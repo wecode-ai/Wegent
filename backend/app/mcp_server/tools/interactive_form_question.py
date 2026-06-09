@@ -216,8 +216,10 @@ def _extract_input_type_and_embedded_question(
         return input_type, None
 
     embedded_question = input_type[match.end() :].strip()
-    while embedded_question.endswith(")"):
+    wrapper_closers = 2
+    while wrapper_closers > 0 and embedded_question.endswith(")"):
         embedded_question = embedded_question[:-1].strip()
+        wrapper_closers -= 1
 
     return match.group("input_type").strip(), embedded_question or None
 

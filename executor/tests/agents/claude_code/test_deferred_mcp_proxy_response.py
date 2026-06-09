@@ -4,6 +4,7 @@
 
 """Tests for ResultMessage handling of deferred MCP proxy calls."""
 
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -247,7 +248,10 @@ async def test_process_result_message_retries_invalid_deferred_form(monkeypatch)
                 "mcp__interactive_wegent-interactive-form-question__"
                 "interactive_form_question"
             ),
-            input={"questions": [{"id": "q1", "input_type": "single_choice"}]},
+            input={
+                "questions": [{"id": "q1", "input_type": "single_choice"}],
+                "api_key": "super-secret",
+            },
         ),
     )
 
@@ -273,7 +277,11 @@ async def test_process_result_message_retries_invalid_deferred_form(monkeypatch)
     assert tool_result["type"] == "tool_result"
     assert tool_result["tool_use_id"] == "tool-3"
     assert tool_result["is_error"] is True
-    assert "Call interactive_form_question again" in tool_result["content"][0]["text"]
+    retry_payload_text = tool_result["content"][0]["text"]
+    retry_payload = json.loads(retry_payload_text)
+    assert "Call interactive_form_question again" in retry_payload_text
+    assert "invalid_arguments" not in retry_payload
+    assert "super-secret" not in retry_payload_text
 
 
 @pytest.mark.asyncio

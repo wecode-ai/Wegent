@@ -1044,7 +1044,6 @@ async def _process_result_message(
                     create_deferred_mcp_retry_query(
                         tool_use_id=deferred_tool_use.id,
                         tool_name=deferred_tool_use.name,
-                        tool_input=deferred_tool_use.input,
                         tool_output=proxy_result.output_text,
                         retry_count=deferred_mcp_retry_count,
                         max_retries=max_deferred_mcp_retries,

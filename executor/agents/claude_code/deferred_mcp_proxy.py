@@ -24,7 +24,7 @@ from mcp.client.streamable_http import streamablehttp_client
 INTERACTIVE_FORM_TOOL_MARKER = "interactive_form_question"
 WAITING_FOR_USER_INPUT_REASON = "waiting_for_user_input"
 INTERACTIVE_FORM_FORMAT_ERROR = "模型给出的表单格式不对"
-INTERACTIVE_FORM_FORMAT_RETRYING = "模型给出的表单格式不对，正在重新生成表单"
+INTERACTIVE_FORM_FORMAT_RETRYING = "模型给出的表单格式不对, 正在重新生成表单"
 INTERACTIVE_FORM_RENDER_ERROR = "交互式表单生成失败"
 INTERACTIVE_FORM_ANSWER_FIELDS = (
     "type",
@@ -118,7 +118,6 @@ async def create_interactive_form_answer_query(
 def build_deferred_mcp_retry_payload(
     *,
     tool_name: str,
-    tool_input: Any,
     tool_output: str,
     retry_count: int,
     max_retries: int,
@@ -133,7 +132,6 @@ def build_deferred_mcp_retry_payload(
         "attempt": retry_count + 1,
         "max_attempts": max_retries,
         "tool_name": tool_name,
-        "invalid_arguments": tool_input if isinstance(tool_input, dict) else {},
         "last_tool_output": tool_output,
         "required_schema": {
             "questions": [
@@ -160,7 +158,6 @@ async def create_deferred_mcp_retry_query(
     *,
     tool_use_id: str,
     tool_name: str,
-    tool_input: Any,
     tool_output: str,
     retry_count: int,
     max_retries: int,
@@ -168,7 +165,6 @@ async def create_deferred_mcp_retry_query(
     """Create an error tool_result that asks the model to retry the form call."""
     payload = build_deferred_mcp_retry_payload(
         tool_name=tool_name,
-        tool_input=tool_input,
         tool_output=tool_output,
         retry_count=retry_count,
         max_retries=max_retries,
