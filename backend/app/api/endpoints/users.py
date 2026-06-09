@@ -42,6 +42,11 @@ from app.services.subscription.notification_service import (
 )
 from app.services.user import user_service
 from app.services.user_mcp_service import user_mcp_service
+from app.services.user_runtime_config import (
+    UserRuntimeConfigError,
+    UserRuntimeConfigSyncError,
+    user_runtime_config_service,
+)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -72,6 +77,37 @@ class MCPProviderServiceConfigResponse(BaseModel):
     detail_url: str
     enabled: bool = False
     url: str = ""
+
+
+class UserRuntimeConfigResponse(BaseModel):
+    """Public status for a user-scoped runtime configuration."""
+
+    runtime: str
+    display_name: str
+    use_user_config: bool = False
+    configured: bool = False
+    target_path: str
+    auth_json_sha256: Optional[str] = None
+    auth_json_updated_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+class UserRuntimeConfigUpdateRequest(BaseModel):
+    """Update request for runtime config preferences."""
+
+    use_user_config: bool
+
+
+class UserRuntimeAuthJsonRequest(BaseModel):
+    """Request body for uploading runtime auth JSON."""
+
+    auth_json: str
+
+
+class UserRuntimeConfigImportRequest(BaseModel):
+    """Request body for importing runtime auth JSON from one local device."""
+
+    device_id: str
 
 
 @router.get("/features", response_model=FeatureFlags)
@@ -162,6 +198,120 @@ async def update_current_user_endpoint(
         )
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.get(
+    "/me/runtime-configs/{runtime}",
+    response_model=UserRuntimeConfigResponse,
+)
+async def get_user_runtime_config(
+    runtime: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """Get current user's runtime config status."""
+    try:
+        return UserRuntimeConfigResponse(
+            **user_runtime_config_service.get_config(
+                db,
+                user_id=current_user.id,
+                runtime=runtime,
+                preferences=current_user.preferences,
+            )
+        )
+    except UserRuntimeConfigError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+
+@router.put(
+    "/me/runtime-configs/{runtime}",
+    response_model=UserRuntimeConfigResponse,
+)
+async def update_user_runtime_config(
+    runtime: str,
+    request: UserRuntimeConfigUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """Update whether a user runtime config is enabled."""
+    try:
+        return UserRuntimeConfigResponse(
+            **user_runtime_config_service.set_use_user_config(
+                db,
+                user=current_user,
+                runtime=runtime,
+                use_user_config=request.use_user_config,
+            )
+        )
+    except UserRuntimeConfigError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+
+@router.post(
+    "/me/runtime-configs/{runtime}/auth-json",
+    response_model=UserRuntimeConfigResponse,
+)
+async def upload_user_runtime_auth_json(
+    runtime: str,
+    request: UserRuntimeAuthJsonRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """Upload and encrypt current user's runtime auth JSON."""
+    try:
+        return UserRuntimeConfigResponse(
+            **user_runtime_config_service.save_auth_json(
+                db,
+                user_id=current_user.id,
+                runtime=runtime,
+                auth_json=request.auth_json,
+                preferences=current_user.preferences,
+            )
+        )
+    except UserRuntimeConfigError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+
+@router.post(
+    "/me/runtime-configs/{runtime}/import-device",
+    response_model=UserRuntimeConfigResponse,
+)
+async def import_user_runtime_auth_json_from_device(
+    runtime: str,
+    request: UserRuntimeConfigImportRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """Import and encrypt current user's runtime auth JSON from a local device."""
+    try:
+        return UserRuntimeConfigResponse(
+            **await user_runtime_config_service.import_auth_json_from_device(
+                db,
+                user_id=current_user.id,
+                runtime=runtime,
+                device_id=request.device_id,
+                preferences=current_user.preferences,
+            )
+        )
+    except UserRuntimeConfigError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    except UserRuntimeConfigSyncError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
 
 
 @router.get(

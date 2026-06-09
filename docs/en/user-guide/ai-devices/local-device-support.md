@@ -86,19 +86,11 @@ curl -fL -o wegent-executor \
 chmod +x wegent-executor
 ```
 
-#### Use Device-Local CLI Configuration
+#### Use Personal Codex CLI Configuration
 
-By default, the executor uses the Claude/Codex model and provider configuration issued by Wegent. If a device already has local Codex CLI login or provider configuration, set this environment variable to let Codex use the device-local configuration:
+By default, the executor uses the Claude/Codex model and provider configuration issued by Wegent. To use personal Codex login information, open Wework **Settings** -> **Personal**, import or upload `~/.codex/auth.json` from a device, and enable the personal configuration. When device heartbeat reports that the local Codex auth file is missing, Wegent syncs the saved auth in the background; if `~/.codex/auth.json` already exists on the device, it is not overwritten. GPT models that use Codex access Codex through that authenticated account.
 
-```bash
-WEGENT_LOCAL_CLI_CONFIG_RUNTIMES=codex
-```
-
-When the variable is empty or unset, all runtimes keep using the system-issued configuration. The currently supported value is:
-
-- `codex`: Codex uses device-local configuration, and Wegent no longer injects the Codex provider.
-
-This setting only affects the current device, which is useful when different devices should mix system-issued configuration and local Codex CLI configuration differently. Claude keeps using Wegent-issued configuration.
+Wegent now marks whether Codex should use personal configuration explicitly on the execution request. It no longer uses the `WEGENT_LOCAL_CLI_CONFIG_RUNTIMES` environment variable for this decision.
 
 ### Building a Device Image
 

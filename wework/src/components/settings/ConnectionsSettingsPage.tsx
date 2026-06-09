@@ -17,6 +17,7 @@ import {
   RotateCcw,
   Terminal,
   Trash2,
+  UserRound,
   X,
 } from 'lucide-react'
 import type { ComponentType } from 'react'
@@ -38,6 +39,7 @@ import type { ArchivedTask } from '@/types/api'
 import type { CloudDeviceMetricsResponse, DeviceInfo } from '@/types/devices'
 import { AppearanceSettingsPage } from '@/features/appearance/AppearanceSettingsPage'
 import { AddCloudDeviceDialog } from './AddCloudDeviceDialog'
+import { RuntimeConfigSettingsPage } from './RuntimeConfigSettingsPage'
 import { WorktreesSettingsPage } from './WorktreesSettingsPage'
 
 interface ConnectionsSettingsPageProps {
@@ -49,12 +51,14 @@ interface ConnectionsSettingsPageProps {
   onDeleteArchivedTasks?: () => Promise<void>
 }
 
+type SettingsCategory = 'personal' | 'coding'
+
 interface SettingsNavItem {
   key: string
   icon: ComponentType<{ className?: string }>
   label: string
   fallback: string
-  category?: 'coding'
+  category?: SettingsCategory
 }
 
 const settingsNavItems: SettingsNavItem[] = [
@@ -69,6 +73,13 @@ const settingsNavItems: SettingsNavItem[] = [
     icon: Palette,
     label: 'settings_nav_appearance',
     fallback: '外观',
+  },
+  {
+    key: 'codex-auth',
+    icon: UserRound,
+    label: 'settings_nav_codex_auth',
+    fallback: 'Codex 认证',
+    category: 'personal',
   },
   {
     key: 'worktrees',
@@ -87,17 +98,31 @@ const settingsNavItems: SettingsNavItem[] = [
 
 const emptyArchivedTasks = async () => ({ items: [], total: 0 })
 const noopArchivedAction = async () => undefined
+const settingsCategoryLabels: Record<SettingsCategory, { label: string; fallback: string }> = {
+  personal: {
+    label: 'settings_category_personal',
+    fallback: '个人',
+  },
+  coding: {
+    label: 'settings_category_coding',
+    fallback: '编码',
+  },
+}
 
 function getSettingsNavFromPath(path: string): string {
   const normalizedPath = stripAppBasePath(path)
+  if (normalizedPath === '/settings/personal') return 'codex-auth'
+  const matchedItem = settingsNavItems.find(
+    item => getSettingsNavPath(item.key) === normalizedPath,
+  )
+  if (matchedItem) return matchedItem.key
   const match = normalizedPath.match(/^\/settings\/([^/]+)$/)
   if (!match) return 'connections'
-  return settingsNavItems.some(item => item.key === match[1])
-    ? match[1]
-    : 'connections'
+  return settingsNavItems.some(item => item.key === match[1]) ? match[1] : 'connections'
 }
 
 function getSettingsNavPath(key: string): string {
+  if (key === 'codex-auth') return '/settings/personal/codex'
   return key === 'connections' ? '/settings' : `/settings/${key}`
 }
 
@@ -1004,14 +1029,17 @@ export function ConnectionsSettingsPage({
 
         <nav className="space-y-1">
           {settingsNavItems.map((item, index) => {
-            const showCodingCategory =
-              item.category === 'coding' &&
-              settingsNavItems[index - 1]?.category !== item.category
+            const showCategory =
+              item.category && settingsNavItems[index - 1]?.category !== item.category
+            const categoryLabel = item.category ? settingsCategoryLabels[item.category] : null
             return (
               <div key={item.key}>
-                {showCodingCategory && (
-                  <div className="mb-1 mt-5 px-2.5 text-xs font-medium text-text-muted">
-                    {t('workbench.settings_category_coding', '编码')}
+                {showCategory && categoryLabel && (
+                  <div
+                    data-testid={`settings-category-${item.category}`}
+                    className="mb-1 mt-5 px-2.5 text-xs font-medium text-text-muted"
+                  >
+                    {t(`workbench.${categoryLabel.label}`, categoryLabel.fallback)}
                   </div>
                 )}
                 <button
@@ -1049,6 +1077,8 @@ export function ConnectionsSettingsPage({
           />
         ) : activeNav === 'appearance' ? (
           <AppearanceSettingsPage />
+        ) : activeNav === 'codex-auth' ? (
+          <RuntimeConfigSettingsPage />
         ) : activeNav === 'worktrees' ? (
           <WorktreesSettingsPage />
         ) : (

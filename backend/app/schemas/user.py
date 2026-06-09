@@ -38,6 +38,12 @@ class UserModelSelectionPreference(BaseModel):
     options: dict[str, str] = Field(default_factory=dict)
 
 
+class UserRuntimeConfigPreference(BaseModel):
+    """User-level runtime configuration preference."""
+
+    use_user_config: bool = False
+
+
 class UserPreferences(BaseModel):
     """User preferences model"""
 
@@ -51,6 +57,9 @@ class UserPreferences(BaseModel):
     wework_new_chat_model_selection: Optional[UserModelSelectionPreference] = None
     wework_project_execution_mode: Literal["current_workspace", "git_worktree"] = (
         "current_workspace"
+    )
+    runtime_configs: dict[str, UserRuntimeConfigPreference] = Field(
+        default_factory=dict
     )
 
 
