@@ -9,10 +9,14 @@ import { useTranslation } from '@/hooks/useTranslation'
 import {
   findWorkbenchDevice,
   getActiveWorkbenchDeviceId,
-  getWorkbenchDeviceDisplayName,
   isWorkbenchDeviceOnline,
 } from '@/lib/workbench-device'
+import {
+  isDeviceBelowWeWorkVersion,
+  isWeWorkCompatibleDevice,
+} from '@/lib/device-capabilities'
 import type { DeviceInfo, ProjectWithTasks, Task } from '@/types/api'
+import type { DeviceUpgradeState } from '@/types/device-events'
 import type { EnvironmentInfo } from '@/types/environment'
 import type {
   GuidanceWorkbenchMessage,
@@ -28,6 +32,7 @@ import {
   DesktopTopBar,
   MAC_NATIVE_TOP_BAR_ACTION_INSET,
 } from './DesktopTopBar'
+import { DeviceStatusPrompt } from './DeviceStatusPrompt'
 
 const DESKTOP_COMPOSER_FRAME_CLASS =
   'mx-auto w-[min(58vw,62rem)] min-w-[32rem] max-w-[calc(100vw-4rem)] -translate-y-12'
@@ -40,34 +45,12 @@ const DESKTOP_SCROLL_TO_BOTTOM_BUTTON_CLASS =
 const DESKTOP_QUEUED_SCROLL_TO_BOTTOM_BUTTON_CLASS =
   'bottom-64 z-popover bg-background/95 shadow-md'
 
-function formatWorkbenchTemplate(template: string, values: Record<string, string>) {
-  return Object.entries(values).reduce(
-    (result, [key, value]) => result.replaceAll(`{{${key}}}`, value),
-    template,
-  )
-}
-
-function getWorkbenchDeviceStatusLabel(
-  t: ReturnType<typeof useTranslation>['t'],
-  status: DeviceInfo['status'] | 'unavailable',
-) {
-  if (status === 'online') {
-    return t('workbench.project_device_status_online', '在线')
-  }
-  if (status === 'busy') {
-    return t('workbench.project_device_status_busy', '忙碌')
-  }
-  if (status === 'offline') {
-    return t('workbench.project_device_status_offline', '离线')
-  }
-  return t('workbench.project_device_status_unavailable', '不可用')
-}
-
 interface DesktopWorkbenchMainProps {
   isBootstrapping: boolean
   currentTask: Task | null
   currentProject: ProjectWithTasks | null
   devices: DeviceInfo[]
+  upgradingDevices: Record<string, DeviceUpgradeState>
   messages: WorkbenchMessage[]
   queuedMessages: QueuedWorkbenchMessage[]
   guidanceMessages: GuidanceWorkbenchMessage[]
@@ -81,6 +64,8 @@ interface DesktopWorkbenchMainProps {
   onListEnvironmentBranches: () => Promise<string[]>
   onCheckoutEnvironmentBranch: (branchName: string) => Promise<void>
   onCreateEnvironmentBranch: (branchName: string) => Promise<void>
+  onOpenCloudDeviceSettings: () => void
+  onUpgradeDevice: (deviceId: string) => Promise<void>
   onInputChange: (value: string) => void
   onSend: () => void
   isResponseStreaming: boolean
@@ -97,6 +82,7 @@ export function DesktopWorkbenchMain({
   currentTask,
   currentProject,
   devices,
+  upgradingDevices,
   messages,
   queuedMessages,
   guidanceMessages,
@@ -110,6 +96,8 @@ export function DesktopWorkbenchMain({
   onListEnvironmentBranches,
   onCheckoutEnvironmentBranch,
   onCreateEnvironmentBranch,
+  onOpenCloudDeviceSettings,
+  onUpgradeDevice,
   onInputChange,
   onSend,
   isResponseStreaming,
@@ -134,22 +122,17 @@ export function DesktopWorkbenchMain({
   const activeDevice = findWorkbenchDevice(devices, activeDeviceId)
   const activeDeviceUnavailable =
     Boolean(activeDeviceId) && !isWorkbenchDeviceOnline(activeDevice)
-  const deviceStatus = getWorkbenchDeviceStatusLabel(
-    t,
-    activeDevice?.status ?? 'unavailable',
-  )
-  const composerDisabledReason = activeDeviceUnavailable
-    ? formatWorkbenchTemplate(
-        t(
-          'workbench.conversation_device_unavailable',
-          '{{device}} {{status}}，恢复在线后可继续对话',
-        ),
-        {
-          device: getWorkbenchDeviceDisplayName(activeDevice, activeDeviceId),
-          status: deviceStatus,
-        },
-      )
-    : undefined
+  const activeDeviceVersionUnsupported =
+    Boolean(activeDevice && isDeviceBelowWeWorkVersion(activeDevice))
+  const noStandaloneCompatibleDevice =
+    !currentProject &&
+    !activeDeviceId &&
+    !devices.some(device => device.status === 'online' && isWeWorkCompatibleDevice(device))
+  const composerDisabled =
+    isSending ||
+    activeDeviceUnavailable ||
+    activeDeviceVersionUnsupported ||
+    noStandaloneCompatibleDevice
   const emptyTitle = currentProject
     ? t('workbench.project_empty_title', {
         defaultValue: `我们应该在 ${currentProject.name} 中构建什么？`,
@@ -225,12 +208,20 @@ export function DesktopWorkbenchMain({
                 className="pointer-events-auto"
                 data-testid="desktop-floating-composer-card"
               >
+                <DeviceStatusPrompt
+                  devices={devices}
+                  upgradingDevices={upgradingDevices}
+                  onUpgradeDevice={onUpgradeDevice}
+                  onOpenCloudDeviceSettings={onOpenCloudDeviceSettings}
+                  activeDeviceId={activeDeviceId}
+                  requiresOnlineCompatibleDevice={noStandaloneCompatibleDevice}
+                  className="mb-2"
+                />
                 <ChatInput
                   value={input}
                   onChange={onInputChange}
                   onSubmit={onSend}
-                  disabled={isSending || activeDeviceUnavailable}
-                  disabledReason={composerDisabledReason}
+                  disabled={composerDisabled}
                   placeholder={t('workbench.input_placeholder', '尽管问')}
                   variant="desktop"
                   projectChat={projectChat}
@@ -257,12 +248,20 @@ export function DesktopWorkbenchMain({
               <h1 className="mb-9 text-center text-[28px] font-medium leading-9 tracking-normal">
                 {emptyTitle}
               </h1>
+              <DeviceStatusPrompt
+                devices={devices}
+                upgradingDevices={upgradingDevices}
+                onUpgradeDevice={onUpgradeDevice}
+                onOpenCloudDeviceSettings={onOpenCloudDeviceSettings}
+                activeDeviceId={activeDeviceId}
+                requiresOnlineCompatibleDevice={noStandaloneCompatibleDevice}
+                className="mb-3"
+              />
               <ChatInput
                 value={input}
                 onChange={onInputChange}
                 onSubmit={onSend}
-                disabled={isSending || activeDeviceUnavailable}
-                disabledReason={composerDisabledReason}
+                disabled={composerDisabled}
                 placeholder={t('workbench.input_placeholder', '尽管问')}
                 variant="desktop"
                 projectChat={projectChat}

@@ -1,4 +1,4 @@
-import { Check, ChevronLeft, Folder, FolderPlus, Loader2, X } from 'lucide-react'
+import { ArrowUpCircle, Check, ChevronLeft, Folder, FolderPlus, Loader2, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
@@ -8,8 +8,12 @@ import {
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
+  WEWORK_MIN_EXECUTOR_VERSION,
+  canRequestDeviceUpgrade,
   canUseForProjectCreation,
   isCloudDevice,
+  isClaudeCodeDevice,
+  isDeviceBelowWeWorkVersion,
   isUsableDevice,
 } from '@/lib/device-capabilities'
 import type {
@@ -20,6 +24,7 @@ import type {
   GitRepoInfo,
   ProjectWithTasks,
 } from '@/types/api'
+import type { DeviceUpgradeState } from '@/types/device-events'
 
 type ProjectCreateMode = 'scratch' | 'existing' | 'git'
 
@@ -39,6 +44,8 @@ interface ProjectCreateDialogProps {
   onGetProjectWorkspaceRoot: (deviceId: string) => Promise<string>
   onListDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
   onCreateDeviceDirectory: (deviceId: string, path: string) => Promise<void>
+  upgradingDevices?: Record<string, DeviceUpgradeState>
+  onUpgradeDevice?: (deviceId: string) => Promise<void>
   onListGitRepositories?: () => Promise<GitRepoInfo[]>
   onListGitBranches?: (repo: GitRepoInfo) => Promise<GitBranch[]>
 }
@@ -121,6 +128,14 @@ function getProjectCreationDevices(devices: DeviceInfo[]): DeviceInfo[] {
   return sortDevicesForProjectCreation(devices.filter(canUseForProjectCreation))
 }
 
+function getProjectDeviceOptions(devices: DeviceInfo[]): DeviceInfo[] {
+  return sortDevicesForProjectCreation(devices.filter(isClaudeCodeDevice))
+}
+
+function canSelectProjectDevice(device: DeviceInfo): boolean {
+  return isUsableDevice(device)
+}
+
 function getDefaultDeviceId(
   devices: DeviceInfo[],
   preferredDeviceId?: string | null
@@ -132,7 +147,7 @@ function getDefaultDeviceId(
     return preferredDevice.device_id
   }
 
-  return getProjectCreationDevices(devices)[0]?.device_id ?? ''
+  return getProjectCreationDevices(devices)[0]?.device_id ?? devices[0]?.device_id ?? ''
 }
 
 function getParentPath(path: string): string {
@@ -174,6 +189,13 @@ function directoryMatchesQuery(directory: string, query: string): boolean {
   return false
 }
 
+function isProjectDeviceUpgradeActive(upgradeState: DeviceUpgradeState | undefined): boolean {
+  return Boolean(
+    upgradeState &&
+      !['success', 'error', 'skipped', 'busy'].includes(upgradeState.status),
+  )
+}
+
 export function ProjectCreateDialog({
   open,
   mode,
@@ -188,6 +210,8 @@ export function ProjectCreateDialog({
   onGetProjectWorkspaceRoot,
   onListDeviceDirectories,
   onCreateDeviceDirectory,
+  upgradingDevices = {},
+  onUpgradeDevice,
   onListGitRepositories,
   onListGitBranches,
 }: ProjectCreateDialogProps) {
@@ -195,7 +219,7 @@ export function ProjectCreateDialog({
 
   return (
     <ProjectCreateDialogContent
-      key={`${mode}:${getDefaultDeviceId(devices)}`}
+      key={`${mode}:${getDefaultDeviceId(getProjectDeviceOptions(devices))}`}
       mode={mode}
       devices={devices}
       onClose={onClose}
@@ -208,6 +232,8 @@ export function ProjectCreateDialog({
       onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot}
       onListDeviceDirectories={onListDeviceDirectories}
       onCreateDeviceDirectory={onCreateDeviceDirectory}
+      upgradingDevices={upgradingDevices}
+      onUpgradeDevice={onUpgradeDevice}
       onListGitRepositories={onListGitRepositories}
       onListGitBranches={onListGitBranches}
     />
@@ -227,14 +253,16 @@ function ProjectCreateDialogContent({
   onGetProjectWorkspaceRoot,
   onListDeviceDirectories,
   onCreateDeviceDirectory,
+  upgradingDevices = {},
+  onUpgradeDevice,
   onListGitRepositories,
   onListGitBranches,
 }: Omit<ProjectCreateDialogProps, 'open'>) {
   const { t } = useTranslation('common')
-  const sortedDevices = useMemo(() => getProjectCreationDevices(devices), [devices])
+  const allProjectDevices = useMemo(() => getProjectDeviceOptions(devices), [devices])
   const firstDeviceId = useMemo(
-    () => getDefaultDeviceId(sortedDevices, preferredDeviceId),
-    [preferredDeviceId, sortedDevices]
+    () => getDefaultDeviceId(allProjectDevices, preferredDeviceId),
+    [allProjectDevices, preferredDeviceId],
   )
   const [deviceId, setDeviceId] = useState(firstDeviceId)
   const [projectName, setProjectName] = useState('')
@@ -262,8 +290,13 @@ function ProjectCreateDialogContent({
   const [projectCreateError, setProjectCreateError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
+  const selectedDevice = allProjectDevices.find(device => device.device_id === deviceId)
+  const selectedDeviceUsable = Boolean(selectedDevice && canUseForProjectCreation(selectedDevice))
+  const selectedUnavailableDevice =
+    selectedDevice && !selectedDeviceUsable ? selectedDevice : null
+
   useEffect(() => {
-    if (mode !== 'scratch' || !deviceId) return
+    if (mode !== 'scratch' || !deviceId || !selectedDeviceUsable) return
     let cancelled = false
 
     async function resolveProjectRoot() {
@@ -283,10 +316,10 @@ function ProjectCreateDialogContent({
     return () => {
       cancelled = true
     }
-  }, [deviceId, mode, onGetProjectWorkspaceRoot])
+  }, [deviceId, mode, onGetProjectWorkspaceRoot, selectedDeviceUsable])
 
   useEffect(() => {
-    if (mode !== 'existing' || !deviceId) return
+    if (mode !== 'existing' || !deviceId || !selectedDeviceUsable) return
     let cancelled = false
 
     async function resolveHomeDirectory() {
@@ -313,7 +346,7 @@ function ProjectCreateDialogContent({
     return () => {
       cancelled = true
     }
-  }, [deviceId, mode, onGetDeviceHomeDirectory])
+  }, [deviceId, mode, onGetDeviceHomeDirectory, selectedDeviceUsable])
 
   useEffect(() => {
     if (mode !== 'existing') return
@@ -331,7 +364,7 @@ function ProjectCreateDialogContent({
   }, [currentPath, directoryQuery, mode, pathInput])
 
   useEffect(() => {
-    if (mode !== 'existing' || !deviceId || !currentPath) return
+    if (mode !== 'existing' || !deviceId || !selectedDeviceUsable || !currentPath) return
     let cancelled = false
 
     async function loadDirectories() {
@@ -358,7 +391,7 @@ function ProjectCreateDialogContent({
     return () => {
       cancelled = true
     }
-  }, [currentPath, deviceId, mode, onListDeviceDirectories, t])
+  }, [currentPath, deviceId, mode, onListDeviceDirectories, selectedDeviceUsable, t])
 
   useEffect(() => {
     if (mode !== 'git') return
@@ -433,8 +466,6 @@ function ProjectCreateDialogContent({
     }
   }, [mode, onListGitBranches, selectedRepo, t])
 
-  const selectedDevice = sortedDevices.find(device => device.device_id === deviceId)
-  const selectedDeviceUsable = Boolean(selectedDevice && canUseForProjectCreation(selectedDevice))
   const scratchPath = useMemo(
     () => `${normalizePath(projectRoot)}/${sanitizePathSegment(projectName)}`,
     [projectName, projectRoot],
@@ -489,6 +520,9 @@ function ProjectCreateDialogContent({
   )
 
   const handleDeviceChange = (nextDeviceId: string) => {
+    const nextDevice = allProjectDevices.find(device => device.device_id === nextDeviceId)
+    if (nextDevice && !canSelectProjectDevice(nextDevice)) return
+
     setDeviceId(nextDeviceId)
     if (nextDeviceId) {
       onSelectDevicePreference?.(nextDeviceId)
@@ -507,6 +541,13 @@ function ProjectCreateDialogContent({
     setBranches([])
     setSelectedBranch(null)
     setBranchError(null)
+    setProjectCreateError(null)
+  }
+
+  const handleUpgradeDevice = async (nextDeviceId: string) => {
+    if (!onUpgradeDevice) return
+    setProjectCreateError(null)
+    await onUpgradeDevice(nextDeviceId)
   }
 
   const handleBrowsePath = (path: string) => {
@@ -551,7 +592,7 @@ function ProjectCreateDialogContent({
 
   const handleCreateDirectory = async () => {
     const folderName = newFolderName.trim()
-    if (!deviceId || !currentPath || !folderName) return
+    if (!deviceId || !selectedDeviceUsable || !currentPath || !folderName) return
 
     if (folderName.includes('/')) {
       setCreateDirectoryError(
@@ -595,6 +636,25 @@ function ProjectCreateDialogContent({
     mode === 'git'
       ? t('workbench.project_git_clone_progress', '正在克隆仓库，可能需要一点时间')
       : t('workbench.project_create_progress', '正在创建项目，请稍候')
+  const getDeviceOptionLabel = (device: DeviceInfo) => {
+    const statusLabel = isDeviceBelowWeWorkVersion(device)
+      ? t('workbench.project_device_upgrade_required_option', '（需升级）')
+      : t(
+          device.status === 'busy'
+            ? 'workbench.project_device_busy'
+            : isUsableDevice(device)
+              ? 'workbench.project_device_online'
+              : 'workbench.project_device_offline',
+          device.status === 'busy' ? '(忙碌)' : isUsableDevice(device) ? '(在线)' : '(离线)',
+        )
+
+    return `${device.name || device.device_id}${
+      isCloudDevice(device) ? ` ${t('workbench.project_cloud_device', '(云设备)')}` : ''
+    } ${statusLabel}`
+  }
+  const directoryDeviceUnavailableMessage = selectedDevice && isDeviceBelowWeWorkVersion(selectedDevice)
+    ? t('workbench.project_directory_upgrade_device_hint', '升级当前设备后可选择目录')
+    : t('workbench.project_directory_unavailable_device_hint', '设备恢复在线后可选择目录')
 
   return createPortal(
     <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4">
@@ -636,24 +696,21 @@ function ProjectCreateDialogContent({
           onChange={event => handleDeviceChange(event.target.value)}
           className="mt-2 h-10 w-full rounded-lg border border-[#d8d8d8] bg-white px-3 text-[13px] outline-none focus:border-[#14b8a6] focus:ring-2 focus:ring-[#14b8a6]/20 disabled:opacity-60"
         >
-          {sortedDevices.length === 0 && (
+          {allProjectDevices.length === 0 && (
             <option value="">{t('workbench.project_no_available_devices', '暂无可用设备')}</option>
           )}
-          {sortedDevices.map(device => (
-            <option key={device.device_id} value={device.device_id}>
-              {device.name || device.device_id}
-              {isCloudDevice(device) ? ` ${t('workbench.project_cloud_device', '(云设备)')}` : ''}
-              {` ${t(
-                isUsableDevice(device)
-                  ? 'workbench.project_device_online'
-                  : 'workbench.project_device_offline',
-                isUsableDevice(device) ? '(在线)' : '(离线)',
-              )}`}
+          {allProjectDevices.map(device => (
+            <option
+              key={device.device_id}
+              value={device.device_id}
+              disabled={!canSelectProjectDevice(device)}
+            >
+              {getDeviceOptionLabel(device)}
             </option>
           ))}
         </select>
 
-        {sortedDevices.length === 0 && onOpenCloudDeviceSettings && (
+        {allProjectDevices.length === 0 && onOpenCloudDeviceSettings && (
           <p className="mt-2 text-xs leading-5 text-[#606368]">
             {t('workbench.project_no_available_devices_hint', '创建项目需要一台可用设备。')}
             <a
@@ -668,6 +725,91 @@ function ProjectCreateDialogContent({
               {t('workbench.project_create_cloud_device_connection', '创建云设备连接')}
             </a>
           </p>
+        )}
+
+        {selectedUnavailableDevice && (
+          <div
+            data-testid="project-device-unavailable-list"
+            className="mt-3 space-y-2"
+          >
+            <p className="text-xs font-medium text-[#6b6f76]">
+              {isDeviceBelowWeWorkVersion(selectedUnavailableDevice)
+                ? t('workbench.project_selected_device_upgrade_title')
+                : t('workbench.project_selected_device_unavailable_title')}
+            </p>
+            {(() => {
+              const device = selectedUnavailableDevice
+              const belowVersion = isDeviceBelowWeWorkVersion(device)
+              const upgradeState = upgradingDevices[device.device_id]
+              const upgrading = isProjectDeviceUpgradeActive(upgradeState)
+              const canUpgrade = Boolean(
+                onUpgradeDevice &&
+                  belowVersion &&
+                  canRequestDeviceUpgrade(device) &&
+                  !upgrading,
+              )
+              const currentVersion = device.executor_version
+                ? `v${device.executor_version}`
+                : t('workbench.project_device_version_unknown')
+              const reason =
+                device.status !== 'online'
+                  ? t('workbench.device_status_offline_reason')
+                  : belowVersion
+                    ? t('workbench.project_device_upgrade_requirement', {
+                        version: WEWORK_MIN_EXECUTOR_VERSION,
+                      })
+                    : t('workbench.device_status_busy_reason')
+
+              return (
+                <div
+                  key={device.device_id}
+                  data-testid={`project-device-unavailable-${device.device_id}`}
+                  className="flex items-center gap-3 rounded-lg border border-[#e5e5e5] bg-[#f7f7f8] px-3 py-2 text-xs text-[#6b6f76]"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="truncate font-medium text-[#4b4f55]">
+                        {device.name || device.device_id}
+                      </span>
+                      {isCloudDevice(device) && (
+                        <span className="shrink-0 text-[#8a8f98]">
+                          {t('workbench.project_cloud_device')}
+                        </span>
+                      )}
+                    </div>
+                    <p className="mt-1 truncate">
+                      {upgrading
+                        ? t('workbench.project_device_upgrading', {
+                            message: upgradeState?.message ?? t('workbench.device_status_checking'),
+                          })
+                        : belowVersion
+                          ? t('workbench.project_device_upgrade_detail', {
+                              current: currentVersion,
+                              required: WEWORK_MIN_EXECUTOR_VERSION,
+                            })
+                          : reason}
+                    </p>
+                  </div>
+                  {belowVersion && (
+                    <button
+                      type="button"
+                      data-testid={`upgrade-project-device-${device.device_id}`}
+                      disabled={!canUpgrade}
+                      onClick={() => void handleUpgradeDevice(device.device_id)}
+                      className="inline-flex h-8 shrink-0 items-center gap-1 rounded-md px-2 font-medium text-[#0f766e] hover:bg-[#e5f6f4] disabled:cursor-not-allowed disabled:text-[#8a8f98] disabled:hover:bg-transparent"
+                    >
+                      {upgrading ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <ArrowUpCircle className="h-3.5 w-3.5" />
+                      )}
+                      {t('workbench.project_device_upgrade_action')}
+                    </button>
+                  )}
+                </div>
+              )
+            })()}
+          </div>
         )}
 
         {mode === 'scratch' ? (
@@ -780,8 +922,9 @@ function ProjectCreateDialogContent({
                   data-testid="project-hidden-directories-toggle"
                   type="checkbox"
                   checked={showHiddenDirectories}
+                  disabled={!selectedDeviceUsable}
                   onChange={event => setShowHiddenDirectories(event.target.checked)}
-                  className="h-4 w-4 rounded border-[#d8d8d8] accent-[#14b8a6]"
+                  className="h-4 w-4 rounded border-[#d8d8d8] accent-[#14b8a6] disabled:opacity-50"
                 />
                 {t('workbench.project_show_hidden_directories', '显示隐藏目录')}
               </label>
@@ -791,7 +934,7 @@ function ProjectCreateDialogContent({
                 <input
                   data-testid="project-directory-path-input"
                   value={pathInput}
-                  disabled={submitting}
+                  disabled={submitting || !selectedDeviceUsable}
                   onChange={event => setPathInput(event.target.value)}
                   onBlur={handleConfirmPathInput}
                   onKeyDown={event => {
@@ -801,12 +944,16 @@ function ProjectCreateDialogContent({
                     }
                   }}
                   className="h-8 min-w-0 flex-1 rounded-md border border-transparent bg-transparent px-1 font-mono text-[13px] text-[#3c4043] outline-none focus:border-[#14b8a6] focus:bg-white focus:ring-2 focus:ring-[#14b8a6]/20 disabled:opacity-60"
-                  placeholder={t('workbench.project_directory_loading', '正在加载目录...')}
+                  placeholder={
+                    selectedDeviceUsable
+                      ? t('workbench.project_directory_loading', '正在加载目录...')
+                      : directoryDeviceUnavailableMessage
+                  }
                 />
                 <button
                   type="button"
                   data-testid="open-create-folder-button"
-                  disabled={submitting}
+                  disabled={submitting || !selectedDeviceUsable}
                   onClick={() => {
                     setNewFolderOpen(open => !open)
                     setCreateDirectoryError(null)
@@ -867,7 +1014,7 @@ function ProjectCreateDialogContent({
                 </p>
               )}
               <div data-testid="project-directory-tree" className="max-h-[320px] overflow-auto p-2">
-                {currentPath && currentPath !== '/' && (
+                {selectedDeviceUsable && currentPath && currentPath !== '/' && (
                   <button
                     type="button"
                     data-testid="directory-parent-button"
@@ -878,15 +1025,24 @@ function ProjectCreateDialogContent({
                     ..
                   </button>
                 )}
-                {loadingDirectories && (
+                {!selectedDeviceUsable && (
+                  <p
+                    data-testid="project-directory-device-unavailable"
+                    className="px-2 py-8 text-center text-[13px] text-[#8a8f98]"
+                  >
+                    {directoryDeviceUnavailableMessage}
+                  </p>
+                )}
+                {selectedDeviceUsable && loadingDirectories && (
                   <p className="px-2 py-3 text-[13px] text-[#8a8f98]">
                     {t('workbench.project_directory_loading', '正在加载目录...')}
                   </p>
                 )}
-                {!loadingDirectories && directoryError && (
+                {selectedDeviceUsable && !loadingDirectories && directoryError && (
                   <p className="px-2 py-3 text-[13px] text-[#c44]">{directoryError}</p>
                 )}
-                {!loadingDirectories &&
+                {selectedDeviceUsable &&
+                  !loadingDirectories &&
                   !directoryError &&
                   filteredDirectories.map(directory => {
                     const childPath = joinPath(currentPath, directory)
@@ -911,11 +1067,14 @@ function ProjectCreateDialogContent({
                       </button>
                     )
                   })}
-                {!loadingDirectories && !directoryError && filteredDirectories.length === 0 && (
-                  <p className="px-2 py-8 text-center text-[13px] text-[#8a8f98]">
-                    {t('workbench.project_directory_empty', '当前目录下没有子目录')}
-                  </p>
-                )}
+                {selectedDeviceUsable &&
+                  !loadingDirectories &&
+                  !directoryError &&
+                  filteredDirectories.length === 0 && (
+                    <p className="px-2 py-8 text-center text-[13px] text-[#8a8f98]">
+                      {t('workbench.project_directory_empty', '当前目录下没有子目录')}
+                    </p>
+                  )}
               </div>
             </div>
           </>

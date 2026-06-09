@@ -11,6 +11,15 @@ import { MobileSettingsPage } from '@/components/settings/MobileSettingsPage'
 import { stripAppBasePath } from '@/config/runtime'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isSettingsRoute, navigateTo } from '@/lib/navigation'
+import {
+  findWorkbenchDevice,
+  getActiveWorkbenchDeviceId,
+  isWorkbenchDeviceOnline,
+} from '@/lib/workbench-device'
+import {
+  isDeviceBelowWeWorkVersion,
+  isWeWorkCompatibleDevice,
+} from '@/lib/device-capabilities'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
 import type {
   ArchivedTaskListResponse,
@@ -21,12 +30,14 @@ import type {
   ProjectWithTasks,
 } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
+import type { DeviceUpgradeState } from '@/types/device-events'
 import type {
   GuidanceWorkbenchMessage,
   QueuedWorkbenchMessage,
   WorkbenchMessage,
   WorkbenchState,
 } from '@/types/workbench'
+import { DeviceStatusPrompt } from './DeviceStatusPrompt'
 import { MobileDrawer } from './MobileDrawer'
 
 interface MobileWorkbenchLayoutProps {
@@ -35,6 +46,7 @@ interface MobileWorkbenchLayoutProps {
   queuedMessages?: QueuedWorkbenchMessage[]
   guidanceMessages?: GuidanceWorkbenchMessage[]
   runningTaskIds?: Set<number>
+  upgradingDevices?: Record<string, DeviceUpgradeState>
   activeItem?: 'chat' | 'plugins' | 'automation'
   onNewChat?: () => void
   onStartStandaloneChat?: () => void
@@ -85,6 +97,7 @@ interface MobileWorkbenchLayoutProps {
     project: ProjectWithTasks | null,
     branchName: string,
   ) => Promise<void>
+  onUpgradeDevice?: (deviceId: string) => Promise<void>
   onInputChange: (value: string) => void
   onSend: () => void
   isResponseStreaming?: boolean
@@ -102,6 +115,7 @@ export function MobileWorkbenchLayout({
   queuedMessages = [],
   guidanceMessages = [],
   runningTaskIds,
+  upgradingDevices = {},
   activeItem,
   onNewChat,
   onStartStandaloneChat,
@@ -114,6 +128,7 @@ export function MobileWorkbenchLayout({
   onListEnvironmentBranches,
   onCheckoutEnvironmentBranch,
   onCreateEnvironmentBranch,
+  onUpgradeDevice = async () => {},
   onInputChange,
   onSend,
   isResponseStreaming = false,
@@ -200,6 +215,25 @@ export function MobileWorkbenchLayout({
           }
         : undefined,
   }
+  const activeDeviceId = getActiveWorkbenchDeviceId({
+    currentTask: state.currentTask,
+    currentProject: state.currentProject,
+    standaloneDeviceId: effectiveProjectWork.currentStandaloneDeviceId,
+  })
+  const activeDevice = findWorkbenchDevice(state.devices, activeDeviceId)
+  const activeDeviceUnavailable =
+    Boolean(activeDeviceId) && !isWorkbenchDeviceOnline(activeDevice)
+  const activeDeviceVersionUnsupported =
+    Boolean(activeDevice && isDeviceBelowWeWorkVersion(activeDevice))
+  const noStandaloneCompatibleDevice =
+    !state.currentProject &&
+    !activeDeviceId &&
+    !state.devices.some(device => device.status === 'online' && isWeWorkCompatibleDevice(device))
+  const composerDisabled =
+    state.isSending ||
+    activeDeviceUnavailable ||
+    activeDeviceVersionUnsupported ||
+    noStandaloneCompatibleDevice
 
   useEffect(() => {
     const handlePopState = () => {
@@ -286,11 +320,21 @@ export function MobileWorkbenchLayout({
               className="pointer-events-none absolute bottom-0 left-0 right-0 z-chrome px-4 pb-[max(16px,env(safe-area-inset-bottom))] pt-3"
             >
               <div className="pointer-events-auto">
+                <DeviceStatusPrompt
+                  devices={state.devices}
+                  upgradingDevices={upgradingDevices}
+                  onUpgradeDevice={onUpgradeDevice}
+                  onOpenCloudDeviceSettings={() => navigateTo('/settings')}
+                  activeDeviceId={activeDeviceId}
+                  requiresOnlineCompatibleDevice={noStandaloneCompatibleDevice}
+                  compact
+                  className="mb-2"
+                />
                 <ChatInput
                   value={state.input}
                   onChange={onInputChange}
                   onSubmit={onSend}
-                  disabled={state.isSending}
+                  disabled={composerDisabled}
                   placeholder={t(
                     'workbench.mobile_input_placeholder',
                     '询问 Wework',
@@ -366,11 +410,21 @@ export function MobileWorkbenchLayout({
               data-testid="mobile-empty-chat-input-dock"
               className="px-4 pb-0 pt-3"
             >
+              <DeviceStatusPrompt
+                devices={state.devices}
+                upgradingDevices={upgradingDevices}
+                onUpgradeDevice={onUpgradeDevice}
+                onOpenCloudDeviceSettings={() => navigateTo('/settings')}
+                activeDeviceId={activeDeviceId}
+                requiresOnlineCompatibleDevice={noStandaloneCompatibleDevice}
+                compact
+                className="mb-2"
+              />
               <ChatInput
                 value={state.input}
                 onChange={onInputChange}
                 onSubmit={onSend}
-                disabled={state.isSending}
+                disabled={composerDisabled}
                 placeholder={t(
                   'workbench.mobile_input_placeholder',
                   '询问 Wework',
