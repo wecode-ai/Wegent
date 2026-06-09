@@ -115,7 +115,9 @@ async def _submit_task(
     files = {"files": (filename, binary_data, mime_type)}
 
     logger.info(f"[MinerU] Submitting task to {submit_url}")
-    response = await client.post(submit_url, data=data, files=files, timeout=config.submit_timeout_seconds)
+    response = await client.post(
+        submit_url, data=data, files=files, timeout=config.submit_timeout_seconds
+    )
     response.raise_for_status()
 
     result = response.json()
@@ -144,7 +146,9 @@ async def _poll_until_done(
 
         try:
             status_url = f"{base_url}/tasks/{task_id}"
-            status_resp = await client.get(status_url, timeout=config.status_timeout_seconds)
+            status_resp = await client.get(
+                status_url, timeout=config.status_timeout_seconds
+            )
             status_resp.raise_for_status()
 
             status_data = status_resp.json()
@@ -158,10 +162,17 @@ async def _poll_until_done(
                 logger.info(f"[MinerU] Task completed: {task_id}")
                 return
             elif status in ("failed", "error"):
-                raise RuntimeError(f"MinerU task failed: {task_id}")
+                error_detail = status_data if isinstance(status_data, dict) else status
+                logger.error(
+                    f"[MinerU] Task failed: {task_id}, "
+                    f"status={status}, response={error_detail}"
+                )
+                raise RuntimeError(
+                    f"MinerU task failed: {task_id}, detail={error_detail}"
+                )
             else:
                 consecutive_errors = 0
-                logger.debug(f"[MinerU] Task status: {status}, waiting...")
+                logger.info(f"[MinerU] Task status: {status}, waiting...")
                 await asyncio.sleep(config.poll_interval_seconds)
         except RuntimeError:
             raise
