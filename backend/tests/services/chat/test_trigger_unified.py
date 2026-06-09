@@ -12,6 +12,84 @@ from shared.models import ExecutionRequest
 from shared.models.knowledge import ChatContextsResult, KnowledgeBaseToolsResult
 
 
+def test_apply_user_runtime_config_adds_codex_status(monkeypatch):
+    """Codex execution requests should carry explicit user runtime config status."""
+    from app.services.chat.trigger import unified as trigger_unified
+
+    request = ExecutionRequest(
+        model_config={
+            "model": "openai",
+            "api_format": "responses",
+            "model_id": "gpt-5.5",
+        }
+    )
+
+    def fake_get_config(db, *, user_id, runtime, preferences=None):
+        assert user_id == 7
+        assert runtime == "codex"
+        assert preferences == {"runtime_configs": {"codex": {"use_user_config": True}}}
+        return {
+            "runtime": "codex",
+            "display_name": "Codex",
+            "use_user_config": True,
+            "configured": True,
+            "target_path": "~/.codex/auth.json",
+            "auth_json_sha256": "sha",
+        }
+
+    monkeypatch.setattr(
+        trigger_unified.user_runtime_config_service,
+        "get_config",
+        fake_get_config,
+    )
+
+    trigger_unified._apply_user_runtime_config(
+        db=MagicMock(),
+        request=request,
+        user=SimpleNamespace(
+            id=7,
+            preferences={"runtime_configs": {"codex": {"use_user_config": True}}},
+        ),
+    )
+
+    assert request.model_config["runtime_config"] == {
+        "codex": {
+            "use_user_config": True,
+            "configured": True,
+            "target_path": "~/.codex/auth.json",
+            "auth_json_sha256": "sha",
+        }
+    }
+
+
+def test_apply_user_runtime_config_skips_non_codex_models(monkeypatch):
+    """Non-Codex-compatible models should not query user runtime config."""
+    from app.services.chat.trigger import unified as trigger_unified
+
+    request = ExecutionRequest(
+        model_config={
+            "model": "openai",
+            "api_format": "chat/completions",
+            "model_id": "gpt-4.1",
+        }
+    )
+    get_config = MagicMock()
+    monkeypatch.setattr(
+        trigger_unified.user_runtime_config_service,
+        "get_config",
+        get_config,
+    )
+
+    trigger_unified._apply_user_runtime_config(
+        db=MagicMock(),
+        request=request,
+        user=SimpleNamespace(id=7),
+    )
+
+    assert "runtime_config" not in request.model_config
+    get_config.assert_not_called()
+
+
 @pytest.mark.unit
 class TestBuildExecutionRequestUserSubtaskId:
     async def test_propagates_user_subtask_id_to_execution_request(self):

@@ -58,10 +58,16 @@ from app.services.device_service import device_service
 from app.services.execution.dispatcher import ResponsesAPIEventParser
 from app.services.execution.emitters.status_updating import StatusUpdatingEmitter
 from app.services.execution.emitters.websocket import WebSocketResultEmitter
+from app.services.user_runtime_config import (
+    UserRuntimeConfigError,
+    UserRuntimeConfigSyncError,
+    user_runtime_config_service,
+)
 from shared.models import EventType
 from shared.telemetry.context import set_request_context, set_user_context
 
 logger = logging.getLogger(__name__)
+CODEX_RUNTIME = "codex"
 
 
 @contextmanager
@@ -420,6 +426,16 @@ async def _store_device_capabilities_state(
         )
 
 
+def _runtime_auth_file_missing(runtime_auth_files: Any, runtime: str) -> bool:
+    """Return True only when heartbeat explicitly reports a missing runtime auth file."""
+    if not isinstance(runtime_auth_files, dict):
+        return False
+    state = runtime_auth_files.get(runtime)
+    if not isinstance(state, dict):
+        return False
+    return state.get("exists") is False
+
+
 class DeviceNamespace(socketio.AsyncNamespace):
     """
     Socket.IO namespace for local executor connections.
@@ -453,6 +469,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
         # This prevents race conditions when multiple response.output_text.delta
         # events arrive concurrently for the same subtask
         self._subtask_locks: Dict[int, asyncio.Lock] = {}
+        self._runtime_auth_sync_inflight: set[tuple[int, str, str]] = set()
 
     def _get_subtask_lock(self, subtask_id: int) -> asyncio.Lock:
         """Get or create a lock for the given subtask.
@@ -872,6 +889,98 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 "[Device WS] Error syncing global capabilities after registration"
             )
 
+    def _schedule_runtime_auth_sync_after_heartbeat(
+        self,
+        *,
+        user_id: int,
+        device_id: str,
+        runtime_auth_files: Any,
+    ) -> None:
+        """Schedule best-effort runtime auth sync when heartbeat reports a missing file."""
+        if not _runtime_auth_file_missing(runtime_auth_files, CODEX_RUNTIME):
+            return
+
+        key = (user_id, device_id, CODEX_RUNTIME)
+        if key in self._runtime_auth_sync_inflight:
+            return
+        self._runtime_auth_sync_inflight.add(key)
+        asyncio.create_task(
+            self._sync_runtime_auth_for_heartbeat_device(
+                user_id=user_id,
+                device_id=device_id,
+                runtime=CODEX_RUNTIME,
+                key=key,
+            )
+        )
+
+    async def _sync_runtime_auth_for_heartbeat_device(
+        self,
+        *,
+        user_id: int,
+        device_id: str,
+        runtime: str,
+        key: tuple[int, str, str],
+    ) -> None:
+        """Best-effort sync of enabled user runtime auth to one heartbeat device."""
+        try:
+            with _db_session() as db:
+                user = db.query(User).filter(User.id == user_id).first()
+                if not user:
+                    logger.warning(
+                        "[Device WS] Runtime auth sync skipped: user not found: user=%s",
+                        user_id,
+                    )
+                    return
+                status = user_runtime_config_service.get_config(
+                    db,
+                    user_id=user_id,
+                    runtime=runtime,
+                    preferences=user.preferences,
+                )
+                if not status.get("use_user_config") or not status.get("configured"):
+                    return
+                result = await user_runtime_config_service.sync_auth_to_devices(
+                    db,
+                    user_id=user_id,
+                    runtime=runtime,
+                    preferences=user.preferences,
+                    device_ids=[device_id],
+                )
+            items = result.get("items") if isinstance(result, dict) else None
+            target_item = next(
+                (
+                    item
+                    for item in (items or [])
+                    if isinstance(item, dict) and item.get("device_id") == device_id
+                ),
+                None,
+            )
+            if not target_item or not target_item.get("success"):
+                logger.warning(
+                    "[Device WS] Runtime auth heartbeat sync did not complete: "
+                    "user=%s device=%s runtime=%s result=%s",
+                    user_id,
+                    device_id,
+                    runtime,
+                    target_item,
+                )
+        except (UserRuntimeConfigError, UserRuntimeConfigSyncError):
+            logger.exception(
+                "[Device WS] Runtime auth heartbeat sync failed: user=%s device=%s runtime=%s",
+                user_id,
+                device_id,
+                runtime,
+            )
+        except Exception:
+            logger.exception(
+                "[Device WS] Runtime auth heartbeat sync errored: user=%s device=%s runtime=%s",
+                user_id,
+                device_id,
+                runtime,
+            )
+        finally:
+            self._runtime_auth_sync_inflight.discard(key)
+
     async def on_device_heartbeat(self, sid: str, data: dict) -> dict:
         """
         Handle device:heartbeat event.
@@ -934,6 +1043,12 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 logger.warning(
                     "[Device WS] Ignored invalid capability heartbeat state: %s", e
                 )
+
+        self._schedule_runtime_auth_sync_after_heartbeat(
+            user_id=user_id,
+            device_id=payload.device_id,
+            runtime_auth_files=payload.runtime_auth_files,
+        )
 
         # Database operation: quick in, quick out
         _update_device_heartbeat(user_id, payload.device_id)
