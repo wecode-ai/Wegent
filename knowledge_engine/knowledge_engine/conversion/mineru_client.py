@@ -34,6 +34,13 @@ class MinerUConfig:
     table_enable: bool = True
     poll_interval_seconds: int = 3
     max_wait_seconds: int = 600
+    # HTTP request timeouts (seconds)
+    submit_timeout_seconds: int = 60
+    status_timeout_seconds: int = 10
+    download_timeout_seconds: int = 120
+    # Error retry configuration
+    max_consecutive_errors: int = 5
+    error_retry_interval_seconds: int = 3
 
 
 # Supported MIME types for conversion
@@ -82,7 +89,7 @@ async def submit_and_wait(
             client, base_url, filename, binary_data, mime_type, config
         )
         await _poll_until_done(client, base_url, task_id, config)
-        return await _download_result(client, base_url, task_id)
+        return await _download_result(client, base_url, task_id, config)
 
 
 async def _submit_task(
@@ -108,7 +115,7 @@ async def _submit_task(
     files = {"files": (filename, binary_data, mime_type)}
 
     logger.info(f"[MinerU] Submitting task to {submit_url}")
-    response = await client.post(submit_url, data=data, files=files, timeout=60.0)
+    response = await client.post(submit_url, data=data, files=files, timeout=config.submit_timeout_seconds)
     response.raise_for_status()
 
     result = response.json()
@@ -126,7 +133,7 @@ async def _poll_until_done(
     """Poll MinerU task status until completion."""
     start_time = asyncio.get_running_loop().time()
     consecutive_errors = 0
-    max_consecutive_errors = 5
+    max_consecutive_errors = config.max_consecutive_errors
 
     while True:
         elapsed = asyncio.get_running_loop().time() - start_time
@@ -137,7 +144,7 @@ async def _poll_until_done(
 
         try:
             status_url = f"{base_url}/tasks/{task_id}"
-            status_resp = await client.get(status_url, timeout=10.0)
+            status_resp = await client.get(status_url, timeout=config.status_timeout_seconds)
             status_resp.raise_for_status()
 
             status_data = status_resp.json()
@@ -168,19 +175,20 @@ async def _poll_until_done(
             logger.warning(
                 f"[MinerU] Status check error ({consecutive_errors}/{max_consecutive_errors}): {e}"
             )
-            await asyncio.sleep(config.poll_interval_seconds)
+            await asyncio.sleep(config.error_retry_interval_seconds)
 
 
 async def _download_result(
     client: httpx.AsyncClient,
     base_url: str,
     task_id: str,
+    config: MinerUConfig,
 ) -> bytes:
     """Download conversion result ZIP from MinerU."""
     result_url = f"{base_url}/tasks/{task_id}/result"
     logger.info(f"[MinerU] Downloading result from {result_url}")
 
-    result_resp = await client.get(result_url, timeout=120.0)
+    result_resp = await client.get(result_url, timeout=config.download_timeout_seconds)
     result_resp.raise_for_status()
 
     content_type = result_resp.headers.get("content-type", "")
