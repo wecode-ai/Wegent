@@ -266,6 +266,54 @@ def _create_personal_skill_definition(test_db, user_id: int) -> Kind:
     return skill
 
 
+def _create_personal_installed_skill(
+    test_db,
+    user_id: int,
+    *,
+    skill: Kind,
+    enabled: bool = True,
+    active: bool = True,
+    suffix: str = "",
+) -> Kind:
+    installed = Kind(
+        user_id=user_id,
+        kind="InstalledSkill",
+        name=f"personal-{skill.name}{suffix}",
+        namespace="default",
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "InstalledSkill",
+            "metadata": {
+                "name": f"personal-{skill.name}{suffix}",
+                "namespace": "default",
+            },
+            "spec": {
+                "source": {
+                    "type": "personal",
+                    "skillKey": skill.name,
+                    "catalogItemId": f"personal/{skill.id}",
+                },
+                "skillRef": {
+                    "kind": "Skill",
+                    "name": skill.name,
+                    "namespace": skill.namespace,
+                    "user_id": skill.user_id,
+                },
+                "displayName": skill.json["spec"].get("displayName") or skill.name,
+                "description": skill.json["spec"].get("description", ""),
+                "installState": "installed" if active else "uninstalled",
+                "enabled": enabled,
+            },
+            "status": {"state": "Available"},
+        },
+        is_active=active,
+    )
+    test_db.add(installed)
+    test_db.commit()
+    test_db.refresh(installed)
+    return installed
+
+
 def test_list_providers_returns_provider_list_response() -> None:
     service = _build_service(StaticSystemSkillProvider())
 
@@ -553,6 +601,102 @@ def test_install_personal_skill_reactivates_existing_installed_state(
     assert len(installed_rows) == 1
 
 
+def test_install_personal_skill_deactivates_duplicate_installed_states(
+    test_db, test_user
+):
+    skill = _create_personal_skill_definition(test_db, test_user.id)
+    older = _create_personal_installed_skill(
+        test_db,
+        test_user.id,
+        skill=skill,
+        active=False,
+        enabled=False,
+        suffix="-old",
+    )
+    duplicate = _create_personal_installed_skill(
+        test_db,
+        test_user.id,
+        skill=skill,
+        active=True,
+        enabled=True,
+        suffix="-duplicate",
+    )
+    service = _build_service(StaticSystemSkillProvider())
+
+    installed = service.install_personal_skill(
+        db=test_db,
+        user_id=test_user.id,
+        request=PersonalSkillInstallRequest(skillId=skill.id),
+    )
+
+    refreshed_older = test_db.get(Kind, older.id)
+    refreshed_duplicate = test_db.get(Kind, duplicate.id)
+    assert int(installed.metadata["labels"]["id"]) == duplicate.id
+    assert refreshed_duplicate.is_active is True
+    assert refreshed_duplicate.json["spec"]["installState"] == "installed"
+    assert refreshed_older.is_active is False
+    assert refreshed_older.json["spec"]["installState"] == "uninstalled"
+
+
+def test_install_personal_skill_deactivates_legacy_system_duplicate_by_skill_ref(
+    test_db, test_user
+):
+    skill = _create_personal_skill_definition(test_db, test_user.id)
+    legacy_system = Kind(
+        user_id=test_user.id,
+        kind="InstalledSkill",
+        name=f"legacy-{skill.name}",
+        namespace="default",
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "InstalledSkill",
+            "metadata": {"name": f"legacy-{skill.name}", "namespace": "default"},
+            "spec": {
+                "source": {
+                    "type": "system",
+                    "providerKey": "legacy",
+                    "skillKey": skill.name,
+                    "catalogItemId": f"@legacy/{skill.name}",
+                },
+                "skillRef": {
+                    "kind": "Skill",
+                    "name": skill.name,
+                    "namespace": skill.namespace,
+                    "user_id": skill.user_id,
+                },
+                "displayName": skill.json["spec"].get("displayName") or skill.name,
+                "description": skill.json["spec"].get("description", ""),
+                "installState": "installed",
+                "enabled": True,
+            },
+            "status": {"state": "Available"},
+        },
+        is_active=True,
+    )
+    test_db.add(legacy_system)
+    test_db.commit()
+    test_db.refresh(legacy_system)
+    service = _build_service(StaticSystemSkillProvider())
+
+    installed = service.install_personal_skill(
+        db=test_db,
+        user_id=test_user.id,
+        request=PersonalSkillInstallRequest(skillId=skill.id),
+    )
+
+    refreshed_legacy = test_db.get(Kind, legacy_system.id)
+    installed_rows = (
+        test_db.query(Kind)
+        .filter(Kind.user_id == test_user.id, Kind.kind == "InstalledSkill")
+        .all()
+    )
+    assert installed.spec.source.type == "personal"
+    assert int(installed.metadata["labels"]["id"]) != legacy_system.id
+    assert refreshed_legacy.is_active is False
+    assert refreshed_legacy.json["spec"]["installState"] == "uninstalled"
+    assert len(installed_rows) == 2
+
+
 @pytest.mark.anyio
 async def test_update_installed_system_skill_toggles_enabled_state(test_db, test_user):
     installed = _create_installed_skill(test_db, test_user.id, enabled=True)
@@ -583,4 +727,99 @@ def test_uninstall_system_skill_soft_deletes_installed_state(test_db, test_user)
     refreshed = test_db.get(Kind, installed.id)
     listed = service.list_installed_system_skills(db=test_db, user_id=test_user.id)
     assert refreshed.is_active is False
+    assert listed.items == []
+
+
+def test_uninstall_personal_skill_deactivates_duplicate_installed_states(
+    test_db, test_user
+):
+    skill = _create_personal_skill_definition(test_db, test_user.id)
+    first = _create_personal_installed_skill(
+        test_db,
+        test_user.id,
+        skill=skill,
+        suffix="-first",
+    )
+    duplicate = _create_personal_installed_skill(
+        test_db,
+        test_user.id,
+        skill=skill,
+        suffix="-duplicate",
+    )
+    service = _build_service(StaticSystemSkillProvider())
+
+    service.uninstall_installed_system_skill(
+        db=test_db,
+        user_id=test_user.id,
+        installed_id=first.id,
+    )
+
+    refreshed_first = test_db.get(Kind, first.id)
+    refreshed_duplicate = test_db.get(Kind, duplicate.id)
+    listed = service.list_installed_system_skills(db=test_db, user_id=test_user.id)
+    assert refreshed_first.is_active is False
+    assert refreshed_first.json["spec"]["installState"] == "uninstalled"
+    assert refreshed_duplicate.is_active is False
+    assert refreshed_duplicate.json["spec"]["installState"] == "uninstalled"
+    assert listed.items == []
+
+
+def test_uninstall_personal_skill_deactivates_legacy_system_duplicate(
+    test_db, test_user
+):
+    skill = _create_personal_skill_definition(test_db, test_user.id)
+    legacy_system = Kind(
+        user_id=test_user.id,
+        kind="InstalledSkill",
+        name=f"weibo-{skill.name}",
+        namespace="default",
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "InstalledSkill",
+            "metadata": {"name": f"weibo-{skill.name}", "namespace": "default"},
+            "spec": {
+                "source": {
+                    "type": "system",
+                    "providerKey": "weibo",
+                    "skillKey": skill.name,
+                    "catalogItemId": f"@weibo/{skill.name}",
+                },
+                "skillRef": {
+                    "kind": "Skill",
+                    "name": skill.name,
+                    "namespace": skill.namespace,
+                    "user_id": skill.user_id,
+                },
+                "displayName": skill.json["spec"].get("displayName") or skill.name,
+                "description": skill.json["spec"].get("description", ""),
+                "installState": "installed",
+                "enabled": True,
+            },
+            "status": {"state": "Available"},
+        },
+        is_active=True,
+    )
+    personal = _create_personal_installed_skill(
+        test_db,
+        test_user.id,
+        skill=skill,
+    )
+    test_db.add(legacy_system)
+    test_db.commit()
+    test_db.refresh(legacy_system)
+    service = _build_service(StaticSystemSkillProvider())
+
+    service.uninstall_installed_system_skill(
+        db=test_db,
+        user_id=test_user.id,
+        installed_id=personal.id,
+    )
+
+    refreshed_legacy = test_db.get(Kind, legacy_system.id)
+    refreshed_personal = test_db.get(Kind, personal.id)
+    listed = service.list_installed_system_skills(db=test_db, user_id=test_user.id)
+    assert refreshed_personal.is_active is False
+    assert refreshed_personal.json["spec"]["installState"] == "uninstalled"
+    assert refreshed_legacy.is_active is False
+    assert refreshed_legacy.json["spec"]["installState"] == "uninstalled"
     assert listed.items == []

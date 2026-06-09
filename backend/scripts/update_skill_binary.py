@@ -12,6 +12,7 @@ This will:
 3. Update the SkillBinary record
 """
 
+import hashlib
 import io
 import os
 import sys
@@ -79,6 +80,8 @@ def update_skill_binary(db: Session, skill_name: str, skill_folder: Path) -> boo
 
     # Create ZIP from folder
     zip_data = create_skill_zip(skill_folder)
+    zip_hash = hashlib.sha256(zip_data).hexdigest()
+    zip_name = f"{skill_name}.zip"
     print(f"Created ZIP: {len(zip_data)} bytes")
 
     # Update or create SkillBinary
@@ -87,12 +90,17 @@ def update_skill_binary(db: Session, skill_name: str, skill_folder: Path) -> boo
     if skill_binary:
         skill_binary.binary_data = zip_data
         skill_binary.file_size = len(zip_data)
+        skill_binary.file_hash = zip_hash
+        skill_binary.file_name = zip_name
+        skill_binary.type = None
         print(f"Updated existing SkillBinary record")
     else:
         skill_binary = SkillBinary(
             kind_id=skill.id,
             binary_data=zip_data,
             file_size=len(zip_data),
+            file_hash=zip_hash,
+            file_name=zip_name,
         )
         db.add(skill_binary)
         print(f"Created new SkillBinary record")

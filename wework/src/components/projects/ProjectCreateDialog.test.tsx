@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { describe, expect, test, vi } from 'vitest'
@@ -43,6 +43,34 @@ const branches: GitBranch[] = [
 ]
 
 describe('ProjectCreateDialog', () => {
+  test('offers a settings link to create a cloud device when no project devices are available', async () => {
+    const onOpenCloudDeviceSettings = vi.fn()
+
+    render(
+      <ProjectCreateDialog
+        open
+        mode="scratch"
+        devices={[]}
+        onClose={vi.fn()}
+        onCreateProject={vi.fn()}
+        onOpenCloudDeviceSettings={onOpenCloudDeviceSettings}
+        onGetDeviceHomeDirectory={vi.fn().mockResolvedValue('/home/user')}
+        onGetProjectWorkspaceRoot={vi.fn().mockResolvedValue('/workspace/projects')}
+        onListDeviceDirectories={vi.fn().mockResolvedValue([])}
+        onCreateDeviceDirectory={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('暂无可用设备')).toBeInTheDocument()
+    const settingsLink = screen.getByTestId('open-cloud-device-settings-link')
+
+    expect(settingsLink).toHaveAttribute('href', '/settings')
+
+    await userEvent.click(settingsLink)
+
+    expect(onOpenCloudDeviceSettings).toHaveBeenCalledTimes(1)
+  })
+
   test('hides OpenClaw devices from the project device selector', () => {
     render(
       <ProjectCreateDialog
@@ -218,7 +246,9 @@ describe('ProjectCreateDialog', () => {
     await waitFor(() => expect(pathInput).toHaveValue('/home/user'))
 
     await userEvent.clear(pathInput)
-    await userEvent.type(pathInput, '/home/user/re{Enter}')
+    await userEvent.type(pathInput, '/home/user/re')
+    await waitFor(() => expect(pathInput).toHaveValue('/home/user/re'))
+    fireEvent.keyDown(pathInput, { key: 'Enter' })
 
     await waitFor(() => expect(pathInput).toHaveValue('/home/user/repo'))
     await waitFor(() =>
@@ -286,7 +316,16 @@ describe('ProjectCreateDialog', () => {
         onGetProjectWorkspaceRoot={vi.fn().mockResolvedValue('/workspace/projects')}
         onListDeviceDirectories={vi.fn().mockResolvedValue([])}
         onCreateDeviceDirectory={vi.fn()}
-        onListGitRepositories={vi.fn().mockResolvedValue(repositories)}
+        onListGitRepositories={vi.fn().mockResolvedValue([
+          ...repositories,
+          {
+            ...repositories[0],
+            git_repo_id: 102,
+            name: 'Docs',
+            git_repo: 'wecode-ai/docs',
+            git_url: 'https://github.com/wecode-ai/docs.git',
+          },
+        ])}
         onListGitBranches={vi.fn().mockResolvedValue(branches)}
       />,
     )
@@ -294,12 +333,27 @@ describe('ProjectCreateDialog', () => {
     await waitFor(() =>
       expect(screen.getByTestId('git-repository-select')).not.toBeDisabled(),
     )
-    await userEvent.selectOptions(
-      screen.getByTestId('git-repository-select'),
-      'https://github.com/wecode-ai/Wegent.git',
+    await userEvent.click(screen.getByTestId('git-repository-select'))
+    await userEvent.type(
+      screen.getByTestId('git-repository-select-search-input'),
+      'Wegent',
     )
-    await waitFor(() => expect(screen.getByTestId('git-branch-select')).toHaveValue('main'))
-    await userEvent.selectOptions(screen.getByTestId('git-branch-select'), 'develop')
+    const repositoryMenu = screen.getByTestId('git-repository-select-menu')
+    expect(within(repositoryMenu).getByText('wecode-ai/Wegent')).toBeInTheDocument()
+    expect(within(repositoryMenu).queryByText('wecode-ai/docs')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('git-repository-select-option'))
+    await waitFor(() =>
+      expect(screen.getByTestId('git-branch-select')).toHaveTextContent('main（默认）'),
+    )
+    await userEvent.click(screen.getByTestId('git-branch-select'))
+    await userEvent.type(
+      screen.getByTestId('git-branch-select-search-input'),
+      'develop',
+    )
+    const branchMenu = screen.getByTestId('git-branch-select-menu')
+    expect(within(branchMenu).getByText('develop')).toBeInTheDocument()
+    expect(within(branchMenu).queryByText('main（默认）')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('git-branch-select-option'))
     await userEvent.click(screen.getByTestId('create-project-button'))
 
     await waitFor(() =>
@@ -349,11 +403,11 @@ describe('ProjectCreateDialog', () => {
     await waitFor(() =>
       expect(screen.getByTestId('git-repository-select')).not.toBeDisabled(),
     )
-    await userEvent.selectOptions(
-      screen.getByTestId('git-repository-select'),
-      'https://github.com/wecode-ai/Wegent.git',
+    await userEvent.click(screen.getByTestId('git-repository-select'))
+    await userEvent.click(screen.getAllByTestId('git-repository-select-option')[0])
+    await waitFor(() =>
+      expect(screen.getByTestId('git-branch-select')).toHaveTextContent('main（默认）'),
     )
-    await waitFor(() => expect(screen.getByTestId('git-branch-select')).toHaveValue('main'))
     await userEvent.click(screen.getByTestId('create-project-button'))
 
     expect(screen.getByTestId('create-project-button')).toHaveTextContent('克隆中...')

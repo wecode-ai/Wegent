@@ -7,6 +7,12 @@
 import logging
 from typing import Any, Mapping, Optional
 
+from socketio.exceptions import (
+    BadNamespaceError,
+    DisconnectedError,
+)
+from socketio.exceptions import TimeoutError as SocketTimeoutError
+
 from app.core.config import settings
 from app.core.socketio import get_sio
 from app.services.device.command_post_processor import (
@@ -110,7 +116,13 @@ class LocalDeviceCommandService:
                 timeout=normalized_timeout + SOCKET_ACK_GRACE_SECONDS,
             )
         except Exception as exc:
-            raise DeviceCommandError(f"Command RPC failed: {exc}") from exc
+            message = self._format_rpc_error(
+                exc,
+                device_id=device_id,
+                event="device:execute_command",
+                timeout_seconds=normalized_timeout + SOCKET_ACK_GRACE_SECONDS,
+            )
+            raise DeviceCommandError(message) from exc
 
         if not isinstance(result, dict):
             raise DeviceCommandError("Command RPC returned an invalid response")
@@ -129,6 +141,34 @@ class LocalDeviceCommandService:
         if parsed <= 0:
             return default
         return min(parsed, upper_bound)
+
+    def _format_rpc_error(
+        self,
+        exc: Exception,
+        *,
+        device_id: str,
+        event: str,
+        timeout_seconds: int,
+    ) -> str:
+        if isinstance(exc, SocketTimeoutError):
+            return (
+                f"Command RPC timed out after {timeout_seconds} seconds while "
+                f"waiting for device '{device_id}' to acknowledge {event}. "
+                "Reconnect or upgrade the local executor and retry."
+            )
+        if isinstance(exc, DisconnectedError):
+            return (
+                f"Command RPC failed because device '{device_id}' disconnected "
+                f"before acknowledging {event}."
+            )
+        if isinstance(exc, BadNamespaceError):
+            return (
+                f"Command RPC failed because the local executor is not connected "
+                f"to the /local-executor namespace for device '{device_id}'."
+            )
+
+        detail = str(exc).strip() or exc.__class__.__name__
+        return f"Command RPC failed: {detail}"
 
 
 local_device_command_service = LocalDeviceCommandService()

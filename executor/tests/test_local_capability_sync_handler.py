@@ -8,7 +8,6 @@ import json
 import zipfile
 
 import pytest
-
 from executor.modes.local.capabilities import (
     CapabilitySyncHandler,
     GlobalCapabilityStore,
@@ -282,6 +281,34 @@ def test_extract_plugin_zip_keeps_existing_install_when_package_is_invalid(tmp_p
         handler._extract_plugin_zip(buffer.getvalue(), install_path)
 
     assert (install_path / "old.txt").read_text() == "old"
+
+
+def test_extract_plugin_zip_ignores_macos_metadata_for_single_root_plugin(tmp_path):
+    install_path = tmp_path / "plugins" / "hookify"
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("hookify/.claude-plugin/plugin.json", "{}")
+        archive.writestr("hookify/hooks/test.json", "{}")
+        archive.writestr("__MACOSX/._hookify", "")
+        archive.writestr("__MACOSX/hookify/._hooks", "")
+
+    store = GlobalCapabilityStore(
+        manifest_path=tmp_path / "capabilities.json",
+        skills_dir=tmp_path / "skills",
+        plugins_dir=tmp_path / "plugins",
+    )
+    handler = CapabilitySyncHandler(
+        auth_token="token",
+        store=store,
+        skills_dir=tmp_path / "skills",
+        plugins_dir=tmp_path / "plugins",
+    )
+
+    handler._extract_plugin_zip(buffer.getvalue(), install_path)
+
+    assert (install_path / ".claude-plugin" / "plugin.json").exists()
+    assert (install_path / "hooks" / "test.json").exists()
+    assert not (install_path / "__MACOSX").exists()
 
 
 def test_replace_removes_stale_managed_plugin_but_keeps_local_user_plugin(tmp_path):

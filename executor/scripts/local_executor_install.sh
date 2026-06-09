@@ -31,7 +31,9 @@ VERSION=""
 # Claude Code minimum version requirement
 # Claude Code defer requires 2.1.89+.
 MIN_CLAUDE_CODE_VERSION="2.1.89"
+MIN_CODEX_CLI_VERSION="0.137.0"
 MIN_NODE_VERSION="18"
+CODEX_CLI_PACKAGE="@openai/codex@0.137.0"
 
 # Feature flags
 # Claude Code is bundled for Linux and Windows, but not for macOS
@@ -143,12 +145,64 @@ check_nodejs() {
 check_npm() {
     if ! command -v npm &> /dev/null; then
         print_error "npm is not installed."
-        print_error "npm is required to install Claude Code."
+        print_error "npm is required to install CLI dependencies."
         echo ""
         print_info "npm usually comes with Node.js. Please reinstall Node.js."
         echo ""
         exit 1
     fi
+}
+
+install_codex_cli() {
+    print_info "Checking Codex CLI installation..."
+    check_nodejs
+    check_npm
+
+    local codex_installed=false
+    local current_version=""
+
+    if command -v codex &> /dev/null; then
+        codex_installed=true
+        current_version="$(codex --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)" || true
+    fi
+
+    if [[ "$codex_installed" == "true" ]] \
+        && [[ -n "$current_version" ]] \
+        && version_compare "$current_version" "$MIN_CODEX_CLI_VERSION"; then
+        print_success "Codex CLI found: v${current_version}"
+        return
+    fi
+
+    if [[ "$codex_installed" == "true" ]]; then
+        print_info "Upgrading Codex CLI to ${CODEX_CLI_PACKAGE}..."
+    else
+        print_info "Codex CLI not found, installing ${CODEX_CLI_PACKAGE}..."
+    fi
+
+    if ! npm install -g "$CODEX_CLI_PACKAGE"; then
+        print_error "Failed to install Codex CLI via npm."
+        echo ""
+        print_info "You can try installing manually:"
+        echo "  npm install -g ${CODEX_CLI_PACKAGE}"
+        echo ""
+        print_info "If you encounter permission issues, try:"
+        echo "  sudo npm install -g ${CODEX_CLI_PACKAGE}"
+        echo ""
+        exit 1
+    fi
+
+    if ! command -v codex &> /dev/null; then
+        print_error "Codex CLI installation failed - 'codex' command not found."
+        exit 1
+    fi
+
+    current_version="$(codex --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)" || true
+    if [[ -z "$current_version" ]] || ! version_compare "$current_version" "$MIN_CODEX_CLI_VERSION"; then
+        print_error "Codex CLI version ${current_version:-unknown} is below required ${MIN_CODEX_CLI_VERSION}"
+        exit 1
+    fi
+
+    print_success "Codex CLI installed: v${current_version}"
 }
 
 # Install or upgrade Claude Code
@@ -575,6 +629,7 @@ main() {
         check_nodejs
         install_claude_code
     fi
+    install_codex_cli
 
     get_download_url
     create_install_dir

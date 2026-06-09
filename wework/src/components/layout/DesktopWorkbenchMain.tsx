@@ -6,6 +6,12 @@ import type {
 } from '@/components/chat/ChatInput'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
 import { useTranslation } from '@/hooks/useTranslation'
+import {
+  findWorkbenchDevice,
+  getActiveWorkbenchDeviceId,
+  getWorkbenchDeviceDisplayName,
+  isWorkbenchDeviceOnline,
+} from '@/lib/workbench-device'
 import type { DeviceInfo, ProjectWithTasks, Task } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
 import type {
@@ -33,6 +39,29 @@ const DESKTOP_SCROLL_TO_BOTTOM_BUTTON_CLASS =
   'bottom-36 z-popover bg-background/95 shadow-md'
 const DESKTOP_QUEUED_SCROLL_TO_BOTTOM_BUTTON_CLASS =
   'bottom-64 z-popover bg-background/95 shadow-md'
+
+function formatWorkbenchTemplate(template: string, values: Record<string, string>) {
+  return Object.entries(values).reduce(
+    (result, [key, value]) => result.replaceAll(`{{${key}}}`, value),
+    template,
+  )
+}
+
+function getWorkbenchDeviceStatusLabel(
+  t: ReturnType<typeof useTranslation>['t'],
+  status: DeviceInfo['status'] | 'unavailable',
+) {
+  if (status === 'online') {
+    return t('workbench.project_device_status_online', '在线')
+  }
+  if (status === 'busy') {
+    return t('workbench.project_device_status_busy', '忙碌')
+  }
+  if (status === 'offline') {
+    return t('workbench.project_device_status_offline', '离线')
+  }
+  return t('workbench.project_device_status_unavailable', '不可用')
+}
 
 interface DesktopWorkbenchMainProps {
   isBootstrapping: boolean
@@ -97,6 +126,30 @@ export function DesktopWorkbenchMain({
   const hasConversation = messages.length > 0 || currentTask
   const hasQueuedComposerRows = queuedMessages.length > 0 || guidanceMessages.length > 0
   const reserveMacWindowControls = isTauriRuntime()
+  const activeDeviceId = getActiveWorkbenchDeviceId({
+    currentTask,
+    currentProject,
+    standaloneDeviceId: projectWork.currentStandaloneDeviceId,
+  })
+  const activeDevice = findWorkbenchDevice(devices, activeDeviceId)
+  const activeDeviceUnavailable =
+    Boolean(activeDeviceId) && !isWorkbenchDeviceOnline(activeDevice)
+  const deviceStatus = getWorkbenchDeviceStatusLabel(
+    t,
+    activeDevice?.status ?? 'unavailable',
+  )
+  const composerDisabledReason = activeDeviceUnavailable
+    ? formatWorkbenchTemplate(
+        t(
+          'workbench.conversation_device_unavailable',
+          '{{device}} {{status}}，恢复在线后可继续对话',
+        ),
+        {
+          device: getWorkbenchDeviceDisplayName(activeDevice, activeDeviceId),
+          status: deviceStatus,
+        },
+      )
+    : undefined
   const emptyTitle = currentProject
     ? t('workbench.project_empty_title', {
         defaultValue: `我们应该在 ${currentProject.name} 中构建什么？`,
@@ -176,7 +229,8 @@ export function DesktopWorkbenchMain({
                   value={input}
                   onChange={onInputChange}
                   onSubmit={onSend}
-                  disabled={isSending}
+                  disabled={isSending || activeDeviceUnavailable}
+                  disabledReason={composerDisabledReason}
                   placeholder={t('workbench.input_placeholder', '尽管问')}
                   variant="desktop"
                   projectChat={projectChat}
@@ -207,7 +261,8 @@ export function DesktopWorkbenchMain({
                 value={input}
                 onChange={onInputChange}
                 onSubmit={onSend}
-                disabled={isSending}
+                disabled={isSending || activeDeviceUnavailable}
+                disabledReason={composerDisabledReason}
                 placeholder={t('workbench.input_placeholder', '尽管问')}
                 variant="desktop"
                 projectChat={projectChat}

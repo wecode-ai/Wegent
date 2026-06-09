@@ -22,6 +22,10 @@ describe('TextInputDialog', () => {
     expect(screen.getByTestId('rename-project-input')).toHaveFocus()
     expect(screen.getByTestId('confirm-rename-project-button')).toHaveClass('h-11')
     expect(screen.getByTestId('rename-project-input-cancel-button')).toHaveClass('h-11')
+    expect(screen.getByTestId('rename-project-input-overlay').parentElement).toBe(
+      document.body,
+    )
+    expect(screen.getByRole('dialog')).toHaveAttribute('aria-modal', 'true')
   })
 
   test('closes when Escape is pressed', () => {

@@ -41,6 +41,7 @@ import wecode.service.openclaw_token_monitor_patch  # noqa: F401  register OpenC
 import wecode.service.request_builder_patch  # noqa: F401  patch TaskRequestBuilder.build to replace ${WECODE_USER_API_KEY} (new dispatcher flow)
 import wecode.service.storage_backend_patch  # noqa: F401  register MinIO/S3 storage backends for attachment service
 import wecode.api.share_service_patch  # noqa: F401  ERP name priority for share members
+import wecode.mcp_server  # noqa: F401  replace external MCP auth with ERP employee_id handler
 from app.api.endpoints.admin.router import router as admin_router
 from app.api.router import api_router
 from wecode.api.admin_published_apps import router as admin_published_apps_router

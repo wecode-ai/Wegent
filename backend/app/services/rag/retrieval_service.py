@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.kind import Kind
+from app.services.rag.document_id_utils import extract_document_id
 from app.services.rag.runtime_resolver import RagRuntimeResolver
 from knowledge_engine.embedding import create_embedding_model_from_runtime_config
 from knowledge_engine.query import QueryExecutor
@@ -341,13 +342,15 @@ class RetrievalService:
             )
             kb_records = result.get("records", [])[:max_results]
             for record in kb_records:
+                metadata = record.get("metadata") or {}
                 records.append(
                     {
                         "content": record.get("content", ""),
                         "score": record.get("score", 0.0),
                         "title": record.get("title", "Unknown"),
-                        "metadata": record.get("metadata"),
+                        "metadata": metadata,
                         "knowledge_base_id": kb_id,
+                        "document_id": extract_document_id(record),
                     }
                 )
         records.sort(key=lambda x: x.get("score", 0.0) or 0.0, reverse=True)

@@ -69,6 +69,8 @@ const FAMILY_ORDER = [
   'other',
 ]
 
+const HIDDEN_MODEL_FAMILIES = new Set(['gemini'])
+
 export const MODEL_FAMILY_CONFIGS: ModelFamilyConfig[] = [
   { id: 'claude', label: 'Claude', order: 10, controls: [] },
   {
@@ -415,6 +417,7 @@ export function groupModelsByFamily(models: UnifiedModel[]) {
   const groups = new Map<string, UnifiedModel[]>()
   for (const model of models) {
     const family = inferModelFamily(model)
+    if (HIDDEN_MODEL_FAMILIES.has(family)) continue
     groups.set(family, [...(groups.get(family) ?? []), model])
   }
 

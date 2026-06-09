@@ -14,6 +14,7 @@ interface ComposerTextareaProps {
   onChange: (value: string) => void
   onSubmit: () => void
   canSend: boolean
+  disabled?: boolean
   placeholder: string
   rows: number
   textareaRef: RefObject<HTMLTextAreaElement | null>
@@ -250,6 +251,7 @@ export function ComposerTextarea({
   onChange,
   onSubmit,
   canSend,
+  disabled = false,
   placeholder,
   rows,
   textareaRef,
@@ -601,6 +603,7 @@ export function ComposerTextarea({
         rows={rows}
         value={value}
         onChange={event => {
+          if (disabled) return
           handleValueChange(event.target.value)
           window.requestAnimationFrame(() => {
             updateSkillTrigger()
@@ -624,6 +627,7 @@ export function ComposerTextarea({
           syncSelection()
         }}
         onPaste={handlePaste}
+        disabled={disabled}
         onFocus={syncSelection}
         onBlur={() => {
           setSelection(current => ({ ...current, focused: false }))

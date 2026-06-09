@@ -86,6 +86,12 @@ def test_build_lite_task_list_uses_batch_related_data_and_avoids_per_task_sql():
     db.execute.return_value = mock_execute_result
 
     tasks = [_build_task(1, "Task One", project_id=42), _build_task(2, "Task Two")]
+    tasks[1].json["spec"]["execution"] = {
+        "workspace": {
+            "source": "git_worktree",
+            "path": "/workspace/worktrees/2/repo-b",
+        }
+    }
     now = datetime.now()
     related_data = {
         "1": {
@@ -143,6 +149,7 @@ def test_build_lite_task_list_uses_batch_related_data_and_avoids_per_task_sql():
     assert result[1]["project_id"] == 0
     assert result[1]["device_id"] == "device-1"
     assert result[1]["device_name"] == "Mac Studio"
+    assert result[1]["execution_workspace_source"] == "git_worktree"
     assert result[1]["git_repo"] == "repo-b"
     assert result[1]["is_group_chat"] is False
     mock_batch.assert_called_once_with(db, tasks, 7)

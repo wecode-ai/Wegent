@@ -1,5 +1,6 @@
 import { X } from 'lucide-react'
 import { useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 
 interface TextInputDialogProps {
@@ -42,11 +43,24 @@ function TextInputDialogContent({
 
   useEscapeKey(onClose)
 
-  return (
-    <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4">
-      <div className="w-full max-w-[420px] rounded-lg border border-[#d8d8d8] bg-white p-5 shadow-2xl">
+  return createPortal(
+    <div
+      data-testid={`${inputTestId}-overlay`}
+      className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4"
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={`${inputTestId}-title`}
+        className="w-full max-w-[420px] rounded-lg border border-[#d8d8d8] bg-white p-5 shadow-2xl"
+      >
         <div className="flex items-center justify-between gap-4">
-          <h2 className="text-base font-semibold text-[#202124]">{title}</h2>
+          <h2
+            id={`${inputTestId}-title`}
+            className="text-base font-semibold text-[#202124]"
+          >
+            {title}
+          </h2>
           <button
             type="button"
             data-testid={`${inputTestId}-close-button`}
@@ -95,6 +109,7 @@ function TextInputDialogContent({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
