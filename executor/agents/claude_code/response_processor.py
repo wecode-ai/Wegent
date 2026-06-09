@@ -19,7 +19,11 @@ from claude_agent_sdk.types import (
 )
 
 from executor.agents.claude_code.deferred_mcp_proxy import (
+    INTERACTIVE_FORM_FORMAT_ERROR,
+    INTERACTIVE_FORM_FORMAT_RETRYING,
+    INTERACTIVE_FORM_RENDER_ERROR,
     WAITING_FOR_USER_INPUT_REASON,
+    create_deferred_mcp_retry_query,
     is_interactive_form_tool,
     parse_mcp_tool_name,
     proxy_deferred_mcp_tool,
@@ -45,6 +49,8 @@ logger = setup_logger("claude_response_processor")
 
 # Maximum retry count for API errors per session
 MAX_API_ERROR_RETRIES = 3
+MAX_DEFERRED_MCP_RETRIES = 2
+DEFERRED_MCP_RETRY_RESULT = "DEFERRED_MCP_RETRY"
 DEFERRED_INTERACTIVE_FORM_STOP_REASONS = {
     "tool_deferred",
     "tool_deferred_unavailable",
@@ -116,6 +122,7 @@ async def process_response(
     # Track if StreamEvent has sent any content
     # If True, AssistantMessage will skip sending events to avoid duplicates
     stream_event_sent = False
+    deferred_mcp_retry_count = 0
     try:
         while True:
             retry_requested = False
@@ -228,20 +235,22 @@ async def process_response(
                                     f"Failed to save session ID: {save_error}"
                                 )
                     result_status = await _process_result_message(
-                        msg,
-                        emitter,
-                        state_manager,
-                        thinking_manager,
-                        client,
-                        current_session_id,
-                        api_error_retry_count,
-                        MAX_API_ERROR_RETRIES,
-                        silent_exit_detected,
-                        silent_exit_reason,
-                        task_state_manager,
-                        cancellation_in_progress,
-                        saw_sdk_interrupt_messages,
-                        mcp_servers,
+                        msg=msg,
+                        emitter=emitter,
+                        state_manager=state_manager,
+                        thinking_manager=thinking_manager,
+                        client=client,
+                        session_id=current_session_id,
+                        api_error_retry_count=api_error_retry_count,
+                        max_retries=MAX_API_ERROR_RETRIES,
+                        propagated_silent_exit=silent_exit_detected,
+                        propagated_silent_exit_reason=silent_exit_reason,
+                        task_state_manager=task_state_manager,
+                        cancellation_in_progress=cancellation_in_progress,
+                        saw_sdk_interrupt_messages=saw_sdk_interrupt_messages,
+                        mcp_servers=mcp_servers,
+                        deferred_mcp_retry_count=deferred_mcp_retry_count,
+                        max_deferred_mcp_retries=MAX_DEFERRED_MCP_RETRIES,
                     )
 
                     if result_status == "RETRY":
@@ -250,6 +259,15 @@ async def process_response(
                         retry_requested = True
                         logger.info(
                             f"Retry initiated, restarting response stream for session {session_id}"
+                        )
+                        break
+                    if result_status == DEFERRED_MCP_RETRY_RESULT:
+                        deferred_mcp_retry_count += 1
+                        retry_requested = True
+                        logger.info(
+                            "Deferred MCP retry initiated, restarting response stream "
+                            "for session %s",
+                            session_id,
                         )
                         break
                     elif result_status:
@@ -854,6 +872,8 @@ async def _process_result_message(
     cancellation_in_progress: bool = False,
     saw_sdk_interrupt_messages: bool = False,
     mcp_servers: Any = None,
+    deferred_mcp_retry_count: int = 0,
+    max_deferred_mcp_retries: int = MAX_DEFERRED_MCP_RETRIES,
 ) -> Union[TaskStatus, str, None]:
     """
     Process a ResultMessage from Claude
@@ -967,53 +987,79 @@ async def _process_result_message(
                 mcp_servers=mcp_servers,
             )
         except Exception as e:
-            error_message = f"Deferred MCP proxy failed: {e}"
-            logger.error(error_message, exc_info=True)
+            internal_error_message = f"Deferred MCP proxy failed: {e}"
+            logger.error(internal_error_message, exc_info=True)
             await emitter.tool_done(
                 call_id=deferred_tool_use.id,
                 name=deferred_tool_use.name,
                 arguments=arguments,
-                output=error_message,
+                output=INTERACTIVE_FORM_RENDER_ERROR,
                 tool_protocol="mcp_call",
                 status="failed",
-                error=error_message,
+                error=INTERACTIVE_FORM_RENDER_ERROR,
             )
             if state_manager:
                 state_manager.set_task_status(TaskStatus.FAILED.value)
                 state_manager.report_progress(
                     progress=100,
                     status=TaskStatus.FAILED.value,
-                    message=error_message,
+                    message=INTERACTIVE_FORM_RENDER_ERROR,
                 )
-            await emitter.error(error_message)
+            await emitter.error(INTERACTIVE_FORM_RENDER_ERROR)
             return TaskStatus.FAILED
+
+        proxy_failed = proxy_result.is_error or not proxy_result.is_deferred_user_input
+        can_retry_deferred_mcp = (
+            proxy_failed
+            and client
+            and session_id
+            and deferred_mcp_retry_count < max_deferred_mcp_retries
+        )
+        user_visible_tool_output = proxy_result.output_text
+        if proxy_failed:
+            user_visible_tool_output = (
+                INTERACTIVE_FORM_FORMAT_RETRYING
+                if can_retry_deferred_mcp
+                else INTERACTIVE_FORM_FORMAT_ERROR
+            )
 
         await emitter.tool_done(
             call_id=proxy_result.tool_use_id,
             name=proxy_result.tool_name,
             arguments=arguments,
-            output=proxy_result.output_text,
+            output=user_visible_tool_output,
             tool_protocol="mcp_call",
             server_label=proxy_result.server_name,
-            status="failed" if proxy_result.is_error else "completed",
-            error=proxy_result.output_text if proxy_result.is_error else None,
+            status="failed" if proxy_failed else "completed",
+            error=user_visible_tool_output if proxy_failed else None,
         )
 
-        if proxy_result.is_error or not proxy_result.is_deferred_user_input:
-            error_message = (
-                proxy_result.output_text
-                if proxy_result.is_error
-                else "Deferred MCP tool did not request user input."
+        if proxy_failed:
+            logger.error(
+                "Deferred MCP tool did not request user input: %s",
+                proxy_result.output_text,
             )
-            logger.error(error_message)
+            if can_retry_deferred_mcp:
+                await client.query(
+                    create_deferred_mcp_retry_query(
+                        tool_use_id=deferred_tool_use.id,
+                        tool_name=deferred_tool_use.name,
+                        tool_output=proxy_result.output_text,
+                        retry_count=deferred_mcp_retry_count,
+                        max_retries=max_deferred_mcp_retries,
+                    ),
+                    session_id=session_id,
+                )
+                return DEFERRED_MCP_RETRY_RESULT
+
             if state_manager:
                 state_manager.set_task_status(TaskStatus.FAILED.value)
                 state_manager.report_progress(
                     progress=100,
                     status=TaskStatus.FAILED.value,
-                    message=error_message,
+                    message=INTERACTIVE_FORM_FORMAT_ERROR,
                 )
-            await emitter.error(error_message)
+            await emitter.error(INTERACTIVE_FORM_FORMAT_ERROR)
             return TaskStatus.FAILED
 
         if state_manager:

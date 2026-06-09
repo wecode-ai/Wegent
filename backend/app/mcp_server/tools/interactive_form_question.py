@@ -28,6 +28,7 @@ WebSocket notification design:
 
 import json
 import logging
+import re
 from typing import Any, Dict, List, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -44,6 +45,7 @@ FORM_RENDERED_REASON = (
 
 TEXT_INPUT_TYPE_ALIASES = {
     "text",
+    "text_input",
     "textarea",
     "long_text",
     "short_text",
@@ -53,6 +55,7 @@ TEXT_INPUT_TYPE_ALIASES = {
 }
 SINGLE_CHOICE_INPUT_TYPE_ALIASES = {
     "choice",
+    "single_choice",
     "single_select",
     "select",
     "dropdown",
@@ -61,6 +64,13 @@ SINGLE_CHOICE_INPUT_TYPE_ALIASES = {
     "enum",
     "option",
 }
+QUESTION_TEXT_KEYS = ("question", "title", "prompt", "label", "text")
+INPUT_TYPE_KEYS = ("input_type", "inputType", "question_type", "questionType")
+MULTI_SELECT_KEYS = ("multi_select", "multiSelect", "multiple", "multi")
+EMBEDDED_QUESTION_PATTERN = re.compile(
+    r"(?P<input_type>[a-zA-Z0-9_\-\s]+)\s*\(\s*question\s*\(",
+    re.IGNORECASE,
+)
 MULTI_CHOICE_INPUT_TYPE_ALIASES = {
     "multi_select",
     "multiple_select",
@@ -197,6 +207,96 @@ def _normalize_default(default: List[str] | str | None) -> List[str] | None:
     return [default]
 
 
+def _extract_input_type_and_embedded_question(
+    input_type: str,
+) -> tuple[str, str | None]:
+    """Recover question text from malformed values like choice(question(...))."""
+    match = EMBEDDED_QUESTION_PATTERN.search(input_type)
+    if not match:
+        return input_type, None
+
+    embedded_question = input_type[match.end() :].strip()
+    wrapper_closers = 2
+    while wrapper_closers > 0 and embedded_question.endswith(")"):
+        embedded_question = embedded_question[:-1].strip()
+        wrapper_closers -= 1
+
+    return match.group("input_type").strip(), embedded_question or None
+
+
+def _normalize_option_payload(option: Any) -> Any:
+    """Normalize common option shorthand into the strict option schema."""
+    if isinstance(option, str):
+        normalized = option.strip()
+        return {"label": normalized, "value": normalized}
+
+    if not isinstance(option, dict):
+        return option
+
+    normalized_option = dict(option)
+    if "label" not in normalized_option:
+        for key in ("name", "text", "title"):
+            value = normalized_option.get(key)
+            if isinstance(value, str) and value.strip():
+                normalized_option["label"] = value
+                break
+
+    if "value" not in normalized_option:
+        value = normalized_option.get("label")
+        if isinstance(value, str) and value.strip():
+            normalized_option["value"] = value
+
+    return normalized_option
+
+
+def _normalize_question_payload(raw_question: Any) -> Any:
+    """Normalize tolerant model-provided fields before Pydantic validation."""
+    if isinstance(raw_question, InteractiveFormQuestionItem):
+        return raw_question
+    if not isinstance(raw_question, dict):
+        return raw_question
+
+    normalized = dict(raw_question)
+
+    if not normalized.get("question"):
+        for key in QUESTION_TEXT_KEYS:
+            value = normalized.get(key)
+            if isinstance(value, str) and value.strip():
+                normalized["question"] = value
+                break
+
+    if not normalized.get("input_type"):
+        for key in INPUT_TYPE_KEYS:
+            value = normalized.get(key)
+            if isinstance(value, str) and value.strip():
+                normalized["input_type"] = value
+                break
+
+    input_type = normalized.get("input_type")
+    if isinstance(input_type, str):
+        clean_input_type, embedded_question = _extract_input_type_and_embedded_question(
+            input_type
+        )
+        normalized["input_type"] = clean_input_type
+        if embedded_question and not normalized.get("question"):
+            normalized["question"] = embedded_question
+
+    if "multi_select" not in normalized:
+        for key in MULTI_SELECT_KEYS:
+            value = normalized.get(key)
+            if value is not None:
+                normalized["multi_select"] = value
+                break
+
+    options = normalized.get("options")
+    if isinstance(options, list):
+        normalized["options"] = [
+            _normalize_option_payload(option) for option in options
+        ]
+
+    return normalized
+
+
 def _parse_record(value: Any) -> Dict[str, Any] | None:
     """Parse a dict-like value from raw tool output shapes."""
     if isinstance(value, dict):
@@ -236,7 +336,9 @@ def build_render_payload_from_tool_input(
         parsed_question = (
             raw_question
             if isinstance(raw_question, InteractiveFormQuestionItem)
-            else InteractiveFormQuestionItem.model_validate(raw_question)
+            else InteractiveFormQuestionItem.model_validate(
+                _normalize_question_payload(raw_question)
+            )
         )
         has_options = bool(parsed_question.options)
         input_type, multi_select = _normalize_input_type(
