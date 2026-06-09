@@ -1,7 +1,10 @@
 from typing import Any
 
-from app.services.web_scraper.models import SourcePart
+from app.services.web_scraper.models import InternalScrapeResult, SourcePart
 from app.services.web_scraper.policy import ScrapePolicy
+from app.services.web_scraper.profiles import BrowserProfile
+from app.services.web_scraper.proxy import ProxyMode, ProxyPlan
+from app.services.web_scraper.security import WebScraperUrlGuard
 from app.services.web_scraper.strategies.playwright_frame_strategy import (
     PlaywrightFrameExtractionStrategy,
 )
@@ -31,6 +34,26 @@ class FakeFrame:
         if "document.title" in script:
             return self.title
         return None
+
+
+class RecordingPlaywrightStrategy(PlaywrightFrameExtractionStrategy):
+    def __init__(self, results: list[InternalScrapeResult]) -> None:
+        super().__init__()
+        self.results = results
+        self.attempts: list[bool] = []
+
+    async def _scrape_once(
+        self,
+        playwright: Any,
+        url: str,
+        policy: ScrapePolicy,
+        profile: BrowserProfile,
+        proxy_plan: ProxyPlan,
+        guard: WebScraperUrlGuard,
+        use_proxy: bool,
+    ) -> InternalScrapeResult:
+        self.attempts.append(use_proxy)
+        return self.results.pop(0)
 
 
 async def test_playwright_frame_prefers_html_markdown() -> None:
@@ -87,3 +110,70 @@ def test_combine_source_parts_includes_frame_source() -> None:
     assert "Source: https://example.com/page" in part
     assert "## Frame" in part
     assert "Source: https://example.com/frame" in part
+
+
+async def test_playwright_fallback_mode_tries_direct_first() -> None:
+    strategy = RecordingPlaywrightStrategy(
+        [InternalScrapeResult(url="https://example.com", markdown="accepted content")]
+    )
+
+    await strategy._scrape_with_proxy_plan(
+        playwright=object(),
+        url="https://example.com",
+        policy=ScrapePolicy(),
+        profile=BrowserProfile(name="desktop_chrome_cn"),
+        proxy_plan=ProxyPlan(
+            mode=ProxyMode.FALLBACK,
+            raw_url="http://proxy.example.com:8080",
+        ),
+        guard=WebScraperUrlGuard(),
+    )
+
+    assert strategy.attempts == [False]
+
+
+async def test_playwright_fallback_retries_proxy_after_direct_failure() -> None:
+    strategy = RecordingPlaywrightStrategy(
+        [
+            InternalScrapeResult(
+                url="https://example.com",
+                success=False,
+                error_message="direct failed",
+            ),
+            InternalScrapeResult(url="https://example.com", markdown="proxy content"),
+        ]
+    )
+
+    await strategy._scrape_with_proxy_plan(
+        playwright=object(),
+        url="https://example.com",
+        policy=ScrapePolicy(),
+        profile=BrowserProfile(name="desktop_chrome_cn"),
+        proxy_plan=ProxyPlan(
+            mode=ProxyMode.FALLBACK,
+            raw_url="http://proxy.example.com:8080",
+        ),
+        guard=WebScraperUrlGuard(),
+    )
+
+    assert strategy.attempts == [False, True]
+
+
+async def test_playwright_proxy_mode_uses_proxy_first() -> None:
+    strategy = RecordingPlaywrightStrategy(
+        [InternalScrapeResult(url="https://example.com", markdown="proxy content")]
+    )
+
+    await strategy._scrape_with_proxy_plan(
+        playwright=object(),
+        url="https://example.com",
+        policy=ScrapePolicy(),
+        profile=BrowserProfile(name="desktop_chrome_cn"),
+        proxy_plan=ProxyPlan(
+            mode=ProxyMode.PROXY,
+            raw_url="http://proxy.example.com:8080",
+        ),
+        guard=WebScraperUrlGuard(),
+    )
+
+    assert strategy.attempts == [True]

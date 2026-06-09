@@ -4,7 +4,7 @@
 
 """URL safety guard for web scraping."""
 
-from urllib.parse import ParseResult, urlparse, urlunparse
+from urllib.parse import ParseResult, urljoin, urlparse, urlunparse
 
 from app.services.url_metadata import _validate_url_for_ssrf
 from app.services.web_scraper.models import ERROR_INVALID_URL, ERROR_SSRF_BLOCKED
@@ -42,16 +42,28 @@ class WebScraperUrlGuard:
                 ERROR_SSRF_BLOCKED,
                 (
                     "Redirect blocked by security policy: "
-                    f"{original_url} -> {final_url}"
+                    f"{redact_url_for_logging(original_url)} -> "
+                    f"{redact_url_for_logging(final_url)}"
                 ),
             )
+
+    def validate_redirect_target(
+        self, original_url: str, current_url: str, location: str
+    ) -> str:
+        """Resolve and validate one redirect target before following it."""
+        next_url = urljoin(current_url, location)
+        self.validate_final_url(original_url, next_url)
+        return next_url
 
     def validate_frame_url(self, frame_url: str) -> None:
         """Validate iframe URL."""
         if not self.is_allowed_frame_url(frame_url):
             raise WebScraperSecurityError(
                 ERROR_SSRF_BLOCKED,
-                f"Frame URL blocked by security policy: {frame_url}",
+                (
+                    "Frame URL blocked by security policy: "
+                    f"{redact_url_for_logging(frame_url)}"
+                ),
             )
 
     def is_allowed_fetch_url(self, url: str) -> bool:
@@ -78,3 +90,22 @@ class WebScraperUrlGuard:
         mapped_scheme = "https" if parsed.scheme == "wss" else "http"
         mapped_url = urlunparse((mapped_scheme, parsed.netloc, "/", "", "", ""))
         return _validate_url_for_ssrf(mapped_url)
+
+
+def redact_url_for_logging(url: str) -> str:
+    """Return a URL safe for logs and trace attributes."""
+    parsed = urlparse(url)
+    if not parsed.scheme or not parsed.netloc:
+        return "<invalid-url>"
+
+    hostname = parsed.hostname or ""
+    netloc = hostname
+    try:
+        if parsed.port:
+            netloc = f"{hostname}:{parsed.port}"
+    except ValueError:
+        return "<invalid-url>"
+
+    query = "<redacted>" if parsed.query else ""
+    fragment = "<redacted>" if parsed.fragment else ""
+    return urlunparse((parsed.scheme, netloc, parsed.path, "", query, fragment))

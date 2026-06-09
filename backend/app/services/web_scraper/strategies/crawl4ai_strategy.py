@@ -8,8 +8,14 @@ import asyncio
 import logging
 from typing import Any, Callable
 
+import httpx
+
 from app.services.web_scraper.classifier import ScrapeResultClassifier
-from app.services.web_scraper.models import InternalScrapeResult, ScrapeStatus
+from app.services.web_scraper.models import (
+    ERROR_SSRF_BLOCKED,
+    InternalScrapeResult,
+    ScrapeStatus,
+)
 from app.services.web_scraper.policy import ScrapePolicy
 from app.services.web_scraper.profiles import BrowserProfile
 from app.services.web_scraper.proxy import ProxyPlan
@@ -17,11 +23,15 @@ from app.services.web_scraper.quality import MarkdownQualityEvaluator
 from app.services.web_scraper.security import (
     WebScraperSecurityError,
     WebScraperUrlGuard,
+    redact_url_for_logging,
 )
 from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
 
+CRAWL4AI_REDIRECT_PREFLIGHT_TIMEOUT = 10
+CRAWL4AI_MAX_REDIRECTS = 10
+REDIRECT_STATUS_CODES = {301, 302, 303, 307, 308}
 
 PROXY_RETRY_STATUSES = {
     ScrapeStatus.NETWORK_FAILED,
@@ -48,7 +58,9 @@ class Crawl4AIScrapeStrategy:
     @trace_async(
         span_name="web_scraper.crawl4ai.scrape",
         tracer_name="web_scraper",
-        extract_attributes=lambda self, url, *args, **kwargs: {"url": url},
+        extract_attributes=lambda self, url, *args, **kwargs: {
+            "url": redact_url_for_logging(url)
+        },
     )
     async def scrape(
         self,
@@ -61,11 +73,19 @@ class Crawl4AIScrapeStrategy:
         """Scrape a URL using the configured proxy strategy."""
         if proxy_plan.force_proxy and proxy_plan.has_proxy:
             return await self._crawl_once(
-                url, policy, profile, proxy_plan.crawl4ai_proxy_config(), guard
+                url,
+                policy,
+                profile,
+                proxy_plan.crawl4ai_proxy_config(),
+                proxy_plan,
+                True,
+                guard,
             )
 
         if proxy_plan.fallback:
-            direct_result = await self._crawl_once(url, policy, profile, None, guard)
+            direct_result = await self._crawl_once(
+                url, policy, profile, None, proxy_plan, False, guard
+            )
             direct_quality = self._quality_evaluator.evaluate(
                 direct_result.markdown, policy, direct_result.quality_level
             )
@@ -76,15 +96,25 @@ class Crawl4AIScrapeStrategy:
             ):
                 return direct_result
             return await self._crawl_once(
-                url, policy, profile, proxy_plan.crawl4ai_proxy_config(), guard
+                url,
+                policy,
+                profile,
+                proxy_plan.crawl4ai_proxy_config(),
+                proxy_plan,
+                True,
+                guard,
             )
 
-        return await self._crawl_once(url, policy, profile, None, guard)
+        return await self._crawl_once(
+            url, policy, profile, None, proxy_plan, False, guard
+        )
 
     @trace_async(
         span_name="web_scraper.crawl4ai.crawl_once",
         tracer_name="web_scraper",
-        extract_attributes=lambda self, url, *args, **kwargs: {"url": url},
+        extract_attributes=lambda self, url, *args, **kwargs: {
+            "url": redact_url_for_logging(url)
+        },
     )
     async def _crawl_once(
         self,
@@ -92,9 +122,12 @@ class Crawl4AIScrapeStrategy:
         policy: ScrapePolicy,
         profile: BrowserProfile,
         proxy_config: dict[str, str] | None,
+        proxy_plan: ProxyPlan,
+        use_proxy: bool,
         guard: WebScraperUrlGuard,
     ) -> InternalScrapeResult:
         try:
+            await self._validate_redirect_chain(url, proxy_plan, guard, use_proxy)
             crawler = await self._crawler_provider()
             run_config = self._build_run_config(policy, profile, proxy_config)
             result = await crawler.arun(url=url, config=run_config)
@@ -113,8 +146,49 @@ class Crawl4AIScrapeStrategy:
                 error_message="Crawl4AI request timed out",
             )
         except Exception as exc:
-            logger.warning("Crawl4AI scrape failed for %s: %s", url, exc)
+            logger.warning(
+                "Crawl4AI scrape failed for %s: %s", redact_url_for_logging(url), exc
+            )
             return InternalScrapeResult(url=url, success=False, error_message=str(exc))
+
+    async def _validate_redirect_chain(
+        self,
+        url: str,
+        proxy_plan: ProxyPlan,
+        guard: WebScraperUrlGuard,
+        use_proxy: bool,
+    ) -> None:
+        async with httpx.AsyncClient(
+            timeout=CRAWL4AI_REDIRECT_PREFLIGHT_TIMEOUT,
+            follow_redirects=False,
+            **proxy_plan.httpx_client_kwargs(use_proxy=use_proxy),
+        ) as client:
+            current_url = url
+            for _ in range(CRAWL4AI_MAX_REDIRECTS + 1):
+                async with client.stream(
+                    "GET",
+                    current_url,
+                    headers={"Range": "bytes=0-0"},
+                ) as response:
+                    if response.status_code not in REDIRECT_STATUS_CODES:
+                        guard.validate_final_url(url, str(response.url))
+                        return
+
+                    location = response.headers.get("location")
+                    if not location:
+                        guard.validate_final_url(url, str(response.url))
+                        return
+
+                    current_url = guard.validate_redirect_target(
+                        url,
+                        str(response.url),
+                        location,
+                    )
+
+            raise WebScraperSecurityError(
+                ERROR_SSRF_BLOCKED,
+                f"Redirect chain exceeded {CRAWL4AI_MAX_REDIRECTS} hops",
+            )
 
     def _build_run_config(
         self,

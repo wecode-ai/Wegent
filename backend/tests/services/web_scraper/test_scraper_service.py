@@ -3,6 +3,7 @@ from typing import Any
 import httpx
 import pytest
 
+import app.services.web_scraper.pdf_extractor as pdf_extractor_module
 from app.services.web_scraper.models import ERROR_INVALID_URL, InternalScrapeResult
 from app.services.web_scraper.pdf_extractor import PdfExtractor
 from app.services.web_scraper.proxy import ProxyMode, ProxyPlan
@@ -58,6 +59,46 @@ class RecordingPdfExtractor(PdfExtractor):
             request=httpx.Request("GET", pdf_url),
             content=b"%PDF",
         )
+
+
+class FakeRedirectingAsyncClient:
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        self.follow_redirects = kwargs.get("follow_redirects")
+
+    async def __aenter__(self) -> "FakeRedirectingAsyncClient":
+        return self
+
+    async def __aexit__(self, *args: Any) -> None:
+        return None
+
+    async def get(self, url: str) -> httpx.Response:
+        if url == "https://example.com/start.pdf":
+            return httpx.Response(
+                302,
+                headers={"location": "/final.pdf"},
+                request=httpx.Request("GET", url),
+            )
+        return httpx.Response(
+            200,
+            request=httpx.Request("GET", url),
+            content=b"%PDF",
+        )
+
+
+class RecordingRedirectGuard(WebScraperUrlGuard):
+    def __init__(self) -> None:
+        self.redirects: list[tuple[str, str, str]] = []
+        self.final_urls: list[tuple[str, str]] = []
+
+    def validate_redirect_target(
+        self, original_url: str, current_url: str, location: str
+    ) -> str:
+        self.redirects.append((original_url, current_url, location))
+        return super().validate_redirect_target(original_url, current_url, location)
+
+    def validate_final_url(self, original_url: str, final_url: str) -> None:
+        self.final_urls.append((original_url, final_url))
+        super().validate_final_url(original_url, final_url)
 
 
 def prepare_service(monkeypatch: pytest.MonkeyPatch) -> WebScraperService:
@@ -196,6 +237,37 @@ async def test_pdf_download_proxy_mode_uses_proxy_first() -> None:
     )
 
     assert extractor.attempts == [True]
+
+
+async def test_pdf_download_validates_redirect_before_following(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        pdf_extractor_module.httpx,
+        "AsyncClient",
+        FakeRedirectingAsyncClient,
+    )
+    guard = RecordingRedirectGuard()
+
+    response = await PdfExtractor()._download_once(
+        pdf_url="https://example.com/start.pdf",
+        proxy_plan=ProxyPlan(mode=ProxyMode.NONE),
+        guard=guard,
+        use_proxy=False,
+    )
+
+    assert str(response.url) == "https://example.com/final.pdf"
+    assert guard.redirects == [
+        (
+            "https://example.com/start.pdf",
+            "https://example.com/start.pdf",
+            "/final.pdf",
+        )
+    ]
+    assert guard.final_urls[-1] == (
+        "https://example.com/start.pdf",
+        "https://example.com/final.pdf",
+    )
 
 
 async def test_pdf_extract_empty_text_is_successful_empty_result(

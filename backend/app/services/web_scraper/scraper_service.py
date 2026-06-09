@@ -42,6 +42,7 @@ from app.services.web_scraper.quality import MarkdownQualityEvaluator
 from app.services.web_scraper.security import (
     WebScraperSecurityError,
     WebScraperUrlGuard,
+    redact_url_for_logging,
 )
 from app.services.web_scraper.strategies.crawl4ai_strategy import Crawl4AIScrapeStrategy
 from app.services.web_scraper.strategies.playwright_frame_strategy import (
@@ -169,7 +170,7 @@ class WebScraperService:
     @trace_async(
         span_name="web_scraper.scrape_url",
         tracer_name="web_scraper",
-        extract_attributes=lambda self, url: {"url": url},
+        extract_attributes=lambda self, url: {"url": redact_url_for_logging(url)},
     )
     async def scrape_url(self, url: str) -> ScrapedContent:
         """Scrape a web page and convert to Markdown."""
@@ -183,7 +184,7 @@ class WebScraperService:
         except WebScraperSecurityError as exc:
             return self._error_result(url, exc.error_code, exc.message)
         except Exception as exc:
-            logger.exception("Web scraping failed for %s", url)
+            logger.exception("Web scraping failed for %s", redact_url_for_logging(url))
             return self._error_result(
                 url, ERROR_FETCH_FAILED, f"Failed to scrape page: {str(exc)}"
             )
@@ -271,7 +272,9 @@ class WebScraperService:
             return self._policy_resolver.resolve(url).total_timeout_seconds
         except (AttributeError, KeyError, ValueError) as exc:
             logger.warning(
-                "Failed to resolve scrape timeout for %s; using default: %s", url, exc
+                "Failed to resolve scrape timeout for %s; using default: %s",
+                redact_url_for_logging(url),
+                exc,
             )
             return DEFAULT_TOTAL_TIMEOUT_SECONDS
 

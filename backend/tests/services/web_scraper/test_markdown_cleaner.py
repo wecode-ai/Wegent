@@ -22,7 +22,7 @@ def test_cleaner_keeps_body_text_with_action_words() -> None:
     html = """
     <article>
       <h1>操作说明</h1>
-      <p>点击登录按钮后，表单会显示在页面右侧。</p>
+      <p>点击登录按钮后, 表单会显示在页面右侧。</p>
     </article>
     """
 

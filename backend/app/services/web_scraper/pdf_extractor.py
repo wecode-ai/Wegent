@@ -15,13 +15,16 @@ from app.services.web_scraper.proxy import ProxyPlan
 from app.services.web_scraper.security import (
     WebScraperSecurityError,
     WebScraperUrlGuard,
+    redact_url_for_logging,
 )
 from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
 
 PDF_DOWNLOAD_TIMEOUT = 30
+PDF_MAX_REDIRECTS = 10
 PROXY_RETRY_STATUS_CODES = {403, 429}
+REDIRECT_STATUS_CODES = {301, 302, 303, 307, 308}
 
 
 class PdfExtractor:
@@ -30,7 +33,9 @@ class PdfExtractor:
     @trace_async(
         span_name="pdf_extractor.extract",
         tracer_name="web_scraper",
-        extract_attributes=lambda self, pdf_url, *args, **kwargs: {"pdf.url": pdf_url},
+        extract_attributes=lambda self, pdf_url, *args, **kwargs: {
+            "pdf.url": redact_url_for_logging(pdf_url)
+        },
     )
     async def extract(
         self,
@@ -94,7 +99,11 @@ class PdfExtractor:
                 quality_level="degraded",
             )
         except Exception as exc:
-            logger.warning("Failed to extract PDF content from %s: %s", pdf_url, exc)
+            logger.warning(
+                "Failed to extract PDF content from %s: %s",
+                redact_url_for_logging(pdf_url),
+                exc,
+            )
             return InternalScrapeResult(
                 url=pdf_url,
                 success=False,
@@ -133,13 +142,32 @@ class PdfExtractor:
     ) -> httpx.Response:
         async with httpx.AsyncClient(
             timeout=PDF_DOWNLOAD_TIMEOUT,
-            follow_redirects=True,
+            follow_redirects=False,
             **proxy_plan.httpx_client_kwargs(use_proxy=use_proxy),
         ) as client:
-            response = await client.get(pdf_url)
-            guard.validate_final_url(pdf_url, str(response.url))
-            response.raise_for_status()
-            return response
+            current_url = pdf_url
+            for _ in range(PDF_MAX_REDIRECTS + 1):
+                response = await client.get(current_url)
+                if response.status_code not in REDIRECT_STATUS_CODES:
+                    guard.validate_final_url(pdf_url, str(response.url))
+                    response.raise_for_status()
+                    return response
+
+                location = response.headers.get("location")
+                if not location:
+                    response.raise_for_status()
+                    return response
+
+                current_url = guard.validate_redirect_target(
+                    pdf_url,
+                    str(response.url),
+                    location,
+                )
+
+            raise httpx.TooManyRedirects(
+                f"Exceeded {PDF_MAX_REDIRECTS} redirects",
+                request=httpx.Request("GET", pdf_url),
+            )
 
     def _should_retry_with_proxy(self, exc: Exception) -> bool:
         if isinstance(exc, (httpx.TimeoutException, httpx.RequestError)):

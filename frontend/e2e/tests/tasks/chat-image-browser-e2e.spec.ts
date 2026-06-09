@@ -323,7 +323,7 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
       localStorage.setItem('user_onboarding_completed', 'true')
       localStorage.removeItem('onboarding_in_progress')
       localStorage.removeItem('onboarding_current_step')
-      if (id) {
+      if (id !== undefined) {
         localStorage.setItem('wegent_last_team_id', String(id))
         localStorage.setItem('wegent_last_team_id_chat', String(id))
       }

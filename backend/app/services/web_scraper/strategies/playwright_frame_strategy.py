@@ -18,11 +18,13 @@ from app.services.web_scraper.quality import MarkdownQualityEvaluator
 from app.services.web_scraper.security import (
     WebScraperSecurityError,
     WebScraperUrlGuard,
+    redact_url_for_logging,
 )
 
 logger = logging.getLogger(__name__)
 
 MIN_FRAME_TEXT_LENGTH = 30
+PROXY_RETRY_STATUS_CODES = {403, 429}
 SCROLL_SCRIPT = """
 async () => {
   const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -75,18 +77,11 @@ class PlaywrightFrameExtractionStrategy:
         except ImportError as exc:
             return InternalScrapeResult(url=url, success=False, error_message=str(exc))
 
-        resources = PlaywrightResources()
         attempted_method = "playwright_html"
         try:
             async with async_playwright() as playwright:
-                result = await self._perform_playwright_scrape(
-                    playwright=playwright,
-                    resources=resources,
-                    url=url,
-                    policy=policy,
-                    profile=profile,
-                    proxy_plan=proxy_plan,
-                    guard=guard,
+                result = await self._scrape_with_proxy_plan(
+                    playwright, url, policy, profile, proxy_plan, guard
                 )
                 attempted_method = result.extraction_method
                 return result
@@ -99,8 +94,78 @@ class PlaywrightFrameExtractionStrategy:
                 extraction_method=attempted_method,
             )
         except Exception as exc:
-            logger.warning("Playwright frame extraction failed for %s: %s", url, exc)
+            logger.warning(
+                "Playwright frame extraction failed for %s: %s",
+                redact_url_for_logging(url),
+                exc,
+            )
             return InternalScrapeResult(url=url, success=False, error_message=str(exc))
+
+    async def _scrape_with_proxy_plan(
+        self,
+        playwright: Any,
+        url: str,
+        policy: ScrapePolicy,
+        profile: BrowserProfile,
+        proxy_plan: ProxyPlan,
+        guard: WebScraperUrlGuard,
+    ) -> InternalScrapeResult:
+        if proxy_plan.fallback:
+            try:
+                direct_result = await self._scrape_once(
+                    playwright, url, policy, profile, proxy_plan, guard, False
+                )
+            except WebScraperSecurityError:
+                raise
+            except Exception as exc:
+                if proxy_plan.has_proxy:
+                    logger.info(
+                        "Retrying Playwright extraction with proxy after direct failure for %s",
+                        redact_url_for_logging(url),
+                    )
+                    return await self._scrape_once(
+                        playwright, url, policy, profile, proxy_plan, guard, True
+                    )
+                raise exc
+
+            if self._should_retry_with_proxy(direct_result, proxy_plan):
+                return await self._scrape_once(
+                    playwright, url, policy, profile, proxy_plan, guard, True
+                )
+            return direct_result
+
+        return await self._scrape_once(
+            playwright,
+            url,
+            policy,
+            profile,
+            proxy_plan,
+            guard,
+            proxy_plan.force_proxy,
+        )
+
+    async def _scrape_once(
+        self,
+        playwright: Any,
+        url: str,
+        policy: ScrapePolicy,
+        profile: BrowserProfile,
+        proxy_plan: ProxyPlan,
+        guard: WebScraperUrlGuard,
+        use_proxy: bool,
+    ) -> InternalScrapeResult:
+        resources = PlaywrightResources()
+        try:
+            return await self._perform_playwright_scrape(
+                playwright=playwright,
+                resources=resources,
+                url=url,
+                policy=policy,
+                profile=profile,
+                proxy_plan=proxy_plan,
+                guard=guard,
+                use_proxy=use_proxy,
+            )
         finally:
             await self._close_quietly(resources.page)
             await self._close_quietly(resources.context)
@@ -115,9 +180,10 @@ class PlaywrightFrameExtractionStrategy:
         profile: BrowserProfile,
         proxy_plan: ProxyPlan,
         guard: WebScraperUrlGuard,
+        use_proxy: bool,
     ) -> InternalScrapeResult:
         launch_kwargs = {"headless": True}
-        if proxy_plan.has_proxy and (proxy_plan.force_proxy or proxy_plan.fallback):
+        if use_proxy and proxy_plan.has_proxy:
             launch_kwargs["proxy"] = proxy_plan.playwright_proxy_config()
 
         resources.browser = await playwright.chromium.launch(**launch_kwargs)
@@ -343,6 +409,21 @@ class PlaywrightFrameExtractionStrategy:
         if not response:
             return None
         return response.headers.get("content-type")
+
+    def _should_retry_with_proxy(
+        self,
+        result: InternalScrapeResult,
+        proxy_plan: ProxyPlan,
+    ) -> bool:
+        if not proxy_plan.has_proxy:
+            return False
+        if not result.success:
+            return True
+        if result.status_code is None:
+            return False
+        return (
+            result.status_code in PROXY_RETRY_STATUS_CODES or result.status_code >= 500
+        )
 
     def _result_quality_level(self, source_parts: list[SourcePart]) -> str:
         if source_parts and all(
