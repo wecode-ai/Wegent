@@ -696,9 +696,13 @@ describe('TaskStateMachine', () => {
 
     const state = machine.getState()
     const message = state.messages.get('ai-42')
-    expect(state.phase).toBe('streaming')
-    expect(state.runtime.phase).toBe('streaming')
-    expect(message?.status).toBe('streaming')
+    // serverConfirmedNoStream dominates: PENDING stale subtask with no stream
+    // is finalized as error, not left in streaming and not marked completed
+    expect(state.phase).toBe('ready')
+    expect(state.derived.isStreaming).toBe(false)
+    expect(state.derived.serverConfirmedNoStream).toBe(true)
+    expect(message?.status).toBe('error')
+    expect(message?.status).not.toBe('completed')
     expect(message?.content).toBe('partial')
 
     consoleInfoSpy.mockRestore()

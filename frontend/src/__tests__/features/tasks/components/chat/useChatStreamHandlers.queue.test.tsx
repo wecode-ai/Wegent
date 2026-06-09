@@ -15,6 +15,7 @@ const mockCheckHealth = jest.fn().mockResolvedValue(undefined)
 
 let isMachineStreamingMock = true
 let activeStreamSubtaskIdMock: number | undefined = 77
+let serverConfirmedNoStreamMock = false
 let taskInputMessageMock = 'next question'
 let currentTaskIdMock: number | null = 42
 let selectedTaskDetailMock: TaskDetail | null = {
@@ -64,6 +65,7 @@ jest.mock('@/features/tasks/session/TaskSession', () => ({
         canCancelTask: getTaskStatusMock() === 'RUNNING' || getTaskStatusMock() === 'PENDING',
         blocksQueuedDispatch:
           getTaskStatusMock() === 'RUNNING' || getTaskStatusMock() === 'PENDING',
+        serverConfirmedNoStream: serverConfirmedNoStreamMock,
       },
     },
   }),
@@ -153,6 +155,7 @@ describe('useChatStreamHandlers queue integration', () => {
     jest.clearAllMocks()
     isMachineStreamingMock = true
     activeStreamSubtaskIdMock = 77
+    serverConfirmedNoStreamMock = false
     taskInputMessageMock = 'next question'
     currentTaskIdMock = 42
     selectedTaskDetailMock = {
@@ -551,5 +554,22 @@ describe('useChatStreamHandlers queue integration', () => {
         title: 'chat:guidance.no_active_stream',
       })
     )
+  })
+
+  it('serverConfirmedNoStream suppresses stale RUNNING queue state', () => {
+    isMachineStreamingMock = false
+    serverConfirmedNoStreamMock = true
+    selectedTaskDetailMock = {
+      id: 42,
+      status: 'RUNNING',
+      is_group_chat: false,
+      subtasks: [],
+    } as unknown as TaskDetail
+    taskInputMessageMock = 'hello'
+
+    const { result } = renderQueueableHook()
+
+    expect(result.current.isStreaming).toBe(false)
+    expect(result.current.canQueueMessage).toBe(false)
   })
 })

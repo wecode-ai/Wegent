@@ -351,7 +351,7 @@ export function useChatStreamHandlers({
     }
     return false
   }, [taskState?.messages])
-  const isStreaming = isMachineStreaming || isRunningLifecycle || hasPendingUserMessage
+  const isStreaming = isMachineStreaming || (isRunningLifecycle && !runtimeDerived?.serverConfirmedNoStream) || hasPendingUserMessage
 
   // Stop stream wrapper
   // Note: subtasks parameter is no longer passed to contextStopStream
