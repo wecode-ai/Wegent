@@ -311,21 +311,24 @@ class ChatService(ChatInterface):
             guard_counter = TokenCounter(
                 model_name=guard_model_id, model_type=guard_model_type
             )
-            tool_output_adapter = ToolOutputGuardAdapter(
-                token_counter=guard_counter,
-                default_policy=TruncationPolicy(
-                    kind="tokens", limit=settings.TOOL_OUTPUT_TOKEN_LIMIT
-                ),
-                emergency_ratio=settings.EMERGENCY_TOOL_OUTPUT_RATIO,
-                tool_policy_overrides=build_default_tool_policy_overrides(
-                    knowledge_tool_limit=settings.KNOWLEDGE_TOOL_OUTPUT_TOKEN_LIMIT
-                ),
-            )
+            guard_sources = []
+            if request.enable_tool_output_guard:
+                tool_output_adapter = ToolOutputGuardAdapter(
+                    token_counter=guard_counter,
+                    default_policy=TruncationPolicy(
+                        kind="tokens", limit=settings.TOOL_OUTPUT_TOKEN_LIMIT
+                    ),
+                    emergency_ratio=settings.EMERGENCY_TOOL_OUTPUT_RATIO,
+                    tool_policy_overrides=build_default_tool_policy_overrides(
+                        knowledge_tool_limit=settings.KNOWLEDGE_TOOL_OUTPUT_TOKEN_LIMIT
+                    ),
+                )
+                guard_sources = [tool_output_adapter]
             context_guard = UnifiedContextGuard(
                 model_id=guard_model_id,
                 model_type=guard_model_type,
                 model_config=request.model_config,
-                sources=[tool_output_adapter],
+                sources=guard_sources,
                 compression_enabled=settings.MESSAGE_COMPRESSION_ENABLED,
             )
             chained_pre_model_hook = chain_pre_model_hooks(

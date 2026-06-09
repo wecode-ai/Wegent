@@ -100,6 +100,7 @@ class ExecutionRequest:
     enable_web_search: bool = False
     enable_clarification: bool = False
     enable_deep_thinking: bool = True
+    enable_tool_output_guard: bool = False
     search_engine: Optional[str] = None  # From ChatRequest
 
     # === Skill Configuration ===

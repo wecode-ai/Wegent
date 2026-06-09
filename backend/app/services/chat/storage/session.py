@@ -1276,6 +1276,7 @@ class SessionManager:
             blocks_key = self._get_blocks_key(subtask_id)
             text_block_key = self._get_current_text_block_key(subtask_id)
             thinking_block_key = self._get_current_thinking_block_key(subtask_id)
+            context_metrics_key = self._get_context_metrics_key(subtask_id)
 
             redis_client = await self._cache._get_client()
             try:
@@ -1284,6 +1285,7 @@ class SessionManager:
                     blocks_key,
                     text_block_key,
                     thinking_block_key,
+                    context_metrics_key,
                 )
                 logger.debug(
                     f"[SessionManager] Cleaned up streaming state for subtask {subtask_id}"

@@ -207,7 +207,7 @@ class TestWebSocketResultEmitter:
             assert "ask_id" not in call_kwargs["render_payload"]
 
     @pytest.mark.asyncio
-    async def test_emit_status_updated_event(self):
+    async def test_emit_status_updated_event(self) -> None:
         """Test emitting STATUS_UPDATED sends websocket event and caches snapshot."""
         from app.services.execution.emitters import WebSocketResultEmitter
 
@@ -259,6 +259,44 @@ class TestWebSocketResultEmitter:
                     "remaining_percent": 38,
                     "is_over_trigger": False,
                 },
+            )
+
+    @pytest.mark.asyncio
+    async def test_emit_status_updated_event_ignores_cache_failure(self) -> None:
+        """Status updates should still be emitted when cache persistence fails."""
+        from app.services.execution.emitters import WebSocketResultEmitter
+
+        with (
+            patch(
+                "app.services.chat.webpage_ws_chat_emitter.get_webpage_ws_emitter"
+            ) as mock_get,
+            patch(
+                "app.services.execution.emitters.websocket.session_manager.save_context_metrics",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("redis down"),
+            ),
+        ):
+            mock_ws = AsyncMock()
+            mock_get.return_value = mock_ws
+
+            emitter = WebSocketResultEmitter(task_id=1, subtask_id=2)
+            event = ExecutionEvent.create(
+                EventType.STATUS_UPDATED,
+                task_id=1,
+                subtask_id=2,
+                data={
+                    "phase": "after_tool_end",
+                    "context_metrics": {"remaining_percent": 38},
+                },
+            )
+
+            await emitter.emit(event)
+
+            mock_ws.emit_chat_status_updated.assert_awaited_once_with(
+                task_id=1,
+                subtask_id=2,
+                phase="after_tool_end",
+                context_metrics={"remaining_percent": 38},
             )
 
     @pytest.mark.asyncio

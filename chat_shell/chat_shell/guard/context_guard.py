@@ -62,14 +62,33 @@ from chat_shell.compression.context_metrics import (
     calculate_context_metrics,
 )
 from chat_shell.compression.token_counter import TokenCounter
-from chat_shell.guard.tool_output import BYPASS_COMPACTION_FLAG, COMPACTED_FLAG
+from chat_shell.guard.tool_output import COMPACTED_FLAG
 from chat_shell.guard.types import GuardSource
+from chat_shell.guard_flags import BYPASS_COMPACTION_FLAG
 
 logger = logging.getLogger(__name__)
 
 
 class ContextGuardFailFastError(RuntimeError):
     """Raised when the guard cannot safely reduce context below trigger."""
+
+
+def _is_tool_output_truncated(source: GuardSource, compact_text: str) -> bool | None:
+    """Return the explicit truncation flag encoded by known source formats.
+
+    For ``tool_output`` we can reliably inspect the generated header line and
+    surface a precise ``truncated=true/false`` signal in logs. Other sources do
+    not currently expose a stable machine-readable truncation bit, so ``None``
+    is returned for them.
+    """
+    if source.name != "tool_output":
+        return None
+    first_line = compact_text.split("\n", 1)[0]
+    if " truncated=true]" in first_line:
+        return True
+    if " truncated=false]" in first_line:
+        return False
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -313,6 +332,25 @@ class UnifiedContextGuard:
                     self.trigger_limit,
                 )
                 if self._has_bypass_protected_messages(view):
+                    protected_count = sum(
+                        1
+                        for message_dict in view
+                        if (
+                            isinstance(message_dict.get("additional_kwargs"), dict)
+                            and message_dict["additional_kwargs"].get(
+                                BYPASS_COMPACTION_FLAG
+                            )
+                            is True
+                        )
+                    )
+                    logger.error(
+                        "[UnifiedContextGuard] Fail-fast: protected payloads "
+                        "prevent further safe compaction (used=%d, trigger=%d, "
+                        "protected_messages=%d)",
+                        self._counter.count_messages(view),
+                        self.trigger_limit,
+                        protected_count,
+                    )
                     raise ContextGuardFailFastError(
                         "Current context still exceeds the safe input budget "
                         "after compaction, and at least one protected payload "
@@ -332,6 +370,7 @@ class UnifiedContextGuard:
             return
 
         for source in self._sources:
+            marked_count = 0
             bypass_check = getattr(source, "should_bypass_request_compaction", None)
             if bypass_check is None:
                 continue
@@ -343,6 +382,14 @@ class UnifiedContextGuard:
                 kwargs = dict(message_dict.get("additional_kwargs") or {})
                 kwargs[BYPASS_COMPACTION_FLAG] = True
                 message_dict["additional_kwargs"] = kwargs
+                marked_count += 1
+            if marked_count > 0:
+                logger.info(
+                    "[UnifiedContextGuard] Marked %d bypass-protected message(s) "
+                    "for source=%s",
+                    marked_count,
+                    source.name,
+                )
 
     @staticmethod
     def _has_bypass_protected_messages(view: list[dict[str, Any]]) -> bool:
@@ -400,6 +447,14 @@ class UnifiedContextGuard:
                 if hasattr(source, "should_bypass_source_compaction") and (
                     source.should_bypass_source_compaction(message_dict)
                 ):
+                    logger.debug(
+                        "[UnifiedContextGuard] Source pass bypassed: source=%s "
+                        "emergency=%s message_id=%s tool=%s",
+                        source.name,
+                        emergency,
+                        message_dict.get("id"),
+                        message_dict.get("name"),
+                    )
                     continue
                 if not emergency and source.is_already_compact(message_dict):
                     continue
@@ -419,12 +474,35 @@ class UnifiedContextGuard:
                     emergency=emergency,
                 )
                 compact_text = source.to_model_visible(raw, policy)
+                original_content = message_dict.get("content", "")
+                original_len = (
+                    len(original_content)
+                    if isinstance(original_content, str)
+                    else len(str(original_content))
+                )
+                compacted_len = len(compact_text)
+                truncated = _is_tool_output_truncated(source, compact_text)
 
                 replacement = self._build_compact_replacement(
                     original=original_messages[i],
                     compact_text=compact_text,
                 )
                 updates.append(replacement)
+
+                logger.info(
+                    "[UnifiedContextGuard] Source pass applied: source=%s "
+                    "emergency=%s message_id=%s tool=%s policy=%s:%d "
+                    "truncated=%s chars=%d->%d",
+                    source.name,
+                    emergency,
+                    message_id,
+                    message_dict.get("name"),
+                    policy.kind,
+                    policy.limit,
+                    truncated,
+                    original_len,
+                    compacted_len,
+                )
 
                 replaced_dict = dict(message_dict)
                 replaced_dict["content"] = compact_text
@@ -434,6 +512,14 @@ class UnifiedContextGuard:
                 position = idx_by_id.get(message_id)
                 if position is not None:
                     new_view[position] = replaced_dict
+
+        if not updates:
+            logger.debug(
+                "[UnifiedContextGuard] Source pass made no changes "
+                "(emergency=%s, sources=%d)",
+                emergency,
+                len(self._sources),
+            )
 
         return _StagePass(updates=updates, view=new_view)
 

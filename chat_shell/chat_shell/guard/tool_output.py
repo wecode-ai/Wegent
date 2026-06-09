@@ -16,9 +16,9 @@ from typing import Any, TypedDict
 
 from chat_shell.compression.token_counter import TokenCounter
 from chat_shell.guard.types import DEFAULT_EMERGENCY_RATIO, TruncationPolicy
+from chat_shell.guard_flags import BYPASS_COMPACTION_FLAG
 
 COMPACTED_FLAG = "compacted"
-BYPASS_COMPACTION_FLAG = "guard_bypass_compaction"
 HEADER_PREFIX = "[tool_output "
 HEAD_RATIO = 0.6
 
@@ -115,13 +115,23 @@ def _parse_footer(line: str) -> dict[str, int | float]:
     return result
 
 
-def _build_header(name: str, total_tokens: int, truncated: bool) -> str:
+def _build_header(
+    name: str,
+    total_tokens: int,
+    truncated: bool,
+    *,
+    extra_fields: dict[str, int | str] | None = None,
+) -> str:
     """Build the header line."""
-    return (
-        f"[tool_output name={name}"
-        f" total_tokens={total_tokens}"
-        f" truncated={'true' if truncated else 'false'}]"
-    )
+    parts = [
+        f"[tool_output name={name}",
+        f"total_tokens={total_tokens}",
+    ]
+    if truncated:
+        for key, value in (extra_fields or {}).items():
+            parts.append(f"{key}={value}")
+    parts.append(f"truncated={'true' if truncated else 'false'}]")
+    return " ".join(parts)
 
 
 def _build_footer(exit_code: int | None, wall_time: float | None) -> str | None:
@@ -177,38 +187,70 @@ def _split_compact(content: str) -> tuple[str, str, dict[str, int | float]]:
 
 def _truncate_body(
     body: str, policy: TruncationPolicy, counter: TokenCounter
-) -> tuple[str, int, bool]:
+) -> tuple[str, int, bool, dict[str, int]]:
     """Truncate *body* according to *policy*.
 
     Returns:
-        ``(rendered_body, total_input_tokens, truncated_flag)``.
+        ``(rendered_body, total_input_tokens, truncated_flag, header_fields)``.
     """
     if policy.kind == "tokens":
         ids = counter.encoding.encode(body)
         total_tokens = len(ids)
         if total_tokens <= policy.limit:
-            return body, total_tokens, False
+            return (
+                body,
+                total_tokens,
+                False,
+                {
+                    "kept_tokens": total_tokens,
+                    "truncated_tokens": 0,
+                },
+            )
         head_budget = max(1, int(policy.limit * HEAD_RATIO))
         tail_budget = max(1, policy.limit - head_budget)
         head = counter.encoding.decode(ids[:head_budget])
         tail = counter.encoding.decode(ids[-tail_budget:])
         dropped = total_tokens - head_budget - tail_budget
-        marker = f"... [truncated {dropped} tokens] ..."
-        return f"{head}\n{marker}\n{tail}", total_tokens, True
+        marker = f"…{dropped} tokens truncated…"
+        return (
+            f"{marker}\n{head}\n{marker}\n{tail}",
+            total_tokens,
+            True,
+            {
+                "kept_tokens": head_budget + tail_budget,
+                "truncated_tokens": dropped,
+            },
+        )
 
     elif policy.kind == "bytes":
         total_tokens = counter.count_text(body)
         encoded = body.encode("utf-8")
         total_bytes = len(encoded)
         if total_bytes <= policy.limit:
-            return body, total_tokens, False
+            return (
+                body,
+                total_tokens,
+                False,
+                {
+                    "kept_bytes": total_bytes,
+                    "truncated_bytes": 0,
+                },
+            )
         head_budget = max(1, int(policy.limit * HEAD_RATIO))
         tail_budget = max(1, policy.limit - head_budget)
         head = encoded[:head_budget].decode("utf-8", errors="ignore")
         tail = encoded[-tail_budget:].decode("utf-8", errors="ignore")
         dropped_bytes = total_bytes - head_budget - tail_budget
-        marker = f"... [truncated {dropped_bytes} bytes] ..."
-        return f"{head}\n{marker}\n{tail}", total_tokens, True
+        marker = f"…{dropped_bytes} bytes truncated…"
+        return (
+            f"{marker}\n{head}\n{marker}\n{tail}",
+            total_tokens,
+            True,
+            {
+                "kept_bytes": head_budget + tail_budget,
+                "truncated_bytes": dropped_bytes,
+            },
+        )
 
     else:
         raise ValueError(f"Unknown policy kind: {policy.kind}")
@@ -267,12 +309,17 @@ class ToolOutputGuardAdapter:
             wall_time = None
 
         # Truncate and assemble.
-        rendered_body, total_tokens, truncated = _truncate_body(
+        rendered_body, total_tokens, truncated, header_fields = _truncate_body(
             body, policy, self._counter
         )
 
         name = _sanitize_name(tool_name)
-        header = _build_header(name, total_tokens, truncated)
+        header = _build_header(
+            name,
+            total_tokens,
+            truncated,
+            extra_fields=header_fields,
+        )
         parts = [header, rendered_body]
 
         footer = _build_footer(exit_code, wall_time)

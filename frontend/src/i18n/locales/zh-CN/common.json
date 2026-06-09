@@ -808,6 +808,12 @@
     "save_success": "对话状态偏好已保存",
     "save_failed": "保存对话状态偏好失败"
   },
+  "tool_output_guard": {
+    "title": "工具输出截断",
+    "description": "在 Chat 模式下自动压缩过大的工具输出，减少因上下文过长导致失败的几率。",
+    "save_success": "工具输出截断偏好已保存",
+    "save_failed": "保存工具输出截断偏好失败"
+  },
   "guide": {
     "title": "欢迎",
     "description": "在开始使用此应用之前，请先完成下面的设置！",

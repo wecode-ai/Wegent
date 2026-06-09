@@ -244,7 +244,9 @@ class WebSocketResultEmitter(BaseResultEmitter):
             f"user_id={self.user_id}, task_id={self.task_id}, status={status}"
         )
 
-    async def _emit_status_updated(self, event: ExecutionEvent, ws_emitter) -> None:
+    async def _emit_status_updated(
+        self, event: ExecutionEvent, ws_emitter: WebPageSocketEmitter
+    ) -> None:
         """Emit chat:status_updated and cache the latest snapshot."""
         phase = event.data.get("phase") if event.data else None
         context_metrics = event.data.get("context_metrics", {}) if event.data else {}
@@ -255,15 +257,23 @@ class WebSocketResultEmitter(BaseResultEmitter):
             )
             return
 
-        await session_manager.save_context_metrics(
-            event.subtask_id,
-            {
-                "task_id": event.task_id,
-                "subtask_id": event.subtask_id,
-                "phase": phase,
-                "context_metrics": context_metrics,
-            },
-        )
+        try:
+            await session_manager.save_context_metrics(
+                event.subtask_id,
+                {
+                    "task_id": event.task_id,
+                    "subtask_id": event.subtask_id,
+                    "phase": phase,
+                    "context_metrics": context_metrics,
+                },
+            )
+        except Exception as exc:
+            logger.warning(
+                "[WebSocketResultEmitter] Failed to cache context metrics for task_id=%s subtask_id=%s: %s",
+                event.task_id,
+                event.subtask_id,
+                exc,
+            )
         await ws_emitter.emit_chat_status_updated(
             task_id=event.task_id,
             subtask_id=event.subtask_id,

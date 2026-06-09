@@ -34,6 +34,7 @@ export default function NotificationSettings() {
   const [searchKey, setSearchKey] = useState<'cmd_k' | 'cmd_f' | 'disabled'>('cmd_k')
   const [memoryEnabled, setMemoryEnabled] = useState(false)
   const [chatStatusItems, setChatStatusItems] = useState<string[]>([])
+  const [toolOutputGuardEnabled, setToolOutputGuardEnabled] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   // Feature flags from backend
   const [featureFlags, setFeatureFlags] = useState<FeatureFlags | null>(null)
@@ -77,6 +78,7 @@ export default function NotificationSettings() {
       setSearchKey(userSearchKey)
       setMemoryEnabled(userMemoryEnabled)
       setChatStatusItems(user.preferences?.chat_status_items || [])
+      setToolOutputGuardEnabled(user.preferences?.tool_output_guard_enabled ?? false)
     }
   }, [user, featureFlags])
 
@@ -209,6 +211,28 @@ export default function NotificationSettings() {
         title: t('common:chat_status.save_failed'),
       })
       setChatStatusItems(user?.preferences?.chat_status_items || [])
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  const handleToolOutputGuardToggle = async (checked: boolean) => {
+    setToolOutputGuardEnabled(checked)
+    setIsSaving(true)
+    try {
+      await updatePreferences({
+        tool_output_guard_enabled: checked,
+      })
+      toast({
+        title: t('common:tool_output_guard.save_success'),
+      })
+    } catch (error) {
+      console.error('Failed to save tool output guard preference:', error)
+      toast({
+        variant: 'destructive',
+        title: t('common:tool_output_guard.save_failed'),
+      })
+      setToolOutputGuardEnabled(user?.preferences?.tool_output_guard_enabled ?? false)
     } finally {
       setIsSaving(false)
     }
@@ -358,6 +382,23 @@ export default function NotificationSettings() {
             </div>
           </label>
         </div>
+      </div>
+
+      <div className="flex items-center justify-between p-4 bg-base border border-border rounded-lg">
+        <div className="flex-1">
+          <h3 className="text-sm font-medium text-text-primary">
+            {t('common:tool_output_guard.title')}
+          </h3>
+          <p className="text-xs text-text-muted mt-1">
+            {t('common:tool_output_guard.description')}
+          </p>
+        </div>
+        <Switch
+          checked={toolOutputGuardEnabled}
+          onCheckedChange={handleToolOutputGuardToggle}
+          disabled={isSaving}
+          data-testid="tool-output-guard-switch"
+        />
       </div>
 
       {/* Restart Onboarding Button */}

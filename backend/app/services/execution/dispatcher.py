@@ -1277,7 +1277,12 @@ class ExecutionDispatcher:
                     )
 
                     if parsed_event:
-                        logger.info(
+                        log_fn = (
+                            logger.debug
+                            if parsed_event.type == EventType.TOOL_ARGUMENT_DELTA.value
+                            else logger.info
+                        )
+                        log_fn(
                             "[ExecutionDispatcher] Parsed SSE event -> internal event: "
                             "task_id=%d, subtask_id=%d, request_id=%s, sse_event=%s, internal_event=%s",
                             request.task_id,

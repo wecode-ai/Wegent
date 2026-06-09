@@ -4,7 +4,7 @@
 
 'use client'
 
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { usePathname } from 'next/navigation'
 import { Coins } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -85,6 +85,7 @@ function useQuotaUsageData(enabled: boolean) {
   const [quota, setQuota] = useState<QuotaData | null>(null)
   const [loading, setLoading] = useState<boolean>(false)
   const [error, setError] = useState<string | null>(null)
+  const hasShownQuotaErrorRef = useRef(false)
 
   const handleLoadQuota = React.useCallback(() => {
     if (!enabled) {
@@ -97,13 +98,17 @@ function useQuotaUsageData(enabled: boolean) {
       .fetchQuota()
       .then(data => {
         setQuota(data)
+        hasShownQuotaErrorRef.current = false
       })
       .catch(() => {
         setError(t('common:quota.load_failed'))
-        toast({
-          variant: 'destructive',
-          title: t('common:quota.load_failed'),
-        })
+        if (!hasShownQuotaErrorRef.current) {
+          toast({
+            variant: 'destructive',
+            title: t('common:quota.load_failed'),
+          })
+          hasShownQuotaErrorRef.current = true
+        }
       })
       .finally(() => {
         setLoading(false)
@@ -118,7 +123,7 @@ function useQuotaUsageData(enabled: boolean) {
   }, [enabled, handleLoadQuota])
 
   useEffect(() => {
-    if (!enabled || !quota || Object.keys(quota).length === 0) {
+    if (!enabled) {
       return
     }
 

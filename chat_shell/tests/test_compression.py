@@ -541,7 +541,7 @@ class TestToolResultTruncationStrategy:
         from chat_shell.guard.tool_output import ToolOutputGuardAdapter
         from chat_shell.guard.types import TruncationPolicy
 
-        counter = TokenCounter(model_name="gpt-4")
+        counter = TokenCounter(model_id="gpt-4")
         adapter = ToolOutputGuardAdapter(
             token_counter=counter,
             default_policy=TruncationPolicy(kind="tokens", limit=200),
@@ -567,7 +567,7 @@ class TestToolResultTruncationStrategy:
         assert details["chars_removed"] == 0
 
     def test_estimate_potential_skips_compacted_messages(self):
-        counter = TokenCounter(model_name="gpt-4")
+        counter = TokenCounter(model_id="gpt-4")
         compacted = {
             "role": "tool",
             "content": "[tool_output ...] big body " + ("x" * 5000),
@@ -587,7 +587,7 @@ class TestToolResultTruncationStrategy:
         assert with_plain.total_compressible_tokens > 0
 
     def test_still_compresses_non_compacted_tool_messages(self):
-        counter = TokenCounter(model_name="gpt-4")
+        counter = TokenCounter(model_id="gpt-4")
         plain = {"role": "tool", "content": "A" * 5000}
 
         strategy = ToolResultTruncationStrategy()

@@ -7,7 +7,6 @@
 from chat_shell.guard.composition import chain_pre_model_hooks
 from chat_shell.guard.context_guard import UnifiedContextGuard
 from chat_shell.guard.tool_output import (
-    BYPASS_COMPACTION_FLAG,
     COMPACTED_FLAG,
     HEAD_RATIO,
     HEADER_PREFIX,
@@ -22,8 +21,10 @@ from chat_shell.guard.types import (
     TruncationPolicy,
     default_emergency_policy,
 )
+from chat_shell.guard_flags import BYPASS_COMPACTION_FLAG
 
 __all__ = [
+    "BYPASS_COMPACTION_FLAG",
     "COMPACTED_FLAG",
     "DEFAULT_EMERGENCY_RATIO",
     "HEAD_RATIO",
@@ -35,7 +36,6 @@ __all__ = [
     "TruncationPolicy",
     "UnifiedContextGuard",
     "build_default_tool_policy_overrides",
-    "BYPASS_COMPACTION_FLAG",
     "chain_pre_model_hooks",
     "default_emergency_policy",
 ]

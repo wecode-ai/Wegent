@@ -25,17 +25,13 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
 
+from chat_shell.guard_flags import BYPASS_COMPACTION_FLAG
 from chat_shell.messages.utils import group_tool_call_messages
 
 from .config import CompressionConfig
 from .token_counter import TokenCounter
 
 logger = logging.getLogger(__name__)
-
-# Duplicated from ``chat_shell.guard.tool_output`` to avoid a layering cycle
-# from ``compression`` -> ``guard``. Keep the literal in sync with
-# ``ToolOutputGuardAdapter``.
-BYPASS_COMPACTION_FLAG = "guard_bypass_compaction"
 
 
 def _is_bypass_protected(msg: dict[str, Any]) -> bool:

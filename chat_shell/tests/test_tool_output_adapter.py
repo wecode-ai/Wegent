@@ -75,10 +75,11 @@ class TestToModelVisible:
         assert lines[0].startswith(HEADER_PREFIX)
         assert "truncated=true" in lines[0]
         assert "total_tokens=500" in lines[0]
+        assert "kept_tokens=100" in lines[0]
+        assert "truncated_tokens=400" in lines[0]
         # Body contains the truncation marker
         body_text = "\n".join(lines[1:])
-        assert "... [truncated " in body_text
-        assert " tokens] ..." in body_text
+        assert "…400 tokens truncated…" in body_text
 
     def test_with_metadata_emits_footer(self):
         """Raw dict with metadata — header and footer present."""
@@ -163,9 +164,10 @@ class TestToModelVisible:
 
         lines = output.split("\n")
         assert "truncated=true" in lines[0]
+        assert "kept_bytes=200" in lines[0]
+        assert "truncated_bytes=9800" in lines[0]
         body_text = "\n".join(lines[1:])
-        assert "... [truncated " in body_text
-        assert " bytes] ..." in body_text
+        assert "…9800 bytes truncated…" in body_text
 
     def test_name_with_whitespace_is_sanitized(self):
         """tool_name with whitespace — replaced with underscores."""

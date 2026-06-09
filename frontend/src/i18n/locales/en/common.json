@@ -808,6 +808,12 @@
     "save_success": "Chat status preference saved",
     "save_failed": "Failed to save chat status preference"
   },
+  "tool_output_guard": {
+    "title": "Tool output truncation",
+    "description": "Automatically compress oversized tool outputs in Chat mode to reduce failures caused by overly long context.",
+    "save_success": "Tool output truncation preference saved",
+    "save_failed": "Failed to save tool output truncation preference"
+  },
   "guide": {
     "title": "Welcome",
     "description": "Before you can start using the app, please complete the setup below first!",

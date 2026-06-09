@@ -49,9 +49,17 @@ from ..tools.deferred_input import DeferredUserInputExit
 logger = logging.getLogger(__name__)
 
 # Message to send to model when tool call limit is reached
-TOOL_LIMIT_REACHED_MESSAGE = """[SYSTEM NOTICE] Tool call limit reached. You have made too many tool calls in this conversation.
+TOOL_LIMIT_REACHED_MESSAGE = """[SYSTEM NOTICE] Tool call limit reached for this turn. You must stop calling tools now.
 
-Please provide your final response to the user based on the information you have gathered so far. Do NOT attempt to call any more tools - simply summarize your findings and provide a helpful response."""
+Additional tool work is still needed, so the information gathered so far may be incomplete.
+
+In your final response:
+- Explicitly tell the user that the tool call limit was reached
+- Summarize only the findings you have already confirmed
+- Clearly call out any incomplete or uncertain parts
+- Suggest a narrower follow-up request if more tool work is required
+
+Do NOT attempt to call any more tools. Provide the best final response you can with the information already collected."""
 
 # Truncation detection constants
 # These finish_reason values indicate content was truncated due to max_token limit
@@ -114,6 +122,74 @@ def _require_non_empty_tool_id(tool_id: Any, context: str) -> str:
         raise InvalidToolMessageSequenceError(f"{context} must be a non-empty string")
 
     return value
+
+
+def _count_tool_use_blocks(output: Any) -> int:
+    """Count tool-use blocks in a provider-native output content payload."""
+    content = None
+    if hasattr(output, "content"):
+        content = getattr(output, "content", None)
+    elif isinstance(output, dict):
+        content = output.get("content")
+
+    if not isinstance(content, list):
+        return 0
+
+    count = 0
+    for part in content:
+        if isinstance(part, dict) and part.get("type") == "tool_use":
+            count += 1
+    return count
+
+
+def _message_preview(message: Any, limit: int = 160) -> str:
+    """Build a short human-readable preview for message content."""
+    content = getattr(message, "content", None)
+    preview = ""
+    if isinstance(content, str):
+        preview = content.strip()
+    elif isinstance(content, list):
+        parts: list[str] = []
+        for part in content:
+            if isinstance(part, str) and part.strip():
+                parts.append(part.strip())
+            elif isinstance(part, dict):
+                part_type = part.get("type")
+                if part_type == "text" and isinstance(part.get("text"), str):
+                    text = part.get("text", "").strip()
+                    if text:
+                        parts.append(text)
+                elif part_type == "tool_use":
+                    name = part.get("name") or "unknown"
+                    parts.append(f"[tool_use:{name}]")
+        preview = " ".join(parts).strip()
+    if not preview:
+        return ""
+    return preview[:limit] if len(preview) > limit else preview
+
+
+def _tail_signature(messages: list[Any], limit: int = 3) -> str:
+    """Summarize the tail of a message sequence for debugging."""
+    tail = messages[-limit:]
+    parts: list[str] = []
+    start_index = len(messages) - len(tail)
+    for offset, message in enumerate(tail):
+        parts.append(
+            f"{start_index + offset}:{type(message).__name__}"
+            f"(tool_calls={len(getattr(message, 'tool_calls', []) or [])},"
+            f"tool_use_blocks={_count_tool_use_blocks(message)})"
+        )
+    return " | ".join(parts)
+
+
+def _last_ai_with_tool_calls(messages: list[Any]) -> AIMessage | None:
+    """Return the most recent AIMessage carrying tool_calls."""
+    for message in reversed(messages):
+        if isinstance(message, AIMessage) and bool(
+            getattr(message, "tool_calls", None)
+        ):
+            return message
+    return None
 
 
 def _validate_tool_message_sequence(
@@ -626,10 +702,18 @@ class LangGraphAgentBuilder:
             raise
 
         except GraphRecursionError:
+            last_tool_call_message = _last_ai_with_tool_calls(_collected_state_messages)
             logger.warning(
                 "[collect_final_state_from_events] GraphRecursionError: Tool call limit reached (max_iterations=%d). "
-                "Asking model to provide final response.",
+                "Asking model to provide final response. messages=%d tail=%s last_tool_call_preview=%s",
                 self.max_iterations,
+                len(_collected_state_messages),
+                _tail_signature(_collected_state_messages),
+                (
+                    _message_preview(last_tool_call_message)
+                    if last_tool_call_message
+                    else ""
+                ),
             )
 
             limit_messages = list(lc_messages) + [
@@ -1114,17 +1198,23 @@ class LangGraphAgentBuilder:
             if on_tool_event
             else None
         )
+        recursion_limit = self.max_iterations * 2 + 1
 
         # Get tracer for LLM request span
         tracer = otel_trace.get_tracer("chat_shell.agents")
 
         add_span_event("astream_events_starting")
+        logger.info(
+            "[stream_tokens] Agent runtime config: max_iterations=%d recursion_limit=%d",
+            self.max_iterations,
+            recursion_limit,
+        )
         try:
             async for event in agent.astream_events(
                 {"messages": lc_messages},
                 config={
                     **(exec_config or {}),
-                    "recursion_limit": self.max_iterations * 2 + 1,
+                    "recursion_limit": recursion_limit,
                 },
                 version="v2",
             ):
@@ -1392,8 +1482,37 @@ class LangGraphAgentBuilder:
 
                     # Check if truncation was detected earlier
                     # If yes, check if the final output contains tool calls
+                    output = event.get("data", {}).get("output")
+                    parsed_tool_calls_count = 0
+                    invalid_tool_calls_count = 0
+                    if hasattr(output, "tool_calls"):
+                        parsed_tool_calls_count = len(
+                            getattr(output, "tool_calls", []) or []
+                        )
+                    elif isinstance(output, dict):
+                        parsed_tool_calls_count = len(output.get("tool_calls") or [])
+                        invalid_tool_calls_count = len(
+                            output.get("invalid_tool_calls") or []
+                        )
+                    content_tool_use_count = _count_tool_use_blocks(output)
+                    metadata = {}
+                    if hasattr(output, "response_metadata"):
+                        metadata = output.response_metadata or {}
+                    elif isinstance(output, dict):
+                        metadata = output.get("response_metadata") or output.get(
+                            "generation_info", {}
+                        )
+                    logger.info(
+                        "[stream_tokens] Model end summary: stop_reason=%s, "
+                        "parsed_tool_calls=%d, content_tool_use_blocks=%d, "
+                        "invalid_tool_calls=%d",
+                        metadata.get("finish_reason") or metadata.get("stop_reason"),
+                        parsed_tool_calls_count,
+                        content_tool_use_count,
+                        invalid_tool_calls_count,
+                    )
+
                     if truncation_detected:
-                        output = event.get("data", {}).get("output")
                         has_tool_calls = False
 
                         # Check for tool calls in the output
@@ -1480,6 +1599,28 @@ class LangGraphAgentBuilder:
                     data = event.get("data", {})
                     output = data.get("output", {})
                     messages_output = output.get("messages", [])
+
+                    if messages_output:
+                        last_message = messages_output[-1]
+                        ai_messages_with_tool_calls = sum(
+                            1
+                            for msg in messages_output
+                            if isinstance(msg, AIMessage)
+                            and bool(getattr(msg, "tool_calls", None))
+                        )
+                        logger.info(
+                            "[stream_tokens] LangGraph chain end summary: "
+                            "messages=%d last_type=%s last_tool_calls=%d "
+                            "ai_messages_with_tool_calls=%d last_tool_use_blocks=%d "
+                            "tail=%s last_preview=%s",
+                            len(messages_output),
+                            type(last_message).__name__,
+                            len(getattr(last_message, "tool_calls", []) or []),
+                            ai_messages_with_tool_calls,
+                            _count_tool_use_blocks(last_message),
+                            _tail_signature(messages_output),
+                            _message_preview(last_message),
+                        )
 
                     if messages_output:
                         # Capture the most complete messages list for history
@@ -1577,6 +1718,19 @@ class LangGraphAgentBuilder:
                     _message_to_context_metrics_dict(msg)
                     for msg in _collected_state_messages
                 ]
+                if (
+                    _collected_state_messages
+                    and isinstance(_collected_state_messages[-1], AIMessage)
+                    and bool(getattr(_collected_state_messages[-1], "tool_calls", None))
+                ):
+                    logger.error(
+                        "[stream_tokens] Stream finished with unresolved tool calls "
+                        "still present on final AI message: tool_calls=%d",
+                        len(
+                            getattr(_collected_state_messages[-1], "tool_calls", [])
+                            or []
+                        ),
+                    )
                 new_msgs = _collected_state_messages[len(lc_messages) :]
                 self._last_messages_chain = _serialize_validated_messages_chain(
                     new_msgs,
@@ -1674,10 +1828,18 @@ class LangGraphAgentBuilder:
 
         except GraphRecursionError as e:
             # Tool call limit reached - ask model to provide final response
+            last_tool_call_message = _last_ai_with_tool_calls(_collected_state_messages)
             logger.warning(
                 "[stream_tokens] GraphRecursionError: Tool call limit reached (max_iterations=%d). "
-                "Asking model to provide final response.",
+                "Asking model to provide final response. messages=%d tail=%s last_tool_call_preview=%s",
                 self.max_iterations,
+                len(_collected_state_messages),
+                _tail_signature(_collected_state_messages),
+                (
+                    _message_preview(last_tool_call_message)
+                    if last_tool_call_message
+                    else ""
+                ),
             )
 
             # Persist messages chain from iterations before the limit
