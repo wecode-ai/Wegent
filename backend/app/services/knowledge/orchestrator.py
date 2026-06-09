@@ -1468,6 +1468,29 @@ class KnowledgeOrchestrator:
 
         logger.info(f"[Orchestrator] Updated document {document_id} content")
 
+        # If the document has a converted attachment, clean it up.
+        # Content has been modified so the conversion result is stale.
+        old_converted_id = document.converted_attachment_id
+        if old_converted_id:
+            from app.services.context.context_service import context_service as _ctx_svc
+
+            document.converted_attachment_id = None
+            try:
+                _ctx_svc.delete_context(
+                    db=db,
+                    context_id=old_converted_id,
+                    user_id=document.user_id,
+                )
+                logger.info(
+                    f"[Orchestrator] Cleaned up stale converted attachment "
+                    f"{old_converted_id} for document {document_id}"
+                )
+            except Exception as e:
+                logger.warning(
+                    f"[Orchestrator] Failed to delete old converted attachment "
+                    f"{old_converted_id}: {e}"
+                )
+
         # Get knowledge base for indexing config
         kb, has_access = KnowledgeService.get_knowledge_base(
             db=db,
@@ -1641,7 +1664,27 @@ class KnowledgeOrchestrator:
 
         try:
             normalized_extension = _normalize_file_extension(document.file_extension)
-            if settings.needs_conversion(normalized_extension):
+            converted_id = document.converted_attachment_id
+
+            if converted_id:
+                # Already converted — index directly using the converted attachment,
+                # skip re-conversion even if the file type normally requires it.
+                async_result = index_document_task.delay(
+                    knowledge_base_id=str(knowledge_base.id),
+                    attachment_id=converted_id,
+                    retriever_name=retriever_name,
+                    retriever_namespace=retriever_namespace,
+                    embedding_model_name=embedding_model_name,
+                    embedding_model_namespace=embedding_model_namespace,
+                    user_id=index_owner_user_id,
+                    user_name=user.user_name,
+                    document_id=document.id,
+                    index_generation=generation,
+                    splitter_config_dict=splitter_config,
+                    trigger_summary=trigger_summary,
+                )
+
+            elif settings.needs_conversion(normalized_extension):
                 # File type requires conversion before indexing
                 # Task is dispatched to knowledge_doc_converter microservice
                 # via the shared Celery broker (knowledge_conversion queue)

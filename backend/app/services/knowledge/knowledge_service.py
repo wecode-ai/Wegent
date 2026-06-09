@@ -1302,6 +1302,8 @@ class KnowledgeService:
         doc_ref = str(doc.id)  # document_id is used as doc_ref in RAG indexing
         kind_id = doc.kind_id
         attachment_id = doc.attachment_id
+        # Capture converted attachment ID before deleting the document row
+        converted_attachment_id = getattr(doc, "converted_attachment_id", None)
 
         # Physically delete document from database
         db.delete(doc)
@@ -1390,6 +1392,25 @@ class KnowledgeService:
                 # Log error but don't fail the document deletion
                 logger.error(
                     f"Failed to delete attachment context {attachment_id}: {str(e)}",
+                    exc_info=True,
+                )
+
+        # Delete converted attachment if exists
+        if converted_attachment_id:
+            try:
+                deleted = context_service.delete_context(
+                    db=db,
+                    context_id=converted_attachment_id,
+                    user_id=user_id,
+                )
+                if deleted:
+                    logger.info(
+                        f"Deleted converted attachment context {converted_attachment_id} for document {document_id}"
+                    )
+            except Exception as e:
+                # Log error but don't fail the document deletion
+                logger.error(
+                    f"Failed to delete converted attachment context {converted_attachment_id}: {str(e)}",
                     exc_info=True,
                 )
 

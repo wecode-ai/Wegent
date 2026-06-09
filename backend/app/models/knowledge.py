@@ -27,6 +27,7 @@ from sqlalchemy import (
     TypeDecorator,
 )
 from sqlalchemy.orm import relationship
+from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy.sql import func
 
 from app.db.base import Base
@@ -130,6 +131,36 @@ class KnowledgeDocument(Base):
     source_config = Column(
         JSON, nullable=False, default={}
     )  # Source configuration (e.g., {"url": "..."} for table)
+
+    # --- Helper properties for converted attachment reference ---
+
+    @property
+    def converted_attachment_id(self) -> int | None:
+        """Get the converted attachment ID from source_config.
+
+        Returns the SubtaskContext ID that stores the converted Markdown content,
+        or None if no conversion has been performed for this document.
+        """
+        cfg = self.source_config or {}
+        val = cfg.get("converted_attachment_id")
+        return int(val) if val is not None else None
+
+    @converted_attachment_id.setter
+    def converted_attachment_id(self, value: int | None) -> None:
+        """Set or clear the converted attachment ID in source_config.
+
+        Args:
+            value: SubtaskContext ID for the converted attachment, or None to clear.
+        """
+        if self.source_config is None:
+            self.source_config = {}
+        if value is not None:
+            self.source_config["converted_attachment_id"] = value
+        else:
+            self.source_config.pop("converted_attachment_id", None)
+        # SQLAlchemy JSON column mutation is not auto-detected;
+        # must explicitly flag it as modified for the ORM to flush the change.
+        flag_modified(self, "source_config")
     # References knowledge_folders.id, 0 = root level (no FK constraint,
     # referential integrity managed at the application layer)
     folder_id = Column(Integer, nullable=False, default=0, index=True)
