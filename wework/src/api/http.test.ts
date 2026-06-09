@@ -35,6 +35,53 @@ describe('createHttpClient', () => {
     })
   })
 
+  test('deduplicates concurrent get requests for the same endpoint and token', async () => {
+    localStorage.setItem('auth_token', 'token-1')
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ items: [1, 2, 3] }),
+    })
+
+    const client = createHttpClient({ baseUrl: '/api' })
+    const [firstResult, secondResult] = await Promise.all([
+      client.get<{ items: number[] }>('/projects'),
+      client.get<{ items: number[] }>('/projects'),
+    ])
+
+    expect(firstResult).toEqual({ items: [1, 2, 3] })
+    expect(secondResult).toEqual({ items: [1, 2, 3] })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock).toHaveBeenCalledWith('/api/projects', {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer token-1',
+      },
+    })
+  })
+
+  test('clears get dedupe after the request settles', async () => {
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ count: 1 }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ count: 2 }),
+      })
+
+    const client = createHttpClient({ baseUrl: '/api' })
+
+    await expect(client.get<{ count: number }>('/devices')).resolves.toEqual({ count: 1 })
+    await expect(client.get<{ count: number }>('/devices')).resolves.toEqual({ count: 2 })
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
   test('throws ApiError with parsed detail message', async () => {
     fetchMock.mockResolvedValueOnce({
       ok: false,
