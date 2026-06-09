@@ -172,7 +172,9 @@ async def _poll_until_done(
                 )
             else:
                 consecutive_errors = 0
-                logger.info(f"[MinerU] Task status: {status}, waiting...")
+                logger.info(
+                    f"[MinerU] Task status: {status}, task_id={task_id}, waiting..."
+                )
                 await asyncio.sleep(config.poll_interval_seconds)
         except RuntimeError:
             raise

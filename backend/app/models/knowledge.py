@@ -161,6 +161,7 @@ class KnowledgeDocument(Base):
         # SQLAlchemy JSON column mutation is not auto-detected;
         # must explicitly flag it as modified for the ORM to flush the change.
         flag_modified(self, "source_config")
+
     # References knowledge_folders.id, 0 = root level (no FK constraint,
     # referential integrity managed at the application layer)
     folder_id = Column(Integer, nullable=False, default=0, index=True)
