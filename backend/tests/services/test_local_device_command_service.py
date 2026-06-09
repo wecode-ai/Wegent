@@ -40,6 +40,18 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     git_clone_definition = resolve_local_device_command(
         "git_clone", settings.LOCAL_DEVICE_COMMANDS
     )
+    git_is_worktree_definition = resolve_local_device_command(
+        "git_is_worktree", settings.LOCAL_DEVICE_COMMANDS
+    )
+    find_worktree_dirs_definition = resolve_local_device_command(
+        "find_worktree_dirs", settings.LOCAL_DEVICE_COMMANDS
+    )
+    git_worktree_remove_definition = resolve_local_device_command(
+        "git_worktree_remove", settings.LOCAL_DEVICE_COMMANDS
+    )
+    remove_worktree_dir_definition = resolve_local_device_command(
+        "remove_worktree_dir", settings.LOCAL_DEVICE_COMMANDS
+    )
     git_branch_definition = resolve_local_device_command(
         "git_branch", settings.LOCAL_DEVICE_COMMANDS
     )
@@ -96,6 +108,20 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     assert git_clone_definition is not None
     assert git_clone_definition.command == "git clone"
     assert git_clone_definition.post_processor is None
+    assert git_is_worktree_definition is not None
+    assert "rev-parse --is-inside-work-tree" in git_is_worktree_definition.command
+    assert git_is_worktree_definition.post_processor is None
+    assert find_worktree_dirs_definition is not None
+    assert "find" in find_worktree_dirs_definition.command
+    assert "mindepth 2" in find_worktree_dirs_definition.command
+    assert find_worktree_dirs_definition.post_processor == "file_list"
+    assert git_worktree_remove_definition is not None
+    assert "worktree remove --force" in git_worktree_remove_definition.command
+    assert git_worktree_remove_definition.post_processor is None
+    assert remove_worktree_dir_definition is not None
+    assert "rm -rf" in remove_worktree_dir_definition.command
+    assert "refusing unsafe worktree path" in remove_worktree_dir_definition.command
+    assert remove_worktree_dir_definition.post_processor is None
     assert git_branch_definition is not None
     assert git_branch_definition.command == "git branch --show-current"
     assert git_branch_definition.post_processor is None
@@ -188,6 +214,52 @@ def test_local_device_command_registry_builds_git_clone_argv():
         definition.command,
         ["https://github.com/wecode-ai/Wegent.git", "Wegent"],
     ) == ["git", "clone", "https://github.com/wecode-ai/Wegent.git", "Wegent"]
+
+
+def test_local_device_command_registry_builds_git_worktree_add_argv():
+    """git_worktree_add should bind args to the fixed worktree subcommand."""
+    from app.services.device.command_registry import (
+        build_local_device_command_argv,
+        resolve_local_device_command,
+    )
+
+    definition = resolve_local_device_command("git_worktree_add")
+
+    assert definition is not None
+    assert build_local_device_command_argv(
+        definition.command,
+        ["/workspace/projects/d837/Wegent", "/workspace/worktrees/1386/Wegent"],
+    ) == [
+        "sh",
+        "-c",
+        'git -C "$1" worktree add --detach "$2"',
+        "--",
+        "/workspace/projects/d837/Wegent",
+        "/workspace/worktrees/1386/Wegent",
+    ]
+
+
+def test_local_device_command_registry_builds_git_worktree_remove_argv():
+    """git_worktree_remove should bind args to the fixed remove subcommand."""
+    from app.services.device.command_registry import (
+        build_local_device_command_argv,
+        resolve_local_device_command,
+    )
+
+    definition = resolve_local_device_command("git_worktree_remove")
+
+    assert definition is not None
+    assert build_local_device_command_argv(
+        definition.command,
+        ["/workspace/projects/d837/Wegent", "/workspace/worktrees/1386/Wegent"],
+    ) == [
+        "sh",
+        "-c",
+        'git -C "$1" worktree remove --force "$2"',
+        "--",
+        "/workspace/projects/d837/Wegent",
+        "/workspace/worktrees/1386/Wegent",
+    ]
 
 
 def test_file_list_post_processor_filters_special_entries():
@@ -493,6 +565,42 @@ async def test_execute_command_calls_registered_device_socket(monkeypatch):
         namespace="/local-executor",
         timeout=10,
     )
+
+
+@pytest.mark.asyncio
+async def test_execute_command_reports_socket_timeout_with_actionable_detail(
+    monkeypatch,
+):
+    """Socket.IO timeout errors should not produce an empty API detail."""
+    from socketio.exceptions import TimeoutError as SocketTimeoutError
+
+    from app.services.device import command_service
+
+    mock_sio = AsyncMock()
+    mock_sio.call.side_effect = SocketTimeoutError()
+
+    monkeypatch.setattr(
+        command_service.device_service,
+        "get_device_online_info",
+        AsyncMock(return_value={"socket_id": "socket-123"}),
+    )
+    monkeypatch.setattr(command_service, "get_sio", lambda: mock_sio)
+
+    with pytest.raises(command_service.DeviceCommandError) as exc_info:
+        await command_service.local_device_command_service.execute_command(
+            user_id=7,
+            device_id="device-abc",
+            command="printenv HOME",
+            timeout_seconds=10,
+            max_output_bytes=4096,
+        )
+
+    message = str(exc_info.value)
+    assert "timed out after 15 seconds" in message
+    assert "device-abc" in message
+    assert "device:execute_command" in message
+    assert "Reconnect or upgrade" in message
+    assert message != "Command RPC failed: "
 
 
 @pytest.mark.asyncio

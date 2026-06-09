@@ -21,6 +21,13 @@ import { createChatStream } from '@/stream/chatStream'
 import { createSocketClient } from '@/stream/socketClient'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
 import { buildTaskRoute, navigateTo, parseTaskRoute } from '@/lib/navigation'
+import { supportsGitWorktreeExecution } from '@/lib/projectClassification'
+import {
+  findWorkbenchDevice,
+  getActiveWorkbenchDeviceId,
+  getWorkbenchDeviceDisplayName,
+  isWorkbenchDeviceOnline,
+} from '@/lib/workbench-device'
 import type {
   Attachment,
   ArchivedTaskListResponse,
@@ -34,6 +41,7 @@ import type {
   LocalDeviceSkill,
   ModelOptions,
   ModelSelectionConfig,
+  ProjectExecutionMode,
   ProjectWithTasks,
   SkillRef,
   Subtask,
@@ -64,6 +72,11 @@ import { WorkbenchContext } from './useWorkbench'
 
 const WEWORK_CLIENT_ORIGIN = 'wework'
 const LOCAL_SKILLS_CACHE_TTL_MS = 60_000
+const DEVICE_STATUS_LABELS: Record<string, string> = {
+  online: '在线',
+  busy: '忙碌',
+  offline: '离线',
+}
 
 interface QueuedWorkbenchSend extends QueuedWorkbenchMessage {
   payload: ChatSendPayload
@@ -120,6 +133,8 @@ export interface WorkbenchContextValue {
     listLocalSkills: () => Promise<LocalDeviceSkill[]>
   }
   runningTaskIds: Set<number>
+  projectExecutionMode: ProjectExecutionMode
+  setProjectExecutionMode: (mode: ProjectExecutionMode) => void
   selectProject: (projectId: number | null) => void
   selectStandaloneDevice: (deviceId: string | null) => void
   startNewChat: () => void
@@ -505,6 +520,8 @@ export function WorkbenchProvider({
   const [guidanceMessages, setGuidanceMessages] = useState<GuidanceWorkbenchMessage[]>([])
   const [isAwaitingAssistantStart, setIsAwaitingAssistantStart] = useState(false)
   const [routePath, setRoutePath] = useState(getCurrentAppPath)
+  const [projectExecutionMode, setProjectExecutionMode] =
+    useState<ProjectExecutionMode>('current_workspace')
   const guidanceSendInFlightRef = useRef(false)
   const localSkillsCacheRef = useRef<
     Map<string, { expiresAt: number; skills: LocalDeviceSkill[] }>
@@ -518,12 +535,63 @@ export function WorkbenchProvider({
     state.currentProject?.config?.execution?.deviceId ??
     state.currentProject?.config?.device_id ??
     (!state.currentProject ? state.standaloneDeviceId ?? undefined : undefined)
+
+  const selectProjectExecutionMode = useCallback(
+    (mode: ProjectExecutionMode) => {
+      setProjectExecutionMode(mode)
+      if (
+        state.currentTask ||
+        !state.currentProject ||
+        !supportsGitWorktreeExecution(state.currentProject)
+      ) {
+        return
+      }
+      const preferences = {
+        ...(currentUser.preferences ?? {}),
+        wework_project_execution_mode: mode,
+      }
+      dispatch({ type: 'user_preferences_updated', preferences })
+      void resolvedServices.userApi
+        ?.updateCurrentUser({ preferences })
+        .catch(() => {
+          dispatch({ type: 'error_set', error: '启动模式保存失败' })
+        })
+    },
+    [
+      currentUser.preferences,
+      resolvedServices.userApi,
+      state.currentProject,
+      state.currentTask,
+    ],
+  )
+
+  useEffect(() => {
+    if (
+      state.currentTask ||
+      !state.currentProject ||
+      !supportsGitWorktreeExecution(state.currentProject)
+    ) {
+      setProjectExecutionMode('current_workspace')
+      return
+    }
+    setProjectExecutionMode(
+      currentUser.preferences?.wework_project_execution_mode ?? 'current_workspace',
+    )
+  }, [
+    currentUser.preferences?.wework_project_execution_mode,
+    state.currentProject,
+    state.currentTask,
+  ])
   const modelSelectionConfig = useMemo(
     () =>
       getTaskModelSelection(state.currentTask) ??
       getNewChatModelSelection(currentUser) ??
       null,
     [currentUser, state.currentTask]
+  )
+  const modelCompatibilityConfig = useMemo(
+    () => getTaskModelSelection(state.currentTask),
+    [state.currentTask]
   )
   const persistNewChatModelSelection = useCallback(
     (selection: ModelSelectionConfig) => {
@@ -551,6 +619,7 @@ export function WorkbenchProvider({
     api: resolvedServices.modelApi,
     locked: false,
     selectionConfig: modelSelectionConfig,
+    compatibilityConfig: modelCompatibilityConfig,
     selectionReady: !state.isBootstrapping,
     onSelectionChange: persistNewChatModelSelection,
   })
@@ -766,7 +835,7 @@ export function WorkbenchProvider({
       void resolvedServices.userApi
         ?.updateCurrentUser({
           preferences: {
-            ...(user.preferences ?? {}),
+            ...(currentUser.preferences ?? {}),
             default_execution_target: deviceId,
           },
         })
@@ -774,7 +843,7 @@ export function WorkbenchProvider({
           // Keep the in-session selection even if preference persistence fails.
         })
     },
-    [resolvedServices.userApi, state.devices, user.preferences]
+    [currentUser.preferences, resolvedServices.userApi, state.devices]
   )
 
   const selectProject = useCallback(
@@ -926,7 +995,15 @@ export function WorkbenchProvider({
       setQueuedSends([])
       setGuidanceMessages([])
       writeTaskIdToUrl(taskId)
-      await resolvedServices.chatStream.joinTask(taskId)
+      const joinResponse = await resolvedServices.chatStream.joinTask(taskId)
+      if (joinResponse?.streaming) {
+        dispatchMessages({
+          type: 'assistant_cached',
+          taskId,
+          subtaskId: joinResponse.streaming.subtask_id,
+          content: joinResponse.streaming.cached_content,
+        })
+      }
       const routeProjectId =
         resolvedProjectId && resolvedProjectId > 0 ? resolvedProjectId : undefined
       handledTaskRouteRef.current = getTaskRouteKey(taskId, routeProjectId)
@@ -1225,11 +1302,11 @@ export function WorkbenchProvider({
     (message: string): { payload: ChatSendPayload; activeDeviceId?: string } | null => {
       if (!state.defaultTeam) return null
 
-      const activeDeviceId =
-        state.currentTask?.device_id ??
-        state.currentProject?.config?.execution?.deviceId ??
-        state.currentProject?.config?.device_id ??
-        (!state.currentProject ? state.standaloneDeviceId ?? undefined : undefined)
+      const activeDeviceId = getActiveWorkbenchDeviceId({
+        currentTask: state.currentTask,
+        currentProject: state.currentProject,
+        standaloneDeviceId: state.standaloneDeviceId,
+      })
 
       const payload: ChatSendPayload = {
         task_id: state.currentTask?.id,
@@ -1239,6 +1316,19 @@ export function WorkbenchProvider({
         device_id: activeDeviceId,
         task_type: 'code',
         message,
+      }
+
+      if (
+        !state.currentTask &&
+        state.currentProject &&
+        projectExecutionMode === 'git_worktree' &&
+        supportsGitWorktreeExecution(state.currentProject)
+      ) {
+        payload.execution = {
+          workspace: {
+            source: 'git_worktree',
+          },
+        }
       }
 
       if (modelSelection.selectedModel) {
@@ -1265,6 +1355,7 @@ export function WorkbenchProvider({
       modelSelection.selectedModel,
       modelSelection.selectedModelOptions,
       skillSelection.selectedSkills,
+      projectExecutionMode,
       state.currentProject,
       state.currentTask,
       state.defaultTeam,
@@ -1365,6 +1456,23 @@ export function WorkbenchProvider({
     const message = trimmedMessage || '请参考附件'
     const prepared = buildSendPayload(message)
     if (!prepared) return
+    if (prepared.activeDeviceId) {
+      const activeDevice = findWorkbenchDevice(state.devices, prepared.activeDeviceId)
+      if (!isWorkbenchDeviceOnline(activeDevice)) {
+        const deviceName = getWorkbenchDeviceDisplayName(
+          activeDevice,
+          prepared.activeDeviceId,
+        )
+        const status = activeDevice
+          ? DEVICE_STATUS_LABELS[activeDevice.status] ?? activeDevice.status
+          : '不可用'
+        dispatch({
+          type: 'error_set',
+          error: `${deviceName} ${status}，恢复在线后可继续对话`,
+        })
+        return
+      }
+    }
     const attachmentsSnapshot = hasAttachments
       ? [...attachmentSelection.attachments]
       : undefined
@@ -1402,6 +1510,7 @@ export function WorkbenchProvider({
     buildSendPayload,
     hasActiveTurn,
     sendPreparedMessage,
+    state.devices,
     state.currentTask?.id,
     state.input,
   ])
@@ -1653,6 +1762,8 @@ export function WorkbenchProvider({
     queuedMessages: queuedSends,
     guidanceMessages,
     runningTaskIds,
+    projectExecutionMode,
+    setProjectExecutionMode: selectProjectExecutionMode,
     projectChat: {
       models: modelSelection.models,
       skills: skillSelection.skills,

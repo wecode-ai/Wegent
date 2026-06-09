@@ -1,9 +1,11 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { ConnectionsSettingsPage } from './ConnectionsSettingsPage'
 import { createDeviceApi } from '@/api/devices'
+import { createProjectApi } from '@/api/projects'
 import { AppearanceProvider } from '@/features/appearance'
+import '@/i18n'
 import type { DeviceInfo } from '@/types/devices'
 
 const runtimeConfigMock = vi.hoisted(() => ({
@@ -27,7 +29,12 @@ vi.mock('@/api/devices', () => ({
   createDeviceApi: vi.fn(),
 }))
 
+vi.mock('@/api/projects', () => ({
+  createProjectApi: vi.fn(),
+}))
+
 const createDeviceApiMock = vi.mocked(createDeviceApi)
+const createProjectApiMock = vi.mocked(createProjectApi)
 
 function cloudDevice(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
   return {
@@ -72,6 +79,10 @@ describe('ConnectionsSettingsPage', () => {
     getMetricsHistory: vi.fn(),
     getVncConfig: vi.fn(),
   }
+  const projectApi = {
+    listWorktrees: vi.fn(),
+    deleteWorktree: vi.fn(),
+  }
 
   beforeEach(() => {
     vi.clearAllMocks()
@@ -97,6 +108,13 @@ describe('ConnectionsSettingsPage', () => {
       sandbox_id: 'sandbox-1',
     })
     createDeviceApiMock.mockReturnValue(api)
+    projectApi.listWorktrees.mockResolvedValue({ total: 0, devices: [] })
+    projectApi.deleteWorktree.mockResolvedValue({
+      worktree_id: '1386',
+      path: '/workspace/worktrees/1386/Wegent',
+      deleted_task_ids: [],
+    })
+    createProjectApiMock.mockReturnValue(projectApi as ReturnType<typeof createProjectApi>)
   })
 
   test('keeps the cloud device creation notice visible after the create request resolves', async () => {
@@ -139,6 +157,169 @@ describe('ConnectionsSettingsPage', () => {
 
     expect(screen.getByTestId('appearance-settings-page')).toBeInTheDocument()
     expect(screen.getByTestId('appearance-mode-system')).toBeInTheDocument()
+  })
+
+  test('opens worktree settings from the coding settings navigation', async () => {
+    api.getAllDevices.mockResolvedValue([])
+    projectApi.listWorktrees.mockResolvedValue({
+      total: 2,
+      devices: [
+        {
+          device_id: 'device-1',
+          device_name: 'Crystal Mac',
+          device_status: 'online',
+          available: true,
+          items: [
+            {
+              worktree_id: '1386',
+              project_name: 'Wegent',
+              path: '/workspace/worktrees/1386/Wegent',
+              project: {
+                id: 7,
+                name: 'Wegent',
+                source_path: 'd837/Wegent',
+              },
+              task: {
+                id: 1386,
+                title: 'Fix sidebar persistence',
+                status: 'RUNNING',
+                project_id: 7,
+              },
+            },
+          ],
+        },
+        {
+          device_id: 'device-2',
+          device_name: 'Linux Builder',
+          device_status: 'offline',
+          available: true,
+          items: [
+            {
+              worktree_id: '1387',
+              project_name: 'Wegent',
+              path: '/workspace/worktrees/1387/Wegent',
+              project: {
+                id: 7,
+                name: 'Wegent',
+                source_path: 'd837/Wegent',
+              },
+              task: null,
+            },
+          ],
+        },
+      ],
+    })
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    await userEvent.click(screen.getByTestId('settings-nav-worktrees'))
+
+    expect(screen.getByTestId('worktrees-settings-page')).toBeInTheDocument()
+    expect(screen.getByText('编码')).toBeInTheDocument()
+    expect(screen.getByTestId('worktrees-refresh-button')).toHaveAccessibleName('刷新')
+    expect(screen.getByTestId('worktrees-refresh-button')).not.toHaveTextContent('刷新')
+    const projectGroup = await screen.findByTestId('worktree-project-group')
+    expect(projectGroup).toHaveTextContent('Wegent')
+    const metadata = within(projectGroup).getByTestId('worktree-project-metadata')
+    expect(metadata).toHaveTextContent('d837/Wegent')
+    expect(metadata).toHaveTextContent('Crystal Mac')
+    expect(metadata).toHaveTextContent('Linux Builder')
+    expect(await screen.findByText('/workspace/worktrees/1386/Wegent')).toBeInTheDocument()
+    expect(screen.getByText('/workspace/worktrees/1387/Wegent')).toBeInTheDocument()
+    expect(screen.getByTestId('worktree-task-link-1386')).toHaveTextContent(
+      'Fix sidebar persistence',
+    )
+    expect(screen.getByTestId('worktree-task-missing-1387')).toHaveTextContent(
+      '未关联会话',
+    )
+    expect(screen.getByText('Crystal Mac')).toHaveClass('text-text-muted')
+    expect(screen.getByText('Linux Builder')).toHaveClass('text-text-muted')
+    within(projectGroup).getAllByTestId('worktree-row').forEach(row => {
+      expect(row).not.toHaveTextContent('Crystal Mac')
+      expect(row).not.toHaveTextContent('Linux Builder')
+    })
+    expect(screen.queryByText('device-1')).not.toBeInTheDocument()
+    expect(screen.queryByText('1386')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('worktree-device-device-1')).not.toBeInTheDocument()
+    expect(projectApi.listWorktrees).toHaveBeenCalledTimes(1)
+
+    await userEvent.click(screen.getByTestId('worktree-task-link-1386'))
+
+    expect(window.location.pathname).toBe('/projects/7/tasks/1386')
+  })
+
+  test('shows a single empty worktree state without device groups', async () => {
+    api.getAllDevices.mockResolvedValue([])
+    projectApi.listWorktrees.mockResolvedValue({
+      total: 0,
+      devices: [
+        {
+          device_id: 'device-empty',
+          device_name: 'Empty Device',
+          device_status: 'online',
+          available: true,
+          items: [],
+        },
+      ],
+    })
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    await userEvent.click(screen.getByTestId('settings-nav-worktrees'))
+
+    expect(await screen.findByText('尚无工作树')).toBeInTheDocument()
+    expect(screen.getByText('创建的工作树将显示在此处。')).toHaveClass('text-text-secondary')
+    expect(screen.queryByText('此设备暂无工作树')).not.toBeInTheDocument()
+    expect(screen.queryByText('Empty Device')).not.toBeInTheDocument()
+  })
+
+  test('deletes a worktree from the worktree settings page', async () => {
+    api.getAllDevices.mockResolvedValue([])
+    projectApi.listWorktrees
+      .mockResolvedValueOnce({
+        total: 1,
+        devices: [
+          {
+            device_id: 'device-1',
+            device_name: 'Crystal Mac',
+            device_status: 'online',
+            available: true,
+            items: [
+              {
+                worktree_id: '1386',
+                project_name: 'Wegent',
+                path: '/workspace/worktrees/1386/Wegent',
+                project: {
+                  id: 7,
+                  name: 'Wegent',
+                  source_path: 'd837/Wegent',
+                },
+              },
+            ],
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ total: 0, devices: [] })
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    await userEvent.click(screen.getByTestId('settings-nav-worktrees'))
+    await userEvent.click(await screen.findByTestId('delete-worktree-button-1386'))
+
+    expect(screen.getByTestId('confirm-delete-worktree-dialog')).toHaveTextContent(
+      '将删除这个工作树目录，并一并删除使用该工作树的任务。',
+    )
+
+    await userEvent.click(screen.getByTestId('confirm-delete-worktree-button'))
+
+    await waitFor(() =>
+      expect(projectApi.deleteWorktree).toHaveBeenCalledWith({
+        device_id: 'device-1',
+        worktree_id: '1386',
+        project_id: 7,
+      }),
+    )
+    expect(projectApi.listWorktrees).toHaveBeenCalledTimes(2)
   })
 
   test('opens appearance settings from the browser path on reload', () => {

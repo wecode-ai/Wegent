@@ -20,6 +20,7 @@ import type {
 } from '@/types/subscription'
 import type { UnifiedSkill } from '@/apis/skills'
 import type { DeviceInfo } from '@/apis/devices'
+import type { CompatibleProvider } from '@/utils/modelCompatibility'
 
 // Model type for selector
 export interface SubscriptionModel {
@@ -56,7 +57,7 @@ export interface SendAreaSectionProps {
   models: SubscriptionModel[]
   modelsLoading: boolean
   modelRequired: boolean
-  compatibleProvider: string | undefined
+  compatibleProvider: CompatibleProvider[] | undefined
   // Skills
   skillRefs: SubscriptionSkillRef[]
   setSkillRefs: React.Dispatch<React.SetStateAction<SubscriptionSkillRef[]>>

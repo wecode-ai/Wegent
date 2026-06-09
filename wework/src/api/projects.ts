@@ -4,8 +4,11 @@ import type {
   CreateGitWorkspaceProjectRequest,
   CreateGitWorkspaceProjectResponse,
   CreateProjectRequest,
+  DeleteProjectWorktreeRequest,
+  DeleteProjectWorktreeResponse,
   ProjectListResponse,
   ProjectDeviceSessionResponse,
+  ProjectWorktreeListResponse,
   ProjectWithTasks,
   TaskArchiveBatchResponse,
   UpdateProjectRequest,
@@ -40,6 +43,18 @@ export function createProjectApi(client: HttpClient) {
         ...data,
         client_origin: WEWORK_CLIENT_ORIGIN,
       })
+    },
+    listWorktrees(): Promise<ProjectWorktreeListResponse> {
+      return client.get(withClientOrigin('/projects/worktrees'))
+    },
+    deleteWorktree(
+      data: DeleteProjectWorktreeRequest
+    ): Promise<DeleteProjectWorktreeResponse> {
+      return client.delete(
+        withClientOrigin(
+          `/projects/worktrees/${encodeURIComponent(data.device_id)}/${encodeURIComponent(data.worktree_id)}?project_id=${encodeURIComponent(String(data.project_id))}`,
+        ),
+      )
     },
     updateProject(
       projectId: number,

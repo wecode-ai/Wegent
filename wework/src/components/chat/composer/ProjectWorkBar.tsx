@@ -7,9 +7,12 @@ import {
   FolderGit2,
   FolderPlus,
   FolderX,
+  GitBranch,
   HardDrive,
+  Laptop,
   Plus,
   Search,
+  X,
 } from 'lucide-react'
 import {
   useCallback,
@@ -20,6 +23,8 @@ import {
   useState,
 } from 'react'
 import { ProjectFolderIcon } from '@/components/projects/ProjectFolderIcon'
+import { BranchSelector } from '@/components/common/BranchSelector'
+import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   getPreferredStandaloneDeviceId,
@@ -27,8 +32,9 @@ import {
   isOnlineDevice,
   sortStandaloneDevices,
 } from '@/lib/device-selection'
+import { supportsGitWorktreeExecution } from '@/lib/projectClassification'
 import { cn } from '@/lib/utils'
-import type { DeviceInfo, ProjectWithTasks } from '@/types/api'
+import type { DeviceInfo, ProjectExecutionMode, ProjectWithTasks } from '@/types/api'
 import type { ProjectCreateMode } from '../ChatInput'
 import { useOutsideClick } from './useOutsideClick'
 
@@ -46,6 +52,7 @@ const PROJECT_MENU_EMPTY_STATE_HEIGHT = 42
 const PROJECT_MENU_DIVIDER_BLOCK_HEIGHT = 13
 const PROJECT_MENU_ACTION_HEIGHT = 32
 const PROJECT_MENU_ACTION_GAP = 2
+const EXECUTION_MODE_MENU_HEIGHT = 126
 const CREATE_PROJECT_SUBMENU_HEIGHT = 128
 const STANDALONE_DEVICE_SUBMENU_MAX_HEIGHT = 280
 const CLIPPING_OVERFLOW_RE = /(auto|hidden|scroll|clip)/
@@ -80,7 +87,10 @@ function getStackHeight(itemCount: number, itemHeight: number, gap: number) {
   return itemCount * itemHeight + (itemCount - 1) * gap
 }
 
-function getProjectMenuFitHeight(projectCount: number, hasCreateProjectOption: boolean) {
+function getProjectMenuFitHeight(
+  projectCount: number,
+  hasCreateProjectOption: boolean,
+) {
   const visibleProjectCount = Math.min(projectCount, PROJECT_MENU_VISIBLE_PROJECT_ROWS)
   const projectListHeight =
     visibleProjectCount > 0
@@ -107,9 +117,18 @@ interface ProjectWorkBarProps {
   devices: DeviceInfo[]
   currentProjectId?: number
   currentStandaloneDeviceId?: string | null
+  executionMode: ProjectExecutionMode
+  executionModeLocked?: boolean
   onSelectProject: (projectId: number | null) => void
   onSelectStandaloneDevice: (deviceId: string | null) => void
+  onExecutionModeChange: (mode: ProjectExecutionMode) => void
   onCreateProjectMode?: (mode: ProjectCreateMode) => void
+  branchName?: string
+  branchLoading?: boolean
+  onRefreshBranch?: () => Promise<void>
+  onListBranches?: () => Promise<string[]>
+  onCheckoutBranch?: (branchName: string) => Promise<void>
+  onCreateBranch?: (branchName: string) => Promise<void>
   className?: string
   buttonClassName?: string
   menuClassName?: string
@@ -121,27 +140,44 @@ export function ProjectWorkBar({
   devices,
   currentProjectId,
   currentStandaloneDeviceId,
+  executionMode,
+  executionModeLocked = false,
   onSelectProject,
   onSelectStandaloneDevice,
+  onExecutionModeChange,
   onCreateProjectMode,
+  branchName,
+  branchLoading,
+  onRefreshBranch,
+  onListBranches,
+  onCheckoutBranch,
+  onCreateBranch,
   className,
   buttonClassName,
   menuClassName,
   emptyLabel,
 }: ProjectWorkBarProps) {
   const { t } = useTranslation('common')
+  const isMobile = useIsMobile()
   const containerRef = useRef<HTMLDivElement>(null)
+  const executionModeContainerRef = useRef<HTMLDivElement>(null)
   const triggerButtonRef = useRef<HTMLButtonElement>(null)
+  const executionModeButtonRef = useRef<HTMLButtonElement>(null)
   const createOptionButtonRef = useRef<HTMLButtonElement>(null)
   const standaloneOptionButtonRef = useRef<HTMLButtonElement>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
   const [open, setOpen] = useState(false)
+  const [executionModeOpenProjectId, setExecutionModeOpenProjectId] =
+    useState<number | null>(null)
   const [activeSubmenu, setActiveSubmenu] = useState<'create' | 'standalone' | null>(null)
   const [projectQuery, setProjectQuery] = useState('')
   const [menuLayout, setMenuLayout] = useState<{
     placement: 'below' | 'above'
     maxHeight: number
   }>({ placement: 'below', maxHeight: PROJECT_MENU_MAX_HEIGHT })
+  const [executionModePlacement, setExecutionModePlacement] = useState<
+    'below' | 'above'
+  >('below')
   const [sideSubmenuPlacement, setSideSubmenuPlacement] = useState<
     Record<'create' | 'standalone', 'below' | 'above'>
   >({
@@ -153,9 +189,24 @@ export function ProjectWorkBar({
     setActiveSubmenu(null)
     setProjectQuery('')
   }, [])
+  const closeExecutionModeMenu = useCallback(() => {
+    setExecutionModeOpenProjectId(null)
+  }, [])
+
+  const standaloneDevices = useMemo(() => sortStandaloneDevices(devices), [devices])
+  const currentProject = useMemo(
+    () => projects.find(p => p.id === currentProjectId),
+    [projects, currentProjectId]
+  )
+  const supportsGitWorktree = Boolean(
+    currentProject && supportsGitWorktreeExecution(currentProject),
+  )
+  const canShowBranchSelector = Boolean(branchName?.trim())
+  const executionModeOpen =
+    supportsGitWorktree && executionModeOpenProjectId === currentProjectId
 
   useOutsideClick(containerRef, open, closeMenu)
-  const standaloneDevices = useMemo(() => sortStandaloneDevices(devices), [devices])
+  useOutsideClick(executionModeContainerRef, executionModeOpen, closeExecutionModeMenu)
 
   const updateMenuLayout = useCallback(() => {
     if (!open || typeof window === 'undefined') return
@@ -166,7 +217,10 @@ export function ProjectWorkBar({
     const visibleBounds = getMenuVisibleBounds(containerRef.current)
     const spaceBelow = visibleBounds.bottom - triggerRect.bottom
     const spaceAbove = triggerRect.top - visibleBounds.top
-    const targetHeight = getProjectMenuFitHeight(projects.length, Boolean(onCreateProjectMode))
+    const targetHeight = getProjectMenuFitHeight(
+      projects.length,
+      Boolean(onCreateProjectMode),
+    )
     const placement =
       spaceBelow >= targetHeight || spaceBelow >= spaceAbove
         ? 'below'
@@ -181,6 +235,26 @@ export function ProjectWorkBar({
       return { placement, maxHeight }
     })
   }, [onCreateProjectMode, open, projects.length])
+
+  const updateExecutionModeLayout = useCallback(() => {
+    if (!executionModeOpen || typeof window === 'undefined') return
+
+    const triggerRect = executionModeButtonRef.current?.getBoundingClientRect()
+    if (!triggerRect) return
+
+    const visibleBounds = getMenuVisibleBounds(executionModeContainerRef.current)
+    const spaceBelow = visibleBounds.bottom - triggerRect.bottom
+    const spaceAbove = triggerRect.top - visibleBounds.top
+    const placement =
+      spaceBelow >= EXECUTION_MODE_MENU_HEIGHT || spaceBelow >= spaceAbove
+        ? 'below'
+        : 'above'
+
+    setExecutionModePlacement(current => {
+      if (current === placement) return current
+      return placement
+    })
+  }, [executionModeOpen])
 
   const updateSideSubmenuPlacement = useCallback(
     (submenu: 'create' | 'standalone') => {
@@ -216,6 +290,10 @@ export function ProjectWorkBar({
     updateMenuLayout()
   }, [updateMenuLayout])
 
+  useLayoutEffect(() => {
+    updateExecutionModeLayout()
+  }, [updateExecutionModeLayout])
+
   useEffect(() => {
     if (!open) return
 
@@ -230,6 +308,13 @@ export function ProjectWorkBar({
     return () => window.removeEventListener('resize', handleResize)
   }, [activeSubmenu, open, updateMenuLayout, updateSideSubmenuPlacement])
 
+  useEffect(() => {
+    if (!executionModeOpen) return
+
+    window.addEventListener('resize', updateExecutionModeLayout)
+    return () => window.removeEventListener('resize', updateExecutionModeLayout)
+  }, [executionModeOpen, updateExecutionModeLayout])
+
   useLayoutEffect(() => {
     if (!activeSubmenu) return
 
@@ -238,17 +323,13 @@ export function ProjectWorkBar({
 
   useEffect(() => {
     if (!open) return
+    if (isMobile) return
 
     searchInputRef.current?.focus()
-  }, [open])
-
-  const currentProject = useMemo(
-    () => projects.find(p => p.id === currentProjectId),
-    [projects, currentProjectId]
-  )
+  }, [isMobile, open])
 
   const getDeviceForProject = useCallback((project: ProjectWithTasks): DeviceInfo | undefined => {
-    const deviceId = project.config?.execution?.deviceId
+    const deviceId = project.config?.execution?.deviceId ?? project.config?.device_id
     if (!deviceId) return undefined
     return devices.find(d => d.device_id === deviceId)
   }, [devices])
@@ -297,6 +378,14 @@ export function ProjectWorkBar({
     closeMenu()
   }
 
+  const handleExecutionModeChange = (mode: ProjectExecutionMode) => {
+    if (executionModeLocked) return
+    if (mode !== executionMode) {
+      onExecutionModeChange(mode)
+    }
+    closeExecutionModeMenu()
+  }
+
   const handleCreateProjectMode = (mode: ProjectCreateMode) => {
     onCreateProjectMode?.(mode)
     closeMenu()
@@ -312,9 +401,50 @@ export function ProjectWorkBar({
       closeMenu()
       return
     }
+    closeExecutionModeMenu()
     setActiveSubmenu(null)
     setOpen(true)
   }
+
+  const handleToggleExecutionModeMenu = () => {
+    if (executionModeOpen) {
+      closeExecutionModeMenu()
+      return
+    }
+    closeMenu()
+    setExecutionModeOpenProjectId(currentProjectId ?? null)
+  }
+
+  const executionModeTriggerLabel =
+    executionMode === 'git_worktree'
+      ? t('workbench.execution_mode_git_worktree', '新工作树')
+      : t('workbench.execution_mode_current_workspace_trigger', '本地模式')
+  const ExecutionModeTriggerIcon =
+    executionMode === 'git_worktree' ? GitBranch : Laptop
+
+  const renderMobileSheetHeader = (title: string, subtitle: string, onClose: () => void) => (
+    <>
+      <div className="mx-auto mt-3 h-1 w-11 shrink-0 rounded-full bg-border" />
+      <div className="flex shrink-0 items-center justify-between px-5 pb-3 pt-4">
+        <div className="min-w-0">
+          <h2 className="text-lg font-semibold text-text-primary">{title}</h2>
+          <p className="mt-1 truncate text-xs text-text-muted">{subtitle}</p>
+        </div>
+        <button
+          type="button"
+          data-testid="project-work-mobile-close-button"
+          aria-label={t('workbench.close_menu', '关闭菜单')}
+          onClick={onClose}
+          className="flex h-11 w-11 items-center justify-center rounded-full bg-surface text-text-primary"
+        >
+          <X className="h-5 w-5" />
+        </button>
+      </div>
+    </>
+  )
+
+  const renderMobileBackdrop = (onClose: () => void) =>
+    <div className="fixed inset-0 z-modal bg-black/25" onClick={onClose} />
 
   const getCompactDeviceStatusLabel = (device: DeviceInfo) => {
     if (device.status === 'online') {
@@ -333,19 +463,33 @@ export function ProjectWorkBar({
   }
 
   return (
-    <div className={cn('flex min-h-[56px] items-center px-6', className)}>
+    <div className={cn('flex min-h-[56px] items-center gap-2 px-6', className)}>
       <div ref={containerRef} className="relative">
+        {open && isMobile && renderMobileBackdrop(closeMenu)}
         {open && (
           <div
             data-testid="project-work-menu"
+            data-mobile={isMobile ? 'true' : undefined}
             className={cn(
-              'absolute left-0 z-popover flex w-80 flex-col rounded-2xl border border-border bg-background p-1.5 shadow-[0_16px_44px_rgba(0,0,0,0.16)]',
-              menuLayout.placement === 'below' ? 'top-11' : 'bottom-11',
-              menuClassName,
+              isMobile
+                ? 'fixed inset-x-0 bottom-0 z-modal flex max-h-[45dvh] flex-col rounded-t-[28px] border border-border bg-background shadow-[0_-18px_48px_rgba(0,0,0,0.18)]'
+                : 'absolute left-0 z-popover flex w-80 flex-col rounded-2xl border border-border bg-background p-1.5 shadow-[0_16px_44px_rgba(0,0,0,0.16)]',
+              !isMobile && (menuLayout.placement === 'below' ? 'top-11' : 'bottom-11'),
+              !isMobile && menuClassName,
             )}
-            style={{ maxHeight: menuLayout.maxHeight }}
+            style={isMobile ? undefined : { maxHeight: menuLayout.maxHeight }}
           >
-            <label className="mb-1.5 flex h-9 shrink-0 items-center gap-2 rounded-xl border border-border bg-surface px-3 text-text-secondary">
+            {isMobile &&
+              renderMobileSheetHeader(
+                t('workbench.project_sheet_title', '选择项目'),
+                currentProject?.name ?? emptyLabel ?? t('workbench.enter_project_work', '进入项目工作'),
+                closeMenu,
+              )}
+            <div className={cn(isMobile && 'flex min-h-0 flex-col px-5 pb-5')}>
+            <label className={cn(
+              'mb-1.5 flex h-9 shrink-0 items-center gap-2 rounded-xl border border-border bg-surface px-3 text-text-secondary',
+              isMobile && 'h-11 rounded-2xl text-base',
+            )}>
               <Search className="h-4 w-4 shrink-0" />
               <input
                 ref={searchInputRef}
@@ -355,7 +499,10 @@ export function ProjectWorkBar({
                 onChange={event => setProjectQuery(event.target.value)}
                 onFocus={() => setActiveSubmenu(null)}
                 placeholder={t('workbench.search_projects', '搜索项目')}
-                className="min-w-0 flex-1 bg-transparent text-[13px] leading-[18px] text-text-primary outline-none placeholder:text-text-muted"
+                className={cn(
+                  'min-w-0 flex-1 bg-transparent text-[13px] leading-[18px] text-text-primary outline-none placeholder:text-text-muted',
+                  isMobile && 'text-base leading-5',
+                )}
               />
             </label>
             {projects.length === 0 ? (
@@ -372,8 +519,11 @@ export function ProjectWorkBar({
             ) : (
               <div
                 data-testid="project-options-list"
-                className="min-h-0 flex-1 space-y-0.5 overflow-y-auto pr-1"
-                style={{ maxHeight: PROJECT_MENU_LIST_MAX_HEIGHT }}
+                className={cn(
+                  'min-h-0 flex-1 space-y-0.5 overflow-y-auto pr-1',
+                  isMobile && 'scrollbar-none max-h-[calc(45dvh-168px)] space-y-2 py-2',
+                )}
+                style={{ maxHeight: isMobile ? undefined : PROJECT_MENU_LIST_MAX_HEIGHT }}
               >
                 {filteredProjects.map(project => {
                   const device = getDeviceForProject(project)
@@ -457,7 +607,7 @@ export function ProjectWorkBar({
               </div>
             )}
             <div className="my-1.5 shrink-0 border-t border-border" />
-            <div className="shrink-0 space-y-0.5">
+            <div className={cn('shrink-0 space-y-0.5', isMobile && 'space-y-2')}>
               {onCreateProjectMode && (
                 <div
                   className="relative"
@@ -600,6 +750,7 @@ export function ProjectWorkBar({
                 )}
               </div>
             </div>
+            </div>
           </div>
         )}
         <button
@@ -608,7 +759,8 @@ export function ProjectWorkBar({
           data-testid="project-work-button"
           onClick={handleToggleMenu}
           className={cn(
-            'flex h-9 min-w-[44px] items-center gap-2 rounded-full px-1 text-[13px] font-medium leading-[18px] text-text-secondary hover:bg-muted',
+            'flex h-9 min-w-[44px] items-center gap-2 rounded-full px-2 text-[13px] font-medium leading-[18px] text-text-secondary transition-[background-color,color,box-shadow] hover:bg-background hover:text-text-primary hover:shadow-[0_10px_28px_rgba(0,0,0,0.14)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
+            open && 'bg-background text-text-primary shadow-[0_10px_28px_rgba(0,0,0,0.14)]',
             buttonClassName,
           )}
           aria-expanded={open}
@@ -617,7 +769,7 @@ export function ProjectWorkBar({
           {currentProject ? (
             <>
               <ProjectFolderIcon project={currentProject} className="h-4 w-4" />
-              <span>{currentProject.name}</span>
+              <span className="max-w-[12rem] truncate">{currentProject.name}</span>
             </>
           ) : (
             <>
@@ -628,6 +780,114 @@ export function ProjectWorkBar({
           <ChevronDown className="h-4 w-4" />
         </button>
       </div>
+      {supportsGitWorktree && (
+        <div ref={executionModeContainerRef} className="relative">
+          {executionModeOpen && isMobile && renderMobileBackdrop(closeExecutionModeMenu)}
+          {executionModeOpen && (
+            <div
+              data-testid="project-execution-mode-menu"
+              data-mobile={isMobile ? 'true' : undefined}
+              className={cn(
+                isMobile
+                  ? 'fixed inset-x-0 bottom-0 z-modal flex max-h-[45dvh] flex-col rounded-t-[28px] border border-border bg-background shadow-[0_-18px_48px_rgba(0,0,0,0.18)]'
+                  : 'absolute left-0 z-popover w-56 rounded-2xl border border-border bg-background p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]',
+                !isMobile && (executionModePlacement === 'below' ? 'top-11' : 'bottom-11'),
+              )}
+            >
+              {isMobile &&
+                renderMobileSheetHeader(
+                  t('workbench.execution_mode_label', '启动模式'),
+                  executionModeTriggerLabel,
+                  closeExecutionModeMenu,
+                )}
+              <div
+                data-testid="project-execution-mode-menu-section"
+                className={cn('space-y-0.5', isMobile && 'px-5 pb-5 pt-2')}
+              >
+                <div className="px-2 pb-1 text-xs font-medium leading-5 text-text-muted">
+                  {t('workbench.execution_mode_label', '启动模式')}
+                </div>
+                <button
+                  type="button"
+                  data-testid="execution-mode-current-workspace-button"
+                  disabled={executionModeLocked}
+                  onClick={() => handleExecutionModeChange('current_workspace')}
+                  className={cn(
+                    'flex h-9 w-full items-center gap-3 rounded-lg px-2 text-left text-[13px] font-medium leading-[18px] disabled:cursor-not-allowed disabled:opacity-60',
+                    isMobile && 'h-14 rounded-2xl bg-surface px-4 text-base leading-5',
+                    executionMode === 'current_workspace'
+                      ? 'text-text-primary'
+                      : 'text-text-secondary hover:bg-muted',
+                  )}
+                >
+                  <Laptop className="h-4 w-4 shrink-0" />
+                  <span className="min-w-0 flex-1">
+                    {t('workbench.execution_mode_current_workspace', '在本地处理')}
+                  </span>
+                  {executionMode === 'current_workspace' && (
+                    <Check className="h-4 w-4 shrink-0" />
+                  )}
+                </button>
+                <button
+                  type="button"
+                  data-testid="execution-mode-git-worktree-button"
+                  disabled={executionModeLocked}
+                  onClick={() => handleExecutionModeChange('git_worktree')}
+                  className={cn(
+                    'flex h-9 w-full items-center gap-3 rounded-lg px-2 text-left text-[13px] font-medium leading-[18px] disabled:cursor-not-allowed disabled:opacity-60',
+                    isMobile && 'h-14 rounded-2xl bg-surface px-4 text-base leading-5',
+                    executionMode === 'git_worktree'
+                      ? 'text-text-primary'
+                      : 'text-text-secondary hover:bg-muted',
+                  )}
+                >
+                  <GitBranch className="h-4 w-4 shrink-0" />
+                  <span className="min-w-0 flex-1">
+                    {t('workbench.execution_mode_git_worktree', '新工作树')}
+                  </span>
+                  {executionMode === 'git_worktree' && (
+                    <Check className="h-4 w-4 shrink-0" />
+                  )}
+                </button>
+              </div>
+            </div>
+          )}
+          <button
+            ref={executionModeButtonRef}
+            type="button"
+            data-testid="execution-mode-button"
+            onClick={handleToggleExecutionModeMenu}
+            className={cn(
+              'flex h-9 min-w-[44px] items-center gap-2 rounded-full px-2 text-[13px] font-medium leading-[18px] text-text-secondary transition-[background-color,color,box-shadow] hover:bg-background hover:text-text-primary hover:shadow-[0_10px_28px_rgba(0,0,0,0.14)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
+              executionModeOpen &&
+                'bg-background text-text-primary shadow-[0_10px_28px_rgba(0,0,0,0.14)]',
+            )}
+            aria-expanded={executionModeOpen}
+            aria-label={t('workbench.execution_mode_label', '启动模式')}
+          >
+            <ExecutionModeTriggerIcon className="h-4 w-4 shrink-0" />
+            <span className="max-w-[8rem] truncate">{executionModeTriggerLabel}</span>
+            <ChevronDown className="h-4 w-4 shrink-0" />
+          </button>
+        </div>
+      )}
+      {currentProject &&
+        executionMode === 'current_workspace' &&
+        !executionModeLocked &&
+        canShowBranchSelector &&
+        onListBranches &&
+        onCheckoutBranch && (
+          <BranchSelector
+            variant="workbar"
+            mobileSheet
+            currentBranch={branchName}
+            loading={branchLoading}
+            onRefresh={onRefreshBranch}
+            onListBranches={onListBranches}
+            onCheckoutBranch={onCheckoutBranch}
+            onCreateBranch={onCreateBranch}
+          />
+        )}
     </div>
   )
 }

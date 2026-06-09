@@ -44,6 +44,7 @@ def test_update_user_preferences_preserves_quick_access(
                 "memory_enabled": False,
                 "mcp_provider_keys": None,
                 "default_execution_target": "cloud",
+                "wework_project_execution_mode": "git_worktree",
                 "quick_access": {"teams": [188]},
             }
         },
@@ -55,3 +56,4 @@ def test_update_user_preferences_preserves_quick_access(
     test_db.refresh(test_user)
     stored_preferences = json.loads(test_user.preferences)
     assert stored_preferences["quick_access"]["teams"] == [188]
+    assert stored_preferences["wework_project_execution_mode"] == "git_worktree"

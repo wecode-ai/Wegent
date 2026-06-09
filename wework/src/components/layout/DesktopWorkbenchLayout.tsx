@@ -153,6 +153,8 @@ export function DesktopWorkbenchLayout({
   const [settingsOpen, setSettingsOpen] = useState(() =>
     isSettingsRoute(stripAppBasePath(window.location.pathname))
   )
+  const [autoOpenAddCloudDeviceDialog, setAutoOpenAddCloudDeviceDialog] =
+    useState(false)
   const [projectWorkCreateMode, setProjectWorkCreateMode] =
     useState<ProjectCreateMode | null>(null)
   const [environmentInfo, setEnvironmentInfo] = useState<EnvironmentInfo>({
@@ -201,6 +203,12 @@ export function DesktopWorkbenchLayout({
   }, [])
 
   useEffect(() => {
+    if (settingsOpen && autoOpenAddCloudDeviceDialog) {
+      setAutoOpenAddCloudDeviceDialog(false)
+    }
+  }, [autoOpenAddCloudDeviceDialog, settingsOpen])
+
+  useEffect(() => {
     const nextCompletedIds = new Set(
       messages
         .filter(message => message.role === 'assistant' && message.status === 'done')
@@ -241,13 +249,22 @@ export function DesktopWorkbenchLayout({
     void onRefreshDevices?.().catch(() => undefined)
   }, [onRefreshDevices])
 
-  const projectWorkWithCreation = useMemo<ProjectWorkControls>(
-    () => ({
-      ...projectWork,
-      onCreateProjectMode: openProjectFromWorkMenu,
-    }),
-    [openProjectFromWorkMenu, projectWork],
-  )
+  const projectWorkWithCreation: ProjectWorkControls = {
+    ...projectWork,
+    onCreateProjectMode: openProjectFromWorkMenu,
+    branchName: environmentInfo.branchName,
+    branchLoading: environmentInfo.loading,
+    onRefreshBranch: refreshEnvironmentInfo,
+    onListBranches: () => onListEnvironmentBranches(environmentProject),
+    onCheckoutBranch: handleCheckoutEnvironmentBranch,
+    onCreateBranch: handleCreateEnvironmentBranch,
+  }
+
+  useEffect(() => {
+    if (state.currentProject && !state.currentTask) {
+      void refreshEnvironmentInfo()
+    }
+  }, [refreshEnvironmentInfo, state.currentProject, state.currentTask])
 
   return (
     <div className="relative flex h-screen overflow-hidden bg-background text-text-primary">
@@ -291,7 +308,10 @@ export function DesktopWorkbenchLayout({
           onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot}
           onListDeviceDirectories={onListDeviceDirectories}
           onCreateDeviceDirectory={onCreateDeviceDirectory}
-          onOpenSettings={() => {
+          onOpenSettings={options => {
+            setAutoOpenAddCloudDeviceDialog(
+              Boolean(options?.autoOpenAddCloudDeviceDialog),
+            )
             setSettingsOpen(true)
             navigateTo('/settings')
           }}
@@ -300,8 +320,10 @@ export function DesktopWorkbenchLayout({
       )}
       {settingsOpen ? (
         <ConnectionsSettingsPage
+          autoOpenAddCloudDeviceDialog={autoOpenAddCloudDeviceDialog}
           onBack={() => {
             setSettingsOpen(false)
+            setAutoOpenAddCloudDeviceDialog(false)
             navigateTo('/')
           }}
           onListArchivedTasks={onListArchivedTasks}
@@ -352,6 +374,12 @@ export function DesktopWorkbenchLayout({
         mode={projectWorkCreateMode ?? 'scratch'}
         devices={state.devices}
         onClose={() => setProjectWorkCreateMode(null)}
+        onOpenCloudDeviceSettings={() => {
+          setProjectWorkCreateMode(null)
+          setAutoOpenAddCloudDeviceDialog(true)
+          setSettingsOpen(true)
+          navigateTo('/settings')
+        }}
         onCreateProject={onCreateProject}
         onCreateGitWorkspaceProject={onCreateGitWorkspaceProject}
         preferredDeviceId={

@@ -1,17 +1,13 @@
 import {
-  Check,
-  ChevronDown,
   CircleDot,
-  GitBranch,
   GitCommit,
   GitPullRequest,
   Info,
   Laptop,
-  Plus,
-  Search,
   Settings,
 } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { BranchSelector } from '@/components/common/BranchSelector'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type { EnvironmentInfo } from '@/types/environment'
@@ -59,22 +55,6 @@ function formatDeviceId(deviceId?: string) {
   return `${deviceId.slice(0, 8)}...${deviceId.slice(-4)}`
 }
 
-function branchMatchesQuery(branch: string, query: string): boolean {
-  const normalizedBranch = branch.toLowerCase()
-  const normalizedQuery = query.trim().toLowerCase()
-  if (!normalizedQuery) return true
-  if (normalizedBranch.includes(normalizedQuery)) return true
-
-  let queryIndex = 0
-  for (const character of normalizedBranch) {
-    if (character === normalizedQuery[queryIndex]) {
-      queryIndex += 1
-      if (queryIndex === normalizedQuery.length) return true
-    }
-  }
-  return false
-}
-
 export function EnvironmentInfoPopover({
   info,
   onRefresh,
@@ -86,14 +66,6 @@ export function EnvironmentInfoPopover({
   const { t } = useTranslation('common')
   const [open, setOpen] = useState(false)
   const [deviceCopied, setDeviceCopied] = useState(false)
-  const [branchMenuOpen, setBranchMenuOpen] = useState(false)
-  const [branches, setBranches] = useState<string[]>([])
-  const [branchQuery, setBranchQuery] = useState('')
-  const [branchesLoading, setBranchesLoading] = useState(false)
-  const [branchActionStatus, setBranchActionStatus] = useState<'idle' | 'switching' | 'creating'>('idle')
-  const [branchError, setBranchError] = useState<string | null>(null)
-  const [newBranchFormOpen, setNewBranchFormOpen] = useState(false)
-  const [newBranchName, setNewBranchName] = useState('')
   const [commitFormOpen, setCommitFormOpen] = useState(false)
   const [commitMessage, setCommitMessage] = useState('')
   const [commitStatus, setCommitStatus] = useState<'idle' | 'committing' | 'success'>('idle')
@@ -101,41 +73,13 @@ export function EnvironmentInfoPopover({
   const rootRef = useRef<HTMLDivElement>(null)
   const additions = info.additions || '+0'
   const deletions = info.deletions || '-0'
-  const branchName = info.branchName || t('workbench.environment_branch_empty', '暂无分支')
   const executionLabel =
     info.executionTarget === 'cloud'
       ? t('workbench.environment_cloud', '云端')
       : t('workbench.environment_local', '本地')
   const shortDeviceId = formatDeviceId(info.deviceId)
   const deviceTitle = info.deviceId ? `${executionLabel} · ${info.deviceId}` : executionLabel
-  const filteredBranches = useMemo(
-    () => branches.filter(branch => branchMatchesQuery(branch, branchQuery)),
-    [branchQuery, branches],
-  )
-
-  const closeBranchMenu = useCallback(() => {
-    setBranchMenuOpen(false)
-    setBranchQuery('')
-    setBranchError(null)
-    setNewBranchFormOpen(false)
-    setNewBranchName('')
-  }, [])
-
-  useEffect(() => {
-    if (!branchMenuOpen) {
-      return
-    }
-
-    function handleBranchMenuKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') {
-        closeBranchMenu()
-      }
-    }
-
-    window.addEventListener('keydown', handleBranchMenuKeyDown)
-    return () => window.removeEventListener('keydown', handleBranchMenuKeyDown)
-  }, [branchMenuOpen, closeBranchMenu])
-
+  const canShowBranchSelector = Boolean(info.branchName?.trim())
   function handleCreatePullRequest() {
     if (!info.createPullRequestUrl) {
       return
@@ -174,79 +118,12 @@ export function EnvironmentInfoPopover({
     }
   }
 
-  async function handleToggleBranchMenu() {
-    const nextOpen = !branchMenuOpen
-    if (!nextOpen) {
-      closeBranchMenu()
-      return
-    }
-    setBranchMenuOpen(true)
-    setBranchError(null)
-
-    if (!onListBranches) {
-      return
-    }
-
-    setBranchesLoading(true)
-    try {
-      const nextBranches = await onListBranches()
-      setBranches(nextBranches)
-    } catch (error) {
-      setBranches([])
-      setBranchError(error instanceof Error ? error.message : t('workbench.environment_branch_load_failed', '分支加载失败'))
-    } finally {
-      setBranchesLoading(false)
-    }
-  }
-
-  async function handleCheckoutBranch(nextBranchName: string) {
-    if (!onCheckoutBranch || nextBranchName === info.branchName) {
-      closeBranchMenu()
-      return
-    }
-
-    setBranchError(null)
-    setBranchActionStatus('switching')
-    try {
-      await onCheckoutBranch(nextBranchName)
-      closeBranchMenu()
-    } catch (error) {
-      setBranchError(error instanceof Error ? error.message : t('workbench.environment_branch_checkout_failed', '切换分支失败'))
-    } finally {
-      setBranchActionStatus('idle')
-    }
-  }
-
-  async function handleCreateBranch(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    const trimmedName = newBranchName.trim()
-    if (!trimmedName || !onCreateBranch) {
-      return
-    }
-
-    setBranchError(null)
-    setBranchActionStatus('creating')
-    try {
-      await onCreateBranch(trimmedName)
-      setNewBranchName('')
-      setNewBranchFormOpen(false)
-      setBranchMenuOpen(false)
-      setBranchQuery('')
-    } catch (error) {
-      setBranchError(error instanceof Error ? error.message : t('workbench.environment_branch_create_failed', '创建分支失败'))
-    } finally {
-      setBranchActionStatus('idle')
-    }
-  }
-
   function handleToggleOpen() {
     const nextOpen = !open
     setOpen(nextOpen)
 
     if (nextOpen) {
       void onRefresh?.()
-    } else {
-      closeBranchMenu()
     }
   }
 
@@ -258,13 +135,12 @@ export function EnvironmentInfoPopover({
     function handlePointerDown(event: PointerEvent) {
       if (!rootRef.current?.contains(event.target as Node)) {
         setOpen(false)
-        closeBranchMenu()
       }
     }
 
     document.addEventListener('pointerdown', handlePointerDown)
     return () => document.removeEventListener('pointerdown', handlePointerDown)
-  }, [closeBranchMenu, open])
+  }, [open])
 
   return (
     <div ref={rootRef}>
@@ -338,114 +214,16 @@ export function EnvironmentInfoPopover({
                 </span>
               )}
             </button>
-            <button
-              type="button"
-              data-testid="environment-branch-row"
-              disabled={!onListBranches}
-              onClick={handleToggleBranchMenu}
-              className="flex h-9 w-full items-center gap-3 rounded-md text-left text-[13px] text-text-primary hover:bg-hover disabled:cursor-default disabled:hover:bg-transparent"
-              aria-label={t('workbench.environment_branch_menu', '切换分支')}
-              aria-expanded={branchMenuOpen}
-            >
-              <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
-                <GitBranch className="h-[18px] w-[18px]" />
-              </span>
-              <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
-                {info.loading ? t('common.loading', '加载中...') : branchName}
-              </span>
-              {onListBranches && (
-                <ChevronDown className="h-4 w-4 shrink-0 text-text-secondary" />
-              )}
-            </button>
-            {branchMenuOpen && (
-              <div
-                data-testid="environment-branch-menu"
-                className="absolute right-[calc(100%-44px)] top-[116px] z-system-popover w-[320px] rounded-2xl border border-border bg-background px-3 py-3 text-text-primary shadow-[0_18px_44px_rgba(0,0,0,0.18)]"
-              >
-                <label className="flex h-9 items-center gap-2 rounded-lg px-2 text-text-muted">
-                  <Search className="h-4 w-4 shrink-0" />
-                  <input
-                    data-testid="environment-branch-search-input"
-                    value={branchQuery}
-                    onChange={event => setBranchQuery(event.target.value)}
-                    className="min-w-0 flex-1 bg-transparent text-sm text-text-primary outline-none placeholder:text-text-muted"
-                    placeholder={t('workbench.environment_branch_search', '搜索分支')}
-                    autoFocus
-                  />
-                </label>
-                <h3 className="mt-3 px-2 text-xs font-medium text-text-secondary">
-                  {t('workbench.environment_branches', '分支')}
-                </h3>
-                <div className="mt-2 max-h-[220px] overflow-y-auto">
-                  {branchesLoading && (
-                    <p className="px-2 py-3 text-sm text-text-muted">
-                      {t('common.loading', '加载中...')}
-                    </p>
-                  )}
-                  {!branchesLoading && branchError && (
-                    <p className="px-2 py-3 text-xs text-red-500">{branchError}</p>
-                  )}
-                  {!branchesLoading && !branchError && filteredBranches.map(branch => {
-                    const current = branch === info.branchName
-                    return (
-                      <button
-                        type="button"
-                        key={branch}
-                        data-testid="environment-branch-option"
-                        disabled={branchActionStatus !== 'idle'}
-                        onClick={() => void handleCheckoutBranch(branch)}
-                        className={cn(
-                          'flex h-9 w-full items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-hover disabled:cursor-not-allowed disabled:opacity-60',
-                          current ? 'text-text-primary' : 'text-text-primary',
-                        )}
-                      >
-                        <GitBranch className="h-4 w-4 shrink-0 text-text-secondary" />
-                        <span className="min-w-0 flex-1 truncate">{branch}</span>
-                        {current && <Check className="h-4 w-4 shrink-0 text-text-secondary" />}
-                      </button>
-                    )
-                  })}
-                  {!branchesLoading && !branchError && filteredBranches.length === 0 && (
-                    <p className="px-2 py-3 text-sm text-text-muted">
-                      {t('workbench.environment_branch_empty_results', '没有匹配的分支')}
-                    </p>
-                  )}
-                </div>
-                <div className="mt-2 border-t border-border pt-2">
-                  {newBranchFormOpen ? (
-                    <form className="flex items-center gap-2" onSubmit={handleCreateBranch}>
-                      <input
-                        data-testid="environment-new-branch-input"
-                        value={newBranchName}
-                        onChange={event => setNewBranchName(event.target.value)}
-                        className="h-8 min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-sm outline-none focus:border-primary"
-                        placeholder={t('workbench.environment_new_branch_placeholder', '输入新分支名')}
-                      />
-                      <button
-                        type="submit"
-                        data-testid="environment-confirm-new-branch-button"
-                        disabled={!newBranchName.trim() || branchActionStatus === 'creating'}
-                        className="h-8 rounded-md bg-primary px-2 text-xs font-medium text-primary-contrast disabled:opacity-50"
-                      >
-                        {branchActionStatus === 'creating'
-                          ? t('workbench.environment_branch_creating', '创建中')
-                          : t('workbench.environment_branch_create_confirm', '创建')}
-                      </button>
-                    </form>
-                  ) : (
-                    <button
-                      type="button"
-                      data-testid="environment-open-new-branch-button"
-                      disabled={!onCreateBranch || branchActionStatus !== 'idle'}
-                      onClick={() => setNewBranchFormOpen(true)}
-                      className="flex h-9 w-full items-center gap-2 rounded-md px-2 text-left text-sm font-medium hover:bg-hover disabled:cursor-not-allowed disabled:text-text-muted"
-                    >
-                      <Plus className="h-4 w-4" />
-                      {t('workbench.environment_branch_create_checkout', '创建并检出新分支...')}
-                    </button>
-                  )}
-                </div>
-              </div>
+            {canShowBranchSelector && onListBranches && onCheckoutBranch && (
+              <BranchSelector
+                variant="environment"
+                currentBranch={info.branchName}
+                loading={info.loading}
+                onRefresh={onRefresh}
+                onListBranches={onListBranches}
+                onCheckoutBranch={onCheckoutBranch}
+                onCreateBranch={onCreateBranch}
+              />
             )}
             <button
               type="button"

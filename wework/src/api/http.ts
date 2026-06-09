@@ -54,6 +54,7 @@ async function parseError(response: Response): Promise<ApiError> {
 
 export function createHttpClient(options: HttpClientOptions): HttpClient {
   const getToken = options.getToken ?? defaultGetToken
+  const inFlightGetRequests = new Map<string, Promise<unknown>>()
 
   async function request<T>(endpoint: string, init: RequestInit): Promise<T> {
     const token = getToken()
@@ -83,8 +84,23 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
     return response.json() as Promise<T>
   }
 
+  function get<T>(endpoint: string): Promise<T> {
+    const token = getToken()
+    const cacheKey = `${token ?? ''}:${endpoint}`
+    const currentRequest = inFlightGetRequests.get(cacheKey)
+    if (currentRequest) {
+      return currentRequest as Promise<T>
+    }
+
+    const nextRequest = request<T>(endpoint, { method: 'GET' }).finally(() => {
+      inFlightGetRequests.delete(cacheKey)
+    })
+    inFlightGetRequests.set(cacheKey, nextRequest)
+    return nextRequest
+  }
+
   return {
-    get: endpoint => request(endpoint, { method: 'GET' }),
+    get,
     post: (endpoint, data) =>
       request(endpoint, {
         method: 'POST',

@@ -7,6 +7,7 @@ import {
   Cloud,
   Code2,
   ExternalLink,
+  GitBranch,
   Globe2,
   Loader2,
   Monitor,
@@ -37,9 +38,11 @@ import type { ArchivedTask } from '@/types/api'
 import type { CloudDeviceMetricsResponse, DeviceInfo } from '@/types/devices'
 import { AppearanceSettingsPage } from '@/features/appearance/AppearanceSettingsPage'
 import { AddCloudDeviceDialog } from './AddCloudDeviceDialog'
+import { WorktreesSettingsPage } from './WorktreesSettingsPage'
 
 interface ConnectionsSettingsPageProps {
   onBack: () => void
+  autoOpenAddCloudDeviceDialog?: boolean
   onListArchivedTasks?: () => Promise<{ items: ArchivedTask[]; total: number }>
   onUnarchiveTask?: (taskId: number) => Promise<void>
   onDeleteTask?: (taskId: number) => Promise<void>
@@ -51,6 +54,7 @@ interface SettingsNavItem {
   icon: ComponentType<{ className?: string }>
   label: string
   fallback: string
+  category?: 'coding'
 }
 
 const settingsNavItems: SettingsNavItem[] = [
@@ -65,6 +69,13 @@ const settingsNavItems: SettingsNavItem[] = [
     icon: Palette,
     label: 'settings_nav_appearance',
     fallback: '外观',
+  },
+  {
+    key: 'worktrees',
+    icon: GitBranch,
+    label: 'settings_nav_worktrees',
+    fallback: '工作树',
+    category: 'coding',
   },
   {
     key: 'archived-chats',
@@ -672,11 +683,15 @@ function DeviceSection({
   )
 }
 
-function ConnectionsDeviceSettingsPage() {
+function ConnectionsDeviceSettingsPage({
+  autoOpenAddCloudDeviceDialog = false,
+}: {
+  autoOpenAddCloudDeviceDialog?: boolean
+}) {
   const { t } = useTranslation('common')
   const [devices, setDevices] = useState<DeviceInfo[]>([])
   const [loading, setLoading] = useState(true)
-  const [addDialogOpen, setAddDialogOpen] = useState(false)
+  const [addDialogOpen, setAddDialogOpen] = useState(autoOpenAddCloudDeviceDialog)
   const [creating, setCreating] = useState(false)
 
   const fetchDevices = useCallback(async () => {
@@ -817,7 +832,9 @@ function ArchivedChatsSettingsPage({
   onUnarchiveTask,
   onDeleteTask,
   onDeleteArchivedTasks,
-}: Required<Omit<ConnectionsSettingsPageProps, 'onBack'>>) {
+}: Required<
+  Omit<ConnectionsSettingsPageProps, 'onBack' | 'autoOpenAddCloudDeviceDialog'>
+>) {
   const { t } = useTranslation('common')
   const [items, setItems] = useState<ArchivedTask[]>([])
   const [loading, setLoading] = useState(true)
@@ -950,6 +967,7 @@ function ArchivedChatsSettingsPage({
 
 export function ConnectionsSettingsPage({
   onBack,
+  autoOpenAddCloudDeviceDialog = false,
   onListArchivedTasks = emptyArchivedTasks,
   onUnarchiveTask = noopArchivedAction,
   onDeleteTask = noopArchivedAction,
@@ -985,28 +1003,39 @@ export function ConnectionsSettingsPage({
         </button>
 
         <nav className="space-y-1">
-          {settingsNavItems.map(item => (
-            <button
-              key={item.key}
-              type="button"
-              data-testid={`settings-nav-${item.key}`}
-              onClick={() => {
-                setActiveNav(item.key)
-                navigateTo(getSettingsNavPath(item.key))
-              }}
-              className={[
-                'flex min-h-[31px] w-full items-center gap-2 rounded-lg px-2.5 text-left text-sm font-medium',
-                activeNav === item.key
-                  ? 'bg-[rgb(var(--color-sidebar-active))] text-text-primary'
-                  : 'text-text-primary hover:bg-[rgb(var(--color-sidebar-hover))]',
-              ].join(' ')}
-            >
-              <item.icon className="h-4 w-4 shrink-0" />
-              <span className="truncate">
-                {t(`workbench.${item.label}`, item.fallback)}
-              </span>
-            </button>
-          ))}
+          {settingsNavItems.map((item, index) => {
+            const showCodingCategory =
+              item.category === 'coding' &&
+              settingsNavItems[index - 1]?.category !== item.category
+            return (
+              <div key={item.key}>
+                {showCodingCategory && (
+                  <div className="mb-1 mt-5 px-2.5 text-xs font-medium text-text-muted">
+                    {t('workbench.settings_category_coding', '编码')}
+                  </div>
+                )}
+                <button
+                  type="button"
+                  data-testid={`settings-nav-${item.key}`}
+                  onClick={() => {
+                    setActiveNav(item.key)
+                    navigateTo(getSettingsNavPath(item.key))
+                  }}
+                  className={[
+                    'flex min-h-[31px] w-full items-center gap-2 rounded-lg px-2.5 text-left text-sm font-medium',
+                    activeNav === item.key
+                      ? 'bg-[rgb(var(--color-sidebar-active))] text-text-primary'
+                      : 'text-text-primary hover:bg-[rgb(var(--color-sidebar-hover))]',
+                  ].join(' ')}
+                >
+                  <item.icon className="h-4 w-4 shrink-0" />
+                  <span className="truncate">
+                    {t(`workbench.${item.label}`, item.fallback)}
+                  </span>
+                </button>
+              </div>
+            )
+          })}
         </nav>
       </aside>
 
@@ -1020,8 +1049,12 @@ export function ConnectionsSettingsPage({
           />
         ) : activeNav === 'appearance' ? (
           <AppearanceSettingsPage />
+        ) : activeNav === 'worktrees' ? (
+          <WorktreesSettingsPage />
         ) : (
-          <ConnectionsDeviceSettingsPage />
+          <ConnectionsDeviceSettingsPage
+            autoOpenAddCloudDeviceDialog={autoOpenAddCloudDeviceDialog}
+          />
         )}
       </main>
     </div>

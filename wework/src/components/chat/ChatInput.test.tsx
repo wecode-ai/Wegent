@@ -63,8 +63,11 @@ function projectWorkControls(overrides: Partial<ProjectWorkControls> = {}): Proj
     devices: [],
     currentProjectId: undefined,
     currentStandaloneDeviceId: null,
+    executionMode: 'current_workspace',
+    executionModeLocked: false,
     onSelectProject: vi.fn(),
     onSelectStandaloneDevice: vi.fn(),
+    onExecutionModeChange: vi.fn(),
     ...overrides,
   }
 }
@@ -190,7 +193,7 @@ describe('ChatInput', () => {
       'box-border',
       'py-[14px]',
       'pl-5',
-      'pr-[104px]',
+      'pr-16',
       'scrollbar-none',
     )
     expect(screen.getByTestId('send-message-button')).toHaveClass(
@@ -237,10 +240,12 @@ describe('ChatInput', () => {
     expect(onPause).toHaveBeenCalledTimes(1)
   })
 
-  test('hides voice input after typing in the compact composer', async () => {
+  test('does not render voice input in the compact composer', async () => {
     render(<ControlledChatInput />)
 
-    expect(screen.getByTestId('voice-input-button')).toBeInTheDocument()
+    expect(screen.queryByTestId('voice-input-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('chat-message-input')).toHaveClass('pr-16')
+
     await userEvent.type(screen.getByTestId('chat-message-input'), 'hello')
 
     expect(screen.queryByTestId('voice-input-button')).not.toBeInTheDocument()
@@ -985,6 +990,213 @@ describe('ChatInput', () => {
     expect(setSelectedModel).toHaveBeenCalledWith(model)
   })
 
+  test('keeps the desktop model menu inside the viewport when it opens upward', async () => {
+    const originalInnerHeight = window.innerHeight
+    Object.defineProperty(window, 'innerHeight', {
+      configurable: true,
+      value: 900,
+    })
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(
+      function getMockRect(this: HTMLElement) {
+        const testId = this.getAttribute('data-testid')
+        if (testId === 'model-selector-button') {
+          return {
+            top: 300,
+            bottom: 332,
+            left: 640,
+            right: 780,
+            width: 140,
+            height: 32,
+          } as DOMRect
+        }
+        if (testId === 'model-selector-menu') {
+          return { top: 0, left: 640, width: 256, height: 720 } as DOMRect
+        }
+        if (testId === 'model-family-gpt') {
+          return { top: 340, left: 660, width: 220, height: 36 } as DOMRect
+        }
+        if (testId === 'model-selector-submenu') {
+          return { top: 0, left: 0, width: 288, height: 192 } as DOMRect
+        }
+        return { top: 0, bottom: 0, left: 0, width: 0, height: 0 } as DOMRect
+      },
+    )
+
+    const model: UnifiedModel = {
+      name: 'overseas-gpt-5.5',
+      type: 'user',
+      displayName: '海外:gpt-5.5',
+      config: {
+        ui: {
+          family: 'gpt',
+          region: 'overseas',
+          modelLabel: 'gpt-5.5',
+          sortOrder: 10,
+        },
+      },
+    }
+
+    try {
+      render(
+        <ChatInput
+          value=""
+          onChange={vi.fn()}
+          onSubmit={vi.fn()}
+          disabled={false}
+          variant="desktop"
+          projectChat={projectChatControls({
+            models: [model],
+            selectedModel: model,
+            selectedModelOptions: {},
+          })}
+        />,
+      )
+
+      await userEvent.click(screen.getByTestId('model-selector-button'))
+
+      await waitFor(() => {
+        expect(screen.getByTestId('model-selector-menu').parentElement).toHaveStyle({
+          top: '64px',
+        })
+      })
+      expect(screen.getByTestId('model-selector-menu')).toHaveStyle({
+        maxHeight: '608px',
+      })
+    } finally {
+      Object.defineProperty(window, 'innerHeight', {
+        configurable: true,
+        value: originalInnerHeight,
+      })
+    }
+  })
+
+  test('keeps the desktop model submenu below the top chrome area', async () => {
+    const originalInnerHeight = window.innerHeight
+    Object.defineProperty(window, 'innerHeight', {
+      configurable: true,
+      value: 900,
+    })
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(
+      function getMockRect(this: HTMLElement) {
+        const testId = this.getAttribute('data-testid')
+        if (testId === 'model-selector-button') {
+          return {
+            top: 300,
+            bottom: 332,
+            left: 640,
+            right: 780,
+            width: 140,
+            height: 32,
+          } as DOMRect
+        }
+        if (testId === 'model-selector-menu') {
+          return { top: 64, left: 640, width: 256, height: 608 } as DOMRect
+        }
+        if (testId === 'model-family-gpt') {
+          return { top: 32, left: 660, width: 220, height: 36 } as DOMRect
+        }
+        if (testId === 'model-selector-submenu') {
+          return { top: 0, left: 0, width: 288, height: 192 } as DOMRect
+        }
+        return { top: 0, bottom: 0, left: 0, width: 0, height: 0 } as DOMRect
+      },
+    )
+
+    const model: UnifiedModel = {
+      name: 'overseas-gpt-5.5',
+      type: 'user',
+      displayName: '海外:gpt-5.5',
+      config: {
+        ui: {
+          family: 'gpt',
+          region: 'overseas',
+          modelLabel: 'gpt-5.5',
+          sortOrder: 10,
+        },
+      },
+    }
+
+    try {
+      render(
+        <ChatInput
+          value=""
+          onChange={vi.fn()}
+          onSubmit={vi.fn()}
+          disabled={false}
+          variant="desktop"
+          projectChat={projectChatControls({
+            models: [model],
+            selectedModel: model,
+            selectedModelOptions: {},
+          })}
+        />,
+      )
+
+      await userEvent.click(screen.getByTestId('model-selector-button'))
+
+      await waitFor(() => {
+        expect(screen.getByTestId('model-selector-submenu')).toHaveStyle({
+          top: '0px',
+        })
+      })
+    } finally {
+      Object.defineProperty(window, 'innerHeight', {
+        configurable: true,
+        value: originalInnerHeight,
+      })
+    }
+  })
+
+  test('hides unsupported Gemini models from the desktop model menu', async () => {
+    const gptModel: UnifiedModel = {
+      name: 'overseas-gpt-5.5',
+      type: 'user',
+      displayName: '海外:gpt-5.5',
+      config: {
+        ui: {
+          family: 'gpt',
+          region: 'overseas',
+          modelLabel: 'gpt-5.5',
+          sortOrder: 10,
+        },
+      },
+    }
+    const geminiModel: UnifiedModel = {
+      name: 'overseas-gemini-3-pro',
+      type: 'public',
+      displayName: '海外:gemini-3-pro',
+      config: {
+        ui: {
+          family: 'gemini',
+          region: 'overseas',
+          modelLabel: 'gemini-3-pro',
+          sortOrder: 10,
+        },
+      },
+    }
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({
+          models: [gptModel, geminiModel],
+          selectedModel: gptModel,
+          selectedModelOptions: {},
+        })}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+
+    expect(screen.getByTestId('model-family-gpt')).toBeInTheDocument()
+    expect(screen.queryByTestId('model-family-gemini')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('model-option-overseas-gemini-3-pro')).not.toBeInTheDocument()
+  })
+
   test('moves the desktop model submenu upward when the active family is near the viewport bottom', async () => {
     const originalInnerHeight = window.innerHeight
     Object.defineProperty(window, 'innerHeight', {
@@ -1048,6 +1260,74 @@ describe('ChatInput', () => {
       Object.defineProperty(window, 'innerHeight', {
         configurable: true,
         value: originalInnerHeight,
+      })
+    }
+  })
+
+  test('uses measured desktop submenu width to avoid overlapping the main menu', async () => {
+    const originalInnerWidth = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      value: 1240,
+    })
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(
+      function getMockRect(this: HTMLElement) {
+        const testId = this.getAttribute('data-testid')
+        if (testId === 'model-selector-menu') {
+          return { top: 64, left: 604, width: 576, height: 620 } as DOMRect
+        }
+        if (testId === 'model-family-gpt') {
+          return { top: 500, left: 620, width: 520, height: 72 } as DOMRect
+        }
+        if (testId === 'model-selector-submenu') {
+          return { top: 0, left: 0, width: 648, height: 432 } as DOMRect
+        }
+        return { top: 0, bottom: 0, left: 0, width: 0, height: 0 } as DOMRect
+      },
+    )
+
+    const model: UnifiedModel = {
+      name: 'overseas-gpt-5.5',
+      type: 'user',
+      displayName: '海外:gpt-5.5',
+      config: {
+        ui: {
+          family: 'gpt',
+          region: 'overseas',
+          modelLabel: 'gpt-5.5',
+          sortOrder: 10,
+        },
+      },
+    }
+
+    try {
+      render(
+        <ChatInput
+          value=""
+          onChange={vi.fn()}
+          onSubmit={vi.fn()}
+          disabled={false}
+          variant="desktop"
+          projectChat={projectChatControls({
+            models: [model],
+            selectedModel: model,
+            selectedModelOptions: {},
+          })}
+        />,
+      )
+
+      await userEvent.click(screen.getByTestId('model-selector-button'))
+
+      await waitFor(() => {
+        expect(screen.getByTestId('model-selector-submenu')).toHaveStyle({
+          left: '-588px',
+          width: '580px',
+        })
+      })
+    } finally {
+      Object.defineProperty(window, 'innerWidth', {
+        configurable: true,
+        value: originalInnerWidth,
       })
     }
   })
@@ -1554,6 +1834,208 @@ describe('ChatInput', () => {
     await userEvent.click(screen.getByTestId('project-option-8'))
 
     expect(onSelectProject).toHaveBeenCalledWith(8)
+  })
+
+  test('shows launch modes beside existing local workspace projects', async () => {
+    const onExecutionModeChange = vi.fn()
+    const projects: ProjectWithTasks[] = [
+      {
+        id: 7,
+        name: 'Wegent',
+        config: {
+          mode: 'workspace',
+          device_id: 'device-1',
+          workspace: {
+            source: 'local_path',
+            localPath: '/workspace/projects/Wegent',
+          },
+        },
+        tasks: [],
+      },
+    ]
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectWork={projectWorkControls({
+          projects,
+          currentProjectId: 7,
+          executionMode: 'current_workspace',
+          onExecutionModeChange,
+        })}
+      />,
+    )
+
+    expect(screen.getByTestId('project-work-button')).toHaveTextContent('Wegent')
+    expect(screen.getByTestId('project-work-button')).toHaveClass(
+      'hover:shadow-[0_10px_28px_rgba(0,0,0,0.14)]',
+    )
+    expect(screen.getByTestId('execution-mode-button')).toHaveTextContent('本地模式')
+    expect(screen.getByTestId('execution-mode-button')).toHaveClass(
+      'hover:shadow-[0_10px_28px_rgba(0,0,0,0.14)]',
+    )
+
+    await userEvent.click(screen.getByTestId('project-work-button'))
+
+    expect(screen.getByTestId('project-work-menu')).toBeInTheDocument()
+    expect(screen.getByTestId('project-work-button')).toHaveClass(
+      'shadow-[0_10px_28px_rgba(0,0,0,0.14)]',
+    )
+    expect(screen.queryByTestId('project-execution-mode-menu-section')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('execution-mode-button'))
+
+    expect(screen.queryByTestId('project-work-menu')).not.toBeInTheDocument()
+    expect(screen.getByTestId('project-execution-mode-menu')).toBeInTheDocument()
+    expect(screen.getByTestId('execution-mode-button')).toHaveClass(
+      'shadow-[0_10px_28px_rgba(0,0,0,0.14)]',
+    )
+    expect(screen.getByTestId('project-execution-mode-menu-section')).toHaveTextContent(
+      '启动模式',
+    )
+    expect(screen.getByTestId('execution-mode-current-workspace-button')).toHaveTextContent(
+      '在本地处理',
+    )
+    expect(screen.getByTestId('execution-mode-git-worktree-button')).toHaveTextContent(
+      '新工作树',
+    )
+
+    await userEvent.click(screen.getByTestId('execution-mode-git-worktree-button'))
+
+    expect(onExecutionModeChange).toHaveBeenCalledWith('git_worktree')
+    expect(screen.queryByTestId('project-execution-mode-menu')).not.toBeInTheDocument()
+  })
+
+  test('switches branches immediately from the new project chat work bar', async () => {
+    const onListBranches = vi.fn().mockResolvedValue(['feature/chat', 'main'])
+    const onCheckoutBranch = vi.fn().mockResolvedValue(undefined)
+    const onRefreshBranch = vi.fn().mockResolvedValue(undefined)
+    const projects: ProjectWithTasks[] = [
+      {
+        id: 7,
+        name: 'Wegent',
+        config: {
+          mode: 'workspace',
+          device_id: 'device-1',
+          workspace: {
+            source: 'local_path',
+            localPath: '/workspace/projects/Wegent',
+          },
+        },
+        tasks: [],
+      },
+    ]
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectWork={projectWorkControls({
+          projects,
+          currentProjectId: 7,
+          branchName: 'main',
+          onRefreshBranch,
+          onListBranches,
+          onCheckoutBranch,
+        })}
+      />,
+    )
+
+    expect(screen.getByTestId('project-branch-button')).toHaveTextContent('main')
+    await userEvent.click(screen.getByTestId('project-branch-button'))
+
+    await waitFor(() => {
+      expect(onRefreshBranch).toHaveBeenCalledTimes(1)
+      expect(onListBranches).toHaveBeenCalledTimes(1)
+    })
+
+    const options = await screen.findAllByTestId('project-branch-option')
+    await userEvent.click(options[0])
+
+    expect(onCheckoutBranch).toHaveBeenCalledWith('feature/chat')
+    await waitFor(() => {
+      expect(screen.queryByTestId('project-branch-menu')).not.toBeInTheDocument()
+    })
+  })
+
+  test('creates and checks out a branch from the new project chat work bar', async () => {
+    const onCreateBranch = vi.fn().mockResolvedValue(undefined)
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectWork={projectWorkControls({
+          projects: [{ id: 7, name: 'Wegent', tasks: [] }],
+          currentProjectId: 7,
+          branchName: 'main',
+          onListBranches: vi.fn().mockResolvedValue(['main']),
+          onCheckoutBranch: vi.fn().mockResolvedValue(undefined),
+          onCreateBranch,
+        })}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('project-branch-button'))
+    await screen.findAllByTestId('project-branch-option')
+    await userEvent.click(screen.getByTestId('project-open-new-branch-button'))
+    await userEvent.type(screen.getByTestId('project-new-branch-input'), 'feature/new-chat')
+    await userEvent.click(screen.getByTestId('project-confirm-new-branch-button'))
+
+    expect(onCreateBranch).toHaveBeenCalledWith('feature/new-chat')
+  })
+
+  test('hides branch switching when the project conversation is locked', () => {
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectWork={projectWorkControls({
+          projects: [{ id: 7, name: 'Wegent', tasks: [] }],
+          currentProjectId: 7,
+          executionModeLocked: true,
+          branchName: 'main',
+          onListBranches: vi.fn().mockResolvedValue(['main']),
+          onCheckoutBranch: vi.fn().mockResolvedValue(undefined),
+        })}
+      />,
+    )
+
+    expect(screen.queryByTestId('project-branch-button')).not.toBeInTheDocument()
+  })
+
+  test('hides branch switching when the current workspace is not a git repository', () => {
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectWork={projectWorkControls({
+          projects: [{ id: 7, name: 'Plain folder', tasks: [] }],
+          currentProjectId: 7,
+          branchName: '',
+          onListBranches: vi.fn().mockResolvedValue([]),
+          onCheckoutBranch: vi.fn().mockResolvedValue(undefined),
+        })}
+      />,
+    )
+
+    expect(screen.queryByTestId('project-branch-button')).not.toBeInTheDocument()
   })
 
   test('opens project work menu upward when below cannot fit the four-row menu', async () => {

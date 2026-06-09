@@ -63,7 +63,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get update && apt-get install -y --no-install-recommends \
     nodejs \
     ttyd \
-    && npm install -g @anthropic-ai/claude-code@2.1.142 \
+    && npm install -g @anthropic-ai/claude-code@2.1.142 @openai/codex@0.137.0 \
     && curl -fsSL https://code-server.dev/install.sh | sh \
     && ln -sf /usr/bin/python3 /usr/bin/python \
     && apt-get purge -y --auto-remove software-properties-common \
