@@ -29,6 +29,49 @@ class _FakeStorageBackend:
 class TestSubtaskContextBrief:
     """Test context brief serialization."""
 
+    def test_context_display_fields_include_external_web_video_fields(
+        self,
+    ) -> None:
+        """Shared display fields expose external web video metadata."""
+        from app.schemas.context_display import build_context_display_fields
+
+        fields = build_context_display_fields(
+            "attachment",
+            {
+                "source": "external_web_content",
+                "file_extension": ".mp4",
+                "file_size": 1024,
+                "mime_type": "video/mp4",
+                "external_source_url": "https://example.com/post/1",
+                "raw_result": [
+                    {
+                        "site": "example",
+                        "video_url_s3": "https://cdn.example.com/video.mp4",
+                        "cover_s3": "https://cdn.example.com/cover.jpg",
+                    }
+                ],
+                "external_video_index": 0,
+            },
+        )
+
+        assert fields["file_extension"] == ".mp4"
+        assert fields["mime_type"] == "video/mp4"
+        assert fields["video_count"] == 1
+        assert fields["site"] == "example"
+        assert fields["source_url"] == "https://example.com/post/1"
+        assert fields["cover_url"] == "https://cdn.example.com/cover.jpg"
+
+    def test_context_display_fields_tolerate_empty_selected_documents(self) -> None:
+        """Selected document display does not fail on nullable legacy data."""
+        from app.schemas.context_display import build_context_display_fields
+
+        fields = build_context_display_fields(
+            "selected_documents",
+            {"document_ids": None},
+        )
+
+        assert fields == {"document_count": 0}
+
     def test_subtask_brief_includes_knowledge_base_domain_id(self) -> None:
         """Knowledge base context briefs expose the underlying knowledge ID."""
         from app.models.subtask_context import (
@@ -78,6 +121,53 @@ class TestSubtaskContextBrief:
         assert brief.id == 888
         assert brief.document_id == 456
         assert brief.source_config == {"url": "https://example.com/table"}
+
+    def test_subtask_brief_includes_external_web_video_fields(self) -> None:
+        """External web video attachments expose display fields."""
+        from app.models.subtask_context import (
+            ContextStatus,
+            ContextType,
+            SubtaskContext,
+        )
+        from app.schemas.subtask import SubtaskContextBrief
+
+        context = SubtaskContext(
+            subtask_id=100,
+            user_id=1,
+            context_type=ContextType.ATTACHMENT.value,
+            name="External video",
+            status=ContextStatus.READY.value,
+            type_data={
+                "source": "external_web_content",
+                "file_extension": ".mp4",
+                "file_size": 1024,
+                "mime_type": "video/mp4",
+                "storage_backend": "weibo",
+                "fid": 12345,
+                "external_source_url": "https://example.com/post/1",
+                "raw_result": [
+                    {
+                        "site": "example",
+                        "title": "External video",
+                        "video_url_s3": "https://cdn.example.com/video.mp4",
+                        "cover_s3": "https://cdn.example.com/cover.jpg",
+                    }
+                ],
+                "external_video_index": 0,
+            },
+        )
+        context.id = 777
+
+        brief = SubtaskContextBrief.from_model(context)
+
+        assert brief.id == 777
+        assert brief.context_type == ContextType.ATTACHMENT.value
+        assert brief.file_extension == ".mp4"
+        assert brief.mime_type == "video/mp4"
+        assert brief.video_count == 1
+        assert brief.site == "example"
+        assert brief.source_url == "https://example.com/post/1"
+        assert brief.cover_url == "https://cdn.example.com/cover.jpg"
 
 
 class TestContextServiceAttachmentCopy:
@@ -2018,7 +2108,7 @@ class TestVideoAttachmentProcessing:
         context_service_module = import_module("app.services.context.context_service")
 
         class EmptyMediaService:
-            def get_download_url(self, fid: int, user=None) -> None:
+            def get_download_url(self, fid: int, **_kwargs) -> None:
                 assert fid == 12345
                 return None
 

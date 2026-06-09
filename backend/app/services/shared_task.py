@@ -28,6 +28,7 @@ from app.models.subtask import Subtask
 from app.models.subtask_context import ContextType, SubtaskContext
 from app.models.task import TaskResource
 from app.models.user import User
+from app.schemas.context_display import build_context_display_fields
 from app.schemas.shared_task import (
     JoinSharedTaskResponse,
     PublicSharedTaskResponse,
@@ -902,21 +903,9 @@ class SharedTaskService:
                     "status": ctx.status,
                 }
 
-                # Add type-specific fields
-                if ctx.context_type == ContextType.ATTACHMENT.value:
-                    ctx_dict.update(
-                        {
-                            "file_extension": ctx.file_extension,
-                            "file_size": ctx.file_size,
-                            "mime_type": ctx.mime_type,
-                        }
-                    )
-                elif ctx.context_type == ContextType.KNOWLEDGE_BASE.value:
-                    ctx_dict.update(
-                        {
-                            "document_count": ctx.document_count,
-                        }
-                    )
+                ctx_dict.update(
+                    build_context_display_fields(ctx.context_type, ctx.type_data)
+                )
 
                 public_contexts.append(ctx_dict)
 

@@ -3,7 +3,10 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
-from app.services.chat.preprocessing.contexts import _validate_attachment_ownership
+from app.services.chat.preprocessing.contexts import (
+    _validate_attachment_ownership,
+    link_contexts_to_subtask,
+)
 
 
 def _create_ready_attachment(
@@ -69,3 +72,20 @@ def test_validate_attachment_ownership_keeps_quick_launch_preset_when_it_is_the_
     )
 
     assert valid_ids == [preset_attachment.id]
+
+
+def test_link_contexts_to_subtask_supports_attachment_only_payload(test_db):
+    attachment = _create_ready_attachment(test_db, user_id=7)
+
+    linked_ids = link_contexts_to_subtask(
+        db=test_db,
+        subtask_id=42,
+        user_id=7,
+        attachment_ids=[attachment.id],
+        contexts=None,
+    )
+
+    test_db.refresh(attachment)
+
+    assert linked_ids == [attachment.id]
+    assert attachment.subtask_id == 42

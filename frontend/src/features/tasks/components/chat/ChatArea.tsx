@@ -1385,6 +1385,10 @@ function ChatAreaContent({
           subtask_id: detail.subtask_id ?? null,
           file_extension: detail.file_extension,
           created_at: detail.created_at,
+          video_count: detail.video_count ?? undefined,
+          site: detail.site ?? undefined,
+          source_url: detail.source_url ?? undefined,
+          cover_url: detail.cover_url ?? undefined,
         })
       } catch (error) {
         // Log error; system will fall back to auto intent analysis
@@ -1473,6 +1477,10 @@ function ChatAreaContent({
             subtask_id: detail.subtask_id ?? null,
             file_extension: detail.file_extension,
             created_at: detail.created_at,
+            video_count: detail.video_count ?? undefined,
+            site: detail.site ?? undefined,
+            source_url: detail.source_url ?? undefined,
+            cover_url: detail.cover_url ?? undefined,
           })
         } catch (error) {
           console.error('Failed to restore attachment for re-edit:', error)
@@ -1637,6 +1645,7 @@ function ChatAreaContent({
     setSelectedContexts: chatState.setSelectedContexts,
     attachmentState: chatState.attachmentState,
     onFileSelect: handleUserFileSelect,
+    onAttachmentAdd: addExistingAttachment,
     onAttachmentRemove: handleInputAttachmentRemove,
     isStreaming: streamHandlers.isStreaming,
     isStopping: streamHandlers.isStopping,

@@ -42,6 +42,7 @@ from app.api.endpoints import (
     token_issuers,
     users,
     utils,
+    web_content,
     web_scraper,
     wiki,
     wizard,
@@ -240,6 +241,9 @@ api_router.include_router(
 api_router.include_router(utils.router, prefix="/utils", tags=["utils"])
 api_router.include_router(
     web_scraper.router, prefix="/web-scraper", tags=["web-scraper"]
+)
+api_router.include_router(
+    web_content.router, prefix="/web-content", tags=["web-content"]
 )
 # Skill market endpoints (external skill market integration)
 api_router.include_router(

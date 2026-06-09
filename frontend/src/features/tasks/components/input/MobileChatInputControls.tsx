@@ -14,6 +14,7 @@ import MobileBranchSelector from '../selector/MobileBranchSelector'
 import MobileClarificationToggle from '../clarification/MobileClarificationToggle'
 import MobileCorrectionModeToggle from '../MobileCorrectionModeToggle'
 import ChatContextInput from '../chat/ChatContextInput'
+import ExternalWebContentButton from '../chat/ExternalWebContentButton'
 import AttachmentButton from '../AttachmentButton'
 import DingTalkAudioRecordButton from '../DingTalkAudioRecordButton'
 import SendButton from './SendButton'
@@ -26,6 +27,7 @@ import type {
   GitBranch as GitBranchType,
   TaskDetail,
   TaskType,
+  Attachment,
 } from '@/types/api'
 import type { ContextItem } from '@/types/context'
 import type { UnifiedSkill } from '@/apis/skills'
@@ -84,7 +86,9 @@ export interface MobileChatInputControlsProps {
   setSelectedContexts: (contexts: ContextItem[]) => void
 
   // Attachment
+  attachments?: Attachment[]
   onFileSelect: (files: File | File[]) => void
+  onAttachmentAdd?: (attachment: Attachment) => void
 
   // State flags
   isStreaming: boolean
@@ -159,7 +163,9 @@ export function MobileChatInputControls({
   onCorrectionModeToggle,
   selectedContexts,
   setSelectedContexts,
+  attachments = [],
   onFileSelect,
+  onAttachmentAdd = () => {},
   isStreaming,
   isStopping,
   hasMessages,
@@ -243,7 +249,7 @@ export function MobileChatInputControls({
     const renderStopAction = () => (
       <ActionButton
         onClick={onStopStream}
-        title="Stop generating"
+        title={t('actions.stop')}
         icon={<CircleStop className="h-4 w-4 text-orange-500" />}
         className="hover:bg-orange-100"
       />
@@ -265,7 +271,7 @@ export function MobileChatInputControls({
       return (
         <ActionButton
           onClick={onCancelTask}
-          title="Cancel task"
+          title={t('common:actions.cancel_task')}
           icon={<CircleStop className="h-4 w-4 text-orange-500" />}
           className="hover:bg-orange-100"
           data-testid="cancel-task-button"
@@ -337,9 +343,9 @@ export function MobileChatInputControls({
             variant="ghost"
             size="sm"
             aria-expanded={moreMenuOpen}
-            aria-label="More actions"
+            aria-label={t('common:teams.more_actions')}
             data-testid="mobile-input-more-actions-button"
-            title="More actions"
+            title={t('common:teams.more_actions')}
             onClick={() => setMoreMenuOpen(open => !open)}
             className="h-8 w-8 p-0 rounded-full border border-border bg-base text-text-muted hover:text-text-primary hover:bg-hover"
           >
@@ -361,12 +367,20 @@ export function MobileChatInputControls({
                     />
                   )}
                   {showChatContexts && (
-                    <ChatContextInput
-                      selectedContexts={selectedContexts}
-                      onContextsChange={setSelectedContexts}
-                      excludeKnowledgeBaseId={knowledgeBaseId}
-                      triggerVariant="menu-item"
-                    />
+                    <>
+                      <ChatContextInput
+                        selectedContexts={selectedContexts}
+                        onContextsChange={setSelectedContexts}
+                        excludeKnowledgeBaseId={knowledgeBaseId}
+                        triggerVariant="menu-item"
+                      />
+                      <ExternalWebContentButton
+                        attachments={attachments}
+                        onAttachmentAdd={onAttachmentAdd}
+                        disabled={isStreaming}
+                        triggerVariant="menu-item"
+                      />
+                    </>
                   )}
                   {showSkillAction && onToggleSkill && (
                     <SkillSelectorPopover
@@ -442,7 +456,6 @@ export function MobileChatInputControls({
           )}
         </div>
       )}
-
       {/* Right: Agent selector, Model selector, Voice button, Send button */}
       <div
         className={`ml-auto flex flex-1 items-center justify-end gap-2 min-w-0 overflow-hidden ${isVoiceMode ? 'w-full flex-1' : 'ml-auto flex-shrink-0'}`}

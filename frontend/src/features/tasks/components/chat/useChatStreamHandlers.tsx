@@ -385,7 +385,7 @@ export function useChatStreamHandlers({
   const createRetryButton = useCallback(
     (onRetryClick: () => void) => (
       <Button variant="outline" size="sm" onClick={onRetryClick}>
-        {t('chat:actions.retry') || '重试'}
+        {t('chat:actions.retry')}
       </Button>
     ),
     [t]
@@ -534,6 +534,10 @@ export function useChatStreamHandlers({
         source_config?: {
           url?: string
         }
+        video_count?: number
+        site?: string | null
+        source_url?: string
+        cover_url?: string | null
       }> = []
 
       for (const attachment of snapshotAttachments) {
@@ -545,6 +549,10 @@ export function useChatStreamHandlers({
           file_extension: attachment.file_extension,
           file_size: attachment.file_size,
           mime_type: attachment.mime_type,
+          video_count: attachment.video_count ?? undefined,
+          site: attachment.site ?? undefined,
+          source_url: attachment.source_url ?? undefined,
+          cover_url: attachment.cover_url ?? undefined,
         })
       }
 
@@ -795,7 +803,7 @@ export function useChatStreamHandlers({
         title: error.message,
         action: (
           <Button variant="outline" size="sm" onClick={retryQueuedMessage}>
-            {t('chat:actions.retry') || 'Retry'}
+            {t('chat:actions.retry')}
           </Button>
         ),
       })
@@ -957,7 +965,7 @@ export function useChatStreamHandlers({
       if (!isAttachmentReadyToSend) {
         toast({
           variant: 'destructive',
-          title: '请等待文件上传完成',
+          title: t('chat:upload.wait_for_upload'),
         })
         return
       }
@@ -1045,6 +1053,7 @@ export function useChatStreamHandlers({
       shouldHideChatInput,
       isAttachmentReadyToSend,
       toast,
+      t,
       selectedRepo,
       currentTaskId,
       selectedTaskDetail,
@@ -1280,6 +1289,10 @@ export function useChatStreamHandlers({
           source_config?: {
             url?: string
           }
+          video_count?: number | null
+          site?: string | null
+          source_url?: string | null
+          cover_url?: string | null
         }> =
           existingContexts?.map(ctx => ({
             id: ctx.id,
@@ -1293,6 +1306,10 @@ export function useChatStreamHandlers({
             knowledge_id: ctx.knowledge_id ?? undefined,
             document_id: ctx.document_id ?? undefined,
             source_config: ctx.source_config ?? undefined,
+            video_count: ctx.video_count ?? undefined,
+            site: ctx.site ?? undefined,
+            source_url: ctx.source_url ?? undefined,
+            cover_url: ctx.cover_url ?? undefined,
           })) || []
 
         const tempTaskId = await contextSendMessage(
