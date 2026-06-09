@@ -85,7 +85,8 @@ async def test_chat_retry_default_model_clears_stale_override_labels_without_nam
         patch("app.api.ws.chat_namespace.extract_display_prompt", return_value="Hello"),
         patch("app.api.ws.chat_namespace.get_device_id", return_value=None),
         patch(
-            "app.services.chat.trigger.trigger_ai_response_unified", AsyncMock()
+            "app.api.ws.chat_namespace.trigger_ai_response_unified",
+            AsyncMock(),
         ) as mock_trigger,
         patch("sqlalchemy.orm.attributes.flag_modified") as mock_flag_modified,
     ):
@@ -144,7 +145,7 @@ async def test_chat_retry_closes_session_before_triggering_sse_dispatch():
         patch("app.api.ws.chat_namespace.extract_display_prompt", return_value="Hello"),
         patch("app.api.ws.chat_namespace.get_device_id", return_value=None),
         patch(
-            "app.services.chat.trigger.trigger_ai_response_unified",
+            "app.api.ws.chat_namespace.trigger_ai_response_unified",
             AsyncMock(side_effect=assert_session_closed_before_dispatch),
         ) as mock_trigger,
     ):
@@ -210,7 +211,8 @@ async def test_chat_retry_new_model_without_type_clears_stale_override_model_typ
         patch("app.api.ws.chat_namespace.extract_display_prompt", return_value="Hello"),
         patch("app.api.ws.chat_namespace.get_device_id", return_value=None),
         patch(
-            "app.services.chat.trigger.trigger_ai_response_unified", AsyncMock()
+            "app.api.ws.chat_namespace.trigger_ai_response_unified",
+            AsyncMock(),
         ) as mock_trigger,
         patch("sqlalchemy.orm.attributes.flag_modified") as mock_flag_modified,
     ):
@@ -271,7 +273,8 @@ async def test_chat_retry_rejects_running_subtask_without_dispatching():
         ),
         patch("app.api.ws.chat_namespace.reset_subtask_for_retry") as mock_reset,
         patch(
-            "app.services.chat.trigger.trigger_ai_response_unified", AsyncMock()
+            "app.api.ws.chat_namespace.trigger_ai_response_unified",
+            AsyncMock(),
         ) as mock_trigger,
     ):
         result = await namespace.on_chat_retry(

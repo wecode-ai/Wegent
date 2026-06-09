@@ -19,6 +19,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, List, Optional
 
+from sqlalchemy.orm import make_transient
+
 from app.db.session import get_db_session
 from app.models.kind import Kind
 from app.models.subtask import Subtask
@@ -151,31 +153,41 @@ async def _build_subscription_execution_request(
             objects = _load_subscription_execution_objects(db, execution_data)
             if not objects:
                 return None
-
-            return await build_execution_request(
-                task=objects.task,
-                assistant_subtask=objects.assistant_subtask,
-                team=objects.team,
-                user=objects.user,
-                message=execution_data.prompt,
-                payload=None,
-                user_subtask_id=execution_data.user_subtask_id,
-                history_limit=(
-                    execution_data.history_message_count
-                    if execution_data.preserve_history
-                    else None
-                ),
-                is_subscription=True,
-                enable_tools=True,
-                enable_deep_thinking=True,
-                preload_skills=(
-                    execution_data.preload_skills
-                    if execution_data.preload_skills
-                    else None
-                ),
-            )
+            _detach_subscription_execution_objects(db, objects)
         finally:
             db.rollback()
+
+    return await build_execution_request(
+        task=objects.task,
+        assistant_subtask=objects.assistant_subtask,
+        team=objects.team,
+        user=objects.user,
+        message=execution_data.prompt,
+        payload=None,
+        user_subtask_id=execution_data.user_subtask_id,
+        history_limit=(
+            execution_data.history_message_count
+            if execution_data.preserve_history
+            else None
+        ),
+        is_subscription=True,
+        enable_tools=True,
+        enable_deep_thinking=True,
+        preload_skills=(
+            execution_data.preload_skills if execution_data.preload_skills else None
+        ),
+    )
+
+
+def _detach_subscription_execution_objects(
+    db: Any,
+    objects: _SubscriptionExecutionObjects,
+) -> None:
+    """Detach loaded ORM objects before closing the loader session."""
+    for obj in (objects.task, objects.assistant_subtask, objects.team, objects.user):
+        if hasattr(obj, "_sa_instance_state"):
+            db.refresh(obj)
+            make_transient(obj)
 
 
 def _load_subscription_execution_objects(

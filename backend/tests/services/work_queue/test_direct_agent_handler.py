@@ -113,9 +113,11 @@ def test_resolve_model_override_uses_public_model_type_for_public_model():
 
 
 @pytest.mark.asyncio
-async def test_dispatch_ai_execution_closes_loader_session_before_collecting_result():
+async def test_dispatch_ai_execution_closes_loader_session_before_collecting_result(
+    fake_orm_session_factory,
+):
     handler = InboxDirectAgentHandler()
-    fake_session = _FakeSession(
+    fake_session = fake_orm_session_factory(
         task_id=123,
         assistant_subtask_id=789,
         team_id=17,
@@ -145,6 +147,11 @@ async def test_dispatch_ai_execution_closes_loader_session_before_collecting_res
     )
     fake_emitters_module = SimpleNamespace(SSEResultEmitter=FakeEmitter)
 
+    async def fake_build_execution_request(**kwargs):
+        assert fake_session.rolled_back is True
+        assert fake_session.closed is True
+        return object()
+
     with (
         patch(
             "app.services.inbox.direct_agent_handler.get_db_session",
@@ -152,7 +159,7 @@ async def test_dispatch_ai_execution_closes_loader_session_before_collecting_res
         ),
         patch(
             "app.services.chat.trigger.unified.build_execution_request",
-            AsyncMock(return_value=object()),
+            AsyncMock(side_effect=fake_build_execution_request),
         ),
         patch.dict(
             sys.modules,
@@ -172,49 +179,3 @@ async def test_dispatch_ai_execution_closes_loader_session_before_collecting_res
         )
 
     dispatch_mock.assert_awaited_once()
-
-
-class _FakeSession:
-    def __init__(
-        self,
-        task_id: int,
-        assistant_subtask_id: int,
-        team_id: int,
-        user_id: int,
-    ):
-        self.task_id = task_id
-        self.assistant_subtask_id = assistant_subtask_id
-        self.team_id = team_id
-        self.user_id = user_id
-        self.rolled_back = False
-        self.closed = False
-
-    def query(self, model):
-        return _FakeQuery(model, self)
-
-    def rollback(self):
-        self.rolled_back = True
-
-    def close(self):
-        self.closed = True
-
-
-class _FakeQuery:
-    def __init__(self, model, session: _FakeSession):
-        self.model = model
-        self.session = session
-
-    def filter(self, *args):
-        return self
-
-    def first(self):
-        model_name = self.model.__name__
-        if model_name == "TaskResource":
-            return SimpleNamespace(id=self.session.task_id, kind="Task")
-        if model_name == "Subtask":
-            return SimpleNamespace(id=self.session.assistant_subtask_id)
-        if model_name == "Kind":
-            return SimpleNamespace(id=self.session.team_id, kind="Team")
-        if model_name == "User":
-            return SimpleNamespace(id=self.session.user_id)
-        return None

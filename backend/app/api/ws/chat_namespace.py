@@ -69,6 +69,7 @@ from app.services.chat.operations import (
 from app.services.chat.rag import process_context_and_rag
 from app.services.chat.storage import session_manager
 from app.services.chat.storage.db import get_db_session, run_sync_in_executor
+from app.services.chat.trigger import trigger_ai_response_unified
 from app.utils.prompt_utils import extract_display_prompt
 from shared.telemetry.context import (
     set_request_context,
@@ -913,8 +914,6 @@ class ChatNamespace(socketio.AsyncNamespace):
             if should_trigger_ai and assistant_subtask:
                 from sqlalchemy.orm import make_transient
 
-                from app.services.chat.trigger import trigger_ai_response_unified
-
                 logger.info(
                     f"[WS] chat:send triggering AI response with enable_deep_thinking={payload.enable_deep_thinking} (controls tool usage)"
                 )
@@ -1337,7 +1336,6 @@ class ChatNamespace(socketio.AsyncNamespace):
         except ValueError as e:
             # Validation errors, data parsing errors
             logger.error(f"[WS] chat:retry validation error: {e}", exc_info=True)
-            db.rollback()
 
             # Broadcast error via ExecutionDispatcher
             # Note: We don't pass emitter here since this is a validation error
@@ -1347,7 +1345,6 @@ class ChatNamespace(socketio.AsyncNamespace):
         except PermissionError as e:
             # Permission/access errors
             logger.error(f"[WS] chat:retry permission error: {e}", exc_info=True)
-            db.rollback()
 
             # Permission errors are returned directly to the caller
             return {"error": f"Access denied: {str(e)}"}
@@ -1356,7 +1353,6 @@ class ChatNamespace(socketio.AsyncNamespace):
             from sqlalchemy.exc import SQLAlchemyError
 
             logger.error(f"[WS] chat:retry exception: {e}", exc_info=True)
-            db.rollback()
 
             # Return error directly to the caller
             error_msg = (
@@ -1364,19 +1360,15 @@ class ChatNamespace(socketio.AsyncNamespace):
                 if isinstance(e, SQLAlchemyError)
                 else f"Internal server error: {str(e)}"
             )
-
-            if isinstance(e, SQLAlchemyError):
-                return {"error": "Database error occurred"}
-            return {"error": f"Internal server error: {str(e)}"}
+            return {"error": error_msg}
         finally:
+            db.rollback()
             db.close()
 
         if "error" in dispatch_args_or_error:
             return dispatch_args_or_error
 
         try:
-            from app.services.chat.trigger import trigger_ai_response_unified
-
             await trigger_ai_response_unified(
                 namespace=self,
                 **dispatch_args_or_error,
@@ -1733,15 +1725,30 @@ def _prepare_chat_retry_dispatch(
         "user_subtask_id": user_subtask.id,
     }
 
+    _detach_retry_dispatch_objects(
+        db,
+        task=task,
+        team=team,
+        assistant_subtask=failed_ai_subtask,
+        user=user,
+    )
+    return dispatch_args
+
+
+def _detach_retry_dispatch_objects(
+    db: Session,
+    task,
+    team,
+    assistant_subtask,
+    user,
+) -> None:
+    """Load ORM attributes and detach objects before the DB session is closed."""
     from sqlalchemy.orm import make_transient
 
-    for obj in (task, team, failed_ai_subtask, user):
+    for obj in (task, team, assistant_subtask, user):
         if hasattr(obj, "_sa_instance_state"):
             db.refresh(obj)
             make_transient(obj)
-
-    db.rollback()
-    return dispatch_args
 
 
 # ============================================================

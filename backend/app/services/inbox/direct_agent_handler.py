@@ -9,7 +9,7 @@ import logging
 import threading
 from typing import Optional
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, make_transient
 
 from app.core.events import QueueMessageCreatedEvent, TaskCompletedEvent
 from app.db.session import get_db_session
@@ -459,22 +459,30 @@ class InboxDirectAgentHandler:
                 )
                 if not loaded:
                     return None
-
                 task, assistant_subtask, team, user = loaded
-                return await build_execution_request(
-                    task=task,
-                    assistant_subtask=assistant_subtask,
-                    team=team,
-                    user=user,
-                    message=message,
-                    payload=None,
-                    user_subtask_id=user_subtask_id,
-                    is_subscription=False,
-                    enable_tools=True,
-                    enable_deep_thinking=True,
-                )
+                self._detach_ai_execution_objects(db, loaded)
             finally:
                 db.rollback()
+
+        return await build_execution_request(
+            task=task,
+            assistant_subtask=assistant_subtask,
+            team=team,
+            user=user,
+            message=message,
+            payload=None,
+            user_subtask_id=user_subtask_id,
+            is_subscription=False,
+            enable_tools=True,
+            enable_deep_thinking=True,
+        )
+
+    def _detach_ai_execution_objects(self, db: Session, loaded) -> None:
+        """Detach loaded ORM objects before closing the loader session."""
+        for obj in loaded:
+            if hasattr(obj, "_sa_instance_state"):
+                db.refresh(obj)
+                make_transient(obj)
 
     def _load_ai_execution_objects(
         self,

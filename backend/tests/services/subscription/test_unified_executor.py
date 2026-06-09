@@ -75,7 +75,9 @@ async def test_http_callback_dispatch_preserves_device_id():
 
 
 @pytest.mark.asyncio
-async def test_unified_executor_closes_loader_session_before_sse_execution():
+async def test_unified_executor_closes_loader_session_before_sse_execution(
+    fake_orm_session_factory,
+):
     """Long SSE execution must not keep the ORM loading session open."""
 
     execution_data = SubscriptionExecutionData(
@@ -98,7 +100,13 @@ async def test_unified_executor_closes_loader_session_before_sse_execution():
         trigger_reason="Scheduled",
     )
 
-    fake_session = _FakeSession(execution_data)
+    fake_session = fake_orm_session_factory(
+        task_id=execution_data.task_id,
+        assistant_subtask_id=execution_data.subtask_id,
+        team_id=execution_data.team_id,
+        user_id=execution_data.user_id,
+        device_id=execution_data.device_id,
+    )
 
     @contextmanager
     def fake_get_db_session():
@@ -110,6 +118,11 @@ async def test_unified_executor_closes_loader_session_before_sse_execution():
     async def fake_execute_sse_sync(request, execution_data):
         assert fake_session.rolled_back is True
         assert fake_session.closed is True
+
+    async def fake_build_execution_request(**kwargs):
+        assert fake_session.rolled_back is True
+        assert fake_session.closed is True
+        return object()
 
     fake_sse_mode = SimpleNamespace(value="SSE")
     fake_execution_module = SimpleNamespace(
@@ -131,7 +144,7 @@ async def test_unified_executor_closes_loader_session_before_sse_execution():
         ),
         patch(
             "app.services.chat.trigger.unified.build_execution_request",
-            AsyncMock(return_value=object()),
+            AsyncMock(side_effect=fake_build_execution_request),
         ),
         patch(
             "app.services.subscription.unified_executor._execute_sse_sync",
@@ -141,48 +154,3 @@ async def test_unified_executor_closes_loader_session_before_sse_execution():
         await execute_subscription_unified(execution_data=execution_data)
 
     sse_mock.assert_awaited_once()
-
-
-class _FakeSession:
-    def __init__(self, execution_data: SubscriptionExecutionData):
-        self.execution_data = execution_data
-        self.rolled_back = False
-        self.closed = False
-
-    def query(self, model):
-        return _FakeQuery(model, self.execution_data)
-
-    def rollback(self):
-        self.rolled_back = True
-
-    def close(self):
-        self.closed = True
-
-
-class _FakeQuery:
-    def __init__(self, model, execution_data: SubscriptionExecutionData):
-        self.model = model
-        self.execution_data = execution_data
-
-    def filter(self, *args):
-        return self
-
-    def first(self):
-        model_name = self.model.__name__
-        if model_name == "TaskResource":
-            return SimpleNamespace(
-                id=self.execution_data.task_id,
-                kind="Task",
-                json={"spec": {"device_id": self.execution_data.device_id}},
-            )
-        if model_name == "Subtask":
-            return SimpleNamespace(id=self.execution_data.subtask_id)
-        if model_name == "Kind":
-            return SimpleNamespace(
-                id=self.execution_data.team_id,
-                kind="Team",
-                json={},
-            )
-        if model_name == "User":
-            return SimpleNamespace(id=self.execution_data.user_id)
-        return None
