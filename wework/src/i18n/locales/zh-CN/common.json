@@ -412,7 +412,7 @@
     "toggle_password_visibility": "切换密码可见性",
     "login_or_continue": "或继续使用",
     "mobile_qrcode_login_title": "扫码登录",
-    "mobile_qrcode_login_description": "使用微博客户端扫码，确认后自动进入 Wework",
+    "mobile_qrcode_login_description": "使用新浪口袋扫码，确认后自动进入 Wework",
     "mobile_qrcode_loading": "正在生成二维码...",
     "mobile_qrcode_waiting": "等待扫码确认",
     "mobile_qrcode_expired": "二维码已过期",
