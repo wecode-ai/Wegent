@@ -4,6 +4,9 @@
 
 """Regression tests for subscription unified execution routing."""
 
+import sys
+from contextlib import contextmanager
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -11,6 +14,7 @@ import pytest
 from app.services.subscription.unified_executor import (
     SubscriptionExecutionData,
     _execute_http_callback,
+    execute_subscription_unified,
 )
 
 
@@ -49,15 +53,18 @@ async def test_http_callback_dispatch_preserves_device_id():
     )
 
     dispatch_mock = AsyncMock(return_value=None)
+    fake_execution_module = SimpleNamespace(
+        execution_dispatcher=SimpleNamespace(dispatch=dispatch_mock)
+    )
+    fake_emitters_module = SimpleNamespace(SSEResultEmitter=_FakeEmitter)
 
     with (
-        patch(
-            "app.services.execution.execution_dispatcher.dispatch",
-            dispatch_mock,
-        ),
-        patch(
-            "app.services.execution.emitters.SSEResultEmitter",
-            _FakeEmitter,
+        patch.dict(
+            sys.modules,
+            {
+                "app.services.execution": fake_execution_module,
+                "app.services.execution.emitters": fake_emitters_module,
+            },
         ),
     ):
         await _execute_http_callback(request=object(), execution_data=execution_data)
@@ -65,3 +72,117 @@ async def test_http_callback_dispatch_preserves_device_id():
     dispatch_mock.assert_awaited_once()
     _, kwargs = dispatch_mock.await_args
     assert kwargs["device_id"] == "local-device-1"
+
+
+@pytest.mark.asyncio
+async def test_unified_executor_closes_loader_session_before_sse_execution():
+    """Long SSE execution must not keep the ORM loading session open."""
+
+    execution_data = SubscriptionExecutionData(
+        subscription_id=88,
+        execution_id=2,
+        task_id=544,
+        subtask_id=670,
+        user_id=2,
+        team_id=73,
+        user_subtask_id=669,
+        device_id="local-device-1",
+        prompt="hello",
+        model_override_name=None,
+        preserve_history=False,
+        history_message_count=0,
+        subscription_name="echo",
+        subscription_display_name="Echo",
+        team_display_name="Team",
+        trigger_type="cron",
+        trigger_reason="Scheduled",
+    )
+
+    fake_session = _FakeSession(execution_data)
+
+    @contextmanager
+    def fake_get_db_session():
+        try:
+            yield fake_session
+        finally:
+            fake_session.close()
+
+    async def fake_execute_sse_sync(request, execution_data):
+        assert fake_session.rolled_back is True
+        assert fake_session.closed is True
+
+    fake_sse_mode = SimpleNamespace(value="SSE")
+    fake_execution_module = SimpleNamespace(
+        CommunicationMode=SimpleNamespace(SSE=fake_sse_mode),
+        ExecutionRouter=lambda: SimpleNamespace(
+            route=lambda request, device_id=None: SimpleNamespace(
+                mode=fake_sse_mode,
+                url="sse://local",
+            )
+        ),
+    )
+
+    with (
+        patch.dict(sys.modules, {"app.services.execution": fake_execution_module}),
+        patch(
+            "app.services.subscription.unified_executor.get_db_session",
+            fake_get_db_session,
+            create=True,
+        ),
+        patch(
+            "app.services.chat.trigger.unified.build_execution_request",
+            AsyncMock(return_value=object()),
+        ),
+        patch(
+            "app.services.subscription.unified_executor._execute_sse_sync",
+            AsyncMock(side_effect=fake_execute_sse_sync),
+        ) as sse_mock,
+    ):
+        await execute_subscription_unified(execution_data=execution_data)
+
+    sse_mock.assert_awaited_once()
+
+
+class _FakeSession:
+    def __init__(self, execution_data: SubscriptionExecutionData):
+        self.execution_data = execution_data
+        self.rolled_back = False
+        self.closed = False
+
+    def query(self, model):
+        return _FakeQuery(model, self.execution_data)
+
+    def rollback(self):
+        self.rolled_back = True
+
+    def close(self):
+        self.closed = True
+
+
+class _FakeQuery:
+    def __init__(self, model, execution_data: SubscriptionExecutionData):
+        self.model = model
+        self.execution_data = execution_data
+
+    def filter(self, *args):
+        return self
+
+    def first(self):
+        model_name = self.model.__name__
+        if model_name == "TaskResource":
+            return SimpleNamespace(
+                id=self.execution_data.task_id,
+                kind="Task",
+                json={"spec": {"device_id": self.execution_data.device_id}},
+            )
+        if model_name == "Subtask":
+            return SimpleNamespace(id=self.execution_data.subtask_id)
+        if model_name == "Kind":
+            return SimpleNamespace(
+                id=self.execution_data.team_id,
+                kind="Team",
+                json={},
+            )
+        if model_name == "User":
+            return SimpleNamespace(id=self.execution_data.user_id)
+        return None

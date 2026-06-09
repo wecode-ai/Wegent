@@ -2,6 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import sys
+from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -108,3 +110,111 @@ def test_resolve_model_override_uses_public_model_type_for_public_model():
     assert model_name == "gpt-5"
     assert force_override is True
     assert model_type == "public"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_ai_execution_closes_loader_session_before_collecting_result():
+    handler = InboxDirectAgentHandler()
+    fake_session = _FakeSession(
+        task_id=123,
+        assistant_subtask_id=789,
+        team_id=17,
+        user_id=7,
+    )
+
+    @contextmanager
+    def fake_get_db_session():
+        try:
+            yield fake_session
+        finally:
+            fake_session.close()
+
+    class FakeEmitter:
+        def __init__(self, task_id: int, subtask_id: int):
+            self.task_id = task_id
+            self.subtask_id = subtask_id
+
+        async def collect(self):
+            assert fake_session.rolled_back is True
+            assert fake_session.closed is True
+            return "", None
+
+    dispatch_mock = AsyncMock(return_value=None)
+    fake_execution_module = SimpleNamespace(
+        execution_dispatcher=SimpleNamespace(dispatch=dispatch_mock)
+    )
+    fake_emitters_module = SimpleNamespace(SSEResultEmitter=FakeEmitter)
+
+    with (
+        patch(
+            "app.services.inbox.direct_agent_handler.get_db_session",
+            fake_get_db_session,
+        ),
+        patch(
+            "app.services.chat.trigger.unified.build_execution_request",
+            AsyncMock(return_value=object()),
+        ),
+        patch.dict(
+            sys.modules,
+            {
+                "app.services.execution": fake_execution_module,
+                "app.services.execution.emitters": fake_emitters_module,
+            },
+        ),
+    ):
+        await handler._dispatch_ai_execution(
+            task_id=123,
+            assistant_subtask_id=789,
+            team_id=17,
+            user_id=7,
+            message="hello",
+            user_subtask_id=456,
+        )
+
+    dispatch_mock.assert_awaited_once()
+
+
+class _FakeSession:
+    def __init__(
+        self,
+        task_id: int,
+        assistant_subtask_id: int,
+        team_id: int,
+        user_id: int,
+    ):
+        self.task_id = task_id
+        self.assistant_subtask_id = assistant_subtask_id
+        self.team_id = team_id
+        self.user_id = user_id
+        self.rolled_back = False
+        self.closed = False
+
+    def query(self, model):
+        return _FakeQuery(model, self)
+
+    def rollback(self):
+        self.rolled_back = True
+
+    def close(self):
+        self.closed = True
+
+
+class _FakeQuery:
+    def __init__(self, model, session: _FakeSession):
+        self.model = model
+        self.session = session
+
+    def filter(self, *args):
+        return self
+
+    def first(self):
+        model_name = self.model.__name__
+        if model_name == "TaskResource":
+            return SimpleNamespace(id=self.session.task_id, kind="Task")
+        if model_name == "Subtask":
+            return SimpleNamespace(id=self.session.assistant_subtask_id)
+        if model_name == "Kind":
+            return SimpleNamespace(id=self.session.team_id, kind="Team")
+        if model_name == "User":
+            return SimpleNamespace(id=self.session.user_id)
+        return None
