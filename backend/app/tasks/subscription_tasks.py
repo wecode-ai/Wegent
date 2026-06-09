@@ -751,6 +751,34 @@ def _handle_execution_failure(
 # Batch size for processing due subscriptions (to avoid memory issues with large datasets)
 SUBSCRIPTION_BATCH_SIZE = 100
 
+
+def _iter_active_subscription_batches(
+    db: Session,
+    batch_size: int = SUBSCRIPTION_BATCH_SIZE,
+):
+    """Yield active subscriptions in deterministic DB-level pages."""
+    from app.models.kind import Kind
+
+    offset = 0
+    while True:
+        batch = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == "Subscription",
+                Kind.is_active == True,
+            )
+            .order_by(Kind.id)
+            .limit(batch_size)
+            .offset(offset)
+            .all()
+        )
+        if not batch:
+            break
+
+        yield batch
+        offset += batch_size
+
+
 # Lock timeout for check_due_subscriptions (should be longer than expected execution time)
 CHECK_DUE_SUBSCRIPTIONS_LOCK_TIMEOUT = 120  # seconds
 
@@ -773,7 +801,6 @@ def check_due_subscriptions(self):
 
     from app.core.distributed_lock import distributed_lock
     from app.db.session import get_db_session
-    from app.models.kind import Kind
     from app.schemas.subscription import Subscription, SubscriptionTriggerType
     from app.services.subscription import subscription_service
 
@@ -800,109 +827,69 @@ def check_due_subscriptions(self):
                 # Use UTC for comparison since next_execution_time is stored in UTC
                 now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
 
-                # Query all active subscriptions
-                all_subscriptions = (
-                    db.query(Kind)
-                    .filter(
-                        Kind.kind == "Subscription",
-                        Kind.is_active == True,
-                    )
-                    .all()
-                )
-
-                # Filter due subscriptions based on _internal fields
-                due_subscriptions = []
-                skipped_invalid = 0
-                for sub in all_subscriptions:
-                    internal = sub.json.get("_internal", {})
-                    if not internal.get("enabled", True):
-                        continue
-
-                    # Skip expired subscriptions
-                    expires_at_str = internal.get("expires_at")
-                    if expires_at_str:
-                        try:
-                            from app.services.subscription.helpers import (
-                                is_subscription_expired,
-                            )
-
-                            expires_at = datetime.fromisoformat(expires_at_str)
-                            if is_subscription_expired(expires_at, now_utc):
-                                # Auto-disable expired subscription
-                                internal["enabled"] = False
-                                sub.json["_internal"] = internal
-                                flag_modified(sub, "json")
-                                db.commit()
-                                logger.info(
-                                    f"[subscription_tasks] Subscription {sub.id} has expired and been disabled"
-                                )
-                                continue
-                        except (ValueError, TypeError):
-                            pass
-
-                    trigger_type = internal.get("trigger_type")
-                    if trigger_type not in [
-                        SubscriptionTriggerType.CRON.value,
-                        SubscriptionTriggerType.INTERVAL.value,
-                        SubscriptionTriggerType.ONE_TIME.value,
-                    ]:
-                        continue
-
-                    # Skip subscriptions with invalid trigger configurations
-                    if not _is_trigger_config_valid(sub.json):
-                        skipped_invalid += 1
-                        continue
-
-                    next_exec_time_str = internal.get("next_execution_time")
-                    if not next_exec_time_str:
-                        continue
-
-                    try:
-                        next_exec_time = datetime.fromisoformat(next_exec_time_str)
-                        if next_exec_time <= now_utc:
-                            due_subscriptions.append(sub)
-                    except (ValueError, TypeError):
-                        continue
-
-                if skipped_invalid > 0:
-                    logger.warning(
-                        f"[subscription_tasks] Skipped {skipped_invalid} subscription(s) with invalid trigger config"
-                    )
-
-                total_due = len(due_subscriptions)
-
-                if total_due == 0:
-                    logger.debug(
-                        "[subscription_tasks] No subscriptions due for execution"
-                    )
-                    return {
-                        "due_subscriptions": 0,
-                        "dispatched": 0,
-                        "recovered_pending": recovered,
-                        "cleaned_running": cleaned_running,
-                    }
-
-                logger.info(
-                    f"[subscription_tasks] Found {total_due} subscription(s) due for execution"
-                )
-
-                # Process in batches to avoid memory issues
                 dispatched = 0
-                offset = 0
+                total_due = 0
+                skipped_invalid = 0
 
-                # Track last lock extension time for watchdog pattern
                 import time
 
                 last_lock_extend_time = time.time()
                 LOCK_EXTEND_INTERVAL = 30  # Extend lock every 30 seconds
 
-                while offset < total_due:
-                    batch = due_subscriptions[offset : offset + SUBSCRIPTION_BATCH_SIZE]
+                for batch in _iter_active_subscription_batches(db):
+                    for subscription in batch:
+                        internal = subscription.json.get("_internal", {})
+                        if not internal.get("enabled", True):
+                            continue
 
-                    if not batch:
-                        break
+                        # Skip expired subscriptions
+                        expires_at_str = internal.get("expires_at")
+                        if expires_at_str:
+                            try:
+                                from app.services.subscription.helpers import (
+                                    is_subscription_expired,
+                                )
 
-                    for idx, subscription in enumerate(batch):
+                                expires_at = datetime.fromisoformat(expires_at_str)
+                                if is_subscription_expired(expires_at, now_utc):
+                                    # Auto-disable expired subscription
+                                    internal["enabled"] = False
+                                    subscription.json["_internal"] = internal
+                                    flag_modified(subscription, "json")
+                                    db.commit()
+                                    logger.info(
+                                        f"[subscription_tasks] Subscription {subscription.id} has expired and been disabled"
+                                    )
+                                    continue
+                            except (ValueError, TypeError):
+                                pass
+
+                        trigger_type = internal.get("trigger_type")
+                        if trigger_type not in [
+                            SubscriptionTriggerType.CRON.value,
+                            SubscriptionTriggerType.INTERVAL.value,
+                            SubscriptionTriggerType.ONE_TIME.value,
+                        ]:
+                            continue
+
+                        # Skip subscriptions with invalid trigger configurations
+                        if not _is_trigger_config_valid(subscription.json):
+                            skipped_invalid += 1
+                            continue
+
+                        next_exec_time_str = internal.get("next_execution_time")
+                        if not next_exec_time_str:
+                            continue
+
+                        try:
+                            next_exec_time = datetime.fromisoformat(next_exec_time_str)
+                            if next_exec_time > now_utc:
+                                continue
+                        except (ValueError, TypeError):
+                            continue
+
+                        total_due += 1
+
                         # Watchdog: extend lock periodically during processing
                         current_time = time.time()
                         if current_time - last_lock_extend_time >= LOCK_EXTEND_INTERVAL:
@@ -913,7 +900,7 @@ def check_due_subscriptions(self):
                             last_lock_extend_time = current_time
                             logger.debug(
                                 f"[subscription_tasks] Extended lock during batch processing "
-                                f"(processed {offset + idx}/{total_due})"
+                                f"(processed {total_due - 1}/{total_due})"
                             )
                         try:
                             subscription_crd = validate_subscription_for_read(
@@ -960,15 +947,23 @@ def check_due_subscriptions(self):
                             db.rollback()
                             continue
 
-                    offset += len(batch)
+                    db.commit()
 
-                    # Additional lock extension between batches (backup to watchdog)
-                    if offset < total_due:
-                        distributed_lock.extend(
-                            "check_due_subscriptions",
-                            expire_seconds=CHECK_DUE_SUBSCRIPTIONS_LOCK_TIMEOUT,
-                        )
-                        last_lock_extend_time = time.time()
+                if skipped_invalid > 0:
+                    logger.warning(
+                        f"[subscription_tasks] Skipped {skipped_invalid} subscription(s) with invalid trigger config"
+                    )
+
+                if total_due == 0:
+                    logger.debug(
+                        "[subscription_tasks] No subscriptions due for execution"
+                    )
+                    return {
+                        "due_subscriptions": 0,
+                        "dispatched": 0,
+                        "recovered_pending": recovered,
+                        "cleaned_running": cleaned_running,
+                    }
 
                 logger.info(
                     f"[subscription_tasks] check_due_subscriptions completed: {dispatched}/{total_due} subscriptions dispatched, {recovered} pending recovered, {cleaned_running} running cleaned"
@@ -1669,7 +1664,6 @@ def check_due_subscriptions_sync():
     - Calls execute_subscription_task_sync instead of dispatching Celery tasks
     """
     from app.db.session import get_db_session
-    from app.models.kind import Kind
     from app.schemas.subscription import Subscription, SubscriptionTriggerType
     from app.services.subscription import subscription_service
 
@@ -1686,67 +1680,105 @@ def check_due_subscriptions_sync():
             # Use UTC for comparison since next_execution_time is stored in UTC
             now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
 
-            # Query all active subscriptions
-            all_subscriptions = (
-                db.query(Kind)
-                .filter(
-                    Kind.kind == "Subscription",
-                    Kind.is_active == True,
-                )
-                .all()
-            )
+            dispatched = 0
+            total_due = 0
+            for batch in _iter_active_subscription_batches(db):
+                for subscription in batch:
+                    internal = subscription.json.get("_internal", {})
+                    if not internal.get("enabled", True):
+                        continue
 
-            # Filter due subscriptions based on _internal fields
-            due_subscriptions = []
-            for sub in all_subscriptions:
-                internal = sub.json.get("_internal", {})
-                if not internal.get("enabled", True):
-                    continue
+                    # Skip expired subscriptions
+                    expires_at_str = internal.get("expires_at")
+                    if expires_at_str:
+                        try:
+                            from sqlalchemy.orm.attributes import flag_modified
 
-                # Skip expired subscriptions
-                expires_at_str = internal.get("expires_at")
-                if expires_at_str:
-                    try:
-                        from sqlalchemy.orm.attributes import flag_modified
-
-                        from app.services.subscription.helpers import (
-                            is_subscription_expired,
-                        )
-
-                        expires_at = datetime.fromisoformat(expires_at_str)
-                        if is_subscription_expired(expires_at, now_utc):
-                            # Auto-disable expired subscription
-                            internal["enabled"] = False
-                            sub.json["_internal"] = internal
-                            flag_modified(sub, "json")
-                            db.commit()
-                            logger.info(
-                                f"[subscription_tasks] Subscription {sub.id} has expired and been disabled (sync)"
+                            from app.services.subscription.helpers import (
+                                is_subscription_expired,
                             )
+
+                            expires_at = datetime.fromisoformat(expires_at_str)
+                            if is_subscription_expired(expires_at, now_utc):
+                                # Auto-disable expired subscription
+                                internal["enabled"] = False
+                                subscription.json["_internal"] = internal
+                                flag_modified(subscription, "json")
+                                db.commit()
+                                logger.info(
+                                    f"[subscription_tasks] Subscription {subscription.id} has expired and been disabled (sync)"
+                                )
+                                continue
+                        except (ValueError, TypeError):
+                            pass
+
+                    trigger_type = internal.get("trigger_type")
+                    if trigger_type not in [
+                        SubscriptionTriggerType.CRON.value,
+                        SubscriptionTriggerType.INTERVAL.value,
+                        SubscriptionTriggerType.ONE_TIME.value,
+                    ]:
+                        continue
+
+                    next_exec_time_str = internal.get("next_execution_time")
+                    if not next_exec_time_str:
+                        continue
+
+                    try:
+                        next_exec_time = datetime.fromisoformat(next_exec_time_str)
+                        if next_exec_time > now_utc:
                             continue
                     except (ValueError, TypeError):
-                        pass
+                        continue
 
-                trigger_type = internal.get("trigger_type")
-                if trigger_type not in [
-                    SubscriptionTriggerType.CRON.value,
-                    SubscriptionTriggerType.INTERVAL.value,
-                    SubscriptionTriggerType.ONE_TIME.value,
-                ]:
-                    continue
+                    total_due += 1
 
-                next_exec_time_str = internal.get("next_execution_time")
-                if not next_exec_time_str:
-                    continue
+                    try:
+                        subscription_crd = validate_subscription_for_read(
+                            subscription.json
+                        )
 
-                try:
-                    next_exec_time = datetime.fromisoformat(next_exec_time_str)
-                    if next_exec_time <= now_utc:
-                        due_subscriptions.append(sub)
-                except (ValueError, TypeError):
-                    continue
+                        # Determine trigger reason
+                        trigger_reason = _get_trigger_reason(
+                            subscription_crd, trigger_type
+                        )
 
-            if not due_subscriptions:
+                        # Create execution record
+                        execution = subscription_service.create_execution(
+                            db,
+                            subscription=subscription,
+                            user_id=subscription.user_id,
+                            trigger_type=trigger_type,
+                            trigger_reason=trigger_reason,
+                        )
+
+                        # Dispatch execution using unified method (sync mode)
+                        subscription_service.dispatch_background_execution(
+                            subscription, execution, use_sync=True
+                        )
+                        SUBSCRIPTION_QUEUE_SIZE.inc()
+                        dispatched += 1
+
+                        logger.info(
+                            f"[subscription_tasks] Started execution {execution.id} for subscription {subscription.id} ({subscription.name}) (sync)"
+                        )
+
+                        # Update next execution time
+                        _update_next_execution_time(
+                            db, subscription, subscription_crd, trigger_type
+                        )
+
+                    except Exception as e:
+                        logger.error(
+                            f"[subscription_tasks] Error processing subscription {subscription.id} (sync): {str(e)}",
+                            exc_info=True,
+                        )
+                        db.rollback()
+                        continue
+
+                db.commit()
+
+            if total_due == 0:
                 logger.debug(
                     "[subscription_tasks] No subscriptions due for execution (sync)"
                 )
@@ -1758,57 +1790,10 @@ def check_due_subscriptions_sync():
                 }
 
             logger.info(
-                f"[subscription_tasks] Found {len(due_subscriptions)} subscription(s) due for execution (sync)"
-            )
-
-            dispatched = 0
-            for subscription in due_subscriptions:
-                try:
-                    subscription_crd = validate_subscription_for_read(subscription.json)
-                    internal = subscription.json.get("_internal", {})
-                    trigger_type = internal.get("trigger_type")
-
-                    # Determine trigger reason
-                    trigger_reason = _get_trigger_reason(subscription_crd, trigger_type)
-
-                    # Create execution record
-                    execution = subscription_service.create_execution(
-                        db,
-                        subscription=subscription,
-                        user_id=subscription.user_id,
-                        trigger_type=trigger_type,
-                        trigger_reason=trigger_reason,
-                    )
-
-                    # Dispatch execution using unified method (sync mode)
-                    subscription_service.dispatch_background_execution(
-                        subscription, execution, use_sync=True
-                    )
-                    SUBSCRIPTION_QUEUE_SIZE.inc()
-                    dispatched += 1
-
-                    logger.info(
-                        f"[subscription_tasks] Started execution {execution.id} for subscription {subscription.id} ({subscription.name}) (sync)"
-                    )
-
-                    # Update next execution time
-                    _update_next_execution_time(
-                        db, subscription, subscription_crd, trigger_type
-                    )
-
-                except Exception as e:
-                    logger.error(
-                        f"[subscription_tasks] Error processing subscription {subscription.id} (sync): {str(e)}",
-                        exc_info=True,
-                    )
-                    db.rollback()
-                    continue
-
-            logger.info(
-                f"[subscription_tasks] check_due_subscriptions_sync completed: {dispatched}/{len(due_subscriptions)} subscriptions dispatched, {recovered} pending recovered, {cleaned_running} running cleaned"
+                f"[subscription_tasks] check_due_subscriptions_sync completed: {dispatched}/{total_due} subscriptions dispatched, {recovered} pending recovered, {cleaned_running} running cleaned"
             )
             return {
-                "due_subscriptions": len(due_subscriptions),
+                "due_subscriptions": total_due,
                 "dispatched": dispatched,
                 "recovered_pending": recovered,
                 "cleaned_running": cleaned_running,

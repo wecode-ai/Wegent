@@ -11,11 +11,13 @@ calls the _fetch_all_repositories_async method to keep the repository cache cons
 
 import logging
 import time
+from dataclasses import dataclass
+from typing import Callable
 
 from sqlalchemy.orm import Session
 
+from app.db.session import SessionLocal
 from app.models.kind import Kind
-from app.models.user import User
 from app.repository.gitea_provider import GiteaProvider
 from app.repository.gitee_provider import GiteeProvider
 from app.repository.github_provider import GitHubProvider
@@ -26,23 +28,57 @@ from app.services.user import user_service
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class RepositoryUserSnapshot:
+    user_id: int
+    user_name: str
+    git_info: list[dict]
+
+    @property
+    def id(self) -> int:
+        return self.user_id
+
+
 class RepositoryJobService(BaseService[Kind, None, None]):
     """
     Job service for updating git repositories cache for all users
     """
 
-    async def update_repositories_for_all_users(self, db: Session) -> None:
+    def __init__(self, model: type[Kind] = Kind):
+        super().__init__(model)
+
+    def load_repository_user_snapshots(
+        self, db: Session
+    ) -> list[RepositoryUserSnapshot]:
+        users = user_service.get_all_users(db)
+        return [
+            RepositoryUserSnapshot(
+                user_id=user.id,
+                user_name=user.user_name,
+                git_info=[dict(git_entry) for git_entry in (user.git_info or [])],
+            )
+            for user in users
+        ]
+
+    async def update_repositories_for_all_users(
+        self,
+        db_factory: Callable[[], Session] = SessionLocal,
+    ) -> None:
         """
         Iterate through all users and update their git repositories cache
 
         Args:
-            db: Database session
+            db_factory: Database session factory used only for loading snapshots
         """
         start_time = time.time()
         try:
             logger.info(f"[repository_job] Starting get all users task")
 
-            users = user_service.get_all_users(db)
+            db = db_factory()
+            try:
+                users = self.load_repository_user_snapshots(db)
+            finally:
+                db.close()
 
             # The patched version already handles token replacement, so we don't need to do it again
             logger.info(
@@ -60,7 +96,7 @@ class RepositoryJobService(BaseService[Kind, None, None]):
                     logger.info(
                         f"[repository_job] Processing user [{i+1}/{len(users)}] {user.user_name}"
                     )
-                    result = await self._process_user(user)
+                    result = await self._process_user_snapshot(user)
                     if result == "success":
                         success_count += 1
                     elif result == "skipped":
@@ -87,12 +123,12 @@ class RepositoryJobService(BaseService[Kind, None, None]):
                 f"[repository_job] Repository cache update task failed, took {elapsed_time:.2f} seconds, error: {e}"
             )
 
-    async def _process_user(self, user: User) -> str:
+    async def _process_user_snapshot(self, user: RepositoryUserSnapshot) -> str:
         """
         Process a single user's git repositories
 
         Args:
-            user: User object
+            user: User snapshot
 
         Returns:
             "success" if at least one repository was updated
@@ -173,7 +209,7 @@ class RepositoryJobService(BaseService[Kind, None, None]):
         return "success" if success else "failed"
 
     async def _update_github_repositories(
-        self, user: User, git_token: str, git_domain: str
+        self, user: RepositoryUserSnapshot, git_token: str, git_domain: str
     ) -> None:
         """
         Update GitHub repositories cache for a user
@@ -190,7 +226,7 @@ class RepositoryJobService(BaseService[Kind, None, None]):
         await provider._fetch_all_repositories_async(user, git_token, git_domain)
 
     async def _update_gitlab_repositories(
-        self, user: User, git_token: str, git_domain: str
+        self, user: RepositoryUserSnapshot, git_token: str, git_domain: str
     ) -> None:
         """
         Update GitLab repositories cache for a user
@@ -207,7 +243,7 @@ class RepositoryJobService(BaseService[Kind, None, None]):
         await provider._fetch_all_repositories_async(user, git_token, git_domain)
 
     async def _update_gitee_repositories(
-        self, user: User, git_token: str, git_domain: str
+        self, user: RepositoryUserSnapshot, git_token: str, git_domain: str
     ) -> None:
         """
         Update Gitee repositories cache for a user
@@ -224,7 +260,7 @@ class RepositoryJobService(BaseService[Kind, None, None]):
         await provider._fetch_all_repositories_async(user, git_token, git_domain)
 
     async def _update_gitea_repositories(
-        self, user: User, git_token: str, git_domain: str
+        self, user: RepositoryUserSnapshot, git_token: str, git_domain: str
     ) -> None:
         """
         Update Gitea repositories cache for a user

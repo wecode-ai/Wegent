@@ -237,7 +237,7 @@ def test_index_document_task_routes_indexing_through_gateway():
     mock_get_index_gateway.assert_called_once()
     mock_gateway.index_document.assert_awaited_once_with(
         mock_resolve.return_value,
-        db=indexing_db,
+        db=None,
     )
 
 

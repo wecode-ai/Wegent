@@ -15,7 +15,9 @@ from sqlalchemy.orm import Session
 from app.models.kind import Kind
 from app.models.knowledge import KnowledgeDocument
 from app.models.user import User
+from app.services.background_chat_executor import BackgroundTaskResult
 from app.services.knowledge import SummaryService, get_summary_service
+from app.services.knowledge.summary_service import DocumentAggregation
 
 
 class TestTriggerKbSummaryClearIfEmpty:
@@ -417,6 +419,63 @@ class TestManualKnowledgeBaseSummary:
         assert refreshed_summary is not None
         assert refreshed_summary.long_summary == "New AI long summary"
         assert refreshed_summary.manual_long_summary == "Manual long summary"
+
+    @pytest.mark.asyncio
+    async def test_kb_summary_commits_generating_status_before_model_call(
+        self, test_db: Session, test_user: User, test_knowledge_base: Kind, monkeypatch
+    ):
+        summary_service = get_summary_service(test_db)
+        commit_count_at_execute = None
+        query_count_at_execute = None
+        original_commit = test_db.commit
+        original_query = test_db.query
+        test_db.commit = MagicMock(wraps=original_commit)
+        test_db.query = MagicMock(wraps=original_query)
+
+        async def fake_execute(*args, **kwargs):
+            nonlocal commit_count_at_execute, query_count_at_execute
+            commit_count_at_execute = test_db.commit.call_count
+            query_count_at_execute = test_db.query.call_count
+            return BackgroundTaskResult(
+                success=True,
+                parsed_content={
+                    "short_summary": "New AI short summary",
+                    "long_summary": "New AI long summary",
+                    "topics": ["new_topic"],
+                },
+                task_id="summary-task",
+                subtask_id="summary-subtask",
+                raw_content="{}",
+            )
+
+        monkeypatch.setattr(
+            "app.services.knowledge.summary_service.BackgroundChatExecutor.execute",
+            fake_execute,
+        )
+        monkeypatch.setattr(
+            summary_service,
+            "_get_document_aggregation",
+            lambda kb_id: DocumentAggregation(
+                aggregated_text="document summary",
+                completed_count=1,
+            ),
+        )
+        monkeypatch.setattr(
+            summary_service,
+            "_get_model_config_from_kb",
+            lambda kb, user_id, user_name: {"model": "test-model"},
+        )
+
+        await summary_service.trigger_kb_summary(
+            kb_id=test_knowledge_base.id,
+            user_id=test_user.id,
+            user_name=test_user.user_name,
+            force=True,
+        )
+
+        assert commit_count_at_execute is not None
+        assert commit_count_at_execute >= 1
+        assert test_db.query.call_count > query_count_at_execute
 
     @pytest.mark.asyncio
     async def test_trigger_kb_summary_skips_when_summary_disabled(
