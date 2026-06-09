@@ -27,6 +27,7 @@ Welcome to the Wegent Developer Guide! This guide will help you understand how t
 ### 🔧 Backend Development
 
 - [MCP Refactoring Guide](./mcp-refactoring-guide.md) - Knowledge MCP tool refactoring architecture
+- [External Knowledge MCP](./external-knowledge-mcp.md) - Knowledge MCP integration for trusted external systems
 
 ### 📊 Observability
 

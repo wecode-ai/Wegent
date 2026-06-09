@@ -97,7 +97,7 @@ describe('QuickLauncherCards', () => {
     expect(screen.queryByTestId('quick-launch-system-grid')).not.toHaveClass('justify-center')
   })
 
-  test('renders launcher cards with titles only', () => {
+  test('renders launcher cards with title and description', () => {
     render(
       <QuickLauncherCards
         systemLaunchers={[
@@ -115,7 +115,7 @@ describe('QuickLauncherCards', () => {
     const systemCard = screen.getByTestId('quick-launcher-system_function-system-video_summary')
 
     expect(systemCard).toHaveTextContent('Analyze Weibo video')
-    expect(systemCard).not.toHaveTextContent(
+    expect(systemCard).toHaveTextContent(
       'Analyze this Weibo video and summarize the author viewpoint'
     )
   })

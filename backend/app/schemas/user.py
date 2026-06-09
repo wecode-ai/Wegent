@@ -49,6 +49,9 @@ class UserPreferences(BaseModel):
     # Default execution target: 'cloud' for cloud mode, or device_id for a specific device
     default_execution_target: Optional[str] = None
     wework_new_chat_model_selection: Optional[UserModelSelectionPreference] = None
+    wework_project_execution_mode: Literal["current_workspace", "git_worktree"] = (
+        "current_workspace"
+    )
 
 
 class Token(BaseModel):

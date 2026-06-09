@@ -1,6 +1,10 @@
 import { Check, ChevronLeft, Folder, FolderPlus, Loader2, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
+import {
+  SearchableSelect,
+  type SearchableSelectOption,
+} from '@/components/common/SearchableSelect'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
@@ -30,6 +34,7 @@ interface ProjectCreateDialogProps {
   ) => Promise<ProjectWithTasks>
   preferredDeviceId?: string | null
   onSelectDevicePreference?: (deviceId: string) => void
+  onOpenCloudDeviceSettings?: () => void
   onGetDeviceHomeDirectory: (deviceId: string) => Promise<string>
   onGetProjectWorkspaceRoot: (deviceId: string) => Promise<string>
   onListDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
@@ -65,6 +70,17 @@ function basename(path: string): string {
 function getGitProjectName(repo: GitRepoInfo | null): string {
   if (!repo) return ''
   return repo.name || repo.git_repo.split('/').filter(Boolean).at(-1) || repo.git_repo
+}
+
+function uniqueRepositories(repositories: GitRepoInfo[]): GitRepoInfo[] {
+  const uniqueByRepository = new Map<string, GitRepoInfo>()
+  repositories.forEach(repository => {
+    const key = `${repository.git_domain}:${repository.git_repo}`
+    if (!uniqueByRepository.has(key)) {
+      uniqueByRepository.set(key, repository)
+    }
+  })
+  return [...uniqueByRepository.values()]
 }
 
 function getGitErrorMessage(
@@ -167,6 +183,7 @@ export function ProjectCreateDialog({
   onCreateGitWorkspaceProject,
   preferredDeviceId,
   onSelectDevicePreference,
+  onOpenCloudDeviceSettings,
   onGetDeviceHomeDirectory,
   onGetProjectWorkspaceRoot,
   onListDeviceDirectories,
@@ -186,6 +203,7 @@ export function ProjectCreateDialog({
       onCreateGitWorkspaceProject={onCreateGitWorkspaceProject}
       preferredDeviceId={preferredDeviceId}
       onSelectDevicePreference={onSelectDevicePreference}
+      onOpenCloudDeviceSettings={onOpenCloudDeviceSettings}
       onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
       onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot}
       onListDeviceDirectories={onListDeviceDirectories}
@@ -204,6 +222,7 @@ function ProjectCreateDialogContent({
   onCreateGitWorkspaceProject,
   preferredDeviceId,
   onSelectDevicePreference,
+  onOpenCloudDeviceSettings,
   onGetDeviceHomeDirectory,
   onGetProjectWorkspaceRoot,
   onListDeviceDirectories,
@@ -352,7 +371,11 @@ function ProjectCreateDialogContent({
       try {
         const items = await onListGitRepositories()
         if (cancelled) return
-        setRepositories([...items].sort((left, right) => left.git_repo.localeCompare(right.git_repo)))
+        setRepositories(
+          uniqueRepositories(items).sort((left, right) =>
+            left.git_repo.localeCompare(right.git_repo),
+          ),
+        )
       } catch (error) {
         if (cancelled) return
         setRepositories([])
@@ -440,6 +463,29 @@ function ProjectCreateDialogContent({
     : directories.filter(directory => !directory.startsWith('.'))
   const filteredDirectories = visibleDirectories.filter(directory =>
     directoryMatchesQuery(directory, directoryQuery),
+  )
+  const repositoryOptions = useMemo<SearchableSelectOption[]>(
+    () =>
+      repositories.map(repo => ({
+        value: repo.git_url,
+        label: repo.git_repo,
+        searchText: `${repo.name} ${repo.namespace} ${repo.git_domain}`,
+      })),
+    [repositories],
+  )
+  const branchOptions = useMemo<SearchableSelectOption[]>(
+    () =>
+      branches.map(branch => ({
+        value: branch.name,
+        label: branch.default
+          ? `${branch.name}${t(
+              'workbench.project_git_branch_default_suffix',
+              '（默认）',
+            )}`
+          : branch.name,
+        searchText: branch.name,
+      })),
+    [branches, t],
   )
 
   const handleDeviceChange = (nextDeviceId: string) => {
@@ -607,6 +653,23 @@ function ProjectCreateDialogContent({
           ))}
         </select>
 
+        {sortedDevices.length === 0 && onOpenCloudDeviceSettings && (
+          <p className="mt-2 text-xs leading-5 text-[#606368]">
+            {t('workbench.project_no_available_devices_hint', '创建项目需要一台可用设备。')}
+            <a
+              href="/settings"
+              data-testid="open-cloud-device-settings-link"
+              onClick={event => {
+                event.preventDefault()
+                onOpenCloudDeviceSettings()
+              }}
+              className="ml-1 font-medium text-[#14b8a6] underline underline-offset-2 hover:text-[#0f9f93]"
+            >
+              {t('workbench.project_create_cloud_device_connection', '创建云设备连接')}
+            </a>
+          </p>
+        )}
+
         {mode === 'scratch' ? (
           <>
             <label className="mt-5 block text-[13px] font-semibold text-[#202124]">
@@ -629,13 +692,27 @@ function ProjectCreateDialogContent({
             <label className="mt-5 block text-[13px] font-semibold text-[#202124]">
               {t('workbench.project_git_repository', 'Git 仓库')}
             </label>
-            <select
-              data-testid="git-repository-select"
+            <SearchableSelect
+              testId="git-repository-select"
               value={selectedRepo?.git_url ?? ''}
+              options={repositoryOptions}
               disabled={submitting || loadingRepositories || repositories.length === 0}
-              onChange={event => {
+              placeholder={
+                loadingRepositories
+                  ? t('workbench.project_git_repository_loading', '正在加载仓库...')
+                  : t('workbench.project_git_repository_placeholder', '选择仓库')
+              }
+              searchPlaceholder={t(
+                'workbench.project_git_repository_search',
+                '搜索仓库',
+              )}
+              emptyText={t(
+                'workbench.project_git_repository_no_results',
+                '没有匹配的仓库',
+              )}
+              onChange={value => {
                 const nextRepo =
-                  repositories.find(repo => repo.git_url === event.target.value) ?? null
+                  repositories.find(repo => repo.git_url === value) ?? null
                 setSelectedRepo(nextRepo)
                 setSelectedBranch(null)
                 if (!nextRepo) {
@@ -644,19 +721,7 @@ function ProjectCreateDialogContent({
                 }
                 setProjectCreateError(null)
               }}
-              className="mt-2 h-10 w-full rounded-lg border border-[#d8d8d8] bg-white px-3 text-[13px] outline-none focus:border-[#14b8a6] focus:ring-2 focus:ring-[#14b8a6]/20 disabled:opacity-60"
-            >
-              <option value="">
-                {loadingRepositories
-                  ? t('workbench.project_git_repository_loading', '正在加载仓库...')
-                  : t('workbench.project_git_repository_placeholder', '选择仓库')}
-              </option>
-              {repositories.map(repo => (
-                <option key={`${repo.git_domain}:${repo.git_repo_id}`} value={repo.git_url}>
-                  {repo.git_repo}
-                </option>
-              ))}
-            </select>
+            />
             {repositoryError && (
               <p className="mt-2 text-xs text-[#c44]">{repositoryError}</p>
             )}
@@ -669,34 +734,31 @@ function ProjectCreateDialogContent({
             <label className="mt-5 block text-[13px] font-semibold text-[#202124]">
               {t('workbench.project_git_default_branch', '默认分支')}
             </label>
-            <select
-              data-testid="git-branch-select"
+            <SearchableSelect
+              testId="git-branch-select"
               value={selectedBranch?.name ?? ''}
+              options={branchOptions}
               disabled={submitting || !selectedRepo || loadingBranches || branches.length === 0}
-              onChange={event => {
+              placeholder={
+                loadingBranches
+                  ? t('workbench.project_git_branch_loading', '正在加载分支...')
+                  : t('workbench.project_git_branch_placeholder', '选择默认分支')
+              }
+              searchPlaceholder={t(
+                'workbench.project_git_branch_search',
+                '搜索分支',
+              )}
+              emptyText={t(
+                'workbench.project_git_branch_no_results',
+                '没有匹配的分支',
+              )}
+              onChange={value => {
                 setSelectedBranch(
-                  branches.find(branch => branch.name === event.target.value) ?? null,
+                  branches.find(branch => branch.name === value) ?? null,
                 )
                 setProjectCreateError(null)
               }}
-              className="mt-2 h-10 w-full rounded-lg border border-[#d8d8d8] bg-white px-3 text-[13px] outline-none focus:border-[#14b8a6] focus:ring-2 focus:ring-[#14b8a6]/20 disabled:opacity-60"
-            >
-              <option value="">
-                {loadingBranches
-                  ? t('workbench.project_git_branch_loading', '正在加载分支...')
-                  : t('workbench.project_git_branch_placeholder', '选择默认分支')}
-              </option>
-              {branches.map(branch => (
-                <option key={branch.name} value={branch.name}>
-                  {branch.default
-                    ? t('workbench.project_git_branch_default_option', {
-                        defaultValue: '{{branch}}（默认）',
-                        branch: branch.name,
-                      })
-                    : branch.name}
-                </option>
-              ))}
-            </select>
+            />
             {branchError && <p className="mt-2 text-xs text-[#c44]">{branchError}</p>}
             {gitProjectName && (
               <p className="mt-2 text-xs text-[#606368]">

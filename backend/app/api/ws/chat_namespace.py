@@ -752,6 +752,18 @@ class ChatNamespace(socketio.AsyncNamespace):
                     "duration": payload.generate_params.duration,
                 }
 
+            execution_workspace = None
+            if (
+                not payload.task_id
+                and payload.execution
+                and payload.execution.workspace
+                and payload.execution.workspace.source == "git_worktree"
+            ):
+                if not payload.project_id:
+                    raise ValueError("Git worktree execution requires a project")
+
+                execution_workspace = {"source": "git_worktree"}
+
             # For pipeline confirm, get the previous stage's bot_id for session management
             previous_bot_id = None
             if pipeline_info:
@@ -781,6 +793,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                 skip_status_check=payload.action == "pipeline:confirm",
                 device_id=payload.device_id,
                 project_id=payload.project_id,
+                execution_workspace=execution_workspace,
                 client_origin=payload.client_origin,
                 generate_params=generate_params_dict,
             )

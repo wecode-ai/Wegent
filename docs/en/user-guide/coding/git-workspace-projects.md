@@ -40,6 +40,23 @@ For example, when the repository name is `pluto`, the final directory is:
 
 Task execution enters the same directory. In other words, the `git clone` location used during project creation and the workspace directory used by later tasks stay aligned.
 
+## Execution Modes
+
+In the new-conversation input area for a local workspace project, you can choose which workspace directory the task should use. The project can come from “Clone from Git” or “Using existing folder”; as long as the directory is a Git repository when the task is sent, it can use a new worktree.
+
+- “Local workspace”: the task enters the project-bound directory, such as `projects/<repoKey>/<repoName>` or an existing folder selected by the user.
+- “New worktree”: before sending the new task, Wegent runs `git worktree add` on the same execution device and creates a dedicated worktree for that task.
+
+New worktrees are created under the execution device workspace root:
+
+```bash
+~/.wecode/wegent-executor/workspace/worktrees/<taskId>/<projectName>
+```
+
+The worktree ID is the task ID. The task stores only `git_worktree` as the execution workspace source; the actual path is derived from the task ID and project directory rules when executing or managing worktrees. Branch name, base ref, the original checkout path, and the absolute worktree path are not duplicated as task fields. The worktree settings page lists created worktrees by scanning the `worktrees` directory on each execution device. When a worktree is deleted, Wegent removes the corresponding worktree directory and soft-deletes the task that uses it.
+
+“New worktree” is available only for new conversations in projects bound to a local execution device and local directory. Existing tasks lock the execution directory so a task cannot switch workspaces midway. If the directory is not currently a Git repository, sending the task shows an error; after the user manually turns that directory into a Git repository, no project configuration change is needed before selecting a new worktree again.
+
 ## Existing Target Directory
 
 If the target directory already exists, Wegent does not create a new directory and does not try to reuse or overwrite the existing one. The UI displays a project-directory-exists message.
