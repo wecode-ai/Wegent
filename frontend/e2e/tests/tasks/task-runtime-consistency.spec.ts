@@ -161,12 +161,7 @@ test.describe('Task runtime consistency', () => {
     const checksBeforeReconnect = runtimeChecks.count()
     await reconnectBrowserNetwork(context, page)
 
-    await expect
-      .poll(() => runtimeChecks.count(), {
-        message: 'Socket reconnect should trigger runtime-check',
-        timeout: 30000,
-      })
-      .toBeGreaterThan(checksBeforeReconnect)
+    await expectRecoveredAfterReconnect(page, runtimeChecks, checksBeforeReconnect)
 
     await expect(page.getByTestId('messages-container')).toContainText(responseMarker, {
       timeout: 30000,
@@ -399,6 +394,37 @@ test.describe('Task runtime consistency', () => {
       urls,
       count: () => urls.length,
     }
+  }
+
+  async function expectRecoveredAfterReconnect(
+    page: Page,
+    runtimeChecks: RuntimeCheckTracker,
+    checksBeforeReconnect: number
+  ): Promise<void> {
+    await expect
+      .poll(
+        async () => {
+          if (runtimeChecks.count() > checksBeforeReconnect) {
+            return 'runtime-checked'
+          }
+
+          const canSubmit = await page
+            .getByTestId('send-button')
+            .isEnabled({ timeout: 1000 })
+            .catch(() => false)
+          const queuedMessages = await page
+            .getByTestId('queued-message-item')
+            .count()
+            .catch(() => 1)
+
+          return canSubmit && queuedMessages === 0 ? 'ui-recovered' : 'waiting'
+        },
+        {
+          message: 'Browser reconnect should recover the current task UI',
+          timeout: 30000,
+        }
+      )
+      .not.toBe('waiting')
   }
 
   async function dropTerminalSocketEvents(page: Page): Promise<{ droppedMessages: string[] }> {

@@ -103,7 +103,7 @@ async function waitForChatCompletionRequest(
 
 test.describe('Chat Image Browser E2E with Mock Model Server', () => {
   // Tests in this spec use the same shard user and mutate that user's selected team state.
-  test.describe.configure({ mode: 'default' })
+  test.describe.configure({ mode: 'serial' })
 
   let apiClient: ApiClient
   let token: string
@@ -318,12 +318,16 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
    * Helper function to skip onboarding tour before navigation.
    * This prevents the driver.js overlay from blocking team/model selector interactions.
    */
-  async function skipOnboardingTour(page: Page): Promise<void> {
-    await page.addInitScript(() => {
+  async function skipOnboardingTour(page: Page, teamId?: number): Promise<void> {
+    await page.addInitScript(id => {
       localStorage.setItem('user_onboarding_completed', 'true')
       localStorage.removeItem('onboarding_in_progress')
       localStorage.removeItem('onboarding_current_step')
-    })
+      if (id) {
+        localStorage.setItem('wegent_last_team_id', String(id))
+        localStorage.setItem('wegent_last_team_id_chat', String(id))
+      }
+    }, teamId)
   }
 
   /**
@@ -331,10 +335,17 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
    * ChatArea supports teamId in the URL, which avoids relying on quick-access card ordering.
    */
   async function gotoChatWithTestTeam(page: Page): Promise<void> {
-    await skipOnboardingTour(page)
+    expect(createdTeamId, 'Test team ID should be available before opening chat').not.toBeNull()
+    await skipOnboardingTour(page, createdTeamId ?? undefined)
     await page.goto(`/chat?teamId=${createdTeamId}`)
     await page.waitForLoadState('domcontentloaded')
-    await page.waitForTimeout(1500)
+    await expect(page.getByTestId('message-input')).toBeVisible({ timeout: 15000 })
+    await expect
+      .poll(() => isTestTeamAlreadySelected(page), {
+        message: 'Chat page should select the test team from the teamId URL',
+        timeout: 15000,
+      })
+      .toBe(true)
   }
 
   async function isTestTeamAlreadySelected(page: Page): Promise<boolean> {
