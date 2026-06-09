@@ -76,12 +76,32 @@ describe('createChatStream', () => {
   test('registers and unregisters streaming handlers', () => {
     const socket = { emit: vi.fn(), on: vi.fn(), off: vi.fn(), connected: true }
     const stream = createChatStream(socket)
-    const handlers = { onChatChunk: vi.fn() }
+    const handlers = {
+      onChatChunk: vi.fn(),
+      onDeviceSlotUpdate: vi.fn(),
+      onDeviceUpgradeStatus: vi.fn(),
+    }
 
     const cleanup = stream.subscribe(handlers)
     cleanup()
 
     expect(socket.on).toHaveBeenCalledWith('chat:chunk', handlers.onChatChunk)
+    expect(socket.on).toHaveBeenCalledWith(
+      'device:slot_update',
+      handlers.onDeviceSlotUpdate,
+    )
+    expect(socket.on).toHaveBeenCalledWith(
+      'device:upgrade_status',
+      handlers.onDeviceUpgradeStatus,
+    )
     expect(socket.off).toHaveBeenCalledWith('chat:chunk', handlers.onChatChunk)
+    expect(socket.off).toHaveBeenCalledWith(
+      'device:slot_update',
+      handlers.onDeviceSlotUpdate,
+    )
+    expect(socket.off).toHaveBeenCalledWith(
+      'device:upgrade_status',
+      handlers.onDeviceUpgradeStatus,
+    )
   })
 })

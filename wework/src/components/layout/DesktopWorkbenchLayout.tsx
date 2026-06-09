@@ -21,6 +21,7 @@ import type {
   TaskListResponse,
 } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
+import type { DeviceUpgradeState } from '@/types/device-events'
 import { stripAppBasePath } from '@/config/runtime'
 import { isSettingsRoute, navigateTo } from '@/lib/navigation'
 import { DesktopSidebar } from './DesktopSidebar'
@@ -36,6 +37,7 @@ interface DesktopWorkbenchLayoutProps {
   queuedMessages?: QueuedWorkbenchMessage[]
   guidanceMessages?: GuidanceWorkbenchMessage[]
   runningTaskIds: Set<number>
+  upgradingDevices?: Record<string, DeviceUpgradeState>
   activeItem?: 'chat' | 'plugins' | 'automation'
   onNewChat: () => void
   onStartStandaloneChat: () => void
@@ -49,6 +51,7 @@ interface DesktopWorkbenchLayoutProps {
   onSearchTaskDetail?: (taskId: number) => Promise<TaskDetail>
   onRememberExecutionDevice?: (deviceId: string) => void
   onRefreshDevices?: () => Promise<void>
+  onUpgradeDevice?: (deviceId: string) => Promise<void>
   onCreateProject: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
   onCreateGitWorkspaceProject: (
     data: CreateGitWorkspaceProjectRequest,
@@ -101,6 +104,7 @@ export function DesktopWorkbenchLayout({
   queuedMessages = [],
   guidanceMessages = [],
   runningTaskIds,
+  upgradingDevices = {},
   activeItem = 'chat',
   onNewChat,
   onStartStandaloneChat,
@@ -114,6 +118,7 @@ export function DesktopWorkbenchLayout({
   onSearchTaskDetail,
   onRememberExecutionDevice,
   onRefreshDevices,
+  onUpgradeDevice = async () => {},
   onCreateProject,
   onCreateGitWorkspaceProject,
   onListGitRepositories,
@@ -281,6 +286,7 @@ export function DesktopWorkbenchLayout({
             state.standaloneDeviceId ??
             state.user?.preferences?.default_execution_target
           }
+          upgradingDevices={upgradingDevices}
           activeItem={activeItem}
           onCollapse={() => setSidebarCollapsed(true)}
           onNewChat={onNewChat}
@@ -293,6 +299,7 @@ export function DesktopWorkbenchLayout({
           onRememberExecutionDevice={onRememberExecutionDevice}
           onOpenPlugins={onOpenPlugins}
           onRefreshDevices={onRefreshDevices}
+          onUpgradeDevice={onUpgradeDevice}
           onCreateProject={onCreateProject}
           onCreateGitWorkspaceProject={onCreateGitWorkspaceProject}
           onListGitRepositories={onListGitRepositories}
@@ -337,6 +344,7 @@ export function DesktopWorkbenchLayout({
           currentTask={state.currentTask}
           currentProject={state.currentProject}
           devices={state.devices}
+          upgradingDevices={upgradingDevices}
           messages={messages}
           queuedMessages={queuedMessages}
           guidanceMessages={guidanceMessages}
@@ -350,6 +358,12 @@ export function DesktopWorkbenchLayout({
           onListEnvironmentBranches={() => onListEnvironmentBranches(environmentProject)}
           onCheckoutEnvironmentBranch={handleCheckoutEnvironmentBranch}
           onCreateEnvironmentBranch={handleCreateEnvironmentBranch}
+          onOpenCloudDeviceSettings={() => {
+            setAutoOpenAddCloudDeviceDialog(true)
+            setSettingsOpen(true)
+            navigateTo('/settings')
+          }}
+          onUpgradeDevice={onUpgradeDevice}
           onInputChange={onInputChange}
           onSend={onSend}
           isResponseStreaming={isResponseStreaming}
@@ -387,6 +401,8 @@ export function DesktopWorkbenchLayout({
           state.user?.preferences?.default_execution_target
         }
         onSelectDevicePreference={onRememberExecutionDevice}
+        upgradingDevices={upgradingDevices}
+        onUpgradeDevice={onUpgradeDevice}
         onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
         onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot}
         onListDeviceDirectories={onListDeviceDirectories}
