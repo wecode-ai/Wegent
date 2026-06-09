@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { createDeviceApi } from '@/api/devices'
 import { createQuotaApi } from '@/api/quota'
+import '@/i18n'
 import { DesktopWorkbenchLayout } from './DesktopWorkbenchLayout'
 
 function createRect({
@@ -229,6 +230,7 @@ describe('DesktopWorkbenchLayout', () => {
       is_default: false,
       device_type: 'cloud' as const,
       bind_shell: 'claudecode',
+      executor_version: '1.8.5',
     }
     const workspaceProject = {
       id: 12,
@@ -910,6 +912,8 @@ describe('DesktopWorkbenchLayout', () => {
               name: 'local-executor',
               status: 'online',
               is_default: true,
+              bind_shell: 'claudecode',
+              executor_version: '1.8.5',
             },
             {
               id: 2,
@@ -918,6 +922,8 @@ describe('DesktopWorkbenchLayout', () => {
               status: 'online',
               is_default: false,
               device_type: 'cloud',
+              bind_shell: 'claudecode',
+              executor_version: '1.8.5',
             },
           ],
         }}
@@ -998,6 +1004,8 @@ describe('DesktopWorkbenchLayout', () => {
               name: 'executor',
               status: 'online',
               is_default: true,
+              bind_shell: 'claudecode',
+              executor_version: '1.8.5',
             },
           ],
         }}
@@ -1058,6 +1066,8 @@ describe('DesktopWorkbenchLayout', () => {
               name: 'executor',
               status: 'online',
               is_default: true,
+              bind_shell: 'claudecode',
+              executor_version: '1.8.5',
             },
           ],
         }}
@@ -1074,6 +1084,48 @@ describe('DesktopWorkbenchLayout', () => {
 
     resolveRefreshDevices?.()
     resolveRepositories?.()
+  })
+
+  test('enables device upgrade from the sidebar project create dialog', async () => {
+    const onUpgradeDevice = vi.fn().mockResolvedValue(undefined)
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onUpgradeDevice={onUpgradeDevice}
+        state={{
+          ...baseProps.state,
+          devices: [
+            {
+              id: 1,
+              device_id: 'old-device',
+              name: 'Old Device',
+              status: 'online',
+              is_default: false,
+              device_type: 'cloud',
+              bind_shell: 'claudecode',
+              executor_version: '1.8.4',
+              slot_used: 0,
+            },
+          ],
+        }}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('projects-create-button'))
+    await userEvent.click(screen.getByTestId('project-start-from-scratch-button'))
+
+    expect(screen.getByTestId('project-create-dialog')).toBeInTheDocument()
+    expect(screen.getByTestId('project-device-unavailable-old-device')).toHaveTextContent(
+      '当前 v1.8.4，需要 1.8.5 或以上',
+    )
+
+    const upgradeButton = screen.getByTestId('upgrade-project-device-old-device')
+    expect(upgradeButton).not.toBeDisabled()
+
+    await userEvent.click(upgradeButton)
+
+    expect(onUpgradeDevice).toHaveBeenCalledWith('old-device')
   })
 
   test('keeps project create menu open until clicking outside', async () => {
@@ -1269,6 +1321,8 @@ describe('DesktopWorkbenchLayout', () => {
               name: 'sifang-executor',
               status: 'online',
               is_default: true,
+              bind_shell: 'claudecode',
+              executor_version: '1.8.5',
             },
           ],
         }}
@@ -1438,6 +1492,7 @@ describe('DesktopWorkbenchLayout', () => {
               is_default: false,
               device_type: 'cloud',
               bind_shell: 'claudecode',
+              executor_version: '1.8.5',
             },
           ],
           recentTasks: [
@@ -1526,6 +1581,7 @@ describe('DesktopWorkbenchLayout', () => {
       is_default: false,
       device_type: 'cloud' as const,
       bind_shell: 'claudecode',
+      executor_version: '1.8.5',
     }
     const busyDevice = {
       id: 2,
@@ -1692,6 +1748,7 @@ describe('DesktopWorkbenchLayout', () => {
       is_default: false,
       device_type: 'cloud' as const,
       bind_shell: 'claudecode',
+      executor_version: '1.8.5',
     }
     const project = {
       id: 7,
@@ -1742,7 +1799,8 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     expect(screen.getByTestId('desktop-chat-scroll')).toHaveTextContent('hello')
-    expect(screen.getByTestId('composer-disabled-reason')).toHaveTextContent(
+    expect(screen.queryByTestId('composer-disabled-reason')).not.toBeInTheDocument()
+    expect(screen.getByTestId('device-status-prompt')).toHaveTextContent(
       'Offline Device 离线，恢复在线后可继续对话',
     )
     expect(screen.getByTestId('chat-message-input')).toBeDisabled()
@@ -1751,6 +1809,72 @@ describe('DesktopWorkbenchLayout', () => {
 
     await userEvent.click(screen.getByTestId('send-message-button'))
     expect(baseProps.onSend).not.toHaveBeenCalled()
+  })
+
+  test('shows an external upgrade action for the active low-version device', async () => {
+    const onUpgradeDevice = vi.fn().mockResolvedValue(undefined)
+    const oldDevice = {
+      id: 1,
+      device_id: 'old-device',
+      name: 'Old Device',
+      status: 'online' as const,
+      is_default: false,
+      device_type: 'cloud' as const,
+      bind_shell: 'claudecode',
+      executor_version: '1.8.4',
+      slot_used: 0,
+    }
+    const compatibleDevice = {
+      id: 2,
+      device_id: 'compatible-device',
+      name: 'Compatible Device',
+      status: 'online' as const,
+      is_default: false,
+      device_type: 'cloud' as const,
+      bind_shell: 'claudecode',
+      executor_version: '1.8.5',
+    }
+    const project = {
+      id: 7,
+      name: 'hello',
+      config: {
+        execution: {
+          targetType: 'cloud' as const,
+          deviceId: 'old-device',
+        },
+      },
+      tasks: [],
+    }
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onUpgradeDevice={onUpgradeDevice}
+        state={{
+          ...baseProps.state,
+          projects: [project],
+          devices: [oldDevice, compatibleDevice],
+          currentProject: project,
+          input: 'hello old device',
+        }}
+        projectWork={{
+          ...baseProps.projectWork,
+          projects: [project],
+          devices: [oldDevice, compatibleDevice],
+          currentProjectId: 7,
+        }}
+      />,
+    )
+
+    expect(screen.queryByTestId('composer-disabled-reason')).not.toBeInTheDocument()
+    expect(screen.getByTestId('device-status-prompt')).toHaveTextContent(
+      'Old Device 版本低于 1.8.5，升级后可继续对话',
+    )
+    expect(screen.getByTestId('chat-message-input')).toBeDisabled()
+
+    await userEvent.click(screen.getByTestId('device-status-upgrade-button'))
+
+    expect(onUpgradeDevice).toHaveBeenCalledWith('old-device')
   })
 
   test('shows running spinners for project and standalone chats', () => {

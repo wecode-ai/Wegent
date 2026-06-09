@@ -58,9 +58,18 @@ function projectChatControls(overrides: Partial<ProjectChatControls> = {}): Proj
 }
 
 function projectWorkControls(overrides: Partial<ProjectWorkControls> = {}): ProjectWorkControls {
+  const devices = overrides.devices?.map(device => ({
+    ...device,
+    bind_shell: device.bind_shell ?? 'claudecode',
+    executor_version:
+      device.bind_shell === 'openclaw'
+        ? device.executor_version
+        : device.executor_version ?? '1.8.5',
+  })) ?? []
+
   return {
     projects: [],
-    devices: [],
+    devices,
     currentProjectId: undefined,
     currentStandaloneDeviceId: null,
     executionMode: 'current_workspace',
@@ -69,6 +78,7 @@ function projectWorkControls(overrides: Partial<ProjectWorkControls> = {}): Proj
     onSelectStandaloneDevice: vi.fn(),
     onExecutionModeChange: vi.fn(),
     ...overrides,
+    devices,
   }
 }
 

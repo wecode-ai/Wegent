@@ -90,7 +90,23 @@ export interface DeviceInfo {
   status: 'online' | 'offline' | 'busy'
   is_default: boolean
   device_type?: 'local' | 'cloud' | string
+  capabilities?: string[] | null
+  slot_used?: number
+  slot_max?: number
+  running_tasks?: DeviceRunningTask[]
+  running_task_ids?: number[]
+  executor_version?: string | null
+  latest_version?: string | null
+  update_available?: boolean
   bind_shell?: 'claudecode' | 'openclaw' | string
+}
+
+export interface DeviceRunningTask {
+  task_id?: number
+  subtask_id?: number
+  title?: string
+  status?: string
+  created_at?: string
 }
 
 export interface ProjectTask {
