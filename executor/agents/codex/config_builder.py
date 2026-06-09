@@ -13,7 +13,6 @@ from typing import Any, Optional
 
 from executor.agents.env_value import resolve_env_value
 from executor.config import config
-from executor.config.local_cli_config import use_local_cli_config
 from shared.logger import setup_logger
 
 OPENAI_RESPONSES_PROTOCOL = "openai-responses"
@@ -87,7 +86,7 @@ def build_codex_config(model_config: dict[str, Any]) -> CodeXConfig:
     if not model:
         raise ValueError("CodeXAgent requires model_config.model_id")
 
-    local_config = use_local_cli_config("codex")
+    local_config = _use_user_runtime_config(model_config, "codex")
     reasoning = _normalize_reasoning(model_config.get("reasoning"))
     service_tier = _normalize_service_tier(model_config.get("service_tier"))
     if local_config:
@@ -133,6 +132,22 @@ def build_codex_config(model_config: dict[str, Any]) -> CodeXConfig:
         thread_config=_build_thread_config(reasoning, service_tier),
         effort=reasoning.get("effort"),
         summary=reasoning.get("summary"),
+    )
+
+
+def _use_user_runtime_config(model_config: dict[str, Any], runtime: str) -> bool:
+    runtime_configs = model_config.get("runtime_config") or model_config.get(
+        "runtimeConfig"
+    )
+    if not isinstance(runtime_configs, dict):
+        return False
+
+    runtime_config = runtime_configs.get(runtime)
+    if not isinstance(runtime_config, dict):
+        return False
+
+    return bool(
+        runtime_config.get("use_user_config") and runtime_config.get("configured", True)
     )
 
 

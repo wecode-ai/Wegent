@@ -358,7 +358,7 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
    * Updated to work with the new QuickAccessCards pagination design (removed "More" button)
    * Note: TeamSelectorButton only renders when selectedTeam exists and teams.length > 0
    */
-  async function selectTestTeam(page: Page): Promise<boolean> {
+  async function selectTestTeam(page: Page, retryWithReload = true): Promise<boolean> {
     try {
       // Wait for page to fully load
       await page.waitForTimeout(3000)
@@ -511,6 +511,14 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
       if (await isTestTeamAlreadySelected(page)) {
         console.log(`Selected team is visible in chat input: ${TEST_TEAM_NAME}`)
         return true
+      }
+
+      if (retryWithReload) {
+        console.log('Team not found, reloading page to refresh team list...')
+        await page.reload()
+        await page.waitForLoadState('domcontentloaded')
+        await page.waitForTimeout(2500)
+        return selectTestTeam(page, false)
       }
 
       // Take screenshot for debugging

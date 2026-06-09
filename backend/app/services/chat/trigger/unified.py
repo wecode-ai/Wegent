@@ -28,6 +28,10 @@ from app.models.subtask import Subtask
 from app.models.task import TaskResource
 from app.models.user import User
 from app.services.context import context_service
+from app.services.user_runtime_config import (
+    UserRuntimeConfigError,
+    user_runtime_config_service,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -38,6 +42,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 SELECTED_KB_PRELOAD_SKILL = "wegent-knowledge"
+CODEX_RUNTIME = "codex"
 SERVICE_TIER_ALIASES = {
     "fast": "priority",
     "priority": "priority",
@@ -92,6 +97,54 @@ def _service_tier_from_model_options(payload: Any) -> Optional[str]:
         return None
 
     return SERVICE_TIER_ALIASES.get(str(speed).strip().lower())
+
+
+def _is_codex_model_config(model_config: Dict[str, Any]) -> bool:
+    model_type = str(model_config.get("model") or "").lower()
+    api_format = str(
+        model_config.get("api_format") or model_config.get("apiFormat") or ""
+    ).lower()
+    protocol = str(model_config.get("protocol") or "").lower()
+    wire_api = str(model_config.get("wire_api") or "").lower()
+
+    return model_type == "openai" and (
+        api_format == "responses"
+        or protocol == "openai-responses"
+        or wire_api == "responses"
+    )
+
+
+def _apply_user_runtime_config(
+    db: "Session",
+    request: "ExecutionRequest",
+    user: User,
+) -> Optional[Dict[str, Any]]:
+    """Attach user runtime config status to model_config for executor routing."""
+    if not _is_codex_model_config(request.model_config):
+        return None
+
+    try:
+        status = user_runtime_config_service.get_config(
+            db,
+            user_id=user.id,
+            runtime=CODEX_RUNTIME,
+            preferences=getattr(user, "preferences", None),
+        )
+    except UserRuntimeConfigError:
+        logger.exception(
+            "[build_execution_request] Failed to resolve user runtime config"
+        )
+        return None
+
+    runtime_config = dict(request.model_config.get("runtime_config") or {})
+    runtime_config[CODEX_RUNTIME] = {
+        "use_user_config": bool(status.get("use_user_config")),
+        "configured": bool(status.get("configured")),
+        "target_path": status.get("target_path"),
+        "auth_json_sha256": status.get("auth_json_sha256"),
+    }
+    request.model_config["runtime_config"] = runtime_config
+    return status
 
 
 def _build_executor_attachment_payload(context: Any) -> dict[str, Any]:
@@ -360,6 +413,8 @@ async def build_execution_request(
                 "[build_execution_request] Applied selected service tier: %s",
                 selected_service_tier,
             )
+
+        _apply_user_runtime_config(db, request, user)
 
         # Store reasoning_config in ExecutionRequest for downstream access
         request.reasoning_config = (

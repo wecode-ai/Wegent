@@ -17,6 +17,7 @@ export interface UserPreferences {
   default_execution_target?: string | null
   wework_new_chat_model_selection?: ModelSelectionConfig | null
   wework_project_execution_mode?: ProjectExecutionMode | null
+  runtime_configs?: Record<string, { use_user_config?: boolean }> | null
 }
 
 export interface Team {
@@ -90,7 +91,23 @@ export interface DeviceInfo {
   status: 'online' | 'offline' | 'busy'
   is_default: boolean
   device_type?: 'local' | 'cloud' | string
+  capabilities?: string[] | null
+  slot_used?: number
+  slot_max?: number
+  running_tasks?: DeviceRunningTask[]
+  running_task_ids?: number[]
+  executor_version?: string | null
+  latest_version?: string | null
+  update_available?: boolean
   bind_shell?: 'claudecode' | 'openclaw' | string
+}
+
+export interface DeviceRunningTask {
+  task_id?: number
+  subtask_id?: number
+  title?: string
+  status?: string
+  created_at?: string
 }
 
 export interface ProjectTask {
