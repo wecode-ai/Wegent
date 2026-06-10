@@ -8,7 +8,6 @@
 
 import asyncio
 import os
-import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
@@ -926,11 +925,10 @@ class ClaudeCodeAgent(Agent):
             elif result == TaskStatus.CANCELLED:
                 self.task_state_manager.set_state(self.task_id, TaskState.CANCELLED)
 
-            # Auto-close CC process after completion to free device slot.
-            # Session ID is preserved on disk for resume on next message.
-            # Skip for CANCELLED — cancel/interrupt flow has its own cleanup.
             if result in (TaskStatus.COMPLETED, TaskStatus.FAILED):
                 await self._auto_close_session()
+            elif result == TaskStatus.CANCELLED:
+                await self._close_interrupted_session()
 
             return result
 
@@ -1253,6 +1251,24 @@ class ClaudeCodeAgent(Agent):
             logger.warning(f"Error auto-closing CC session: {e}")
             self.client = None
 
+    async def _close_interrupted_session(self) -> None:
+        """Close an interrupted turn while preserving its resumable session ID."""
+        if self.client is None:
+            return
+
+        try:
+            await self.client.disconnect()
+            logger.info(
+                f"Closed interrupted Claude session: session_id={self.session_id}, "
+                f"task_id={self.task_id}. Session ID preserved on disk for resume."
+            )
+        except Exception as e:
+            logger.warning(
+                f"Error closing interrupted Claude session {self.session_id}: {e}"
+            )
+        finally:
+            self.client = None
+
     def _handle_execution_result(
         self, result_content: str, execution_type: str = "execution"
     ) -> TaskStatus:
@@ -1383,114 +1399,38 @@ class ClaudeCodeAgent(Agent):
         return await SessionManager.cleanup_task_clients(task_id)
 
     def cancel_run(self) -> bool:
-        """
-        Cancel the current running task using multi-level cancellation strategy:
-        1. Set cancellation state to CANCELLED immediately (not CANCELLING)
-        2. Try SDK interrupt
-        3. No longer send callback here, it will be sent asynchronously by background task to avoid blocking
-        4. Wait briefly for cleanup
-
-        Returns:
-            bool: True if cancellation was successful, False otherwise
-        """
+        """Cancel from a synchronous context."""
         try:
-            # Step 1: Immediately set to CANCELLED state (skip CANCELLING)
-            # This ensures response_processor checks will immediately detect cancellation
-            self.task_state_manager.set_state(self.task_id, TaskState.CANCELLED)
-            logger.info(f"Task {self.task_id} marked as cancelled immediately")
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(self.cancel_run_async())
 
-            # Step 2: Try SDK interrupt if client is available
-            if self.client and hasattr(self.client, "interrupt"):
-                self._sync_cancel_run()
-                logger.info(f"Sent interrupt signal to task {self.task_id}")
-            else:
-                logger.warning(
-                    f"No client or interrupt method available for task {self.task_id}"
-                )
+        logger.error(
+            f"cancel_run() cannot run inside an active event loop for task "
+            f"{self.task_id}; use cancel_run_async()"
+        )
+        return False
 
-            # Step 3: Wait briefly (2 seconds max) for graceful cleanup
-            max_wait = min(config.GRACEFUL_SHUTDOWN_TIMEOUT, 2)
-            waited = 0
-            while waited < max_wait:
-                # Check if cleanup completed (task state is None means cleaned up)
-                if self.task_state_manager.get_state(self.task_id) is None:
-                    logger.info(f"Task {self.task_id} cleaned up gracefully")
-                    return True
-                time.sleep(0.1)  # Check more frequently (100ms)
-                waited += 0.1
+    async def cancel_run_async(self) -> bool:
+        """Interrupt the current turn using the Claude Agent SDK."""
+        self.task_state_manager.set_state(self.task_id, TaskState.CANCELLED)
+        logger.info(f"Task {self.task_id} marked as cancelled")
 
-            # Note: No longer send callback here
-            # Callback will be sent asynchronously by background task in main.py to avoid blocking executor_manager's cancel request
-            logger.info(
-                f"Task {self.task_id} cancelled (cleanup may continue in background), callback will be sent asynchronously"
-            )
+        if self.client is None:
+            logger.warning(f"No client available for task {self.task_id}")
             return True
 
+        try:
+            await self.client.interrupt()
+            logger.info(
+                f"Successfully sent interrupt to client for session_id: {self.session_id}"
+            )
+            return True
         except Exception as e:
-            logger.exception(f"Error cancelling task {self.task_id}: {e}")
-            # Ensure cancelled state even on error
-            self.task_state_manager.set_state(self.task_id, TaskState.CANCELLED)
+            logger.exception(
+                f"Error interrupting Claude session {self.session_id}: {str(e)}"
+            )
             return False
-
-    def _sync_cancel_run(self) -> None:
-        """
-        Synchronous helper method to cancel the current run
-        """
-        try:
-            if self.client is not None:
-                # Check if we're in an async context
-                try:
-                    loop = asyncio.get_running_loop()
-                    # If we're in an async context, use run_coroutine_threadsafe
-                    # to ensure interrupt() is actually executed
-                    future = asyncio.run_coroutine_threadsafe(
-                        self._async_cancel_run(), loop
-                    )
-                    # Wait for the interrupt to complete with a timeout
-                    # This ensures cancel_run() doesn't return before interrupt() is sent
-                    future.result(timeout=5)
-                except RuntimeError:
-                    # No running event loop, run the async method in a new loop
-                    # Copy ContextVars before creating new event loop
-                    try:
-                        from shared.telemetry.context import (
-                            copy_context_vars,
-                            restore_context_vars,
-                        )
-
-                        saved_context = copy_context_vars()
-                    except ImportError:
-                        saved_context = None
-
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    try:
-                        # Restore ContextVars in the new event loop
-                        if saved_context:
-                            restore_context_vars(saved_context)
-                        loop.run_until_complete(self._async_cancel_run())
-                    finally:
-                        loop.close()
-        except Exception as e:
-            logger.exception(
-                f"Error during sync interrupt for session_id {self.session_id}: {str(e)}"
-            )
-
-    async def _async_cancel_run(self) -> None:
-        """
-        Asynchronous helper method to cancel the current run.
-        No longer send callback, handled by background task.
-        """
-        try:
-            if self.client is not None:
-                await self.client.interrupt()
-                logger.info(
-                    f"Successfully sent interrupt to client for session_id: {self.session_id}"
-                )
-        except Exception as e:
-            logger.exception(
-                f"Error during async interrupt for session_id {self.session_id}: {str(e)}"
-            )
 
     def _update_git_exclude(self, project_path: str) -> None:
         """Update .git/info/exclude to ignore .claudecode directory.
