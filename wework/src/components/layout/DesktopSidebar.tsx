@@ -22,6 +22,7 @@ import { ProjectCreateDialog } from '@/components/projects/ProjectCreateDialog'
 import { ProjectFolderIcon } from '@/components/projects/ProjectFolderIcon'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
+import { selectStandaloneConversations } from '@/lib/taskLists'
 import { cn } from '@/lib/utils'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import type {
@@ -267,14 +268,6 @@ function sortProjectTasks(tasks: ProjectTask[] = []) {
   return [...tasks].sort((left, right) => {
     const leftTime = new Date(getProjectTaskTime(left) || 0).getTime()
     const rightTime = new Date(getProjectTaskTime(right) || 0).getTime()
-    return rightTime - leftTime
-  })
-}
-
-function sortTasksByTime(tasks: Task[] = []) {
-  return [...tasks].sort((left, right) => {
-    const leftTime = new Date(left.updated_at || left.created_at || 0).getTime()
-    const rightTime = new Date(right.updated_at || right.created_at || 0).getTime()
     return rightTime - leftTime
   })
 }
@@ -879,7 +872,7 @@ export function DesktopSidebar({
     [expandedTaskListIds, projects],
   )
   const sortedRecentTasks = useMemo(
-    () => sortTasksByTime(recentTasks).filter(task => !task.project_id),
+    () => selectStandaloneConversations(recentTasks),
     [recentTasks]
   )
   const currentProjectWithTask = useMemo(

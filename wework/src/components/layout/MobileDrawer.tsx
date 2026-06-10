@@ -13,6 +13,7 @@ import {
 import { useMemo, useRef, useState } from 'react'
 import { ProjectCreateDialog } from '@/components/projects/ProjectCreateDialog'
 import { useTranslation } from '@/hooks/useTranslation'
+import { selectStandaloneConversations } from '@/lib/taskLists'
 import type {
   CreateGitWorkspaceProjectRequest,
   CreateProjectRequest,
@@ -99,14 +100,6 @@ function sortProjectTasks(tasks: ProjectTask[] = []) {
   })
 }
 
-function sortTasksByTime(tasks: Task[] = []) {
-  return [...tasks].sort((left, right) => {
-    const leftTime = new Date(left.updated_at || left.created_at || 0).getTime()
-    const rightTime = new Date(right.updated_at || right.created_at || 0).getTime()
-    return rightTime - leftTime
-  })
-}
-
 export function MobileDrawer({
   open,
   user,
@@ -161,7 +154,7 @@ export function MobileDrawer({
     () => new Set(),
   )
   const standaloneRecentTasks = useMemo(
-    () => sortTasksByTime(recentTasks).filter(task => !task.project_id),
+    () => selectStandaloneConversations(recentTasks),
     [recentTasks],
   )
 
