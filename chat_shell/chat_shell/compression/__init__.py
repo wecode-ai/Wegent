@@ -15,6 +15,16 @@ from .config import (
     ModelContextConfig,
     get_model_context_config,
 )
+from .context_metrics import (
+    PHASE_AFTER_COMPACTION,
+    PHASE_AFTER_TOOL_END,
+    PHASE_BUILD_MESSAGES,
+    PHASE_FINAL,
+    ContextMetricsSnapshot,
+    ContextMetricsTracker,
+    calculate_context_metrics,
+    should_emit_status_update,
+)
 from .strategies import (
     AttachmentTruncationStrategy,
     CompressionResult,
@@ -29,6 +39,14 @@ __all__ = [
     "CompressionConfig",
     "ModelContextConfig",
     "get_model_context_config",
+    "ContextMetricsSnapshot",
+    "ContextMetricsTracker",
+    "calculate_context_metrics",
+    "should_emit_status_update",
+    "PHASE_BUILD_MESSAGES",
+    "PHASE_AFTER_TOOL_END",
+    "PHASE_AFTER_COMPACTION",
+    "PHASE_FINAL",
     "CompressionResult",
     "CompressionStrategy",
     "AttachmentTruncationStrategy",

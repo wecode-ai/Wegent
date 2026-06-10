@@ -103,87 +103,6 @@ def build_table_prompt(table_contexts: List[dict]) -> str:
     return TABLE_PROMPT_TEMPLATE.format(tables_info=tables_info)
 
 
-async def process_contexts(
-    db: Session,
-    context_ids: List[int],
-    message: str,
-) -> str | list[dict[str, Any]]:
-    """
-    Process multiple contexts and build message with all context contents.
-
-    Args:
-        db: Database session (SQLAlchemy Session)
-        context_ids: List of context IDs
-        message: Original message
-
-    Returns:
-        Message with all context contents prepended, or OpenAI Responses API
-        format vision content list for images
-    """
-    if not context_ids:
-        return message
-
-    # Collect all contexts
-    text_contents = []
-    image_contents = []
-
-    for idx, context_id in enumerate(context_ids, start=1):
-        try:
-            context = context_service.get_context_optional(
-                db=db,
-                context_id=context_id,
-            )
-
-            if context is None:
-                logger.warning(f"Context {context_id} not found")
-                continue
-
-            if context.status != ContextStatus.READY.value:
-                logger.warning(f"Context {context_id} is not ready: {context.status}")
-                continue
-
-            # Process based on context type
-            if context.context_type == ContextType.ATTACHMENT.value:
-                if context_service.is_video_context(context):
-                    logger.warning(
-                        "Skipping video context %s in process_contexts because "
-                        "model capabilities are unavailable in this compatibility path",
-                        context.id,
-                    )
-                    continue
-                _process_attachment_context(
-                    db,
-                    context,
-                    idx,
-                    text_contents,
-                    image_contents,
-                    [],
-                )
-            elif context.context_type == ContextType.KNOWLEDGE_BASE.value:
-                # Knowledge base contexts are handled via RAG tools, not here
-                logger.debug(
-                    f"Knowledge base context {context_id} will be used via RAG"
-                )
-
-        except (ValueError, KeyError) as e:
-            logger.exception(f"Error processing context {context_id}")
-            continue
-        except Exception as e:
-            logger.exception(f"Unexpected error processing context {context_id}")
-            continue
-
-    # Build vision structure if images present. Video contexts require model
-    # capabilities and are handled by prepare_contexts_for_chat.
-    if image_contents:
-        return _build_vision_structure(text_contents, image_contents, [], message)
-
-    # Combine text contents if present
-    if text_contents:
-        return _combine_text_contents(text_contents, message)
-
-    return message
-
-
 def _build_vision_structure(
     text_contents: List[str],
     image_contents: List[dict],
@@ -368,9 +287,14 @@ def _process_attachment_context(
         )
 
         if not supports_video:
-            raise VideoAttachmentResolutionError(
-                f"Video attachment {context.id} requires a video-capable model"
+            _metadata_header, metadata_text, _fid = (
+                context_service.build_video_metadata_text(context)
             )
+            text_contents.append(f"[Attachment {idx}]\n{metadata_text}")
+            logger.info(
+                "[VIDEO DEBUG] Added metadata-only video context: id=%s", context.id
+            )
+            return
 
         payload = context_service.build_video_content_from_attachment(db, context)
         if payload is None:

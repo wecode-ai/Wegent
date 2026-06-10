@@ -76,6 +76,45 @@ function taskBelongsToProject(task: Task): boolean {
   return Boolean(task.project_id && task.project_id > 0)
 }
 
+function collectProjectTaskIds(projects: ProjectWithTasks[]): Set<number> {
+  const ids = new Set<number>()
+  for (const project of projects) {
+    for (const task of project.tasks ?? []) {
+      ids.add(task.task_id)
+    }
+  }
+  return ids
+}
+
+function removeTaskFromProjects(
+  projects: ProjectWithTasks[],
+  taskId: number
+): ProjectWithTasks[] {
+  return projects.map(project => {
+    if (!project.tasks?.some(task => task.task_id === taskId)) return project
+    return {
+      ...project,
+      tasks: project.tasks.filter(task => task.task_id !== taskId),
+    }
+  })
+}
+
+/**
+ * Enforce that the "conversations" list (recentTasks) and the "projects" lists
+ * are mutually exclusive. A task already grouped under a project must never
+ * leak into recentTasks, even if the server momentarily reports project_id=0
+ * for it (eventual consistency right after task creation).
+ */
+function normalizeListExclusivity(state: WorkbenchState): WorkbenchState {
+  const projectTaskIds = collectProjectTaskIds(state.projects)
+  if (projectTaskIds.size === 0) return state
+  const dedupedRecentTasks = state.recentTasks.filter(
+    task => !projectTaskIds.has(task.id)
+  )
+  if (dedupedRecentTasks.length === state.recentTasks.length) return state
+  return { ...state, recentTasks: dedupedRecentTasks }
+}
+
 function toProjectTask(task: Task): ProjectTask {
   return {
     id: task.id,
@@ -115,12 +154,16 @@ function upsertOpenedTask(state: WorkbenchState, task: Task): WorkbenchState {
             }
           : project
       ),
+      // A project task must not linger in the standalone conversation list.
+      recentTasks: state.recentTasks.filter(item => item.id !== task.id),
     }
   }
 
   return {
     ...state,
     recentTasks: upsertTask(state.recentTasks, task.id, task, item => item.id),
+    // A standalone task must not linger in any project bucket.
+    projects: removeTaskFromProjects(state.projects, task.id),
   }
 }
 
@@ -156,7 +199,7 @@ export function workbenchReducer(
 ): WorkbenchState {
   switch (action.type) {
     case 'bootstrapped':
-      return {
+      return normalizeListExclusivity({
         ...state,
         user: action.user,
         defaultTeam: action.defaultTeam,
@@ -173,7 +216,7 @@ export function workbenchReducer(
             : action.standaloneDeviceId,
         isBootstrapping: false,
         error: null,
-      }
+      })
     case 'lists_refreshed': {
       const refreshedState = {
         ...state,
@@ -192,9 +235,11 @@ export function workbenchReducer(
         state.currentTask &&
         !workListsIncludeTask(action.projects, action.recentTasks, state.currentTask)
       ) {
-        return upsertOpenedTask(refreshedState, state.currentTask)
+        return normalizeListExclusivity(
+          upsertOpenedTask(refreshedState, state.currentTask)
+        )
       }
-      return refreshedState
+      return normalizeListExclusivity(refreshedState)
     }
     case 'devices_refreshed':
       return {

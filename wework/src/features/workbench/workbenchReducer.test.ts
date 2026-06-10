@@ -270,4 +270,85 @@ describe('workbenchReducer', () => {
     expect(cleared.currentProject?.id).toBe(7)
     expect(cleared.currentTask).toBeNull()
   })
+
+  test('keeps a project task out of recent chats when the server reports project_id=0 in both lists', () => {
+    // Simulates the eventual-consistency window right after creating a project
+    // chat: the server returns the task inside its project AND in the personal
+    // (recent) list with project_id still 0. It must appear only in the project.
+    const refreshed = workbenchReducer(initialWorkbenchState, {
+      type: 'lists_refreshed',
+      projects: [
+        {
+          id: 7,
+          name: 'Repo',
+          tasks: [
+            {
+              id: 42,
+              task_id: 42,
+              task_title: 'Project chat',
+              task_status: 'RUNNING',
+              title: 'Project chat',
+              status: 'RUNNING',
+              task_type: 'code',
+              created_at: '2026-05-25T00:00:00.000Z',
+            },
+          ],
+        },
+      ],
+      devices: [],
+      recentTasks: [
+        {
+          id: 42,
+          title: 'Project chat',
+          status: 'RUNNING',
+          task_type: 'code',
+          project_id: 0,
+          created_at: '2026-05-25T00:00:00.000Z',
+        },
+      ],
+    })
+
+    expect(refreshed.recentTasks).toEqual([])
+    expect(refreshed.projects[0].tasks).toHaveLength(1)
+  })
+
+  test('re-adds a missing current project task and never duplicates it into recent chats', () => {
+    const selected = workbenchReducer(initialWorkbenchState, {
+      type: 'project_selected',
+      project: { id: 7, name: 'Repo', tasks: [] },
+    })
+    const opened = workbenchReducer(selected, {
+      type: 'task_opened',
+      task: {
+        id: 42,
+        title: 'Project chat',
+        status: 'RUNNING',
+        task_type: 'code',
+        project_id: 7,
+        created_at: '2026-05-25T00:00:00.000Z',
+      },
+    })
+    // Server hasn't associated the task with the project yet: it's missing from
+    // the project list and leaks into recentTasks with project_id=0.
+    const refreshed = workbenchReducer(opened, {
+      type: 'lists_refreshed',
+      projects: [{ id: 7, name: 'Repo', tasks: [] }],
+      devices: [],
+      recentTasks: [
+        {
+          id: 42,
+          title: 'Project chat',
+          status: 'RUNNING',
+          task_type: 'code',
+          project_id: 0,
+          created_at: '2026-05-25T00:00:00.000Z',
+        },
+      ],
+    })
+
+    expect(refreshed.recentTasks).toEqual([])
+    expect(refreshed.projects[0].tasks).toEqual([
+      expect.objectContaining({ task_id: 42 }),
+    ])
+  })
 })

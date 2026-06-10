@@ -13,6 +13,20 @@ from app.services.user_mcp_service import user_mcp_service
 class TestUserScopedMcpInjection:
     """Tests for DingTalk Docs MCP injection."""
 
+    def test_tool_output_guard_defaults_to_disabled(self):
+        user = SimpleNamespace(preferences="{}")
+
+        enabled = TaskRequestBuilder._is_tool_output_guard_enabled(user)
+
+        assert enabled is False
+
+    def test_tool_output_guard_reads_user_preference(self):
+        user = SimpleNamespace(preferences='{"tool_output_guard_enabled": true}')
+
+        enabled = TaskRequestBuilder._is_tool_output_guard_enabled(user)
+
+        assert enabled is True
+
     def test_build_request_task_data_injects_decrypted_user_mcps(self):
         preferences = user_mcp_service.dump_preferences(
             user_mcp_service.set_provider_service_config(
