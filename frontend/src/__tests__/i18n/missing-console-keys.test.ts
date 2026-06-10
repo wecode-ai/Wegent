@@ -22,6 +22,11 @@ describe('i18n console warning keys', () => {
     expect(zhCommon.noData).toBeTruthy()
   })
 
+  test('has tool detail empty output translations in zh-CN and en', () => {
+    expect(enChat.thinking.no_output).toBe('No output')
+    expect(zhChat.thinking.no_output).toBe('无输出')
+  })
+
   test('uses automation as the feed module title in zh-CN and en', () => {
     expect(zhCommon.navigation.flow).toBe('自动化')
     expect(zhFeed.title).toBe('自动化')

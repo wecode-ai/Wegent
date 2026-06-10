@@ -544,7 +544,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
     expect(screen.getByTestId('desktop-window-controls')).toHaveClass('gap-3')
     expect(screen.getByTestId('workbench-topbar-right-actions')).toHaveClass(
-      'gap-5',
+      'gap-2',
     )
 
     await userEvent.click(screen.getByTestId('collapse-sidebar-button'))

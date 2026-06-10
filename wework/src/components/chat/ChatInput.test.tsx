@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { StrictMode, useState } from 'react'
 import { describe, expect, test, vi } from 'vitest'
@@ -88,6 +88,7 @@ describe('ChatInput', () => {
   afterEach(() => {
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
+    vi.useRealTimers()
     localStorage.clear()
     URL.createObjectURL = originalCreateObjectUrl
   })
@@ -2794,6 +2795,28 @@ describe('ChatInput', () => {
     render(<ControlledChatInput onSubmit={onSubmit} />)
 
     await userEvent.type(screen.getByTestId('chat-message-input'), 'hello{enter}')
+
+    expect(onSubmit).toHaveBeenCalledTimes(1)
+  })
+
+  test('does not submit when Enter confirms IME composition', () => {
+    vi.useFakeTimers()
+    const onSubmit = vi.fn()
+    render(<ControlledChatInput onSubmit={onSubmit} />)
+
+    const input = screen.getByTestId('chat-message-input')
+    fireEvent.change(input, { target: { value: 'hello' } })
+    fireEvent.compositionStart(input)
+    fireEvent.keyDown(input, { key: 'Enter' })
+    fireEvent.compositionEnd(input)
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(onSubmit).not.toHaveBeenCalled()
+
+    act(() => {
+      vi.advanceTimersByTime(101)
+    })
+    fireEvent.keyDown(input, { key: 'Enter' })
 
     expect(onSubmit).toHaveBeenCalledTimes(1)
   })

@@ -21,7 +21,7 @@ describe('ToolBlocksDisplay', () => {
   test('groups completed tools into an activity summary', () => {
     render(<ToolBlocksDisplay blocks={[completedCommandBlock]} isStreaming={false} />)
 
-    fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
+    fireEvent.click(screen.getByRole('button', { name: /用时/ }))
 
     expect(screen.getByText('已运行 1 条命令')).toBeInTheDocument()
     expect(screen.queryByText('已运行 pwd')).not.toBeInTheDocument()
@@ -56,7 +56,28 @@ describe('ToolBlocksDisplay', () => {
     })
 
     expect(
-      screen.getByRole('button', { name: /已处理 3s 时间了/ })
+      screen.getByRole('button', { name: /用时 3 秒/ })
+    ).toBeInTheDocument()
+  })
+
+  test('formats live duration with natural Chinese units', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-06-05T00:00:00.000Z'))
+
+    const runningBlock: ProcessingBlock = {
+      ...completedCommandBlock,
+      status: 'streaming',
+      createdAt: Date.now(),
+    }
+
+    render(<ToolBlocksDisplay blocks={[runningBlock]} isStreaming={true} />)
+
+    act(() => {
+      vi.advanceTimersByTime(62000)
+    })
+
+    expect(
+      screen.getByText(/已处理 1 分 2 秒/)
     ).toBeInTheDocument()
   })
 
@@ -78,7 +99,7 @@ describe('ToolBlocksDisplay', () => {
       vi.advanceTimersByTime(5000)
     })
 
-    expect(screen.getByText('已处理 5s 时间了')).toBeInTheDocument()
+    expect(screen.getByText('已处理 5 秒')).toBeInTheDocument()
   })
 
   test('anchors the running duration to the turn start, surviving a refresh', () => {
@@ -108,7 +129,7 @@ describe('ToolBlocksDisplay', () => {
       vi.advanceTimersByTime(0)
     })
 
-    expect(screen.getByText('已处理 10s 时间了')).toBeInTheDocument()
+    expect(screen.getByText('已处理 10 秒')).toBeInTheDocument()
   })
 
   test('renders the header as plain text (not a button) while running', () => {
@@ -123,6 +144,6 @@ describe('ToolBlocksDisplay', () => {
     expect(
       screen.queryByRole('button', { name: /已处理/ })
     ).not.toBeInTheDocument()
-    expect(screen.getByText(/已处理 .* 时间了/)).toBeInTheDocument()
+    expect(screen.getByText(/已处理 .* 秒/)).toBeInTheDocument()
   })
 })

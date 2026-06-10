@@ -22,7 +22,7 @@ export function MessageList({ messages }: MessageListProps) {
   }
 
   return (
-    <div className="mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-6 overflow-x-hidden px-6 py-8">
+    <div className="mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-4 overflow-x-hidden px-6 py-8">
       {messages.map(message => (
         <article
           key={message.id}
@@ -229,7 +229,7 @@ function MessageHoverActions({
   return (
     <div
       className={[
-        'flex min-h-6 items-center gap-1 text-xs text-text-muted opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100',
+        'flex min-h-5 items-center gap-1 text-xs text-text-muted opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100',
         align === 'right' ? 'justify-end' : 'justify-start',
       ].join(' ')}
     >
