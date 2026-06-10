@@ -23,7 +23,7 @@ from urllib.parse import urlparse
 import httpx
 from fastapi import APIRouter, Body, FastAPI, HTTPException, Request, Response
 from fastapi.responses import PlainTextResponse, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from executor_manager.common.config import ROUTE_PREFIX
 from executor_manager.config.config import EXECUTOR_DISPATCHER_MODE
@@ -688,7 +688,7 @@ async def get_executor_workspace_file(
 
 
 class CancelTaskRequest(BaseModel):
-    task_id: int
+    task_id: int = Field(..., strict=True)
 
 
 class ValidateImageRequest(BaseModel):
@@ -1110,8 +1110,8 @@ class OpenAIResponsesRequest(BaseModel):
 class CancelRequest(BaseModel):
     """Request model for /v1/cancel endpoint."""
 
-    task_id: int
-    subtask_id: Optional[int] = None
+    task_id: int = Field(..., strict=True)
+    subtask_id: Optional[int] = Field(None, strict=True)
     executor_name: Optional[str] = None
 
 
