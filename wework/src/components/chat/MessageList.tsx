@@ -43,6 +43,11 @@ export function MessageList({ messages }: MessageListProps) {
   )
 }
 
+function getTurnStartMs(createdAt: string): number | undefined {
+  const ms = new Date(createdAt).getTime()
+  return Number.isFinite(ms) ? ms : undefined
+}
+
 function formatMessageTime(createdAt: string) {
   const date = new Date(createdAt)
   if (Number.isNaN(date.getTime())) return ''
@@ -298,6 +303,7 @@ function AssistantMessage({ message }: { message: WorkbenchMessage }) {
         <ToolBlocksDisplay
           blocks={message.blocks ?? []}
           isStreaming={isStreaming}
+          startedAt={getTurnStartMs(message.createdAt)}
         />
       )}
       {hasContent && (

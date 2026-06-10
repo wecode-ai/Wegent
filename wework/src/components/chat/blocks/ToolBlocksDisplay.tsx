@@ -10,12 +10,23 @@ import {
 interface ToolBlocksDisplayProps {
   blocks: ProcessingBlock[]
   isStreaming: boolean
+  // Wall-clock epoch ms when the turn started (the assistant subtask's
+  // created_at). Used as the duration anchor so the elapsed time survives a
+  // page refresh: after a refresh the in-progress blocks are re-streamed with
+  // fresh client timestamps, so anchoring to the first block would restart the
+  // timer from the refresh moment.
+  startedAt?: number
 }
 
-export function ToolBlocksDisplay({ blocks, isStreaming }: ToolBlocksDisplayProps) {
+export function ToolBlocksDisplay({
+  blocks,
+  isStreaming,
+  startedAt,
+}: ToolBlocksDisplayProps) {
   const isRunning = isStreaming || blocks.some(b => b.status !== 'done' && b.status !== 'error')
   const [userExpanded, setUserExpanded] = useState(false)
-  const [startedAt] = useState(() => Date.now())
+  const [mountedAt] = useState(() => Date.now())
+  const turnStartedAt = startedAt ?? mountedAt
   const [hasRenderedRunning, setHasRenderedRunning] = useState(isRunning)
   const [completedAt, setCompletedAt] = useState<number | null>(null)
   const [now, setNow] = useState(() => Date.now())
@@ -44,7 +55,7 @@ export function ToolBlocksDisplay({ blocks, isStreaming }: ToolBlocksDisplayProp
 
   if (blocks.length === 0 && !isStreaming) return null
 
-  const duration = getDuration(blocks, startedAt, now, completedAt, isRunning)
+  const duration = getDuration(blocks, turnStartedAt, now, completedAt, isRunning)
   const rows = buildProcessingDisplayRows(blocks)
   const expanded = isRunning || userExpanded
 
@@ -150,12 +161,16 @@ function ThinkingIndicator() {
 
 function getDuration(
   blocks: ProcessingBlock[],
-  fallbackStart: number,
+  turnStartedAt: number,
   now: number,
   completedAt: number | null,
   isRunning: boolean
 ): string {
-  const first = blocks[0]?.createdAt ?? fallbackStart
+  // Anchor the elapsed time to the turn's wall-clock start rather than the
+  // first block. After a page refresh the in-progress blocks are re-streamed
+  // with fresh client timestamps, so anchoring to blocks[0] would restart the
+  // timer from the refresh moment.
+  const first = turnStartedAt
   const last = blocks[blocks.length - 1]?.createdAt ?? first
   // While running, keep counting against the live clock so the timer advances
   // every second even during pure thinking phases with no new tool output.

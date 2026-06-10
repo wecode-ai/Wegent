@@ -81,6 +81,36 @@ describe('ToolBlocksDisplay', () => {
     expect(screen.getByText('已处理 5s 时间了')).toBeInTheDocument()
   })
 
+  test('anchors the running duration to the turn start, surviving a refresh', () => {
+    vi.useFakeTimers()
+    // The page was refreshed 10s into a still-running turn.
+    vi.setSystemTime(new Date('2026-06-05T00:00:10.000Z'))
+
+    // After a refresh the in-progress blocks are re-streamed with fresh client
+    // timestamps (createdAt === now), so anchoring to the first block would
+    // restart the timer. The turn actually started 10s ago.
+    const restreamedBlock: ProcessingBlock = {
+      ...completedCommandBlock,
+      status: 'streaming',
+      createdAt: Date.now(),
+    }
+    const turnStart = new Date('2026-06-05T00:00:00.000Z').getTime()
+
+    render(
+      <ToolBlocksDisplay
+        blocks={[restreamedBlock]}
+        isStreaming={true}
+        startedAt={turnStart}
+      />
+    )
+
+    act(() => {
+      vi.advanceTimersByTime(0)
+    })
+
+    expect(screen.getByText('已处理 10s 时间了')).toBeInTheDocument()
+  })
+
   test('renders the header as plain text (not a button) while running', () => {
     const runningBlock: ProcessingBlock = {
       ...completedCommandBlock,
