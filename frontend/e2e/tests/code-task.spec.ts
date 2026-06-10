@@ -26,11 +26,12 @@ test.describe('Code Task', () => {
     const botResponse = await apiClient.createBot({
       name: botName,
       shell_name: 'Chat',
+      agent_config: {},
       system_prompt: 'You are a deterministic E2E code-task assistant.',
       namespace: 'default',
       is_active: true,
     })
-    expect([200, 201]).toContain(botResponse.status)
+    expect([200, 201], JSON.stringify(botResponse.data)).toContain(botResponse.status)
     codeBot = { name: botName, id: (botResponse.data as { id?: number } | null)?.id }
     expect(codeBot.id).toBeTruthy()
 
@@ -50,7 +51,7 @@ test.describe('Code Task', () => {
       requires_workspace: false,
       workflow: null,
     })
-    expect([200, 201]).toContain(teamResponse.status)
+    expect([200, 201], JSON.stringify(teamResponse.data)).toContain(teamResponse.status)
     codeTeam = { name: teamName, id: (teamResponse.data as { id?: number } | null)?.id }
     expect(codeTeam.id).toBeTruthy()
   })
