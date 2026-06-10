@@ -750,6 +750,7 @@ class ExecutionDispatcher:
                     team_name=team_name,
                     task_title=task_title,
                     is_group_chat=is_group_chat,
+                    project_id=request.project_id,
                 )
 
             # Wrap emitter with StatusUpdatingEmitter for unified status updates

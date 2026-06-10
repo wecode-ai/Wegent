@@ -82,6 +82,7 @@ _PERSONAL_COUNT_SQL = text(
     AND k.namespace != 'system'
     AND k.user_id = :user_id
     AND k.is_group_chat = 0
+    AND k.project_id = 0
 """
 )
 
@@ -95,6 +96,7 @@ _PERSONAL_COUNT_BY_ORIGIN_SQL = text(
     AND k.user_id = :user_id
     AND k.is_group_chat = 0
     AND k.client_origin = :client_origin
+    AND k.project_id = 0
 """
 )
 
@@ -107,6 +109,7 @@ _PERSONAL_IDS_SQL = text(
     AND k.namespace != 'system'
     AND k.user_id = :user_id
     AND k.is_group_chat = 0
+    AND k.project_id = 0
     ORDER BY k.created_at DESC
     LIMIT :limit OFFSET :skip
 """
@@ -122,6 +125,7 @@ _PERSONAL_IDS_BY_ORIGIN_SQL = text(
     AND k.user_id = :user_id
     AND k.is_group_chat = 0
     AND k.client_origin = :client_origin
+    AND k.project_id = 0
     ORDER BY k.created_at DESC
     LIMIT :limit OFFSET :skip
 """

@@ -8,9 +8,12 @@ import { act, render, waitFor } from '@testing-library/react'
 import { taskApis } from '@/apis/tasks'
 import { TaskSessionProvider, useTaskSession } from '@/features/tasks/session/TaskSession'
 import type { Task, TaskDetail } from '@/types/api'
-import type { TaskStatusPayload } from '@/types/socket'
+import type { TaskCreatedPayload, TaskStatusPayload } from '@/types/socket'
 
-let mockTaskHandlers: { onTaskStatus?: (payload: TaskStatusPayload) => void } | null = null
+let mockTaskHandlers: {
+  onTaskCreated?: (payload: TaskCreatedPayload) => void
+  onTaskStatus?: (payload: TaskStatusPayload) => void
+} | null = null
 let mockVisibleHandler: ((wasHiddenFor: number) => void) | null = null
 let mockReconnectHandler: (() => void) | null = null
 let mockIsConnected = true
@@ -203,6 +206,33 @@ describe('TaskSessionContext runtime state machine sync', () => {
     expect(contextProbe.current?.taskState?.runtime.lastStatusUpdatedAt).toBe(
       '2026-05-31T10:00:00.000Z'
     )
+  })
+
+  it('does not add project-owned task creation events to personal history', async () => {
+    render(
+      <TaskSessionProvider>
+        <ContextProbe />
+      </TaskSessionProvider>
+    )
+
+    await waitFor(() => {
+      expect(mockTaskHandlers?.onTaskCreated).toBeDefined()
+    })
+
+    act(() => {
+      mockTaskHandlers?.onTaskCreated?.({
+        task_id: 99,
+        title: 'Project task',
+        team_id: 1,
+        team_name: 'team',
+        created_at: '2026-05-31T10:00:00.000Z',
+        is_group_chat: false,
+        project_id: 12,
+      })
+    })
+
+    expect(contextProbe.current?.personalTasks.some(task => task.id === 99)).toBe(false)
+    expect(contextProbe.current?.tasks.some(task => task.id === 99)).toBe(false)
   })
 
   it('does not stamp active task runtime events with client time', async () => {

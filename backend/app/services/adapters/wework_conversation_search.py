@@ -130,6 +130,7 @@ def _load_visible_wework_tasks(
             TaskResource.namespace != "system",
             TaskResource.user_id == user_id,
             TaskResource.client_origin == client_origin,
+            TaskResource.project_id == 0,
         )
         .order_by(TaskResource.updated_at.desc())
         .all()

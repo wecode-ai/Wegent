@@ -493,6 +493,7 @@ class TaskCreatedPayload(BaseModel):
     team_name: str
     created_at: str
     is_group_chat: bool = False
+    project_id: Optional[int] = None
 
 
 class TaskDeletedPayload(BaseModel):

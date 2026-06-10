@@ -427,6 +427,11 @@ export function useTaskPuller(): TaskPuller {
 
   // Handle new task created via WebSocket
   const handleTaskCreated = useCallback((data: TaskCreatedPayload) => {
+    const projectId = data.project_id ?? 0
+    if (projectId > 0) {
+      return
+    }
+
     // Use is_group_chat from WebSocket payload (defaults to false if not provided)
     const isGroupChat = data.is_group_chat ?? false
 
@@ -456,6 +461,7 @@ export function useTaskPuller(): TaskPuller {
       updated_at: data.created_at,
       completed_at: '',
       is_group_chat: isGroupChat,
+      project_id: projectId,
     }
 
     // Initialize view status for the new task

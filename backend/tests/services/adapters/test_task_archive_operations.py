@@ -212,6 +212,13 @@ def test_conversation_search_matches_subtask_content_and_client_origin(
     test_db: Session,
     test_user: User,
 ):
+    project = _create_project(
+        test_db,
+        test_user.id,
+        711,
+        "wework-project",
+        client_origin="wework",
+    )
     matched_task = _create_task(
         test_db,
         test_user.id,
@@ -227,6 +234,15 @@ def test_conversation_search_matches_subtask_content_and_client_origin(
         "hi",
         client_origin="frontend",
         updated_at=datetime(2026, 5, 30, 10, 0, 0),
+    )
+    project_task = _create_task(
+        test_db,
+        test_user.id,
+        7113,
+        "project hi",
+        project_id=project.id,
+        client_origin="wework",
+        updated_at=datetime(2026, 5, 30, 11, 0, 0),
     )
     test_db.add_all(
         [
@@ -249,6 +265,16 @@ def test_conversation_search_matches_subtask_content_and_client_origin(
                 prompt="胡云鹏",
                 result={"value": "wrong client"},
                 completed_at=datetime(2026, 5, 30, 10, 1, 0),
+            ),
+            Subtask(
+                user_id=test_user.id,
+                task_id=project_task.id,
+                team_id=1,
+                title="assistant reply",
+                bot_ids=[],
+                prompt="胡云鹏",
+                result={"value": "project task should stay under project"},
+                completed_at=datetime(2026, 5, 30, 11, 1, 0),
             ),
         ]
     )
@@ -400,6 +426,13 @@ def test_personal_task_list_filters_by_client_origin(
     test_db: Session,
     test_user: User,
 ):
+    project = _create_project(
+        test_db,
+        test_user.id,
+        707,
+        "wework-project",
+        client_origin="wework",
+    )
     frontend_task = _create_task(
         test_db,
         test_user.id,
@@ -414,6 +447,14 @@ def test_personal_task_list_filters_by_client_origin(
         "Wework standalone chat",
         client_origin="wework",
     )
+    project_task = _create_task(
+        test_db,
+        test_user.id,
+        7028,
+        "Wework project chat",
+        project_id=project.id,
+        client_origin="wework",
+    )
 
     items, total = task_kinds_service.get_user_personal_tasks_lite(
         test_db,
@@ -425,6 +466,7 @@ def test_personal_task_list_filters_by_client_origin(
     assert total == 1
     assert [item["id"] for item in items] == [wework_task.id]
     assert frontend_task.id not in [item["id"] for item in items]
+    assert project_task.id not in [item["id"] for item in items]
 
 
 def test_archive_standalone_chats_filters_by_client_origin(

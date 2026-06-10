@@ -439,6 +439,7 @@ export interface Task {
   updated_at: string
   completed_at: string
   is_group_chat?: boolean // Whether this task is a group chat
+  project_id?: number // Project ID for project-owned tasks
   knowledge_base_id?: number // Knowledge base ID for knowledge type tasks
 }
 
