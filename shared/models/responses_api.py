@@ -295,6 +295,15 @@ class BlockUpdatedEvent(TypedDict):
     updates: dict[str, Any]
 
 
+class StatusUpdatedEvent(TypedDict):
+    """response.status.updated event."""
+
+    type: Literal["response.status.updated"]
+    response_id: str
+    phase: str
+    context_metrics: dict[str, Any]
+
+
 class ErrorEvent(TypedDict):
     """error event."""
 
@@ -321,6 +330,8 @@ ResponsesAPIStreamingResponse = Union[
     ResponsePartAddedEvent,
     ReasoningSummaryTextDeltaEvent,
     BlockCreatedEvent,
+    BlockUpdatedEvent,
+    StatusUpdatedEvent,
     ErrorEvent,
 ]
 
@@ -395,6 +406,7 @@ class ResponsesAPIStreamEvents(str, Enum):
     # Wegent block events
     BLOCK_CREATED = "response.block.created"
     BLOCK_UPDATED = "response.block.updated"
+    STATUS_UPDATED = "response.status.updated"
 
     # Error event
     ERROR = "error"
@@ -430,7 +442,10 @@ __all__ = [
     "FunctionCallArgumentsDeltaEvent",
     "FunctionCallArgumentsDoneEvent",
     "ResponsePartAddedEvent",
+    "ReasoningSummaryTextDeltaEvent",
     "BlockCreatedEvent",
+    "BlockUpdatedEvent",
+    "StatusUpdatedEvent",
     "ErrorEvent",
     # Event builder
     "ResponsesAPIEventBuilder",
@@ -674,6 +689,15 @@ class ResponsesAPIEventBuilder:
             "item_id": self.item_id,
             "block_id": block_id,
             "updates": updates,
+        }
+
+    def status_updated(self, phase: str, context_metrics: dict[str, Any]) -> dict:
+        """Create a context-status update event."""
+        return {
+            "type": ResponsesAPIStreamEvents.STATUS_UPDATED.value,
+            "response_id": self.response_id,
+            "phase": phase,
+            "context_metrics": context_metrics,
         }
 
     # ============================================================

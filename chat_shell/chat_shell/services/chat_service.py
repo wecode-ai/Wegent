@@ -22,6 +22,11 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Any, AsyncIterator
 
+from chat_shell.compression.context_metrics import (
+    PHASE_BUILD_MESSAGES,
+    PHASE_FINAL,
+    ContextMetricsTracker,
+)
 from chat_shell.core.config import settings
 from chat_shell.services.context import ChatContext
 from chat_shell.services.guidance import GuidanceConsumer, create_guidance_queue_client
@@ -39,6 +44,23 @@ from shared.models.execution import EventType, ExecutionEvent, ExecutionRequest
 from shared.telemetry.decorators import add_span_event, trace_async
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_final_context_metric_messages(
+    *,
+    initial_messages: list[dict[str, Any]],
+    messages_chain: list[dict[str, Any]] | None,
+    live_state_messages: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    """Resolve the best available final model-visible state for metrics.
+
+    Phase 2 guard enforcement mutates LangGraph live state mid-turn. When the
+    agent builder captured that final state, prefer it over reconstructing an
+    approximation from the turn input plus serialized turn output.
+    """
+    if live_state_messages:
+        return list(live_state_messages)
+    return list(initial_messages) + list(messages_chain or [])
 
 
 class ChatInterface(ABC):
@@ -218,6 +240,7 @@ class ChatService(ChatInterface):
                 request.task_id,
                 request.subtask_id,
             )
+            context_metrics_tracker: ContextMetricsTracker | None = None
 
             # Prepare all context resources in parallel
             add_span_event("preparing_context")
@@ -265,6 +288,50 @@ class ChatService(ChatInterface):
                 is_cancelled=core.is_cancelled,
             )
 
+            # Build the unified context guard that runs as the LangGraph
+            # pre_model_hook. It owns budget enforcement at every model call —
+            # both pre-turn (turn start) and mid-turn (after every tool). The
+            # guidance consumer's hook is chained AFTER the guard so guidance
+            # injection observes already-budgeted state.
+            from chat_shell.compression.token_counter import TokenCounter
+            from chat_shell.guard import (
+                ToolOutputGuardAdapter,
+                TruncationPolicy,
+                UnifiedContextGuard,
+                chain_pre_model_hooks,
+            )
+
+            guard_model_id = (
+                request.model_config.get("model_id") if request.model_config else None
+            ) or "gpt-4"
+            guard_model_type = (
+                request.model_config.get("model") if request.model_config else None
+            )
+            guard_counter = TokenCounter(
+                model_name=guard_model_id, model_type=guard_model_type
+            )
+            guard_sources = []
+            if request.enable_tool_output_guard:
+                tool_output_adapter = ToolOutputGuardAdapter(
+                    token_counter=guard_counter,
+                    default_policy=TruncationPolicy(
+                        kind="tokens", limit=settings.TOOL_OUTPUT_TOKEN_LIMIT
+                    ),
+                    emergency_ratio=settings.EMERGENCY_TOOL_OUTPUT_RATIO,
+                )
+                guard_sources = [tool_output_adapter]
+            context_guard = UnifiedContextGuard(
+                model_id=guard_model_id,
+                model_type=guard_model_type,
+                model_config=request.model_config,
+                sources=guard_sources,
+                compression_enabled=settings.MESSAGE_COMPRESSION_ENABLED,
+            )
+            chained_pre_model_hook = chain_pre_model_hooks(
+                context_guard,
+                guidance_consumer.create_pre_model_hook(),
+            )
+
             add_span_event("building_agent_config")
             agent_config = AgentConfig(
                 model_config=request.model_config or {"model": "gpt-4"},
@@ -275,7 +342,7 @@ class ChatService(ChatInterface):
                 enable_clarification=request.enable_clarification,
                 enable_deep_thinking=request.enable_deep_thinking,
                 skills=request.skills,
-                pre_model_hook=guidance_consumer.create_pre_model_hook(),
+                pre_model_hook=chained_pre_model_hook,
             )
 
             # Build messages for the agent
@@ -299,6 +366,23 @@ class ChatService(ChatInterface):
                 (time.perf_counter() - t1) * 1000,
             )
             add_span_event("messages_built", {"message_count": len(messages)})
+
+            context_metrics_tracker = ContextMetricsTracker(
+                task_id=request.task_id,
+                subtask_id=request.subtask_id,
+                metrics_fn=context_guard.metrics,
+                emitter=emitter,
+            )
+            # Wire the tracker into the guard so every pre_model_hook
+            # invocation (turn start + after each tool) emits a snapshot
+            # via the same tracker. This restores the per-tool toolbar
+            # updates from Phase 1 while sourcing accounting from the
+            # guard's authoritative state.
+            context_guard.set_tracker(context_metrics_tracker)
+            initial_snapshot = await context_metrics_tracker.capture(
+                messages, PHASE_BUILD_MESSAGES
+            )
+            state.context_metrics = initial_snapshot.to_dict()
 
             # Persist the formatted user message (with system-reminder time block) to
             # the DB so that future turns load the same exact content, enabling
@@ -329,7 +413,11 @@ class ChatService(ChatInterface):
             add_span_event("creating_tool_event_handler")
             t2 = time.perf_counter()
             agent_builder = agent.create_agent_builder(agent_config)
-            on_tool_event = create_tool_event_handler(state, emitter, agent_builder)
+            on_tool_event = create_tool_event_handler(
+                state,
+                emitter,
+                agent_builder,
+            )
             logger.info(
                 "[CHAT_SERVICE_PERF] create_agent_builder: %.2fms",
                 (time.perf_counter() - t2) * 1000,
@@ -394,6 +482,18 @@ class ChatService(ChatInterface):
             # Finalize if not cancelled
             await guidance_consumer.expire_pending()
             if not core.is_cancelled():
+                if context_metrics_tracker is not None:
+                    final_messages = _resolve_final_context_metric_messages(
+                        initial_messages=messages,
+                        messages_chain=messages_chain,
+                        live_state_messages=getattr(
+                            agent_builder, "_last_live_state_messages", None
+                        ),
+                    )
+                    final_snapshot = await context_metrics_tracker.capture(
+                        final_messages, PHASE_FINAL
+                    )
+                    state.context_metrics = final_snapshot.to_dict()
                 add_span_event("finalizing", {"total_tokens": token_count})
                 await core.finalize()
 

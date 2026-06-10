@@ -10,6 +10,7 @@ This module consolidates the logic from the former ChatConfigBuilder,
 providing complete Bot, Model, Ghost, Shell, and Skill resolution.
 """
 
+import json
 import logging
 from typing import Any, List, Optional, Union
 
@@ -364,6 +365,7 @@ class TaskRequestBuilder:
             enable_web_search=enable_web_search,
             enable_clarification=enable_clarification,
             enable_deep_thinking=enable_deep_thinking,
+            enable_tool_output_guard=self._is_tool_output_guard_enabled(user),
             skill_names=[s["name"] for s in resolved_skills],
             skill_configs=resolved_skills,
             preload_skills=resolved_preload_skills,
@@ -1450,6 +1452,33 @@ class TaskRequestBuilder:
             return None
 
         return {"user_mcps": user_mcps}
+
+    @staticmethod
+    def _is_tool_output_guard_enabled(user: User | None) -> bool:
+        """Return whether source-level tool output truncation is enabled."""
+        if not user or not getattr(user, "preferences", None):
+            return False
+
+        raw_preferences = user.preferences
+        if isinstance(raw_preferences, str):
+            try:
+                preferences = json.loads(raw_preferences)
+            except json.JSONDecodeError:
+                logger.warning(
+                    "[TaskRequestBuilder] Failed to parse user preferences for tool output guard toggle"
+                )
+                return False
+            if not isinstance(preferences, dict):
+                logger.warning(
+                    "[TaskRequestBuilder] Ignoring non-object user preferences for tool output guard toggle"
+                )
+                return False
+        elif isinstance(raw_preferences, dict):
+            preferences = raw_preferences
+        else:
+            return False
+
+        return bool(preferences.get("tool_output_guard_enabled", False))
 
     def _build_skill_data(self, skill: Kind, *, user: User | None = None) -> dict:
         """Build skill data dictionary from a Skill Kind object.

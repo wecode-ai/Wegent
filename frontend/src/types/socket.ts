@@ -36,6 +36,7 @@ export const ServerEvents = {
   CHAT_DONE: 'chat:done',
   CHAT_ERROR: 'chat:error',
   CHAT_CANCELLED: 'chat:cancelled',
+  CHAT_STATUS_UPDATED: 'chat:status_updated',
   CHAT_GUIDANCE_QUEUED: 'chat:guidance_queued',
   CHAT_GUIDANCE_APPLIED: 'chat:guidance_applied',
   CHAT_GUIDANCE_EXPIRED: 'chat:guidance_expired',
@@ -318,6 +319,55 @@ export interface ChatErrorPayload {
 export interface ChatCancelledPayload {
   task_id: number
   subtask_id: number
+}
+
+/**
+ * Snapshot of the current model-visible context budget for a chat turn.
+ *
+ * All numeric budget fields use token units except the *_percent fields.
+ * `display_*` values are intended for UI display, while the raw remaining/limit
+ * values follow the stricter internal guard accounting.
+ */
+export interface ContextMetricsSnapshot {
+  /** Full context window size for the active model, in tokens. */
+  context_window: number
+  /** Output tokens reserved up front when computing the usable input budget. */
+  reserved_output_tokens: number
+  /** Effective input budget after reserving output tokens, in tokens. */
+  available_input_tokens: number
+  /** Current model-visible input usage, in tokens. */
+  used_input_tokens: number
+  /** Strict remaining input budget after internal guard reservation, in tokens. */
+  remaining_input_tokens: number
+  /** Strict remaining input budget expressed as a percentage. */
+  remaining_percent: number
+  /** UI-facing remaining budget based on the full context window, in tokens. */
+  display_remaining_tokens: number
+  /** UI-facing remaining budget percentage shown to users. */
+  display_remaining_percent: number
+  /** Threshold where request-level compaction should begin, in tokens. */
+  trigger_limit: number
+  /** Desired post-compaction target budget, in tokens. */
+  target_limit: number
+  /** Whether current usage has crossed the trigger limit. */
+  is_over_trigger: boolean
+}
+
+/**
+ * Socket payload for `chat:status_updated`.
+ *
+ * Emitted when the active chat/subtask advances through major runtime phases
+ * such as post-tool updates, finalization, or other context-budget checkpoints.
+ */
+export interface ChatStatusUpdatedPayload {
+  /** Parent task identifier. */
+  task_id: number
+  /** Active subtask identifier for this status snapshot. */
+  subtask_id: number
+  /** Backend-provided phase name for the status update. */
+  phase: string
+  /** Context budget snapshot associated with this phase transition. */
+  context_metrics: ContextMetricsSnapshot
 }
 
 /**

@@ -7,7 +7,7 @@
 import json
 
 import pytest
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from chat_shell.agents.graph_builder import (
     InvalidToolMessageSequenceError,
@@ -164,8 +164,8 @@ class TestSerializeMessagesChain:
         assert result[2]["role"] == "assistant"
         assert result[2]["content"] == "Here is your answer."
 
-    def test_human_messages_are_skipped(self):
-        """HumanMessage and other non-AI/Tool messages are not included."""
+    def test_non_compacted_human_messages_are_skipped(self):
+        """Non-compacted HumanMessage and other non-AI/Tool messages are not included."""
         messages = [
             HumanMessage(content="User question"),
             AIMessage(content="Response"),
@@ -173,6 +173,70 @@ class TestSerializeMessagesChain:
         result = _serialize_messages_chain(messages)
         assert len(result) == 1
         assert result[0]["role"] == "assistant"
+
+    def test_compacted_human_message_is_persisted(self):
+        """Compacted HumanMessage summaries must survive into messages_chain."""
+        msg = HumanMessage(
+            content="[history summary]",
+            additional_kwargs={"compacted": True},
+        )
+        result = _serialize_messages_chain([msg])
+        assert result == [
+            {
+                "role": "user",
+                "content": "[history summary]",
+                "additional_kwargs": {"compacted": True},
+            }
+        ]
+
+    def test_compacted_system_message_is_persisted(self):
+        """Compacted SystemMessage summaries must survive into messages_chain."""
+        msg = SystemMessage(
+            content="[system summary]",
+            additional_kwargs={"compacted": True},
+        )
+        result = _serialize_messages_chain([msg])
+        assert result == [
+            {
+                "role": "system",
+                "content": "[system summary]",
+                "additional_kwargs": {"compacted": True},
+            }
+        ]
+
+    def test_compacted_assistant_message_preserves_marker(self):
+        """Assistant summaries keep the compacted marker through serialization."""
+        msg = AIMessage(
+            content="Compacted assistant summary",
+            additional_kwargs={"compacted": True},
+        )
+        result = _serialize_messages_chain([msg])
+        assert result == [
+            {
+                "role": "assistant",
+                "content": "Compacted assistant summary",
+                "additional_kwargs": {"compacted": True},
+            }
+        ]
+
+    def test_compacted_tool_message_preserves_marker(self):
+        """Tool messages keep the compacted marker through serialization."""
+        msg = ToolMessage(
+            content="Compacted tool output",
+            tool_call_id="call_abc",
+            name="search",
+            additional_kwargs={"compacted": True},
+        )
+        result = _serialize_messages_chain([msg])
+        assert result == [
+            {
+                "role": "tool",
+                "content": "Compacted tool output",
+                "tool_call_id": "call_abc",
+                "name": "search",
+                "additional_kwargs": {"compacted": True},
+            }
+        ]
 
     def test_ai_message_list_content(self):
         """AIMessage with list content (e.g. text blocks) is preserved."""
@@ -276,73 +340,3 @@ class TestSerializeMessagesChain:
         assert result[0]["content"] == [
             {"type": "reasoning", "reasoning": "thinking..."},
         ]
-
-
-class TestToolResultTruncationAtSerialization:
-    """Tests for tool result truncation in _serialize_messages_chain."""
-
-    def test_short_tool_result_unchanged(self):
-        """Tool results within the limit are not truncated."""
-        msg = ToolMessage(
-            content="short result",
-            tool_call_id="call_1",
-            name="test_tool",
-        )
-        result = _serialize_messages_chain([msg])
-        assert result[0]["content"] == "short result"
-
-    def test_long_tool_result_truncated(self, monkeypatch):
-        """Tool results exceeding MAX_TOOL_RESULT_LENGTH are truncated."""
-        # Set a small limit for testing
-        from chat_shell.core import config as config_module
-
-        original_settings = config_module.settings
-        monkeypatch.setattr(
-            config_module,
-            "settings",
-            type(original_settings).model_construct(
-                **{
-                    **original_settings.model_dump(),
-                    "MAX_TOOL_RESULT_LENGTH": 200,
-                }
-            ),
-        )
-
-        long_content = "A" * 500
-        msg = ToolMessage(
-            content=long_content,
-            tool_call_id="call_1",
-            name="test_tool",
-        )
-        result = _serialize_messages_chain([msg])
-        content = result[0]["content"]
-        assert len(content) < 500
-        assert "Tool output truncated at serialization" in content
-        # Beginning and end preserved
-        assert content.startswith("A" * 50)
-        assert content.endswith("A" * 50)
-
-    def test_truncation_disabled_when_zero(self, monkeypatch):
-        """Setting MAX_TOOL_RESULT_LENGTH=0 disables truncation."""
-        from chat_shell.core import config as config_module
-
-        original_settings = config_module.settings
-        monkeypatch.setattr(
-            config_module,
-            "settings",
-            type(original_settings).model_construct(
-                **{
-                    **original_settings.model_dump(),
-                    "MAX_TOOL_RESULT_LENGTH": 0,
-                }
-            ),
-        )
-
-        long_content = "B" * 100000
-        msg = ToolMessage(
-            content=long_content,
-            tool_call_id="call_1",
-            name="test_tool",
-        )
-        result = _serialize_messages_chain([msg])
-        assert result[0]["content"] == long_content

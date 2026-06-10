@@ -793,6 +793,27 @@
     "save_success": "记忆偏好设置已保存",
     "save_failed": "保存记忆偏好设置失败"
   },
+  "chat_status": {
+    "title": "当前对话状态",
+    "description": "显示当前会话可用的上下文预算",
+    "status_line_title": "对话状态栏",
+    "status_line_description": "在聊天工具栏中显示轻量的运行时状态信息。",
+    "enable": "启用状态栏",
+    "items_title": "显示项",
+    "context_remaining_label": "上下文剩余",
+    "context_remaining": "上下文剩余 {{percent}}%",
+    "context_usage": "{{used}} / {{total}} 上下文 token",
+    "token_usage": "{{used}} / {{total}} 输入 token",
+    "over_trigger": "已达到压缩阈值",
+    "save_success": "对话状态偏好已保存",
+    "save_failed": "保存对话状态偏好失败"
+  },
+  "tool_output_guard": {
+    "title": "工具输出截断",
+    "description": "在 Chat 模式下自动压缩过大的工具输出，减少因上下文过长导致失败的几率。",
+    "save_success": "工具输出截断偏好已保存",
+    "save_failed": "保存工具输出截断偏好失败"
+  },
   "guide": {
     "title": "欢迎",
     "description": "在开始使用此应用之前，请先完成下面的设置！",
@@ -859,6 +880,7 @@
     "noResults": "未找到用户"
   },
   "quota": {
+    "title": "模型额度",
     "load_failed": "用量信息获取失败",
     "brief": "{{quota_source}}配额 {{monthly_usage}} / {{monthly_quota}} (+{{permanent_quota}})",
     "detail_monthly": "你的当月额度为 {{monthly_quota}}，已经使用 {{monthly_usage}}，剩余 {{monthly_left}}。",

@@ -522,6 +522,26 @@ class KnowledgeService:
             return personal + team + organization + other
 
     @staticmethod
+    def list_knowledge_bases_paginated(
+        db: Session,
+        user_id: int,
+        scope: ResourceScope = ResourceScope.ALL,
+        group_name: Optional[str] = None,
+        *,
+        offset: int = 0,
+        limit: int = 50,
+    ) -> tuple[list[Kind], int]:
+        """List accessible knowledge bases with offset/limit pagination."""
+        knowledge_bases = KnowledgeService.list_knowledge_bases(
+            db=db,
+            user_id=user_id,
+            scope=scope,
+            group_name=group_name,
+        )
+        total = len(knowledge_bases)
+        return knowledge_bases[offset : offset + limit], total
+
+    @staticmethod
     def update_knowledge_base(
         db: Session,
         knowledge_base_id: int,
@@ -1178,6 +1198,39 @@ class KnowledgeService:
             query = query.filter(KnowledgeDocument.folder_id == folder_id)
 
         return query.order_by(KnowledgeDocument.created_at.desc()).all()
+
+    @staticmethod
+    def list_documents_paginated(
+        db: Session,
+        knowledge_base_id: int,
+        user_id: int,
+        folder_id: int | None = None,
+        *,
+        offset: int = 0,
+        limit: int = 50,
+    ) -> tuple[list[KnowledgeDocument], int]:
+        """List documents with offset/limit pagination."""
+        kb, has_access = KnowledgeService.get_knowledge_base(
+            db, knowledge_base_id, user_id
+        )
+        if not kb or not has_access:
+            return [], 0
+
+        query = db.query(KnowledgeDocument).filter(
+            KnowledgeDocument.kind_id == knowledge_base_id,
+        )
+
+        if folder_id is not None:
+            query = query.filter(KnowledgeDocument.folder_id == folder_id)
+
+        total = query.count()
+        items = (
+            query.order_by(KnowledgeDocument.created_at.desc())
+            .offset(offset)
+            .limit(limit)
+            .all()
+        )
+        return items, total
 
     @staticmethod
     def _assert_can_manage_document(

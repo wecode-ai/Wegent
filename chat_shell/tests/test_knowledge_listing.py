@@ -7,7 +7,58 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from chat_shell.tools.builtin.knowledge_listing import KbHeadTool
+from chat_shell.tools.builtin.knowledge_listing import KbHeadTool, KbLsTool
+
+
+class TestKbLsTool:
+    @pytest.mark.asyncio
+    async def test_http_mode_lists_docs_with_pagination(self) -> None:
+        """HTTP mode should pass offset/limit and surface pagination metadata."""
+        tool = KbLsTool(knowledge_base_ids=[3])
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "documents": [
+                {
+                    "id": 101,
+                    "name": "doc-101",
+                    "file_extension": "md",
+                    "file_size": 2048,
+                    "short_summary": "summary",
+                    "is_active": True,
+                }
+            ],
+            "total": 5,
+            "returned_count": 1,
+            "offset": 2,
+            "limit": 1,
+            "has_more": True,
+        }
+
+        with (
+            patch(
+                "chat_shell.tools.builtin.knowledge_listing._get_backend_url",
+                return_value="http://backend",
+            ),
+            patch("httpx.AsyncClient") as mock_client,
+        ):
+            post = AsyncMock(return_value=mock_response)
+            mock_client.return_value.__aenter__.return_value.post = post
+
+            result = await tool._arun(knowledge_base_id=3, offset=2, limit=1)
+
+        post.assert_awaited_once_with(
+            "http://backend/api/internal/rag/list-docs",
+            json={"knowledge_base_id": 3, "offset": 2, "limit": 1},
+        )
+
+        data = json.loads(result)
+        assert data["total"] == 5
+        assert data["returned_count"] == 1
+        assert data["offset"] == 2
+        assert data["limit"] == 1
+        assert data["has_more"] is True
+        assert data["documents"][0]["id"] == 101
 
 
 class TestKbHeadTool:

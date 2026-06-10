@@ -29,7 +29,9 @@ from app.mcp_server.auth import TaskTokenInfo
 from app.mcp_server.tools.decorator import build_mcp_tools_dict, mcp_tool
 from app.models.user import User
 from app.services.knowledge.orchestrator import (
+    DEFAULT_KNOWLEDGE_LIST_LIMIT,
     MAX_DOCUMENT_READ_LIMIT,
+    MAX_KNOWLEDGE_LIST_LIMIT,
     knowledge_orchestrator,
 )
 
@@ -167,12 +169,16 @@ async def search_knowledge_base(
     param_descriptions={
         "scope": "Resource scope - 'all', 'personal', or 'group'",
         "group_name": "Group name (required when scope='group')",
+        "limit": "Maximum number of knowledge bases to return",
+        "offset": "Start offset for paginated listing",
     },
 )
 def list_knowledge_bases(
     token_info: TaskTokenInfo,
     scope: str = "all",
     group_name: Optional[str] = None,
+    limit: int = DEFAULT_KNOWLEDGE_LIST_LIMIT,
+    offset: int = 0,
 ) -> Dict[str, Any]:
     """
     List all knowledge bases accessible to the current user.
@@ -190,16 +196,34 @@ def list_knowledge_bases(
         user = _get_user_from_token(db, token_info)
         if not user:
             return {"error": "User not found", "total": 0, "items": []}
+        if limit < 1 or limit > MAX_KNOWLEDGE_LIST_LIMIT:
+            return {
+                "error": f"limit must be between 1 and {MAX_KNOWLEDGE_LIST_LIMIT}",
+                "total": 0,
+                "items": [],
+            }
+        if offset < 0:
+            return {
+                "error": "offset must be greater than or equal to 0",
+                "total": 0,
+                "items": [],
+            }
 
         result = knowledge_orchestrator.list_knowledge_bases(
             db=db,
             user=user,
             scope=scope,
             group_name=group_name,
+            limit=limit,
+            offset=offset,
         )
 
         return {
             "total": result.total,
+            "returned_count": result.returned_count,
+            "limit": result.limit,
+            "offset": result.offset,
+            "has_more": result.has_more,
             "items": [item.model_dump() for item in result.items],
         }
 
@@ -218,12 +242,16 @@ def list_knowledge_bases(
     param_descriptions={
         "knowledge_base_id": "Knowledge base ID to list documents from",
         "folder_id": "Optional folder ID to filter documents by (0 or omit for root/all documents)",
+        "limit": "Maximum number of documents to return",
+        "offset": "Start offset for paginated listing",
     },
 )
 def list_documents(
     token_info: TaskTokenInfo,
     knowledge_base_id: int,
     folder_id: Optional[int] = None,
+    limit: int = DEFAULT_KNOWLEDGE_LIST_LIMIT,
+    offset: int = 0,
 ) -> Dict[str, Any]:
     """
     List all documents in a knowledge base.
@@ -241,16 +269,34 @@ def list_documents(
         user = _get_user_from_token(db, token_info)
         if not user:
             return {"error": "User not found", "total": 0, "items": []}
+        if limit < 1 or limit > MAX_KNOWLEDGE_LIST_LIMIT:
+            return {
+                "error": f"limit must be between 1 and {MAX_KNOWLEDGE_LIST_LIMIT}",
+                "total": 0,
+                "items": [],
+            }
+        if offset < 0:
+            return {
+                "error": "offset must be greater than or equal to 0",
+                "total": 0,
+                "items": [],
+            }
 
         result = knowledge_orchestrator.list_documents(
             db=db,
             user=user,
             knowledge_base_id=knowledge_base_id,
             folder_id=folder_id,
+            limit=limit,
+            offset=offset,
         )
 
         return {
             "total": result.total,
+            "returned_count": result.returned_count,
+            "limit": result.limit,
+            "offset": result.offset,
+            "has_more": result.has_more,
             "items": [item.model_dump() for item in result.items],
         }
 
