@@ -151,7 +151,7 @@ class TestTriggerKbSummaryClearIfEmpty:
                     task_id=123,
                 )
             )
-            mock_executor.with_short_sessions.return_value = mock_instance
+            mock_executor.with_managed_sessions.return_value = mock_instance
 
             result = await summary_service.trigger_kb_summary(
                 test_knowledge_base.id,
@@ -402,7 +402,7 @@ class TestManualKnowledgeBaseSummary:
                     task_id=456,
                 )
             )
-            mock_executor.with_short_sessions.return_value = mock_instance
+            mock_executor.with_managed_sessions.return_value = mock_instance
             with patch.object(
                 summary_service,
                 "_get_model_config_from_kb",
@@ -499,7 +499,7 @@ class TestManualKnowledgeBaseSummary:
             )
         )
         executor_cls = MagicMock()
-        executor_cls.with_short_sessions.return_value = executor_instance
+        executor_cls.with_managed_sessions.return_value = executor_instance
 
         monkeypatch.setattr(
             summary_service,
@@ -526,7 +526,7 @@ class TestManualKnowledgeBaseSummary:
                 force=True,
             )
 
-        executor_cls.with_short_sessions.assert_called_once_with(test_user.id)
+        executor_cls.with_managed_sessions.assert_called_once_with(test_user.id)
         test_db.rollback.assert_not_called()
 
     @pytest.mark.asyncio
@@ -1031,7 +1031,7 @@ class TestTriggerDocumentSummaryDeletionRace:
             mock_instance.execute = AsyncMock(
                 side_effect=delete_document_and_return_result
             )
-            mock_executor.with_short_sessions.return_value = mock_instance
+            mock_executor.with_managed_sessions.return_value = mock_instance
 
             result = await summary_service.trigger_document_summary(
                 document_id,
@@ -1089,7 +1089,7 @@ class TestTriggerDocumentSummaryDeletionRace:
         ):
             mock_instance = MagicMock()
             mock_instance.execute = AsyncMock(side_effect=delete_document_and_raise)
-            mock_executor.with_short_sessions.return_value = mock_instance
+            mock_executor.with_managed_sessions.return_value = mock_instance
 
             result = await summary_service.trigger_document_summary(
                 document_id,

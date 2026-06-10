@@ -33,7 +33,7 @@ async def test_short_session_executor_closes_db_before_sse_wait():
         sessions.append(session)
         return session
 
-    executor = BackgroundChatExecutor.with_short_sessions(
+    executor = BackgroundChatExecutor.with_managed_sessions(
         user_id=10,
         session_factory=session_factory,
     )

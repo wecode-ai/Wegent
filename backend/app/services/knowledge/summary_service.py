@@ -435,7 +435,7 @@ class SummaryService:
             logger.info(
                 f"[SummaryService] Starting summary generation: document_id={document_id}"
             )
-            executor = BackgroundChatExecutor.with_short_sessions(user_id)
+            executor = BackgroundChatExecutor.with_managed_sessions(user_id)
             result = await executor.execute(
                 system_prompt=DOCUMENT_SUMMARY_PROMPT,
                 user_message=f"Please generate a summary for the following document:\n\n{truncated_content}",
@@ -699,7 +699,7 @@ class SummaryService:
         truncated_aggregation: str,
         model_config: Dict[str, Any],
     ) -> BackgroundTaskResult:
-        executor = BackgroundChatExecutor.with_short_sessions(user_id)
+        executor = BackgroundChatExecutor.with_managed_sessions(user_id)
         return await executor.execute(
             system_prompt=KB_SUMMARY_PROMPT,
             user_message=(

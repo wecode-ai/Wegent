@@ -77,7 +77,7 @@ class BackgroundChatExecutor:
         # Use global execution_dispatcher instead of HTTPAdapter
 
     @classmethod
-    def with_short_sessions(
+    def with_managed_sessions(
         cls,
         user_id: int,
         *,
@@ -111,7 +111,7 @@ class BackgroundChatExecutor:
         )
 
         if self.session_factory is not None:
-            return await self._execute_with_short_sessions(
+            return await self._execute_with_managed_sessions(
                 system_prompt=system_prompt,
                 user_message=user_message,
                 config=config,
@@ -270,7 +270,7 @@ class BackgroundChatExecutor:
                 error=str(e),
             )
 
-    async def _execute_with_short_sessions(
+    async def _execute_with_managed_sessions(
         self,
         *,
         system_prompt: str,
