@@ -1436,13 +1436,15 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(await screen.findByText('Implement archive')).toBeInTheDocument()
     expect(screen.getByText('2h')).toBeInTheDocument()
-    expect(screen.getByTestId('project-chat-time-11')).toHaveClass(
+    expect(screen.getByTestId('project-chat-time-11')).not.toHaveClass(
       'group-hover/task:invisible',
       'group-focus-within/task:invisible',
     )
     expect(screen.getByTestId('project-chat-time-value-11')).toHaveClass(
       'w-7',
       'justify-center',
+      'group-hover/task:invisible',
+      'group-focus-within/task:invisible',
     )
     expect(screen.getByTestId('project-chat-actions-11')).toHaveClass(
       'absolute',
@@ -1531,13 +1533,15 @@ describe('DesktopWorkbenchLayout', () => {
     expect(rows[1]).toHaveTextContent('Older session')
     expect(screen.queryByText('Project session')).not.toBeInTheDocument()
     expect(screen.getByText('1h')).toBeInTheDocument()
-    expect(screen.getByTestId('history-task-time-5')).toHaveClass(
+    expect(screen.getByTestId('history-task-time-5')).not.toHaveClass(
       'group-hover/task:invisible',
       'group-focus-within/task:invisible',
     )
     expect(screen.getByTestId('history-task-time-value-5')).toHaveClass(
       'w-7',
       'justify-center',
+      'group-hover/task:invisible',
+      'group-focus-within/task:invisible',
     )
     expect(screen.getByTestId('history-task-actions-5')).toHaveClass(
       'absolute',
@@ -1674,6 +1678,10 @@ describe('DesktopWorkbenchLayout', () => {
       'aria-label',
       'Git worktree',
     )
+    expect(screen.getByTestId('project-chat-git-worktree-icon-71')).not.toHaveClass(
+      'group-hover/task:invisible',
+      'group-focus-within/task:invisible',
+    )
 
     await userEvent.click(screen.getByTestId('project-chat-button'))
     expect(baseProps.onOpenTask).toHaveBeenCalledWith(71, 7)
@@ -1684,6 +1692,14 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('history-task-git-worktree-icon-81')).toHaveAttribute(
       'aria-label',
       'Git worktree',
+    )
+    expect(screen.getByTestId('history-task-git-worktree-icon-81')).not.toHaveClass(
+      'group-hover/task:invisible',
+      'group-focus-within/task:invisible',
+    )
+    expect(historyDeviceStatus).toHaveClass(
+      'group-hover/task:invisible',
+      'group-focus-within/task:invisible',
     )
 
     await userEvent.click(screen.getByTestId('history-task-button'))
