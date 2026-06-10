@@ -59,4 +59,40 @@ describe('ToolBlocksDisplay', () => {
       screen.getByRole('button', { name: /已处理 3s 时间了/ })
     ).toBeInTheDocument()
   })
+
+  test('keeps ticking while streaming even when all tool blocks are done', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-06-05T00:00:00.000Z'))
+
+    // All blocks are done but the model is still streaming (pure thinking
+    // phase with no new tool output). The timer must keep advancing.
+    const doneBlock: ProcessingBlock = {
+      ...completedCommandBlock,
+      status: 'done',
+      createdAt: Date.now(),
+    }
+
+    render(<ToolBlocksDisplay blocks={[doneBlock]} isStreaming={true} />)
+
+    act(() => {
+      vi.advanceTimersByTime(5000)
+    })
+
+    expect(screen.getByText('已处理 5s 时间了')).toBeInTheDocument()
+  })
+
+  test('renders the header as plain text (not a button) while running', () => {
+    const runningBlock: ProcessingBlock = {
+      ...completedCommandBlock,
+      status: 'streaming',
+    }
+
+    render(<ToolBlocksDisplay blocks={[runningBlock]} isStreaming={true} />)
+
+    // While running the summary is informational only and must not be clickable.
+    expect(
+      screen.queryByRole('button', { name: /已处理/ })
+    ).not.toBeInTheDocument()
+    expect(screen.getByText(/已处理 .* 时间了/)).toBeInTheDocument()
+  })
 })
