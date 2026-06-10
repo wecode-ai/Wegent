@@ -4,6 +4,8 @@
 
 """Tests for _build_vision_structure and _combine_text_contents in contexts module."""
 
+from types import SimpleNamespace
+
 import pytest
 
 from app.services.chat.preprocessing.contexts import (
@@ -11,6 +13,7 @@ from app.services.chat.preprocessing.contexts import (
     _combine_text_contents,
     _process_attachment_context,
 )
+from app.services.context.context_service import VideoAttachmentResolutionError
 
 
 class TestBuildVisionStructure:
@@ -134,3 +137,63 @@ class TestCombineTextContents:
         assert "doc1" in result[0]["text"]
         assert "doc2" in result[0]["text"]
         assert result[1]["text"] == "Q"
+
+
+class TestProcessAttachmentContext:
+    """Tests for video attachment preprocessing branches."""
+
+    def test_video_context_metadata_only_adds_fid_text_without_video_block(self):
+        context = SimpleNamespace(
+            id=42,
+            user_id=7,
+            context_type="attachment",
+            original_filename="clip.mp4",
+            mime_type="video/mp4",
+            file_size=1024,
+            file_extension=".mp4",
+            image_base64="",
+            type_data={"fid": "fid-123"},
+        )
+        text_contents: list[str] = []
+        image_contents: list[dict] = []
+        video_contents: list[dict] = []
+
+        _process_attachment_context(
+            db=object(),
+            context=context,
+            idx=1,
+            text_contents=text_contents,
+            image_contents=image_contents,
+            video_contents=video_contents,
+            model_config={"modelCapabilities": {"supportsVideo": False}},
+        )
+
+        assert video_contents == []
+        assert image_contents == []
+        assert len(text_contents) == 1
+        assert "[Video Attachment: clip.mp4" in text_contents[0]
+        assert '"fid": "fid-123"' in text_contents[0]
+
+    def test_video_context_metadata_only_requires_fid(self):
+        context = SimpleNamespace(
+            id=43,
+            user_id=7,
+            context_type="attachment",
+            original_filename="clip.mp4",
+            mime_type="video/mp4",
+            file_size=1024,
+            file_extension=".mp4",
+            image_base64="",
+            type_data={},
+        )
+
+        with pytest.raises(VideoAttachmentResolutionError, match="missing fid"):
+            _process_attachment_context(
+                db=object(),
+                context=context,
+                idx=1,
+                text_contents=[],
+                image_contents=[],
+                video_contents=[],
+                model_config={"modelCapabilities": {"supportsVideo": False}},
+            )

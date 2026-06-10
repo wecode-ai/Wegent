@@ -28,7 +28,6 @@ from .contexts import (
     get_table_context_ids_from_subtask,
     link_contexts_to_subtask,
     prepare_contexts_for_chat,
-    process_contexts,
 )
 from .tables import (
     detect_provider_from_url,
@@ -37,7 +36,6 @@ from .tables import (
 )
 
 __all__ = [
-    "process_contexts",
     "extract_knowledge_base_ids",
     "link_contexts_to_subtask",
     "prepare_contexts_for_chat",

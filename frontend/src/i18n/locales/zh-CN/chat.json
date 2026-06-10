@@ -740,6 +740,8 @@
     "crawlingHint": "抓取可能需要几分钟，请勿关闭或退出当前页面。",
     "added": "已添加外站视频",
     "videoCount": "{{count}} 个视频",
+    "videoMetadataOnlyTitle": "当前模型不支持视频画面理解",
+    "videoMetadataOnlyDescription": "如需理解画面，请切换到视频理解模型。",
     "errors": {
       "urlRequired": "请输入网页地址",
       "duplicate": "该地址已添加",

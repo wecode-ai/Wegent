@@ -951,29 +951,15 @@ class ContextService:
             )
             return None
 
+        metadata_header, metadata_text, fid = self.build_video_metadata_text(context)
         filename = context.original_filename or "video"
         attachment_id = context.id
         mime_type = context.mime_type or "video/mp4"
-        file_size = context.file_size or 0
-        formatted_size = self.format_file_size(file_size)
-
-        metadata_header = (
-            f"[Video Attachment: {filename} | ID: {attachment_id} | "
-            f"Type: {mime_type} | Size: {formatted_size}]"
-        )
-
-        type_data = context.type_data or {}
-        fid = type_data.get("fid")
 
         logger.info(
             f"[build_video_content_from_attachment] Processing video: id={attachment_id}, "
             f"filename={filename}, fid={fid}"
         )
-
-        if not fid:
-            raise VideoAttachmentResolutionError(
-                f"Video attachment {attachment_id} is missing fid"
-            )
 
         user = db.query(User).filter(User.id == context.user_id).first()
         video_url = weibo_media_service.get_download_url(fid, user=user)
@@ -981,9 +967,6 @@ class ContextService:
             raise VideoAttachmentResolutionError(
                 f"Failed to resolve video URL for attachment {attachment_id}"
             )
-
-        metadata_text = f"{metadata_header}\n"
-        metadata_text += json.dumps({"fid": fid})
 
         logger.info(
             f"[build_video_content_from_attachment] Result: id={attachment_id}, "
@@ -995,6 +978,36 @@ class ContextService:
             mime_type=mime_type,
             metadata_header=metadata_header,
             metadata_text=metadata_text,
+        )
+
+    def build_video_metadata_text(
+        self, context: SubtaskContext
+    ) -> tuple[str, str, Any]:
+        """Build video attachment metadata text without resolving a video URL."""
+        metadata_header = self.build_video_attachment_header(context)
+
+        type_data = context.type_data or {}
+        fid = type_data.get("fid")
+        if not fid:
+            raise VideoAttachmentResolutionError(
+                f"Video attachment {context.id} is missing fid"
+            )
+
+        metadata_text = f"{metadata_header}\n"
+        metadata_text += json.dumps({"fid": fid})
+        return metadata_header, metadata_text, fid
+
+    def build_video_attachment_header(self, context: SubtaskContext) -> str:
+        """Build a video attachment header without exposing analysis identifiers."""
+        filename = context.original_filename or "video"
+        attachment_id = context.id
+        mime_type = context.mime_type or "video/mp4"
+        file_size = context.file_size or 0
+        formatted_size = self.format_file_size(file_size)
+
+        return (
+            f"[Video Attachment: {filename} | ID: {attachment_id} | "
+            f"Type: {mime_type} | Size: {formatted_size}]"
         )
 
     def build_vision_content_block(
