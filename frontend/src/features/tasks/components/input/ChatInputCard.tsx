@@ -199,7 +199,7 @@ export function ChatInputCard({
   isStopping,
   hasMessages,
   shouldCollapseSelectors,
-  shouldHideQuotaUsage,
+  shouldHideToolbarStatus,
   shouldHideChatInput,
   isModelSelectionRequired,
   isAttachmentReadyToSend,
@@ -635,7 +635,7 @@ export function ChatInputCard({
             isStopping={isStopping}
             hasMessages={hasMessages}
             shouldCollapseSelectors={shouldCollapseSelectors}
-            shouldHideQuotaUsage={shouldHideQuotaUsage}
+            shouldHideToolbarStatus={shouldHideToolbarStatus}
             shouldHideChatInput={shouldHideChatInput}
             isModelSelectionRequired={isModelSelectionRequired}
             isAttachmentReadyToSend={isAttachmentReadyToSend}

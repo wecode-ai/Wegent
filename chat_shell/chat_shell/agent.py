@@ -30,7 +30,6 @@ from shared.telemetry.decorators import (
 )
 
 from .agents import LangGraphAgentBuilder
-from .compression import MessageCompressor
 from .messages import MessageConverter
 from .models import LangChainModelFactory
 from .tools import ToolRegistry
@@ -413,33 +412,17 @@ class ChatAgent:
             dynamic_context=dynamic_context,
         )
 
-        # Apply message compression if enabled and model_id is provided.
-        # Compression runs BEFORE cache breakpoints so that strategies
-        # don't need to be aware of Anthropic cache_control metadata.
-        compression_enabled = getattr(settings, "MESSAGE_COMPRESSION_ENABLED", True)
-        if model_id and compression_enabled:
-            # Pass model_config to compressor for context window configuration
-            model_config_for_compression = config.model_config if config else None
-            compressor = MessageCompressor(
-                model_id,
-                model_config=model_config_for_compression,
-            )
-            result = compressor.compress_if_needed(messages)
+        # Phase 2 note: budget enforcement (compression, source-level
+        # truncation, emergency fallback) is owned by UnifiedContextGuard
+        # registered as the LangGraph pre_model_hook. build_messages only
+        # assembles. The hook fires before every model call (turn start +
+        # every follow-up) so both pre-turn and mid-turn budgets share the
+        # same accounting and policy.
 
-            if result.was_compressed:
-                logger.info(
-                    "[ChatAgent] Messages compressed: %d -> %d tokens (saved %d), "
-                    "strategies: %s",
-                    result.original_tokens,
-                    result.compressed_tokens,
-                    result.tokens_saved,
-                    ", ".join(result.strategies_applied),
-                )
-                messages = result.messages
-
-        # Apply Anthropic explicit cache breakpoints AFTER compression.
-        # This ensures breakpoints are placed on the final message layout
-        # and compression strategies don't strip or corrupt them.
+        # Apply Anthropic explicit cache breakpoints on the assembled layout
+        # so breakpoints land on the final structure. The guard never edits
+        # this layout in place; it produces state updates the LangGraph
+        # reducer applies, leaving cache markers on unaffected messages.
         if self._needs_explicit_cache_breakpoints(config):
             MessageConverter.apply_cache_breakpoints(
                 messages,

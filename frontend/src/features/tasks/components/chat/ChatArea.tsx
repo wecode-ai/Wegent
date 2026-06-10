@@ -1592,7 +1592,7 @@ function ChatAreaContent({
     isStopping: streamHandlers.isStopping,
     hasMessages,
     shouldCollapseSelectors,
-    shouldHideQuotaUsage: chatState.shouldHideQuotaUsage,
+    shouldHideToolbarStatus: chatState.shouldHideToolbarStatus,
     shouldHideChatInput: chatState.shouldHideChatInput,
     isModelSelectionRequired,
     isAttachmentReadyToSend: chatState.isAttachmentReadyToSend,

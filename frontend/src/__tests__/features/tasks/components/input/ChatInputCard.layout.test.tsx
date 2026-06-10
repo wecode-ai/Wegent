@@ -130,7 +130,7 @@ const buildProps = (): ChatInputCardProps => ({
   isStopping: false,
   hasMessages: false,
   shouldCollapseSelectors: false,
-  shouldHideQuotaUsage: false,
+  shouldHideToolbarStatus: false,
   shouldHideChatInput: false,
   isModelSelectionRequired: false,
   isAttachmentReadyToSend: true,

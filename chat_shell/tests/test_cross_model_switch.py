@@ -254,7 +254,9 @@ class TestCrossModelSwitch:
         # Step 3: Load and convert for same provider (GPT-5.4 → GPT-5.4)
         history = [{"role": "user", "content": "What is 6*7?"}] + chain
         lc_messages = _convert_validated_messages(
-            history, context="test", target_provider="openai",
+            history,
+            context="test",
+            target_provider="openai",
             target_api_format="responses",
         )
 
@@ -271,9 +273,7 @@ class TestCrossModelSwitch:
 
         rb = reasoning_blocks[0]
         # Top-level id must be present (not buried in extras)
-        assert rb.get("id") == (
-            "rs_00a8759da22afc8f0069d4b2f63cd88195a5b413e3d1051685"
-        )
+        assert rb.get("id") == ("rs_00a8759da22afc8f0069d4b2f63cd88195a5b413e3d1051685")
         # Summary structure must be rebuilt
         assert "summary" in rb
         assert rb["summary"] == [

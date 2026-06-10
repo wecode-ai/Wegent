@@ -56,7 +56,9 @@ from app.services.knowledge import (
     knowledge_base_qa_service,
 )
 from app.services.knowledge.orchestrator import (
+    DEFAULT_KNOWLEDGE_LIST_LIMIT,
     MAX_DOCUMENT_READ_LIMIT,
+    MAX_KNOWLEDGE_LIST_LIMIT,
     knowledge_orchestrator,
 )
 from shared.telemetry.decorators import (
@@ -160,6 +162,17 @@ def list_knowledge_bases(
         default=None,
         description="Group name (required when scope is group)",
     ),
+    limit: int = Query(
+        default=DEFAULT_KNOWLEDGE_LIST_LIMIT,
+        ge=1,
+        le=MAX_KNOWLEDGE_LIST_LIMIT,
+        description="Maximum number of knowledge bases to return",
+    ),
+    offset: int = Query(
+        default=0,
+        ge=0,
+        description="Start offset for paginated knowledge base listing",
+    ),
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -191,6 +204,8 @@ def list_knowledge_bases(
         user=current_user,
         scope=scope,
         group_name=group_name,
+        limit=limit,
+        offset=offset,
     )
 
 
@@ -575,6 +590,17 @@ def list_documents(
     folder_id: Optional[int] = Query(
         default=None, ge=0, description="Filter documents by folder (None = all)"
     ),
+    limit: int = Query(
+        default=DEFAULT_KNOWLEDGE_LIST_LIMIT,
+        ge=1,
+        le=MAX_KNOWLEDGE_LIST_LIMIT,
+        description="Maximum number of documents to return",
+    ),
+    offset: int = Query(
+        default=0,
+        ge=0,
+        description="Start offset for paginated document listing",
+    ),
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -586,6 +612,8 @@ def list_documents(
             user=current_user,
             knowledge_base_id=knowledge_base_id,
             folder_id=folder_id,
+            limit=limit,
+            offset=offset,
         )
     except ValueError as e:
         raise HTTPException(

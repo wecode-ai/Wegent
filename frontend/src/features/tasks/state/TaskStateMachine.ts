@@ -27,6 +27,7 @@
  */
 
 import type { TaskDetail, TaskDetailSubtask, TaskStatus as ApiTaskStatus } from '@/types/api'
+import type { ContextMetricsSnapshot } from '@/types/socket'
 import type { MessageBlock } from '../components/message/thinking/types'
 import { mergeBlocksForDone, mergeStreamingBlocks } from './TaskStateMachine.blockMerging'
 import {
@@ -91,6 +92,7 @@ export interface UnifiedMessage {
     reasoning_content?: string
     reasoning_chunk?: string
     blocks?: MessageBlock[]
+    context_metrics?: ContextMetricsSnapshot
     /** Video generation config (stored in user message subtask for display) */
     video_config?: {
       model?: string
