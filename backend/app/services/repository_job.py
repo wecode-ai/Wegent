@@ -11,9 +11,11 @@ calls the _fetch_all_repositories_async method to keep the repository cache cons
 
 import logging
 import time
+from copy import deepcopy
+from dataclasses import dataclass
+from typing import Any
 
-from sqlalchemy.orm import Session
-
+from app.db.session import get_db_session
 from app.models.kind import Kind
 from app.models.user import User
 from app.repository.gitea_provider import GiteaProvider
@@ -26,23 +28,28 @@ from app.services.user import user_service
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class UserRepositorySnapshot:
+    id: int
+    user_name: str
+    git_info: list[dict[str, Any]] | None
+    is_active: bool
+
+
 class RepositoryJobService(BaseService[Kind, None, None]):
     """
     Job service for updating git repositories cache for all users
     """
 
-    async def update_repositories_for_all_users(self, db: Session) -> None:
+    async def update_repositories_for_all_users(self) -> None:
         """
         Iterate through all users and update their git repositories cache
-
-        Args:
-            db: Database session
         """
         start_time = time.time()
         try:
             logger.info(f"[repository_job] Starting get all users task")
 
-            users = user_service.get_all_users(db)
+            users = self._get_user_snapshots()
 
             # The patched version already handles token replacement, so we don't need to do it again
             logger.info(
@@ -87,12 +94,12 @@ class RepositoryJobService(BaseService[Kind, None, None]):
                 f"[repository_job] Repository cache update task failed, took {elapsed_time:.2f} seconds, error: {e}"
             )
 
-    async def _process_user(self, user: User) -> str:
+    async def _process_user(self, user: UserRepositorySnapshot) -> str:
         """
         Process a single user's git repositories
 
         Args:
-            user: User object
+            user: Repository user snapshot
 
         Returns:
             "success" if at least one repository was updated
@@ -172,14 +179,30 @@ class RepositoryJobService(BaseService[Kind, None, None]):
 
         return "success" if success else "failed"
 
+    def _get_user_snapshots(self) -> list[UserRepositorySnapshot]:
+        with get_db_session() as db:
+            return self._snapshot_users(user_service.get_all_users(db))
+
+    def _snapshot_users(self, users: list[User]) -> list[UserRepositorySnapshot]:
+        """Copy user fields needed by repository providers before releasing DB."""
+        return [
+            UserRepositorySnapshot(
+                id=user.id,
+                user_name=user.user_name,
+                git_info=deepcopy(user.git_info),
+                is_active=user.is_active,
+            )
+            for user in users
+        ]
+
     async def _update_github_repositories(
-        self, user: User, git_token: str, git_domain: str
+        self, user: UserRepositorySnapshot, git_token: str, git_domain: str
     ) -> None:
         """
         Update GitHub repositories cache for a user
 
         Args:
-            user: User object
+            user: Repository user snapshot
             git_token: GitHub token
             git_domain: GitHub domain
         """
@@ -190,13 +213,13 @@ class RepositoryJobService(BaseService[Kind, None, None]):
         await provider._fetch_all_repositories_async(user, git_token, git_domain)
 
     async def _update_gitlab_repositories(
-        self, user: User, git_token: str, git_domain: str
+        self, user: UserRepositorySnapshot, git_token: str, git_domain: str
     ) -> None:
         """
         Update GitLab repositories cache for a user
 
         Args:
-            user: User object
+            user: Repository user snapshot
             git_token: GitLab token
             git_domain: GitLab domain
         """
@@ -207,13 +230,13 @@ class RepositoryJobService(BaseService[Kind, None, None]):
         await provider._fetch_all_repositories_async(user, git_token, git_domain)
 
     async def _update_gitee_repositories(
-        self, user: User, git_token: str, git_domain: str
+        self, user: UserRepositorySnapshot, git_token: str, git_domain: str
     ) -> None:
         """
         Update Gitee repositories cache for a user
 
         Args:
-            user: User object
+            user: Repository user snapshot
             git_token: Gitee token
             git_domain: Gitee domain
         """
@@ -224,13 +247,13 @@ class RepositoryJobService(BaseService[Kind, None, None]):
         await provider._fetch_all_repositories_async(user, git_token, git_domain)
 
     async def _update_gitea_repositories(
-        self, user: User, git_token: str, git_domain: str
+        self, user: UserRepositorySnapshot, git_token: str, git_domain: str
     ) -> None:
         """
         Update Gitea repositories cache for a user
 
         Args:
-            user: User object
+            user: Repository user snapshot
             git_token: Gitea token
             git_domain: Gitea domain
         """
