@@ -23,10 +23,12 @@ import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
+from app.db.session import SessionLocal
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.services.execution import execution_dispatcher
@@ -62,10 +64,26 @@ class BackgroundTaskResult:
 class BackgroundChatExecutor:
     """Background Chat Shell task executor."""
 
-    def __init__(self, db: Session, user_id: int):
+    def __init__(
+        self,
+        db: Session | None,
+        user_id: int,
+        *,
+        session_factory: Callable[[], Session] | None = None,
+    ):
         self.db = db
         self.user_id = user_id
+        self.session_factory = session_factory
         # Use global execution_dispatcher instead of HTTPAdapter
+
+    @classmethod
+    def with_short_sessions(
+        cls,
+        user_id: int,
+        *,
+        session_factory: Callable[[], Session] = SessionLocal,
+    ) -> "BackgroundChatExecutor":
+        return cls(None, user_id, session_factory=session_factory)
 
     async def execute(
         self,
@@ -91,6 +109,14 @@ class BackgroundChatExecutor:
             f"type={config.task_type}, summary_type={config.summary_type}, "
             f"document_id={config.document_id}, kb_id={config.knowledge_base_id}"
         )
+
+        if self.session_factory is not None:
+            return await self._execute_with_short_sessions(
+                system_prompt=system_prompt,
+                user_message=user_message,
+                config=config,
+                parse_json=parse_json,
+            )
 
         # 1. Create Task and Subtask records
         task, _user_subtask, assistant_subtask = self._create_task_records(
@@ -200,27 +226,13 @@ class BackgroundChatExecutor:
                     )
 
             # 6. Update Subtask status to COMPLETED
-            result = {"value": accumulated_content}
-            if parsed_content:
-                result["parsed"] = parsed_content
-
-            assistant_subtask.status = SubtaskStatus.COMPLETED
-            assistant_subtask.result = result
-            assistant_subtask.completed_at = datetime.now()
-
-            # 7. Update Task status to COMPLETED
-            task_json = task.json
-            if task_json and "status" in task_json:
-                task_json["status"]["status"] = "COMPLETED"
-                task_json["status"]["progress"] = 100
-                task_json["status"]["updatedAt"] = datetime.now().isoformat()
-                task_json["status"]["completedAt"] = datetime.now().isoformat()
-                task.json = task_json
-                from sqlalchemy.orm.attributes import flag_modified
-
-                flag_modified(task, "json")
-
-            self.db.commit()
+            self._mark_task_completed(
+                self.db,
+                task=task,
+                assistant_subtask=assistant_subtask,
+                accumulated_content=accumulated_content,
+                parsed_content=parsed_content,
+            )
 
             logger.info(
                 f"[BackgroundChatExecutor] Task completed successfully: "
@@ -243,24 +255,12 @@ class BackgroundChatExecutor:
             )
 
             # Update Subtask status to FAILED
-            assistant_subtask.status = SubtaskStatus.FAILED
-            assistant_subtask.error_message = str(e)
-            assistant_subtask.completed_at = datetime.now()
-
-            # Update Task status to FAILED
-            task_json = task.json
-            if task_json and "status" in task_json:
-                task_json["status"]["status"] = "FAILED"
-                task_json["status"]["progress"] = 0
-                task_json["status"]["errorMessage"] = str(e)
-                task_json["status"]["updatedAt"] = datetime.now().isoformat()
-                task_json["status"]["completedAt"] = datetime.now().isoformat()
-                task.json = task_json
-                from sqlalchemy.orm.attributes import flag_modified
-
-                flag_modified(task, "json")
-
-            self.db.commit()
+            self._mark_task_failed(
+                self.db,
+                task=task,
+                assistant_subtask=assistant_subtask,
+                error=str(e),
+            )
 
             return BackgroundTaskResult(
                 success=False,
@@ -270,8 +270,241 @@ class BackgroundChatExecutor:
                 error=str(e),
             )
 
+    async def _execute_with_short_sessions(
+        self,
+        *,
+        system_prompt: str,
+        user_message: str,
+        config: BackgroundTaskConfig,
+        parse_json: bool,
+    ) -> BackgroundTaskResult:
+        task_id = 0
+        assistant_subtask_id = 0
+
+        try:
+            db = self.session_factory()
+            try:
+                task, _user_subtask, assistant_subtask = (
+                    self._create_task_records_in_db(db, config, user_message)
+                )
+                assistant_subtask.status = SubtaskStatus.RUNNING
+                db.commit()
+                task_id = task.id
+                assistant_subtask_id = assistant_subtask.id
+            finally:
+                db.close()
+
+            logger.info(
+                f"[BackgroundChatExecutor] Task started: task_id={task_id}, "
+                f"subtask_id={assistant_subtask_id}"
+            )
+
+            model_config = config.model_config or self._get_default_model_config()
+            logger.info(
+                "[BackgroundChatExecutor] Model config summary: name=%s, namespace=%s, type=%s",
+                model_config.get("model_name"),
+                model_config.get("model_namespace"),
+                model_config.get("model_type"),
+            )
+
+            execution_request = self._build_execution_request(
+                task_id=task_id,
+                subtask_id=assistant_subtask_id,
+                system_prompt=system_prompt,
+                user_message=user_message,
+                model_config=model_config,
+            )
+            accumulated_content = await self._dispatch_and_collect(execution_request)
+
+            parsed_content = None
+            if parse_json and accumulated_content:
+                parsed_content = self._parse_json_response(accumulated_content)
+
+            db = self.session_factory()
+            try:
+                task, assistant_subtask = self._load_task_records(
+                    db, task_id, assistant_subtask_id
+                )
+                self._mark_task_completed(
+                    db,
+                    task=task,
+                    assistant_subtask=assistant_subtask,
+                    accumulated_content=accumulated_content,
+                    parsed_content=parsed_content,
+                )
+            finally:
+                db.close()
+
+            return BackgroundTaskResult(
+                success=True,
+                task_id=task_id,
+                subtask_id=assistant_subtask_id,
+                raw_content=accumulated_content,
+                parsed_content=parsed_content,
+            )
+
+        except Exception as exc:
+            logger.exception(
+                f"[BackgroundChatExecutor] Task failed: "
+                f"task_id={task_id}, subtask_id={assistant_subtask_id}"
+            )
+            if task_id and assistant_subtask_id:
+                db = self.session_factory()
+                try:
+                    task, assistant_subtask = self._load_task_records(
+                        db, task_id, assistant_subtask_id
+                    )
+                    self._mark_task_failed(
+                        db,
+                        task=task,
+                        assistant_subtask=assistant_subtask,
+                        error=str(exc),
+                    )
+                finally:
+                    db.close()
+
+            return BackgroundTaskResult(
+                success=False,
+                task_id=task_id,
+                subtask_id=assistant_subtask_id,
+                raw_content="",
+                error=str(exc),
+            )
+
+    async def _dispatch_and_collect(self, execution_request: ExecutionRequest) -> str:
+        import asyncio
+
+        from app.services.execution.emitters import SSEResultEmitter
+
+        emitter = SSEResultEmitter(
+            task_id=execution_request.task_id,
+            subtask_id=execution_request.subtask_id,
+        )
+        dispatch_task = asyncio.create_task(
+            execution_dispatcher.dispatch(execution_request, emitter=emitter)
+        )
+        accumulated_content, _ = await emitter.collect()
+        try:
+            await dispatch_task
+        except Exception:
+            pass
+        return accumulated_content
+
+    def _build_execution_request(
+        self,
+        *,
+        task_id: int,
+        subtask_id: int,
+        system_prompt: str,
+        user_message: str,
+        model_config: Dict[str, Any],
+    ) -> ExecutionRequest:
+        return ExecutionRequest(
+            task_id=task_id,
+            subtask_id=subtask_id,
+            team_id=0,
+            team_name="system-background",
+            user={"id": self.user_id, "name": "system"},
+            user_id=self.user_id,
+            user_name="system",
+            bot=[
+                {
+                    "name": "system-background",
+                    "shell_type": "Chat",
+                    "system_prompt": system_prompt,
+                    "mcp_servers": [],
+                    "skills": [],
+                }
+            ],
+            model_config=model_config,
+            system_prompt=system_prompt,
+            prompt=user_message,
+            enable_tools=False,
+            enable_web_search=False,
+            enable_deep_thinking=False,
+            message_id=subtask_id,
+            is_group_chat=False,
+        )
+
+    def _load_task_records(
+        self,
+        db: Session,
+        task_id: int,
+        assistant_subtask_id: int,
+    ) -> tuple[TaskResource, Subtask]:
+        task = db.query(TaskResource).filter(TaskResource.id == task_id).first()
+        assistant_subtask = (
+            db.query(Subtask).filter(Subtask.id == assistant_subtask_id).first()
+        )
+        if task is None or assistant_subtask is None:
+            raise ValueError(
+                f"Background task records not found: task_id={task_id}, "
+                f"subtask_id={assistant_subtask_id}"
+            )
+        return task, assistant_subtask
+
+    def _mark_task_completed(
+        self,
+        db: Session,
+        *,
+        task: TaskResource,
+        assistant_subtask: Subtask,
+        accumulated_content: str,
+        parsed_content: Optional[Dict[str, Any]],
+    ) -> None:
+        result = {"value": accumulated_content}
+        if parsed_content:
+            result["parsed"] = parsed_content
+
+        assistant_subtask.status = SubtaskStatus.COMPLETED
+        assistant_subtask.result = result
+        assistant_subtask.completed_at = datetime.now()
+
+        task_json = task.json
+        if task_json and "status" in task_json:
+            task_json["status"]["status"] = "COMPLETED"
+            task_json["status"]["progress"] = 100
+            task_json["status"]["updatedAt"] = datetime.now().isoformat()
+            task_json["status"]["completedAt"] = datetime.now().isoformat()
+            task.json = task_json
+            flag_modified(task, "json")
+
+        db.commit()
+
+    def _mark_task_failed(
+        self,
+        db: Session,
+        *,
+        task: TaskResource,
+        assistant_subtask: Subtask,
+        error: str,
+    ) -> None:
+        assistant_subtask.status = SubtaskStatus.FAILED
+        assistant_subtask.error_message = error
+        assistant_subtask.completed_at = datetime.now()
+
+        task_json = task.json
+        if task_json and "status" in task_json:
+            task_json["status"]["status"] = "FAILED"
+            task_json["status"]["progress"] = 0
+            task_json["status"]["errorMessage"] = error
+            task_json["status"]["updatedAt"] = datetime.now().isoformat()
+            task_json["status"]["completedAt"] = datetime.now().isoformat()
+            task.json = task_json
+            flag_modified(task, "json")
+
+        db.commit()
+
     def _create_task_records(
         self, config: BackgroundTaskConfig, user_message: str
+    ) -> tuple:
+        """Create Task and Subtask records."""
+        if self.db is None:
+            raise ValueError("A database session is required to create task records")
+        return self._create_task_records_in_db(self.db, config, user_message)
+
+    def _create_task_records_in_db(
+        self, db: Session, config: BackgroundTaskConfig, user_message: str
     ) -> tuple:
         """Create Task and Subtask records."""
         # Build task title
@@ -328,14 +561,14 @@ class BackgroundChatExecutor:
             json=task_json,
             is_active=True,
         )
-        self.db.add(task)
-        self.db.flush()  # Flush to get the auto-generated ID
+        db.add(task)
+        db.flush()  # Flush to get the auto-generated ID
 
         # Update task name and metadata with the actual ID
         task.name = f"task-{task.id}"
         task_json["metadata"]["name"] = f"task-{task.id}"
         task.json = task_json
-        self.db.flush()
+        db.flush()
 
         # Create User Subtask (record input)
         user_subtask = Subtask(
@@ -355,7 +588,7 @@ class BackgroundChatExecutor:
             error_message="",
             completed_at=datetime.now(),
         )
-        self.db.add(user_subtask)
+        db.add(user_subtask)
 
         # Create Assistant Subtask (record output)
         assistant_subtask = Subtask(
@@ -375,8 +608,8 @@ class BackgroundChatExecutor:
             error_message="",
             # completed_at will be set when task completes
         )
-        self.db.add(assistant_subtask)
-        self.db.commit()
+        db.add(assistant_subtask)
+        db.commit()
 
         return task, user_subtask, assistant_subtask
 

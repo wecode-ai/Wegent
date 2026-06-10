@@ -382,7 +382,9 @@ def _run_indexing_gateway_calls(
     embedding_model_namespace: str,
 ) -> dict:
     loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+    # Do NOT call asyncio.set_event_loop — that would overwrite the thread-local
+    # loop with one we are about to close, breaking any subsequent async work on
+    # this thread (e.g. the next Celery task in a thread-pool worker).
     try:
         rag_gateway = get_index_gateway()
 

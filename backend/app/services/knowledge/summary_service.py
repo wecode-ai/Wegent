@@ -435,7 +435,7 @@ class SummaryService:
             logger.info(
                 f"[SummaryService] Starting summary generation: document_id={document_id}"
             )
-            executor = BackgroundChatExecutor(self.db, user_id)
+            executor = BackgroundChatExecutor.with_short_sessions(user_id)
             result = await executor.execute(
                 system_prompt=DOCUMENT_SUMMARY_PROMPT,
                 user_message=f"Please generate a summary for the following document:\n\n{truncated_content}",
@@ -691,6 +691,31 @@ class SummaryService:
             },
         )
 
+    async def _execute_kb_summary_model(
+        self,
+        *,
+        user_id: int,
+        kb_id: int,
+        truncated_aggregation: str,
+        model_config: Dict[str, Any],
+    ) -> BackgroundTaskResult:
+        executor = BackgroundChatExecutor.with_short_sessions(user_id)
+        return await executor.execute(
+            system_prompt=KB_SUMMARY_PROMPT,
+            user_message=(
+                "Please generate a comprehensive summary for the knowledge base "
+                "based on the following document summaries:\n\n"
+                f"{truncated_aggregation}"
+            ),
+            config=BackgroundTaskConfig(
+                task_type="summary",
+                summary_type="knowledge_base",
+                knowledge_base_id=kb_id,
+                model_config=model_config,
+            ),
+            parse_json=True,
+        )
+
     async def trigger_kb_summary(
         self,
         kb_id: int,
@@ -734,24 +759,13 @@ class SummaryService:
             logger.info(
                 f"[SummaryService] Starting KB summary generation: kb_id={kb_id}"
             )
-            executor = BackgroundChatExecutor(self.db, user_id)
-            result = await executor.execute(
-                system_prompt=KB_SUMMARY_PROMPT,
-                user_message=(
-                    "Please generate a comprehensive summary for the knowledge base "
-                    "based on the following document summaries:\n\n"
-                    f"{truncated_aggregation}"
-                ),
-                config=BackgroundTaskConfig(
-                    task_type="summary",
-                    summary_type="knowledge_base",
-                    knowledge_base_id=kb_id,
-                    model_config=claim.model_config,
-                ),
-                parse_json=True,
+            result = await self._execute_kb_summary_model(
+                user_id=user_id,
+                kb_id=kb_id,
+                truncated_aggregation=truncated_aggregation,
+                model_config=claim.model_config,
             )
 
-            self.db.rollback()
             self._write_kb_summary_result(
                 kb_id=kb_id,
                 result=result,

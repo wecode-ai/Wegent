@@ -16,6 +16,7 @@ The architecture separates trigger from execution:
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
@@ -752,31 +753,182 @@ def _handle_execution_failure(
 SUBSCRIPTION_BATCH_SIZE = 100
 
 
-def _iter_active_subscription_batches(
+def _iter_active_subscription_id_batches(
     db: Session,
     batch_size: int = SUBSCRIPTION_BATCH_SIZE,
 ):
-    """Yield active subscriptions in deterministic DB-level pages."""
+    """Yield active subscription IDs with keyset pagination."""
     from app.models.kind import Kind
 
-    offset = 0
+    last_seen_id = 0
     while True:
-        batch = (
-            db.query(Kind)
+        rows = (
+            db.query(Kind.id)
             .filter(
                 Kind.kind == "Subscription",
                 Kind.is_active == True,
+                Kind.id > last_seen_id,
             )
             .order_by(Kind.id)
             .limit(batch_size)
-            .offset(offset)
             .all()
         )
-        if not batch:
+        subscription_ids = [
+            getattr(row, "id", row[0] if isinstance(row, (tuple, list)) else row)
+            for row in rows
+        ]
+        if not subscription_ids:
             break
 
-        yield batch
-        offset += batch_size
+        yield subscription_ids
+        last_seen_id = subscription_ids[-1]
+
+
+def _load_active_subscription(db: Session, subscription_id: int):
+    """Load one active subscription by ID."""
+    from app.models.kind import Kind
+
+    return (
+        db.query(Kind)
+        .filter(
+            Kind.id == subscription_id,
+            Kind.kind == "Subscription",
+            Kind.is_active == True,
+        )
+        .first()
+    )
+
+
+def _disable_expired_subscription_if_needed(
+    *,
+    db: Session,
+    subscription: Any,
+    internal: Dict[str, Any],
+    now_utc: datetime,
+    sync_label: str,
+) -> bool:
+    """Disable expired subscription and return whether caller should skip it."""
+    from sqlalchemy.orm.attributes import flag_modified
+
+    from app.services.subscription.helpers import is_subscription_expired
+
+    expires_at_str = internal.get("expires_at")
+    if not expires_at_str:
+        return False
+
+    try:
+        expires_at = datetime.fromisoformat(expires_at_str)
+        if not is_subscription_expired(expires_at, now_utc):
+            return False
+
+        internal["enabled"] = False
+        subscription.json["_internal"] = internal
+        flag_modified(subscription, "json")
+        db.commit()
+        logger.info(
+            f"[subscription_tasks] Subscription {subscription.id} has expired and been disabled{sync_label}"
+        )
+        return True
+    except (ValueError, TypeError):
+        return False
+    except Exception as exc:
+        logger.error(
+            f"[subscription_tasks] Failed to disable expired subscription {subscription.id}{sync_label}: {exc}",
+            exc_info=True,
+        )
+        db.rollback()
+        return True
+
+
+def _dispatch_due_subscription(
+    *,
+    db: Session,
+    subscription: Any,
+    trigger_type: str,
+    subscription_service: Any,
+    use_sync: bool,
+) -> bool:
+    """Create, schedule, then dispatch one due subscription."""
+    from app.schemas.subscription import BackgroundExecutionStatus
+
+    try:
+        subscription_crd = validate_subscription_for_read(subscription.json)
+
+        trigger_reason = _get_trigger_reason(subscription_crd, trigger_type)
+        execution = subscription_service.create_execution(
+            db,
+            subscription=subscription,
+            user_id=subscription.user_id,
+            trigger_type=trigger_type,
+            trigger_reason=trigger_reason,
+        )
+
+        try:
+            _update_next_execution_time(
+                db, subscription, subscription_crd, trigger_type
+            )
+        except Exception as exc:
+            logger.error(
+                f"[subscription_tasks] Failed to update next execution time for subscription {subscription.id}: {exc}",
+                exc_info=True,
+            )
+            db.rollback()
+            try:
+                subscription_service.update_execution_status(
+                    db,
+                    execution_id=execution.id,
+                    status=BackgroundExecutionStatus.FAILED,
+                    error_message=(
+                        "Execution was not dispatched because scheduler failed to "
+                        f"advance next_execution_time: {exc}"
+                    ),
+                    skip_notifications=True,
+                )
+            except Exception as status_exc:
+                logger.error(
+                    f"[subscription_tasks] Failed to mark execution {execution.id} as failed: {status_exc}",
+                    exc_info=True,
+                )
+                db.rollback()
+            return False
+
+        try:
+            subscription_service.dispatch_background_execution(
+                subscription, execution, use_sync=use_sync
+            )
+        except Exception as exc:
+            logger.error(
+                f"[subscription_tasks] Failed to dispatch execution {execution.id} "
+                f"for subscription {subscription.id}: {exc}",
+                exc_info=True,
+            )
+            db.rollback()
+            try:
+                subscription_service.update_execution_status(
+                    db,
+                    execution_id=execution.id,
+                    status=BackgroundExecutionStatus.FAILED,
+                    error_message=(
+                        "Execution was not dispatched because dispatch failed after "
+                        f"scheduler advanced next_execution_time: {exc}"
+                    ),
+                    skip_notifications=True,
+                )
+            except Exception as status_exc:
+                logger.error(
+                    f"[subscription_tasks] Failed to mark execution {execution.id} as failed: {status_exc}",
+                    exc_info=True,
+                )
+                db.rollback()
+            return False
+        return True
+    except Exception as exc:
+        logger.error(
+            f"[subscription_tasks] Error processing subscription {subscription.id}: {exc}",
+            exc_info=True,
+        )
+        db.rollback()
+        return False
 
 
 # Lock timeout for check_due_subscriptions (should be longer than expected execution time)
@@ -797,8 +949,6 @@ def check_due_subscriptions(self):
 
     Runs every FLOW_SCHEDULER_INTERVAL_SECONDS (default: 60 seconds).
     """
-    from sqlalchemy.orm.attributes import flag_modified
-
     from app.core.distributed_lock import distributed_lock
     from app.db.session import get_db_session
     from app.schemas.subscription import Subscription, SubscriptionTriggerType
@@ -831,38 +981,27 @@ def check_due_subscriptions(self):
                 total_due = 0
                 skipped_invalid = 0
 
-                import time
-
                 last_lock_extend_time = time.time()
                 LOCK_EXTEND_INTERVAL = 30  # Extend lock every 30 seconds
 
-                for batch in _iter_active_subscription_batches(db):
-                    for subscription in batch:
+                for subscription_ids in _iter_active_subscription_id_batches(db):
+                    for subscription_id in subscription_ids:
+                        subscription = _load_active_subscription(db, subscription_id)
+                        if subscription is None:
+                            continue
+
                         internal = subscription.json.get("_internal", {})
                         if not internal.get("enabled", True):
                             continue
 
-                        # Skip expired subscriptions
-                        expires_at_str = internal.get("expires_at")
-                        if expires_at_str:
-                            try:
-                                from app.services.subscription.helpers import (
-                                    is_subscription_expired,
-                                )
-
-                                expires_at = datetime.fromisoformat(expires_at_str)
-                                if is_subscription_expired(expires_at, now_utc):
-                                    # Auto-disable expired subscription
-                                    internal["enabled"] = False
-                                    subscription.json["_internal"] = internal
-                                    flag_modified(subscription, "json")
-                                    db.commit()
-                                    logger.info(
-                                        f"[subscription_tasks] Subscription {subscription.id} has expired and been disabled"
-                                    )
-                                    continue
-                            except (ValueError, TypeError):
-                                pass
+                        if _disable_expired_subscription_if_needed(
+                            db=db,
+                            subscription=subscription,
+                            internal=internal,
+                            now_utc=now_utc,
+                            sync_label="",
+                        ):
+                            continue
 
                         trigger_type = internal.get("trigger_type")
                         if trigger_type not in [
@@ -900,52 +1039,20 @@ def check_due_subscriptions(self):
                             last_lock_extend_time = current_time
                             logger.debug(
                                 f"[subscription_tasks] Extended lock during batch processing "
-                                f"(processed {total_due - 1}/{total_due})"
+                                f"(dispatched so far: {dispatched})"
                             )
-                        try:
-                            subscription_crd = validate_subscription_for_read(
-                                subscription.json
-                            )
-                            internal = subscription.json.get("_internal", {})
-                            trigger_type = internal.get("trigger_type")
-
-                            # Determine trigger reason
-                            trigger_reason = _get_trigger_reason(
-                                subscription_crd, trigger_type
-                            )
-
-                            # Create execution record
-                            execution = subscription_service.create_execution(
-                                db,
-                                subscription=subscription,
-                                user_id=subscription.user_id,
-                                trigger_type=trigger_type,
-                                trigger_reason=trigger_reason,
-                            )
-
-                            # Dispatch execution using unified method
-                            subscription_service.dispatch_background_execution(
-                                subscription, execution, use_sync=False
-                            )
+                        if _dispatch_due_subscription(
+                            db=db,
+                            subscription=subscription,
+                            trigger_type=trigger_type,
+                            subscription_service=subscription_service,
+                            use_sync=False,
+                        ):
                             SUBSCRIPTION_QUEUE_SIZE.inc()
                             dispatched += 1
-
                             logger.info(
-                                f"[subscription_tasks] Dispatched execution {execution.id} for subscription {subscription.id} ({subscription.name})"
+                                f"[subscription_tasks] Dispatched subscription {subscription.id} ({subscription.name})"
                             )
-
-                            # Update next execution time
-                            _update_next_execution_time(
-                                db, subscription, subscription_crd, trigger_type
-                            )
-
-                        except Exception as e:
-                            logger.error(
-                                f"[subscription_tasks] Error processing subscription {subscription.id}: {str(e)}",
-                                exc_info=True,
-                            )
-                            db.rollback()
-                            continue
 
                     db.commit()
 
@@ -1340,8 +1447,6 @@ def execute_subscription_task(
         execution_id: The BackgroundExecution ID to update
         timeout_seconds: Optional timeout override
     """
-    import time
-
     from app.db.session import get_db_session
 
     start_time = time.time()
@@ -1616,35 +1721,25 @@ def check_due_subscriptions_sync():
 
             dispatched = 0
             total_due = 0
-            for batch in _iter_active_subscription_batches(db):
-                for subscription in batch:
+            skipped_invalid = 0
+            for subscription_ids in _iter_active_subscription_id_batches(db):
+                for subscription_id in subscription_ids:
+                    subscription = _load_active_subscription(db, subscription_id)
+                    if subscription is None:
+                        continue
+
                     internal = subscription.json.get("_internal", {})
                     if not internal.get("enabled", True):
                         continue
 
-                    # Skip expired subscriptions
-                    expires_at_str = internal.get("expires_at")
-                    if expires_at_str:
-                        try:
-                            from sqlalchemy.orm.attributes import flag_modified
-
-                            from app.services.subscription.helpers import (
-                                is_subscription_expired,
-                            )
-
-                            expires_at = datetime.fromisoformat(expires_at_str)
-                            if is_subscription_expired(expires_at, now_utc):
-                                # Auto-disable expired subscription
-                                internal["enabled"] = False
-                                subscription.json["_internal"] = internal
-                                flag_modified(subscription, "json")
-                                db.commit()
-                                logger.info(
-                                    f"[subscription_tasks] Subscription {subscription.id} has expired and been disabled (sync)"
-                                )
-                                continue
-                        except (ValueError, TypeError):
-                            pass
+                    if _disable_expired_subscription_if_needed(
+                        db=db,
+                        subscription=subscription,
+                        internal=internal,
+                        now_utc=now_utc,
+                        sync_label=" (sync)",
+                    ):
+                        continue
 
                     trigger_type = internal.get("trigger_type")
                     if trigger_type not in [
@@ -1652,6 +1747,10 @@ def check_due_subscriptions_sync():
                         SubscriptionTriggerType.INTERVAL.value,
                         SubscriptionTriggerType.ONE_TIME.value,
                     ]:
+                        continue
+
+                    if not _is_trigger_config_valid(subscription.json):
+                        skipped_invalid += 1
                         continue
 
                     next_exec_time_str = internal.get("next_execution_time")
@@ -1667,50 +1766,25 @@ def check_due_subscriptions_sync():
 
                     total_due += 1
 
-                    try:
-                        subscription_crd = validate_subscription_for_read(
-                            subscription.json
-                        )
-
-                        # Determine trigger reason
-                        trigger_reason = _get_trigger_reason(
-                            subscription_crd, trigger_type
-                        )
-
-                        # Create execution record
-                        execution = subscription_service.create_execution(
-                            db,
-                            subscription=subscription,
-                            user_id=subscription.user_id,
-                            trigger_type=trigger_type,
-                            trigger_reason=trigger_reason,
-                        )
-
-                        # Dispatch execution using unified method (sync mode)
-                        subscription_service.dispatch_background_execution(
-                            subscription, execution, use_sync=True
-                        )
+                    if _dispatch_due_subscription(
+                        db=db,
+                        subscription=subscription,
+                        trigger_type=trigger_type,
+                        subscription_service=subscription_service,
+                        use_sync=True,
+                    ):
                         SUBSCRIPTION_QUEUE_SIZE.inc()
                         dispatched += 1
-
                         logger.info(
-                            f"[subscription_tasks] Started execution {execution.id} for subscription {subscription.id} ({subscription.name}) (sync)"
+                            f"[subscription_tasks] Dispatched subscription {subscription.id} ({subscription.name}) (sync)"
                         )
-
-                        # Update next execution time
-                        _update_next_execution_time(
-                            db, subscription, subscription_crd, trigger_type
-                        )
-
-                    except Exception as e:
-                        logger.error(
-                            f"[subscription_tasks] Error processing subscription {subscription.id} (sync): {str(e)}",
-                            exc_info=True,
-                        )
-                        db.rollback()
-                        continue
 
                 db.commit()
+
+            if skipped_invalid > 0:
+                logger.warning(
+                    f"[subscription_tasks] Skipped {skipped_invalid} subscription(s) with invalid trigger config (sync)"
+                )
 
             if total_due == 0:
                 logger.debug(
@@ -1759,8 +1833,6 @@ def execute_subscription_task_sync(
         execution_id: The BackgroundExecution ID to update
         timeout_seconds: Optional timeout override
     """
-    import time
-
     from app.db.session import get_db_session
 
     start_time = time.time()
