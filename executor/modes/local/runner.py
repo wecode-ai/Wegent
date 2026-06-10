@@ -314,9 +314,12 @@ class LocalRunner:
         """
         info = self._running_tasks.get(task_id)
         if info:
-            if info.agent and hasattr(info.agent, "cancel_run"):
-                info.agent.cancel_run()
-                logger.info(f"Cancelled task: task_id={task_id}")
+            if info.agent and hasattr(info.agent, "cancel_run_async"):
+                cancelled = await info.agent.cancel_run_async()
+                if cancelled:
+                    logger.info(f"Cancelled task: task_id={task_id}")
+                else:
+                    logger.warning(f"Agent failed to cancel task: task_id={task_id}")
 
                 # NOTE: Do NOT send cancel callback here - response_processor will send it
                 # after SDK interrupt messages are fully processed, avoiding duplicate callbacks
@@ -345,8 +348,8 @@ class LocalRunner:
         info = self._running_tasks.get(task_id)
         if info:
             # Cancel the task if agent supports it
-            if info.agent and hasattr(info.agent, "cancel_run"):
-                info.agent.cancel_run()
+            if info.agent and hasattr(info.agent, "cancel_run_async"):
+                await info.agent.cancel_run_async()
 
             # Cleanup agent resources
             if info.agent and hasattr(info.agent, "cleanup"):

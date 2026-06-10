@@ -924,6 +924,23 @@ async def _process_result_message(
         f"Result message received: subtype={msg.subtype}, stop_reason={stop_reason}, is_error={msg.is_error}, msg = {json.dumps(masked_msg_dict, ensure_ascii=False)}"
     )
 
+    task_id = (
+        getattr(state_manager.task_data, "task_id", None) if state_manager else None
+    )
+    is_cancelled = (
+        bool(task_id)
+        and task_state_manager is not None
+        and task_state_manager.is_cancelled(task_id)
+    )
+    if cancellation_in_progress or is_cancelled:
+        logger.info(
+            f"Task {task_id} received final result after interrupt; "
+            f"preserving CANCELLED status"
+        )
+        if state_manager:
+            state_manager.set_task_status(TaskStatus.CANCELLED.value)
+        return TaskStatus.CANCELLED
+
     # Check for silent exit marker in result
     # First use propagated values from UserMessage tool results (more reliable)
     silent_exit_detected = propagated_silent_exit

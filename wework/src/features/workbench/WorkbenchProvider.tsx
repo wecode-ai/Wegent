@@ -1163,7 +1163,6 @@ export function WorkbenchProvider({
       })
       setQueuedSends([])
       setGuidanceMessages([])
-      writeTaskIdToUrl(taskId)
       const joinResponse = await resolvedServices.chatStream.joinTask(taskId)
       if (joinResponse?.streaming) {
         dispatchMessages({
@@ -1584,8 +1583,12 @@ export function WorkbenchProvider({
       }
 
       if (!state.currentTask && ack.task_id) {
-        writeTaskIdToUrl(ack.task_id)
         const projectId = state.currentProject?.id ?? 0
+        const routeProjectId = projectId > 0 ? projectId : undefined
+        // Navigate to the canonical task route so a freshly created chat shares
+        // the same URL shape as opening an existing one (path, not ?taskId=).
+        handledTaskRouteRef.current = getTaskRouteKey(ack.task_id, routeProjectId)
+        navigateTo(buildTaskRoute({ taskId: ack.task_id, projectId: routeProjectId }))
         const openedTask: Task = {
           id: ack.task_id,
           title: message.substring(0, 100),

@@ -884,12 +884,16 @@ class SessionManager:
             # Ensure block has id
             block_id = block.get("id")
             if not block_id:
-                block_id = f"block-{int(asyncio.get_event_loop().time() * 1000)}"
+                block_id = f"block-{int(time.time() * 1000)}"
                 block["id"] = block_id
 
-            # Ensure block has timestamp
+            # Ensure block has timestamp.
+            # Use wall-clock epoch milliseconds (time.time) rather than the
+            # event loop's monotonic clock: the latter is a small non-epoch
+            # number that clients reject as invalid, which collapses the
+            # rendered turn duration to 0s after a page refresh.
             if "timestamp" not in block:
-                block["timestamp"] = int(asyncio.get_event_loop().time() * 1000)
+                block["timestamp"] = int(time.time() * 1000)
 
             blocks_key = self._get_blocks_key(subtask_id)
             redis_client = await self._cache._get_client()
