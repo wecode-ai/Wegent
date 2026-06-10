@@ -88,6 +88,58 @@ def _strip_reasoning_from_content(content: list) -> list:
     return filtered
 
 
+def _clear_google_thought_signatures(content: list) -> list:
+    """Remove ``thought_signature`` from text blocks in Google history.
+
+    When ``langchain-google-genai`` serialises a Gemini 3+ response that
+    contains a function call with a thought, it stores the
+    ``thought_signature`` bytes (base-64 encoded) inside the *text* part's
+    ``extras.signature`` field::
+
+        {"type": "text", "text": "", "extras": {"signature": "<base64>"}}
+
+    The Gemini API does **not** strictly validate thought signatures on
+    non-function-call parts (text/image/…).  However, it **will** reject a
+    request with a 400 ``INVALID_ARGUMENT`` error when an expired or
+    otherwise invalid signature is sent back in a subsequent turn.
+
+    Per the official Gemini documentation:
+
+        "You won't receive a blocking error if you *omit* [non-FC
+        signatures], though performance may degrade."
+
+    Returning an invalid signature is therefore strictly worse than omitting
+    it.  This helper strips the ``signature`` key from ``extras`` on text
+    blocks so that stale cross-subtask signatures are never replayed to the
+    API.
+
+    Non-text blocks and text blocks without a signature are returned
+    unchanged (no deep-copy overhead for the common case).
+
+    Returns:
+        A new list where text-block signatures have been removed, or the
+        original ``content`` list unchanged when no signature was found.
+    """
+    changed = False
+    result = []
+    for block in content:
+        if (
+            isinstance(block, dict)
+            and block.get("type") == "text"
+            and isinstance(block.get("extras"), dict)
+            and "signature" in block["extras"]
+        ):
+            changed = True
+            block = copy.copy(block)
+            new_extras = {k: v for k, v in block["extras"].items() if k != "signature"}
+            if new_extras:
+                block["extras"] = new_extras
+            else:
+                block = {k: v for k, v in block.items() if k != "extras"}
+        result.append(block)
+    return result if changed else content
+
+
 def _denormalize_for_anthropic(content: list) -> list:
     """Convert canonical reasoning blocks back to Anthropic native thinking format.
 
@@ -413,6 +465,23 @@ def strip_foreign_reasoning_blocks(
                 denormalized = copy.deepcopy(msg)
                 denormalized["content"] = _denormalize_for_openai_responses(content)
                 result.append(denormalized)
+            elif target_provider == "google" and isinstance(content, list):
+                # Gemini 3+ stores thought_signature on text parts after a
+                # function call.  These signatures are session-scoped and
+                # expire quickly.  Replaying a stale signature in a later
+                # subtask causes a 400 "Thought signature is not valid" error.
+                # Per the Gemini API docs, omitting non-FC signatures is safe
+                # ("won't receive a blocking error if you omit them"), so we
+                # strip them here to prevent cross-subtask replay failures.
+                # Within-subtask signatures are managed in-memory by
+                # langchain-google-genai and are not affected by this path.
+                cleaned = _clear_google_thought_signatures(content)
+                if cleaned is not content:
+                    cleared_msg = copy.copy(msg)
+                    cleared_msg["content"] = cleaned
+                    result.append(cleared_msg)
+                else:
+                    result.append(msg)
             else:
                 result.append(msg)
             continue
