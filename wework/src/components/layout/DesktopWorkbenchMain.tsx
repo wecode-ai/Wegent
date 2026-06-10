@@ -144,6 +144,7 @@ export function DesktopWorkbenchMain({
     <main className="relative flex min-w-0 flex-1 overflow-hidden">
       <DesktopTopBar
         testId="workbench-topbar"
+        rightClassName="gap-2"
         className={cn(
           'absolute inset-x-0 top-0 z-chrome bg-background/95 pr-7 backdrop-blur-xl',
           topBarLeftActions && reserveMacWindowControls

@@ -5,6 +5,34 @@ import type { Attachment } from '@/types/api'
 import { MessageList } from './MessageList'
 
 describe('MessageList', () => {
+  test('uses compact spacing between messages and hover actions', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'user-1',
+            role: 'user',
+            content: 'First message',
+            status: 'done',
+            createdAt: '2026-06-10T08:00:00Z',
+          },
+          {
+            id: 'assistant-1',
+            role: 'assistant',
+            content: 'Second message',
+            status: 'done',
+            createdAt: '2026-06-10T08:01:00Z',
+          },
+        ]}
+      />,
+    )
+
+    expect(screen.getByTestId('message-user').parentElement).toHaveClass('gap-4')
+    expect(screen.getAllByTestId('message-hover-time')[0].parentElement).toHaveClass(
+      'min-h-5',
+    )
+  })
+
   const originalCreateObjectUrl = URL.createObjectURL
   const originalRevokeObjectUrl = URL.revokeObjectURL
 
