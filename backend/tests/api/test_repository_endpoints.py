@@ -2,18 +2,15 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
-from app.api.endpoints import repository as repository_endpoint
+from app.api.endpoints.repository import get_repository_user_context
 from app.models.user import User
 
 
-@pytest.mark.asyncio
-async def test_get_repositories_closes_user_session_before_external_fetch(
-    monkeypatch,
-):
+def _make_user() -> tuple[User, MagicMock]:
     session = MagicMock()
     session.closed = False
 
@@ -21,7 +18,7 @@ async def test_get_repositories_closes_user_session_before_external_fetch(
         session.closed = True
 
     session.close.side_effect = close_session
-    current_user = User(
+    user = User(
         id=1,
         user_name="admin",
         git_info=[
@@ -32,35 +29,47 @@ async def test_get_repositories_closes_user_session_before_external_fetch(
             }
         ],
     )
+    return user, session
 
-    monkeypatch.setattr(
-        repository_endpoint,
-        "object_session",
-        lambda _: session,
-    )
 
-    async def fake_get_repositories(user_context, page: int, limit: int):
-        assert session.closed is True
-        assert user_context is not current_user
-        assert user_context.id == current_user.id
-        assert user_context.user_name == current_user.user_name
-        assert user_context.git_info == current_user.git_info
-        assert page == 1
-        assert limit == 5000
-        return []
+def test_get_repository_user_context_snapshots_and_closes_session():
+    user, session = _make_user()
 
-    monkeypatch.setattr(
-        repository_endpoint.repository_service,
-        "get_repositories",
-        AsyncMock(side_effect=fake_get_repositories),
-    )
+    gen = get_repository_user_context(current_user=user, db=session)
+    user_context = next(gen)
 
-    result = await repository_endpoint.get_repositories(
-        page=1,
-        limit=5000,
-        current_user=current_user,
-    )
+    assert session.close.call_count == 1
+    assert user_context is not user
+    assert user_context.id == user.id
+    assert user_context.user_name == user.user_name
+    assert user_context.git_info == user.git_info
 
-    assert result == []
+
+def test_get_repository_user_context_session_closed_before_yield():
+    """Session must be closed before the endpoint body runs (before yield)."""
+    user, session = _make_user()
+
+    gen = get_repository_user_context(current_user=user, db=session)
+
+    # At the point the context is yielded, the session must already be closed.
+    user_context = next(gen)
+    assert session.closed is True
+
+
+@pytest.mark.parametrize(
+    "git_info",
+    [
+        None,
+        [],
+        [{"type": "github", "git_domain": "github.com", "git_token": "t"}],
+    ],
+)
+def test_get_repository_user_context_handles_various_git_info(git_info):
+    session = MagicMock()
+    user = User(id=2, user_name="bob", git_info=git_info)
+
+    gen = get_repository_user_context(current_user=user, db=session)
+    user_context = next(gen)
+
+    assert user_context.git_info == (git_info or [])
     session.close.assert_called_once()
-    repository_endpoint.repository_service.get_repositories.assert_awaited_once()
