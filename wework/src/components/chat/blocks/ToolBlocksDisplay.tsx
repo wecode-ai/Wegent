@@ -44,7 +44,7 @@ export function ToolBlocksDisplay({ blocks, isStreaming }: ToolBlocksDisplayProp
 
   if (blocks.length === 0 && !isStreaming) return null
 
-  const duration = getDuration(blocks, startedAt, now, completedAt)
+  const duration = getDurationText(blocks, startedAt, now, completedAt, isRunning)
   const rows = buildProcessingDisplayRows(blocks)
   const expanded = isRunning || userExpanded
 
@@ -58,7 +58,7 @@ export function ToolBlocksDisplay({ blocks, isStreaming }: ToolBlocksDisplayProp
           if (!isRunning) setUserExpanded(value => !value)
         }}
       >
-        <span>已处理 {duration} 时间了</span>
+        <span>{duration}</span>
         <svg
           className={`h-3 w-3 transition-transform ${expanded || isRunning ? '' : '-rotate-90'}`}
           fill="none"
@@ -143,11 +143,12 @@ function ThinkingIndicator() {
   )
 }
 
-function getDuration(
+function getDurationText(
   blocks: ProcessingBlock[],
   fallbackStart: number,
   now: number,
-  completedAt: number | null
+  completedAt: number | null,
+  isRunning: boolean
 ): string {
   const first = blocks[0]?.createdAt ?? fallbackStart
   const last = blocks[blocks.length - 1]?.createdAt ?? first
@@ -155,9 +156,26 @@ function getDuration(
     blocks.length > 0 && blocks.every(b => b.status === 'done' || b.status === 'error')
   const endTime = isComplete ? (completedAt ?? last) : now
   const durationMs = Math.max(0, endTime - first)
+  const duration = formatDuration(durationMs)
+
+  if (isRunning) return `已处理 ${duration}`
+  return `用时 ${duration}`
+}
+
+function formatDuration(durationMs: number): string {
   const seconds = Math.floor(durationMs / 1000)
-  if (seconds < 60) return `${seconds}s`
+  if (seconds < 60) return `${seconds} 秒`
+
   const minutes = Math.floor(seconds / 60)
   const remainingSeconds = seconds % 60
-  return `${minutes}m ${remainingSeconds}s`
+  if (minutes < 60) {
+    return remainingSeconds > 0
+      ? `${minutes} 分 ${remainingSeconds} 秒`
+      : `${minutes} 分钟`
+  }
+
+  const hours = Math.floor(minutes / 60)
+  const remainingMinutes = minutes % 60
+  if (remainingMinutes === 0) return `${hours} 小时`
+  return `${hours} 小时 ${remainingMinutes} 分钟`
 }
