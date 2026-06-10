@@ -13,10 +13,6 @@ from executor.agents.codex.codex_agent import CodeXAgent
 from shared.models.execution import ExecutionRequest
 
 
-def _enable_standalone_chats(monkeypatch):
-    monkeypatch.setenv("WEGENT_EXECUTOR_STANDALONE_CHATS_ENABLED", "true")
-
-
 def test_git_project_path_uses_project_workspace_root_when_project_id_present():
     request = ExecutionRequest(
         task_id=1001,
@@ -134,6 +130,7 @@ def test_initial_standalone_chat_prepares_request_named_cwd(tmp_path, monkeypatc
         task_id=1003,
         subtask_id=2003,
         prompt="hello-new-wework",
+        type="chat",
     )
     agent = ClaudeCodeAgent.__new__(ClaudeCodeAgent)
     agent.task_data = request
@@ -144,7 +141,6 @@ def test_initial_standalone_chat_prepares_request_named_cwd(tmp_path, monkeypatc
     agent._claude_config_dir = str(task_dir / ".claude")
 
     executor_home = tmp_path / ".wegent-executor"
-    _enable_standalone_chats(monkeypatch)
     monkeypatch.setenv("WEGENT_EXECUTOR_CHATS_DIR", str(chats_root))
     with (
         patch(
@@ -177,6 +173,58 @@ def test_initial_standalone_chat_prepares_request_named_cwd(tmp_path, monkeypatc
     assert (task_dir / ".claude").exists()
     assert target.exists()
     set_session_root.assert_called_once_with(1003, str(executor_home / "sessions"))
+
+
+def test_code_task_is_not_moved_into_chats_workspace_by_prepare(
+    tmp_path,
+    monkeypatch,
+):
+    """A ClaudeCode task with no project_id/git_url must NOT be hijacked into
+    the dated chats tree just because it lacks project metadata. This is
+    the regression that the task_type gate replaces."""
+    workspace_root = tmp_path / "workspace"
+    task_dir = workspace_root / "1009"
+    (task_dir / ".claude").mkdir(parents=True)
+    chats_root = tmp_path / "chats"
+    request = ExecutionRequest(
+        task_id=1009,
+        subtask_id=2009,
+        prompt="plain-code-prompt",
+        type="code",
+    )
+    agent = ClaudeCodeAgent.__new__(ClaudeCodeAgent)
+    agent.task_data = request
+    agent.task_id = request.task_id
+    agent.prompt = request.prompt
+    agent.options = {}
+    agent.project_path = None
+    agent._claude_config_dir = str(task_dir / ".claude")
+
+    executor_home = tmp_path / ".wegent-executor"
+    monkeypatch.setenv("WEGENT_EXECUTOR_CHATS_DIR", str(chats_root))
+    monkeypatch.delenv("WEGENT_EXECUTOR_STANDALONE_CHATS_ENABLED", raising=False)
+    with (
+        patch(
+            "executor.agents.claude_code.claude_code_agent.config.get_workspace_root",
+            return_value=str(workspace_root),
+        ),
+        patch(
+            "executor.agents.claude_code.standalone_chat_workspace.config.get_workspace_root",
+            return_value=str(workspace_root),
+        ),
+        patch(
+            "executor.agents.claude_code.claude_code_agent.config.WEGENT_EXECUTOR_HOME",
+            str(executor_home),
+        ),
+        patch.object(SessionManager, "set_task_session_root") as set_session_root,
+    ):
+        agent._prepare_project_workspace()
+
+    assert not chats_root.exists()
+    # project_workspace_path stays unset, so the executor falls back to
+    # the legacy workspace/<task_id> default in the client.
+    assert request.project_workspace_path is None
+    set_session_root.assert_not_called()
 
 
 async def test_codex_pre_execute_uses_project_workspace_path(tmp_path):
@@ -217,6 +265,7 @@ def test_initial_standalone_chat_coordinate_mode_keeps_claude_out_of_chat_dir(
         subtask_id=2004,
         prompt="coordinate-chat",
         mode="coordinate",
+        type="chat",
         bot=[
             {"id": 1, "name": "leader", "system_prompt": "Lead"},
             {"id": 2, "name": "worker", "system_prompt": "Work"},
@@ -231,7 +280,6 @@ def test_initial_standalone_chat_coordinate_mode_keeps_claude_out_of_chat_dir(
     agent._claude_config_dir = str(task_dir / ".claude")
 
     executor_home = tmp_path / ".wegent-executor"
-    _enable_standalone_chats(monkeypatch)
     monkeypatch.setenv("WEGENT_EXECUTOR_CHATS_DIR", str(chats_root))
     with (
         patch(

@@ -386,6 +386,10 @@ class TaskRequestBuilder:
             git_repo=git_repo,
             git_repo_id=git_repo_id,
             branch_name=branch_name,
+            # Task type (e.g. "chat", "code", "knowledge") used by the executor
+            # to decide between the legacy task-id workspace and the dated
+            # chats workspace tree.
+            type=self._derive_task_mode(task),
             message_id=subtask.message_id,
             user_message_id=None,
             is_group_chat=is_group_chat,

@@ -184,7 +184,9 @@ class ExecutionRequest:
     # === Task Status (from Task) ===
     status: Optional[str] = None
     progress: Optional[int] = None
-    type: Optional[str] = None  # Task type: "online" or "offline"
+    type: Optional[str] = (
+        None  # Task kind: "chat" | "code" | "knowledge" | "validation"
+    )
 
     # === Executor Information (from Task) ===
     executor_name: Optional[str] = None

@@ -138,9 +138,11 @@ When a project configures `workspace.localPath` or `workspace.checkoutPath`, the
 
 ### Standalone Chat Workspaces
 
-When a chat has no selected project but is bound to an online device, executor-side independent Chats workspaces are currently disabled by default. To enable them, set `WEGENT_EXECUTOR_STANDALONE_CHATS_ENABLED=true` in the device runtime environment.
+When a chat has no selected project but is bound to an online device, the executor routes the task into a dated `chats/YYYY-MM-DD/<slug>` directory instead of the legacy `workspace/<task_id>` path. The slug is derived from the user prompt, and a numeric suffix is appended on collisions.
 
-Once enabled, the first task runs in a temporary task directory. After the response finishes, the Executor generates a dated directory name from the response summary and moves the temporary directory into the Chats workspace tree. The default root is `~/.wecode/wegent-executor/workspace/chats`. To use another location, set `WEGENT_EXECUTOR_CHATS_DIR` in the device runtime environment. Backend stores the final path in the task metadata label `standaloneChatWorkspacePath`, so continuing the conversation or opening it from history reuses the same directory.
+The first task runs in a temporary task directory. After the response finishes, the executor moves the temporary directory into the chats workspace tree. The default root is `~/.wecode/wegent-executor/workspace/chats`. To use another location, set `WEGENT_EXECUTOR_CHATS_DIR` in the device runtime environment. Backend stores the final path in the task metadata label `standaloneChatWorkspacePath`, so continuing the conversation or opening it from history reuses the same directory.
+
+This routing is task-type aware: only tasks whose backend `taskType` label is `chat` ever use the dated chats tree. `code` and other task types always keep the legacy `workspace/<task_id>` path, so the feature is safe to leave on even when a device also serves the main Wegent web UI. No device-side environment toggle is required.
 
 Project chats do not use this path. They continue to use the project's configured `workspace.localPath` or `workspace.checkoutPath`.
 

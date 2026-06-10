@@ -140,9 +140,11 @@ docker run -d --platform linux/amd64 \
 
 ### 非项目会话工作区
 
-当聊天未选择项目但绑定到在线设备时，Executor 侧的独立 Chats 工作区功能当前默认关闭。如需启用，可在设备运行环境中设置 `WEGENT_EXECUTOR_STANDALONE_CHATS_ENABLED=true`。
+当聊天未选择项目但绑定到在线设备时，Executor 会把任务路由到按日期命名的 `chats/YYYY-MM-DD/<slug>` 目录，而不是使用传统的 `workspace/<task_id>` 路径。slug 由用户输入派生，冲突时会附加数字后缀。
 
-启用后，首轮任务先在临时任务目录中执行；回复完成后，Executor 会根据日期和回复摘要生成目录名，并把临时目录移动到 Chats 工作区树中。默认根目录为 `~/.wecode/wegent-executor/workspace/chats`。如需自定义位置，可在设备运行环境中设置 `WEGENT_EXECUTOR_CHATS_DIR`。Backend 会把最终路径写入任务元数据标签 `standaloneChatWorkspacePath`，后续继续该会话或打开历史会话时会复用同一目录。
+首轮任务先在临时任务目录中执行；回复完成后，Executor 会把临时目录移动到 Chats 工作区树中。默认根目录为 `~/.wecode/wegent-executor/workspace/chats`。如需自定义位置，可在设备运行环境中设置 `WEGENT_EXECUTOR_CHATS_DIR`。Backend 会把最终路径写入任务元数据标签 `standaloneChatWorkspacePath`，后续继续该会话或打开历史会话时会复用同一目录。
+
+该路由按任务类型区分：只有后端 `taskType` 标签为 `chat` 的任务才会进入 chats 目录树。`code` 等其他任务类型始终走传统的 `workspace/<task_id>` 路径，因此即使该设备同时为 Wegent Web 主前端提供服务，也无需额外开关。设备侧无需配置任何环境变量。
 
 项目会话不使用此路径；项目会话仍然使用项目配置中的 `workspace.localPath` 或 `workspace.checkoutPath`。
 

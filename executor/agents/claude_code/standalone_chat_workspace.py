@@ -19,18 +19,9 @@ from shared.logger import setup_logger
 logger = setup_logger("standalone_chat_workspace")
 
 CHAT_WORKSPACE_ENV = "WEGENT_EXECUTOR_CHATS_DIR"
-STANDALONE_CHATS_ENABLED_ENV = "WEGENT_EXECUTOR_STANDALONE_CHATS_ENABLED"
 DEFAULT_CHAT_SLUG = "new-chat"
 MAX_CHAT_DIR_NAME_LENGTH = 20
 WORKSPACE_INTERNAL_DIRS = {".claude"}
-TRUTHY_ENV_VALUES = {"1", "true", "yes", "on"}
-
-
-def is_standalone_chat_workspace_enabled() -> bool:
-    """Return whether executor-side standalone Chats workspaces are enabled."""
-
-    value = os.environ.get(STANDALONE_CHATS_ENABLED_ENV, "")
-    return value.strip().lower() in TRUTHY_ENV_VALUES
 
 
 def get_chats_root() -> Path:
@@ -137,12 +128,27 @@ def _move_user_workspace(source: Path, target: Path) -> None:
         shutil.move(str(item), str(target / item.name))
 
 
+def _task_type(task_data) -> Optional[str]:
+    """Return the task kind for the request, accepting both field names.
+
+    `ExecutionRequest.type` carries the task kind ("chat", "code", ...) and
+    `BaseAgent` aliases it as `task_type`. Standalone workspace routing
+    runs before the agent is fully constructed, so we read both spellings
+    to stay agnostic of the wrapper.
+    """
+
+    return getattr(task_data, "task_type", None) or getattr(task_data, "type", None)
+
+
 def is_initial_standalone_chat(task_data) -> bool:
     """Return true when this request should create a standalone chat workspace."""
 
-    if not is_standalone_chat_workspace_enabled():
-        return False
     if not task_data:
+        return False
+    # Only chat-type tasks may use the dated chats workspace. Code and
+    # knowledge tasks must keep the legacy `workspace/<task_id>` path
+    # even when they happen to arrive without project/git metadata.
+    if _task_type(task_data) != "chat":
         return False
     if getattr(task_data, "project_id", None):
         return False
@@ -156,9 +162,9 @@ def is_initial_standalone_chat(task_data) -> bool:
 def prepared_standalone_chat_workspace_path(task_data) -> Optional[str]:
     """Return an already resolved standalone chat workspace path."""
 
-    if not is_standalone_chat_workspace_enabled():
-        return None
     if not task_data:
+        return None
+    if _task_type(task_data) != "chat":
         return None
     if getattr(task_data, "project_id", None):
         return None
