@@ -676,7 +676,7 @@ async def cancel_task(
     if otel_config.enabled and is_telemetry_enabled():
         set_task_context(task_id=task_id)
 
-    status, message = agent_service.cancel_task(task_id)
+    status, message = await agent_service.cancel_task_async(task_id)
 
     if status == TaskStatus.SUCCESS:
         # Send cancel callback in background without blocking response

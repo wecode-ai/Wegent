@@ -41,6 +41,17 @@ class Agent:
         """
         return self.__class__.__name__
 
+    async def cancel_run_async(self) -> bool:
+        """Cancel the active run without blocking the caller's event loop."""
+        cancel_run = getattr(self, "cancel_run", None)
+        if cancel_run is None:
+            return False
+
+        result = cancel_run()
+        if asyncio.iscoroutine(result):
+            result = await result
+        return bool(result)
+
     def __init__(
         self,
         task_data: ExecutionRequest,
