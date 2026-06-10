@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { WorkbenchProvider } from './WorkbenchProvider'
@@ -2916,5 +2916,171 @@ describe('WorkbenchProvider', () => {
     await waitFor(() => expect(archiveAllChats).toHaveBeenCalledTimes(1))
     expect(screen.getByTestId('current-task-title')).toHaveTextContent('no-task')
     expect(screen.getByTestId('message-count')).toHaveTextContent('0')
+  })
+
+  test('keeps the model the user picked in an open task across chat:start events', async () => {
+    // Regression: the dropdown used to revert to the task's original model
+    // ~2 seconds after the user picked a new one, because the next turn's
+    // chat:start WebSocket event dispatched task_status_changed and the
+    // syncSelection effect then re-anchored the dropdown on the stale
+    // currentTask.model_id (which had never been updated for existing tasks).
+    type StreamHandlers = {
+      onChatStart?: (payload: { task_id: number; subtask_id: number }) => void
+    }
+    let streamHandlers: StreamHandlers | undefined
+
+    function ModelPersistProbe() {
+      const workbench = useWorkbench()
+
+      return (
+        <div>
+          <span data-testid="current-task-model">
+            {workbench.state.currentTask?.model_id ?? 'no-task'}
+          </span>
+          <span data-testid="selected-model">
+            {workbench.projectChat.selectedModel?.name ?? 'no-model'}
+          </span>
+          <button
+            type="button"
+            data-testid="switch-to-opus"
+            onClick={() =>
+              workbench.projectChat.setSelectedModel({
+                name: 'wecode-claude-opus-4',
+                type: 'public',
+              })
+            }
+          >
+            switch to opus
+          </button>
+          <button type="button" onClick={() => void workbench.openTask(8)}>
+            open task
+          </button>
+        </div>
+      )
+    }
+
+    render(
+      <WorkbenchProvider
+        user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+        services={{
+          teamApi: {
+            getDefaultWorkbenchTeam: vi
+              .fn()
+              .mockResolvedValue({ id: 2, name: 'coder', is_active: true }),
+          },
+          modelApi: {
+            listModels: vi.fn().mockResolvedValue({
+              data: [
+                {
+                  name: 'wecode-claude-sonnet-4-5',
+                  type: 'public',
+                },
+                {
+                  name: 'wecode-claude-opus-4',
+                  type: 'public',
+                },
+              ],
+            }),
+          },
+          skillApi: {
+            listSkills: vi.fn().mockResolvedValue([]),
+            getTeamSkills: vi.fn().mockResolvedValue({ skills: [], preload_skills: [] }),
+          },
+          projectApi: {
+            listProjects: vi.fn().mockResolvedValue({ items: [] }),
+            getProject: vi.fn(),
+            createProject: vi.fn(),
+            updateProject: vi.fn(),
+            deleteProject: vi.fn(),
+            archiveProjectChats: vi.fn(),
+            archiveAllProjectChats: vi.fn(),
+            createConversation: vi.fn(),
+          },
+          taskApi: {
+            listRecentTasks: vi.fn().mockResolvedValue({ total: 0, items: [] }),
+            getTaskDetail: vi.fn().mockResolvedValue({
+              id: 8,
+              title: 'Existing task',
+              status: 'SUCCESS',
+              task_type: 'code',
+              project_id: 0,
+              model_id: 'wecode-claude-sonnet-4-5',
+              force_override_bot_model_type: 'public',
+              created_at: '2026-06-04T00:00:00.000Z',
+              subtasks: [],
+            }),
+            renameTask: vi.fn(),
+            archiveTask: vi.fn(),
+            archiveAllChats: vi.fn(),
+            listArchivedTasks: vi.fn(),
+            unarchiveTask: vi.fn(),
+            deleteTask: vi.fn(),
+            deleteArchivedTasks: vi.fn(),
+          },
+          deviceApi: {
+            listDevices: vi.fn().mockResolvedValue([]),
+            getHomeDirectory: vi.fn(),
+            getProjectWorkspaceRoot: vi.fn(),
+            listDirectories: vi.fn(),
+            listSkills: vi.fn().mockResolvedValue([]),
+          },
+          chatStream: {
+            joinTask: vi.fn(),
+            leaveTask: vi.fn(),
+            sendMessage: vi.fn(),
+            subscribe: vi.fn(handlers => {
+              streamHandlers = handlers as StreamHandlers
+              return vi.fn()
+            }),
+          },
+        }}
+      >
+        <ModelPersistProbe />
+      </WorkbenchProvider>
+    )
+
+    // 1. Open the task; the dropdown anchors on the task's saved model.
+    await userEvent.click(await screen.findByText('open task'))
+    await waitFor(() =>
+      expect(screen.getByTestId('current-task-model')).toHaveTextContent(
+        'wecode-claude-sonnet-4-5'
+      )
+    )
+    expect(screen.getByTestId('selected-model')).toHaveTextContent(
+      'wecode-claude-sonnet-4-5'
+    )
+
+    // 2. User picks a different model. The dropdown updates immediately
+    //    AND the open task's model_id is mirrored so subsequent
+    //    task_status updates (e.g. chat:start) can't revert it.
+    await userEvent.click(screen.getByTestId('switch-to-opus'))
+    await waitFor(() =>
+      expect(screen.getByTestId('current-task-model')).toHaveTextContent(
+        'wecode-claude-opus-4'
+      )
+    )
+    expect(screen.getByTestId('selected-model')).toHaveTextContent(
+      'wecode-claude-opus-4'
+    )
+
+    // 3. The next turn's chat:start event flips task status from SUCCESS to
+    //    RUNNING. Before the fix this rebuilt state.currentTask and the
+    //    syncSelection effect then re-anchored the dropdown on the stale
+    //    model_id — reverting the user's choice. After the fix the open
+    //    task's model_id already reflects the new selection, so nothing
+    //    flips back.
+    expect(streamHandlers?.onChatStart).toBeDefined()
+    act(() => {
+      streamHandlers?.onChatStart?.({ task_id: 8, subtask_id: 99 })
+    })
+
+    await waitFor(() =>
+      expect(screen.getByTestId('selected-model')).toHaveTextContent(
+        'wecode-claude-opus-4'
+      )
+    )
+    expect(screen.getByTestId('current-task-model')).toHaveTextContent(
+      'wecode-claude-opus-4'
+    )
   })
 })

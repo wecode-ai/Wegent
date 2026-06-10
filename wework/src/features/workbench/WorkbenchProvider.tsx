@@ -629,7 +629,19 @@ export function WorkbenchProvider({
   )
   const persistNewChatModelSelection = useCallback(
     (selection: ModelSelectionConfig) => {
-      if (state.currentTask) return
+      if (state.currentTask) {
+        // Mirror the selection onto the open task so subsequent task_status
+        // updates (e.g. the chat:start/chat:done WebSocket events dispatched
+        // when the next turn is sent) don't revert the dropdown back to the
+        // model the task was originally created with. We deliberately avoid
+        // re-saving to the user preferences: that preference is for new chats
+        // and would leak the per-task override into future conversations.
+        dispatch({
+          type: 'current_task_model_selection_changed',
+          selection,
+        })
+        return
+      }
       const preferences = {
         ...(currentUser.preferences ?? {}),
         wework_new_chat_model_selection: selection,
