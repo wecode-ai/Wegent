@@ -292,13 +292,18 @@ class AgentService:
                 client = getattr(agent, "client", None)
 
                 if client and session_id:
-                    from executor.agents.claude_code.session_manager import (
-                        SessionManager,
-                    )
-
-                    # Use process termination instead of disconnect() to avoid
-                    # cancel scope issues when called from different asyncio context
-                    await SessionManager._terminate_client_process(client, session_id)
+                    close_client = getattr(agent, "close_client_async", None)
+                    if close_client is None:
+                        return (
+                            TaskStatus.FAILED,
+                            "ClaudeCode agent does not support async client cleanup",
+                        )
+                    closed = await close_client("agent service cleanup")
+                    if not closed:
+                        return (
+                            TaskStatus.FAILED,
+                            f"Failed to close Claude client for session {session_id}",
+                        )
 
                     logger.info(
                         f"[{_format_task_log(task_id, MISSING_SUBTASK_ID)}] Closed Claude client "

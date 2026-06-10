@@ -100,6 +100,8 @@ class ClaudeCodeAgent(Agent):
     Uses HookManager for hook function loading and execution.
     """
 
+    CLIENT_DISCONNECT_TIMEOUT_SECONDS = 3.0
+
     def get_name(self) -> str:
         """Return the agent type name."""
         return "ClaudeCode"
@@ -1185,21 +1187,7 @@ class ClaudeCodeAgent(Agent):
             logger.warning("No client to close for retry")
             return
 
-        try:
-            # Terminate the client process
-            await SessionManager._terminate_client_process(self.client, self.session_id)
-
-            # Clear local client reference
-            # Note: No longer using in-memory cache since each subtask creates new Agent instance
-            self.client = None
-
-            logger.info(
-                f"Closed client for retry, session_id={self.session_id} preserved for resume"
-            )
-        except Exception as e:
-            logger.warning(f"Error closing client for retry: {e}")
-            # Clear client reference anyway to allow new client creation
-            self.client = None
+        await self.close_client_async("retry")
 
     async def _auto_close_session(self) -> None:
         """
@@ -1224,12 +1212,7 @@ class ClaudeCodeAgent(Agent):
                 f"session_id={self.session_id}, task_id={self.task_id}"
             )
 
-            # Terminate the CC process
-            await SessionManager._terminate_client_process(self.client, self.session_id)
-
-            # Clear local client reference
-            # Note: No longer using in-memory cache since each subtask creates new Agent instance
-            self.client = None
+            await self.close_client_async("completion")
 
             # Trigger heartbeat callback to immediately update slot usage
             if self.on_client_created_callback:
@@ -1253,18 +1236,32 @@ class ClaudeCodeAgent(Agent):
 
     async def _close_interrupted_session(self) -> None:
         """Close an interrupted turn while preserving its resumable session ID."""
-        if self.client is None:
-            return
+        await self.close_client_async("interrupt")
 
+    async def close_client_async(self, reason: str = "session cleanup") -> bool:
+        """Disconnect the SDK client and preserve the resumable session ID."""
+        if self.client is None:
+            return True
+
+        client = self.client
         try:
-            await self.client.disconnect()
-            logger.info(
-                f"Closed interrupted Claude session: session_id={self.session_id}, "
-                f"task_id={self.task_id}. Session ID preserved on disk for resume."
+            await asyncio.wait_for(
+                client.disconnect(),
+                timeout=self.CLIENT_DISCONNECT_TIMEOUT_SECONDS,
             )
+            logger.info(
+                f"Disconnected Claude client after {reason}: "
+                f"session_id={self.session_id}, task_id={self.task_id}. "
+                f"Session ID preserved on disk for resume."
+            )
+            return True
         except Exception as e:
             logger.warning(
-                f"Error closing interrupted Claude session {self.session_id}: {e}"
+                f"SDK disconnect failed after {reason} for session "
+                f"{self.session_id}: {e}; forcing process termination"
+            )
+            return await SessionManager._terminate_client_process(
+                client, self.session_id
             )
         finally:
             self.client = None
