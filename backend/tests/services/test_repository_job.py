@@ -9,7 +9,8 @@ import pytest
 
 from app.models.user import User
 from app.services import repository_job as repository_job_module
-from app.services.repository_job import RepositoryJobService, RepositoryUserSnapshot
+from app.services.repository import RepositoryUserContext
+from app.services.repository_job import RepositoryJobService
 
 
 @contextmanager
@@ -55,9 +56,8 @@ async def test_repo_job_processes_snapshots_after_loader_session_is_closed(
         lambda _: [source_user],
     )
 
-    async def assert_session_closed(user: RepositoryUserSnapshot):
+    async def assert_session_closed(user: RepositoryUserContext):
         assert session.closed is True
-        assert user.user_id == source_user.id
         assert user.id == source_user.id
         assert user.user_name == source_user.user_name
         assert user.git_info == source_user.git_info

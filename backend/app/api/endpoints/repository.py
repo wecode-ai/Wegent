@@ -11,7 +11,11 @@ from sqlalchemy.orm import object_session
 from app.core import security
 from app.models.user import User
 from app.schemas.github import Branch, RepositoryResult
-from app.services.repository import repository_service, snapshot_repository_user
+from app.services.repository import (
+    RepositoryUserContext,
+    repository_service,
+    snapshot_repository_user,
+)
 
 # Logger instance
 logger = logging.getLogger(__name__)
@@ -19,8 +23,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-def _snapshot_current_user(current_user: User):
+def _snapshot_current_user(current_user: User) -> RepositoryUserContext:
     user_context = snapshot_repository_user(current_user)
+    # Repository providers may perform slow external I/O; release the auth session first.
     db = object_session(current_user)
     if db is not None:
         db.close()
