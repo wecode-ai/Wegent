@@ -4,14 +4,16 @@
 
 import '@testing-library/jest-dom'
 import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import ContextSelector from '@/features/tasks/components/chat/ContextSelector'
 
 const mockListKnowledgeBases = jest.fn()
 const mockGetOrganizationNamespace = jest.fn()
+const translate = (key: string) => key
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
-    t: (key: string) => key,
+    t: translate,
   }),
 }))
 
@@ -76,6 +78,10 @@ jest.mock('@/components/ui/command', () => ({
   CommandSeparator: () => <hr />,
 }))
 
+jest.mock('@/components/ui/scroll-area', () => ({
+  ScrollArea: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+}))
+
 jest.mock('@/components/ui/tabs', () => ({
   Tabs: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   TabsList: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
@@ -101,7 +107,9 @@ describe('ContextSelector organization grouping', () => {
     })
   })
 
-  it('shows knowledge bases under the organization section when the organization namespace is dynamic', async () => {
+  it('shows organization knowledge bases after selecting the organization scope', async () => {
+    const user = userEvent.setup()
+
     render(
       <ContextSelector
         open={true}
@@ -115,10 +123,10 @@ describe('ContextSelector organization grouping', () => {
     )
 
     await waitFor(() => {
-      expect(screen.getByText('knowledge:document.tabs.organization')).toBeInTheDocument()
+      expect(screen.getByText('contextSelector.organizationKnowledge')).toBeInTheDocument()
     })
 
-    expect(screen.queryByText('knowledge:document.tabs.group')).not.toBeInTheDocument()
+    await user.click(screen.getByText('contextSelector.organizationKnowledge'))
     expect(screen.getByText('Org KB')).toBeInTheDocument()
   })
 
@@ -136,7 +144,7 @@ describe('ContextSelector organization grouping', () => {
     )
 
     await waitFor(() => {
-      expect(screen.getByText('knowledge:document.tabs.organization')).toBeInTheDocument()
+      expect(screen.getByText('contextSelector.organizationKnowledge')).toBeInTheDocument()
     })
 
     expect(screen.getByTestId('context-selector-popover')).toHaveAttribute('data-side', 'top')

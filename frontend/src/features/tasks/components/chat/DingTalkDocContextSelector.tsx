@@ -516,7 +516,7 @@ export function DingTalkDocContextSelector({
   }
 
   return (
-    <div className="flex flex-col min-h-0 flex-1">
+    <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
       {/* Section switcher - always visible */}
       <div className="flex border-b border-border flex-shrink-0">
         <button
@@ -590,7 +590,7 @@ export function DingTalkDocContextSelector({
       </div>
 
       {/* Tree content area */}
-      <div className="overflow-y-auto flex-1 max-h-[260px] py-1 px-1">{renderContent()}</div>
+      <div className="min-h-0 flex-1 overflow-y-auto py-1 px-1">{renderContent()}</div>
     </div>
   )
 }

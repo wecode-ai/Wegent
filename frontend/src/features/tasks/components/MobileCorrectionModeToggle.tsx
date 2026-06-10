@@ -106,6 +106,13 @@ export default function MobileCorrectionModeToggle({
     }
   }
 
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return
+
+    event.preventDefault()
+    handleClick()
+  }
+
   const handleModelSelect = (model: UnifiedModel) => {
     const displayName = model.displayName || model.name
     onToggle(true, model.name, displayName)
@@ -143,15 +150,17 @@ export default function MobileCorrectionModeToggle({
 
   return (
     <>
-      <button
-        type="button"
+      <div
+        role="button"
+        tabIndex={disabled ? -1 : 0}
+        aria-disabled={disabled}
         onClick={handleClick}
-        disabled={disabled}
+        onKeyDown={handleKeyDown}
         className={cn(
           'w-full flex items-center justify-between px-3 py-2.5',
           'text-left transition-colors',
           'hover:bg-hover active:bg-hover',
-          'disabled:opacity-50 disabled:cursor-not-allowed'
+          disabled && 'cursor-not-allowed opacity-50'
         )}
       >
         <div className="flex items-center gap-3">
@@ -178,7 +187,7 @@ export default function MobileCorrectionModeToggle({
             }
           }}
         />
-      </button>
+      </div>
 
       {/* Model Selection Dialog */}
       <Dialog open={showModelSelector} onOpenChange={handleDialogClose}>

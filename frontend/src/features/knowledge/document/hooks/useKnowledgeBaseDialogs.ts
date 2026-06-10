@@ -77,7 +77,13 @@ export interface UseKnowledgeBaseDialogsReturn {
   handleCreateKbFromAll: (kbType: KnowledgeBaseType) => void
   handleCreateKbFromGroups: (kbType: KnowledgeBaseType) => void
   handleCreateKbFromGroup: (kbType: KnowledgeBaseType) => void
-  canMigrateKb: (kb: { id: number; namespace: string; user_id: number }) => boolean
+  canMigrateKb: (kb: {
+    id: number
+    namespace: string
+    user_id: number
+    shared_from?: string | null
+    shared_via?: string | null
+  }) => boolean
   resetCreateDialogState: () => void
 }
 
@@ -292,9 +298,16 @@ export function useKnowledgeBaseDialogs({
   )
 
   const canMigrateKb = useCallback(
-    (kb: { id: number; namespace: string; user_id: number }) => {
+    (kb: {
+      id: number
+      namespace: string
+      user_id: number
+      shared_from?: string | null
+      shared_via?: string | null
+    }) => {
       if (kb.namespace !== 'default') return false
-      return kb.user_id === sidebar.currentUser?.id
+      if (kb.user_id !== sidebar.currentUser?.id) return false
+      return !kb.shared_from && !kb.shared_via
     },
     [sidebar.currentUser]
   )
