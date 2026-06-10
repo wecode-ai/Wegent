@@ -301,7 +301,7 @@ def test_run_document_indexing_switches_index_mode_independently(
 
     mock_selected_gateway.assert_awaited_once_with(
         mock_build_runtime_spec.return_value,
-        db=db,
+        db=None,
     )
     mock_other_gateway.assert_not_called()
     assert result == {

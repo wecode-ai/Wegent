@@ -435,7 +435,7 @@ class SummaryService:
             logger.info(
                 f"[SummaryService] Starting summary generation: document_id={document_id}"
             )
-            executor = BackgroundChatExecutor(self.db, user_id)
+            executor = BackgroundChatExecutor.with_managed_sessions(user_id)
             result = await executor.execute(
                 system_prompt=DOCUMENT_SUMMARY_PROMPT,
                 user_message=f"Please generate a summary for the following document:\n\n{truncated_content}",
@@ -533,6 +533,189 @@ class SummaryService:
 
     # ==================== Knowledge Base Summary ====================
 
+    def _claim_kb_summary_generation(
+        self,
+        kb_id: int,
+        user_id: int,
+        user_name: str,
+        force: bool,
+        clear_if_empty: bool,
+    ) -> Optional["KbSummaryClaim"]:
+        kb = (
+            self.db.query(Kind)
+            .filter(
+                Kind.id == kb_id,
+                Kind.kind == "KnowledgeBase",
+            )
+            .with_for_update()
+            .first()
+        )
+
+        if not kb:
+            logger.warning(f"[SummaryService] KnowledgeBase not found: {kb_id}")
+            self.db.rollback()
+            return None
+
+        logger.info(f"[SummaryService] KB found: kb_id={kb_id}, name={kb.name}")
+
+        kb_spec = (kb.json or {}).get("spec", {})
+        if not kb_spec.get("summaryEnabled") and not clear_if_empty:
+            logger.info(
+                "[SummaryService] KB summary is disabled, skipping trigger: kb_id=%s",
+                kb_id,
+            )
+            self.db.rollback()
+            return None
+
+        if not force and not self._should_trigger_kb_summary(kb):
+            logger.info(
+                f"[SummaryService] KB summary trigger condition not met: "
+                f"kb_id={kb_id} (already generating or no changes)"
+            )
+            self.db.rollback()
+            return None
+
+        logger.info(f"[SummaryService] Aggregating document summaries: kb_id={kb_id}")
+        aggregation = self._get_document_aggregation(kb_id)
+        if not aggregation.aggregated_text:
+            self._handle_empty_kb_summary(
+                kb, kb_id, clear_if_empty, aggregation.completed_count
+            )
+            self.db.rollback()
+            return None
+
+        logger.info(
+            f"[SummaryService] Document summaries aggregated: "
+            f"kb_id={kb_id}, completed_count={aggregation.completed_count}"
+        )
+
+        model_config = self._get_model_config_from_kb(kb, user_id, user_name)
+        if not model_config:
+            logger.warning(
+                f"[SummaryService] No model configured for summary generation in KB: {kb_id}"
+            )
+            self.db.rollback()
+            return None
+
+        existing_summary = dict((kb.json or {}).get("spec", {}).get("summary") or {})
+        self._persist_kb_summary(
+            kb,
+            {
+                **existing_summary,
+                "status": "generating",
+                "updated_at": datetime.now().isoformat(),
+            },
+        )
+        logger.info(
+            f"[SummaryService] KB summary status set to generating: kb_id={kb_id}"
+        )
+        return KbSummaryClaim(
+            aggregation=aggregation,
+            model_config=model_config,
+        )
+
+    def _write_kb_summary_result(
+        self,
+        kb_id: int,
+        result: BackgroundTaskResult,
+        completed_count: int,
+    ) -> None:
+        kb = (
+            self.db.query(Kind)
+            .filter(
+                Kind.id == kb_id,
+                Kind.kind == "KnowledgeBase",
+            )
+            .first()
+        )
+        if not kb:
+            logger.warning(
+                "[SummaryService] KnowledgeBase not found during final write: %s", kb_id
+            )
+            self.db.rollback()
+            return
+
+        existing_summary = dict((kb.json or {}).get("spec", {}).get("summary") or {})
+        if result.success and result.parsed_content:
+            summary_data = {
+                **existing_summary,
+                **result.parsed_content,
+                "status": "completed",
+                "task_id": result.task_id,
+                "updated_at": datetime.now().isoformat(),
+                "last_summary_doc_count": completed_count,
+                "meta_info": {
+                    "document_count": completed_count,
+                    "last_updated": datetime.now().isoformat(),
+                },
+            }
+            logger.info(
+                f"[SummaryService] KB summary completed: "
+                f"kb_id={kb_id}, task_id={result.task_id}, doc_count={completed_count}"
+            )
+        else:
+            summary_data = {
+                **existing_summary,
+                "status": "failed",
+                "error": result.error or "Failed to parse summary",
+                "task_id": result.task_id,
+                "updated_at": datetime.now().isoformat(),
+            }
+            logger.error(
+                f"[SummaryService] KB summary failed: kb_id={kb_id}, error={result.error}"
+            )
+
+        self._persist_kb_summary(kb, summary_data)
+
+    def _write_kb_summary_failure(self, kb_id: int, error: str) -> None:
+        kb = (
+            self.db.query(Kind)
+            .filter(
+                Kind.id == kb_id,
+                Kind.kind == "KnowledgeBase",
+            )
+            .first()
+        )
+        if not kb:
+            self.db.rollback()
+            return
+
+        existing_summary = dict((kb.json or {}).get("spec", {}).get("summary") or {})
+        self._persist_kb_summary(
+            kb,
+            {
+                **existing_summary,
+                "status": "failed",
+                "error": error,
+                "updated_at": datetime.now().isoformat(),
+            },
+        )
+
+    async def _execute_kb_summary_model(
+        self,
+        *,
+        user_id: int,
+        kb_id: int,
+        truncated_aggregation: str,
+        model_config: Dict[str, Any],
+    ) -> BackgroundTaskResult:
+        executor = BackgroundChatExecutor.with_managed_sessions(user_id)
+        return await executor.execute(
+            system_prompt=KB_SUMMARY_PROMPT,
+            user_message=(
+                "Please generate a comprehensive summary for the knowledge base "
+                "based on the following document summaries:\n\n"
+                f"{truncated_aggregation}"
+            ),
+            config=BackgroundTaskConfig(
+                task_type="summary",
+                summary_type="knowledge_base",
+                knowledge_base_id=kb_id,
+                model_config=model_config,
+            ),
+            parse_json=True,
+        )
+
     async def trigger_kb_summary(
         self,
         kb_id: int,
@@ -557,150 +740,37 @@ class SummaryService:
             f"kb_id={kb_id}, user_id={user_id}, force={force}, clear_if_empty={clear_if_empty}"
         )
 
-        # 1. Get knowledge base with row lock to prevent TOCTOU race condition
-        # This ensures atomic check-and-set for "generating" status
-        kb = (
-            self.db.query(Kind)
-            .filter(
-                Kind.id == kb_id,
-                Kind.kind == "KnowledgeBase",
-            )
-            .with_for_update()
-            .first()
+        claim = self._claim_kb_summary_generation(
+            kb_id=kb_id,
+            user_id=user_id,
+            user_name=user_name,
+            force=force,
+            clear_if_empty=clear_if_empty,
         )
-
-        if not kb:
-            logger.warning(f"[SummaryService] KnowledgeBase not found: {kb_id}")
+        if not claim:
             return None
-
-        logger.info(f"[SummaryService] KB found: kb_id={kb_id}, name={kb.name}")
-
-        kb_spec = (kb.json or {}).get("spec", {})
-        if not kb_spec.get("summaryEnabled") and not clear_if_empty:
-            logger.info(
-                "[SummaryService] KB summary is disabled, skipping trigger: kb_id=%s",
-                kb_id,
-            )
-            return None
-
-        # 2. Check if trigger is needed (unless forced)
-        # This check is now atomic with the lock
-        if not force and not self._should_trigger_kb_summary(kb):
-            logger.info(
-                f"[SummaryService] KB summary trigger condition not met: "
-                f"kb_id={kb_id} (already generating or no changes)"
-            )
-            return None
-
-        # 3. Aggregate completed document summaries (single query for both text and count)
-        # This is done BEFORE model config check to handle clear_if_empty case
-        logger.info(f"[SummaryService] Aggregating document summaries: kb_id={kb_id}")
-        aggregation = self._get_document_aggregation(kb_id)
-        if not aggregation.aggregated_text:
-            # No completed document summaries - handle empty state
-            # This works even without model config (for clear_if_empty scenario)
-            self._handle_empty_kb_summary(
-                kb, kb_id, clear_if_empty, aggregation.completed_count
-            )
-            return None
-
-        logger.info(
-            f"[SummaryService] Document summaries aggregated: "
-            f"kb_id={kb_id}, completed_count={aggregation.completed_count}"
-        )
 
         truncated_aggregation = self._truncate_prompt_if_needed(
-            aggregation.aggregated_text,
+            claim.aggregation.aggregated_text,
             "KB summary",
         )
 
-        # 4. Get model configuration from knowledge base
-        # Only needed if we have documents to summarize
-        model_config = self._get_model_config_from_kb(kb, user_id, user_name)
-        if not model_config:
-            logger.warning(
-                f"[SummaryService] No model configured for summary generation in KB: {kb_id}"
-            )
-            return None
-
         try:
-            # 5. Update status to generating (atomic with the lock)
-            existing_summary = dict(
-                (kb.json or {}).get("spec", {}).get("summary") or {}
-            )
-            self._persist_kb_summary(
-                kb,
-                {
-                    **existing_summary,
-                    "status": "generating",
-                    "updated_at": datetime.now().isoformat(),
-                },
-            )  # Release the lock after setting status
-
-            logger.info(
-                f"[SummaryService] KB summary status set to generating: kb_id={kb_id}"
-            )
-
-            # 6. Execute summary generation
             logger.info(
                 f"[SummaryService] Starting KB summary generation: kb_id={kb_id}"
             )
-            executor = BackgroundChatExecutor(self.db, user_id)
-            result = await executor.execute(
-                system_prompt=KB_SUMMARY_PROMPT,
-                user_message=(
-                    "Please generate a comprehensive summary for the knowledge base "
-                    "based on the following document summaries:\n\n"
-                    f"{truncated_aggregation}"
-                ),
-                config=BackgroundTaskConfig(
-                    task_type="summary",
-                    summary_type="knowledge_base",
-                    knowledge_base_id=kb_id,
-                    model_config=model_config,
-                ),
-                parse_json=True,
+            result = await self._execute_kb_summary_model(
+                user_id=user_id,
+                kb_id=kb_id,
+                truncated_aggregation=truncated_aggregation,
+                model_config=claim.model_config,
             )
 
-            # 7. Update knowledge base summary (reuse completed_count from aggregation)
-            if result.success and result.parsed_content:
-                existing_summary = dict(
-                    (kb.json or {}).get("spec", {}).get("summary") or {}
-                )
-                summary_data = {
-                    **existing_summary,
-                    **result.parsed_content,
-                    "status": "completed",
-                    "task_id": result.task_id,
-                    "updated_at": datetime.now().isoformat(),
-                    "last_summary_doc_count": aggregation.completed_count,
-                    "meta_info": {
-                        "document_count": aggregation.completed_count,
-                        "last_updated": datetime.now().isoformat(),
-                    },
-                }
-                logger.info(
-                    f"[SummaryService] KB summary completed: "
-                    f"kb_id={kb_id}, task_id={result.task_id}, "
-                    f"doc_count={aggregation.completed_count}"
-                )
-            else:
-                existing_summary = dict(
-                    (kb.json or {}).get("spec", {}).get("summary") or {}
-                )
-                summary_data = {
-                    **existing_summary,
-                    "status": "failed",
-                    "error": result.error or "Failed to parse summary",
-                    "task_id": result.task_id,
-                    "updated_at": datetime.now().isoformat(),
-                }
-                logger.error(
-                    f"[SummaryService] KB summary failed: "
-                    f"kb_id={kb_id}, error={result.error}"
-                )
-
-            self._persist_kb_summary(kb, summary_data)
+            self._write_kb_summary_result(
+                kb_id=kb_id,
+                result=result,
+                completed_count=claim.aggregation.completed_count,
+            )
 
             return result
 
@@ -710,18 +780,7 @@ class SummaryService:
             )
             self.db.rollback()
             try:
-                existing_summary = dict(
-                    (kb.json or {}).get("spec", {}).get("summary") or {}
-                )
-                self._persist_kb_summary(
-                    kb,
-                    {
-                        **existing_summary,
-                        "status": "failed",
-                        "error": str(e),
-                        "updated_at": datetime.now().isoformat(),
-                    },
-                )
+                self._write_kb_summary_failure(kb_id, str(e))
             except Exception as commit_error:
                 logger.warning(
                     f"[SummaryService] Failed to save KB error status: {commit_error}"
@@ -1036,6 +1095,14 @@ class DocumentAggregation:
 
     aggregated_text: Optional[str]
     completed_count: int
+
+
+@dataclass
+class KbSummaryClaim:
+    """Data needed after the locked KB summary claim is committed."""
+
+    aggregation: DocumentAggregation
+    model_config: Dict[str, Any]
 
 
 # Service instance factory

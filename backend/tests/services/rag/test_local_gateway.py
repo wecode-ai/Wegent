@@ -177,8 +177,9 @@ async def test_local_gateway_query_requires_db():
 
 
 @pytest.mark.asyncio
-async def test_local_gateway_index_document_requires_db():
+async def test_local_gateway_index_document_allows_gateway_owned_session():
     gateway = LocalRagGateway()
+    gateway._index_executor = AsyncMock(return_value={"status": "success"})
 
     spec = IndexRuntimeSpec(
         knowledge_base_id=1,
@@ -191,5 +192,7 @@ async def test_local_gateway_index_document_requires_db():
         source=IndexSource(source_type="attachment", attachment_id=9),
     )
 
-    with pytest.raises(ValueError, match="db is required"):
-        await gateway.index_document(spec)
+    result = await gateway.index_document(spec)
+
+    assert result == {"status": "success"}
+    gateway._index_executor.assert_awaited_once_with(spec, db=None)
