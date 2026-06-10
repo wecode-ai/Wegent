@@ -7,8 +7,87 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.core.constants import CLIENT_ORIGIN_FRONTEND
 from shared.models import ExecutionRequest
 from shared.models.knowledge import ChatContextsResult, KnowledgeBaseToolsResult
+
+
+def test_apply_user_runtime_config_adds_codex_status(monkeypatch):
+    """Codex execution requests should carry explicit user runtime config status."""
+    from app.services.chat.trigger import unified as trigger_unified
+
+    request = ExecutionRequest(
+        model_config={
+            "model": "openai",
+            "api_format": "responses",
+            "model_id": "gpt-5.5",
+        }
+    )
+
+    def fake_get_config(db, *, user_id, runtime, preferences=None):
+        assert user_id == 7
+        assert runtime == "codex"
+        assert preferences == {"runtime_configs": {"codex": {"use_user_config": True}}}
+        return {
+            "runtime": "codex",
+            "display_name": "Codex",
+            "use_user_config": True,
+            "configured": True,
+            "target_path": "~/.codex/auth.json",
+            "auth_json_sha256": "sha",
+        }
+
+    monkeypatch.setattr(
+        trigger_unified.user_runtime_config_service,
+        "get_config",
+        fake_get_config,
+    )
+
+    trigger_unified._apply_user_runtime_config(
+        db=MagicMock(),
+        request=request,
+        user=SimpleNamespace(
+            id=7,
+            preferences={"runtime_configs": {"codex": {"use_user_config": True}}},
+        ),
+    )
+
+    assert request.model_config["runtime_config"] == {
+        "codex": {
+            "use_user_config": True,
+            "configured": True,
+            "target_path": "~/.codex/auth.json",
+            "auth_json_sha256": "sha",
+        }
+    }
+
+
+def test_apply_user_runtime_config_skips_non_codex_models(monkeypatch):
+    """Non-Codex-compatible models should not query user runtime config."""
+    from app.services.chat.trigger import unified as trigger_unified
+
+    request = ExecutionRequest(
+        model_config={
+            "model": "openai",
+            "api_format": "chat/completions",
+            "model_id": "gpt-4.1",
+        }
+    )
+    get_config = MagicMock()
+    monkeypatch.setattr(
+        trigger_unified.user_runtime_config_service,
+        "get_config",
+        get_config,
+    )
+
+    trigger_unified._apply_user_runtime_config(
+        db=MagicMock(),
+        request=request,
+        user=SimpleNamespace(id=7),
+    )
+
+    assert "runtime_config" not in request.model_config
+    get_config.assert_not_called()
 
 
 @pytest.mark.unit
@@ -120,6 +199,48 @@ class TestBuildExecutionRequestUserSubtaskId:
                     "answers": {"language": "python"},
                     "message": "selected python",
                 }
+
+    async def test_frontend_payload_enables_web_runtime_guidance(self):
+        """Web chat requests should ask the request builder to add UI guidance."""
+        from app.services.chat.trigger import unified as trigger_unified
+
+        mock_db = MagicMock()
+        request_from_builder = ExecutionRequest(task_id=1, subtask_id=2)
+        mock_builder = MagicMock()
+        mock_builder.build.return_value = request_from_builder
+        payload = SimpleNamespace(
+            enable_web_search=False,
+            enable_clarification=False,
+            additional_skills=None,
+            client_origin=CLIENT_ORIGIN_FRONTEND,
+        )
+
+        with patch.object(trigger_unified, "SessionLocal", return_value=mock_db):
+            with patch(
+                "app.services.execution.TaskRequestBuilder", return_value=mock_builder
+            ):
+                task = MagicMock()
+                task.id = 1
+                task.json = {}
+
+                assistant_subtask = MagicMock()
+                assistant_subtask.id = 2
+
+                team = MagicMock()
+                user = MagicMock()
+                user.id = 7
+
+                await trigger_unified.build_execution_request(
+                    task=task,
+                    assistant_subtask=assistant_subtask,
+                    team=team,
+                    user=user,
+                    message="hello",
+                    payload=payload,
+                    user_subtask_id=None,
+                )
+
+        assert mock_builder.build.call_args.kwargs["web_runtime_guidance"] is True
 
     async def test_device_execution_keeps_sandbox_path_in_context_processing(self):
         """Device-routed tasks should keep sandbox path placeholders for executor rewrite."""

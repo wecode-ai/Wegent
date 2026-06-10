@@ -14,6 +14,7 @@ Uses unified block types from shared.models.blocks for consistency.
 import logging
 from typing import Any, Optional
 
+from app.services.chat.storage import session_manager
 from app.services.chat.webpage_ws_chat_emitter import WebPageSocketEmitter
 from app.services.execution.interactive_form_render import (
     build_interactive_form_render_payload,
@@ -131,6 +132,12 @@ class WebSocketResultEmitter(BaseResultEmitter):
         elif event.type == EventType.BLOCK_CREATED.value:
             await self._emit_direct_block_created(event, webpage_ws_emitter)
 
+        elif event.type == EventType.BLOCK_UPDATED.value:
+            await self._emit_direct_block_updated(event, webpage_ws_emitter)
+
+        elif event.type == EventType.STATUS_UPDATED.value:
+            await self._emit_status_updated(event, webpage_ws_emitter)
+
         elif event.type == EventType.THINKING.value:
             # Emit reasoning content as a chat:chunk with reasoning_chunk in result
             # This allows the frontend to display incremental reasoning content
@@ -237,6 +244,43 @@ class WebSocketResultEmitter(BaseResultEmitter):
             f"user_id={self.user_id}, task_id={self.task_id}, status={status}"
         )
 
+    async def _emit_status_updated(
+        self, event: ExecutionEvent, ws_emitter: WebPageSocketEmitter
+    ) -> None:
+        """Emit chat:status_updated and cache the latest snapshot."""
+        phase = event.data.get("phase") if event.data else None
+        context_metrics = event.data.get("context_metrics", {}) if event.data else {}
+        if not phase or not isinstance(context_metrics, dict):
+            logger.debug(
+                "[WebSocketResultEmitter] Skipping invalid status update event: %s",
+                event.data,
+            )
+            return
+
+        try:
+            await session_manager.save_context_metrics(
+                event.subtask_id,
+                {
+                    "task_id": event.task_id,
+                    "subtask_id": event.subtask_id,
+                    "phase": phase,
+                    "context_metrics": context_metrics,
+                },
+            )
+        except Exception as exc:
+            logger.warning(
+                "[WebSocketResultEmitter] Failed to cache context metrics for task_id=%s subtask_id=%s: %s",
+                event.task_id,
+                event.subtask_id,
+                exc,
+            )
+        await ws_emitter.emit_chat_status_updated(
+            task_id=event.task_id,
+            subtask_id=event.subtask_id,
+            phase=phase,
+            context_metrics=context_metrics,
+        )
+
     async def _emit_block_created(self, event: ExecutionEvent, ws_emitter) -> None:
         """Emit chat:block_created event for tool start.
 
@@ -305,6 +349,42 @@ class WebSocketResultEmitter(BaseResultEmitter):
         import app.services.chat.storage as chat_storage
 
         await chat_storage.session_manager.add_block(event.subtask_id, block)
+
+    async def _emit_direct_block_updated(
+        self, event: ExecutionEvent, ws_emitter
+    ) -> None:
+        """Emit chat:block_updated from an ExecutionEvent block update payload."""
+        block_id = event.data.get("block_id") if event.data else None
+        updates = event.data.get("updates") if event.data else None
+        if not block_id or not isinstance(updates, dict):
+            return
+
+        update_kwargs = {
+            "task_id": event.task_id,
+            "subtask_id": event.subtask_id,
+            "block_id": str(block_id),
+        }
+        for source_key, target_key in (
+            ("content", "content"),
+            ("tool_input", "tool_input"),
+            ("tool_output", "tool_output"),
+            ("status", "status"),
+        ):
+            if source_key in updates:
+                update_kwargs[target_key] = updates[source_key]
+        await ws_emitter.emit_block_updated(**update_kwargs)
+
+        import app.services.chat.storage as chat_storage
+
+        blocks = await chat_storage.session_manager.get_blocks(event.subtask_id)
+        existing_block = next(
+            (block for block in blocks if block.get("id") == str(block_id)),
+            None,
+        )
+        if existing_block is None:
+            return
+        existing_block.update(updates)
+        await chat_storage.session_manager.add_block(event.subtask_id, existing_block)
 
     async def _emit_result_guidance_blocks(
         self, event: ExecutionEvent, ws_emitter

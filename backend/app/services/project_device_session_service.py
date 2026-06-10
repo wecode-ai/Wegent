@@ -11,6 +11,7 @@ from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from app.models.project import Project
+from app.schemas.device import DeviceType
 from app.schemas.project import (
     ProjectConfig,
     ProjectDeviceSessionResponse,
@@ -21,6 +22,7 @@ from app.services.device.session_service import (
     DeviceSessionNotFoundError,
     local_device_session_service,
 )
+from app.services.device_service import device_service
 
 ProjectSessionType = Literal["terminal", "code_server"]
 
@@ -50,6 +52,7 @@ async def start_project_device_session(
 
     project_config = _parse_project_config(project.config)
     device_id = _get_bound_device_id(project_config)
+    _ensure_device_supports_project_sessions(db, user_id, device_id)
     path, create_if_missing = _get_project_path(
         project_config, project.config, project_id
     )
@@ -126,6 +129,27 @@ def _get_bound_device_id(config: ProjectConfig) -> str:
     return config.execution.deviceId
 
 
+def _ensure_device_supports_project_sessions(
+    db: Session,
+    user_id: int,
+    device_id: str,
+) -> None:
+    """Reject project terminal and code-server sessions for local devices."""
+
+    device_kind = device_service.get_device_by_device_id(db, user_id, device_id)
+    if not device_kind:
+        return
+
+    spec = getattr(device_kind, "json", None)
+    spec = spec.get("spec", {}) if isinstance(spec, dict) else {}
+    device_type = spec.get("deviceType")
+    if device_type == DeviceType.LOCAL.value:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Local devices do not support terminal or code-server sessions",
+        )
+
+
 def _get_project_path(
     config: ProjectConfig,
     raw_config: object,
@@ -133,7 +157,10 @@ def _get_project_path(
 ) -> tuple[str, bool]:
     workspace = config.workspace
     if workspace:
-        path = workspace.localPath or workspace.checkoutPath
+        if workspace.source == "git" and workspace.checkoutPath:
+            path = f"projects/{workspace.checkoutPath}"
+        else:
+            path = workspace.localPath or workspace.checkoutPath
         if path:
             return path, True
 

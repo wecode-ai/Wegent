@@ -54,6 +54,7 @@ class ServerEvents:
     CHAT_DONE = "chat:done"
     CHAT_ERROR = "chat:error"
     CHAT_CANCELLED = "chat:cancelled"
+    CHAT_STATUS_UPDATED = "chat:status_updated"
 
     # Block events for mixed content rendering (to task room)
     CHAT_BLOCK_CREATED = "chat:block_created"
@@ -133,6 +134,22 @@ class GenerateParams(BaseModel):
     )
     ratio: Optional[str] = Field(None, description="Aspect ratio (e.g., '16:9')")
     duration: Optional[int] = Field(None, description="Duration in seconds")
+
+
+class ChatExecutionWorkspacePayload(BaseModel):
+    """Workspace execution intent for chat:send."""
+
+    source: Literal["git_worktree"] = Field(
+        ..., description="Execution workspace source"
+    )
+
+
+class ChatExecutionPayload(BaseModel):
+    """Execution options for chat:send."""
+
+    workspace: Optional[ChatExecutionWorkspacePayload] = Field(
+        None, description="Workspace execution options"
+    )
 
 
 class InteractiveFormAnswerPayload(BaseModel):
@@ -250,6 +267,10 @@ class ChatSendPayload(BaseModel):
     interactive_form_answer: Optional[InteractiveFormAnswerPayload] = Field(
         None,
         description="Answer payload for a deferred interactive_form_question tool call",
+    )
+    execution: Optional[ChatExecutionPayload] = Field(
+        None,
+        description="Execution options for new tasks",
     )
 
 

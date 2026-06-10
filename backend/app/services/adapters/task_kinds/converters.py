@@ -53,6 +53,17 @@ def _get_model_selection_labels(task_crd: Task) -> Dict[str, Any]:
     }
 
 
+def get_task_execution_workspace_source(task_crd: Task) -> str | None:
+    """Return the task execution workspace source used by list views."""
+
+    execution = getattr(task_crd.spec, "execution", None)
+    workspace = getattr(execution, "workspace", None) if execution else None
+    source = getattr(workspace, "source", None) if workspace else None
+    if isinstance(source, str) and source.strip():
+        return source.strip()
+    return None
+
+
 def convert_to_task_dict(task: Kind, db: Session, user_id: int) -> Dict[str, Any]:
     """
     Convert kinds Task to task-like dictionary.
@@ -176,6 +187,7 @@ def convert_to_task_dict(task: Kind, db: Session, user_id: int) -> Dict[str, Any
 
     # Extract device_id from task spec
     device_id = task_crd.spec.device_id if hasattr(task_crd.spec, "device_id") else None
+    execution_workspace_source = get_task_execution_workspace_source(task_crd)
 
     return {
         "id": task.id,
@@ -199,10 +211,12 @@ def convert_to_task_dict(task: Kind, db: Session, user_id: int) -> Dict[str, Any
         "created_at": created_at or task.created_at,
         "updated_at": updated_at or task.updated_at,
         "completed_at": completed_at,
+        "project_id": task.project_id or 0,
         **model_selection,
         "is_group_chat": is_group_chat,
         "app": app_data,
         "device_id": device_id,
+        "execution_workspace_source": execution_workspace_source,
         "preserve_executor": preserve_executor,
     }
 
@@ -233,6 +247,7 @@ def convert_to_task_dict_optimized(
 
     # Extract device_id from task spec
     device_id = task_crd.spec.device_id if hasattr(task_crd.spec, "device_id") else None
+    execution_workspace_source = get_task_execution_workspace_source(task_crd)
 
     # Extract preserve_executor flag from task labels
     preserve_executor = (
@@ -263,6 +278,7 @@ def convert_to_task_dict_optimized(
         "created_at": related_data.get("created_at", task.created_at),
         "updated_at": related_data.get("updated_at", task.updated_at),
         "completed_at": related_data.get("completed_at"),
+        "project_id": task.project_id or 0,
         **model_selection,
         "is_group_chat": related_data.get("is_group_chat", False),
         "app": (
@@ -271,6 +287,7 @@ def convert_to_task_dict_optimized(
             else None
         ),
         "device_id": device_id,
+        "execution_workspace_source": execution_workspace_source,
         "preserve_executor": preserve_executor,
     }
 

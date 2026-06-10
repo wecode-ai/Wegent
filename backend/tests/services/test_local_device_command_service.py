@@ -34,8 +34,23 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     mkdir_definition = resolve_local_device_command(
         "mkdir_p", settings.LOCAL_DEVICE_COMMANDS
     )
+    path_exists_definition = resolve_local_device_command(
+        "path_exists", settings.LOCAL_DEVICE_COMMANDS
+    )
     git_clone_definition = resolve_local_device_command(
         "git_clone", settings.LOCAL_DEVICE_COMMANDS
+    )
+    git_is_worktree_definition = resolve_local_device_command(
+        "git_is_worktree", settings.LOCAL_DEVICE_COMMANDS
+    )
+    find_worktree_dirs_definition = resolve_local_device_command(
+        "find_worktree_dirs", settings.LOCAL_DEVICE_COMMANDS
+    )
+    git_worktree_remove_definition = resolve_local_device_command(
+        "git_worktree_remove", settings.LOCAL_DEVICE_COMMANDS
+    )
+    remove_worktree_dir_definition = resolve_local_device_command(
+        "remove_worktree_dir", settings.LOCAL_DEVICE_COMMANDS
     )
     git_branch_definition = resolve_local_device_command(
         "git_branch", settings.LOCAL_DEVICE_COMMANDS
@@ -67,6 +82,12 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     ls_skills_definition = resolve_local_device_command(
         "ls_skills", settings.LOCAL_DEVICE_COMMANDS
     )
+    sync_runtime_auth_file_definition = resolve_local_device_command(
+        "sync_runtime_auth_file", settings.LOCAL_DEVICE_COMMANDS
+    )
+    read_runtime_auth_file_definition = resolve_local_device_command(
+        "read_runtime_auth_file", settings.LOCAL_DEVICE_COMMANDS
+    )
 
     assert pwd_definition is not None
     assert pwd_definition.command == "pwd"
@@ -87,9 +108,26 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     assert mkdir_definition is not None
     assert mkdir_definition.command == "mkdir -p"
     assert mkdir_definition.post_processor is None
+    assert path_exists_definition is not None
+    assert path_exists_definition.command == "test -e"
+    assert path_exists_definition.post_processor is None
     assert git_clone_definition is not None
     assert git_clone_definition.command == "git clone"
     assert git_clone_definition.post_processor is None
+    assert git_is_worktree_definition is not None
+    assert "rev-parse --is-inside-work-tree" in git_is_worktree_definition.command
+    assert git_is_worktree_definition.post_processor is None
+    assert find_worktree_dirs_definition is not None
+    assert "find" in find_worktree_dirs_definition.command
+    assert "mindepth 2" in find_worktree_dirs_definition.command
+    assert find_worktree_dirs_definition.post_processor == "file_list"
+    assert git_worktree_remove_definition is not None
+    assert "worktree remove --force" in git_worktree_remove_definition.command
+    assert git_worktree_remove_definition.post_processor is None
+    assert remove_worktree_dir_definition is not None
+    assert "rm -rf" in remove_worktree_dir_definition.command
+    assert "refusing unsafe worktree path" in remove_worktree_dir_definition.command
+    assert remove_worktree_dir_definition.post_processor is None
     assert git_branch_definition is not None
     assert git_branch_definition.command == "git branch --show-current"
     assert git_branch_definition.post_processor is None
@@ -127,6 +165,14 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     assert ".codex" in ls_skills_definition.command
     assert "plugins" in ls_skills_definition.command
     assert ls_skills_definition.post_processor == "json"
+    assert sync_runtime_auth_file_definition is not None
+    assert "WEGENT_RUNTIME_CONFIG_CONTENT" in sync_runtime_auth_file_definition.command
+    assert sync_runtime_auth_file_definition.post_processor == "json"
+    assert read_runtime_auth_file_definition is not None
+    assert (
+        "WEGENT_RUNTIME_CONFIG_TARGET_PATH" in read_runtime_auth_file_definition.command
+    )
+    assert read_runtime_auth_file_definition.post_processor == "json"
 
 
 def test_local_device_command_registry_supports_inline_post_processor():
@@ -182,6 +228,52 @@ def test_local_device_command_registry_builds_git_clone_argv():
         definition.command,
         ["https://github.com/wecode-ai/Wegent.git", "Wegent"],
     ) == ["git", "clone", "https://github.com/wecode-ai/Wegent.git", "Wegent"]
+
+
+def test_local_device_command_registry_builds_git_worktree_add_argv():
+    """git_worktree_add should bind args to the fixed worktree subcommand."""
+    from app.services.device.command_registry import (
+        build_local_device_command_argv,
+        resolve_local_device_command,
+    )
+
+    definition = resolve_local_device_command("git_worktree_add")
+
+    assert definition is not None
+    assert build_local_device_command_argv(
+        definition.command,
+        ["/workspace/projects/d837/Wegent", "/workspace/worktrees/1386/Wegent"],
+    ) == [
+        "sh",
+        "-c",
+        'git -C "$1" worktree add --detach "$2"',
+        "--",
+        "/workspace/projects/d837/Wegent",
+        "/workspace/worktrees/1386/Wegent",
+    ]
+
+
+def test_local_device_command_registry_builds_git_worktree_remove_argv():
+    """git_worktree_remove should bind args to the fixed remove subcommand."""
+    from app.services.device.command_registry import (
+        build_local_device_command_argv,
+        resolve_local_device_command,
+    )
+
+    definition = resolve_local_device_command("git_worktree_remove")
+
+    assert definition is not None
+    assert build_local_device_command_argv(
+        definition.command,
+        ["/workspace/projects/d837/Wegent", "/workspace/worktrees/1386/Wegent"],
+    ) == [
+        "sh",
+        "-c",
+        'git -C "$1" worktree remove --force "$2"',
+        "--",
+        "/workspace/projects/d837/Wegent",
+        "/workspace/worktrees/1386/Wegent",
+    ]
 
 
 def test_file_list_post_processor_filters_special_entries():
@@ -321,6 +413,99 @@ metadata:
         }
     ]
     assert "|" not in skills[0]["description"]
+
+
+def test_sync_runtime_auth_file_command_writes_json_object(tmp_path):
+    """sync_runtime_auth_file should create auth JSON with private permissions."""
+    from app.services.device.command_registry import SYNC_RUNTIME_AUTH_FILE_SCRIPT
+
+    env = {
+        **os.environ,
+        "HOME": str(tmp_path),
+        "WEGENT_RUNTIME_CONFIG_RUNTIME": "codex",
+        "WEGENT_RUNTIME_CONFIG_TARGET_PATH": "~/.codex/auth.json",
+        "WEGENT_RUNTIME_CONFIG_CONTENT": '{"token":"secret","account":{"id":"u1"}}',
+    }
+    result = subprocess.run(
+        ["python3", "-c", SYNC_RUNTIME_AUTH_FILE_SCRIPT],
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(result.stdout)
+    target = tmp_path / ".codex" / "auth.json"
+
+    assert payload == {
+        "status": "written",
+        "runtime": "codex",
+        "path": "~/.codex/auth.json",
+    }
+    assert json.loads(target.read_text(encoding="utf-8")) == {
+        "account": {"id": "u1"},
+        "token": "secret",
+    }
+    assert target.stat().st_mode & 0o777 == 0o600
+
+
+def test_sync_runtime_auth_file_command_does_not_overwrite_existing_file(tmp_path):
+    """sync_runtime_auth_file should skip when auth JSON already exists."""
+    from app.services.device.command_registry import SYNC_RUNTIME_AUTH_FILE_SCRIPT
+
+    target = tmp_path / ".codex" / "auth.json"
+    target.parent.mkdir(parents=True)
+    target.write_text('{"token":"existing"}\n', encoding="utf-8")
+    env = {
+        **os.environ,
+        "HOME": str(tmp_path),
+        "WEGENT_RUNTIME_CONFIG_RUNTIME": "codex",
+        "WEGENT_RUNTIME_CONFIG_TARGET_PATH": "~/.codex/auth.json",
+        "WEGENT_RUNTIME_CONFIG_CONTENT": '{"token":"new"}',
+    }
+    result = subprocess.run(
+        ["python3", "-c", SYNC_RUNTIME_AUTH_FILE_SCRIPT],
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert json.loads(result.stdout) == {
+        "status": "skipped_existing",
+        "runtime": "codex",
+        "path": "~/.codex/auth.json",
+    }
+    assert target.read_text(encoding="utf-8") == '{"token":"existing"}\n'
+
+
+def test_read_runtime_auth_file_command_returns_existing_json(tmp_path):
+    """read_runtime_auth_file should return the auth JSON content."""
+    from app.services.device.command_registry import READ_RUNTIME_AUTH_FILE_SCRIPT
+
+    target = tmp_path / ".codex" / "auth.json"
+    target.parent.mkdir(parents=True)
+    target.write_text('{"token":"existing"}\n', encoding="utf-8")
+    env = {
+        **os.environ,
+        "HOME": str(tmp_path),
+        "WEGENT_RUNTIME_CONFIG_RUNTIME": "codex",
+        "WEGENT_RUNTIME_CONFIG_TARGET_PATH": "~/.codex/auth.json",
+    }
+    result = subprocess.run(
+        ["python3", "-c", READ_RUNTIME_AUTH_FILE_SCRIPT],
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert json.loads(result.stdout) == {
+        "status": "read",
+        "runtime": "codex",
+        "path": "~/.codex/auth.json",
+        "content": '{"token":"existing"}\n',
+    }
 
 
 def test_ls_skills_command_includes_plugin_skills(tmp_path):
@@ -487,6 +672,42 @@ async def test_execute_command_calls_registered_device_socket(monkeypatch):
         namespace="/local-executor",
         timeout=10,
     )
+
+
+@pytest.mark.asyncio
+async def test_execute_command_reports_socket_timeout_with_actionable_detail(
+    monkeypatch,
+):
+    """Socket.IO timeout errors should not produce an empty API detail."""
+    from socketio.exceptions import TimeoutError as SocketTimeoutError
+
+    from app.services.device import command_service
+
+    mock_sio = AsyncMock()
+    mock_sio.call.side_effect = SocketTimeoutError()
+
+    monkeypatch.setattr(
+        command_service.device_service,
+        "get_device_online_info",
+        AsyncMock(return_value={"socket_id": "socket-123"}),
+    )
+    monkeypatch.setattr(command_service, "get_sio", lambda: mock_sio)
+
+    with pytest.raises(command_service.DeviceCommandError) as exc_info:
+        await command_service.local_device_command_service.execute_command(
+            user_id=7,
+            device_id="device-abc",
+            command="printenv HOME",
+            timeout_seconds=10,
+            max_output_bytes=4096,
+        )
+
+    message = str(exc_info.value)
+    assert "timed out after 15 seconds" in message
+    assert "device-abc" in message
+    assert "device:execute_command" in message
+    assert "Reconnect or upgrade" in message
+    assert message != "Command RPC failed: "
 
 
 @pytest.mark.asyncio

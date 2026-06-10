@@ -18,6 +18,7 @@ import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Label } from '@/components/ui/label'
+import { Checkbox } from '@/components/ui/checkbox'
 import { useUser } from '@/features/common/UserContext'
 import { userApis, type FeatureFlags } from '@/apis/user'
 import type { UserPreferences } from '@/types/api'
@@ -26,12 +27,14 @@ export default function NotificationSettings() {
   const { t } = useTranslation()
   const { toast } = useToast()
   const router = useRouter()
-  const { user, refresh } = useUser()
+  const { user, refresh, updatePreferences } = useUser()
   const [enabled, setEnabled] = useState(false)
   const [supported, setSupported] = useState(true)
   const [sendKey, setSendKey] = useState<'enter' | 'cmd_enter'>('enter')
   const [searchKey, setSearchKey] = useState<'cmd_k' | 'cmd_f' | 'disabled'>('cmd_k')
   const [memoryEnabled, setMemoryEnabled] = useState(false)
+  const [chatStatusItems, setChatStatusItems] = useState<string[]>([])
+  const [toolOutputGuardEnabled, setToolOutputGuardEnabled] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   // Feature flags from backend
   const [featureFlags, setFeatureFlags] = useState<FeatureFlags | null>(null)
@@ -74,6 +77,8 @@ export default function NotificationSettings() {
       setSendKey(userSendKey)
       setSearchKey(userSearchKey)
       setMemoryEnabled(userMemoryEnabled)
+      setChatStatusItems(user.preferences?.chat_status_items || [])
+      setToolOutputGuardEnabled(user.preferences?.tool_output_guard_enabled ?? false)
     }
   }, [user, featureFlags])
 
@@ -182,6 +187,52 @@ export default function NotificationSettings() {
           ? user.preferences.memory_enabled
           : (featureFlags?.memory_enabled ?? false)
       setMemoryEnabled(revertValue)
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  const handleChatStatusItemToggle = async (checked: boolean) => {
+    const nextItems = checked ? ['context-remaining'] : []
+
+    setChatStatusItems(nextItems)
+    setIsSaving(true)
+    try {
+      await updatePreferences({
+        chat_status_items: nextItems,
+      })
+      toast({
+        title: t('common:chat_status.save_success'),
+      })
+    } catch (error) {
+      console.error('Failed to save chat status items:', error)
+      toast({
+        variant: 'destructive',
+        title: t('common:chat_status.save_failed'),
+      })
+      setChatStatusItems(user?.preferences?.chat_status_items || [])
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  const handleToolOutputGuardToggle = async (checked: boolean) => {
+    setToolOutputGuardEnabled(checked)
+    setIsSaving(true)
+    try {
+      await updatePreferences({
+        tool_output_guard_enabled: checked,
+      })
+      toast({
+        title: t('common:tool_output_guard.save_success'),
+      })
+    } catch (error) {
+      console.error('Failed to save tool output guard preference:', error)
+      toast({
+        variant: 'destructive',
+        title: t('common:tool_output_guard.save_failed'),
+      })
+      setToolOutputGuardEnabled(user?.preferences?.tool_output_guard_enabled ?? false)
     } finally {
       setIsSaving(false)
     }
@@ -297,6 +348,58 @@ export default function NotificationSettings() {
           />
         </div>
       )}
+
+      <div className="p-4 bg-base border border-border rounded-lg space-y-4">
+        <div className="flex-1">
+          <h3 className="text-sm font-medium text-text-primary">
+            {t('common:chat_status.status_line_title')}
+          </h3>
+          <p className="text-xs text-text-muted mt-1">
+            {t('common:chat_status.status_line_description')}
+          </p>
+        </div>
+
+        <div className="pt-1">
+          <div className="text-xs font-medium text-text-primary mb-2">
+            {t('common:chat_status.items_title')}
+          </div>
+          <label
+            htmlFor="chat-status-context-remaining"
+            className="flex cursor-pointer items-center gap-3 rounded-lg border border-border px-3 py-2"
+          >
+            <Checkbox
+              id="chat-status-context-remaining"
+              checked={chatStatusItems.includes('context-remaining')}
+              onCheckedChange={checked => handleChatStatusItemToggle(Boolean(checked))}
+              disabled={isSaving}
+              data-testid="chat-status-context-remaining-checkbox"
+            />
+            <div>
+              <div className="text-sm text-text-primary">
+                {t('common:chat_status.context_remaining_label')}
+              </div>
+              <div className="text-xs text-text-muted">{t('common:chat_status.description')}</div>
+            </div>
+          </label>
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between p-4 bg-base border border-border rounded-lg">
+        <div className="flex-1">
+          <h3 className="text-sm font-medium text-text-primary">
+            {t('common:tool_output_guard.title')}
+          </h3>
+          <p className="text-xs text-text-muted mt-1">
+            {t('common:tool_output_guard.description')}
+          </p>
+        </div>
+        <Switch
+          checked={toolOutputGuardEnabled}
+          onCheckedChange={handleToolOutputGuardToggle}
+          disabled={isSaving}
+          data-testid="tool-output-guard-switch"
+        />
+      </div>
 
       {/* Restart Onboarding Button */}
       <div className="flex items-center justify-between p-4 bg-base border border-border rounded-lg">

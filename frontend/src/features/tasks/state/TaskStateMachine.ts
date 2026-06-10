@@ -27,6 +27,7 @@
  */
 
 import type { TaskDetail, TaskDetailSubtask, TaskStatus as ApiTaskStatus } from '@/types/api'
+import type { ContextMetricsSnapshot } from '@/types/socket'
 import type { MessageBlock } from '../components/message/thinking/types'
 import { mergeBlocksForDone, mergeStreamingBlocks } from './TaskStateMachine.blockMerging'
 import {
@@ -91,6 +92,7 @@ export interface UnifiedMessage {
     reasoning_content?: string
     reasoning_chunk?: string
     blocks?: MessageBlock[]
+    context_metrics?: ContextMetricsSnapshot
     /** Video generation config (stored in user message subtask for display) */
     video_config?: {
       model?: string
@@ -304,7 +306,6 @@ export interface TaskStateMachineDeps {
     error?: string
   }>
   leaveTask?: (taskId: number) => void
-  verifyRuntime?: (taskId: number) => Promise<TaskRuntimeVerifyResult>
   isConnected: () => boolean
 }
 
@@ -556,28 +557,16 @@ export class TaskStateMachine {
 
   async checkHealth(reason: TaskRecoveryReason): Promise<void> {
     if (!this.deps.isConnected()) return
-    const pullRuntime = this.deps.pullRuntime ?? this.deps.verifyRuntime
-    if (!pullRuntime) {
+    if (!this.deps.pullRuntime) {
       throw new Error('[TaskStateMachine] pullRuntime action is required for checkHealth().')
     }
 
-    const server = await pullRuntime(this.state.taskId)
+    const server = await this.deps.pullRuntime(this.state.taskId)
     if (!server) return
     await this.reconcileRuntime(server, reason)
   }
 
   async handleSocketConnected(reason: TaskRecoveryReason): Promise<void> {
-    if (this.state.status === 'waiting_socket') {
-      const recoveryReason =
-        this.pendingRecoveryReason ?? this.state.runtime.recoveryReason ?? reason
-      const recoveryOptions = this.pendingRecoveryOptions
-      this.pendingRecovery = false
-      this.pendingRecoveryReason = undefined
-      this.pendingRecoveryOptions = undefined
-      await this.recover({ force: true, reason: recoveryReason, ...recoveryOptions })
-      return
-    }
-
     await this.checkHealth(reason)
   }
 

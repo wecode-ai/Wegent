@@ -15,6 +15,7 @@ from typing import Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.core.constants import CLIENT_ORIGIN_FRONTEND, SUPPORTED_CLIENT_ORIGINS
+from shared.utils.git_util import get_safe_git_workspace_key
 
 
 class ProjectTaskBase(BaseModel):
@@ -35,6 +36,10 @@ class ProjectTaskResponse(BaseModel):
     task_id: int = Field(..., description="Task ID")
     task_title: str = Field(..., description="Task title")
     task_status: str = Field(..., description="Task status")
+    device_id: Optional[str] = Field(None, description="Device ID used for execution")
+    execution_workspace_source: Optional[str] = Field(
+        None, description="Task execution workspace source"
+    )
     is_group_chat: bool = Field(
         default=False, description="Whether the task is a group chat"
     )
@@ -142,6 +147,7 @@ class ProjectConfig(BaseModel):
     mode: Optional[Literal["workspace"]] = Field(
         None, description="Project mode. workspace means executable project."
     )
+    device_id: Optional[str] = Field(None, description="Legacy bound local device ID")
     execution: Optional[ProjectExecutionConfig] = None
     team: Optional[ProjectTeamConfig] = None
     workspace: Optional[ProjectWorkspaceConfig] = None
@@ -157,7 +163,12 @@ class ProjectConfig(BaseModel):
             return self
 
         if not self.execution:
-            raise ValueError("execution is required for workspace projects")
+            if not self.device_id:
+                raise ValueError("execution is required for workspace projects")
+            self.execution = ProjectExecutionConfig(
+                targetType="local",
+                deviceId=self.device_id,
+            )
 
         # workspace config is optional — when absent, the executor uses a default path
         if not self.workspace:
@@ -167,6 +178,13 @@ class ProjectConfig(BaseModel):
         if workspace.source == "git":
             if not self.git:
                 raise ValueError("git config is required when workspace.source is git")
+            if not workspace.checkoutPath:
+                workspace_key = get_safe_git_workspace_key(
+                    self.git.url,
+                    domain=self.git.domain,
+                    repo=self.git.repo,
+                )
+                workspace.checkoutPath = workspace_key
             if (
                 self.execution.targetType == "cloud"
                 and workspace.checkoutPath
@@ -224,6 +242,26 @@ class ProjectCreate(ProjectBase):
     pass
 
 
+class GitWorkspaceProjectCreate(BaseModel):
+    """Request model for creating a Git-backed workspace project."""
+
+    device_id: str = Field(..., min_length=1, description="Local device ID")
+    git: ProjectGitConfig = Field(..., description="Git repository configuration")
+    name: Optional[str] = Field(None, min_length=1, max_length=100)
+    description: str = Field(default="", description="Project description")
+    color: Optional[str] = Field(None, max_length=20)
+    client_origin: str = Field(default=CLIENT_ORIGIN_FRONTEND)
+
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def validate_client_origin(self) -> "GitWorkspaceProjectCreate":
+        """Validate project client origin."""
+        if self.client_origin not in SUPPORTED_CLIENT_ORIGINS:
+            raise ValueError("Unsupported client_origin")
+        return self
+
+
 class ProjectUpdate(BaseModel):
     """Request model for updating a project."""
 
@@ -266,6 +304,78 @@ class ProjectWithTasksResponse(ProjectResponse):
     tasks: list[ProjectTaskResponse] = Field(
         default_factory=list,
         description="Tasks in this project",
+    )
+
+
+class GitWorkspaceProjectResponse(BaseModel):
+    """Response model for Git-backed workspace creation."""
+
+    project: ProjectResponse
+    checkout_path: str = Field(..., description="Relative checkout path")
+    reused_existing_checkout: bool = Field(
+        default=False, description="Whether an existing checkout was reused"
+    )
+
+
+class ProjectWorktreeProjectRef(BaseModel):
+    """Matched project metadata for a scanned worktree directory."""
+
+    id: int = Field(..., description="Project ID")
+    name: str = Field(..., description="Project name")
+    source_path: str = Field(..., description="Configured project source path")
+
+
+class ProjectWorktreeTaskRef(BaseModel):
+    """Matched task metadata for a scanned worktree directory."""
+
+    id: int = Field(..., description="Task ID")
+    title: str = Field(..., description="Task title")
+    status: str = Field(..., description="Task status")
+    project_id: int = Field(..., description="Project ID")
+
+
+class ProjectWorktreeItem(BaseModel):
+    """One worktree directory discovered on a device."""
+
+    worktree_id: str = Field(..., description="Task ID worktree directory")
+    project_name: str = Field(..., description="Project directory name in the worktree")
+    path: str = Field(..., description="Absolute worktree path on the device")
+    project: Optional[ProjectWorktreeProjectRef] = Field(
+        None, description="Matched Wework project, if any"
+    )
+    task: Optional[ProjectWorktreeTaskRef] = Field(
+        None, description="Matched task using this worktree, if any"
+    )
+
+
+class ProjectWorktreeDeviceGroup(BaseModel):
+    """Worktree directories grouped by execution device."""
+
+    device_id: str = Field(..., description="Device ID")
+    device_name: str = Field(..., description="Device display name")
+    device_status: str = Field(..., description="Device status")
+    available: bool = Field(
+        True, description="Whether worktree directories were readable"
+    )
+    error: Optional[str] = Field(None, description="Read failure message")
+    items: list[ProjectWorktreeItem] = Field(default_factory=list)
+
+
+class ProjectWorktreeListResponse(BaseModel):
+    """Response model for Wework worktree settings."""
+
+    devices: list[ProjectWorktreeDeviceGroup] = Field(default_factory=list)
+    total: int = Field(..., description="Total discovered worktrees")
+
+
+class ProjectWorktreeDeleteResponse(BaseModel):
+    """Response model for deleting a project worktree."""
+
+    worktree_id: str = Field(..., description="Deleted task ID worktree directory")
+    path: str = Field(..., description="Deleted worktree path on the device")
+    deleted_task_ids: list[int] = Field(
+        default_factory=list,
+        description="Task IDs soft-deleted with this worktree",
     )
 
 

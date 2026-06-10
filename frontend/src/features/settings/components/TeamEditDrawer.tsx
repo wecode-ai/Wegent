@@ -88,13 +88,14 @@ function PromptEdit({
         allBotIds.unshift(String(leaderBotId))
       }
 
-      return allBotIds.map(botId => {
-        const botDetails = allBots.find(b => String(b.id) === String(botId))
-        const numericBotId = Number(botId)
+      return allBotIds.map(botKey => {
+        const botIdStr = String(botKey)
+        const botDetails = allBots.find(b => String(b.id) === botIdStr)
+        const numericBotId = Number(botIdStr)
         return {
           bot_id: numericBotId,
           bot_prompt: unsavedPrompts[`prompt-${numericBotId}`] || '',
-          name: botDetails?.name || `Bot ID: ${botId}`,
+          name: botDetails?.name || `Bot ID: ${botIdStr}`,
           isLeader: numericBotId === leaderBotId,
           basePrompt: botDetails?.system_prompt || '',
         }

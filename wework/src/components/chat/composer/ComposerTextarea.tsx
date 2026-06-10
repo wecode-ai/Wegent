@@ -14,6 +14,7 @@ interface ComposerTextareaProps {
   onChange: (value: string) => void
   onSubmit: () => void
   canSend: boolean
+  disabled?: boolean
   placeholder: string
   rows: number
   textareaRef: RefObject<HTMLTextAreaElement | null>
@@ -250,6 +251,7 @@ export function ComposerTextarea({
   onChange,
   onSubmit,
   canSend,
+  disabled = false,
   placeholder,
   rows,
   textareaRef,
@@ -273,6 +275,11 @@ export function ComposerTextarea({
     end: 0,
     focused: false,
   })
+  const [isComposing, setIsComposing] = useState(false)
+  const compositionJustEndedRef = useRef(false)
+  const compositionResetTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(
+    null,
+  )
   const [trigger, setTrigger] = useState<SkillTrigger | null>(null)
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [loading, setLoading] = useState(false)
@@ -452,6 +459,37 @@ export function ComposerTextarea({
     }
   }, [closeSkillMenu, showSkillMenu, textareaRef])
 
+  useEffect(() => {
+    return () => {
+      if (compositionResetTimerRef.current) {
+        window.clearTimeout(compositionResetTimerRef.current)
+      }
+    }
+  }, [])
+
+  const clearCompositionResetTimer = () => {
+    if (!compositionResetTimerRef.current) return
+
+    window.clearTimeout(compositionResetTimerRef.current)
+    compositionResetTimerRef.current = null
+  }
+
+  const handleCompositionStart = () => {
+    clearCompositionResetTimer()
+    setIsComposing(true)
+    compositionJustEndedRef.current = false
+  }
+
+  const handleCompositionEnd = () => {
+    setIsComposing(false)
+    compositionJustEndedRef.current = true
+    clearCompositionResetTimer()
+    compositionResetTimerRef.current = window.setTimeout(() => {
+      compositionJustEndedRef.current = false
+      compositionResetTimerRef.current = null
+    }, 100)
+  }
+
   const selectSkill = useCallback(
     (skill: LocalDeviceSkill) => {
       const textarea = textareaRef.current
@@ -500,6 +538,14 @@ export function ComposerTextarea({
   )
 
   const handleKeyDown: KeyboardEventHandler<HTMLTextAreaElement> = event => {
+    if (
+      isComposing ||
+      event.nativeEvent.isComposing ||
+      compositionJustEndedRef.current
+    ) {
+      return
+    }
+
     if (event.key === 'Backspace' || event.key === 'Delete') {
       const selectionStart = event.currentTarget.selectionStart
       const selectionEnd = event.currentTarget.selectionEnd
@@ -564,7 +610,7 @@ export function ComposerTextarea({
       }
     }
 
-    if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return
+    if (event.key !== 'Enter' || event.shiftKey) return
 
     event.preventDefault()
     if (canSend) onSubmit()
@@ -601,6 +647,7 @@ export function ComposerTextarea({
         rows={rows}
         value={value}
         onChange={event => {
+          if (disabled) return
           handleValueChange(event.target.value)
           window.requestAnimationFrame(() => {
             updateSkillTrigger()
@@ -619,11 +666,14 @@ export function ComposerTextarea({
         }}
         onKeyDown={handleKeyDown}
         onKeyUp={syncSelection}
+        onCompositionStart={handleCompositionStart}
+        onCompositionEnd={handleCompositionEnd}
         onSelect={() => {
           updateSkillTrigger()
           syncSelection()
         }}
         onPaste={handlePaste}
+        disabled={disabled}
         onFocus={syncSelection}
         onBlur={() => {
           setSelection(current => ({ ...current, focused: false }))

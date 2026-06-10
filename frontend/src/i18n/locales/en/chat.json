@@ -142,28 +142,6 @@
     "video_generation": "Video Generation"
   },
   "message_count": "messages",
-  "thinking": {
-    "tool_group": "Tool Group",
-    "tools": "tools",
-    "completed": "Completed",
-    "running": "Running",
-    "has_errors": "Has Errors",
-    "tool_input": "Input",
-    "tool_output": "Output",
-    "tool_error": "Error",
-    "tool_executing": "Executing...",
-    "tools": {
-      "bash": "Execute Command",
-      "read": "Read File",
-      "edit": "Edit File",
-      "write": "Write File",
-      "grep": "Search Code",
-      "glob": "Find Files",
-      "todo": "Update Tasks",
-      "kb_search": "Search Knowledge Base",
-      "web_search": "Web Search"
-    }
-  },
   "shared_task": {
     "share_task": "Share",
     "sharing": "Sharing...",
@@ -256,6 +234,7 @@
     "tool_input": "Input",
     "tool_output": "Output",
     "tool_executing": "Executing...",
+    "no_output": "No output",
     "downloadable": "Downloadable",
     "processing": "Processing...",
     "tools": {

@@ -34,7 +34,7 @@ export function useConsistencyWatcher({
   getMachine,
   refreshTasks,
 }: ConsistencyWatcherOptions): void {
-  const { isConnected } = useSocket()
+  const { isConnected, onReconnect } = useSocket()
   const isCheckingRef = useRef(false)
   const hasConnectedOnceRef = useRef(false)
   const wasConnectedRef = useRef(false)
@@ -86,7 +86,13 @@ export function useConsistencyWatcher({
     }
 
     wasConnectedRef.current = isConnected
-  }, [isConnected, verifyCurrentTask])
+  }, [getMachine, isConnected, verifyCurrentTask])
+
+  useEffect(() => {
+    return onReconnect(() => {
+      void verifyCurrentTask('websocket-reconnect')
+    })
+  }, [onReconnect, verifyCurrentTask])
 
   useEffect(() => {
     if (typeof window === 'undefined') return

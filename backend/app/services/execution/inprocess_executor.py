@@ -144,6 +144,18 @@ class EmitterBridgeTransport(EventTransport):
             self._offset += len(delta)
             return event
 
+        elif event_type == ResponsesAPIStreamEvents.STATUS_UPDATED.value:
+            return ExecutionEvent(
+                type=EventType.STATUS_UPDATED.value,
+                task_id=self.task_id,
+                subtask_id=self.subtask_id,
+                data={
+                    "phase": data.get("phase"),
+                    "context_metrics": data.get("context_metrics") or {},
+                },
+                message_id=message_id,
+            )
+
         # response.completed -> DONE
         elif event_type == ResponsesAPIStreamEvents.RESPONSE_COMPLETED.value:
             response_data = data.get("response", {})
@@ -165,6 +177,19 @@ class EmitterBridgeTransport(EventTransport):
                 task_id=self.task_id,
                 subtask_id=self.subtask_id,
                 data={"block": block},
+                message_id=message_id,
+            )
+
+        elif event_type == ResponsesAPIStreamEvents.BLOCK_UPDATED.value:
+            block_id = data.get("block_id")
+            updates = data.get("updates")
+            if not block_id or not isinstance(updates, dict):
+                return None
+            return ExecutionEvent(
+                type=EventType.BLOCK_UPDATED.value,
+                task_id=self.task_id,
+                subtask_id=self.subtask_id,
+                data={"block_id": str(block_id), "updates": updates},
                 message_id=message_id,
             )
 

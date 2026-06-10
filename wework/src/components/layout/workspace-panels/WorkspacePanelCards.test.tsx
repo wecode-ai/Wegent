@@ -4,9 +4,18 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { createDeviceApi } from '@/api/devices'
 import { createProjectApi } from '@/api/projects'
 import { WorkspacePanelCards } from './WorkspacePanelCards'
+import type { DeviceInfo } from '@/types/api'
 
 vi.mock('@/config/runtime', () => ({
-  getRuntimeConfig: () => ({ apiBaseUrl: '/api' }),
+  getRuntimeConfig: () => ({ appBasePath: '', apiBaseUrl: '/api' }),
+  joinAppPath: (basePath: string, path: string) => {
+    const normalizedBasePath = !basePath || basePath === '/' ? '' : basePath.replace(/\/+$/, '')
+    const normalizedPath = path.startsWith('/') ? path : `/${path}`
+
+    if (!normalizedBasePath) return normalizedPath
+    if (normalizedPath === '/') return `${normalizedBasePath}/`
+    return `${normalizedBasePath}${normalizedPath}`
+  },
 }))
 
 vi.mock('@/api/http', () => ({
@@ -42,6 +51,42 @@ const project = {
   tasks: [],
 }
 
+const cloudDevices: DeviceInfo[] = [
+  {
+    id: 1,
+    device_id: 'device-1',
+    name: 'Cloud Device',
+    status: 'online',
+    is_default: false,
+    device_type: 'cloud',
+    bind_shell: 'claudecode',
+  },
+]
+
+const localDevices: DeviceInfo[] = [
+  {
+    id: 2,
+    device_id: 'device-1',
+    name: 'Local Device',
+    status: 'online',
+    is_default: false,
+    device_type: 'local',
+    bind_shell: 'claudecode',
+  },
+]
+
+const openClawCloudDevices: DeviceInfo[] = [
+  {
+    id: 3,
+    device_id: 'device-1',
+    name: 'OpenClaw Device',
+    status: 'online',
+    is_default: false,
+    device_type: 'cloud',
+    bind_shell: 'openclaw',
+  },
+]
+
 describe('WorkspacePanelCards', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -76,7 +121,7 @@ describe('WorkspacePanelCards', () => {
   })
 
   test('renders terminal, IDE, and desktop project tools', () => {
-    render(<WorkspacePanelCards currentProject={project} />)
+    render(<WorkspacePanelCards currentProject={project} devices={cloudDevices} />)
 
     expect(screen.queryByTestId('workspace-browser-card')).not.toBeInTheDocument()
     expect(screen.getByTestId('workspace-terminal-card')).toHaveTextContent('终端')
@@ -86,7 +131,7 @@ describe('WorkspacePanelCards', () => {
 
   test('embeds the project terminal in the workspace panel', async () => {
     const api = createProjectApiMock()
-    render(<WorkspacePanelCards currentProject={project} />)
+    render(<WorkspacePanelCards currentProject={project} devices={cloudDevices} />)
 
     await userEvent.click(screen.getByTestId('workspace-terminal-card'))
 
@@ -95,69 +140,91 @@ describe('WorkspacePanelCards', () => {
     )
     expect(screen.getByTestId('workspace-terminal-frame')).toHaveAttribute(
       'src',
-      'http://localhost/terminal-1?embed=1',
+      'http://localhost/terminal-1',
     )
     expect(screen.getByTestId('workspace-terminal-window')).toHaveClass(
       'bg-white',
     )
     expect(screen.getByTestId('workspace-terminal-tab')).toHaveTextContent(
-      'device-1',
+      'project38',
     )
     expect(screen.getByTestId('workspace-terminal-new-tab-button')).toBeInTheDocument()
     expect(screen.getByTestId('workspace-terminal-close-button')).toBeInTheDocument()
     expect(screen.queryByText('/workspace/projects/project38')).not.toBeInTheDocument()
   })
 
-  test('creates and switches to a new project terminal tab', async () => {
+  test('shows project tool cards from the terminal plus button', async () => {
     const api = createProjectApiMock()
-    render(<WorkspacePanelCards currentProject={project} />)
+    render(<WorkspacePanelCards currentProject={project} devices={cloudDevices} />)
 
     await userEvent.click(screen.getByTestId('workspace-terminal-card'))
     await waitFor(() =>
       expect(screen.getByTestId('workspace-terminal-frame')).toHaveAttribute(
         'src',
-        'http://localhost/terminal-1?embed=1',
+        'http://localhost/terminal-1',
       ),
     )
 
     await userEvent.click(screen.getByTestId('workspace-terminal-new-tab-button'))
+
+    expect(screen.getByTestId('workspace-terminal-window')).not.toHaveAttribute('hidden')
+    expect(screen.getByTestId('workspace-terminal-frame')).toHaveAttribute(
+      'src',
+      'http://localhost/terminal-1',
+    )
+    expect(screen.getByTestId('workspace-tool-launcher')).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-terminal-card')).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-ide-card')).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-desktop-card')).toBeInTheDocument()
+    expect(api.startTerminalSession).toHaveBeenCalledTimes(1)
+
+    await userEvent.click(screen.getByTestId('workspace-terminal-card'))
 
     await waitFor(() =>
       expect(api.startTerminalSession).toHaveBeenCalledTimes(2),
     )
     expect(screen.getAllByTestId('workspace-terminal-tab')).toHaveLength(2)
     expect(screen.getAllByTestId('workspace-terminal-close-button')).toHaveLength(2)
-    expect(screen.getByTestId('workspace-terminal-frame')).toHaveAttribute(
+    const frames = screen.getAllByTestId('workspace-terminal-frame')
+    expect(frames).toHaveLength(2)
+    expect(frames[0]).toHaveAttribute(
       'src',
-      'http://localhost/terminal-2?embed=1',
+      'http://localhost/terminal-1',
     )
+    expect(frames[0]).toHaveAttribute('hidden')
+    expect(frames[1]).toHaveAttribute(
+      'src',
+      'http://localhost/terminal-2',
+    )
+    expect(frames[1]).not.toHaveAttribute('hidden')
 
     await userEvent.click(screen.getAllByTestId('workspace-terminal-close-button')[1])
 
     expect(screen.getAllByTestId('workspace-terminal-tab')).toHaveLength(1)
     expect(screen.getByTestId('workspace-terminal-frame')).toHaveAttribute(
       'src',
-      'http://localhost/terminal-1?embed=1',
+      'http://localhost/terminal-1',
     )
+    expect(screen.getByTestId('workspace-terminal-frame')).not.toHaveAttribute('hidden')
   })
 
-  test('opens the project IDE in a new page', async () => {
+  test('opens the project IDE in a new page without a preflight probe', async () => {
     const api = createProjectApiMock()
     const onRequestClose = vi.fn()
-    render(<WorkspacePanelCards currentProject={project} onRequestClose={onRequestClose} />)
+    render(
+      <WorkspacePanelCards
+        currentProject={project}
+        devices={cloudDevices}
+        onRequestClose={onRequestClose}
+      />,
+    )
 
     await userEvent.click(screen.getByTestId('workspace-ide-card'))
 
     await waitFor(() =>
       expect(api.startCodeServerSession).toHaveBeenCalledWith(7),
     )
-    expect(fetchMock).toHaveBeenCalledWith(
-      'http://localhost/ide?__wegent_probe=1',
-      expect.objectContaining({
-        credentials: 'omit',
-        method: 'GET',
-      }),
-    )
+    expect(fetchMock).not.toHaveBeenCalled()
     expect(window.open).toHaveBeenCalledWith(
       'http://localhost/ide',
       '_blank',
@@ -168,7 +235,13 @@ describe('WorkspacePanelCards', () => {
 
   test('opens the project desktop using the cloud device VNC page', async () => {
     const onRequestClose = vi.fn()
-    render(<WorkspacePanelCards currentProject={project} onRequestClose={onRequestClose} />)
+    render(
+      <WorkspacePanelCards
+        currentProject={project}
+        devices={cloudDevices}
+        onRequestClose={onRequestClose}
+      />,
+    )
 
     await userEvent.click(screen.getByTestId('workspace-desktop-card'))
 
@@ -188,12 +261,41 @@ describe('WorkspacePanelCards', () => {
     expect(onRequestClose).toHaveBeenCalledTimes(1)
   })
 
+  test('does not show cloud-only project tools for local devices', () => {
+    render(<WorkspacePanelCards currentProject={project} devices={localDevices} />)
+
+    expect(screen.queryByTestId('workspace-terminal-card')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('workspace-ide-card')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('workspace-desktop-card')).not.toBeInTheDocument()
+    expect(screen.getByTestId('workspace-local-device-limited-tools')).toHaveTextContent(
+      'workbench.local_device_limited_tools_title',
+    )
+  })
+
+  test('does not show ClaudeCode-only project tools for OpenClaw devices', () => {
+    render(<WorkspacePanelCards currentProject={project} devices={openClawCloudDevices} />)
+
+    expect(screen.queryByTestId('workspace-terminal-card')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('workspace-ide-card')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('workspace-desktop-card')).not.toBeInTheDocument()
+    expect(screen.getByTestId('workspace-local-device-limited-tools')).toBeInTheDocument()
+  })
+
+  test('does not show cloud-only project tools before the bound device type is known', () => {
+    render(<WorkspacePanelCards currentProject={project} devices={[]} />)
+
+    expect(screen.queryByTestId('workspace-terminal-card')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('workspace-ide-card')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('workspace-desktop-card')).not.toBeInTheDocument()
+    expect(screen.getByTestId('workspace-local-device-limited-tools')).toBeInTheDocument()
+  })
+
   test('marks terminal as unavailable when session probing fails', async () => {
     const api = createProjectApiMock()
     vi.mocked(api.startTerminalSession).mockRejectedValueOnce(
       new Error('terminal unavailable'),
     )
-    render(<WorkspacePanelCards currentProject={project} />)
+    render(<WorkspacePanelCards currentProject={project} devices={cloudDevices} />)
 
     await userEvent.click(screen.getByTestId('workspace-terminal-card'))
 
@@ -209,34 +311,36 @@ describe('WorkspacePanelCards', () => {
     expect(screen.getByTestId('workspace-desktop-card')).not.toBeDisabled()
   })
 
-  test('marks IDE as unavailable when session probing fails', async () => {
+  test('opens IDE even when browser preflight probing would be blocked', async () => {
     const api = createProjectApiMock()
-    vi.mocked(api.startCodeServerSession).mockRejectedValueOnce(
-      new Error('code-server unavailable'),
-    )
-    render(<WorkspacePanelCards currentProject={project} />)
+    fetchMock.mockRejectedValueOnce(new TypeError('Mixed content blocked'))
+    render(<WorkspacePanelCards currentProject={project} devices={cloudDevices} />)
 
     await userEvent.click(screen.getByTestId('workspace-ide-card'))
 
     await waitFor(() =>
-      expect(screen.getByTestId('workspace-ide-card')).toBeDisabled(),
+      expect(api.startCodeServerSession).toHaveBeenCalledWith(7),
     )
-    expect(screen.getByTestId('workspace-ide-card')).toHaveTextContent('暂不可用')
-    expect(window.open).not.toHaveBeenCalled()
-
-    await userEvent.click(screen.getByTestId('workspace-ide-card'))
-
+    expect(fetchMock).not.toHaveBeenCalled()
     expect(api.startCodeServerSession).toHaveBeenCalledTimes(1)
-    expect(screen.getByTestId('workspace-terminal-card')).not.toBeDisabled()
-    expect(screen.getByTestId('workspace-desktop-card')).not.toBeDisabled()
+    expect(window.open).toHaveBeenCalledWith(
+      'http://localhost/ide',
+      '_blank',
+      'noopener',
+    )
   })
 
   test('marks IDE as unavailable when the returned session URL is missing', async () => {
     const api = createProjectApiMock()
-    fetchMock.mockResolvedValueOnce(
-      new Response('Session not found', { status: 404 }),
-    )
-    render(<WorkspacePanelCards currentProject={project} />)
+    vi.mocked(api.startCodeServerSession).mockResolvedValueOnce({
+      session_id: 'ide-1',
+      project_id: 7,
+      device_id: 'device-1',
+      type: 'code_server',
+      path: '/workspace/projects/project38',
+      url: '',
+    })
+    render(<WorkspacePanelCards currentProject={project} devices={cloudDevices} />)
 
     await userEvent.click(screen.getByTestId('workspace-ide-card'))
 
@@ -245,12 +349,12 @@ describe('WorkspacePanelCards', () => {
     )
     expect(window.open).not.toHaveBeenCalled()
     expect(api.startCodeServerSession).toHaveBeenCalledTimes(1)
-    expect(screen.getByRole('alert')).toHaveTextContent('会话已失效，请重新打开工具')
+    expect(screen.getByRole('alert')).toHaveTextContent('启动失败')
   })
 
   test('marks desktop as unavailable when VNC probing fails', async () => {
     getVncConfigMock.mockRejectedValueOnce(new Error('vnc unavailable'))
-    render(<WorkspacePanelCards currentProject={project} />)
+    render(<WorkspacePanelCards currentProject={project} devices={cloudDevices} />)
 
     await userEvent.click(screen.getByTestId('workspace-desktop-card'))
 
@@ -277,7 +381,9 @@ describe('WorkspacePanelCards', () => {
       id: 8,
       name: 'project39',
     }
-    const { rerender } = render(<WorkspacePanelCards currentProject={project} />)
+    const { rerender } = render(
+      <WorkspacePanelCards currentProject={project} devices={cloudDevices} />,
+    )
 
     await userEvent.click(screen.getByTestId('workspace-terminal-card'))
 
@@ -285,7 +391,7 @@ describe('WorkspacePanelCards', () => {
       expect(screen.getByTestId('workspace-terminal-card')).toBeDisabled(),
     )
 
-    rerender(<WorkspacePanelCards currentProject={nextProject} />)
+    rerender(<WorkspacePanelCards currentProject={nextProject} devices={cloudDevices} />)
 
     expect(screen.getByTestId('workspace-terminal-card')).not.toBeDisabled()
     expect(screen.getByTestId('workspace-terminal-card')).not.toHaveTextContent(

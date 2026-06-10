@@ -23,6 +23,8 @@ from app.services.skill_service import SkillValidator
 
 logger = logging.getLogger(__name__)
 
+SKILL_BINARY_TYPE = ""
+
 
 class SkillKindsService:
     """Service for managing Skills in kinds table"""
@@ -336,12 +338,16 @@ class SkillKindsService:
                 skill_binary.binary_data = file_content
                 skill_binary.file_size = metadata["file_size"]
                 skill_binary.file_hash = metadata["file_hash"]
+                skill_binary.file_name = file_name
+                skill_binary.type = SKILL_BINARY_TYPE
             else:
                 skill_binary = SkillBinary(
                     kind_id=existing.id,
                     binary_data=file_content,
                     file_size=metadata["file_size"],
                     file_hash=metadata["file_hash"],
+                    type=SKILL_BINARY_TYPE,
+                    file_name=file_name,
                 )
                 db.add(skill_binary)
 
@@ -375,6 +381,8 @@ class SkillKindsService:
             binary_data=file_content,
             file_size=metadata["file_size"],
             file_hash=metadata["file_hash"],
+            type=SKILL_BINARY_TYPE,
+            file_name=file_name,
         )
         db.add(skill_binary)
 
@@ -466,6 +474,8 @@ class SkillKindsService:
                 binary_data=source_binary.binary_data,
                 file_size=source_binary.file_size,
                 file_hash=source_binary.file_hash,
+                type=source_binary.type or SKILL_BINARY_TYPE,
+                file_name=source_binary.file_name or "",
             )
             db.add(new_binary)
 
@@ -733,12 +743,16 @@ class SkillKindsService:
             skill_binary.binary_data = file_content
             skill_binary.file_size = metadata["file_size"]
             skill_binary.file_hash = metadata["file_hash"]
+            skill_binary.file_name = file_name
+            skill_binary.type = SKILL_BINARY_TYPE
         else:
             skill_binary = SkillBinary(
                 kind_id=skill_id,
                 binary_data=file_content,
                 file_size=metadata["file_size"],
                 file_hash=metadata["file_hash"],
+                type=SKILL_BINARY_TYPE,
+                file_name=file_name,
             )
             db.add(skill_binary)
 

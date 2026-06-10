@@ -5,6 +5,9 @@ import { createApiClient, ApiClient } from '../../utils/api-client'
 import { DataBuilders } from '../../fixtures/data-builders'
 import { ADMIN_USER, REGULAR_USER } from '../../config/test-users'
 
+const ADMIN_USERS_READY_SELECTOR =
+  'h2:has-text("User Management"), h2:has-text("用户管理"), button:has-text("Create User"), button:has-text("创建用户")'
+
 test.describe('Admin - User Management', () => {
   let adminPage: AdminPage
   let apiClient: ApiClient
@@ -23,6 +26,7 @@ test.describe('Admin - User Management', () => {
 
     // Navigate directly to admin page (already authenticated via global setup storageState)
     await adminPage.navigateToTab('users')
+    await expect(page.locator(ADMIN_USERS_READY_SELECTOR).first()).toBeVisible({ timeout: 30000 })
 
     // Dismiss any remaining dialogs (e.g., setup wizard if it still shows)
     const openDialog = page.locator('[role="dialog"][data-state="open"]')
@@ -70,13 +74,7 @@ test.describe('Admin - User Management', () => {
   test('should access admin user management page', async ({ page }) => {
     expect(adminPage.isOnAdminPage()).toBe(true)
 
-    // Should see user list or admin content - use more flexible selectors
-    const hasContent = await page
-      .locator('h2, h3, [data-testid="user-list"], table, .space-y-3')
-      .first()
-      .isVisible({ timeout: 10000 })
-      .catch(() => false)
-    expect(hasContent).toBe(true)
+    await expect(page.locator(ADMIN_USERS_READY_SELECTOR).first()).toBeVisible({ timeout: 30000 })
   })
 
   test('should display user list', async () => {

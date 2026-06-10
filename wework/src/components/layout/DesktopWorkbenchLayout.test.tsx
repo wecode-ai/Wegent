@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { createDeviceApi } from '@/api/devices'
 import { createQuotaApi } from '@/api/quota'
+import '@/i18n'
 import { DesktopWorkbenchLayout } from './DesktopWorkbenchLayout'
 
 function createRect({
@@ -30,7 +31,8 @@ function createRect({
 }
 
 vi.mock('@/config/runtime', () => ({
-  getRuntimeConfig: () => ({ apiBaseUrl: '/api' }),
+  getRuntimeConfig: () => ({ appBasePath: '', apiBaseUrl: '/api' }),
+  stripAppBasePath: (path: string) => path,
 }))
 
 vi.mock('@/api/http', () => ({
@@ -52,7 +54,10 @@ const fetchQuotaMock = vi.fn()
 describe('DesktopWorkbenchLayout', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    delete (window as typeof window & { __TAURI_INTERNALS__?: unknown })
+      .__TAURI_INTERNALS__
     localStorage.clear()
+    window.history.pushState({}, '', '/')
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
       value: {
@@ -164,13 +169,19 @@ describe('DesktopWorkbenchLayout', () => {
       projects: [{ id: 1, name: 'github_wegent', tasks: [] }],
       devices: [],
       currentProjectId: undefined,
+      currentStandaloneDeviceId: null,
+      executionMode: 'current_workspace',
+      executionModeLocked: false,
       onSelectProject: vi.fn(),
+      onSelectStandaloneDevice: vi.fn(),
+      onExecutionModeChange: vi.fn(),
     },
     onSelectProject: vi.fn(),
     onStartNewProjectChat: vi.fn(),
     onOpenTask: vi.fn(),
     onSearchTaskDetail: vi.fn(),
     onCreateProject: vi.fn(),
+    onCreateGitWorkspaceProject: vi.fn(),
     onUpdateProjectName: vi.fn(),
     onRemoveProject: vi.fn(),
     onArchiveAllChats: vi.fn(),
@@ -186,6 +197,8 @@ describe('DesktopWorkbenchLayout', () => {
     onGetProjectWorkspaceRoot: vi.fn().mockResolvedValue('/workspace/projects'),
     onListDeviceDirectories: vi.fn(),
     onCreateDeviceDirectory: vi.fn(),
+    onListGitRepositories: vi.fn().mockResolvedValue([]),
+    onListGitBranches: vi.fn().mockResolvedValue([]),
     onLoadEnvironmentInfo: vi.fn().mockResolvedValue({
       additions: '+173',
       deletions: '-13366',
@@ -208,6 +221,60 @@ describe('DesktopWorkbenchLayout', () => {
     onLogout: vi.fn(),
   }
 
+  function createCloudWorkspacePanelState() {
+    const workspaceDevice = {
+      id: 11,
+      device_id: 'workspace-cloud-device',
+      name: 'Workspace Cloud Device',
+      status: 'online' as const,
+      is_default: false,
+      device_type: 'cloud' as const,
+      bind_shell: 'claudecode',
+      executor_version: '1.8.5',
+    }
+    const workspaceProject = {
+      id: 12,
+      name: 'workspace-project',
+      tasks: [],
+      config: {
+        mode: 'workspace' as const,
+        execution: {
+          targetType: 'local' as const,
+          deviceId: workspaceDevice.device_id,
+        },
+        workspace: {
+          source: 'local_path' as const,
+          localPath: '/workspace/project',
+        },
+      },
+    }
+
+    return {
+      currentProject: workspaceProject,
+      projects: [workspaceProject],
+      devices: [workspaceDevice],
+    }
+  }
+
+  function renderWorkspacePanelLayout() {
+    const workspacePanelState = createCloudWorkspacePanelState()
+    return render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          ...workspacePanelState,
+        }}
+        projectWork={{
+          ...baseProps.projectWork,
+          projects: workspacePanelState.projects,
+          devices: workspacePanelState.devices,
+          currentProjectId: workspacePanelState.currentProject.id,
+        }}
+      />,
+    )
+  }
+
   test('renders projects, recent tasks, and empty prompt', () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
@@ -215,6 +282,8 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByText('github_wegent')).toBeInTheDocument()
     expect(screen.getByText('远程连接 Claude Code')).toBeInTheDocument()
     expect(screen.getByText('我们该做什么？')).toBeInTheDocument()
+    expect(screen.getByTestId('plugins-button')).toBeInTheDocument()
+    expect(screen.queryByTestId('automation-button')).not.toBeInTheDocument()
   })
 
   test('collapses and expands project and chat sections from the sidebar headers', async () => {
@@ -246,6 +315,51 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByText('远程连接 Claude Code')).toBeInTheDocument()
   })
 
+  test('persists expanded project rows and visible task limits after refresh', async () => {
+    const projectTasks = Array.from({ length: 6 }, (_, index) => ({
+      id: index + 10,
+      task_id: index + 10,
+      task_title: `hello chat ${index + 1}`,
+      status: 'SUCCESS',
+      created_at: `2026-06-0${index + 1}T00:00:00.000Z`,
+      updated_at: `2026-06-0${index + 1}T00:00:00.000Z`,
+    }))
+    const props = {
+      ...baseProps,
+      state: {
+        ...baseProps.state,
+        user: { id: 42, user_name: 'alice', email: 'a@b.c' },
+        projects: [{ id: 7, name: 'hello', tasks: projectTasks }],
+      },
+      projectWork: {
+        ...baseProps.projectWork,
+        projects: [{ id: 7, name: 'hello', tasks: projectTasks }],
+      },
+    }
+
+    const { unmount } = render(<DesktopWorkbenchLayout {...props} />)
+
+    await userEvent.click(screen.getByTestId('project-item-button'))
+    expect(screen.getByText('hello chat 6')).toBeInTheDocument()
+    expect(screen.queryByText('hello chat 1')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('project-task-limit-toggle-7'))
+    expect(screen.getByText('hello chat 1')).toBeInTheDocument()
+    expect(screen.getByTestId('project-task-limit-toggle-7')).toHaveTextContent('收起')
+
+    await userEvent.click(screen.getByTestId('chats-section-toggle'))
+    expect(screen.queryByText('远程连接 Claude Code')).not.toBeInTheDocument()
+
+    unmount()
+    render(<DesktopWorkbenchLayout {...props} />)
+
+    expect(screen.getByText('hello chat 1')).toBeInTheDocument()
+    expect(screen.getByText('hello chat 6')).toBeInTheDocument()
+    expect(screen.getByTestId('project-task-limit-toggle-7')).toHaveTextContent('收起')
+    expect(screen.getByTestId('chats-section-chevron-right')).toBeInTheDocument()
+    expect(screen.queryByText('远程连接 Claude Code')).not.toBeInTheDocument()
+  })
+
   test('renders project-specific empty prompt after selecting a project', () => {
     render(
       <DesktopWorkbenchLayout
@@ -269,6 +383,7 @@ describe('DesktopWorkbenchLayout', () => {
       'w-[min(58vw,62rem)]',
       'min-w-[32rem]',
       'max-w-[calc(100vw-4rem)]',
+      '-translate-y-12',
     )
   })
 
@@ -288,6 +403,9 @@ describe('DesktopWorkbenchLayout', () => {
       />,
     )
 
+    expect(screen.getByTestId('desktop-workbench-content')).toHaveClass(
+      'pt-[52px]',
+    )
     expect(screen.getByTestId('desktop-chat-scroll')).toHaveClass(
       'h-full',
       'overflow-y-auto',
@@ -410,16 +528,66 @@ describe('DesktopWorkbenchLayout', () => {
       />,
     )
 
+    expect(
+      screen
+        .getAllByTestId('macos-titlebar-drag-region')
+        .every((region) => region.hasAttribute('data-tauri-drag-region')),
+    ).toBe(true)
+    expect(screen.getByTestId('desktop-sidebar-topbar')).toHaveClass(
+      'h-[52px]',
+      'pl-2',
+    )
+    expect(screen.getByTestId('collapse-sidebar-button')).toHaveClass(
+      'h-7',
+      'w-7',
+      'rounded-lg',
+    )
+    expect(screen.getByTestId('desktop-window-controls')).toHaveClass('gap-3')
+    expect(screen.getByTestId('workbench-topbar-right-actions')).toHaveClass(
+      'gap-2',
+    )
+
     await userEvent.click(screen.getByTestId('collapse-sidebar-button'))
 
     expect(screen.queryByText('新对话')).not.toBeInTheDocument()
     expect(document.querySelector('aside')).not.toBeInTheDocument()
     expect(screen.getByTestId('expand-sidebar-button')).toBeInTheDocument()
+    expect(screen.getByTestId('workbench-topbar')).toHaveClass('h-[52px]')
+    expect(screen.getByTestId('workbench-topbar')).toHaveClass('pl-2')
+    expect(screen.getByTestId('workbench-topbar-left-actions')).toContainElement(
+      screen.getByTestId('desktop-window-controls'),
+    )
 
     await userEvent.click(screen.getByTestId('expand-sidebar-button'))
 
     expect(screen.getByText('新对话')).toBeInTheDocument()
     expect(document.querySelector('aside')).toBeInTheDocument()
+  })
+
+  test('reserves native macOS traffic light space in the Tauri title bar', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    expect(screen.getByTestId('desktop-sidebar-topbar')).toHaveClass(
+      'h-[52px]',
+    )
+    expect(screen.getByTestId('desktop-sidebar-topbar')).toHaveStyle({
+      paddingLeft: '89px',
+    })
+
+    await userEvent.click(screen.getByTestId('collapse-sidebar-button'))
+
+    expect(screen.getByTestId('workbench-topbar')).toHaveStyle({
+      paddingLeft: '89px',
+    })
+    expect(screen.getByTestId('expand-sidebar-button')).toHaveClass(
+      'h-7',
+      'w-7',
+    )
   })
 
   test('opens and filters the desktop search dialog from the sidebar', async () => {
@@ -667,7 +835,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(selectedRow).toHaveTextContent('项目会话 7')
     expect(selectedRow).toHaveClass('bg-[rgb(var(--color-sidebar-active))]')
-    expect(Element.prototype.scrollIntoView).toHaveBeenCalled()
+    await waitFor(() => expect(Element.prototype.scrollIntoView).toHaveBeenCalled())
   })
 
   test('opens the settings menu from the sidebar', async () => {
@@ -680,6 +848,15 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getAllByText('设置')).toHaveLength(2)
     expect(screen.getByText('剩余用量')).toBeInTheDocument()
     expect(screen.getByText('退出登录')).toBeInTheDocument()
+  })
+
+  test('opens settings page from the browser path on reload', () => {
+    window.history.pushState({}, '', '/settings')
+
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    expect(screen.getByTestId('wework-settings-page')).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: '我们该做什么？' })).not.toBeInTheDocument()
   })
 
   test('closes the settings menu when clicking outside it', async () => {
@@ -735,6 +912,8 @@ describe('DesktopWorkbenchLayout', () => {
               name: 'local-executor',
               status: 'online',
               is_default: true,
+              bind_shell: 'claudecode',
+              executor_version: '1.8.5',
             },
             {
               id: 2,
@@ -743,6 +922,8 @@ describe('DesktopWorkbenchLayout', () => {
               status: 'online',
               is_default: false,
               device_type: 'cloud',
+              bind_shell: 'claudecode',
+              executor_version: '1.8.5',
             },
           ],
         }}
@@ -784,6 +965,167 @@ describe('DesktopWorkbenchLayout', () => {
         }),
       ),
     )
+  })
+
+  test('opens Git project creation from the project create menu', async () => {
+    const onListGitRepositories = vi.fn().mockResolvedValue([
+      {
+        git_repo_id: 101,
+        name: 'Wegent',
+        git_repo: 'wecode-ai/Wegent',
+        git_url: 'https://github.com/wecode-ai/Wegent.git',
+        git_domain: 'github.com',
+        namespace: 'wecode-ai',
+        private: false,
+        type: 'github',
+      },
+    ])
+    const onListGitBranches = vi.fn().mockResolvedValue([
+      { name: 'main', default: true, protected: false },
+    ])
+    const onCreateGitWorkspaceProject = vi.fn().mockResolvedValue({
+      id: 9,
+      name: 'Wegent',
+      tasks: [],
+    })
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onListGitRepositories={onListGitRepositories}
+        onListGitBranches={onListGitBranches}
+        onCreateGitWorkspaceProject={onCreateGitWorkspaceProject}
+        state={{
+          ...baseProps.state,
+          devices: [
+            {
+              id: 1,
+              device_id: 'device-1',
+              name: 'executor',
+              status: 'online',
+              is_default: true,
+              bind_shell: 'claudecode',
+              executor_version: '1.8.5',
+            },
+          ],
+        }}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('projects-create-button'))
+    await userEvent.click(screen.getByTestId('project-clone-from-git-button'))
+
+    await waitFor(() => expect(onListGitRepositories).toHaveBeenCalledTimes(1))
+    await userEvent.click(screen.getByTestId('git-repository-select'))
+    await userEvent.click(screen.getByTestId('git-repository-select-option'))
+    await waitFor(() =>
+      expect(screen.getByTestId('git-branch-select')).toHaveTextContent('main（默认）'),
+    )
+    await userEvent.click(screen.getByTestId('create-project-button'))
+
+    await waitFor(() =>
+      expect(onCreateGitWorkspaceProject).toHaveBeenCalledWith(
+        expect.objectContaining({
+          device_id: 'device-1',
+          git: expect.objectContaining({
+            url: 'https://github.com/wecode-ai/Wegent.git',
+            branch: 'main',
+          }),
+        }),
+      ),
+    )
+  })
+
+  test('opens Git project dialog before device refresh completes', async () => {
+    let resolveRefreshDevices: (() => void) | undefined
+    let resolveRepositories: (() => void) | undefined
+    const onRefreshDevices = vi.fn(
+      () =>
+        new Promise<void>(resolve => {
+          resolveRefreshDevices = resolve
+        }),
+    )
+    const onListGitRepositories = vi.fn(
+      () =>
+        new Promise<[]>(resolve => {
+          resolveRepositories = () => resolve([])
+        }),
+    )
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onRefreshDevices={onRefreshDevices}
+        onListGitRepositories={onListGitRepositories}
+        state={{
+          ...baseProps.state,
+          devices: [
+            {
+              id: 1,
+              device_id: 'device-1',
+              name: 'executor',
+              status: 'online',
+              is_default: true,
+              bind_shell: 'claudecode',
+              executor_version: '1.8.5',
+            },
+          ],
+        }}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('projects-create-button'))
+    await userEvent.click(screen.getByTestId('project-clone-from-git-button'))
+
+    expect(screen.getByText('克隆 Git 仓库')).toBeInTheDocument()
+    expect(screen.getByTestId('git-repository-select')).toBeDisabled()
+    expect(screen.getByText('正在加载仓库...')).toBeInTheDocument()
+    expect(onRefreshDevices).toHaveBeenCalledTimes(1)
+
+    resolveRefreshDevices?.()
+    resolveRepositories?.()
+  })
+
+  test('enables device upgrade from the sidebar project create dialog', async () => {
+    const onUpgradeDevice = vi.fn().mockResolvedValue(undefined)
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onUpgradeDevice={onUpgradeDevice}
+        state={{
+          ...baseProps.state,
+          devices: [
+            {
+              id: 1,
+              device_id: 'old-device',
+              name: 'Old Device',
+              status: 'online',
+              is_default: false,
+              device_type: 'cloud',
+              bind_shell: 'claudecode',
+              executor_version: '1.8.4',
+              slot_used: 0,
+            },
+          ],
+        }}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('projects-create-button'))
+    await userEvent.click(screen.getByTestId('project-start-from-scratch-button'))
+
+    expect(screen.getByTestId('project-create-dialog')).toBeInTheDocument()
+    expect(screen.getByTestId('project-device-unavailable-old-device')).toHaveTextContent(
+      '当前 v1.8.4，需要 1.8.5 或以上',
+    )
+
+    const upgradeButton = screen.getByTestId('upgrade-project-device-old-device')
+    expect(upgradeButton).not.toBeDisabled()
+
+    await userEvent.click(upgradeButton)
+
+    expect(onUpgradeDevice).toHaveBeenCalledWith('old-device')
   })
 
   test('keeps project create menu open until clicking outside', async () => {
@@ -858,6 +1200,107 @@ describe('DesktopWorkbenchLayout', () => {
     expect(overlay).toHaveClass('fixed', 'inset-0')
   })
 
+  test('opens blank project dialog from the project work menu add option', async () => {
+    const onRefreshDevices = vi.fn().mockResolvedValue(undefined)
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onRefreshDevices={onRefreshDevices}
+        state={{
+          ...baseProps.state,
+          devices: [
+            {
+              id: 1,
+              device_id: 'device-1',
+              name: 'executor',
+              status: 'online',
+              is_default: true,
+            },
+          ],
+        }}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('project-work-button'))
+
+    const menu = screen.getByTestId('project-work-menu')
+    const addProjectOption = screen.getByTestId('add-project-option')
+    expect(
+      [...menu.querySelectorAll('button')].map(button => button.dataset.testid),
+    ).toEqual([
+      'project-option-1',
+      'add-project-option',
+      'no-project-option',
+    ])
+
+    await userEvent.click(addProjectOption)
+    expect(screen.getByTestId('create-project-submenu')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('project-start-from-scratch-option'))
+
+    expect(onRefreshDevices).toHaveBeenCalledTimes(1)
+    expect(screen.queryByTestId('project-work-menu')).not.toBeInTheDocument()
+    expect(screen.getByTestId('project-create-dialog')).toBeInTheDocument()
+    expect(screen.getByText('新建项目')).toBeInTheDocument()
+    expect(screen.getByTestId('project-name-input')).toBeInTheDocument()
+    expect(screen.getByTestId('create-project-button')).toHaveTextContent('创建项目')
+  })
+
+  test('opens connection settings cloud device creation from an empty sidebar project dialog', async () => {
+    const onRefreshDevices = vi.fn().mockResolvedValue(undefined)
+
+    render(<DesktopWorkbenchLayout {...baseProps} onRefreshDevices={onRefreshDevices} />)
+
+    await userEvent.click(screen.getByTestId('projects-create-button'))
+    await userEvent.click(screen.getByTestId('project-start-from-scratch-button'))
+
+    expect(screen.getByTestId('project-create-dialog')).toBeInTheDocument()
+    expect(screen.getByText('暂无可用设备')).toBeInTheDocument()
+
+    const settingsLink = screen.getByTestId('open-cloud-device-settings-link')
+    expect(settingsLink).toHaveAttribute('href', '/settings')
+
+    await userEvent.click(settingsLink)
+
+    expect(screen.queryByTestId('project-create-dialog')).not.toBeInTheDocument()
+    expect(screen.getByTestId('wework-settings-page')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '连接' })).toBeInTheDocument()
+    expect(screen.getByTestId('add-cloud-device-dialog')).toBeInTheDocument()
+  })
+
+  test('opens connection settings cloud device creation from an empty project dialog', async () => {
+    const onRefreshDevices = vi.fn().mockResolvedValue(undefined)
+    createDeviceApiMock.mockReturnValue({
+      getAllDevices: vi.fn().mockResolvedValue([]),
+      getMetrics: vi.fn(),
+      getMetricsHistory: vi.fn(),
+      getVncConfig: vi.fn(),
+      createCloudDevice: vi.fn(),
+      startTerminal: vi.fn(),
+      startCodeServer: vi.fn(),
+      renameDevice: vi.fn(),
+      restartCloudDevice: vi.fn(),
+      deleteCloudDevice: vi.fn(),
+      deleteDevice: vi.fn(),
+      getHomeDirectory: vi.fn().mockResolvedValue('/home/ubuntu'),
+      getProjectWorkspaceRoot: vi.fn().mockResolvedValue('/workspace/projects'),
+      listDirectories: vi.fn().mockResolvedValue([]),
+      executeCommand: vi.fn(),
+    })
+
+    render(<DesktopWorkbenchLayout {...baseProps} onRefreshDevices={onRefreshDevices} />)
+
+    await userEvent.click(screen.getByTestId('project-work-button'))
+    await userEvent.click(screen.getByTestId('add-project-option'))
+    await userEvent.click(screen.getByTestId('project-start-from-scratch-option'))
+    await userEvent.click(screen.getByTestId('open-cloud-device-settings-link'))
+
+    expect(screen.queryByTestId('project-create-dialog')).not.toBeInTheDocument()
+    expect(screen.getByTestId('wework-settings-page')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '连接' })).toBeInTheDocument()
+    expect(screen.getByTestId('add-cloud-device-dialog')).toBeInTheDocument()
+  })
+
   test('creates a project from an existing folder selected in the directory tree', async () => {
     const onCreateProject = vi.fn().mockResolvedValue({ id: 2, name: 'repo', tasks: [] })
     const onGetDeviceHomeDirectory = vi.fn().mockResolvedValue('/home/ubuntu')
@@ -878,6 +1321,8 @@ describe('DesktopWorkbenchLayout', () => {
               name: 'sifang-executor',
               status: 'online',
               is_default: true,
+              bind_shell: 'claudecode',
+              executor_version: '1.8.5',
             },
           ],
         }}
@@ -966,9 +1411,22 @@ describe('DesktopWorkbenchLayout', () => {
     expect(baseProps.onStartNewProjectChat).toHaveBeenCalledWith(1)
 
     await userEvent.click(screen.getByTestId('project-menu-1'))
+    expect(screen.getByTestId('project-menu-1-menu')).toHaveClass(
+      'bg-background',
+      'text-text-primary',
+      'border-border',
+    )
     expect(screen.getByTestId('rename-project-1')).toHaveTextContent('重命名项目')
+    expect(screen.getByTestId('rename-project-1')).toHaveClass(
+      'text-text-primary',
+      'hover:bg-muted',
+    )
     expect(screen.getByTestId('archive-project-chats-1')).toHaveTextContent('归档会话')
     expect(screen.getByTestId('remove-project-1')).toHaveTextContent('移除')
+    expect(screen.getByTestId('remove-project-1')).toHaveClass(
+      'text-red-500',
+      'hover:bg-red-500/10',
+    )
 
     await userEvent.click(screen.getByTestId('rename-project-1'))
     await userEvent.clear(screen.getByTestId('rename-project-input'))
@@ -979,17 +1437,35 @@ describe('DesktopWorkbenchLayout', () => {
     expect(await screen.findByText('Implement archive')).toBeInTheDocument()
     expect(screen.getByText('2h')).toBeInTheDocument()
     expect(screen.getByTestId('project-chat-time-11')).toHaveClass(
-      'group-hover/task:opacity-0',
+      'group-hover/task:invisible',
+      'group-focus-within/task:invisible',
+    )
+    expect(screen.getByTestId('project-chat-time-value-11')).toHaveClass(
+      'w-7',
+      'justify-center',
     )
     expect(screen.getByTestId('project-chat-actions-11')).toHaveClass(
       'absolute',
+      'invisible',
+      'justify-end',
       'opacity-0',
+      'group-hover/task:visible',
       'group-hover/task:opacity-100',
+      'group-focus-within/task:visible',
+    )
+    expect(screen.getByTestId('project-chat-menu-11')).not.toHaveClass(
+      'rounded-md',
+      'hover:bg-background',
     )
     expect(screen.getByTestId('project-chat-row-11')).toHaveClass(
       'bg-[rgb(var(--color-sidebar-active))]',
+      'pl-9',
     )
     await userEvent.click(screen.getByTestId('project-chat-button'))
+    expect(baseProps.onOpenTask).toHaveBeenCalledWith(11, 1)
+    baseProps.onOpenTask.mockClear()
+
+    await userEvent.click(screen.getByTestId('project-chat-time-11'))
     expect(baseProps.onOpenTask).toHaveBeenCalledWith(11, 1)
 
     await userEvent.click(screen.getByTestId('project-chat-menu-11'))
@@ -1006,6 +1482,19 @@ describe('DesktopWorkbenchLayout', () => {
         {...baseProps}
         state={{
           ...baseProps.state,
+          standaloneDeviceId: 'standalone-online',
+          devices: [
+            {
+              id: 1,
+              device_id: 'standalone-online',
+              name: 'Standalone Online',
+              status: 'online',
+              is_default: false,
+              device_type: 'cloud',
+              bind_shell: 'claudecode',
+              executor_version: '1.8.5',
+            },
+          ],
           recentTasks: [
             {
               id: 4,
@@ -1043,14 +1532,31 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByText('Project session')).not.toBeInTheDocument()
     expect(screen.getByText('1h')).toBeInTheDocument()
     expect(screen.getByTestId('history-task-time-5')).toHaveClass(
-      'group-hover/task:opacity-0',
+      'group-hover/task:invisible',
+      'group-focus-within/task:invisible',
+    )
+    expect(screen.getByTestId('history-task-time-value-5')).toHaveClass(
+      'w-7',
+      'justify-center',
     )
     expect(screen.getByTestId('history-task-actions-5')).toHaveClass(
       'absolute',
+      'invisible',
+      'justify-end',
       'opacity-0',
+      'group-hover/task:visible',
       'group-hover/task:opacity-100',
+      'group-focus-within/task:visible',
+    )
+    expect(screen.getByTestId('history-task-menu-5')).not.toHaveClass(
+      'rounded-md',
+      'hover:bg-background',
     )
     await userEvent.click(rows[0])
+    expect(baseProps.onOpenTask).toHaveBeenCalledWith(5, 0)
+    baseProps.onOpenTask.mockClear()
+
+    await userEvent.click(screen.getByTestId('history-task-time-5'))
     expect(baseProps.onOpenTask).toHaveBeenCalledWith(5, 0)
 
     await userEvent.click(screen.getByTestId('history-task-menu-5'))
@@ -1064,6 +1570,311 @@ describe('DesktopWorkbenchLayout', () => {
 
     await userEvent.click(screen.getByTestId('chats-new-conversation-button'))
     expect(baseProps.onStartStandaloneChat).toHaveBeenCalledTimes(1)
+  })
+
+  test('surfaces unavailable devices before starting sidebar chats', async () => {
+    const offlineDevice = {
+      id: 1,
+      device_id: 'offline-device',
+      name: 'Offline Device',
+      status: 'offline' as const,
+      is_default: false,
+      device_type: 'cloud' as const,
+      bind_shell: 'claudecode',
+      executor_version: '1.8.5',
+    }
+    const busyDevice = {
+      id: 2,
+      device_id: 'busy-device',
+      name: 'Busy Device',
+      status: 'busy' as const,
+      is_default: false,
+      device_type: 'cloud' as const,
+      bind_shell: 'claudecode',
+    }
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          standaloneDeviceId: 'offline-device',
+          devices: [offlineDevice, busyDevice],
+          projects: [
+            {
+              id: 7,
+              name: 'hello',
+              config: {
+                execution: {
+                  targetType: 'cloud',
+                  deviceId: 'offline-device',
+                },
+              },
+              tasks: [
+                {
+                  id: 71,
+                  task_id: 71,
+                  task_title: 'Continue busy chat',
+                  device_id: 'busy-device',
+                  execution_workspace_source: 'git_worktree',
+                  updated_at: new Date().toISOString(),
+                },
+              ],
+            },
+          ],
+          recentTasks: [
+            {
+              id: 81,
+              title: 'Standalone offline chat',
+              status: 'COMPLETED',
+              task_type: 'code',
+              device_id: 'offline-device',
+              execution_workspace_source: 'git_worktree',
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            },
+          ],
+        }}
+      />,
+    )
+
+    const projectRow = screen.getByTestId('project-row-7')
+    const projectDeviceStatus = within(projectRow).getByTestId('project-device-status-7')
+    expect(projectDeviceStatus).toHaveTextContent('离线')
+    expect(projectDeviceStatus).toHaveAttribute('title', 'Offline Device · 离线')
+    expect(projectDeviceStatus).toHaveClass(
+      'ml-auto',
+      'justify-end',
+      'text-right',
+      'group-hover/project:invisible',
+      'group-focus-within/project:invisible',
+    )
+    expect(projectRow).toHaveClass('relative')
+    expect(screen.getByTestId('project-menu-7').parentElement?.parentElement).toHaveClass(
+      'absolute',
+      'right-1',
+      'group-hover/project:visible',
+    )
+
+    const projectChatButton = within(projectRow).getByTestId(
+      'project-new-conversation-button',
+    )
+    expect(projectChatButton).toBeDisabled()
+    expect(projectChatButton).toHaveAttribute(
+      'title',
+      '设备离线，无法新建项目对话：Offline Device',
+    )
+
+    await userEvent.click(projectChatButton)
+    expect(baseProps.onStartNewProjectChat).not.toHaveBeenCalled()
+
+    await userEvent.click(within(projectRow).getByTestId('project-item-button'))
+    expect(screen.queryByTestId('project-chat-device-status-71')).not.toBeInTheDocument()
+    expect(screen.getByTestId('project-chat-git-worktree-icon-71')).toHaveAttribute(
+      'aria-label',
+      'Git worktree',
+    )
+
+    await userEvent.click(screen.getByTestId('project-chat-button'))
+    expect(baseProps.onOpenTask).toHaveBeenCalledWith(71, 7)
+
+    const historyDeviceStatus = screen.getByTestId('history-task-device-status-81')
+    expect(historyDeviceStatus).toHaveTextContent('离线')
+    expect(historyDeviceStatus).toHaveAttribute('title', 'Offline Device · 离线')
+    expect(screen.getByTestId('history-task-git-worktree-icon-81')).toHaveAttribute(
+      'aria-label',
+      'Git worktree',
+    )
+
+    await userEvent.click(screen.getByTestId('history-task-button'))
+    expect(baseProps.onOpenTask).toHaveBeenCalledWith(81, 0)
+
+    const standaloneButton = screen.getByTestId('chats-new-conversation-button')
+    expect(standaloneButton).toBeDisabled()
+    expect(standaloneButton).toHaveAttribute('title', '暂无在线设备，无法新建对话')
+    await userEvent.click(standaloneButton)
+    expect(baseProps.onStartStandaloneChat).not.toHaveBeenCalled()
+  })
+
+  test('hides project device status when the project device is online', () => {
+    const onlineDevice = {
+      id: 1,
+      device_id: 'online-device',
+      name: 'Online Device',
+      status: 'online' as const,
+      is_default: false,
+      device_type: 'cloud' as const,
+      bind_shell: 'claudecode',
+    }
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          devices: [onlineDevice],
+          projects: [
+            {
+              id: 7,
+              name: 'hello',
+              config: {
+                execution: {
+                  targetType: 'cloud',
+                  deviceId: 'online-device',
+                },
+              },
+              tasks: [],
+            },
+          ],
+        }}
+      />,
+    )
+
+    const projectRow = screen.getByTestId('project-row-7')
+    expect(
+      within(projectRow).queryByTestId('project-device-status-7'),
+    ).not.toBeInTheDocument()
+    expect(
+      within(projectRow).getByTestId('project-new-conversation-button'),
+    ).not.toBeDisabled()
+  })
+
+  test('keeps offline project conversations readable but locks the composer', async () => {
+    const offlineDevice = {
+      id: 1,
+      device_id: 'offline-device',
+      name: 'Offline Device',
+      status: 'offline' as const,
+      is_default: false,
+      device_type: 'cloud' as const,
+      bind_shell: 'claudecode',
+      executor_version: '1.8.5',
+    }
+    const project = {
+      id: 7,
+      name: 'hello',
+      config: {
+        execution: {
+          targetType: 'cloud' as const,
+          deviceId: 'offline-device',
+        },
+      },
+      tasks: [],
+    }
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          projects: [project],
+          devices: [offlineDevice],
+          currentProject: project,
+          currentTask: {
+            id: 71,
+            title: 'Offline chat',
+            status: 'COMPLETED',
+            task_type: 'code',
+            project_id: 7,
+            created_at: new Date().toISOString(),
+          },
+          input: 'hello offline',
+        }}
+        messages={[
+          {
+            id: 'message-1',
+            role: 'user',
+            content: 'hello',
+            status: 'done',
+            createdAt: new Date().toISOString(),
+          },
+        ]}
+        projectWork={{
+          ...baseProps.projectWork,
+          projects: [project],
+          devices: [offlineDevice],
+          currentProjectId: 7,
+        }}
+      />,
+    )
+
+    expect(screen.getByTestId('desktop-chat-scroll')).toHaveTextContent('hello')
+    expect(screen.queryByTestId('composer-disabled-reason')).not.toBeInTheDocument()
+    expect(screen.getByTestId('device-status-prompt')).toHaveTextContent(
+      'Offline Device 离线，恢复在线后可继续对话',
+    )
+    expect(screen.getByTestId('chat-message-input')).toBeDisabled()
+    expect(screen.getByTestId('send-message-button')).toBeDisabled()
+    expect(screen.getByTestId('add-context-button')).toBeDisabled()
+
+    await userEvent.click(screen.getByTestId('send-message-button'))
+    expect(baseProps.onSend).not.toHaveBeenCalled()
+  })
+
+  test('shows an external upgrade action for the active low-version device', async () => {
+    const onUpgradeDevice = vi.fn().mockResolvedValue(undefined)
+    const oldDevice = {
+      id: 1,
+      device_id: 'old-device',
+      name: 'Old Device',
+      status: 'online' as const,
+      is_default: false,
+      device_type: 'cloud' as const,
+      bind_shell: 'claudecode',
+      executor_version: '1.8.4',
+      slot_used: 0,
+    }
+    const compatibleDevice = {
+      id: 2,
+      device_id: 'compatible-device',
+      name: 'Compatible Device',
+      status: 'online' as const,
+      is_default: false,
+      device_type: 'cloud' as const,
+      bind_shell: 'claudecode',
+      executor_version: '1.8.5',
+    }
+    const project = {
+      id: 7,
+      name: 'hello',
+      config: {
+        execution: {
+          targetType: 'cloud' as const,
+          deviceId: 'old-device',
+        },
+      },
+      tasks: [],
+    }
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onUpgradeDevice={onUpgradeDevice}
+        state={{
+          ...baseProps.state,
+          projects: [project],
+          devices: [oldDevice, compatibleDevice],
+          currentProject: project,
+          input: 'hello old device',
+        }}
+        projectWork={{
+          ...baseProps.projectWork,
+          projects: [project],
+          devices: [oldDevice, compatibleDevice],
+          currentProjectId: 7,
+        }}
+      />,
+    )
+
+    expect(screen.queryByTestId('composer-disabled-reason')).not.toBeInTheDocument()
+    expect(screen.getByTestId('device-status-prompt')).toHaveTextContent(
+      'Old Device 版本低于 1.8.5，升级后可继续对话',
+    )
+    expect(screen.getByTestId('chat-message-input')).toBeDisabled()
+
+    await userEvent.click(screen.getByTestId('device-status-upgrade-button'))
+
+    expect(onUpgradeDevice).toHaveBeenCalledWith('old-device')
   })
 
   test('shows running spinners for project and standalone chats', () => {
@@ -1154,7 +1965,7 @@ describe('DesktopWorkbenchLayout', () => {
       'overflow-y-auto',
       'scrollbar-none',
     )
-    expect(screen.getByTestId('settings-button')).toHaveClass('shrink-0')
+    expect(screen.getByTestId('settings-button')).toHaveClass('shrink-0', 'w-full')
   })
 
   test('toggles an empty project chat list without selecting the project chat context', async () => {
@@ -1274,8 +2085,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByText('控制其他设备')).not.toBeInTheDocument()
     expect(screen.queryByText('SSH')).not.toBeInTheDocument()
     expect(screen.getByTestId('settings-nav-connections')).toBeInTheDocument()
-    expect(screen.getByTestId('settings-nav-projects')).toBeInTheDocument()
-    expect(screen.getByText('项目')).toBeInTheDocument()
+    expect(screen.queryByTestId('settings-nav-projects')).not.toBeInTheDocument()
     expect(screen.queryByTestId('settings-nav-general')).not.toBeInTheDocument()
     expect(screen.queryByText('Personal Devices')).not.toBeInTheDocument()
     expect(screen.queryByText('Linux-Device-481b616e8e0b')).not.toBeInTheDocument()
@@ -1322,7 +2132,7 @@ describe('DesktopWorkbenchLayout', () => {
   })
 
   test('opens and resizes the right workspace panel', async () => {
-    render(<DesktopWorkbenchLayout {...baseProps} />)
+    renderWorkspacePanelLayout()
 
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
 
@@ -1330,9 +2140,10 @@ describe('DesktopWorkbenchLayout', () => {
     expect(panel).toBeInTheDocument()
     expect(screen.getByTestId('toggle-right-workspace-panel-button')).toBeInTheDocument()
     expect(screen.getByTestId('toggle-bottom-workspace-panel-button')).toBeInTheDocument()
-    expect(screen.getByText('终端')).toBeInTheDocument()
-    expect(screen.getByText('IDE')).toBeInTheDocument()
-    expect(screen.getByText('桌面')).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-tool-launcher')).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-terminal-card')).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-ide-card')).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-desktop-card')).toBeInTheDocument()
 
     fireEvent.pointerDown(screen.getByTestId('right-workspace-resize-handle'), { clientX: 700 })
     fireEvent.pointerMove(document, { clientX: 640 })
@@ -1515,6 +2326,29 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('environment-branch-menu')).not.toBeInTheDocument()
   })
 
+  test('hides branch switching in the environment popover without a git branch', async () => {
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onLoadEnvironmentInfo={vi.fn().mockResolvedValue({
+          additions: '+0',
+          deletions: '-0',
+          executionTarget: 'local',
+          deviceId: 'device-1',
+          branchName: '',
+        })}
+        onListEnvironmentBranches={vi.fn().mockResolvedValue([])}
+        onCheckoutEnvironmentBranch={vi.fn().mockResolvedValue(undefined)}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('environment-info-button'))
+
+    await waitFor(() =>
+      expect(screen.queryByTestId('environment-branch-row')).not.toBeInTheDocument(),
+    )
+  })
+
   test('closes the branch menu when Escape is pressed', async () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
@@ -1692,7 +2526,10 @@ describe('DesktopWorkbenchLayout', () => {
       />,
     )
 
-    expect(onLoadEnvironmentInfo).not.toHaveBeenCalled()
+    await waitFor(() => {
+      expect(onLoadEnvironmentInfo).toHaveBeenCalledTimes(1)
+      expect(onLoadEnvironmentInfo).toHaveBeenCalledWith(workspaceProject)
+    })
 
     rerender(
       <DesktopWorkbenchLayout
@@ -1711,9 +2548,7 @@ describe('DesktopWorkbenchLayout', () => {
       />,
     )
 
-    await waitFor(() =>
-      expect(onLoadEnvironmentInfo).toHaveBeenCalledWith(workspaceProject),
-    )
+    await waitFor(() => expect(onLoadEnvironmentInfo).toHaveBeenCalledTimes(2))
   })
 
   test('closes the right workspace panel from the panel edge', async () => {
@@ -1729,7 +2564,7 @@ describe('DesktopWorkbenchLayout', () => {
   })
 
   test('opens and resizes the bottom workspace panel', async () => {
-    render(<DesktopWorkbenchLayout {...baseProps} />)
+    renderWorkspacePanelLayout()
 
     await userEvent.click(screen.getByTestId('toggle-bottom-workspace-panel-button'))
 
@@ -1737,9 +2572,10 @@ describe('DesktopWorkbenchLayout', () => {
     expect(panel).toBeInTheDocument()
     expect(screen.getByTestId('toggle-bottom-workspace-panel-button')).toBeInTheDocument()
     expect(screen.getByTestId('toggle-right-workspace-panel-button')).toBeInTheDocument()
-    expect(screen.getByText('终端')).toBeInTheDocument()
-    expect(screen.getByText('IDE')).toBeInTheDocument()
-    expect(screen.getByText('桌面')).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-tool-launcher')).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-terminal-card')).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-ide-card')).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-desktop-card')).toBeInTheDocument()
 
     fireEvent.pointerDown(screen.getByTestId('bottom-workspace-resize-handle'), { clientY: 700 })
     fireEvent.pointerMove(document, { clientY: 620 })

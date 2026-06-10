@@ -15,6 +15,8 @@ export interface UserPreferences {
   search_key?: 'cmd_k' | 'cmd_f' | 'disabled'
   quick_access?: QuickAccessConfig
   memory_enabled?: boolean
+  chat_status_items?: string[]
+  tool_output_guard_enabled?: boolean
   /** Default execution target: 'cloud' for cloud mode, or device_id for a specific device */
   default_execution_target?: string | null
 }
@@ -729,6 +731,18 @@ export interface QuickLaunchInputPreset {
   title: string
   prompt?: string | null
   options?: QuickLaunchInputOptions | null
+  source_attachment_ids?: number[]
+}
+
+export interface QuickLaunchPreparePresetRequest {
+  function_id: string
+  preset_id: string
+}
+
+export interface QuickLaunchPreparePresetResponse {
+  function_id: string
+  preset_id: string
+  attachments: Attachment[]
 }
 
 // Welcome Config Types (Slogan & Tips)

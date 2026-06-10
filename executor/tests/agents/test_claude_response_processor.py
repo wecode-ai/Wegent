@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from claude_agent_sdk.types import (
     AssistantMessage,
+    ResultMessage,
     StreamEvent,
     TextBlock,
     ToolUseBlock,
@@ -11,11 +12,24 @@ from claude_agent_sdk.types import (
 from executor.agents.claude_code.response_processor import (
     _handle_assistant_message,
     _handle_stream_event,
+    _process_result_message,
 )
+from executor.tasks.task_state_manager import TaskState, TaskStateManager
+from shared.status import TaskStatus
 
 
 class DummyStateManager:
+    def __init__(self, task_id=1):
+        self.task_data = MagicMock(task_id=task_id)
+        self.statuses = []
+
     def update_workbench_summary(self, *_args, **_kwargs):
+        pass
+
+    def set_task_status(self, status):
+        self.statuses.append(status)
+
+    def report_progress(self, *_args, **_kwargs):
         pass
 
 
@@ -126,3 +140,35 @@ async def test_assistant_message_emits_empty_tool_input_as_dict():
         name="Write",
         arguments={},
     )
+
+
+@pytest.mark.asyncio
+async def test_cancelled_task_takes_precedence_over_error_result_message():
+    task_id = 99101
+    task_state_manager = TaskStateManager()
+    task_state_manager.set_state(task_id, TaskState.CANCELLED)
+    state_manager = DummyStateManager(task_id=task_id)
+    emitter = MagicMock()
+
+    message = ResultMessage(
+        subtype="error_during_execution",
+        duration_ms=1,
+        duration_api_ms=1,
+        is_error=True,
+        num_turns=1,
+        session_id="session-1",
+        result="Request interrupted",
+    )
+
+    try:
+        result = await _process_result_message(
+            msg=message,
+            emitter=emitter,
+            state_manager=state_manager,
+            task_state_manager=task_state_manager,
+        )
+    finally:
+        task_state_manager.cleanup(task_id)
+
+    assert result == TaskStatus.CANCELLED
+    assert state_manager.statuses == [TaskStatus.CANCELLED.value]

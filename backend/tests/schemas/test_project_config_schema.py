@@ -28,6 +28,24 @@ def test_workspace_project_git_config_accepts_cloud_relative_checkout_path():
     assert config.workspace.checkoutPath == "projects/demo"
 
 
+def test_workspace_project_git_config_defaults_checkout_path_to_safe_repo_key():
+    config = ProjectConfig.model_validate(
+        {
+            "mode": "workspace",
+            "execution": {"targetType": "local", "deviceId": "device-1"},
+            "workspace": {"source": "git"},
+            "git": {
+                "url": "https://github.com/wecode-ai/Wegent.git",
+                "repo": "wecode-ai/Wegent",
+                "domain": "github.com",
+                "branch": "main",
+            },
+        }
+    )
+
+    assert config.workspace.checkoutPath == "Wegent"
+
+
 def test_workspace_project_rejects_cloud_absolute_checkout_path():
     with pytest.raises(ValidationError):
         ProjectConfig.model_validate(

@@ -428,6 +428,14 @@ check_docker_installed() {
     return 1
 }
 
+# Check if Docker daemon is reachable
+check_docker_ready() {
+    if docker info &> /dev/null; then
+        return 0
+    fi
+    return 1
+}
+
 # Show docker installation instructions
 show_docker_install_instructions() {
     echo -e "${RED}Error: Docker is not installed or not running.${NC}"
@@ -461,10 +469,82 @@ show_docker_install_instructions() {
     exit 1
 }
 
+# Show Docker daemon troubleshooting instructions
+show_docker_ready_instructions() {
+    echo -e "${RED}Error: Docker is installed, but the Docker daemon is not reachable.${NC}"
+    echo ""
+    echo -e "${YELLOW}Please ensure Docker is running and your user can access it.${NC}"
+    echo ""
+    echo -e "  ${GREEN}Linux: start Docker${NC}"
+    echo -e "    ${BLUE}sudo systemctl enable --now docker${NC}"
+    echo ""
+    echo -e "  ${GREEN}Linux: allow current user to access Docker${NC}"
+    echo -e "    ${BLUE}sudo usermod -aG docker \$USER${NC}"
+    echo -e "    ${BLUE}newgrp docker${NC}"
+    echo ""
+    echo -e "  ${GREEN}macOS / Windows:${NC}"
+    echo -e "    ${BLUE}Start Docker Desktop and wait until it is ready.${NC}"
+    echo ""
+    echo -e "${YELLOW}Then re-run this script.${NC}"
+    echo ""
+    exit 1
+}
+
+# Detect Docker Compose command
+detect_docker_compose() {
+    if docker compose version &> /dev/null; then
+        DOCKER_COMPOSE_CMD="docker compose"
+        return 0
+    fi
+
+    if command -v docker-compose &> /dev/null && docker-compose version &> /dev/null; then
+        DOCKER_COMPOSE_CMD="docker-compose"
+        return 0
+    fi
+
+    return 1
+}
+
+# Run Docker Compose with the detected command
+run_docker_compose() {
+    if [ -z "$DOCKER_COMPOSE_CMD" ]; then
+        detect_docker_compose || return 127
+    fi
+
+    # DOCKER_COMPOSE_CMD intentionally contains either "docker compose" or "docker-compose".
+    # shellcheck disable=SC2086
+    $DOCKER_COMPOSE_CMD "$@"
+}
+
+# Show Docker Compose installation instructions
+show_docker_compose_install_instructions() {
+    echo -e "${RED}Error: Docker Compose is not installed.${NC}"
+    echo ""
+    echo -e "${YELLOW}Docker Compose is required to start MySQL and Redis from docker-compose.yml.${NC}"
+    echo -e "${YELLOW}Install the Compose plugin, then re-run this script.${NC}"
+    echo ""
+    echo -e "  ${GREEN}Ubuntu / Debian using Docker official packages:${NC}"
+    echo -e "    ${BLUE}sudo apt update${NC}"
+    echo -e "    ${BLUE}sudo apt install -y docker-compose-plugin${NC}"
+    echo ""
+    echo -e "  ${GREEN}Ubuntu / Debian using distro Docker packages:${NC}"
+    echo -e "    ${BLUE}sudo apt update${NC}"
+    echo -e "    ${BLUE}sudo apt install -y docker-compose-v2${NC}"
+    echo ""
+    echo -e "  ${GREEN}macOS / Windows:${NC}"
+    echo -e "    ${BLUE}Docker Desktop includes Docker Compose.${NC}"
+    echo ""
+    exit 1
+}
+
 # Check if MySQL and Redis are running
 check_mysql_redis() {
     local mysql_running=false
     local redis_running=false
+
+    if [ -z "$DOCKER_COMPOSE_CMD" ] && ! detect_docker_compose; then
+        show_docker_compose_install_instructions
+    fi
 
     # Check if MySQL container is running
     if docker ps --format '{{.Names}}' | grep -q "^wegent-mysql$"; then
@@ -482,9 +562,9 @@ check_mysql_redis() {
     fi
 
     # Start MySQL and Redis if not running
-    echo -e "${YELLOW}MySQL or Redis is not running. Starting them with docker-compose...${NC}"
+    echo -e "${YELLOW}MySQL or Redis is not running. Starting them with $DOCKER_COMPOSE_CMD...${NC}"
     
-    if ! docker compose up -d mysql redis; then
+    if ! run_docker_compose up -d mysql redis; then
         echo -e "${RED}Error: Failed to start MySQL and Redis${NC}"
         echo -e "${YELLOW}Please check docker-compose.yml and ensure Docker is running${NC}"
         exit 1
@@ -837,6 +917,7 @@ WEGENT_SOCKET_URL=""
 TASK_API_DOMAIN=""
 EXECUTOR_MANAGER_URL=""
 KNOWLEDGE_RUNTIME_URL=""
+DOCKER_COMPOSE_CMD=""
 
 # PID file directory
 PID_DIR="$SCRIPT_DIR/.pids"
@@ -1000,7 +1081,7 @@ Options:
   --socket-url URL              Socket direct url (auto-computed from BACKEND_PORT)
   --clean-frontend-cache        Remove frontend .next cache before starting frontend
   --init                        Interactive configuration initialization
-  --stop [services...]          Stop tracked services by default. Can specify multiple:
+  --stop [services...]          Stop all known service ports by default. Can specify multiple:
                                 $(valid_service_names)
   -g, --graceful                Use graceful shutdown with stop/restart (SIGTERM, wait 30s, then SIGKILL)
   --restart [services...]       Restart services (default: all)
@@ -1045,7 +1126,7 @@ Examples:
   $0 -p 8080                            # Specify frontend port as 8080
   $0 -e my-executor:latest              # Specify custom executor image
   $0 --socket-url http://192.168.1.100:8000  # Specify socket URL with your IP
-  $0 --stop                             # Stop services tracked by .pids (force kill)
+  $0 --stop                             # Stop all known service ports (force kill)
   $0 --stop all                         # Stop all known services (force kill)
   $0 --stop backend frontend            # Stop only backend and frontend
   $0 --stop be cs kr                    # Stop backend, chat_shell, knowledge_runtime (short names)
@@ -1466,23 +1547,16 @@ stop_services() {
         all_ports+=("$(get_runtime_service_port "$service")")
     done
 
-    local tracked_services=()
-    local tracked_service
-    for tracked_service in $(get_tracked_services); do
-        [ -n "$tracked_service" ] || continue
-        tracked_services+=("$tracked_service")
-    done
-
     # Determine which services to stop
     local services=()
     local service_ports=()
 
     if [ $# -eq 0 ]; then
-        # No specific services provided, stop only services this script tracks.
-        services=("${tracked_services[@]}")
-        for service in "${services[@]}"; do
-            service_ports+=("$(get_runtime_service_port "$service")")
-        done
+        # No specific services provided: stop every known service port.
+        # PID files can be missing when a process was orphaned or started by a
+        # previous shell, so default stop must not depend on .pids alone.
+        services=("${all_services[@]}")
+        service_ports=("${all_ports[@]}")
     else
         # Parse specified services
         for svc in "$@"; do
@@ -1905,6 +1979,17 @@ start_services() {
     fi
     local docker_version=$(docker --version | awk '{print $3}' | tr -d ',')
     echo -e "  ${GREEN}✓${NC} docker detected: $docker_version"
+
+    if ! check_docker_ready; then
+        show_docker_ready_instructions
+    fi
+    echo -e "  ${GREEN}✓${NC} Docker daemon is reachable"
+
+    if ! detect_docker_compose; then
+        show_docker_compose_install_instructions
+    fi
+    local compose_version=$($DOCKER_COMPOSE_CMD version 2>&1 | head -n 1)
+    echo -e "  ${GREEN}✓${NC} Docker Compose detected: $compose_version"
 
     # Check and start MySQL and Redis if needed
     check_mysql_redis

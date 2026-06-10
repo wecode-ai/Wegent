@@ -111,3 +111,32 @@ async def test_thinking_blocks_are_split_by_text_boundaries():
     assert blocks[1]["content"] == "Answer."
     assert blocks[2]["content"] == "Second thought."
     assert [block["status"] for block in blocks] == ["done", "done", "done"]
+    assert blocks[0]["timestamp"] > 1_000_000_000_000
+    assert blocks[2]["timestamp"] > 1_000_000_000_000
+
+
+@pytest.mark.asyncio
+async def test_add_block_fills_wall_clock_epoch_timestamp():
+    """Blocks without a timestamp must get a valid epoch-ms value.
+
+    Regression: the fallback previously used the event loop's monotonic clock,
+    producing a small non-epoch number that clients reject as invalid, which
+    collapsed the rendered turn duration to 0s after a refresh.
+    """
+    manager = SessionManager()
+    redis_client = FakeRedisClient()
+    manager._cache = FakeCache(redis_client)
+
+    await manager.add_block(
+        subtask_id=404,
+        block={"type": "tool", "tool_name": "Bash"},
+    )
+
+    blocks = await manager.get_blocks(404)
+
+    assert len(blocks) == 1
+    # A real wall-clock epoch in milliseconds is always greater than 1e12.
+    assert blocks[0]["timestamp"] > 1_000_000_000_000
+    # An auto-generated id must also be derived from wall-clock time.
+    assert blocks[0]["id"].startswith("block-")
+    assert int(blocks[0]["id"].removeprefix("block-")) > 1_000_000_000_000

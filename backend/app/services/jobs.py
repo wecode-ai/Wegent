@@ -20,7 +20,7 @@ from datetime import datetime
 from app.core.cache import cache_manager
 from app.core.config import settings
 from app.core.distributed_lock import distributed_lock
-from app.db.session import AsyncSessionLocal, SessionLocal
+from app.db.session import AsyncSessionLocal
 from app.services.adapters.executor_job import job_service
 from app.services.executor_cleanup_cursor_service import EXECUTOR_CLEANUP_CURSOR_KEY
 from app.services.repository_job import repository_job_service
@@ -159,14 +159,10 @@ def repo_update_worker(stop_event: threading.Event):
                 try:
                     logger.info("[job] Starting repository cache update task")
 
-                    db = SessionLocal()
-                    try:
-                        # Run the repository update job asynchronously
-                        loop.run_until_complete(
-                            repository_job_service.update_repositories_for_all_users(db)
-                        )
-                    finally:
-                        db.close()
+                    # Run the repository update job asynchronously
+                    loop.run_until_complete(
+                        repository_job_service.update_repositories_for_all_users()
+                    )
 
                     logger.info(
                         "[job] Repository cache update task execution completed"

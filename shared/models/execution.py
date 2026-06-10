@@ -41,6 +41,8 @@ class EventType(str, Enum):
     TOOL_ARGUMENT_DONE = "tool_argument_done"
     TOOL_RESULT = "tool_result"
     BLOCK_CREATED = "block_created"
+    BLOCK_UPDATED = "block_updated"
+    STATUS_UPDATED = "status_updated"
     PROGRESS = "progress"
     DONE = "done"
     ERROR = "error"
@@ -98,6 +100,7 @@ class ExecutionRequest:
     enable_web_search: bool = False
     enable_clarification: bool = False
     enable_deep_thinking: bool = True
+    enable_tool_output_guard: bool = False
     search_engine: Optional[str] = None  # From ChatRequest
 
     # === Skill Configuration ===

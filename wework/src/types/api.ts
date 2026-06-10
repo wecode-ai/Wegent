@@ -16,6 +16,8 @@ export interface UserPreferences {
   } | null
   default_execution_target?: string | null
   wework_new_chat_model_selection?: ModelSelectionConfig | null
+  wework_project_execution_mode?: ProjectExecutionMode | null
+  runtime_configs?: Record<string, { use_user_config?: boolean }> | null
 }
 
 export interface Team {
@@ -39,6 +41,31 @@ export interface ProjectWorkspaceConfig {
   checkoutPath?: string
 }
 
+export interface ProjectGitConfig {
+  url: string
+  repo?: string | null
+  repoId?: number | null
+  domain?: string | null
+  branch?: string | null
+}
+
+export interface GitRepoInfo {
+  git_repo_id: number
+  name: string
+  git_repo: string
+  git_url: string
+  namespace: string
+  private: boolean
+  git_domain: string
+  type: 'github' | 'gitlab' | 'gitee' | 'gitea' | 'gerrit' | string
+}
+
+export interface GitBranch {
+  name: string
+  protected?: boolean
+  default?: boolean
+}
+
 export type ModelType = 'public' | 'user' | 'group'
 
 export interface ModelSelectionConfig {
@@ -53,6 +80,7 @@ export interface ProjectConfig {
   device_id?: string
   execution?: ProjectExecutionConfig | null
   workspace?: ProjectWorkspaceConfig | null
+  git?: ProjectGitConfig | null
   modelSelection?: ModelSelectionConfig | null
 }
 
@@ -63,7 +91,23 @@ export interface DeviceInfo {
   status: 'online' | 'offline' | 'busy'
   is_default: boolean
   device_type?: 'local' | 'cloud' | string
+  capabilities?: string[] | null
+  slot_used?: number
+  slot_max?: number
+  running_tasks?: DeviceRunningTask[]
+  running_task_ids?: number[]
+  executor_version?: string | null
+  latest_version?: string | null
+  update_available?: boolean
   bind_shell?: 'claudecode' | 'openclaw' | string
+}
+
+export interface DeviceRunningTask {
+  task_id?: number
+  subtask_id?: number
+  title?: string
+  status?: string
+  created_at?: string
 }
 
 export interface ProjectTask {
@@ -73,6 +117,8 @@ export interface ProjectTask {
   task_status?: string
   title?: string
   status?: string
+  device_id?: string | null
+  execution_workspace_source?: string | null
   created_at?: string
   updated_at?: string
   task_type?: string
@@ -88,6 +134,8 @@ export interface ProjectWithTasks {
   tasks?: ProjectTask[]
 }
 
+export type ProjectExecutionMode = 'current_workspace' | 'git_worktree'
+
 export interface ProjectListResponse {
   total?: number
   items: ProjectWithTasks[]
@@ -99,6 +147,68 @@ export interface CreateProjectRequest {
   color?: string
   client_origin?: string
   config?: ProjectConfig
+}
+
+export interface CreateGitWorkspaceProjectRequest {
+  device_id: string
+  name?: string
+  description?: string
+  color?: string
+  client_origin?: string
+  git: ProjectGitConfig
+}
+
+export interface CreateGitWorkspaceProjectResponse {
+  project: ProjectWithTasks
+  checkout_path: string
+  reused_existing_checkout: boolean
+}
+
+export interface ProjectWorktreeProjectRef {
+  id: number
+  name: string
+  source_path: string
+}
+
+export interface ProjectWorktreeTaskRef {
+  id: number
+  title: string
+  status: string
+  project_id: number
+}
+
+export interface ProjectWorktreeItem {
+  worktree_id: string
+  project_name: string
+  path: string
+  project?: ProjectWorktreeProjectRef | null
+  task?: ProjectWorktreeTaskRef | null
+}
+
+export interface ProjectWorktreeDeviceGroup {
+  device_id: string
+  device_name: string
+  device_status: 'online' | 'offline' | 'busy' | string
+  available: boolean
+  error?: string | null
+  items: ProjectWorktreeItem[]
+}
+
+export interface ProjectWorktreeListResponse {
+  devices: ProjectWorktreeDeviceGroup[]
+  total: number
+}
+
+export interface DeleteProjectWorktreeRequest {
+  device_id: string
+  worktree_id: string
+  project_id: number
+}
+
+export interface DeleteProjectWorktreeResponse {
+  worktree_id: string
+  path: string
+  deleted_task_ids: number[]
 }
 
 export interface UpdateProjectRequest {
@@ -117,6 +227,7 @@ export interface Task {
   project_id?: number
   client_origin?: string
   device_id?: string | null
+  execution_workspace_source?: string | null
   created_at: string
   updated_at?: string
   is_group_chat?: boolean
@@ -259,6 +370,11 @@ export interface ChatSendPayload {
   model_options?: ModelOptions
   attachment_ids?: number[]
   additional_skills?: SkillRef[]
+  execution?: {
+    workspace?: {
+      source: 'git_worktree'
+    }
+  }
 }
 
 export interface ChatSendAck {
@@ -301,18 +417,26 @@ export interface ChatStartPayload {
   message_id?: number
 }
 
+export type ChatResultPayload = Record<string, unknown> & {
+  value?: string
+  error?: string
+  reasoning_chunk?: string
+  blocks?: ChatBlock[]
+}
+
 export interface ChatChunkPayload {
   task_id?: number
   subtask_id: number
   content: string
   offset: number
+  result?: ChatResultPayload
 }
 
 export interface ChatDonePayload {
   task_id?: number
   subtask_id: number
   offset: number
-  result: Record<string, unknown> & { value?: string; error?: string }
+  result: ChatResultPayload
   message_id?: number
 }
 
@@ -328,6 +452,7 @@ export interface TaskJoinResponse {
     subtask_id: number
     offset: number
     cached_content: string
+    blocks?: ChatBlock[]
   }
   subtasks?: Array<Record<string, unknown>>
   error?: string

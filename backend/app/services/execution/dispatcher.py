@@ -173,6 +173,7 @@ def extract_completed_result(response_data: dict) -> dict:
         "loaded_skills": response_data.get("loaded_skills"),
         "stop_reason": response_data.get("stop_reason"),
         "messages_chain": response_data.get("messages_chain"),
+        "context_metrics": response_data.get("context_metrics"),
         "standalone_chat_workspace_path": response_data.get(
             "standalone_chat_workspace_path"
         ),
@@ -239,6 +240,18 @@ class ResponsesAPIEventParser:
                 message_id=message_id,
             )
 
+        elif event_type == ResponsesAPIStreamEvents.STATUS_UPDATED.value:
+            return ExecutionEvent(
+                type=EventType.STATUS_UPDATED,
+                task_id=task_id,
+                subtask_id=subtask_id,
+                data={
+                    "phase": data.get("phase"),
+                    "context_metrics": data.get("context_metrics") or {},
+                },
+                message_id=message_id,
+            )
+
         elif event_type == ResponsesAPIStreamEvents.RESPONSE_COMPLETED.value:
             # response.completed -> DONE
             response_data = data.get("response", {})
@@ -261,6 +274,19 @@ class ResponsesAPIEventParser:
                 task_id=task_id,
                 subtask_id=subtask_id,
                 data={"block": block},
+                message_id=message_id,
+            )
+
+        elif event_type == ResponsesAPIStreamEvents.BLOCK_UPDATED.value:
+            block_id = data.get("block_id")
+            updates = data.get("updates")
+            if not block_id or not isinstance(updates, dict):
+                return None
+            return ExecutionEvent(
+                type=EventType.BLOCK_UPDATED,
+                task_id=task_id,
+                subtask_id=subtask_id,
+                data={"block_id": str(block_id), "updates": updates},
                 message_id=message_id,
             )
 
@@ -1251,7 +1277,12 @@ class ExecutionDispatcher:
                     )
 
                     if parsed_event:
-                        logger.info(
+                        log_fn = (
+                            logger.debug
+                            if parsed_event.type == EventType.TOOL_ARGUMENT_DELTA.value
+                            else logger.info
+                        )
+                        log_fn(
                             "[ExecutionDispatcher] Parsed SSE event -> internal event: "
                             "task_id=%d, subtask_id=%d, request_id=%s, sse_event=%s, internal_event=%s",
                             request.task_id,

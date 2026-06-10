@@ -6,6 +6,8 @@ import type {
   DeviceListResponse,
   DeviceSessionResponse,
   MetricsHistoryResponse,
+  UpgradeDeviceOptions,
+  UpgradeDeviceResponse,
   VncConfigResponse,
 } from '@/types/devices'
 import type { HttpClient } from './http'
@@ -194,6 +196,22 @@ export function createDeviceApi(client: HttpClient) {
     async deleteCloudDevice(deviceId: string): Promise<{ message: string }> {
       return client.delete<{ message: string }>(
         `/cloud-devices/${encodeURIComponent(deviceId)}`,
+      )
+    },
+
+    async deleteDevice(deviceId: string): Promise<{ message: string }> {
+      return client.delete<{ message: string }>(
+        `/devices/${encodeURIComponent(deviceId)}`,
+      )
+    },
+
+    upgradeDevice(
+      deviceId: string,
+      options?: UpgradeDeviceOptions,
+    ): Promise<UpgradeDeviceResponse> {
+      return client.post<UpgradeDeviceResponse>(
+        `/devices/${encodeURIComponent(deviceId)}/upgrade`,
+        options || {},
       )
     },
 

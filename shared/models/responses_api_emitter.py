@@ -533,6 +533,21 @@ class ResponsesAPIEmitter:
         data = self.builder.block_created(block)
         return await self._emit(ResponsesAPIStreamEvents.BLOCK_CREATED.value, data)
 
+    async def block_updated(self, block_id: str, updates: dict[str, Any]) -> Any:
+        """Emit a non-text block update event."""
+        data = self.builder.block_updated(block_id, updates)
+        return await self._emit(ResponsesAPIStreamEvents.BLOCK_UPDATED.value, data)
+
+    async def status_updated(
+        self,
+        *,
+        phase: str,
+        context_metrics: dict[str, Any],
+    ) -> Any:
+        """Emit a session-level context status update event."""
+        data = self.builder.status_updated(phase, context_metrics)
+        return await self._emit(ResponsesAPIStreamEvents.STATUS_UPDATED.value, data)
+
     # ============================================================
     # Buffer Management
     # ============================================================

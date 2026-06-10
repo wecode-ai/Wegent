@@ -336,6 +336,7 @@
     "quick_launch_function_order": "Order",
     "quick_launch_function_icon": "Icon",
     "quick_launch_function_enabled": "Enabled",
+    "quick_launch_function_disabled": "Disabled",
     "quick_launch_function_phrases": "Quick Phrases",
     "quick_launch_function_add_phrase": "Add Phrase",
     "quick_launch_function_phrase_placeholder": "Example: Help me create a product roadmap PPT",
@@ -350,6 +351,9 @@
     "quick_launch_function_preset_deep_thinking": "Deep Thinking",
     "quick_launch_function_preset_clarification": "Clarification",
     "quick_launch_function_preset_force_override": "Force Model Override",
+    "quick_launch_function_preset_attachments": "Attachments",
+    "quick_launch_function_preset_upload_attachment": "Upload Attachment",
+    "quick_launch_function_preset_no_attachments": "No preset attachments",
     "version": "Version",
     "success": {
       "updated": "Configuration updated successfully"
@@ -359,6 +363,7 @@
       "save_failed": "Failed to save configuration",
       "partial_save_failed": "Some configuration changes were saved, but others failed. Please retry.",
       "quick_launch_functions_required": "System functions must include an ID, name, and target agent",
+      "quick_launch_attachment_upload_failed": "Failed to upload preset attachment",
       "slogan_required": "Both Chinese and English slogan are required",
       "tip_required": "Both Chinese and English tip text are required"
     }

@@ -15,16 +15,110 @@ const EMPTY_ENVIRONMENT_INFO: EnvironmentInfo = {
   deletions: '-0',
   executionTarget: 'local',
 }
-const DEFAULT_DIFF_BASE_REFS = ['main', 'origin/main', 'master', 'origin/master']
 const INVALID_BRANCH_CHARACTERS = new Set([' ', '~', '^', ':', '?', '*', '[', '\\', ']'])
+const ENVIRONMENT_INFO_CACHE_TTL_MS = 1500
+
+type EnvironmentInfoCacheEntry = {
+  expiresAt: number
+  promise: Promise<EnvironmentInfo>
+}
+
+const environmentInfoCaches = new WeakMap<DeviceCommandApi, Map<string, EnvironmentInfoCacheEntry>>()
 
 function outputAsString(output: DeviceCommandResponse['stdout']): string {
   return Array.isArray(output) ? output.join('\n') : output
 }
 
-function workspacePath(project: ProjectWithTasks): string | undefined {
+function configuredWorkspacePath(project: ProjectWithTasks): string | undefined {
   const config = project.config
   return config?.workspace?.localPath || config?.workspace?.checkoutPath || config?.path
+}
+
+function isGitWorkspace(project: ProjectWithTasks): boolean {
+  return project.config?.workspace?.source === 'git'
+}
+
+function environmentInfoCacheKey(project: ProjectWithTasks): string | null {
+  const deviceId = executionDeviceId(project)
+  if (!deviceId) {
+    return null
+  }
+
+  const config = project.config
+  const workspace = config?.workspace
+  return JSON.stringify({
+    projectId: project.id,
+    deviceId,
+    executionTarget: config?.execution?.targetType ?? 'local',
+    workspaceSource: workspace?.source,
+    workspacePath: configuredWorkspacePath(project),
+  })
+}
+
+function cloneEnvironmentInfo(info: EnvironmentInfo): EnvironmentInfo {
+  return { ...info }
+}
+
+function getEnvironmentInfoCache(api: DeviceCommandApi): Map<string, EnvironmentInfoCacheEntry> {
+  let cache = environmentInfoCaches.get(api)
+  if (!cache) {
+    cache = new Map<string, EnvironmentInfoCacheEntry>()
+    environmentInfoCaches.set(api, cache)
+  }
+  return cache
+}
+
+function joinDevicePath(root: string, child: string): string {
+  const normalizedRoot = root.trim().replace(/\/+$/, '') || '/'
+  const normalizedChild = child.trim().replace(/^\/+/, '')
+  if (!normalizedChild) {
+    return normalizedRoot
+  }
+  return normalizedRoot === '/' ? `/${normalizedChild}` : `${normalizedRoot}/${normalizedChild}`
+}
+
+function executorWorkspaceRoot(projectWorkspaceRoot: string): string {
+  const normalizedRoot = projectWorkspaceRoot.trim().replace(/\/+$/, '') || '/'
+  if (normalizedRoot.split('/').pop() === 'projects') {
+    return normalizedRoot.slice(0, normalizedRoot.lastIndexOf('/')) || '/'
+  }
+  return normalizedRoot
+}
+
+async function resolveProjectWorkspaceRoot(
+  api: DeviceCommandApi,
+  deviceId: string,
+): Promise<string> {
+  const response = await api.executeCommand(deviceId, {
+    command_key: 'project_workspace_root',
+    timeout_seconds: 10,
+    max_output_bytes: 4096,
+  })
+  if (!response.success) {
+    throw new Error(response.error || response.stderr || 'Failed to resolve project workspace root')
+  }
+  const root = outputAsString(response.stdout).trim()
+  if (!root) {
+    throw new Error('Project workspace root is empty')
+  }
+  return root
+}
+
+async function workspacePath(
+  api: DeviceCommandApi,
+  deviceId: string,
+  project: ProjectWithTasks,
+): Promise<string | undefined> {
+  const path = configuredWorkspacePath(project)
+  if (!path || !isGitWorkspace(project) || path.startsWith('/')) {
+    return path
+  }
+
+  const workspaceRoot = await resolveProjectWorkspaceRoot(api, deviceId)
+  if (path.startsWith('projects/')) {
+    return joinDevicePath(executorWorkspaceRoot(workspaceRoot), path)
+  }
+  return joinDevicePath(workspaceRoot, path)
 }
 
 function executionDeviceId(project: ProjectWithTasks): string | undefined {
@@ -57,6 +151,15 @@ function validateBranchName(branchName: string): void {
 }
 
 export function parseGitShortStat(value: string): Pick<EnvironmentInfo, 'additions' | 'deletions'> {
+  // Handle "N file(s) pending" format (no-commit repos with pending files)
+  const pendingMatch = value.match(/(\d+)\s+file\(s\)\s+pending/)
+  if (pendingMatch) {
+    return {
+      additions: `+${pendingMatch[1]}`,
+      deletions: '-0',
+    }
+  }
+
   const additionsMatch = value.match(/(\d+)\s+insertions?\(\+\)/)
   const deletionsMatch = value.match(/(\d+)\s+deletions?\(-\)/)
 
@@ -147,39 +250,36 @@ async function loadBranchDiffShortStat(
   deviceId: string,
   path: string,
 ): Promise<string> {
-  for (const baseRef of DEFAULT_DIFF_BASE_REFS) {
-    try {
-      return await runGitCommand(api, deviceId, 'git_diff_shortstat', path, {
-        args: [`${baseRef}...`, '--'],
-      })
-    } catch {
-      // Try the next common base ref when this repository does not have one.
-    }
-  }
-
+  // Use diff against HEAD for tracked uncommitted line changes.
+  // This captures staged + unstaged modifications to tracked files.
   try {
     return await runGitCommand(api, deviceId, 'git_diff_shortstat', path, {
       args: ['HEAD', '--'],
     })
-  } catch (error) {
-    throw error instanceof Error
-      ? error
-      : new Error('Failed to load branch diff stat')
+  } catch {
+    // HEAD may not exist (no commits yet).
+    return ''
   }
 }
 
-function commandContext(project: ProjectWithTasks): { deviceId: string; path: string } {
+async function commandContext(
+  api: DeviceCommandApi,
+  project: ProjectWithTasks,
+): Promise<{ deviceId: string; path: string }> {
   const deviceId = executionDeviceId(project)
-  const path = workspacePath(project)
 
-  if (!deviceId || !path) {
+  if (!deviceId) {
     throw new Error('Project device and workspace path are required')
   }
 
+  const path = await workspacePath(api, deviceId, project)
+  if (!path) {
+    throw new Error('Project device and workspace path are required')
+  }
   return { deviceId, path }
 }
 
-export async function loadProjectEnvironment(
+async function loadProjectEnvironmentUncached(
   api: DeviceCommandApi,
   project: ProjectWithTasks | null,
 ): Promise<EnvironmentInfo> {
@@ -189,26 +289,55 @@ export async function loadProjectEnvironment(
 
   const executionTarget = project.config?.execution?.targetType ?? 'local'
   const deviceId = executionDeviceId(project)
-  const path = workspacePath(project)
   const baseInfo: EnvironmentInfo = {
     ...EMPTY_ENVIRONMENT_INFO,
     executionTarget,
     deviceId,
   }
 
-  if (!deviceId || !path) {
+  if (!deviceId) {
     return baseInfo
   }
 
   try {
-    const [branchName, shortStat] = await Promise.all([
+    const path = await workspacePath(api, deviceId, project)
+    if (!path) {
+      return baseInfo
+    }
+    const [branchName, shortStat, porcelain] = await Promise.all([
       runGitCommand(api, deviceId, 'git_branch', path),
       loadBranchDiffShortStat(api, deviceId, path),
+      runGitCommand(api, deviceId, 'git_status_porcelain', path).catch(
+        () => '',
+      ),
     ])
     const remoteUrl = await runGitCommand(api, deviceId, 'git_remote_url', path).catch(
       () => '',
     )
     const diff = parseGitShortStat(shortStat)
+
+    // Count pending files from porcelain (untracked, staged, modified).
+    // git diff --shortstat only covers tracked files, so we merge
+    // porcelain data to include untracked and no-commit scenarios.
+    const porcelainLines = porcelain
+      .split('\n')
+      .filter(line => line.trim().length > 0)
+
+    if (shortStat) {
+      // Repo has commits — diff stat covers tracked changes.
+      // Add untracked file count on top.
+      const untrackedCount = porcelainLines.filter(line =>
+        line.startsWith('??'),
+      ).length
+      if (untrackedCount > 0) {
+        const trackedAdditions =
+          parseInt(diff.additions.replace(/^\+/, ''), 10) || 0
+        diff.additions = `+${trackedAdditions + untrackedCount}`
+      }
+    } else if (porcelainLines.length > 0) {
+      // Repo has no commits — every porcelain line is a pending change.
+      diff.additions = `+${porcelainLines.length}`
+    }
 
     return {
       ...baseInfo,
@@ -221,6 +350,40 @@ export async function loadProjectEnvironment(
       ...baseInfo,
       error: error instanceof Error ? error.message : 'Failed to load environment info',
     }
+  }
+}
+
+export async function loadProjectEnvironment(
+  api: DeviceCommandApi,
+  project: ProjectWithTasks | null,
+): Promise<EnvironmentInfo> {
+  if (!project) {
+    return cloneEnvironmentInfo(EMPTY_ENVIRONMENT_INFO)
+  }
+
+  const cacheKey = environmentInfoCacheKey(project)
+  if (!cacheKey) {
+    return loadProjectEnvironmentUncached(api, project)
+  }
+
+  const now = Date.now()
+  const environmentInfoCache = getEnvironmentInfoCache(api)
+  const cached = environmentInfoCache.get(cacheKey)
+  if (cached && cached.expiresAt > now) {
+    return cloneEnvironmentInfo(await cached.promise)
+  }
+
+  const promise = loadProjectEnvironmentUncached(api, project)
+  environmentInfoCache.set(cacheKey, {
+    expiresAt: now + ENVIRONMENT_INFO_CACHE_TTL_MS,
+    promise,
+  })
+
+  try {
+    return cloneEnvironmentInfo(await promise)
+  } catch (error) {
+    environmentInfoCache.delete(cacheKey)
+    throw error
   }
 }
 
@@ -239,7 +402,7 @@ export async function commitProjectChanges(
     throw new Error('Project is required')
   }
 
-  const { deviceId, path } = commandContext(project)
+  const { deviceId, path } = await commandContext(api, project)
 
   await runGitCommand(api, deviceId, 'git_add_all', path, {
     timeoutSeconds: 30,
@@ -260,7 +423,7 @@ export async function listProjectBranches(
     throw new Error('Project is required')
   }
 
-  const { deviceId, path } = commandContext(project)
+  const { deviceId, path } = await commandContext(api, project)
   const output = await runGitCommand(api, deviceId, 'git_branch_list', path, {
     timeoutSeconds: 15,
     maxOutputBytes: 1024 * 64,
@@ -287,7 +450,7 @@ export async function checkoutProjectBranch(
     throw new Error('Project is required')
   }
 
-  const { deviceId, path } = commandContext(project)
+  const { deviceId, path } = await commandContext(api, project)
   await runGitCommand(api, deviceId, 'git_checkout', path, {
     args: [trimmedBranch],
     timeoutSeconds: 30,
@@ -309,7 +472,7 @@ export async function createAndCheckoutProjectBranch(
     throw new Error('Project is required')
   }
 
-  const { deviceId, path } = commandContext(project)
+  const { deviceId, path } = await commandContext(api, project)
   await runGitCommand(api, deviceId, 'git_checkout_new', path, {
     args: [trimmedBranch],
     timeoutSeconds: 30,

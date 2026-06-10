@@ -215,6 +215,144 @@ print(json.dumps(skills, ensure_ascii=False))
 
 LS_SKILLS_COMMAND = f"python3 -c {shlex.quote(LS_SKILLS_SCRIPT)}"
 
+SYNC_RUNTIME_AUTH_FILE_SCRIPT = """
+import json
+import os
+import sys
+from pathlib import Path
+
+
+def fail(message, code=64):
+    print(json.dumps({"status": "failed", "error": message}, ensure_ascii=False))
+    sys.exit(code)
+
+
+runtime = os.environ.get("WEGENT_RUNTIME_CONFIG_RUNTIME", "").strip()
+target_path = os.environ.get("WEGENT_RUNTIME_CONFIG_TARGET_PATH", "").strip()
+content = os.environ.get("WEGENT_RUNTIME_CONFIG_CONTENT", "")
+
+if not runtime:
+    fail("runtime is required")
+if not target_path.startswith("~/"):
+    fail("target path must be inside the user home directory")
+if not content:
+    fail("runtime config content is required")
+
+try:
+    parsed = json.loads(content)
+except json.JSONDecodeError as exc:
+    fail(f"runtime config content is not valid JSON: {exc}")
+if not isinstance(parsed, dict):
+    fail("runtime config content must be a JSON object")
+
+home = Path.home().resolve()
+target = Path(target_path).expanduser()
+try:
+    resolved_target = target.resolve(strict=False)
+except OSError as exc:
+    fail(f"failed to resolve target path: {exc}")
+
+if home not in [resolved_target, *resolved_target.parents]:
+    fail("target path must stay inside the user home directory")
+
+if target.exists():
+    print(
+        json.dumps(
+            {"status": "skipped_existing", "runtime": runtime, "path": target_path},
+            ensure_ascii=False,
+        )
+    )
+    sys.exit(0)
+
+target.parent.mkdir(parents=True, exist_ok=True)
+try:
+    fd = os.open(str(target), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+except FileExistsError:
+    print(
+        json.dumps(
+            {"status": "skipped_existing", "runtime": runtime, "path": target_path},
+            ensure_ascii=False,
+        )
+    )
+    sys.exit(0)
+
+with os.fdopen(fd, "w", encoding="utf-8") as handle:
+    handle.write(json.dumps(parsed, ensure_ascii=False, indent=2, sort_keys=True))
+    handle.write("\\n")
+
+print(
+    json.dumps(
+        {"status": "written", "runtime": runtime, "path": target_path},
+        ensure_ascii=False,
+    )
+)
+""".strip()
+
+SYNC_RUNTIME_AUTH_FILE_COMMAND = (
+    f"python3 -c {shlex.quote(SYNC_RUNTIME_AUTH_FILE_SCRIPT)}"
+)
+
+READ_RUNTIME_AUTH_FILE_SCRIPT = """
+import json
+import os
+import sys
+from pathlib import Path
+
+
+def fail(message, code=64):
+    print(json.dumps({"status": "failed", "error": message}, ensure_ascii=False))
+    sys.exit(code)
+
+
+runtime = os.environ.get("WEGENT_RUNTIME_CONFIG_RUNTIME", "").strip()
+target_path = os.environ.get("WEGENT_RUNTIME_CONFIG_TARGET_PATH", "").strip()
+
+if not runtime:
+    fail("runtime is required")
+if not target_path.startswith("~/"):
+    fail("target path must be inside the user home directory")
+
+home = Path.home().resolve()
+target = Path(target_path).expanduser()
+try:
+    resolved_target = target.resolve(strict=False)
+except OSError as exc:
+    fail(f"failed to resolve target path: {exc}")
+
+if home not in [resolved_target, *resolved_target.parents]:
+    fail("target path must stay inside the user home directory")
+if not target.is_file():
+    fail("runtime auth file does not exist", code=66)
+
+try:
+    content = target.read_text(encoding="utf-8")
+except OSError as exc:
+    fail(f"failed to read runtime auth file: {exc}", code=74)
+
+try:
+    parsed = json.loads(content)
+except json.JSONDecodeError as exc:
+    fail(f"runtime auth file is not valid JSON: {exc}")
+if not isinstance(parsed, dict):
+    fail("runtime auth file must be a JSON object")
+
+print(
+    json.dumps(
+        {
+            "status": "read",
+            "runtime": runtime,
+            "path": target_path,
+            "content": content,
+        },
+        ensure_ascii=False,
+    )
+)
+""".strip()
+
+READ_RUNTIME_AUTH_FILE_COMMAND = (
+    f"python3 -c {shlex.quote(READ_RUNTIME_AUTH_FILE_SCRIPT)}"
+)
+
 
 DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
     "pwd": LocalDeviceCommandDefinition(command="pwd"),
@@ -235,7 +373,43 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
         post_processor="directory_list",
     ),
     "mkdir_p": LocalDeviceCommandDefinition(command="mkdir -p"),
+    "path_exists": LocalDeviceCommandDefinition(command="test -e"),
     "git_clone": LocalDeviceCommandDefinition(command="git clone"),
+    "git_worktree_list": LocalDeviceCommandDefinition(
+        command="sh -c 'git -C \"$1\" worktree list --porcelain' --"
+    ),
+    "find_worktree_dirs": LocalDeviceCommandDefinition(
+        command=(
+            "sh -c "
+            '\'root=$1; [ -d "$root" ] || exit 0; '
+            'find "$root" -mindepth 2 -maxdepth 2 -type d -print\' --'
+        ),
+        post_processor="file_list",
+    ),
+    "git_is_worktree": LocalDeviceCommandDefinition(
+        command="sh -c 'git -C \"$1\" rev-parse --is-inside-work-tree' --"
+    ),
+    "git_worktree_add": LocalDeviceCommandDefinition(
+        command='sh -c \'git -C "$1" worktree add --detach "$2"\' --'
+    ),
+    "git_worktree_remove": LocalDeviceCommandDefinition(
+        command='sh -c \'git -C "$1" worktree remove --force "$2"\' --'
+    ),
+    "remove_worktree_dir": LocalDeviceCommandDefinition(
+        command=(
+            "sh -c "
+            "'target=$1; "
+            'parent=$(dirname "$target"); '
+            'id=$(basename "$parent"); '
+            'root_name=$(basename "$(dirname "$parent")"); '
+            'if [ "$root_name" != "worktrees" ]; then '
+            'echo "refusing unsafe worktree path" >&2; exit 64; fi; '
+            'case "$id" in ""|*[!0-9]*) '
+            'echo "refusing unsafe worktree path" >&2; exit 64 ;; '
+            "esac; "
+            'rm -rf "$target"; rmdir "$parent" 2>/dev/null || true\' --'
+        )
+    ),
     "git_branch": LocalDeviceCommandDefinition(command="git branch --show-current"),
     "git_branch_list": LocalDeviceCommandDefinition(
         command="git branch --format=%(refname:short)"
@@ -246,11 +420,22 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
     "git_branch_diff_shortstat": LocalDeviceCommandDefinition(
         command=GIT_BRANCH_DIFF_SHORTSTAT_COMMAND
     ),
+    "git_status_porcelain": LocalDeviceCommandDefinition(
+        command="git status --porcelain"
+    ),
     "git_remote_url": LocalDeviceCommandDefinition(command="git remote get-url origin"),
     "git_add_all": LocalDeviceCommandDefinition(command="git add --all"),
     "git_commit": LocalDeviceCommandDefinition(command="git commit"),
     "ls_skills": LocalDeviceCommandDefinition(
         command=LS_SKILLS_COMMAND,
+        post_processor="json",
+    ),
+    "sync_runtime_auth_file": LocalDeviceCommandDefinition(
+        command=SYNC_RUNTIME_AUTH_FILE_COMMAND,
+        post_processor="json",
+    ),
+    "read_runtime_auth_file": LocalDeviceCommandDefinition(
+        command=READ_RUNTIME_AUTH_FILE_COMMAND,
         post_processor="json",
     ),
 }

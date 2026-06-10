@@ -206,6 +206,154 @@ class TestWebSocketResultEmitter:
             }
             assert "ask_id" not in call_kwargs["render_payload"]
 
+    @pytest.mark.asyncio
+    async def test_emit_status_updated_event(self) -> None:
+        """Test emitting STATUS_UPDATED sends websocket event and caches snapshot."""
+        from app.services.execution.emitters import WebSocketResultEmitter
+
+        with (
+            patch(
+                "app.services.chat.webpage_ws_chat_emitter.get_webpage_ws_emitter"
+            ) as mock_get,
+            patch(
+                "app.services.execution.emitters.websocket.session_manager.save_context_metrics",
+                new_callable=AsyncMock,
+            ) as mock_save_context_metrics,
+        ):
+            mock_ws = AsyncMock()
+            mock_get.return_value = mock_ws
+
+            emitter = WebSocketResultEmitter(task_id=1, subtask_id=2)
+            event = ExecutionEvent.create(
+                EventType.STATUS_UPDATED,
+                task_id=1,
+                subtask_id=2,
+                data={
+                    "phase": "after_tool_end",
+                    "context_metrics": {
+                        "remaining_percent": 38,
+                        "is_over_trigger": False,
+                    },
+                },
+            )
+
+            await emitter.emit(event)
+
+            mock_save_context_metrics.assert_awaited_once_with(
+                2,
+                {
+                    "task_id": 1,
+                    "subtask_id": 2,
+                    "phase": "after_tool_end",
+                    "context_metrics": {
+                        "remaining_percent": 38,
+                        "is_over_trigger": False,
+                    },
+                },
+            )
+            mock_ws.emit_chat_status_updated.assert_awaited_once_with(
+                task_id=1,
+                subtask_id=2,
+                phase="after_tool_end",
+                context_metrics={
+                    "remaining_percent": 38,
+                    "is_over_trigger": False,
+                },
+            )
+
+    @pytest.mark.asyncio
+    async def test_emit_status_updated_event_ignores_cache_failure(self) -> None:
+        """Status updates should still be emitted when cache persistence fails."""
+        from app.services.execution.emitters import WebSocketResultEmitter
+
+        with (
+            patch(
+                "app.services.chat.webpage_ws_chat_emitter.get_webpage_ws_emitter"
+            ) as mock_get,
+            patch(
+                "app.services.execution.emitters.websocket.session_manager.save_context_metrics",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("redis down"),
+            ),
+        ):
+            mock_ws = AsyncMock()
+            mock_get.return_value = mock_ws
+
+            emitter = WebSocketResultEmitter(task_id=1, subtask_id=2)
+            event = ExecutionEvent.create(
+                EventType.STATUS_UPDATED,
+                task_id=1,
+                subtask_id=2,
+                data={
+                    "phase": "after_tool_end",
+                    "context_metrics": {"remaining_percent": 38},
+                },
+            )
+
+            await emitter.emit(event)
+
+            mock_ws.emit_chat_status_updated.assert_awaited_once_with(
+                task_id=1,
+                subtask_id=2,
+                phase="after_tool_end",
+                context_metrics={"remaining_percent": 38},
+            )
+
+    @pytest.mark.asyncio
+    async def test_direct_block_updated_emits_and_persists_block_update(self):
+        """Direct block updates should reach the websocket and update stored blocks."""
+        from app.services.execution.emitters import WebSocketResultEmitter
+
+        with (
+            patch(
+                "app.services.chat.webpage_ws_chat_emitter.get_webpage_ws_emitter"
+            ) as mock_get,
+            patch("app.services.chat.storage.session_manager") as mock_session,
+        ):
+            mock_ws = AsyncMock()
+            mock_get.return_value = mock_ws
+            mock_session.get_blocks = AsyncMock(
+                return_value=[
+                    {
+                        "id": "codex-commentary-1",
+                        "type": "thinking",
+                        "content": "",
+                        "status": "streaming",
+                    }
+                ]
+            )
+            mock_session.add_block = AsyncMock()
+
+            emitter = WebSocketResultEmitter(task_id=10, subtask_id=20)
+            event = ExecutionEvent.create(
+                EventType.BLOCK_UPDATED,
+                task_id=10,
+                subtask_id=20,
+                data={
+                    "block_id": "codex-commentary-1",
+                    "updates": {"content": "Working", "status": "done"},
+                },
+            )
+
+            await emitter.emit(event)
+
+            mock_ws.emit_block_updated.assert_awaited_once_with(
+                task_id=10,
+                subtask_id=20,
+                block_id="codex-commentary-1",
+                content="Working",
+                status="done",
+            )
+            mock_session.add_block.assert_awaited_once_with(
+                20,
+                {
+                    "id": "codex-commentary-1",
+                    "type": "thinking",
+                    "content": "Working",
+                    "status": "done",
+                },
+            )
+
 
 class TestSSEResultEmitter:
     """Tests for SSEResultEmitter."""
