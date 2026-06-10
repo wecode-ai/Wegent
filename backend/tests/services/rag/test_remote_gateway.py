@@ -99,6 +99,63 @@ async def test_remote_gateway_index_document_posts_reference_mode_request(
 
 
 @pytest.mark.asyncio
+async def test_remote_gateway_index_document_closes_owned_session_before_http(
+    mocker,
+) -> None:
+    db = MagicMock()
+    db.closed = False
+
+    def close_db() -> None:
+        db.closed = True
+
+    db.close.side_effect = close_db
+    mocker.patch("app.services.rag.remote_gateway.SessionLocal", return_value=db)
+    mocker.patch(
+        "app.services.rag.remote_gateway.build_content_ref_for_attachment",
+        return_value=PresignedUrlContentRef(
+            kind="presigned_url",
+            url="https://storage.example.com/release-notes.md",
+        ),
+    )
+    mocker.patch(
+        "app.services.rag.remote_gateway._get_attachment_source_metadata",
+        return_value=("release-notes.md", ".md"),
+        create=True,
+    )
+
+    async def post_after_session_closed(*args, **kwargs):
+        assert db.closed is True
+        return _build_response(
+            url="http://knowledge-runtime/internal/rag/index",
+            status_code=200,
+            json_body={"status": "accepted", "knowledge_id": "1"},
+        )
+
+    post_mock = mocker.patch(
+        "httpx.AsyncClient.post",
+        side_effect=post_after_session_closed,
+    )
+    gateway = RemoteRagGateway(base_url="http://knowledge-runtime")
+    spec = IndexRuntimeSpec(
+        knowledge_base_id=1,
+        document_id=2,
+        index_owner_user_id=3,
+        retriever_name="retriever-a",
+        retriever_namespace="default",
+        embedding_model_name="embedding-a",
+        embedding_model_namespace="default",
+        source=IndexSource(source_type="attachment", attachment_id=9),
+    )
+
+    result = await gateway.index_document(spec)
+
+    assert result == {"status": "accepted", "knowledge_id": "1"}
+    db.rollback.assert_called_once()
+    db.close.assert_called_once()
+    post_mock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_remote_gateway_query_posts_reference_mode_request(mocker) -> None:
     post_mock = mocker.patch(
         "httpx.AsyncClient.post",

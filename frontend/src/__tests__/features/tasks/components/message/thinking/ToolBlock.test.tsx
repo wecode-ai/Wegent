@@ -9,7 +9,10 @@ import type { ToolPair } from '@/features/tasks/components/message/thinking/type
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
-    t: (key: string) => key,
+    t: (key: string) =>
+      ({
+        'thinking.no_output': 'No output',
+      })[key] ?? key,
   }),
 }))
 
@@ -48,5 +51,20 @@ describe('ToolBlock', () => {
     render(<ToolBlock tool={createTool({})} />)
 
     expect(screen.queryByText(/\{\}/)).not.toBeInTheDocument()
+  })
+
+  it('does not expose missing translation keys for completed tools without output', () => {
+    const emptyTool = createTool({})
+    render(
+      <ToolBlock
+        tool={emptyTool}
+        defaultExpanded
+        count={2}
+        mergedTools={[emptyTool, { ...emptyTool, toolUseId: 'tool_write_2' }]}
+      />
+    )
+
+    expect(screen.queryByText('thinking.no_output')).not.toBeInTheDocument()
+    expect(screen.getAllByText('No output')).toHaveLength(2)
   })
 })

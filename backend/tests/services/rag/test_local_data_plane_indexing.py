@@ -7,6 +7,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.models.subtask_context import ContextStatus, ContextType
 from app.services.rag.local_data_plane.indexing import (
     delete_document_index_local,
     drop_knowledge_index_local,
@@ -20,7 +21,7 @@ from app.services.rag.runtime_specs import (
     IndexSource,
     PurgeKnowledgeRuntimeSpec,
 )
-from shared.models import RuntimeRetrieverConfig
+from shared.models import RuntimeEmbeddingModelConfig, RuntimeRetrieverConfig
 
 
 @pytest.mark.asyncio
@@ -159,6 +160,174 @@ async def test_index_document_local_delegates_to_engine_document_service() -> No
         },
         document_id=2,
     )
+
+
+@pytest.mark.asyncio
+async def test_index_document_local_closes_owned_session_before_engine_indexing() -> (
+    None
+):
+    db = MagicMock()
+    db.closed = False
+
+    def close_db() -> None:
+        db.closed = True
+
+    db.close.side_effect = close_db
+    db.query.return_value.filter.return_value.first.return_value = SimpleNamespace(
+        id=9,
+        context_type=ContextType.ATTACHMENT.value,
+        status=ContextStatus.READY.value,
+        storage_backend="mysql",
+        original_filename="notes.md",
+        file_extension=".md",
+    )
+    spec = IndexRuntimeSpec(
+        knowledge_base_id=1,
+        document_id=2,
+        index_owner_user_id=3,
+        retriever_name="retriever-a",
+        retriever_namespace="default",
+        embedding_model_name="embed-a",
+        embedding_model_namespace="default",
+        retriever_config=RuntimeRetrieverConfig(
+            name="retriever-a",
+            namespace="default",
+            storage_config={"type": "qdrant"},
+        ),
+        embedding_model_config=RuntimeEmbeddingModelConfig(
+            model_name="embed-a",
+            model_namespace="default",
+            resolved_config={
+                "protocol": "openai",
+                "model_id": "text-embedding-3-small",
+            },
+        ),
+        source=IndexSource(source_type="attachment", attachment_id=9),
+    )
+
+    async def index_after_session_closed(**kwargs):
+        assert db.closed is True
+        return {"status": "success"}
+
+    with (
+        patch(
+            "app.services.rag.local_data_plane.indexing.SessionLocal",
+            return_value=db,
+        ),
+        patch(
+            "app.services.rag.local_data_plane.indexing.context_service.get_attachment_binary_data",
+            return_value=b"hello world",
+        ),
+        patch(
+            "app.services.rag.local_data_plane.indexing.create_storage_backend_from_runtime_config",
+            return_value=MagicMock(),
+        ),
+        patch(
+            "app.services.rag.local_data_plane.indexing.create_embedding_model_from_runtime_config",
+            return_value=object(),
+        ),
+        patch(
+            "app.services.rag.local_data_plane.indexing.EngineDocumentService.index_document_from_binary",
+            side_effect=index_after_session_closed,
+        ) as mock_index_document,
+    ):
+        result = await index_document_local(spec)
+
+    assert result == {"status": "success"}
+    db.rollback.assert_called_once()
+    db.close.assert_called_once()
+    mock_index_document.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_index_document_local_closes_owned_session_before_external_attachment_get() -> (
+    None
+):
+    db = MagicMock()
+    db.closed = False
+
+    def close_db() -> None:
+        db.closed = True
+
+    db.close.side_effect = close_db
+    context = SimpleNamespace(
+        id=9,
+        context_type=ContextType.ATTACHMENT.value,
+        status=ContextStatus.READY.value,
+        storage_backend="s3",
+        storage_key="attachments/9",
+        original_filename="notes.md",
+        file_extension=".md",
+        is_encrypted=False,
+    )
+    db.query.return_value.filter.return_value.first.return_value = context
+
+    attachment_backend = MagicMock()
+
+    def get_after_session_closed(storage_key):
+        assert storage_key == "attachments/9"
+        assert db.closed is True
+        return b"hello world"
+
+    attachment_backend.get.side_effect = get_after_session_closed
+
+    spec = IndexRuntimeSpec(
+        knowledge_base_id=1,
+        document_id=2,
+        index_owner_user_id=3,
+        retriever_name="retriever-a",
+        retriever_namespace="default",
+        embedding_model_name="embed-a",
+        embedding_model_namespace="default",
+        retriever_config=RuntimeRetrieverConfig(
+            name="retriever-a",
+            namespace="default",
+            storage_config={"type": "qdrant"},
+        ),
+        embedding_model_config=RuntimeEmbeddingModelConfig(
+            model_name="embed-a",
+            model_namespace="default",
+            resolved_config={
+                "protocol": "openai",
+                "model_id": "text-embedding-3-small",
+            },
+        ),
+        source=IndexSource(source_type="attachment", attachment_id=9),
+    )
+
+    async def index_after_session_closed(**kwargs):
+        assert db.closed is True
+        assert kwargs["binary_data"] == b"hello world"
+        return {"status": "success"}
+
+    with (
+        patch(
+            "app.services.rag.local_data_plane.indexing.SessionLocal",
+            return_value=db,
+        ),
+        patch(
+            "app.services.rag.local_data_plane.indexing.get_storage_backend",
+            return_value=attachment_backend,
+        ),
+        patch(
+            "app.services.rag.local_data_plane.indexing.create_storage_backend_from_runtime_config",
+            return_value=MagicMock(),
+        ),
+        patch(
+            "app.services.rag.local_data_plane.indexing.create_embedding_model_from_runtime_config",
+            return_value=object(),
+        ),
+        patch(
+            "app.services.rag.local_data_plane.indexing.EngineDocumentService.index_document_from_binary",
+            side_effect=index_after_session_closed,
+        ),
+    ):
+        result = await index_document_local(spec)
+
+    assert result == {"status": "success"}
+    db.rollback.assert_called_once()
+    db.close.assert_called_once()
+    attachment_backend.get.assert_called_once_with("attachments/9")
 
 
 @pytest.mark.asyncio
