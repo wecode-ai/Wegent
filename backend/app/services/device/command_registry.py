@@ -420,6 +420,9 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
     "git_branch_diff_shortstat": LocalDeviceCommandDefinition(
         command=GIT_BRANCH_DIFF_SHORTSTAT_COMMAND
     ),
+    "git_status_porcelain": LocalDeviceCommandDefinition(
+        command="git status --porcelain"
+    ),
     "git_remote_url": LocalDeviceCommandDefinition(command="git remote get-url origin"),
     "git_add_all": LocalDeviceCommandDefinition(command="git add --all"),
     "git_commit": LocalDeviceCommandDefinition(command="git commit"),
