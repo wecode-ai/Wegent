@@ -24,7 +24,50 @@ The service selects an extraction path based on content type and quality:
 4. Enable Playwright frame extraction only when the primary result is empty or low quality and policy allows fallback.
 5. Run fallback output through the Markdown cleaner, classifier, and quality evaluator.
 
+```mermaid
+flowchart TD
+    A["WebScraperService.scrape_url"] --> B["Validate initial URL"]
+    B --> C["Resolve site policy and proxy plan"]
+    C --> D{"PDF URL"}
+    D -->|Yes| E["PDF extractor"]
+    D -->|No| F["Crawl4AI strategy"]
+    F --> G["Markdown cleaner"]
+    G --> H["Quality evaluator"]
+    H --> I["Result classifier"]
+    I --> J{"PDF response"}
+    J -->|Yes| E
+    J -->|No| K{"Result acceptable"}
+    K -->|Yes| L["Return successful ScrapedContent"]
+    K -->|No| M{"Policy allows fallback"}
+    M -->|No| N["Return error ScrapedContent"]
+    M -->|Yes| O["Playwright frame extraction"]
+    O --> G
+    E --> P["PDF quality evaluation and classification"]
+    P --> Q{"PDF result acceptable"}
+    Q -->|Yes| L
+    Q -->|No| N
+```
+
 Playwright fallback prefers frame `innerHTML` and converts it to Markdown. It only falls back to `innerText` when structured HTML is unavailable. Multi-frame output keeps frame titles and source URLs for indexing and troubleshooting.
+
+## Module Relationships
+
+`WebScraperService` is the only public entry point. Internally, it resolves policy, selects the extraction path, and normalizes strategy results into `ScrapedContent`.
+
+```mermaid
+flowchart LR
+    S["WebScraperService"] --> G["WebScraperUrlGuard"]
+    S --> P["SitePolicyResolver"]
+    S --> X["ProxyResolver"]
+    S --> C["Crawl4AIScrapeStrategy"]
+    S --> F["PlaywrightFrameExtractionStrategy"]
+    S --> D["PdfExtractor"]
+    C --> Q["MarkdownQualityEvaluator"]
+    F --> Q
+    D --> Q
+    Q --> R["ScrapeResultClassifier"]
+    R --> S
+```
 
 ## Markdown Output
 

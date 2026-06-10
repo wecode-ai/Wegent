@@ -24,7 +24,50 @@ sidebar_position: 13
 4. 当主抓取结果为空或质量过低，且策略允许 fallback 时，才启用 Playwright frame extraction。
 5. fallback 结果仍会经过 Markdown cleaner、classifier 和 quality evaluator。
 
+```mermaid
+flowchart TD
+    A["WebScraperService.scrape_url"] --> B["校验初始 URL"]
+    B --> C["解析站点策略和代理计划"]
+    C --> D{"是否 PDF URL"}
+    D -->|是| E["PDF extractor"]
+    D -->|否| F["Crawl4AI strategy"]
+    F --> G["Markdown cleaner"]
+    G --> H["Quality evaluator"]
+    H --> I["Result classifier"]
+    I --> J{"是否 PDF 响应"}
+    J -->|是| E
+    J -->|否| K{"结果是否可接受"}
+    K -->|是| L["返回 ScrapedContent 成功结果"]
+    K -->|否| M{"策略是否允许 fallback"}
+    M -->|否| N["返回 ScrapedContent 错误结果"]
+    M -->|是| O["Playwright frame extraction"]
+    O --> G
+    E --> P["PDF 质量评估和分类"]
+    P --> Q{"PDF 结果是否可接受"}
+    Q -->|是| L
+    Q -->|否| N
+```
+
 Playwright fallback 优先提取 frame 的 `innerHTML` 并转换为 Markdown。只有结构化 HTML 不可用时，才退化使用 `innerText`。多 frame 内容会保留 frame 标题和来源 URL，便于知识库索引和排查。
+
+## 模块关系
+
+`WebScraperService` 是唯一对外入口，内部负责解析策略、选择抓取路径，并把各策略结果统一转换成 `ScrapedContent`。
+
+```mermaid
+flowchart LR
+    S["WebScraperService"] --> G["WebScraperUrlGuard"]
+    S --> P["SitePolicyResolver"]
+    S --> X["ProxyResolver"]
+    S --> C["Crawl4AIScrapeStrategy"]
+    S --> F["PlaywrightFrameExtractionStrategy"]
+    S --> D["PdfExtractor"]
+    C --> Q["MarkdownQualityEvaluator"]
+    F --> Q
+    D --> Q
+    Q --> R["ScrapeResultClassifier"]
+    R --> S
+```
 
 ## Markdown 输出要求
 
