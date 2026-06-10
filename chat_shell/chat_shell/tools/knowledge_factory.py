@@ -104,6 +104,7 @@ async def prepare_knowledge_base_tools(
         current_model_name=(model_config or {}).get("model_name"),
         current_model_namespace=(model_config or {}).get("model_namespace")
         or "default",
+        max_output_tokens=(model_config or {}).get("max_output_tokens"),
         context_window=context_window,
         injection_mode="hybrid",
         tool_access_mode=kb_tool_access_mode,

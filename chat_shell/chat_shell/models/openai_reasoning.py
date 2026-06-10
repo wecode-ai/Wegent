@@ -129,8 +129,7 @@ class ChatOpenAIWithReasoning(ChatOpenAI):
                             b
                             for b in api_content
                             if not (
-                                isinstance(b, dict)
-                                and b.get("type") == "reasoning"
+                                isinstance(b, dict) and b.get("type") == "reasoning"
                             )
                         ]
                         if (

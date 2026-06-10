@@ -458,6 +458,9 @@ class ChatNamespace(socketio.AsyncNamespace):
             # Get cached content and blocks from Redis
             cached_content = await session_manager.get_streaming_content(subtask_id)
             blocks = await session_manager.get_blocks(subtask_id)
+            cached_context_metrics = await session_manager.get_context_metrics(
+                subtask_id
+            )
             offset = len(cached_content) if cached_content else 0
 
             logger.info(
@@ -465,6 +468,13 @@ class ChatNamespace(socketio.AsyncNamespace):
                 f"cached_content_len={len(cached_content) if cached_content else 0}, "
                 f"blocks_count={len(blocks)}, offset={offset}"
             )
+
+            if cached_context_metrics:
+                await self.emit(
+                    ServerEvents.CHAT_STATUS_UPDATED,
+                    cached_context_metrics,
+                    to=sid,
+                )
 
             return {
                 "streaming": {
@@ -1412,6 +1422,14 @@ class ChatNamespace(socketio.AsyncNamespace):
         if not await can_access_task(user_id, payload.task_id):
             return {"error": "Access denied"}
 
+        owns_subtask = await run_sync_in_executor(
+            _subtask_belongs_to_task,
+            payload.subtask_id,
+            payload.task_id,
+        )
+        if not owns_subtask:
+            return {"error": "Access denied"}
+
         # Join task room
         task_room = f"task:{payload.task_id}"
         await self.enter_room(sid, task_room)
@@ -1431,6 +1449,18 @@ class ChatNamespace(socketio.AsyncNamespace):
                     "content": remaining,
                     "offset": payload.offset,
                 },
+                to=sid,
+            )
+
+        cached_context_metrics = await session_manager.get_context_metrics(
+            payload.subtask_id
+        )
+        if cached_context_metrics:
+            from app.api.ws.events import ServerEvents
+
+            await self.emit(
+                ServerEvents.CHAT_STATUS_UPDATED,
+                cached_context_metrics,
                 to=sid,
             )
 
@@ -1862,6 +1892,17 @@ def _get_subtask_for_cancel(subtask_id: int) -> Optional[dict]:
             "status": subtask.status,
             "executor_name": subtask.executor_name,
         }
+
+
+def _subtask_belongs_to_task(subtask_id: int, task_id: int) -> bool:
+    """Return True when *subtask_id* belongs to *task_id*."""
+    with get_db_session() as db:
+        return (
+            db.query(Subtask.id)
+            .filter(Subtask.id == subtask_id, Subtask.task_id == task_id)
+            .first()
+            is not None
+        )
 
 
 def _mark_subtask_and_task_cancelled(

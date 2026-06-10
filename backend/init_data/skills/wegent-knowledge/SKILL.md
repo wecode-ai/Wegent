@@ -1,7 +1,7 @@
 ---
 description: "Knowledge base management and search tools for Wegent. Provides capabilities to list, create, update, and search knowledge bases and documents using RAG retrieval. Use this skill when the user wants to manage knowledge bases, documents, or search for information programmatically."
 displayName: "知识库工具"
-version: "1.0.0"
+version: "1.1.0"
 author: "Wegent Team"
 tags: ["knowledge", "knowledge-base", "document", "rag"]
 bindShells:
@@ -28,9 +28,15 @@ You now have access to Wegent Knowledge Base management tools.
 - **wegent_kb_list_knowledge_bases**: List all knowledge bases accessible to the current user
   - scope: "personal" (your own), "group" (team), or "all" (default)
   - group_name: Specify group name when scope="group"
+  - limit: Maximum number of knowledge bases to return per page
+  - offset: Start offset for paginated listing
+  - returns: items, total, returned_count, limit, offset, has_more
 
 - **wegent_kb_list_documents**: List all documents in a knowledge base
   - knowledge_base_id: ID of the knowledge base
+  - limit: Maximum number of documents to return per page
+  - offset: Start offset for paginated listing
+  - returns: items, total, returned_count, limit, offset, has_more
 
 - **wegent_kb_create_knowledge_base**: Create a new knowledge base
   - name: Knowledge base display name
@@ -87,7 +93,12 @@ You now have access to Wegent Knowledge Base management tools.
 
 2. List documents in a specific knowledge base:
    ```
-   wegent_kb_list_documents(knowledge_base_id=123)
+   wegent_kb_list_documents(knowledge_base_id=123, limit=20, offset=0)
+   ```
+
+   If `has_more=true`, continue with:
+   ```
+   wegent_kb_list_documents(knowledge_base_id=123, limit=20, offset=20)
    ```
 
 3. Create a new knowledge base:

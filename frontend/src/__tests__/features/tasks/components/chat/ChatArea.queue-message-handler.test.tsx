@@ -99,7 +99,7 @@ jest.mock('@/features/tasks/components/chat/useChatAreaState', () => ({
     attachmentState: { attachments: [], uploadingFiles: new Map(), errors: new Map() },
     resetAttachment: jest.fn(),
     isAttachmentReadyToSend: true,
-    shouldHideQuotaUsage: false,
+    shouldHideToolbarStatus: false,
     shouldHideChatInput: false,
     selectedContexts: [],
     resetContexts: jest.fn(),

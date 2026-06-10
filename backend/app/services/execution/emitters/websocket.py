@@ -14,6 +14,7 @@ Uses unified block types from shared.models.blocks for consistency.
 import logging
 from typing import Any, Optional
 
+from app.services.chat.storage import session_manager
 from app.services.chat.webpage_ws_chat_emitter import WebPageSocketEmitter
 from app.services.execution.interactive_form_render import (
     build_interactive_form_render_payload,
@@ -134,6 +135,9 @@ class WebSocketResultEmitter(BaseResultEmitter):
         elif event.type == EventType.BLOCK_UPDATED.value:
             await self._emit_direct_block_updated(event, webpage_ws_emitter)
 
+        elif event.type == EventType.STATUS_UPDATED.value:
+            await self._emit_status_updated(event, webpage_ws_emitter)
+
         elif event.type == EventType.THINKING.value:
             # Emit reasoning content as a chat:chunk with reasoning_chunk in result
             # This allows the frontend to display incremental reasoning content
@@ -238,6 +242,43 @@ class WebSocketResultEmitter(BaseResultEmitter):
         logger.debug(
             f"[WebSocketResultEmitter] task:status emitted: "
             f"user_id={self.user_id}, task_id={self.task_id}, status={status}"
+        )
+
+    async def _emit_status_updated(
+        self, event: ExecutionEvent, ws_emitter: WebPageSocketEmitter
+    ) -> None:
+        """Emit chat:status_updated and cache the latest snapshot."""
+        phase = event.data.get("phase") if event.data else None
+        context_metrics = event.data.get("context_metrics", {}) if event.data else {}
+        if not phase or not isinstance(context_metrics, dict):
+            logger.debug(
+                "[WebSocketResultEmitter] Skipping invalid status update event: %s",
+                event.data,
+            )
+            return
+
+        try:
+            await session_manager.save_context_metrics(
+                event.subtask_id,
+                {
+                    "task_id": event.task_id,
+                    "subtask_id": event.subtask_id,
+                    "phase": phase,
+                    "context_metrics": context_metrics,
+                },
+            )
+        except Exception as exc:
+            logger.warning(
+                "[WebSocketResultEmitter] Failed to cache context metrics for task_id=%s subtask_id=%s: %s",
+                event.task_id,
+                event.subtask_id,
+                exc,
+            )
+        await ws_emitter.emit_chat_status_updated(
+            task_id=event.task_id,
+            subtask_id=event.subtask_id,
+            phase=phase,
+            context_metrics=context_metrics,
         )
 
     async def _emit_block_created(self, event: ExecutionEvent, ws_emitter) -> None:

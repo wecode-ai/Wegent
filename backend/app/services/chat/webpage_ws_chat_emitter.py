@@ -242,6 +242,32 @@ class WebPageSocketEmitter:
         )
         logger.info(f"[WS] emit chat:cancelled task={task_id} subtask={subtask_id}")
 
+    async def emit_chat_status_updated(
+        self,
+        task_id: int,
+        subtask_id: int,
+        phase: str,
+        context_metrics: Dict[str, Any],
+    ) -> None:
+        """Emit chat:status_updated event to task room."""
+        await self.sio.emit(
+            ServerEvents.CHAT_STATUS_UPDATED,
+            {
+                "task_id": task_id,
+                "subtask_id": subtask_id,
+                "phase": phase,
+                "context_metrics": context_metrics,
+            },
+            room=f"task:{task_id}",
+            namespace=self.namespace,
+        )
+        logger.debug(
+            "[WS] emit chat:status_updated task=%s subtask=%s phase=%s",
+            task_id,
+            subtask_id,
+            phase,
+        )
+
     # ============================================================
     # Block Events for Mixed Content Rendering (to task room)
     # ============================================================

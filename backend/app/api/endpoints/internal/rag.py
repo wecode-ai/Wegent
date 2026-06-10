@@ -761,6 +761,13 @@ class ListDocsRequest(BaseModel):
     """Request for listing documents in a knowledge base."""
 
     knowledge_base_id: int = Field(..., description="Knowledge base ID")
+    offset: int = Field(default=0, ge=0, description="Start offset for pagination")
+    limit: int = Field(
+        default=20,
+        ge=1,
+        le=100,
+        description="Maximum number of documents to return",
+    )
 
 
 class DocItem(BaseModel):
@@ -782,6 +789,10 @@ class ListDocsResponse(BaseModel):
 
     documents: list[DocItem]
     total: int
+    returned_count: int
+    offset: int
+    limit: int
+    has_more: bool
 
 
 @router.post("/list-docs", response_model=ListDocsResponse)
@@ -806,10 +817,14 @@ async def list_documents(
         from app.models.knowledge import KnowledgeDocument
 
         # Query documents directly (internal API, permission checked at task level)
+        base_query = db.query(KnowledgeDocument).filter(
+            KnowledgeDocument.kind_id == request.knowledge_base_id
+        )
+        total = base_query.count()
         documents = (
-            db.query(KnowledgeDocument)
-            .filter(KnowledgeDocument.kind_id == request.knowledge_base_id)
-            .order_by(KnowledgeDocument.created_at.desc())
+            base_query.order_by(KnowledgeDocument.created_at.desc())
+            .offset(request.offset)
+            .limit(request.limit)
             .all()
         )
 
@@ -833,14 +848,21 @@ async def list_documents(
             )
 
         logger.info(
-            "[internal_rag] Listed %d documents for KB %d",
+            "[internal_rag] Listed %d documents for KB %d (offset=%d limit=%d total=%d)",
             len(doc_items),
             request.knowledge_base_id,
+            request.offset,
+            request.limit,
+            total,
         )
 
         return ListDocsResponse(
             documents=doc_items,
-            total=len(doc_items),
+            total=total,
+            returned_count=len(doc_items),
+            offset=request.offset,
+            limit=request.limit,
+            has_more=request.offset + len(doc_items) < total,
         )
 
     except Exception as e:

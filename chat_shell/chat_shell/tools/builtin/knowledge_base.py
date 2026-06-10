@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field, PrivateAttr
 
 from shared.models.knowledge import KnowledgeBaseToolAccessMode
 
+from ...compression.config import get_model_context_config
 from ..knowledge_content_cleaner import get_content_cleaner
 from ..knowledge_injection_strategy import InjectionMode, InjectionStrategy
 
@@ -33,7 +34,6 @@ TOKEN_CHARS_PER_TOKEN = 4  # ~4 chars/token for English, 1-2 for CJK
 # Default configuration values (used when KB spec doesn't specify)
 DEFAULT_MAX_CALLS_PER_CONVERSATION = 10
 DEFAULT_EXEMPT_CALLS_BEFORE_CHECK = 5
-DEFAULT_RESERVED_OUTPUT_TOKENS = 4096
 
 
 class KnowledgeBaseInput(BaseModel):
@@ -105,6 +105,7 @@ class KnowledgeBaseTool(BaseTool):
     model_id: str = "claude-3-5-sonnet"
     current_model_name: Optional[str] = None
     current_model_namespace: str = "default"
+    max_output_tokens: Optional[int] = None
 
     # Context window size from Model CRD (required for injection strategy)
     context_window: Optional[int] = None
@@ -153,6 +154,26 @@ class KnowledgeBaseTool(BaseTool):
             Context window size (uses InjectionStrategy.DEFAULT_CONTEXT_WINDOW if None)
         """
         return self.context_window or InjectionStrategy.DEFAULT_CONTEXT_WINDOW
+
+    def _get_reserved_output_tokens(self) -> int:
+        """Get effective reserved output tokens for the current model."""
+        if self.max_output_tokens is not None:
+            return self.max_output_tokens
+        return get_model_context_config(self.model_id).output_tokens
+
+    def _get_effective_input_budget(self) -> int:
+        """Get usable input budget after reserving model output space."""
+        return max(
+            1,
+            self._get_effective_context_window() - self._get_reserved_output_tokens(),
+        )
+
+    def _get_available_runtime_input_budget(self) -> int:
+        """Get remaining usable input budget after current conversation usage."""
+        return max(
+            1,
+            self._get_effective_input_budget() - self._get_used_context_tokens(),
+        )
 
     def _is_restricted_search_only(self) -> bool:
         """Whether the tool should expose only redacted search results."""
@@ -303,8 +324,8 @@ class KnowledgeBaseTool(BaseTool):
         # Check 2: Token threshold (only after exempt period)
         if current_call > exempt_calls:
             # Calculate current token usage percentage
-            effective_context_window = self._get_effective_context_window()
-            usage_percent = self._accumulated_tokens / effective_context_window
+            effective_input_budget = self._get_available_runtime_input_budget()
+            usage_percent = self._accumulated_tokens / effective_input_budget
 
             # Token >= 90%: Reject (most severe)
             if usage_percent >= TOKEN_REJECT_THRESHOLD:
@@ -328,7 +349,7 @@ class KnowledgeBaseTool(BaseTool):
                     kb_name,
                     query[:50],
                     self._accumulated_tokens,
-                    effective_context_window,
+                    effective_input_budget,
                     usage_percent * 100,
                 )
                 return True, None, "strong"
@@ -343,7 +364,7 @@ class KnowledgeBaseTool(BaseTool):
                     kb_name,
                     query[:50],
                     self._accumulated_tokens,
-                    effective_context_window,
+                    effective_input_budget,
                     usage_percent * 100,
                 )
                 return (
@@ -397,8 +418,8 @@ class KnowledgeBaseTool(BaseTool):
         Returns:
             JSON string with rejection message
         """
-        effective_context_window = self._get_effective_context_window()
-        usage_percent = (self._accumulated_tokens / effective_context_window) * 100
+        effective_input_budget = self._get_available_runtime_input_budget()
+        usage_percent = (self._accumulated_tokens / effective_input_budget) * 100
 
         if rejection_reason == "max_calls_exceeded":
             message = (
@@ -409,7 +430,7 @@ class KnowledgeBaseTool(BaseTool):
         else:  # token_limit_exceeded
             message = (
                 f"🚫 Call Rejected: Knowledge base content has already consumed {usage_percent:.1f}% "
-                f"of the context window.\n"
+                f"of the usable input budget.\n"
                 f"You have made {self._call_count} successful calls. "
                 f"Please use the information you've gathered to provide your response."
             )
@@ -452,11 +473,11 @@ class KnowledgeBaseTool(BaseTool):
 
         if warning_level == "strong":
             # Strong warning: Token >= 70%
-            effective_context_window = self._get_effective_context_window()
-            usage_percent = (self._accumulated_tokens / effective_context_window) * 100
+            effective_input_budget = self._get_available_runtime_input_budget()
+            usage_percent = (self._accumulated_tokens / effective_input_budget) * 100
             header += (
                 f"\n🚨 Strong Warning: Knowledge base content has consumed {usage_percent:.1f}% "
-                f"of the context window.\n"
+                f"of the usable input budget.\n"
                 f"Please prioritize using existing information to answer the user's question.\n"
             )
         elif warning_level == "normal":
@@ -716,7 +737,9 @@ class KnowledgeBaseTool(BaseTool):
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 headers = {}
-                auth_token = getattr(settings, "INTERNAL_SERVICE_TOKEN", "") or self.auth_token
+                auth_token = (
+                    getattr(settings, "INTERNAL_SERVICE_TOKEN", "") or self.auth_token
+                )
                 if auth_token:
                     headers["Authorization"] = f"Bearer {auth_token}"
 
@@ -786,15 +809,12 @@ class KnowledgeBaseTool(BaseTool):
             self.current_messages
         )
 
-    def _build_runtime_context(
-        self,
-        reserved_output_tokens: int = DEFAULT_RESERVED_OUTPUT_TOKENS,
-    ) -> Dict[str, Any]:
+    def _build_runtime_context(self) -> Dict[str, Any]:
         """Build runtime context budget for Backend-side routing."""
         return {
             "context_window": self._get_effective_context_window(),
             "used_context_tokens": self._get_used_context_tokens(),
-            "reserved_output_tokens": reserved_output_tokens,
+            "reserved_output_tokens": self._get_reserved_output_tokens(),
             "context_buffer_ratio": self.context_buffer_ratio,
             "max_direct_chunks": self.max_direct_chunks,
         }
@@ -904,7 +924,7 @@ class KnowledgeBaseTool(BaseTool):
                     user_id=self.user_id,
                     context_window=self._get_effective_context_window(),
                     used_context_tokens=self._get_used_context_tokens(),
-                    reserved_output_tokens=DEFAULT_RESERVED_OUTPUT_TOKENS,
+                    reserved_output_tokens=self._get_reserved_output_tokens(),
                     context_buffer_ratio=self.context_buffer_ratio,
                     max_direct_chunks=self.max_direct_chunks,
                     restricted_mode=self._is_restricted_search_only(),
