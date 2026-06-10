@@ -6,7 +6,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { usePathname } from 'next/navigation'
-import { Coins } from 'lucide-react'
+import { Coins, Gauge } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -50,7 +50,10 @@ function ChatStatusSection({
 }) {
   return (
     <section className="space-y-1.5" data-testid="chat-status-section">
-      <div className="text-sm font-medium text-text-primary">{title}</div>
+      <div className="flex items-center gap-1.5 text-sm font-medium text-text-primary">
+        <Gauge className="h-3.5 w-3.5 text-text-muted" />
+        <span>{title}</span>
+      </div>
       <div className="text-sm text-text-primary">{contextRemainingLabel}</div>
       <div className="text-text-muted">{contextUsageLabel}</div>
       {display.isOverTrigger && <div className="text-amber-700">{overTriggerLabel}</div>}
@@ -71,7 +74,10 @@ function QuotaSection({
 }) {
   return (
     <section className="space-y-1.5" data-testid="quota-usage-section">
-      <div className="text-sm font-medium text-text-primary">{title}</div>
+      <div className="flex items-center gap-1.5 text-sm font-medium text-text-primary">
+        <Coins className="h-3.5 w-3.5 text-text-muted" />
+        <span>{title}</span>
+      </div>
       <div className="text-sm text-text-primary">{brief}</div>
       <div className="text-text-muted">{monthlyDetail}</div>
       <div className="text-text-muted">{permanentDetail}</div>
@@ -190,21 +196,6 @@ export default function ChatToolbarStatus({ className, compact = false }: ChatTo
   const statusDisplay = status.display
   const contentElement = (
     <div className="space-y-3 text-xs" data-testid="chat-toolbar-status-popover">
-      {showStatusSection && statusDisplay && (
-        <ChatStatusSection
-          display={statusDisplay}
-          title={t('common:chat_status.title')}
-          contextRemainingLabel={t('common:chat_status.context_remaining', {
-            percent: statusDisplay.percent,
-          })}
-          contextUsageLabel={t('common:chat_status.context_usage', {
-            used: statusDisplay.usedTokens,
-            total: statusDisplay.totalTokens,
-          })}
-          overTriggerLabel={t('common:chat_status.over_trigger')}
-        />
-      )}
-
       {showQuotaSection && quotaDetail && quotaBrief && (
         <QuotaSection
           title={t('common:quota.title')}
@@ -220,6 +211,29 @@ export default function ChatToolbarStatus({ className, compact = false }: ChatTo
             permanent_left: quotaDetail.permanent_quota - quotaDetail.permanent_usage,
           })}
         />
+      )}
+
+      {showQuotaSection && (showStatusSection || quotaHasError) && (
+        <div className="border-t border-border" aria-hidden="true" />
+      )}
+
+      {showStatusSection && statusDisplay && (
+        <ChatStatusSection
+          display={statusDisplay}
+          title={t('common:chat_status.title')}
+          contextRemainingLabel={t('common:chat_status.context_remaining', {
+            percent: statusDisplay.percent,
+          })}
+          contextUsageLabel={t('common:chat_status.context_usage', {
+            used: statusDisplay.usedTokens,
+            total: statusDisplay.totalTokens,
+          })}
+          overTriggerLabel={t('common:chat_status.over_trigger')}
+        />
+      )}
+
+      {showStatusSection && quotaHasError && (
+        <div className="border-t border-border" aria-hidden="true" />
       )}
 
       {quotaHasError && (
