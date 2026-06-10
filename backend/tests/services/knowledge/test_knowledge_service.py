@@ -177,6 +177,8 @@ class TestKnowledgeServiceDeleteDocument:
             id=8,
             kind_id=10,
             attachment_id=20,
+            user_id=42,
+            converted_attachment_id=None,
         )
         knowledge_base = SimpleNamespace(
             id=10,
@@ -260,6 +262,8 @@ class TestKnowledgeServiceDeleteDocument:
             id=8,
             kind_id=10,
             attachment_id=None,
+            user_id=42,
+            converted_attachment_id=None,
         )
         knowledge_base = SimpleNamespace(
             id=10,
