@@ -10,12 +10,23 @@ import {
 interface ToolBlocksDisplayProps {
   blocks: ProcessingBlock[]
   isStreaming: boolean
+  // Wall-clock epoch ms when the turn started (the assistant subtask's
+  // created_at). Used as the duration anchor so the elapsed time survives a
+  // page refresh: after a refresh the in-progress blocks are re-streamed with
+  // fresh client timestamps, so anchoring to the first block would restart the
+  // timer from the refresh moment.
+  startedAt?: number
 }
 
-export function ToolBlocksDisplay({ blocks, isStreaming }: ToolBlocksDisplayProps) {
+export function ToolBlocksDisplay({
+  blocks,
+  isStreaming,
+  startedAt,
+}: ToolBlocksDisplayProps) {
   const isRunning = isStreaming || blocks.some(b => b.status !== 'done' && b.status !== 'error')
   const [userExpanded, setUserExpanded] = useState(false)
-  const [startedAt] = useState(() => Date.now())
+  const [mountedAt] = useState(() => Date.now())
+  const turnStartedAt = startedAt ?? mountedAt
   const [hasRenderedRunning, setHasRenderedRunning] = useState(isRunning)
   const [completedAt, setCompletedAt] = useState<number | null>(null)
   const [now, setNow] = useState(() => Date.now())
@@ -44,31 +55,36 @@ export function ToolBlocksDisplay({ blocks, isStreaming }: ToolBlocksDisplayProp
 
   if (blocks.length === 0 && !isStreaming) return null
 
-  const duration = getDurationText(blocks, startedAt, now, completedAt, isRunning)
+  const duration = getDurationText(blocks, turnStartedAt, now, completedAt, isRunning)
   const rows = buildProcessingDisplayRows(blocks)
   const expanded = isRunning || userExpanded
 
   return (
     <div className="mb-3 min-w-0">
-      <button
-        type="button"
-        className="mb-3 flex w-full items-center gap-1 border-b border-border pb-2 text-left text-xs text-text-muted hover:text-text-secondary disabled:hover:text-text-muted"
-        disabled={isRunning}
-        onClick={() => {
-          if (!isRunning) setUserExpanded(value => !value)
-        }}
-      >
-        <span>{duration}</span>
-        <svg
-          className={`h-3 w-3 transition-transform ${expanded || isRunning ? '' : '-rotate-90'}`}
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-          strokeWidth={2}
+      {isRunning ? (
+        // While the turn is still running the summary is informational only:
+        // render it as plain, non-interactive text so it does not look clickable.
+        <div className="mb-3 flex w-full items-center gap-1 border-b border-border pb-2 text-xs text-text-muted">
+          <span>{duration}</span>
+        </div>
+      ) : (
+        <button
+          type="button"
+          className="mb-3 flex w-full items-center gap-1 border-b border-border pb-2 text-left text-xs text-text-muted hover:text-text-secondary"
+          onClick={() => setUserExpanded(value => !value)}
         >
-          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-        </svg>
-      </button>
+          <span>{duration}</span>
+          <svg
+            className={`h-3 w-3 transition-transform ${expanded ? '' : '-rotate-90'}`}
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            strokeWidth={2}
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+      )}
       {expanded && (
         <div className="flex min-w-0 flex-col gap-3">
           {rows.map(row =>
@@ -145,16 +161,22 @@ function ThinkingIndicator() {
 
 function getDurationText(
   blocks: ProcessingBlock[],
-  fallbackStart: number,
+  turnStartedAt: number,
   now: number,
   completedAt: number | null,
   isRunning: boolean
 ): string {
-  const first = blocks[0]?.createdAt ?? fallbackStart
+  // Anchor the elapsed time to the turn's wall-clock start rather than the
+  // first block. After a page refresh the in-progress blocks are re-streamed
+  // with fresh client timestamps, so anchoring to blocks[0] would restart the
+  // timer from the refresh moment.
+  const first = turnStartedAt
   const last = blocks[blocks.length - 1]?.createdAt ?? first
-  const isComplete =
-    blocks.length > 0 && blocks.every(b => b.status === 'done' || b.status === 'error')
-  const endTime = isComplete ? (completedAt ?? last) : now
+  // While running, keep counting against the live clock so the timer advances
+  // every second even during pure thinking phases with no new tool output.
+  // Once finished, lock to the completion time (or the last block timestamp
+  // when the turn was restored from history after a refresh).
+  const endTime = isRunning ? now : (completedAt ?? last)
   const durationMs = Math.max(0, endTime - first)
   const duration = formatDuration(durationMs)
 
