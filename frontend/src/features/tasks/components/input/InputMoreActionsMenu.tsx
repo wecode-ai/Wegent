@@ -13,9 +13,10 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import ClarificationToggle from '../clarification/ClarificationToggle'
 import CorrectionModeToggle from '../CorrectionModeToggle'
 import SkillSelectorPopover, { SkillSelectorPopoverRef } from '../selector/SkillSelectorPopover'
+import ExternalWebContentButton from '../chat/ExternalWebContentButton'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isChatShell } from '../../service/messageService'
-import type { Team } from '@/types/api'
+import type { Attachment, Team } from '@/types/api'
 import type { UnifiedSkill } from '@/apis/skills'
 
 interface InputMoreActionsMenuProps {
@@ -36,6 +37,9 @@ interface InputMoreActionsMenuProps {
   selectedSkillNames: string[]
   onToggleSkill?: (skillName: string) => void
   skillSelectorRef?: RefObject<SkillSelectorPopoverRef | null>
+  showExternalWebContent?: boolean
+  attachments?: Attachment[]
+  onAttachmentAdd?: (attachment: Attachment) => void
 }
 
 export function InputMoreActionsMenu({
@@ -56,13 +60,16 @@ export function InputMoreActionsMenu({
   selectedSkillNames,
   onToggleSkill,
   skillSelectorRef,
+  showExternalWebContent = false,
+  attachments = [],
+  onAttachmentAdd = () => {},
 }: InputMoreActionsMenuProps) {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   const showSkillSelector = availableSkills.length > 0 && Boolean(onToggleSkill)
   const selectedSkillCount = selectedSkillNames.length
 
-  if (!showClarification && !showCorrection && !showSkillSelector) {
+  if (!showClarification && !showCorrection && !showSkillSelector && !showExternalWebContent) {
     return null
   }
 
@@ -76,7 +83,7 @@ export function InputMoreActionsMenu({
                 <ActionButton
                   disabled={disabled}
                   icon={<MoreHorizontal className="h-4 w-4" />}
-                  title={t('common:teams.more_actions', '更多操作')}
+                  title={t('common:teams.more_actions')}
                   data-testid="desktop-input-more-actions-button"
                 />
                 {selectedSkillCount > 0 && (
@@ -88,7 +95,7 @@ export function InputMoreActionsMenu({
             </PopoverTrigger>
           </TooltipTrigger>
           <TooltipContent side="top">
-            <p>{t('common:teams.more_actions', '更多操作')}</p>
+            <p>{t('common:teams.more_actions')}</p>
           </TooltipContent>
         </Tooltip>
 
@@ -98,6 +105,15 @@ export function InputMoreActionsMenu({
           className="w-56 p-1"
           data-testid="desktop-input-more-actions-menu"
         >
+          {showExternalWebContent && (
+            <ExternalWebContentButton
+              attachments={attachments}
+              onAttachmentAdd={onAttachmentAdd}
+              disabled={disabled}
+              triggerVariant="menu-item"
+            />
+          )}
+
           {showSkillSelector && onToggleSkill && (
             <SkillSelectorPopover
               ref={skillSelectorRef}

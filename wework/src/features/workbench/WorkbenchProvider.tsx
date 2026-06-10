@@ -20,6 +20,12 @@ import { getRuntimeConfig, stripAppBasePath } from '@/config/runtime'
 import { createChatStream } from '@/stream/chatStream'
 import { createSocketClient } from '@/stream/socketClient'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
+import {
+  WEWORK_MIN_EXECUTOR_VERSION,
+  canRequestDeviceUpgrade,
+  isDeviceBelowWeWorkVersion,
+  isWeWorkCompatibleDevice,
+} from '@/lib/device-capabilities'
 import { buildTaskRoute, navigateTo, parseTaskRoute } from '@/lib/navigation'
 import { supportsGitWorktreeExecution } from '@/lib/projectClassification'
 import {
@@ -52,6 +58,10 @@ import type {
   UnifiedSkill,
   User,
 } from '@/types/api'
+import type {
+  DeviceUpgradeState,
+  DeviceUpgradeStatusPayload,
+} from '@/types/device-events'
 import type { EnvironmentInfo } from '@/types/environment'
 import type {
   GuidanceWorkbenchMessage,
@@ -77,11 +87,27 @@ const DEVICE_STATUS_LABELS: Record<string, string> = {
   busy: '忙碌',
   offline: '离线',
 }
+const TERMINAL_UPGRADE_STATUSES = new Set(['success', 'error', 'skipped', 'busy'])
+const UPGRADE_STATE_CLEAR_DELAY_MS = 5000
+const UPGRADE_REFRESH_INTERVAL_MS = 3000
 
 interface QueuedWorkbenchSend extends QueuedWorkbenchMessage {
   payload: ChatSendPayload
   activeDeviceId?: string
   attachments?: Attachment[]
+}
+
+function isTerminalDeviceUpgradeStatus(status: string): boolean {
+  return TERMINAL_UPGRADE_STATUSES.has(status)
+}
+
+function getUpgradeStatusMessage(payload: DeviceUpgradeStatusPayload): string {
+  if (payload.message) return payload.message
+  if (payload.status === 'success') return '升级完成，正在检查设备版本'
+  if (payload.status === 'error') return payload.error ?? '升级失败'
+  if (payload.status === 'busy') return '设备正在执行任务，空闲后再升级'
+  if (payload.status === 'skipped') return '设备已是最新版本'
+  return '设备升级中'
 }
 
 export interface WorkbenchServices {
@@ -133,6 +159,7 @@ export interface WorkbenchContextValue {
     listLocalSkills: () => Promise<LocalDeviceSkill[]>
   }
   runningTaskIds: Set<number>
+  upgradingDevices: Record<string, DeviceUpgradeState>
   projectExecutionMode: ProjectExecutionMode
   setProjectExecutionMode: (mode: ProjectExecutionMode) => void
   selectProject: (projectId: number | null) => void
@@ -146,6 +173,7 @@ export interface WorkbenchContextValue {
   rememberExecutionDevice: (deviceId: string) => void
   refreshWorkLists: () => Promise<void>
   refreshDevices: () => Promise<void>
+  upgradeDevice: (deviceId: string) => Promise<void>
   createProject: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
   createGitWorkspaceProject: (
     data: CreateGitWorkspaceProjectRequest,
@@ -518,11 +546,17 @@ export function WorkbenchProvider({
   const [messages, dispatchMessages] = useReducer(messageReducer, [])
   const [queuedSends, setQueuedSends] = useState<QueuedWorkbenchSend[]>([])
   const [guidanceMessages, setGuidanceMessages] = useState<GuidanceWorkbenchMessage[]>([])
+  const [upgradingDevices, setUpgradingDevices] = useState<
+    Record<string, DeviceUpgradeState>
+  >({})
   const [isAwaitingAssistantStart, setIsAwaitingAssistantStart] = useState(false)
   const [routePath, setRoutePath] = useState(getCurrentAppPath)
   const [projectExecutionMode, setProjectExecutionMode] =
     useState<ProjectExecutionMode>('current_workspace')
   const guidanceSendInFlightRef = useRef(false)
+  const upgradeClearTimersRef = useRef<
+    Record<string, ReturnType<typeof window.setTimeout>>
+  >({})
   const localSkillsCacheRef = useRef<
     Map<string, { expiresAt: number; skills: LocalDeviceSkill[] }>
   >(new Map())
@@ -701,15 +735,112 @@ export function WorkbenchProvider({
     })
   }, [resolvedServices, state.standaloneDeviceId])
 
+  const clearUpgradeStateTimer = useCallback((deviceId: string) => {
+    const timer = upgradeClearTimersRef.current[deviceId]
+    if (!timer) return
+    window.clearTimeout(timer)
+    delete upgradeClearTimersRef.current[deviceId]
+  }, [])
+
+  const scheduleUpgradeStateClear = useCallback(
+    (deviceId: string) => {
+      clearUpgradeStateTimer(deviceId)
+      upgradeClearTimersRef.current[deviceId] = window.setTimeout(() => {
+        setUpgradingDevices(current => {
+          const next = { ...current }
+          delete next[deviceId]
+          return next
+        })
+        delete upgradeClearTimersRef.current[deviceId]
+      }, UPGRADE_STATE_CLEAR_DELAY_MS)
+    },
+    [clearUpgradeStateTimer],
+  )
+
+  const setDeviceUpgradeState = useCallback(
+    (deviceId: string, upgradeState: DeviceUpgradeState) => {
+      clearUpgradeStateTimer(deviceId)
+      setUpgradingDevices(current => ({
+        ...current,
+        [deviceId]: upgradeState,
+      }))
+      if (isTerminalDeviceUpgradeStatus(upgradeState.status)) {
+        scheduleUpgradeStateClear(deviceId)
+      }
+    },
+    [clearUpgradeStateTimer, scheduleUpgradeStateClear],
+  )
+
+  const upgradeDevice = useCallback(
+    async (deviceId: string) => {
+      const device = state.devices.find(item => item.device_id === deviceId)
+      if (device && !canRequestDeviceUpgrade(device)) {
+        const message =
+          device.status !== 'online'
+            ? '设备离线，恢复在线后再升级'
+            : '设备正在执行任务，空闲后再升级'
+        setDeviceUpgradeState(deviceId, {
+          status: 'busy',
+          message,
+        })
+        dispatch({ type: 'error_set', error: message })
+        return
+      }
+
+      setDeviceUpgradeState(deviceId, {
+        status: 'pending',
+        message: '正在发送升级指令',
+      })
+
+      try {
+        await resolvedServices.deviceApi.upgradeDevice(deviceId, {
+          auto_confirm: true,
+        })
+        setDeviceUpgradeState(deviceId, {
+          status: 'checking',
+          message: '升级指令已发送，正在等待设备更新',
+        })
+        void refreshDevices().catch(() => undefined)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '升级失败'
+        setDeviceUpgradeState(deviceId, {
+          status: 'error',
+          message,
+          error: message,
+        })
+        dispatch({ type: 'error_set', error: message })
+      }
+    },
+    [
+      refreshDevices,
+      resolvedServices.deviceApi,
+      setDeviceUpgradeState,
+      state.devices,
+    ],
+  )
+
   useEffect(() => {
     const handleDeviceChanged = () => {
       void refreshDevices()
+    }
+    const handleDeviceUpgradeStatus = (payload: DeviceUpgradeStatusPayload) => {
+      setDeviceUpgradeState(payload.device_id, {
+        status: payload.status,
+        message: getUpgradeStatusMessage(payload),
+        progress: payload.progress,
+        error: payload.error,
+      })
+      if (payload.status === 'success' || payload.status === 'skipped') {
+        void refreshDevices()
+      }
     }
 
     return resolvedServices.chatStream.subscribe({
       onDeviceOnline: handleDeviceChanged,
       onDeviceOffline: handleDeviceChanged,
       onDeviceStatus: handleDeviceChanged,
+      onDeviceSlotUpdate: handleDeviceChanged,
+      onDeviceUpgradeStatus: handleDeviceUpgradeStatus,
       onChatStart: payload => {
         setIsAwaitingAssistantStart(false)
         dispatch({
@@ -823,7 +954,45 @@ export function WorkbenchProvider({
         )
       },
     })
-  }, [refreshDevices, resolvedServices, state.currentTask?.id])
+  }, [refreshDevices, resolvedServices, setDeviceUpgradeState, state.currentTask?.id])
+
+  useEffect(() => {
+    return () => {
+      Object.values(upgradeClearTimersRef.current).forEach(timer => {
+        window.clearTimeout(timer)
+      })
+      upgradeClearTimersRef.current = {}
+    }
+  }, [])
+
+  useEffect(() => {
+    const hasActiveUpgrade = Object.values(upgradingDevices).some(
+      upgradeState => !isTerminalDeviceUpgradeStatus(upgradeState.status),
+    )
+    if (!hasActiveUpgrade) return undefined
+
+    const interval = window.setInterval(() => {
+      void refreshDevices().catch(() => undefined)
+    }, UPGRADE_REFRESH_INTERVAL_MS)
+
+    return () => window.clearInterval(interval)
+  }, [refreshDevices, upgradingDevices])
+
+  useEffect(() => {
+    setUpgradingDevices(current => {
+      let changed = false
+      const next = { ...current }
+      Object.keys(next).forEach(deviceId => {
+        const device = state.devices.find(item => item.device_id === deviceId)
+        if (device && device.status === 'online' && isWeWorkCompatibleDevice(device)) {
+          clearUpgradeStateTimer(deviceId)
+          delete next[deviceId]
+          changed = true
+        }
+      })
+      return changed ? next : current
+    })
+  }, [clearUpgradeStateTimer, state.devices])
 
   const rememberExecutionDevice = useCallback(
     (deviceId: string) => {
@@ -1472,6 +1641,28 @@ export function WorkbenchProvider({
         })
         return
       }
+      if (activeDevice && isDeviceBelowWeWorkVersion(activeDevice)) {
+        const deviceName = getWorkbenchDeviceDisplayName(
+          activeDevice,
+          prepared.activeDeviceId,
+        )
+        dispatch({
+          type: 'error_set',
+          error: `${deviceName} 版本低于 ${WEWORK_MIN_EXECUTOR_VERSION}，升级后可继续对话`,
+        })
+        return
+      }
+    } else if (!state.currentProject && !state.currentTask) {
+      const hasOnlineCompatibleDevice = state.devices.some(
+        device => device.status === 'online' && isWeWorkCompatibleDevice(device),
+      )
+      if (!hasOnlineCompatibleDevice) {
+        dispatch({
+          type: 'error_set',
+          error: `暂无满足 ${WEWORK_MIN_EXECUTOR_VERSION} 的在线设备，请连接或升级设备`,
+        })
+        return
+      }
     }
     const attachmentsSnapshot = hasAttachments
       ? [...attachmentSelection.attachments]
@@ -1511,7 +1702,8 @@ export function WorkbenchProvider({
     hasActiveTurn,
     sendPreparedMessage,
     state.devices,
-    state.currentTask?.id,
+    state.currentProject,
+    state.currentTask,
     state.input,
   ])
 
@@ -1762,6 +1954,7 @@ export function WorkbenchProvider({
     queuedMessages: queuedSends,
     guidanceMessages,
     runningTaskIds,
+    upgradingDevices,
     projectExecutionMode,
     setProjectExecutionMode: selectProjectExecutionMode,
     projectChat: {
@@ -1797,6 +1990,7 @@ export function WorkbenchProvider({
     rememberExecutionDevice,
     refreshWorkLists,
     refreshDevices,
+    upgradeDevice,
     createProject,
     createGitWorkspaceProject,
     listGitRepositories,

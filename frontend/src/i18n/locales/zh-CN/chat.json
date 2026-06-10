@@ -729,5 +729,27 @@
     "wikispaceNotConfigured": "钉钉知识库 MCP 未配置",
     "wikispaceLastSynced": "上次同步: {{time}}",
     "wikispaceNeverSynced": "从未同步"
+  },
+  "externalWebContent": {
+    "trigger": "外站内容",
+    "title": "添加外站内容",
+    "description": "目前仅支持抓取抖音、B站、小红书等视频内容。",
+    "placeholder": "https://www.douyin.com/video/...",
+    "crawl": "抓取",
+    "crawlingHint": "抓取可能需要几分钟，请勿关闭或退出当前页面。",
+    "added": "已添加外站视频",
+    "videoCount": "{{count}} 个视频",
+    "errors": {
+      "urlRequired": "请输入网页地址",
+      "duplicate": "该地址已添加",
+      "invalidUrl": "请输入有效的 HTTP(S) 网页地址",
+      "noVideo": "暂未抓取到可添加的视频，可等会再试试",
+      "tooManyVideos": "该网页包含的视频数量超过上限",
+      "videoDownloadFailed": "外站视频下载失败，请稍后重试",
+      "videoUploadFailed": "外站视频上传到视频平台失败，请稍后重试",
+      "videoTooLarge": "外站视频文件超过大小上限",
+      "serviceUnavailable": "外站内容抓取服务暂时不可用，请稍后重试",
+      "crawlFailed": "抓取外站内容失败"
+    }
   }
 }

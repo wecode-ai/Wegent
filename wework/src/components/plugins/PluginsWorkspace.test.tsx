@@ -69,6 +69,11 @@ function mockSystemSkillsFetch(
     installState: 'not_installed' | 'installed' | 'update_available'
     enabled: boolean
     installedSkillId: number | null
+    providerErrors: Array<{
+      providerKey: string
+      code: 'token_required' | 'provider_error'
+      message: string
+    }>
   }> = {},
 ) {
   const personalSkillsResponse = {
@@ -384,7 +389,7 @@ function mockSystemSkillsFetch(
               page,
               pageSize: 20,
               items: keyword ? [] : [item],
-              providerErrors: [],
+              providerErrors: overrides.providerErrors ?? [],
             }
 
       return Promise.resolve({
@@ -718,6 +723,24 @@ describe('PluginsWorkspace', () => {
         body: expect.stringContaining('"catalogItemId":"@weibo/page-1"'),
       }),
     )
+  })
+
+  test('keeps personal skills available when the Weibo provider fails', async () => {
+    mockSystemSkillsFetch({
+      providerErrors: [
+        {
+          providerKey: 'weibo',
+          code: 'token_required',
+          message: 'Skill Hub token is not configured',
+        },
+      ],
+    })
+
+    render(<PluginsWorkspace />)
+
+    await openSkillsTab()
+    expect(await screen.findByText('Excel Helper')).toBeInTheDocument()
+    expect(screen.getByText('部分技能来源暂不可用')).toBeInTheDocument()
   })
 
   test('shows personal skills as uninstalled until explicitly installed', async () => {

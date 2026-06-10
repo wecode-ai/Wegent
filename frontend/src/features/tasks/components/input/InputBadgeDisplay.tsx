@@ -5,7 +5,7 @@
 'use client'
 
 import React, { useState, useEffect } from 'react'
-import { X, Loader2 } from 'lucide-react'
+import { X, Loader2, Video } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import ContextBadge from '../chat/ContextBadge'
@@ -17,6 +17,7 @@ import {
 } from '@/apis/attachments'
 import { getToken } from '@/apis/user'
 import { useTranslation } from '@/hooks/useTranslation'
+import { parseHostname } from '@/lib/url-utils'
 import type { Attachment, MultiAttachmentUploadState } from '@/types/api'
 import type { ContextItem } from '@/types/context'
 
@@ -108,7 +109,7 @@ function AttachmentPreviewInline({
   attachment: Attachment
   disabled?: boolean
   onRemove: () => void
-  t: (key: string) => string
+  t: (key: string, params?: Record<string, unknown>) => string
 }) {
   const isImage = isImageExtension(attachment.file_extension)
   const {
@@ -116,6 +117,42 @@ function AttachmentPreviewInline({
     isLoading: imageLoading,
     error: imageError,
   } = useAuthenticatedImageInline(attachment.id, isImage)
+  const isExternalWebVideo = Boolean(attachment.source_url && attachment.video_count != null)
+
+  if (isExternalWebVideo) {
+    const sourceLabel = attachment.site || parseHostname(attachment.source_url)
+    return (
+      <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg border bg-muted border-border">
+        <Video className="h-4 w-4 flex-shrink-0" />
+        <div className="flex flex-col min-w-0 max-w-[170px]">
+          <span className="text-xs font-medium truncate" title={attachment.filename}>
+            {attachment.filename}
+          </span>
+          <span className="text-xs text-text-muted truncate">
+            {[
+              sourceLabel,
+              t('chat:externalWebContent.videoCount', {
+                count: attachment.video_count ?? 0,
+              }),
+            ]
+              .filter(Boolean)
+              .join(' · ')}
+          </span>
+        </div>
+        {!disabled && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={onRemove}
+            className="h-5 w-5 ml-1 text-text-muted hover:text-text-primary"
+          >
+            <X className="h-3 w-3" />
+          </Button>
+        )}
+      </div>
+    )
+  }
 
   // For images, show thumbnail preview
   if (isImage && !imageError) {

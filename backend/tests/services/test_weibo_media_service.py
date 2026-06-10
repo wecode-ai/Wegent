@@ -4,6 +4,8 @@
 
 import json
 
+import pytest
+
 from app.models.user import User
 from app.services.media.weibo_media_service import (
     WEIBO_DOWNLOAD_URL,
@@ -63,3 +65,34 @@ def test_get_download_url_uses_bound_uid_for_tauth(httpx_mock, monkeypatch) -> N
 
     assert video_url == "https://example.com/video.mp4"
     assert requested_uids == [1234567890]
+
+
+@pytest.mark.asyncio
+async def test_init_upload_accepts_string_chunk_length(httpx_mock, monkeypatch) -> None:
+    """Weibo init may return chunk length as a string."""
+
+    def fake_auth_headers(uid: int, headers=None):
+        return {**(headers or {}), "Authorization": f"TAuth2 uid={uid}"}
+
+    monkeypatch.setattr(
+        "app.services.media.weibo_media_service.auth_headers",
+        fake_auth_headers,
+    )
+    httpx_mock.add_response(
+        method="GET",
+        json={
+            "fileToken": "token-1",
+            "length": "4096",
+            "auth": "upload-auth",
+            "request_id": "req-1",
+        },
+    )
+
+    result = await WeiboMediaService().init_upload(
+        filename="video.mp4",
+        file_size=1024,
+        file_check="md5",
+    )
+
+    assert result.chunk_size == 4096 * 1024
+    assert result.file_token == "token-1"

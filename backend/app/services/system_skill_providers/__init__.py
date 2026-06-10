@@ -6,5 +6,14 @@ from app.services.system_skill_providers.core.registry import (
     SystemSkillProviderRegistry,
     system_skill_provider_registry,
 )
+from app.services.system_skill_providers.providers.weibo import (
+    WeiboSkillMarketProvider,
+)
 
-__all__ = ["SystemSkillProviderRegistry", "system_skill_provider_registry"]
+system_skill_provider_registry.register(WeiboSkillMarketProvider())
+
+__all__ = [
+    "SystemSkillProviderRegistry",
+    "WeiboSkillMarketProvider",
+    "system_skill_provider_registry",
+]

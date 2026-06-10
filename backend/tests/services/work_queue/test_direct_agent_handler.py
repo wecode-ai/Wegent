@@ -2,6 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import sys
+from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -108,3 +110,72 @@ def test_resolve_model_override_uses_public_model_type_for_public_model():
     assert model_name == "gpt-5"
     assert force_override is True
     assert model_type == "public"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_ai_execution_closes_loader_session_before_collecting_result(
+    fake_orm_session_factory,
+):
+    handler = InboxDirectAgentHandler()
+    fake_session = fake_orm_session_factory(
+        task_id=123,
+        assistant_subtask_id=789,
+        team_id=17,
+        user_id=7,
+    )
+
+    @contextmanager
+    def fake_get_db_session():
+        try:
+            yield fake_session
+        finally:
+            fake_session.close()
+
+    class FakeEmitter:
+        def __init__(self, task_id: int, subtask_id: int):
+            self.task_id = task_id
+            self.subtask_id = subtask_id
+
+        async def collect(self):
+            assert fake_session.rolled_back is True
+            assert fake_session.closed is True
+            return "", None
+
+    dispatch_mock = AsyncMock(return_value=None)
+    fake_execution_module = SimpleNamespace(
+        execution_dispatcher=SimpleNamespace(dispatch=dispatch_mock)
+    )
+    fake_emitters_module = SimpleNamespace(SSEResultEmitter=FakeEmitter)
+
+    async def fake_build_execution_request(**kwargs):
+        assert fake_session.rolled_back is True
+        assert fake_session.closed is True
+        return object()
+
+    with (
+        patch(
+            "app.services.inbox.direct_agent_handler.get_db_session",
+            fake_get_db_session,
+        ),
+        patch(
+            "app.services.chat.trigger.unified.build_execution_request",
+            AsyncMock(side_effect=fake_build_execution_request),
+        ),
+        patch.dict(
+            sys.modules,
+            {
+                "app.services.execution": fake_execution_module,
+                "app.services.execution.emitters": fake_emitters_module,
+            },
+        ),
+    ):
+        await handler._dispatch_ai_execution(
+            task_id=123,
+            assistant_subtask_id=789,
+            team_id=17,
+            user_id=7,
+            message="hello",
+            user_subtask_id=456,
+        )
+
+    dispatch_mock.assert_awaited_once()

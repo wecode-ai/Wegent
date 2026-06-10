@@ -141,7 +141,8 @@ def test_registry_lists_registered_providers_by_priority():
     assert registry.get("missing") is None
 
 
-def test_default_registry_starts_without_internal_providers():
+def test_default_registry_registers_weibo_provider():
     providers = system_skill_provider_registry.list_all()
 
-    assert providers == []
+    assert [provider.key for provider in providers] == ["weibo"]
+    assert providers[0].requires_token is False

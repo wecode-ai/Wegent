@@ -149,7 +149,7 @@ describe('MobileChatInputControls layout', () => {
   it('keeps long selector labels clipped without clipping the overflow menu', () => {
     render(<MobileChatInputControls {...buildProps()} />)
 
-    fireEvent.click(screen.getByRole('button', { name: 'More actions' }))
+    fireEvent.click(screen.getByTestId('mobile-input-more-actions-button'))
 
     const sendSlot = screen.getByTestId('send-button').parentElement
     const rightControls = sendSlot?.parentElement

@@ -21,6 +21,7 @@ import type {
   TaskDetail,
   MultiAttachmentUploadState,
   TaskType,
+  Attachment,
 } from '@/types/api'
 import type { ContextItem } from '@/types/context'
 import type { UnifiedSkill } from '@/apis/skills'
@@ -44,6 +45,7 @@ import { ProjectSelectorTab } from '@/features/projects/components/ProjectSelect
 import { getChatSendState } from './chatSendState'
 import AgentSkillSelectorMenu from './AgentSkillSelectorMenu'
 import InputMoreActionsMenu from './InputMoreActionsMenu'
+import { useTranslation } from '@/hooks/useTranslation'
 
 export interface ChatInputControlsProps {
   /** Task type to determine which controls to show */
@@ -100,6 +102,7 @@ export interface ChatInputControlsProps {
   // Attachment (multi-attachment)
   attachmentState: MultiAttachmentUploadState
   onFileSelect: (files: File | File[]) => void
+  onAttachmentAdd?: (attachment: Attachment) => void
   onAttachmentRemove: (attachmentId: number) => void
 
   // State flags
@@ -223,6 +226,7 @@ export function ChatInputControls({
   setSelectedContexts,
   attachmentState,
   onFileSelect,
+  onAttachmentAdd = () => {},
   onAttachmentRemove: _onAttachmentRemove,
   isStreaming,
   isStopping,
@@ -275,6 +279,7 @@ export function ChatInputControls({
   // Project context
   projectId,
 }: ChatInputControlsProps) {
+  const { t } = useTranslation('chat')
   // Check if we're in video or image mode
   const isVideoMode = taskType === 'video'
   const isImageMode = taskType === 'image'
@@ -303,9 +308,10 @@ export function ChatInputControls({
     const renderStopAction = () => (
       <ActionButton
         onClick={onStopStream}
-        title="Stop generating"
+        title={t('actions.stop')}
         icon={<CircleStop className="h-4 w-4 text-orange-500" />}
         className="hover:bg-orange-100"
+        data-testid="stop-generating-button"
       />
     )
 
@@ -325,7 +331,7 @@ export function ChatInputControls({
       return (
         <ActionButton
           onClick={onCancelTask}
-          title="Cancel task"
+          title={t('common:actions.cancel_task')}
           icon={<CircleStop className="h-4 w-4 text-orange-500" />}
           className="hover:bg-orange-100"
           data-testid="cancel-task-button"
@@ -408,7 +414,9 @@ export function ChatInputControls({
         onCorrectionModeToggle={onCorrectionModeToggle}
         selectedContexts={selectedContexts}
         setSelectedContexts={setSelectedContexts}
+        attachments={attachmentState.attachments}
         onFileSelect={onFileSelect}
+        onAttachmentAdd={onAttachmentAdd}
         isStreaming={isStreaming}
         isStopping={isStopping}
         hasMessages={hasMessages}
@@ -566,12 +574,14 @@ export function ChatInputControls({
             />
 
             {showChatContexts && (
-              <ChatContextInput
-                selectedContexts={selectedContexts}
-                onContextsChange={setSelectedContexts}
-                excludeKnowledgeBaseId={knowledgeBaseId}
-                iconOnly
-              />
+              <>
+                <ChatContextInput
+                  selectedContexts={selectedContexts}
+                  onContextsChange={setSelectedContexts}
+                  excludeKnowledgeBaseId={knowledgeBaseId}
+                  iconOnly
+                />
+              </>
             )}
 
             <InputMoreActionsMenu
@@ -592,6 +602,9 @@ export function ChatInputControls({
               selectedSkillNames={selectedSkillNames}
               onToggleSkill={onToggleSkill}
               skillSelectorRef={skillSelectorRef}
+              showExternalWebContent={showChatContexts}
+              attachments={attachmentState.attachments}
+              onAttachmentAdd={onAttachmentAdd}
             />
 
             {/* Project Selector - show when in project context */}

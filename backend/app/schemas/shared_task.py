@@ -90,12 +90,12 @@ class SharedTaskInDB(BaseModel):
 
 class PublicContextData(BaseModel):
     """
-    Public context data for read-only viewing (unified attachment and knowledge base).
+    Public context data for read-only viewing.
     This replaces the legacy PublicAttachmentData for shared tasks.
     """
 
     id: int
-    context_type: str  # "attachment" or "knowledge_base"
+    context_type: str
     name: str
     status: str
 
@@ -106,6 +106,16 @@ class PublicContextData(BaseModel):
 
     # Knowledge base-specific fields (optional)
     document_count: Optional[int] = None
+
+    # Table-specific fields (optional)
+    document_id: Optional[int] = None
+    source_config: Optional[dict[str, Any]] = None
+
+    # External web content-specific fields (optional)
+    video_count: Optional[int] = None
+    site: Optional[str] = None
+    source_url: Optional[str] = None
+    cover_url: Optional[str] = None
 
     class Config:
         from_attributes = True

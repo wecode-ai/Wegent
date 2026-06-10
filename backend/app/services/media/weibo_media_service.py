@@ -1,5 +1,6 @@
 """Weibo media platform integration."""
 
+import hashlib
 import logging
 from dataclasses import dataclass
 from typing import Optional
@@ -13,6 +14,7 @@ from app.services.weibo_account_binding import weibo_account_binding_service
 logger = logging.getLogger(__name__)
 
 WEIBO_INIT_URL = "http://i.fileplatform.api.weibo.com/2/multimedia/init.json"
+WEIBO_UPLOAD_URL = "https://fileplatform.api.weibo.com/2/multimedia/upload.json"
 WEIBO_DOWNLOAD_URL = (
     "http://i.fileplatform.api.weibo.com/2/multimedia/downloadlink.json"
 )
@@ -40,6 +42,15 @@ class WeiboInitResult:
     chunk_size: int
     auth: str
     request_id: str
+
+
+@dataclass(frozen=True)
+class WeiboUploadResult:
+    """Result returned after uploading video bytes to Weibo file platform."""
+
+    fid: int
+    request_id: str
+    url: str = ""
 
 
 class WeiboMediaService:
@@ -86,7 +97,12 @@ class WeiboMediaService:
 
         data = response.json()
         file_token = data.get("fileToken")
-        chunk_size_kb = data.get("length", 4096)
+        try:
+            chunk_size_kb = int(data.get("length", 4096))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "Weibo init failed: invalid chunk length returned"
+            ) from exc
         auth = data.get("auth", "")
         request_id = data.get("request_id", "")
 
@@ -94,12 +110,95 @@ class WeiboMediaService:
             raise ValueError("Weibo init failed: no fileToken returned")
         if not auth:
             raise ValueError("Weibo init failed: no auth returned")
+        if chunk_size_kb <= 0:
+            raise ValueError("Weibo init failed: invalid chunk length returned")
 
         return WeiboInitResult(
             file_token=file_token,
             chunk_size=chunk_size_kb * 1024,
             auth=auth,
             request_id=request_id,
+        )
+
+    async def upload_video_bytes(
+        self,
+        *,
+        filename: str,
+        content: bytes,
+        user: User | None = None,
+    ) -> WeiboUploadResult:
+        """Upload video bytes to Weibo file platform and return the final fid."""
+        if not content:
+            raise ValueError("Cannot upload empty video content")
+
+        file_check = hashlib.md5(content).hexdigest()
+        init_result = await self.init_upload(
+            filename=filename,
+            file_size=len(content),
+            file_check=file_check,
+            user=user,
+        )
+        chunk_size = max(init_result.chunk_size, 1)
+        chunk_count = (len(content) + chunk_size - 1) // chunk_size
+        last_response: dict | None = None
+
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            for index in range(chunk_count):
+                start = index * chunk_size
+                chunk = content[start : start + chunk_size]
+                section_check = hashlib.md5(chunk).hexdigest()
+                response = await client.post(
+                    WEIBO_UPLOAD_URL,
+                    params={
+                        "filetoken": init_result.file_token,
+                        "startloc": str(start),
+                        "sectioncheck": section_check,
+                        "chunkcount": str(chunk_count),
+                        "chunkindex": str(index + 1),
+                        "chunksize": str(len(chunk)),
+                        "filelength": str(len(content)),
+                        "filecheck": file_check,
+                    },
+                    headers={
+                        "Content-Type": "application/octet-stream",
+                        "X-Up-Auth": init_result.auth,
+                    },
+                    content=chunk,
+                )
+                if response.status_code >= 400:
+                    logger.error(
+                        "[weibo_media] Upload chunk failed: status=%s body=%s",
+                        response.status_code,
+                        response.text,
+                    )
+                    response.raise_for_status()
+
+                data = response.json()
+                error = self._read_upload_error(data)
+                if error:
+                    raise ValueError(error)
+                if data.get("fid"):
+                    last_response = data
+
+        if not last_response or not last_response.get("fid"):
+            raise ValueError("Weibo upload completed but no fid returned")
+
+        return WeiboUploadResult(
+            fid=int(last_response["fid"]),
+            request_id=last_response.get("request_id") or init_result.request_id,
+            url=last_response.get("url") or "",
+        )
+
+    @staticmethod
+    def _read_upload_error(data: dict) -> str | None:
+        if data.get("succ") is not False:
+            return None
+        return (
+            data.get("error")
+            or data.get("errmsg")
+            or data.get("msg")
+            or data.get("message")
+            or "Weibo chunk upload failed"
         )
 
     def get_download_url(self, fid: int, user: User | None = None) -> Optional[str]:

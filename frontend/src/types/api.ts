@@ -637,6 +637,10 @@ export interface Attachment {
   file_extension: string
   created_at: string
   truncation_info?: TruncationInfo | null
+  video_count?: number | null
+  site?: string | null
+  source_url?: string | null
+  cover_url?: string | null
 }
 
 export interface AttachmentUploadState {
@@ -674,6 +678,11 @@ export interface SubtaskContextBrief {
   source_config?: {
     url?: string
   } | null
+  // External web content fields
+  video_count?: number | null
+  site?: string | null
+  source_url?: string | null
+  cover_url?: string | null
 }
 
 // Quick Access Types

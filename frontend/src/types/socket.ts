@@ -379,13 +379,21 @@ export interface ChatMessageAttachment {
 
 export interface ChatMessageContext {
   id: number
-  context_type: 'attachment' | 'knowledge_base'
+  context_type: 'attachment' | 'knowledge_base' | 'table'
   name: string
   status: string
   file_extension?: string
   file_size?: number
   mime_type?: string
   document_count?: number
+  document_id?: number
+  source_config?: {
+    url?: string
+  }
+  video_count?: number
+  site?: string | null
+  source_url?: string | null
+  cover_url?: string | null
 }
 
 export interface ChatMessagePayload {

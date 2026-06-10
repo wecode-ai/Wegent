@@ -444,6 +444,7 @@ class ContextService:
         extension: str,
         fid: int,
         subtask_id: int = 0,
+        extra_type_data: Optional[Dict[str, Any]] = None,
     ) -> SubtaskContext:
         """
         Upload video metadata after frontend has uploaded to Weibo platform.
@@ -466,7 +467,39 @@ class ContextService:
         Raises:
             ValueError: If video format is not supported or file size exceeds limit
         """
-        # Validate extension
+        context = self.create_video_metadata_context(
+            user_id=user_id,
+            filename=filename,
+            file_size=file_size,
+            extension=extension,
+            fid=fid,
+            subtask_id=subtask_id,
+            extra_type_data=extra_type_data,
+        )
+
+        db.add(context)
+        db.commit()
+        db.refresh(context)
+
+        logger.info(
+            f"Video metadata uploaded: id={context.id}, filename={filename}, "
+            f"fid={fid}, size={file_size}"
+        )
+
+        return context
+
+    def create_video_metadata_context(
+        self,
+        *,
+        user_id: int,
+        filename: str,
+        file_size: int,
+        extension: str,
+        fid: int,
+        subtask_id: int = 0,
+        extra_type_data: Optional[Dict[str, Any]] = None,
+    ) -> SubtaskContext:
+        """Build a READY video attachment context backed by Weibo fid metadata."""
         extension = extension.lower()
         if extension not in self.VIDEO_EXTENSIONS:
             raise ValueError(
@@ -497,8 +530,10 @@ class ContextService:
             "storage_backend": "weibo",
             "fid": fid,
         }
+        if extra_type_data:
+            type_data.update(extra_type_data)
 
-        context = SubtaskContext(
+        return SubtaskContext(
             subtask_id=effective_subtask_id,
             user_id=user_id,
             context_type=ContextType.ATTACHMENT.value,
@@ -511,17 +546,6 @@ class ContextService:
             error_message="",
             type_data=type_data,
         )
-
-        db.add(context)
-        db.commit()
-        db.refresh(context)
-
-        logger.info(
-            f"Video metadata uploaded: id={context.id}, filename={filename}, "
-            f"fid={fid}, size={file_size}"
-        )
-
-        return context
 
     def overwrite_attachment(
         self,
