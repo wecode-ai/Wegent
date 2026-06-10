@@ -515,7 +515,7 @@ function resolveOpenedTaskProjectId(
 ): number | undefined {
   if (explicitProjectId !== undefined) return explicitProjectId
   if (task.project_id !== undefined) return task.project_id
-  if (listTask && !listTask.project_id) return 0
+  if (listTask?.project_id !== undefined) return listTask.project_id
   return undefined
 }
 
