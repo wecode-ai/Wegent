@@ -9,9 +9,7 @@ from __future__ import annotations
 from chat_shell.compression.token_counter import TokenCounter
 from chat_shell.guard.tool_output import (
     HEADER_PREFIX,
-    KNOWLEDGE_TOOL_NAMES,
     ToolOutputGuardAdapter,
-    build_default_tool_policy_overrides,
 )
 from chat_shell.guard.types import TruncationPolicy
 
@@ -168,6 +166,37 @@ class TestToModelVisible:
         assert "truncated_bytes=9800" in lines[0]
         body_text = "\n".join(lines[1:])
         assert "…9800 bytes truncated…" in body_text
+
+    def test_tiny_token_limit_does_not_exceed_budget(self):
+        """A tiny token budget should never keep more tokens than configured."""
+        counter = TokenCounter("gpt-4")
+        adapter = ToolOutputGuardAdapter(
+            token_counter=counter,
+            default_policy=TruncationPolicy(kind="tokens", limit=1),
+        )
+        body = _make_tokens(20, counter)
+
+        output = adapter.to_model_visible(
+            {"text": body}, TruncationPolicy(kind="tokens", limit=1)
+        )
+
+        header = output.split("\n", 1)[0]
+        assert "kept_tokens=1" in header
+
+    def test_tiny_byte_limit_does_not_exceed_budget(self):
+        """A tiny byte budget should never keep more bytes than configured."""
+        counter = TokenCounter("gpt-4")
+        adapter = ToolOutputGuardAdapter(
+            token_counter=counter,
+            default_policy=TruncationPolicy(kind="bytes", limit=1),
+        )
+
+        output = adapter.to_model_visible(
+            {"text": "abcdef"}, TruncationPolicy(kind="bytes", limit=1)
+        )
+
+        header = output.split("\n", 1)[0]
+        assert "kept_bytes=1" in header
 
     def test_name_with_whitespace_is_sanitized(self):
         """tool_name with whitespace — replaced with underscores."""
@@ -401,14 +430,6 @@ class TestRecognition:
         assert (
             adapter.policy_for_message({"role": "tool", "name": "shell"}).limit == 15000
         )
-
-    def test_build_default_tool_policy_overrides_covers_knowledge_tools(self):
-        """System-level default overrides are centralized in the guard module."""
-        overrides = build_default_tool_policy_overrides(knowledge_tool_limit=30000)
-
-        assert set(overrides) == set(KNOWLEDGE_TOOL_NAMES)
-        assert all(policy.kind == "tokens" for policy in overrides.values())
-        assert all(policy.limit == 30000 for policy in overrides.values())
 
     def test_should_bypass_source_compaction_for_direct_injection(self):
         """Knowledge direct-injection payloads bypass per-tool truncation."""

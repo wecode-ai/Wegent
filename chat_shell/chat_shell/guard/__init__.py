@@ -10,10 +10,8 @@ from chat_shell.guard.tool_output import (
     COMPACTED_FLAG,
     HEAD_RATIO,
     HEADER_PREFIX,
-    KNOWLEDGE_TOOL_NAMES,
     RawToolOutput,
     ToolOutputGuardAdapter,
-    build_default_tool_policy_overrides,
 )
 from chat_shell.guard.types import (
     DEFAULT_EMERGENCY_RATIO,
@@ -29,13 +27,11 @@ __all__ = [
     "DEFAULT_EMERGENCY_RATIO",
     "HEAD_RATIO",
     "HEADER_PREFIX",
-    "KNOWLEDGE_TOOL_NAMES",
     "GuardSource",
     "RawToolOutput",
     "ToolOutputGuardAdapter",
     "TruncationPolicy",
     "UnifiedContextGuard",
-    "build_default_tool_policy_overrides",
     "chain_pre_model_hooks",
     "default_emergency_policy",
 ]

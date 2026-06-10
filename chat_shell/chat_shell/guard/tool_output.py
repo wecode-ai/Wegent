@@ -23,7 +23,6 @@ HEADER_PREFIX = "[tool_output "
 HEAD_RATIO = 0.6
 
 _FOOTER_PATTERN = re.compile(r"^\[(exit_code=-?\d+)?( ?wall_time=\d+\.\d+s)?\]$")
-KNOWLEDGE_TOOL_NAMES = frozenset({"knowledge_base_search", "kb_ls", "kb_head"})
 _DIRECT_INJECTION_TOOL_NAME = "knowledge_base_search"
 _DIRECT_INJECTION_MODE = "direct_injection"
 
@@ -33,22 +32,6 @@ class RawToolOutput(TypedDict, total=False):
     tool_name: str
     exit_code: int
     wall_time: float
-
-
-def build_default_tool_policy_overrides(
-    *,
-    knowledge_tool_limit: int,
-) -> dict[str, TruncationPolicy]:
-    """Build the system-level per-tool output policy overrides.
-
-    The unified guard remains the sole owner of model-visible tool budgets.
-    Callers should obtain overrides from this helper instead of hard-coding
-    tool-name checks in service wiring.
-    """
-    return {
-        tool_name: TruncationPolicy(kind="tokens", limit=knowledge_tool_limit)
-        for tool_name in KNOWLEDGE_TOOL_NAMES
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -207,17 +190,19 @@ def _truncate_body(
                 },
             )
         head_budget = max(1, int(policy.limit * HEAD_RATIO))
-        tail_budget = max(1, policy.limit - head_budget)
+        head_budget = min(head_budget, policy.limit)
+        tail_budget = max(0, policy.limit - head_budget)
         head = counter.encoding.decode(ids[:head_budget])
-        tail = counter.encoding.decode(ids[-tail_budget:])
-        dropped = total_tokens - head_budget - tail_budget
+        tail = counter.encoding.decode(ids[-tail_budget:]) if tail_budget > 0 else ""
+        kept = head_budget + tail_budget
+        dropped = total_tokens - kept
         marker = f"…{dropped} tokens truncated…"
         return (
             f"{marker}\n{head}\n{marker}\n{tail}",
             total_tokens,
             True,
             {
-                "kept_tokens": head_budget + tail_budget,
+                "kept_tokens": kept,
                 "truncated_tokens": dropped,
             },
         )
@@ -237,17 +222,23 @@ def _truncate_body(
                 },
             )
         head_budget = max(1, int(policy.limit * HEAD_RATIO))
-        tail_budget = max(1, policy.limit - head_budget)
+        head_budget = min(head_budget, policy.limit)
+        tail_budget = max(0, policy.limit - head_budget)
         head = encoded[:head_budget].decode("utf-8", errors="ignore")
-        tail = encoded[-tail_budget:].decode("utf-8", errors="ignore")
-        dropped_bytes = total_bytes - head_budget - tail_budget
+        tail = (
+            encoded[-tail_budget:].decode("utf-8", errors="ignore")
+            if tail_budget > 0
+            else ""
+        )
+        kept = head_budget + tail_budget
+        dropped_bytes = total_bytes - kept
         marker = f"…{dropped_bytes} bytes truncated…"
         return (
             f"{marker}\n{head}\n{marker}\n{tail}",
             total_tokens,
             True,
             {
-                "kept_bytes": head_budget + tail_budget,
+                "kept_bytes": kept,
                 "truncated_bytes": dropped_bytes,
             },
         )

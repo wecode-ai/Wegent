@@ -1468,6 +1468,11 @@ class TaskRequestBuilder:
                     "[TaskRequestBuilder] Failed to parse user preferences for tool output guard toggle"
                 )
                 return False
+            if not isinstance(preferences, dict):
+                logger.warning(
+                    "[TaskRequestBuilder] Ignoring non-object user preferences for tool output guard toggle"
+                )
+                return False
         elif isinstance(raw_preferences, dict):
             preferences = raw_preferences
         else:

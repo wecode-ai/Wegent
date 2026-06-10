@@ -93,7 +93,6 @@ class Settings(BaseSettings):
 
     # Phase 2 unified context guard
     TOOL_OUTPUT_TOKEN_LIMIT: int = 15000
-    KNOWLEDGE_TOOL_OUTPUT_TOKEN_LIMIT: int = 30000
     EMERGENCY_TOOL_OUTPUT_RATIO: float = 0.3
 
     # MCP configuration for Chat Shell

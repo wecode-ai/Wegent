@@ -298,7 +298,6 @@ class ChatService(ChatInterface):
                 ToolOutputGuardAdapter,
                 TruncationPolicy,
                 UnifiedContextGuard,
-                build_default_tool_policy_overrides,
                 chain_pre_model_hooks,
             )
 
@@ -319,9 +318,6 @@ class ChatService(ChatInterface):
                         kind="tokens", limit=settings.TOOL_OUTPUT_TOKEN_LIMIT
                     ),
                     emergency_ratio=settings.EMERGENCY_TOOL_OUTPUT_RATIO,
-                    tool_policy_overrides=build_default_tool_policy_overrides(
-                        knowledge_tool_limit=settings.KNOWLEDGE_TOOL_OUTPUT_TOKEN_LIMIT
-                    ),
                 )
                 guard_sources = [tool_output_adapter]
             context_guard = UnifiedContextGuard(
