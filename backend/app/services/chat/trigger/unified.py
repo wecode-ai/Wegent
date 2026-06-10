@@ -184,33 +184,6 @@ def _ensure_selected_kb_skill_priority(request: "ExecutionRequest") -> None:
         )
 
 
-def _ensure_video_context_supported(
-    db: "Session",
-    request: "ExecutionRequest",
-    user_subtask_id: Optional[int],
-) -> None:
-    """Reject video attachments when the resolved model lacks video input support."""
-    if not user_subtask_id:
-        return
-
-    attachments = context_service.get_attachments_by_subtask(db, user_subtask_id)
-    has_video_context = any(
-        context_service.is_video_context(context) for context in attachments
-    )
-    if not has_video_context:
-        return
-
-    model_capabilities = (request.model_config or {}).get("modelCapabilities") or {}
-    if model_capabilities.get("supportsVideo") is True:
-        return
-
-    model_id = (request.model_config or {}).get("model_id") or "selected model"
-    raise ValueError(
-        f"Model '{model_id}' does not support video input attachments. "
-        "Please select a model with modelCapabilities.supportsVideo=true."
-    )
-
-
 async def trigger_ai_response_unified(
     task: TaskResource,
     assistant_subtask: Subtask,
@@ -557,7 +530,6 @@ async def build_execution_request(
                 context_subtask_id,
                 user.id,
             )
-            _ensure_video_context_supported(db, request, context_subtask_id)
             if (
                 device_id
                 and request.knowledge_base_ids
