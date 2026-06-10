@@ -1516,6 +1516,10 @@ describe('WorkbenchProvider', () => {
           project_id: 7,
           client_origin: 'wework',
           device_id: 'device-1',
+          // A conversation that's attached to a project is a code task — the
+          // executor keeps it in the project workspace and skips the chats
+          // directory tree. The complementary 'chat' path is asserted by
+          // `sends standalone chats to the preferred online cloud device`.
           task_type: 'code',
           message: 'build it',
           force_override_bot_model: 'gpt-5.5-medium',
@@ -1997,7 +2001,12 @@ describe('WorkbenchProvider', () => {
           project_id: undefined,
           client_origin: 'wework',
           device_id: 'cloud-online',
-          task_type: 'code',
+          // Standalone chats (no project_id) must declare task_type='chat' so
+          // the executor routes the workspace into chats/<YYYY-MM-DD>/<slug>
+          // instead of the legacy workspace/<task_id> directory. The previous
+          // behaviour of always sending 'code' silently disabled the chats
+          // workspace tree for every wework conversation.
+          task_type: 'chat',
           message: 'run pwd',
         })
       )

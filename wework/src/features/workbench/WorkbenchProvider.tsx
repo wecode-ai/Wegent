@@ -1476,13 +1476,22 @@ export function WorkbenchProvider({
         standaloneDeviceId: state.standaloneDeviceId,
       })
 
+      // A WeWork task is "code" when it lives inside a project (which always
+      // has a git workspace) and "chat" when it's a standalone conversation.
+      // The backend records this on the Task and the executor uses it to
+      // decide between the legacy workspace/<task_id> directory and the dated
+      // chats/<YYYY-MM-DD>/<slug> tree. Hardcoding 'code' here would force
+      // every standalone chat into the code workspace and break the chats
+      // tree (see PR #1340).
+      const taskType: 'chat' | 'code' = state.currentProject ? 'code' : 'chat'
+
       const payload: ChatSendPayload = {
         task_id: state.currentTask?.id,
         team_id: state.defaultTeam.id,
         project_id: state.currentTask ? undefined : state.currentProject?.id,
         client_origin: WEWORK_CLIENT_ORIGIN,
         device_id: activeDeviceId,
-        task_type: 'code',
+        task_type: taskType,
         message,
       }
 
@@ -1593,7 +1602,10 @@ export function WorkbenchProvider({
           id: ack.task_id,
           title: message.substring(0, 100),
           status: 'RUNNING',
-          task_type: 'code',
+          // Mirror the task_type we just sent so the local task list matches
+          // the row the backend persisted (chat-only conversations vs. code
+          // tasks attached to a project).
+          task_type: payload.task_type === 'chat' ? 'chat' : 'code',
           team_id: payload.team_id,
           project_id: projectId,
           client_origin: WEWORK_CLIENT_ORIGIN,
