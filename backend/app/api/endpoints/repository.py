@@ -3,16 +3,20 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import logging
-from typing import Any, Dict, List
+from typing import Generator, List
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core import security
 from app.models.user import User
 from app.schemas.github import Branch, RepositoryResult
-from app.services.repository import repository_service
+from app.services.repository import (
+    RepositoryUserContext,
+    repository_service,
+    snapshot_repository_user,
+)
 
 # Logger instance
 logger = logging.getLogger(__name__)
@@ -20,18 +24,28 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def get_repository_user_context(
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+) -> Generator[RepositoryUserContext, None, None]:
+    # Snapshot eagerly so the session can be released before slow provider I/O.
+    user_context = snapshot_repository_user(current_user)
+    db.close()
+    yield user_context
+
+
 @router.post("/repositories/refresh")
 async def refresh_repositories(
-    current_user: User = Depends(security.get_current_user),
+    user_context: RepositoryUserContext = Depends(get_repository_user_context),
 ):
     """
     Force refresh user's repository cache.
     Clears the Redis cache for all git domains configured by the user,
     forcing fresh data to be fetched from Git providers on next request.
     """
-    cleared_domains = await repository_service.clear_user_cache(current_user)
+    cleared_domains = await repository_service.clear_user_cache(user_context)
     logger.info(
-        f"User {current_user.user_name} cleared repository cache for domains: {cleared_domains}"
+        f"User {user_context.user_name} cleared repository cache for domains: {cleared_domains}"
     )
     return {
         "success": True,
@@ -46,12 +60,11 @@ async def get_repositories(
     limit: int = Query(
         1000, ge=1, le=5000, description="Number of repositories per page (max 5000)"
     ),
-    current_user: User = Depends(security.get_current_user),
-    db: AsyncSession = Depends(get_db),
+    user_context: RepositoryUserContext = Depends(get_repository_user_context),
 ):
     """Get user's repository list from all configured providers"""
     repositories = await repository_service.get_repositories(
-        current_user, page=page, limit=limit
+        user_context, page=page, limit=limit
     )
     return [
         RepositoryResult(
@@ -77,12 +90,11 @@ async def get_branches(
         ...,
         description="Repository git domain, required (e.g., github.com, gitlab.com, gitea.example.com)",
     ),
-    current_user: User = Depends(security.get_current_user),
-    db: AsyncSession = Depends(get_db),
+    user_context: RepositoryUserContext = Depends(get_repository_user_context),
 ):
     """Get branch list for specified repository"""
     return await repository_service.get_branches(
-        current_user, git_repo, type=type, git_domain=git_domain
+        user_context, git_repo, type=type, git_domain=git_domain
     )
 
 
@@ -98,12 +110,11 @@ async def get_branch_diff(
         ...,
         description="Repository git domain, required (e.g., github.com, gitlab.com, gitea.example.com)",
     ),
-    current_user: User = Depends(security.get_current_user),
-    db: AsyncSession = Depends(get_db),
+    user_context: RepositoryUserContext = Depends(get_repository_user_context),
 ):
     """Get diff between two branches for specified repository"""
     return await repository_service.get_branch_diff(
-        current_user, git_repo, source_branch, target_branch, type, git_domain
+        user_context, git_repo, source_branch, target_branch, type, git_domain
     )
 
 
@@ -114,13 +125,11 @@ async def search_repositories(
     fullmatch: bool = Query(
         False, description="Enable exact match (true) or partial match (false)"
     ),
-    current_user: User = Depends(security.get_current_user),
-    db: AsyncSession = Depends(get_db),
+    user_context: RepositoryUserContext = Depends(get_repository_user_context),
 ):
     """Search repositories by name from all user's repositories"""
-
     repositories = await repository_service.search_repositories(
-        current_user, q, timeout, fullmatch
+        user_context, q, timeout, fullmatch
     )
     return [
         RepositoryResult(
