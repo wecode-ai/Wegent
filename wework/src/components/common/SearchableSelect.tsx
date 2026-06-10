@@ -1,5 +1,6 @@
 import { Check, ChevronDown, Search } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { cn } from '@/lib/utils'
 
 export interface SearchableSelectOption {
@@ -38,8 +39,10 @@ export function SearchableSelect({
   onChange,
 }: SearchableSelectProps) {
   const rootRef = useRef<HTMLDivElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
   const [open, setOpen] = useState(false)
   const [placement, setPlacement] = useState<'above' | 'below'>('below')
+  const [menuRect, setMenuRect] = useState({ left: 0, width: 0, anchor: 0 })
   const [query, setQuery] = useState('')
   const selectedOption = options.find(option => option.value === value)
   const filteredOptions = useMemo(
@@ -56,7 +59,13 @@ export function SearchableSelect({
     if (!open) return
 
     function handlePointerDown(event: PointerEvent) {
-      if (!rootRef.current?.contains(event.target as Node)) close()
+      const target = event.target as Node
+      if (
+        !rootRef.current?.contains(target) &&
+        !menuRef.current?.contains(target)
+      ) {
+        close()
+      }
     }
 
     function handleKeyDown(event: KeyboardEvent) {
@@ -85,7 +94,17 @@ export function SearchableSelect({
           const rect = rootRef.current?.getBoundingClientRect()
           if (rect) {
             const spaceBelow = window.innerHeight - rect.bottom
-            setPlacement(spaceBelow < 300 && rect.top > spaceBelow ? 'above' : 'below')
+            const nextPlacement =
+              spaceBelow < 300 && rect.top > spaceBelow ? 'above' : 'below'
+            setPlacement(nextPlacement)
+            setMenuRect({
+              left: rect.left,
+              width: rect.width,
+              anchor:
+                nextPlacement === 'above'
+                  ? window.innerHeight - rect.top + 8
+                  : rect.bottom + 8,
+            })
           }
           setOpen(true)
         }}
@@ -106,13 +125,19 @@ export function SearchableSelect({
         <ChevronDown className="h-4 w-4 shrink-0 text-[#606368]" />
       </button>
 
-      {open && (
+      {open &&
+        createPortal(
         <div
+          ref={menuRef}
           data-testid={`${testId}-menu`}
-          className={cn(
-            'absolute left-0 right-0 z-system-popover rounded-xl border border-[#d8d8d8] bg-white p-2 shadow-[0_16px_44px_rgba(0,0,0,0.18)]',
-            placement === 'above' ? 'bottom-12' : 'top-12',
-          )}
+          className="fixed z-[11000] rounded-xl border border-[#d8d8d8] bg-white p-2 shadow-[0_16px_44px_rgba(0,0,0,0.18)]"
+          style={{
+            left: menuRect.left,
+            width: menuRect.width,
+            ...(placement === 'above'
+              ? { bottom: menuRect.anchor }
+              : { top: menuRect.anchor }),
+          }}
         >
           <label className="flex h-9 items-center gap-2 rounded-lg border border-[#e5e5e5] px-2 text-[#8a8f98] focus-within:border-[#14b8a6] focus-within:ring-2 focus-within:ring-[#14b8a6]/15">
             <Search className="h-4 w-4 shrink-0" />
@@ -152,8 +177,9 @@ export function SearchableSelect({
               </p>
             )}
           </div>
-        </div>
-      )}
+        </div>,
+          document.body,
+        )}
     </div>
   )
 }

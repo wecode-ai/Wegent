@@ -32,7 +32,7 @@ class RagGateway(Protocol):
         self,
         spec: DeleteRuntimeSpec,
         *,
-        db: Session,
+        db: Session | None = None,
     ) -> dict: ...
 
     async def purge_knowledge_index(

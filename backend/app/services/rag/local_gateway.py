@@ -35,8 +35,6 @@ class LocalRagGateway:
         *,
         db: Session | None = None,
     ) -> dict:
-        if db is None:
-            raise ValueError("db is required for LocalRagGateway.index_document")
         return await self._index_executor(spec, db=db)
 
     async def query(
@@ -53,7 +51,7 @@ class LocalRagGateway:
         self,
         spec: DeleteRuntimeSpec,
         *,
-        db: Session,
+        db: Session | None = None,
     ) -> dict:
         return await self._delete_executor(spec, db=db)
 
