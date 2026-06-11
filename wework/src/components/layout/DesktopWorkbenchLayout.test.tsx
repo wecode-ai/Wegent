@@ -879,11 +879,16 @@ describe('DesktopWorkbenchLayout', () => {
     await waitFor(() => expect(fetchQuotaMock).toHaveBeenCalledTimes(1))
 
     const usagePanel = await screen.findByTestId('usage-detail-panel')
-    expect(usagePanel).toHaveTextContent('模型额度')
+    expect(within(usagePanel).queryByText('模型额度')).not.toBeInTheDocument()
     expect(usagePanel).toHaveTextContent('747.74 / 748 元')
     expect(usagePanel).toHaveTextContent('剩余 0.26 元')
     expect(usagePanel).not.toHaveTextContent('使用率')
     expect(usagePanel).not.toHaveTextContent('总额度')
+    expect(usagePanel).not.toHaveClass('pl-12')
+    expect(within(usagePanel).getByRole('progressbar')).toHaveAttribute(
+      'aria-valuenow',
+      '100'
+    )
     const quotaLink = await screen.findByRole('link', {
       name: '额度与计费说明',
     })
