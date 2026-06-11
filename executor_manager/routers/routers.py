@@ -1502,9 +1502,28 @@ async def archive_executor_workspace(
 
     except HTTPException:
         raise
+    except httpx.TimeoutException:
+        logger.error(f"[Archive] Upstream timeout for task {request.task_id}")
+        raise HTTPException(
+            status_code=504, detail="Executor archive service timed out"
+        )
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            f"[Archive] Upstream status error for task {request.task_id}: {e.response.status_code}"
+        )
+        raise HTTPException(
+            status_code=502, detail="Executor archive service returned an error"
+        )
+    except (httpx.ConnectError, httpx.RemoteProtocolError, httpx.NetworkError):
+        logger.error(f"[Archive] Upstream connection error for task {request.task_id}")
+        raise HTTPException(
+            status_code=502, detail="Executor archive service is unavailable"
+        )
     except httpx.HTTPError as e:
         logger.error(f"[Archive] HTTP error for task {request.task_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"HTTP error: {str(e)}")
+        raise HTTPException(
+            status_code=502, detail="Executor archive service returned an error"
+        )
     except Exception as e:
         logger.error(f"[Archive] Error archiving task {request.task_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1576,9 +1595,28 @@ async def restore_executor_workspace(
 
     except HTTPException:
         raise
+    except httpx.TimeoutException:
+        logger.error(f"[Restore] Upstream timeout for task {request.task_id}")
+        raise HTTPException(
+            status_code=504, detail="Executor restore service timed out"
+        )
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            f"[Restore] Upstream status error for task {request.task_id}: {e.response.status_code}"
+        )
+        raise HTTPException(
+            status_code=502, detail="Executor restore service returned an error"
+        )
+    except (httpx.ConnectError, httpx.RemoteProtocolError, httpx.NetworkError):
+        logger.error(f"[Restore] Upstream connection error for task {request.task_id}")
+        raise HTTPException(
+            status_code=502, detail="Executor restore service is unavailable"
+        )
     except httpx.HTTPError as e:
         logger.error(f"[Restore] HTTP error for task {request.task_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"HTTP error: {str(e)}")
+        raise HTTPException(
+            status_code=502, detail="Executor restore service returned an error"
+        )
     except Exception as e:
         logger.error(f"[Restore] Error restoring task {request.task_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
