@@ -35,6 +35,8 @@ echo -e "${GREEN}  Wegent E2E Test Local Runner${NC}"
 echo -e "${GREEN}========================================${NC}"
 echo -e "${YELLOW}Logs will be saved to: $LOG_DIR${NC}"
 
+export INTERNAL_SERVICE_TOKEN="${INTERNAL_SERVICE_TOKEN:-e2e-internal-service-token}"
+
 # Function to cleanup on exit
 cleanup() {
     echo -e "\n${YELLOW}Cleaning up...${NC}"

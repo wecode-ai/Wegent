@@ -15,6 +15,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  E2E_INTERNAL_SERVICE_TOKEN: e2e-internal-service-token
+
 jobs:
   # Runs browser and API tests with sharding. Executor-heavy coverage runs separately.
   e2e-tests:
@@ -163,6 +166,7 @@ jobs:
           ENVIRONMENT: development
           DB_AUTO_MIGRATE: "false"
           INIT_DATA_ENABLED: "true"
+          INTERNAL_SERVICE_TOKEN: ${{ env.E2E_INTERNAL_SERVICE_TOKEN }}
         run: |
           source .venv/bin/activate
           nohup uvicorn app.main:app --host 0.0.0.0 --port 8000 > backend.log 2>&1 &
@@ -174,7 +178,8 @@ jobs:
           CHAT_SHELL_MODE: http
           CHAT_SHELL_STORAGE_TYPE: remote
           CHAT_SHELL_REMOTE_STORAGE_URL: http://localhost:8000/api/internal
-          CHAT_SHELL_REMOTE_STORAGE_TOKEN: ""
+          CHAT_SHELL_REMOTE_STORAGE_TOKEN: ${{ env.E2E_INTERNAL_SERVICE_TOKEN }}
+          CHAT_SHELL_INTERNAL_SERVICE_TOKEN: ${{ env.E2E_INTERNAL_SERVICE_TOKEN }}
           EXECUTOR_MANAGER_URL: http://localhost:8001
         run: |
           source .venv/bin/activate
@@ -477,6 +482,7 @@ jobs:
           ENVIRONMENT: development
           DB_AUTO_MIGRATE: "false"
           INIT_DATA_ENABLED: "true"
+          INTERNAL_SERVICE_TOKEN: ${{ env.E2E_INTERNAL_SERVICE_TOKEN }}
         run: |
           source .venv/bin/activate
           nohup uvicorn app.main:app --host 0.0.0.0 --port 8000 > backend.log 2>&1 &
@@ -488,7 +494,8 @@ jobs:
           CHAT_SHELL_MODE: http
           CHAT_SHELL_STORAGE_TYPE: remote
           CHAT_SHELL_REMOTE_STORAGE_URL: http://localhost:8000/api/internal
-          CHAT_SHELL_REMOTE_STORAGE_TOKEN: ""
+          CHAT_SHELL_REMOTE_STORAGE_TOKEN: ${{ env.E2E_INTERNAL_SERVICE_TOKEN }}
+          CHAT_SHELL_INTERNAL_SERVICE_TOKEN: ${{ env.E2E_INTERNAL_SERVICE_TOKEN }}
           EXECUTOR_MANAGER_URL: http://localhost:8001
         run: |
           source .venv/bin/activate
