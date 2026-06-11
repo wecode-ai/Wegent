@@ -863,6 +863,7 @@ class ClaudeCodeAgent(Agent):
                 interactive_form_answer
             )
 
+            await self.start_turn_file_change_tracking()
             if interactive_form_payload:
                 logger.info(
                     "Sending interactive form answer as tool_result for tool_use_id=%s",
@@ -919,6 +920,9 @@ class ClaudeCodeAgent(Agent):
                 logger.warning("No final result received from process_response")
                 result = TaskStatus.RUNNING
 
+            if result != TaskStatus.COMPLETED:
+                await self.abort_turn_file_change_tracking()
+
             # Update task state based on result
             if result == TaskStatus.COMPLETED:
                 self.task_state_manager.set_state(self.task_id, TaskState.COMPLETED)
@@ -935,6 +939,7 @@ class ClaudeCodeAgent(Agent):
             return result
 
         except Exception as e:
+            await self.abort_turn_file_change_tracking()
             return self._handle_execution_error(e, "async execution")
 
     async def _drain_answered_interactive_form_resume_result(
