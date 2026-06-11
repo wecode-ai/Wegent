@@ -63,6 +63,7 @@ class ArchiveService:
         task: TaskResource,
         executor_name: str,
         executor_namespace: str,
+        runtime_type: str = "executor",
     ) -> Optional[ArchiveInfo]:
         """Archive workspace files before Pod deletion.
 
@@ -98,6 +99,7 @@ class ArchiveService:
                 upload_url=upload_url,
                 executor_name=executor_name,
                 executor_namespace=executor_namespace,
+                runtime_type=runtime_type,
             )
 
             if not archive_result:
@@ -146,6 +148,7 @@ class ArchiveService:
         task: TaskResource,
         executor_name: str,
         executor_namespace: str,
+        runtime_type: str = "executor",
     ) -> bool:
         """Restore workspace files after Pod recreation.
 
@@ -207,6 +210,7 @@ class ArchiveService:
                 download_url=download_url,
                 executor_name=executor_name,
                 executor_namespace=executor_namespace,
+                runtime_type=runtime_type,
             )
 
             if not restore_result:
@@ -268,6 +272,7 @@ class ArchiveService:
         upload_url: str,
         executor_name: str,
         executor_namespace: str,
+        runtime_type: str = "executor",
     ) -> Optional[Dict[str, Any]]:
         """Call executor to archive workspace.
 
@@ -290,6 +295,7 @@ class ArchiveService:
             "executor_name": executor_name,
             "executor_namespace": executor_namespace,
             "max_size_mb": settings.WORKSPACE_ARCHIVE_MAX_SIZE_MB,
+            "runtime_type": runtime_type,
         }
 
         logger.info(
@@ -331,6 +337,7 @@ class ArchiveService:
         download_url: str,
         executor_name: str,
         executor_namespace: str,
+        runtime_type: str = "executor",
     ) -> Optional[Dict[str, Any]]:
         """Call executor to restore workspace.
 
@@ -352,6 +359,7 @@ class ArchiveService:
             "download_url": download_url,
             "executor_name": executor_name,
             "executor_namespace": executor_namespace,
+            "runtime_type": runtime_type,
         }
 
         logger.info(
