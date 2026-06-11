@@ -15,7 +15,12 @@ import {
   isDeviceBelowWeWorkVersion,
   isWeWorkCompatibleDevice,
 } from '@/lib/device-capabilities'
-import type { DeviceInfo, ProjectWithTasks, Task } from '@/types/api'
+import type {
+  DeviceInfo,
+  ProjectWithTasks,
+  Task,
+  TurnFileChangesSummary,
+} from '@/types/api'
 import type { DeviceUpgradeState } from '@/types/device-events'
 import type { EnvironmentInfo } from '@/types/environment'
 import type {
@@ -74,6 +79,10 @@ interface DesktopWorkbenchMainProps {
   onSendQueuedAsGuidance: (id: string) => void
   onEditQueuedMessage: (id: string) => void
   onCancelGuidanceMessage: (id: string) => void
+  onLoadFileChangesDiff?: (subtaskId: number) => Promise<string>
+  onRevertFileChanges?: (
+    subtaskId: number,
+  ) => Promise<TurnFileChangesSummary>
   topBarLeftActions?: ReactNode
 }
 
@@ -106,6 +115,8 @@ export function DesktopWorkbenchMain({
   onSendQueuedAsGuidance,
   onEditQueuedMessage,
   onCancelGuidanceMessage,
+  onLoadFileChangesDiff,
+  onRevertFileChanges,
   topBarLeftActions,
 }: DesktopWorkbenchMainProps) {
   const { t } = useTranslation('common')
@@ -196,6 +207,9 @@ export function DesktopWorkbenchMain({
                   ? DESKTOP_QUEUED_SCROLL_TO_BOTTOM_BUTTON_CLASS
                   : DESKTOP_SCROLL_TO_BOTTOM_BUTTON_CLASS
               }
+              devices={devices}
+              onLoadFileChangesDiff={onLoadFileChangesDiff}
+              onRevertFileChanges={onRevertFileChanges}
             />
             <div
               className={DESKTOP_FLOATING_COMPOSER_BACKDROP_CLASS}

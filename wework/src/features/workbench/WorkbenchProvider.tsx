@@ -9,7 +9,7 @@ import {
   loadProjectEnvironment,
 } from '@/api/environment'
 import { createGitApi } from '@/api/git'
-import { createHttpClient } from '@/api/http'
+import { ApiError, createHttpClient } from '@/api/http'
 import { createModelApi } from '@/api/models'
 import { createProjectApi } from '@/api/projects'
 import { createSkillApi } from '@/api/skills'
@@ -1819,17 +1819,33 @@ export function WorkbenchProvider({
     async (subtaskId: number) => {
       const revert = resolvedServices.taskApi.revertTurnFileChanges
       if (!revert) throw new Error('File changes revert is unavailable')
-      const response = await revert(subtaskId)
-      const fileChanges = normalizeTurnFileChanges(response.file_changes)
-      if (!fileChanges) {
-        throw new Error('Invalid file changes response')
+      try {
+        const response = await revert(subtaskId)
+        const fileChanges = normalizeTurnFileChanges(response.file_changes)
+        if (!fileChanges) {
+          throw new Error('Invalid file changes response')
+        }
+        dispatchMessages({
+          type: 'file_changes_updated',
+          subtaskId,
+          fileChanges,
+        })
+        return fileChanges
+      } catch (error) {
+        if (error instanceof ApiError && isRecord(error.detail)) {
+          const fileChanges = normalizeTurnFileChanges(
+            error.detail.file_changes,
+          )
+          if (fileChanges) {
+            dispatchMessages({
+              type: 'file_changes_updated',
+              subtaskId,
+              fileChanges,
+            })
+          }
+        }
+        throw error
       }
-      dispatchMessages({
-        type: 'file_changes_updated',
-        subtaskId,
-        fileChanges,
-      })
-      return fileChanges
     },
     [resolvedServices.taskApi],
   )

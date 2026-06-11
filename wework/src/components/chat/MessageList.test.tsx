@@ -3,8 +3,60 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import type { Attachment } from '@/types/api'
 import { MessageList } from './MessageList'
+import '@/i18n'
 
 describe('MessageList', () => {
+  test('renders one assistant turn file changes under its message', () => {
+    render(
+      <MessageList
+        devices={[
+          {
+            id: 1,
+            device_id: 'device-1',
+            name: 'Device 1',
+            status: 'online',
+            is_default: false,
+          },
+        ]}
+        onLoadFileChangesDiff={vi.fn().mockResolvedValue('')}
+        onRevertFileChanges={vi.fn()}
+        messages={[
+          {
+            id: 'assistant-21',
+            subtaskId: 21,
+            role: 'assistant',
+            content: 'Done',
+            status: 'done',
+            createdAt: '2026-06-11T10:00:00Z',
+            fileChanges: {
+              version: 1,
+              status: 'active',
+              artifact_id: 'turn-21',
+              device_id: 'device-1',
+              workspace_path: '/workspace/project',
+              file_count: 1,
+              additions: 4,
+              deletions: 2,
+              files: [
+                {
+                  path: 'src/main.ts',
+                  change_type: 'modified',
+                  additions: 4,
+                  deletions: 2,
+                  binary: false,
+                },
+              ],
+            },
+          },
+        ]}
+      />,
+    )
+
+    expect(screen.getByTestId('file-changes-card')).toHaveTextContent(
+      'src/main.ts',
+    )
+  })
+
   test('uses compact spacing between messages and hover actions', () => {
     render(
       <MessageList
