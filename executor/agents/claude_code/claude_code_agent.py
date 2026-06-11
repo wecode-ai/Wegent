@@ -748,8 +748,12 @@ class ClaudeCodeAgent(Agent):
                     self.task_data.kb_meta_prompt,
                     executor_mode=config.EXECUTOR_MODE,
                     is_user_selected_kb=self.task_data.is_user_selected_kb,
+                    task_type=self.task_data.type,
                 )
-                if self.task_data.kb_meta_prompt and config.EXECUTOR_MODE == "local":
+                if (
+                    self.task_data.kb_meta_prompt
+                    and (self.task_data.type or "").lower() != "code"
+                ):
                     logger.info("Injected kb_meta_prompt into ClaudeCode query prompt")
                 if self.options.get("cwd"):
                     cwd_text = "\nCurrent working directory: " + self.options.get("cwd")
@@ -778,10 +782,11 @@ class ClaudeCodeAgent(Agent):
                         self.task_data.kb_meta_prompt,
                         executor_mode=config.EXECUTOR_MODE,
                         is_user_selected_kb=self.task_data.is_user_selected_kb,
+                        task_type=self.task_data.type,
                     )
                     if (
                         self.task_data.kb_meta_prompt
-                        and config.EXECUTOR_MODE == "local"
+                        and (self.task_data.type or "").lower() != "code"
                     ):
                         logger.info(
                             "Injected kb_meta_prompt into ClaudeCode query prompt"
@@ -811,10 +816,11 @@ class ClaudeCodeAgent(Agent):
                         self.task_data.kb_meta_prompt,
                         executor_mode=config.EXECUTOR_MODE,
                         is_user_selected_kb=self.task_data.is_user_selected_kb,
+                        task_type=self.task_data.type,
                     )
                     if (
                         self.task_data.kb_meta_prompt
-                        and config.EXECUTOR_MODE == "local"
+                        and (self.task_data.type or "").lower() != "code"
                     ):
                         logger.info(
                             "Injected kb_meta_prompt into ClaudeCode query prompt"
