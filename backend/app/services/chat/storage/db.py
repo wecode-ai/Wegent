@@ -273,6 +273,7 @@ class DatabaseHandler:
             last_subtask: The subtask that just completed
             advance_info: Dict from get_auto_advance_info() with next stage details
         """
+        from app.models.subtask import SenderType
         from app.models.subtask import Subtask as SubtaskModel
         from app.models.subtask import SubtaskRole, SubtaskStatus
 
@@ -300,12 +301,34 @@ class DatabaseHandler:
 
         from app.services.adapters.pipeline_context import build_pipeline_context_prompt
 
-        next_prompt = build_pipeline_context_prompt(
+        handoff_message = build_pipeline_context_prompt(
             db,
             task_id=task.id,
             current_subtask=last_subtask,
             context_passing=context_passing,
         )
+
+        user_subtask = SubtaskModel(
+            user_id=task.user_id,
+            task_id=task.id,
+            team_id=last_subtask.team_id,
+            title="User message",
+            bot_ids=[next_bot_id],
+            role=SubtaskRole.USER,
+            prompt=handoff_message,
+            status=SubtaskStatus.COMPLETED,
+            progress=100,
+            message_id=next_message_id,
+            parent_id=parent_id,
+            executor_name="",
+            executor_namespace="",
+            error_message="",
+            completed_at=datetime.now(),
+            result=None,
+            sender_type=SenderType.USER,
+            sender_user_id=task.user_id,
+        )
+        db.add(user_subtask)
 
         new_subtask = SubtaskModel(
             user_id=task.user_id,
@@ -314,16 +337,18 @@ class DatabaseHandler:
             title=f"{task_crd.spec.title} - {next_bot_name}",
             bot_ids=[next_bot_id],
             role=SubtaskRole.ASSISTANT,
-            prompt=next_prompt,
+            prompt="",
             status=SubtaskStatus.PENDING,
             progress=0,
-            message_id=next_message_id,
-            parent_id=parent_id,
+            message_id=next_message_id + 1,
+            parent_id=next_message_id,
             executor_name=executor_name,
             executor_namespace=executor_namespace,
             error_message="",
             completed_at=datetime.now(),
             result=None,
+            sender_type=SenderType.TEAM,
+            sender_user_id=0,
         )
         db.add(new_subtask)
         logger.info(

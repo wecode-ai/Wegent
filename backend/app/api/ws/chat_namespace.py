@@ -539,6 +539,7 @@ class ChatNamespace(socketio.AsyncNamespace):
         )
 
         session = await self.get_session(sid)
+        effective_message = payload.message
         user_id = session.get("user_id")
         user_name = session.get("user_name")
         auth_token = session.get("auth_token", "")  # Get original JWT token
@@ -600,6 +601,8 @@ class ChatNamespace(socketio.AsyncNamespace):
                             )
                         }
                     pipeline_context_passing = confirm_result.get("context_passing")
+                    if "handoff_message" in confirm_result:
+                        effective_message = confirm_result["handoff_message"]
 
                     # Emit task:status event to notify frontend that task status changed
                     # This triggers PipelineStageIndicator to re-fetch pipeline stage info
@@ -704,7 +707,7 @@ class ChatNamespace(socketio.AsyncNamespace):
             team_name = team.name
             should_trigger_ai = should_trigger_ai_response(
                 task_json,
-                payload.message,
+                effective_message,
                 team_name,
                 request_is_group_chat=payload.is_group_chat,
             )
@@ -718,7 +721,7 @@ class ChatNamespace(socketio.AsyncNamespace):
             # Process context metadata and RAG based on chat version
             # Uses service module for RAG processing
             _, rag_prompt = await process_context_and_rag(
-                message=payload.message,
+                message=effective_message,
                 contexts=payload.contexts,
                 should_trigger_ai=should_trigger_ai,
                 user_id=user_id,
@@ -773,7 +776,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                 previous_bot_id = pipeline_info.get("current_stage_bot_id")
 
             params = TaskCreationParams(
-                message=payload.message,
+                message=effective_message,
                 title=payload.title,
                 model_id=payload.force_override_bot_model,
                 force_override_bot_model=payload.force_override_bot_model is not None,
@@ -806,7 +809,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                 db=db,
                 user=user,
                 team=team,
-                message=payload.message,
+                message=effective_message,
                 params=params,
                 task_id=payload.task_id,
                 should_trigger_ai=should_trigger_ai,
@@ -891,7 +894,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                     db=db,
                     user_subtask=user_subtask,
                     task_id=task.id,
-                    message=payload.message,
+                    message=effective_message,
                     user_id=user_id,
                     user_name=user_name,
                     attachment_id=(
@@ -954,7 +957,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                             assistant_subtask=assistant_subtask,
                             team=team,
                             user=user,
-                            message=payload.message,  # Original message
+                            message=effective_message,
                             payload=payload,
                             task_room=task_room,
                             device_id=device_id,

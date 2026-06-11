@@ -463,7 +463,7 @@ async def test_create_task_and_subtasks_allows_pipeline_confirm_to_skip_status_c
 
 
 @pytest.mark.asyncio
-async def test_create_task_and_subtasks_applies_pipeline_context_passing_on_confirm(
+async def test_create_task_and_subtasks_uses_pipeline_context_as_confirm_user_message(
     test_db: Session,
     test_user: User,
 ):
@@ -551,7 +551,8 @@ async def test_create_task_and_subtasks_applies_pipeline_context_passing_on_conf
         )
 
     assert result.assistant_subtask is not None
-    assert result.assistant_subtask.prompt == (
+    assert result.user_subtask.prompt == (
         "Original user request:\nBuild a release checklist.\n\n"
         "Previous stage output:\nStage 1 found three release risks."
     )
+    assert result.assistant_subtask.prompt == ""

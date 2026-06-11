@@ -85,15 +85,15 @@ def _load_team_crd(team: Kind) -> Optional[Team]:
     return Team.model_validate(team_json)
 
 
-def _build_pipeline_stage_prompt(
+def _build_pipeline_handoff_message(
     db: Session,
     *,
     task_id: int,
     existing_subtasks: List[Subtask],
     context_passing: Optional[str],
 ) -> str:
-    """Build prompt context for a manually confirmed pipeline stage."""
-    if not context_passing:
+    """Build the user-visible handoff message for a pipeline stage."""
+    if context_passing is None:
         return ""
 
     previous_stage = next(
@@ -268,6 +268,15 @@ def prepare_execution_session(
         next_message_id = existing_subtasks[0].message_id + 1
         parent_id = existing_subtasks[0].message_id
 
+    handoff_message = input_text
+    if resolved_task_params.pipeline_context_passing is not None:
+        handoff_message = _build_pipeline_handoff_message(
+            db,
+            task_id=task.id,
+            existing_subtasks=existing_subtasks,
+            context_passing=resolved_task_params.pipeline_context_passing,
+        )
+
     user_subtask = create_user_subtask(
         db=db,
         subtask_user_id=subtask_user_id,
@@ -275,19 +284,13 @@ def prepare_execution_session(
         task_id=task.id,
         team_id=team.id,
         bot_ids=bot_ids,
-        message=input_text,
+        message=handoff_message,
         next_message_id=next_message_id,
         parent_id=parent_id,
         video_config=video_config,
     )
     assistant_subtask = None
     if should_trigger_ai:
-        assistant_prompt = _build_pipeline_stage_prompt(
-            db,
-            task_id=task.id,
-            existing_subtasks=existing_subtasks,
-            context_passing=resolved_task_params.pipeline_context_passing,
-        )
         assistant_subtask = create_assistant_subtask(
             db=db,
             subtask_user_id=subtask_user_id,
@@ -296,7 +299,6 @@ def prepare_execution_session(
             bot_ids=bot_ids,
             next_message_id=next_message_id + 1,
             parent_id=next_message_id,
-            prompt=assistant_prompt,
         )
 
     db.commit()

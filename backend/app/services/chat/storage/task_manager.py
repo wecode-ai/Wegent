@@ -879,7 +879,7 @@ async def create_task_and_subtasks(
             context_messages = build_context_messages(
                 db=db,
                 existing_subtasks=existing_subtasks,
-                current_message=message,
+                current_message=user_subtask.prompt,
                 current_user=user,
                 is_group_chat=is_group_chat,
                 context_limit=settings.MEMORY_CONTEXT_MESSAGES,

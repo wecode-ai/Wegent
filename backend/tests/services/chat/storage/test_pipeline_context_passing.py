@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.user import User
 from app.services.chat.storage.db import DatabaseHandler
+from app.services.execution.schedule_helper import _resolve_dispatch_message
 
 
 def _add_user_subtask(
@@ -81,7 +82,7 @@ def _auto_advance(
     user: User,
     *,
     context_passing: str,
-) -> Subtask:
+) -> tuple[Subtask, Subtask]:
     task_id = 9201
     team_id = 12
     task = SimpleNamespace(id=task_id, user_id=user.id)
@@ -120,58 +121,119 @@ def _auto_advance(
     )
     db.flush()
 
-    return (
+    handoff_user = (
         db.query(Subtask)
         .filter(
             Subtask.task_id == task_id,
-            Subtask.role == SubtaskRole.ASSISTANT,
+            Subtask.role == SubtaskRole.USER,
             Subtask.message_id == 3,
         )
         .one()
     )
+    next_stage = (
+        db.query(Subtask)
+        .filter(
+            Subtask.task_id == task_id,
+            Subtask.role == SubtaskRole.ASSISTANT,
+            Subtask.message_id == 4,
+        )
+        .one()
+    )
+    return handoff_user, next_stage
 
 
 def test_pipeline_auto_advance_keeps_empty_prompt_when_context_passing_none(
     test_db: Session,
     test_user: User,
 ) -> None:
-    next_stage = _auto_advance(test_db, test_user, context_passing="none")
+    handoff_user, next_stage = _auto_advance(test_db, test_user, context_passing="none")
 
+    assert handoff_user.prompt == ""
     assert next_stage.prompt == ""
+    assert next_stage.parent_id == handoff_user.message_id
 
 
 def test_pipeline_auto_advance_passes_previous_bot_output(
     test_db: Session,
     test_user: User,
 ) -> None:
-    next_stage = _auto_advance(test_db, test_user, context_passing="previous_bot")
+    handoff_user, next_stage = _auto_advance(
+        test_db, test_user, context_passing="previous_bot"
+    )
 
     assert (
-        next_stage.prompt
+        handoff_user.prompt
         == "Previous stage output:\nStage 1 found three release risks."
     )
+    assert next_stage.prompt == ""
+    assert next_stage.parent_id == handoff_user.message_id
 
 
 def test_pipeline_auto_advance_passes_original_user_message(
     test_db: Session,
     test_user: User,
 ) -> None:
-    next_stage = _auto_advance(test_db, test_user, context_passing="original_user")
+    handoff_user, next_stage = _auto_advance(
+        test_db, test_user, context_passing="original_user"
+    )
 
-    assert next_stage.prompt == "Original user request:\nBuild a release checklist."
+    assert handoff_user.prompt == "Original user request:\nBuild a release checklist."
+    assert next_stage.prompt == ""
+    assert next_stage.parent_id == handoff_user.message_id
 
 
 def test_pipeline_auto_advance_passes_original_user_and_previous_bot_output(
     test_db: Session,
     test_user: User,
 ) -> None:
-    next_stage = _auto_advance(
+    handoff_user, next_stage = _auto_advance(
         test_db,
         test_user,
         context_passing="original_and_previous",
     )
 
-    assert next_stage.prompt == (
+    assert handoff_user.prompt == (
         "Original user request:\nBuild a release checklist.\n\n"
         "Previous stage output:\nStage 1 found three release risks."
+    )
+    assert next_stage.prompt == ""
+    assert next_stage.parent_id == handoff_user.message_id
+
+
+def test_pipeline_dispatch_uses_parent_user_message_when_assistant_prompt_is_empty(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    user_subtask = _add_user_subtask(
+        test_db,
+        test_user,
+        task_id=9301,
+        team_id=12,
+        message_id=3,
+        prompt="Previous stage output:\nReady for review.",
+    )
+    assistant_subtask = Subtask(
+        user_id=test_user.id,
+        task_id=9301,
+        team_id=12,
+        title="Stage 2",
+        bot_ids=[20],
+        role=SubtaskRole.ASSISTANT,
+        prompt="",
+        status=SubtaskStatus.PENDING,
+        progress=0,
+        message_id=4,
+        parent_id=user_subtask.message_id,
+        executor_namespace="default",
+        executor_name="wegent-task-user1-pipeline",
+        error_message="",
+        completed_at=datetime.now(),
+        result=None,
+    )
+    test_db.add(assistant_subtask)
+    test_db.flush()
+
+    assert (
+        _resolve_dispatch_message(test_db, assistant_subtask)
+        == "Previous stage output:\nReady for review."
     )
