@@ -102,11 +102,13 @@ export default function TeamModeSelector({
                     value={opt}
                     id={`selector-mode-${opt}`}
                     className="peer sr-only"
+                    data-testid={`select-mode-radio-${opt}`}
                   />
                   <label
                     htmlFor={`selector-mode-${opt}`}
+                    data-testid={`select-mode-label-${opt}`}
                     className={`
-                      flex items-center justify-center w-full px-3 py-1.5 text-sm font-medium
+                      flex items-center justify-center w-full min-w-[44px] h-11 px-3 text-sm font-medium
                       rounded-md cursor-pointer transition-colors
                       border border-border
                       peer-data-[state=checked]:bg-primary peer-data-[state=checked]:text-primary-foreground peer-data-[state=checked]:border-primary
