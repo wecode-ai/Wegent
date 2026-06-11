@@ -186,7 +186,7 @@ describe('TaskStateMachine', () => {
     expect(joinTask).not.toHaveBeenCalled()
 
     connected = true
-    await machine.handleSocketConnected('websocket-reconnect')
+    await machine.requestRuntimeCheck('websocket-reconnect')
 
     expect(pullRuntime).toHaveBeenCalledWith(100)
     expect(joinTask).toHaveBeenCalledWith(100, {
@@ -217,7 +217,7 @@ describe('TaskStateMachine', () => {
     expect(machine.getState().phase).toBe('waiting_socket')
 
     connected = true
-    await machine.handleSocketConnected('websocket-reconnect')
+    await machine.requestRuntimeCheck('websocket-reconnect')
 
     expect(pullRuntime).toHaveBeenCalledWith(100)
     expect(joinTask).toHaveBeenCalledWith(100, {
@@ -242,9 +242,7 @@ describe('TaskStateMachine', () => {
 
     connected = true
 
-    await expect(machine.handleSocketConnected('websocket-reconnect')).rejects.toThrow(
-      '[TaskStateMachine] pullRuntime action is required for checkHealth().'
-    )
+    await expect(machine.requestRuntimeCheck('websocket-reconnect')).resolves.toBeUndefined()
     expect(joinTask).not.toHaveBeenCalled()
   })
 
@@ -1078,7 +1076,7 @@ describe('TaskStateMachine', () => {
       status: 'RUNNING',
       updated_at: '2026-06-01T10:00:00',
     })
-    await machine.checkHealth('page-visible')
+    await machine.requestRuntimeCheck('page-visible')
 
     expect(actions.pullRuntime).toHaveBeenCalledTimes(1)
     expect(actions.joinTask).toHaveBeenCalledWith(42, {
@@ -1135,7 +1133,7 @@ describe('TaskStateMachine', () => {
       status: 'COMPLETED',
       updated_at: '2026-06-01T10:00:10',
     })
-    await machine.checkHealth('page-visible')
+    await machine.requestRuntimeCheck('page-visible')
 
     expect(actions.joinTask).toHaveBeenCalledWith(42, {
       forceRefresh: true,
@@ -1144,7 +1142,7 @@ describe('TaskStateMachine', () => {
     expect(machine.getState().messages.get('ai-77')?.content).toBe('synced answer')
     expect(machine.getState().runtime.messagesSyncedUpdatedAt).toBe('2026-06-01T10:00:10')
     ;(actions.joinTask as jest.Mock).mockClear()
-    await machine.checkHealth('page-visible')
+    await machine.requestRuntimeCheck('page-visible')
     expect(actions.joinTask).not.toHaveBeenCalled()
 
     consoleInfoSpy.mockRestore()
@@ -1231,7 +1229,7 @@ describe('TaskStateMachine', () => {
       status: 'COMPLETED',
       updated_at: '2026-06-01T10:00:10',
     })
-    await machine.checkHealth('page-visible')
+    await machine.requestRuntimeCheck('page-visible')
 
     expect(machine.getState().messages.get('ai-77')?.result?.blocks ?? []).toHaveLength(0)
   })
@@ -1345,7 +1343,7 @@ describe('TaskStateMachine', () => {
       status: 'COMPLETED',
       updated_at: '2026-06-03T20:34:56',
     })
-    await machine.checkHealth('page-visible')
+    await machine.requestRuntimeCheck('page-visible')
 
     const blocks = machine.getState().messages.get('ai-1266')?.result?.blocks ?? []
     expect(blocks).toEqual([
@@ -1417,7 +1415,7 @@ describe('TaskStateMachine', () => {
     })
     machine.handleChatStart(77, 'Chat', 2)
     machine.handleChatChunk(77, 'partial')
-    await machine.checkHealth('page-visible')
+    await machine.requestRuntimeCheck('page-visible')
 
     expect(actions.joinTask).toHaveBeenCalledWith(42, {
       forceRefresh: true,
@@ -1508,7 +1506,7 @@ describe('TaskStateMachine', () => {
 
     machine.handleChatStart(77)
     machine.handleChatChunk(77, 'partial')
-    await machine.checkHealth('page-visible')
+    await machine.requestRuntimeCheck('page-visible')
 
     const state = machine.getState()
     expect(state.runtime.taskStatus).toBe('COMPLETED')

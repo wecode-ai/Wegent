@@ -566,31 +566,12 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         return { success: false, error: 'Not connected to server' }
       }
 
-      return new Promise(resolve => {
-        const timeout = setTimeout(() => {
-          resolve({ success: false, error: 'Cancel ack timeout' })
-        }, 5000)
-
-        socket.emit(
-          'chat:cancel',
-          {
-            subtask_id: subtaskId,
-            partial_content: partialContent,
-            shell_type: shellType,
-          },
-          (response: { success?: boolean; error?: string } | undefined) => {
-            clearTimeout(timeout)
-            if (!response) {
-              resolve({ success: false, error: 'No response from server' })
-              return
-            }
-            resolve({
-              success: response.success === true,
-              error: typeof response.error === 'string' ? response.error : undefined,
-            })
-          }
-        )
+      socket.emit('chat:cancel', {
+        subtask_id: subtaskId,
+        partial_content: partialContent,
+        shell_type: shellType,
       })
+      return { success: true }
     },
     [socket]
   )

@@ -31,6 +31,11 @@ type RuntimeCheckTracker = {
   count: () => number
 }
 
+type SocketDropOptions = {
+  chatEvents?: string[]
+  terminalTaskStatuses?: string[]
+}
+
 test.describe.configure({ mode: 'serial' })
 
 test.describe('Task runtime consistency', () => {
@@ -172,6 +177,124 @@ test.describe('Task runtime consistency', () => {
       timeout: 30000,
     })
     await expectChatInputCanSubmit(page, `${TEST_PREFIX} network readiness probe`)
+    await expectNoQueuedMessages(page)
+  })
+
+  test('recovers RUNNING with unknown stream through the state machine probe', async ({
+    page,
+    request,
+  }) => {
+    const socketDropper = await dropChatStartSocketEvents(page)
+    const runtimeChecks = trackRuntimeChecks(page)
+    const messageText = `${TEST_PREFIX} unknown stream probe request`
+    const responseMarker = `${TEST_PREFIX}-unknown-response`
+
+    await configureStreamRule(request, messageText, {
+      responseContent: [
+        responseMarker,
+        'keeps',
+        'streaming',
+        'after',
+        'the',
+        'start',
+        'event',
+        'is',
+        'lost',
+        'so',
+        'runtime',
+        'probe',
+        'can',
+        'resume',
+      ].join(' '),
+      chunkDelayMs: 250,
+      doneDelayMs: 3000,
+    })
+
+    await gotoChatWithTestTeam(page)
+    const checksBeforeSend = runtimeChecks.count()
+    await sendChatMessage(page, messageText)
+
+    const taskId = await waitForTaskId(page)
+    await waitForBackendTerminal(request, taskId)
+
+    await expect
+      .poll(() => socketDropper.droppedMessages.some(message => message.includes('chat:start')), {
+        message: 'The E2E fault injection should drop chat:start',
+        timeout: 10000,
+      })
+      .toBe(true)
+
+    await expect
+      .poll(() => runtimeChecks.count(), {
+        message: 'Dropped chat:start should trigger the internal runtime probe',
+        timeout: 15000,
+      })
+      .toBeGreaterThan(checksBeforeSend)
+
+    await expect(page.getByTestId('messages-container')).toContainText(responseMarker, {
+      timeout: 30000,
+    })
+    await expectChatInputCanSubmit(page, `${TEST_PREFIX} unknown readiness probe`)
+    await expectNoQueuedMessages(page)
+  })
+
+  test('recovers when stream cancellation ack events are missed', async ({ page, request }) => {
+    const socketDropper = await dropTerminalSocketEvents(page)
+    const runtimeChecks = trackRuntimeChecks(page)
+    const messageText = `${TEST_PREFIX} cancel ack probe request`
+    const responseMarker = `${TEST_PREFIX}-cancel-response`
+
+    await configureStreamRule(request, messageText, {
+      responseContent: [
+        responseMarker,
+        'keeps',
+        'streaming',
+        'long',
+        'enough',
+        'for',
+        'the',
+        'browser',
+        'to',
+        'send',
+        'a',
+        'stop',
+        'request',
+        'before',
+        'the',
+        'model',
+        'finishes',
+      ].join(' '),
+      chunkDelayMs: 250,
+      doneDelayMs: 20000,
+    })
+
+    await gotoChatWithTestTeam(page)
+    await sendChatMessage(page, messageText)
+
+    const taskId = await waitForTaskId(page)
+    await expect(page.getByTestId('messages-container')).toContainText(responseMarker, {
+      timeout: 15000,
+    })
+
+    const checksBeforeStop = runtimeChecks.count()
+    await stopActiveStream(page)
+    await waitForBackendStatus(request, taskId, ['CANCELLED'])
+
+    await expect
+      .poll(() => socketDropper.droppedMessages.some(message => message.includes('CANCELLED')), {
+        message: 'The E2E fault injection should drop cancellation terminal events',
+        timeout: 10000,
+      })
+      .toBe(true)
+
+    await expect
+      .poll(() => runtimeChecks.count(), {
+        message: 'Missing cancellation ack should trigger the internal runtime probe',
+        timeout: 20000,
+      })
+      .toBeGreaterThan(checksBeforeStop)
+
+    await expectChatInputCanSubmit(page, `${TEST_PREFIX} cancel readiness probe`)
     await expectNoQueuedMessages(page)
   })
 
@@ -333,6 +456,16 @@ test.describe('Task runtime consistency', () => {
     await expect(page.getByTestId('send-button')).toBeEnabled({ timeout: 30000 })
   }
 
+  async function stopActiveStream(page: Page): Promise<void> {
+    const stopButton = page
+      .getByTestId('stop-stream-button')
+      .or(page.locator('button[title="Stop generating"]'))
+      .first()
+    await expect(stopButton).toBeVisible({ timeout: 15000 })
+    await expect(stopButton).toBeEnabled({ timeout: 15000 })
+    await stopButton.click()
+  }
+
   async function expectNoQueuedMessages(page: Page): Promise<void> {
     await expect
       .poll(() => page.getByTestId('queued-message-item').count(), {
@@ -365,6 +498,16 @@ test.describe('Task runtime consistency', () => {
   }
 
   async function waitForBackendTerminal(request: APIRequestContext, taskId: number): Promise<void> {
+    await waitForBackendStatus(request, taskId, ['COMPLETED', 'COMPLETED_SILENT'])
+  }
+
+  async function waitForBackendStatus(
+    request: APIRequestContext,
+    taskId: number,
+    expectedStatuses: string[]
+  ): Promise<void> {
+    const normalizedExpectedStatuses = new Set(expectedStatuses.map(status => status.toUpperCase()))
+
     await expect
       .poll(
         async () => {
@@ -377,14 +520,14 @@ test.describe('Task runtime consistency', () => {
 
           const runtime = (await response.json()) as RuntimeCheckResponse
           const status = String(runtime.task_status || '').toUpperCase()
-          return status === 'COMPLETED' || status === 'COMPLETED_SILENT' ? 'TERMINAL' : status
+          return normalizedExpectedStatuses.has(status) ? 'EXPECTED' : status
         },
         {
-          message: `Backend task ${taskId} should reach a terminal status`,
+          message: `Backend task ${taskId} should reach one of: ${expectedStatuses.join(', ')}`,
           timeout: 30000,
         }
       )
-      .toBe('TERMINAL')
+      .toBe('EXPECTED')
   }
 
   function trackRuntimeChecks(page: Page): RuntimeCheckTracker {
@@ -402,6 +545,22 @@ test.describe('Task runtime consistency', () => {
   }
 
   async function dropTerminalSocketEvents(page: Page): Promise<{ droppedMessages: string[] }> {
+    return dropSocketEvents(page, {
+      chatEvents: ['chat:done', 'chat:error', 'chat:cancelled'],
+      terminalTaskStatuses: ['COMPLETED', 'COMPLETED_SILENT', 'FAILED', 'CANCELLED'],
+    })
+  }
+
+  async function dropChatStartSocketEvents(page: Page): Promise<{ droppedMessages: string[] }> {
+    return dropSocketEvents(page, {
+      chatEvents: ['chat:start'],
+    })
+  }
+
+  async function dropSocketEvents(
+    page: Page,
+    options: SocketDropOptions
+  ): Promise<{ droppedMessages: string[] }> {
     const droppedMessages: string[] = []
 
     await page.routeWebSocket(/\/socket\.io\/.*transport=websocket/, ws => {
@@ -413,14 +572,13 @@ test.describe('Task runtime consistency', () => {
 
       server.onMessage(message => {
         const text = typeof message === 'string' ? message : message.toString()
-        const isTerminalChatEvent =
-          text.includes('chat:done') ||
-          text.includes('chat:error') ||
-          text.includes('chat:cancelled')
+        const isDroppedChatEvent =
+          options.chatEvents?.some(eventName => text.includes(eventName)) ?? false
         const isTerminalTaskStatus =
-          text.includes('task:status') && /COMPLETED|COMPLETED_SILENT|FAILED|CANCELLED/.test(text)
+          text.includes('task:status') &&
+          (options.terminalTaskStatuses?.some(status => text.includes(status)) ?? false)
 
-        if (isTerminalChatEvent || isTerminalTaskStatus) {
+        if (isDroppedChatEvent || isTerminalTaskStatus) {
           droppedMessages.push(text)
           return
         }

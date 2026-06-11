@@ -72,7 +72,7 @@ describe('TaskStateMachine recovery', () => {
       machine.handleChatStart(10)
       machine.setStopping(true)
 
-      await machine.checkHealth('page-visible')
+      await machine.requestRuntimeCheck('page-visible')
 
       const state = machine.getState()
       expect(state.isStopping).toBe(false)
@@ -96,12 +96,27 @@ describe('TaskStateMachine recovery', () => {
         joinTask: jest.fn().mockResolvedValue({
           subtasks: [
             {
-              id: 10, task_id: 42, team_id: 1, title: 'streaming', bot_ids: [],
-              role: 'ASSISTANT', message_id: 1, parent_id: 1, prompt: '',
-              executor_namespace: '', executor_name: '', status: 'RUNNING',
-              progress: 0, batch: 0, result: { value: 'hello' }, error_message: '',
-              user_id: 1, created_at: '2026-06-01T10:00:00.000Z',
-              updated_at: '2026-06-01T10:00:05.000Z', completed_at: null, bots: [],
+              id: 10,
+              task_id: 42,
+              team_id: 1,
+              title: 'streaming',
+              bot_ids: [],
+              role: 'ASSISTANT',
+              message_id: 1,
+              parent_id: 1,
+              prompt: '',
+              executor_namespace: '',
+              executor_name: '',
+              status: 'RUNNING',
+              progress: 0,
+              batch: 0,
+              result: { value: 'hello' },
+              error_message: '',
+              user_id: 1,
+              created_at: '2026-06-01T10:00:00.000Z',
+              updated_at: '2026-06-01T10:00:05.000Z',
+              completed_at: null,
+              bots: [],
             },
           ],
           streaming: { subtask_id: 10, cached_content: 'hello world', offset: 11 },
@@ -113,7 +128,7 @@ describe('TaskStateMachine recovery', () => {
       machine.handleChatChunk(10, 'hello')
       machine.setStopping(true)
 
-      await machine.checkHealth('page-visible')
+      await machine.requestRuntimeCheck('page-visible')
 
       const state = machine.getState()
       expect(state.isStopping).toBe(false)
@@ -144,6 +159,214 @@ describe('TaskStateMachine recovery', () => {
 
       expect(machine.getState().isStopping).toBe(false)
     })
+
+    it('RUNNING without server no-stream confirmation is exposed as streaming', () => {
+      const machine = new TaskStateMachine(42, createRuntimeActions())
+
+      machine.markSendAccepted('2026-06-01T10:00:00')
+
+      const state = machine.getState()
+      expect(state.runtime.taskStatus).toBe('RUNNING')
+      expect(state.runtime.activeStreamSubtaskId).toBeUndefined()
+      expect(state.derived.isStreaming).toBe(true)
+      expect(state.derived.canSendMessage).toBe(false)
+      expect(computeSendState(machine)).toBe('stop')
+    })
+
+    it('state machine probes RUNNING unknown stream and exits when runtime confirms no stream', async () => {
+      jest.useFakeTimers()
+      const pullRuntime = jest.fn().mockResolvedValue({
+        task_id: 42,
+        task_status: 'RUNNING',
+        status_updated_at: '2026-06-01T10:00:05',
+        active_stream: null,
+      })
+      const machine = new TaskStateMachine(
+        42,
+        createRuntimeActions({
+          pullRuntime,
+        })
+      )
+
+      try {
+        machine.markSendAccepted('2026-06-01T10:00:00')
+
+        expect(machine.getState().derived.isStreaming).toBe(true)
+        await jest.advanceTimersByTimeAsync(2999)
+        expect(pullRuntime).not.toHaveBeenCalled()
+
+        await jest.advanceTimersByTimeAsync(1)
+
+        expect(pullRuntime).toHaveBeenCalledTimes(1)
+        const state = machine.getState()
+        expect(state.runtime.taskStatus).toBe('RUNNING')
+        expect(state.runtime.serverConfirmedNoStream).toBe(true)
+        expect(state.derived.isStreaming).toBe(false)
+        expect(state.derived.canSendMessage).toBe(true)
+      } finally {
+        machine.closeTask()
+        jest.useRealTimers()
+      }
+    })
+
+    it('state machine retries unknown stream probe until runtime reaches a stable state', async () => {
+      jest.useFakeTimers()
+      const pullRuntime = jest
+        .fn()
+        .mockRejectedValueOnce(new Error('temporary network failure'))
+        .mockResolvedValueOnce({
+          task_id: 42,
+          task_status: 'COMPLETED',
+          status_updated_at: '2026-06-01T10:00:05',
+          active_stream: null,
+        })
+      const machine = new TaskStateMachine(
+        42,
+        createRuntimeActions({
+          pullRuntime,
+        })
+      )
+
+      try {
+        machine.markSendAccepted('2026-06-01T10:00:00')
+
+        await jest.advanceTimersByTimeAsync(3000)
+        expect(pullRuntime).toHaveBeenCalledTimes(1)
+        expect(machine.getState().derived.isStreaming).toBe(true)
+
+        await jest.advanceTimersByTimeAsync(3000)
+
+        expect(pullRuntime).toHaveBeenCalledTimes(2)
+        expect(machine.getState().derived.isStreaming).toBe(false)
+      } finally {
+        machine.closeTask()
+        jest.useRealTimers()
+      }
+    })
+
+    it('state machine stops unknown stream probe when chat:start makes the stream known', async () => {
+      jest.useFakeTimers()
+      const pullRuntime = jest.fn()
+      const machine = new TaskStateMachine(
+        42,
+        createRuntimeActions({
+          pullRuntime,
+        })
+      )
+
+      try {
+        machine.markSendAccepted('2026-06-01T10:00:00')
+        machine.handleChatStart(10, 'Chat', 1)
+
+        await jest.advanceTimersByTimeAsync(3000)
+
+        expect(pullRuntime).not.toHaveBeenCalled()
+        expect(machine.getState().runtime.activeStreamSubtaskId).toBe(10)
+      } finally {
+        machine.closeTask()
+        jest.useRealTimers()
+      }
+    })
+
+    it('state machine probes cancel pending state and exits when runtime confirms no stream', async () => {
+      jest.useFakeTimers()
+      const pullRuntime = jest.fn().mockResolvedValue({
+        task_id: 42,
+        task_status: 'RUNNING',
+        status_updated_at: '2026-06-01T10:00:05',
+        active_stream: null,
+      })
+      const machine = new TaskStateMachine(
+        42,
+        createRuntimeActions({
+          pullRuntime,
+        })
+      )
+
+      try {
+        machine.handleTaskStatus('RUNNING', '2026-06-01T10:00:00')
+        machine.handleChatStart(10, 'Chat', 1)
+        machine.setStopping(true)
+
+        await jest.advanceTimersByTimeAsync(4999)
+        expect(pullRuntime).not.toHaveBeenCalled()
+
+        await jest.advanceTimersByTimeAsync(1)
+
+        expect(pullRuntime).toHaveBeenCalledTimes(1)
+        const state = machine.getState()
+        expect(state.isStopping).toBe(false)
+        expect(state.runtime.serverConfirmedNoStream).toBe(true)
+        expect(state.derived.isStreaming).toBe(false)
+      } finally {
+        machine.closeTask()
+        jest.useRealTimers()
+      }
+    })
+
+    it('state machine retries cancel pending probe until runtime reaches a stable state', async () => {
+      jest.useFakeTimers()
+      const pullRuntime = jest
+        .fn()
+        .mockRejectedValueOnce(new Error('temporary network failure'))
+        .mockResolvedValueOnce({
+          task_id: 42,
+          task_status: 'COMPLETED',
+          status_updated_at: '2026-06-01T10:00:05',
+          active_stream: null,
+        })
+      const machine = new TaskStateMachine(
+        42,
+        createRuntimeActions({
+          pullRuntime,
+        })
+      )
+
+      try {
+        machine.handleTaskStatus('RUNNING', '2026-06-01T10:00:00')
+        machine.handleChatStart(10, 'Chat', 1)
+        machine.setStopping(true)
+
+        await jest.advanceTimersByTimeAsync(5000)
+        expect(pullRuntime).toHaveBeenCalledTimes(1)
+        expect(machine.getState().isStopping).toBe(true)
+
+        await jest.advanceTimersByTimeAsync(5000)
+
+        expect(pullRuntime).toHaveBeenCalledTimes(2)
+        expect(machine.getState().isStopping).toBe(false)
+        expect(machine.getState().derived.isStreaming).toBe(false)
+      } finally {
+        machine.closeTask()
+        jest.useRealTimers()
+      }
+    })
+
+    it('state machine stops cancel pending probe when chat:cancelled arrives', async () => {
+      jest.useFakeTimers()
+      const pullRuntime = jest.fn()
+      const machine = new TaskStateMachine(
+        42,
+        createRuntimeActions({
+          pullRuntime,
+        })
+      )
+
+      try {
+        machine.handleTaskStatus('RUNNING', '2026-06-01T10:00:00')
+        machine.handleChatStart(10, 'Chat', 1)
+        machine.setStopping(true)
+        machine.handleChatCancelled(10)
+
+        await jest.advanceTimersByTimeAsync(5000)
+
+        expect(pullRuntime).not.toHaveBeenCalled()
+        expect(machine.getState().isStopping).toBe(false)
+      } finally {
+        machine.closeTask()
+        jest.useRealTimers()
+      }
+    })
   })
 
   describe('cancel sent then socket closed before ack', () => {
@@ -160,19 +383,35 @@ describe('TaskStateMachine recovery', () => {
     it('[MATRIX 1] recovery finalizes stale streaming and clears isStopping when server confirms no stream', async () => {
       const actions = createRuntimeActions({
         pullRuntime: jest.fn().mockResolvedValue({
-          task_id: 42, task_status: 'COMPLETED',
-          status_updated_at: '2026-06-01T10:00:10', active_stream: null,
+          task_id: 42,
+          task_status: 'COMPLETED',
+          status_updated_at: '2026-06-01T10:00:10',
+          active_stream: null,
         }),
         joinTask: jest.fn().mockResolvedValue({
           subtasks: [
             {
-              id: 10, task_id: 42, team_id: 1, title: 'cancelled', bot_ids: [],
-              role: 'ASSISTANT', message_id: 1, parent_id: 1, prompt: '',
-              executor_namespace: '', executor_name: '', status: 'COMPLETED',
-              progress: 100, batch: 0, result: { value: 'partial content' },
-              error_message: '', user_id: 1, created_at: '2026-06-01T10:00:00.000Z',
+              id: 10,
+              task_id: 42,
+              team_id: 1,
+              title: 'cancelled',
+              bot_ids: [],
+              role: 'ASSISTANT',
+              message_id: 1,
+              parent_id: 1,
+              prompt: '',
+              executor_namespace: '',
+              executor_name: '',
+              status: 'COMPLETED',
+              progress: 100,
+              batch: 0,
+              result: { value: 'partial content' },
+              error_message: '',
+              user_id: 1,
+              created_at: '2026-06-01T10:00:00.000Z',
               updated_at: '2026-06-01T10:00:05.000Z',
-              completed_at: '2026-06-01T10:00:10.000Z', bots: [],
+              completed_at: '2026-06-01T10:00:10.000Z',
+              bots: [],
             },
           ],
         }),
@@ -185,7 +424,7 @@ describe('TaskStateMachine recovery', () => {
       machine.setStopping(true)
       expect(machine.getState().isStopping).toBe(true)
 
-      await machine.checkHealth('page-visible')
+      await machine.requestRuntimeCheck('page-visible')
 
       const state = machine.getState()
       expect(state.isStopping).toBe(false)
@@ -199,13 +438,27 @@ describe('TaskStateMachine recovery', () => {
       const joinTask = jest.fn().mockResolvedValue({
         subtasks: [
           {
-            id: 58, task_id: 9, team_id: 1, title: 'cancelled', bot_ids: [],
-            role: 'ASSISTANT', message_id: 2, parent_id: 1, prompt: '',
-            executor_namespace: '', executor_name: '', status: 'COMPLETED',
-            progress: 100, batch: 0, result: { value: '# Report\n---\nContent' },
-            error_message: '', user_id: 1, created_at: '2026-06-08T19:03:00.000Z',
+            id: 58,
+            task_id: 9,
+            team_id: 1,
+            title: 'cancelled',
+            bot_ids: [],
+            role: 'ASSISTANT',
+            message_id: 2,
+            parent_id: 1,
+            prompt: '',
+            executor_namespace: '',
+            executor_name: '',
+            status: 'COMPLETED',
+            progress: 100,
+            batch: 0,
+            result: { value: '# Report\n---\nContent' },
+            error_message: '',
+            user_id: 1,
+            created_at: '2026-06-08T19:03:00.000Z',
             updated_at: '2026-06-08T19:03:54.000Z',
-            completed_at: '2026-06-08T19:04:00.000Z', bots: [],
+            completed_at: '2026-06-08T19:04:00.000Z',
+            bots: [],
           },
         ],
       })
@@ -233,13 +486,27 @@ describe('TaskStateMachine recovery', () => {
       const joinTask = jest.fn().mockResolvedValue({
         subtasks: [
           {
-            id: 58, task_id: 9, team_id: 1, title: 'cancelled', bot_ids: [],
-            role: 'ASSISTANT', message_id: 2, parent_id: 1, prompt: '',
-            executor_namespace: '', executor_name: '', status: 'CANCELLED',
-            progress: 50, batch: 0, result: { value: 'partial' }, error_message: '',
-            user_id: 1, created_at: '2026-06-08T19:03:00.000Z',
+            id: 58,
+            task_id: 9,
+            team_id: 1,
+            title: 'cancelled',
+            bot_ids: [],
+            role: 'ASSISTANT',
+            message_id: 2,
+            parent_id: 1,
+            prompt: '',
+            executor_namespace: '',
+            executor_name: '',
+            status: 'CANCELLED',
+            progress: 50,
+            batch: 0,
+            result: { value: 'partial' },
+            error_message: '',
+            user_id: 1,
+            created_at: '2026-06-08T19:03:00.000Z',
             updated_at: '2026-06-08T19:04:00.000Z',
-            completed_at: '2026-06-08T19:04:00.000Z', bots: [],
+            completed_at: '2026-06-08T19:04:00.000Z',
+            bots: [],
           },
         ],
       })
@@ -261,14 +528,27 @@ describe('TaskStateMachine recovery', () => {
       const joinTask = jest.fn().mockResolvedValue({
         subtasks: [
           {
-            id: 58, task_id: 9, team_id: 1, title: 'failed', bot_ids: [],
-            role: 'ASSISTANT', message_id: 2, parent_id: 1, prompt: '',
-            executor_namespace: '', executor_name: '', status: 'FAILED',
-            progress: 50, batch: 0, result: { value: 'partial' },
-            error_message: 'executor crashed', user_id: 1,
+            id: 58,
+            task_id: 9,
+            team_id: 1,
+            title: 'failed',
+            bot_ids: [],
+            role: 'ASSISTANT',
+            message_id: 2,
+            parent_id: 1,
+            prompt: '',
+            executor_namespace: '',
+            executor_name: '',
+            status: 'FAILED',
+            progress: 50,
+            batch: 0,
+            result: { value: 'partial' },
+            error_message: 'executor crashed',
+            user_id: 1,
             created_at: '2026-06-08T19:03:00.000Z',
             updated_at: '2026-06-08T19:04:00.000Z',
-            completed_at: '2026-06-08T19:04:00.000Z', bots: [],
+            completed_at: '2026-06-08T19:04:00.000Z',
+            bots: [],
           },
         ],
       })
@@ -290,13 +570,27 @@ describe('TaskStateMachine recovery', () => {
       const joinTask = jest.fn().mockResolvedValue({
         subtasks: [
           {
-            id: 58, task_id: 9, team_id: 1, title: 'done', bot_ids: [],
-            role: 'ASSISTANT', message_id: 2, parent_id: 1, prompt: '',
-            executor_namespace: '', executor_name: '', status: 'COMPLETED',
-            progress: 100, batch: 0, result: { value: 'done' }, error_message: '',
-            user_id: 1, created_at: '2026-06-08T19:03:00.000Z',
+            id: 58,
+            task_id: 9,
+            team_id: 1,
+            title: 'done',
+            bot_ids: [],
+            role: 'ASSISTANT',
+            message_id: 2,
+            parent_id: 1,
+            prompt: '',
+            executor_namespace: '',
+            executor_name: '',
+            status: 'COMPLETED',
+            progress: 100,
+            batch: 0,
+            result: { value: 'done' },
+            error_message: '',
+            user_id: 1,
+            created_at: '2026-06-08T19:03:00.000Z',
             updated_at: '2026-06-08T19:04:00.000Z',
-            completed_at: '2026-06-08T19:04:00.000Z', bots: [],
+            completed_at: '2026-06-08T19:04:00.000Z',
+            bots: [],
           },
         ],
       })
@@ -351,13 +645,27 @@ describe('TaskStateMachine recovery', () => {
       const joinTask = jest.fn().mockResolvedValue({
         subtasks: [
           {
-            id: 58, task_id: 9, team_id: 1, title: 'done', bot_ids: [],
-            role: 'ASSISTANT', message_id: 2, parent_id: 1, prompt: '',
-            executor_namespace: '', executor_name: '', status: 'COMPLETED',
-            progress: 100, batch: 0, result: { value: 'done' }, error_message: '',
-            user_id: 1, created_at: '2026-06-08T19:03:00.000Z',
+            id: 58,
+            task_id: 9,
+            team_id: 1,
+            title: 'done',
+            bot_ids: [],
+            role: 'ASSISTANT',
+            message_id: 2,
+            parent_id: 1,
+            prompt: '',
+            executor_namespace: '',
+            executor_name: '',
+            status: 'COMPLETED',
+            progress: 100,
+            batch: 0,
+            result: { value: 'done' },
+            error_message: '',
+            user_id: 1,
+            created_at: '2026-06-08T19:03:00.000Z',
             updated_at: '2026-06-08T19:04:00.000Z',
-            completed_at: '2026-06-08T19:04:00.000Z', bots: [],
+            completed_at: '2026-06-08T19:04:00.000Z',
+            bots: [],
           },
         ],
       })
@@ -387,12 +695,27 @@ describe('TaskStateMachine recovery', () => {
       const joinTask = jest.fn().mockResolvedValue({
         subtasks: [
           {
-            id: 58, task_id: 9, team_id: 1, title: 'still running', bot_ids: [],
-            role: 'ASSISTANT', message_id: 2, parent_id: 1, prompt: '',
-            executor_namespace: '', executor_name: '', status: 'RUNNING',
-            progress: 50, batch: 0, result: { value: 'partial' }, error_message: '',
-            user_id: 1, created_at: '2026-06-08T19:03:00.000Z',
-            updated_at: '2026-06-08T19:04:00.000Z', completed_at: null, bots: [],
+            id: 58,
+            task_id: 9,
+            team_id: 1,
+            title: 'still running',
+            bot_ids: [],
+            role: 'ASSISTANT',
+            message_id: 2,
+            parent_id: 1,
+            prompt: '',
+            executor_namespace: '',
+            executor_name: '',
+            status: 'RUNNING',
+            progress: 50,
+            batch: 0,
+            result: { value: 'partial' },
+            error_message: '',
+            user_id: 1,
+            created_at: '2026-06-08T19:03:00.000Z',
+            updated_at: '2026-06-08T19:04:00.000Z',
+            completed_at: null,
+            bots: [],
           },
         ],
       })
@@ -422,12 +745,27 @@ describe('TaskStateMachine recovery', () => {
       const joinTask = jest.fn().mockResolvedValue({
         subtasks: [
           {
-            id: 58, task_id: 9, team_id: 1, title: 'pending', bot_ids: [],
-            role: 'ASSISTANT', message_id: 2, parent_id: 1, prompt: '',
-            executor_namespace: '', executor_name: '', status: 'PENDING',
-            progress: 0, batch: 0, result: {}, error_message: '',
-            user_id: 1, created_at: '2026-06-08T19:03:00.000Z',
-            updated_at: '2026-06-08T19:04:00.000Z', completed_at: null, bots: [],
+            id: 58,
+            task_id: 9,
+            team_id: 1,
+            title: 'pending',
+            bot_ids: [],
+            role: 'ASSISTANT',
+            message_id: 2,
+            parent_id: 1,
+            prompt: '',
+            executor_namespace: '',
+            executor_name: '',
+            status: 'PENDING',
+            progress: 0,
+            batch: 0,
+            result: {},
+            error_message: '',
+            user_id: 1,
+            created_at: '2026-06-08T19:03:00.000Z',
+            updated_at: '2026-06-08T19:04:00.000Z',
+            completed_at: null,
+            bots: [],
           },
         ],
       })
@@ -451,6 +789,75 @@ describe('TaskStateMachine recovery', () => {
       expect(state.messages.get('ai-58')?.status).toBe('error')
       expect(state.messages.get('ai-58')?.status).not.toBe('streaming')
       expect(state.messages.get('ai-58')?.status).not.toBe('completed')
+    })
+
+    it('runtime check fast path exits unknown when server confirms no stream', async () => {
+      const statusUpdatedAt = '2026-06-08T19:03:54'
+      const joinTask = jest.fn().mockResolvedValue({ subtasks: [] })
+      const pullRuntime = jest.fn().mockResolvedValue({
+        task_id: 9,
+        task_status: 'RUNNING',
+        status_updated_at: statusUpdatedAt,
+        active_stream: null,
+      })
+      const machine = new TaskStateMachine(9, {
+        joinTask,
+        pullRuntime,
+        isConnected: () => true,
+      })
+
+      await machine.recover({ force: true, syncUpdatedAt: statusUpdatedAt })
+      machine.markSendAccepted(statusUpdatedAt)
+      expect(machine.getState().derived.isStreaming).toBe(true)
+
+      await machine.requestRuntimeCheck('page-visible')
+
+      const state = machine.getState()
+      expect(joinTask).toHaveBeenCalledTimes(1)
+      expect(state.runtime.serverConfirmedNoStream).toBe(true)
+      expect(state.derived.isStreaming).toBe(false)
+      expect(state.derived.canSendMessage).toBe(true)
+      expect(state.derived.canCancelTask).toBe(false)
+      expect(state.derived.blocksQueuedDispatch).toBe(false)
+      expect(computeSendState(machine)).toBe('send')
+    })
+
+    it('runtime check fast path finalizes stale streaming messages when server has no stream', async () => {
+      const statusUpdatedAt = '2026-06-08T19:03:54'
+      const joinTask = jest.fn().mockResolvedValue({ subtasks: [] })
+      const pullRuntime = jest.fn().mockResolvedValue({
+        task_id: 9,
+        task_status: 'RUNNING',
+        status_updated_at: statusUpdatedAt,
+        active_stream: null,
+      })
+      const machine = new TaskStateMachine(9, {
+        joinTask,
+        pullRuntime,
+        isConnected: () => true,
+      })
+
+      await machine.recover({ force: true, syncUpdatedAt: statusUpdatedAt })
+      machine.handleChatStart(58, 'Chat', 2)
+      machine.handleChatChunk(58, 'partial')
+      machine.setStopping(true)
+
+      await machine.requestRuntimeCheck('page-visible')
+
+      const state = machine.getState()
+      expect(joinTask).toHaveBeenCalledTimes(1)
+      expect(state.runtime.serverConfirmedNoStream).toBe(true)
+      expect(state.runtime.activeStreamSubtaskId).toBeUndefined()
+      expect(state.isStopping).toBe(false)
+      expect(state.derived.isStreaming).toBe(false)
+      expect(state.messages.get('ai-58')?.status).toBe('error')
+
+      machine.handleChatChunk(58, ' stale-chunk')
+
+      const stateAfterLateChunk = machine.getState()
+      expect(stateAfterLateChunk.derived.isStreaming).toBe(false)
+      expect(stateAfterLateChunk.messages.get('ai-58')?.status).toBe('error')
+      expect(stateAfterLateChunk.messages.get('ai-58')?.content).toBe('partial')
     })
   })
 })

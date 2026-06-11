@@ -23,8 +23,8 @@ import type {
   TaskStateSnapshot,
   UnifiedMessage,
 } from '../state'
-import { useConsistencyWatcher } from './consistencyWatcher'
 import { MessageSyncer, useMessageSyncer } from './messageSyncer'
+import { useRuntimeSignalBridge } from './runtimeSignalBridge'
 import { TaskPuller, useTaskPuller } from './taskPuller'
 
 type MessageSession = Omit<
@@ -133,6 +133,7 @@ export function TaskSessionProvider({ children }: { children: ReactNode }) {
     (realTaskId: number, previousTaskId: number) => {
       if (realTaskId === previousTaskId) return
       writeSelectedTask({ id: realTaskId } as Task)
+      machineRef.current?.refreshRuntimeProbe()
       void pullTaskDetail(realTaskId)
       setTaskState(machineRef.current?.getState() ?? null)
     },
@@ -161,7 +162,7 @@ export function TaskSessionProvider({ children }: { children: ReactNode }) {
     const machine = machineRef.current
     if (!detail || !machine || machine.getState().taskId !== detail.id) return
     machine.syncTaskDetail(detail)
-  }, [selectedTaskDetail?.id, selectedTaskDetail?.status, selectedTaskDetail?.updated_at])
+  }, [selectedTaskDetail])
 
   const selectTask = useCallback(
     (task: Task | null) => {
@@ -191,7 +192,7 @@ export function TaskSessionProvider({ children }: { children: ReactNode }) {
     [disposeMachine, ensureMachine, prepareSelectedTaskState, resetSelectedTaskState]
   )
 
-  useConsistencyWatcher({
+  useRuntimeSignalBridge({
     taskId: selectedTask?.id ?? null,
     getMachine,
     refreshTasks,
@@ -204,7 +205,7 @@ export function TaskSessionProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const recoverCurrentTask = useCallback(async (reason: TaskRecoveryReason = 'manual-refresh') => {
-    await machineRef.current?.checkHealth(reason)
+    await machineRef.current?.requestRuntimeCheck(reason)
   }, [])
 
   const stopStream = useCallback(

@@ -14,8 +14,8 @@ const mockRefreshSelectedTaskDetail = jest.fn()
 const mockCheckHealth = jest.fn().mockResolvedValue(undefined)
 
 let isMachineStreamingMock = true
+let derivedIsStreamingMock: boolean | undefined
 let activeStreamSubtaskIdMock: number | undefined = 77
-let serverConfirmedNoStreamMock = false
 let taskInputMessageMock = 'next question'
 let currentTaskIdMock: number | null = 42
 let selectedTaskDetailMock: TaskDetail | null = {
@@ -58,14 +58,13 @@ jest.mock('@/features/tasks/session/TaskSession', () => ({
           getTaskStatusMock() === 'COMPLETED' ||
           getTaskStatusMock() === 'FAILED' ||
           getTaskStatusMock() === 'CANCELLED',
-        isStreaming: isMachineStreamingMock,
+        isStreaming: derivedIsStreamingMock ?? isMachineStreamingMock,
         shouldJoinRoom: false,
         canSendMessage: getTaskStatusMock() === 'COMPLETED',
         canQueueMessage: isMachineStreamingMock,
         canCancelTask: getTaskStatusMock() === 'RUNNING' || getTaskStatusMock() === 'PENDING',
         blocksQueuedDispatch:
           getTaskStatusMock() === 'RUNNING' || getTaskStatusMock() === 'PENDING',
-        serverConfirmedNoStream: serverConfirmedNoStreamMock,
       },
     },
   }),
@@ -154,8 +153,8 @@ describe('useChatStreamHandlers queue integration', () => {
   beforeEach(() => {
     jest.clearAllMocks()
     isMachineStreamingMock = true
+    derivedIsStreamingMock = undefined
     activeStreamSubtaskIdMock = 77
-    serverConfirmedNoStreamMock = false
     taskInputMessageMock = 'next question'
     currentTaskIdMock = 42
     selectedTaskDetailMock = {
@@ -556,9 +555,9 @@ describe('useChatStreamHandlers queue integration', () => {
     )
   })
 
-  it('serverConfirmedNoStream suppresses stale RUNNING queue state', () => {
+  it('uses the state machine derived streaming state instead of recomputing RUNNING lifecycle', () => {
     isMachineStreamingMock = false
-    serverConfirmedNoStreamMock = true
+    derivedIsStreamingMock = false
     selectedTaskDetailMock = {
       id: 42,
       status: 'RUNNING',
