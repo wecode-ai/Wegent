@@ -6,7 +6,7 @@ import '@testing-library/jest-dom'
 import React from 'react'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { KnowledgeContextSelector } from '@/features/tasks/components/chat/knowledge-context/KnowledgeContextSelector'
+import { KnowledgeContextSelector } from '@/features/tasks/components/chat/knowledge-context/knowledge-context-selector'
 import type { KnowledgeBase } from '@/types/api'
 import type { ContextItem } from '@/types/context'
 

@@ -107,6 +107,7 @@ export default function MobileCorrectionModeToggle({
   }
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (disabled) return
     if (event.key !== 'Enter' && event.key !== ' ') return
 
     event.preventDefault()
@@ -152,6 +153,7 @@ export default function MobileCorrectionModeToggle({
     <>
       <div
         role="button"
+        data-testid="toggle-correction-mode"
         tabIndex={disabled ? -1 : 0}
         aria-disabled={disabled}
         onClick={handleClick}
@@ -166,7 +168,7 @@ export default function MobileCorrectionModeToggle({
         <div className="flex items-center gap-3">
           <Sparkles className="h-4 w-4 text-text-muted" />
           <div className="flex flex-col">
-            <span className="text-sm">纠错模式</span>
+            <span className="text-sm">{t('chat:correction.label')}</span>
             {enabled && correctionModelName && (
               <span className="text-xs text-text-muted truncate max-w-[120px]">
                 {correctionModelName}
@@ -175,6 +177,7 @@ export default function MobileCorrectionModeToggle({
           </div>
         </div>
         <Switch
+          data-testid="correction-mode-switch"
           checked={enabled}
           disabled={disabled}
           onClick={e => e.stopPropagation()}

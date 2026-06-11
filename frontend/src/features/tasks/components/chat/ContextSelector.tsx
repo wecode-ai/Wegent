@@ -28,7 +28,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { useOrganizationNamespace } from '@/hooks/useOrganizationNamespace'
 import { cn } from '@/lib/utils'
 import { getDingTalkSelectedIds, DingTalkDocContextSelector } from './DingTalkDocContextSelector'
-import { KnowledgeContextSelector } from './knowledge-context/KnowledgeContextSelector'
+import { KnowledgeContextSelector } from './knowledge-context/knowledge-context-selector'
 
 interface ContextSelectorProps {
   open: boolean

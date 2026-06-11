@@ -8,6 +8,7 @@ import React from 'react'
 import { MessageSquareMore } from 'lucide-react'
 import { Switch } from '@/components/ui/switch'
 import { cn } from '@/lib/utils'
+import { useTranslation } from '@/hooks/useTranslation'
 
 interface MobileClarificationToggleProps {
   enabled: boolean
@@ -24,6 +25,8 @@ export default function MobileClarificationToggle({
   onToggle,
   disabled = false,
 }: MobileClarificationToggleProps) {
+  const { t } = useTranslation('chat')
+
   const handleClick = () => {
     if (!disabled) {
       onToggle(!enabled)
@@ -31,6 +34,7 @@ export default function MobileClarificationToggle({
   }
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (disabled) return
     if (event.key !== 'Enter' && event.key !== ' ') return
 
     event.preventDefault()
@@ -40,6 +44,7 @@ export default function MobileClarificationToggle({
   return (
     <div
       role="button"
+      data-testid="toggle-clarification"
       tabIndex={disabled ? -1 : 0}
       aria-disabled={disabled}
       onClick={handleClick}
@@ -53,9 +58,10 @@ export default function MobileClarificationToggle({
     >
       <div className="flex items-center gap-3">
         <MessageSquareMore className="h-4 w-4 text-text-muted" />
-        <span className="text-sm">追问澄清</span>
+        <span className="text-sm">{t('clarification_toggle.label')}</span>
       </div>
       <Switch
+        data-testid="clarification-switch"
         checked={enabled}
         onCheckedChange={onToggle}
         disabled={disabled}

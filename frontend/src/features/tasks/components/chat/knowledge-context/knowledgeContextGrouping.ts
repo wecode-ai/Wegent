@@ -45,6 +45,17 @@ interface BuildKnowledgeContextGroupsParams {
   }
 }
 
+interface BuildOptionsParams extends BuildKnowledgeContextGroupsParams {
+  optionsByScope: Map<KnowledgeScopeKey, KnowledgeOption[]>
+  boundIds: Set<number>
+}
+
+interface KnowledgeContextGroups {
+  scopes: KnowledgeScopeItem[]
+  optionsByScope: Map<KnowledgeScopeKey, KnowledgeOption[]>
+  options: KnowledgeOption[]
+}
+
 function buildSearchText(parts: Array<string | number | null | undefined>): string {
   return parts.filter(Boolean).join(' ').toLowerCase()
 }
@@ -91,71 +102,113 @@ function toKnowledgeOption(
   }
 }
 
-export function buildKnowledgeContextGroups({
-  knowledgeBases,
+function appendOption(
+  optionsByScope: Map<KnowledgeScopeKey, KnowledgeOption[]>,
+  option: KnowledgeOption
+) {
+  const existing = optionsByScope.get(option.scopeKey) || []
+  existing.push(option)
+  optionsByScope.set(option.scopeKey, existing)
+}
+
+function isExcludedKnowledgeBase(
+  id: number,
+  excludeKnowledgeBaseId: number | undefined,
+  boundIds?: Set<number>
+): boolean {
+  return (
+    Boolean(boundIds?.has(id)) ||
+    (excludeKnowledgeBaseId !== undefined && id === excludeKnowledgeBaseId)
+  )
+}
+
+function appendBoundOptions({
   boundKnowledgeBases,
+  excludeKnowledgeBaseId,
+  labels,
+  optionsByScope,
+}: BuildOptionsParams) {
+  for (const kb of boundKnowledgeBases) {
+    if (isExcludedKnowledgeBase(kb.id, excludeKnowledgeBaseId)) continue
+    appendOption(optionsByScope, toBoundOption(kb, labels.bound))
+  }
+}
+
+function appendRegularKnowledgeOptions({
+  knowledgeBases,
   excludeKnowledgeBaseId,
   organizationNamespace,
   labels,
-}: BuildKnowledgeContextGroupsParams): {
-  scopes: KnowledgeScopeItem[]
-  optionsByScope: Map<KnowledgeScopeKey, KnowledgeOption[]>
-  options: KnowledgeOption[]
-} {
-  const optionsByScope = new Map<KnowledgeScopeKey, KnowledgeOption[]>()
-  const boundIds = new Set(boundKnowledgeBases.map(kb => kb.id))
-
-  const appendOption = (option: KnowledgeOption) => {
-    const existing = optionsByScope.get(option.scopeKey) || []
-    existing.push(option)
-    optionsByScope.set(option.scopeKey, existing)
-  }
-
-  for (const kb of boundKnowledgeBases) {
-    if (excludeKnowledgeBaseId !== undefined && kb.id === excludeKnowledgeBaseId) continue
-    appendOption(toBoundOption(kb, labels.bound))
-  }
-
+  optionsByScope,
+  boundIds,
+}: BuildOptionsParams) {
   for (const kb of knowledgeBases) {
-    if (boundIds.has(kb.id)) continue
-    if (excludeKnowledgeBaseId !== undefined && kb.id === excludeKnowledgeBaseId) continue
+    if (isExcludedKnowledgeBase(kb.id, excludeKnowledgeBaseId, boundIds)) continue
 
     const group = getKnowledgeBaseGroup(kb.namespace, organizationNamespace)
-    if (group === 'personal') {
-      appendOption(
-        toKnowledgeOption(
-          kb,
-          'personal',
-          labels.personal,
-          `${labels.personal} / ${labels.createdByMe}`
-        )
-      )
-      continue
-    }
+    const option = toScopedKnowledgeOption(kb, group, labels)
+    appendOption(optionsByScope, option)
+  }
+}
 
-    if (group === 'organization') {
-      appendOption(toKnowledgeOption(kb, 'organization', labels.organization, labels.organization))
-      continue
-    }
-
-    const groupLabel = kb.namespace || labels.groupFallback
-    appendOption(
-      toKnowledgeOption(
-        kb,
-        `group:${kb.namespace}`,
-        groupLabel,
-        `${labels.groupSection} / ${groupLabel}`
-      )
+function toScopedKnowledgeOption(
+  kb: KnowledgeBase,
+  group: ReturnType<typeof getKnowledgeBaseGroup>,
+  labels: BuildKnowledgeContextGroupsParams['labels']
+): KnowledgeOption {
+  if (group === 'personal') {
+    return toKnowledgeOption(
+      kb,
+      'personal',
+      labels.personal,
+      `${labels.personal} / ${labels.createdByMe}`
     )
   }
 
+  if (group === 'organization') {
+    return toKnowledgeOption(kb, 'organization', labels.organization, labels.organization)
+  }
+
+  const groupLabel = kb.namespace || labels.groupFallback
+  return toKnowledgeOption(
+    kb,
+    `group:${kb.namespace}`,
+    groupLabel,
+    `${labels.groupSection} / ${groupLabel}`
+  )
+}
+
+function sortOptionsByScope(optionsByScope: Map<KnowledgeScopeKey, KnowledgeOption[]>) {
   for (const [scopeKey, scopeOptions] of optionsByScope) {
     optionsByScope.set(scopeKey, scopeOptions.slice().sort(compareByName))
   }
+}
 
+function buildGroupScopes(
+  optionsByScope: Map<KnowledgeScopeKey, KnowledgeOption[]>,
+  groupFallback: string
+): KnowledgeScopeItem[] {
+  return Array.from(optionsByScope.entries())
+    .filter(([key]) => key.startsWith('group:'))
+    .map(([key, scopeOptions]) => ({
+      key: key as KnowledgeScopeKey,
+      type: 'group' as const,
+      namespace: key.slice('group:'.length),
+      label: key.slice('group:'.length) || groupFallback,
+      count: scopeOptions.length,
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label))
+}
+
+function buildScopes(
+  optionsByScope: Map<KnowledgeScopeKey, KnowledgeOption[]>,
+  labels: BuildKnowledgeContextGroupsParams['labels']
+): KnowledgeScopeItem[] {
   const scopes: KnowledgeScopeItem[] = []
-
   const boundOptions = optionsByScope.get('bound')
+  const personalOptions = optionsByScope.get('personal')
+  const organizationOptions = optionsByScope.get('organization')
+
   if (boundOptions?.length) {
     scopes.push({
       key: 'bound',
@@ -165,28 +218,13 @@ export function buildKnowledgeContextGroups({
     })
   }
 
-  const personalOptions = optionsByScope.get('personal')
   scopes.push({
     key: 'personal',
     type: 'personal',
     label: labels.personal,
     count: personalOptions?.length || 0,
   })
-
-  const groupScopes = Array.from(optionsByScope.entries())
-    .filter(([key]) => key.startsWith('group:'))
-    .map(([key, scopeOptions]) => ({
-      key: key as KnowledgeScopeKey,
-      type: 'group' as const,
-      namespace: key.slice('group:'.length),
-      label: key.slice('group:'.length) || labels.groupFallback,
-      count: scopeOptions.length,
-    }))
-    .sort((a, b) => a.label.localeCompare(b.label))
-
-  scopes.push(...groupScopes)
-
-  const organizationOptions = optionsByScope.get('organization')
+  scopes.push(...buildGroupScopes(optionsByScope, labels.groupFallback))
   scopes.push({
     key: 'organization',
     type: 'organization',
@@ -194,6 +232,33 @@ export function buildKnowledgeContextGroups({
     count: organizationOptions?.length || 0,
   })
 
+  return scopes
+}
+
+export function buildKnowledgeContextGroups({
+  knowledgeBases,
+  boundKnowledgeBases,
+  excludeKnowledgeBaseId,
+  organizationNamespace,
+  labels,
+}: BuildKnowledgeContextGroupsParams): KnowledgeContextGroups {
+  const optionsByScope = new Map<KnowledgeScopeKey, KnowledgeOption[]>()
+  const boundIds = new Set(boundKnowledgeBases.map(kb => kb.id))
+  const buildParams = {
+    knowledgeBases,
+    boundKnowledgeBases,
+    excludeKnowledgeBaseId,
+    organizationNamespace,
+    labels,
+    optionsByScope,
+    boundIds,
+  }
+
+  appendBoundOptions(buildParams)
+  appendRegularKnowledgeOptions(buildParams)
+  sortOptionsByScope(optionsByScope)
+
+  const scopes = buildScopes(optionsByScope, labels)
   const options = Array.from(optionsByScope.values()).flat()
 
   return {
