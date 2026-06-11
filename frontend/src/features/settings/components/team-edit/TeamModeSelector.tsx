@@ -17,26 +17,11 @@ import { cn } from '@/lib/utils'
 interface TeamModeSelectorProps {
   mode: TeamMode
   onModeChange: (mode: TeamMode) => void
-  shouldCollapse?: boolean
-  onCollapseHandled?: () => void
 }
 
-export default function TeamModeSelector({
-  mode,
-  onModeChange,
-  shouldCollapse,
-  onCollapseHandled,
-}: TeamModeSelectorProps) {
+export default function TeamModeSelector({ mode, onModeChange }: TeamModeSelectorProps) {
   const { t } = useTranslation()
   const [isExpanded, setIsExpanded] = useState(false)
-
-  // Handle collapse from parent (after dialog confirmation)
-  React.useEffect(() => {
-    if (shouldCollapse) {
-      setIsExpanded(false)
-      onCollapseHandled?.()
-    }
-  }, [shouldCollapse, onCollapseHandled])
 
   // Mode info with description and image
   const modeInfo = useMemo(() => {

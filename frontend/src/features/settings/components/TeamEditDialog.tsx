@@ -183,9 +183,6 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   const [modeChangeDialogVisible, setModeChangeDialogVisible] = useState(false)
   const [pendingMode, setPendingMode] = useState<TeamMode | null>(null)
 
-  // State to trigger collapse of TeamModeSelector after confirmation
-  const [shouldCollapseSelector, setShouldCollapseSelector] = useState(false)
-
   // Shells data for resolving custom shell runtime types
   const [shells, setShells] = useState<UnifiedShell[]>([])
 
@@ -482,7 +479,6 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       setModeChangeDialogVisible(true)
     } else {
       executeModeChange(newMode)
-      setShouldCollapseSelector(true)
     }
   }
 
@@ -492,12 +488,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     }
     setModeChangeDialogVisible(false)
     setPendingMode(null)
-    setShouldCollapseSelector(true)
   }
-
-  const handleCollapseHandled = useCallback(() => {
-    setShouldCollapseSelector(false)
-  }, [])
 
   const handleCancelModeChange = () => {
     setModeChangeDialogVisible(false)
@@ -1011,12 +1002,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                 />
 
                 {/* Mode Selection Section */}
-                <TeamModeSelector
-                  mode={mode}
-                  onModeChange={handleModeChange}
-                  shouldCollapse={shouldCollapseSelector}
-                  onCollapseHandled={handleCollapseHandled}
-                />
+                <TeamModeSelector mode={mode} onModeChange={handleModeChange} />
 
                 {/* Mode-specific Editor Section */}
                 <TeamModeEditor

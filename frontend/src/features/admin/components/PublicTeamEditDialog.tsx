@@ -197,8 +197,6 @@ export default function PublicTeamEditDialog({
   // Mode change confirmation dialog state
   const [modeChangeDialogVisible, setModeChangeDialogVisible] = useState(false)
   const [pendingMode, setPendingMode] = useState<TeamMode | null>(null)
-  const [shouldCollapseSelector, setShouldCollapseSelector] = useState(false)
-
   // Ref for BotEdit in solo mode
   const botEditRef = useRef<BotEditRef | null>(null)
 
@@ -366,7 +364,6 @@ export default function PublicTeamEditDialog({
       setModeChangeDialogVisible(true)
     } else {
       executeModeChange(newMode)
-      setShouldCollapseSelector(true)
     }
   }
 
@@ -376,12 +373,7 @@ export default function PublicTeamEditDialog({
     }
     setModeChangeDialogVisible(false)
     setPendingMode(null)
-    setShouldCollapseSelector(true)
   }
-
-  const handleCollapseHandled = useCallback(() => {
-    setShouldCollapseSelector(false)
-  }, [])
 
   const handleCancelModeChange = () => {
     setModeChangeDialogVisible(false)
@@ -859,12 +851,7 @@ export default function PublicTeamEditDialog({
                   />
 
                   {/* Mode Selection Section */}
-                  <TeamModeSelector
-                    mode={mode}
-                    onModeChange={handleModeChange}
-                    shouldCollapse={shouldCollapseSelector}
-                    onCollapseHandled={handleCollapseHandled}
-                  />
+                  <TeamModeSelector mode={mode} onModeChange={handleModeChange} />
 
                   {/* Mode-specific Editor Section */}
                   <TeamModeEditor
