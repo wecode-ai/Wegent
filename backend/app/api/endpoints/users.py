@@ -85,10 +85,23 @@ class UserRuntimeConfigResponse(BaseModel):
     runtime: str
     display_name: str
     use_user_config: bool = False
+    use_proxy: bool = False
     configured: bool = False
     target_path: str
     auth_json_sha256: Optional[str] = None
     auth_json_updated_at: Optional[str] = None
+    proxy_configured: bool = False
+    proxy_url_masked: str = ""
+    proxy_updated_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+class UserProxyConfigResponse(BaseModel):
+    """Public status for a user-scoped proxy configuration."""
+
+    configured: bool = False
+    proxy_url_masked: str = ""
+    proxy_updated_at: Optional[str] = None
     updated_at: Optional[str] = None
 
 
@@ -96,12 +109,19 @@ class UserRuntimeConfigUpdateRequest(BaseModel):
     """Update request for runtime config preferences."""
 
     use_user_config: bool
+    use_proxy: Optional[bool] = None
 
 
 class UserRuntimeAuthJsonRequest(BaseModel):
     """Request body for uploading runtime auth JSON."""
 
     auth_json: str
+
+
+class UserProxyConfigRequest(BaseModel):
+    """Request body for saving a user proxy URL."""
+
+    proxy_url: str = ""
 
 
 class UserRuntimeConfigImportRequest(BaseModel):
@@ -244,6 +264,7 @@ async def update_user_runtime_config(
                 user=current_user,
                 runtime=runtime,
                 use_user_config=request.use_user_config,
+                use_proxy=request.use_proxy,
             )
         )
     except UserRuntimeConfigError as exc:
@@ -251,6 +272,48 @@ async def update_user_runtime_config(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
         ) from exc
+
+
+@router.put(
+    "/me/proxy-config",
+    response_model=UserProxyConfigResponse,
+)
+async def update_user_proxy_config(
+    request: UserProxyConfigRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """Upload and encrypt current user's proxy URL."""
+    try:
+        return UserProxyConfigResponse(
+            **user_runtime_config_service.save_proxy_url(
+                db,
+                user=current_user,
+                proxy_url=request.proxy_url,
+            )
+        )
+    except UserRuntimeConfigError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+
+@router.get(
+    "/me/proxy-config",
+    response_model=UserProxyConfigResponse,
+)
+async def get_user_proxy_config(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """Get current user's proxy config status."""
+    return UserProxyConfigResponse(
+        **user_runtime_config_service.get_proxy_config(
+            db,
+            user_id=current_user.id,
+        )
+    )
 
 
 @router.post(

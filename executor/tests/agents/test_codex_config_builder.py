@@ -57,7 +57,10 @@ def test_build_codex_config_maps_provider_and_reasoning():
     assert config.summary == "concise"
 
 
-def test_build_codex_config_uses_user_runtime_config():
+def test_build_codex_config_uses_user_runtime_config(monkeypatch):
+    monkeypatch.delenv("NO_PROXY", raising=False)
+    monkeypatch.delenv("no_proxy", raising=False)
+
     config = build_codex_config(
         {
             "model": "openai",
@@ -68,8 +71,10 @@ def test_build_codex_config_uses_user_runtime_config():
                     "use_user_config": True,
                     "configured": True,
                     "target_path": "~/.codex/auth.json",
+                    "use_proxy": True,
                 }
             },
+            "proxy": {"url": "http://127.0.0.1:7890"},
             "reasoning": {"effort": "high", "summary": "concise"},
         }
     )
@@ -81,6 +86,41 @@ def test_build_codex_config_uses_user_runtime_config():
         "model_reasoning_effort": "high",
         "model_reasoning_summary": "concise",
     }
+    assert config.env == {
+        "HTTP_PROXY": "http://127.0.0.1:7890",
+        "HTTPS_PROXY": "http://127.0.0.1:7890",
+        "ALL_PROXY": "http://127.0.0.1:7890",
+        "http_proxy": "http://127.0.0.1:7890",
+        "https_proxy": "http://127.0.0.1:7890",
+        "all_proxy": "http://127.0.0.1:7890",
+        "NO_PROXY": "localhost,127.0.0.1,::1,host.docker.internal",
+        "no_proxy": "localhost,127.0.0.1,::1,host.docker.internal",
+    }
+
+
+def test_build_codex_config_uses_existing_no_proxy(monkeypatch):
+    monkeypatch.setenv("NO_PROXY", "localhost,.internal")
+
+    config = build_codex_config(
+        {
+            "model": "openai",
+            "model_id": "gpt-5.5",
+            "api_format": "responses",
+            "runtime_config": {
+                "codex": {
+                    "use_user_config": True,
+                    "configured": True,
+                    "use_proxy": True,
+                }
+            },
+            "proxy": {"url": "socks5://127.0.0.1:7890"},
+        }
+    )
+
+    assert config.env is not None
+    assert config.env["HTTPS_PROXY"] == "socks5://127.0.0.1:7890"
+    assert config.env["NO_PROXY"] == "localhost,.internal"
+    assert config.env["no_proxy"] == "localhost,.internal"
 
 
 def test_build_codex_config_ignores_legacy_local_cli_env(monkeypatch):
