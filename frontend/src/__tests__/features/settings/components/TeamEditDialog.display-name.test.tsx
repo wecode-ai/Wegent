@@ -45,6 +45,11 @@ jest.mock('@/features/settings/services/teams', () => ({
 }))
 
 jest.mock('@/features/settings/components/team-modes', () => ({
+  getAllowedAgentsForTeamMode: (mode: string) => {
+    if (mode === 'pipeline' || mode === 'coordinate') return ['ClaudeCode']
+    if (mode === 'route' || mode === 'collaborate') return []
+    return undefined
+  },
   getFilteredBotsForMode: (bots: Bot[]) => bots,
   getActualShellType: (shellType: string) => shellType,
 }))
@@ -60,11 +65,16 @@ jest.mock('@/contexts/TeamContext', () => ({
   }),
 }))
 
-jest.mock('@/apis/shells', () => ({
-  shellApis: {
-    getUnifiedShells: jest.fn().mockResolvedValue({ data: [] }),
-  },
-}))
+jest.mock('@/apis/shells', () => {
+  const actual = jest.requireActual('@/apis/shells')
+  return {
+    ...actual,
+    shellApis: {
+      ...actual.shellApis,
+      getUnifiedShells: jest.fn().mockResolvedValue({ data: [] }),
+    },
+  }
+})
 
 jest.mock('@/components/ui/dialog', () => ({
   Dialog: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,

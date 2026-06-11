@@ -367,6 +367,12 @@ jobs:
           --health-retries=5
 
     steps:
+      - name: Generate internal service token
+        run: |
+          token=$(openssl rand -hex 32)
+          echo "::add-mask::$token"
+          echo "INTERNAL_SERVICE_TOKEN=$token" >> "$GITHUB_ENV"
+
       - name: Checkout code
         uses: actions/checkout@v4
 

@@ -14,7 +14,7 @@ The Settings module provides configuration functionality for the Wegent system, 
 |----------|-------------|
 | [Agent Settings](./agent-settings.md) | Configure Agents, Bots, prompts, and collaboration modes |
 | [Configuring Models](./configuring-models.md) | Configure AI models (Anthropic Claude, OpenAI GPT, etc.) |
-| [Configuring Shells](./configuring-shells.md) | Configure runtime environments (ClaudeCode, Agno, Dify) |
+| [Configuring Shells](./configuring-shells.md) | Configure runtime environments (ClaudeCode, Dify, Chat) |
 | [Managing Skills](./managing-skills.md) | Upload, manage, and use Skill capability extension packages |
 
 ---
@@ -33,9 +33,9 @@ Bot = Shell + Model + Prompt + MCP Tools + Skills
 **Collaboration Modes**:
 - **Solo**: Single bot working independently
 - **Pipeline**: Sequential execution, forming a processing pipeline
-- **Route**: Leader routes content to appropriate experts
 - **Coordinate**: Leader coordinates parallel execution and aggregates results
-- **Collaborate**: All members freely discuss and share context
+
+The web UI currently offers Solo, Pipeline, and Coordinate for new or edited agents.
 
 ### Model Configuration
 
@@ -53,7 +53,6 @@ Supports multiple runtime environments:
 | Shell | Description | Use Case |
 |-------|-------------|----------|
 | **ClaudeCode** | Claude Code SDK, supports code execution and file operations | Code development, file processing |
-| **Agno** | Agno framework, supports multiple collaboration modes | Conversations, multi-agent collaboration |
 | **Dify** | External Dify API proxy | Dify workflow integration |
 | **Chat** | Direct LLM API (no Docker) | Lightweight conversations |
 

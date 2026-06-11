@@ -6,12 +6,15 @@ import {
   Check,
   Cloud,
   Code2,
+  Copy,
   ExternalLink,
   GitBranch,
   Globe2,
+  Info,
   Loader2,
   Monitor,
   MoreHorizontal,
+  Network,
   Pencil,
   Plus,
   RotateCcw,
@@ -39,6 +42,7 @@ import type { ArchivedTask } from '@/types/api'
 import type { CloudDeviceMetricsResponse, DeviceInfo } from '@/types/devices'
 import { AppearanceSettingsPage } from '@/features/appearance/AppearanceSettingsPage'
 import { AddCloudDeviceDialog } from './AddCloudDeviceDialog'
+import { ProxySettingsPage } from './ProxySettingsPage'
 import { RuntimeConfigSettingsPage } from './RuntimeConfigSettingsPage'
 import { WorktreesSettingsPage } from './WorktreesSettingsPage'
 
@@ -79,6 +83,13 @@ const settingsNavItems: SettingsNavItem[] = [
     icon: UserRound,
     label: 'settings_nav_codex_auth',
     fallback: 'Codex 认证',
+    category: 'personal',
+  },
+  {
+    key: 'proxy',
+    icon: Network,
+    label: 'settings_nav_proxy',
+    fallback: '代理',
     category: 'personal',
   },
   {
@@ -123,6 +134,7 @@ function getSettingsNavFromPath(path: string): string {
 
 function getSettingsNavPath(key: string): string {
   if (key === 'codex-auth') return '/settings/personal/codex'
+  if (key === 'proxy') return '/settings/personal/proxy'
   return key === 'connections' ? '/settings' : `/settings/${key}`
 }
 
@@ -367,6 +379,134 @@ function ConfirmDeviceActionDialog({
   )
 }
 
+const CLOUD_DEVICE_USERNAME = 'ubuntu'
+const CLOUD_DEVICE_DEFAULT_PASSWORD = 'ubuntu'
+
+interface CloudDeviceConnectionInfo {
+  sandboxId: string
+  deviceId: string
+  username: string
+  password: string
+}
+
+function getCloudDeviceConnectionInfo(device: DeviceInfo): CloudDeviceConnectionInfo {
+  const cloudConfig = device.cloud_config || {}
+  return {
+    sandboxId: cloudConfig.sandboxId || '-',
+    deviceId: cloudConfig.deviceId || device.device_id || '-',
+    username: CLOUD_DEVICE_USERNAME,
+    password:
+      cloudConfig.ubuntuInitialPassword ||
+      cloudConfig.ubuntuPassword ||
+      CLOUD_DEVICE_DEFAULT_PASSWORD,
+  }
+}
+
+function formatCloudDeviceConnectionInfo(info: CloudDeviceConnectionInfo): string {
+  return [
+    `Sandbox ID: ${info.sandboxId}`,
+    `Device ID: ${info.deviceId}`,
+    `Username: ${info.username}`,
+    `Password: ${info.password}`,
+  ].join('\n')
+}
+
+function CloudDeviceConnectionInfoDialog({
+  device,
+  onClose,
+}: {
+  device: DeviceInfo
+  onClose: () => void
+}) {
+  const [copiedKey, setCopiedKey] = useState<string | null>(null)
+  const info = getCloudDeviceConnectionInfo(device)
+
+  const copyValue = async (key: string, value: string) => {
+    await navigator.clipboard?.writeText(value)
+    setCopiedKey(key)
+  }
+
+  const rows = [
+    { key: 'sandbox-id', label: 'Sandbox ID', value: info.sandboxId },
+    { key: 'device-id', label: 'Device ID', value: info.deviceId },
+    { key: 'username', label: '用户名', value: info.username },
+    { key: 'password', label: '密码', value: info.password },
+  ]
+
+  return (
+    <div
+      className="fixed inset-0 z-modal flex items-center justify-center bg-black/35"
+      onClick={e => {
+        if (e.target === e.currentTarget) onClose()
+      }}
+    >
+      <div
+        data-testid="connection-info-dialog"
+        className="w-[460px] rounded-lg border border-border bg-popover p-5 shadow-[0_18px_50px_rgba(0,0,0,0.28)]"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex items-start gap-3">
+          <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-muted text-text-secondary">
+            <Info className="h-4 w-4" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <h2 className="text-sm font-semibold text-text-primary">连接信息</h2>
+            <p className="mt-1.5 text-xs leading-5 text-text-secondary">
+              用于连接云设备的初始化信息。用户名固定为 ubuntu。
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-4 space-y-2">
+          {rows.map(row => (
+            <div
+              key={row.key}
+              className="flex items-center gap-3 rounded-md border border-border bg-surface px-3 py-2"
+            >
+              <div className="w-20 shrink-0 text-xs text-text-secondary">
+                {row.label}
+              </div>
+              <div className="min-w-0 flex-1 truncate font-mono text-xs text-text-primary">
+                {row.value}
+              </div>
+              <button
+                type="button"
+                data-testid={`copy-connection-info-${row.key}`}
+                onClick={() => copyValue(row.key, row.value)}
+                className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs text-text-secondary hover:bg-muted hover:text-text-primary"
+              >
+                <Copy className="h-3.5 w-3.5" />
+                <span>{copiedKey === row.key ? '已复制' : '复制'}</span>
+              </button>
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="h-8 rounded-md px-3 text-sm text-text-secondary hover:bg-muted hover:text-text-primary"
+          >
+            关闭
+          </button>
+          <button
+            type="button"
+            data-testid="copy-connection-info-all"
+            onClick={() =>
+              copyValue('all', formatCloudDeviceConnectionInfo(info))
+            }
+            className="inline-flex h-8 items-center gap-1.5 rounded-md bg-text-primary px-3 text-sm font-medium text-background hover:opacity-90"
+          >
+            <Copy className="h-3.5 w-3.5" />
+            {copiedKey === 'all' ? '已复制' : '复制全部'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () => void }) {
   const [sessionLoading, setSessionLoading] = useState<string | null>(null)
   const [editing, setEditing] = useState(false)
@@ -376,6 +516,7 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
   const [deleting, setDeleting] = useState(false)
   const [actionMenuOpen, setActionMenuOpen] = useState(false)
   const [confirmAction, setConfirmAction] = useState<ConfirmDeviceAction | null>(null)
+  const [connectionInfoOpen, setConnectionInfoOpen] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const actionMenuRef = useRef<HTMLDivElement>(null)
 
@@ -489,6 +630,11 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
     setConfirmAction(action)
   }
 
+  const openConnectionInfo = () => {
+    setActionMenuOpen(false)
+    setConnectionInfoOpen(true)
+  }
+
   const isOnline = device.status === 'online'
   const isCloud = isCloudDevice(device)
   const canUseCloudSessions = supportsCloudSessions(device)
@@ -589,8 +735,17 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
                 {actionMenuOpen && (
                   <div
                     data-testid={`connection-more-menu-${device.device_id}`}
-                    className="absolute right-0 top-9 z-20 w-32 overflow-hidden rounded-md border border-border bg-popover py-1 shadow-[0_8px_24px_rgba(0,0,0,0.22)]"
+                    className="absolute right-0 top-9 z-20 w-36 overflow-hidden rounded-md border border-border bg-popover py-1 shadow-[0_8px_24px_rgba(0,0,0,0.22)]"
                   >
+                    <button
+                      type="button"
+                      data-testid={`connection-info-menu-item-${device.device_id}`}
+                      onClick={openConnectionInfo}
+                      className="flex h-8 w-full items-center gap-2 px-2.5 text-left text-xs text-text-primary hover:bg-muted"
+                    >
+                      <Info className="h-3.5 w-3.5" />
+                      <span>连接信息</span>
+                    </button>
                     <button
                       type="button"
                       data-testid={`connection-restart-menu-item-${device.device_id}`}
@@ -635,6 +790,12 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
           loading={confirmAction === 'delete' ? deleting : restarting}
           onCancel={() => setConfirmAction(null)}
           onConfirm={confirmAction === 'delete' ? handleDeleteDevice : handleRestartDevice}
+        />
+      )}
+      {connectionInfoOpen && (
+        <CloudDeviceConnectionInfoDialog
+          device={device}
+          onClose={() => setConnectionInfoOpen(false)}
         />
       )}
     </>
@@ -1078,7 +1239,9 @@ export function ConnectionsSettingsPage({
         ) : activeNav === 'appearance' ? (
           <AppearanceSettingsPage />
         ) : activeNav === 'codex-auth' ? (
-          <RuntimeConfigSettingsPage />
+          <RuntimeConfigSettingsPage runtime="codex" />
+        ) : activeNav === 'proxy' ? (
+          <ProxySettingsPage />
         ) : activeNav === 'worktrees' ? (
           <WorktreesSettingsPage />
         ) : (

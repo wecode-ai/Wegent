@@ -1,6 +1,6 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "wework",
+  "productName": "WeWork",
   "version": "0.1.0",
   "identifier": "io.wecode.wework",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "wework",
+        "title": "WeWork",
         "width": 1280,
         "height": 720,
         "titleBarStyle": "Overlay",

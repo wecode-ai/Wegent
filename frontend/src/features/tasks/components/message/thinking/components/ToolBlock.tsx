@@ -324,14 +324,14 @@ export const ToolBlock = memo(function ToolBlock({
                 {!toolHasContent && toolIsRunning ? (
                   <div className="flex items-center gap-2 text-xs text-[#888] dark:text-[#777]">
                     <Loader2 className="w-3 h-3 animate-spin" />
-                    <span>{t('thinking.tool_executing') || 'Executing...'}</span>
+                    <span>{t('thinking.tool_executing')}</span>
                   </div>
                 ) : toolHasContent ? (
                   <CurrentToolRenderer tool={toolItem} />
                 ) : (
                   // Tool completed but no content (edge case)
                   <div className="text-xs text-[#888] dark:text-[#777] italic">
-                    {t('thinking.no_output') || 'No output'}
+                    {t('thinking.no_output')}
                   </div>
                 )}
               </div>

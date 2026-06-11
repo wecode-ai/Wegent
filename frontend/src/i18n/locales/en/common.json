@@ -798,6 +798,27 @@
     "save_success": "Memory preference saved",
     "save_failed": "Failed to save memory preference"
   },
+  "chat_status": {
+    "title": "Current chat status",
+    "description": "Show the current context budget for the active conversation",
+    "status_line_title": "Chat status line",
+    "status_line_description": "Show lightweight runtime status items in the chat toolbar.",
+    "enable": "Enable status line",
+    "items_title": "Displayed items",
+    "context_remaining_label": "Context remaining",
+    "context_remaining": "Context {{percent}}% left",
+    "context_usage": "{{used}} / {{total}} context tokens",
+    "token_usage": "{{used}} / {{total}} input tokens",
+    "over_trigger": "Compression threshold reached",
+    "save_success": "Chat status preference saved",
+    "save_failed": "Failed to save chat status preference"
+  },
+  "tool_output_guard": {
+    "title": "Tool output truncation",
+    "description": "Automatically compress oversized tool outputs in Chat mode to reduce failures caused by overly long context.",
+    "save_success": "Tool output truncation preference saved",
+    "save_failed": "Failed to save tool output truncation preference"
+  },
   "guide": {
     "title": "Welcome",
     "description": "Before you can start using the app, please complete the setup below first!",
@@ -864,6 +885,7 @@
     "noResults": "No users found"
   },
   "quota": {
+    "title": "Model quota",
     "load_failed": "Failed to fetch quota info",
     "brief": "{{quota_source}} quota {{monthly_usage}} / {{monthly_quota}} (+{{permanent_quota}})",
     "detail_monthly": "Your monthly quota is {{monthly_quota}}, used {{monthly_usage}}, left {{monthly_left}}.",
@@ -1116,7 +1138,7 @@
     "name_readonly_hint": "Model name cannot be changed after creation",
     "provider_type": "Model Protocol",
     "select_provider": "Select Protocol",
-    "provider_hint": "Agno uses OpenAI protocol, Claude Code uses Anthropic protocol, Gemini uses Google protocol",
+    "provider_hint": "OpenAI-compatible models use OpenAI protocol, Claude Code uses Anthropic protocol, Gemini uses Google protocol",
     "api_key": "API Key",
     "base_url": "Base URL",
     "base_url_hint": "Leave empty for default endpoint, fill in for proxy or custom endpoint",
@@ -1263,7 +1285,7 @@
     "display_name_hint": "Human-readable name for display (optional)",
     "base_shell": "Base Shell",
     "select_base_shell": "Select a base shell type",
-    "base_shell_hint": "The shell type this custom shell is based on (ClaudeCode, Agno)",
+    "base_shell_hint": "The shell type this custom shell is based on (ClaudeCode)",
     "base_image": "Base Image",
     "base_image_hint": "Docker image address (e.g., ghcr.io/your-org/your-image:latest)",
     "no_shells": "No shells available",

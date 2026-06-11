@@ -26,6 +26,18 @@ export interface UnifiedShellListResponse {
   data: UnifiedShell[]
 }
 
+const HIDDEN_SHELL_TYPES = new Set(['Agno'])
+
+export function isSelectableShell(shell: Pick<UnifiedShell, 'shellType'>): boolean {
+  return !HIDDEN_SHELL_TYPES.has(shell.shellType)
+}
+
+export function filterSelectableShells<T extends Pick<UnifiedShell, 'shellType'>>(
+  shells: T[]
+): T[] {
+  return shells.filter(isSelectableShell)
+}
+
 export interface ShellCreateRequest {
   name: string
   displayName?: string
@@ -182,7 +194,7 @@ export const shellApis = {
    */
   async getLocalEngineShells(): Promise<UnifiedShell[]> {
     const response = await this.getUnifiedShells()
-    return (response.data || []).filter(
+    return filterSelectableShells(response.data || []).filter(
       shell => shell.type === 'public' && shell.executionType === 'local_engine'
     )
   },

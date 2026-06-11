@@ -114,7 +114,7 @@ jest.mock('@/features/tasks/components/message/LoadingDots', () => ({
   default: () => <div data-testid="loading-dots" />,
 }))
 
-jest.mock('@/features/tasks/components/params/QuotaUsage', () => ({
+jest.mock('@/features/tasks/components/input/ChatToolbarStatus', () => ({
   __esModule: true,
   default: () => <div data-testid="quota-usage" />,
 }))
@@ -178,7 +178,7 @@ function createProps(): ChatInputControlsProps {
     isStopping: false,
     hasMessages: false,
     shouldCollapseSelectors: false,
-    shouldHideQuotaUsage: true,
+    shouldHideToolbarStatus: true,
     shouldHideChatInput: false,
     isModelSelectionRequired: false,
     isAttachmentReadyToSend: true,

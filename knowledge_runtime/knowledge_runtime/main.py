@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse
 from knowledge_runtime.api.router import router
 from knowledge_runtime.config import get_settings
 from knowledge_runtime.core.logging import setup_logging
+from knowledge_runtime.middleware.auth import require_internal_service_token_configured
 from shared.models import RemoteRagError
 
 logger = logging.getLogger(__name__)
@@ -32,6 +33,7 @@ async def lifespan(app: FastAPI):
         log_dir=settings.log_dir,
         log_level=settings.log_level,
     )
+    require_internal_service_token_configured()
 
     # Initialize database connection for config resolution
     if settings.database_url:

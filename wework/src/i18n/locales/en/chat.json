@@ -1,0 +1,25 @@
+{
+  "file_changes": {
+    "edited_files": "Edited {{count}} files",
+    "show_more": "Show {{count}} more files",
+    "show_less": "Show less",
+    "review": "Review",
+    "review_title": "Changes from this turn",
+    "revert": "Revert",
+    "confirm_revert_title": "Revert this turn's file changes?",
+    "confirm_revert_description": "The workspace changes only when the reverse patch applies safely. Later changes are never overwritten.",
+    "confirm_revert": "Confirm revert",
+    "cancel": "Cancel",
+    "close": "Close",
+    "reverting": "Reverting",
+    "loading_diff": "Loading changes from the device...",
+    "empty_diff": "No text changes to display",
+    "review_failed": "Failed to load file changes",
+    "revert_failed": "Failed to revert file changes",
+    "device_offline": "The device is offline. Review and revert are unavailable.",
+    "reverted": "Reverted",
+    "conflicted": "Later changes conflict, so the workspace was not modified",
+    "artifact_missing": "The change artifact is no longer available",
+    "binary_file": "Binary file"
+  }
+}

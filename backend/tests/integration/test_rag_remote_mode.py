@@ -58,6 +58,11 @@ EXPECTED_QUERY_RESPONSE = {
 }
 
 
+@pytest.fixture(autouse=True)
+def configure_internal_service_token(monkeypatch):
+    monkeypatch.setattr(settings, "INTERNAL_SERVICE_TOKEN", "test-internal-token")
+
+
 def _internal_headers() -> dict[str, str]:
     token = settings.INTERNAL_SERVICE_TOKEN
     return {"Authorization": f"Bearer {token}"} if token else {}
@@ -301,7 +306,7 @@ def test_run_document_indexing_switches_index_mode_independently(
 
     mock_selected_gateway.assert_awaited_once_with(
         mock_build_runtime_spec.return_value,
-        db=db,
+        db=None,
     )
     mock_other_gateway.assert_not_called()
     assert result == {

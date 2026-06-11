@@ -33,6 +33,33 @@ class TestResponsesAPIEventParserToolIds:
         assert result.type == EventType.THINKING
         assert result.content == "Reasoning chunk."
 
+    def test_status_updated_event_emits_status_update(self):
+        parser = ResponsesAPIEventParser()
+
+        result = parser.parse(
+            task_id=1,
+            subtask_id=2,
+            message_id=3,
+            event_type=ResponsesAPIStreamEvents.STATUS_UPDATED.value,
+            data={
+                "phase": "after_tool_end",
+                "context_metrics": {
+                    "remaining_percent": 42,
+                    "is_over_trigger": False,
+                },
+            },
+        )
+
+        assert result is not None
+        assert result.type == EventType.STATUS_UPDATED
+        assert result.data == {
+            "phase": "after_tool_end",
+            "context_metrics": {
+                "remaining_percent": 42,
+                "is_over_trigger": False,
+            },
+        }
+
     def test_block_updated_event_parses_direct_block_update(self):
         parser = ResponsesAPIEventParser()
 

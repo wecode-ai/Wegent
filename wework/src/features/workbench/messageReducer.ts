@@ -3,6 +3,7 @@ import type {
   ToolBlockStatus,
   WorkbenchMessage,
 } from '@/types/workbench'
+import type { TurnFileChangesSummary } from '@/types/api'
 
 type ProcessingBlockUpdate = {
   content?: string
@@ -28,6 +29,12 @@ export type MessageAction =
       subtaskId: number
       content?: string
       blocks?: ProcessingBlock[]
+      fileChanges?: TurnFileChangesSummary
+    }
+  | {
+      type: 'file_changes_updated'
+      subtaskId: number
+      fileChanges: TurnFileChangesSummary
     }
   | { type: 'assistant_error'; subtaskId: number; error: string }
   | { type: 'block_created'; subtaskId: number; block: ProcessingBlock }
@@ -114,7 +121,14 @@ export function messageReducer(
               content: action.content ?? message.content,
               status: 'done' as const,
               blocks: action.blocks ?? finalizeProcessingBlocks(message.blocks),
+              fileChanges: action.fileChanges ?? message.fileChanges,
             }
+          : message
+      )
+    case 'file_changes_updated':
+      return state.map(message =>
+        message.subtaskId === action.subtaskId
+          ? { ...message, fileChanges: action.fileChanges }
           : message
       )
     case 'assistant_error':

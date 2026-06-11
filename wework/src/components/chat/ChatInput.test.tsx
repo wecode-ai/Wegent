@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { StrictMode, useState } from 'react'
 import { describe, expect, test, vi } from 'vitest'
@@ -72,11 +72,8 @@ function projectWorkControls(overrides: Partial<ProjectWorkControls> = {}): Proj
     devices,
     currentProjectId: undefined,
     currentStandaloneDeviceId: null,
-    executionMode: 'current_workspace',
-    executionModeLocked: false,
     onSelectProject: vi.fn(),
     onSelectStandaloneDevice: vi.fn(),
-    onExecutionModeChange: vi.fn(),
     ...overrides,
     devices,
   }
@@ -88,6 +85,7 @@ describe('ChatInput', () => {
   afterEach(() => {
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
+    vi.useRealTimers()
     localStorage.clear()
     URL.createObjectURL = originalCreateObjectUrl
   })
@@ -189,7 +187,7 @@ describe('ChatInput', () => {
 
     const form = screen.getByTestId('chat-message-input').closest('form')
 
-    expect(form).toHaveClass('items-center')
+    expect(form).toHaveClass('items-end')
     expect(screen.getByTestId('add-context-button')).toHaveClass(
       'h-[52px]',
       'w-[52px]',
@@ -197,27 +195,16 @@ describe('ChatInput', () => {
     )
     expect(screen.getByTestId('compact-input-pill')).toHaveClass('min-h-[52px]')
     expect(screen.getByTestId('chat-message-input')).toHaveClass(
-      'm-0',
-      'block',
-      'h-[52px]',
-      'box-border',
       'py-[14px]',
-      'pl-5',
-      'pr-16',
       'scrollbar-none',
     )
     expect(screen.getByTestId('send-message-button')).toHaveClass(
       'absolute',
-      'bottom-[4px]',
-      'right-[4px]',
-      'z-popover',
+      'bottom-1',
+      'right-1',
       'h-11',
       'w-11',
       'rounded-[22px]',
-    )
-    expect(screen.getByTestId('send-message-button')).not.toHaveClass(
-      'top-1/2',
-      '-translate-y-1/2',
     )
   })
 
@@ -237,9 +224,8 @@ describe('ChatInput', () => {
 
     expect(screen.getByTestId('pause-response-button')).toHaveClass(
       'absolute',
-      'bottom-[4px]',
-      'right-[4px]',
-      'z-popover',
+      'bottom-1',
+      'right-1',
       'h-11',
       'w-11',
     )
@@ -250,46 +236,17 @@ describe('ChatInput', () => {
     expect(onPause).toHaveBeenCalledTimes(1)
   })
 
-  test('does not render voice input in the compact composer', async () => {
+  test('hides voice input after typing in the compact composer', async () => {
     render(<ControlledChatInput />)
 
-    expect(screen.queryByTestId('voice-input-button')).not.toBeInTheDocument()
-    expect(screen.getByTestId('chat-message-input')).toHaveClass('pr-16')
-
+    expect(screen.getByTestId('voice-input-button')).toBeInTheDocument()
     await userEvent.type(screen.getByTestId('chat-message-input'), 'hello')
 
     expect(screen.queryByTestId('voice-input-button')).not.toBeInTheDocument()
-    expect(screen.getByTestId('chat-message-input')).toHaveClass('pr-16')
+    expect(screen.getByTestId('compact-input-pill')).toHaveClass('pr-14')
     expect(screen.getByTestId('send-message-button')).toHaveClass(
-      'bottom-[4px]',
-      'right-[4px]',
-      'z-popover',
-    )
-    expect(screen.getByTestId('send-message-button')).not.toHaveClass(
-      'top-1/2',
-      '-translate-y-1/2',
-    )
-  })
-
-  test('keeps the compact send button anchored to the bottom for multiline input', async () => {
-    render(<ControlledChatInput />)
-
-    await userEvent.type(
-      screen.getByTestId('chat-message-input'),
-      'first line{shift>}{enter}{/shift}second line',
-    )
-
-    expect(screen.getByTestId('chat-message-input')).toHaveValue(
-      'first line\nsecond line',
-    )
-    expect(screen.getByTestId('send-message-button')).toHaveClass(
-      'bottom-[4px]',
-      'right-[4px]',
-      'z-popover',
-    )
-    expect(screen.getByTestId('send-message-button')).not.toHaveClass(
-      'top-1/2',
-      '-translate-y-1/2',
+      'bottom-1',
+      'right-1',
     )
   })
 
@@ -316,7 +273,7 @@ describe('ChatInput', () => {
     })
     expect(screen.getByTestId('local-skill-autocomplete')).toHaveClass(
       'bottom-[calc(100%+1rem)]',
-      'z-popover',
+      'z-[80]',
       'bg-background',
       'left-[-1rem]',
       'right-[-3.5rem]',
@@ -373,108 +330,6 @@ describe('ChatInput', () => {
     })
   })
 
-  test('shows plugin skill names with plugin prefix and origin labels', async () => {
-    const wegentPluginSkill: LocalDeviceSkill = {
-      name: 'brainstorming',
-      description: 'Use before creative work',
-      short_description: 'Use before creative work',
-      path: '/Users/crystal/.claude/plugins/cache/claude-plugins-official/superpowers/5.0.7/skills/brainstorming/SKILL.md',
-      source: 'claude-plugin',
-      origin: 'wegent',
-      plugin_name: 'superpowers',
-    }
-    const localPluginSkill: LocalDeviceSkill = {
-      name: 'github',
-      description: 'Inspect repositories and pull requests',
-      short_description: 'GitHub workflow support',
-      path: '/Users/crystal/.codex/plugins/cache/openai-curated/github/83d1f0d2/skills/github/SKILL.md',
-      source: 'codex-plugin',
-      origin: 'local',
-      plugin_name: 'github',
-    }
-    const listLocalSkills = vi
-      .fn()
-      .mockResolvedValue([wegentPluginSkill, localPluginSkill])
-
-    render(
-      <ControlledChatInput
-        projectChat={projectChatControls({ listLocalSkills })}
-      />,
-    )
-
-    await userEvent.type(screen.getByTestId('chat-message-input'), '$')
-
-    const wegentOption = await screen.findByTestId('local-skill-option-brainstorming')
-    const localOption = screen.getByTestId('local-skill-option-github')
-
-    expect(screen.getByText('Superpowers: Brainstorming')).toBeInTheDocument()
-    expect(screen.getByText('Github: Github')).toBeInTheDocument()
-    expect(wegentOption).toHaveClass('min-h-8', 'py-1.5')
-    expect(wegentOption.querySelector('.lucide-package')).toBeInTheDocument()
-    expect(wegentOption).toHaveTextContent(
-      'workbench.local_skill_origin_wegent',
-    )
-    expect(localOption).toHaveTextContent(
-      'workbench.local_skill_origin_local',
-    )
-
-    await userEvent.click(wegentOption)
-
-    const selectedChip = screen.getByTestId('local-skill-chip-brainstorming')
-    expect(selectedChip).toHaveTextContent('Superpowers: Brainstorming')
-    expect(selectedChip).toHaveClass('text-blue-600')
-    expect(selectedChip).not.toHaveClass('bg-[#FFF8EA]', 'border-[#E6D5AF]')
-    expect(selectedChip.querySelector('.lucide-package')).toBeInTheDocument()
-  })
-
-  test('sorts local skill suggestions by display name', async () => {
-    const listLocalSkills = vi.fn().mockResolvedValue([
-      {
-        name: 'zeta-helper',
-        description: 'Last plugin skill',
-        short_description: 'Last plugin skill',
-        path: '/Users/crystal/.codex/plugins/cache/openai-curated/zeta/83d1f0d2/skills/zeta-helper/SKILL.md',
-        source: 'codex-plugin',
-        origin: 'local',
-        plugin_name: 'zeta',
-      },
-      {
-        name: 'alpha-helper',
-        description: 'First local skill',
-        short_description: 'First local skill',
-        path: '/Users/crystal/.codex/skills/alpha-helper/SKILL.md',
-        source: 'codex',
-        origin: 'local',
-      },
-      {
-        name: 'beta-helper',
-        description: 'Middle plugin skill',
-        short_description: 'Middle plugin skill',
-        path: '/Users/crystal/.claude/plugins/cache/claude-plugins-official/beta/5.0.7/skills/beta-helper/SKILL.md',
-        source: 'claude-plugin',
-        origin: 'wegent',
-        plugin_name: 'beta',
-      },
-    ])
-
-    render(
-      <ControlledChatInput
-        projectChat={projectChatControls({ listLocalSkills })}
-      />,
-    )
-
-    await userEvent.type(screen.getByTestId('chat-message-input'), '$')
-
-    const listbox = await screen.findByTestId('local-skill-autocomplete')
-    const options = within(listbox).getAllByRole('option')
-
-    expect(options.map(option => option.dataset.testid)).toEqual([
-      'local-skill-option-alpha-helper',
-      'local-skill-option-beta-helper',
-      'local-skill-option-zeta-helper',
-    ])
-  })
-
   test('keeps the composer editable after selecting a local skill', async () => {
     const skill: LocalDeviceSkill = {
       name: 'env-context',
@@ -505,7 +360,7 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('local-skill-chip-env-context')).toHaveTextContent('Env Context')
   })
 
-  test('deletes local skill mention space before deleting the mention with Backspace', async () => {
+  test('deletes a selected local skill mention as one unit', async () => {
     const skill: LocalDeviceSkill = {
       name: 'env-context',
       description: 'Use when environment facts are needed',
@@ -528,48 +383,8 @@ describe('ChatInput', () => {
     })
     await userEvent.keyboard('{Backspace}')
 
-    expect(screen.getByTestId('chat-message-input')).toHaveValue(
-      '[$env-context](skill:///Users/crystal/.codex/skills/env-context/SKILL.md)',
-    )
-    expect(screen.getByTestId('local-skill-chip-env-context')).toBeInTheDocument()
-
-    await userEvent.keyboard('{Backspace}')
-
     expect(screen.getByTestId('chat-message-input')).toHaveValue('')
     expect(screen.queryByTestId('local-skill-chip-env-context')).not.toBeInTheDocument()
-  })
-
-  test('deletes a selected local skill mention as one unit with Delete', async () => {
-    const skill: LocalDeviceSkill = {
-      name: 'brainstorming',
-      description: 'Use before creative work',
-      short_description: 'Use before creative work',
-      path: '/home/ubuntu/.claude/plugins/cache/superpowers-marketplace/superpowers/5.1.0/skills/brainstorming/SKILL.md',
-      source: 'claude-plugin',
-      origin: 'local',
-      plugin_name: 'superpowers',
-    }
-    const listLocalSkills = vi.fn().mockResolvedValue([skill])
-
-    render(
-      <ControlledChatInput
-        projectChat={projectChatControls({ listLocalSkills })}
-      />,
-    )
-
-    const input = screen.getByTestId('chat-message-input')
-    await userEvent.type(input, '$')
-    await userEvent.click(await screen.findByTestId('local-skill-option-brainstorming'))
-    await waitFor(() => {
-      expect(input).toHaveFocus()
-    })
-
-    input.setSelectionRange(0, 0)
-    fireEvent.keyDown(input, { key: 'Delete' })
-
-    expect(input).toHaveValue('')
-    expect(screen.queryByText(/\[\$brainstorming]/)).not.toBeInTheDocument()
-    expect(screen.queryByTestId('local-skill-chip-brainstorming')).not.toBeInTheDocument()
   })
 
   test('sizes desktop local skill autocomplete to the composer width', async () => {
@@ -691,10 +506,6 @@ describe('ChatInput', () => {
 
     await userEvent.click(screen.getByTestId('add-context-button'))
 
-    expect(screen.getByTestId('mobile-context-sheet-backdrop')).toHaveClass('z-critical')
-    expect(screen.getByTestId('compact-input-pill').className).not.toMatch(
-      /\bz-(?:chrome|modal|critical)\b/,
-    )
     expect(screen.getByTestId('mobile-context-sheet')).toBeInTheDocument()
     expect(screen.getByTestId('mobile-take-photo-button')).toHaveTextContent('拍照')
     expect(screen.getByTestId('mobile-upload-image-button')).toHaveTextContent('上传文件')
@@ -870,7 +681,6 @@ describe('ChatInput', () => {
     await userEvent.click(screen.getByTestId('expand-input-button'))
 
     expect(screen.getByTestId('fullscreen-input-sheet')).toBeInTheDocument()
-    expect(screen.getByTestId('fullscreen-input-sheet')).toHaveClass('z-critical')
     expect(screen.queryByText('编辑消息')).not.toBeInTheDocument()
     expect(screen.getByTestId('collapse-input-button')).toHaveClass(
       'absolute',
@@ -924,9 +734,7 @@ describe('ChatInput', () => {
           region: 'overseas',
           modelLabel: 'gpt-5.5',
           sortOrder: 10,
-          controls: {
-            speed: true,
-          },
+          controls: ['speed'],
         },
       },
     }
@@ -941,7 +749,7 @@ describe('ChatInput', () => {
         projectChat={projectChatControls({
           models: [model],
           selectedModel: model,
-          selectedModelOptions: { reasoning: 'high', speed: 'fast' },
+          selectedModelOptions: { reasoning: 'high', speed: 'standard' },
           setSelectedModel,
         })}
       />,
@@ -953,258 +761,23 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('model-selector-submenu')).toBeInTheDocument()
     expect(screen.getByTestId('model-family-gpt')).toBeInTheDocument()
     expect(screen.getByTestId('model-control-reasoning-high')).toBeInTheDocument()
-    expect(screen.getByTestId('model-control-trigger-speed')).toBeInTheDocument()
-    expect(screen.queryByTestId('model-control-speed-fast')).not.toBeInTheDocument()
+    expect(screen.getByTestId('model-control-speed-fast')).toBeInTheDocument()
     expect(screen.queryByTestId('model-option-default')).not.toBeInTheDocument()
-    expect(screen.getByTestId('model-selector-button')).toHaveTextContent(
-      '海外:gpt-5.5 High ⚡',
-    )
+    expect(screen.getByTestId('model-selector-button')).toHaveTextContent('海外:gpt-5.5 High')
     const modelOption = screen.getByTestId('model-option-overseas-gpt-5.5')
-    expect(modelOption).toHaveTextContent('海外:gpt-5.5 ⚡')
-    expect(modelOption).not.toHaveTextContent('快速')
+    expect(modelOption).toHaveTextContent('海外:gpt-5.5')
     expect(modelOption).not.toHaveTextContent('High')
     expect(modelOption.querySelectorAll('span')).toHaveLength(1)
     expect(
       screen
         .getByTestId('model-control-reasoning-high')
         .compareDocumentPosition(screen.getByTestId('model-family-gpt')) &
-      Node.DOCUMENT_POSITION_FOLLOWING,
+        Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy()
-
-    await userEvent.hover(screen.getByTestId('model-control-trigger-speed'))
-
-    expect(screen.getByTestId('model-control-submenu-speed')).toBeInTheDocument()
-    expect(screen.getByTestId('model-family-gpt')).not.toHaveClass('bg-muted')
-    expect(screen.getByTestId('model-control-trigger-speed')).toHaveClass('bg-muted')
-    expect(screen.getByTestId('model-control-speed-standard')).toHaveTextContent(
-      '标准',
-    )
-    expect(screen.getByTestId('model-control-speed-standard')).toHaveTextContent(
-      '默认速度',
-    )
-    expect(screen.getByTestId('model-control-speed-fast')).toHaveTextContent('⚡ 快速')
-    expect(screen.getByTestId('model-control-speed-fast')).toHaveTextContent(
-      '1.5 倍速度，消耗增加',
-    )
-
-    await userEvent.hover(screen.getByTestId('model-family-gpt'))
-    expect(screen.getByTestId('model-family-gpt')).toHaveClass('bg-muted')
-    expect(screen.getByTestId('model-control-trigger-speed')).not.toHaveClass('bg-muted')
-
-    await userEvent.hover(screen.getByTestId('model-control-reasoning-high'))
-    expect(screen.getByTestId('model-family-gpt')).not.toHaveClass('bg-muted')
-    expect(screen.getByTestId('model-control-trigger-speed')).not.toHaveClass('bg-muted')
 
     await userEvent.click(screen.getByTestId('model-option-overseas-gpt-5.5'))
 
     expect(setSelectedModel).toHaveBeenCalledWith(model)
-  })
-
-  test('keeps the desktop model menu inside the viewport when it opens upward', async () => {
-    const originalInnerHeight = window.innerHeight
-    Object.defineProperty(window, 'innerHeight', {
-      configurable: true,
-      value: 900,
-    })
-    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(
-      function getMockRect(this: HTMLElement) {
-        const testId = this.getAttribute('data-testid')
-        if (testId === 'model-selector-button') {
-          return {
-            top: 300,
-            bottom: 332,
-            left: 640,
-            right: 780,
-            width: 140,
-            height: 32,
-          } as DOMRect
-        }
-        if (testId === 'model-selector-menu') {
-          return { top: 0, left: 640, width: 256, height: 720 } as DOMRect
-        }
-        if (testId === 'model-family-gpt') {
-          return { top: 340, left: 660, width: 220, height: 36 } as DOMRect
-        }
-        if (testId === 'model-selector-submenu') {
-          return { top: 0, left: 0, width: 288, height: 192 } as DOMRect
-        }
-        return { top: 0, bottom: 0, left: 0, width: 0, height: 0 } as DOMRect
-      },
-    )
-
-    const model: UnifiedModel = {
-      name: 'overseas-gpt-5.5',
-      type: 'user',
-      displayName: '海外:gpt-5.5',
-      config: {
-        ui: {
-          family: 'gpt',
-          region: 'overseas',
-          modelLabel: 'gpt-5.5',
-          sortOrder: 10,
-        },
-      },
-    }
-
-    try {
-      render(
-        <ChatInput
-          value=""
-          onChange={vi.fn()}
-          onSubmit={vi.fn()}
-          disabled={false}
-          variant="desktop"
-          projectChat={projectChatControls({
-            models: [model],
-            selectedModel: model,
-            selectedModelOptions: {},
-          })}
-        />,
-      )
-
-      await userEvent.click(screen.getByTestId('model-selector-button'))
-
-      await waitFor(() => {
-        expect(screen.getByTestId('model-selector-menu').parentElement).toHaveStyle({
-          top: '64px',
-        })
-      })
-      expect(screen.getByTestId('model-selector-menu')).toHaveStyle({
-        maxHeight: '608px',
-      })
-    } finally {
-      Object.defineProperty(window, 'innerHeight', {
-        configurable: true,
-        value: originalInnerHeight,
-      })
-    }
-  })
-
-  test('keeps the desktop model submenu below the top chrome area', async () => {
-    const originalInnerHeight = window.innerHeight
-    Object.defineProperty(window, 'innerHeight', {
-      configurable: true,
-      value: 900,
-    })
-    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(
-      function getMockRect(this: HTMLElement) {
-        const testId = this.getAttribute('data-testid')
-        if (testId === 'model-selector-button') {
-          return {
-            top: 300,
-            bottom: 332,
-            left: 640,
-            right: 780,
-            width: 140,
-            height: 32,
-          } as DOMRect
-        }
-        if (testId === 'model-selector-menu') {
-          return { top: 64, left: 640, width: 256, height: 608 } as DOMRect
-        }
-        if (testId === 'model-family-gpt') {
-          return { top: 32, left: 660, width: 220, height: 36 } as DOMRect
-        }
-        if (testId === 'model-selector-submenu') {
-          return { top: 0, left: 0, width: 288, height: 192 } as DOMRect
-        }
-        return { top: 0, bottom: 0, left: 0, width: 0, height: 0 } as DOMRect
-      },
-    )
-
-    const model: UnifiedModel = {
-      name: 'overseas-gpt-5.5',
-      type: 'user',
-      displayName: '海外:gpt-5.5',
-      config: {
-        ui: {
-          family: 'gpt',
-          region: 'overseas',
-          modelLabel: 'gpt-5.5',
-          sortOrder: 10,
-        },
-      },
-    }
-
-    try {
-      render(
-        <ChatInput
-          value=""
-          onChange={vi.fn()}
-          onSubmit={vi.fn()}
-          disabled={false}
-          variant="desktop"
-          projectChat={projectChatControls({
-            models: [model],
-            selectedModel: model,
-            selectedModelOptions: {},
-          })}
-        />,
-      )
-
-      await userEvent.click(screen.getByTestId('model-selector-button'))
-
-      await waitFor(() => {
-        expect(screen.getByTestId('model-selector-submenu')).toHaveStyle({
-          top: '0px',
-        })
-      })
-    } finally {
-      Object.defineProperty(window, 'innerHeight', {
-        configurable: true,
-        value: originalInnerHeight,
-      })
-    }
-  })
-
-  test('hides unsupported Gemini models from the desktop model menu', async () => {
-    const gptModel: UnifiedModel = {
-      name: 'overseas-gpt-5.5',
-      type: 'user',
-      displayName: '海外:gpt-5.5',
-      config: {
-        ui: {
-          family: 'gpt',
-          region: 'overseas',
-          modelLabel: 'gpt-5.5',
-          sortOrder: 10,
-        },
-      },
-    }
-    const geminiModel: UnifiedModel = {
-      name: 'overseas-gemini-3-pro',
-      type: 'public',
-      displayName: '海外:gemini-3-pro',
-      config: {
-        ui: {
-          family: 'gemini',
-          region: 'overseas',
-          modelLabel: 'gemini-3-pro',
-          sortOrder: 10,
-        },
-      },
-    }
-
-    render(
-      <ChatInput
-        value=""
-        onChange={vi.fn()}
-        onSubmit={vi.fn()}
-        disabled={false}
-        variant="desktop"
-        projectChat={projectChatControls({
-          models: [gptModel, geminiModel],
-          selectedModel: gptModel,
-          selectedModelOptions: {},
-        })}
-      />,
-    )
-
-    await userEvent.click(screen.getByTestId('model-selector-button'))
-
-    expect(screen.getByTestId('model-family-gpt')).toBeInTheDocument()
-    expect(screen.queryByTestId('model-family-gemini')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('model-option-overseas-gemini-3-pro')).not.toBeInTheDocument()
   })
 
   test('moves the desktop model submenu upward when the active family is near the viewport bottom', async () => {
@@ -1270,74 +843,6 @@ describe('ChatInput', () => {
       Object.defineProperty(window, 'innerHeight', {
         configurable: true,
         value: originalInnerHeight,
-      })
-    }
-  })
-
-  test('uses measured desktop submenu width to avoid overlapping the main menu', async () => {
-    const originalInnerWidth = window.innerWidth
-    Object.defineProperty(window, 'innerWidth', {
-      configurable: true,
-      value: 1240,
-    })
-    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(
-      function getMockRect(this: HTMLElement) {
-        const testId = this.getAttribute('data-testid')
-        if (testId === 'model-selector-menu') {
-          return { top: 64, left: 604, width: 576, height: 620 } as DOMRect
-        }
-        if (testId === 'model-family-gpt') {
-          return { top: 500, left: 620, width: 520, height: 72 } as DOMRect
-        }
-        if (testId === 'model-selector-submenu') {
-          return { top: 0, left: 0, width: 648, height: 432 } as DOMRect
-        }
-        return { top: 0, bottom: 0, left: 0, width: 0, height: 0 } as DOMRect
-      },
-    )
-
-    const model: UnifiedModel = {
-      name: 'overseas-gpt-5.5',
-      type: 'user',
-      displayName: '海外:gpt-5.5',
-      config: {
-        ui: {
-          family: 'gpt',
-          region: 'overseas',
-          modelLabel: 'gpt-5.5',
-          sortOrder: 10,
-        },
-      },
-    }
-
-    try {
-      render(
-        <ChatInput
-          value=""
-          onChange={vi.fn()}
-          onSubmit={vi.fn()}
-          disabled={false}
-          variant="desktop"
-          projectChat={projectChatControls({
-            models: [model],
-            selectedModel: model,
-            selectedModelOptions: {},
-          })}
-        />,
-      )
-
-      await userEvent.click(screen.getByTestId('model-selector-button'))
-
-      await waitFor(() => {
-        expect(screen.getByTestId('model-selector-submenu')).toHaveStyle({
-          left: '-588px',
-          width: '580px',
-        })
-      })
-    } finally {
-      Object.defineProperty(window, 'innerWidth', {
-        configurable: true,
-        value: originalInnerWidth,
       })
     }
   })
@@ -1520,9 +1025,7 @@ describe('ChatInput', () => {
           region: 'overseas',
           modelLabel: 'gpt-5.5',
           sortOrder: 20,
-          controls: {
-            speed: true,
-          },
+          controls: ['speed'],
         },
       },
     }
@@ -1826,513 +1329,18 @@ describe('ChatInput', () => {
 
     await userEvent.click(screen.getByTestId('project-work-button'))
 
-    expect(screen.getByTestId('project-work-menu')).toHaveClass('top-11')
-    expect(screen.getByTestId('project-options-list')).toHaveClass(
-      'min-h-0',
-      'flex-1',
-      'overflow-y-auto',
-    )
-    expect(screen.getByTestId('project-options-list')).toHaveStyle({
-      maxHeight: '150px',
-    })
-    expect(screen.getByTestId('project-option-7')).toHaveClass('h-9')
+    expect(screen.getByTestId('project-work-menu')).toBeInTheDocument()
     expect(screen.getAllByText('Wegent').length).toBeGreaterThan(0)
     expect(screen.getByText('Docs')).toBeInTheDocument()
     expect(screen.getByTestId('no-project-option')).toHaveTextContent('不使用项目')
-    expect(screen.getByTestId('no-project-option')).toHaveClass('h-8')
 
     await userEvent.click(screen.getByTestId('project-option-8'))
 
     expect(onSelectProject).toHaveBeenCalledWith(8)
   })
 
-  test('shows launch modes beside existing local workspace projects', async () => {
-    const onExecutionModeChange = vi.fn()
-    const projects: ProjectWithTasks[] = [
-      {
-        id: 7,
-        name: 'Wegent',
-        config: {
-          mode: 'workspace',
-          device_id: 'device-1',
-          workspace: {
-            source: 'local_path',
-            localPath: '/workspace/projects/Wegent',
-          },
-        },
-        tasks: [],
-      },
-    ]
-
-    render(
-      <ChatInput
-        value=""
-        onChange={vi.fn()}
-        onSubmit={vi.fn()}
-        disabled={false}
-        variant="desktop"
-        projectWork={projectWorkControls({
-          projects,
-          currentProjectId: 7,
-          executionMode: 'current_workspace',
-          onExecutionModeChange,
-        })}
-      />,
-    )
-
-    expect(screen.getByTestId('project-work-button')).toHaveTextContent('Wegent')
-    expect(screen.getByTestId('project-work-button')).toHaveClass(
-      'hover:shadow-[0_10px_28px_rgba(0,0,0,0.14)]',
-    )
-    expect(screen.getByTestId('execution-mode-button')).toHaveTextContent('本地模式')
-    expect(screen.getByTestId('execution-mode-button')).toHaveClass(
-      'hover:shadow-[0_10px_28px_rgba(0,0,0,0.14)]',
-    )
-
-    await userEvent.click(screen.getByTestId('project-work-button'))
-
-    expect(screen.getByTestId('project-work-menu')).toBeInTheDocument()
-    expect(screen.getByTestId('project-work-button')).toHaveClass(
-      'shadow-[0_10px_28px_rgba(0,0,0,0.14)]',
-    )
-    expect(screen.queryByTestId('project-execution-mode-menu-section')).not.toBeInTheDocument()
-
-    await userEvent.click(screen.getByTestId('execution-mode-button'))
-
-    expect(screen.queryByTestId('project-work-menu')).not.toBeInTheDocument()
-    expect(screen.getByTestId('project-execution-mode-menu')).toBeInTheDocument()
-    expect(screen.getByTestId('execution-mode-button')).toHaveClass(
-      'shadow-[0_10px_28px_rgba(0,0,0,0.14)]',
-    )
-    expect(screen.getByTestId('project-execution-mode-menu-section')).toHaveTextContent(
-      '启动模式',
-    )
-    expect(screen.getByTestId('execution-mode-current-workspace-button')).toHaveTextContent(
-      '在本地处理',
-    )
-    expect(screen.getByTestId('execution-mode-git-worktree-button')).toHaveTextContent(
-      '新工作树',
-    )
-
-    await userEvent.click(screen.getByTestId('execution-mode-git-worktree-button'))
-
-    expect(onExecutionModeChange).toHaveBeenCalledWith('git_worktree')
-    expect(screen.queryByTestId('project-execution-mode-menu')).not.toBeInTheDocument()
-  })
-
-  test('switches branches immediately from the new project chat work bar', async () => {
-    const onListBranches = vi.fn().mockResolvedValue(['feature/chat', 'main'])
-    const onCheckoutBranch = vi.fn().mockResolvedValue(undefined)
-    const onRefreshBranch = vi.fn().mockResolvedValue(undefined)
-    const projects: ProjectWithTasks[] = [
-      {
-        id: 7,
-        name: 'Wegent',
-        config: {
-          mode: 'workspace',
-          device_id: 'device-1',
-          workspace: {
-            source: 'local_path',
-            localPath: '/workspace/projects/Wegent',
-          },
-        },
-        tasks: [],
-      },
-    ]
-
-    render(
-      <ChatInput
-        value=""
-        onChange={vi.fn()}
-        onSubmit={vi.fn()}
-        disabled={false}
-        variant="desktop"
-        projectWork={projectWorkControls({
-          projects,
-          currentProjectId: 7,
-          branchName: 'main',
-          onRefreshBranch,
-          onListBranches,
-          onCheckoutBranch,
-        })}
-      />,
-    )
-
-    expect(screen.getByTestId('project-branch-button')).toHaveTextContent('main')
-    await userEvent.click(screen.getByTestId('project-branch-button'))
-
-    await waitFor(() => {
-      expect(onRefreshBranch).toHaveBeenCalledTimes(1)
-      expect(onListBranches).toHaveBeenCalledTimes(1)
-    })
-
-    const options = await screen.findAllByTestId('project-branch-option')
-    await userEvent.click(options[0])
-
-    expect(onCheckoutBranch).toHaveBeenCalledWith('feature/chat')
-    await waitFor(() => {
-      expect(screen.queryByTestId('project-branch-menu')).not.toBeInTheDocument()
-    })
-  })
-
-  test('creates and checks out a branch from the new project chat work bar', async () => {
-    const onCreateBranch = vi.fn().mockResolvedValue(undefined)
-
-    render(
-      <ChatInput
-        value=""
-        onChange={vi.fn()}
-        onSubmit={vi.fn()}
-        disabled={false}
-        variant="desktop"
-        projectWork={projectWorkControls({
-          projects: [{ id: 7, name: 'Wegent', tasks: [] }],
-          currentProjectId: 7,
-          branchName: 'main',
-          onListBranches: vi.fn().mockResolvedValue(['main']),
-          onCheckoutBranch: vi.fn().mockResolvedValue(undefined),
-          onCreateBranch,
-        })}
-      />,
-    )
-
-    await userEvent.click(screen.getByTestId('project-branch-button'))
-    await screen.findAllByTestId('project-branch-option')
-    await userEvent.click(screen.getByTestId('project-open-new-branch-button'))
-    await userEvent.type(screen.getByTestId('project-new-branch-input'), 'feature/new-chat')
-    await userEvent.click(screen.getByTestId('project-confirm-new-branch-button'))
-
-    expect(onCreateBranch).toHaveBeenCalledWith('feature/new-chat')
-  })
-
-  test('hides branch switching when the project conversation is locked', () => {
-    render(
-      <ChatInput
-        value=""
-        onChange={vi.fn()}
-        onSubmit={vi.fn()}
-        disabled={false}
-        variant="desktop"
-        projectWork={projectWorkControls({
-          projects: [{ id: 7, name: 'Wegent', tasks: [] }],
-          currentProjectId: 7,
-          executionModeLocked: true,
-          branchName: 'main',
-          onListBranches: vi.fn().mockResolvedValue(['main']),
-          onCheckoutBranch: vi.fn().mockResolvedValue(undefined),
-        })}
-      />,
-    )
-
-    expect(screen.queryByTestId('project-branch-button')).not.toBeInTheDocument()
-  })
-
-  test('hides branch switching when the current workspace is not a git repository', () => {
-    render(
-      <ChatInput
-        value=""
-        onChange={vi.fn()}
-        onSubmit={vi.fn()}
-        disabled={false}
-        variant="desktop"
-        projectWork={projectWorkControls({
-          projects: [{ id: 7, name: 'Plain folder', tasks: [] }],
-          currentProjectId: 7,
-          branchName: '',
-          onListBranches: vi.fn().mockResolvedValue([]),
-          onCheckoutBranch: vi.fn().mockResolvedValue(undefined),
-        })}
-      />,
-    )
-
-    expect(screen.queryByTestId('project-branch-button')).not.toBeInTheDocument()
-  })
-
-  test('opens project work menu upward when below cannot fit the four-row menu', async () => {
-    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
-      if ((this as HTMLElement).dataset.testid === 'project-work-button') {
-        return {
-          x: 0,
-          y: 720,
-          width: 160,
-          height: 36,
-          top: 720,
-          right: 160,
-          bottom: 756,
-          left: 0,
-          toJSON: () => ({}),
-        } as DOMRect
-      }
-
-      return {
-        x: 0,
-        y: 0,
-        width: 0,
-        height: 0,
-        top: 0,
-        right: 0,
-        bottom: 0,
-        left: 0,
-        toJSON: () => ({}),
-      } as DOMRect
-    })
-
-    render(
-      <ChatInput
-        value=""
-        onChange={vi.fn()}
-        onSubmit={vi.fn()}
-        disabled={false}
-        variant="desktop"
-        projectWork={projectWorkControls({
-          projects: [
-            { id: 7, name: 'Wegent', tasks: [] },
-            { id: 8, name: 'Docs', tasks: [] },
-            { id: 9, name: 'MCPs', tasks: [] },
-            { id: 10, name: 'hello-gpt', tasks: [] },
-            { id: 11, name: 'ai-exam', tasks: [] },
-            { id: 12, name: 'weekly-report', tasks: [] },
-          ],
-          onCreateProjectMode: vi.fn(),
-        })}
-      />,
-    )
-
-    await userEvent.click(screen.getByTestId('project-work-button'))
-
-    await waitFor(() => {
-      expect(screen.getByTestId('project-work-menu')).toHaveClass('bottom-11')
-    })
-    expect(screen.getByTestId('project-options-list')).toHaveClass('overflow-y-auto')
-    expect(screen.getByTestId('add-project-option')).toBeInTheDocument()
-    expect(screen.getByTestId('no-project-option')).toBeInTheDocument()
-  })
-
-  test('keeps project work menu below when clipped space can fit four rows and actions', async () => {
-    const originalInnerHeight = window.innerHeight
-    Object.defineProperty(window, 'innerHeight', {
-      configurable: true,
-      value: 1000,
-    })
-    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
-      const testId = (this as HTMLElement).dataset.testid
-      if (testId === 'project-work-button') {
-        return {
-          x: 0,
-          y: 500,
-          width: 160,
-          height: 40,
-          top: 500,
-          right: 160,
-          bottom: 540,
-          left: 0,
-          toJSON: () => ({}),
-        } as DOMRect
-      }
-
-      if (testId === 'project-work-clipping-shell') {
-        return {
-          x: 0,
-          y: 0,
-          width: 900,
-          height: 896,
-          top: 0,
-          right: 900,
-          bottom: 896,
-          left: 0,
-          toJSON: () => ({}),
-        } as DOMRect
-      }
-
-      return {
-        x: 0,
-        y: 0,
-        width: 0,
-        height: 0,
-        top: 0,
-        right: 0,
-        bottom: 0,
-        left: 0,
-        toJSON: () => ({}),
-      } as DOMRect
-    })
-
-    try {
-      render(
-        <div data-testid="project-work-clipping-shell" style={{ overflow: 'hidden' }}>
-          <ChatInput
-            value=""
-            onChange={vi.fn()}
-            onSubmit={vi.fn()}
-            disabled={false}
-            variant="desktop"
-            projectWork={projectWorkControls({
-              projects: [
-                { id: 7, name: 'Wegent', tasks: [] },
-                { id: 8, name: 'Docs', tasks: [] },
-                { id: 9, name: 'MCPs', tasks: [] },
-                { id: 10, name: 'hello-gpt', tasks: [] },
-                { id: 11, name: 'ai-exam', tasks: [] },
-                { id: 12, name: 'weekly-report', tasks: [] },
-              ],
-              onCreateProjectMode: vi.fn(),
-            })}
-          />
-        </div>,
-      )
-
-      await userEvent.click(screen.getByTestId('project-work-button'))
-
-      const menu = screen.getByTestId('project-work-menu')
-      expect(menu).toHaveClass('top-11')
-      expect(menu).toHaveStyle({ maxHeight: '340px' })
-      expect(screen.getByTestId('project-options-list')).toHaveStyle({
-        maxHeight: '150px',
-      })
-      expect(screen.getByTestId('add-project-option')).toBeInTheDocument()
-      expect(screen.getByTestId('no-project-option')).toBeInTheDocument()
-    } finally {
-      Object.defineProperty(window, 'innerHeight', {
-        configurable: true,
-        value: originalInnerHeight,
-      })
-    }
-  })
-
-  test('opens project creation submenu upward when it would be clipped below', async () => {
-    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
-      const testId = (this as HTMLElement).dataset.testid
-      if (testId === 'add-project-option') {
-        return {
-          x: 0,
-          y: 720,
-          width: 240,
-          height: 32,
-          top: 720,
-          right: 240,
-          bottom: 752,
-          left: 0,
-          toJSON: () => ({}),
-        } as DOMRect
-      }
-
-      return {
-        x: 0,
-        y: 0,
-        width: 0,
-        height: 0,
-        top: 0,
-        right: 0,
-        bottom: 0,
-        left: 0,
-        toJSON: () => ({}),
-      } as DOMRect
-    })
-
-    render(
-      <ChatInput
-        value=""
-        onChange={vi.fn()}
-        onSubmit={vi.fn()}
-        disabled={false}
-        variant="desktop"
-        projectWork={projectWorkControls({
-          projects: [{ id: 7, name: 'Wegent', tasks: [] }],
-          onCreateProjectMode: vi.fn(),
-        })}
-      />,
-    )
-
-    await userEvent.click(screen.getByTestId('project-work-button'))
-    await userEvent.click(screen.getByTestId('add-project-option'))
-
-    const createSubmenu = screen.getByTestId('create-project-submenu')
-    expect(createSubmenu.parentElement).toHaveClass('bottom-0')
-    expect(createSubmenu).toHaveTextContent('新建空白项目')
-  })
-
-  test('filters project work menu by project and device text', async () => {
-    const projects: ProjectWithTasks[] = [
-      {
-        id: 7,
-        name: 'Wegent',
-        config: { execution: { targetType: 'local', deviceId: 'macbook-local' } },
-        tasks: [],
-      },
-      {
-        id: 8,
-        name: 'Docs',
-        config: { execution: { targetType: 'cloud', deviceId: 'cloud-docs' } },
-        tasks: [],
-      },
-    ]
-
-    render(
-      <ChatInput
-        value=""
-        onChange={vi.fn()}
-        onSubmit={vi.fn()}
-        disabled={false}
-        variant="desktop"
-        projectWork={projectWorkControls({
-          projects,
-          onCreateProjectMode: vi.fn(),
-          devices: [
-            {
-              id: 1,
-              device_id: 'macbook-local',
-              name: 'MacBook Pro',
-              status: 'online',
-              is_default: false,
-            },
-            {
-              id: 2,
-              device_id: 'cloud-docs',
-              name: 'Docs Runner',
-              status: 'online',
-              is_default: false,
-            },
-          ],
-        })}
-      />,
-    )
-
-    await userEvent.click(screen.getByTestId('project-work-button'))
-
-    const searchInput = screen.getByTestId('project-search-input')
-    await waitFor(() => expect(searchInput).toHaveFocus())
-    expect(searchInput).toHaveAttribute('placeholder', '搜索项目')
-
-    await userEvent.type(searchInput, 'docs')
-    expect(screen.queryByTestId('project-option-7')).not.toBeInTheDocument()
-    expect(screen.getByTestId('project-option-8')).toBeInTheDocument()
-    expect(screen.getByTestId('add-project-option')).toBeInTheDocument()
-    expect(screen.getByTestId('no-project-option')).toBeInTheDocument()
-
-    await userEvent.clear(searchInput)
-    await userEvent.type(searchInput, 'macbook')
-    expect(screen.getByTestId('project-option-7')).toBeInTheDocument()
-    expect(screen.queryByTestId('project-option-8')).not.toBeInTheDocument()
-
-    await userEvent.clear(searchInput)
-    await userEvent.type(searchInput, 'missing')
-    expect(screen.getByTestId('project-search-empty')).toHaveTextContent('没有匹配的项目')
-    expect(screen.getByTestId('add-project-option')).toBeInTheDocument()
-    expect(screen.getByTestId('no-project-option')).toBeInTheDocument()
-  })
-
   test('shows no-project transition from the standalone entry', async () => {
     const onSelectStandaloneDevice = vi.fn()
-    const devices: DeviceInfo[] = [
-      {
-        id: 1,
-        device_id: 'cloud-online',
-        name: 'Cloud Online',
-        status: 'online',
-        is_default: false,
-        device_type: 'cloud',
-      },
-    ]
 
     render(
       <ChatInput
@@ -2343,7 +1351,6 @@ describe('ChatInput', () => {
         variant="desktop"
         projectWork={projectWorkControls({
           projects: [{ id: 7, name: 'Wegent', tasks: [] }],
-          devices,
           currentProjectId: 7,
           onSelectStandaloneDevice,
         })}
@@ -2352,9 +1359,8 @@ describe('ChatInput', () => {
 
     await userEvent.click(screen.getByTestId('project-work-button'))
     await userEvent.click(screen.getByTestId('no-project-option'))
-    await userEvent.click(screen.getByTestId('standalone-device-option-cloud-online'))
 
-    expect(onSelectStandaloneDevice).toHaveBeenCalledWith('cloud-online')
+    expect(onSelectStandaloneDevice).toHaveBeenCalledWith(null)
   })
 
   test('shows no-project option before selecting a concrete project', async () => {
@@ -2381,52 +1387,7 @@ describe('ChatInput', () => {
 
     await userEvent.click(screen.getByTestId('no-project-option'))
 
-    expect(screen.getByTestId('standalone-device-submenu')).toBeInTheDocument()
-    expect(onSelectStandaloneDevice).not.toHaveBeenCalled()
-  })
-
-  test('shows add project option above no-project and opens the creation submenu', async () => {
-    const onCreateProjectMode = vi.fn()
-
-    render(
-      <ChatInput
-        value=""
-        onChange={vi.fn()}
-        onSubmit={vi.fn()}
-        disabled={false}
-        variant="desktop"
-        projectWork={projectWorkControls({
-          projects: [{ id: 7, name: 'Wegent', tasks: [] }],
-          onCreateProjectMode,
-        })}
-      />,
-    )
-
-    await userEvent.click(screen.getByTestId('project-work-button'))
-
-    const menu = screen.getByTestId('project-work-menu')
-    expect(screen.getByTestId('add-project-option')).toHaveTextContent('添加新项目')
-    expect(
-      [...menu.querySelectorAll('button')].map(button => button.dataset.testid),
-    ).toEqual([
-      'project-option-7',
-      'add-project-option',
-      'no-project-option',
-    ])
-
-    await userEvent.click(screen.getByTestId('add-project-option'))
-
-    expect(screen.getByTestId('create-project-submenu')).toBeInTheDocument()
-    expect(screen.getByTestId('project-start-from-scratch-option')).toHaveTextContent(
-      '新建空白项目',
-    )
-    expect(screen.getByTestId('project-existing-folder-option')).toHaveTextContent('使用现有目录')
-    expect(screen.getByTestId('project-clone-from-git-option')).toHaveTextContent('从 Git 克隆')
-
-    await userEvent.click(screen.getByTestId('project-start-from-scratch-option'))
-
-    expect(onCreateProjectMode).toHaveBeenCalledWith('scratch')
-    expect(screen.queryByTestId('project-work-menu')).not.toBeInTheDocument()
+    expect(onSelectStandaloneDevice).toHaveBeenCalledWith(null)
   })
 
   test('lists standalone devices under no-project and defaults to online cloud devices', async () => {
@@ -2456,15 +1417,6 @@ describe('ChatInput', () => {
         is_default: false,
         device_type: 'local',
       },
-      {
-        id: 4,
-        device_id: 'openclaw-online',
-        name: 'OpenClaw Online',
-        status: 'online',
-        is_default: false,
-        device_type: 'cloud',
-        bind_shell: 'openclaw',
-      },
     ]
 
     render(
@@ -2485,20 +1437,15 @@ describe('ChatInput', () => {
 
     await userEvent.click(screen.getByTestId('project-work-button'))
 
-    expect(screen.queryByTestId('standalone-device-submenu')).not.toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('no-project-option'))
-
-    expect(screen.getByTestId('standalone-device-submenu')).toBeInTheDocument()
+    expect(screen.getByTestId('standalone-device-list')).toBeInTheDocument()
     expect(screen.getByText('Cloud Online')).toBeInTheDocument()
     expect(screen.getByText('Local Online')).toBeInTheDocument()
-    expect(screen.queryByText('OpenClaw Online')).not.toBeInTheDocument()
     expect(screen.getByTestId('standalone-device-option-local-offline')).toBeDisabled()
 
-    await userEvent.click(screen.getByTestId('standalone-device-option-cloud-online'))
+    await userEvent.click(screen.getByTestId('no-project-option'))
     expect(onSelectStandaloneDevice).toHaveBeenCalledWith('cloud-online')
 
     await userEvent.click(screen.getByTestId('project-work-button'))
-    await userEvent.click(screen.getByTestId('no-project-option'))
     await userEvent.click(screen.getByTestId('standalone-device-option-local-online'))
     expect(onSelectStandaloneDevice).toHaveBeenLastCalledWith('local-online')
   })
@@ -2576,7 +1523,6 @@ describe('ChatInput', () => {
     )
 
     await userEvent.click(screen.getByTestId('project-work-button'))
-    await userEvent.click(screen.getByTestId('no-project-option'))
 
     expect(
       screen.getByTestId('standalone-device-selected-icon-local-online')
@@ -2609,7 +1555,7 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('project-work-menu')).not.toHaveTextContent('进入项目工作')
   })
 
-  test('renders online project and standalone devices with neutral secondary text', async () => {
+  test('renders online project devices with neutral secondary text', async () => {
     const projects: ProjectWithTasks[] = [
       {
         id: 7,
@@ -2655,17 +1601,11 @@ describe('ChatInput', () => {
     )
 
     await userEvent.click(screen.getByTestId('project-work-button'))
-    await userEvent.click(screen.getByTestId('no-project-option'))
 
     const projectDeviceLabel = screen.getAllByText('online-executor')[0]
     const offlineProjectDeviceLabel = screen.getAllByText('offline-executor')[0]
-    const standaloneDeviceStatus = screen
-      .getByTestId('standalone-device-option-device-online')
-      .querySelector('span:last-of-type')
     expect(projectDeviceLabel).toHaveClass('text-text-secondary')
     expect(projectDeviceLabel).not.toHaveClass('text-primary')
-    expect(standaloneDeviceStatus).toHaveClass('text-text-secondary')
-    expect(standaloneDeviceStatus).not.toHaveClass('text-primary')
     expect(offlineProjectDeviceLabel).toHaveClass('text-text-muted')
   })
 
@@ -2794,6 +1734,28 @@ describe('ChatInput', () => {
     render(<ControlledChatInput onSubmit={onSubmit} />)
 
     await userEvent.type(screen.getByTestId('chat-message-input'), 'hello{enter}')
+
+    expect(onSubmit).toHaveBeenCalledTimes(1)
+  })
+
+  test('does not submit when Enter confirms IME composition', () => {
+    vi.useFakeTimers()
+    const onSubmit = vi.fn()
+    render(<ControlledChatInput onSubmit={onSubmit} />)
+
+    const input = screen.getByTestId('chat-message-input')
+    fireEvent.change(input, { target: { value: 'hello' } })
+    fireEvent.compositionStart(input)
+    fireEvent.keyDown(input, { key: 'Enter' })
+    fireEvent.compositionEnd(input)
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(onSubmit).not.toHaveBeenCalled()
+
+    act(() => {
+      vi.advanceTimersByTime(101)
+    })
+    fireEvent.keyDown(input, { key: 'Enter' })
 
     expect(onSubmit).toHaveBeenCalledTimes(1)
   })

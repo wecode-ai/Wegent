@@ -9,6 +9,10 @@ import {
 } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
+import type {
+  DeviceInfo,
+  TurnFileChangesSummary,
+} from '@/types/api'
 import type { WorkbenchMessage } from '@/types/workbench'
 import { MessageList } from './MessageList'
 
@@ -22,6 +26,11 @@ interface ScrollableMessageAreaProps {
   scrollButtonClassName?: string
   scrollTestId?: string
   conversationKey?: string | number | null
+  devices?: DeviceInfo[]
+  onLoadFileChangesDiff?: (subtaskId: number) => Promise<string>
+  onRevertFileChanges?: (
+    subtaskId: number,
+  ) => Promise<TurnFileChangesSummary>
 }
 
 export function ScrollableMessageArea({
@@ -31,6 +40,9 @@ export function ScrollableMessageArea({
   scrollButtonClassName,
   scrollTestId = 'chat-message-scroll-area',
   conversationKey,
+  devices,
+  onLoadFileChangesDiff,
+  onRevertFileChanges,
 }: ScrollableMessageAreaProps) {
   const { t } = useTranslation('common')
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -219,7 +231,12 @@ export function ScrollableMessageArea({
               </p>
             </div>
           ) : (
-            <MessageList messages={messages} />
+            <MessageList
+              messages={messages}
+              devices={devices}
+              onLoadFileChangesDiff={onLoadFileChangesDiff}
+              onRevertFileChanges={onRevertFileChanges}
+            />
           )}
         </div>
       </div>

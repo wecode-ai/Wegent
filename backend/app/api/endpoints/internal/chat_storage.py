@@ -1180,8 +1180,10 @@ async def clear_history(
 
 @router.get("/sessions", response_model=SessionListResponse)
 async def list_sessions(
-    limit: int = Query(100, description="Max number of sessions to return"),
-    offset: int = Query(0, description="Offset for pagination"),
+    limit: int = Query(
+        100, ge=1, le=1000, description="Max number of sessions to return"
+    ),
+    offset: int = Query(0, ge=0, description="Offset for pagination"),
     db: Session = Depends(get_db),
 ):
     """

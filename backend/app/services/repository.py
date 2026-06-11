@@ -8,6 +8,7 @@ Repository aggregation service for handling multiple repository providers
 
 import asyncio
 import logging
+from dataclasses import dataclass
 from typing import Any, Dict, List
 
 from fastapi import HTTPException
@@ -19,6 +20,21 @@ from app.repository.gitee_provider import GiteeProvider
 from app.repository.github_provider import GitHubProvider
 from app.repository.gitlab_provider import GitLabProvider
 from shared.utils.url_util import domains_match
+
+
+@dataclass(frozen=True)
+class RepositoryUserContext:
+    id: int
+    user_name: str
+    git_info: List[Dict[str, Any]]
+
+
+def snapshot_repository_user(user: User) -> RepositoryUserContext:
+    return RepositoryUserContext(
+        id=user.id,
+        user_name=user.user_name,
+        git_info=[dict(git_entry) for git_entry in (user.git_info or [])],
+    )
 
 
 class RepositoryService:
