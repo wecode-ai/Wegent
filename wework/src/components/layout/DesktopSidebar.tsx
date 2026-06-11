@@ -95,7 +95,9 @@ interface DesktopSidebarProps {
 type ProjectCreateMode = 'scratch' | 'existing' | 'git'
 
 const SIDEBAR_ROW_METADATA_CLASS =
-  'flex items-center gap-1 text-xs text-[rgb(var(--color-sidebar-text-muted))] group-hover/task:invisible group-focus-within/task:invisible'
+  'flex items-center gap-1 text-xs text-[rgb(var(--color-sidebar-text-muted))]'
+const SIDEBAR_ROW_HOVER_HIDE_CLASS =
+  'group-hover/task:invisible group-focus-within/task:invisible'
 const SIDEBAR_ROW_ACTIONS_CLASS =
   'absolute inset-0 invisible flex items-center justify-end opacity-0 transition-opacity group-hover/task:visible group-hover/task:opacity-100 group-focus-within/task:visible group-focus-within/task:opacity-100'
 
@@ -479,7 +481,10 @@ function ProjectTaskRow({
             )}
             <span
               data-testid={`project-chat-time-value-${task.task_id}`}
-              className="flex h-7 w-7 items-center justify-center"
+              className={cn(
+                'flex h-7 w-7 items-center justify-center',
+                SIDEBAR_ROW_HOVER_HIDE_CLASS,
+              )}
             >
               {formatRelativeSidebarTime(getProjectTaskTime(task))}
             </span>
@@ -745,11 +750,15 @@ function RecentTaskRow({
               <SidebarDeviceStatusIndicator
                 deviceState={visibleDeviceState}
                 testId={`history-task-device-status-${task.id}`}
+                className={SIDEBAR_ROW_HOVER_HIDE_CLASS}
               />
             )}
             <span
               data-testid={`history-task-time-value-${task.id}`}
-              className="flex h-7 w-7 items-center justify-center"
+              className={cn(
+                'flex h-7 w-7 items-center justify-center',
+                SIDEBAR_ROW_HOVER_HIDE_CLASS,
+              )}
             >
               {formatRelativeSidebarTime(task.updated_at || task.created_at)}
             </span>
