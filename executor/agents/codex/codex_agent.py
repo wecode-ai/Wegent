@@ -195,6 +195,7 @@ class CodeXAgent(Agent):
             codex_bin=self.codex_config.codex_bin,
             config_overrides=self.codex_config.config_overrides,
             cwd=self.project_path,
+            env=self.codex_config.env,
         )
         self._codex = AsyncCodex(config=sdk_config)
         await self._codex.__aenter__()

@@ -90,6 +90,8 @@ chmod +x wegent-executor
 
 By default, the executor uses the Claude/Codex model and provider configuration issued by Wegent. To use personal Codex login information, open Wework **Settings** -> **Personal**, import or upload `~/.codex/auth.json` from a device, and enable the personal configuration. When device heartbeat reports that the local Codex auth file is missing, Wegent syncs the saved auth in the background; if `~/.codex/auth.json` already exists on the device, it is not overwritten. GPT models that use Codex access Codex through that authenticated account.
 
+If Codex access requires a proxy, first save the personal proxy URL in Wework **Settings** -> **Personal** -> **Proxy**, then enable the Codex proxy switch in **Codex Auth**. Wegent injects `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, and the matching lowercase environment variables when executing Codex. If `NO_PROXY` or `no_proxy` already exists, Wegent keeps that value; otherwise it bypasses `localhost`, `127.0.0.1`, `::1`, and `host.docker.internal` by default.
+
 Wegent now marks whether Codex should use personal configuration explicitly on the execution request. It no longer uses the `WEGENT_LOCAL_CLI_CONFIG_RUNTIMES` environment variable for this decision.
 
 ### Building a Device Image

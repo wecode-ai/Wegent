@@ -93,6 +93,8 @@ describe('ConnectionsSettingsPage', () => {
     updateCurrentUser: vi.fn(),
     getRuntimeConfig: vi.fn(),
     updateRuntimeConfig: vi.fn(),
+    getProxyConfig: vi.fn(),
+    updateProxyConfig: vi.fn(),
     uploadRuntimeAuthJson: vi.fn(),
     importRuntimeAuthJson: vi.fn(),
   }
@@ -132,40 +134,68 @@ describe('ConnectionsSettingsPage', () => {
       runtime: 'codex',
       display_name: 'Codex',
       use_user_config: false,
+      use_proxy: false,
       configured: true,
       target_path: '~/.codex/auth.json',
       auth_json_sha256: 'abc1234567890',
       auth_json_updated_at: '2026-06-09T00:00:00Z',
+      proxy_configured: false,
+      proxy_url_masked: '',
+      proxy_updated_at: null,
       updated_at: '2026-06-09T00:00:00Z',
     })
     userApi.updateRuntimeConfig.mockResolvedValue({
       runtime: 'codex',
       display_name: 'Codex',
       use_user_config: true,
+      use_proxy: false,
       configured: true,
       target_path: '~/.codex/auth.json',
       auth_json_sha256: 'abc1234567890',
       auth_json_updated_at: '2026-06-09T00:00:00Z',
+      proxy_configured: false,
+      proxy_url_masked: '',
+      proxy_updated_at: null,
       updated_at: '2026-06-09T00:00:01Z',
+    })
+    userApi.getProxyConfig.mockResolvedValue({
+      configured: false,
+      proxy_url_masked: '',
+      proxy_updated_at: null,
+      updated_at: null,
+    })
+    userApi.updateProxyConfig.mockResolvedValue({
+      configured: true,
+      proxy_url_masked: 'http://127.0.0.1:7890',
+      proxy_updated_at: '2026-06-09T00:00:02Z',
+      updated_at: '2026-06-09T00:00:02Z',
     })
     userApi.uploadRuntimeAuthJson.mockResolvedValue({
       runtime: 'codex',
       display_name: 'Codex',
       use_user_config: false,
+      use_proxy: false,
       configured: true,
       target_path: '~/.codex/auth.json',
       auth_json_sha256: 'abc1234567890',
       auth_json_updated_at: '2026-06-09T00:00:00Z',
+      proxy_configured: false,
+      proxy_url_masked: '',
+      proxy_updated_at: null,
       updated_at: '2026-06-09T00:00:00Z',
     })
     userApi.importRuntimeAuthJson.mockResolvedValue({
       runtime: 'codex',
       display_name: 'Codex',
       use_user_config: false,
+      use_proxy: false,
       configured: true,
       target_path: '~/.codex/auth.json',
       auth_json_sha256: 'abc1234567890',
       auth_json_updated_at: '2026-06-09T00:00:00Z',
+      proxy_configured: false,
+      proxy_url_masked: '',
+      proxy_updated_at: null,
       updated_at: '2026-06-09T00:00:00Z',
     })
     createUserApiMock.mockReturnValue(userApi as ReturnType<typeof createUserApi>)
@@ -255,6 +285,69 @@ describe('ConnectionsSettingsPage', () => {
 
     expect(screen.queryByTestId('runtime-config-sync-button')).not.toBeInTheDocument()
     expect(screen.queryByTestId('runtime-config-sync-result')).not.toBeInTheDocument()
+  })
+
+  test('saves personal proxy then enables it for Codex auth', async () => {
+    api.getAllDevices.mockResolvedValue([localDevice()])
+    userApi.getRuntimeConfig.mockResolvedValueOnce({
+      runtime: 'codex',
+      display_name: 'Codex',
+      use_user_config: false,
+      use_proxy: false,
+      configured: true,
+      target_path: '~/.codex/auth.json',
+      auth_json_sha256: 'abc1234567890',
+      auth_json_updated_at: '2026-06-09T00:00:00Z',
+      proxy_configured: true,
+      proxy_url_masked: 'http://127.0.0.1:7890',
+      proxy_updated_at: '2026-06-09T00:00:02Z',
+      updated_at: '2026-06-09T00:00:00Z',
+    })
+    userApi.updateRuntimeConfig.mockResolvedValueOnce({
+      runtime: 'codex',
+      display_name: 'Codex',
+      use_user_config: false,
+      use_proxy: true,
+      configured: true,
+      target_path: '~/.codex/auth.json',
+      auth_json_sha256: 'abc1234567890',
+      auth_json_updated_at: '2026-06-09T00:00:00Z',
+      proxy_configured: true,
+      proxy_url_masked: 'http://127.0.0.1:7890',
+      proxy_updated_at: '2026-06-09T00:00:02Z',
+      updated_at: '2026-06-09T00:00:03Z',
+    })
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    await userEvent.click(screen.getByTestId('settings-nav-proxy'))
+
+    expect(await screen.findByTestId('proxy-settings-page')).toBeInTheDocument()
+    const proxyInput = await screen.findByTestId('proxy-config-url-input')
+    await userEvent.type(proxyInput, 'http://127.0.0.1:7890')
+    await userEvent.click(screen.getByTestId('proxy-config-save-button'))
+
+    await waitFor(() =>
+      expect(userApi.updateProxyConfig).toHaveBeenCalledWith('http://127.0.0.1:7890'),
+    )
+    expect(await screen.findByText('http://127.0.0.1:7890')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('settings-nav-codex-auth'))
+
+    await userEvent.click(screen.getByTestId('runtime-config-proxy-toggle'))
+
+    await waitFor(() =>
+      expect(userApi.updateRuntimeConfig).toHaveBeenCalledWith('codex', {
+        use_user_config: false,
+        use_proxy: true,
+      }),
+    )
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-config-proxy-toggle')).toHaveAttribute(
+        'aria-checked',
+        'true',
+      ),
+    )
   })
 
   test('opens worktree settings from the coding settings navigation', async () => {

@@ -6,6 +6,7 @@
 
 # -*- coding: utf-8 -*-
 
+import os
 import re
 import shutil
 from dataclasses import dataclass
@@ -18,6 +19,7 @@ from shared.logger import setup_logger
 OPENAI_RESPONSES_PROTOCOL = "openai-responses"
 RESPONSES_WIRE_API = "responses"
 DEFAULT_PROVIDER_NAME = "wecode openai"
+DEFAULT_NO_PROXY = "localhost,127.0.0.1,::1,host.docker.internal"
 CODEX_REASONING_EFFORTS = {"none", "minimal", "low", "medium", "high", "xhigh"}
 CODEX_REASONING_SUMMARIES = {"auto", "concise", "detailed"}
 DEFAULT_REASONING_EFFORT = "medium"
@@ -64,6 +66,7 @@ class CodeXConfig:
     thread_config: dict[str, Any]
     effort: Optional[str]
     summary: Optional[str]
+    env: Optional[dict[str, str]] = None
 
 
 def is_codex_compatible_model(model_config: dict[str, Any]) -> bool:
@@ -87,6 +90,7 @@ def build_codex_config(model_config: dict[str, Any]) -> CodeXConfig:
         raise ValueError("CodeXAgent requires model_config.model_id")
 
     local_config = _use_user_runtime_config(model_config, "codex")
+    proxy_env = _build_runtime_proxy_env(model_config, "codex")
     reasoning = _normalize_reasoning(model_config.get("reasoning"))
     service_tier = _normalize_service_tier(model_config.get("service_tier"))
     if local_config:
@@ -99,6 +103,7 @@ def build_codex_config(model_config: dict[str, Any]) -> CodeXConfig:
             thread_config=_build_thread_config(reasoning, service_tier),
             effort=reasoning.get("effort"),
             summary=reasoning.get("summary"),
+            env=proxy_env,
         )
 
     base_url = str(model_config.get("base_url") or "").strip()
@@ -132,23 +137,68 @@ def build_codex_config(model_config: dict[str, Any]) -> CodeXConfig:
         thread_config=_build_thread_config(reasoning, service_tier),
         effort=reasoning.get("effort"),
         summary=reasoning.get("summary"),
+        env=proxy_env,
     )
 
 
 def _use_user_runtime_config(model_config: dict[str, Any], runtime: str) -> bool:
-    runtime_configs = model_config.get("runtime_config") or model_config.get(
-        "runtimeConfig"
-    )
-    if not isinstance(runtime_configs, dict):
-        return False
-
-    runtime_config = runtime_configs.get(runtime)
-    if not isinstance(runtime_config, dict):
+    runtime_config = _get_runtime_config(model_config, runtime)
+    if not runtime_config:
         return False
 
     return bool(
         runtime_config.get("use_user_config") and runtime_config.get("configured", True)
     )
+
+
+def _build_runtime_proxy_env(
+    model_config: dict[str, Any], runtime: str
+) -> Optional[dict[str, str]]:
+    runtime_config = _get_runtime_config(model_config, runtime)
+    if not runtime_config:
+        return None
+    if not runtime_config.get("use_proxy"):
+        return None
+
+    proxy = _get_proxy(model_config)
+    proxy_url = str(proxy.get("url") or "").strip()
+    if not proxy_url:
+        return None
+
+    no_proxy = os.environ.get("NO_PROXY") or os.environ.get("no_proxy")
+    if not no_proxy:
+        no_proxy = DEFAULT_NO_PROXY
+
+    return {
+        "HTTP_PROXY": proxy_url,
+        "HTTPS_PROXY": proxy_url,
+        "ALL_PROXY": proxy_url,
+        "http_proxy": proxy_url,
+        "https_proxy": proxy_url,
+        "all_proxy": proxy_url,
+        "NO_PROXY": no_proxy,
+        "no_proxy": no_proxy,
+    }
+
+
+def _get_runtime_config(
+    model_config: dict[str, Any], runtime: str
+) -> Optional[dict[str, Any]]:
+    runtime_configs = model_config.get("runtime_config") or model_config.get(
+        "runtimeConfig"
+    )
+    if not isinstance(runtime_configs, dict):
+        return None
+
+    runtime_config = runtime_configs.get(runtime)
+    if not isinstance(runtime_config, dict):
+        return None
+    return runtime_config
+
+
+def _get_proxy(model_config: dict[str, Any]) -> dict[str, Any]:
+    proxy = model_config.get("proxy")
+    return proxy if isinstance(proxy, dict) else {}
 
 
 def _build_thread_config(
