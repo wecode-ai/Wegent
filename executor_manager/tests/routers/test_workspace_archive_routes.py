@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from pydantic import ValidationError
 
 from executor_manager.routers import routers
 
@@ -105,3 +106,76 @@ async def test_restore_executor_workspace_wraps_http_errors(mocker):
 
     assert exc_info.value.status_code == 500
     assert "HTTP error" in exc_info.value.detail
+
+
+# =============================================================================
+# Restore Request Validation Regression Tests
+# =============================================================================
+
+
+class TestRestoreRequestValidation:
+    def test_all_invalid_fields_returns_422(self):
+        with pytest.raises(ValidationError) as exc_info:
+            routers.RestoreExecutorRequest(
+                executor_name="",
+                executor_namespace="",
+                task_id=0,
+                download_url="",
+            )
+        errors = exc_info.value.errors()
+        assert len(errors) == 4
+
+    def test_empty_executor_name_returns_422(self):
+        with pytest.raises(ValidationError) as exc_info:
+            routers.RestoreExecutorRequest(
+                executor_name="",
+                executor_namespace="default",
+                task_id=1,
+                download_url="http://example.com/download",
+            )
+        field_names = [e["loc"][-1] for e in exc_info.value.errors()]
+        assert "executor_name" in field_names
+
+    def test_empty_download_url_returns_422(self):
+        with pytest.raises(ValidationError) as exc_info:
+            routers.RestoreExecutorRequest(
+                executor_name="x",
+                executor_namespace="default",
+                task_id=1,
+                download_url="",
+            )
+        field_names = [e["loc"][-1] for e in exc_info.value.errors()]
+        assert "download_url" in field_names
+
+    def test_empty_executor_namespace_returns_422(self):
+        with pytest.raises(ValidationError) as exc_info:
+            routers.RestoreExecutorRequest(
+                executor_name="x",
+                executor_namespace="",
+                task_id=1,
+                download_url="http://example.com/download",
+            )
+        field_names = [e["loc"][-1] for e in exc_info.value.errors()]
+        assert "executor_namespace" in field_names
+
+    def test_task_id_zero_returns_422(self):
+        with pytest.raises(ValidationError) as exc_info:
+            routers.RestoreExecutorRequest(
+                executor_name="x",
+                executor_namespace="default",
+                task_id=0,
+                download_url="http://example.com/download",
+            )
+        field_names = [e["loc"][-1] for e in exc_info.value.errors()]
+        assert "task_id" in field_names
+
+    def test_task_id_true_returns_422(self):
+        with pytest.raises(ValidationError) as exc_info:
+            routers.RestoreExecutorRequest(
+                executor_name="x",
+                executor_namespace="default",
+                task_id=True,
+                download_url="http://example.com/download",
+            )
+        field_names = [e["loc"][-1] for e in exc_info.value.errors()]
+        assert "task_id" in field_names
