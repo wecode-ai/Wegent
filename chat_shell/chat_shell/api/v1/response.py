@@ -110,7 +110,7 @@ class OpenAIResponsesRequest(BaseModel):
 class CancelRequest(BaseModel):
     """Cancel request schema."""
 
-    subtask_id: int = Field(..., description="Subtask ID to cancel")
+    subtask_id: int = Field(..., strict=True, description="Subtask ID to cancel")
 
 
 class CancelResponse(BaseModel):
