@@ -113,8 +113,8 @@ async def test_restore_executor_workspace_wraps_http_errors(mocker):
 # =============================================================================
 
 
-class TestRestoreRequestValidation:
-    def test_all_invalid_fields_returns_422(self):
+class TestRestoreExecutorRequestModelValidation:
+    def test_all_invalid_fields_raises_validation_error(self):
         with pytest.raises(ValidationError) as exc_info:
             routers.RestoreExecutorRequest(
                 executor_name="",
@@ -125,7 +125,7 @@ class TestRestoreRequestValidation:
         errors = exc_info.value.errors()
         assert len(errors) == 4
 
-    def test_empty_executor_name_returns_422(self):
+    def test_empty_executor_name_raises_validation_error(self):
         with pytest.raises(ValidationError) as exc_info:
             routers.RestoreExecutorRequest(
                 executor_name="",
@@ -136,7 +136,7 @@ class TestRestoreRequestValidation:
         field_names = [e["loc"][-1] for e in exc_info.value.errors()]
         assert "executor_name" in field_names
 
-    def test_empty_download_url_returns_422(self):
+    def test_empty_download_url_raises_validation_error(self):
         with pytest.raises(ValidationError) as exc_info:
             routers.RestoreExecutorRequest(
                 executor_name="x",
@@ -147,7 +147,7 @@ class TestRestoreRequestValidation:
         field_names = [e["loc"][-1] for e in exc_info.value.errors()]
         assert "download_url" in field_names
 
-    def test_empty_executor_namespace_returns_422(self):
+    def test_empty_executor_namespace_raises_validation_error(self):
         with pytest.raises(ValidationError) as exc_info:
             routers.RestoreExecutorRequest(
                 executor_name="x",
@@ -158,7 +158,7 @@ class TestRestoreRequestValidation:
         field_names = [e["loc"][-1] for e in exc_info.value.errors()]
         assert "executor_namespace" in field_names
 
-    def test_task_id_zero_returns_422(self):
+    def test_task_id_zero_raises_validation_error(self):
         with pytest.raises(ValidationError) as exc_info:
             routers.RestoreExecutorRequest(
                 executor_name="x",
@@ -169,7 +169,7 @@ class TestRestoreRequestValidation:
         field_names = [e["loc"][-1] for e in exc_info.value.errors()]
         assert "task_id" in field_names
 
-    def test_task_id_true_returns_422(self):
+    def test_task_id_true_raises_validation_error(self):
         with pytest.raises(ValidationError) as exc_info:
             routers.RestoreExecutorRequest(
                 executor_name="x",
