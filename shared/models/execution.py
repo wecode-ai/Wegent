@@ -133,6 +133,7 @@ class ExecutionRequest:
     # === Workspace Configuration ===
     workspace: dict = field(default_factory=dict)
     project_id: Optional[int] = None
+    standalone_chat_workspace: bool = False
     workspace_source: Optional[str] = None
     project_workspace_path: Optional[str] = None
     execution_target_type: Optional[str] = None

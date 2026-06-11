@@ -11,15 +11,27 @@ export interface UserRuntimeConfig {
   runtime: UserRuntime
   display_name: string
   use_user_config: boolean
+  use_proxy: boolean
   configured: boolean
   target_path: string
   auth_json_sha256?: string | null
   auth_json_updated_at?: string | null
+  proxy_configured: boolean
+  proxy_url_masked: string
+  proxy_updated_at?: string | null
+  updated_at?: string | null
+}
+
+export interface UserProxyConfig {
+  configured: boolean
+  proxy_url_masked: string
+  proxy_updated_at?: string | null
   updated_at?: string | null
 }
 
 export interface UpdateUserRuntimeConfigRequest {
   use_user_config: boolean
+  use_proxy?: boolean
 }
 
 function runtimeConfigPath(runtime: UserRuntime) {
@@ -39,6 +51,14 @@ export function createUserApi(client: HttpClient) {
       data: UpdateUserRuntimeConfigRequest,
     ): Promise<UserRuntimeConfig> {
       return client.put(runtimeConfigPath(runtime), data)
+    },
+    getProxyConfig(): Promise<UserProxyConfig> {
+      return client.get('/users/me/proxy-config')
+    },
+    updateProxyConfig(proxyUrl: string): Promise<UserProxyConfig> {
+      return client.put('/users/me/proxy-config', {
+        proxy_url: proxyUrl,
+      })
     },
     uploadRuntimeAuthJson(
       runtime: UserRuntime,

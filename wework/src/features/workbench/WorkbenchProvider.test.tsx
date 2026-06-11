@@ -833,7 +833,7 @@ describe('WorkbenchProvider', () => {
     expect(listDevices).toHaveBeenCalledTimes(2)
   })
 
-  test('restores the last concrete project for new chat and can clear project work', async () => {
+  test('starts new chat as standalone project zero even with a remembered project', async () => {
     localStorage.setItem('wework.lastProjectId.1', '7')
 
     render(
@@ -908,9 +908,11 @@ describe('WorkbenchProvider', () => {
 
     await userEvent.click(screen.getByText('standalone chat'))
     expect(screen.getByTestId('current-project-name')).toHaveTextContent('no-project')
+    expect(window.location.pathname + window.location.search).toBe('/?projectId=0')
 
     await userEvent.click(screen.getByText('new chat'))
-    expect(screen.getByTestId('current-project-name')).toHaveTextContent('Wegent')
+    expect(screen.getByTestId('current-project-name')).toHaveTextContent('no-project')
+    expect(window.location.pathname + window.location.search).toBe('/?projectId=0')
   })
 
   test('restores the remembered standalone device when entering chat mode', async () => {
@@ -1163,7 +1165,7 @@ describe('WorkbenchProvider', () => {
     )
     expect(screen.getByTestId('standalone-device-id')).toHaveTextContent('local-online')
     expect(joinTask).toHaveBeenCalledWith(8)
-    expect(window.location.pathname).toBe('/tasks/8')
+    expect(window.location.pathname).toBe('/projects/0/tasks/8')
     expect(window.location.search).toBe('')
   })
 
@@ -1276,7 +1278,7 @@ describe('WorkbenchProvider', () => {
     )
     expect(getTaskDetail).toHaveBeenCalledWith(8)
     expect(joinTask).toHaveBeenCalledWith(8)
-    expect(window.location.pathname).toBe('/tasks/8')
+    expect(window.location.pathname).toBe('/projects/0/tasks/8')
     expect(window.location.search).toBe('')
   })
 
@@ -1994,7 +1996,7 @@ describe('WorkbenchProvider', () => {
       expect(sendMessage).toHaveBeenCalledWith(
         expect.objectContaining({
           team_id: 2,
-          project_id: undefined,
+          project_id: 0,
           client_origin: 'wework',
           device_id: 'cloud-online',
           task_type: 'code',
@@ -2002,6 +2004,7 @@ describe('WorkbenchProvider', () => {
         })
       )
     )
+    expect(window.location.pathname + window.location.search).toBe('/projects/0/tasks/100')
   })
 
   test('treats backend chat ACK without success as successful and reuses task id', async () => {

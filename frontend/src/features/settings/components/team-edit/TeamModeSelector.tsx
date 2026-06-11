@@ -11,32 +11,17 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { RiRobot2Line } from 'react-icons/ri'
 import { ChevronDown } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
-import { TeamMode } from '../team-modes'
+import { getSelectableTeamModes, TeamMode } from '../team-modes'
 import { cn } from '@/lib/utils'
 
 interface TeamModeSelectorProps {
   mode: TeamMode
   onModeChange: (mode: TeamMode) => void
-  shouldCollapse?: boolean
-  onCollapseHandled?: () => void
 }
 
-export default function TeamModeSelector({
-  mode,
-  onModeChange,
-  shouldCollapse,
-  onCollapseHandled,
-}: TeamModeSelectorProps) {
+export default function TeamModeSelector({ mode, onModeChange }: TeamModeSelectorProps) {
   const { t } = useTranslation()
   const [isExpanded, setIsExpanded] = useState(false)
-
-  // Handle collapse from parent (after dialog confirmation)
-  React.useEffect(() => {
-    if (shouldCollapse) {
-      setIsExpanded(false)
-      onCollapseHandled?.()
-    }
-  }, [shouldCollapse, onCollapseHandled])
 
   // Mode info with description and image
   const modeInfo = useMemo(() => {
@@ -94,31 +79,31 @@ export default function TeamModeSelector({
               onValueChange={value => {
                 onModeChange(value as TeamMode)
               }}
-              className="w-full grid grid-cols-5 gap-2"
+              className="w-full grid grid-cols-3 gap-2"
             >
-              {(['solo', 'pipeline', 'route', 'coordinate', 'collaborate'] as TeamMode[]).map(
-                opt => (
-                  <div key={opt} className="flex items-center">
-                    <RadioGroupItem
-                      value={opt}
-                      id={`selector-mode-${opt}`}
-                      className="peer sr-only"
-                    />
-                    <label
-                      htmlFor={`selector-mode-${opt}`}
-                      className={`
-                      flex items-center justify-center w-full px-3 py-1.5 text-sm font-medium
+              {getSelectableTeamModes().map(opt => (
+                <div key={opt} className="flex items-center">
+                  <RadioGroupItem
+                    value={opt}
+                    id={`selector-mode-${opt}`}
+                    className="peer sr-only"
+                    data-testid={`select-mode-radio-${opt}`}
+                  />
+                  <label
+                    htmlFor={`selector-mode-${opt}`}
+                    data-testid={`select-mode-label-${opt}`}
+                    className={`
+                      flex items-center justify-center w-full min-w-[44px] h-11 px-3 text-sm font-medium
                       rounded-md cursor-pointer transition-colors
                       border border-border
                       peer-data-[state=checked]:bg-primary peer-data-[state=checked]:text-primary-foreground peer-data-[state=checked]:border-primary
                       hover:bg-accent hover:text-accent-foreground
                     `}
-                    >
-                      {t(`team_model.${opt}`)}
-                    </label>
-                  </div>
-                )
-              )}
+                  >
+                    {t(`team_model.${opt}`)}
+                  </label>
+                </div>
+              ))}
             </RadioGroup>
 
             {/* Divider */}

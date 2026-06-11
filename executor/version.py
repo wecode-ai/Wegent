@@ -5,6 +5,7 @@
 """Version utilities - reads version from pyproject.toml or embedded value."""
 
 import importlib.metadata
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -20,14 +21,19 @@ def get_version() -> str:
     """Get executor version.
 
     Priority:
-    1. Embedded version (for PyInstaller builds)
-    2. Package metadata (for installed packages)
-    3. pyproject.toml (for development)
+    1. WEGENT_EXECUTOR_VERSION environment override
+    2. Embedded version (for PyInstaller builds)
+    3. Package metadata (for installed packages)
+    4. pyproject.toml (for development)
 
     Returns:
         Version string (e.g., "1.0.0")
     """
     global _version_cache
+
+    env_version = os.environ.get("WEGENT_EXECUTOR_VERSION")
+    if env_version and env_version.strip():
+        return env_version.strip()
 
     if _version_cache is not None:
         return _version_cache

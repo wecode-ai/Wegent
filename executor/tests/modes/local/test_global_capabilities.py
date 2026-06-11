@@ -9,7 +9,28 @@ from executor.modes.local.capabilities import (
     GlobalCapabilityStore,
     ManagedCapabilityManifest,
     default_manifest_path,
+    is_project_task,
 )
+from shared.models.execution import ExecutionRequest
+
+
+def test_wework_standalone_chat_uses_global_capabilities():
+    request = ExecutionRequest(
+        task_id=1901,
+        project_id=0,
+        standalone_chat_workspace=True,
+    )
+
+    assert is_project_task(request) is True
+
+
+def test_frontend_project_zero_chat_keeps_task_local_capabilities():
+    request = ExecutionRequest(
+        task_id=1902,
+        project_id=0,
+    )
+
+    assert is_project_task(request) is False
 
 
 def test_project_runtime_uses_global_claude_capability_dirs_without_merging_global_mcp(
@@ -68,38 +89,20 @@ def test_project_runtime_uses_global_claude_capability_dirs_without_merging_glob
     assert options["mcp_servers"] == {
         "task_only": {"type": "http", "url": "https://task.example/mcp"}
     }
+    assert options["env"]["CLAUDE_CONFIG_DIR"] == str(tmp_path / ".claude")
     assert options["env"]["SKILLS_DIR"] == str(tmp_path / ".claude" / "skills")
     task_skills_dir = tmp_path / "task" / ".claude" / "skills"
-    assert task_skills_dir.is_symlink()
-    assert task_skills_dir.resolve() == (tmp_path / ".claude" / "skills").resolve()
     task_plugins_dir = tmp_path / "task" / ".claude" / "plugins"
-    assert task_plugins_dir.is_symlink()
-    assert task_plugins_dir.resolve() == (tmp_path / ".claude" / "plugins").resolve()
-    task_settings = json.loads(
-        (tmp_path / "task" / ".claude" / "settings.json").read_text()
-    )
-    assert task_settings == {
-        "enabledPlugins": {
-            "superpowers@claude-plugins-official": True,
-            "context7@claude-plugins-official": True,
-        },
-        "extraKnownMarketplaces": {
-            "claude-code-warp": {
-                "source": {
-                    "source": "github",
-                    "repo": "warpdotdev/claude-code-warp",
-                }
-            }
-        },
-    }
+    assert not task_skills_dir.exists()
+    assert not task_plugins_dir.exists()
 
 
 def test_default_manifest_path_lives_with_device_config(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.delenv("WEGENT_EXECUTOR_HOME", raising=False)
 
-    assert (
-        default_manifest_path() == tmp_path / ".wegent-executor" / "capabilities.json"
+    assert default_manifest_path() == (
+        tmp_path / ".wegent-executor" / "capabilities" / "manifest.json"
     )
 
 
@@ -123,6 +126,8 @@ def test_manifest_store_records_skills_and_preserves_mcp_section(tmp_path):
     assert written["mcps"] == {"wegent__old_docs": {"id": "dingtalk/old_docs"}}
     assert written["skills"] == {
         "browser": {
+            "managed": True,
+            "name": "browser",
             "skill_id": 101,
             "namespace": "default",
             "updated_at": written["skills"]["browser"]["updated_at"],
@@ -238,5 +243,97 @@ def test_reporter_marks_local_skills_plugins_and_managed_capabilities(
                     "path": "skills/context7",
                 }
             ],
+        }
+    ]
+
+
+def test_reporter_scans_managed_plugin_store_when_claude_cache_path_is_missing(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    skills_root = tmp_path / ".claude" / "skills"
+    plugins_root = tmp_path / ".claude" / "plugins"
+    plugins_root.mkdir(parents=True)
+    missing_cache_path = plugins_root / "cache" / "wegent" / "superpowers" / "5.0.7"
+    store_plugin_path = (
+        tmp_path
+        / ".wegent-executor"
+        / "capabilities"
+        / "store"
+        / "plugins"
+        / "1614-wegent-superpowers-5.0.7"
+    )
+    plugin_skill_path = store_plugin_path / "skills" / "systematic-debugging"
+    plugin_skill_path.mkdir(parents=True)
+    (plugin_skill_path / "SKILL.md").write_text(
+        "---\n"
+        "name: systematic-debugging\n"
+        "description: Use when encountering bugs.\n"
+        "---\n"
+        "# Systematic Debugging\n"
+    )
+    (plugins_root / "installed_plugins.json").write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "plugins": {
+                    "superpowers@wegent": [
+                        {
+                            "scope": "user",
+                            "installPath": str(missing_cache_path),
+                            "version": "5.0.7",
+                            "installedAt": "2026-06-09T08:45:55.290Z",
+                            "lastUpdated": "2026-06-09T08:45:55.290Z",
+                        }
+                    ]
+                },
+            }
+        )
+    )
+    manifest = ManagedCapabilityManifest(
+        path=tmp_path / ".wegent-executor" / "capabilities.json"
+    )
+    manifest.save(
+        {
+            "version": 1,
+            "revision": 1,
+            "skills": {},
+            "plugins": {
+                "superpowers@wegent": {
+                    "installed_plugin_id": 1614,
+                    "managed": True,
+                    "store_path": str(store_plugin_path),
+                    "version": "5.0.7",
+                    "component_states": {"skill:systematic-debugging": True},
+                }
+            },
+            "mcps": {},
+        }
+    )
+    reporter = GlobalCapabilityReporter(
+        skills_dir=skills_root,
+        plugins_dir=plugins_root,
+        manifest=manifest,
+    )
+
+    report = reporter.build_report(force_full=True)
+
+    assert report["plugins"] == [
+        {
+            "name": "superpowers",
+            "marketplace": "wegent",
+            "scope": "user",
+            "version": "5.0.7",
+            "source": "wegent",
+            "installed_at": "2026-06-09T08:45:55.290Z",
+            "last_updated": "2026-06-09T08:45:55.290Z",
+            "skills": [
+                {
+                    "name": "systematic-debugging",
+                    "description": "Use when encountering bugs.",
+                    "path": "skills/systematic-debugging",
+                }
+            ],
+            "installed_plugin_id": 1614,
         }
     ]

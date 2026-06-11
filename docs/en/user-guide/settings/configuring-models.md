@@ -32,7 +32,7 @@ Bot = Executor (Shell) + Model (Brain) + Prompt (Personality)
 ```
 
 **Analogy**:
-- **Executor (Shell)**: The runtime environment (ClaudeCode, Agno, Dify, Chat)
+- **Executor (Shell)**: The runtime environment (ClaudeCode, Dify, Chat)
 - **Model**: The AI brain (Claude, GPT-4, Gemini)
 - **Prompt**: The personality and expertise
 

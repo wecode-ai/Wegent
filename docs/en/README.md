@@ -74,13 +74,13 @@ Detailed technical references:
 Define and run personalized agent teams through YAML configuration with web UI - no secondary development required.
 
 ### ⚙️ Multi-Engine Architecture
-Built on Agno and Claude Code agent engines, supporting both dialogue and coding modes.
+Built on Chat, Claude Code, and Dify execution paths, supporting dialogue, coding, and workflow modes.
 
 ### 🔒 Isolated Sandbox Environments
 Each agent team runs in an independent sandbox, enabling multiple teams to execute simultaneously.
 
 ### 🤝 Advanced Collaboration Modes
-Dialogue mode supports parallel, leader-based, and other agent collaboration patterns for complex workflows.
+Agent teams support solo, pipeline, and coordination patterns for complex workflows.
 
 ### 💻 AI Coding Integration
 Coding mode integrates with GitHub/GitLab and other code services to implement AI-driven development and code review workflows.

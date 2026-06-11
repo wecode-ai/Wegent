@@ -335,7 +335,7 @@ function renderUserContent(content: string) {
       <a
         key={`skill-${start}`}
         href={href}
-        className="inline-flex items-center rounded-md bg-muted px-1.5 py-0.5 font-medium text-text-primary underline decoration-text-muted"
+        className="inline-flex items-center rounded-md bg-primary/10 px-1.5 py-0.5 font-medium text-primary underline decoration-primary/40"
         onClick={event => event.preventDefault()}
       >
         {`$${skillName}`}
@@ -368,13 +368,13 @@ function AssistantMessage({
   const hasBlocks = message.blocks && message.blocks.length > 0
   const hasContent = Boolean(message.content)
   const isStreaming = message.status === 'streaming'
-  const shouldShowProcessing = hasBlocks || isStreaming
+  const isThinking = isStreaming && !hasContent && !hasBlocks
 
   return (
     <div className="group min-w-0 overflow-x-hidden text-[13px] leading-6 text-text-primary">
-      {shouldShowProcessing && (
+      {hasBlocks && (
         <ToolBlocksDisplay
-          blocks={message.blocks ?? []}
+          blocks={message.blocks!}
           isStreaming={isStreaming}
           startedAt={getTurnStartMs(message.createdAt)}
         />
@@ -422,13 +422,19 @@ function AssistantMessage({
                 <td className="border-b border-border px-3 py-2">{children}</td>
               ),
               a: ({ href, children }) => (
-                <a href={href} className="break-words text-blue-600 underline" target="_blank" rel="noopener noreferrer">{children}</a>
+                <a href={href} className="break-words text-primary underline" target="_blank" rel="noopener noreferrer">{children}</a>
               ),
             }}
           >
             {message.content}
           </ReactMarkdown>
         </div>
+      )}
+      {isThinking && (
+        <span className="text-text-muted">正在思考</span>
+      )}
+      {isStreaming && hasContent && (
+        <span className="text-text-muted">正在思考</span>
       )}
       {message.status === 'failed' && message.error && (
         <p className="mt-2 text-xs text-red-500">{message.error}</p>

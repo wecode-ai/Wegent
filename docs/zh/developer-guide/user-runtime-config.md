@@ -34,15 +34,37 @@ sidebar_position: 26
 }
 ```
 
-资源仍按 Kind 规则用 `user_id + namespace + name` 定位。`name` 是运行时标识，例如 `codex`；后续扩展 Claude 时新增 `claude` 资源即可。
+个人代理配置使用独立的用户级 Kind 资源，避免绑定到某一个运行时：
 
-“是否启用个人配置”不存放在 `UserRuntimeConfig` 中，而是作为用户偏好存放在 `users.preferences`：
+```json
+{
+  "apiVersion": "agent.wecode.io/v1",
+  "kind": "UserProxyConfig",
+  "metadata": {
+    "name": "default",
+    "namespace": "default"
+  },
+  "spec": {
+    "proxy": {
+      "encryptedUrl": "...",
+      "sha256": "...",
+      "updatedAt": "..."
+    },
+    "updatedAt": "..."
+  }
+}
+```
+
+资源仍按 Kind 规则用 `user_id + namespace + name` 定位。`UserRuntimeConfig` 的 `name` 是运行时标识，例如 `codex`；后续扩展 Claude 时新增 `claude` 资源即可。`UserProxyConfig` 的 `name` 固定为 `default`，表示当前用户的默认个人代理。
+
+“是否启用个人配置”和“该运行时是否使用个人代理”不存放在 Kind 中，而是作为用户偏好存放在 `users.preferences`：
 
 ```json
 {
   "runtime_configs": {
     "codex": {
-      "use_user_config": true
+      "use_user_config": true,
+      "use_proxy": true
     }
   }
 }
@@ -53,7 +75,17 @@ sidebar_position: 26
 - 上传内容必须是合法 JSON，并且顶层必须是 object。
 - 后端使用 `shared.utils.crypto.encrypt_sensitive_data()` 加密后存储。
 - API 响应只返回是否已配置、更新时间、目标路径和摘要，不返回明文或密文。
+- 代理 URL 也加密存储，API 只返回脱敏后的展示值。
 - 前端不得在状态、toast 或同步结果中展示认证内容。
+
+## 执行代理
+
+个人代理配置只在执行期注入 executor，不下发到设备 auth 文件。后端在构建执行请求时，如果用户为 `codex` 启用了 `use_proxy` 且 `UserProxyConfig/default` 已保存代理 URL，会把明文代理 URL 放入执行请求顶层的 `proxy.url`。消费层根据自己的运行时开关决定是否使用该代理。
+
+executor 启动 Codex SDK 时把代理 URL 注入为 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY` 以及对应的小写变量。`NO_PROXY` 的规则是：
+
+- 如果 executor 原有环境已经配置 `NO_PROXY` 或 `no_proxy`，沿用原值。
+- 如果没有配置，默认使用 `localhost,127.0.0.1,::1,host.docker.internal`，避免本地 stdio/localhost 类访问走代理。
 
 ## 设备心跳同步
 
