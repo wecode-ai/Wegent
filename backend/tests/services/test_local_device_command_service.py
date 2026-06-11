@@ -4,6 +4,8 @@
 
 """Tests for local device command RPC service."""
 
+import gzip
+import hashlib
 import json
 import os
 import subprocess
@@ -11,6 +13,153 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+
+
+def _run_git(repo, *args):
+    return subprocess.run(
+        ["git", "-C", str(repo), *args],
+        check=True,
+        capture_output=True,
+    ).stdout
+
+
+def _create_turn_file_changes_artifact(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _run_git(repo, "init", "-q")
+    _run_git(repo, "config", "user.email", "tests@example.com")
+    _run_git(repo, "config", "user.name", "Tests")
+    changed_file = repo / "changed.txt"
+    changed_file.write_text("before\n", encoding="utf-8")
+    _run_git(repo, "add", "--all")
+    _run_git(repo, "commit", "-qm", "initial")
+    changed_file.write_text("after\n", encoding="utf-8")
+    patch = _run_git(repo, "diff", "--binary", "HEAD")
+    executor_home = tmp_path / "executor-home"
+    artifact_dir = executor_home / "artifacts" / "turn-file-changes" / "10" / "20"
+    artifact_dir.mkdir(parents=True)
+    (artifact_dir / "changes.patch.gz").write_bytes(gzip.compress(patch))
+    (artifact_dir / "metadata.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "task_id": 10,
+                "subtask_id": 20,
+                "workspace_path": str(repo.resolve()),
+                "checksum": hashlib.sha256(patch).hexdigest(),
+            }
+        ),
+        encoding="utf-8",
+    )
+    return repo, executor_home
+
+
+def test_turn_file_changes_commands_are_registered():
+    from app.services.device.command_registry import resolve_local_device_command
+
+    review = resolve_local_device_command("turn_file_changes_review", {})
+    revert = resolve_local_device_command("turn_file_changes_revert", {})
+
+    assert review is not None
+    assert revert is not None
+    assert review.post_processor == "json"
+    assert revert.post_processor == "json"
+
+
+@pytest.mark.parametrize(
+    "artifact_id",
+    [
+        "../../etc/passwd",
+        "turn-file-changes/1/2/../../../secret",
+    ],
+)
+def test_turn_file_changes_command_rejects_invalid_artifact_id(
+    tmp_path,
+    artifact_id,
+):
+    from app.services.device.command_registry import TURN_FILE_CHANGES_SCRIPT
+
+    result = subprocess.run(
+        ["python3", "-c", TURN_FILE_CHANGES_SCRIPT, "review", artifact_id],
+        cwd=tmp_path,
+        env={**os.environ, "WEGENT_EXECUTOR_HOME": str(tmp_path / "home")},
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "invalid artifact id" in result.stdout
+
+
+def test_turn_file_changes_review_returns_validated_diff(tmp_path):
+    from app.services.device.command_registry import TURN_FILE_CHANGES_SCRIPT
+
+    repo, executor_home = _create_turn_file_changes_artifact(tmp_path)
+    result = subprocess.run(
+        [
+            "python3",
+            "-c",
+            TURN_FILE_CHANGES_SCRIPT,
+            "review",
+            "turn-file-changes/10/20",
+        ],
+        cwd=repo,
+        env={**os.environ, "WEGENT_EXECUTOR_HOME": str(executor_home)},
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(result.stdout)
+    assert payload["success"] is True
+    assert payload["diff"].startswith("diff --git a/changed.txt b/changed.txt")
+
+
+def test_turn_file_changes_revert_is_conflict_safe(tmp_path):
+    from app.services.device.command_registry import TURN_FILE_CHANGES_SCRIPT
+
+    repo, executor_home = _create_turn_file_changes_artifact(tmp_path)
+    (repo / "changed.txt").write_text("later change\n", encoding="utf-8")
+    result = subprocess.run(
+        [
+            "python3",
+            "-c",
+            TURN_FILE_CHANGES_SCRIPT,
+            "revert",
+            "turn-file-changes/10/20",
+        ],
+        cwd=repo,
+        env={**os.environ, "WEGENT_EXECUTOR_HOME": str(executor_home)},
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert json.loads(result.stdout)["status"] == "conflicted"
+    assert (repo / "changed.txt").read_text(encoding="utf-8") == "later change\n"
+
+
+def test_turn_file_changes_revert_applies_reverse_patch(tmp_path):
+    from app.services.device.command_registry import TURN_FILE_CHANGES_SCRIPT
+
+    repo, executor_home = _create_turn_file_changes_artifact(tmp_path)
+    result = subprocess.run(
+        [
+            "python3",
+            "-c",
+            TURN_FILE_CHANGES_SCRIPT,
+            "revert",
+            "turn-file-changes/10/20",
+        ],
+        cwd=repo,
+        env={**os.environ, "WEGENT_EXECUTOR_HOME": str(executor_home)},
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert json.loads(result.stdout) == {"success": True, "status": "reverted"}
+    assert (repo / "changed.txt").read_text(encoding="utf-8") == "before\n"
 
 
 def test_local_device_command_registry_default_includes_diagnostic_commands():
