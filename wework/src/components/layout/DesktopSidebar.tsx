@@ -112,7 +112,7 @@ function SidebarRunningStatusPill({
   return (
     <span
       data-testid={testId}
-      className="flex h-5 min-w-7 items-center justify-center rounded-full border border-border bg-base px-1.5 text-primary shadow-sm group-hover/task:invisible group-focus-within/task:invisible"
+      className="flex h-5 min-w-7 items-center justify-center rounded-full border border-border bg-base px-1.5 text-primary shadow-sm"
     >
       <Loader2
         data-testid={spinnerTestId}
@@ -506,30 +506,32 @@ function ProjectTaskRow({
             </span>
           </span>
         )}
-        <div
-          data-testid={`project-chat-actions-${task.task_id}`}
-          className={SIDEBAR_ROW_ACTIONS_CLASS}
-        >
-          <ActionMenu
-            ariaLabel={t('workbench.chat_actions', '会话操作')}
-            testId={`project-chat-menu-${task.task_id}`}
-            triggerClassName="flex h-7 w-7 items-center justify-center text-text-secondary hover:text-text-primary"
-            items={[
-              {
-                label: t('workbench.archive_chat', '归档会话'),
-                icon: Archive,
-                testId: `archive-chat-${task.task_id}`,
-                onSelect: () => onArchiveTask(task.task_id),
-              },
-              {
-                label: t('workbench.rename_chat', '重命名会话'),
-                icon: Edit3,
-                testId: `rename-chat-${task.task_id}`,
-                onSelect: () => onRenameTask(task),
-              },
-            ]}
-          />
-        </div>
+        {!running ? (
+          <div
+            data-testid={`project-chat-actions-${task.task_id}`}
+            className={SIDEBAR_ROW_ACTIONS_CLASS}
+          >
+            <ActionMenu
+              ariaLabel={t('workbench.chat_actions', '会话操作')}
+              testId={`project-chat-menu-${task.task_id}`}
+              triggerClassName="flex h-7 w-7 items-center justify-center text-text-secondary hover:text-text-primary"
+              items={[
+                {
+                  label: t('workbench.archive_chat', '归档会话'),
+                  icon: Archive,
+                  testId: `archive-chat-${task.task_id}`,
+                  onSelect: () => onArchiveTask(task.task_id),
+                },
+                {
+                  label: t('workbench.rename_chat', '重命名会话'),
+                  icon: Edit3,
+                  testId: `rename-chat-${task.task_id}`,
+                  onSelect: () => onRenameTask(task),
+                },
+              ]}
+            />
+          </div>
+        ) : null}
       </div>
     </div>
   )
@@ -774,30 +776,32 @@ function RecentTaskRow({
             </span>
           </span>
         )}
-        <div
-          data-testid={`history-task-actions-${task.id}`}
-          className={SIDEBAR_ROW_ACTIONS_CLASS}
-        >
-          <ActionMenu
-            ariaLabel={t('workbench.chat_actions', '会话操作')}
-            testId={`history-task-menu-${task.id}`}
-            triggerClassName="flex h-7 w-7 items-center justify-center text-text-secondary hover:text-text-primary"
-            items={[
-              {
-                label: t('workbench.archive_chat', '归档会话'),
-                icon: Archive,
-                testId: `archive-history-chat-${task.id}`,
-                onSelect: () => onArchiveTask(task.id),
-              },
-              {
-                label: t('workbench.rename_chat', '重命名会话'),
-                icon: Edit3,
-                testId: `rename-history-chat-${task.id}`,
-                onSelect: () => onRenameTask(task),
-              },
-            ]}
-          />
-        </div>
+        {!running ? (
+          <div
+            data-testid={`history-task-actions-${task.id}`}
+            className={SIDEBAR_ROW_ACTIONS_CLASS}
+          >
+            <ActionMenu
+              ariaLabel={t('workbench.chat_actions', '会话操作')}
+              testId={`history-task-menu-${task.id}`}
+              triggerClassName="flex h-7 w-7 items-center justify-center text-text-secondary hover:text-text-primary"
+              items={[
+                {
+                  label: t('workbench.archive_chat', '归档会话'),
+                  icon: Archive,
+                  testId: `archive-history-chat-${task.id}`,
+                  onSelect: () => onArchiveTask(task.id),
+                },
+                {
+                  label: t('workbench.rename_chat', '重命名会话'),
+                  icon: Edit3,
+                  testId: `rename-history-chat-${task.id}`,
+                  onSelect: () => onRenameTask(task),
+                },
+              ]}
+            />
+          </div>
+        ) : null}
       </div>
     </div>
   )

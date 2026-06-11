@@ -1922,10 +1922,12 @@ describe('DesktopWorkbenchLayout', () => {
       'rounded-full',
       'border',
     )
+    expect(screen.queryByTestId('project-chat-actions-31')).not.toBeInTheDocument()
     expect(screen.getByTestId('history-task-running-pill-41')).toHaveClass(
       'rounded-full',
       'border',
     )
+    expect(screen.queryByTestId('history-task-actions-41')).not.toBeInTheDocument()
   })
 
   test('does not show spinners for stale server running statuses on initial lists', () => {
