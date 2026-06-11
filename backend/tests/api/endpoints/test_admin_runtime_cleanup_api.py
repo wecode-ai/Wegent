@@ -183,6 +183,63 @@ def test_admin_runtime_cleanup_with_task_id_skips_recent_sandbox(
     job_service.cleanup_stale_task_executor.assert_not_called()
 
 
+def test_admin_runtime_cleanup_with_task_id_archives_stale_sandbox(
+    test_client: TestClient, test_admin_token: str
+):
+    with (
+        patch(
+            "app.api.endpoints.admin.runtime_cleanup.job_service",
+            create=True,
+        ) as job_service,
+        patch(
+            "app.api.endpoints.admin.runtime_cleanup.get_executor_runtime_client",
+            create=True,
+        ) as get_runtime_client,
+    ):
+        job_service.cleanup_stale_task_executor = AsyncMock()
+        runtime_client = AsyncMock()
+        runtime_client.get_sandbox.return_value = (
+            {
+                "sandbox_id": "123",
+                "container_name": "sandbox-123",
+                "last_activity_at": time.time() - 25 * 3600,
+            },
+            None,
+        )
+        runtime_client.cleanup_sandbox_by_task_id.return_value = {
+            "target": "sandbox",
+            "task_id": 123,
+            "sandbox_id": "123",
+            "deleted": True,
+            "skipped": False,
+            "archived": True,
+            "archive_before_delete": True,
+            "reason": "sandbox_deleted",
+        }
+        get_runtime_client.return_value = runtime_client
+
+        response = test_client.post(
+            "/api/admin/runtime-cleanup/stale",
+            headers={"Authorization": f"Bearer {test_admin_token}"},
+            json={"task_id": 123, "inactive_hours": 24},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["archive_before_delete"] is True
+    assert payload["results"]["sandbox"]["deleted"] is True
+    assert payload["results"]["sandbox"]["archived"] is True
+    assert payload["results"]["sandbox"]["archive_before_delete"] is True
+    assert payload["results"]["sandbox"]["reason"] == "sandbox_deleted"
+    runtime_client.cleanup_sandbox_by_task_id.assert_awaited_once_with(
+        task_id=123,
+        dry_run=False,
+        archive_before_delete=True,
+    )
+    runtime_client.delete_sandbox.assert_not_called()
+    job_service.cleanup_stale_task_executor.assert_not_called()
+
+
 def test_admin_runtime_cleanup_rejects_non_admin_user(
     test_client: TestClient, test_token: str
 ):

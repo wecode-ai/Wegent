@@ -26,6 +26,7 @@ class RuntimeCleanupRequest(BaseModel):
     task_id: int = Field(ge=1)
     inactive_hours: int = Field(default=24, ge=1, le=720)
     dry_run: bool = False
+    archive_before_delete: bool = True
 
 
 class SandboxCleanupRequest(BaseModel):
@@ -48,6 +49,7 @@ async def _cleanup_stale_sandbox_for_task(
     sandbox_payload: Dict[str, Any],
     inactive_hours: int,
     dry_run: bool,
+    archive_before_delete: bool,
 ) -> Dict[str, Any]:
     """Clean up one sandbox after validating its inactivity window."""
     sandbox_id = str(sandbox_payload.get("sandbox_id") or task_id)
@@ -56,6 +58,7 @@ async def _cleanup_stale_sandbox_for_task(
         "sandbox_id": sandbox_id,
         "inactive_hours": inactive_hours,
         "dry_run": dry_run,
+        "archive_before_delete": archive_before_delete,
         "deleted": False,
         "skipped": True,
     }
@@ -84,20 +87,24 @@ async def _cleanup_stale_sandbox_for_task(
             "last_activity_at": _format_timestamp(last_activity_at),
         }
 
-    deleted, error = await runtime_client.delete_sandbox(sandbox_id)
-    if deleted:
-        return {
-            **result,
-            "deleted": True,
-            "skipped": False,
-            "reason": "sandbox_deleted",
-            "container_name": sandbox_payload.get("container_name"),
-        }
-
+    cleanup_result = await runtime_client.cleanup_sandbox_by_task_id(
+        task_id=task_id,
+        dry_run=False,
+        archive_before_delete=archive_before_delete,
+    )
+    deleted = bool(cleanup_result.get("deleted"))
     return {
         **result,
-        "reason": "delete_failed",
-        "error": error,
+        **cleanup_result,
+        "deleted": deleted,
+        "skipped": cleanup_result.get("skipped", not deleted),
+        "reason": cleanup_result.get(
+            "reason",
+            "sandbox_deleted" if deleted else "delete_failed",
+        ),
+        "last_activity_at": _format_timestamp(last_activity_at),
+        "eligible_after": _format_timestamp(eligible_after),
+        "container_name": sandbox_payload.get("container_name"),
     }
 
 
@@ -122,6 +129,7 @@ async def cleanup_stale_runtimes(
             sandbox_payload=sandbox_payload,
             inactive_hours=request.inactive_hours,
             dry_run=request.dry_run,
+            archive_before_delete=request.archive_before_delete,
         )
     else:
         if sandbox_error:
@@ -143,6 +151,7 @@ async def cleanup_stale_runtimes(
         "task_id": request.task_id,
         "inactive_hours": request.inactive_hours,
         "dry_run": request.dry_run,
+        "archive_before_delete": request.archive_before_delete,
         "requested_by": current_user.id,
         "results": results,
     }
