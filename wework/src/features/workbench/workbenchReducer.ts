@@ -115,6 +115,15 @@ function normalizeListExclusivity(state: WorkbenchState): WorkbenchState {
   return { ...state, recentTasks: dedupedRecentTasks }
 }
 
+function keepDevicesOnTransientEmpty(
+  currentDevices: DeviceInfo[],
+  nextDevices: DeviceInfo[],
+): DeviceInfo[] {
+  if (nextDevices.length > 0) return nextDevices
+  if (currentDevices.length > 0) return currentDevices
+  return nextDevices
+}
+
 function toProjectTask(task: Task): ProjectTask {
   return {
     id: task.id,
@@ -204,7 +213,7 @@ export function workbenchReducer(
         user: action.user,
         defaultTeam: action.defaultTeam,
         projects: action.projects,
-        devices: action.devices,
+        devices: keepDevicesOnTransientEmpty(state.devices, action.devices),
         recentTasks: action.recentTasks,
         currentProject:
           action.currentProject === undefined
@@ -221,7 +230,7 @@ export function workbenchReducer(
       const refreshedState = {
         ...state,
         projects: action.projects,
-        devices: action.devices,
+        devices: keepDevicesOnTransientEmpty(state.devices, action.devices),
         recentTasks: action.recentTasks,
         currentProject: state.currentProject
           ? action.projects.find(project => project.id === state.currentProject?.id) ?? null
@@ -244,7 +253,7 @@ export function workbenchReducer(
     case 'devices_refreshed':
       return {
         ...state,
-        devices: action.devices,
+        devices: keepDevicesOnTransientEmpty(state.devices, action.devices),
         standaloneDeviceId:
           action.standaloneDeviceId === undefined
             ? state.standaloneDeviceId

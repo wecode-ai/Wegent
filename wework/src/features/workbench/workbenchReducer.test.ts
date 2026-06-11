@@ -351,4 +351,54 @@ describe('workbenchReducer', () => {
       expect.objectContaining({ task_id: 42 }),
     ])
   })
+
+  test('keeps existing devices when a device refresh returns a transient empty list', () => {
+    const device = {
+      id: 1,
+      device_id: 'device-1',
+      name: 'Device 1',
+      status: 'online' as const,
+      is_default: false,
+      bind_shell: 'claudecode',
+      executor_version: '1.8.5',
+      update_available: true,
+    }
+    const state = {
+      ...initialWorkbenchState,
+      devices: [device],
+    }
+
+    const refreshed = workbenchReducer(state, {
+      type: 'devices_refreshed',
+      devices: [],
+    })
+
+    expect(refreshed.devices).toEqual([device])
+  })
+
+  test('keeps existing devices when worklist refresh returns a transient empty device list', () => {
+    const device = {
+      id: 1,
+      device_id: 'device-1',
+      name: 'Device 1',
+      status: 'online' as const,
+      is_default: false,
+      bind_shell: 'claudecode',
+      executor_version: '1.8.5',
+      update_available: true,
+    }
+    const state = {
+      ...initialWorkbenchState,
+      devices: [device],
+    }
+
+    const refreshed = workbenchReducer(state, {
+      type: 'lists_refreshed',
+      projects: [],
+      devices: [],
+      recentTasks: [],
+    })
+
+    expect(refreshed.devices).toEqual([device])
+  })
 })

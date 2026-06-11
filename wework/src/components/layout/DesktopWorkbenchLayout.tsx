@@ -100,6 +100,7 @@ interface DesktopWorkbenchLayoutProps {
   onRevertFileChanges?: (
     subtaskId: number,
   ) => Promise<TurnFileChangesSummary>
+  onRefreshWorkLists?: () => Promise<void>
   onLogout: () => void
 }
 
@@ -158,6 +159,7 @@ export function DesktopWorkbenchLayout({
   onCancelGuidanceMessage = () => {},
   onLoadFileChangesDiff,
   onRevertFileChanges,
+  onRefreshWorkLists,
   onLogout,
 }: DesktopWorkbenchLayoutProps) {
   const { sidebarCollapsed, setSidebarCollapsed } =
@@ -329,6 +331,7 @@ export function DesktopWorkbenchLayout({
             setSettingsOpen(true)
             navigateTo('/settings')
           }}
+          onRefreshWorkLists={onRefreshWorkLists}
           onLogout={onLogout}
         />
       )}
