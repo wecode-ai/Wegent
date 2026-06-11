@@ -26,16 +26,27 @@ Current behavior: boolean values enter business logic (false→0)
 Expected behavior: returns 422
 """
 
+from unittest.mock import MagicMock, patch
+
 import pytest
 from fastapi.testclient import TestClient
+
+_app = None
 
 
 @pytest.fixture
 def client():
     """Create test client."""
-    from executor_manager.main import app
+    global _app
+    if _app is None:
+        with patch(
+            "executor_manager.executors.docker.executor.subprocess.run",
+            return_value=MagicMock(stdout="Docker version 27.0.0", returncode=0),
+        ):
+            from executor_manager.routers.routers import app
 
-    return TestClient(app)
+            _app = app
+    return TestClient(_app)
 
 
 class TestCancelTaskRequestStrictIntValidation:
