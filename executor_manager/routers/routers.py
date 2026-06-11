@@ -1099,11 +1099,11 @@ class OpenAIResponsesRequest(BaseModel):
     # Custom metadata for task identification
     metadata: Optional[Dict[str, Any]] = None
 
-    # Model configuration
-    model_config_data: Optional[Dict[str, Any]] = None
+    # Model configuration (alias "model_config" aligns with downstream executor contract)
+    model_config_data: Optional[Dict[str, Any]] = Field(None, alias="model_config")
 
     class Config:
-        # Allow extra fields for forward compatibility
+        populate_by_name = True
         extra = "allow"
 
 
@@ -1328,7 +1328,7 @@ async def openai_responses(request: OpenAIResponsesRequest, http_request: Reques
     """
     client_ip = http_request.client.host if http_request.client else "unknown"
 
-    request_data = request.model_dump()
+    request_data = request.model_dump(by_alias=True, exclude_none=True)
 
     # Extract task identification from metadata
     metadata = request.metadata or {}
