@@ -35,6 +35,39 @@ echo -e "${GREEN}  Wegent E2E Test Local Runner${NC}"
 echo -e "${GREEN}========================================${NC}"
 echo -e "${YELLOW}Logs will be saved to: $LOG_DIR${NC}"
 
+generate_internal_service_token() {
+    if command -v openssl >/dev/null 2>&1; then
+        openssl rand -hex 32
+        return
+    fi
+
+    if command -v python3 >/dev/null 2>&1; then
+        python3 - << 'PY'
+import secrets
+
+print(secrets.token_hex(32))
+PY
+        return
+    fi
+
+    return 1
+}
+
+ensure_internal_service_token() {
+    if [ -n "${INTERNAL_SERVICE_TOKEN:-}" ]; then
+        export INTERNAL_SERVICE_TOKEN
+        return
+    fi
+
+    INTERNAL_SERVICE_TOKEN=$(generate_internal_service_token) || {
+        echo -e "${RED}Error: Unable to generate INTERNAL_SERVICE_TOKEN. Install openssl or python3.${NC}"
+        exit 1
+    }
+    export INTERNAL_SERVICE_TOKEN
+}
+
+ensure_internal_service_token
+
 # Function to cleanup on exit
 cleanup() {
     echo -e "\n${YELLOW}Cleaning up...${NC}"
@@ -243,6 +276,7 @@ export E2E_BASE_URL="http://localhost:3000"
 # Parse command line arguments
 E2E_MODE="${1:-run}"
 
+set +e
 case "$E2E_MODE" in
     "ui")
         echo "Running E2E tests in UI mode..."
@@ -267,6 +301,7 @@ case "$E2E_MODE" in
 esac
 
 E2E_EXIT_CODE=$?
+set -e
 
 echo -e "\n${GREEN}========================================${NC}"
 if [ $E2E_EXIT_CODE -eq 0 ]; then

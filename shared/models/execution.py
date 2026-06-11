@@ -136,6 +136,7 @@ class ExecutionRequest:
     workspace_source: Optional[str] = None
     project_workspace_path: Optional[str] = None
     execution_target_type: Optional[str] = None
+    device_id: Optional[str] = None
 
     # === Git Configuration (from Task) ===
     git_domain: Optional[str] = None

@@ -4,12 +4,19 @@ import { redirectToLogin } from '@/features/auth/redirect'
 export class ApiError extends Error {
   status: number
   errorCode?: string | number
+  detail?: unknown
 
-  constructor(message: string, status: number, errorCode?: string | number) {
+  constructor(
+    message: string,
+    status: number,
+    errorCode?: string | number,
+    detail?: unknown,
+  ) {
     super(message)
     this.name = 'ApiError'
     this.status = status
     this.errorCode = errorCode
+    this.detail = detail
   }
 }
 
@@ -33,14 +40,20 @@ async function parseError(response: Response): Promise<ApiError> {
   const errorText = await response.text()
   let message = errorText
   let errorCode: string | number | undefined
+  let detail: unknown
 
   try {
     const json = JSON.parse(errorText)
+    detail = json.detail
     if (typeof json.detail === 'string') {
       message = json.detail
-    } else if (json.detail?.error_code) {
-      message = String(json.detail.error_code)
-      errorCode = json.detail.error_code
+    } else if (json.detail && typeof json.detail === 'object') {
+      if (typeof json.detail.message === 'string') {
+        message = json.detail.message
+      }
+      if (json.detail.error_code || json.detail.code) {
+        errorCode = json.detail.error_code ?? json.detail.code
+      }
     }
     if (json.error_code) {
       errorCode = json.error_code
@@ -49,7 +62,7 @@ async function parseError(response: Response): Promise<ApiError> {
     message = errorText || `HTTP ${response.status}`
   }
 
-  return new ApiError(message, response.status, errorCode)
+  return new ApiError(message, response.status, errorCode, detail)
 }
 
 export function createHttpClient(options: HttpClientOptions): HttpClient {

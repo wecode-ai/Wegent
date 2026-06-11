@@ -158,4 +158,50 @@ describe('messageReducer', () => {
       blocks: [{ id: 'thinking-real', type: 'thinking', status: 'done' }],
     })
   })
+
+  test('stores file changes on completion and updates them after revert', () => {
+    const activeFileChanges = {
+      version: 1 as const,
+      status: 'active' as const,
+      artifact_id: 'turn-1',
+      device_id: 'device-1',
+      workspace_path: '/workspace/project',
+      file_count: 1,
+      additions: 3,
+      deletions: 1,
+      files: [
+        {
+          path: 'src/main.ts',
+          change_type: 'modified' as const,
+          additions: 3,
+          deletions: 1,
+          binary: false,
+        },
+      ],
+    }
+    const state = messageReducer(
+      messageReducer([], {
+        type: 'assistant_started',
+        taskId: 1,
+        subtaskId: 9,
+      }),
+      {
+        type: 'assistant_done',
+        subtaskId: 9,
+        fileChanges: activeFileChanges,
+      },
+    )
+    const reverted = messageReducer(state, {
+      type: 'file_changes_updated',
+      subtaskId: 9,
+      fileChanges: {
+        ...activeFileChanges,
+        status: 'reverted',
+        reverted_at: '2026-06-11T10:00:00Z',
+      },
+    })
+
+    expect(state[0].fileChanges).toEqual(activeFileChanges)
+    expect(reverted[0].fileChanges?.status).toBe('reverted')
+  })
 })

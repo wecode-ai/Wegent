@@ -143,6 +143,7 @@ class CodeXAgent(Agent):
 
             input_text = self._build_turn_input()
             effort, summary = self._build_reasoning_params()
+            await self.start_turn_file_change_tracking()
             self._turn = await self._thread.turn(
                 input_text,
                 cwd=self.project_path,
@@ -155,10 +156,14 @@ class CodeXAgent(Agent):
             async for event in self._turn.stream():
                 status = await mapper.handle(event)
                 if status is not None:
+                    if status != TaskStatus.COMPLETED:
+                        await self.abort_turn_file_change_tracking()
                     return status
+            await self.abort_turn_file_change_tracking()
             return TaskStatus.FAILED
         except Exception as exc:
             logger.exception("CodeXAgent execution failed: %s", exc)
+            await self.abort_turn_file_change_tracking()
             await self.emitter.error(str(exc), "execution_error")
             return TaskStatus.FAILED
         finally:

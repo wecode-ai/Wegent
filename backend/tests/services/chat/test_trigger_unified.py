@@ -92,6 +92,35 @@ def test_apply_user_runtime_config_skips_non_codex_models(monkeypatch):
 
 @pytest.mark.unit
 class TestBuildExecutionRequestUserSubtaskId:
+    async def test_propagates_device_id_to_execution_request(self):
+        from app.services.chat.trigger import unified as trigger_unified
+
+        mock_db = MagicMock()
+        request_from_builder = ExecutionRequest(task_id=1, subtask_id=2)
+        mock_builder = MagicMock()
+        mock_builder.build.return_value = request_from_builder
+
+        with patch.object(trigger_unified, "SessionLocal", return_value=mock_db):
+            with patch(
+                "app.services.execution.TaskRequestBuilder",
+                return_value=mock_builder,
+            ):
+                task = MagicMock(id=1, json={})
+                assistant_subtask = MagicMock(id=2)
+                team = MagicMock()
+                user = MagicMock(id=7)
+
+                result = await trigger_unified.build_execution_request(
+                    task=task,
+                    assistant_subtask=assistant_subtask,
+                    team=team,
+                    user=user,
+                    message="hello",
+                    device_id="device-1",
+                )
+
+        assert result.device_id == "device-1"
+
     async def test_propagates_user_subtask_id_to_execution_request(self):
         """Ensure user_subtask_id is always propagated for downstream RAG persistence."""
         from app.services.chat.trigger import unified as trigger_unified

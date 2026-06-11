@@ -40,6 +40,10 @@ describe('messageService canUseChatContexts', () => {
     expect(canUseChatContexts('code', null)).toBe(false)
   })
 
+  it('returns true for ClaudeCode shell teams in chat mode', () => {
+    expect(canUseChatContexts('chat', createTeam('ClaudeCode'))).toBe(true)
+  })
+
   it('returns true for chat shell teams in chat mode', () => {
     const team = {
       id: 1,

@@ -9,7 +9,7 @@ import {
   loadProjectEnvironment,
 } from '@/api/environment'
 import { createGitApi } from '@/api/git'
-import { createHttpClient } from '@/api/http'
+import { ApiError, createHttpClient } from '@/api/http'
 import { createModelApi } from '@/api/models'
 import { createProjectApi } from '@/api/projects'
 import { createSkillApi } from '@/api/skills'
@@ -54,6 +54,7 @@ import type {
   Task,
   TaskDetail,
   TaskListResponse,
+  TurnFileChangesSummary,
   UnifiedModel,
   UnifiedSkill,
   User,
@@ -74,6 +75,7 @@ import { useWorkbenchAttachments } from './useWorkbenchAttachments'
 import { useWorkbenchModels } from './useWorkbenchModels'
 import { useWorkbenchSkills } from './useWorkbenchSkills'
 import { messageReducer, normalizeBlockStatus } from './messageReducer'
+import { normalizeTurnFileChanges } from './turnFileChanges'
 import {
   initialWorkbenchState,
   workbenchReducer,
@@ -123,8 +125,17 @@ export interface WorkbenchServices {
     >['createGitWorkspaceProject']
   }
   gitApi?: ReturnType<typeof createGitApi>
-  taskApi: Omit<ReturnType<typeof createTaskApi>, 'searchTasks'> & {
+  taskApi: Omit<
+    ReturnType<typeof createTaskApi>,
+    'searchTasks' | 'getTurnFileChangesDiff' | 'revertTurnFileChanges'
+  > & {
     searchTasks?: ReturnType<typeof createTaskApi>['searchTasks']
+    getTurnFileChangesDiff?: ReturnType<
+      typeof createTaskApi
+    >['getTurnFileChangesDiff']
+    revertTurnFileChanges?: ReturnType<
+      typeof createTaskApi
+    >['revertTurnFileChanges']
   }
   deviceApi: ReturnType<typeof createDeviceApi>
   userApi?: ReturnType<typeof createUserApi>
@@ -217,6 +228,10 @@ export interface WorkbenchContextValue {
   sendQueuedAsGuidance: (id: string) => Promise<void>
   editQueuedMessage: (id: string) => void
   cancelGuidanceMessage: (id: string) => void
+  loadTurnFileChangesDiff: (subtaskId: number) => Promise<string>
+  revertTurnFileChanges: (
+    subtaskId: number,
+  ) => Promise<TurnFileChangesSummary>
 }
 
 interface WorkbenchProviderProps {
@@ -254,6 +269,7 @@ function getTaskRouteKey(taskId: number, projectId?: number): string {
 interface SubtaskResult {
   value?: string
   blocks?: unknown[]
+  fileChanges?: TurnFileChangesSummary
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -265,6 +281,7 @@ function getSubtaskResult(result: unknown): SubtaskResult | undefined {
   return {
     value: typeof result.value === 'string' ? result.value : undefined,
     blocks: Array.isArray(result.blocks) ? result.blocks : undefined,
+    fileChanges: normalizeTurnFileChanges(result.file_changes),
   }
 }
 
@@ -403,6 +420,7 @@ function subtaskToMessage(subtask: Subtask): WorkbenchMessage {
     status: subtask.status === 'FAILED' ? 'failed' : 'done',
     attachments: getSubtaskAttachments(subtask),
     blocks: blocks.length > 0 ? blocks : undefined,
+    fileChanges: result?.fileChanges,
     createdAt: subtask.created_at,
   }
 }
@@ -893,6 +911,7 @@ export function WorkbenchProvider({
               ? payload.result.value
               : undefined,
           blocks: getResultBlocks(payload.subtask_id, payload.result),
+          fileChanges: normalizeTurnFileChanges(payload.result.file_changes),
         })
       },
       onChatError: payload => {
@@ -1786,6 +1805,51 @@ export function WorkbenchProvider({
     setGuidanceMessages(items => items.filter(item => item.id !== id))
   }, [])
 
+  const loadTurnFileChangesDiff = useCallback(
+    async (subtaskId: number) => {
+      const loadDiff = resolvedServices.taskApi.getTurnFileChangesDiff
+      if (!loadDiff) throw new Error('File changes review is unavailable')
+      const response = await loadDiff(subtaskId)
+      return response.diff
+    },
+    [resolvedServices.taskApi],
+  )
+
+  const revertTurnFileChanges = useCallback(
+    async (subtaskId: number) => {
+      const revert = resolvedServices.taskApi.revertTurnFileChanges
+      if (!revert) throw new Error('File changes revert is unavailable')
+      try {
+        const response = await revert(subtaskId)
+        const fileChanges = normalizeTurnFileChanges(response.file_changes)
+        if (!fileChanges) {
+          throw new Error('Invalid file changes response')
+        }
+        dispatchMessages({
+          type: 'file_changes_updated',
+          subtaskId,
+          fileChanges,
+        })
+        return fileChanges
+      } catch (error) {
+        if (error instanceof ApiError && isRecord(error.detail)) {
+          const fileChanges = normalizeTurnFileChanges(
+            error.detail.file_changes,
+          )
+          if (fileChanges) {
+            dispatchMessages({
+              type: 'file_changes_updated',
+              subtaskId,
+              fileChanges,
+            })
+          }
+        }
+        throw error
+      }
+    },
+    [resolvedServices.taskApi],
+  )
+
   const pauseCurrentResponse = useCallback(async () => {
     if (!activeAssistantMessage?.subtaskId) return
 
@@ -2038,6 +2102,8 @@ export function WorkbenchProvider({
     sendQueuedAsGuidance,
     editQueuedMessage,
     cancelGuidanceMessage,
+    loadTurnFileChangesDiff,
+    revertTurnFileChanges,
   }
 
   return (
