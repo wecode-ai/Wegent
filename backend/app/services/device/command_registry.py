@@ -353,6 +353,156 @@ READ_RUNTIME_AUTH_FILE_COMMAND = (
     f"python3 -c {shlex.quote(READ_RUNTIME_AUTH_FILE_SCRIPT)}"
 )
 
+TURN_FILE_CHANGES_SCRIPT = """
+import gzip
+import hashlib
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+MAX_PATCH_BYTES = 20 * 1024 * 1024
+ARTIFACT_PATTERN = re.compile(
+    r"turn-file-changes/([1-9][0-9]*)/([1-9][0-9]*)"
+)
+
+
+def finish(payload, code=0):
+    print(json.dumps(payload, ensure_ascii=False))
+    sys.exit(code)
+
+
+def fail(message, code=64, status=None):
+    payload = {"success": False, "error": message}
+    if status:
+        payload["status"] = status
+    finish(payload, code)
+
+
+if len(sys.argv) != 3:
+    fail("mode and artifact id are required")
+
+mode = sys.argv[1]
+artifact_id = sys.argv[2]
+if mode not in {"review", "revert"}:
+    fail("invalid mode")
+
+match = ARTIFACT_PATTERN.fullmatch(artifact_id)
+if not match:
+    fail("invalid artifact id")
+
+task_id = int(match.group(1))
+subtask_id = int(match.group(2))
+executor_home = Path(
+    os.environ.get("WEGENT_EXECUTOR_HOME", "~/.wegent-executor")
+).expanduser()
+artifact_root = (executor_home / "artifacts").resolve()
+artifact_dir = (artifact_root / artifact_id).resolve()
+if artifact_root not in artifact_dir.parents:
+    fail("invalid artifact id")
+
+metadata_path = artifact_dir / "metadata.json"
+patch_path = artifact_dir / "changes.patch.gz"
+if not metadata_path.is_file() or not patch_path.is_file():
+    finish(
+        {
+            "success": False,
+            "status": "artifact_missing",
+            "error": "turn file changes artifact is missing",
+        }
+    )
+
+try:
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+except (OSError, json.JSONDecodeError) as exc:
+    fail(f"invalid artifact metadata: {exc}", code=65)
+
+if not isinstance(metadata, dict):
+    fail("invalid artifact metadata", code=65)
+if metadata.get("task_id") != task_id or metadata.get("subtask_id") != subtask_id:
+    fail("artifact metadata id mismatch", code=65)
+
+workspace = Path.cwd().resolve()
+try:
+    metadata_workspace = Path(str(metadata["workspace_path"])).resolve()
+except (KeyError, OSError):
+    fail("invalid artifact workspace", code=65)
+if metadata_workspace != workspace:
+    fail("artifact workspace mismatch", code=65)
+
+try:
+    with gzip.open(patch_path, "rb") as patch_file:
+        patch = patch_file.read(MAX_PATCH_BYTES + 1)
+except (OSError, gzip.BadGzipFile) as exc:
+    fail(f"failed to read artifact patch: {exc}", code=65)
+if len(patch) > MAX_PATCH_BYTES:
+    fail("artifact patch exceeds size limit", code=65)
+if hashlib.sha256(patch).hexdigest() != metadata.get("checksum"):
+    fail("artifact patch checksum mismatch", code=65)
+
+if mode == "review":
+    finish(
+        {
+            "success": True,
+            "diff": patch.decode("utf-8", errors="replace"),
+        }
+    )
+
+temp_path = None
+try:
+    with tempfile.NamedTemporaryFile(
+        prefix="wegent-validated-turn-",
+        suffix=".patch",
+        delete=False,
+    ) as temp_file:
+        temp_file.write(patch)
+        temp_path = Path(temp_file.name)
+
+    check = subprocess.run(
+        ["git", "apply", "--reverse", "--check", "--binary", str(temp_path)],
+        cwd=workspace,
+        capture_output=True,
+        text=True,
+    )
+    if check.returncode != 0:
+        finish(
+            {
+                "success": False,
+                "status": "conflicted",
+                "error": "patch does not apply",
+            }
+        )
+
+    apply_result = subprocess.run(
+        ["git", "apply", "--reverse", "--binary", str(temp_path)],
+        cwd=workspace,
+        capture_output=True,
+        text=True,
+    )
+    if apply_result.returncode != 0:
+        finish(
+            {
+                "success": False,
+                "status": "conflicted",
+                "error": "patch does not apply",
+            }
+        )
+    finish({"success": True, "status": "reverted"})
+finally:
+    if temp_path is not None:
+        temp_path.unlink(missing_ok=True)
+""".strip()
+
+TURN_FILE_CHANGES_REVIEW_COMMAND = (
+    f"python3 -c {shlex.quote(TURN_FILE_CHANGES_SCRIPT)} review"
+)
+TURN_FILE_CHANGES_REVERT_COMMAND = (
+    f"python3 -c {shlex.quote(TURN_FILE_CHANGES_SCRIPT)} revert"
+)
+
 
 DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
     "pwd": LocalDeviceCommandDefinition(command="pwd"),
@@ -436,6 +586,14 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
     ),
     "read_runtime_auth_file": LocalDeviceCommandDefinition(
         command=READ_RUNTIME_AUTH_FILE_COMMAND,
+        post_processor="json",
+    ),
+    "turn_file_changes_review": LocalDeviceCommandDefinition(
+        command=TURN_FILE_CHANGES_REVIEW_COMMAND,
+        post_processor="json",
+    ),
+    "turn_file_changes_revert": LocalDeviceCommandDefinition(
+        command=TURN_FILE_CHANGES_REVERT_COMMAND,
         post_processor="json",
     ),
 }

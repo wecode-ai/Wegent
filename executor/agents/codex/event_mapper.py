@@ -33,6 +33,7 @@ class CodeXEventMapper:
         self._pending_agent_delta_text = ""
         self._pending_agent_deltas: dict[str, str] = {}
         self._tool_contexts: dict[str, dict[str, Any]] = {}
+        self.native_turn_diff = ""
 
     async def handle(self, event: Any) -> Optional[TaskStatus]:
         method = getattr(event, "method", "")
@@ -71,6 +72,14 @@ class CodeXEventMapper:
 
         if method == "thread/tokenUsage/updated":
             self._handle_usage(payload)
+            return None
+
+        if method == "turn/diff/updated":
+            self.native_turn_diff = str(getattr(payload, "diff", "") or "")
+            logger.debug(
+                "Received native Codex turn diff: bytes=%s",
+                len(self.native_turn_diff.encode("utf-8")),
+            )
             return None
 
         if method == "turn/completed":
@@ -362,8 +371,10 @@ class CodeXEventMapper:
 
     @classmethod
     def _call_id(cls, item: Any) -> str:
-        value = cls._get(item, "call_id") or cls._get(item, "callId") or cls._get(
-            item, "id"
+        value = (
+            cls._get(item, "call_id")
+            or cls._get(item, "callId")
+            or cls._get(item, "id")
         )
         return str(value or "")
 
