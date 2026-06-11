@@ -560,6 +560,26 @@ function isRunningTaskStatus(status?: string) {
   )
 }
 
+function addRunningTasksFromWorkLists(
+  ids: Set<number>,
+  projects: ProjectWithTasks[],
+  recentTasks: Task[],
+) {
+  for (const project of projects) {
+    for (const task of project.tasks ?? []) {
+      if (task.task_id && isRunningTaskStatus(task.task_status ?? task.status)) {
+        ids.add(task.task_id)
+      }
+    }
+  }
+
+  for (const task of recentTasks) {
+    if (task.id && isRunningTaskStatus(task.status)) {
+      ids.add(task.id)
+    }
+  }
+}
+
 function normalizeGuidanceError(error?: string) {
   if (!error) return '引导发送失败'
   if (error.includes('Chat Shell')) {
@@ -1679,11 +1699,10 @@ export function WorkbenchProvider({
 
       if (!state.currentTask && ack.task_id) {
         const projectId = payload.project_id ?? state.currentProject?.id ?? 0
-        const routeProjectId = projectId > 0 ? projectId : undefined
         // Navigate to the canonical task route so a freshly created chat shares
         // the same URL shape as opening an existing one (path, not ?taskId=).
-        handledTaskRouteRef.current = getTaskRouteKey(ack.task_id, routeProjectId)
-        navigateTo(buildTaskRoute({ taskId: ack.task_id, projectId: routeProjectId }))
+        handledTaskRouteRef.current = getTaskRouteKey(ack.task_id, projectId)
+        navigateTo(buildTaskRoute({ taskId: ack.task_id, projectId }))
         const openedTask: Task = {
           id: ack.task_id,
           title: message.substring(0, 100),
@@ -1711,6 +1730,7 @@ export function WorkbenchProvider({
     [
       refreshWorkLists,
       resolvedServices.chatStream,
+      state.currentProject?.id,
       state.currentTask,
     ]
   )
@@ -2075,6 +2095,7 @@ export function WorkbenchProvider({
 
   const runningTaskIds = useMemo(() => {
     const ids = new Set<number>()
+    addRunningTasksFromWorkLists(ids, state.projects, state.recentTasks)
     if (state.currentTask && isRunningTaskStatus(state.currentTask.status)) {
       ids.add(state.currentTask.id)
     }
@@ -2088,7 +2109,7 @@ export function WorkbenchProvider({
       }
     }
     return ids
-  }, [messages, state.currentTask])
+  }, [messages, state.currentTask, state.projects, state.recentTasks])
 
   const value: WorkbenchContextValue = {
     state,
