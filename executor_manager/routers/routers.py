@@ -1420,11 +1420,11 @@ async def task_heartbeat(task_id: str, http_request: Request):
 class ArchiveExecutorRequest(BaseModel):
     """Request model for /executor/archive endpoint."""
 
-    task_id: int
-    upload_url: str  # Presigned MinIO upload URL
-    executor_name: str
-    executor_namespace: str
-    max_size_mb: int = 500
+    task_id: int = Field(..., ge=1)
+    upload_url: str = Field(..., min_length=1)
+    executor_name: str = Field(..., min_length=1)
+    executor_namespace: str = Field(..., min_length=1)
+    max_size_mb: int = Field(500, ge=1)
 
 
 class RestoreExecutorRequest(BaseModel):
