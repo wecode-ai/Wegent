@@ -187,11 +187,18 @@ export interface BotSummary {
 }
 
 /** Bot information (used for Team.bots) */
+export type PipelineContextPassing =
+  | 'none'
+  | 'original_user'
+  | 'previous_bot'
+  | 'original_and_previous'
+
 export interface TeamBot {
   bot_id: number
   bot_prompt: string
   role?: string
   requireConfirmation?: boolean // Pipeline mode: pause after this stage for user confirmation
+  contextPassing?: PipelineContextPassing // Pipeline mode: message passed from this stage to the next stage
   bot?: BotSummary
 }
 

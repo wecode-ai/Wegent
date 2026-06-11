@@ -5,7 +5,7 @@
 'use client'
 
 import React from 'react'
-import { Bot } from '@/types/api'
+import { Bot, type PipelineContextPassing } from '@/types/api'
 import BotTransfer from './BotTransfer'
 
 export interface PipelineModeEditorProps {
@@ -20,6 +20,11 @@ export interface PipelineModeEditorProps {
   /** Pipeline mode: requireConfirmation settings for each bot */
   requireConfirmationMap?: Record<number, boolean>
   setRequireConfirmationMap?: React.Dispatch<React.SetStateAction<Record<number, boolean>>>
+  /** Pipeline mode: context passing settings for each bot */
+  contextPassingMap?: Record<number, PipelineContextPassing>
+  setContextPassingMap?: React.Dispatch<
+    React.SetStateAction<Record<number, PipelineContextPassing>>
+  >
   toast: ReturnType<typeof import('@/hooks/use-toast').useToast>['toast']
   onEditBot: (botId: number) => void
   onCreateBot: () => void
@@ -38,6 +43,8 @@ export default function PipelineModeEditor({
   isDifyLeader,
   requireConfirmationMap,
   setRequireConfirmationMap,
+  contextPassingMap,
+  setContextPassingMap,
   onEditBot,
   onCreateBot,
   onCloneBot,
@@ -58,6 +65,8 @@ export default function PipelineModeEditor({
         sortable={true}
         requireConfirmationMap={requireConfirmationMap}
         setRequireConfirmationMap={setRequireConfirmationMap}
+        contextPassingMap={contextPassingMap}
+        setContextPassingMap={setContextPassingMap}
         onEditBot={onEditBot}
         onCreateBot={onCreateBot}
         onCloneBot={onCloneBot}

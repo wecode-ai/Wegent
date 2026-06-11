@@ -550,6 +550,7 @@ class ChatNamespace(socketio.AsyncNamespace):
 
         db = SessionLocal()
         pipeline_info = None
+        pipeline_context_passing = None
         try:
             # Get user
             user = db.query(User).filter(User.id == user_id).first()
@@ -598,6 +599,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                                 "error", "Pipeline confirm failed"
                             )
                         }
+                    pipeline_context_passing = confirm_result.get("context_passing")
 
                     # Emit task:status event to notify frontend that task status changed
                     # This triggers PipelineStageIndicator to re-fetch pipeline stage info
@@ -791,6 +793,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                 # TaskRequestBuilder will compare this with current bot_id to determine
                 # if a new session is needed (different bot = new session)
                 previous_bot_id=previous_bot_id,
+                pipeline_context_passing=pipeline_context_passing,
                 skip_status_check=payload.action == "pipeline:confirm",
                 device_id=payload.device_id,
                 project_id=payload.project_id,

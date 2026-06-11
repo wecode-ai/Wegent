@@ -20,6 +20,7 @@ from app.models.kind import Kind
 from app.models.subtask import Subtask, SubtaskStatus
 from app.models.task import TaskResource
 from app.schemas.kind import Task, Team
+from app.services.adapters.pipeline_context import normalize_context_passing
 from app.services.readers.kinds import KindType, kindReader
 from app.services.task_member_service import task_member_service
 
@@ -421,6 +422,9 @@ class PipelineStageService:
             "next_stage_index": next_stage,
             "total_stages": total_stages,
             "next_stage_name": next_bot.name,
+            "context_passing": normalize_context_passing(
+                getattr(current_member, "contextPassing", None)
+            ),
             "team": team,
             "team_crd": team_crd,
         }

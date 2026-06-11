@@ -15,7 +15,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
-from app.models.subtask import Subtask
+from app.models.subtask import Subtask, SubtaskRole
 from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.kind import Team
@@ -83,6 +83,38 @@ def _load_team_crd(team: Kind) -> Optional[Team]:
     if team_json is None:
         return None
     return Team.model_validate(team_json)
+
+
+def _build_pipeline_stage_prompt(
+    db: Session,
+    *,
+    task_id: int,
+    existing_subtasks: List[Subtask],
+    context_passing: Optional[str],
+) -> str:
+    """Build prompt context for a manually confirmed pipeline stage."""
+    if not context_passing:
+        return ""
+
+    previous_stage = next(
+        (
+            subtask
+            for subtask in existing_subtasks
+            if subtask.role == SubtaskRole.ASSISTANT
+        ),
+        None,
+    )
+    if previous_stage is None:
+        return ""
+
+    from app.services.adapters.pipeline_context import build_pipeline_context_prompt
+
+    return build_pipeline_context_prompt(
+        db,
+        task_id=task_id,
+        current_subtask=previous_stage,
+        context_passing=context_passing,
+    )
 
 
 def prepare_execution_session(
@@ -250,6 +282,12 @@ def prepare_execution_session(
     )
     assistant_subtask = None
     if should_trigger_ai:
+        assistant_prompt = _build_pipeline_stage_prompt(
+            db,
+            task_id=task.id,
+            existing_subtasks=existing_subtasks,
+            context_passing=resolved_task_params.pipeline_context_passing,
+        )
         assistant_subtask = create_assistant_subtask(
             db=db,
             subtask_user_id=subtask_user_id,
@@ -258,6 +296,7 @@ def prepare_execution_session(
             bot_ids=bot_ids,
             next_message_id=next_message_id + 1,
             parent_id=next_message_id,
+            prompt=assistant_prompt,
         )
 
     db.commit()

@@ -279,6 +279,7 @@ class DatabaseHandler:
         next_stage_index = advance_info["next_stage_index"]
         next_bot_id = advance_info["next_bot_id"]
         next_bot_name = advance_info["next_bot_name"]
+        context_passing = advance_info.get("context_passing")
 
         # Reuse same executor container (pipeline runs all stages in one container)
         executor_name = last_subtask.executor_name or ""
@@ -297,6 +298,15 @@ class DatabaseHandler:
         # Advance currentStage in task spec
         task_crd.spec.currentStage = next_stage_index
 
+        from app.services.adapters.pipeline_context import build_pipeline_context_prompt
+
+        next_prompt = build_pipeline_context_prompt(
+            db,
+            task_id=task.id,
+            current_subtask=last_subtask,
+            context_passing=context_passing,
+        )
+
         new_subtask = SubtaskModel(
             user_id=task.user_id,
             task_id=task.id,
@@ -304,7 +314,7 @@ class DatabaseHandler:
             title=f"{task_crd.spec.title} - {next_bot_name}",
             bot_ids=[next_bot_id],
             role=SubtaskRole.ASSISTANT,
-            prompt="",
+            prompt=next_prompt,
             status=SubtaskStatus.PENDING,
             progress=0,
             message_id=next_message_id,

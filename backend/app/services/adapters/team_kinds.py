@@ -29,6 +29,7 @@ from app.models.user import User
 from app.schemas.kind import Bot, Ghost, Model, Shell, Task, Team
 from app.schemas.quick_launch import normalize_quick_phrases
 from app.schemas.team import BotInfo, TeamCreate, TeamDetail, TeamInDB, TeamUpdate
+from app.services.adapters.pipeline_context import normalize_context_passing
 from app.services.adapters.shell_utils import get_shell_type
 from app.services.adapters.task_kinds.running_tasks import get_running_tasks_for_team
 from app.services.base import BaseService
@@ -144,6 +145,11 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 if hasattr(bot_info, "requireConfirmation")
                 else bot_info.get("requireConfirmation", False)
             )
+            context_passing = (
+                bot_info.contextPassing
+                if hasattr(bot_info, "contextPassing")
+                else bot_info.get("contextPassing", "none")
+            )
 
             # Get bot from kinds table
             bot = kindReader.get_by_id(db, KindType.BOT, bot_id)
@@ -158,6 +164,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 "prompt": bot_prompt or "",
                 "role": role or "",
                 "requireConfirmation": require_confirmation or False,
+                "contextPassing": normalize_context_passing(context_passing),
             }
             members.append(member)
 
@@ -899,6 +906,11 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                     if hasattr(bot_info, "requireConfirmation")
                     else bot_info.get("requireConfirmation", False)
                 )
+                context_passing = (
+                    bot_info.contextPassing
+                    if hasattr(bot_info, "contextPassing")
+                    else bot_info.get("contextPassing", "none")
+                )
 
                 # Get bot from kinds table
                 bot = kindReader.get_by_id(db, KindType.BOT, bot_id)
@@ -913,6 +925,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                     prompt=bot_prompt or "",
                     role=role or "",
                     requireConfirmation=require_confirmation or False,
+                    contextPassing=normalize_context_passing(context_passing),
                 )
                 members.append(member)
             team_crd.spec.members = members
@@ -1297,6 +1310,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                     "bot_prompt": member.prompt or "",
                     "role": member.role or "",
                     "requireConfirmation": member.requireConfirmation or False,
+                    "contextPassing": normalize_context_passing(member.contextPassing),
                     "bot": bot_summary,
                 }
                 bots.append(bot_info)
@@ -1479,6 +1493,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                     "bot_prompt": member.prompt or "",
                     "role": member.role or "",
                     "requireConfirmation": member.requireConfirmation or False,
+                    "contextPassing": normalize_context_passing(member.contextPassing),
                     "bot": bot_summary,
                 }
                 bots.append(bot_info)
@@ -2275,6 +2290,9 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                     "bot_id": cloned_bot["id"],
                     "bot_prompt": leader_member.get("prompt", ""),
                     "role": "leader",
+                    "contextPassing": normalize_context_passing(
+                        leader_member.get("contextPassing")
+                    ),
                 }
             )
         else:
@@ -2324,6 +2342,12 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                                 "bot_id": cloned["id"],
                                 "bot_prompt": member.get("prompt", ""),
                                 "role": member.get("role", ""),
+                                "requireConfirmation": member.get(
+                                    "requireConfirmation", False
+                                ),
+                                "contextPassing": normalize_context_passing(
+                                    member.get("contextPassing")
+                                ),
                             }
                         )
                     else:
@@ -2332,6 +2356,12 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                                 "bot_id": bot.id,
                                 "bot_prompt": member.get("prompt", ""),
                                 "role": member.get("role", ""),
+                                "requireConfirmation": member.get(
+                                    "requireConfirmation", False
+                                ),
+                                "contextPassing": normalize_context_passing(
+                                    member.get("contextPassing")
+                                ),
                             }
                         )
 

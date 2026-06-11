@@ -310,6 +310,7 @@ spec:
         name: developer-bot
         namespace: default
       prompt: ""
+      contextPassing: "previous_bot"
   collaborationModel: "pipeline"
 ```
 
@@ -329,6 +330,7 @@ spec:
 | `role` | string | No | Member role, such as `leader` |
 | `botRef` | object | Yes | Bot reference |
 | `prompt` | string | No | Member-specific prompt |
+| `contextPassing` | string | No | Message passed to the next pipeline stage after this stage completes: `none`, `original_user`, `previous_bot`, `original_and_previous` |
 
 ### Collaboration Models
 

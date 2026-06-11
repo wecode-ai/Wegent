@@ -482,6 +482,11 @@
     "bind_mode_image": "Image",
     "bind_mode_required": "Please select at least one bind mode",
     "require_confirmation_tooltip": "When enabled, the task will pause after this stage completes, waiting for user confirmation before proceeding to the next stage",
+    "context_passing_tooltip": "Choose what this stage passes to the next bot in pipeline mode",
+    "context_passing_none": "Pass nothing",
+    "context_passing_original_user": "Original request",
+    "context_passing_previous_bot": "Previous output",
+    "context_passing_original_and_previous": "Request + output",
     "requires_workspace": "Requires Repository",
     "requires_workspace_hint": "When enabled, this agent requires a code repository to be selected in code mode before starting a task. When disabled, tasks can start without selecting a repository."
   },
