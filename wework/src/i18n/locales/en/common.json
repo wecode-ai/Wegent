@@ -489,6 +489,8 @@
     "mobile_qrcode_backend_unavailable": "QR code login is not enabled on this backend",
     "mobile_qrcode_refresh": "Refresh QR code",
     "mobile_qrcode_alt": "Weibo QR code login",
+    "pocket_login": "Open Pocket App to login",
+    "pocket_opening": "Opening Pocket App...",
     "oidc_login": "Login with OpenID Connect",
     "oidc_processing": "Processing OpenID Connect login..."
   }

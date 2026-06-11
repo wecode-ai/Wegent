@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { QrCode, RefreshCw } from 'lucide-react'
+import { useCallback, useEffect, useState } from 'react'
+import { QrCode, RefreshCw, Smartphone } from 'lucide-react'
 import type { WeiboQrcodeChallenge } from '@/api/auth'
 import { ApiError } from '@/api/http'
 import { POST_LOGIN_REDIRECT_KEY } from '@/features/auth/redirect'
@@ -8,6 +8,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
 
 const QRCODE_POLL_INTERVAL_MS = 2000
+const POCKET_SCHEME = 'sinaintravdun'
 
 interface QrcodeLoginPageProps {
   redirectTarget: string
@@ -30,6 +31,22 @@ export function QrcodeLoginPage({ redirectTarget }: QrcodeLoginPageProps) {
   >('idle')
   const [qrcodeError, setQrcodeError] = useState<string | null>(null)
   const [qrcodeNonce, setQrcodeNonce] = useState(0)
+  const [pocketOpening, setPocketOpening] = useState(false)
+
+  const openPocketApp = useCallback((qrData: string) => {
+    setPocketOpening(true)
+    // qr_data = https://koudai.sina.com/staffvdun/qr?d=<token>
+    // Pocket app scheme expects only the token: sinaintravdun://qr?d=<token>
+    let pocketUrl: string
+    try {
+      const token = new URL(qrData).searchParams.get('d')
+      pocketUrl = token ? `${POCKET_SCHEME}://qr?d=${token}` : qrData
+    } catch {
+      pocketUrl = qrData
+    }
+    window.location.href = pocketUrl
+    setTimeout(() => setPocketOpening(false), 3000)
+  }, [])
 
   useEffect(() => {
     let isCancelled = false
@@ -155,6 +172,20 @@ export function QrcodeLoginPage({ redirectTarget }: QrcodeLoginPageProps) {
           <div className="mt-4 min-h-5 text-sm text-text-secondary">
             {qrcodeStatus === 'waiting' && t('workbench.mobile_qrcode_waiting')}
           </div>
+          {qrcodeChallenge && qrcodeStatus === 'waiting' && (
+            <button
+              type="button"
+              data-testid="pocket-login-button"
+              className="mt-5 inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-text-primary px-4 text-sm font-semibold text-white shadow-sm disabled:opacity-60"
+              disabled={pocketOpening}
+              onClick={() => openPocketApp(qrcodeChallenge.qr_data)}
+            >
+              <Smartphone className="h-4 w-4" />
+              {pocketOpening
+                ? t('workbench.pocket_opening', '正在打开新浪口袋...')
+                : t('workbench.pocket_login', '打开口袋登录')}
+            </button>
+          )}
           {(qrcodeStatus === 'expired' || qrcodeStatus === 'error') && (
             <button
               type="button"
