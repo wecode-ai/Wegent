@@ -23,14 +23,26 @@ from app.core.config import settings
 security = HTTPBearer(auto_error=False)
 
 
+def require_internal_service_token_configured() -> None:
+    """Fail startup when protected internal endpoints cannot authenticate."""
+    if settings.INTERNAL_SERVICE_TOKEN:
+        return
+
+    raise RuntimeError(
+        "INTERNAL_SERVICE_TOKEN is required for Backend internal API authentication. "
+        "Generate one with `openssl rand -hex 32` and configure the same value for "
+        "Backend, Chat Shell, Knowledge Runtime, and Knowledge Doc Converter."
+    )
+
+
 def verify_internal_service_token(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
 ) -> None:
     """Verify internal service authentication token.
 
     This dependency checks for a valid Bearer token in the Authorization header.
-    If INTERNAL_SERVICE_TOKEN is not configured (empty string), authentication is
-    skipped (dev mode).
+    If INTERNAL_SERVICE_TOKEN is not configured (empty string), requests are
+    rejected so internal endpoints fail closed.
 
     Args:
         credentials: The Bearer token credentials from the Authorization header.
@@ -40,9 +52,12 @@ def verify_internal_service_token(
     """
     expected_token = settings.INTERNAL_SERVICE_TOKEN
 
-    # Skip authentication if token is not configured (development mode)
     if not expected_token:
-        return
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Internal service token is not configured",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
     # Check if credentials are provided
     if credentials is None:

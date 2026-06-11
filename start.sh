@@ -60,6 +60,67 @@ load_config() {
     fi
 }
 
+persist_internal_service_token() {
+    local token="$1"
+    local temp_file
+    temp_file=$(mktemp)
+
+    if [ -f "$CONFIG_FILE" ]; then
+        grep -v "^INTERNAL_SERVICE_TOKEN=" "$CONFIG_FILE" > "$temp_file" || true
+    else
+        cat > "$temp_file" << 'EOF'
+# Wegent Configuration
+# This file is used by both docker-compose and start.sh
+# Copy from .env.example and customize as needed
+
+EOF
+    fi
+
+    cat >> "$temp_file" << EOF
+
+# Internal service authentication token shared by Backend, Chat Shell, and Knowledge Runtime.
+# Generated automatically by start.sh for local development.
+INTERNAL_SERVICE_TOKEN=$token
+EOF
+
+    mv "$temp_file" "$CONFIG_FILE"
+}
+
+generate_internal_service_token() {
+    if command -v openssl >/dev/null 2>&1; then
+        openssl rand -hex 32
+        return
+    fi
+
+    if command -v python3 >/dev/null 2>&1; then
+        python3 - << 'PY'
+import secrets
+
+print(secrets.token_hex(32))
+PY
+        return
+    fi
+
+    echo ""
+}
+
+ensure_internal_service_token() {
+    if [ -n "${INTERNAL_SERVICE_TOKEN:-}" ]; then
+        return
+    fi
+
+    local generated_token
+    generated_token=$(generate_internal_service_token)
+    if [ -z "$generated_token" ]; then
+        echo -e "${RED}Unable to generate INTERNAL_SERVICE_TOKEN. Install openssl or python3, or set INTERNAL_SERVICE_TOKEN manually.${NC}"
+        exit 1
+    fi
+
+    export INTERNAL_SERVICE_TOKEN="$generated_token"
+    persist_internal_service_token "$generated_token"
+    echo -e "${GREEN}✓ Generated INTERNAL_SERVICE_TOKEN for local development and saved it to .env${NC}"
+}
+
 # Save configuration to .env file
 # Only saves start.sh specific variables, preserves existing content
 save_config() {
@@ -1943,6 +2004,10 @@ start_services() {
         exit 1
     fi
 
+    if [ "$start_backend" = true ] || [ "$start_chat_shell" = true ] || [ "$start_knowledge_runtime" = true ]; then
+        ensure_internal_service_token
+    fi
+
     compute_derived_urls "$previous_backend_port" "$previous_executor_manager_port" "$previous_knowledge_runtime_port"
     echo -e "${GREEN}✓ Required ports resolved${NC}"
     echo ""
@@ -2040,7 +2105,7 @@ start_services() {
         # --reload-dir: Watch shared module for changes (editable dependency)
         # --reload-exclude: Exclude .venv and __pycache__ to reduce CPU usage
         start_service "backend" "backend" \
-            "export EXECUTOR_MANAGER_URL=$EXECUTOR_MANAGER_URL && export CHAT_SHELL_URL=http://localhost:$CHAT_SHELL_PORT && export BACKEND_INTERNAL_URL=$TASK_API_DOMAIN && export LOG_LEVEL=DEBUG && source .venv/bin/activate && uvicorn app.main:app --reload --reload-dir . --reload-dir ../shared $RELOAD_EXCLUDE --host 0.0.0.0 --port $BACKEND_PORT --log-level debug" \
+            "export INTERNAL_SERVICE_TOKEN=$INTERNAL_SERVICE_TOKEN && export EXECUTOR_MANAGER_URL=$EXECUTOR_MANAGER_URL && export CHAT_SHELL_URL=http://localhost:$CHAT_SHELL_PORT && export BACKEND_INTERNAL_URL=$TASK_API_DOMAIN && export LOG_LEVEL=DEBUG && source .venv/bin/activate && uvicorn app.main:app --reload --reload-dir . --reload-dir ../shared $RELOAD_EXCLUDE --host 0.0.0.0 --port $BACKEND_PORT --log-level debug" \
             "$BACKEND_PORT"
     fi
 
@@ -2050,7 +2115,7 @@ start_services() {
         # --reload-dir: Watch shared module for changes (editable dependency)
         # --reload-exclude: Exclude .venv and __pycache__ to reduce CPU usage
         start_service "chat_shell" "chat_shell" \
-            "export CHAT_SHELL_MODE=http && export CHAT_SHELL_STORAGE_TYPE=remote && export CHAT_SHELL_REMOTE_STORAGE_URL=http://localhost:$BACKEND_PORT/api/internal && export EXECUTOR_MANAGER_URL=$EXECUTOR_MANAGER_URL && source .venv/bin/activate && .venv/bin/python -m uvicorn chat_shell.main:app --reload --reload-dir . --reload-dir ../shared $RELOAD_EXCLUDE --host 0.0.0.0 --port $CHAT_SHELL_PORT --log-level debug" \
+            "export CHAT_SHELL_MODE=http && export CHAT_SHELL_STORAGE_TYPE=remote && export CHAT_SHELL_REMOTE_STORAGE_URL=http://localhost:$BACKEND_PORT/api/internal && export CHAT_SHELL_REMOTE_STORAGE_TOKEN=$INTERNAL_SERVICE_TOKEN && export CHAT_SHELL_INTERNAL_SERVICE_TOKEN=$INTERNAL_SERVICE_TOKEN && export EXECUTOR_MANAGER_URL=$EXECUTOR_MANAGER_URL && source .venv/bin/activate && .venv/bin/python -m uvicorn chat_shell.main:app --reload --reload-dir . --reload-dir ../shared $RELOAD_EXCLUDE --host 0.0.0.0 --port $CHAT_SHELL_PORT --log-level debug" \
             "$CHAT_SHELL_PORT"
     fi
 

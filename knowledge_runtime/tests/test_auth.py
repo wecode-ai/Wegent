@@ -11,7 +11,10 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from knowledge_runtime.config import reset_settings
-from knowledge_runtime.middleware.auth import verify_internal_token
+from knowledge_runtime.middleware.auth import (
+    require_internal_service_token_configured,
+    verify_internal_token,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -36,17 +39,36 @@ def test_app():
     return app
 
 
-def test_auth_disabled_when_token_empty(test_app, monkeypatch):
-    """Test that authentication is skipped when token is not configured."""
+def test_protected_endpoint_rejects_when_token_empty(test_app, monkeypatch):
+    """Test that authentication fails closed when token is not configured."""
     monkeypatch.setenv("INTERNAL_SERVICE_TOKEN", "")
     reset_settings()
 
     client = TestClient(test_app)
 
-    # Should work without any auth header
     response = client.get("/protected")
-    assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Internal service token is not configured"}
+    assert response.headers.get("WWW-Authenticate") == "Bearer"
+
+
+def test_startup_config_check_rejects_unconfigured_token(monkeypatch):
+    """Test that startup fails when protected internal endpoints cannot authenticate."""
+    monkeypatch.setenv("INTERNAL_SERVICE_TOKEN", "")
+    reset_settings()
+
+    with pytest.raises(RuntimeError) as exc_info:
+        require_internal_service_token_configured()
+
+    assert "INTERNAL_SERVICE_TOKEN is required" in str(exc_info.value)
+
+
+def test_startup_config_check_accepts_configured_token(monkeypatch):
+    """Test that startup allows a configured internal service token."""
+    monkeypatch.setenv("INTERNAL_SERVICE_TOKEN", "test-token-123")
+    reset_settings()
+
+    require_internal_service_token_configured()
 
 
 def test_protected_endpoint_missing_token(test_app, monkeypatch):

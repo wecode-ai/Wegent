@@ -26,6 +26,40 @@ FRONTEND_PORT=${FRONTEND_PORT:-3000}
 # Set Redis URL to localhost (embedded Redis)
 export REDIS_URL="${REDIS_URL:-redis://localhost:6379/0}"
 
+generate_internal_service_token() {
+    if command -v openssl >/dev/null 2>&1; then
+        openssl rand -hex 32
+        return
+    fi
+
+    python3 - << 'PY'
+import secrets
+
+print(secrets.token_hex(32))
+PY
+}
+
+ensure_internal_service_token() {
+    if [ -n "${INTERNAL_SERVICE_TOKEN:-}" ]; then
+        return
+    fi
+
+    local token_file="/app/data/internal_service_token"
+    if [ -f "$token_file" ]; then
+        export INTERNAL_SERVICE_TOKEN
+        INTERNAL_SERVICE_TOKEN=$(cat "$token_file")
+        return
+    fi
+
+    export INTERNAL_SERVICE_TOKEN
+    INTERNAL_SERVICE_TOKEN=$(generate_internal_service_token)
+    umask 077
+    printf '%s\n' "$INTERNAL_SERVICE_TOKEN" > "$token_file"
+    echo "      Generated internal service token for standalone mode"
+}
+
+ensure_internal_service_token
+
 # ========================================
 # Step 1: Start Redis
 # ========================================
