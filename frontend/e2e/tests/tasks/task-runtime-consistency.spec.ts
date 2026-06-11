@@ -92,6 +92,145 @@ test.describe('Task runtime consistency', () => {
     expect(runtimeChecks.count()).toBeLessThan(8)
   })
 
+  test('keeps previous messages and resumes streaming after page refresh', async ({
+    page,
+    request,
+  }) => {
+    const messageText = `${TEST_PREFIX} refresh during streaming request`
+    const initialMarker = `${TEST_PREFIX}-refresh-initial`
+    const continuationMarker = `${TEST_PREFIX}-refresh-continuation`
+    const finalMarker = `${TEST_PREFIX}-refresh-final`
+
+    await configureStreamRule(request, messageText, {
+      responseContent: [
+        initialMarker,
+        'cached',
+        'partial',
+        'content',
+        'before',
+        'the',
+        'browser',
+        'refreshes',
+        'and',
+        'then',
+        continuationMarker,
+        'keeps',
+        'arriving',
+        'after',
+        'reload',
+        finalMarker,
+      ].join(' '),
+      chunkDelayMs: 300,
+      doneDelayMs: 1500,
+    })
+
+    await gotoChatWithTestTeam(page)
+    await sendChatMessage(page, messageText)
+
+    const taskId = await waitForTaskId(page)
+    await waitForBackendStatus(request, taskId, ['RUNNING'])
+    await expect(page.getByTestId('messages-container')).toContainText(messageText, {
+      timeout: 15000,
+    })
+    await expect(page.getByTestId('messages-container')).toContainText(initialMarker, {
+      timeout: 15000,
+    })
+
+    await reloadCurrentTaskPage(page)
+
+    await expect(page.getByTestId('messages-container')).toContainText(messageText, {
+      timeout: 30000,
+    })
+    await expect(page.getByTestId('messages-container')).toContainText(initialMarker, {
+      timeout: 30000,
+    })
+    await expect(page.getByTestId('messages-container')).toContainText(continuationMarker, {
+      timeout: 30000,
+    })
+    await expect(page.getByTestId('messages-container')).toContainText(finalMarker, {
+      timeout: 30000,
+    })
+    await waitForBackendTerminal(request, taskId)
+
+    await expectChatInputCanSubmit(page, `${TEST_PREFIX} refresh readiness probe`)
+    await expectNoQueuedMessages(page)
+    await expectSingleVisibleResponse(page, finalMarker)
+  })
+
+  test('restores streaming content after reopening the task page mid-stream', async ({
+    context,
+    page,
+    request,
+  }) => {
+    const messageText = `${TEST_PREFIX} reopen during streaming request`
+    const initialMarker = `${TEST_PREFIX}-reopen-initial`
+    const continuationMarker = `${TEST_PREFIX}-reopen-continuation`
+    const finalMarker = `${TEST_PREFIX}-reopen-final`
+
+    await configureStreamRule(request, messageText, {
+      responseContent: [
+        initialMarker,
+        'the',
+        'original',
+        'page',
+        'is',
+        'closed',
+        'while',
+        'the',
+        'model',
+        'continues',
+        'streaming',
+        'cached',
+        'content',
+        'for',
+        'the',
+        'next',
+        'page',
+        continuationMarker,
+        'continues',
+        'through',
+        'socket',
+        'resume',
+        'until',
+        finalMarker,
+      ].join(' '),
+      chunkDelayMs: 300,
+      doneDelayMs: 1500,
+    })
+
+    await gotoChatWithTestTeam(page)
+    await sendChatMessage(page, messageText)
+
+    const taskId = await waitForTaskId(page)
+    await waitForBackendStatus(request, taskId, ['RUNNING'])
+    await expect(page.getByTestId('messages-container')).toContainText(initialMarker, {
+      timeout: 15000,
+    })
+
+    const taskUrl = page.url()
+    await page.close()
+    const recoveredPage = await openTaskPageInFreshTab(context, taskUrl)
+
+    await expect(recoveredPage.getByTestId('messages-container')).toContainText(messageText, {
+      timeout: 30000,
+    })
+    await expect(recoveredPage.getByTestId('messages-container')).toContainText(initialMarker, {
+      timeout: 30000,
+    })
+    await expect(recoveredPage.getByTestId('messages-container')).toContainText(
+      continuationMarker,
+      { timeout: 30000 }
+    )
+    await expect(recoveredPage.getByTestId('messages-container')).toContainText(finalMarker, {
+      timeout: 30000,
+    })
+    await waitForBackendTerminal(request, taskId)
+
+    await expectChatInputCanSubmit(recoveredPage, `${TEST_PREFIX} reopen readiness probe`)
+    await expectNoQueuedMessages(recoveredPage)
+    await expectSingleVisibleResponse(recoveredPage, finalMarker)
+  })
+
   test('recovers when the terminal push event is missed while returning from background', async ({
     page,
     request,
@@ -432,6 +571,22 @@ test.describe('Task runtime consistency', () => {
     await page.waitForLoadState('domcontentloaded')
     await dismissOnboardingTour(page)
     await ensureTestTeamSelected(page)
+  }
+
+  async function reloadCurrentTaskPage(page: Page): Promise<void> {
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    await dismissOnboardingTour(page)
+    await expect(page.getByTestId('messages-container')).toBeVisible({ timeout: 30000 })
+  }
+
+  async function openTaskPageInFreshTab(context: BrowserContext, taskUrl: string): Promise<Page> {
+    const recoveredPage = await context.newPage()
+    await skipOnboardingTour(recoveredPage)
+    await recoveredPage.goto(taskUrl)
+    await recoveredPage.waitForLoadState('domcontentloaded')
+    await dismissOnboardingTour(recoveredPage)
+    await expect(recoveredPage.getByTestId('messages-container')).toBeVisible({ timeout: 30000 })
+    return recoveredPage
   }
 
   async function sendChatMessage(page: Page, message: string): Promise<void> {
