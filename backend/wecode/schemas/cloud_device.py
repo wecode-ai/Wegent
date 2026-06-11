@@ -40,6 +40,9 @@ class CloudDeviceConfig(BaseModel):
     imageId: str = Field(..., description="Image ID used for VM creation")
     deviceId: Optional[str] = Field(None, description="Server-generated device UUID")
     deviceName: Optional[str] = Field(None, description="Server-generated device name")
+    ubuntuInitialPassword: Optional[str] = Field(
+        None, description="Initial login password for the ubuntu system user"
+    )
     createdAt: datetime = Field(
         default_factory=datetime.now,
         description="Cloud device creation timestamp",

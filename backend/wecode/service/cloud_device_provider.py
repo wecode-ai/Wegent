@@ -17,6 +17,7 @@ Key features:
 """
 
 import logging
+import secrets
 import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -45,6 +46,7 @@ logger = logging.getLogger(__name__)
 # Redis key patterns and TTL (same as local devices)
 DEVICE_ONLINE_KEY_PREFIX = "device:online:"
 DEVICE_ONLINE_TTL = 90  # seconds
+UBUNTU_PASSWORD_TOKEN_BYTES = 24
 
 
 class CloudDeviceProvider(BaseDeviceProvider):
@@ -155,6 +157,7 @@ class CloudDeviceProvider(BaseDeviceProvider):
         # Generate server-side device_id (UUID) and device_name
         server_device_id = str(uuid.uuid4())
         server_device_name = f"{user_name}-executor-{server_device_id.split('-')[-1]}"
+        ubuntu_password = secrets.token_urlsafe(UBUNTU_PASSWORD_TOKEN_BYTES)
 
         # Generate OpenClaw device_id (separate from executor, same VM)
         openclaw_device_id = ""
@@ -190,6 +193,7 @@ class CloudDeviceProvider(BaseDeviceProvider):
             git_tokens=git_tokens,
             device_id=server_device_id,
             device_name=server_device_name,
+            ubuntu_password=ubuntu_password,
             openclaw_script_url=nevis_settings.NEVIS_OPENCLAW_INSTALL_SCRIPT_URL,
             api_key=api_key,
             openclaw_device_id=openclaw_device_id,
@@ -217,6 +221,7 @@ class CloudDeviceProvider(BaseDeviceProvider):
             name=server_device_name,
             sandbox_id=sandbox_id,
             image_id=nevis_settings.NEVIS_IMAGE_ID,
+            ubuntu_password=ubuntu_password,
             bind_shell="claudecode",
         )
 
@@ -229,6 +234,7 @@ class CloudDeviceProvider(BaseDeviceProvider):
                 name=openclaw_device_name,
                 sandbox_id=sandbox_id,
                 image_id=nevis_settings.NEVIS_IMAGE_ID,
+                ubuntu_password=ubuntu_password,
                 bind_shell="openclaw",
             )
 
@@ -259,6 +265,7 @@ class CloudDeviceProvider(BaseDeviceProvider):
         name: str,
         sandbox_id: str,
         image_id: str,
+        ubuntu_password: str,
         bind_shell: str = "claudecode",
     ) -> Kind:
         """Create Device CRD for cloud device.
@@ -270,6 +277,7 @@ class CloudDeviceProvider(BaseDeviceProvider):
             name: Device display name
             sandbox_id: Nevis sandbox ID
             image_id: Image ID used for VM
+            ubuntu_password: Login password for the ubuntu system user.
             bind_shell: Shell runtime binding ('claudecode' or 'openclaw')
 
         Returns:
@@ -311,6 +319,7 @@ class CloudDeviceProvider(BaseDeviceProvider):
                     "imageId": image_id,
                     "deviceId": device_id,
                     "deviceName": name,
+                    "ubuntuInitialPassword": ubuntu_password,
                     "createdAt": datetime.now().isoformat(),
                 },
             },
