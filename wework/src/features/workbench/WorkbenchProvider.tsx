@@ -93,6 +93,53 @@ const DEVICE_STATUS_LABELS: Record<string, string> = {
 const TERMINAL_UPGRADE_STATUSES = new Set(['success', 'error', 'skipped', 'busy'])
 const UPGRADE_STATE_CLEAR_DELAY_MS = 5000
 const UPGRADE_REFRESH_INTERVAL_MS = 3000
+const DEVICE_LIST_CACHE_KEY = 'wework.workbench.lastNonEmptyDevices'
+const DEVICE_LIST_CACHE_TTL_MS = 5 * 60 * 1000
+
+function readCachedDeviceList(): DeviceInfo[] {
+  try {
+    const value = window.sessionStorage.getItem(DEVICE_LIST_CACHE_KEY)
+    if (!value) return []
+    const parsed = JSON.parse(value)
+    if (
+      !parsed ||
+      !Array.isArray(parsed.devices) ||
+      typeof parsed.updatedAt !== 'number'
+    ) {
+      return []
+    }
+    if (Date.now() - parsed.updatedAt > DEVICE_LIST_CACHE_TTL_MS) return []
+    return parsed.devices
+  } catch {
+    return []
+  }
+}
+
+function writeCachedDeviceList(devices: DeviceInfo[]) {
+  if (devices.length === 0) return
+  try {
+    window.sessionStorage.setItem(
+      DEVICE_LIST_CACHE_KEY,
+      JSON.stringify({ devices, updatedAt: Date.now() }),
+    )
+  } catch {
+    // The live state remains authoritative when browser storage is unavailable.
+  }
+}
+
+function resolveDeviceListWithCache(devices: DeviceInfo[]): DeviceInfo[] {
+  if (devices.length > 0) {
+    writeCachedDeviceList(devices)
+    return devices
+  }
+
+  const cachedDevices = readCachedDeviceList()
+  if (cachedDevices.length > 0) {
+    return cachedDevices
+  }
+
+  return devices
+}
 
 interface QueuedWorkbenchSend extends QueuedWorkbenchMessage {
   payload: ChatSendPayload
@@ -710,7 +757,8 @@ export function WorkbenchProvider({
 
       const projects =
         projectsResult.status === 'fulfilled' ? projectsResult.value.items : []
-      const devices = devicesResult.status === 'fulfilled' ? devicesResult.value : []
+      const rawDevices = devicesResult.status === 'fulfilled' ? devicesResult.value : []
+      const devices = resolveDeviceListWithCache(rawDevices)
       const lastProjectId = readLastProjectId(user.id)
       const currentProject =
         lastProjectId === null
@@ -740,22 +788,38 @@ export function WorkbenchProvider({
     const [projectsResult, recentTasksResult, devicesResult] = await Promise.all([
       resolvedServices.projectApi.listProjects(),
       resolvedServices.taskApi.listRecentTasks({ limit: 20 }),
-      resolvedServices.deviceApi.listDevices(),
+      resolvedServices.deviceApi.listDevices().catch(error => {
+        const cachedDevices = readCachedDeviceList()
+        if (cachedDevices.length === 0) throw error
+        return cachedDevices
+      }),
     ])
+    const devices = resolveDeviceListWithCache(devicesResult)
     dispatch({
       type: 'lists_refreshed',
       projects: projectsResult.items,
       recentTasks: recentTasksResult.items,
-      devices: devicesResult,
+      devices,
       standaloneDeviceId: getPreferredStandaloneDeviceId(
-        devicesResult,
+        devices,
         state.standaloneDeviceId
       ),
     })
   }, [resolvedServices, state.standaloneDeviceId])
 
   const refreshDevices = useCallback(async () => {
-    const devices = await resolvedServices.deviceApi.listDevices()
+    let devices: DeviceInfo[]
+    try {
+      devices = await resolvedServices.deviceApi.listDevices()
+    } catch (error) {
+      const cachedDevices = readCachedDeviceList()
+      if (cachedDevices.length > 0) {
+        devices = cachedDevices
+      } else {
+        throw error
+      }
+    }
+    devices = resolveDeviceListWithCache(devices)
     dispatch({
       type: 'devices_refreshed',
       devices,

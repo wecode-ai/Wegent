@@ -230,6 +230,7 @@ export function DesktopWorkbenchMain({
                   onOpenCloudDeviceSettings={onOpenCloudDeviceSettings}
                   activeDeviceId={activeDeviceId}
                   requiresOnlineCompatibleDevice={noStandaloneCompatibleDevice}
+                  hideAvailableUpdates
                   className="mb-2"
                 />
                 <ChatInput
@@ -270,6 +271,7 @@ export function DesktopWorkbenchMain({
                 onOpenCloudDeviceSettings={onOpenCloudDeviceSettings}
                 activeDeviceId={activeDeviceId}
                 requiresOnlineCompatibleDevice={noStandaloneCompatibleDevice}
+                hideAvailableUpdates
                 className="mb-3"
               />
               <ChatInput

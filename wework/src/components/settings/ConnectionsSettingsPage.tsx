@@ -30,6 +30,13 @@ import { createHttpClient } from '@/api/http'
 import { getRuntimeConfig, stripAppBasePath } from '@/config/runtime'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
+import { cn } from '@/lib/utils'
+import { isTauriRuntime } from '@/lib/runtime-environment'
+import {
+  DesktopTopBar,
+  MAC_NATIVE_TOP_BAR_ACTION_INSET,
+} from '@/components/layout/DesktopTopBar'
+import { useResizableSidebar } from '@/components/layout/useResizableSidebar'
 import { buildVncPageUrl } from '@/lib/vnc'
 import {
   isClaudeCodeDevice,
@@ -1160,6 +1167,8 @@ export function ConnectionsSettingsPage({
   onDeleteArchivedTasks = noopArchivedAction,
 }: ConnectionsSettingsPageProps) {
   const { t } = useTranslation('common')
+  const reserveMacWindowControls = isTauriRuntime()
+  const { sidebarWidth, handleResizeStart } = useResizableSidebar()
   const [activeNav, setActiveNav] = useState(() =>
     getSettingsNavFromPath(window.location.pathname)
   )
@@ -1177,18 +1186,35 @@ export function ConnectionsSettingsPage({
       data-testid="wework-settings-page"
       className="flex h-screen min-w-0 flex-1 overflow-hidden bg-background text-text-primary"
     >
-      <aside className="flex w-[294px] shrink-0 flex-col bg-[rgb(var(--color-sidebar))] px-3 py-4 backdrop-blur-xl">
-        <button
-          type="button"
-          data-testid="settings-back-button"
-          onClick={onBack}
-          className="mb-4 flex h-9 items-center gap-2 rounded-md px-2 text-sm text-text-secondary hover:bg-[rgb(var(--color-sidebar-hover))]"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          {t('workbench.settings_back_to_app', '返回')}
-        </button>
+      <aside
+        className="relative flex shrink-0 flex-col border-r border-border/70 bg-[rgb(var(--color-sidebar))] px-1.5 pb-4 shadow-[inset_-1px_0_0_rgb(var(--color-border))] backdrop-blur-xl backdrop-saturate-150"
+        style={{ width: sidebarWidth }}
+      >
+        <DesktopTopBar
+          testId="settings-sidebar-topbar"
+          className={cn(
+            '-mx-1.5 mb-2 w-[calc(100%+0.75rem)] bg-transparent pr-2',
+            reserveMacWindowControls ? undefined : 'pl-2',
+          )}
+          style={
+            reserveMacWindowControls
+              ? { paddingLeft: MAC_NATIVE_TOP_BAR_ACTION_INSET }
+              : undefined
+          }
+          left={
+            <button
+              type="button"
+              data-testid="settings-back-button"
+              onClick={onBack}
+              className="flex h-7 items-center gap-1.5 rounded-md px-2 text-sm text-text-secondary hover:bg-[rgb(var(--color-sidebar-hover))]"
+            >
+              <ArrowLeft className="h-4 w-4" />
+              {t('workbench.settings_back_to_app', '返回')}
+            </button>
+          }
+        />
 
-        <nav className="space-y-1">
+        <nav className="space-y-1 px-1.5">
           {settingsNavItems.map((item, index) => {
             const showCategory =
               item.category && settingsNavItems[index - 1]?.category !== item.category
@@ -1226,6 +1252,14 @@ export function ConnectionsSettingsPage({
             )
           })}
         </nav>
+
+        <button
+          type="button"
+          data-testid="settings-sidebar-resize-handle"
+          onPointerDown={handleResizeStart}
+          className="absolute right-[-4px] top-0 z-20 h-full w-3 cursor-col-resize bg-transparent"
+          aria-label={t('workbench.resize_sidebar', '调整侧边栏宽度')}
+        />
       </aside>
 
       <main className="min-w-0 flex-1 overflow-auto bg-background px-8 py-16">
