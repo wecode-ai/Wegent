@@ -625,8 +625,9 @@ test.describe('Agent conversation regression', () => {
           headers: authHeaders(),
         })
         .catch(() => null)
-      const botNames =
-        'stageTwoBotName' in team ? [team.stageOneBotName, team.stageTwoBotName] : [team.botName]
+      const botNames = isPipelineTeam(team)
+        ? [team.stageOneBotName, team.stageTwoBotName]
+        : [team.botName]
       for (const botName of botNames) {
         await request
           .delete(`${API_BASE_URL}/api/v1/namespaces/default/bots/${botName}`, {
@@ -905,6 +906,10 @@ test.describe('Agent conversation regression', () => {
   function requestContainsAll(capture: CapturedModelRequest, expectedTexts: string[]): boolean {
     const text = extractText(capture.body)
     return expectedTexts.every(expected => text.includes(expected))
+  }
+
+  function isPipelineTeam(team: CreatedTeam): team is CreatedPipelineTeam {
+    return 'stageTwoBotName' in team
   }
 
   function authHeaders(): Record<string, string> {
