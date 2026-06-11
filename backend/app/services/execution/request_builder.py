@@ -424,7 +424,7 @@ class TaskRequestBuilder:
             new_session=new_session,
             collaboration_model=collaboration_model,
             mode=collaboration_model,
-            type=self._derive_task_mode(task),
+            task_mode=self._derive_task_mode(task),
             auth_token=auth_token,
             skill_identity_token=skill_identity_token,
             backend_url=settings.BACKEND_INTERNAL_URL,
