@@ -195,8 +195,7 @@ export const shellApis = {
   async getLocalEngineShells(): Promise<UnifiedShell[]> {
     const response = await this.getUnifiedShells()
     return filterSelectableShells(response.data || []).filter(
-      shell => shell.type === 'public'
-      // shell => shell.type === 'public' && shell.executionType === 'local_engine'
+      shell => shell.type === 'public' && shell.executionType === 'local_engine'
     )
   },
 }
