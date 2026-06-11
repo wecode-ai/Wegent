@@ -535,6 +535,42 @@ describe('ConnectionsSettingsPage', () => {
     )
   })
 
+  test.each([
+    {
+      name: 'missing',
+      cloudConfig: {
+        sandboxId: 'sandbox-without-password',
+        deviceId: 'device-without-password',
+      },
+    },
+    {
+      name: 'empty',
+      cloudConfig: {
+        sandboxId: 'sandbox-empty-password',
+        deviceId: 'device-empty-password',
+        ubuntuInitialPassword: '',
+      },
+    },
+  ])(
+    'falls back to ubuntu when the initial password is $name',
+    async ({ cloudConfig }) => {
+      api.getAllDevices.mockResolvedValue([
+        cloudDevice({
+          cloud_config: cloudConfig,
+        }),
+      ])
+
+      render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+      await screen.findByTestId('connection-device-device-1')
+      await userEvent.click(screen.getByTestId('connection-more-button-device-1'))
+      await userEvent.click(screen.getByTestId('connection-info-menu-item-device-1'))
+      await userEvent.click(screen.getByTestId('copy-connection-info-password'))
+
+      expect(navigator.clipboard.writeText).toHaveBeenCalledWith('ubuntu')
+    },
+  )
+
   test('lists local and cloud Claude Code devices while excluding unsupported shells', async () => {
     api.getAllDevices.mockResolvedValue([
       cloudDevice({

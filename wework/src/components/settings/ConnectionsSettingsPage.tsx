@@ -297,6 +297,7 @@ function ConfirmDeviceActionDialog({
 }
 
 const CLOUD_DEVICE_USERNAME = 'ubuntu'
+const CLOUD_DEVICE_DEFAULT_PASSWORD = 'ubuntu'
 
 interface CloudDeviceConnectionInfo {
   sandboxId: string
@@ -311,7 +312,10 @@ function getCloudDeviceConnectionInfo(device: DeviceInfo): CloudDeviceConnection
     sandboxId: cloudConfig.sandboxId || '-',
     deviceId: cloudConfig.deviceId || device.device_id || '-',
     username: CLOUD_DEVICE_USERNAME,
-    password: cloudConfig.ubuntuInitialPassword || cloudConfig.ubuntuPassword || '-',
+    password:
+      cloudConfig.ubuntuInitialPassword ||
+      cloudConfig.ubuntuPassword ||
+      CLOUD_DEVICE_DEFAULT_PASSWORD,
   }
 }
 
