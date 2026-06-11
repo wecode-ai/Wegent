@@ -39,7 +39,7 @@ function FileChangeRow({ file }: { file: TurnFileChangeItem }) {
   return (
     <div
       data-testid="file-change-row"
-      className="flex min-w-0 items-center gap-3 px-4 py-2.5 text-xs"
+      className="flex min-w-0 items-center gap-2 px-3 py-1.5 text-xs"
     >
       <span className="min-w-0 flex-1 truncate font-mono text-text-primary">
         {file.change_type === 'renamed' && file.old_path
@@ -123,11 +123,11 @@ export function FileChangesCard({
     <>
       <section
         data-testid="file-changes-card"
-        className="mt-4 overflow-hidden rounded-xl border border-border bg-base"
+        className="mt-3 overflow-hidden rounded-xl border border-border bg-base"
       >
-        <div className="flex flex-wrap items-center gap-3 border-b border-border px-4 py-3">
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-surface text-text-secondary">
-            <FileDiff className="h-4 w-4" />
+        <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2">
+          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-surface text-text-secondary">
+            <FileDiff className="h-3.5 w-3.5" />
           </span>
           <div className="min-w-0 flex-1">
             <p className="text-sm font-medium text-text-primary">
@@ -135,7 +135,7 @@ export function FileChangesCard({
                 count: summary.file_count,
               })}
             </p>
-            <p className="mt-0.5 flex gap-2 text-xs font-medium">
+            <p className="flex gap-2 text-xs font-medium">
               <span className="text-green-600">+{summary.additions}</span>
               <span className="text-red-500">-{summary.deletions}</span>
             </p>
@@ -152,7 +152,7 @@ export function FileChangesCard({
               data-testid="review-file-changes-button"
               disabled={actionsDisabled}
               onClick={() => void openReview()}
-              className="h-11 min-w-[44px] rounded-md border border-border px-3 text-xs font-medium text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+              className="h-7 rounded border border-border px-2 text-xs font-medium text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
             >
               {t('file_changes.review')}
             </button>
@@ -162,7 +162,7 @@ export function FileChangesCard({
                 data-testid="revert-file-changes-button"
                 disabled={actionsDisabled}
                 onClick={() => setConfirmOpen(true)}
-                className="flex h-11 min-w-[44px] items-center justify-center gap-1.5 rounded-md px-3 text-xs font-medium text-text-secondary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                className="flex h-7 items-center justify-center gap-1 rounded px-2 text-xs font-medium text-text-secondary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <RotateCcw className="h-3.5 w-3.5" />
                 {t('file_changes.revert')}
@@ -171,22 +171,22 @@ export function FileChangesCard({
           </div>
         </div>
         {summary.status === 'conflicted' ? (
-          <p className="border-b border-border bg-amber-50 px-4 py-2 text-xs text-amber-800">
+          <p className="border-b border-border bg-amber-50 px-3 py-1.5 text-xs text-amber-800">
             {t('file_changes.conflicted')}
           </p>
         ) : null}
         {summary.status === 'artifact_missing' ? (
-          <p className="border-b border-border bg-surface px-4 py-2 text-xs text-text-muted">
+          <p className="border-b border-border bg-surface px-3 py-1.5 text-xs text-text-muted">
             {t('file_changes.artifact_missing')}
           </p>
         ) : null}
         {!deviceOnline ? (
-          <p className="border-b border-border bg-surface px-4 py-2 text-xs text-text-muted">
+          <p className="border-b border-border bg-surface px-3 py-1.5 text-xs text-text-muted">
             {t('file_changes.device_offline')}
           </p>
         ) : null}
         {actionError ? (
-          <p className="border-b border-border bg-red-50 px-4 py-2 text-xs text-red-700">
+          <p className="border-b border-border bg-red-50 px-3 py-1.5 text-xs text-red-700">
             {actionError}
           </p>
         ) : null}
@@ -204,7 +204,7 @@ export function FileChangesCard({
             data-testid="toggle-file-changes-button"
             aria-expanded={expanded}
             onClick={() => setExpanded(value => !value)}
-            className="flex h-11 w-full items-center gap-1 border-t border-border px-4 text-xs font-medium text-text-secondary hover:bg-muted"
+            className="flex h-8 w-full items-center gap-1 border-t border-border px-3 text-xs font-medium text-text-secondary hover:bg-muted"
           >
             {expanded ? (
               <ChevronUp className="h-3.5 w-3.5" />

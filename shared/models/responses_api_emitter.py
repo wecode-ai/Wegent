@@ -100,6 +100,11 @@ class ResponsesAPIEmitter:
     ) -> None:
         """Set a one-shot provider for fields added to the completion event."""
         self._completion_fields_provider = provider
+        logger.info(
+            "Response completion fields provider %s for subtask_id=%s",
+            "set" if provider is not None else "cleared",
+            self.subtask_id,
+        )
 
     # ============================================================
     # Response Lifecycle Events
@@ -159,14 +164,30 @@ class ResponsesAPIEmitter:
 
         provider = self._completion_fields_provider
         self._completion_fields_provider = None
+        logger.info(
+            "Preparing response.completed for subtask_id=%s completion_provider=%s",
+            self.subtask_id,
+            provider is not None,
+        )
         if provider is not None:
             try:
                 provider_fields = provider()
                 if inspect.isawaitable(provider_fields):
                     provider_fields = await provider_fields
                 if isinstance(provider_fields, dict):
+                    logger.info(
+                        "Collected response completion fields for subtask_id=%s keys=%s",
+                        self.subtask_id,
+                        sorted(provider_fields.keys()),
+                    )
                     for key, value in provider_fields.items():
                         extra_fields.setdefault(key, value)
+                else:
+                    logger.info(
+                        "Response completion fields provider returned non-dict for subtask_id=%s: %s",
+                        self.subtask_id,
+                        type(provider_fields).__name__,
+                    )
             except Exception:
                 logger.exception("Failed to collect response completion fields")
 

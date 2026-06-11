@@ -9,6 +9,7 @@ from __future__ import annotations
 import gzip
 import hashlib
 import json
+import logging
 import os
 import socket
 import subprocess
@@ -20,6 +21,7 @@ from typing import Any, Optional
 
 ARTIFACT_VERSION = 1
 LOCK_FILE_NAME = "wegent-turn-file-changes.lock"
+logger = logging.getLogger(__name__)
 
 
 class WorkspaceBusyError(RuntimeError):
@@ -117,6 +119,13 @@ class TurnFileChangeTracker:
         try:
             self._before = self._capture_tree()
             self._active = True
+            logger.info(
+                "Captured turn file change baseline: task_id=%s subtask_id=%s workspace=%s tree=%s",
+                self.task_id,
+                self.subtask_id,
+                self.workspace,
+                self._before.tree_id,
+            )
             return True
         except Exception:
             self._release_lock()
@@ -130,9 +139,27 @@ class TurnFileChangeTracker:
             after = self._capture_tree()
             patch = self._create_patch(self._before, after)
             if not patch:
+                logger.info(
+                    "No turn file changes detected: task_id=%s subtask_id=%s workspace=%s before=%s after=%s",
+                    self.task_id,
+                    self.subtask_id,
+                    self.workspace,
+                    self._before.tree_id,
+                    after.tree_id,
+                )
                 return {}
             files = self._create_file_summary(self._before, after)
             artifact = self._persist_artifact(patch)
+            logger.info(
+                "Persisted turn file changes: task_id=%s subtask_id=%s workspace=%s artifact_id=%s files=%s additions=%s deletions=%s",
+                self.task_id,
+                self.subtask_id,
+                self.workspace,
+                artifact.artifact_id,
+                len(files),
+                sum(item["additions"] for item in files),
+                sum(item["deletions"] for item in files),
+            )
             return {
                 "file_changes": {
                     "version": ARTIFACT_VERSION,

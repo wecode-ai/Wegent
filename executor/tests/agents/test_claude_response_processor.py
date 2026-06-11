@@ -206,6 +206,36 @@ async def test_claude_success_finalizes_turn_file_changes():
 
 
 @pytest.mark.asyncio
+async def test_claude_success_uses_explicit_completion_fields_provider():
+    transport = GeneratorTransport()
+    emitter = EmitterBuilder().with_task(1, 2).with_transport(transport).build()
+    completion_fields = AsyncMock(
+        return_value={"file_changes": {"version": 1, "file_count": 1}}
+    )
+    message = ResultMessage(
+        subtype="success",
+        duration_ms=1,
+        duration_api_ms=1,
+        is_error=False,
+        num_turns=1,
+        session_id="session-1",
+        result="done",
+    )
+
+    result = await _process_result_message(
+        msg=message,
+        emitter=emitter,
+        state_manager=DummyStateManager(),
+        completion_fields_provider=completion_fields,
+    )
+
+    completed = transport.get_events()[-1][1]["response"]
+    assert result == TaskStatus.COMPLETED
+    completion_fields.assert_awaited_once()
+    assert completed["file_changes"]["file_count"] == 1
+
+
+@pytest.mark.asyncio
 async def test_claude_failure_does_not_finalize_turn_file_changes():
     transport = GeneratorTransport()
     emitter = EmitterBuilder().with_task(1, 2).with_transport(transport).build()

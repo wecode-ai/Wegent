@@ -132,7 +132,17 @@ class Agent:
     async def start_turn_file_change_tracking(self) -> None:
         """Install per-turn Git tracking when the workspace supports it."""
         device_id = getattr(self.task_data, "device_id", None)
-        if not self.project_path or not device_id:
+        if not self.project_path:
+            logger.info(
+                "Turn file change tracking skipped for task %s: project_path is empty",
+                self.task_id,
+            )
+            return
+        if not device_id:
+            logger.info(
+                "Turn file change tracking skipped for task %s: device_id is empty",
+                self.task_id,
+            )
             return
         tracker = TurnFileChangeTracker(
             workspace=Path(self.project_path),
@@ -144,6 +154,18 @@ class Agent:
         if await tracker.start():
             self.turn_file_change_tracker = tracker
             self.emitter.set_completion_fields_provider(tracker.finalize)
+            logger.info(
+                "Turn file change tracking started for task %s, subtask %s, workspace=%s",
+                self.task_id,
+                self.subtask_id,
+                self.project_path,
+            )
+        else:
+            logger.info(
+                "Turn file change tracking skipped for task %s: workspace is not a Git repository with HEAD, workspace=%s",
+                self.task_id,
+                self.project_path,
+            )
 
     async def abort_turn_file_change_tracking(self) -> None:
         """Discard the current turn tracker and release its workspace lock."""
@@ -152,6 +174,15 @@ class Agent:
         self.emitter.set_completion_fields_provider(None)
         if tracker is not None:
             await tracker.abort()
+
+    async def collect_turn_file_change_completion_fields(self) -> dict[str, Any]:
+        """Finalize the current turn tracker and return response.completed fields."""
+        tracker = self.turn_file_change_tracker
+        self.turn_file_change_tracker = None
+        self.emitter.set_completion_fields_provider(None)
+        if tracker is None:
+            return {}
+        return await tracker.finalize()
 
     async def handle(
         self, pre_executed: Optional[TaskStatus] = None

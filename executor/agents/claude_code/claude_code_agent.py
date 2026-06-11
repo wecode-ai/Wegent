@@ -911,6 +911,9 @@ class ClaudeCodeAgent(Agent):
                 session_id=self.session_id,
                 mcp_servers=self.options.get("mcp_servers")
                 or self.options.get("mcpServers"),
+                completion_fields_provider=(
+                    self.collect_turn_file_change_completion_fields
+                ),
             )
 
             # Task completed or failed
