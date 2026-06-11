@@ -18,6 +18,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.constants import CLIENT_ORIGIN_WEWORK
 from app.models.project import Project
 from app.models.subtask import Subtask
 from app.models.task import TaskResource
@@ -45,6 +46,27 @@ logger = logging.getLogger(__name__)
 SELECTED_KB_PRELOAD_SKILL = "wegent-knowledge"
 WEB_RUNTIME_GUIDANCE_MARKER = "<wegent_runtime_guidance>"
 WEB_RUNTIME_GUIDANCE_CLOSE = "</wegent_runtime_guidance>"
+
+
+def _first_present_project_id(*values: Any) -> Optional[int]:
+    """Return the first project id that is explicitly present, preserving 0."""
+
+    for value in values:
+        if value is None:
+            continue
+        return value
+    return None
+
+
+def _is_wework_standalone_chat_project(
+    task: TaskResource,
+    project_id: Optional[int],
+) -> bool:
+    """Return whether the task should use a standalone Wework chat workspace."""
+
+    return (
+        getattr(task, "client_origin", None) == CLIENT_ORIGIN_WEWORK and project_id == 0
+    )
 
 
 class TaskRequestBuilder:
@@ -348,6 +370,10 @@ class TaskRequestBuilder:
                 workspace_path=project_workspace.get("project_workspace_path"),
             )
 
+        request_project_id = _first_present_project_id(
+            project_workspace.get("project_id"), task.project_id
+        )
+
         return ExecutionRequest(
             task_id=task.id,
             subtask_id=subtask.id,
@@ -378,7 +404,10 @@ class TaskRequestBuilder:
             table_contexts=[],
             is_user_selected_kb=is_user_selected_kb,
             workspace=workspace,
-            project_id=project_workspace.get("project_id") or task.project_id or None,
+            project_id=request_project_id,
+            standalone_chat_workspace=_is_wework_standalone_chat_project(
+                task, request_project_id
+            ),
             workspace_source=project_workspace.get("workspace_source"),
             project_workspace_path=project_workspace.get("project_workspace_path"),
             execution_target_type=project_workspace.get("execution_target_type"),
@@ -2504,7 +2533,9 @@ Response template:
 
         workspace_source = workspace_source.strip()
         existing_project = workspace_data.get("project") or {}
-        project_id = existing_project.get("project_id") or task.project_id or None
+        project_id = _first_present_project_id(
+            existing_project.get("project_id"), task.project_id
+        )
         device_id = existing_project.get("device_id") or spec.get("device_id")
 
         if (
@@ -2649,7 +2680,7 @@ Response template:
             workspace_source = "local_path"
 
         workspace_data["project"] = {
-            "project_id": None,
+            "project_id": _first_present_project_id(getattr(task, "project_id", None)),
             "workspace_source": workspace_source,
             "project_workspace_path": workspace_path.strip(),
             "execution_target_type": "local",

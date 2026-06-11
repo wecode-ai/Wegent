@@ -140,9 +140,9 @@ When a project configures `workspace.localPath` or `workspace.checkoutPath`, the
 
 ### Standalone Chat Workspaces
 
-When a chat has no selected project but is bound to an online device, executor-side independent Chats workspaces are currently disabled by default. To enable them, set `WEGENT_EXECUTOR_STANDALONE_CHATS_ENABLED=true` in the device runtime environment.
+For new Wework conversations with no selected project (`project_id=0`) that are bound to an online device, the Executor uses independent Chats workspaces by default. To disable them, set `WEGENT_EXECUTOR_STANDALONE_CHATS_ENABLED=false` in the device runtime environment. Frontend device chats keep the legacy behavior and continue to use task-scoped temporary workspaces.
 
-Once enabled, the first task runs in a temporary task directory. After the response finishes, the Executor generates a dated directory name from the response summary and moves the temporary directory into the Chats workspace tree. The default root is `~/.wecode/wegent-executor/workspace/chats`. To use another location, set `WEGENT_EXECUTOR_CHATS_DIR` in the device runtime environment. Backend stores the final path in the task metadata label `standaloneChatWorkspacePath`, so continuing the conversation or opening it from history reuses the same directory.
+The first task creates a directory in the Chats workspace tree, using the date and user request to name the directory. The default root is `~/.wecode/wegent-executor/workspace/chats`. To use another location, set `WEGENT_EXECUTOR_CHATS_DIR` in the device runtime environment. Backend stores the final path in the task metadata label `standaloneChatWorkspacePath`, so continuing the conversation or opening it from history reuses the same directory.
 
 Project chats do not use this path. They continue to use the project's configured `workspace.localPath` or `workspace.checkoutPath`.
 

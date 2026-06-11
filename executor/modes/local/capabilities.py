@@ -10,6 +10,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import shutil
 import tempfile
 import zipfile
@@ -20,7 +21,6 @@ from typing import Any, Iterator
 
 from executor.platform_compat import get_permissions_manager
 from executor.services.api_client import ApiClient, SkillDownloader
-
 from shared.logger import setup_logger
 from shared.models.execution import ExecutionRequest
 
@@ -40,7 +40,12 @@ def default_manifest_path() -> Path:
     executor_home = os.environ.get(
         "WEGENT_EXECUTOR_HOME", os.path.expanduser("~/.wegent-executor")
     )
-    return Path(executor_home).expanduser() / "capabilities.json"
+    return Path(executor_home).expanduser() / "capabilities" / "manifest.json"
+
+
+def default_store_dir() -> Path:
+    """Return the centralized Wegent capability package store directory."""
+    return default_manifest_path().parent / "store"
 
 
 def default_global_skills_dir() -> Path:
@@ -53,8 +58,30 @@ def default_global_plugins_dir() -> Path:
     return Path.home() / ".claude" / "plugins"
 
 
+def default_codex_skills_dir() -> Path:
+    """Return the Codex global Skills directory."""
+    return Path.home() / ".codex" / "skills"
+
+
+def default_codex_plugins_dir() -> Path:
+    """Return the Codex global Plugins directory."""
+    return Path.home() / ".codex" / "plugins"
+
+
+def _peer_codex_capability_dir(source_dir: Path, directory_name: str) -> Path:
+    root = (
+        source_dir.parent.parent
+        if source_dir.parent.name == ".claude"
+        else source_dir.parent
+    )
+    return root / ".codex" / directory_name
+
+
 def is_project_task(task_data: ExecutionRequest) -> bool:
     """Return whether an execution request should use project-global capabilities."""
+    if getattr(task_data, "standalone_chat_workspace", False):
+        return True
+
     project_id = getattr(task_data, "project_id", None)
     if project_id and int(project_id) > 0:
         return True
@@ -192,13 +219,32 @@ class GlobalCapabilityStore:
         manifest_path: Path | None = None,
         skills_dir: Path | None = None,
         plugins_dir: Path | None = None,
+        codex_skills_dir: Path | None = None,
+        codex_plugins_dir: Path | None = None,
+        store_dir: Path | None = None,
     ):
         self.manifest = manifest or ManagedCapabilityManifest(
             path=manifest_path or default_manifest_path()
         )
         self.skills_dir = skills_dir or default_global_skills_dir()
         self.plugins_dir = plugins_dir or default_global_plugins_dir()
+        self.codex_skills_dir = codex_skills_dir or (
+            default_codex_skills_dir()
+            if skills_dir is None
+            else _peer_codex_capability_dir(self.skills_dir, "skills")
+        )
+        self.codex_plugins_dir = codex_plugins_dir or (
+            default_codex_plugins_dir()
+            if plugins_dir is None
+            else _peer_codex_capability_dir(self.plugins_dir, "plugins")
+        )
+        self.store_dir = store_dir or default_store_dir()
+        self.skill_store_dir = self.store_dir / "skills"
+        self.plugin_store_dir = self.store_dir / "plugins"
         self._lock_path = self.manifest.path.with_suffix(".lock")
+
+    def load(self) -> dict[str, Any]:
+        return self.manifest.load()
 
     def record_skill(self, skill: dict[str, Any]) -> None:
         with _file_lock(self._lock_path):
@@ -247,9 +293,15 @@ class GlobalCapabilityStore:
                 )
                 if name in desired_names or not managed:
                     continue
-                skill_path = self.skills_dir / name
-                if skill_path.exists() and self._is_child(skill_path, self.skills_dir):
-                    shutil.rmtree(skill_path)
+                removed_claude = self._remove_runtime_entry(
+                    self.skills_dir / name,
+                    self.skills_dir,
+                )
+                removed_codex = self._remove_runtime_entry(
+                    self.codex_skills_dir / name,
+                    self.codex_skills_dir,
+                )
+                if removed_claude or removed_codex:
                     removed.append(name)
                 manifest["skills"].pop(name, None)
             if removed:
@@ -261,33 +313,167 @@ class GlobalCapabilityStore:
             manifest = self.manifest.load()
             installed_plugins = self._load_installed_plugins()
             installed_map = installed_plugins.setdefault("plugins", {})
+            settings = self._load_claude_settings()
+            enabled_plugins = settings.get("enabledPlugins")
+            if not isinstance(enabled_plugins, dict):
+                enabled_plugins = {}
+                settings["enabledPlugins"] = enabled_plugins
             removed = []
             changed = False
+            settings_changed = False
             for key, record in list((manifest.get("plugins") or {}).items()):
                 managed = (
                     record.get("managed", True) if isinstance(record, dict) else False
                 )
                 if key in desired_keys or not managed:
                     continue
+                runtime = record.get("runtime") if isinstance(record, dict) else {}
+                if isinstance(runtime, dict):
+                    self._remove_runtime_entry(
+                        Path(str(runtime.get("claude_link", ""))).expanduser(),
+                        self.plugins_dir,
+                    )
+                    self._remove_runtime_entry(
+                        Path(str(runtime.get("codex_link", ""))).expanduser(),
+                        self.codex_plugins_dir,
+                    )
                 if key in installed_map:
                     installed_map.pop(key, None)
                     removed.append(key)
                     changed = True
+                if key in enabled_plugins:
+                    enabled_plugins.pop(key, None)
+                    settings_changed = True
                 manifest.setdefault("plugins", {}).pop(key, None)
                 changed = True
             if changed:
                 self._save_installed_plugins(installed_plugins)
                 self.manifest.save(self.manifest.bump_revision(manifest))
+                self._sync_local_plugin_marketplace(manifest.get("plugins") or {})
+            if settings_changed:
+                self._save_claude_settings(settings)
             return removed
 
+    def reconcile_managed_plugins(self) -> list[str]:
+        """Restore Claude plugin install and enablement state from the manifest."""
+        with _file_lock(self._lock_path):
+            manifest = self.manifest.load()
+            manifest_plugins = manifest.get("plugins") or {}
+            if not isinstance(manifest_plugins, dict):
+                return []
+
+            installed_plugins = self._load_installed_plugins()
+            installed_map = installed_plugins.setdefault("plugins", {})
+            settings = self._load_claude_settings()
+            enabled_plugins = settings.get("enabledPlugins")
+            if not isinstance(enabled_plugins, dict):
+                enabled_plugins = {}
+                settings["enabledPlugins"] = enabled_plugins
+
+            restored: list[str] = []
+            installed_changed = False
+            settings_changed = False
+            for key, record in sorted(manifest_plugins.items()):
+                if not isinstance(record, dict) or not record.get("managed", True):
+                    continue
+                store_path = Path(str(record.get("store_path") or "")).expanduser()
+                runtime = record.get("runtime") or {}
+                if not isinstance(runtime, dict):
+                    runtime = {}
+                claude_link_raw = runtime.get("claude_link") or record.get(
+                    "install_path"
+                )
+                if not claude_link_raw:
+                    continue
+                claude_link = Path(str(claude_link_raw)).expanduser()
+                if not store_path.is_dir():
+                    continue
+
+                if self._ensure_runtime_symlink(
+                    claude_link, store_path, self.plugins_dir
+                ):
+                    restored.append(key)
+
+                codex_link_raw = runtime.get("codex_link")
+                if codex_link_raw:
+                    codex_link = Path(str(codex_link_raw)).expanduser()
+                    self._ensure_runtime_symlink(
+                        codex_link,
+                        store_path,
+                        self.codex_plugins_dir,
+                        optional=True,
+                    )
+
+                entry = self._plugin_install_entry(record, claude_link)
+                entries = installed_map.get(key)
+                if not isinstance(entries, list):
+                    entries = []
+                next_entries = [
+                    install
+                    for install in entries
+                    if isinstance(install, dict)
+                    and install.get("scope", "user") != entry["scope"]
+                ]
+                current = next(
+                    (
+                        install
+                        for install in entries
+                        if isinstance(install, dict)
+                        and install.get("scope", "user") == entry["scope"]
+                    ),
+                    None,
+                )
+                if current:
+                    entry["installedAt"] = current.get(
+                        "installedAt", entry["installedAt"]
+                    )
+                    entry["lastUpdated"] = current.get(
+                        "lastUpdated", entry["lastUpdated"]
+                    )
+                next_entries.append(entry)
+                if entries != next_entries:
+                    installed_map[key] = next_entries
+                    installed_changed = True
+                    if key not in restored:
+                        restored.append(key)
+
+                if enabled_plugins.get(key) is not True:
+                    enabled_plugins[key] = True
+                    settings_changed = True
+                    if key not in restored:
+                        restored.append(key)
+
+            if installed_changed:
+                self._save_installed_plugins(installed_plugins)
+            if settings_changed:
+                self._save_claude_settings(settings)
+            self._sync_local_plugin_marketplace(manifest_plugins)
+            return restored
+
     def _skill_record(self, skill: dict[str, Any]) -> dict[str, Any]:
+        name = skill.get("name")
+        store_path = skill.get("store_path")
+        claude_link = skill.get("runtime_link") or skill.get("claude_link")
+        codex_link = skill.get("codex_link")
         record = {
             "skill_id": skill.get("id") or skill.get("skill_id"),
             "namespace": skill.get("namespace", "default"),
+            "managed": True,
             "updated_at": utc_now_iso(),
         }
+        if store_path:
+            record["store_path"] = str(store_path)
+        runtime = {}
+        if claude_link:
+            runtime["claude_link"] = str(claude_link)
+        if codex_link:
+            runtime["codex_link"] = str(codex_link)
+        if runtime:
+            record["runtime"] = runtime
         if skill.get("installed_skill_id") is not None:
             record["installed_skill_id"] = skill.get("installed_skill_id")
+        if name:
+            record["name"] = name
         return record
 
     def _load_installed_plugins(self) -> dict[str, Any]:
@@ -301,12 +487,155 @@ class GlobalCapabilityStore:
         data.setdefault("plugins", {})
         _atomic_write_json(self.plugins_dir / "installed_plugins.json", data)
 
+    def _load_claude_settings(self) -> dict[str, Any]:
+        return _read_json_file(self.plugins_dir.parent / "settings.json", {})
+
+    def _save_claude_settings(self, data: dict[str, Any]) -> None:
+        _atomic_write_json(self.plugins_dir.parent / "settings.json", data)
+
+    def _load_known_marketplaces(self) -> dict[str, Any]:
+        return _read_json_file(self.plugins_dir / "known_marketplaces.json", {})
+
+    def _save_known_marketplaces(self, data: dict[str, Any]) -> None:
+        _atomic_write_json(self.plugins_dir / "known_marketplaces.json", data)
+
+    def _sync_local_plugin_marketplace(self, manifest_plugins: dict[str, Any]) -> None:
+        plugins: list[dict[str, Any]] = []
+        marketplace_dir = self.plugins_dir / "marketplaces" / "wegent"
+        marketplace_plugins_dir = marketplace_dir / "plugins"
+        for key, record in sorted(manifest_plugins.items()):
+            if not isinstance(record, dict) or not record.get("managed", True):
+                continue
+            if record.get("marketplace") != "wegent":
+                continue
+            store_path = Path(str(record.get("store_path") or "")).expanduser()
+            if not store_path.is_dir():
+                continue
+            plugin_name = record.get("name")
+            if not plugin_name:
+                continue
+            source_name = self._safe_path_segment(key)
+            source_path = marketplace_plugins_dir / source_name
+            self._ensure_runtime_symlink(
+                source_path,
+                store_path,
+                marketplace_plugins_dir,
+                optional=True,
+            )
+            plugin_entry = {
+                "name": plugin_name,
+                "source": f"./plugins/{source_name}",
+                "description": record.get("description") or "",
+            }
+            if record.get("version") is not None:
+                plugin_entry["version"] = str(record.get("version"))
+            plugins.append(plugin_entry)
+
+        known_marketplaces = self._load_known_marketplaces()
+        if not plugins:
+            if known_marketplaces.pop("wegent", None) is not None:
+                self._save_known_marketplaces(known_marketplaces)
+            return
+
+        marketplace_json = {
+            "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+            "name": "wegent",
+            "description": "Wegent managed local plugin marketplace",
+            "owner": {"name": "Wegent"},
+            "plugins": plugins,
+        }
+        _atomic_write_json(
+            marketplace_dir / ".claude-plugin" / "marketplace.json",
+            marketplace_json,
+        )
+        next_known = {
+            "source": {"source": "local", "path": str(marketplace_dir)},
+            "installLocation": str(marketplace_dir),
+            "lastUpdated": utc_now_iso(),
+        }
+        if known_marketplaces.get("wegent") != next_known:
+            known_marketplaces["wegent"] = next_known
+            self._save_known_marketplaces(known_marketplaces)
+
+    def _plugin_install_entry(
+        self, record: dict[str, Any], install_path: Path
+    ) -> dict[str, Any]:
+        now = utc_now_iso()
+        return {
+            "scope": record.get("scope", "user"),
+            "installPath": str(install_path),
+            "installedPluginId": record.get("installed_plugin_id"),
+            "checksum": record.get("checksum"),
+            "version": record.get("version"),
+            "componentStates": record.get("component_states") or {},
+            "installedAt": record.get("installed_at") or now,
+            "lastUpdated": now,
+        }
+
+    def _ensure_runtime_symlink(
+        self,
+        runtime_path: Path,
+        target_path: Path,
+        parent: Path,
+        *,
+        optional: bool = False,
+    ) -> bool:
+        if not self._is_runtime_child(runtime_path, parent):
+            if not optional:
+                raise FileExistsError(
+                    f"Runtime path is outside managed parent: {runtime_path}"
+                )
+            logger.warning(
+                "Runtime path is outside managed parent, skipping link: %s",
+                runtime_path,
+            )
+            return False
+        runtime_path.parent.mkdir(parents=True, exist_ok=True)
+        if runtime_path.is_symlink():
+            if runtime_path.resolve() == target_path.resolve():
+                return False
+            runtime_path.unlink()
+        elif runtime_path.exists():
+            if runtime_path.samefile(target_path):
+                return False
+            if optional:
+                logger.warning(
+                    "Runtime path is occupied by a local user item, skipping link: %s",
+                    runtime_path,
+                )
+                return False
+            raise FileExistsError(f"Runtime path is occupied: {runtime_path}")
+        os.symlink(target_path, runtime_path, target_is_directory=True)
+        return True
+
+    def _safe_path_segment(self, value: Any) -> str:
+        segment = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(value or "").strip()).strip("-")
+        return segment or "unknown"
+
     def _is_child(self, path: Path, parent: Path) -> bool:
         try:
             path.resolve().relative_to(parent.resolve())
             return True
         except ValueError:
             return False
+
+    def _is_runtime_child(self, path: Path, parent: Path) -> bool:
+        try:
+            path.parent.resolve().relative_to(parent.resolve())
+            return True
+        except (OSError, ValueError):
+            return False
+
+    def _remove_runtime_entry(self, path: Path, parent: Path) -> bool:
+        if not path or not (path.exists() or path.is_symlink()):
+            return False
+        if not self._is_runtime_child(path, parent):
+            return False
+        if path.is_symlink():
+            path.unlink()
+        else:
+            shutil.rmtree(path)
+        return True
 
 
 class GlobalCapabilityReporter:
@@ -405,23 +734,48 @@ class GlobalCapabilityReporter:
             for install in installs:
                 if not isinstance(install, dict):
                     continue
+                install_path = install.get("installPath")
+                component_states = install.get("componentStates") or {}
+                version = install.get("version")
+                if managed:
+                    install_path = self._managed_plugin_scan_path(
+                        install_path,
+                        managed,
+                    )
+                    component_states = (
+                        component_states or managed.get("component_states") or {}
+                    )
+                    if version in {None, "unknown"}:
+                        version = managed.get("version")
                 record = {
                     "name": plugin_name,
                     "marketplace": marketplace,
                     "scope": install.get("scope", "user"),
-                    "version": install.get("version"),
+                    "version": version,
                     "source": "wegent" if managed else "local_user",
                     "installed_at": install.get("installedAt"),
                     "last_updated": install.get("lastUpdated"),
                     "skills": self._scan_plugin_skills(
-                        install.get("installPath"),
-                        install.get("componentStates") or {},
+                        install_path,
+                        component_states,
                     ),
                 }
                 if managed:
                     record["installed_plugin_id"] = managed.get("installed_plugin_id")
                 results.append(record)
         return results
+
+    def _managed_plugin_scan_path(
+        self, install_path: Any, managed: dict[str, Any]
+    ) -> Any:
+        if install_path:
+            runtime_path = Path(str(install_path)).expanduser()
+            if runtime_path.is_dir():
+                return install_path
+        store_path = managed.get("store_path")
+        if store_path:
+            return store_path
+        return install_path
 
     def _scan_plugin_skills(
         self, install_path: Any, component_states: dict[str, Any] | None = None
@@ -506,6 +860,8 @@ class CapabilitySyncHandler:
         reporter: GlobalCapabilityReporter | None = None,
         skills_dir: Path | None = None,
         plugins_dir: Path | None = None,
+        codex_skills_dir: Path | None = None,
+        codex_plugins_dir: Path | None = None,
     ):
         self.auth_token = auth_token or os.getenv("WEGENT_AUTH_TOKEN", "")
         self.skills_dir = skills_dir or default_global_skills_dir()
@@ -513,7 +869,11 @@ class CapabilitySyncHandler:
         self.store = store or GlobalCapabilityStore(
             skills_dir=self.skills_dir,
             plugins_dir=self.plugins_dir,
+            codex_skills_dir=codex_skills_dir,
+            codex_plugins_dir=codex_plugins_dir,
         )
+        self.codex_skills_dir = codex_skills_dir or self.store.codex_skills_dir
+        self.codex_plugins_dir = codex_plugins_dir or self.store.codex_plugins_dir
         self.reporter = reporter
 
     async def handle_sync_capabilities(self, data: dict[str, Any]) -> dict[str, Any]:
@@ -591,6 +951,8 @@ class CapabilitySyncHandler:
         manifest = self.store.manifest.load()
         manifest["last_sync_at"] = utc_now_iso()
         self.store.manifest.save(self.store.manifest.bump_revision(manifest))
+        if plugin_records:
+            self.store.reconcile_managed_plugins()
         if self.reporter:
             self.reporter.force_next_full_report()
 
@@ -647,11 +1009,8 @@ class CapabilitySyncHandler:
 
         self.skills_dir.mkdir(parents=True, exist_ok=True)
         _set_owner_only(self.skills_dir, is_directory=True)
-        downloader = SkillDownloader(
-            auth_token=self.auth_token,
-            team_namespace="default",
-            skills_dir=str(self.skills_dir),
-        )
+        self.codex_skills_dir.mkdir(parents=True, exist_ok=True)
+        _set_owner_only(self.codex_skills_dir, is_directory=True)
 
         for skill in skills:
             name = skill.get("name")
@@ -668,21 +1027,60 @@ class CapabilitySyncHandler:
                     }
                 )
                 continue
-            before_digest = self._skill_digest(name)
-            if (self.skills_dir / name).is_dir():
+
+            runtime_link = self.skills_dir / name
+            manifest = self.store.manifest.load()
+            managed_record = (manifest.get("skills") or {}).get(name)
+            if self._is_runtime_path_occupied_by_local_user(
+                runtime_link, managed_record
+            ):
+                results.append(
+                    {
+                        "id": skill_id,
+                        "name": name,
+                        "status": "failed",
+                        "error": "Runtime Skill path is occupied by a local user item",
+                    }
+                )
+                continue
+
+            store_path = self._skill_store_path(name, skill_id, namespace)
+            before_digest = self._skill_digest_at(store_path)
+            if (
+                isinstance(managed_record, dict)
+                and self._runtime_skill_package_exists(runtime_link)
+                and not store_path.exists()
+            ):
+                codex_link = self._codex_skill_link(name, runtime_link)
                 record = dict(skill)
                 record["id"] = skill_id
+                record["store_path"] = runtime_link
+                record["runtime_link"] = runtime_link
+                record["codex_link"] = codex_link
+                records[name] = self.store._skill_record(record)
+                results.append({"id": skill_id, "name": name, "status": "skipped"})
+                continue
+            if store_path.is_dir():
+                self._ensure_runtime_symlink(runtime_link, store_path)
+                codex_link = self._ensure_codex_skill_link(name, store_path)
+                record = dict(skill)
+                record["id"] = skill_id
+                record["store_path"] = store_path
+                record["runtime_link"] = runtime_link
+                record["codex_link"] = codex_link
                 records[name] = self.store._skill_record(record)
                 logger.info(
-                    "Global skill already present: name=%s skill_id=%s namespace=%s",
+                    "Global skill already present in store: name=%s skill_id=%s namespace=%s",
                     name,
                     skill_id,
                     namespace,
                 )
                 results.append({"id": skill_id, "name": name, "status": "skipped"})
                 continue
-            ok = downloader._download_single_skill(
+
+            ok = self._download_skill_to_store(
                 name,
+                store_path,
                 {
                     "skill_id": skill_id,
                     "namespace": namespace,
@@ -690,9 +1088,14 @@ class CapabilitySyncHandler:
                 },
             )
             if ok:
-                after_digest = self._skill_digest(name)
+                self._ensure_runtime_symlink(runtime_link, store_path)
+                codex_link = self._ensure_codex_skill_link(name, store_path)
+                after_digest = self._skill_digest_at(store_path)
                 record = dict(skill)
                 record["id"] = skill_id
+                record["store_path"] = store_path
+                record["runtime_link"] = runtime_link
+                record["codex_link"] = codex_link
                 records[name] = self.store._skill_record(record)
                 status = (
                     "skipped"
@@ -724,6 +1127,70 @@ class CapabilitySyncHandler:
                 )
         return results, records
 
+    def _skill_store_path(self, name: str, skill_id: Any, namespace: str) -> Path:
+        return self.store.skill_store_dir / "-".join(
+            [
+                self._safe_path_segment(skill_id),
+                self._safe_path_segment(namespace),
+                self._safe_path_segment(name),
+            ]
+        )
+
+    def _runtime_skill_package_exists(self, runtime_link: Path) -> bool:
+        return (
+            runtime_link.exists()
+            and runtime_link.is_dir()
+            and (runtime_link / "SKILL.md").exists()
+        )
+
+    def _codex_skill_link(self, name: str, target_path: Path) -> Path | None:
+        runtime_path = self.codex_skills_dir / name
+        if self._ensure_optional_runtime_symlink(runtime_path, target_path):
+            return runtime_path
+        return None
+
+    def _ensure_codex_skill_link(self, name: str, store_path: Path) -> Path | None:
+        return self._codex_skill_link(name, store_path)
+
+    def _download_skill_to_store(
+        self, name: str, store_path: Path, skill_ref: dict[str, Any]
+    ) -> bool:
+        temp_parent = self.store.skill_store_dir / f".tmp-{os.getpid()}-{name}"
+        if temp_parent.exists():
+            shutil.rmtree(temp_parent)
+        temp_parent.mkdir(parents=True, exist_ok=True)
+        try:
+            downloader = SkillDownloader(
+                auth_token=self.auth_token,
+                team_namespace="default",
+                skills_dir=str(temp_parent),
+            )
+            ok = downloader._download_single_skill(name, skill_ref)
+            extracted_path = temp_parent / name
+            if not ok or not extracted_path.is_dir():
+                return False
+            staged_path = store_path.parent / f".{store_path.name}.staged-{os.getpid()}"
+            if staged_path.exists():
+                shutil.rmtree(staged_path)
+            store_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(extracted_path), str(staged_path))
+            if store_path.exists() or store_path.is_symlink():
+                if store_path.is_symlink():
+                    store_path.unlink()
+                else:
+                    shutil.rmtree(store_path)
+            os.replace(staged_path, store_path)
+            _set_owner_only(store_path, is_directory=True)
+            return True
+        finally:
+            if temp_parent.exists():
+                shutil.rmtree(temp_parent, ignore_errors=True)
+
+    def _skill_digest_at(self, path: Path) -> str | None:
+        if not path.is_dir():
+            return None
+        return self._directory_digest(path)
+
     def _sync_plugins(
         self, plugins: list[dict[str, Any]]
     ) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
@@ -737,6 +1204,8 @@ class CapabilitySyncHandler:
         installed_map = installed_plugins.setdefault("plugins", {})
         self.plugins_dir.mkdir(parents=True, exist_ok=True)
         _set_owner_only(self.plugins_dir, is_directory=True)
+        self.codex_plugins_dir.mkdir(parents=True, exist_ok=True)
+        _set_owner_only(self.codex_plugins_dir, is_directory=True)
         client = ApiClient(self.auth_token) if self.auth_token else None
 
         for item in plugins:
@@ -753,9 +1222,10 @@ class CapabilitySyncHandler:
                 )
                 continue
             key = self._plugin_key(name, marketplace)
-            install_path = self._plugin_install_path(item, name, marketplace)
+            runtime_link = self._plugin_runtime_path(item, name, marketplace)
+            store_path = self._plugin_store_path(item, name, marketplace)
             expected_checksum = item.get("checksum")
-            should_download = not install_path.exists()
+            should_download = not store_path.exists()
             if (
                 isinstance(expected_checksum, str)
                 and expected_checksum
@@ -774,7 +1244,7 @@ class CapabilitySyncHandler:
                         }
                     )
                     continue
-                if not self._download_plugin_package(client, item, install_path):
+                if not self._download_plugin_package(client, item, store_path):
                     results.append(
                         {
                             "id": item.get("installed_plugin_id"),
@@ -784,12 +1254,14 @@ class CapabilitySyncHandler:
                         }
                     )
                     continue
-            if not install_path.exists() or not install_path.is_dir():
+            if not store_path.exists() and runtime_link.exists():
+                store_path = runtime_link
+            if not store_path.exists() or not store_path.is_dir():
                 logger.warning(
                     "Plugin package not found in local cache: name=%s marketplace=%s path=%s",
                     name,
                     marketplace,
-                    install_path,
+                    store_path,
                 )
                 results.append(
                     {
@@ -800,6 +1272,9 @@ class CapabilitySyncHandler:
                     }
                 )
                 continue
+            if store_path != runtime_link:
+                self._ensure_runtime_symlink(runtime_link, store_path)
+            codex_link = self._ensure_codex_plugin_link(key, store_path)
 
             scope = item.get("scope", "user")
             existing_installs = [
@@ -810,7 +1285,7 @@ class CapabilitySyncHandler:
             existing_installs.append(
                 {
                     "scope": scope,
-                    "installPath": str(install_path),
+                    "installPath": str(runtime_link),
                     "installedPluginId": item.get("installed_plugin_id"),
                     "checksum": item.get("checksum"),
                     "version": item.get("version"),
@@ -820,12 +1295,14 @@ class CapabilitySyncHandler:
                 }
             )
             installed_map[key] = existing_installs
-            records[key] = self._plugin_record(item, key, marketplace, install_path)
+            records[key] = self._plugin_record(
+                item, key, marketplace, store_path, runtime_link, codex_link
+            )
             logger.info(
                 "Configured global plugin: key=%s installed_plugin_id=%s path=%s",
                 key,
                 item.get("installed_plugin_id"),
-                install_path,
+                runtime_link,
             )
             results.append(
                 {
@@ -922,18 +1399,25 @@ class CapabilitySyncHandler:
         _set_owner_only(install_path, is_directory=True)
 
     def _normalized_plugin_root(self, path: Path) -> Path:
-        if (path / ".claude-plugin" / "plugin.json").exists():
-            return path
-        children = [
-            child
-            for child in path.iterdir()
-            if child.is_dir() and not self._is_macos_zip_metadata(child)
-        ]
-        if (
-            len(children) == 1
-            and (children[0] / ".claude-plugin" / "plugin.json").exists()
-        ):
-            return children[0]
+        candidates: list[Path] = []
+        for plugin_json in path.rglob("plugin.json"):
+            if plugin_json.parent.name != ".claude-plugin":
+                continue
+            candidate = plugin_json.parent.parent
+            relative_parts = candidate.relative_to(path).parts
+            if any(
+                part == "__MACOSX" or part.startswith("._") for part in relative_parts
+            ):
+                continue
+            candidates.append(candidate)
+        if candidates:
+            return sorted(
+                candidates,
+                key=lambda candidate: (
+                    len(candidate.relative_to(path).parts),
+                    str(candidate),
+                ),
+            )[0]
         raise ValueError("Plugin package must include .claude-plugin/plugin.json")
 
     def _is_macos_zip_metadata(self, path: Path) -> bool:
@@ -941,12 +1425,17 @@ class CapabilitySyncHandler:
 
     def _plugin_marketplace(self, item: dict[str, Any]) -> str | None:
         source = item.get("source") or {}
-        return item.get("marketplace") or source.get("marketplace")
+        marketplace = item.get("marketplace") or source.get("marketplace")
+        if marketplace:
+            return marketplace
+        if source.get("type") == "upload":
+            return "wegent"
+        return None
 
     def _plugin_key(self, name: str, marketplace: str | None) -> str:
         return f"{name}@{marketplace}" if marketplace else name
 
-    def _plugin_install_path(
+    def _plugin_runtime_path(
         self,
         item: dict[str, Any],
         name: str,
@@ -958,10 +1447,31 @@ class CapabilitySyncHandler:
         return (
             self.plugins_dir
             / "cache"
-            / (marketplace or "local")
+            / (marketplace or "default")
             / name
             / str(item.get("version") or "latest")
         )
+
+    def _plugin_store_path(
+        self,
+        item: dict[str, Any],
+        name: str,
+        marketplace: str | None,
+    ) -> Path:
+        return self.store.plugin_store_dir / "-".join(
+            [
+                self._safe_path_segment(item.get("installed_plugin_id") or "unknown"),
+                self._safe_path_segment(marketplace or "default"),
+                self._safe_path_segment(name),
+                self._safe_path_segment(item.get("version") or "latest"),
+            ]
+        )
+
+    def _ensure_codex_plugin_link(self, key: str, store_path: Path) -> Path | None:
+        runtime_path = self.codex_plugins_dir / self._safe_path_segment(key)
+        if self._ensure_optional_runtime_symlink(runtime_path, store_path):
+            return runtime_path
+        return None
 
     def _persisted_plugin_checksum(
         self,
@@ -997,8 +1507,13 @@ class CapabilitySyncHandler:
         item: dict[str, Any],
         key: str,
         marketplace: str | None,
-        install_path: Path,
+        store_path: Path,
+        runtime_link: Path,
+        codex_link: Path | None,
     ) -> dict[str, Any]:
+        runtime = {"claude_link": str(runtime_link)}
+        if codex_link:
+            runtime["codex_link"] = str(codex_link)
         return {
             "name": item.get("name"),
             "key": key,
@@ -1011,7 +1526,9 @@ class CapabilitySyncHandler:
             "checksum": item.get("checksum"),
             "component_states": item.get("component_states") or {},
             "components": item.get("components") or {},
-            "install_path": str(install_path),
+            "store_path": str(store_path),
+            "runtime": runtime,
+            "install_path": str(runtime_link),
             "managed": True,
             "updated_at": utc_now_iso(),
         }
@@ -1066,10 +1583,51 @@ class CapabilitySyncHandler:
             if server.get(key) is not None
         }
 
+    def _is_runtime_path_occupied_by_local_user(
+        self, runtime_path: Path, managed_record: Any
+    ) -> bool:
+        if not runtime_path.exists() and not runtime_path.is_symlink():
+            return False
+        return not (
+            isinstance(managed_record, dict) and managed_record.get("managed", True)
+        )
+
+    def _ensure_runtime_symlink(self, runtime_path: Path, target_path: Path) -> None:
+        runtime_path.parent.mkdir(parents=True, exist_ok=True)
+        if runtime_path.is_symlink():
+            if runtime_path.resolve() == target_path.resolve():
+                return
+            runtime_path.unlink()
+        elif runtime_path.exists():
+            if runtime_path.samefile(target_path):
+                return
+            raise FileExistsError(f"Runtime path is occupied: {runtime_path}")
+        os.symlink(target_path, runtime_path, target_is_directory=True)
+
+    def _ensure_optional_runtime_symlink(
+        self, runtime_path: Path, target_path: Path
+    ) -> bool:
+        try:
+            self._ensure_runtime_symlink(runtime_path, target_path)
+            return True
+        except FileExistsError:
+            logger.warning(
+                "Runtime path is occupied by a local user item, skipping link: %s",
+                runtime_path,
+            )
+            return False
+
+    def _safe_path_segment(self, value: Any) -> str:
+        segment = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(value or "").strip()).strip("-")
+        return segment or "unknown"
+
     def _skill_digest(self, name: str) -> str | None:
         path = self.skills_dir / name
         if not path.exists():
             return None
+        return self._directory_digest(path)
+
+    def _directory_digest(self, path: Path) -> str:
         files: list[tuple[str, str]] = []
         for file_path in sorted(item for item in path.rglob("*") if item.is_file()):
             rel = str(file_path.relative_to(path))

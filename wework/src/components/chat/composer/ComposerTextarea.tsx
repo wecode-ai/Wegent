@@ -69,35 +69,7 @@ function displaySkillNameFromName(name: string): string {
 }
 
 function displaySkillName(skill: LocalDeviceSkill): string {
-  if (skill.plugin_name && skill.source.includes('plugin')) {
-    return `${displaySkillNameFromName(skill.plugin_name)}: ${displaySkillNameFromName(skill.name)}`
-  }
   return displaySkillNameFromName(skill.name)
-}
-
-function isPluginSkill(skill: LocalDeviceSkill): boolean {
-  return Boolean(skill.plugin_name && skill.source.includes('plugin'))
-}
-
-function compareSkillDisplayName(
-  left: LocalDeviceSkill,
-  right: LocalDeviceSkill,
-): number {
-  const leftName = displaySkillName(left).toLowerCase()
-  const rightName = displaySkillName(right).toLowerCase()
-  const nameResult = leftName.localeCompare(rightName)
-  if (nameResult !== 0) return nameResult
-
-  return left.path.localeCompare(right.path)
-}
-
-function displaySkillOrigin(
-  skill: LocalDeviceSkill,
-  t: (key: string) => string,
-): string {
-  return skill.origin === 'wegent'
-    ? t('workbench.local_skill_origin_wegent')
-    : t('workbench.local_skill_origin_local')
 }
 
 function localSkillTestId(name: string): string {
@@ -152,12 +124,16 @@ function findExpandedSelectionDeletionRange(
 }
 
 function findBackspaceSkillMentionDeletionRange(
+  value: string,
   cursor: number,
   mentions: SkillMention[],
 ): SkillMentionDeletionRange | null {
   for (const mention of mentions) {
     if (cursor > mention.start && cursor <= mention.end) {
       return { start: mention.start, end: mention.end, cursor: mention.start }
+    }
+    if (cursor > mention.end && value.slice(mention.end, cursor) === ' ') {
+      return { start: mention.start, end: cursor, cursor: mention.start }
     }
   }
 
@@ -228,9 +204,9 @@ function renderTextWithSkillMentions(
       <span
         key={mention.id}
         data-testid={`local-skill-chip-${localSkillTestId(mention.name)}`}
-        className="inline-flex max-w-full items-baseline gap-1 align-baseline text-[inherit] font-medium leading-[inherit] text-blue-600"
+        className="inline-flex h-6 max-w-full items-center gap-1.5 rounded-md border border-[#E6D5AF] bg-[#FFF8EA] px-2 align-middle text-xs font-medium text-[#6F4D13]"
       >
-        <Package className="h-[0.9em] w-[0.9em] shrink-0 translate-y-[0.08em]" />
+        <Package className="h-3.5 w-3.5 shrink-0" />
         <span className="truncate">{mention.label}</span>
       </span>,
     )
@@ -251,7 +227,6 @@ export function ComposerTextarea({
   onChange,
   onSubmit,
   canSend,
-  disabled = false,
   placeholder,
   rows,
   textareaRef,
@@ -302,18 +277,16 @@ export function ComposerTextarea({
 
   const filteredSkills = useMemo(() => {
     const query = trigger?.query.trim().toLowerCase() ?? ''
-    const matchingSkills = query
-      ? skills.filter(skill => {
-          const description = skill.short_description || skill.description || ''
-          return (
-            skill.name.toLowerCase().includes(query) ||
-            displaySkillName(skill).toLowerCase().includes(query) ||
-            description.toLowerCase().includes(query)
-          )
-        })
-      : skills
+    if (!query) return skills
 
-    return [...matchingSkills].sort(compareSkillDisplayName)
+    return skills.filter(skill => {
+      const description = skill.short_description || skill.description || ''
+      return (
+        skill.name.toLowerCase().includes(query) ||
+        displaySkillName(skill).toLowerCase().includes(query) ||
+        description.toLowerCase().includes(query)
+      )
+    })
   }, [skills, trigger?.query])
 
   const showSkillMenu = trigger !== null && Boolean(onListLocalSkills)
@@ -375,7 +348,7 @@ export function ComposerTextarea({
             return null
           })
           .filter((mention): mention is SkillMention =>
-            Boolean(mention && nextValue.slice(mention.start, mention.end) === mention.reference),
+            Boolean(mention && nextValue.slice(mention.start, mention.end) === mention.label),
           ),
       )
       onChange(nextValue)
@@ -557,6 +530,7 @@ export function ComposerTextarea({
         ) ??
         (selectionStart === selectionEnd && event.key === 'Backspace'
           ? findBackspaceSkillMentionDeletionRange(
+              value,
               selectionStart,
               validSkillMentions,
             )
@@ -647,7 +621,6 @@ export function ComposerTextarea({
         rows={rows}
         value={value}
         onChange={event => {
-          if (disabled) return
           handleValueChange(event.target.value)
           window.requestAnimationFrame(() => {
             updateSkillTrigger()
@@ -673,7 +646,6 @@ export function ComposerTextarea({
           syncSelection()
         }}
         onPaste={handlePaste}
-        disabled={disabled}
         onFocus={syncSelection}
         onBlur={() => {
           setSelection(current => ({ ...current, focused: false }))
@@ -696,7 +668,7 @@ export function ComposerTextarea({
           data-testid="local-skill-autocomplete"
           role="listbox"
           className={[
-            'absolute bottom-[calc(100%+1rem)] z-popover max-h-72 overflow-y-auto rounded-2xl border border-border bg-background p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]',
+            'absolute bottom-[calc(100%+1rem)] z-[80] max-h-72 overflow-y-auto rounded-2xl border border-border bg-background p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]',
             skillMenuClassName,
           ].join(' ')}
         >
@@ -723,41 +695,35 @@ export function ComposerTextarea({
               {t('workbench.no_local_skills')}
             </div>
           ) : (
-            filteredSkills.map((skill, index) => {
-              const SkillIcon = isPluginSkill(skill) ? Package : Sparkles
-
-              return (
-                <button
-                  key={`${skill.source}:${skill.path}`}
-                  type="button"
-                  data-testid={`local-skill-option-${skill.name}`}
-                  aria-selected={index === selectedIndex}
-                  role="option"
-                  onMouseEnter={() => setSelectedIndex(index)}
-                  onPointerEnter={() => setSelectedIndex(index)}
-                  onClick={() => selectSkill(skill)}
-                  className={[
-                    'flex min-h-8 w-full items-center gap-2 rounded-lg px-3 py-1.5 text-left',
-                    index === selectedIndex ? 'bg-muted' : '',
-                  ].join(' ')}
-                >
-                  <SkillIcon className="h-3.5 w-3.5 shrink-0 text-text-secondary" />
-                  <span className="flex min-w-0 flex-1 items-baseline gap-2">
-                    <span className="max-w-[48%] shrink-0 truncate text-[13px] font-medium leading-[18px] text-text-primary">
-                      {displaySkillName(skill)}
+            filteredSkills.map((skill, index) => (
+              <button
+                key={`${skill.source}:${skill.path}`}
+                type="button"
+                data-testid={`local-skill-option-${skill.name}`}
+                aria-selected={index === selectedIndex}
+                role="option"
+                onMouseEnter={() => setSelectedIndex(index)}
+                onPointerEnter={() => setSelectedIndex(index)}
+                onClick={() => selectSkill(skill)}
+                className={[
+                  'flex min-h-11 w-full items-center gap-3 rounded-xl px-3 py-2 text-left',
+                  index === selectedIndex ? 'bg-muted' : '',
+                ].join(' ')}
+              >
+                <Sparkles className="h-4 w-4 shrink-0 text-primary" />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-medium text-text-primary">
+                    {displaySkillName(skill)}
+                  </span>
+                  {(skill.short_description || skill.description) && (
+                    <span className="line-clamp-1 text-xs text-text-muted">
+                      {skill.short_description || skill.description}
                     </span>
-                    {(skill.short_description || skill.description) && (
-                      <span className="min-w-0 flex-1 truncate text-[13px] leading-[18px] text-text-muted">
-                        {skill.short_description || skill.description}
-                      </span>
-                    )}
-                  </span>
-                  <span className="shrink-0 text-xs text-text-muted">
-                    {displaySkillOrigin(skill, t)}
-                  </span>
-                </button>
-              )
-            })
+                  )}
+                </span>
+                <span className="shrink-0 text-xs text-text-muted">{skill.source}</span>
+              </button>
+            ))
           )}
         </div>
       )}

@@ -210,6 +210,36 @@ def create_claude_model_config(
     return final_claude_code_config
 
 
+def _normalize_mcp_server_for_claude(server_config: dict[str, Any]) -> dict[str, Any]:
+    """Normalize an MCP server config to Claude Code SDK schema."""
+    config = dict(server_config)
+    server_type = config.get("type")
+    if server_type == "streamable-http":
+        server_type = "http"
+        config["type"] = "http"
+
+    if server_type in {"http", "sse"}:
+        url = config.get("url") or config.get("base_url")
+        normalized: dict[str, Any] = {"type": server_type}
+        if url:
+            normalized["url"] = url
+        headers = config.get("headers")
+        if isinstance(headers, dict) and headers:
+            normalized["headers"] = headers
+        return normalized
+
+    if server_type == "stdio" or (
+        "command" in config and server_type in {None, "", "stdio"}
+    ):
+        normalized = {"type": "stdio"}
+        for key in ("command", "args", "env"):
+            if config.get(key) is not None:
+                normalized[key] = config[key]
+        return normalized
+
+    return config
+
+
 def _convert_mcp_servers_list_to_dict(mcp_servers: Any) -> Dict[str, Any]:
     """Convert MCP servers from list format to dict format.
 
@@ -239,18 +269,19 @@ def _convert_mcp_servers_list_to_dict(mcp_servers: Any) -> Dict[str, Any]:
         return {}
 
     if isinstance(mcp_servers, dict):
-        return mcp_servers
+        return {
+            name: _normalize_mcp_server_for_claude(config)
+            for name, config in mcp_servers.items()
+            if isinstance(config, dict)
+        }
 
     if isinstance(mcp_servers, list):
         result = {}
         for item in mcp_servers:
             if isinstance(item, dict) and "name" in item:
                 server_name = item["name"]
-                # Create a copy without the "name" key for the server config
                 server_config = {k: v for k, v in item.items() if k != "name"}
-                # Rename "headers" to "auth" if present (for Claude Code SDK compatibility)
-                # Note: Claude Code SDK uses different key names
-                result[server_name] = server_config
+                result[server_name] = _normalize_mcp_server_for_claude(server_config)
         return result
 
     logger.warning(

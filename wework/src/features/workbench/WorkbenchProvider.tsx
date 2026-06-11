@@ -84,6 +84,7 @@ import { WorkbenchContext } from './useWorkbench'
 
 const WEWORK_CLIENT_ORIGIN = 'wework'
 const LOCAL_SKILLS_CACHE_TTL_MS = 60_000
+const STANDALONE_PROJECT_ID = 0
 const DEVICE_STATUS_LABELS: Record<string, string> = {
   online: '在线',
   busy: '忙碌',
@@ -263,7 +264,7 @@ function getCurrentAppPath(): string {
 }
 
 function getTaskRouteKey(taskId: number, projectId?: number): string {
-  return `${projectId ?? 0}:${taskId}`
+  return `${projectId ?? STANDALONE_PROJECT_ID}:${taskId}`
 }
 
 interface SubtaskResult {
@@ -1109,28 +1110,20 @@ export function WorkbenchProvider({
 
   const startNewChat = useCallback(() => {
     writeTaskIdToUrl(null)
-    const lastProjectId = readLastProjectId(user.id)
-    const project = lastProjectId
-      ? state.projects.find(item => item.id === lastProjectId)
-      : null
-    if (project) {
-      dispatch({ type: 'project_selected', project })
-    } else {
-      dispatch({
-        type: 'project_cleared',
-        standaloneDeviceId: getRememberedStandaloneDeviceId(
-          user,
-          state.devices,
-          state.standaloneDeviceId
-        ),
-      })
-    }
+    dispatch({
+      type: 'project_cleared',
+      standaloneDeviceId: getRememberedStandaloneDeviceId(
+        user,
+        state.devices,
+        state.standaloneDeviceId
+      ),
+    })
     dispatchMessages({ type: 'reset', messages: [] })
     setQueuedSends([])
     setGuidanceMessages([])
     handledTaskRouteRef.current = null
-    navigateTo('/')
-  }, [state.devices, state.projects, state.standaloneDeviceId, user])
+    navigateTo(`/?projectId=${STANDALONE_PROJECT_ID}`)
+  }, [state.devices, state.standaloneDeviceId, user])
 
   const startStandaloneChat = useCallback(() => {
     writeTaskIdToUrl(null)
@@ -1146,7 +1139,7 @@ export function WorkbenchProvider({
     setQueuedSends([])
     setGuidanceMessages([])
     handledTaskRouteRef.current = null
-    navigateTo('/')
+    navigateTo(`/?projectId=${STANDALONE_PROJECT_ID}`)
   }, [state.devices, state.standaloneDeviceId, user])
 
   const startNewProjectChat = useCallback(
@@ -1204,7 +1197,7 @@ export function WorkbenchProvider({
         })
       }
       const routeProjectId =
-        resolvedProjectId && resolvedProjectId > 0 ? resolvedProjectId : undefined
+        resolvedProjectId === undefined ? undefined : resolvedProjectId
       handledTaskRouteRef.current = getTaskRouteKey(taskId, routeProjectId)
       navigateTo(buildTaskRoute({ taskId, projectId: routeProjectId }))
     },
@@ -1226,7 +1219,7 @@ export function WorkbenchProvider({
   useEffect(() => {
     if (state.isBootstrapping) return
 
-    const taskRoute = parseTaskRoute(routePath)
+    const taskRoute = parseTaskRoute(routePath, window.location.search)
     if (!taskRoute) return
 
     const routeKey = getTaskRouteKey(taskRoute.taskId, taskRoute.projectId)
@@ -1353,6 +1346,7 @@ export function WorkbenchProvider({
       writeTaskIdToUrl(null)
       dispatch({ type: 'current_task_cleared' })
       dispatchMessages({ type: 'reset', messages: [] })
+      navigateTo(`/?projectId=${STANDALONE_PROJECT_ID}`)
     }
     await refreshWorkLists()
   }, [refreshWorkLists, resolvedServices, state.currentProject, state.currentTask])
@@ -1363,6 +1357,7 @@ export function WorkbenchProvider({
       writeTaskIdToUrl(null)
       dispatch({ type: 'current_task_cleared' })
       dispatchMessages({ type: 'reset', messages: [] })
+      navigateTo('/')
     }
     await refreshWorkLists()
   }, [refreshWorkLists, resolvedServices, state.currentProject, state.currentTask?.project_id])
@@ -1373,6 +1368,7 @@ export function WorkbenchProvider({
       writeTaskIdToUrl(null)
       dispatch({ type: 'current_task_cleared' })
       dispatchMessages({ type: 'reset', messages: [] })
+      navigateTo('/')
       await refreshWorkLists()
     },
     [refreshWorkLists, resolvedServices]
@@ -1385,6 +1381,7 @@ export function WorkbenchProvider({
         writeTaskIdToUrl(null)
         dispatch({ type: 'current_task_cleared' })
         dispatchMessages({ type: 'reset', messages: [] })
+        navigateTo(`/?projectId=${STANDALONE_PROJECT_ID}`)
       }
       await refreshWorkLists()
     },
@@ -1419,6 +1416,7 @@ export function WorkbenchProvider({
         writeTaskIdToUrl(null)
         dispatch({ type: 'current_task_cleared' })
         dispatchMessages({ type: 'reset', messages: [] })
+        navigateTo(`/?projectId=${STANDALONE_PROJECT_ID}`)
       }
       await refreshWorkLists()
     },
@@ -1510,7 +1508,9 @@ export function WorkbenchProvider({
       const payload: ChatSendPayload = {
         task_id: state.currentTask?.id,
         team_id: state.defaultTeam.id,
-        project_id: state.currentTask ? undefined : state.currentProject?.id,
+        project_id: state.currentTask
+          ? undefined
+          : state.currentProject?.id ?? STANDALONE_PROJECT_ID,
         client_origin: WEWORK_CLIENT_ORIGIN,
         device_id: activeDeviceId,
         task_type: 'code',
@@ -1614,7 +1614,7 @@ export function WorkbenchProvider({
       }
 
       if (!state.currentTask && ack.task_id) {
-        const projectId = state.currentProject?.id ?? 0
+        const projectId = payload.project_id ?? state.currentProject?.id ?? 0
         const routeProjectId = projectId > 0 ? projectId : undefined
         // Navigate to the canonical task route so a freshly created chat shares
         // the same URL shape as opening an existing one (path, not ?taskId=).
@@ -1647,7 +1647,6 @@ export function WorkbenchProvider({
     [
       refreshWorkLists,
       resolvedServices.chatStream,
-      state.currentProject?.id,
       state.currentTask,
     ]
   )

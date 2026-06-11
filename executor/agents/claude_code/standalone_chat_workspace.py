@@ -29,7 +29,9 @@ TRUTHY_ENV_VALUES = {"1", "true", "yes", "on"}
 def is_standalone_chat_workspace_enabled() -> bool:
     """Return whether executor-side standalone Chats workspaces are enabled."""
 
-    value = os.environ.get(STANDALONE_CHATS_ENABLED_ENV, "")
+    value = os.environ.get(STANDALONE_CHATS_ENABLED_ENV)
+    if value is None:
+        return True
     return value.strip().lower() in TRUTHY_ENV_VALUES
 
 
@@ -144,7 +146,9 @@ def is_initial_standalone_chat(task_data) -> bool:
         return False
     if not task_data:
         return False
-    if getattr(task_data, "project_id", None):
+    if not getattr(task_data, "standalone_chat_workspace", False):
+        return False
+    if getattr(task_data, "project_id", None) != 0:
         return False
     if getattr(task_data, "project_workspace_path", None):
         return False
@@ -160,7 +164,9 @@ def prepared_standalone_chat_workspace_path(task_data) -> Optional[str]:
         return None
     if not task_data:
         return None
-    if getattr(task_data, "project_id", None):
+    if not getattr(task_data, "standalone_chat_workspace", False):
+        return None
+    if getattr(task_data, "project_id", None) != 0:
         return None
     if getattr(task_data, "git_url", None):
         return None
