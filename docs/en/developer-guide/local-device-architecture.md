@@ -290,6 +290,12 @@ Cloud devices use a user data startup script to install and run the executor aut
 
 `WEGENT_AUTH_TOKEN` and `WEGENT_USER_JWT_TOKEN` must not be used interchangeably: the former represents the device authentication identity, while the latter represents the user identity at cloud device creation time.
 
+### Cloud Device Bootstrap System Configuration
+
+When creating a cloud device, the backend generates the initial login password for the `ubuntu` user and stores it in the Device CRD `spec.cloudConfig.ubuntuInitialPassword` field. The user data startup script uses that password with `chpasswd` to initialize the `ubuntu` user's password.
+
+The same user data startup script also creates `/etc/systemd/system/fstrim.timer.d/override.conf`, configures `fstrim.timer` to run daily, then reloads, restarts, and enables the timer.
+
 ### User Isolation
 
 Each device session is bound to a user:
