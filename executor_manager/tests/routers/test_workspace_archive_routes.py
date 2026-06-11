@@ -6,8 +6,92 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from pydantic import ValidationError
 
 from executor_manager.routers import routers
+
+# =============================================================================
+# Request Validation Regression Tests
+# =============================================================================
+
+
+class TestArchiveRequestValidation:
+    def test_all_invalid_fields_returns_422(self):
+        with pytest.raises(ValidationError) as exc_info:
+            routers.ArchiveExecutorRequest(
+                executor_name="",
+                executor_namespace="",
+                task_id=0,
+                upload_url="",
+                max_size_mb=False,
+            )
+        errors = exc_info.value.errors()
+        assert len(errors) == 5
+
+    def test_empty_executor_name_returns_422(self):
+        with pytest.raises(ValidationError) as exc_info:
+            routers.ArchiveExecutorRequest(
+                executor_name="",
+                executor_namespace="default",
+                task_id=1,
+                upload_url="http://example.com/upload",
+                max_size_mb=100,
+            )
+        field_names = [e["loc"][-1] for e in exc_info.value.errors()]
+        assert "executor_name" in field_names
+
+    def test_empty_upload_url_returns_422(self):
+        with pytest.raises(ValidationError) as exc_info:
+            routers.ArchiveExecutorRequest(
+                executor_name="x",
+                executor_namespace="default",
+                task_id=1,
+                upload_url="",
+                max_size_mb=100,
+            )
+        field_names = [e["loc"][-1] for e in exc_info.value.errors()]
+        assert "upload_url" in field_names
+
+    def test_max_size_mb_false_returns_422(self):
+        with pytest.raises(ValidationError) as exc_info:
+            routers.ArchiveExecutorRequest(
+                executor_name="x",
+                executor_namespace="default",
+                task_id=1,
+                upload_url="http://example.com/upload",
+                max_size_mb=False,
+            )
+        field_names = [e["loc"][-1] for e in exc_info.value.errors()]
+        assert "max_size_mb" in field_names
+
+    def test_empty_executor_namespace_returns_422(self):
+        with pytest.raises(ValidationError) as exc_info:
+            routers.ArchiveExecutorRequest(
+                executor_name="x",
+                executor_namespace="",
+                task_id=1,
+                upload_url="http://example.com/upload",
+                max_size_mb=100,
+            )
+        field_names = [e["loc"][-1] for e in exc_info.value.errors()]
+        assert "executor_namespace" in field_names
+
+    def test_task_id_zero_returns_422(self):
+        with pytest.raises(ValidationError) as exc_info:
+            routers.ArchiveExecutorRequest(
+                executor_name="x",
+                executor_namespace="default",
+                task_id=0,
+                upload_url="http://example.com/upload",
+                max_size_mb=100,
+            )
+        field_names = [e["loc"][-1] for e in exc_info.value.errors()]
+        assert "task_id" in field_names
+
+
+# =============================================================================
+# Existing Tests
+# =============================================================================
 
 
 @pytest.mark.asyncio
