@@ -386,6 +386,7 @@ async def build_execution_request(
             previous_bot_id=previous_bot_id,
             web_runtime_guidance=web_runtime_guidance,
         )
+        request.device_id = device_id or request.device_id
 
         # Merge reasoning config from API/model selection into model_config.
         # Priority: explicit API reasoning_config > UI model_options > model think_config.

@@ -1,0 +1,25 @@
+{
+  "file_changes": {
+    "edited_files": "已编辑 {{count}} 个文件",
+    "show_more": "再显示 {{count}} 个文件",
+    "show_less": "收起",
+    "review": "审核",
+    "review_title": "本轮文件变更",
+    "revert": "撤销",
+    "confirm_revert_title": "撤销本轮文件变更？",
+    "confirm_revert_description": "仅当反向补丁可安全应用时才会修改工作区，不会覆盖后续变更。",
+    "confirm_revert": "确认撤销",
+    "cancel": "取消",
+    "close": "关闭",
+    "reverting": "撤销中",
+    "loading_diff": "正在从设备加载变更...",
+    "empty_diff": "没有可展示的文本变更",
+    "review_failed": "加载文件变更失败",
+    "revert_failed": "撤销文件变更失败",
+    "device_offline": "设备离线，无法审核或撤销",
+    "reverted": "已撤销",
+    "conflicted": "存在后续冲突，未修改工作区",
+    "artifact_missing": "变更文件已不存在",
+    "binary_file": "二进制文件"
+  }
+}

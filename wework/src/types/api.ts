@@ -329,6 +329,44 @@ export interface Subtask {
   sender_user_name?: string
 }
 
+export type TurnFileChangesStatus =
+  | 'active'
+  | 'reverted'
+  | 'conflicted'
+  | 'artifact_missing'
+
+export interface TurnFileChangeItem {
+  old_path?: string | null
+  path: string
+  change_type: 'created' | 'modified' | 'deleted' | 'renamed'
+  additions: number
+  deletions: number
+  binary: boolean
+}
+
+export interface TurnFileChangesSummary {
+  version: 1
+  status: TurnFileChangesStatus
+  artifact_id: string
+  device_id: string
+  workspace_path: string
+  file_count: number
+  additions: number
+  deletions: number
+  files: TurnFileChangeItem[]
+  reverted_at?: string | null
+}
+
+export interface TurnFileChangesDiffResponse {
+  subtask_id: number
+  diff: string
+}
+
+export interface TurnFileChangesRevertResponse {
+  subtask_id: number
+  file_changes: TurnFileChangesSummary
+}
+
 export interface TaskDetail extends Task {
   subtasks?: Subtask[]
 }
@@ -422,6 +460,7 @@ export type ChatResultPayload = Record<string, unknown> & {
   error?: string
   reasoning_chunk?: string
   blocks?: ChatBlock[]
+  file_changes?: TurnFileChangesSummary
 }
 
 export interface ChatChunkPayload {

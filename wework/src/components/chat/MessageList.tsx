@@ -10,7 +10,11 @@ import {
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import type { Attachment } from '@/types/api'
+import type {
+  Attachment,
+  DeviceInfo,
+  TurnFileChangesSummary,
+} from '@/types/api'
 import type { WorkbenchMessage } from '@/types/workbench'
 import {
   getAttachmentImageUrl,
@@ -18,15 +22,26 @@ import {
   isImageAttachment,
 } from '@/lib/attachments'
 import { ToolBlocksDisplay } from './blocks/ToolBlocksDisplay'
+import { FileChangesCard } from './FileChangesCard'
 
 interface MessageListProps {
   messages: WorkbenchMessage[]
+  devices?: DeviceInfo[]
+  onLoadFileChangesDiff?: (subtaskId: number) => Promise<string>
+  onRevertFileChanges?: (
+    subtaskId: number,
+  ) => Promise<TurnFileChangesSummary>
 }
 
 const USER_MESSAGE_COLLAPSE_LINES = 10
 const USER_MESSAGE_COLLAPSE_CHARACTERS = 600
 
-export function MessageList({ messages }: MessageListProps) {
+export function MessageList({
+  messages,
+  devices = [],
+  onLoadFileChangesDiff,
+  onRevertFileChanges,
+}: MessageListProps) {
   if (messages.length === 0) {
     return null
   }
@@ -45,7 +60,12 @@ export function MessageList({ messages }: MessageListProps) {
           {message.role === 'user' ? (
             <UserMessage message={message} />
           ) : (
-            <AssistantMessage message={message} />
+            <AssistantMessage
+              message={message}
+              devices={devices}
+              onLoadFileChangesDiff={onLoadFileChangesDiff}
+              onRevertFileChanges={onRevertFileChanges}
+            />
           )}
         </article>
       ))}
@@ -332,7 +352,19 @@ function renderUserContent(content: string) {
   return parts
 }
 
-function AssistantMessage({ message }: { message: WorkbenchMessage }) {
+function AssistantMessage({
+  message,
+  devices,
+  onLoadFileChangesDiff,
+  onRevertFileChanges,
+}: {
+  message: WorkbenchMessage
+  devices: DeviceInfo[]
+  onLoadFileChangesDiff?: (subtaskId: number) => Promise<string>
+  onRevertFileChanges?: (
+    subtaskId: number,
+  ) => Promise<TurnFileChangesSummary>
+}) {
   const hasBlocks = message.blocks && message.blocks.length > 0
   const hasContent = Boolean(message.content)
   const isStreaming = message.status === 'streaming'
@@ -401,6 +433,22 @@ function AssistantMessage({ message }: { message: WorkbenchMessage }) {
       {message.status === 'failed' && message.error && (
         <p className="mt-2 text-xs text-red-500">{message.error}</p>
       )}
+      {message.fileChanges &&
+      message.subtaskId &&
+      onLoadFileChangesDiff &&
+      onRevertFileChanges ? (
+        <FileChangesCard
+          subtaskId={message.subtaskId}
+          summary={message.fileChanges}
+          deviceOnline={devices.some(
+            device =>
+              device.device_id === message.fileChanges?.device_id &&
+              device.status === 'online',
+          )}
+          onLoadDiff={onLoadFileChangesDiff}
+          onRevert={onRevertFileChanges}
+        />
+      ) : null}
       {message.status !== 'streaming' && (hasContent || message.status === 'failed') && (
         <MessageHoverActions message={message} align="left" />
       )}
