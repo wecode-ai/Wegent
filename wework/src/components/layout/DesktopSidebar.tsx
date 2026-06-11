@@ -42,6 +42,7 @@ import type { DeviceUpgradeState } from '@/types/device-events'
 import { DesktopSettingsMenu } from './DesktopSettingsMenu'
 import { DesktopSearchDialog } from './DesktopSearchDialog'
 import { DesktopWindowControls } from './DesktopWindowControls'
+import { DeviceStatusPrompt } from './DeviceStatusPrompt'
 import {
   DesktopTopBar,
   MAC_NATIVE_TOP_BAR_ACTION_INSET,
@@ -1057,6 +1058,18 @@ export function DesktopSidebar({
             onToggleSidebar={onCollapse}
           />
         )}
+        right={(
+          <DeviceStatusPrompt
+            devices={devices}
+            upgradingDevices={upgradingDevices}
+            onUpgradeDevice={onUpgradeDevice ?? (async () => {})}
+            onOpenCloudDeviceSettings={() =>
+              onOpenSettings({ autoOpenAddCloudDeviceDialog: true })
+            }
+            presentation="sidebar-action"
+          />
+        )}
+        rightClassName="gap-2"
       />
 
       <nav className="space-y-0.5">
