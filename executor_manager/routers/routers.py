@@ -1295,7 +1295,7 @@ async def _cleanup_task_heartbeat(task_id: int) -> None:
 
 
 @api_router.post("/v1/responses")
-async def openai_responses(http_request: Request):
+async def openai_responses(request: OpenAIResponsesRequest, http_request: Request):
     """OpenAI Responses API endpoint - async queue mode.
 
     This endpoint accepts OpenAI Responses API format requests and enqueues
@@ -1320,6 +1320,7 @@ async def openai_responses(http_request: Request):
     }
 
     Args:
+        request: Validated OpenAI Responses API request
         http_request: HTTP request object
 
     Returns:
@@ -1327,21 +1328,16 @@ async def openai_responses(http_request: Request):
     """
     client_ip = http_request.client.host if http_request.client else "unknown"
 
-    # Read raw JSON data from request body
-    body_bytes = await http_request.body()
-    import json
-
-    request_data = json.loads(body_bytes)
+    request_data = request.model_dump()
 
     # Extract task identification from metadata
-    metadata = request_data.get("metadata", {})
+    metadata = request.metadata or {}
     task_id = metadata.get("task_id", 0)
     subtask_id = metadata.get("subtask_id", 0)
-    background = request_data.get("background", False)
 
     logger.info(
         f"[v1/responses] Received OpenAI request: task_id={task_id}, "
-        f"subtask_id={subtask_id}, background={background} from {client_ip}"
+        f"subtask_id={subtask_id}, background={request.background} from {client_ip}"
     )
 
     # Set task context for tracing
