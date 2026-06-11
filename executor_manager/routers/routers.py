@@ -1430,10 +1430,10 @@ class ArchiveExecutorRequest(BaseModel):
 class RestoreExecutorRequest(BaseModel):
     """Request model for /executor/restore endpoint."""
 
-    task_id: int
-    download_url: str  # Presigned MinIO download URL
-    executor_name: str
-    executor_namespace: str
+    task_id: int = Field(..., ge=1, strict=True)
+    download_url: str = Field(..., min_length=1)
+    executor_name: str = Field(..., min_length=1)
+    executor_namespace: str = Field(..., min_length=1)
 
 
 @api_router.post("/executor/archive")
