@@ -25,17 +25,22 @@ Usage:
     await emitter.done(content="Hello world", usage={"input_tokens": 10})
 """
 
+import inspect
 import json
 import logging
 import time
 import uuid
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Optional, Union
+from typing import Any, Awaitable, Callable, Optional, Union
 
 from .responses_api import ResponsesAPIEventBuilder, ResponsesAPIStreamEvents
 
 logger = logging.getLogger(__name__)
 SHELL_TOOL_NAMES = {"exec"}
+CompletionFieldsProvider = Callable[
+    [],
+    Union[dict[str, Any], Awaitable[dict[str, Any]]],
+]
 
 __all__ = [
     "ResponsesAPIEmitter",
@@ -87,6 +92,19 @@ class ResponsesAPIEmitter:
         self.executor_namespace = executor_namespace
         self.builder = ResponsesAPIEventBuilder(subtask_id, model)
         self._tool_contexts: dict[str, dict[str, Any]] = {}
+        self._completion_fields_provider: Optional[CompletionFieldsProvider] = None
+
+    def set_completion_fields_provider(
+        self,
+        provider: Optional[CompletionFieldsProvider],
+    ) -> None:
+        """Set a one-shot provider for fields added to the completion event."""
+        self._completion_fields_provider = provider
+        logger.info(
+            "Response completion fields provider %s for subtask_id=%s",
+            "set" if provider is not None else "cleared",
+            self.subtask_id,
+        )
 
     # ============================================================
     # Response Lifecycle Events
@@ -143,6 +161,35 @@ class ResponsesAPIEmitter:
         """
         # Flush any buffered events before sending done
         await self.flush()
+
+        provider = self._completion_fields_provider
+        self._completion_fields_provider = None
+        logger.info(
+            "Preparing response.completed for subtask_id=%s completion_provider=%s",
+            self.subtask_id,
+            provider is not None,
+        )
+        if provider is not None:
+            try:
+                provider_fields = provider()
+                if inspect.isawaitable(provider_fields):
+                    provider_fields = await provider_fields
+                if isinstance(provider_fields, dict):
+                    logger.info(
+                        "Collected response completion fields for subtask_id=%s keys=%s",
+                        self.subtask_id,
+                        sorted(provider_fields.keys()),
+                    )
+                    for key, value in provider_fields.items():
+                        extra_fields.setdefault(key, value)
+                else:
+                    logger.info(
+                        "Response completion fields provider returned non-dict for subtask_id=%s: %s",
+                        self.subtask_id,
+                        type(provider_fields).__name__,
+                    )
+            except Exception:
+                logger.exception("Failed to collect response completion fields")
 
         data = self.builder.response_completed(
             content=content,

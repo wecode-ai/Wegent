@@ -373,6 +373,69 @@ class TestRedisTransport:
 
 class TestResponsesAPIEmitter:
     @pytest.mark.asyncio
+    async def test_done_merges_completion_provider_fields(self):
+        transport = GeneratorTransport()
+        emitter = EmitterBuilder().with_task(1, 2).with_transport(transport).build()
+
+        async def completion_fields():
+            return {"file_changes": {"version": 1, "file_count": 2}}
+
+        emitter.set_completion_fields_provider(completion_fields)
+
+        await emitter.done(content="done")
+
+        completed = transport.get_events()[-1][1]["response"]
+        assert completed["file_changes"] == {
+            "version": 1,
+            "file_count": 2,
+        }
+
+    @pytest.mark.asyncio
+    async def test_done_ignores_empty_completion_provider_fields(self):
+        transport = GeneratorTransport()
+        emitter = EmitterBuilder().with_task(1, 2).with_transport(transport).build()
+        emitter.set_completion_fields_provider(lambda: {})
+
+        await emitter.done(content="done")
+
+        completed = transport.get_events()[-1][1]["response"]
+        assert "file_changes" not in completed
+
+    @pytest.mark.asyncio
+    async def test_done_logs_provider_failure_and_still_emits_completion(self, caplog):
+        transport = GeneratorTransport()
+        emitter = EmitterBuilder().with_task(1, 2).with_transport(transport).build()
+
+        async def fail():
+            raise RuntimeError("snapshot failed")
+
+        emitter.set_completion_fields_provider(fail)
+
+        await emitter.done(content="done")
+
+        completed = transport.get_events()[-1][1]["response"]
+        assert completed["output"][0]["content"][0]["text"] == "done"
+        assert "Failed to collect response completion fields" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_done_consumes_completion_provider_once(self):
+        transport = GeneratorTransport()
+        emitter = EmitterBuilder().with_task(1, 2).with_transport(transport).build()
+        calls = 0
+
+        async def completion_fields():
+            nonlocal calls
+            calls += 1
+            return {"file_changes": {"version": 1}}
+
+        emitter.set_completion_fields_provider(completion_fields)
+
+        await emitter.done(content="first")
+        await emitter.done(content="second")
+
+        assert calls == 1
+
+    @pytest.mark.asyncio
     async def test_reasoning_emits_summary_text_delta(self):
         transport = GeneratorTransport()
         emitter = EmitterBuilder().with_task(1, 2).with_transport(transport).build()

@@ -66,6 +66,26 @@ class TestExtractCompletedResult:
             result["standalone_chat_workspace_path"] == "/tmp/chats/2026-05-29/new-chat"
         )
 
+    def test_preserves_file_changes(self):
+        file_changes = {
+            "version": 1,
+            "status": "active",
+            "file_count": 1,
+            "additions": 1,
+            "deletions": 0,
+            "files": [
+                {
+                    "path": "data.txt",
+                    "change_type": "created",
+                    "additions": 1,
+                    "deletions": 0,
+                    "binary": False,
+                }
+            ],
+        }
+        result = extract_completed_result({"file_changes": file_changes})
+        assert result["file_changes"] == file_changes
+
     def test_preserves_silent_exit_fields(self):
         result = extract_completed_result(
             {
