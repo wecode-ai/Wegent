@@ -47,10 +47,12 @@ interface UseMultiAttachmentReturn {
 
 export function useMultiAttachment(options?: {
   maxAttachments?: number
+  showTruncationToast?: boolean
 }): UseMultiAttachmentReturn {
   const { t } = useTranslation()
   const { user, refresh } = useUser()
   const maxAttachments = options?.maxAttachments
+  const showTruncationToast = options?.showTruncationToast ?? false
   const [state, setState] = useState<MultiAttachmentUploadState>({
     attachments: [],
     uploadingFiles: new Map(),
@@ -159,15 +161,16 @@ export function useMultiAttachment(options?: {
               newMap.set(attachment.id, attachment.truncation_info!)
               return newMap
             })
-            // Show toast notification for truncation
-            toast({
-              title: t('common:attachment.errors.content_truncated'),
-              description: t('common:attachment.truncation.notice', {
-                original: attachment.truncation_info.original_length?.toLocaleString(),
-                truncated: attachment.truncation_info.truncated_length?.toLocaleString(),
-              }),
-              variant: 'default',
-            })
+            if (showTruncationToast) {
+              toast({
+                title: t('common:attachment.errors.content_truncated'),
+                description: t('common:attachment.truncation.notice', {
+                  original: attachment.truncation_info.original_length?.toLocaleString(),
+                  truncated: attachment.truncation_info.truncated_length?.toLocaleString(),
+                }),
+                variant: 'default',
+              })
+            }
           }
 
           // Add to attachments list
@@ -218,7 +221,7 @@ export function useMultiAttachment(options?: {
         }
       }
     },
-    [state, t, maxAttachments]
+    [state, t, maxAttachments, showTruncationToast]
   )
 
   const handleFileSelect = useCallback(

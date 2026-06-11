@@ -70,7 +70,7 @@ class TestInjectKbMetaPrompt:
         assert "use the selected knowledge base first" in result.lower()
         assert "before web search" in result.lower()
 
-    def test_local_mode_tells_executor_to_use_read_document_content_tool(self):
+    def test_local_mode_tells_executor_to_load_knowledge_skill(self):
         prompt = "Read the selected knowledge base document."
         kb_meta_prompt = "Knowledge Bases In Scope:\n- KB Name: 222, KB ID: 1408"
 
@@ -81,14 +81,14 @@ class TestInjectKbMetaPrompt:
             is_user_selected_kb=True,
         )
 
-        assert "wegent_kb_read_document_content" in result
-        assert "document_id" in result
-        assert "offset" in result
-        assert "limit" in result
+        assert "wegent-knowledge" in result
+        assert "selected knowledge base scope" in result.lower()
         assert "wegent_kb_list_documents" in result
         assert "do not construct mcp resource uris manually" in result.lower()
+        assert "wegent_kb_read_document_content" not in result
+        assert "wegent_kb_get_document_download" not in result
 
-    def test_local_mode_tells_executor_to_list_documents_before_reading(
+    def test_local_mode_tells_executor_to_pass_kb_id_when_listing_documents(
         self,
     ):
         prompt = "Find the relevant knowledge base passage."
@@ -102,4 +102,4 @@ class TestInjectKbMetaPrompt:
         )
 
         assert "wegent_kb_list_documents" in result
-        assert "identify which document matters" in result.lower()
+        assert "knowledge_base_id" in result

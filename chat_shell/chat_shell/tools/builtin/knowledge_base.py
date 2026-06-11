@@ -798,6 +798,7 @@ class KnowledgeBaseTool(BaseTool):
                     "content": record.get("content", ""),
                     "source": record.get("title", "Unknown"),
                     "score": record.get("score"),
+                    "document_id": record.get("document_id"),
                     "knowledge_base_id": kb_id,
                 }
             )
@@ -1084,6 +1085,7 @@ class KnowledgeBaseTool(BaseTool):
                         "index": source_index,
                         "title": self._display_source_title(source_file, source_index),
                         "kb_id": kb_id,
+                        "document_id": chunk.get("document_id"),
                     }
                 )
                 source_index += 1
@@ -1166,6 +1168,7 @@ class KnowledgeBaseTool(BaseTool):
                         ),
                         "source_index": seen_sources[source_key],
                         "score": chunk["score"],
+                        "document_id": chunk.get("document_id"),
                         "knowledge_base_id": kb_id,
                     }
                 )

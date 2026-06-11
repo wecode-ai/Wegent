@@ -27,10 +27,8 @@ def inject_kb_meta_prompt(
         kb_priority = (
             "<knowledge_base_priority>\n"
             "Use the selected knowledge base first for this request.\n"
-            "- Use selected knowledge base tools and skills before web search or external lookup.\n"
-            "- When you need to identify which document matters, call `wegent_kb_list_documents` first.\n"
-            "- When you need the content of a specific knowledge base document, call\n"
-            "  `wegent_kb_read_document_content` with `document_id` and optional `offset`/`limit`.\n"
+            "- Load and follow the `wegent-knowledge` skill before web search or external lookup.\n"
+            "- Use the selected knowledge base scope from the context below.\n"
             "- Pass `knowledge_base_id` when calling `wegent_kb_list_documents`.\n"
             "- Do not construct MCP resource URIs manually.\n"
             "- Use web search only if the user explicitly asks for external or current web information,\n"

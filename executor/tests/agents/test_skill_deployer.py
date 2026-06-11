@@ -78,6 +78,9 @@ def test_build_skill_emphasis_prompt_prioritizes_selected_kb_skill():
     assert "wegent-knowledge" in prompt
     assert "selected knowledge bases" in prompt.lower()
     assert "before web search" in prompt.lower()
+    assert "load and follow" in prompt.lower()
+    assert "original source-file download" not in prompt.lower()
+    assert "exact spreadsheet" not in prompt.lower()
 
 
 def test_coordinate_mode_collects_member_bot_skills_for_deployment():

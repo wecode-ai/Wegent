@@ -21,6 +21,7 @@ import { correctionApis } from '@/apis/correction'
 import { saveLastRepo } from '@/utils/userPreferences'
 import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import { useMediaQuery } from '@/hooks/useMediaQuery'
+import { isChatShell } from '../../service/attachmentService'
 import { teamRequiresWorkspace } from '../../service/messageService'
 
 const SHOULD_HIDE_QUOTA_NAME_LIMIT = 18
@@ -304,6 +305,7 @@ export function useChatAreaState({
     weiboBindingPrompt,
   } = useMultiAttachment({
     maxAttachments: effectiveMaxAttachments,
+    showTruncationToast: isChatShell(selectedTeam),
   })
 
   // Refs for random indices (stable across taskType changes)
