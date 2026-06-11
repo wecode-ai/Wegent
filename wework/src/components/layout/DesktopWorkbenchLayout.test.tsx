@@ -1880,7 +1880,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(onUpgradeDevice).toHaveBeenCalledWith('old-device')
   })
 
-  test('shows running spinners for project and standalone chats', () => {
+  test('shows compact running status pills for project and standalone chats', async () => {
     render(
       <DesktopWorkbenchLayout
         {...baseProps}
@@ -1917,7 +1917,15 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     expect(screen.getByTestId('project-spinner-1')).toBeInTheDocument()
-    expect(screen.getByTestId('history-task-spinner-41')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('project-item-button'))
+    expect(screen.getByTestId('project-chat-running-pill-31')).toHaveClass(
+      'rounded-full',
+      'border',
+    )
+    expect(screen.getByTestId('history-task-running-pill-41')).toHaveClass(
+      'rounded-full',
+      'border',
+    )
   })
 
   test('does not show spinners for stale server running statuses on initial lists', () => {

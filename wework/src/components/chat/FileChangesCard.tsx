@@ -12,11 +12,12 @@ import { ApiError } from '@/api/http'
 import { Button } from '@/components/ui/button'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
+import { cn } from '@/lib/utils'
 import type {
   TurnFileChangeItem,
   TurnFileChangesSummary,
 } from '@/types/api'
-import { FileChangesReviewDialog } from './FileChangesReviewDialog'
+import { parseUnifiedDiff } from './parseUnifiedDiff'
 
 const DEFAULT_VISIBLE_FILE_COUNT = 3
 
@@ -33,13 +34,109 @@ function getErrorMessage(error: unknown, fallback: string) {
   return fallback
 }
 
-function FileChangeRow({ file }: { file: TurnFileChangeItem }) {
+function getVisibleDiffLine(line: string) {
+  if (
+    line.startsWith('diff --git') ||
+    line.startsWith('index ') ||
+    line.startsWith('---') ||
+    line.startsWith('+++')
+  ) {
+    return null
+  }
+
+  if (line.startsWith('+')) {
+    return { marker: '+', content: line.slice(1), className: 'bg-green-50 text-green-800' }
+  }
+  if (line.startsWith('-')) {
+    return { marker: '-', content: line.slice(1), className: 'bg-red-50 text-red-800' }
+  }
+  if (line.startsWith('@@')) {
+    return { marker: '', content: line, className: 'bg-surface text-text-secondary' }
+  }
+
+  return {
+    marker: ' ',
+    content: line.startsWith(' ') ? line.slice(1) : line,
+    className: 'text-text-primary',
+  }
+}
+
+function InlineFileDiff({
+  file,
+  diff,
+  loading,
+  error,
+}: {
+  file: TurnFileChangeItem
+  diff: string
+  loading: boolean
+  error?: string
+}) {
   const { t } = useTranslation('chat')
+  const sections = parseUnifiedDiff(diff)
+  const section = sections.find(item => item.path === file.path)
+  const lines = section?.lines.map(getVisibleDiffLine).filter(Boolean) ?? []
 
   return (
     <div
+      data-testid={`inline-file-diff-${file.path}`}
+      className="border-t border-border bg-background"
+    >
+      {loading ? (
+        <p className="px-3 py-6 text-center text-xs text-text-muted">
+          {t('file_changes.loading_diff')}
+        </p>
+      ) : error ? (
+        <p className="m-3 rounded-md bg-red-50 px-3 py-2 text-xs text-red-700">
+          {error}
+        </p>
+      ) : !section || lines.length === 0 ? (
+        <p className="px-3 py-6 text-center text-xs text-text-muted">
+          {t('file_changes.empty_diff')}
+        </p>
+      ) : (
+        <pre className="grid overflow-x-auto font-mono text-xs leading-5">
+          {lines.map((line, index) => (
+            <span
+              key={`${index}-${line?.marker}-${line?.content}`}
+              className={cn('flex px-2', line?.className)}
+            >
+              <span className="w-5 shrink-0 select-none text-text-muted">
+                {line?.marker}
+              </span>
+              <span>{line?.content || ' '}</span>
+            </span>
+          ))}
+        </pre>
+      )}
+    </div>
+  )
+}
+
+function FileChangeRow({
+  file,
+  active,
+  disabled,
+  onOpen,
+}: {
+  file: TurnFileChangeItem
+  active: boolean
+  disabled: boolean
+  onOpen: () => void
+}) {
+  const { t } = useTranslation('chat')
+
+  return (
+    <button
+      type="button"
       data-testid="file-change-row"
-      className="flex min-w-0 items-center gap-2 px-3 py-1.5 text-xs"
+      aria-expanded={active}
+      disabled={disabled}
+      onClick={onOpen}
+      className={cn(
+        'flex w-full min-w-0 items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60',
+        active && 'bg-surface',
+      )}
     >
       <span className="min-w-0 flex-1 truncate font-mono text-text-primary">
         {file.change_type === 'renamed' && file.old_path
@@ -56,7 +153,7 @@ function FileChangeRow({ file }: { file: TurnFileChangeItem }) {
           <span className="text-red-500">-{file.deletions}</span>
         </span>
       )}
-    </div>
+    </button>
   )
 }
 
@@ -69,7 +166,7 @@ export function FileChangesCard({
 }: FileChangesCardProps) {
   const { t } = useTranslation('chat')
   const [expanded, setExpanded] = useState(false)
-  const [reviewOpen, setReviewOpen] = useState(false)
+  const [selectedDiffPath, setSelectedDiffPath] = useState<string>()
   const [reviewLoading, setReviewLoading] = useState(false)
   const [diff, setDiff] = useState('')
   const [reviewError, setReviewError] = useState<string>()
@@ -87,8 +184,10 @@ export function FileChangesCard({
     !deviceOnline || summary.status === 'artifact_missing'
   const canRevert = summary.status === 'active'
 
-  const openReview = async () => {
-    setReviewOpen(true)
+  const openFileDiff = async (file: TurnFileChangeItem) => {
+    const nextPath = selectedDiffPath === file.path ? undefined : file.path
+    setSelectedDiffPath(nextPath)
+    if (!nextPath || file.binary) return
     if (diff || reviewLoading) return
     setReviewLoading(true)
     setReviewError(undefined)
@@ -147,15 +246,6 @@ export function FileChangesCard({
                 {t('file_changes.reverted')}
               </span>
             ) : null}
-            <button
-              type="button"
-              data-testid="review-file-changes-button"
-              disabled={actionsDisabled}
-              onClick={() => void openReview()}
-              className="h-7 rounded border border-border px-2 text-xs font-medium text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {t('file_changes.review')}
-            </button>
             {canRevert ? (
               <button
                 type="button"
@@ -190,12 +280,28 @@ export function FileChangesCard({
             {actionError}
           </p>
         ) : null}
+        <div className="flex items-center gap-1 border-b border-border px-3 py-1.5 text-xs font-medium text-text-primary">
+          <span>{t('file_changes.edited_files_label')}</span>
+          <ChevronDown className="h-3.5 w-3.5 text-text-muted" />
+        </div>
         <div className="divide-y divide-border/70">
           {visibleFiles.map(file => (
-            <FileChangeRow
-              key={`${file.old_path ?? ''}:${file.path}`}
-              file={file}
-            />
+            <div key={`${file.old_path ?? ''}:${file.path}`}>
+              <FileChangeRow
+                file={file}
+                active={selectedDiffPath === file.path}
+                disabled={actionsDisabled || file.binary}
+                onOpen={() => void openFileDiff(file)}
+              />
+              {selectedDiffPath === file.path ? (
+                <InlineFileDiff
+                  file={file}
+                  diff={diff}
+                  loading={reviewLoading}
+                  error={reviewError}
+                />
+              ) : null}
+            </div>
           ))}
         </div>
         {hiddenCount > 0 ? (
@@ -217,13 +323,6 @@ export function FileChangesCard({
           </button>
         ) : null}
       </section>
-      <FileChangesReviewDialog
-        open={reviewOpen}
-        loading={reviewLoading}
-        diff={diff}
-        error={reviewError}
-        onClose={() => setReviewOpen(false)}
-      />
       <ConfirmRevertDialog
         open={confirmOpen}
         submitting={reverting}
