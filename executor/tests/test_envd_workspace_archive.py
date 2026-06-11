@@ -17,7 +17,7 @@ from executor.envd.api.routes import register_rest_api
 
 
 @pytest.mark.asyncio
-async def test_archive_and_restore_includes_workspace_and_home_claude(
+async def test_executor_archive_and_restore_includes_workspace_and_full_home(
     tmp_path: Path, monkeypatch
 ):
     task_id = 1385
@@ -48,6 +48,9 @@ async def test_archive_and_restore_includes_workspace_and_home_claude(
         json.dumps({"theme": "dark"}),
         encoding="utf-8",
     )
+    (home_path / "notes.md").write_text("home-notes", encoding="utf-8")
+    (home_path / ".cache").mkdir()
+    (home_path / ".cache" / "large.bin").write_text("skip", encoding="utf-8")
 
     monkeypatch.setattr(routes, "get_workspace_path", lambda _: workspace_path)
     monkeypatch.setattr(routes, "get_home_path", lambda: home_path)
@@ -84,11 +87,26 @@ async def test_archive_and_restore_includes_workspace_and_home_claude(
         archive_payload = archive_response.json()
         assert archive_payload["session_file_included"] is True
         assert archive_payload["git_included"] is True
+        with tarfile.open(
+            fileobj=BytesIO(archive_blob_store[upload_url]),
+            mode="r:gz",
+        ) as tar:
+            member_names = tar.getnames()
+
+        assert "workspace/.claude/workspace-memory.md" in member_names
+        assert "workspace/.claude_session_id" in member_names
+        assert "workspace/.git/HEAD" in member_names
+        assert "home/.claude/home-memory.md" in member_names
+        assert "home/.claude.json" in member_names
+        assert "home/notes.md" in member_names
+        assert "home/.cache" not in member_names
 
         shutil.rmtree(workspace_path / ".claude")
         (workspace_path / ".claude_session_id").unlink()
+        shutil.rmtree(workspace_path / ".git")
         shutil.rmtree(home_path / ".claude")
         (home_path / ".claude.json").unlink()
+        (home_path / "notes.md").unlink()
 
         restore_response = await client.post(
             "/api/restore",
@@ -107,12 +125,16 @@ async def test_archive_and_restore_includes_workspace_and_home_claude(
     assert (workspace_path / ".claude" / "workspace-memory.md").read_text(
         encoding="utf-8"
     ) == "workspace-context"
+    assert (workspace_path / ".git" / "HEAD").read_text(
+        encoding="utf-8"
+    ) == "ref: refs/heads/main"
     assert (home_path / ".claude" / "home-memory.md").read_text(
         encoding="utf-8"
     ) == "home-context"
     assert json.loads((home_path / ".claude.json").read_text(encoding="utf-8")) == {
         "theme": "dark"
     }
+    assert (home_path / "notes.md").read_text(encoding="utf-8") == "home-notes"
 
 
 @pytest.mark.asyncio
@@ -201,8 +223,8 @@ async def test_archive_enforces_max_size_and_excludes_large_directories(
     ) as tar:
         member_names = tar.getnames()
 
-    assert "node_modules" not in member_names
-    assert "keep.txt" in member_names
+    assert "workspace/node_modules" not in member_names
+    assert "workspace/keep.txt" in member_names
 
 
 @pytest.mark.asyncio

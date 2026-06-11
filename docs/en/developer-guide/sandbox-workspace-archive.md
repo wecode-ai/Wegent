@@ -4,7 +4,7 @@ sidebar_position: 19
 
 # Sandbox Workspace Archive
 
-Sandbox workspace archive preserves file state before a Sandbox runtime is deleted by the 24-hour idle cleanup, then restores those files when the same Task creates a new Sandbox runtime during a later conversation. The feature reuses the existing executor Pod workspace archive pipeline, with `runtime_type` selecting the runtime-specific path strategy.
+Sandbox workspace archive preserves file state before a Sandbox runtime is deleted by the 24-hour idle cleanup, then restores those files when the same Task creates a new Sandbox runtime during a later conversation. The feature reuses the existing executor Pod workspace archive pipeline. Executor and sandbox archives both use `home/` and `workspace/` roots, with `runtime_type` selecting the runtime-specific home path.
 
 ## Scope
 
@@ -14,7 +14,7 @@ This feature covers Sandbox runtime lifecycle recovery:
 - When the user continues the same Task later, Executor Manager creates a new Sandbox and asks Backend to restore the archive.
 - Archive or restore failures do not block Sandbox deletion or creation; they are logged as warnings.
 
-Regular executor Pods continue to use the existing code task recovery flow. Calls that omit `runtime_type` keep the default executor behavior.
+Regular executor Pods continue to use the code task recovery flow. Calls that omit `runtime_type` use the default executor behavior.
 
 ## Architecture
 
@@ -39,14 +39,14 @@ Restore flow:
 
 ## Path Strategy
 
-executor Pods and Sandbox runtimes use the same executor/envd code, but their filesystem layouts differ. envd therefore selects paths by `runtime_type`:
+executor Pods and Sandbox runtimes use the same executor/envd code. The archive format is unified as `home/` and `workspace/` roots, while envd selects the runtime home path by `runtime_type`:
 
 | runtime_type | Archived paths | Archive roots | Notes |
 | --- | --- | --- | --- |
-| `executor` | `/workspace/{task_id}` and Claude home config | existing format, `__home__/` | Default value; preserves existing behavior |
+| `executor` | `$HOME` and `/workspace/{task_id}` | `home/`, `workspace/` | Default value; captures the executor's full home children and task workspace |
 | `sandbox` | `/home/user` and `/workspace/{task_id}` | `home/`, `workspace/` | Covers the Sandbox working directory and compatibility workspace path |
 
-Sandbox archives exclude common large directories and caches, including:
+Archives exclude common large directories and caches, including:
 
 - `node_modules`
 - `.venv`, `venv`
@@ -58,7 +58,7 @@ Sandbox archives exclude common large directories and caches, including:
 - `build`, `dist`, `target`
 - `*.log`
 
-During restore, `home/*` is written back to `/home/user`, and `workspace/*` is written back to `/workspace/{task_id}`.
+During restore, `workspace/*` is written back to `/workspace/{task_id}`. `home/*` is written back to `$HOME` for executor runtimes and `/home/user` for sandbox runtimes.
 
 ## Failure Handling
 

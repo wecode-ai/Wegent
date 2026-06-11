@@ -4,7 +4,7 @@ sidebar_position: 19
 
 # 沙箱工作区归档
 
-沙箱工作区归档用于在 Sandbox runtime 被 24 小时空闲清理删除前保存文件状态，并在同一 Task 后续重新对话时恢复到新建的 Sandbox runtime。该机制复用现有 executor Pod 工作区归档链路，但通过 `runtime_type` 区分不同运行时的目录策略。
+沙箱工作区归档用于在 Sandbox runtime 被 24 小时空闲清理删除前保存文件状态，并在同一 Task 后续重新对话时恢复到新建的 Sandbox runtime。该机制复用现有 executor Pod 工作区归档链路，executor 与 sandbox 都使用 `home/` 和 `workspace/` 两个归档根目录，并通过 `runtime_type` 选择运行时 home 路径。
 
 ## 适用场景
 
@@ -14,7 +14,7 @@ sidebar_position: 19
 - 用户后续继续同一个 Task 的沙箱对话时，Executor Manager 新建 Sandbox，并请求 Backend 恢复归档。
 - 如果归档或恢复失败，Sandbox 删除和创建不会被阻断；失败只记录日志。
 
-普通 executor Pod 仍使用原有 code task 恢复链路。旧调用不传 `runtime_type` 时默认按 executor 行为处理。
+普通 executor Pod 仍使用 code task 恢复链路。调用不传 `runtime_type` 时默认按 executor 行为处理。
 
 ## 架构
 
@@ -39,14 +39,14 @@ sidebar_position: 19
 
 ## 目录策略
 
-executor Pod 和 Sandbox runtime 使用同一份 executor/envd 代码，但目录布局不同。因此 envd 通过 `runtime_type` 选择目录策略：
+executor Pod 和 Sandbox runtime 使用同一份 executor/envd 代码。归档格式统一为 `home/` 和 `workspace/` 两个根目录，但 envd 通过 `runtime_type` 选择运行时 home 路径：
 
 | runtime_type | 归档目录 | tar 内部根目录 | 说明 |
 | --- | --- | --- | --- |
-| `executor` | `/workspace/{task_id}`、Claude home 配置 | 原有格式、`__home__/` | 默认值，保持旧行为 |
+| `executor` | `$HOME`、`/workspace/{task_id}` | `home/`、`workspace/` | 默认值，覆盖 executor 的完整 home 子内容和任务工作区 |
 | `sandbox` | `/home/user`、`/workspace/{task_id}` | `home/`、`workspace/` | 覆盖 Sandbox 当前工作目录和兼容工作区路径 |
 
-Sandbox 归档排除常见大目录和缓存，例如：
+归档会排除常见大目录和缓存，例如：
 
 - `node_modules`
 - `.venv`、`venv`
@@ -58,7 +58,7 @@ Sandbox 归档排除常见大目录和缓存，例如：
 - `build`、`dist`、`target`
 - `*.log`
 
-恢复时，`home/*` 写回 `/home/user`，`workspace/*` 写回 `/workspace/{task_id}`。
+恢复时，`workspace/*` 写回 `/workspace/{task_id}`；`home/*` 对 executor 写回 `$HOME`，对 sandbox 写回 `/home/user`。
 
 ## 失败处理
 
