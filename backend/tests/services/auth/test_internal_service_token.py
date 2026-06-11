@@ -63,8 +63,27 @@ def test_unconfigured_internal_service_token_rejects_present_authorization(monke
     assert exc_info.value.detail == "Internal service token is not configured"
 
 
+def test_whitespace_internal_service_token_is_unconfigured(monkeypatch):
+    monkeypatch.setattr(settings, "INTERNAL_SERVICE_TOKEN", "   ")
+
+    with pytest.raises(HTTPException) as exc_info:
+        verify_internal_service_token(credentials=_credentials("any-token"))
+
+    assert exc_info.value.status_code == 401
+    assert exc_info.value.detail == "Internal service token is not configured"
+
+
 def test_startup_config_check_rejects_unconfigured_token(monkeypatch):
     monkeypatch.setattr(settings, "INTERNAL_SERVICE_TOKEN", "")
+
+    with pytest.raises(RuntimeError) as exc_info:
+        require_internal_service_token_configured()
+
+    assert "INTERNAL_SERVICE_TOKEN is required" in str(exc_info.value)
+
+
+def test_startup_config_check_rejects_whitespace_token(monkeypatch):
+    monkeypatch.setattr(settings, "INTERNAL_SERVICE_TOKEN", "   ")
 
     with pytest.raises(RuntimeError) as exc_info:
         require_internal_service_token_configured()

@@ -45,14 +45,21 @@ ensure_internal_service_token() {
     fi
 
     local token_file="/app/data/internal_service_token"
-    if [ -f "$token_file" ]; then
-        export INTERNAL_SERVICE_TOKEN
-        INTERNAL_SERVICE_TOKEN=$(cat "$token_file")
-        return
+    if [ -s "$token_file" ]; then
+        local token_value
+        token_value=$(tr -d '[:space:]' < "$token_file")
+        if [ -n "$token_value" ]; then
+            export INTERNAL_SERVICE_TOKEN="$token_value"
+            return
+        fi
     fi
 
     export INTERNAL_SERVICE_TOKEN
     INTERNAL_SERVICE_TOKEN=$(generate_internal_service_token)
+    if [ -z "$INTERNAL_SERVICE_TOKEN" ]; then
+        echo "      ERROR: Failed to generate INTERNAL_SERVICE_TOKEN"
+        exit 1
+    fi
     umask 077
     printf '%s\n' "$INTERNAL_SERVICE_TOKEN" > "$token_file"
     echo "      Generated internal service token for standalone mode"

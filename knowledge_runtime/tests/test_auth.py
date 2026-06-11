@@ -52,9 +52,36 @@ def test_protected_endpoint_rejects_when_token_empty(test_app, monkeypatch):
     assert response.headers.get("WWW-Authenticate") == "Bearer"
 
 
+def test_protected_endpoint_rejects_when_token_whitespace(test_app, monkeypatch):
+    """Test that whitespace-only tokens are treated as unconfigured."""
+    monkeypatch.setenv("INTERNAL_SERVICE_TOKEN", "   ")
+    reset_settings()
+
+    client = TestClient(test_app)
+
+    response = client.get(
+        "/protected",
+        headers={"Authorization": "Bearer any-token"},
+    )
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Internal service token is not configured"}
+    assert response.headers.get("WWW-Authenticate") == "Bearer"
+
+
 def test_startup_config_check_rejects_unconfigured_token(monkeypatch):
     """Test that startup fails when protected internal endpoints cannot authenticate."""
     monkeypatch.setenv("INTERNAL_SERVICE_TOKEN", "")
+    reset_settings()
+
+    with pytest.raises(RuntimeError) as exc_info:
+        require_internal_service_token_configured()
+
+    assert "INTERNAL_SERVICE_TOKEN is required" in str(exc_info.value)
+
+
+def test_startup_config_check_rejects_whitespace_token(monkeypatch):
+    """Test that startup rejects whitespace-only internal service tokens."""
+    monkeypatch.setenv("INTERNAL_SERVICE_TOKEN", "   ")
     reset_settings()
 
     with pytest.raises(RuntimeError) as exc_info:

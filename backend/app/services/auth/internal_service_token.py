@@ -18,14 +18,20 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.core.config import settings
+from shared.telemetry.decorators import trace_sync
 
 # HTTPBearer security scheme for OpenAPI documentation
 security = HTTPBearer(auto_error=False)
 
 
+def _normalized_internal_service_token() -> str:
+    return (settings.INTERNAL_SERVICE_TOKEN or "").strip()
+
+
+@trace_sync()
 def require_internal_service_token_configured() -> None:
     """Fail startup when protected internal endpoints cannot authenticate."""
-    if settings.INTERNAL_SERVICE_TOKEN:
+    if _normalized_internal_service_token():
         return
 
     raise RuntimeError(
@@ -50,7 +56,7 @@ def verify_internal_service_token(
     Raises:
         HTTPException: 401 Unauthorized if token is missing or invalid.
     """
-    expected_token = settings.INTERNAL_SERVICE_TOKEN
+    expected_token = _normalized_internal_service_token()
 
     if not expected_token:
         raise HTTPException(

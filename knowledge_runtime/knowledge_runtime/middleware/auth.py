@@ -18,10 +18,14 @@ from knowledge_runtime.config import get_settings
 security = HTTPBearer(auto_error=False)
 
 
+def _normalized_internal_service_token() -> str:
+    settings = get_settings()
+    return (settings.internal_service_token or "").strip()
+
+
 def require_internal_service_token_configured() -> None:
     """Fail startup when protected internal endpoints cannot authenticate."""
-    settings = get_settings()
-    if settings.internal_service_token:
+    if _normalized_internal_service_token():
         return
 
     raise RuntimeError(
@@ -46,8 +50,7 @@ def verify_internal_token(
     Raises:
         HTTPException: 401 Unauthorized if token is missing or invalid.
     """
-    settings = get_settings()
-    expected_token = settings.internal_service_token
+    expected_token = _normalized_internal_service_token()
 
     if not expected_token:
         raise HTTPException(
