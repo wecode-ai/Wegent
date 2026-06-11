@@ -1647,6 +1647,7 @@ export function WorkbenchProvider({
     [
       refreshWorkLists,
       resolvedServices.chatStream,
+      state.currentProject?.id,
       state.currentTask,
     ]
   )
