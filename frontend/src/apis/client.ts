@@ -3,7 +3,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { paths } from '../config/paths'
-import { POST_LOGIN_REDIRECT_KEY, sanitizeRedirectPath } from '@/features/login/constants'
+import {
+  hasAideskAuthParams,
+  POST_LOGIN_REDIRECT_KEY,
+  sanitizeRedirectPath,
+} from '@/features/login/constants'
 import { getApiBaseUrl, fetchRuntimeConfig } from '@/lib/runtime-config'
 
 // Token management
@@ -76,13 +80,8 @@ class APIClient {
         if (typeof window !== 'undefined') {
           // Check if Aidesk auth params are present - skip redirect to let AideskTokenHandler handle it
           const params = new URLSearchParams(window.location.search)
-          const hasAideskAuthParams =
-            params.get('source') === 'aidesk' &&
-            !!params.get('username') &&
-            !!params.get('timestamp') &&
-            !!params.get('sign')
 
-          if (hasAideskAuthParams) {
+          if (hasAideskAuthParams(params)) {
             // Don't remove token or redirect - let AideskTokenHandler handle authentication
             throw new Error('Authentication failed')
           }

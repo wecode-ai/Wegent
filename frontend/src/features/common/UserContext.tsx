@@ -8,7 +8,11 @@ import { userApis } from '@/apis/user'
 import { User } from '@/types/api'
 import { useRouter } from 'next/navigation'
 import { paths } from '@/config/paths'
-import { POST_LOGIN_REDIRECT_KEY, sanitizeRedirectPath } from '@/features/login/constants'
+import {
+  hasAideskAuthParams as hasAideskAuthSearchParams,
+  POST_LOGIN_REDIRECT_KEY,
+  sanitizeRedirectPath,
+} from '@/features/login/constants'
 import { useToast } from '@/hooks/use-toast'
 
 interface UserContextType {
@@ -48,13 +52,7 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
    */
   const hasAideskAuthParams = (): boolean => {
     if (typeof window === 'undefined') return false
-    const params = new URLSearchParams(window.location.search)
-    return (
-      params.get('source') === 'aidesk' &&
-      !!params.get('username') &&
-      !!params.get('timestamp') &&
-      !!params.get('sign')
-    )
+    return hasAideskAuthSearchParams(new URLSearchParams(window.location.search))
   }
 
   const redirectToLogin = () => {
