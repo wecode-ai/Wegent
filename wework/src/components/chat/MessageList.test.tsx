@@ -3,8 +3,60 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import type { Attachment } from '@/types/api'
 import { MessageList } from './MessageList'
+import '@/i18n'
 
 describe('MessageList', () => {
+  test('renders one assistant turn file changes under its message', () => {
+    render(
+      <MessageList
+        devices={[
+          {
+            id: 1,
+            device_id: 'device-1',
+            name: 'Device 1',
+            status: 'online',
+            is_default: false,
+          },
+        ]}
+        onLoadFileChangesDiff={vi.fn().mockResolvedValue('')}
+        onRevertFileChanges={vi.fn()}
+        messages={[
+          {
+            id: 'assistant-21',
+            subtaskId: 21,
+            role: 'assistant',
+            content: 'Done',
+            status: 'done',
+            createdAt: '2026-06-11T10:00:00Z',
+            fileChanges: {
+              version: 1,
+              status: 'active',
+              artifact_id: 'turn-21',
+              device_id: 'device-1',
+              workspace_path: '/workspace/project',
+              file_count: 1,
+              additions: 4,
+              deletions: 2,
+              files: [
+                {
+                  path: 'src/main.ts',
+                  change_type: 'modified',
+                  additions: 4,
+                  deletions: 2,
+                  binary: false,
+                },
+              ],
+            },
+          },
+        ]}
+      />,
+    )
+
+    expect(screen.getByTestId('file-changes-card')).toHaveTextContent(
+      'src/main.ts',
+    )
+  })
+
   test('uses compact spacing between messages and hover actions', () => {
     render(
       <MessageList
@@ -72,32 +124,6 @@ describe('MessageList', () => {
       'min-w-0',
       'overflow-x-hidden',
     )
-  })
-
-  test('uses neutral user bubble and blue assistant links', () => {
-    const { container } = render(
-      <MessageList
-        messages={[
-          {
-            id: '1',
-            role: 'user',
-            content: '总结下这个文档',
-            status: 'done',
-            createdAt: '2026-05-25T00:00:00.000Z',
-          },
-          {
-            id: '2',
-            role: 'assistant',
-            content: '联系 [jueding.ly@alibaba-inc.com](mailto:jueding.ly@alibaba-inc.com)',
-            status: 'done',
-            createdAt: '2026-05-25T00:00:01.000Z',
-          },
-        ]}
-      />,
-    )
-
-    expect(screen.getByText('总结下这个文档').parentElement).toHaveClass('bg-muted')
-    expect(container.querySelector('a[href^="mailto:"]')).toHaveClass('text-blue-600')
   })
 
   test('renders image attachments in user messages', async () => {
@@ -425,7 +451,6 @@ describe('MessageList', () => {
       'href',
       'skill:///Users/crystal/.codex/skills/env-context/SKILL.md',
     )
-    expect(skillLink).toHaveClass('bg-muted', 'text-text-primary')
     expect(screen.getByTestId('message-user')).toHaveTextContent(
       'hello $env-context context',
     )

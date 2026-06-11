@@ -42,7 +42,7 @@ Then open http://localhost:3000 in your browser.
 ## 🏗️ Architecture
 
 ```
-Frontend (Next.js) → Backend (FastAPI) → Executor Manager → Executors (ClaudeCode/Agno/Dify/Chat)
+Frontend (Next.js) → Backend (FastAPI) → Executor Manager → Executors (ClaudeCode/Dify/Chat)
 ```
 
 **Core Concepts:**

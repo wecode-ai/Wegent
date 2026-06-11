@@ -4,6 +4,7 @@
 
 """Tests for the --version CLI flag functionality."""
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -11,6 +12,7 @@ from unittest.mock import patch
 
 import pytest
 
+from executor import version as executor_version
 from executor.version import get_version
 
 # Get the project root directory dynamically
@@ -72,6 +74,30 @@ class TestVersionCLI:
             timeout=30,
         )
         assert result.stdout.strip() == expected_version
+
+    def test_version_flag_uses_env_override(self) -> None:
+        """Test that --version uses WEGENT_EXECUTOR_VERSION when provided."""
+        result = subprocess.run(
+            [sys.executable, "-m", "executor.main", "--version"],
+            capture_output=True,
+            text=True,
+            cwd=str(PROJECT_ROOT),
+            timeout=30,
+            env={**os.environ, "WEGENT_EXECUTOR_VERSION": "9.8.7"},
+        )
+        assert result.returncode == 0
+        assert result.stdout.strip() == "9.8.7"
+
+
+class TestVersionUtility:
+    """Test version utility behavior."""
+
+    def test_get_version_uses_env_override(self, monkeypatch) -> None:
+        """Test that get_version uses WEGENT_EXECUTOR_VERSION when provided."""
+        monkeypatch.setattr(executor_version, "_version_cache", "1.0.0")
+        monkeypatch.setenv("WEGENT_EXECUTOR_VERSION", "2.3.4")
+
+        assert get_version() == "2.3.4"
 
 
 class TestVersionFlagInMain:

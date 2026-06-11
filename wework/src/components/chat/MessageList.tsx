@@ -10,7 +10,11 @@ import {
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import type { Attachment } from '@/types/api'
+import type {
+  Attachment,
+  DeviceInfo,
+  TurnFileChangesSummary,
+} from '@/types/api'
 import type { WorkbenchMessage } from '@/types/workbench'
 import {
   getAttachmentImageUrl,
@@ -18,15 +22,26 @@ import {
   isImageAttachment,
 } from '@/lib/attachments'
 import { ToolBlocksDisplay } from './blocks/ToolBlocksDisplay'
+import { FileChangesCard } from './FileChangesCard'
 
 interface MessageListProps {
   messages: WorkbenchMessage[]
+  devices?: DeviceInfo[]
+  onLoadFileChangesDiff?: (subtaskId: number) => Promise<string>
+  onRevertFileChanges?: (
+    subtaskId: number,
+  ) => Promise<TurnFileChangesSummary>
 }
 
 const USER_MESSAGE_COLLAPSE_LINES = 10
 const USER_MESSAGE_COLLAPSE_CHARACTERS = 600
 
-export function MessageList({ messages }: MessageListProps) {
+export function MessageList({
+  messages,
+  devices = [],
+  onLoadFileChangesDiff,
+  onRevertFileChanges,
+}: MessageListProps) {
   if (messages.length === 0) {
     return null
   }
@@ -45,7 +60,12 @@ export function MessageList({ messages }: MessageListProps) {
           {message.role === 'user' ? (
             <UserMessage message={message} />
           ) : (
-            <AssistantMessage message={message} />
+            <AssistantMessage
+              message={message}
+              devices={devices}
+              onLoadFileChangesDiff={onLoadFileChangesDiff}
+              onRevertFileChanges={onRevertFileChanges}
+            />
           )}
         </article>
       ))}
@@ -315,7 +335,7 @@ function renderUserContent(content: string) {
       <a
         key={`skill-${start}`}
         href={href}
-        className="inline-flex items-center rounded-md bg-muted px-1.5 py-0.5 font-medium text-text-primary underline decoration-text-muted"
+        className="inline-flex items-center rounded-md bg-primary/10 px-1.5 py-0.5 font-medium text-primary underline decoration-primary/40"
         onClick={event => event.preventDefault()}
       >
         {`$${skillName}`}
@@ -332,17 +352,29 @@ function renderUserContent(content: string) {
   return parts
 }
 
-function AssistantMessage({ message }: { message: WorkbenchMessage }) {
+function AssistantMessage({
+  message,
+  devices,
+  onLoadFileChangesDiff,
+  onRevertFileChanges,
+}: {
+  message: WorkbenchMessage
+  devices: DeviceInfo[]
+  onLoadFileChangesDiff?: (subtaskId: number) => Promise<string>
+  onRevertFileChanges?: (
+    subtaskId: number,
+  ) => Promise<TurnFileChangesSummary>
+}) {
   const hasBlocks = message.blocks && message.blocks.length > 0
   const hasContent = Boolean(message.content)
   const isStreaming = message.status === 'streaming'
-  const shouldShowProcessing = hasBlocks || isStreaming
+  const isThinking = isStreaming && !hasContent && !hasBlocks
 
   return (
     <div className="group min-w-0 overflow-x-hidden text-[13px] leading-6 text-text-primary">
-      {shouldShowProcessing && (
+      {hasBlocks && (
         <ToolBlocksDisplay
-          blocks={message.blocks ?? []}
+          blocks={message.blocks!}
           isStreaming={isStreaming}
           startedAt={getTurnStartMs(message.createdAt)}
         />
@@ -390,7 +422,7 @@ function AssistantMessage({ message }: { message: WorkbenchMessage }) {
                 <td className="border-b border-border px-3 py-2">{children}</td>
               ),
               a: ({ href, children }) => (
-                <a href={href} className="break-words text-blue-600 underline" target="_blank" rel="noopener noreferrer">{children}</a>
+                <a href={href} className="break-words text-primary underline" target="_blank" rel="noopener noreferrer">{children}</a>
               ),
             }}
           >
@@ -398,9 +430,31 @@ function AssistantMessage({ message }: { message: WorkbenchMessage }) {
           </ReactMarkdown>
         </div>
       )}
+      {isThinking && (
+        <span className="text-text-muted">正在思考</span>
+      )}
+      {isStreaming && hasContent && (
+        <span className="text-text-muted">正在思考</span>
+      )}
       {message.status === 'failed' && message.error && (
         <p className="mt-2 text-xs text-red-500">{message.error}</p>
       )}
+      {message.fileChanges &&
+      message.subtaskId &&
+      onLoadFileChangesDiff &&
+      onRevertFileChanges ? (
+        <FileChangesCard
+          subtaskId={message.subtaskId}
+          summary={message.fileChanges}
+          deviceOnline={devices.some(
+            device =>
+              device.device_id === message.fileChanges?.device_id &&
+              device.status === 'online',
+          )}
+          onLoadDiff={onLoadFileChangesDiff}
+          onRevert={onRevertFileChanges}
+        />
+      ) : null}
       {message.status !== 'streaming' && (hasContent || message.status === 'failed') && (
         <MessageHoverActions message={message} align="left" />
       )}

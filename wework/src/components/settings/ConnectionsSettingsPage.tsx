@@ -13,6 +13,7 @@ import {
   Info,
   Loader2,
   MoreHorizontal,
+  Network,
   Monitor,
   Pencil,
   Plus,
@@ -42,6 +43,7 @@ import { AppearanceSettingsPage } from '@/features/appearance/AppearanceSettings
 import { DeviceMetrics } from '@wecode/components/DeviceMetrics'
 import { VncDesktopButton } from '@wecode/components/VncDesktopButton'
 import { AddCloudDeviceDialog } from './AddCloudDeviceDialog'
+import { ProxySettingsPage } from './ProxySettingsPage'
 import { RuntimeConfigSettingsPage } from './RuntimeConfigSettingsPage'
 import { WorktreesSettingsPage } from './WorktreesSettingsPage'
 
@@ -82,6 +84,13 @@ const settingsNavItems: SettingsNavItem[] = [
     icon: UserRound,
     label: 'settings_nav_codex_auth',
     fallback: 'Codex 认证',
+    category: 'personal',
+  },
+  {
+    key: 'proxy',
+    icon: Network,
+    label: 'settings_nav_proxy',
+    fallback: '代理',
     category: 'personal',
   },
   {
@@ -126,6 +135,7 @@ function getSettingsNavFromPath(path: string): string {
 
 function getSettingsNavPath(key: string): string {
   if (key === 'codex-auth') return '/settings/personal/codex'
+  if (key === 'proxy') return '/settings/personal/proxy'
   return key === 'connections' ? '/settings' : `/settings/${key}`
 }
 
@@ -1143,7 +1153,9 @@ export function ConnectionsSettingsPage({
         ) : activeNav === 'appearance' ? (
           <AppearanceSettingsPage />
         ) : activeNav === 'codex-auth' ? (
-          <RuntimeConfigSettingsPage />
+          <RuntimeConfigSettingsPage runtime="codex" />
+        ) : activeNav === 'proxy' ? (
+          <ProxySettingsPage />
         ) : activeNav === 'worktrees' ? (
           <WorktreesSettingsPage />
         ) : (

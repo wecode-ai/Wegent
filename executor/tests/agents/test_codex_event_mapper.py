@@ -5,11 +5,14 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from executor.agents.base import Agent
 from executor.agents.codex.event_mapper import CodeXEventMapper
+from shared.models import EmitterBuilder, GeneratorTransport
+from shared.models.execution import ExecutionRequest
 from shared.status import TaskStatus
 
 
@@ -26,6 +29,70 @@ def assert_commentary_block(
     assert block["status"] == status
     assert isinstance(block["timestamp"], int)
     return block
+
+
+@pytest.mark.asyncio
+async def test_agent_installs_turn_file_change_completion_provider():
+    emitter = MagicMock()
+    tracker = MagicMock()
+    tracker.start = AsyncMock(return_value=True)
+    tracker.finalize = AsyncMock(return_value={"file_changes": {"file_count": 1}})
+    task_data = ExecutionRequest(task_id=1, subtask_id=2, device_id="device-1")
+    agent = Agent(task_data, emitter)
+    agent.project_path = "/tmp/project"
+
+    with patch(
+        "executor.agents.base.TurnFileChangeTracker",
+        return_value=tracker,
+    ) as tracker_class:
+        await agent.start_turn_file_change_tracking()
+
+    tracker_class.assert_called_once()
+    tracker.start.assert_awaited_once()
+    emitter.set_completion_fields_provider.assert_called_once_with(tracker.finalize)
+    assert agent.turn_file_change_tracker is tracker
+
+
+@pytest.mark.asyncio
+async def test_codex_completion_includes_turn_file_changes():
+    transport = GeneratorTransport()
+    emitter = EmitterBuilder().with_task(1, 2).with_transport(transport).build()
+    completion_fields = AsyncMock(
+        return_value={"file_changes": {"version": 1, "file_count": 1}}
+    )
+    emitter.set_completion_fields_provider(completion_fields)
+    mapper = CodeXEventMapper(emitter)
+
+    status = await mapper.handle(
+        SimpleNamespace(
+            method="turn/completed",
+            payload=SimpleNamespace(
+                turn=SimpleNamespace(status=SimpleNamespace(value="completed"))
+            ),
+        )
+    )
+
+    completed = transport.get_events()[-1][1]["response"]
+    assert status == TaskStatus.COMPLETED
+    completion_fields.assert_awaited_once()
+    assert completed["file_changes"]["file_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_codex_records_native_turn_diff_for_diagnostics_only():
+    emitter = MagicMock()
+    mapper = CodeXEventMapper(emitter)
+
+    result = await mapper.handle(
+        SimpleNamespace(
+            method="turn/diff/updated",
+            payload=SimpleNamespace(diff="diff --git a/a.txt b/a.txt\n"),
+        )
+    )
+
+    assert result is None
+    assert mapper.native_turn_diff == "diff --git a/a.txt b/a.txt\n"
+    emitter.done.assert_not_called()
 
 
 @pytest.mark.asyncio

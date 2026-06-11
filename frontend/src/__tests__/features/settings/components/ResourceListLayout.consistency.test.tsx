@@ -23,12 +23,17 @@ jest.mock('@/apis/models', () => ({
   },
 }))
 
-jest.mock('@/apis/shells', () => ({
-  shellApis: {
-    getUnifiedShells: jest.fn(),
-    deleteShell: jest.fn(),
-  },
-}))
+jest.mock('@/apis/shells', () => {
+  const actual = jest.requireActual('@/apis/shells')
+  return {
+    ...actual,
+    shellApis: {
+      ...actual.shellApis,
+      getUnifiedShells: jest.fn(),
+      deleteShell: jest.fn(),
+    },
+  }
+})
 
 jest.mock('@/apis/retrievers', () => ({
   retrieverApis: {

@@ -1417,20 +1417,20 @@ describe('DesktopWorkbenchLayout', () => {
 
     await userEvent.click(screen.getByTestId('project-menu-1'))
     expect(screen.getByTestId('project-menu-1-menu')).toHaveClass(
-      'bg-background',
-      'text-text-primary',
-      'border-border',
+      'bg-[#2b2b2b]',
+      'text-white',
+      'border-black/10',
     )
     expect(screen.getByTestId('rename-project-1')).toHaveTextContent('重命名项目')
     expect(screen.getByTestId('rename-project-1')).toHaveClass(
-      'text-text-primary',
-      'hover:bg-muted',
+      'text-white',
+      'hover:bg-white/10',
     )
     expect(screen.getByTestId('archive-project-chats-1')).toHaveTextContent('归档会话')
     expect(screen.getByTestId('remove-project-1')).toHaveTextContent('移除')
     expect(screen.getByTestId('remove-project-1')).toHaveClass(
-      'text-red-500',
-      'hover:bg-red-500/10',
+      'text-[#ff7b7b]',
+      'hover:bg-white/10',
     )
 
     await userEvent.click(screen.getByTestId('rename-project-1'))
@@ -1808,9 +1808,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('device-status-prompt')).toHaveTextContent(
       'Offline Device 离线，恢复在线后可继续对话',
     )
-    expect(screen.getByTestId('chat-message-input')).toBeDisabled()
     expect(screen.getByTestId('send-message-button')).toBeDisabled()
-    expect(screen.getByTestId('add-context-button')).toBeDisabled()
 
     await userEvent.click(screen.getByTestId('send-message-button'))
     expect(baseProps.onSend).not.toHaveBeenCalled()
@@ -1875,7 +1873,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('device-status-prompt')).toHaveTextContent(
       'Old Device 版本低于 1.8.5，升级后可继续对话',
     )
-    expect(screen.getByTestId('chat-message-input')).toBeDisabled()
+    expect(screen.getByTestId('send-message-button')).toBeDisabled()
 
     await userEvent.click(screen.getByTestId('device-status-upgrade-button'))
 

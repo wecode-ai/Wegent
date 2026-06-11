@@ -1,4 +1,12 @@
-import type { Attachment, DeviceInfo, ProjectWithTasks, Task, Team, User } from './api'
+import type {
+  Attachment,
+  DeviceInfo,
+  ProjectWithTasks,
+  Task,
+  Team,
+  TurnFileChangesSummary,
+  User,
+} from './api'
 
 export type MessageRole = 'user' | 'assistant' | 'system'
 export type MessageStatus = 'pending' | 'streaming' | 'done' | 'failed'
@@ -37,6 +45,7 @@ export interface WorkbenchMessage {
   error?: string
   attachments?: Attachment[]
   blocks?: ProcessingBlock[]
+  fileChanges?: TurnFileChangesSummary
   createdAt: string
 }
 

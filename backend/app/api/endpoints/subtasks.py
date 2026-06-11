@@ -23,8 +23,13 @@ from app.schemas.subtask import (
     SubtaskListResponse,
     SubtaskUpdate,
 )
+from app.schemas.turn_file_changes import (
+    TurnFileChangesDiffResponse,
+    TurnFileChangesRevertResponse,
+)
 from app.services.chat.storage import session_manager
 from app.services.subtask import subtask_service
+from app.services.turn_file_changes import turn_file_changes_service
 
 router = APIRouter()
 
@@ -100,6 +105,40 @@ def get_subtask(
     """Get specified subtask details"""
     return subtask_service.get_subtask_by_id(
         db=db, subtask_id=subtask_id, user_id=current_user.id
+    )
+
+
+@router.get(
+    "/{subtask_id}/file-changes/diff",
+    response_model=TurnFileChangesDiffResponse,
+)
+async def get_turn_file_changes_diff(
+    subtask_id: int,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+) -> TurnFileChangesDiffResponse:
+    """Load one assistant turn's validated diff from its execution device."""
+    return await turn_file_changes_service.get_diff(
+        db=db,
+        user_id=current_user.id,
+        subtask_id=subtask_id,
+    )
+
+
+@router.post(
+    "/{subtask_id}/file-changes/revert",
+    response_model=TurnFileChangesRevertResponse,
+)
+async def revert_turn_file_changes(
+    subtask_id: int,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+) -> TurnFileChangesRevertResponse:
+    """Reverse one assistant turn without overwriting later workspace changes."""
+    return await turn_file_changes_service.revert(
+        db=db,
+        user_id=current_user.id,
+        subtask_id=subtask_id,
     )
 
 

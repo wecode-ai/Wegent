@@ -427,9 +427,11 @@ describe('useChatStreamHandlers queue integration', () => {
       )
     })
     expect(mockToast).toHaveBeenCalledTimes(1)
-    expect(result.current.queuedMessages[0]).toMatchObject({
-      status: 'failed',
-      error: 'network down',
+    await waitFor(() => {
+      expect(result.current.queuedMessages[0]).toMatchObject({
+        status: 'failed',
+        error: 'network down',
+      })
     })
 
     const toastAction = mockToast.mock.calls[0][0].action as React.ReactElement<{

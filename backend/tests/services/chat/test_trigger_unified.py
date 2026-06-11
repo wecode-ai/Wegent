@@ -24,23 +24,28 @@ def test_apply_user_runtime_config_adds_codex_status(monkeypatch):
         }
     )
 
-    def fake_get_config(db, *, user_id, runtime, preferences=None):
+    def fake_get_execution_config(db, *, user_id, runtime, preferences=None):
         assert user_id == 7
         assert runtime == "codex"
-        assert preferences == {"runtime_configs": {"codex": {"use_user_config": True}}}
+        assert preferences == {
+            "runtime_configs": {"codex": {"use_user_config": True, "use_proxy": True}}
+        }
         return {
             "runtime": "codex",
             "display_name": "Codex",
             "use_user_config": True,
+            "use_proxy": True,
             "configured": True,
             "target_path": "~/.codex/auth.json",
             "auth_json_sha256": "sha",
+            "proxy_configured": True,
+            "proxy_url": "http://127.0.0.1:7890",
         }
 
     monkeypatch.setattr(
         trigger_unified.user_runtime_config_service,
-        "get_config",
-        fake_get_config,
+        "get_execution_config",
+        fake_get_execution_config,
     )
 
     trigger_unified._apply_user_runtime_config(
@@ -48,7 +53,11 @@ def test_apply_user_runtime_config_adds_codex_status(monkeypatch):
         request=request,
         user=SimpleNamespace(
             id=7,
-            preferences={"runtime_configs": {"codex": {"use_user_config": True}}},
+            preferences={
+                "runtime_configs": {
+                    "codex": {"use_user_config": True, "use_proxy": True}
+                }
+            },
         ),
     )
 
@@ -58,7 +67,12 @@ def test_apply_user_runtime_config_adds_codex_status(monkeypatch):
             "configured": True,
             "target_path": "~/.codex/auth.json",
             "auth_json_sha256": "sha",
+            "use_proxy": True,
+            "proxy_configured": True,
         }
+    }
+    assert request.model_config["proxy"] == {
+        "url": "http://127.0.0.1:7890",
     }
 
 
@@ -73,11 +87,11 @@ def test_apply_user_runtime_config_skips_non_codex_models(monkeypatch):
             "model_id": "gpt-4.1",
         }
     )
-    get_config = MagicMock()
+    get_execution_config = MagicMock()
     monkeypatch.setattr(
         trigger_unified.user_runtime_config_service,
-        "get_config",
-        get_config,
+        "get_execution_config",
+        get_execution_config,
     )
 
     trigger_unified._apply_user_runtime_config(
@@ -87,11 +101,40 @@ def test_apply_user_runtime_config_skips_non_codex_models(monkeypatch):
     )
 
     assert "runtime_config" not in request.model_config
-    get_config.assert_not_called()
+    get_execution_config.assert_not_called()
 
 
 @pytest.mark.unit
 class TestBuildExecutionRequestUserSubtaskId:
+    async def test_propagates_device_id_to_execution_request(self):
+        from app.services.chat.trigger import unified as trigger_unified
+
+        mock_db = MagicMock()
+        request_from_builder = ExecutionRequest(task_id=1, subtask_id=2)
+        mock_builder = MagicMock()
+        mock_builder.build.return_value = request_from_builder
+
+        with patch.object(trigger_unified, "SessionLocal", return_value=mock_db):
+            with patch(
+                "app.services.execution.TaskRequestBuilder",
+                return_value=mock_builder,
+            ):
+                task = MagicMock(id=1, json={})
+                assistant_subtask = MagicMock(id=2)
+                team = MagicMock()
+                user = MagicMock(id=7)
+
+                result = await trigger_unified.build_execution_request(
+                    task=task,
+                    assistant_subtask=assistant_subtask,
+                    team=team,
+                    user=user,
+                    message="hello",
+                    device_id="device-1",
+                )
+
+        assert result.device_id == "device-1"
+
     async def test_propagates_user_subtask_id_to_execution_request(self):
         """Ensure user_subtask_id is always propagated for downstream RAG persistence."""
         from app.services.chat.trigger import unified as trigger_unified
