@@ -24,6 +24,7 @@ import { Loader2 } from 'lucide-react'
 import { Bot, Team, TaskType } from '@/types/api'
 import {
   TeamMode,
+  getAllowedAgentsForTeamMode,
   getFilteredBotsForMode,
   AgentType,
   getActualShellType,
@@ -317,15 +318,7 @@ export default function PublicTeamEditDialog({
 
   // Get allowed agents for current mode
   const allowedAgentsForMode = useMemo((): AgentType[] | undefined => {
-    const MODE_AGENT_FILTER: Record<TeamMode, AgentType[] | null> = {
-      solo: null,
-      pipeline: ['ClaudeCode', 'Agno'],
-      route: ['Agno'],
-      coordinate: ['Agno', 'ClaudeCode'],
-      collaborate: ['Agno'],
-    }
-    const allowed = MODE_AGENT_FILTER[mode]
-    return allowed === null ? undefined : allowed
+    return getAllowedAgentsForTeamMode(mode)
   }, [mode])
 
   const teamPromptMap = useMemo(() => {

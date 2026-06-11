@@ -138,7 +138,7 @@ Wegent 内部把一个 AI 助手拆成几块可复用配置：
 
 ```text
 Ghost（提示词 + MCP + Skills）
-  + Shell（Chat / ClaudeCode / Agno / Dify）
+  + Shell（Chat / ClaudeCode / Dify）
   + Model（Claude / OpenAI / Gemini / DeepSeek / GLM 等）
   = Bot（机器人）
 
@@ -176,7 +176,7 @@ graph TB
     Backend --> ExecutorManager["Executor Manager"]
     Backend --> KnowledgeRuntime["Knowledge Runtime"]
 
-    ExecutorManager --> CloudExecutor["云端 Executor<br/>ClaudeCode / Agno / Dify"]
+    ExecutorManager --> CloudExecutor["云端 Executor<br/>ClaudeCode / Dify"]
     Backend <--> LocalExecutor["本地 Executor<br/>WebSocket"]
     KnowledgeRuntime --> VectorStore["Elasticsearch / Qdrant / Milvus"]
     Backend --> DocConverter["Knowledge Doc Converter<br/>MinerU OCR"]

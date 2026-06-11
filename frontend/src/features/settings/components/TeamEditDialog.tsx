@@ -22,7 +22,13 @@ import { botApis } from '@/apis/bots'
 import { modelApis, type ModelTypeEnum, type UnifiedModel } from '@/apis/models'
 import { fetchUnifiedSkillsList, type UnifiedSkill } from '@/apis/skills'
 import { Bot, Team, TaskType, type KnowledgeBaseDefaultRef } from '@/types/api'
-import { TeamMode, getFilteredBotsForMode, AgentType, getActualShellType } from './team-modes'
+import {
+  TeamMode,
+  getAllowedAgentsForTeamMode,
+  getFilteredBotsForMode,
+  AgentType,
+  getActualShellType,
+} from './team-modes'
 import { createTeam, updateTeam } from '../services/teams'
 import TeamEditDrawer from './TeamEditDrawer'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -231,15 +237,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
 
   // Get allowed agents for current mode
   const allowedAgentsForMode = useMemo((): AgentType[] | undefined => {
-    const MODE_AGENT_FILTER: Record<TeamMode, AgentType[] | null> = {
-      solo: null,
-      pipeline: ['ClaudeCode', 'Agno'],
-      route: ['Agno'],
-      coordinate: ['Agno', 'ClaudeCode'],
-      collaborate: ['Agno'],
-    }
-    const allowed = MODE_AGENT_FILTER[mode]
-    return allowed === null ? undefined : allowed
+    return getAllowedAgentsForTeamMode(mode)
   }, [mode])
 
   const effectiveAllowedAgents = useMemo(
