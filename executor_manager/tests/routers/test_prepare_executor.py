@@ -76,11 +76,8 @@ class TestPrepareSkipGitCloneStrictBool:
         assert response.status_code == 422
 
     def test_skip_git_clone_bool_false_passes_validation(self, client):
-        with patch.object(
-            __import__(
-                "executor_manager.routers.routers", fromlist=["task_processor"]
-            ).task_processor,
-            "process_tasks",
+        with patch(
+            "executor_manager.routers.routers.task_processor.process_tasks",
             return_value={
                 1: {
                     "status": "success",
@@ -94,14 +91,11 @@ class TestPrepareSkipGitCloneStrictBool:
                 json={"task_id": 1, "skip_git_clone": False},
                 headers={"Content-Type": "application/json"},
             )
-            assert response.status_code != 422
+            assert response.status_code == 200
 
     def test_skip_git_clone_bool_true_passes_validation(self, client):
-        with patch.object(
-            __import__(
-                "executor_manager.routers.routers", fromlist=["task_processor"]
-            ).task_processor,
-            "process_tasks",
+        with patch(
+            "executor_manager.routers.routers.task_processor.process_tasks",
             return_value={
                 1: {
                     "status": "success",
@@ -115,14 +109,11 @@ class TestPrepareSkipGitCloneStrictBool:
                 json={"task_id": 1, "skip_git_clone": True},
                 headers={"Content-Type": "application/json"},
             )
-            assert response.status_code != 422
+            assert response.status_code == 200
 
     def test_skip_git_clone_omitted_passes_validation(self, client):
-        with patch.object(
-            __import__(
-                "executor_manager.routers.routers", fromlist=["task_processor"]
-            ).task_processor,
-            "process_tasks",
+        with patch(
+            "executor_manager.routers.routers.task_processor.process_tasks",
             return_value={
                 1: {
                     "status": "success",
@@ -136,14 +127,11 @@ class TestPrepareSkipGitCloneStrictBool:
                 json={"task_id": 1},
                 headers={"Content-Type": "application/json"},
             )
-            assert response.status_code != 422
+            assert response.status_code == 200
 
     def test_prepare_executor_logs_failed_prepare_detail(self, client):
-        with patch.object(
-            __import__(
-                "executor_manager.routers.routers", fromlist=["task_processor"]
-            ).task_processor,
-            "process_tasks",
+        with patch(
+            "executor_manager.routers.routers.task_processor.process_tasks",
             return_value={
                 1385: {
                     "status": "failed",
