@@ -37,7 +37,7 @@ async def test_agent_installs_turn_file_change_completion_provider():
     tracker = MagicMock()
     tracker.start = AsyncMock(return_value=True)
     tracker.finalize = AsyncMock(return_value={"file_changes": {"file_count": 1}})
-    task_data = ExecutionRequest(task_id=1, subtask_id=2)
+    task_data = ExecutionRequest(task_id=1, subtask_id=2, device_id="device-1")
     agent = Agent(task_data, emitter)
     agent.project_path = "/tmp/project"
 

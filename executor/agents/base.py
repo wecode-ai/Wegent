@@ -131,14 +131,15 @@ class Agent:
 
     async def start_turn_file_change_tracking(self) -> None:
         """Install per-turn Git tracking when the workspace supports it."""
-        if not self.project_path:
+        device_id = getattr(self.task_data, "device_id", None)
+        if not self.project_path or not device_id:
             return
         tracker = TurnFileChangeTracker(
             workspace=Path(self.project_path),
             task_id=self.task_id,
             subtask_id=self.subtask_id,
             executor_home=Path(config.WEGENT_EXECUTOR_HOME),
-            device_id=getattr(self.task_data, "device_id", None),
+            device_id=device_id,
         )
         if await tracker.start():
             self.turn_file_change_tracker = tracker
