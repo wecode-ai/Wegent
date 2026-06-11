@@ -20,6 +20,7 @@ from enum import Enum
 from typing import Any, Optional, Union
 
 from dacite import Config, from_dict
+from pydantic import StrictBool
 
 from .knowledge import KnowledgeBaseToolAccessMode
 
@@ -209,7 +210,9 @@ class ExecutionRequest:
     )
 
     # === Workspace Recovery ===
-    skip_git_clone: bool = False  # Skip git clone for workspace recovery from archive
+    skip_git_clone: StrictBool = (
+        False  # Skip git clone for workspace recovery from archive
+    )
 
     # === Timestamps (from Task) ===
     created_at: Optional[str] = None  # ISO format datetime
