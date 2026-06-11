@@ -24,10 +24,20 @@ from typing import Any, Dict, Optional
 
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.db.session import SessionLocal
 from app.mcp_server.auth import TaskTokenInfo
+from app.mcp_server.server import EXTERNAL_KNOWLEDGE_MCP_MOUNT_PATH
 from app.mcp_server.tools.decorator import build_mcp_tools_dict, mcp_tool
 from app.models.user import User
+from app.services.knowledge.external_document_access import (
+    DOCUMENT_DOWNLOAD_TOKEN_EXPIRES_SECONDS,
+    DOWNLOAD_TOKEN_HEADER,
+    ExternalDocumentAccessError,
+    create_document_download_token,
+    get_document_access_or_raise,
+    normalize_disposition,
+)
 from app.services.knowledge.orchestrator import (
     DEFAULT_KNOWLEDGE_LIST_LIMIT,
     MAX_DOCUMENT_READ_LIMIT,
@@ -41,6 +51,85 @@ logger = logging.getLogger(__name__)
 def _get_user_from_token(db: Session, token_info: TaskTokenInfo) -> Optional[User]:
     """Get user from token info."""
     return db.query(User).filter(User.id == token_info.user_id).first()
+
+
+def _document_file_url_path(document_id: int) -> str:
+    """Build the relative source-file download path for a knowledge document."""
+    api_prefix = (settings.API_PREFIX or "").rstrip("/")
+    return (
+        f"{api_prefix}{EXTERNAL_KNOWLEDGE_MCP_MOUNT_PATH}"
+        f"/documents/{document_id}/file"
+    )
+
+
+def _shell_single_quote(value: str) -> str:
+    """Quote a string for POSIX shell single-quoted contexts."""
+    return "'" + value.replace("'", "'\"'\"'") + "'"
+
+
+def _safe_download_output_name(file_name: str) -> str:
+    """Return a safe local output name for generated curl commands."""
+    raw_name = str(file_name or "").replace("\x00", "").replace("\\", "/")
+    base_name = raw_name.rsplit("/", 1)[-1].strip()
+    if base_name in {"", ".", ".."}:
+        return "document"
+
+    safe_name = "".join(char if char >= " " else "_" for char in base_name)
+    return safe_name or "document"
+
+
+def _default_download_dir(*, task_id: int, subtask_id: int) -> str:
+    """Return the executor-private default directory for knowledge source files."""
+    return f"/home/user/{task_id}:executor:knowledge/{subtask_id}"
+
+
+def _default_download_path(*, task_id: int, subtask_id: int, file_name: str) -> str:
+    """Return the executor-private default path for a downloaded source file."""
+    return (
+        f"{_default_download_dir(task_id=task_id, subtask_id=subtask_id)}/"
+        f"{_safe_download_output_name(file_name)}"
+    )
+
+
+def _build_download_command(
+    *,
+    resource_url: str,
+    token: str,
+    file_name: str,
+    task_id: Optional[int] = None,
+    subtask_id: Optional[int] = None,
+) -> str:
+    """Build a curl command template for local executors."""
+    url_expr = (
+        f'"${{TASK_API_DOMAIN%/}}{resource_url}"'
+        if resource_url.startswith("/")
+        else _shell_single_quote(resource_url)
+    )
+    header = _shell_single_quote(f"{DOWNLOAD_TOKEN_HEADER}: {token}")
+    output_name = _shell_single_quote(_safe_download_output_name(file_name))
+    if task_id is None or subtask_id is None:
+        return f"curl -fL -H {header} {url_expr} -o {output_name}"
+
+    default_dir = _shell_single_quote(
+        _default_download_dir(task_id=task_id, subtask_id=subtask_id)
+    )
+    return (
+        f"download_dir={default_dir}"
+        ' && output_path="$download_dir"/'
+        f"{output_name}"
+        ' && mkdir -p "$download_dir"'
+        f' && curl -fL -H {header} {url_expr} -o "$output_path"'
+        " && printf '\\nDownloaded to %s\\n' \"$output_path\""
+    )
+
+
+def _build_download_command_notes() -> str:
+    return (
+        "If resource_url is relative, prefix it with TASK_API_DOMAIN. "
+        "Use the returned headers exactly; the credential is short-lived. "
+        "download_command saves the file under the executor-private /home/user "
+        "directory so it does not appear in Wegent task files."
+    )
 
 
 @mcp_tool(
@@ -552,6 +641,104 @@ def read_document_content(
         logger.error(f"[MCP] read_document_content error: {e}", exc_info=True)
         return {"error": str(e)}
 
+    finally:
+        db.close()
+
+
+@mcp_tool(
+    name="wegent_kb_get_document_download",
+    description=(
+        "Get a short-lived original source-file download credential for an "
+        "accessible knowledge document. Use it when exact spreadsheet, binary "
+        "file, or full-file analysis is needed instead of RAG snippets."
+    ),
+    server="knowledge",
+    param_descriptions={
+        "document_id": "Document ID to download",
+        "disposition": "Download disposition: 'attachment' for saving the source file, or 'inline' for previewable files",
+    },
+)
+def get_document_download(
+    token_info: TaskTokenInfo,
+    document_id: int,
+    disposition: str = "attachment",
+) -> Dict[str, Any]:
+    """
+    Return short-lived source-file download credentials for a document.
+
+    Args:
+        token_info: Task token information containing user context
+        document_id: Document ID
+        disposition: Content disposition ("attachment" or "inline")
+
+    Returns:
+        Dict with URL path, headers, metadata, and a curl command template
+    """
+    if not isinstance(document_id, int) or document_id <= 0:
+        return {"error": "document_id must be a positive integer"}
+
+    db = SessionLocal()
+    try:
+        normalized_disposition = normalize_disposition(disposition)
+        access = get_document_access_or_raise(
+            db,
+            user_id=token_info.user_id,
+            document_id=document_id,
+        )
+        if not access.downloadable:
+            return {"error": "Document file is unavailable", "code": "file_unavailable"}
+        if normalized_disposition == "inline" and not access.previewable:
+            return {
+                "error": "Document file is not previewable",
+                "code": "unsupported_media_type",
+            }
+
+        token = create_document_download_token(
+            user_id=token_info.user_id,
+            document_id=document_id,
+            disposition=normalized_disposition,
+        )
+        resource_url = _document_file_url_path(document_id)
+        default_download_dir = _default_download_dir(
+            task_id=token_info.task_id,
+            subtask_id=token_info.subtask_id,
+        )
+        default_local_path = _default_download_path(
+            task_id=token_info.task_id,
+            subtask_id=token_info.subtask_id,
+            file_name=access.file_name,
+        )
+        return {
+            "document_id": document_id,
+            "node_id": f"document:{document_id}",
+            "knowledge_base_id": access.knowledge_base_id,
+            "resource_url": resource_url,
+            "headers": {DOWNLOAD_TOKEN_HEADER: token},
+            "expiration_seconds": DOCUMENT_DOWNLOAD_TOKEN_EXPIRES_SECONDS,
+            "disposition": normalized_disposition,
+            "mime_type": access.mime_type or "application/octet-stream",
+            "file_name": access.file_name,
+            "file_extension": access.file_extension,
+            "file_size": access.file_size,
+            "downloadable": access.downloadable,
+            "previewable": access.previewable,
+            "download_dir": default_download_dir,
+            "local_path": default_local_path,
+            "download_command": _build_download_command(
+                resource_url=resource_url,
+                token=token,
+                file_name=access.file_name,
+                task_id=token_info.task_id,
+                subtask_id=token_info.subtask_id,
+            ),
+            "notes": _build_download_command_notes(),
+        }
+    except ExternalDocumentAccessError as e:
+        logger.warning(f"[MCP] get_document_download validation error: {e}")
+        return {"error": str(e), "code": e.code}
+    except Exception as e:
+        logger.error(f"[MCP] get_document_download error: {e}", exc_info=True)
+        return {"error": str(e)}
     finally:
         db.close()
 

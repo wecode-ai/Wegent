@@ -164,6 +164,16 @@ def _build_executor_attachment_payload(context: Any) -> dict[str, Any]:
     }
 
 
+def _is_local_file_capable_shell(request: "ExecutionRequest") -> bool:
+    """Return whether the shell can analyze downloaded files locally."""
+    shell_type = ""
+    if request.bot and isinstance(request.bot, list):
+        first_bot = request.bot[0] if request.bot else {}
+        if isinstance(first_bot, dict):
+            shell_type = first_bot.get("shell_type", "")
+    return shell_type in {"ClaudeCode", "Agno", "Codex"}
+
+
 def _ensure_selected_kb_skill_priority(request: "ExecutionRequest") -> None:
     """Ensure selected-KB requests both preload and prioritize the KB skill."""
     if not request.knowledge_base_ids or not request.is_user_selected_kb:
@@ -592,6 +602,7 @@ async def _process_contexts(
         task_id=request.task_id,
         context_window=model_context_window,
         model_config=request.model_config,
+        metadata_only_for_large_attachments=_is_local_file_capable_shell(request),
     )
 
     # Update request with all processed context results.

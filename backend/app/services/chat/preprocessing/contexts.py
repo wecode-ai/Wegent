@@ -43,6 +43,12 @@ from shared.prompts import (
 
 logger = logging.getLogger(__name__)
 
+SPREADSHEET_FILE_EXTENSIONS = {".xls", ".xlsx", ".csv"}
+
+# Max characters of parsed text to include as preview when injecting
+# metadata-only prefix for large non-spreadsheet files.
+METADATA_TEXT_PREVIEW_LENGTH = 500
+
 # Table context prompt template - will be dynamically generated with table info
 TABLE_PROMPT_TEMPLATE = """
 
@@ -101,6 +107,91 @@ def build_table_prompt(table_contexts: List[dict]) -> str:
 
     tables_info = "\n".join(tables_info_lines)
     return TABLE_PROMPT_TEMPLATE.format(tables_info=tables_info)
+
+
+async def process_contexts(
+    db: Session,
+    context_ids: List[int],
+    message: str,
+    metadata_only_for_large_documents: bool = False,
+) -> str | list[dict[str, Any]]:
+    """
+    Process multiple contexts and build message with all context contents.
+
+    Args:
+        db: Database session (SQLAlchemy Session)
+        context_ids: List of context IDs
+        message: Original message
+        metadata_only_for_large_documents: If True, inject metadata instead of
+            parsed text for spreadsheets and large documents.
+
+    Returns:
+        Message with all context contents prepended, or OpenAI Responses API
+        format vision content list for images
+    """
+    if not context_ids:
+        return message
+
+    # Collect all contexts
+    text_contents = []
+    image_contents = []
+
+    for idx, context_id in enumerate(context_ids, start=1):
+        try:
+            context = context_service.get_context_optional(
+                db=db,
+                context_id=context_id,
+            )
+
+            if context is None:
+                logger.warning(f"Context {context_id} not found")
+                continue
+
+            if context.status != ContextStatus.READY.value:
+                logger.warning(f"Context {context_id} is not ready: {context.status}")
+                continue
+
+            # Process based on context type
+            if context.context_type == ContextType.ATTACHMENT.value:
+                if context_service.is_video_context(context):
+                    logger.warning(
+                        "Skipping video context %s in process_contexts because "
+                        "model capabilities are unavailable in this compatibility path",
+                        context.id,
+                    )
+                    continue
+                _process_attachment_context(
+                    db,
+                    context,
+                    idx,
+                    text_contents,
+                    image_contents,
+                    [],
+                    metadata_only_for_large_documents=metadata_only_for_large_documents,
+                )
+            elif context.context_type == ContextType.KNOWLEDGE_BASE.value:
+                # Knowledge base contexts are handled via RAG tools, not here
+                logger.debug(
+                    f"Knowledge base context {context_id} will be used via RAG"
+                )
+
+        except (ValueError, KeyError) as e:
+            logger.exception(f"Error processing context {context_id}")
+            continue
+        except Exception as e:
+            logger.exception(f"Unexpected error processing context {context_id}")
+            continue
+
+    # Build vision structure if images present. Video contexts require model
+    # capabilities and are handled by prepare_contexts_for_chat.
+    if image_contents:
+        return _build_vision_structure(text_contents, image_contents, [], message)
+
+    # Combine text contents if present
+    if text_contents:
+        return _combine_text_contents(text_contents, message)
+
+    return message
 
 
 def _build_vision_structure(
@@ -224,6 +315,7 @@ def _process_attachment_context(
     model_config: Optional[
         dict[str, Any]
     ] = None,  # New parameter for model capabilities
+    metadata_only_for_large_documents: bool = False,
 ) -> None:
     """
     Process an attachment context and add to appropriate list.
@@ -316,13 +408,111 @@ def _process_attachment_context(
     else:
         # Text document - get formatted content with attachment index
         # The content is wrapped in <attachment> XML tags by context_service
-        doc_prefix = context_service.build_document_text_prefix(
-            context,
-            task_id=task_id,
-            subtask_id=subtask_id,
-        )
+        if metadata_only_for_large_documents and _should_skip_attachment_text(context):
+            doc_prefix = _build_attachment_metadata_only_prefix(
+                context,
+                task_id=task_id,
+                subtask_id=subtask_id,
+            )
+        else:
+            doc_prefix = context_service.build_document_text_prefix(
+                context,
+                task_id=task_id,
+                subtask_id=subtask_id,
+            )
         if doc_prefix:
             text_contents.append(f"[Attachment {idx}]\n{doc_prefix}")
+
+
+def _should_skip_attachment_text(context: SubtaskContext) -> bool:
+    """Return whether local executors should receive metadata instead of text."""
+    extension = (context.file_extension or "").strip().lower()
+    if extension in SPREADSHEET_FILE_EXTENSIONS:
+        return True
+
+    max_text_length = context_service.parser.get_max_text_length()
+    return bool(context.text_length and context.text_length >= max_text_length)
+
+
+def _build_attachment_metadata_only_prefix(
+    context: SubtaskContext,
+    *,
+    task_id: Optional[int],
+    subtask_id: Optional[int],
+) -> str:
+    """Build attachment metadata without injecting parsed file content.
+
+    For non-spreadsheet files with extracted text, a short preview snippet
+    is included so the LLM can decide whether to download the full source
+    file for deeper analysis.
+    """
+    attachment_id = context.id
+    filename = context.original_filename
+    mime_type = context.mime_type or "unknown"
+    file_size = context.file_size or 0
+    formatted_size = context_service.format_file_size(file_size)
+    url = context_service.build_attachment_url(attachment_id)
+    sandbox_path = context_service.build_sandbox_path(task_id, subtask_id, filename)
+    preview_status = "truncated" if context.extracted_text else "unavailable"
+    path_part = (
+        f" | File Path(already in sandbox): {sandbox_path}" if sandbox_path else ""
+    )
+
+    # Include a text preview for non-spreadsheet files that have extracted
+    # text.  Spreadsheets are excluded because their parsed text is flat
+    # and unstructured — the local file is the only useful representation.
+    extension = (context.file_extension or "").strip().lower()
+    is_spreadsheet = extension in SPREADSHEET_FILE_EXTENSIONS
+    preview_section = ""
+    if not is_spreadsheet and context.extracted_text:
+        snippet = context.extracted_text[:METADATA_TEXT_PREVIEW_LENGTH]
+        truncated_marker = (
+            "..." if len(context.extracted_text) > METADATA_TEXT_PREVIEW_LENGTH else ""
+        )
+        preview_section = (
+            f"\n<text_preview>\n{snippet}{truncated_marker}\n</text_preview>"
+        )
+
+    return (
+        f"[Attachment: {filename} | ID: {attachment_id} | Type: {mime_type} | "
+        f"Size: {formatted_size} | URL: {url}{path_part}]\n"
+        f"(Source file is available for local tool analysis. "
+        f"Parsed text preview status: {preview_status}. "
+        f"Use the local file path for precise spreadsheet or full-file analysis.)"
+        f"{preview_section}\n\n"
+    )
+
+
+async def process_attachments(
+    db: Any,
+    attachment_ids: List[int],
+    user_id: int,
+    message: str,
+    metadata_only_for_large_documents: bool = False,
+) -> str | list[dict[str, Any]]:
+    """
+    Process multiple attachments and build message with all attachment contents.
+
+    This is a backward-compatible wrapper around process_contexts.
+
+    Args:
+        db: Database session (SQLAlchemy Session)
+        attachment_ids: List of attachment IDs (now context IDs)
+        user_id: User ID (unused, kept for backward compatibility with callers)
+        message: Original message
+        metadata_only_for_large_documents: If True, inject metadata instead of
+            parsed text for spreadsheets and large documents.
+
+    Returns:
+        Message with all attachment contents prepended, or OpenAI Responses API
+        format vision content list for images
+    """
+    return await process_contexts(
+        db,
+        attachment_ids,
+        message,
+        metadata_only_for_large_documents=metadata_only_for_large_documents,
+    )
 
 
 def extract_knowledge_base_ids(
@@ -956,6 +1146,7 @@ async def prepare_contexts_for_chat(
     task_id: Optional[int] = None,
     context_window: Optional[int] = None,
     model_config: Optional[dict[str, Any]] = None,
+    metadata_only_for_large_attachments: bool = False,
 ) -> ChatContextsResult:
     """
     Unified context processing based on user_subtask_id.
@@ -1026,6 +1217,7 @@ async def prepare_contexts_for_chat(
         task_id=task_id,
         subtask_id=user_subtask_id,
         model_config=model_config,  # Pass model config for video capability check
+        metadata_only_for_large_documents=metadata_only_for_large_attachments,
     )
 
     # 2. Process knowledge base contexts - create tools
@@ -1151,6 +1343,7 @@ async def _process_attachment_contexts_for_message(
     model_config: Optional[
         dict[str, Any]
     ] = None,  # New parameter for model capabilities
+    metadata_only_for_large_documents: bool = False,
 ) -> str | list[dict[str, Any]]:
     """
     Process attachment contexts and build message with content.
@@ -1184,6 +1377,7 @@ async def _process_attachment_contexts_for_message(
                 task_id=task_id,
                 subtask_id=subtask_id,
                 model_config=model_config,  # Pass model config
+                metadata_only_for_large_documents=metadata_only_for_large_documents,
             )
         except Exception as e:
             if isinstance(e, VideoAttachmentResolutionError):
