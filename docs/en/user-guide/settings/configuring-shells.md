@@ -50,7 +50,7 @@ When a Bot references a Shell, the system follows this lookup order:
 2. **Public Shells**: If not found, falls back to system-provided public Shells in the `public_shells` table
 
 This allows users to:
-- Use preset public Shells (like `ClaudeCode`, `Agno`, `Dify`) without creating them
+- Use preset public Shells (like `ClaudeCode` and `Dify`) without creating them
 - Override public Shells by creating custom Shells with the same name
 - Define private Shells that only they can access
 
@@ -70,7 +70,7 @@ Shells provide Bots with the following core capabilities:
 
 ## 📊 Runtime Selection Guide
 
-Wegent currently supports three main runtimes:
+The web configuration flow currently exposes ClaudeCode and Dify for user selection. Chat is available as the direct LLM runtime in agent and bot flows. Agno is no longer offered in the web UI while it is being decommissioned.
 
 ### ClaudeCode Runtime (Recommended)
 
@@ -88,20 +88,6 @@ Wegent currently supports three main runtimes:
 - ✅ Mature and stable
 
 **Recommended for**: Most development tasks
-
-### Agno Runtime (Experimental)
-
-**Use Cases**:
-- Conversational interactions
-- Experimental feature testing
-- Special AI interaction needs
-
-**Features**:
-- ⚡ Based on Agno framework
-- ⚠️ Experimental, features still being refined
-- 🔬 Suitable for advanced users
-
-**Recommended for**: Conversational tasks or experimental scenarios
 
 ### Dify Runtime
 
@@ -127,15 +113,15 @@ Wegent currently supports three main runtimes:
 
 ### Decision Table
 
-| Feature | ClaudeCode | Agno | Dify |
-|---------|------------|------|------|
-| **Stability** | ⭐⭐⭐⭐⭐ Mature | ⭐⭐⭐ Experimental | ⭐⭐⭐⭐ Stable |
-| **Code Development** | ⭐⭐⭐⭐⭐ Excellent | ⭐⭐ Basic | ⭐⭐ Limited |
-| **Tool Invocation** | ⭐⭐⭐⭐⭐ Complete | ⭐⭐⭐ Partial | ⭐⭐⭐ Via Dify |
-| **Git Integration** | ⭐⭐⭐⭐⭐ Complete | ⭐⭐ Limited | ❌ None |
-| **Workflow Support** | ⭐⭐ Basic | ⭐⭐ Basic | ⭐⭐⭐⭐⭐ Excellent |
-| **Learning Curve** | ⭐⭐⭐⭐ Simple | ⭐⭐ Complex | ⭐⭐⭐⭐ Simple |
-| **Recommendation** | ✅ Development | ⚠️ Advanced | ✅ Workflows |
+| Feature | ClaudeCode | Dify |
+|---------|------------|------|
+| **Stability** | ⭐⭐⭐⭐⭐ Mature | ⭐⭐⭐⭐ Stable |
+| **Code Development** | ⭐⭐⭐⭐⭐ Excellent | ⭐⭐ Limited |
+| **Tool Invocation** | ⭐⭐⭐⭐⭐ Complete | ⭐⭐⭐ Via Dify |
+| **Git Integration** | ⭐⭐⭐⭐⭐ Complete | ❌ None |
+| **Workflow Support** | ⭐⭐ Basic | ⭐⭐⭐⭐⭐ Excellent |
+| **Learning Curve** | ⭐⭐⭐⭐ Simple | ⭐⭐⭐⭐ Simple |
+| **Recommendation** | ✅ Development | ✅ Workflows |
 
 ---
 
@@ -156,19 +142,7 @@ Wegent comes with the following preset Shells that can be used immediately:
 - Code refactoring
 - Documentation writing
 
-### 2. Agno
-
-**Name**: `Agno`
-**Runtime**: `Agno`
-**Status**: ⚠️ Experimental
-**Namespace**: `default`
-
-**Recommended Scenarios**:
-- Conversational interactions
-- Experimental features
-- Special requirements
-
-### 3. Dify
+### 2. Dify
 
 **Name**: `Dify`
 **Runtime**: `Dify`
@@ -187,7 +161,7 @@ Wegent comes with the following preset Shells that can be used immediately:
 
 ### Method 1: Use Preset Shells (Recommended for Beginners)
 
-The system already has `ClaudeCode` and `Agno` Shells preset. You can directly reference them when creating a Bot:
+The system already has preset Shells such as `ClaudeCode` and `Dify`. You can directly reference them when creating a Bot:
 
 ```yaml
 apiVersion: agent.wecode.io/v1
@@ -228,7 +202,7 @@ If you need a custom Shell configuration:
 4. Fill in the following fields:
    - **Name**: Unique identifier for the Shell (lowercase letters and hyphens)
    - **Namespace**: Usually use `default`
-   - **Runtime Type**: Select `ClaudeCode` or `Agno`
+   - **Runtime Type**: Select `ClaudeCode` for custom local execution Shells
    - **Supported Model Types**: (Optional) Specify model types this Shell supports
 5. Click **Submit** to create
 
@@ -270,7 +244,7 @@ status:
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `runtime` | string | Yes | Runtime type, options: `ClaudeCode`, `Agno`, `Dify` |
+| `runtime` | string | Yes | Runtime type exposed in the web UI, options: `ClaudeCode`, `Dify` |
 | `supportModel` | array | No | List of supported model types, empty array means all models supported |
 
 **supportModel Explanation**:
@@ -307,27 +281,7 @@ status:
 - Supports all types of AI models
 - Suitable for most development tasks
 
-### Example 2: Agno Shell (Experimental)
-
-```yaml
-apiVersion: agent.wecode.io/v1
-kind: Shell
-metadata:
-  name: Agno
-  namespace: default
-spec:
-  runtime: Agno
-  supportModel: []  # Supports all model types
-status:
-  state: "Available"
-```
-
-**Description**:
-- Preset Agno Shell configuration
-- Experimental feature, suitable for advanced users
-- Suitable for conversational interaction tasks
-
-### Example 3: Dify Shell
+### Example 2: Dify Shell
 
 ```yaml
 apiVersion: agent.wecode.io/v1
@@ -348,7 +302,7 @@ status:
 - Supports chat, chatflow, workflow, and agent-chat modes
 - Suitable for workflow automation and multi-turn conversations
 
-### Example 4: Custom Shell (Supports Specific Models Only)
+### Example 3: Custom Shell (Supports Specific Models Only)
 
 ```yaml
 apiVersion: agent.wecode.io/v1
@@ -368,7 +322,7 @@ status:
 - Only supports Anthropic models (Claude series)
 - Suitable for scenarios with specific model restrictions
 
-### Example 5: Development Environment Shell
+### Example 4: Development Environment Shell
 
 ```yaml
 apiVersion: agent.wecode.io/v1
@@ -449,21 +403,20 @@ spec:
 - Visit http://localhost:8000/api/docs
 - Use Shell-related API endpoints to query
 
-### Q2: What's the difference between ClaudeCode, Agno, and Dify?
+### Q2: What's the difference between ClaudeCode and Dify?
 
 **Answer**:
 
-| Feature | ClaudeCode | Agno | Dify |
-|---------|------------|------|------|
-| **Maturity** | Mature and stable | Experimental | Stable |
-| **Primary Use** | Code development | Conversational interaction | Workflow automation |
-| **Tool Support** | Complete | Partial | Via Dify platform |
-| **Recommendation** | ✅ Recommended | ⚠️ Advanced users | ✅ For workflows |
+| Feature | ClaudeCode | Dify |
+|---------|------------|------|
+| **Maturity** | Mature and stable | Stable |
+| **Primary Use** | Code development | Workflow automation |
+| **Tool Support** | Complete | Via Dify platform |
+| **Recommendation** | ✅ Recommended | ✅ For workflows |
 
 **Suggestion**:
 - For code development tasks, use ClaudeCode
 - For workflow automation and Dify integration, use Dify
-- For experimental features, use Agno
 
 ### Q3: How to check Shell status?
 
@@ -479,7 +432,7 @@ View Shell status via Web interface:
 **Answer**: Common errors and solutions:
 
 **Error 1: Shell status is Unavailable**
-- Check if runtime type is correct (`ClaudeCode`, `Agno`, or `Dify`)
+- Check if runtime type is correct (`ClaudeCode` or `Dify`)
 - Check if configuration format complies with YAML specification
 - View backend logs: `docker-compose logs backend`
 
@@ -510,7 +463,7 @@ View Shell status via Web interface:
 
 **Answer**:
 
-The preset `ClaudeCode` and `Agno` Shells are recommended configurations; it's best not to modify them.
+The preset `ClaudeCode` Shell is a recommended configuration; it's best not to modify it.
 
 If you need custom configuration:
 - Create a new Shell resource

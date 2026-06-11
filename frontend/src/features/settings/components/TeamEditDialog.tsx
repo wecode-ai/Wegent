@@ -22,7 +22,13 @@ import { botApis } from '@/apis/bots'
 import { modelApis, type ModelTypeEnum, type UnifiedModel } from '@/apis/models'
 import { fetchUnifiedSkillsList, type UnifiedSkill } from '@/apis/skills'
 import { Bot, Team, TaskType, type KnowledgeBaseDefaultRef } from '@/types/api'
-import { TeamMode, getFilteredBotsForMode, AgentType, getActualShellType } from './team-modes'
+import {
+  TeamMode,
+  getAllowedAgentsForTeamMode,
+  getFilteredBotsForMode,
+  AgentType,
+  getActualShellType,
+} from './team-modes'
 import { createTeam, updateTeam } from '../services/teams'
 import TeamEditDrawer from './TeamEditDrawer'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -177,9 +183,6 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   const [modeChangeDialogVisible, setModeChangeDialogVisible] = useState(false)
   const [pendingMode, setPendingMode] = useState<TeamMode | null>(null)
 
-  // State to trigger collapse of TeamModeSelector after confirmation
-  const [shouldCollapseSelector, setShouldCollapseSelector] = useState(false)
-
   // Shells data for resolving custom shell runtime types
   const [shells, setShells] = useState<UnifiedShell[]>([])
 
@@ -231,15 +234,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
 
   // Get allowed agents for current mode
   const allowedAgentsForMode = useMemo((): AgentType[] | undefined => {
-    const MODE_AGENT_FILTER: Record<TeamMode, AgentType[] | null> = {
-      solo: null,
-      pipeline: ['ClaudeCode', 'Agno'],
-      route: ['Agno'],
-      coordinate: ['Agno', 'ClaudeCode'],
-      collaborate: ['Agno'],
-    }
-    const allowed = MODE_AGENT_FILTER[mode]
-    return allowed === null ? undefined : allowed
+    return getAllowedAgentsForTeamMode(mode)
   }, [mode])
 
   const effectiveAllowedAgents = useMemo(
@@ -484,7 +479,6 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       setModeChangeDialogVisible(true)
     } else {
       executeModeChange(newMode)
-      setShouldCollapseSelector(true)
     }
   }
 
@@ -494,12 +488,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     }
     setModeChangeDialogVisible(false)
     setPendingMode(null)
-    setShouldCollapseSelector(true)
   }
-
-  const handleCollapseHandled = useCallback(() => {
-    setShouldCollapseSelector(false)
-  }, [])
 
   const handleCancelModeChange = () => {
     setModeChangeDialogVisible(false)
@@ -1013,12 +1002,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                 />
 
                 {/* Mode Selection Section */}
-                <TeamModeSelector
-                  mode={mode}
-                  onModeChange={handleModeChange}
-                  shouldCollapse={shouldCollapseSelector}
-                  onCollapseHandled={handleCollapseHandled}
-                />
+                <TeamModeSelector mode={mode} onModeChange={handleModeChange} />
 
                 {/* Mode-specific Editor Section */}
                 <TeamModeEditor

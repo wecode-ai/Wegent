@@ -138,7 +138,7 @@ Internally, Wegent splits an AI assistant into reusable pieces:
 
 ```text
 Ghost (prompt + MCP + Skills)
-  + Shell (Chat / ClaudeCode / Agno / Dify)
+  + Shell (Chat / ClaudeCode / Dify)
   + Model (Claude / OpenAI / Gemini / DeepSeek / GLM, etc.)
   = Bot
 
@@ -176,7 +176,7 @@ graph TB
     Backend --> ExecutorManager["Executor Manager"]
     Backend --> KnowledgeRuntime["Knowledge Runtime"]
 
-    ExecutorManager --> CloudExecutor["Cloud Executor<br/>ClaudeCode / Agno / Dify"]
+    ExecutorManager --> CloudExecutor["Cloud Executor<br/>ClaudeCode / Dify"]
     Backend <--> LocalExecutor["Local Executor<br/>WebSocket"]
     KnowledgeRuntime --> VectorStore["Elasticsearch / Qdrant / Milvus"]
     Backend --> DocConverter["Knowledge Doc Converter<br/>MinerU OCR"]
