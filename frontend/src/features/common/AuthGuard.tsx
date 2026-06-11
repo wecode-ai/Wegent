@@ -10,6 +10,7 @@ import { userApis } from '@/apis/user'
 import { paths } from '@/config/paths'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Spinner } from '@/components/ui/spinner'
+import { hasAideskAuthParams } from '@/features/login/constants'
 
 interface AuthGuardProps {
   children: React.ReactNode
@@ -37,15 +38,11 @@ export default function AuthGuard({ children }: AuthGuardProps) {
 
     // Check if URL contains Aidesk authentication parameters
     // If so, skip auth check to let AideskTokenHandler process the authentication first
-    const hasAideskAuthParams =
-      searchParams.get('source') === 'aidesk' &&
-      !!searchParams.get('username') &&
-      !!searchParams.get('timestamp') &&
-      !!searchParams.get('sign')
+    const hasAideskAuthRequest = hasAideskAuthParams(searchParams)
 
     // Allow download pages (they handle their own auth checks)
     const isAllowedPath = allowedPaths.includes(pathname) || pathname.startsWith('/download/')
-    if (!isAllowedPath && !hasAideskAuthParams) {
+    if (!isAllowedPath && !hasAideskAuthRequest) {
       // Use isAuthenticated() to check both token existence and expiry
       const isAuth = userApis.isAuthenticated()
       if (!isAuth) {

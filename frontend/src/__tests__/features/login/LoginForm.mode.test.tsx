@@ -93,4 +93,17 @@ describe('LoginForm display mode', () => {
     expect(screen.getByLabelText('Password')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /SSO Login/i })).not.toBeInTheDocument()
   })
+
+  it('should not force password login when Aidesk auth parameters are present', () => {
+    mockSearchParams = new URLSearchParams(
+      'source=aidesk&username=testuser&timestamp=1730000000&sign=abcdef&password_login'
+    )
+
+    render(<LoginForm />)
+
+    expect(getRuntimeConfigSync).toHaveBeenCalled()
+    expect(screen.queryByLabelText('Username')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Password')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /SSO Login/i })).toBeInTheDocument()
+  })
 })

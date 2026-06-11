@@ -59,7 +59,7 @@ import {
 
 import { fetchRuntimeConfig, getSocketUrl } from '@/lib/runtime-config'
 import { paths } from '@/config/paths'
-import { POST_LOGIN_REDIRECT_KEY } from '@/features/login/constants'
+import { hasAideskAuthParams, POST_LOGIN_REDIRECT_KEY } from '@/features/login/constants'
 
 const SOCKETIO_PATH = '/socket.io'
 
@@ -307,13 +307,8 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       if (typeof window !== 'undefined' && window.location.pathname !== loginPath) {
         // Check if Aidesk auth params are present - skip redirect to let AideskTokenHandler handle it
         const params = new URLSearchParams(window.location.search)
-        const hasAideskAuthParams =
-          params.get('source') === 'aidesk' &&
-          !!params.get('username') &&
-          !!params.get('timestamp') &&
-          !!params.get('sign')
 
-        if (!hasAideskAuthParams) {
+        if (!hasAideskAuthParams(params)) {
           // Save current path for redirect after login
           const currentPath = window.location.pathname + window.location.search
           sessionStorage.setItem(POST_LOGIN_REDIRECT_KEY, currentPath)
@@ -344,13 +339,8 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         if (typeof window !== 'undefined' && window.location.pathname !== loginPath) {
           // Check if Aidesk auth params are present - skip redirect to let AideskTokenHandler handle it
           const params = new URLSearchParams(window.location.search)
-          const hasAideskAuthParams =
-            params.get('source') === 'aidesk' &&
-            !!params.get('username') &&
-            !!params.get('timestamp') &&
-            !!params.get('sign')
 
-          if (!hasAideskAuthParams) {
+          if (!hasAideskAuthParams(params)) {
             // Save current path for redirect after login (consistent with AUTH_ERROR handler)
             const currentPath = window.location.pathname + window.location.search
             sessionStorage.setItem(POST_LOGIN_REDIRECT_KEY, currentPath)
