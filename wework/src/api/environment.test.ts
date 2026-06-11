@@ -20,6 +20,13 @@ describe('parseGitShortStat', () => {
   test('defaults missing additions and deletions to zero', () => {
     expect(parseGitShortStat('')).toEqual({ additions: '+0', deletions: '-0' })
   })
+
+  test('parses pending file count from no-commit repos', () => {
+    expect(parseGitShortStat(' 3 file(s) pending')).toEqual({
+      additions: '+3',
+      deletions: '-0',
+    })
+  })
 })
 
 describe('buildPullRequestUrl', () => {
@@ -62,6 +69,11 @@ describe('loadProjectEnvironment', () => {
       })
       .mockResolvedValueOnce({
         success: true,
+        stdout: '',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
         stdout: 'https://github.com/wecode-ai/Wegent.git\n',
         stderr: '',
       })
@@ -95,7 +107,7 @@ describe('loadProjectEnvironment', () => {
     expect(executeCommand).toHaveBeenCalledWith('device-123', {
       command_key: 'git_diff_shortstat',
       path: '/workspace/projects/directmessage_single',
-      args: ['main...', '--'],
+      args: ['HEAD', '--'],
       timeout_seconds: 10,
       max_output_bytes: 4096,
     })
@@ -112,6 +124,11 @@ describe('loadProjectEnvironment', () => {
       .mockResolvedValueOnce({
         success: true,
         stdout: ' 2 files changed, 8 insertions(+), 3 deletions(-)',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: '',
         stderr: '',
       })
       .mockResolvedValueOnce({
@@ -157,7 +174,7 @@ describe('loadProjectEnvironment', () => {
     expect(executeCommand).toHaveBeenCalledWith('device-123', {
       command_key: 'git_diff_shortstat',
       path: '/workspace/Wegent',
-      args: ['main...', '--'],
+      args: ['HEAD', '--'],
       timeout_seconds: 10,
       max_output_bytes: 4096,
     })
@@ -174,6 +191,11 @@ describe('loadProjectEnvironment', () => {
       .mockResolvedValueOnce({
         success: true,
         stdout: ' 2 files changed, 8 insertions(+), 3 deletions(-)',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: '',
         stderr: '',
       })
       .mockResolvedValueOnce({
@@ -211,7 +233,8 @@ describe('loadProjectEnvironment', () => {
     const cachedInfo = await loadProjectEnvironment(api, project)
 
     expect(cachedInfo.branchName).toBe('human/narwhal-20260528-073440')
-    expect(executeCommand).toHaveBeenCalledTimes(3)
+    // 4 calls: git_branch, git_diff_shortstat, git_status_porcelain, git_remote_url
+    expect(executeCommand).toHaveBeenCalledTimes(4)
     expect(executeCommand).toHaveBeenCalledWith('device-123', {
       command_key: 'git_branch',
       path: '/workspace/Wegent',
@@ -221,7 +244,13 @@ describe('loadProjectEnvironment', () => {
     expect(executeCommand).toHaveBeenCalledWith('device-123', {
       command_key: 'git_diff_shortstat',
       path: '/workspace/Wegent',
-      args: ['main...', '--'],
+      args: ['HEAD', '--'],
+      timeout_seconds: 10,
+      max_output_bytes: 4096,
+    })
+    expect(executeCommand).toHaveBeenCalledWith('device-123', {
+      command_key: 'git_status_porcelain',
+      path: '/workspace/Wegent',
       timeout_seconds: 10,
       max_output_bytes: 4096,
     })
@@ -233,7 +262,7 @@ describe('loadProjectEnvironment', () => {
     })
   })
 
-  test('falls back to origin main when local main is unavailable', async () => {
+  test('uses git diff against HEAD for tracked uncommitted changes', async () => {
     const executeCommand = vi.fn((_: string, data: { command_key: string; args?: string[] }) => {
       if (data.command_key === 'git_branch') {
         return Promise.resolve({
@@ -243,18 +272,18 @@ describe('loadProjectEnvironment', () => {
         })
       }
 
-      if (data.command_key === 'git_diff_shortstat' && data.args?.[0] === 'main...') {
-        return Promise.resolve({
-          success: false,
-          stdout: '',
-          stderr: "fatal: ambiguous argument 'main...'",
-        })
-      }
-
-      if (data.command_key === 'git_diff_shortstat' && data.args?.[0] === 'origin/main...') {
+      if (data.command_key === 'git_diff_shortstat') {
         return Promise.resolve({
           success: true,
           stdout: ' 1 file changed, 1 insertion(+), 1 deletion(-)',
+          stderr: '',
+        })
+      }
+
+      if (data.command_key === 'git_status_porcelain') {
+        return Promise.resolve({
+          success: true,
+          stdout: '',
           stderr: '',
         })
       }
@@ -298,41 +327,34 @@ describe('loadProjectEnvironment', () => {
     expect(executeCommand).toHaveBeenCalledWith('device-123', {
       command_key: 'git_diff_shortstat',
       path: '/workspace/Wegent',
-      args: ['main...', '--'],
-      timeout_seconds: 10,
-      max_output_bytes: 4096,
-    })
-    expect(executeCommand).toHaveBeenCalledWith('device-123', {
-      command_key: 'git_diff_shortstat',
-      path: '/workspace/Wegent',
-      args: ['origin/main...', '--'],
+      args: ['HEAD', '--'],
       timeout_seconds: 10,
       max_output_bytes: 4096,
     })
   })
 
-  test('falls back to head when no main or master base exists', async () => {
+  test('adds untracked file count to diff additions', async () => {
     const executeCommand = vi.fn((_: string, data: { command_key: string; args?: string[] }) => {
       if (data.command_key === 'git_branch') {
         return Promise.resolve({
           success: true,
-          stdout: 'human/seal-20260529-104820\n',
+          stdout: 'main\n',
           stderr: '',
         })
       }
 
-      if (data.command_key === 'git_diff_shortstat' && data.args?.[0] !== 'HEAD') {
+      if (data.command_key === 'git_diff_shortstat') {
         return Promise.resolve({
-          success: false,
-          stdout: '',
-          stderr: `fatal: ambiguous argument '${data.args?.[0]}'`,
+          success: true,
+          stdout: ' 1 file changed, 5 insertions(+), 2 deletions(-)',
+          stderr: '',
         })
       }
 
-      if (data.command_key === 'git_diff_shortstat' && data.args?.[0] === 'HEAD') {
+      if (data.command_key === 'git_status_porcelain') {
         return Promise.resolve({
           success: true,
-          stdout: ' 1 file changed, 1 insertion(+), 1 deletion(-)',
+          stdout: '?? output.txt\n?? notes.md\n',
           stderr: '',
         })
       }
@@ -356,7 +378,7 @@ describe('loadProjectEnvironment', () => {
       { executeCommand },
       {
         id: 1,
-        name: 'sina-sso',
+        name: 'Wegent',
         config: {
           mode: 'workspace',
           execution: {
@@ -365,21 +387,153 @@ describe('loadProjectEnvironment', () => {
           },
           workspace: {
             source: 'local_path',
-            localPath: '/Users/hongyu9/Downloads/sina-sso',
+            localPath: '/workspace/Wegent',
+          },
+        },
+      },
+    )
+
+    // 5 tracked insertions + 2 untracked files = +7
+    expect(info.additions).toBe('+7')
+    expect(info.deletions).toBe('-2')
+    expect(info.branchName).toBe('main')
+  })
+
+  test('counts pending files from porcelain when repo has no commits', async () => {
+    const executeCommand = vi.fn((_: string, data: { command_key: string; args?: string[] }) => {
+      if (data.command_key === 'git_branch') {
+        return Promise.resolve({
+          success: true,
+          stdout: 'master\n',
+          stderr: '',
+        })
+      }
+
+      if (data.command_key === 'git_diff_shortstat') {
+        return Promise.resolve({
+          success: false,
+          stdout: '',
+          stderr: "fatal: bad revision 'HEAD'",
+        })
+      }
+
+      if (data.command_key === 'git_status_porcelain') {
+        return Promise.resolve({
+          success: true,
+          stdout: '?? output.txt\n',
+          stderr: '',
+        })
+      }
+
+      if (data.command_key === 'git_remote_url') {
+        return Promise.resolve({
+          success: false,
+          stdout: '',
+          stderr: 'No such remote',
+        })
+      }
+
+      return Promise.resolve({
+        success: false,
+        stdout: '',
+        stderr: 'unknown command',
+      })
+    })
+
+    const info = await loadProjectEnvironment(
+      { executeCommand },
+      {
+        id: 2,
+        name: 'empty-repo',
+        config: {
+          mode: 'workspace',
+          execution: {
+            targetType: 'local',
+            deviceId: 'device-123',
+          },
+          workspace: {
+            source: 'local_path',
+            localPath: '/Volumes/OuterHD/Documents/test-porject',
           },
         },
       },
     )
 
     expect(info.additions).toBe('+1')
-    expect(info.deletions).toBe('-1')
+    expect(info.deletions).toBe('-0')
+    expect(info.branchName).toBe('master')
+    expect(info.error).toBeUndefined()
     expect(executeCommand).toHaveBeenCalledWith('device-123', {
-      command_key: 'git_diff_shortstat',
-      path: '/Users/hongyu9/Downloads/sina-sso',
-      args: ['HEAD', '--'],
+      command_key: 'git_status_porcelain',
+      path: '/Volumes/OuterHD/Documents/test-porject',
       timeout_seconds: 10,
       max_output_bytes: 4096,
     })
+  })
+
+  test('shows zero diff when repo is clean and has no untracked files', async () => {
+    const executeCommand = vi.fn((_: string, data: { command_key: string; args?: string[] }) => {
+      if (data.command_key === 'git_branch') {
+        return Promise.resolve({
+          success: true,
+          stdout: 'main\n',
+          stderr: '',
+        })
+      }
+
+      if (data.command_key === 'git_diff_shortstat') {
+        return Promise.resolve({
+          success: false,
+          stdout: '',
+          stderr: "fatal: bad revision 'HEAD'",
+        })
+      }
+
+      if (data.command_key === 'git_status_porcelain') {
+        return Promise.resolve({
+          success: true,
+          stdout: '',
+          stderr: '',
+        })
+      }
+
+      if (data.command_key === 'git_remote_url') {
+        return Promise.resolve({
+          success: false,
+          stdout: '',
+          stderr: 'No such remote',
+        })
+      }
+
+      return Promise.resolve({
+        success: false,
+        stdout: '',
+        stderr: 'unknown command',
+      })
+    })
+
+    const info = await loadProjectEnvironment(
+      { executeCommand },
+      {
+        id: 3,
+        name: 'clean-repo',
+        config: {
+          mode: 'workspace',
+          execution: {
+            targetType: 'local',
+            deviceId: 'device-123',
+          },
+          workspace: {
+            source: 'local_path',
+            localPath: '/tmp/clean-repo',
+          },
+        },
+      },
+    )
+
+    expect(info.additions).toBe('+0')
+    expect(info.deletions).toBe('-0')
+    expect(info.error).toBeUndefined()
   })
 })
 

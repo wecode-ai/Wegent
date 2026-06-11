@@ -1,6 +1,13 @@
 import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
-import { Copy, CopyCheck, FileText, Loader2 } from 'lucide-react'
+import {
+  ChevronDown,
+  ChevronUp,
+  Copy,
+  CopyCheck,
+  FileText,
+  Loader2,
+} from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { Attachment } from '@/types/api'
@@ -15,6 +22,9 @@ import { ToolBlocksDisplay } from './blocks/ToolBlocksDisplay'
 interface MessageListProps {
   messages: WorkbenchMessage[]
 }
+
+const USER_MESSAGE_COLLAPSE_LINES = 10
+const USER_MESSAGE_COLLAPSE_CHARACTERS = 600
 
 export function MessageList({ messages }: MessageListProps) {
   if (messages.length === 0) {
@@ -82,10 +92,14 @@ async function copyText(text: string) {
 }
 
 function UserMessage({ message }: { message: WorkbenchMessage }) {
+  const [isExpanded, setIsExpanded] = useState(false)
   const imageAttachments = (message.attachments ?? []).filter(isImageAttachment)
   const documentAttachments = (message.attachments ?? []).filter(
     attachment => !isImageAttachment(attachment)
   )
+  const shouldCollapse =
+    message.content.length > USER_MESSAGE_COLLAPSE_CHARACTERS ||
+    message.content.split('\n').length > USER_MESSAGE_COLLAPSE_LINES
 
   return (
     <div className="group flex max-w-[80%] flex-col items-end gap-1.5">
@@ -106,8 +120,35 @@ function UserMessage({ message }: { message: WorkbenchMessage }) {
         </div>
       )}
       {message.content && (
-        <div className="overflow-hidden break-words whitespace-pre-wrap rounded-2xl bg-muted px-4 py-3 text-[13px] leading-5 text-text-primary">
-          {renderUserContent(message.content)}
+        <div className="max-w-full overflow-hidden rounded-2xl bg-muted text-[13px] leading-5 text-text-primary">
+          <div
+            data-testid="user-message-content"
+            className={[
+              'relative overflow-hidden break-words whitespace-pre-wrap bg-muted px-4 py-3',
+              shouldCollapse && !isExpanded ? 'max-h-44' : '',
+            ].join(' ')}
+          >
+            {renderUserContent(message.content)}
+            {shouldCollapse && !isExpanded && (
+              <span className="pointer-events-none absolute inset-x-0 bottom-0 h-14 bg-gradient-to-t from-muted to-transparent" />
+            )}
+          </div>
+          {shouldCollapse && (
+            <button
+              type="button"
+              data-testid="toggle-user-message-button"
+              aria-expanded={isExpanded}
+              onClick={() => setIsExpanded(value => !value)}
+              className="flex h-9 w-full items-center justify-center gap-1 border-t border-border/60 text-xs font-medium text-text-secondary transition-colors hover:bg-surface"
+            >
+              {isExpanded ? (
+                <ChevronUp className="h-3.5 w-3.5" />
+              ) : (
+                <ChevronDown className="h-3.5 w-3.5" />
+              )}
+              {isExpanded ? '收起' : '展开'}
+            </button>
+          )}
         </div>
       )}
       <MessageHoverActions message={message} align="right" />

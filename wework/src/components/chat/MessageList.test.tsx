@@ -216,6 +216,66 @@ describe('MessageList', () => {
     expect(writeText).toHaveBeenCalledWith('对 bind_shell=openclaw 直接跳过')
   })
 
+  test('collapses long user messages without changing copied content', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.assign(navigator, {
+      clipboard: { writeText },
+    })
+    const content = Array.from(
+      { length: 12 },
+      (_, index) => `第 ${index + 1} 行内容`,
+    ).join('\n')
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: '1',
+            role: 'user',
+            content,
+            status: 'done',
+            createdAt: '2026-05-25T15:08:00.000+08:00',
+          },
+        ]}
+      />,
+    )
+
+    const messageContent = screen.getByTestId('user-message-content')
+    const toggleButton = screen.getByTestId('toggle-user-message-button')
+
+    expect(messageContent).toHaveClass('max-h-44', 'overflow-hidden')
+    expect(toggleButton).toHaveAttribute('aria-expanded', 'false')
+    expect(toggleButton).toHaveTextContent('展开')
+
+    await userEvent.click(toggleButton)
+
+    expect(messageContent).not.toHaveClass('max-h-44')
+    expect(toggleButton).toHaveAttribute('aria-expanded', 'true')
+    expect(toggleButton).toHaveTextContent('收起')
+
+    await userEvent.click(screen.getByTestId('copy-message-button'))
+    expect(writeText).toHaveBeenCalledWith(content)
+  })
+
+  test('does not show a collapse control for short user messages', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: '1',
+            role: 'user',
+            content: '短消息',
+            status: 'done',
+            createdAt: '2026-05-25T15:08:00.000+08:00',
+          },
+        ]}
+      />,
+    )
+
+    expect(screen.queryByTestId('toggle-user-message-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('user-message-content')).not.toHaveClass('max-h-44')
+  })
+
   test('shows only clock time for messages created today', () => {
     vi.useFakeTimers()
     try {
