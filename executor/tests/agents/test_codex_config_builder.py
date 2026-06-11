@@ -4,12 +4,19 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import json
+
 import pytest
 
 from executor.agents.codex.config_builder import (
     build_codex_config,
     is_codex_compatible_model,
 )
+
+
+@pytest.fixture(autouse=True)
+def isolate_executor_home(tmp_path, monkeypatch):
+    monkeypatch.setenv("WEGENT_EXECUTOR_HOME", str(tmp_path / ".wegent-executor"))
 
 
 def test_is_codex_compatible_model_requires_openai_responses():
@@ -57,7 +64,10 @@ def test_build_codex_config_maps_provider_and_reasoning():
     assert config.summary == "concise"
 
 
-def test_build_codex_config_uses_user_runtime_config():
+def test_build_codex_config_uses_user_runtime_config(monkeypatch):
+    monkeypatch.delenv("NO_PROXY", raising=False)
+    monkeypatch.delenv("no_proxy", raising=False)
+
     config = build_codex_config(
         {
             "model": "openai",
@@ -68,8 +78,10 @@ def test_build_codex_config_uses_user_runtime_config():
                     "use_user_config": True,
                     "configured": True,
                     "target_path": "~/.codex/auth.json",
+                    "use_proxy": True,
                 }
             },
+            "proxy": {"url": "http://127.0.0.1:7890"},
             "reasoning": {"effort": "high", "summary": "concise"},
         }
     )
@@ -81,6 +93,95 @@ def test_build_codex_config_uses_user_runtime_config():
         "model_reasoning_effort": "high",
         "model_reasoning_summary": "concise",
     }
+    assert config.env == {
+        "HTTP_PROXY": "http://127.0.0.1:7890",
+        "HTTPS_PROXY": "http://127.0.0.1:7890",
+        "ALL_PROXY": "http://127.0.0.1:7890",
+        "http_proxy": "http://127.0.0.1:7890",
+        "https_proxy": "http://127.0.0.1:7890",
+        "all_proxy": "http://127.0.0.1:7890",
+        "NO_PROXY": "localhost,127.0.0.1,::1,host.docker.internal",
+        "no_proxy": "localhost,127.0.0.1,::1,host.docker.internal",
+    }
+
+
+def test_build_codex_config_uses_existing_no_proxy(monkeypatch):
+    monkeypatch.setenv("NO_PROXY", "localhost,.internal")
+
+    config = build_codex_config(
+        {
+            "model": "openai",
+            "model_id": "gpt-5.5",
+            "api_format": "responses",
+            "runtime_config": {
+                "codex": {
+                    "use_user_config": True,
+                    "configured": True,
+                    "use_proxy": True,
+                }
+            },
+            "proxy": {"url": "socks5://127.0.0.1:7890"},
+        }
+    )
+
+    assert config.env is not None
+    assert config.env["HTTPS_PROXY"] == "socks5://127.0.0.1:7890"
+    assert config.env["NO_PROXY"] == "localhost,.internal"
+    assert config.env["no_proxy"] == "localhost,.internal"
+
+
+def test_build_codex_config_injects_global_mcp_overrides(tmp_path, monkeypatch):
+    monkeypatch.setenv("WEGENT_EXECUTOR_HOME", str(tmp_path / ".wegent-executor"))
+    manifest_path = tmp_path / ".wegent-executor" / "capabilities" / "manifest.json"
+    manifest_path.parent.mkdir(parents=True)
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "revision": 1,
+                "skills": {},
+                "plugins": {},
+                "mcps": {
+                    "docs": {
+                        "server": {
+                            "type": "streamable-http",
+                            "url": "https://mcp.example.com/docs",
+                            "base_url": "https://ignored.example.com/docs",
+                            "bearer_token_env_var": "DOCS_TOKEN",
+                        }
+                    },
+                    "shell": {
+                        "server": {
+                            "type": "stdio",
+                            "command": "uvx",
+                            "args": ["tool", "--flag"],
+                            "env": {"FOO": "bar"},
+                        }
+                    },
+                },
+            }
+        )
+    )
+
+    config = build_codex_config(
+        {
+            "model": "openai",
+            "model_id": "gpt-5.5",
+            "base_url": "http://127.0.0.1:3456/v1",
+            "api_key": "wecode-proxy-placeholder",
+            "api_format": "responses",
+        }
+    )
+
+    assert 'mcp_servers.docs.url="https://mcp.example.com/docs"' in (
+        config.config_overrides
+    )
+    assert 'mcp_servers.docs.bearer_token_env_var="DOCS_TOKEN"' in (
+        config.config_overrides
+    )
+    assert 'mcp_servers.shell.command="uvx"' in config.config_overrides
+    assert 'mcp_servers.shell.args=["tool","--flag"]' in config.config_overrides
+    assert 'mcp_servers.shell.env.FOO="bar"' in config.config_overrides
 
 
 def test_build_codex_config_ignores_legacy_local_cli_env(monkeypatch):

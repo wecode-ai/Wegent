@@ -83,11 +83,16 @@ jest.mock('@/apis/models', () => ({
   },
 }))
 
-jest.mock('@/apis/shells', () => ({
-  shellApis: {
-    getUnifiedShells: jest.fn(),
-  },
-}))
+jest.mock('@/apis/shells', () => {
+  const actual = jest.requireActual('@/apis/shells')
+  return {
+    ...actual,
+    shellApis: {
+      ...actual.shellApis,
+      getUnifiedShells: jest.fn(),
+    },
+  }
+})
 
 jest.mock('@/apis/skills', () => ({
   fetchUnifiedSkillsList: jest.fn(),

@@ -153,3 +153,65 @@ def test_resolve_payload_includes_selected_installed_plugins(test_db):
             },
         }
     ]
+
+
+def test_resolve_payload_uses_uploaded_plugin_key_and_download_ref(test_db):
+    installed = Kind(
+        id=302,
+        user_id=7,
+        kind="InstalledPlugin",
+        name="superpowers-4ab1d13f2c",
+        namespace="default",
+        is_active=True,
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "InstalledPlugin",
+            "metadata": {"name": "superpowers-4ab1d13f2c", "namespace": "default"},
+            "spec": {
+                "source": {
+                    "type": "upload",
+                    "providerKey": "claude-code",
+                    "pluginKey": "superpowers",
+                },
+                "displayName": "Superpowers",
+                "description": "Core skills",
+                "version": "5.0.7",
+                "installState": "installed",
+                "enabled": True,
+                "packageRef": {
+                    "storageKey": "skill-binaries/302",
+                    "checksum": "sha256:abc123",
+                    "sizeBytes": 100,
+                },
+            },
+        },
+    )
+    test_db.add(installed)
+    test_db.flush()
+    user = User(id=7, user_name="alice")
+
+    resolved = device_capability_sync_service.resolve_payload(
+        test_db,
+        user=user,
+        skill_ids=[],
+        installed_plugin_ids=[302],
+        mode="merge",
+    )
+
+    assert resolved["plugins"] == [
+        {
+            "installed_plugin_id": 302,
+            "name": "superpowers",
+            "display_name": "Superpowers",
+            "description": "Core skills",
+            "marketplace": None,
+            "version": "5.0.7",
+            "source": {
+                "type": "upload",
+                "providerKey": "claude-code",
+                "pluginKey": "superpowers",
+            },
+            "checksum": "sha256:abc123",
+            "download_path": "/api/plugins/installed/302/download",
+        }
+    ]
