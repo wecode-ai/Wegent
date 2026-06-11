@@ -8,14 +8,20 @@ import {
   UserCircle,
 } from 'lucide-react'
 import { useMemo, useState } from 'react'
-import { useTranslation } from 'react-i18next'
 import { createHttpClient } from '@/api/http'
 import { createQuotaApi } from '@/api/quota'
 import type { QuotaData } from '@/api/quota'
 import { getRuntimeConfig } from '@/config/runtime'
+import { useTranslation } from '@/hooks/useTranslation'
 import type { User as UserProfile } from '@/types/api'
 
 const QUOTA_BILLING_URL = 'https://space.intra.weibo.com/develop/model-quota'
+
+function getQuotaUsagePercent(quota: QuotaData): number {
+  const rawPercent = quota.usage_rate * 100
+  if (!Number.isFinite(rawPercent)) return 0
+  return Math.min(100, Math.max(0, rawPercent))
+}
 
 interface DesktopSettingsMenuProps {
   user: UserProfile | null
@@ -47,6 +53,8 @@ export function DesktopSettingsMenu({
   const quotaRemainingText = quota
     ? `${t('workbench.quota_remaining_label', '剩余')} ${quota.remaining.toFixed(2)} ${t('workbench.quota_unit_yuan', '元')}`
     : ''
+  const quotaUsagePercent = quota ? getQuotaUsagePercent(quota) : 0
+  const quotaUsagePercentValue = Math.round(quotaUsagePercent)
 
   const handleUsageClick = () => {
     const shouldExpand = !isUsageExpanded
@@ -125,7 +133,7 @@ export function DesktopSettingsMenu({
         <div
           id="remaining-usage-panel"
           data-testid="usage-detail-panel"
-          className="px-4 pb-2 pl-12"
+          className="px-4 pb-3 pt-1"
         >
           {isQuotaLoading ? (
             <div className="py-1 text-[13px] leading-[18px] text-text-secondary">
@@ -136,22 +144,31 @@ export function DesktopSettingsMenu({
             <div className="py-1 text-[13px] leading-[18px] text-text-secondary">{quotaError}</div>
           ) : null}
           {quota ? (
-            <div className="space-y-1.5 rounded-md bg-muted/60 px-3 py-2 text-xs leading-5 text-text-secondary">
-              <div className="flex items-center justify-between gap-3">
-                <span className="font-medium text-text-primary">
-                  {t('workbench.quota_model_label', '模型额度')}
-                </span>
-                <span className="font-medium text-text-primary">
-                  {quotaUsageText}
-                </span>
+            <div className="space-y-1.5 text-xs leading-5 text-text-secondary">
+              <div className="whitespace-nowrap font-semibold text-text-primary">
+                {quotaUsageText}
               </div>
-              <div>{quotaRemainingText}</div>
-              <div className="pt-0.5">
+              <div className="whitespace-nowrap text-text-secondary">
+                {quotaRemainingText}
+              </div>
+              <div
+                role="progressbar"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={quotaUsagePercentValue}
+                className="h-1.5 overflow-hidden rounded-full bg-muted"
+              >
+                <div
+                  className="h-full rounded-full bg-primary"
+                  style={{ width: `${quotaUsagePercent}%` }}
+                />
+              </div>
+              <div>
                 <a
                   href={QUOTA_BILLING_URL}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-text-secondary hover:text-text-primary hover:underline"
+                  className="inline-flex h-6 items-center gap-1 whitespace-nowrap text-text-secondary hover:text-text-primary hover:underline"
                 >
                   {t('workbench.quota_billing_link', '额度与计费说明')}
                   <ExternalLink className="h-3 w-3 text-text-muted" />

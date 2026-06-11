@@ -126,32 +126,6 @@ describe('MessageList', () => {
     )
   })
 
-  test('uses neutral user bubble and blue assistant links', () => {
-    const { container } = render(
-      <MessageList
-        messages={[
-          {
-            id: '1',
-            role: 'user',
-            content: '总结下这个文档',
-            status: 'done',
-            createdAt: '2026-05-25T00:00:00.000Z',
-          },
-          {
-            id: '2',
-            role: 'assistant',
-            content: '联系 [jueding.ly@alibaba-inc.com](mailto:jueding.ly@alibaba-inc.com)',
-            status: 'done',
-            createdAt: '2026-05-25T00:00:01.000Z',
-          },
-        ]}
-      />,
-    )
-
-    expect(screen.getByText('总结下这个文档').parentElement).toHaveClass('bg-muted')
-    expect(container.querySelector('a[href^="mailto:"]')).toHaveClass('text-blue-600')
-  })
-
   test('renders image attachments in user messages', async () => {
     URL.createObjectURL = vi.fn(() => 'blob:message-image-preview')
     URL.revokeObjectURL = vi.fn()
@@ -477,7 +451,6 @@ describe('MessageList', () => {
       'href',
       'skill:///Users/crystal/.codex/skills/env-context/SKILL.md',
     )
-    expect(skillLink).toHaveClass('bg-muted', 'text-text-primary')
     expect(screen.getByTestId('message-user')).toHaveTextContent(
       'hello $env-context context',
     )

@@ -54,6 +54,8 @@ function cloudDevice(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
     executor_version: '1.712',
     cloud_config: {
       sandboxId: 'sandbox-1',
+      deviceId: 'cloud-runtime-device-1',
+      ubuntuInitialPassword: 'initial-password-1',
     },
     ...overrides,
   }
@@ -101,6 +103,12 @@ describe('ConnectionsSettingsPage', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText: vi.fn().mockResolvedValue(undefined),
+      },
+    })
     runtimeConfigMock.value = {
       appBasePath: '',
       apiBaseUrl: '/api',
@@ -567,6 +575,94 @@ describe('ConnectionsSettingsPage', () => {
     expect(api.restartCloudDevice).toHaveBeenCalledWith('device-1')
     expect(api.deleteCloudDevice).toHaveBeenCalledWith('device-1')
   })
+
+  test('shows cloud device connection info from the compact more menu and copies values', async () => {
+    api.getAllDevices.mockResolvedValue([cloudDevice()])
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    await screen.findByTestId('connection-device-device-1')
+    await userEvent.click(screen.getByTestId('connection-more-button-device-1'))
+    await userEvent.click(screen.getByTestId('connection-info-menu-item-device-1'))
+
+    const dialog = screen.getByTestId('connection-info-dialog')
+    expect(dialog).toHaveTextContent('连接信息')
+    expect(dialog).toHaveTextContent('sandbox-1')
+    expect(dialog).toHaveTextContent('cloud-runtime-device-1')
+    expect(dialog).toHaveTextContent('ubuntu')
+    expect(dialog).toHaveTextContent('initial-password-1')
+
+    await userEvent.click(screen.getByTestId('copy-connection-info-password'))
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith('initial-password-1')
+
+    await userEvent.click(screen.getByTestId('copy-connection-info-all'))
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+      [
+        'Sandbox ID: sandbox-1',
+        'Device ID: cloud-runtime-device-1',
+        'Username: ubuntu',
+        'Password: initial-password-1',
+      ].join('\n'),
+    )
+  })
+
+  test('falls back to legacy ubuntu password field in cloud device connection info', async () => {
+    api.getAllDevices.mockResolvedValue([
+      cloudDevice({
+        cloud_config: {
+          sandboxId: 'sandbox-legacy',
+          deviceId: 'device-legacy',
+          ubuntuPassword: 'legacy-password',
+        },
+      }),
+    ])
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    await screen.findByTestId('connection-device-device-1')
+    await userEvent.click(screen.getByTestId('connection-more-button-device-1'))
+    await userEvent.click(screen.getByTestId('connection-info-menu-item-device-1'))
+
+    expect(screen.getByTestId('connection-info-dialog')).toHaveTextContent(
+      'legacy-password',
+    )
+  })
+
+  test.each([
+    {
+      name: 'missing',
+      cloudConfig: {
+        sandboxId: 'sandbox-without-password',
+        deviceId: 'device-without-password',
+      },
+    },
+    {
+      name: 'empty',
+      cloudConfig: {
+        sandboxId: 'sandbox-empty-password',
+        deviceId: 'device-empty-password',
+        ubuntuInitialPassword: '',
+      },
+    },
+  ])(
+    'falls back to ubuntu when the initial password is $name',
+    async ({ cloudConfig }) => {
+      api.getAllDevices.mockResolvedValue([
+        cloudDevice({
+          cloud_config: cloudConfig,
+        }),
+      ])
+
+      render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+      await screen.findByTestId('connection-device-device-1')
+      await userEvent.click(screen.getByTestId('connection-more-button-device-1'))
+      await userEvent.click(screen.getByTestId('connection-info-menu-item-device-1'))
+      await userEvent.click(screen.getByTestId('copy-connection-info-password'))
+
+      expect(navigator.clipboard.writeText).toHaveBeenCalledWith('ubuntu')
+    },
+  )
 
   test('lists local and cloud Claude Code devices while excluding unsupported shells', async () => {
     api.getAllDevices.mockResolvedValue([

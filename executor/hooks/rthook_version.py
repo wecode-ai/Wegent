@@ -19,12 +19,24 @@ if "--version" in sys.argv or "-v" in sys.argv:
     # Read version directly from the embedded value
     # This avoids importing any modules that could cause cleanup issues
     try:
-        # Try to import just the version module with minimal dependencies
-        from executor.version import _EMBEDDED_VERSION
+        import os
 
-        version = _EMBEDDED_VERSION if _EMBEDDED_VERSION else "unknown"
-    except ImportError:
-        version = "unknown"
+        env_version = os.environ.get("WEGENT_EXECUTOR_VERSION")
+        if env_version and env_version.strip():
+            version = env_version.strip()
+        else:
+            version = None
+    except Exception:
+        version = None
+
+    if version is None:
+        try:
+            # Try to import just the version module with minimal dependencies
+            from executor.version import _EMBEDDED_VERSION
+
+            version = _EMBEDDED_VERSION if _EMBEDDED_VERSION else "unknown"
+        except ImportError:
+            version = "unknown"
 
     # Write to stdout and flush
     sys.stdout.write(version + "\n")

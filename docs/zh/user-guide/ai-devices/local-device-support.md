@@ -142,9 +142,9 @@ docker run -d --platform linux/amd64 \
 
 ### 非项目会话工作区
 
-当聊天未选择项目但绑定到在线设备时，Executor 侧的独立 Chats 工作区功能当前默认关闭。如需启用，可在设备运行环境中设置 `WEGENT_EXECUTOR_STANDALONE_CHATS_ENABLED=true`。
+Wework 入口的新对话在未选择项目（`project_id=0`）且绑定到在线设备时，Executor 会默认使用独立 Chats 工作区。如需关闭，可在设备运行环境中设置 `WEGENT_EXECUTOR_STANDALONE_CHATS_ENABLED=false`。Frontend 设备对话保留旧行为，仍使用任务临时工作区。
 
-启用后，首轮任务先在临时任务目录中执行；回复完成后，Executor 会根据日期和回复摘要生成目录名，并把临时目录移动到 Chats 工作区树中。默认根目录为 `~/.wecode/wegent-executor/workspace/chats`。如需自定义位置，可在设备运行环境中设置 `WEGENT_EXECUTOR_CHATS_DIR`。Backend 会把最终路径写入任务元数据标签 `standaloneChatWorkspacePath`，后续继续该会话或打开历史会话时会复用同一目录。
+首轮任务会在 Chats 工作区树中创建目录，目录名根据日期和用户请求生成。默认根目录为 `~/.wecode/wegent-executor/workspace/chats`。如需自定义位置，可在设备运行环境中设置 `WEGENT_EXECUTOR_CHATS_DIR`。Backend 会把最终路径写入任务元数据标签 `standaloneChatWorkspacePath`，后续继续该会话或打开历史会话时会复用同一目录。
 
 项目会话不使用此路径；项目会话仍然使用项目配置中的 `workspace.localPath` 或 `workspace.checkoutPath`。
 

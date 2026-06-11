@@ -56,6 +56,25 @@ describe('messageReducer', () => {
     })
   })
 
+  test('restores cached assistant streaming content as a message', () => {
+    const state = messageReducer([], {
+      type: 'assistant_cached',
+      taskId: 8,
+      subtaskId: 18,
+      content: '已经输出的内容',
+    })
+
+    expect(state).toHaveLength(1)
+    expect(state[0]).toMatchObject({
+      id: 'assistant-18',
+      taskId: 8,
+      subtaskId: 18,
+      role: 'assistant',
+      content: '已经输出的内容',
+      status: 'streaming',
+    })
+  })
+
   test('streams reasoning chunks into a thinking block', () => {
     const state = messageReducer([], {
       type: 'assistant_started',
