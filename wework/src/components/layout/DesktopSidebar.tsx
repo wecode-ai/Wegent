@@ -9,6 +9,7 @@ import {
   Loader2,
   MessageSquarePlus,
   Plus,
+  RotateCw,
   Search,
   Settings,
   Sparkles,
@@ -90,6 +91,7 @@ interface DesktopSidebarProps {
   onListDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
   onCreateDeviceDirectory: (deviceId: string, path: string) => Promise<void>
   onOpenSettings: (options?: { autoOpenAddCloudDeviceDialog?: boolean }) => void
+  onRefreshWorkLists?: () => Promise<void>
   onLogout: () => void
 }
 
@@ -823,6 +825,7 @@ export function DesktopSidebar({
   onListDeviceDirectories,
   onCreateDeviceDirectory,
   onOpenSettings,
+  onRefreshWorkLists,
   onLogout,
 }: DesktopSidebarProps) {
   const { t } = useTranslation('common')
@@ -847,6 +850,7 @@ export function DesktopSidebar({
   )
   const storageScopeRef = useRef(storageScope)
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false)
+  const [isRefreshing, setIsRefreshing] = useState(false)
   const settingsMenuRef = useRef<HTMLDivElement>(null)
   const [projectCreateMode, setProjectCreateMode] = useState<ProjectCreateMode | null>(null)
   const [renamingProject, setRenamingProject] = useState<ProjectWithTasks | null>(null)
@@ -1230,17 +1234,38 @@ export function DesktopSidebar({
         </section>
       </div>
 
-      <div ref={settingsMenuRef} className="mt-4 shrink-0">
+      <div ref={settingsMenuRef} className="mt-4 flex shrink-0 items-center gap-1">
         <button
           type="button"
           data-testid="settings-button"
           onClick={() => setSettingsMenuOpen(open => !open)}
-          className="flex h-9 w-full shrink-0 items-center gap-2 rounded-md px-2 text-left text-[13px] font-medium leading-[18px] text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]"
+          className="flex h-9 flex-1 items-center gap-2 rounded-md px-2 text-left text-[13px] font-medium leading-[18px] text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]"
           aria-expanded={settingsMenuOpen}
         >
           <Settings className="h-4 w-4" />
           {t('workbench.settings', '设置')}
         </button>
+        {onRefreshWorkLists && (
+          <button
+            type="button"
+            data-testid="refresh-worklists-button"
+            disabled={isRefreshing}
+            onClick={async () => {
+              if (isRefreshing) return
+              setIsRefreshing(true)
+              try {
+                await onRefreshWorkLists()
+              } finally {
+                setIsRefreshing(false)
+              }
+            }}
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))] disabled:cursor-not-allowed disabled:opacity-60"
+            title={t('workbench.refresh_worklists', '刷新')}
+            aria-label={t('workbench.refresh_worklists', '刷新')}
+          >
+            <RotateCw className={cn('h-4 w-4', isRefreshing && 'animate-spin')} />
+          </button>
+        )}
         {settingsMenuOpen && (
           <DesktopSettingsMenu
             user={user}
