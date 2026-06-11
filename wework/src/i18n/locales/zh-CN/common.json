@@ -489,6 +489,8 @@
     "mobile_qrcode_backend_unavailable": "当前后端未启用扫码登录接口",
     "mobile_qrcode_refresh": "刷新二维码",
     "mobile_qrcode_alt": "微博扫码登录二维码",
+    "pocket_login": "打开口袋登录",
+    "pocket_opening": "正在打开新浪口袋...",
     "oidc_login": "使用 OpenID Connect 登录",
     "oidc_processing": "正在处理 OpenID Connect 登录..."
   }
