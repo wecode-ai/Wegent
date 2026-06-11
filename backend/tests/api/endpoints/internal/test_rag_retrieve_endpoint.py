@@ -4,6 +4,8 @@
 
 from unittest.mock import ANY, AsyncMock, patch
 
+import pytest
+
 from app.core.config import settings
 from app.services.rag.remote_gateway import RemoteRagGatewayError
 from app.services.rag.runtime_specs import (
@@ -16,6 +18,11 @@ from shared.models import (
     RuntimeRetrievalConfig,
     RuntimeRetrieverConfig,
 )
+
+
+@pytest.fixture(autouse=True)
+def configure_internal_service_token(monkeypatch):
+    monkeypatch.setattr(settings, "INTERNAL_SERVICE_TOKEN", "test-internal-token")
 
 
 def _internal_headers() -> dict[str, str]:

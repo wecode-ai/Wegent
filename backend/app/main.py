@@ -41,6 +41,9 @@ from app.core.yaml_init import run_yaml_initialization
 from app.db.base import Base
 from app.db.session import SessionLocal, engine
 from app.models import *  # noqa: F401,F403
+from app.services.auth.internal_service_token import (
+    require_internal_service_token_configured,
+)
 from app.services.jobs import start_background_jobs, stop_background_jobs
 from shared.telemetry.context.large_data import log_json_body
 
@@ -91,6 +94,8 @@ async def lifespan(app: FastAPI):
     logger = _logger
 
     # ==================== STARTUP ====================
+    require_internal_service_token_configured()
+
     # Try to get Redis client for distributed locking
     redis_client = None
     try:
