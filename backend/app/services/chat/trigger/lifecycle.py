@@ -269,7 +269,10 @@ def prepare_execution_session(
         parent_id = existing_subtasks[0].message_id
 
     handoff_message = input_text
-    if resolved_task_params.pipeline_context_passing is not None:
+    if (
+        resolved_task_params.pipeline_context_passing is not None
+        and not input_text.strip()
+    ):
         handoff_message = _build_pipeline_handoff_message(
             db,
             task_id=task.id,

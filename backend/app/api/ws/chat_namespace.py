@@ -601,7 +601,10 @@ class ChatNamespace(socketio.AsyncNamespace):
                             )
                         }
                     pipeline_context_passing = confirm_result.get("context_passing")
-                    if "handoff_message" in confirm_result:
+                    if (
+                        "handoff_message" in confirm_result
+                        and not (effective_message or "").strip()
+                    ):
                         effective_message = confirm_result["handoff_message"]
 
                     # Emit task:status event to notify frontend that task status changed
