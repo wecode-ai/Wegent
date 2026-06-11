@@ -206,6 +206,91 @@ async def test_archive_enforces_max_size_and_excludes_large_directories(
 
 
 @pytest.mark.asyncio
+async def test_sandbox_archive_and_restore_includes_home_and_workspace(
+    tmp_path: Path, monkeypatch
+):
+    task_id = 4680
+    upload_url = "https://minio.local/upload/sandbox-archive"
+
+    home_path = tmp_path / "home"
+    home_path.mkdir(parents=True)
+    (home_path / "notes.md").write_text("home-notes", encoding="utf-8")
+    (home_path / ".cache").mkdir()
+    (home_path / ".cache" / "large.bin").write_text("skip", encoding="utf-8")
+
+    workspace_path = tmp_path / "workspace" / str(task_id)
+    workspace_path.mkdir(parents=True)
+    (workspace_path / "project.txt").write_text("workspace-project", encoding="utf-8")
+    (workspace_path / "node_modules").mkdir()
+    (workspace_path / "node_modules" / "skip.txt").write_text(
+        "skip",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(routes, "get_sandbox_home_path", lambda: home_path)
+    monkeypatch.setattr(routes, "get_workspace_path", lambda _: workspace_path)
+
+    archive_blob_store: dict[str, bytes] = {}
+
+    async def _mock_upload_archive(upload_url: str, content: bytes) -> None:
+        archive_blob_store[upload_url] = content
+
+    async def _mock_download_archive(download_url: str) -> bytes:
+        return archive_blob_store[download_url]
+
+    monkeypatch.setattr(routes, "upload_archive_to_url", _mock_upload_archive)
+    monkeypatch.setattr(routes, "download_archive_from_url", _mock_download_archive)
+
+    app = FastAPI()
+    register_rest_api(app)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(
+        transport=transport,
+        base_url="http://testserver",
+    ) as client:
+        archive_response = await client.post(
+            "/api/archive",
+            json={
+                "task_id": task_id,
+                "upload_url": upload_url,
+                "max_size_mb": 10,
+                "runtime_type": "sandbox",
+            },
+        )
+
+        assert archive_response.status_code == 200
+        with tarfile.open(
+            fileobj=BytesIO(archive_blob_store[upload_url]),
+            mode="r:gz",
+        ) as tar:
+            member_names = tar.getnames()
+
+        assert "home/notes.md" in member_names
+        assert "workspace/project.txt" in member_names
+        assert "home/.cache" not in member_names
+        assert "workspace/node_modules" not in member_names
+
+        (home_path / "notes.md").unlink()
+        (workspace_path / "project.txt").unlink()
+
+        restore_response = await client.post(
+            "/api/restore",
+            json={
+                "task_id": task_id,
+                "download_url": upload_url,
+                "runtime_type": "sandbox",
+            },
+        )
+
+    assert restore_response.status_code == 200
+    assert (home_path / "notes.md").read_text(encoding="utf-8") == "home-notes"
+    assert (workspace_path / "project.txt").read_text(
+        encoding="utf-8"
+    ) == "workspace-project"
+
+
+@pytest.mark.asyncio
 async def test_restore_succeeds_without_home_payload(tmp_path: Path, monkeypatch):
     task_id = 8642
     upload_url = "https://minio.local/upload/no-home"
@@ -261,3 +346,11 @@ async def test_restore_succeeds_without_home_payload(tmp_path: Path, monkeypatch
     assert restore_response.json()["success"] is True
     assert restore_response.json()["session_restored"] is False
     assert restore_response.json()["git_restored"] is False
+
+
+def test_sandbox_home_path_is_not_process_home(monkeypatch):
+    """Sandbox archives must target the user home, not the envd process home."""
+    monkeypatch.setenv("HOME", "/root")
+
+    assert routes.get_home_path() == Path("/root")
+    assert routes.get_sandbox_home_path() == Path("/home/user")

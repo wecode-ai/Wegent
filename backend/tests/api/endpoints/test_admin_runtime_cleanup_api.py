@@ -106,6 +106,44 @@ def test_admin_runtime_cleanup_with_task_id_cleans_only_task_executor(
     runtime_client.cleanup_stale_sandboxes.assert_not_called()
 
 
+def test_admin_runtime_cleanup_sandbox_by_task_id(
+    test_client: TestClient, test_admin_token: str
+):
+    with patch(
+        "app.api.endpoints.admin.runtime_cleanup.get_executor_runtime_client",
+        create=True,
+    ) as get_runtime_client:
+        runtime_client = AsyncMock()
+        runtime_client.cleanup_sandbox_by_task_id.return_value = {
+            "target": "sandbox",
+            "task_id": 1967,
+            "sandbox_id": "1967",
+            "deleted": True,
+            "redis_cleared": True,
+        }
+        get_runtime_client.return_value = runtime_client
+
+        response = test_client.post(
+            "/api/admin/runtime-cleanup/sandbox",
+            headers={"Authorization": f"Bearer {test_admin_token}"},
+            json={
+                "task_id": 1967,
+                "dry_run": False,
+                "archive_before_delete": False,
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["task_id"] == 1967
+    assert payload["results"]["sandbox"]["deleted"] is True
+    runtime_client.cleanup_sandbox_by_task_id.assert_awaited_once_with(
+        task_id=1967,
+        dry_run=False,
+        archive_before_delete=False,
+    )
+
+
 def test_admin_runtime_cleanup_with_task_id_skips_recent_sandbox(
     test_client: TestClient, test_admin_token: str
 ):

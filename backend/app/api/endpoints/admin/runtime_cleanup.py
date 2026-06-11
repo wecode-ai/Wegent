@@ -28,6 +28,14 @@ class RuntimeCleanupRequest(BaseModel):
     dry_run: bool = False
 
 
+class SandboxCleanupRequest(BaseModel):
+    """Request body for targeted sandbox cleanup."""
+
+    task_id: int = Field(ge=1)
+    dry_run: bool = False
+    archive_before_delete: bool = True
+
+
 def _format_timestamp(timestamp: float) -> str:
     """Format a Unix timestamp as an ISO string."""
     return datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat()
@@ -137,4 +145,26 @@ async def cleanup_stale_runtimes(
         "dry_run": request.dry_run,
         "requested_by": current_user.id,
         "results": results,
+    }
+
+
+@router.post("/runtime-cleanup/sandbox", response_model=Dict[str, Any])
+async def cleanup_sandbox_runtime(
+    request: SandboxCleanupRequest,
+    current_user: User = Depends(get_admin_user),
+):
+    """Clean up one sandbox runtime by task ID without a stale-age check."""
+    runtime_client = get_executor_runtime_client()
+    sandbox_result = await runtime_client.cleanup_sandbox_by_task_id(
+        task_id=request.task_id,
+        dry_run=request.dry_run,
+        archive_before_delete=request.archive_before_delete,
+    )
+
+    return {
+        "task_id": request.task_id,
+        "dry_run": request.dry_run,
+        "archive_before_delete": request.archive_before_delete,
+        "requested_by": current_user.id,
+        "results": {"sandbox": sandbox_result},
     }

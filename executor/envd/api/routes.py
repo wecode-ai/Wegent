@@ -10,6 +10,7 @@ import shutil
 import tarfile
 import tempfile
 import time
+from copy import copy
 from pathlib import Path
 from typing import Optional
 
@@ -47,11 +48,17 @@ ARCHIVE_EXCLUDE_PATTERNS = [
     "*.log",
     ".next",
     ".nuxt",
+    ".npm",
+    ".pnpm-store",
+    ".yarn",
     "vendor",
     ".cache",
 ]
 
 CLAUDE_HOME_ARCHIVE_PREFIX = "__home__"
+SANDBOX_HOME_ARCHIVE_PREFIX = "home"
+SANDBOX_WORKSPACE_ARCHIVE_PREFIX = "workspace"
+SANDBOX_HOME_PATH = Path("/home/user")
 CLAUDE_CONFIG_DIR_NAME = ".claude"
 CLAUDE_CONFIG_FILE_NAME = ".claude.json"
 
@@ -64,6 +71,11 @@ def get_workspace_path(task_id: int) -> Path:
 def get_home_path() -> Path:
     """Get current user home path."""
     return Path.home()
+
+
+def get_sandbox_home_path() -> Path:
+    """Get the sandbox user's home path."""
+    return SANDBOX_HOME_PATH
 
 
 def extract_tar_members(
@@ -80,6 +92,68 @@ def extract_tar_members(
         tar.extractall(filter="data", **extract_kwargs)
     except TypeError:
         tar.extractall(**extract_kwargs)
+
+
+def should_exclude_archive_path(name: str) -> bool:
+    """Check if a file or directory should be excluded from workspace archives."""
+    parts = Path(name).parts
+    for pattern in ARCHIVE_EXCLUDE_PATTERNS:
+        if pattern.startswith("*"):
+            if name.endswith(pattern[1:]):
+                return True
+        elif pattern in parts:
+            return True
+    return False
+
+
+def strip_tar_member_prefix(
+    members: list[tarfile.TarInfo],
+    prefix: str,
+) -> list[tarfile.TarInfo]:
+    """Return tar members renamed without the archive root prefix."""
+    stripped_members = []
+    prefix_with_slash = f"{prefix}/"
+    for member in members:
+        if member.name == prefix:
+            continue
+        if not member.name.startswith(prefix_with_slash):
+            continue
+
+        stripped_member = copy(member)
+        stripped_member.name = member.name[len(prefix_with_slash) :]
+        if stripped_member.name:
+            stripped_members.append(stripped_member)
+    return stripped_members
+
+
+def add_directory_children_to_archive(
+    tar: tarfile.TarFile,
+    source_path: Path,
+    arc_prefix: str = "",
+) -> tuple[bool, bool]:
+    """Add direct children of source_path to a tar archive.
+
+    Returns:
+        Tuple of (session_file_included, git_included).
+    """
+    session_file_included = False
+    git_included = False
+
+    for item in source_path.iterdir():
+        arcname = f"{arc_prefix}/{item.name}" if arc_prefix else item.name
+        if should_exclude_archive_path(arcname):
+            logger.debug(f"[archive] Excluding: {arcname}")
+            continue
+
+        if item.name.startswith(".claude_session_id"):
+            session_file_included = True
+        if item.name == ".git":
+            git_included = True
+
+        tar.add(str(item), arcname=arcname)
+        logger.debug(f"[archive] Added: {arcname}")
+
+    return session_file_included, git_included
 
 
 async def upload_archive_to_url(upload_url: str, content: bytes) -> None:
@@ -293,12 +367,15 @@ def register_rest_api(app: FastAPI):
         task_id = request.task_id
         upload_url = request.upload_url
         max_size_bytes = request.max_size_mb * 1024 * 1024
+        runtime_type = request.runtime_type
 
-        logger.info(f"[archive] Starting archive for task {task_id}")
+        logger.info(
+            f"[archive] Starting archive for task {task_id}, runtime={runtime_type}"
+        )
 
         # Workspace path
         workspace_path = get_workspace_path(task_id)
-        if not workspace_path.exists():
+        if runtime_type == "executor" and not workspace_path.exists():
             logger.warning(f"[archive] Workspace not found: {workspace_path}")
             raise HTTPException(
                 status_code=404,
@@ -317,58 +394,76 @@ def register_rest_api(app: FastAPI):
                 session_file_included = False
                 git_included = False
 
-                # Create tarball with exclusions
-                def should_exclude(name: str) -> bool:
-                    """Check if file/dir should be excluded."""
-                    for pattern in ARCHIVE_EXCLUDE_PATTERNS:
-                        if pattern.startswith("*"):
-                            if name.endswith(pattern[1:]):
-                                return True
-                        elif pattern in name.split(os.sep):
-                            return True
-                    return False
-
                 with tarfile.open(tmp_path, "w:gz") as tar:
-                    for item in workspace_path.iterdir():
-                        if should_exclude(item.name):
-                            logger.debug(f"[archive] Excluding: {item.name}")
-                            continue
+                    if runtime_type == "sandbox":
+                        home_path = get_sandbox_home_path()
+                        if home_path.exists():
+                            (
+                                home_session_included,
+                                home_git_included,
+                            ) = add_directory_children_to_archive(
+                                tar,
+                                home_path,
+                                SANDBOX_HOME_ARCHIVE_PREFIX,
+                            )
+                            session_file_included = (
+                                session_file_included or home_session_included
+                            )
+                            git_included = git_included or home_git_included
 
-                        # Track session and git files
-                        if item.name.startswith(".claude_session_id"):
-                            session_file_included = True
-                        if item.name == ".git":
-                            git_included = True
+                        if workspace_path.exists():
+                            (
+                                workspace_session_included,
+                                workspace_git_included,
+                            ) = add_directory_children_to_archive(
+                                tar,
+                                workspace_path,
+                                SANDBOX_WORKSPACE_ARCHIVE_PREFIX,
+                            )
+                            session_file_included = (
+                                session_file_included or workspace_session_included
+                            )
+                            git_included = git_included or workspace_git_included
+                    else:
+                        (
+                            session_file_included,
+                            git_included,
+                        ) = add_directory_children_to_archive(tar, workspace_path)
 
-                        # Add to archive
-                        tar.add(str(item), arcname=item.name)
-                        logger.debug(f"[archive] Added: {item.name}")
+                        home_path = get_home_path()
+                        claude_home_dir = home_path / CLAUDE_CONFIG_DIR_NAME
+                        if claude_home_dir.exists():
+                            tar.add(
+                                str(claude_home_dir),
+                                arcname=(
+                                    f"{CLAUDE_HOME_ARCHIVE_PREFIX}/"
+                                    f"{CLAUDE_CONFIG_DIR_NAME}"
+                                ),
+                            )
+                            logger.debug(
+                                f"[archive] Added Claude home directory: {claude_home_dir}"
+                            )
 
-                    home_path = get_home_path()
-                    claude_home_dir = home_path / CLAUDE_CONFIG_DIR_NAME
-                    if claude_home_dir.exists():
-                        tar.add(
-                            str(claude_home_dir),
-                            arcname=(
-                                f"{CLAUDE_HOME_ARCHIVE_PREFIX}/"
-                                f"{CLAUDE_CONFIG_DIR_NAME}"
+                        claude_home_config = home_path / CLAUDE_CONFIG_FILE_NAME
+                        if claude_home_config.exists():
+                            tar.add(
+                                str(claude_home_config),
+                                arcname=(
+                                    f"{CLAUDE_HOME_ARCHIVE_PREFIX}/"
+                                    f"{CLAUDE_CONFIG_FILE_NAME}"
+                                ),
+                            )
+                            logger.debug(
+                                f"[archive] Added Claude home config: {claude_home_config}"
+                            )
+
+                    if runtime_type == "sandbox" and tar.getmembers() == []:
+                        raise HTTPException(
+                            status_code=404,
+                            detail=(
+                                f"No sandbox archive roots found: "
+                                f"{get_sandbox_home_path()}, {workspace_path}"
                             ),
-                        )
-                        logger.debug(
-                            f"[archive] Added Claude home directory: {claude_home_dir}"
-                        )
-
-                    claude_home_config = home_path / CLAUDE_CONFIG_FILE_NAME
-                    if claude_home_config.exists():
-                        tar.add(
-                            str(claude_home_config),
-                            arcname=(
-                                f"{CLAUDE_HOME_ARCHIVE_PREFIX}/"
-                                f"{CLAUDE_CONFIG_FILE_NAME}"
-                            ),
-                        )
-                        logger.debug(
-                            f"[archive] Added Claude home config: {claude_home_config}"
                         )
 
                 # Check size
@@ -432,8 +527,11 @@ def register_rest_api(app: FastAPI):
 
         task_id = request.task_id
         download_url = request.download_url
+        runtime_type = request.runtime_type
 
-        logger.info(f"[restore] Starting restore for task {task_id}")
+        logger.info(
+            f"[restore] Starting restore for task {task_id}, runtime={runtime_type}"
+        )
 
         # Workspace path
         workspace_path = get_workspace_path(task_id)
@@ -467,6 +565,8 @@ def register_rest_api(app: FastAPI):
                 with tarfile.open(tmp_path, "r:gz") as tar:
                     workspace_members = []
                     home_members = []
+                    sandbox_home_members = []
+                    sandbox_workspace_members = []
 
                     # Get member names for tracking and split target location
                     for member in tar.getmembers():
@@ -476,20 +576,51 @@ def register_rest_api(app: FastAPI):
                         if member_name == ".git" or member_name.startswith(".git/"):
                             git_restored = True
 
-                        if member_name.startswith(f"{CLAUDE_HOME_ARCHIVE_PREFIX}/"):
+                        if runtime_type == "sandbox" and member_name.startswith(
+                            f"{SANDBOX_HOME_ARCHIVE_PREFIX}/"
+                        ):
+                            sandbox_home_members.append(member)
+                        elif runtime_type == "sandbox" and member_name.startswith(
+                            f"{SANDBOX_WORKSPACE_ARCHIVE_PREFIX}/"
+                        ):
+                            sandbox_workspace_members.append(member)
+                        elif member_name.startswith(f"{CLAUDE_HOME_ARCHIVE_PREFIX}/"):
                             home_members.append(member)
                         else:
                             workspace_members.append(member)
 
-                    # Restore workspace files
-                    extract_tar_members(
-                        tar=tar,
-                        path=str(workspace_path),
-                        members=workspace_members,
-                    )
+                    if runtime_type == "sandbox":
+                        stripped_home_members = strip_tar_member_prefix(
+                            sandbox_home_members,
+                            SANDBOX_HOME_ARCHIVE_PREFIX,
+                        )
+                        if stripped_home_members:
+                            extract_tar_members(
+                                tar=tar,
+                                path=str(get_sandbox_home_path()),
+                                members=stripped_home_members,
+                            )
+
+                        stripped_workspace_members = strip_tar_member_prefix(
+                            sandbox_workspace_members,
+                            SANDBOX_WORKSPACE_ARCHIVE_PREFIX,
+                        )
+                        if stripped_workspace_members:
+                            extract_tar_members(
+                                tar=tar,
+                                path=str(workspace_path),
+                                members=stripped_workspace_members,
+                            )
+                    else:
+                        # Restore workspace files
+                        extract_tar_members(
+                            tar=tar,
+                            path=str(workspace_path),
+                            members=workspace_members,
+                        )
 
                     # Restore Claude home files
-                    if home_members:
+                    if runtime_type == "executor" and home_members:
                         home_path = get_home_path()
                         with tempfile.TemporaryDirectory(
                             prefix="claude-home-restore-"
