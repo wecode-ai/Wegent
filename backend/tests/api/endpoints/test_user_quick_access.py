@@ -30,6 +30,51 @@ class _FakeDb:
 
 
 @pytest.mark.asyncio
+async def test_quick_access_handles_null_user_config(monkeypatch):
+    system_config = SimpleNamespace(version=2, config_value={"teams": [101]})
+    db = _FakeDb(system_config)
+    current_user = SimpleNamespace(
+        id=7,
+        preferences=json.dumps({"quick_access": None}),
+    )
+
+    def fake_get_team_by_id(team_id: int):
+        return {
+            "id": team_id,
+            "metadata": {
+                "name": f"team-{team_id}",
+                "displayName": f"Team {team_id}",
+            },
+            "spec": {"recommended_mode": "chat"},
+            "agent_type": "claude",
+        }
+
+    monkeypatch.setattr(
+        users_endpoint.kind_service,
+        "get_team_by_id",
+        fake_get_team_by_id,
+    )
+
+    response = await users_endpoint.get_user_quick_access(
+        db=db,
+        current_user=current_user,
+    )
+
+    assert response.user_version is None
+    assert response.show_system_recommended is True
+    assert [(team.id, team.is_system) for team in response.teams] == [(101, True)]
+
+
+def test_get_user_quick_access_team_ids_handles_null_user_config():
+    current_user = SimpleNamespace(
+        id=7,
+        preferences=json.dumps({"quick_access": None}),
+    )
+
+    assert users_endpoint._get_user_quick_access_team_ids(current_user) == []
+
+
+@pytest.mark.asyncio
 async def test_quick_access_response_includes_team_display_name(monkeypatch):
     system_config = SimpleNamespace(version=2, config_value={"teams": [101]})
     db = _FakeDb(system_config)

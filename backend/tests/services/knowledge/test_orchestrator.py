@@ -191,7 +191,7 @@ class TestKnowledgeOrchestrator:
         ) as mock_service:
             mock_kb = MagicMock()
             mock_kb.id = 1
-            mock_service.list_knowledge_bases.return_value = [mock_kb]
+            mock_service.list_knowledge_bases_paginated.return_value = ([mock_kb], 1)
             mock_service.get_document_count.return_value = 5
 
             with patch(
@@ -208,6 +208,9 @@ class TestKnowledgeOrchestrator:
                     # Return a mock that has the expected attributes
                     result_mock = MagicMock()
                     result_mock.total = 1
+                    result_mock.returned_count = 1
+                    result_mock.offset = 0
+                    result_mock.has_more = False
                     mock_list_response.return_value = result_mock
 
                     result = orchestrator.list_knowledge_bases(
@@ -215,7 +218,10 @@ class TestKnowledgeOrchestrator:
                     )
 
                     assert result.total == 1
-                    mock_service.list_knowledge_bases.assert_called_once()
+                    assert result.returned_count == 1
+                    assert result.offset == 0
+                    assert result.has_more is False
+                    mock_service.list_knowledge_bases_paginated.assert_called_once()
 
     def test_list_documents_raises_when_kb_not_found(
         self, orchestrator, mock_db, mock_user
@@ -1276,8 +1282,8 @@ class TestListDocumentsCreatedBy:
                 return_value=(kb_mock, True),
             ),
             patch(
-                "app.services.knowledge.orchestrator.KnowledgeService.list_documents",
-                return_value=[doc1, doc2],
+                "app.services.knowledge.orchestrator.KnowledgeService.list_documents_paginated",
+                return_value=([doc1, doc2], 2),
             ),
         ):
             # Mock db.query for User lookup
@@ -1299,6 +1305,9 @@ class TestListDocumentsCreatedBy:
 
         assert isinstance(result, KnowledgeDocumentListResponse)
         assert result.total == 2
+        assert result.returned_count == 2
+        assert result.offset == 0
+        assert result.has_more is False
         # Verify created_by is populated
         items = result.items
         created_by_map = {item.id: item.created_by for item in items}
@@ -1320,8 +1329,8 @@ class TestListDocumentsCreatedBy:
                 return_value=(kb_mock, True),
             ),
             patch(
-                "app.services.knowledge.orchestrator.KnowledgeService.list_documents",
-                return_value=[doc],
+                "app.services.knowledge.orchestrator.KnowledgeService.list_documents_paginated",
+                return_value=([doc], 1),
             ),
         ):
             mock_db = MagicMock()
@@ -1351,8 +1360,8 @@ class TestListDocumentsCreatedBy:
                 return_value=(kb_mock, True),
             ),
             patch(
-                "app.services.knowledge.orchestrator.KnowledgeService.list_documents",
-                return_value=[],
+                "app.services.knowledge.orchestrator.KnowledgeService.list_documents_paginated",
+                return_value=([], 0),
             ),
         ):
             mock_db = MagicMock()
@@ -1366,6 +1375,8 @@ class TestListDocumentsCreatedBy:
         # No db.query should be called since documents list is empty
         mock_db.query.assert_not_called()
         assert result.total == 0
+        assert result.returned_count == 0
+        assert result.has_more is False
         assert result.items == []
 
     def test_list_documents_deduplicates_user_ids(self) -> None:
@@ -1385,8 +1396,8 @@ class TestListDocumentsCreatedBy:
                 return_value=(kb_mock, True),
             ),
             patch(
-                "app.services.knowledge.orchestrator.KnowledgeService.list_documents",
-                return_value=[doc1, doc2],
+                "app.services.knowledge.orchestrator.KnowledgeService.list_documents_paginated",
+                return_value=([doc1, doc2], 2),
             ),
         ):
             mock_db = MagicMock()
@@ -1407,3 +1418,39 @@ class TestListDocumentsCreatedBy:
         assert result.items[1].created_by == "alice"
         # Verify db.query was called exactly once (batch query, not per-document)
         mock_db.query.assert_called_once()
+
+    def test_list_documents_propagates_pagination_metadata(self) -> None:
+        """list_documents should preserve pagination metadata from service results."""
+        orchestrator = KnowledgeOrchestrator()
+        user = SimpleNamespace(id=1, user_name="testuser")
+        doc = self._make_doc(doc_id=1, user_id=1, name="doc1.pdf")
+        kb_mock = SimpleNamespace(id=10)
+
+        with (
+            patch(
+                "app.services.knowledge.orchestrator.KnowledgeService.get_knowledge_base",
+                return_value=(kb_mock, True),
+            ),
+            patch(
+                "app.services.knowledge.orchestrator.KnowledgeService.list_documents_paginated",
+                return_value=([doc], 3),
+            ),
+        ):
+            mock_db = MagicMock()
+            user_query = MagicMock()
+            user_query.filter.return_value.all.return_value = [(1, "alice")]
+            mock_db.query.return_value = user_query
+
+            result = orchestrator.list_documents(
+                db=mock_db,
+                user=user,
+                knowledge_base_id=10,
+                offset=1,
+                limit=1,
+            )
+
+        assert result.total == 3
+        assert result.returned_count == 1
+        assert result.offset == 1
+        assert result.limit == 1
+        assert result.has_more is True

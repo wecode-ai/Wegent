@@ -26,6 +26,8 @@ logger = logging.getLogger(__name__)
 
 # Default configuration values
 DEFAULT_MAX_CALLS_PER_CONVERSATION = 10
+DEFAULT_KB_LS_LIMIT = 20
+MAX_KB_LS_LIMIT = 100
 
 # File size constants for human-readable formatting
 KB = 1024
@@ -129,6 +131,17 @@ class KbLsInput(BaseModel):
     knowledge_base_id: int = Field(
         description="Knowledge base ID to list documents from"
     )
+    offset: int = Field(
+        default=0,
+        ge=0,
+        description="Start offset for paginated document listing.",
+    )
+    limit: int = Field(
+        default=DEFAULT_KB_LS_LIMIT,
+        ge=1,
+        le=MAX_KB_LS_LIMIT,
+        description="Maximum number of documents to return in this page.",
+    )
 
 
 class KbLsTool(BaseTool):
@@ -163,6 +176,8 @@ class KbLsTool(BaseTool):
     def _run(
         self,
         knowledge_base_id: int,
+        offset: int = 0,
+        limit: int = DEFAULT_KB_LS_LIMIT,
         run_manager: CallbackManagerForToolRun | None = None,
     ) -> str:
         """Synchronous run - not implemented, use async version."""
@@ -172,6 +187,8 @@ class KbLsTool(BaseTool):
     async def _arun(
         self,
         knowledge_base_id: int,
+        offset: int = 0,
+        limit: int = DEFAULT_KB_LS_LIMIT,
         run_manager: CallbackManagerForToolRun | None = None,
     ) -> str:
         """List documents in the specified knowledge base.
@@ -186,6 +203,8 @@ class KbLsTool(BaseTool):
         try:
             add_span_event("listing_documents")
             set_span_attribute("knowledge_base_id", knowledge_base_id)
+            set_span_attribute("offset", offset)
+            set_span_attribute("limit", limit)
 
             # Check call limit if counter is set
             if self._call_counter:
@@ -206,14 +225,31 @@ class KbLsTool(BaseTool):
                     ensure_ascii=False,
                 )
 
+            if limit < 1 or limit > MAX_KB_LS_LIMIT:
+                return json.dumps(
+                    {
+                        "error": f"limit must be between 1 and {MAX_KB_LS_LIMIT}",
+                    },
+                    ensure_ascii=False,
+                )
+            if offset < 0:
+                return json.dumps(
+                    {"error": "offset must be greater than or equal to 0"},
+                    ensure_ascii=False,
+                )
+
             logger.info(f"[KbLsTool] Listing documents in KB {knowledge_base_id}")
 
             # Try package mode first (direct DB access)
             try:
-                return await self._list_docs_package_mode(knowledge_base_id)
+                return await self._list_docs_package_mode(
+                    knowledge_base_id, offset=offset, limit=limit
+                )
             except ImportError:
                 # Fall back to HTTP mode
-                return await self._list_docs_http_mode(knowledge_base_id)
+                return await self._list_docs_http_mode(
+                    knowledge_base_id, offset=offset, limit=limit
+                )
 
         except Exception as e:
             logger.error(f"[KbLsTool] Failed to list documents: {e}", exc_info=True)
@@ -225,7 +261,13 @@ class KbLsTool(BaseTool):
         span_name="kb_ls_list_docs_package_mode",
         tracer_name="chat_shell.tools.kb_ls",
     )
-    async def _list_docs_package_mode(self, knowledge_base_id: int) -> str:
+    async def _list_docs_package_mode(
+        self,
+        knowledge_base_id: int,
+        *,
+        offset: int,
+        limit: int,
+    ) -> str:
         """List documents using direct database access."""
         import asyncio
 
@@ -242,15 +284,19 @@ class KbLsTool(BaseTool):
         set_span_attribute("mode", "package")
 
         def _query_docs():
+            base_query = self.db_session.query(KnowledgeDocument).filter(
+                KnowledgeDocument.kind_id == knowledge_base_id
+            )
+            total = base_query.count()
             documents = (
-                self.db_session.query(KnowledgeDocument)
-                .filter(KnowledgeDocument.kind_id == knowledge_base_id)
-                .order_by(KnowledgeDocument.created_at.desc())
+                base_query.order_by(KnowledgeDocument.created_at.desc())
+                .offset(offset)
+                .limit(limit)
                 .all()
             )
-            return documents
+            return documents, total
 
-        documents = await asyncio.to_thread(_query_docs)
+        documents, total = await asyncio.to_thread(_query_docs)
 
         doc_items = []
         for doc in documents:
@@ -272,14 +318,19 @@ class KbLsTool(BaseTool):
         set_span_attribute("document_count", len(doc_items))
 
         logger.info(
-            f"[KbLsTool] Listed {len(doc_items)} documents from KB {knowledge_base_id} (package mode)"
+            f"[KbLsTool] Listed {len(doc_items)} documents from KB {knowledge_base_id} "
+            f"(package mode, offset={offset}, limit={limit}, total={total})"
         )
 
         return json.dumps(
             {
                 "knowledge_base_id": knowledge_base_id,
                 "documents": doc_items,
-                "total": len(doc_items),
+                "total": total,
+                "returned_count": len(doc_items),
+                "offset": offset,
+                "limit": limit,
+                "has_more": offset + len(doc_items) < total,
             },
             ensure_ascii=False,
         )
@@ -287,7 +338,13 @@ class KbLsTool(BaseTool):
     @trace_async(
         span_name="kb_ls_list_docs_http_mode", tracer_name="chat_shell.tools.kb_ls"
     )
-    async def _list_docs_http_mode(self, knowledge_base_id: int) -> str:
+    async def _list_docs_http_mode(
+        self,
+        knowledge_base_id: int,
+        *,
+        offset: int,
+        limit: int,
+    ) -> str:
         """List documents via HTTP API."""
         import httpx
 
@@ -304,7 +361,12 @@ class KbLsTool(BaseTool):
                 response = await client.post(
                     f"{backend_url}/api/internal/rag/list-docs",
                     **_build_backend_post_kwargs(
-                        {"knowledge_base_id": knowledge_base_id}, self.auth_token
+                        {
+                            "knowledge_base_id": knowledge_base_id,
+                            "offset": offset,
+                            "limit": limit,
+                        },
+                        self.auth_token,
                     ),
                 )
 
@@ -339,14 +401,19 @@ class KbLsTool(BaseTool):
                 set_span_attribute("document_count", len(doc_items))
 
                 logger.info(
-                    f"[KbLsTool] Listed {len(doc_items)} documents from KB {knowledge_base_id} (HTTP mode)"
+                    f"[KbLsTool] Listed {len(doc_items)} documents from KB {knowledge_base_id} "
+                    f"(HTTP mode, offset={offset}, limit={limit}, total={data.get('total', 0)})"
                 )
 
                 return json.dumps(
                     {
                         "knowledge_base_id": knowledge_base_id,
                         "documents": doc_items,
-                        "total": len(doc_items),
+                        "total": data.get("total", len(doc_items)),
+                        "returned_count": data.get("returned_count", len(doc_items)),
+                        "offset": data.get("offset", offset),
+                        "limit": data.get("limit", limit),
+                        "has_more": data.get("has_more", False),
                     },
                     ensure_ascii=False,
                 )

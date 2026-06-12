@@ -182,7 +182,6 @@ The **Executor** determines how and where your AI executes tasks. It includes:
 |----------|----------|
 | **Chat** | Quick conversations, Q&A |
 | **Code** | Programming tasks, code generation |
-| **Agno** | Multi-agent collaboration |
 | **Dify** | Workflow automation |
 
 ### 🧠 Model

@@ -1,7 +1,7 @@
-import { ArrowUp, Camera, Image, Maximize2, Minimize2, Plus, Square } from 'lucide-react'
+import { ArrowUp, Camera, Image, Maximize2, Mic, Minimize2, Plus, Square } from 'lucide-react'
 import type { ChangeEvent, ClipboardEventHandler } from 'react'
 import { useEffect, useRef, useState } from 'react'
-import { useTranslation } from '@/hooks/useTranslation'
+import { useTranslation } from 'react-i18next'
 import type { Attachment, LocalDeviceSkill } from '@/types/api'
 import { AttachmentBadges } from './AttachmentBadges'
 import { ComposerTextarea } from './ComposerTextarea'
@@ -12,7 +12,6 @@ interface CompactChatComposerProps {
   onChange: (value: string) => void
   onSubmit: () => void
   disabled: boolean
-  disabledReason?: string
   placeholder: string
   attachments?: Attachment[]
   uploadingFiles?: Map<string, { file: File; progress: number }>
@@ -29,7 +28,6 @@ export function CompactChatComposer({
   onChange,
   onSubmit,
   disabled,
-  disabledReason,
   placeholder,
   attachments = [],
   uploadingFiles = new Map(),
@@ -48,6 +46,7 @@ export function CompactChatComposer({
   const [fullscreenInputOpen, setFullscreenInputOpen] = useState(false)
   const [canExpandInput, setCanExpandInput] = useState(false)
   const canSend = (value.trim().length > 0 || attachments.length > 0) && !disabled
+  const hasText = value.trim().length > 0
   const explicitLineCount = value.split('\n').length
 
   const handleImageChange = (event: ChangeEvent<HTMLInputElement>) => {
@@ -85,14 +84,6 @@ export function CompactChatComposer({
         errors={attachmentErrors}
         onRemoveAttachment={onRemoveAttachment}
       />
-      {disabledReason && (
-        <div
-          data-testid="composer-disabled-reason"
-          className="mb-2 rounded-2xl bg-muted px-4 py-2 text-sm text-text-secondary"
-        >
-          {disabledReason}
-        </div>
-      )}
       <input
         ref={imageInputRef}
         type="file"
@@ -111,7 +102,7 @@ export function CompactChatComposer({
         onChange={handleImageChange}
       />
       <form
-        className="flex w-full items-center gap-2"
+        className="flex w-full items-end gap-2"
         onSubmit={event => {
           event.preventDefault()
           if (canSend) onSubmit()
@@ -131,7 +122,9 @@ export function CompactChatComposer({
         <div
           data-testid="compact-input-pill"
           className={[
-            'relative flex min-h-[52px] min-w-0 flex-1 items-center rounded-[26px] border border-border bg-background shadow-[0_12px_40px_rgba(0,0,0,0.08)]',
+            'relative flex min-h-[52px] min-w-0 flex-1 items-end rounded-[26px] border border-border bg-background pl-4 shadow-[0_12px_40px_rgba(0,0,0,0.08)]',
+            'z-chrome',
+            hasText ? 'pr-14' : 'pr-[92px]',
           ].join(' ')}
         >
           <ComposerTextarea
@@ -140,14 +133,10 @@ export function CompactChatComposer({
             onChange={onChange}
             onSubmit={onSubmit}
             canSend={canSend}
-            disabled={disabled}
             placeholder={placeholder}
             rows={1}
             onPasteFiles={files => onFileSelect?.(files)}
-            className={[
-              'scrollbar-none m-0 block h-[52px] max-h-32 w-full min-w-0 flex-1 box-border resize-none overflow-y-auto bg-transparent py-[14px] pl-5 text-base leading-6 text-text-primary outline-none placeholder:text-text-muted',
-              'pr-16',
-            ].join(' ')}
+            className="scrollbar-none max-h-32 min-h-6 min-w-0 flex-1 resize-none overflow-y-auto bg-transparent py-[14px] text-base leading-6 text-text-primary outline-none placeholder:text-text-muted"
             skillMenuClassName="left-[-1rem] right-[-3.5rem]"
             onListLocalSkills={onListLocalSkills}
           />
@@ -156,11 +145,20 @@ export function CompactChatComposer({
               type="button"
               data-testid="expand-input-button"
               onClick={() => setFullscreenInputOpen(true)}
-              disabled={disabled}
-              className="absolute right-2 top-2 z-popover flex h-11 w-11 items-center justify-center rounded-full text-text-secondary hover:bg-muted"
+              className="absolute right-2 top-2 flex h-8 w-8 items-center justify-center rounded-full text-text-secondary hover:bg-muted"
               aria-label={t('workbench.expand_input', '展开输入框')}
             >
               <Maximize2 className="h-4 w-4" />
+            </button>
+          )}
+          {!hasText && (
+            <button
+              type="button"
+              data-testid="voice-input-button"
+              className="absolute bottom-1.5 right-12 flex h-10 w-10 items-center justify-center rounded-full p-0 text-text-secondary hover:bg-muted"
+              aria-label={t('workbench.voice_input', '语音输入')}
+            >
+              <Mic className="h-5 w-5" />
             </button>
           )}
           {isStreaming ? (
@@ -168,7 +166,7 @@ export function CompactChatComposer({
               type="button"
               data-testid="pause-response-button"
               onClick={onPause}
-              className="absolute bottom-[4px] right-[4px] z-popover flex h-11 w-11 items-center justify-center rounded-[22px] bg-[#242424] p-0 text-white hover:bg-[#333]"
+              className="absolute bottom-1 right-1 flex h-11 w-11 items-center justify-center rounded-[22px] bg-[#242424] p-0 text-white hover:bg-[#333]"
               aria-label={t('workbench.pause_response', '暂停回复')}
             >
               <Square className="h-4 w-4 fill-current" />
@@ -178,7 +176,7 @@ export function CompactChatComposer({
               type="submit"
               data-testid="send-message-button"
               disabled={!canSend}
-              className="absolute bottom-[4px] right-[4px] z-popover flex h-11 w-11 items-center justify-center rounded-[22px] bg-[#242424] p-0 text-white disabled:bg-[#9a9a9a]"
+              className="absolute bottom-1 right-1 flex h-11 w-11 items-center justify-center rounded-[22px] bg-[#242424] p-0 text-white disabled:bg-[#9a9a9a]"
               aria-label={t('workbench.send_message', '发送消息')}
             >
               <ArrowUp className="h-5 w-5" />
@@ -189,7 +187,7 @@ export function CompactChatComposer({
       {contextSheetOpen && (
         <div
           data-testid="mobile-context-sheet-backdrop"
-          className="fixed inset-0 z-critical bg-black/20"
+          className="fixed inset-0 z-modal bg-black/20"
           onClick={() => setContextSheetOpen(false)}
         >
           <div
@@ -222,14 +220,14 @@ export function CompactChatComposer({
       {fullscreenInputOpen && (
         <div
           data-testid="fullscreen-input-sheet"
-          className="fixed inset-0 z-critical flex h-dvh flex-col bg-background px-5 pb-[max(18px,env(safe-area-inset-bottom))] pt-[max(18px,env(safe-area-inset-top))] text-text-primary"
+          className="fixed inset-0 z-modal flex h-dvh flex-col bg-background px-5 pb-[max(18px,env(safe-area-inset-bottom))] pt-[max(18px,env(safe-area-inset-top))] text-text-primary"
         >
           <div className="relative min-h-0 flex-1">
             <button
               type="button"
               data-testid="collapse-input-button"
               onClick={() => setFullscreenInputOpen(false)}
-              className="absolute right-3 top-3 z-popover flex h-11 w-11 items-center justify-center rounded-full bg-background/90 text-text-secondary shadow-sm hover:bg-muted"
+              className="absolute right-3 top-3 z-10 flex h-9 w-9 items-center justify-center rounded-full bg-background/90 text-text-secondary shadow-sm hover:bg-muted"
               aria-label={t('workbench.collapse_input', '折叠输入框')}
             >
               <Minimize2 className="h-5 w-5" />
@@ -238,7 +236,6 @@ export function CompactChatComposer({
               data-testid="fullscreen-message-input"
               value={value}
               onChange={event => onChange(event.target.value)}
-              disabled={disabled}
               onPaste={handlePasteFiles}
               placeholder={placeholder}
               className="h-full w-full resize-none rounded-2xl border border-border bg-surface px-4 pb-4 pt-14 text-base leading-7 text-text-primary outline-none placeholder:text-text-muted"

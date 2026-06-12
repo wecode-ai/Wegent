@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { WorkbenchProvider } from './WorkbenchProvider'
@@ -622,6 +622,120 @@ describe('WorkbenchProvider', () => {
     )
   })
 
+  test('ignores stale cached streaming when opening a cancelled task', async () => {
+    const getTaskDetail = vi.fn().mockResolvedValue({
+      id: 8,
+      title: 'Cancelled task',
+      status: 'CANCELLED',
+      task_type: 'code',
+      project_id: 0,
+      device_id: 'local-online',
+      created_at: '2026-06-04T00:00:00.000Z',
+      updated_at: '2026-06-04T00:01:00.000Z',
+      subtasks: [
+        {
+          id: 20,
+          task_id: 8,
+          role: 'user',
+          prompt: '写个故事',
+          status: 'COMPLETED',
+          created_at: '2026-06-04T00:00:00.000Z',
+        },
+        {
+          id: 21,
+          task_id: 8,
+          role: 'assistant',
+          result: { value: '' },
+          status: 'CANCELLED',
+          created_at: '2026-06-04T00:00:01.000Z',
+        },
+      ],
+    })
+    const joinTask = vi.fn().mockResolvedValue({
+      streaming: {
+        subtask_id: 21,
+        offset: 9,
+        cached_content: '旧的缓存内容',
+      },
+    })
+
+    render(
+      <WorkbenchProvider
+        user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+        services={{
+          teamApi: {
+            getDefaultWorkbenchTeam: vi
+              .fn()
+              .mockResolvedValue({ id: 2, name: 'coder', is_active: true }),
+          },
+          modelApi: { listModels: vi.fn().mockResolvedValue({ data: [] }) },
+          skillApi: {
+            listSkills: vi.fn().mockResolvedValue([]),
+            getTeamSkills: vi.fn().mockResolvedValue({ skills: [], preload_skills: [] }),
+          },
+          projectApi: {
+            listProjects: vi.fn().mockResolvedValue({ items: [] }),
+            getProject: vi.fn(),
+            createProject: vi.fn(),
+            updateProject: vi.fn(),
+            deleteProject: vi.fn(),
+            archiveProjectChats: vi.fn(),
+            archiveAllProjectChats: vi.fn(),
+            createConversation: vi.fn(),
+          },
+          taskApi: {
+            listRecentTasks: vi.fn().mockResolvedValue({ total: 0, items: [] }),
+            getTaskDetail,
+            renameTask: vi.fn(),
+            archiveTask: vi.fn(),
+            archiveAllChats: vi.fn(),
+            listArchivedTasks: vi.fn(),
+            unarchiveTask: vi.fn(),
+            deleteTask: vi.fn(),
+            deleteArchivedTasks: vi.fn(),
+          },
+          deviceApi: {
+            listDevices: vi.fn().mockResolvedValue([
+              {
+                id: 1,
+                device_id: 'local-online',
+                name: 'Local Device',
+                status: 'online',
+                is_default: false,
+                device_type: 'local',
+                bind_shell: 'claudecode',
+              },
+            ]),
+            getHomeDirectory: vi.fn(),
+            getProjectWorkspaceRoot: vi.fn(),
+            listDirectories: vi.fn(),
+            listSkills: vi.fn().mockResolvedValue([]),
+          },
+          chatStream: {
+            joinTask,
+            leaveTask: vi.fn(),
+            sendMessage: vi.fn(),
+            sendGuidance: vi.fn(),
+            cancelStream: vi.fn(),
+            subscribe: vi.fn(() => vi.fn()),
+          },
+        }}
+      >
+        <TaskMessagesProbe />
+      </WorkbenchProvider>
+    )
+
+    await userEvent.click(await screen.findByText('open task'))
+
+    await waitFor(() => expect(joinTask).toHaveBeenCalledWith(8))
+    expect(screen.getByTestId('message-contents')).toHaveTextContent(
+      'assistant:done:'
+    )
+    expect(screen.getByTestId('message-contents')).not.toHaveTextContent(
+      'assistant:streaming'
+    )
+  })
+
   test('uses the opened task model as the runtime compatibility anchor', async () => {
     const models: UnifiedModel[] = [
       {
@@ -833,7 +947,7 @@ describe('WorkbenchProvider', () => {
     expect(listDevices).toHaveBeenCalledTimes(2)
   })
 
-  test('restores the last concrete project for new chat and can clear project work', async () => {
+  test('starts new chat as standalone project zero even with a remembered project', async () => {
     localStorage.setItem('wework.lastProjectId.1', '7')
 
     render(
@@ -908,9 +1022,11 @@ describe('WorkbenchProvider', () => {
 
     await userEvent.click(screen.getByText('standalone chat'))
     expect(screen.getByTestId('current-project-name')).toHaveTextContent('no-project')
+    expect(window.location.pathname + window.location.search).toBe('/?projectId=0')
 
     await userEvent.click(screen.getByText('new chat'))
-    expect(screen.getByTestId('current-project-name')).toHaveTextContent('Wegent')
+    expect(screen.getByTestId('current-project-name')).toHaveTextContent('no-project')
+    expect(window.location.pathname + window.location.search).toBe('/?projectId=0')
   })
 
   test('restores the remembered standalone device when entering chat mode', async () => {
@@ -1163,7 +1279,7 @@ describe('WorkbenchProvider', () => {
     )
     expect(screen.getByTestId('standalone-device-id')).toHaveTextContent('local-online')
     expect(joinTask).toHaveBeenCalledWith(8)
-    expect(window.location.pathname).toBe('/tasks/8')
+    expect(window.location.pathname).toBe('/projects/0/tasks/8')
     expect(window.location.search).toBe('')
   })
 
@@ -1276,7 +1392,7 @@ describe('WorkbenchProvider', () => {
     )
     expect(getTaskDetail).toHaveBeenCalledWith(8)
     expect(joinTask).toHaveBeenCalledWith(8)
-    expect(window.location.pathname).toBe('/tasks/8')
+    expect(window.location.pathname).toBe('/projects/0/tasks/8')
     expect(window.location.search).toBe('')
   })
 
@@ -1994,7 +2110,7 @@ describe('WorkbenchProvider', () => {
       expect(sendMessage).toHaveBeenCalledWith(
         expect.objectContaining({
           team_id: 2,
-          project_id: undefined,
+          project_id: 0,
           client_origin: 'wework',
           device_id: 'cloud-online',
           task_type: 'code',
@@ -2002,6 +2118,8 @@ describe('WorkbenchProvider', () => {
         })
       )
     )
+    const url = window.location.pathname + window.location.search
+    expect(url === '/tasks/100' || url === '/projects/0/tasks/100').toBe(true)
   })
 
   test('treats backend chat ACK without success as successful and reuses task id', async () => {
@@ -2722,7 +2840,7 @@ describe('WorkbenchProvider', () => {
     expect(updateCurrentUser).not.toHaveBeenCalled()
   })
 
-  test('sends an attachment-only project message with fallback text', async () => {
+  test('sends an attachment-only project message without echoing fallback text', async () => {
     const sendMessage = vi.fn().mockResolvedValue({ success: true, task_id: 100 })
 
     function AttachmentOnlyProbe() {
@@ -2741,6 +2859,14 @@ describe('WorkbenchProvider', () => {
         <div>
           <span data-testid="attachment-probe-ready">
             {workbench.state.defaultTeam ? 'ready' : 'loading'}
+          </span>
+          <span data-testid="attachment-message-contents">
+            {workbench.messages
+              .map(message => `${message.role}:${message.status}:${message.content}`)
+              .join('|')}
+          </span>
+          <span data-testid="attachment-current-task-title">
+            {workbench.state.currentTask?.title ?? ''}
           </span>
           <button type="button" onClick={() => workbench.projectChat.addExistingAttachment(attachment)}>
             add attachment
@@ -2826,10 +2952,20 @@ describe('WorkbenchProvider', () => {
     await waitFor(() =>
       expect(sendMessage).toHaveBeenCalledWith(
         expect.objectContaining({
-          message: '请参考附件',
+          message: '',
+          title: '新对话',
           attachment_ids: [55],
         })
       )
+    )
+    expect(screen.getByTestId('attachment-message-contents')).not.toHaveTextContent(
+      '请参考附件'
+    )
+    expect(screen.getByTestId('attachment-message-contents')).toHaveTextContent(
+      'user:done:'
+    )
+    expect(screen.getByTestId('attachment-current-task-title')).toHaveTextContent(
+      '新对话'
     )
   })
 
@@ -2916,5 +3052,171 @@ describe('WorkbenchProvider', () => {
     await waitFor(() => expect(archiveAllChats).toHaveBeenCalledTimes(1))
     expect(screen.getByTestId('current-task-title')).toHaveTextContent('no-task')
     expect(screen.getByTestId('message-count')).toHaveTextContent('0')
+  })
+
+  test('keeps the model the user picked in an open task across chat:start events', async () => {
+    // Regression: the dropdown used to revert to the task's original model
+    // ~2 seconds after the user picked a new one, because the next turn's
+    // chat:start WebSocket event dispatched task_status_changed and the
+    // syncSelection effect then re-anchored the dropdown on the stale
+    // currentTask.model_id (which had never been updated for existing tasks).
+    type StreamHandlers = {
+      onChatStart?: (payload: { task_id: number; subtask_id: number }) => void
+    }
+    let streamHandlers: StreamHandlers | undefined
+
+    function ModelPersistProbe() {
+      const workbench = useWorkbench()
+
+      return (
+        <div>
+          <span data-testid="current-task-model">
+            {workbench.state.currentTask?.model_id ?? 'no-task'}
+          </span>
+          <span data-testid="selected-model">
+            {workbench.projectChat.selectedModel?.name ?? 'no-model'}
+          </span>
+          <button
+            type="button"
+            data-testid="switch-to-opus"
+            onClick={() =>
+              workbench.projectChat.setSelectedModel({
+                name: 'wecode-claude-opus-4',
+                type: 'public',
+              })
+            }
+          >
+            switch to opus
+          </button>
+          <button type="button" onClick={() => void workbench.openTask(8)}>
+            open task
+          </button>
+        </div>
+      )
+    }
+
+    render(
+      <WorkbenchProvider
+        user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+        services={{
+          teamApi: {
+            getDefaultWorkbenchTeam: vi
+              .fn()
+              .mockResolvedValue({ id: 2, name: 'coder', is_active: true }),
+          },
+          modelApi: {
+            listModels: vi.fn().mockResolvedValue({
+              data: [
+                {
+                  name: 'wecode-claude-sonnet-4-5',
+                  type: 'public',
+                },
+                {
+                  name: 'wecode-claude-opus-4',
+                  type: 'public',
+                },
+              ],
+            }),
+          },
+          skillApi: {
+            listSkills: vi.fn().mockResolvedValue([]),
+            getTeamSkills: vi.fn().mockResolvedValue({ skills: [], preload_skills: [] }),
+          },
+          projectApi: {
+            listProjects: vi.fn().mockResolvedValue({ items: [] }),
+            getProject: vi.fn(),
+            createProject: vi.fn(),
+            updateProject: vi.fn(),
+            deleteProject: vi.fn(),
+            archiveProjectChats: vi.fn(),
+            archiveAllProjectChats: vi.fn(),
+            createConversation: vi.fn(),
+          },
+          taskApi: {
+            listRecentTasks: vi.fn().mockResolvedValue({ total: 0, items: [] }),
+            getTaskDetail: vi.fn().mockResolvedValue({
+              id: 8,
+              title: 'Existing task',
+              status: 'SUCCESS',
+              task_type: 'code',
+              project_id: 0,
+              model_id: 'wecode-claude-sonnet-4-5',
+              force_override_bot_model_type: 'public',
+              created_at: '2026-06-04T00:00:00.000Z',
+              subtasks: [],
+            }),
+            renameTask: vi.fn(),
+            archiveTask: vi.fn(),
+            archiveAllChats: vi.fn(),
+            listArchivedTasks: vi.fn(),
+            unarchiveTask: vi.fn(),
+            deleteTask: vi.fn(),
+            deleteArchivedTasks: vi.fn(),
+          },
+          deviceApi: {
+            listDevices: vi.fn().mockResolvedValue([]),
+            getHomeDirectory: vi.fn(),
+            getProjectWorkspaceRoot: vi.fn(),
+            listDirectories: vi.fn(),
+            listSkills: vi.fn().mockResolvedValue([]),
+          },
+          chatStream: {
+            joinTask: vi.fn(),
+            leaveTask: vi.fn(),
+            sendMessage: vi.fn(),
+            subscribe: vi.fn(handlers => {
+              streamHandlers = handlers as StreamHandlers
+              return vi.fn()
+            }),
+          },
+        }}
+      >
+        <ModelPersistProbe />
+      </WorkbenchProvider>
+    )
+
+    // 1. Open the task; the dropdown anchors on the task's saved model.
+    await userEvent.click(await screen.findByText('open task'))
+    await waitFor(() =>
+      expect(screen.getByTestId('current-task-model')).toHaveTextContent(
+        'wecode-claude-sonnet-4-5'
+      )
+    )
+    expect(screen.getByTestId('selected-model')).toHaveTextContent(
+      'wecode-claude-sonnet-4-5'
+    )
+
+    // 2. User picks a different model. The dropdown updates immediately
+    //    AND the open task's model_id is mirrored so subsequent
+    //    task_status updates (e.g. chat:start) can't revert it.
+    await userEvent.click(screen.getByTestId('switch-to-opus'))
+    await waitFor(() =>
+      expect(screen.getByTestId('current-task-model')).toHaveTextContent(
+        'wecode-claude-opus-4'
+      )
+    )
+    expect(screen.getByTestId('selected-model')).toHaveTextContent(
+      'wecode-claude-opus-4'
+    )
+
+    // 3. The next turn's chat:start event flips task status from SUCCESS to
+    //    RUNNING. Before the fix this rebuilt state.currentTask and the
+    //    syncSelection effect then re-anchored the dropdown on the stale
+    //    model_id — reverting the user's choice. After the fix the open
+    //    task's model_id already reflects the new selection, so nothing
+    //    flips back.
+    expect(streamHandlers?.onChatStart).toBeDefined()
+    act(() => {
+      streamHandlers?.onChatStart?.({ task_id: 8, subtask_id: 99 })
+    })
+
+    await waitFor(() =>
+      expect(screen.getByTestId('selected-model')).toHaveTextContent(
+        'wecode-claude-opus-4'
+      )
+    )
+    expect(screen.getByTestId('current-task-model')).toHaveTextContent(
+      'wecode-claude-opus-4'
+    )
   })
 })

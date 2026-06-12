@@ -6,6 +6,8 @@
 
 # -*- coding: utf-8 -*-
 
+import json
+import os
 import re
 import shutil
 from dataclasses import dataclass
@@ -13,12 +15,12 @@ from typing import Any, Optional
 
 from executor.agents.env_value import resolve_env_value
 from executor.config import config
-from executor.config.local_cli_config import use_local_cli_config
 from shared.logger import setup_logger
 
 OPENAI_RESPONSES_PROTOCOL = "openai-responses"
 RESPONSES_WIRE_API = "responses"
 DEFAULT_PROVIDER_NAME = "wecode openai"
+DEFAULT_NO_PROXY = "localhost,127.0.0.1,::1,host.docker.internal"
 CODEX_REASONING_EFFORTS = {"none", "minimal", "low", "medium", "high", "xhigh"}
 CODEX_REASONING_SUMMARIES = {"auto", "concise", "detailed"}
 DEFAULT_REASONING_EFFORT = "medium"
@@ -65,6 +67,7 @@ class CodeXConfig:
     thread_config: dict[str, Any]
     effort: Optional[str]
     summary: Optional[str]
+    env: Optional[dict[str, str]] = None
 
 
 def is_codex_compatible_model(model_config: dict[str, Any]) -> bool:
@@ -87,11 +90,13 @@ def build_codex_config(model_config: dict[str, Any]) -> CodeXConfig:
     if not model:
         raise ValueError("CodeXAgent requires model_config.model_id")
 
-    local_config = use_local_cli_config("codex")
+    local_config = _use_user_runtime_config(model_config, "codex")
+    proxy_env = _build_runtime_proxy_env(model_config, "codex")
     reasoning = _normalize_reasoning(model_config.get("reasoning"))
     service_tier = _normalize_service_tier(model_config.get("service_tier"))
+    mcp_overrides = _build_global_mcp_config_overrides()
     if local_config:
-        overrides = [f"model={model}"]
+        overrides = [f"model={model}", *mcp_overrides]
         return CodeXConfig(
             codex_bin=_resolve_codex_binary(config.CODEX_BINARY_PATH),
             model=model,
@@ -100,6 +105,7 @@ def build_codex_config(model_config: dict[str, Any]) -> CodeXConfig:
             thread_config=_build_thread_config(reasoning, service_tier),
             effort=reasoning.get("effort"),
             summary=reasoning.get("summary"),
+            env=proxy_env,
         )
 
     base_url = str(model_config.get("base_url") or "").strip()
@@ -123,6 +129,7 @@ def build_codex_config(model_config: dict[str, Any]) -> CodeXConfig:
         f"model_providers.{model_provider}.base_url={base_url.rstrip('/')}",
         f"model_providers.{model_provider}.wire_api={wire_api}",
         f"model_providers.{model_provider}.experimental_bearer_token={api_key}",
+        *mcp_overrides,
     ]
 
     return CodeXConfig(
@@ -133,7 +140,68 @@ def build_codex_config(model_config: dict[str, Any]) -> CodeXConfig:
         thread_config=_build_thread_config(reasoning, service_tier),
         effort=reasoning.get("effort"),
         summary=reasoning.get("summary"),
+        env=proxy_env,
     )
+
+
+def _use_user_runtime_config(model_config: dict[str, Any], runtime: str) -> bool:
+    runtime_config = _get_runtime_config(model_config, runtime)
+    if not runtime_config:
+        return False
+
+    return bool(
+        runtime_config.get("use_user_config") and runtime_config.get("configured", True)
+    )
+
+
+def _build_runtime_proxy_env(
+    model_config: dict[str, Any], runtime: str
+) -> Optional[dict[str, str]]:
+    runtime_config = _get_runtime_config(model_config, runtime)
+    if not runtime_config:
+        return None
+    if not runtime_config.get("use_proxy"):
+        return None
+
+    proxy = _get_proxy(model_config)
+    proxy_url = str(proxy.get("url") or "").strip()
+    if not proxy_url:
+        return None
+
+    no_proxy = os.environ.get("NO_PROXY") or os.environ.get("no_proxy")
+    if not no_proxy:
+        no_proxy = DEFAULT_NO_PROXY
+
+    return {
+        "HTTP_PROXY": proxy_url,
+        "HTTPS_PROXY": proxy_url,
+        "ALL_PROXY": proxy_url,
+        "http_proxy": proxy_url,
+        "https_proxy": proxy_url,
+        "all_proxy": proxy_url,
+        "NO_PROXY": no_proxy,
+        "no_proxy": no_proxy,
+    }
+
+
+def _get_runtime_config(
+    model_config: dict[str, Any], runtime: str
+) -> Optional[dict[str, Any]]:
+    runtime_configs = model_config.get("runtime_config") or model_config.get(
+        "runtimeConfig"
+    )
+    if not isinstance(runtime_configs, dict):
+        return None
+
+    runtime_config = runtime_configs.get(runtime)
+    if not isinstance(runtime_config, dict):
+        return None
+    return runtime_config
+
+
+def _get_proxy(model_config: dict[str, Any]) -> dict[str, Any]:
+    proxy = model_config.get("proxy")
+    return proxy if isinstance(proxy, dict) else {}
 
 
 def _build_thread_config(
@@ -191,6 +259,91 @@ def _resolve_codex_binary(value: str) -> str:
     if "/" in value or "\\" in value:
         return value
     return shutil.which(value) or value
+
+
+def _build_global_mcp_config_overrides() -> tuple[str, ...]:
+    """Build Codex CLI config overrides from synced global MCP records."""
+    try:
+        from executor.modes.local.capabilities import GlobalCapabilityStore
+
+        manifest = GlobalCapabilityStore().load()
+    except Exception as exc:
+        logger.warning("Failed to load global MCP manifest for Codex: %s", exc)
+        return ()
+
+    overrides: list[str] = []
+    for name, record in sorted((manifest.get("mcps") or {}).items()):
+        if not isinstance(record, dict):
+            continue
+        server = record.get("server") or {}
+        if not isinstance(server, dict):
+            continue
+        overrides.extend(_codex_mcp_server_overrides(str(name), server))
+    if overrides:
+        logger.info("Injected Codex global MCP servers: count=%s", len(overrides))
+    return tuple(overrides)
+
+
+def _codex_mcp_server_overrides(name: str, server: dict[str, Any]) -> list[str]:
+    key = _toml_key_path("mcp_servers", name)
+    server_type = str(server.get("type") or "").strip()
+
+    if server_type == "stdio" or server.get("command"):
+        command = str(server.get("command") or "").strip()
+        if not command:
+            logger.warning("Skipping Codex stdio MCP without command: %s", name)
+            return []
+        overrides = [f"{key}.command={_toml_value(command)}"]
+        args = server.get("args")
+        if isinstance(args, list):
+            overrides.append(f"{key}.args={_toml_value([str(arg) for arg in args])}")
+        env = server.get("env")
+        if isinstance(env, dict):
+            for env_key, env_value in sorted(env.items()):
+                if env_value is None:
+                    continue
+                overrides.append(
+                    f"{key}.env.{_toml_key_segment(str(env_key))}="
+                    f"{_toml_value(str(env_value))}"
+                )
+        return overrides
+
+    url = str(server.get("url") or server.get("base_url") or "").strip()
+    if not url:
+        logger.warning("Skipping Codex URL MCP without URL: %s", name)
+        return []
+
+    overrides = [f"{key}.url={_toml_value(url)}"]
+    bearer_env = server.get("bearer_token_env_var") or server.get("bearerTokenEnvVar")
+    if bearer_env:
+        overrides.append(f"{key}.bearer_token_env_var={_toml_value(str(bearer_env))}")
+    oauth_client_id = server.get("oauth_client_id") or server.get("oauthClientId")
+    if oauth_client_id:
+        overrides.append(f"{key}.oauth_client_id={_toml_value(str(oauth_client_id))}")
+    oauth_resource = server.get("oauth_resource") or server.get("oauthResource")
+    if oauth_resource:
+        overrides.append(f"{key}.oauth_resource={_toml_value(str(oauth_resource))}")
+    return overrides
+
+
+def _toml_key_path(*segments: str) -> str:
+    return ".".join(_toml_key_segment(segment) for segment in segments)
+
+
+def _toml_key_segment(segment: str) -> str:
+    if re.fullmatch(r"[A-Za-z0-9_-]+", segment):
+        return segment
+    return json.dumps(segment)
+
+
+def _toml_value(value: Any) -> str:
+    if isinstance(value, list):
+        return "[" + ",".join(_toml_value(item) for item in value) + "]"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return str(value)
+    return json.dumps(str(value))
 
 
 def _normalize_reasoning(value: Any) -> dict[str, str]:

@@ -3,7 +3,7 @@ import json
 import os
 from dataclasses import asdict
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, Union
 
 from claude_agent_sdk import ClaudeSDKClient
 from claude_agent_sdk.types import (
@@ -46,6 +46,10 @@ from shared.utils.sensitive_data_masker import mask_sensitive_data
 
 logger = setup_logger("claude_response_processor")
 
+CompletionFieldsProvider = Callable[
+    [], Union[Dict[str, Any], Awaitable[Dict[str, Any]]]
+]
+
 
 # Maximum retry count for API errors per session
 MAX_API_ERROR_RETRIES = 3
@@ -77,6 +81,32 @@ def _standalone_workspace_result_fields(state_manager, content: str) -> dict[str
     return {"standalone_chat_workspace_path": workspace_path}
 
 
+async def _collect_completion_fields(
+    provider: Optional[CompletionFieldsProvider],
+) -> Dict[str, Any]:
+    """Collect optional fields that must be attached to response.completed."""
+    if provider is None:
+        return {}
+
+    try:
+        fields = provider()
+        if hasattr(fields, "__await__"):
+            fields = await fields
+        if isinstance(fields, dict):
+            logger.info(
+                "Collected Claude response completion fields: keys=%s",
+                sorted(fields.keys()),
+            )
+            return fields
+        logger.info(
+            "Claude response completion fields provider returned non-dict: %s",
+            type(fields).__name__,
+        )
+    except Exception:
+        logger.exception("Failed to collect Claude response completion fields")
+    return {}
+
+
 def _tool_result_completion(block: ToolResultBlock) -> tuple[str, str | None]:
     """Translate Claude tool result errors into emitter terminal status."""
     if not block.is_error:
@@ -95,6 +125,7 @@ async def process_response(
     task_state_manager=None,
     session_id: str = None,
     mcp_servers: Any = None,
+    completion_fields_provider: Optional[CompletionFieldsProvider] = None,
 ) -> Union[TaskStatus, str]:
     """
     Process the response messages from Claude
@@ -106,6 +137,7 @@ async def process_response(
         thinking_manager: Optional ThinkingStepManager instance for adding thinking steps
         task_state_manager: Optional TaskStateManager instance for checking cancellation
         session_id: Optional session ID for retry operations
+        completion_fields_provider: Optional provider for response.completed fields
 
     Returns:
         TaskStatus: Processing status
@@ -251,6 +283,7 @@ async def process_response(
                         mcp_servers=mcp_servers,
                         deferred_mcp_retry_count=deferred_mcp_retry_count,
                         max_deferred_mcp_retries=MAX_DEFERRED_MCP_RETRIES,
+                        completion_fields_provider=completion_fields_provider,
                     )
 
                     if result_status == "RETRY":
@@ -874,6 +907,7 @@ async def _process_result_message(
     mcp_servers: Any = None,
     deferred_mcp_retry_count: int = 0,
     max_deferred_mcp_retries: int = MAX_DEFERRED_MCP_RETRIES,
+    completion_fields_provider: Optional[CompletionFieldsProvider] = None,
 ) -> Union[TaskStatus, str, None]:
     """
     Process a ResultMessage from Claude
@@ -890,6 +924,7 @@ async def _process_result_message(
         propagated_silent_exit: Silent exit flag propagated from UserMessage tool results
         propagated_silent_exit_reason: Silent exit reason propagated from UserMessage tool results
         task_state_manager: Optional TaskStateManager for checking cancellation state
+        completion_fields_provider: Optional provider for response.completed fields
 
     Returns:
         TaskStatus: Processing status (COMPLETED if successful, CANCELLED, FAILED, or None)
@@ -923,6 +958,23 @@ async def _process_result_message(
     logger.info(
         f"Result message received: subtype={msg.subtype}, stop_reason={stop_reason}, is_error={msg.is_error}, msg = {json.dumps(masked_msg_dict, ensure_ascii=False)}"
     )
+
+    task_id = (
+        getattr(state_manager.task_data, "task_id", None) if state_manager else None
+    )
+    is_cancelled = (
+        bool(task_id)
+        and task_state_manager is not None
+        and task_state_manager.is_cancelled(task_id)
+    )
+    if cancellation_in_progress or is_cancelled:
+        logger.info(
+            f"Task {task_id} received final result after interrupt; "
+            f"preserving CANCELLED status"
+        )
+        if state_manager:
+            state_manager.set_task_status(TaskStatus.CANCELLED.value)
+        return TaskStatus.CANCELLED
 
     # Check for silent exit marker in result
     # First use propagated values from UserMessage tool results (more reliable)
@@ -1064,12 +1116,14 @@ async def _process_result_message(
 
         if state_manager:
             state_manager.set_task_status(TaskStatus.COMPLETED.value)
+        extra_fields = await _collect_completion_fields(completion_fields_provider)
         await emitter.done(
             content="",
             usage=msg.usage,
             stop_reason=stop_reason or "tool_deferred",
             silent_exit=True,
             silent_exit_reason=WAITING_FOR_USER_INPUT_REASON,
+            **extra_fields,
         )
         return TaskStatus.COMPLETED
 
@@ -1131,6 +1185,9 @@ async def _process_result_message(
                 extra_fields = _standalone_workspace_result_fields(
                     state_manager, content
                 )
+                extra_fields.update(
+                    await _collect_completion_fields(completion_fields_provider)
+                )
                 await emitter.done(
                     content=content,
                     usage=msg.usage,
@@ -1162,6 +1219,9 @@ async def _process_result_message(
             # Send done event (response.completed) via emitter
             extra_fields = _standalone_workspace_result_fields(
                 state_manager, result_str
+            )
+            extra_fields.update(
+                await _collect_completion_fields(completion_fields_provider)
             )
             await emitter.done(
                 content=result_str,

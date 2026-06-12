@@ -793,6 +793,27 @@
     "save_success": "记忆偏好设置已保存",
     "save_failed": "保存记忆偏好设置失败"
   },
+  "chat_status": {
+    "title": "当前对话状态",
+    "description": "显示当前会话可用的上下文预算",
+    "status_line_title": "对话状态栏",
+    "status_line_description": "在聊天工具栏中显示轻量的运行时状态信息。",
+    "enable": "启用状态栏",
+    "items_title": "显示项",
+    "context_remaining_label": "上下文剩余",
+    "context_remaining": "上下文剩余 {{percent}}%",
+    "context_usage": "{{used}} / {{total}} 上下文 token",
+    "token_usage": "{{used}} / {{total}} 输入 token",
+    "over_trigger": "已达到压缩阈值",
+    "save_success": "对话状态偏好已保存",
+    "save_failed": "保存对话状态偏好失败"
+  },
+  "tool_output_guard": {
+    "title": "工具输出截断",
+    "description": "在 Chat 模式下自动压缩过大的工具输出，减少因上下文过长导致失败的几率。",
+    "save_success": "工具输出截断偏好已保存",
+    "save_failed": "保存工具输出截断偏好失败"
+  },
   "guide": {
     "title": "欢迎",
     "description": "在开始使用此应用之前，请先完成下面的设置！",
@@ -859,6 +880,7 @@
     "noResults": "未找到用户"
   },
   "quota": {
+    "title": "模型额度",
     "load_failed": "用量信息获取失败",
     "brief": "{{quota_source}}配额 {{monthly_usage}} / {{monthly_quota}} (+{{permanent_quota}})",
     "detail_monthly": "你的当月额度为 {{monthly_quota}}，已经使用 {{monthly_usage}}，剩余 {{monthly_left}}。",
@@ -1111,7 +1133,7 @@
     "name_readonly_hint": "模型名称创建后不可修改",
     "provider_type": "模型协议",
     "select_provider": "选择模型协议",
-    "provider_hint": "Agno 使用 OpenAI 协议，Claude Code 使用 Anthropic 协议，Gemini 使用 Google 协议",
+    "provider_hint": "OpenAI 兼容模型使用 OpenAI 协议，Claude Code 使用 Anthropic 协议，Gemini 使用 Google 协议",
     "api_key": "API Key",
     "base_url": "Base URL",
     "base_url_hint": "使用默认端点留空，使用代理或自定义端点时填写",
@@ -1258,7 +1280,7 @@
     "display_name_hint": "用于显示的友好名称（可选）",
     "base_shell": "基础 Shell",
     "select_base_shell": "选择基础 Shell 类型",
-    "base_shell_hint": "此自定义 Shell 基于的 Shell 类型（ClaudeCode、Agno）",
+    "base_shell_hint": "此自定义 Shell 基于的 Shell 类型（ClaudeCode）",
     "base_image": "Base Image",
     "base_image_hint": "Docker 镜像地址（例如：ghcr.io/your-org/your-image:latest）",
     "no_shells": "暂无 Shell",

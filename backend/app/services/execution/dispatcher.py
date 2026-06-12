@@ -32,9 +32,8 @@ if TYPE_CHECKING:
 
 from app.core.async_utils import run_in_main_loop
 from app.db.session import SessionLocal
-from app.models.subtask import Subtask
-from app.models.task import TaskResource
 from app.services.task_status import extract_task_error
+from app.stores.tasks import subtask_store, task_store
 from shared.models import (
     EventType,
     ExecutionEvent,
@@ -173,9 +172,11 @@ def extract_completed_result(response_data: dict) -> dict:
         "loaded_skills": response_data.get("loaded_skills"),
         "stop_reason": response_data.get("stop_reason"),
         "messages_chain": response_data.get("messages_chain"),
+        "context_metrics": response_data.get("context_metrics"),
         "standalone_chat_workspace_path": response_data.get(
             "standalone_chat_workspace_path"
         ),
+        "file_changes": response_data.get("file_changes"),
         "reasoning_content": reasoning_content,
     }
 
@@ -235,6 +236,18 @@ class ResponsesAPIEventParser:
                 data={
                     "block_id": data.get("block_id"),
                     "block_offset": data.get("block_offset"),
+                },
+                message_id=message_id,
+            )
+
+        elif event_type == ResponsesAPIStreamEvents.STATUS_UPDATED.value:
+            return ExecutionEvent(
+                type=EventType.STATUS_UPDATED,
+                task_id=task_id,
+                subtask_id=subtask_id,
+                data={
+                    "phase": data.get("phase"),
+                    "context_metrics": data.get("context_metrics") or {},
                 },
                 message_id=message_id,
             )
@@ -824,7 +837,7 @@ class ExecutionDispatcher:
 
         db = SessionLocal()
         try:
-            subtask = db.query(Subtask).filter(Subtask.id == request.subtask_id).first()
+            subtask = subtask_store.get_by_id(db, subtask_id=request.subtask_id)
             if not subtask:
                 return
 
@@ -834,14 +847,7 @@ class ExecutionDispatcher:
             if not subtask.executor_deleted_at:
                 return
 
-            task = (
-                db.query(TaskResource)
-                .filter(
-                    TaskResource.id == request.task_id,
-                    TaskResource.kind == "Task",
-                )
-                .first()
-            )
+            task = task_store.get_by_id(db, task_id=request.task_id)
             if not task:
                 raise RuntimeError(
                     f"Task {request.task_id} not found for executor recovery"
@@ -875,10 +881,13 @@ class ExecutionDispatcher:
                 raise RuntimeError(error_message)
 
             # Update the current subtask to reflect the recovered executor.
-            current_subtask.executor_name = recovered_info["executor_name"]
-            current_subtask.executor_namespace = recovered_info["executor_namespace"]
-            current_subtask.executor_deleted_at = False
-            db.add(current_subtask)
+            subtask_store.update_fields(
+                db,
+                subtask=current_subtask,
+                executor_name=recovered_info["executor_name"],
+                executor_namespace=recovered_info["executor_namespace"],
+                executor_deleted_at=False,
+            )
             db.commit()
 
             request.executor_name = recovered_info["executor_name"]
@@ -931,15 +940,16 @@ class ExecutionDispatcher:
             device_id: Device ID
             user_id: User ID
         """
-        from app.db.session import SessionLocal
-        from app.models.subtask import Subtask
-
         db = SessionLocal()
         try:
-            subtask = db.query(Subtask).filter(Subtask.id == subtask_id).first()
+            subtask = subtask_store.get_by_id(db, subtask_id=subtask_id)
             if subtask:
-                subtask.executor_name = f"device-{device_id}"
-                subtask.executor_namespace = f"user-{user_id}" if user_id else None
+                subtask_store.update_executor_info(
+                    db,
+                    subtask=subtask,
+                    executor_name=f"device-{device_id}",
+                    executor_namespace=f"user-{user_id}" if user_id else "",
+                )
                 db.commit()
                 logger.info(
                     f"[ExecutionDispatcher] Set executor on subtask {subtask_id}: "
@@ -1264,7 +1274,12 @@ class ExecutionDispatcher:
                     )
 
                     if parsed_event:
-                        logger.info(
+                        log_fn = (
+                            logger.debug
+                            if parsed_event.type == EventType.TOOL_ARGUMENT_DELTA.value
+                            else logger.info
+                        )
+                        log_fn(
                             "[ExecutionDispatcher] Parsed SSE event -> internal event: "
                             "task_id=%d, subtask_id=%d, request_id=%s, sse_event=%s, internal_event=%s",
                             request.task_id,

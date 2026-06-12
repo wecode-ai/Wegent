@@ -42,6 +42,11 @@ from app.services.subscription.notification_service import (
 )
 from app.services.user import user_service
 from app.services.user_mcp_service import user_mcp_service
+from app.services.user_runtime_config import (
+    UserRuntimeConfigError,
+    UserRuntimeConfigSyncError,
+    user_runtime_config_service,
+)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -72,6 +77,57 @@ class MCPProviderServiceConfigResponse(BaseModel):
     detail_url: str
     enabled: bool = False
     url: str = ""
+
+
+class UserRuntimeConfigResponse(BaseModel):
+    """Public status for a user-scoped runtime configuration."""
+
+    runtime: str
+    display_name: str
+    use_user_config: bool = False
+    use_proxy: bool = False
+    configured: bool = False
+    target_path: str
+    auth_json_sha256: Optional[str] = None
+    auth_json_updated_at: Optional[str] = None
+    proxy_configured: bool = False
+    proxy_url_masked: str = ""
+    proxy_updated_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+class UserProxyConfigResponse(BaseModel):
+    """Public status for a user-scoped proxy configuration."""
+
+    configured: bool = False
+    proxy_url_masked: str = ""
+    proxy_updated_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+class UserRuntimeConfigUpdateRequest(BaseModel):
+    """Update request for runtime config preferences."""
+
+    use_user_config: bool
+    use_proxy: Optional[bool] = None
+
+
+class UserRuntimeAuthJsonRequest(BaseModel):
+    """Request body for uploading runtime auth JSON."""
+
+    auth_json: str
+
+
+class UserProxyConfigRequest(BaseModel):
+    """Request body for saving a user proxy URL."""
+
+    proxy_url: str = ""
+
+
+class UserRuntimeConfigImportRequest(BaseModel):
+    """Request body for importing runtime auth JSON from one local device."""
+
+    device_id: str
 
 
 @router.get("/features", response_model=FeatureFlags)
@@ -162,6 +218,163 @@ async def update_current_user_endpoint(
         )
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.get(
+    "/me/runtime-configs/{runtime}",
+    response_model=UserRuntimeConfigResponse,
+)
+async def get_user_runtime_config(
+    runtime: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """Get current user's runtime config status."""
+    try:
+        return UserRuntimeConfigResponse(
+            **user_runtime_config_service.get_config(
+                db,
+                user_id=current_user.id,
+                runtime=runtime,
+                preferences=current_user.preferences,
+            )
+        )
+    except UserRuntimeConfigError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+
+@router.put(
+    "/me/runtime-configs/{runtime}",
+    response_model=UserRuntimeConfigResponse,
+)
+async def update_user_runtime_config(
+    runtime: str,
+    request: UserRuntimeConfigUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """Update whether a user runtime config is enabled."""
+    try:
+        return UserRuntimeConfigResponse(
+            **user_runtime_config_service.set_use_user_config(
+                db,
+                user=current_user,
+                runtime=runtime,
+                use_user_config=request.use_user_config,
+                use_proxy=request.use_proxy,
+            )
+        )
+    except UserRuntimeConfigError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+
+@router.put(
+    "/me/proxy-config",
+    response_model=UserProxyConfigResponse,
+)
+async def update_user_proxy_config(
+    request: UserProxyConfigRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """Upload and encrypt current user's proxy URL."""
+    try:
+        return UserProxyConfigResponse(
+            **user_runtime_config_service.save_proxy_url(
+                db,
+                user=current_user,
+                proxy_url=request.proxy_url,
+            )
+        )
+    except UserRuntimeConfigError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+
+@router.get(
+    "/me/proxy-config",
+    response_model=UserProxyConfigResponse,
+)
+async def get_user_proxy_config(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """Get current user's proxy config status."""
+    return UserProxyConfigResponse(
+        **user_runtime_config_service.get_proxy_config(
+            db,
+            user_id=current_user.id,
+        )
+    )
+
+
+@router.post(
+    "/me/runtime-configs/{runtime}/auth-json",
+    response_model=UserRuntimeConfigResponse,
+)
+async def upload_user_runtime_auth_json(
+    runtime: str,
+    request: UserRuntimeAuthJsonRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """Upload and encrypt current user's runtime auth JSON."""
+    try:
+        return UserRuntimeConfigResponse(
+            **user_runtime_config_service.save_auth_json(
+                db,
+                user_id=current_user.id,
+                runtime=runtime,
+                auth_json=request.auth_json,
+                preferences=current_user.preferences,
+            )
+        )
+    except UserRuntimeConfigError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+
+@router.post(
+    "/me/runtime-configs/{runtime}/import-device",
+    response_model=UserRuntimeConfigResponse,
+)
+async def import_user_runtime_auth_json_from_device(
+    runtime: str,
+    request: UserRuntimeConfigImportRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """Import and encrypt current user's runtime auth JSON from a local device."""
+    try:
+        return UserRuntimeConfigResponse(
+            **await user_runtime_config_service.import_auth_json_from_device(
+                db,
+                user_id=current_user.id,
+                runtime=runtime,
+                device_id=request.device_id,
+                preferences=current_user.preferences,
+            )
+        )
+    except UserRuntimeConfigError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    except UserRuntimeConfigSyncError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
 
 
 @router.get(
@@ -348,15 +561,23 @@ def _get_system_config_value(db: Session, key: str) -> tuple[int, dict]:
     return config.version, config.config_value or {}
 
 
-def _get_user_quick_access_team_ids(current_user: User) -> list[int]:
+def _get_user_preferences(current_user: User) -> dict:
     preferences = {}
     if current_user.preferences:
         try:
             preferences = json.loads(current_user.preferences)
         except (json.JSONDecodeError, TypeError):
             preferences = {}
+    return preferences if isinstance(preferences, dict) else {}
 
-    quick_access_config = preferences.get("quick_access", {})
+
+def _get_user_quick_access_config(current_user: User) -> dict:
+    quick_access_config = _get_user_preferences(current_user).get("quick_access")
+    return quick_access_config if isinstance(quick_access_config, dict) else {}
+
+
+def _get_user_quick_access_team_ids(current_user: User) -> list[int]:
+    quick_access_config = _get_user_quick_access_config(current_user)
     return quick_access_config.get("teams", [])
 
 
@@ -471,14 +692,7 @@ async def get_user_quick_access(
     )
 
     # Get user preferences
-    user_preferences = {}
-    if current_user.preferences:
-        try:
-            user_preferences = json.loads(current_user.preferences)
-        except (json.JSONDecodeError, TypeError):
-            user_preferences = {}
-
-    quick_access_config = user_preferences.get("quick_access", {})
+    quick_access_config = _get_user_quick_access_config(current_user)
     user_version = quick_access_config.get("version")
     user_team_ids = quick_access_config.get("teams", [])
 

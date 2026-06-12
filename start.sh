@@ -60,6 +60,67 @@ load_config() {
     fi
 }
 
+persist_internal_service_token() {
+    local token="$1"
+    local temp_file
+    temp_file=$(mktemp)
+
+    if [ -f "$CONFIG_FILE" ]; then
+        grep -v "^INTERNAL_SERVICE_TOKEN=" "$CONFIG_FILE" > "$temp_file" || true
+    else
+        cat > "$temp_file" << 'EOF'
+# Wegent Configuration
+# This file is used by both docker-compose and start.sh
+# Copy from .env.example and customize as needed
+
+EOF
+    fi
+
+    cat >> "$temp_file" << EOF
+
+# Internal service authentication token shared by Backend, Chat Shell, and Knowledge Runtime.
+# Generated automatically by start.sh for local development.
+INTERNAL_SERVICE_TOKEN=$token
+EOF
+
+    mv "$temp_file" "$CONFIG_FILE"
+}
+
+generate_internal_service_token() {
+    if command -v openssl >/dev/null 2>&1; then
+        openssl rand -hex 32
+        return
+    fi
+
+    if command -v python3 >/dev/null 2>&1; then
+        python3 - << 'PY'
+import secrets
+
+print(secrets.token_hex(32))
+PY
+        return
+    fi
+
+    echo ""
+}
+
+ensure_internal_service_token() {
+    if [ -n "${INTERNAL_SERVICE_TOKEN:-}" ]; then
+        return
+    fi
+
+    local generated_token
+    generated_token=$(generate_internal_service_token)
+    if [ -z "$generated_token" ]; then
+        echo -e "${RED}Unable to generate INTERNAL_SERVICE_TOKEN. Install openssl or python3, or set INTERNAL_SERVICE_TOKEN manually.${NC}"
+        exit 1
+    fi
+
+    export INTERNAL_SERVICE_TOKEN="$generated_token"
+    persist_internal_service_token "$generated_token"
+    echo -e "${GREEN}✓ Generated INTERNAL_SERVICE_TOKEN for local development and saved it to .env${NC}"
+}
+
 # Save configuration to .env file
 # Only saves start.sh specific variables, preserves existing content
 save_config() {
@@ -428,6 +489,14 @@ check_docker_installed() {
     return 1
 }
 
+# Check if Docker daemon is reachable
+check_docker_ready() {
+    if docker info &> /dev/null; then
+        return 0
+    fi
+    return 1
+}
+
 # Show docker installation instructions
 show_docker_install_instructions() {
     echo -e "${RED}Error: Docker is not installed or not running.${NC}"
@@ -461,10 +530,82 @@ show_docker_install_instructions() {
     exit 1
 }
 
+# Show Docker daemon troubleshooting instructions
+show_docker_ready_instructions() {
+    echo -e "${RED}Error: Docker is installed, but the Docker daemon is not reachable.${NC}"
+    echo ""
+    echo -e "${YELLOW}Please ensure Docker is running and your user can access it.${NC}"
+    echo ""
+    echo -e "  ${GREEN}Linux: start Docker${NC}"
+    echo -e "    ${BLUE}sudo systemctl enable --now docker${NC}"
+    echo ""
+    echo -e "  ${GREEN}Linux: allow current user to access Docker${NC}"
+    echo -e "    ${BLUE}sudo usermod -aG docker \$USER${NC}"
+    echo -e "    ${BLUE}newgrp docker${NC}"
+    echo ""
+    echo -e "  ${GREEN}macOS / Windows:${NC}"
+    echo -e "    ${BLUE}Start Docker Desktop and wait until it is ready.${NC}"
+    echo ""
+    echo -e "${YELLOW}Then re-run this script.${NC}"
+    echo ""
+    exit 1
+}
+
+# Detect Docker Compose command
+detect_docker_compose() {
+    if docker compose version &> /dev/null; then
+        DOCKER_COMPOSE_CMD="docker compose"
+        return 0
+    fi
+
+    if command -v docker-compose &> /dev/null && docker-compose version &> /dev/null; then
+        DOCKER_COMPOSE_CMD="docker-compose"
+        return 0
+    fi
+
+    return 1
+}
+
+# Run Docker Compose with the detected command
+run_docker_compose() {
+    if [ -z "$DOCKER_COMPOSE_CMD" ]; then
+        detect_docker_compose || return 127
+    fi
+
+    # DOCKER_COMPOSE_CMD intentionally contains either "docker compose" or "docker-compose".
+    # shellcheck disable=SC2086
+    $DOCKER_COMPOSE_CMD "$@"
+}
+
+# Show Docker Compose installation instructions
+show_docker_compose_install_instructions() {
+    echo -e "${RED}Error: Docker Compose is not installed.${NC}"
+    echo ""
+    echo -e "${YELLOW}Docker Compose is required to start MySQL and Redis from docker-compose.yml.${NC}"
+    echo -e "${YELLOW}Install the Compose plugin, then re-run this script.${NC}"
+    echo ""
+    echo -e "  ${GREEN}Ubuntu / Debian using Docker official packages:${NC}"
+    echo -e "    ${BLUE}sudo apt update${NC}"
+    echo -e "    ${BLUE}sudo apt install -y docker-compose-plugin${NC}"
+    echo ""
+    echo -e "  ${GREEN}Ubuntu / Debian using distro Docker packages:${NC}"
+    echo -e "    ${BLUE}sudo apt update${NC}"
+    echo -e "    ${BLUE}sudo apt install -y docker-compose-v2${NC}"
+    echo ""
+    echo -e "  ${GREEN}macOS / Windows:${NC}"
+    echo -e "    ${BLUE}Docker Desktop includes Docker Compose.${NC}"
+    echo ""
+    exit 1
+}
+
 # Check if MySQL and Redis are running
 check_mysql_redis() {
     local mysql_running=false
     local redis_running=false
+
+    if [ -z "$DOCKER_COMPOSE_CMD" ] && ! detect_docker_compose; then
+        show_docker_compose_install_instructions
+    fi
 
     # Check if MySQL container is running
     if docker ps --format '{{.Names}}' | grep -q "^wegent-mysql$"; then
@@ -482,9 +623,9 @@ check_mysql_redis() {
     fi
 
     # Start MySQL and Redis if not running
-    echo -e "${YELLOW}MySQL or Redis is not running. Starting them with docker-compose...${NC}"
+    echo -e "${YELLOW}MySQL or Redis is not running. Starting them with $DOCKER_COMPOSE_CMD...${NC}"
     
-    if ! docker compose up -d mysql redis; then
+    if ! run_docker_compose up -d mysql redis; then
         echo -e "${RED}Error: Failed to start MySQL and Redis${NC}"
         echo -e "${YELLOW}Please check docker-compose.yml and ensure Docker is running${NC}"
         exit 1
@@ -837,6 +978,7 @@ WEGENT_SOCKET_URL=""
 TASK_API_DOMAIN=""
 EXECUTOR_MANAGER_URL=""
 KNOWLEDGE_RUNTIME_URL=""
+DOCKER_COMPOSE_CMD=""
 
 # PID file directory
 PID_DIR="$SCRIPT_DIR/.pids"
@@ -1899,6 +2041,21 @@ start_services() {
     local docker_version=$(docker --version | awk '{print $3}' | tr -d ',')
     echo -e "  ${GREEN}✓${NC} docker detected: $docker_version"
 
+    if ! check_docker_ready; then
+        show_docker_ready_instructions
+    fi
+    echo -e "  ${GREEN}✓${NC} Docker daemon is reachable"
+
+    if ! detect_docker_compose; then
+        show_docker_compose_install_instructions
+    fi
+    local compose_version=$($DOCKER_COMPOSE_CMD version 2>&1 | head -n 1)
+    echo -e "  ${GREEN}✓${NC} Docker Compose detected: $compose_version"
+
+    # Docker Compose validates the whole compose file before starting selected
+    # services, so the internal token must exist before any compose command runs.
+    ensure_internal_service_token
+
     # Check and start MySQL and Redis if needed
     check_mysql_redis
 
@@ -2040,7 +2197,7 @@ start_services() {
         # --reload-dir: Watch shared module for changes (editable dependency)
         # --reload-exclude: Exclude .venv and __pycache__ to reduce CPU usage
         start_service "backend" "backend" \
-            "export EXECUTOR_MANAGER_URL=$EXECUTOR_MANAGER_URL && export CHAT_SHELL_URL=http://localhost:$CHAT_SHELL_PORT && export BACKEND_INTERNAL_URL=$TASK_API_DOMAIN && export LOG_LEVEL=DEBUG && source .venv/bin/activate && uvicorn app.main:app --reload --reload-dir . --reload-dir ../shared $RELOAD_EXCLUDE --host 0.0.0.0 --port $BACKEND_PORT --log-level debug" \
+            "export INTERNAL_SERVICE_TOKEN=\"\$INTERNAL_SERVICE_TOKEN\" && export EXECUTOR_MANAGER_URL=$EXECUTOR_MANAGER_URL && export CHAT_SHELL_URL=http://localhost:$CHAT_SHELL_PORT && export BACKEND_INTERNAL_URL=$TASK_API_DOMAIN && export LOG_LEVEL=DEBUG && source .venv/bin/activate && uvicorn app.main:app --reload --reload-dir . --reload-dir ../shared $RELOAD_EXCLUDE --host 0.0.0.0 --port $BACKEND_PORT --log-level debug" \
             "$BACKEND_PORT"
     fi
 
@@ -2050,7 +2207,7 @@ start_services() {
         # --reload-dir: Watch shared module for changes (editable dependency)
         # --reload-exclude: Exclude .venv and __pycache__ to reduce CPU usage
         start_service "chat_shell" "chat_shell" \
-            "export CHAT_SHELL_MODE=http && export CHAT_SHELL_STORAGE_TYPE=remote && export CHAT_SHELL_REMOTE_STORAGE_URL=http://localhost:$BACKEND_PORT/api/internal && export EXECUTOR_MANAGER_URL=$EXECUTOR_MANAGER_URL && source .venv/bin/activate && .venv/bin/python -m uvicorn chat_shell.main:app --reload --reload-dir . --reload-dir ../shared $RELOAD_EXCLUDE --host 0.0.0.0 --port $CHAT_SHELL_PORT --log-level debug" \
+            "export CHAT_SHELL_MODE=http && export CHAT_SHELL_STORAGE_TYPE=remote && export CHAT_SHELL_REMOTE_STORAGE_URL=http://localhost:$BACKEND_PORT/api/internal && export CHAT_SHELL_REMOTE_STORAGE_TOKEN=\"\$INTERNAL_SERVICE_TOKEN\" && export CHAT_SHELL_INTERNAL_SERVICE_TOKEN=\"\$INTERNAL_SERVICE_TOKEN\" && export EXECUTOR_MANAGER_URL=$EXECUTOR_MANAGER_URL && source .venv/bin/activate && .venv/bin/python -m uvicorn chat_shell.main:app --reload --reload-dir . --reload-dir ../shared $RELOAD_EXCLUDE --host 0.0.0.0 --port $CHAT_SHELL_PORT --log-level debug" \
             "$CHAT_SHELL_PORT"
     fi
 

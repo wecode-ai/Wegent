@@ -2,7 +2,10 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from unittest.mock import AsyncMock
+import json
+from contextlib import contextmanager
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -60,3 +63,175 @@ async def test_store_device_capabilities_state_preserves_plugin_report(monkeypat
             "source": "local_user",
         }
     ]
+
+
+def test_runtime_auth_file_missing_requires_explicit_false():
+    assert (
+        device_namespace._runtime_auth_file_missing(
+            {"codex": {"exists": False}},
+            "codex",
+        )
+        is True
+    )
+    assert (
+        device_namespace._runtime_auth_file_missing(
+            {"codex": {"exists": True}},
+            "codex",
+        )
+        is False
+    )
+    assert device_namespace._runtime_auth_file_missing({}, "codex") is False
+    assert device_namespace._runtime_auth_file_missing(None, "codex") is False
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_runtime_auth_sync_uses_user_preferences(monkeypatch):
+    namespace = device_namespace.DeviceNamespace()
+    user = SimpleNamespace(
+        id=7,
+        preferences=json.dumps(
+            {"runtime_configs": {"codex": {"use_user_config": True}}}
+        ),
+    )
+    db = MagicMock()
+    db.query.return_value.filter.return_value.first.return_value = user
+
+    @contextmanager
+    def fake_db_session():
+        yield db
+
+    def fake_get_config(db_arg, *, user_id, runtime, preferences):
+        assert db_arg is db
+        assert user_id == 7
+        assert runtime == "codex"
+        assert preferences == user.preferences
+        return {"use_user_config": True, "configured": True}
+
+    sync_auth_to_devices = AsyncMock(
+        return_value={
+            "items": [
+                {
+                    "device_id": "device-1",
+                    "success": True,
+                    "status": "written",
+                }
+            ]
+        }
+    )
+    monkeypatch.setattr(device_namespace, "_db_session", fake_db_session)
+    monkeypatch.setattr(
+        device_namespace.user_runtime_config_service,
+        "get_config",
+        fake_get_config,
+    )
+    monkeypatch.setattr(
+        device_namespace.user_runtime_config_service,
+        "sync_auth_to_devices",
+        sync_auth_to_devices,
+    )
+
+    key = (7, "device-1", "codex")
+    namespace._runtime_auth_sync_inflight.add(key)
+
+    await namespace._sync_runtime_auth_for_heartbeat_device(
+        user_id=7,
+        device_id="device-1",
+        runtime="codex",
+        key=key,
+    )
+
+    sync_auth_to_devices.assert_awaited_once_with(
+        db,
+        user_id=7,
+        runtime="codex",
+        preferences=user.preferences,
+        device_ids=["device-1"],
+    )
+    assert key not in namespace._runtime_auth_sync_inflight
+
+
+@pytest.mark.asyncio
+async def test_responses_api_terminal_event_logs_callback_summary(monkeypatch):
+    namespace = device_namespace.DeviceNamespace()
+    event = SimpleNamespace(
+        type=device_namespace.EventType.DONE.value,
+        result={"content": "done"},
+    )
+    payload = {
+        "task_id": 101,
+        "subtask_id": 202,
+        "message_id": 303,
+        "data": {"output": [{"type": "text", "text": "done"}]},
+    }
+    messages = []
+    completed_event_args = []
+
+    async def fake_get_session(sid):
+        return {"user_id": 7, "device_id": "device-1"}
+
+    def fake_parse(**kwargs):
+        return event
+
+    class FakeWebSocketResultEmitter:
+        def __init__(self, **kwargs):
+            assert kwargs["user_id"] == 7
+            pass
+
+    class FakeStatusUpdatingEmitter:
+        def __init__(self, **kwargs):
+            assert "owner_user_id" not in kwargs
+            pass
+
+        async def emit(self, emitted_event):
+            assert emitted_event is event
+
+        async def close(self):
+            pass
+
+    async def fake_publish_task_completed_event(*args):
+        completed_event_args.append(args)
+
+    async def fake_broadcast_slot_update(*args):
+        pass
+
+    monkeypatch.setattr(namespace, "get_session", fake_get_session)
+    monkeypatch.setattr(namespace._event_parser, "parse", fake_parse)
+    monkeypatch.setattr(
+        device_namespace,
+        "WebSocketResultEmitter",
+        FakeWebSocketResultEmitter,
+    )
+    monkeypatch.setattr(
+        device_namespace,
+        "StatusUpdatingEmitter",
+        FakeStatusUpdatingEmitter,
+    )
+    monkeypatch.setattr(
+        namespace,
+        "_publish_task_completed_event",
+        fake_publish_task_completed_event,
+    )
+    monkeypatch.setattr(
+        namespace,
+        "_broadcast_device_slot_update",
+        fake_broadcast_slot_update,
+    )
+    monkeypatch.setattr(
+        device_namespace.logger,
+        "info",
+        lambda message: messages.append(message),
+    )
+
+    result = await namespace._handle_responses_api_event(
+        "sid-1", "response.completed", payload
+    )
+
+    assert result == {"success": True}
+    assert completed_event_args[0][2] == 7
+    assert any(
+        "[Device WS] Terminal callback received:" in message
+        and "task_id=101" in message
+        and "subtask_id=202" in message
+        for message in messages
+    )
+    assert all("done" not in message for message in messages)

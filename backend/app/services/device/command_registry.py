@@ -215,6 +215,294 @@ print(json.dumps(skills, ensure_ascii=False))
 
 LS_SKILLS_COMMAND = f"python3 -c {shlex.quote(LS_SKILLS_SCRIPT)}"
 
+SYNC_RUNTIME_AUTH_FILE_SCRIPT = """
+import json
+import os
+import sys
+from pathlib import Path
+
+
+def fail(message, code=64):
+    print(json.dumps({"status": "failed", "error": message}, ensure_ascii=False))
+    sys.exit(code)
+
+
+runtime = os.environ.get("WEGENT_RUNTIME_CONFIG_RUNTIME", "").strip()
+target_path = os.environ.get("WEGENT_RUNTIME_CONFIG_TARGET_PATH", "").strip()
+content = os.environ.get("WEGENT_RUNTIME_CONFIG_CONTENT", "")
+
+if not runtime:
+    fail("runtime is required")
+if not target_path.startswith("~/"):
+    fail("target path must be inside the user home directory")
+if not content:
+    fail("runtime config content is required")
+
+try:
+    parsed = json.loads(content)
+except json.JSONDecodeError as exc:
+    fail(f"runtime config content is not valid JSON: {exc}")
+if not isinstance(parsed, dict):
+    fail("runtime config content must be a JSON object")
+
+home = Path.home().resolve()
+target = Path(target_path).expanduser()
+try:
+    resolved_target = target.resolve(strict=False)
+except OSError as exc:
+    fail(f"failed to resolve target path: {exc}")
+
+if home not in [resolved_target, *resolved_target.parents]:
+    fail("target path must stay inside the user home directory")
+
+if target.exists():
+    print(
+        json.dumps(
+            {"status": "skipped_existing", "runtime": runtime, "path": target_path},
+            ensure_ascii=False,
+        )
+    )
+    sys.exit(0)
+
+target.parent.mkdir(parents=True, exist_ok=True)
+try:
+    fd = os.open(str(target), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+except FileExistsError:
+    print(
+        json.dumps(
+            {"status": "skipped_existing", "runtime": runtime, "path": target_path},
+            ensure_ascii=False,
+        )
+    )
+    sys.exit(0)
+
+with os.fdopen(fd, "w", encoding="utf-8") as handle:
+    handle.write(json.dumps(parsed, ensure_ascii=False, indent=2, sort_keys=True))
+    handle.write("\\n")
+
+print(
+    json.dumps(
+        {"status": "written", "runtime": runtime, "path": target_path},
+        ensure_ascii=False,
+    )
+)
+""".strip()
+
+SYNC_RUNTIME_AUTH_FILE_COMMAND = (
+    f"python3 -c {shlex.quote(SYNC_RUNTIME_AUTH_FILE_SCRIPT)}"
+)
+
+READ_RUNTIME_AUTH_FILE_SCRIPT = """
+import json
+import os
+import sys
+from pathlib import Path
+
+
+def fail(message, code=64):
+    print(json.dumps({"status": "failed", "error": message}, ensure_ascii=False))
+    sys.exit(code)
+
+
+runtime = os.environ.get("WEGENT_RUNTIME_CONFIG_RUNTIME", "").strip()
+target_path = os.environ.get("WEGENT_RUNTIME_CONFIG_TARGET_PATH", "").strip()
+
+if not runtime:
+    fail("runtime is required")
+if not target_path.startswith("~/"):
+    fail("target path must be inside the user home directory")
+
+home = Path.home().resolve()
+target = Path(target_path).expanduser()
+try:
+    resolved_target = target.resolve(strict=False)
+except OSError as exc:
+    fail(f"failed to resolve target path: {exc}")
+
+if home not in [resolved_target, *resolved_target.parents]:
+    fail("target path must stay inside the user home directory")
+if not target.is_file():
+    fail("runtime auth file does not exist", code=66)
+
+try:
+    content = target.read_text(encoding="utf-8")
+except OSError as exc:
+    fail(f"failed to read runtime auth file: {exc}", code=74)
+
+try:
+    parsed = json.loads(content)
+except json.JSONDecodeError as exc:
+    fail(f"runtime auth file is not valid JSON: {exc}")
+if not isinstance(parsed, dict):
+    fail("runtime auth file must be a JSON object")
+
+print(
+    json.dumps(
+        {
+            "status": "read",
+            "runtime": runtime,
+            "path": target_path,
+            "content": content,
+        },
+        ensure_ascii=False,
+    )
+)
+""".strip()
+
+READ_RUNTIME_AUTH_FILE_COMMAND = (
+    f"python3 -c {shlex.quote(READ_RUNTIME_AUTH_FILE_SCRIPT)}"
+)
+
+TURN_FILE_CHANGES_SCRIPT = """
+import gzip
+import hashlib
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+MAX_PATCH_BYTES = 20 * 1024 * 1024
+ARTIFACT_PATTERN = re.compile(
+    r"turn-file-changes/([1-9][0-9]*)/([1-9][0-9]*)"
+)
+
+
+def finish(payload, code=0):
+    print(json.dumps(payload, ensure_ascii=False))
+    sys.exit(code)
+
+
+def fail(message, code=64, status=None):
+    payload = {"success": False, "error": message}
+    if status:
+        payload["status"] = status
+    finish(payload, code)
+
+
+if len(sys.argv) != 3:
+    fail("mode and artifact id are required")
+
+mode = sys.argv[1]
+artifact_id = sys.argv[2]
+if mode not in {"review", "revert"}:
+    fail("invalid mode")
+
+match = ARTIFACT_PATTERN.fullmatch(artifact_id)
+if not match:
+    fail("invalid artifact id")
+
+task_id = int(match.group(1))
+subtask_id = int(match.group(2))
+executor_home = Path(
+    os.environ.get("WEGENT_EXECUTOR_HOME", "~/.wegent-executor")
+).expanduser()
+artifact_root = (executor_home / "artifacts").resolve()
+artifact_dir = (artifact_root / artifact_id).resolve()
+if artifact_root not in artifact_dir.parents:
+    fail("invalid artifact id")
+
+metadata_path = artifact_dir / "metadata.json"
+patch_path = artifact_dir / "changes.patch.gz"
+if not metadata_path.is_file() or not patch_path.is_file():
+    finish(
+        {
+            "success": False,
+            "status": "artifact_missing",
+            "error": "turn file changes artifact is missing",
+        }
+    )
+
+try:
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+except (OSError, json.JSONDecodeError) as exc:
+    fail(f"invalid artifact metadata: {exc}", code=65)
+
+if not isinstance(metadata, dict):
+    fail("invalid artifact metadata", code=65)
+if metadata.get("task_id") != task_id or metadata.get("subtask_id") != subtask_id:
+    fail("artifact metadata id mismatch", code=65)
+
+workspace = Path.cwd().resolve()
+try:
+    metadata_workspace = Path(str(metadata["workspace_path"])).resolve()
+except (KeyError, OSError):
+    fail("invalid artifact workspace", code=65)
+if metadata_workspace != workspace:
+    fail("artifact workspace mismatch", code=65)
+
+try:
+    with gzip.open(patch_path, "rb") as patch_file:
+        patch = patch_file.read(MAX_PATCH_BYTES + 1)
+except (OSError, gzip.BadGzipFile) as exc:
+    fail(f"failed to read artifact patch: {exc}", code=65)
+if len(patch) > MAX_PATCH_BYTES:
+    fail("artifact patch exceeds size limit", code=65)
+if hashlib.sha256(patch).hexdigest() != metadata.get("checksum"):
+    fail("artifact patch checksum mismatch", code=65)
+
+if mode == "review":
+    finish(
+        {
+            "success": True,
+            "diff": patch.decode("utf-8", errors="replace"),
+        }
+    )
+
+temp_path = None
+try:
+    with tempfile.NamedTemporaryFile(
+        prefix="wegent-validated-turn-",
+        suffix=".patch",
+        delete=False,
+    ) as temp_file:
+        temp_file.write(patch)
+        temp_path = Path(temp_file.name)
+
+    check = subprocess.run(
+        ["git", "apply", "--reverse", "--check", "--binary", str(temp_path)],
+        cwd=workspace,
+        capture_output=True,
+        text=True,
+    )
+    if check.returncode != 0:
+        finish(
+            {
+                "success": False,
+                "status": "conflicted",
+                "error": "patch does not apply",
+            }
+        )
+
+    apply_result = subprocess.run(
+        ["git", "apply", "--reverse", "--binary", str(temp_path)],
+        cwd=workspace,
+        capture_output=True,
+        text=True,
+    )
+    if apply_result.returncode != 0:
+        finish(
+            {
+                "success": False,
+                "status": "conflicted",
+                "error": "patch does not apply",
+            }
+        )
+    finish({"success": True, "status": "reverted"})
+finally:
+    if temp_path is not None:
+        temp_path.unlink(missing_ok=True)
+""".strip()
+
+TURN_FILE_CHANGES_REVIEW_COMMAND = (
+    f"python3 -c {shlex.quote(TURN_FILE_CHANGES_SCRIPT)} review"
+)
+TURN_FILE_CHANGES_REVERT_COMMAND = (
+    f"python3 -c {shlex.quote(TURN_FILE_CHANGES_SCRIPT)} revert"
+)
+
 
 DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
     "pwd": LocalDeviceCommandDefinition(command="pwd"),
@@ -282,11 +570,30 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
     "git_branch_diff_shortstat": LocalDeviceCommandDefinition(
         command=GIT_BRANCH_DIFF_SHORTSTAT_COMMAND
     ),
+    "git_status_porcelain": LocalDeviceCommandDefinition(
+        command="git status --porcelain"
+    ),
     "git_remote_url": LocalDeviceCommandDefinition(command="git remote get-url origin"),
     "git_add_all": LocalDeviceCommandDefinition(command="git add --all"),
     "git_commit": LocalDeviceCommandDefinition(command="git commit"),
     "ls_skills": LocalDeviceCommandDefinition(
         command=LS_SKILLS_COMMAND,
+        post_processor="json",
+    ),
+    "sync_runtime_auth_file": LocalDeviceCommandDefinition(
+        command=SYNC_RUNTIME_AUTH_FILE_COMMAND,
+        post_processor="json",
+    ),
+    "read_runtime_auth_file": LocalDeviceCommandDefinition(
+        command=READ_RUNTIME_AUTH_FILE_COMMAND,
+        post_processor="json",
+    ),
+    "turn_file_changes_review": LocalDeviceCommandDefinition(
+        command=TURN_FILE_CHANGES_REVIEW_COMMAND,
+        post_processor="json",
+    ),
+    "turn_file_changes_revert": LocalDeviceCommandDefinition(
+        command=TURN_FILE_CHANGES_REVERT_COMMAND,
         post_processor="json",
     ),
 }

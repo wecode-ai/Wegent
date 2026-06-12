@@ -32,6 +32,7 @@ import {
   ChatDonePayload,
   ChatErrorPayload,
   ChatCancelledPayload,
+  ChatStatusUpdatedPayload,
   ChatMessagePayload,
   ChatBlockCreatedPayload,
   ChatBlockUpdatedPayload,
@@ -149,6 +150,7 @@ export interface ChatEventHandlers {
   onChatDone?: (data: ChatDonePayload) => void
   onChatError?: (data: ChatErrorPayload) => void
   onChatCancelled?: (data: ChatCancelledPayload) => void
+  onChatStatusUpdated?: (data: ChatStatusUpdatedPayload) => void
   /** Handler for chat:message event (other users' messages in group chat) */
   onChatMessage?: (data: ChatMessagePayload) => void
   /** Handler for chat:block_created event (new block added) */
@@ -564,19 +566,12 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         return { success: false, error: 'Not connected to server' }
       }
 
-      return new Promise(resolve => {
-        socket.emit(
-          'chat:cancel',
-          {
-            subtask_id: subtaskId,
-            partial_content: partialContent,
-            shell_type: shellType,
-          },
-          (response: { success?: boolean; error?: string }) => {
-            resolve({ success: response.success ?? true, error: response.error })
-          }
-        )
+      socket.emit('chat:cancel', {
+        subtask_id: subtaskId,
+        partial_content: partialContent,
+        shell_type: shellType,
       })
+      return { success: true }
     },
     [socket]
   )
@@ -670,6 +665,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         onChatDone,
         onChatError,
         onChatCancelled,
+        onChatStatusUpdated,
         onChatMessage,
         onBlockCreated,
         onBlockUpdated,
@@ -683,6 +679,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       if (onChatDone) socket.on(ServerEvents.CHAT_DONE, onChatDone)
       if (onChatError) socket.on(ServerEvents.CHAT_ERROR, onChatError)
       if (onChatCancelled) socket.on(ServerEvents.CHAT_CANCELLED, onChatCancelled)
+      if (onChatStatusUpdated) socket.on(ServerEvents.CHAT_STATUS_UPDATED, onChatStatusUpdated)
       if (onChatMessage) socket.on(ServerEvents.CHAT_MESSAGE, onChatMessage)
       if (onBlockCreated) socket.on(ServerEvents.CHAT_BLOCK_CREATED, onBlockCreated)
       if (onBlockUpdated) socket.on(ServerEvents.CHAT_BLOCK_UPDATED, onBlockUpdated)
@@ -697,6 +694,9 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         if (onChatDone) socket.off(ServerEvents.CHAT_DONE, onChatDone)
         if (onChatError) socket.off(ServerEvents.CHAT_ERROR, onChatError)
         if (onChatCancelled) socket.off(ServerEvents.CHAT_CANCELLED, onChatCancelled)
+        if (onChatStatusUpdated) {
+          socket.off(ServerEvents.CHAT_STATUS_UPDATED, onChatStatusUpdated)
+        }
         if (onChatMessage) socket.off(ServerEvents.CHAT_MESSAGE, onChatMessage)
         if (onBlockCreated) socket.off(ServerEvents.CHAT_BLOCK_CREATED, onBlockCreated)
         if (onBlockUpdated) socket.off(ServerEvents.CHAT_BLOCK_UPDATED, onBlockUpdated)

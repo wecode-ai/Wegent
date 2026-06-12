@@ -16,10 +16,10 @@ from typing import Any, Dict
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
-from app.models.task import TaskResource
 from app.schemas.kind import Task, Team, Workspace
 from app.services.readers.kinds import KindType, kindReader
 from app.services.readers.users import userReader
+from app.stores.tasks import task_store
 
 logger = logging.getLogger(__name__)
 
@@ -79,16 +79,11 @@ def convert_to_task_dict(task: Kind, db: Session, user_id: int) -> Dict[str, Any
     task_crd = Task.model_validate(task.json)
 
     # Get workspace data
-    workspace = (
-        db.query(TaskResource)
-        .filter(
-            TaskResource.user_id == user_id,
-            TaskResource.kind == "Workspace",
-            TaskResource.name == task_crd.spec.workspaceRef.name,
-            TaskResource.namespace == task_crd.spec.workspaceRef.namespace,
-            TaskResource.is_active == TaskResource.STATE_ACTIVE,
-        )
-        .first()
+    workspace = task_store.get_workspace_by_ref(
+        db,
+        user_id=user_id,
+        name=task_crd.spec.workspaceRef.name,
+        namespace=task_crd.spec.workspaceRef.namespace,
     )
 
     git_url = ""
@@ -211,6 +206,7 @@ def convert_to_task_dict(task: Kind, db: Session, user_id: int) -> Dict[str, Any
         "created_at": created_at or task.created_at,
         "updated_at": updated_at or task.updated_at,
         "completed_at": completed_at,
+        "project_id": task.project_id or 0,
         **model_selection,
         "is_group_chat": is_group_chat,
         "app": app_data,
@@ -277,6 +273,7 @@ def convert_to_task_dict_optimized(
         "created_at": related_data.get("created_at", task.created_at),
         "updated_at": related_data.get("updated_at", task.updated_at),
         "completed_at": related_data.get("completed_at"),
+        "project_id": task.project_id or 0,
         **model_selection,
         "is_group_chat": related_data.get("is_group_chat", False),
         "app": (

@@ -201,24 +201,15 @@ class PipelineCollaborationStrategy(CollaborationStrategy):
 
         try:
             from app.models.kind import Kind
-            from app.models.subtask import Subtask
-            from app.models.task import TaskResource
             from app.schemas.kind import Task, Team
             from app.services.readers.kinds import KindType, kindReader
+            from app.stores.tasks import subtask_store, task_store
 
-            subtask = db.get(Subtask, subtask_id)
+            subtask = subtask_store.get_by_id(db, subtask_id=subtask_id)
             if not subtask or not subtask.bot_ids:
                 return None
 
-            task = (
-                db.query(TaskResource)
-                .filter(
-                    TaskResource.id == task_id,
-                    TaskResource.kind == "Task",
-                    TaskResource.is_active == TaskResource.STATE_ACTIVE,
-                )
-                .first()
-            )
+            task = task_store.get_regular_active_task(db, task_id=task_id)
             if not task:
                 return None
 
@@ -348,20 +339,12 @@ class CollaborationStrategyFactory:
             CollaborationStrategy instance for the task's team
         """
         from app.models.kind import Kind
-        from app.models.task import TaskResource
         from app.schemas.kind import Task, Team
+        from app.stores.tasks import task_store
 
         try:
             # Get the task
-            task = (
-                db.query(TaskResource)
-                .filter(
-                    TaskResource.id == task_id,
-                    TaskResource.kind == "Task",
-                    TaskResource.is_active == TaskResource.STATE_ACTIVE,
-                )
-                .first()
-            )
+            task = task_store.get_regular_active_task(db, task_id=task_id)
             if not task:
                 return DefaultCollaborationStrategy()
 

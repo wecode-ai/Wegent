@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import get_db
 from app.core import security
 from app.models.kind import Kind
-from app.models.subtask import Subtask, SubtaskRole
+from app.models.subtask import SubtaskRole
 from app.models.task import TaskResource
 from app.models.user import User
 from app.services.chat.config import (
@@ -37,6 +37,7 @@ from app.services.chat.correction import (
     evaluate_and_save_correction,
     get_existing_correction,
 )
+from app.stores.tasks import subtask_store, task_access_store, task_store
 
 logger = logging.getLogger(__name__)
 
@@ -214,49 +215,28 @@ async def correct_response(
     extended_emitter = get_extended_emitter()
 
     # Validate that the task belongs to the current user
-    task = (
-        db.query(TaskResource)
-        .filter(
-            TaskResource.id == request.task_id,
-            TaskResource.user_id == current_user.id,
-            TaskResource.kind == "Task",
-            TaskResource.is_active == TaskResource.STATE_ACTIVE,
-        )
-        .first()
+    task = task_store.get_owned_task_by_state(
+        db,
+        task_id=request.task_id,
+        user_id=current_user.id,
+        state=TaskResource.STATE_ACTIVE,
     )
 
-    if not task:
-        # Check if user is a group chat member
-        from app.models.resource_member import MemberStatus, ResourceMember
-        from app.models.share_link import ResourceType
-
-        member = (
-            db.query(ResourceMember)
-            .filter(
-                ResourceMember.resource_type == ResourceType.TASK,
-                ResourceMember.resource_id == request.task_id,
-                ResourceMember.entity_type == "user",
-                ResourceMember.entity_id == str(current_user.id),
-                ResourceMember.status == MemberStatus.APPROVED,
-            )
-            .first()
-        )
-
-        if not member:
-            raise HTTPException(status_code=404, detail="Task not found")
+    if not task and not task_access_store.is_member(
+        db,
+        task_id=request.task_id,
+        user_id=current_user.id,
+    ):
+        raise HTTPException(status_code=404, detail="Task not found")
 
     # Get the subtask (AI message) to check for existing correction
-    subtask = (
-        db.query(Subtask)
-        .filter(
-            Subtask.id == request.message_id,
-            Subtask.task_id == request.task_id,
-            Subtask.role == SubtaskRole.ASSISTANT,
-        )
-        .first()
-    )
+    subtask = subtask_store.get_by_id(db, subtask_id=request.message_id)
 
-    if not subtask:
+    if (
+        not subtask
+        or subtask.task_id != request.task_id
+        or subtask.role != SubtaskRole.ASSISTANT
+    ):
         raise HTTPException(status_code=404, detail="AI message not found")
 
     # Check for existing correction using service module
@@ -402,49 +382,25 @@ async def delete_correction(
     The correction data is stored in subtask.result.correction.
     """
     # Get the subtask
-    subtask = (
-        db.query(Subtask)
-        .filter(
-            Subtask.id == subtask_id,
-            Subtask.role == SubtaskRole.ASSISTANT,
-        )
-        .first()
-    )
+    subtask = subtask_store.get_by_id(db, subtask_id=subtask_id)
 
-    if not subtask:
+    if not subtask or subtask.role != SubtaskRole.ASSISTANT:
         raise HTTPException(status_code=404, detail="Subtask not found")
 
     # Verify user has access to the task
-    task = (
-        db.query(TaskResource)
-        .filter(
-            TaskResource.id == subtask.task_id,
-            TaskResource.user_id == current_user.id,
-            TaskResource.kind == "Task",
-            TaskResource.is_active == TaskResource.STATE_ACTIVE,
-        )
-        .first()
+    task = task_store.get_owned_task_by_state(
+        db,
+        task_id=subtask.task_id,
+        user_id=current_user.id,
+        state=TaskResource.STATE_ACTIVE,
     )
 
-    if not task:
-        # Check if user is a group chat member
-        from app.models.resource_member import MemberStatus, ResourceMember
-        from app.models.share_link import ResourceType
-
-        member = (
-            db.query(ResourceMember)
-            .filter(
-                ResourceMember.resource_type == ResourceType.TASK,
-                ResourceMember.resource_id == subtask.task_id,
-                ResourceMember.entity_type == "user",
-                ResourceMember.entity_id == str(current_user.id),
-                ResourceMember.status == MemberStatus.APPROVED,
-            )
-            .first()
-        )
-
-        if not member:
-            raise HTTPException(status_code=403, detail="Access denied")
+    if not task and not task_access_store.is_member(
+        db,
+        task_id=subtask.task_id,
+        user_id=current_user.id,
+    ):
+        raise HTTPException(status_code=403, detail="Access denied")
 
     # Remove correction from result using service module
     delete_correction_from_subtask(db, subtask)
@@ -477,49 +433,25 @@ async def apply_correction(
         {"message": "Correction applied", "subtask_id": int}
     """
     # Get the subtask
-    subtask = (
-        db.query(Subtask)
-        .filter(
-            Subtask.id == subtask_id,
-            Subtask.role == SubtaskRole.ASSISTANT,
-        )
-        .first()
-    )
+    subtask = subtask_store.get_by_id(db, subtask_id=subtask_id)
 
-    if not subtask:
+    if not subtask or subtask.role != SubtaskRole.ASSISTANT:
         raise HTTPException(status_code=404, detail="Subtask not found")
 
     # Verify user has access to the task
-    task = (
-        db.query(TaskResource)
-        .filter(
-            TaskResource.id == subtask.task_id,
-            TaskResource.user_id == current_user.id,
-            TaskResource.kind == "Task",
-            TaskResource.is_active == TaskResource.STATE_ACTIVE,
-        )
-        .first()
+    task = task_store.get_owned_task_by_state(
+        db,
+        task_id=subtask.task_id,
+        user_id=current_user.id,
+        state=TaskResource.STATE_ACTIVE,
     )
 
-    if not task:
-        # Check if user is a group chat member
-        from app.models.resource_member import MemberStatus, ResourceMember
-        from app.models.share_link import ResourceType
-
-        member = (
-            db.query(ResourceMember)
-            .filter(
-                ResourceMember.resource_type == ResourceType.TASK,
-                ResourceMember.resource_id == subtask.task_id,
-                ResourceMember.entity_type == "user",
-                ResourceMember.entity_id == str(current_user.id),
-                ResourceMember.status == MemberStatus.APPROVED,
-            )
-            .first()
-        )
-
-        if not member:
-            raise HTTPException(status_code=403, detail="Access denied")
+    if not task and not task_access_store.is_member(
+        db,
+        task_id=subtask.task_id,
+        user_id=current_user.id,
+    ):
+        raise HTTPException(status_code=403, detail="Access denied")
 
     # Apply correction using service module
     apply_correction_to_subtask(db, subtask, request.improved_answer)

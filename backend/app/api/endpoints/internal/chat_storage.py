@@ -35,6 +35,7 @@ from app.models.subtask_context import (
 from app.models.user import User
 from app.services.chat.guidance_queue import guidance_queue
 from app.services.chat.webpage_ws_chat_emitter import get_webpage_ws_emitter
+from app.stores.tasks import subtask_store
 from shared.prompts.constants import parse_prompt_blocks
 from shared.telemetry.decorators import trace_sync
 
@@ -864,28 +865,13 @@ async def get_chat_history(
         [status.value for status in history_statuses],
     )
 
-    # Build query for subtasks - include terminal history messages.
-    # FAILED assistant turns are conditionally included in subtask_to_messages:
-    # only when result.value exists.
-    query = db.query(Subtask).filter(
-        Subtask.task_id == task_id,
-        Subtask.status.in_(history_statuses),
+    subtasks = subtask_store.list_history_by_task_statuses(
+        db,
+        task_id=task_id,
+        statuses=history_statuses,
+        before_message_id=before_message_id,
+        limit=limit,
     )
-
-    if before_message_id:
-        # Filter by message_id, not subtask.id
-        # message_id represents the order within the conversation
-        query = query.filter(Subtask.message_id < before_message_id)
-
-    # When limit is specified, we need to get the most recent N messages
-    # First order by message_id desc to get the latest, then reverse
-    if limit:
-        subtasks = query.order_by(Subtask.message_id.desc()).limit(limit).all()
-        # Reverse to get chronological order (oldest first)
-        subtasks = list(reversed(subtasks))
-    else:
-        # No limit - get all messages in chronological order
-        subtasks = query.order_by(Subtask.message_id.asc()).all()
 
     # Convert to message format with full context loading
     messages = [
@@ -910,25 +896,29 @@ async def get_chat_history(
     return HistoryResponse(session_id=session_id, messages=messages)
 
 
-def _populate_subtask_content(subtask: Subtask, message: MessageCreate) -> None:
-    """Set prompt or result on a Subtask based on the message role."""
-    if subtask.role == SubtaskRole.USER:
-        subtask.prompt = (
-            message.content
-            if isinstance(message.content, str)
-            else json.dumps(message.content, ensure_ascii=False)
-        )
-    else:
-        result: dict = {
-            "value": (
+def _build_subtask_content_fields(
+    role: SubtaskRole,
+    message: MessageCreate | MessageUpdate,
+) -> dict[str, Any]:
+    """Build Subtask content fields from a chat message payload."""
+    if role == SubtaskRole.USER:
+        return {
+            "prompt": (
                 message.content
                 if isinstance(message.content, str)
                 else json.dumps(message.content, ensure_ascii=False)
             )
         }
-        if message.model_info:
-            result["model_info"] = message.model_info
-        subtask.result = result
+    result: dict = {
+        "value": (
+            message.content
+            if isinstance(message.content, str)
+            else json.dumps(message.content, ensure_ascii=False)
+        )
+    }
+    if getattr(message, "model_info", None):
+        result["model_info"] = message.model_info
+    return {"result": result}
 
 
 @router.post("/history/{session_id}/messages", response_model=MessageIdResponse)
@@ -951,7 +941,7 @@ async def append_message(
         )
 
     # Get task info to determine team_id
-    existing = db.query(Subtask).filter(Subtask.task_id == task_id).first()
+    existing = subtask_store.get_first_by_task(db, task_id=task_id)
     if not existing:
         raise HTTPException(
             status_code=404,
@@ -965,30 +955,28 @@ async def append_message(
         role = SubtaskRole.ASSISTANT
 
     # Get next message_id
-    max_message_id = (
-        db.query(Subtask.message_id)
-        .filter(Subtask.task_id == task_id)
-        .order_by(Subtask.message_id.desc())
-        .first()
-    )
-    next_message_id = (max_message_id[0] + 1) if max_message_id else 1
+    next_message_id = subtask_store.get_next_message_id(db, task_id=task_id)
 
     # Create subtask
-    subtask = Subtask(
+    content_fields = _build_subtask_content_fields(role, message)
+    subtask = subtask_store.create_subtask(
+        db,
+        user_id=existing.user_id,
         task_id=task_id,
         team_id=existing.team_id,
-        user_id=existing.user_id,
         title="",
         bot_ids=existing.bot_ids,
         role=role,
+        prompt=content_fields.get("prompt"),
+        result=content_fields.get("result"),
+        executor_namespace="",
+        executor_name="",
         message_id=next_message_id,
+        parent_id=None,
         status=SubtaskStatus.COMPLETED,
+        progress=100,
+        error_message="",
     )
-
-    # Set content based on role
-    _populate_subtask_content(subtask, message)
-
-    db.add(subtask)
     db.commit()
     db.refresh(subtask)
 
@@ -1022,7 +1010,7 @@ async def append_messages_batch(
         )
 
     # Get task info
-    existing = db.query(Subtask).filter(Subtask.task_id == task_id).first()
+    existing = subtask_store.get_first_by_task(db, task_id=task_id)
     if not existing:
         raise HTTPException(
             status_code=404,
@@ -1030,32 +1018,31 @@ async def append_messages_batch(
         )
 
     # Get next message_id
-    max_message_id = (
-        db.query(Subtask.message_id)
-        .filter(Subtask.task_id == task_id)
-        .order_by(Subtask.message_id.desc())
-        .first()
-    )
-    next_message_id = (max_message_id[0] + 1) if max_message_id else 1
+    next_message_id = subtask_store.get_next_message_id(db, task_id=task_id)
 
     message_ids = []
     for message in batch.messages:
         role = SubtaskRole.USER if message.role == "user" else SubtaskRole.ASSISTANT
 
-        subtask = Subtask(
+        content_fields = _build_subtask_content_fields(role, message)
+        subtask = subtask_store.create_subtask(
+            db,
+            user_id=existing.user_id,
             task_id=task_id,
             team_id=existing.team_id,
-            user_id=existing.user_id,
             title="",
             bot_ids=existing.bot_ids,
             role=role,
+            prompt=content_fields.get("prompt"),
+            result=content_fields.get("result"),
+            executor_namespace="",
+            executor_name="",
             message_id=next_message_id,
+            parent_id=None,
             status=SubtaskStatus.COMPLETED,
+            progress=100,
+            error_message="",
         )
-
-        _populate_subtask_content(subtask, message)
-
-        db.add(subtask)
         db.flush()  # Get ID without committing
         message_ids.append(str(subtask.id))
         next_message_id += 1
@@ -1088,25 +1075,15 @@ async def update_message(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid message_id")
 
-    subtask = db.query(Subtask).filter(Subtask.id == subtask_id).first()
+    subtask = subtask_store.get_by_id(db, subtask_id=subtask_id)
     if not subtask:
         raise HTTPException(status_code=404, detail="Message not found")
 
-    # Update content based on role
-    if subtask.role == SubtaskRole.USER:
-        subtask.prompt = (
-            update.content
-            if isinstance(update.content, str)
-            else json.dumps(update.content, ensure_ascii=False)
-        )
-    else:
-        subtask.result = {
-            "value": (
-                update.content
-                if isinstance(update.content, str)
-                else json.dumps(update.content, ensure_ascii=False)
-            )
-        }
+    subtask_store.update_fields(
+        db,
+        subtask=subtask,
+        **_build_subtask_content_fields(subtask.role, update),
+    )
 
     db.commit()
 
@@ -1135,11 +1112,11 @@ async def delete_message(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid message_id")
 
-    subtask = db.query(Subtask).filter(Subtask.id == subtask_id).first()
+    subtask = subtask_store.get_by_id(db, subtask_id=subtask_id)
     if not subtask:
         raise HTTPException(status_code=404, detail="Message not found")
 
-    subtask.status = SubtaskStatus.DELETE
+    subtask_store.update_status(db, subtask=subtask, status=SubtaskStatus.DELETE)
     db.commit()
 
     logger.debug(
@@ -1168,8 +1145,10 @@ async def clear_history(
         )
 
     # Soft delete all subtasks for this task
-    db.query(Subtask).filter(Subtask.task_id == task_id).update(
-        {"status": SubtaskStatus.DELETE}
+    subtask_store.mark_task_messages_status(
+        db,
+        task_id=task_id,
+        status=SubtaskStatus.DELETE,
     )
     db.commit()
 
@@ -1180,8 +1159,10 @@ async def clear_history(
 
 @router.get("/sessions", response_model=SessionListResponse)
 async def list_sessions(
-    limit: int = Query(100, description="Max number of sessions to return"),
-    offset: int = Query(0, description="Offset for pagination"),
+    limit: int = Query(
+        100, ge=1, le=1000, description="Max number of sessions to return"
+    ),
+    offset: int = Query(0, ge=0, description="Offset for pagination"),
     db: Session = Depends(get_db),
 ):
     """
@@ -1190,20 +1171,8 @@ async def list_sessions(
     Note: This is primarily for CLI/testing. In production, sessions are
     typically managed by task_id which comes from the frontend.
     """
-    # Get unique task_ids with subtasks, ordered by most recent activity
-    from sqlalchemy import func
-
-    task_ids = (
-        db.query(Subtask.task_id)
-        .filter(Subtask.status != SubtaskStatus.DELETE)
-        .group_by(Subtask.task_id)
-        .order_by(func.max(Subtask.id).desc())
-        .offset(offset)
-        .limit(limit)
-        .all()
-    )
-
-    sessions = [f"task-{task_id[0]}" for task_id in task_ids]
+    task_ids = subtask_store.list_session_task_ids(db, skip=offset, limit=limit)
+    sessions = [f"task-{task_id}" for task_id in task_ids]
 
     return SessionListResponse(sessions=sessions)
 

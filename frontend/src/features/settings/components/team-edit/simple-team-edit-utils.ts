@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import type { UnifiedShell } from '@/apis/shells'
+import { filterSelectableShells, type UnifiedShell } from '@/apis/shells'
 import type { TaskType } from '@/types/api'
 
 export type SimpleExecutorMode = 'simple' | 'complex' | 'custom'
@@ -89,7 +89,9 @@ export function shellSupportsPreloadSkills(shell: ShellIdentity | null | undefin
 }
 
 export function getCustomShells(shells: UnifiedShell[]): UnifiedShell[] {
-  return shells.filter(shell => shell.type === 'user' || shell.type === 'group')
+  return filterSelectableShells(shells).filter(
+    shell => shell.type === 'user' || shell.type === 'group'
+  )
 }
 
 export function resolveShellForExecutor(

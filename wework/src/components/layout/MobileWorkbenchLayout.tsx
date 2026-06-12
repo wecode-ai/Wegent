@@ -28,6 +28,7 @@ import type {
   GitBranch,
   GitRepoInfo,
   ProjectWithTasks,
+  TurnFileChangesSummary,
 } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
 import type { DeviceUpgradeState } from '@/types/device-events'
@@ -79,6 +80,7 @@ interface MobileWorkbenchLayoutProps {
     deviceId: string,
     path: string,
   ) => Promise<string[]>
+  onCreateDeviceDirectory?: (deviceId: string, path: string) => Promise<void>
   onLoadEnvironmentInfo?: (
     project: ProjectWithTasks | null,
   ) => Promise<EnvironmentInfo>
@@ -106,6 +108,11 @@ interface MobileWorkbenchLayoutProps {
   onSendQueuedAsGuidance?: (id: string) => void
   onEditQueuedMessage?: (id: string) => void
   onCancelGuidanceMessage?: (id: string) => void
+  onLoadFileChangesDiff?: (subtaskId: number) => Promise<string>
+  onRevertFileChanges?: (
+    subtaskId: number,
+  ) => Promise<TurnFileChangesSummary>
+  onRefreshWorkLists?: () => Promise<void>
   onLogout: () => void
 }
 
@@ -124,6 +131,19 @@ export function MobileWorkbenchLayout({
   projectWork,
   onSelectProject,
   onOpenTask,
+  onCreateProject,
+  onCreateGitWorkspaceProject,
+  onListGitRepositories,
+  onListGitBranches,
+  onUpdateProjectName,
+  onRemoveProject,
+  onArchiveProjectChats,
+  onArchiveTask,
+  onRenameTask,
+  onGetDeviceHomeDirectory,
+  onGetProjectWorkspaceRoot,
+  onListDeviceDirectories,
+  onCreateDeviceDirectory,
   onLoadEnvironmentInfo,
   onListEnvironmentBranches,
   onCheckoutEnvironmentBranch,
@@ -137,6 +157,9 @@ export function MobileWorkbenchLayout({
   onSendQueuedAsGuidance = () => {},
   onEditQueuedMessage = () => {},
   onCancelGuidanceMessage = () => {},
+  onLoadFileChangesDiff,
+  onRevertFileChanges,
+  onRefreshWorkLists,
 }: MobileWorkbenchLayoutProps) {
   const { t } = useTranslation('common')
   const [drawerOpen, setDrawerOpen] = useState(false)
@@ -314,6 +337,9 @@ export function MobileWorkbenchLayout({
               conversationKey={state.currentTask?.id ?? null}
               className="h-full"
               scrollerClassName="pb-28 pt-16"
+              devices={state.devices}
+              onLoadFileChangesDiff={onLoadFileChangesDiff}
+              onRevertFileChanges={onRevertFileChanges}
             />
             <div
               data-testid="mobile-chat-input-dock"
@@ -448,6 +474,7 @@ export function MobileWorkbenchLayout({
       <MobileDrawer
         open={drawerOpen}
         user={state.user}
+        devices={state.devices}
         projects={state.projects}
         recentTasks={state.recentTasks}
         runningTaskIds={runningTaskIds}
@@ -461,8 +488,22 @@ export function MobileWorkbenchLayout({
           setSettingsOpen(true)
           navigateTo('/settings')
         }}
+        onCreateProject={onCreateProject}
+        onCreateGitWorkspaceProject={onCreateGitWorkspaceProject}
+        onListGitRepositories={onListGitRepositories}
+        onListGitBranches={onListGitBranches}
+        onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
+        onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot}
+        onListDeviceDirectories={onListDeviceDirectories}
+        onCreateDeviceDirectory={onCreateDeviceDirectory}
+        onUpdateProjectName={onUpdateProjectName}
+        onRemoveProject={onRemoveProject}
+        onArchiveProjectChats={onArchiveProjectChats}
+        onArchiveTask={onArchiveTask}
+        onRenameTask={onRenameTask}
         onSelectProject={onSelectProject}
         onOpenTask={onOpenTask}
+        onRefreshWorkLists={onRefreshWorkLists}
       />
     </div>
   )

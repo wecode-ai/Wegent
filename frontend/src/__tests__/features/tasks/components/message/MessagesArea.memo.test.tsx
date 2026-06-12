@@ -67,6 +67,7 @@ const createTaskStateSnapshot = (
       canQueueMessage: false,
       canCancelTask: false,
       blocksQueuedDispatch: false,
+      serverConfirmedNoStream: false,
     },
   }
 

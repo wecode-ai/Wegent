@@ -9,6 +9,7 @@ import {
   Loader2,
   MessageSquarePlus,
   Plus,
+  RotateCw,
   Search,
   Settings,
   Sparkles,
@@ -22,6 +23,7 @@ import { ProjectCreateDialog } from '@/components/projects/ProjectCreateDialog'
 import { ProjectFolderIcon } from '@/components/projects/ProjectFolderIcon'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
+import { selectStandaloneConversations } from '@/lib/taskLists'
 import { cn } from '@/lib/utils'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import type {
@@ -41,6 +43,7 @@ import type { DeviceUpgradeState } from '@/types/device-events'
 import { DesktopSettingsMenu } from './DesktopSettingsMenu'
 import { DesktopSearchDialog } from './DesktopSearchDialog'
 import { DesktopWindowControls } from './DesktopWindowControls'
+import { DeviceStatusPrompt } from './DeviceStatusPrompt'
 import {
   DesktopTopBar,
   MAC_NATIVE_TOP_BAR_ACTION_INSET,
@@ -88,6 +91,7 @@ interface DesktopSidebarProps {
   onListDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
   onCreateDeviceDirectory: (deviceId: string, path: string) => Promise<void>
   onOpenSettings: (options?: { autoOpenAddCloudDeviceDialog?: boolean }) => void
+  onRefreshWorkLists?: () => Promise<void>
   onLogout: () => void
 }
 
@@ -271,14 +275,6 @@ function sortProjectTasks(tasks: ProjectTask[] = []) {
   })
 }
 
-function sortTasksByTime(tasks: Task[] = []) {
-  return [...tasks].sort((left, right) => {
-    const leftTime = new Date(left.updated_at || left.created_at || 0).getTime()
-    const rightTime = new Date(right.updated_at || right.created_at || 0).getTime()
-    return rightTime - leftTime
-  })
-}
-
 function isGitWorktreeSession(
   task: Pick<ProjectTask | Task, 'execution_workspace_source'>,
 ): boolean {
@@ -452,7 +448,7 @@ function ProjectTaskRow({
       onClick={handleOpen}
       onKeyDown={(event) => handleSidebarRowKeyDown(event, handleOpen)}
       className={[
-        'group/task flex h-8 cursor-default items-center rounded-md pl-9 pr-1 text-[13px] leading-[18px]',
+        'group/task flex h-8 min-w-0 cursor-default items-center rounded-md pl-9 pr-1 text-[13px] leading-[18px]',
         selected
           ? 'bg-[rgb(var(--color-sidebar-active))] text-text-primary'
           : 'text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]',
@@ -460,16 +456,19 @@ function ProjectTaskRow({
     >
       <span
         data-testid="project-chat-button"
+        title={title}
         className="min-w-0 flex-1 truncate"
       >
         {title}
       </span>
       <div className="relative ml-2 flex h-7 w-12 shrink-0 items-center justify-end">
         {running ? (
-          <Loader2
-            data-testid={`project-chat-spinner-${task.task_id}`}
-            className="h-3.5 w-3.5 animate-spin text-primary"
-          />
+          <span className="flex h-7 w-7 items-center justify-center group-hover/task:invisible group-focus-within/task:invisible">
+            <Loader2
+              data-testid={`project-chat-spinner-${task.task_id}`}
+              className="h-3.5 w-3.5 animate-spin text-primary"
+            />
+          </span>
         ) : (
           <span
             data-testid={`project-chat-time-${task.task_id}`}
@@ -496,7 +495,6 @@ function ProjectTaskRow({
           <ActionMenu
             ariaLabel={t('workbench.chat_actions', '会话操作')}
             testId={`project-chat-menu-${task.task_id}`}
-            variant="vertical"
             triggerClassName="flex h-7 w-7 items-center justify-center text-text-secondary hover:text-text-primary"
             items={[
               {
@@ -567,20 +565,22 @@ function ProjectItem({
     <div data-testid="project-item" className="space-y-0.5">
       <div
         data-testid={`project-row-${project.id}`}
-        className="group/project relative flex h-8 items-center gap-1 rounded-md pl-2.5 pr-1 text-[13px] leading-[18px] text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))]"
+        className="group/project relative flex h-8 min-w-0 items-center gap-1 rounded-md pl-2.5 pr-1 text-[13px] leading-[18px] text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))]"
       >
         <button
           type="button"
           data-testid="project-item-button"
           onClick={() => onToggleProject(project.id)}
           aria-expanded={expanded}
-          className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
+          className="flex min-w-0 flex-1 items-center gap-2.5 pr-16 text-left"
         >
           <ProjectFolderIcon
             project={project}
             className="h-3.5 w-3.5 shrink-0 text-[rgb(var(--color-sidebar-text-secondary))]"
           />
-          <span className="min-w-0 flex-1 truncate">{project.name}</span>
+          <span className="min-w-0 flex-1 truncate" title={project.name}>
+            {project.name}
+          </span>
           {projectDeviceState && (
             <SidebarDeviceStatusIndicator
               deviceState={projectDeviceState}
@@ -707,7 +707,7 @@ function RecentTaskRow({
       onClick={handleOpen}
       onKeyDown={(event) => handleSidebarRowKeyDown(event, handleOpen)}
       className={[
-        'group/task flex h-8 cursor-default items-center rounded-md pl-3 pr-0.5 text-[13px] leading-[18px]',
+        'group/task flex h-8 min-w-0 cursor-default items-center rounded-md pl-3 pr-0.5 text-[13px] leading-[18px]',
         selected
           ? 'bg-[rgb(var(--color-sidebar-active))] text-text-primary'
           : 'text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]',
@@ -715,6 +715,7 @@ function RecentTaskRow({
     >
       <span
         data-testid="history-task-button"
+        title={task.title}
         className="min-w-0 flex-1 truncate"
       >
         {task.title}
@@ -726,10 +727,12 @@ function RecentTaskRow({
         ].join(' ')}
       >
         {running ? (
-          <Loader2
-            data-testid={`history-task-spinner-${task.id}`}
-            className="h-3.5 w-3.5 animate-spin text-primary"
-          />
+          <span className="flex h-7 w-7 items-center justify-center group-hover/task:invisible group-focus-within/task:invisible">
+            <Loader2
+              data-testid={`history-task-spinner-${task.id}`}
+              className="h-3.5 w-3.5 animate-spin text-primary"
+            />
+          </span>
         ) : (
           <span
             data-testid={`history-task-time-${task.id}`}
@@ -762,7 +765,6 @@ function RecentTaskRow({
           <ActionMenu
             ariaLabel={t('workbench.chat_actions', '会话操作')}
             testId={`history-task-menu-${task.id}`}
-            variant="vertical"
             triggerClassName="flex h-7 w-7 items-center justify-center text-text-secondary hover:text-text-primary"
             items={[
               {
@@ -823,6 +825,7 @@ export function DesktopSidebar({
   onListDeviceDirectories,
   onCreateDeviceDirectory,
   onOpenSettings,
+  onRefreshWorkLists,
   onLogout,
 }: DesktopSidebarProps) {
   const { t } = useTranslation('common')
@@ -847,6 +850,7 @@ export function DesktopSidebar({
   )
   const storageScopeRef = useRef(storageScope)
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false)
+  const [isRefreshing, setIsRefreshing] = useState(false)
   const settingsMenuRef = useRef<HTMLDivElement>(null)
   const [projectCreateMode, setProjectCreateMode] = useState<ProjectCreateMode | null>(null)
   const [renamingProject, setRenamingProject] = useState<ProjectWithTasks | null>(null)
@@ -873,7 +877,7 @@ export function DesktopSidebar({
     [expandedTaskListIds, projects],
   )
   const sortedRecentTasks = useMemo(
-    () => sortTasksByTime(recentTasks).filter(task => !task.project_id),
+    () => selectStandaloneConversations(recentTasks),
     [recentTasks]
   )
   const currentProjectWithTask = useMemo(
@@ -1058,6 +1062,18 @@ export function DesktopSidebar({
             onToggleSidebar={onCollapse}
           />
         )}
+        right={(
+          <DeviceStatusPrompt
+            devices={devices}
+            upgradingDevices={upgradingDevices}
+            onUpgradeDevice={onUpgradeDevice ?? (async () => {})}
+            onOpenCloudDeviceSettings={() =>
+              onOpenSettings({ autoOpenAddCloudDeviceDialog: true })
+            }
+            presentation="sidebar-action"
+          />
+        )}
+        rightClassName="gap-2"
       />
 
       <nav className="space-y-0.5">
@@ -1218,17 +1234,38 @@ export function DesktopSidebar({
         </section>
       </div>
 
-      <div ref={settingsMenuRef} className="mt-4 shrink-0">
+      <div ref={settingsMenuRef} className="mt-4 flex shrink-0 items-center gap-1">
         <button
           type="button"
           data-testid="settings-button"
           onClick={() => setSettingsMenuOpen(open => !open)}
-          className="flex h-9 w-full shrink-0 items-center gap-2 rounded-md px-2 text-left text-[13px] font-medium leading-[18px] text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]"
+          className="flex h-9 shrink-0 w-full items-center gap-2 rounded-md px-2 text-left text-[13px] font-medium leading-[18px] text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]"
           aria-expanded={settingsMenuOpen}
         >
           <Settings className="h-4 w-4" />
           {t('workbench.settings', '设置')}
         </button>
+        {onRefreshWorkLists && (
+          <button
+            type="button"
+            data-testid="refresh-worklists-button"
+            disabled={isRefreshing}
+            onClick={async () => {
+              if (isRefreshing) return
+              setIsRefreshing(true)
+              try {
+                await onRefreshWorkLists()
+              } finally {
+                setIsRefreshing(false)
+              }
+            }}
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))] disabled:cursor-not-allowed disabled:opacity-60"
+            title={t('workbench.refresh_worklists', '刷新')}
+            aria-label={t('workbench.refresh_worklists', '刷新')}
+          >
+            <RotateCw className={cn('h-4 w-4', isRefreshing && 'animate-spin')} />
+          </button>
+        )}
         {settingsMenuOpen && (
           <DesktopSettingsMenu
             user={user}
