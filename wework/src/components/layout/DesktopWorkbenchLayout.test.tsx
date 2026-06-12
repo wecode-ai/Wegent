@@ -1880,7 +1880,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(onUpgradeDevice).toHaveBeenCalledWith('old-device')
   })
 
-  test('shows running spinners for project and standalone chats', () => {
+  test('shows compact running status pills for project and standalone chats', async () => {
     render(
       <DesktopWorkbenchLayout
         {...baseProps}
@@ -1894,7 +1894,7 @@ describe('DesktopWorkbenchLayout', () => {
               tasks: [
                 {
                   id: 31,
-                  task_id: 31,
+                  task_id: '31' as unknown as number,
                   task_title: 'Running project chat',
                   task_status: 'RUNNING',
                   updated_at: new Date().toISOString(),
@@ -1904,7 +1904,7 @@ describe('DesktopWorkbenchLayout', () => {
           ],
           recentTasks: [
             {
-              id: 41,
+              id: '41' as unknown as number,
               title: 'Running standalone chat',
               status: 'RUNNING',
               task_type: 'code',
@@ -1917,7 +1917,17 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     expect(screen.getByTestId('project-spinner-1')).toBeInTheDocument()
-    expect(screen.getByTestId('history-task-spinner-41')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('project-item-button'))
+    expect(screen.getByTestId('project-chat-running-pill-31')).toHaveClass(
+      'rounded-full',
+      'border',
+    )
+    expect(screen.queryByTestId('project-chat-actions-31')).not.toBeInTheDocument()
+    expect(screen.getByTestId('history-task-running-pill-41')).toHaveClass(
+      'rounded-full',
+      'border',
+    )
+    expect(screen.queryByTestId('history-task-actions-41')).not.toBeInTheDocument()
   })
 
   test('does not show spinners for stale server running statuses on initial lists', () => {

@@ -5,6 +5,7 @@ import type {
   TaskArchiveResponse,
   TaskDetail,
   TaskListResponse,
+  TaskRuntimeCheck,
   TurnFileChangesDiffResponse,
   TurnFileChangesRevertResponse,
 } from '@/types/api'
@@ -41,6 +42,9 @@ export function createTaskApi(client: HttpClient) {
     },
     getTaskDetail(taskId: number): Promise<TaskDetail> {
       return client.get(`/tasks/${taskId}?client_origin=${WEWORK_CLIENT_ORIGIN}`)
+    },
+    getTaskRuntimeCheck(taskId: number): Promise<TaskRuntimeCheck> {
+      return client.get(`/tasks/${taskId}/runtime-check`)
     },
     getTurnFileChangesDiff(
       subtaskId: number,

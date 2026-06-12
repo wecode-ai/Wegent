@@ -8,6 +8,7 @@ import type {
   User,
   UserPreferences,
 } from '@/types/api'
+import type { DeviceSlotUpdatePayload } from '@/types/device-events'
 import type { WorkbenchState } from '@/types/workbench'
 
 export const initialWorkbenchState: WorkbenchState = {
@@ -48,6 +49,10 @@ export type WorkbenchAction =
       devices: DeviceInfo[]
       standaloneDeviceId?: string | null
     }
+  | {
+      type: 'device_slot_updated'
+      payload: DeviceSlotUpdatePayload
+    }
   | { type: 'bootstrap_failed'; error: string }
   | { type: 'project_selected'; project: ProjectWithTasks }
   | { type: 'project_updated'; project: ProjectWithTasks }
@@ -80,10 +85,22 @@ function collectProjectTaskIds(projects: ProjectWithTasks[]): Set<number> {
   const ids = new Set<number>()
   for (const project of projects) {
     for (const task of project.tasks ?? []) {
-      ids.add(task.task_id)
+      const taskId = normalizeTaskId(task.task_id)
+      if (taskId !== undefined) ids.add(taskId)
     }
   }
   return ids
+}
+
+function normalizeTaskId(value: unknown): number | undefined {
+  const taskId = Number(value)
+  return Number.isInteger(taskId) && taskId > 0 ? taskId : undefined
+}
+
+function isSameTaskId(left: unknown, right: unknown): boolean {
+  const leftTaskId = normalizeTaskId(left)
+  const rightTaskId = normalizeTaskId(right)
+  return leftTaskId !== undefined && leftTaskId === rightTaskId
 }
 
 function removeTaskFromProjects(
@@ -91,10 +108,10 @@ function removeTaskFromProjects(
   taskId: number
 ): ProjectWithTasks[] {
   return projects.map(project => {
-    if (!project.tasks?.some(task => task.task_id === taskId)) return project
+    if (!project.tasks?.some(task => isSameTaskId(task.task_id, taskId))) return project
     return {
       ...project,
-      tasks: project.tasks.filter(task => task.task_id !== taskId),
+      tasks: project.tasks.filter(task => !isSameTaskId(task.task_id, taskId)),
     }
   })
 }
@@ -124,14 +141,25 @@ function keepDevicesOnTransientEmpty(
   return nextDevices
 }
 
+function getTaskStatus(task: Task): string {
+  return task.status ?? task.task_status ?? ''
+}
+
+function normalizeTaskRuntimeStatus(task: Task): Task {
+  const status = getTaskStatus(task)
+  if (!status || task.status === status) return task
+  return { ...task, status }
+}
+
 function toProjectTask(task: Task): ProjectTask {
+  const status = getTaskStatus(task)
   return {
     id: task.id,
     task_id: task.id,
     task_title: task.title,
-    task_status: task.status,
+    task_status: status,
     title: task.title,
-    status: task.status,
+    status,
     task_type: task.task_type,
     created_at: task.created_at,
     updated_at: task.updated_at,
@@ -145,7 +173,9 @@ function upsertTask<T>(
   getTaskId: (task: T) => number
 ): T[] {
   const currentTasks = tasks ?? []
-  const existingIndex = currentTasks.findIndex(task => getTaskId(task) === taskId)
+  const existingIndex = currentTasks.findIndex(task =>
+    isSameTaskId(getTaskId(task), taskId)
+  )
   if (existingIndex === -1) return [nextTask, ...currentTasks]
 
   return currentTasks.map((task, index) => (index === existingIndex ? nextTask : task))
@@ -180,9 +210,10 @@ function normalizeOpenedTaskProject(
   task: Task,
   project: ProjectWithTasks | null | undefined
 ): Task {
-  if (project === undefined) return task
+  const normalizedTask = normalizeTaskRuntimeStatus(task)
+  if (project === undefined) return normalizedTask
   return {
-    ...task,
+    ...normalizedTask,
     project_id: project?.id ?? 0,
   }
 }
@@ -195,11 +226,13 @@ function workListsIncludeTask(
   if (taskBelongsToProject(task)) {
     return projects.some(project =>
       project.id === task.project_id &&
-      (project.tasks ?? []).some(projectTask => projectTask.task_id === task.id)
+      (project.tasks ?? []).some(projectTask =>
+        isSameTaskId(projectTask.task_id, task.id)
+      )
     )
   }
 
-  return recentTasks.some(recentTask => recentTask.id === task.id)
+  return recentTasks.some(recentTask => isSameTaskId(recentTask.id, task.id))
 }
 
 export function workbenchReducer(
@@ -258,6 +291,22 @@ export function workbenchReducer(
           action.standaloneDeviceId === undefined
             ? state.standaloneDeviceId
             : action.standaloneDeviceId,
+      }
+    case 'device_slot_updated':
+      return {
+        ...state,
+        devices: state.devices.map(device =>
+          device.device_id === action.payload.device_id
+            ? {
+                ...device,
+                slot_used: action.payload.slot_used,
+                slot_max: action.payload.slot_max ?? device.slot_max,
+                running_tasks: action.payload.running_tasks ?? device.running_tasks,
+                running_task_ids:
+                  action.payload.running_task_ids ?? device.running_task_ids,
+              }
+            : device
+        ),
       }
     case 'bootstrap_failed':
       return { ...state, isBootstrapping: false, error: action.error }
@@ -322,16 +371,18 @@ export function workbenchReducer(
       return {
         ...state,
         currentTask:
-          state.currentTask?.id === action.taskId
+          state.currentTask && isSameTaskId(state.currentTask.id, action.taskId)
             ? { ...state.currentTask, status: action.status }
             : state.currentTask,
         recentTasks: state.recentTasks.map(task =>
-          task.id === action.taskId ? { ...task, status: action.status } : task
+          isSameTaskId(task.id, action.taskId)
+            ? { ...task, status: action.status }
+            : task
         ),
         projects: state.projects.map(project => ({
           ...project,
           tasks: project.tasks?.map(task =>
-            task.task_id === action.taskId
+            isSameTaskId(task.task_id, action.taskId)
               ? { ...task, task_status: action.status, status: action.status }
               : task
           ),

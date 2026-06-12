@@ -14,6 +14,27 @@ function Probe() {
   )
 }
 
+function RunningTaskIdsProbe() {
+  const { runningTaskIds } = useWorkbench()
+  return (
+    <div data-testid="running-task-ids">
+      {Array.from(runningTaskIds).sort((a, b) => a - b).join(',')}
+    </div>
+  )
+}
+
+function OpenTaskRunningIdsProbe({ taskId }: { taskId: number }) {
+  const workbench = useWorkbench()
+  return (
+    <div>
+      <RunningTaskIdsProbe />
+      <button type="button" onClick={() => void workbench.openTask(taskId)}>
+        open task
+      </button>
+    </div>
+  )
+}
+
 function ProjectChatProbe() {
   const workbench = useWorkbench()
   const projectChat = workbench.projectChat
@@ -341,6 +362,384 @@ describe('WorkbenchProvider', () => {
 
     await waitFor(() =>
       expect(screen.getByTestId('probe')).toHaveTextContent('alice')
+    )
+  })
+
+  test('keeps running ids from work lists and device slots after opening another task', async () => {
+    window.history.pushState({}, '', '/projects/7/tasks/12')
+
+    render(
+      <WorkbenchProvider
+        user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+        services={{
+          teamApi: {
+            getDefaultWorkbenchTeam: vi
+              .fn()
+              .mockResolvedValue({ id: 2, name: 'coder', is_active: true }),
+          },
+          modelApi: {
+            listModels: vi.fn().mockResolvedValue({ data: [] }),
+          },
+          skillApi: {
+            listSkills: vi.fn().mockResolvedValue([]),
+            getTeamSkills: vi.fn().mockResolvedValue({ skills: [], preload_skills: [] }),
+          },
+          projectApi: {
+            listProjects: vi.fn().mockResolvedValue({
+              items: [
+                {
+                  id: 7,
+                  name: 'Desktop',
+                  tasks: [
+                    {
+                      id: 11,
+                      task_id: '11' as unknown as number,
+                      task_title: 'hello',
+                      task_status: 'RUNNING',
+                      updated_at: '2026-06-11T00:01:00.000Z',
+                    },
+                    {
+                      id: 12,
+                      task_id: 12,
+                      task_title: '执行pwd',
+                      task_status: 'COMPLETED',
+                      updated_at: '2026-06-11T00:02:00.000Z',
+                    },
+                    {
+                      id: 13,
+                      task_id: 13,
+                      task_title: 'stale status task',
+                      task_status: 'COMPLETED',
+                      updated_at: '2026-06-11T00:03:00.000Z',
+                    },
+                    {
+                      id: 14,
+                      task_id: 14,
+                      task_title: 'pre executed task',
+                      task_status: 'PRE_EXECUTED',
+                      updated_at: '2026-06-11T00:04:00.000Z',
+                    },
+                    {
+                      id: 15,
+                      task_id: 15,
+                      task_title: 'phase running task',
+                      status: { phase: 'RUNNING' } as unknown as string,
+                      updated_at: '2026-06-11T00:05:00.000Z',
+                    },
+                    {
+                      id: 16,
+                      task_id: 16,
+                      task_title: 'unknown active task',
+                      task_status: 'BACKEND_DISPATCHED',
+                      updated_at: '2026-06-11T00:06:00.000Z',
+                    },
+                  ],
+                },
+              ],
+            }),
+            getProject: vi.fn(),
+            createProject: vi.fn(),
+            updateProject: vi.fn(),
+            deleteProject: vi.fn(),
+            archiveProjectChats: vi.fn(),
+            archiveAllProjectChats: vi.fn(),
+            createConversation: vi.fn(),
+          },
+          taskApi: {
+            listRecentTasks: vi.fn().mockResolvedValue({ total: 0, items: [] }),
+            getTaskDetail: vi.fn().mockResolvedValue({
+              id: 12,
+              title: '执行pwd',
+              status: 'COMPLETED',
+              task_type: 'code',
+              project_id: 7,
+              created_at: '2026-06-11T00:02:00.000Z',
+            }),
+            renameTask: vi.fn(),
+            archiveTask: vi.fn(),
+            archiveAllChats: vi.fn(),
+            listArchivedTasks: vi.fn(),
+            unarchiveTask: vi.fn(),
+            deleteTask: vi.fn(),
+            deleteArchivedTasks: vi.fn(),
+          },
+          deviceApi: {
+            listDevices: vi.fn().mockResolvedValue([
+              {
+                id: 1,
+                device_id: 'local-1',
+                name: 'Local Device',
+                status: 'online',
+                is_default: true,
+                device_type: 'local',
+                bind_shell: 'claudecode',
+                running_task_ids: ['13' as unknown as number],
+              },
+            ]),
+            getHomeDirectory: vi.fn(),
+            getProjectWorkspaceRoot: vi.fn(),
+            listDirectories: vi.fn(),
+            listSkills: vi.fn().mockResolvedValue([]),
+          },
+          chatStream: {
+            joinTask: vi.fn().mockResolvedValue({}),
+            leaveTask: vi.fn(),
+            sendMessage: vi.fn(),
+            subscribe: vi.fn(() => vi.fn()),
+          },
+        }}
+      >
+        <RunningTaskIdsProbe />
+      </WorkbenchProvider>,
+    )
+
+    await waitFor(() =>
+      expect(screen.getByTestId('running-task-ids')).toHaveTextContent(
+        '11,13,14,15,16',
+      ),
+    )
+  })
+
+  test('marks an opened detail task as running from task_status', async () => {
+    render(
+      <WorkbenchProvider
+        user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+        services={{
+          teamApi: {
+            getDefaultWorkbenchTeam: vi
+              .fn()
+              .mockResolvedValue({ id: 2, name: 'coder', is_active: true }),
+          },
+          modelApi: {
+            listModels: vi.fn().mockResolvedValue({ data: [] }),
+          },
+          skillApi: {
+            listSkills: vi.fn().mockResolvedValue([]),
+            getTeamSkills: vi.fn().mockResolvedValue({ skills: [], preload_skills: [] }),
+          },
+          projectApi: {
+            listProjects: vi.fn().mockResolvedValue({
+              items: [{ id: 7, name: 'Desktop', tasks: [] }],
+            }),
+            getProject: vi.fn(),
+            createProject: vi.fn(),
+            updateProject: vi.fn(),
+            deleteProject: vi.fn(),
+            archiveProjectChats: vi.fn(),
+            archiveAllProjectChats: vi.fn(),
+            createConversation: vi.fn(),
+          },
+          taskApi: {
+            listRecentTasks: vi.fn().mockResolvedValue({ total: 0, items: [] }),
+            getTaskDetail: vi.fn().mockResolvedValue({
+              id: 2005,
+              title: '执行pwd',
+              task_status: 'BACKEND_DISPATCHED',
+              task_type: 'code',
+              project_id: 7,
+              created_at: '2026-06-11T00:02:00.000Z',
+            }),
+            renameTask: vi.fn(),
+            archiveTask: vi.fn(),
+            archiveAllChats: vi.fn(),
+            listArchivedTasks: vi.fn(),
+            unarchiveTask: vi.fn(),
+            deleteTask: vi.fn(),
+            deleteArchivedTasks: vi.fn(),
+          },
+          deviceApi: {
+            listDevices: vi.fn().mockResolvedValue([]),
+            getHomeDirectory: vi.fn(),
+            getProjectWorkspaceRoot: vi.fn(),
+            listDirectories: vi.fn(),
+            listSkills: vi.fn().mockResolvedValue([]),
+          },
+          chatStream: {
+            joinTask: vi.fn().mockResolvedValue({}),
+            leaveTask: vi.fn(),
+            sendMessage: vi.fn(),
+            subscribe: vi.fn(() => vi.fn()),
+          },
+        }}
+      >
+        <OpenTaskRunningIdsProbe taskId={2005} />
+      </WorkbenchProvider>,
+    )
+
+    await userEvent.click(await screen.findByText('open task'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('running-task-ids')).toHaveTextContent('2005'),
+    )
+  })
+
+  test('updates sidebar running ids from task status socket events', async () => {
+    let handlers: Record<string, (payload: unknown) => void> = {}
+
+    render(
+      <WorkbenchProvider
+        user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+        services={{
+          teamApi: {
+            getDefaultWorkbenchTeam: vi
+              .fn()
+              .mockResolvedValue({ id: 2, name: 'coder', is_active: true }),
+          },
+          modelApi: {
+            listModels: vi.fn().mockResolvedValue({ data: [] }),
+          },
+          skillApi: {
+            listSkills: vi.fn().mockResolvedValue([]),
+            getTeamSkills: vi.fn().mockResolvedValue({ skills: [], preload_skills: [] }),
+          },
+          projectApi: {
+            listProjects: vi.fn().mockResolvedValue({
+              items: [
+                {
+                  id: 7,
+                  name: 'Desktop',
+                  tasks: [
+                    {
+                      id: 2005,
+                      task_id: 2005,
+                      task_title: '执行pwd',
+                      task_status: 'COMPLETED',
+                      updated_at: '2026-06-11T00:02:00.000Z',
+                    },
+                  ],
+                },
+              ],
+            }),
+            getProject: vi.fn(),
+            createProject: vi.fn(),
+            updateProject: vi.fn(),
+            deleteProject: vi.fn(),
+            archiveProjectChats: vi.fn(),
+            archiveAllProjectChats: vi.fn(),
+            createConversation: vi.fn(),
+          },
+          taskApi: {
+            listRecentTasks: vi.fn().mockResolvedValue({ total: 0, items: [] }),
+            getTaskDetail: vi.fn(),
+            renameTask: vi.fn(),
+            archiveTask: vi.fn(),
+            archiveAllChats: vi.fn(),
+            listArchivedTasks: vi.fn(),
+            unarchiveTask: vi.fn(),
+            deleteTask: vi.fn(),
+            deleteArchivedTasks: vi.fn(),
+          },
+          deviceApi: {
+            listDevices: vi.fn().mockResolvedValue([]),
+            getHomeDirectory: vi.fn(),
+            getProjectWorkspaceRoot: vi.fn(),
+            listDirectories: vi.fn(),
+            listSkills: vi.fn().mockResolvedValue([]),
+          },
+          chatStream: {
+            joinTask: vi.fn().mockResolvedValue({}),
+            leaveTask: vi.fn(),
+            sendMessage: vi.fn(),
+            subscribe: vi.fn(nextHandlers => {
+              handlers = nextHandlers as Record<string, (payload: unknown) => void>
+              return vi.fn()
+            }),
+          },
+        }}
+      >
+        <RunningTaskIdsProbe />
+      </WorkbenchProvider>,
+    )
+
+    await waitFor(() =>
+      expect(screen.getByTestId('running-task-ids')).toHaveTextContent(''),
+    )
+
+    handlers.onTaskStatus?.({ task_id: 2005, status: 'RUNNING' })
+
+    await waitFor(() =>
+      expect(screen.getByTestId('running-task-ids')).toHaveTextContent('2005'),
+    )
+  })
+
+  test('uses runtime-check to mark an opened task as running', async () => {
+    const getTaskRuntimeCheck = vi.fn().mockResolvedValue({
+      task_id: 2005,
+      task_status: 'RUNNING',
+      active_stream: null,
+    })
+
+    render(
+      <WorkbenchProvider
+        user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+        services={{
+          teamApi: {
+            getDefaultWorkbenchTeam: vi
+              .fn()
+              .mockResolvedValue({ id: 2, name: 'coder', is_active: true }),
+          },
+          modelApi: {
+            listModels: vi.fn().mockResolvedValue({ data: [] }),
+          },
+          skillApi: {
+            listSkills: vi.fn().mockResolvedValue([]),
+            getTeamSkills: vi.fn().mockResolvedValue({ skills: [], preload_skills: [] }),
+          },
+          projectApi: {
+            listProjects: vi.fn().mockResolvedValue({
+              items: [{ id: 7, name: 'Desktop', tasks: [] }],
+            }),
+            getProject: vi.fn(),
+            createProject: vi.fn(),
+            updateProject: vi.fn(),
+            deleteProject: vi.fn(),
+            archiveProjectChats: vi.fn(),
+            archiveAllProjectChats: vi.fn(),
+            createConversation: vi.fn(),
+          },
+          taskApi: {
+            listRecentTasks: vi.fn().mockResolvedValue({ total: 0, items: [] }),
+            getTaskDetail: vi.fn().mockResolvedValue({
+              id: 2005,
+              title: '执行pwd',
+              status: 'COMPLETED',
+              task_type: 'code',
+              project_id: 7,
+              created_at: '2026-06-11T00:02:00.000Z',
+            }),
+            getTaskRuntimeCheck,
+            renameTask: vi.fn(),
+            archiveTask: vi.fn(),
+            archiveAllChats: vi.fn(),
+            listArchivedTasks: vi.fn(),
+            unarchiveTask: vi.fn(),
+            deleteTask: vi.fn(),
+            deleteArchivedTasks: vi.fn(),
+          },
+          deviceApi: {
+            listDevices: vi.fn().mockResolvedValue([]),
+            getHomeDirectory: vi.fn(),
+            getProjectWorkspaceRoot: vi.fn(),
+            listDirectories: vi.fn(),
+            listSkills: vi.fn().mockResolvedValue([]),
+          },
+          chatStream: {
+            joinTask: vi.fn().mockResolvedValue({}),
+            leaveTask: vi.fn(),
+            sendMessage: vi.fn(),
+            subscribe: vi.fn(() => vi.fn()),
+          },
+        }}
+      >
+        <OpenTaskRunningIdsProbe taskId={2005} />
+      </WorkbenchProvider>,
+    )
+
+    await userEvent.click(await screen.findByText('open task'))
+
+    await waitFor(() => expect(getTaskRuntimeCheck).toHaveBeenCalledWith(2005))
+    await waitFor(() =>
+      expect(screen.getByTestId('running-task-ids')).toHaveTextContent('2005'),
     )
   })
 

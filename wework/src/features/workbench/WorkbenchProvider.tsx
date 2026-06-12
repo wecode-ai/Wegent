@@ -54,12 +54,14 @@ import type {
   Task,
   TaskDetail,
   TaskListResponse,
+  TaskRuntimeCheck,
   TurnFileChangesSummary,
   UnifiedModel,
   UnifiedSkill,
   User,
 } from '@/types/api'
 import type {
+  DeviceSlotUpdatePayload,
   DeviceUpgradeState,
   DeviceUpgradeStatusPayload,
 } from '@/types/device-events'
@@ -175,9 +177,15 @@ export interface WorkbenchServices {
   gitApi?: ReturnType<typeof createGitApi>
   taskApi: Omit<
     ReturnType<typeof createTaskApi>,
-    'searchTasks' | 'getTurnFileChangesDiff' | 'revertTurnFileChanges'
+    | 'searchTasks'
+    | 'getTaskRuntimeCheck'
+    | 'getTurnFileChangesDiff'
+    | 'revertTurnFileChanges'
   > & {
     searchTasks?: ReturnType<typeof createTaskApi>['searchTasks']
+    getTaskRuntimeCheck?: ReturnType<
+      typeof createTaskApi
+    >['getTaskRuntimeCheck']
     getTurnFileChangesDiff?: ReturnType<
       typeof createTaskApi
     >['getTurnFileChangesDiff']
@@ -554,10 +562,93 @@ function getNewChatModelSelection(user: User | null): ModelSelectionConfig | nul
   return user?.preferences?.wework_new_chat_model_selection ?? null
 }
 
-function isRunningTaskStatus(status?: string) {
-  return ['PENDING', 'RUNNING', 'STARTED', 'PROCESSING', 'IN_PROGRESS'].includes(
-    String(status ?? '').toUpperCase()
-  )
+const TERMINAL_TASK_STATUSES = new Set([
+  'COMPLETED',
+  'SUCCESS',
+  'FAILED',
+  'CANCELLED',
+  'CANCELED',
+  'DELETE',
+  'TIMEOUT',
+])
+const WAITING_FOR_USER_TASK_STATUSES = new Set(['PENDING_CONFIRMATION'])
+
+function normalizeTaskStatus(value: unknown): string | undefined {
+  if (typeof value === 'string') return value.toUpperCase()
+  if (!value || typeof value !== 'object') return undefined
+
+  const record = value as Record<string, unknown>
+  const nestedStatus = record.status
+  if (typeof nestedStatus === 'string') return nestedStatus.toUpperCase()
+
+  const phase = record.phase
+  if (typeof phase === 'string') return phase.toUpperCase()
+
+  return undefined
+}
+
+function isRunningTaskStatus(status?: unknown) {
+  const normalizedStatus = normalizeTaskStatus(status)
+  if (!normalizedStatus) return false
+  if (TERMINAL_TASK_STATUSES.has(normalizedStatus)) return false
+  if (WAITING_FOR_USER_TASK_STATUSES.has(normalizedStatus)) return false
+  return true
+}
+
+function normalizeRunningTaskId(value: unknown) {
+  const taskId = Number(value)
+  return Number.isInteger(taskId) && taskId > 0 ? taskId : undefined
+}
+
+function addRunningTaskId(ids: Set<number>, value: unknown) {
+  const taskId = normalizeRunningTaskId(value)
+  if (taskId !== undefined) ids.add(taskId)
+}
+
+function addRunningTasksFromWorkLists(
+  ids: Set<number>,
+  projects: ProjectWithTasks[],
+  recentTasks: Task[],
+) {
+  for (const project of projects) {
+    for (const task of project.tasks ?? []) {
+      if (task.task_id && isRunningTaskStatus(task.task_status ?? task.status)) {
+        addRunningTaskId(ids, task.task_id)
+      }
+    }
+  }
+
+  for (const task of recentTasks) {
+    if (task.id && isRunningTaskStatus(task.status)) {
+      addRunningTaskId(ids, task.id)
+    }
+  }
+}
+
+function addRunningTasksFromDevices(ids: Set<number>, devices: DeviceInfo[]) {
+  for (const device of devices) {
+    for (const taskId of device.running_task_ids ?? []) {
+      addRunningTaskId(ids, taskId)
+    }
+    for (const task of device.running_tasks ?? []) {
+      if (task.task_id) {
+        addRunningTaskId(ids, task.task_id)
+      }
+    }
+  }
+}
+
+function mergeTaskRuntimeCheck(
+  task: TaskDetail,
+  runtimeCheck: TaskRuntimeCheck | null,
+): TaskDetail {
+  if (!runtimeCheck || runtimeCheck.task_id !== task.id) return task
+  return {
+    ...task,
+    status: runtimeCheck.task_status,
+    task_status: runtimeCheck.task_status,
+    updated_at: runtimeCheck.status_updated_at ?? task.updated_at,
+  }
 }
 
 function normalizeGuidanceError(error?: string) {
@@ -918,6 +1009,10 @@ export function WorkbenchProvider({
     const handleDeviceChanged = () => {
       void refreshDevices()
     }
+    const handleDeviceSlotUpdate = (payload: DeviceSlotUpdatePayload) => {
+      dispatch({ type: 'device_slot_updated', payload })
+      void refreshDevices()
+    }
     const handleDeviceUpgradeStatus = (payload: DeviceUpgradeStatusPayload) => {
       setDeviceUpgradeState(payload.device_id, {
         status: payload.status,
@@ -934,8 +1029,15 @@ export function WorkbenchProvider({
       onDeviceOnline: handleDeviceChanged,
       onDeviceOffline: handleDeviceChanged,
       onDeviceStatus: handleDeviceChanged,
-      onDeviceSlotUpdate: handleDeviceChanged,
+      onDeviceSlotUpdate: handleDeviceSlotUpdate,
       onDeviceUpgradeStatus: handleDeviceUpgradeStatus,
+      onTaskStatus: payload => {
+        dispatch({
+          type: 'task_status_changed',
+          taskId: payload.task_id,
+          status: payload.status,
+        })
+      },
       onChatStart: payload => {
         setIsAwaitingAssistantStart(false)
         dispatch({
@@ -1216,7 +1318,13 @@ export function WorkbenchProvider({
 
   const openTask = useCallback(
     async (taskId: number, projectId?: number) => {
-      const detail = await resolvedServices.taskApi.getTaskDetail(taskId)
+      const [rawDetail, runtimeCheck] = await Promise.all([
+        resolvedServices.taskApi.getTaskDetail(taskId),
+        resolvedServices.taskApi
+          .getTaskRuntimeCheck?.(taskId)
+          .catch(() => null) ?? Promise.resolve(null),
+      ])
+      const detail = mergeTaskRuntimeCheck(rawDetail, runtimeCheck)
       const detailTask = detail as Task
       const listTask = state.recentTasks.find(item => item.id === taskId)
       const resolvedProjectId = resolveOpenedTaskProjectId(
@@ -1679,11 +1787,10 @@ export function WorkbenchProvider({
 
       if (!state.currentTask && ack.task_id) {
         const projectId = payload.project_id ?? state.currentProject?.id ?? 0
-        const routeProjectId = projectId > 0 ? projectId : undefined
         // Navigate to the canonical task route so a freshly created chat shares
         // the same URL shape as opening an existing one (path, not ?taskId=).
-        handledTaskRouteRef.current = getTaskRouteKey(ack.task_id, routeProjectId)
-        navigateTo(buildTaskRoute({ taskId: ack.task_id, projectId: routeProjectId }))
+        handledTaskRouteRef.current = getTaskRouteKey(ack.task_id, projectId)
+        navigateTo(buildTaskRoute({ taskId: ack.task_id, projectId }))
         const openedTask: Task = {
           id: ack.task_id,
           title: message.substring(0, 100),
@@ -1711,6 +1818,7 @@ export function WorkbenchProvider({
     [
       refreshWorkLists,
       resolvedServices.chatStream,
+      state.currentProject?.id,
       state.currentTask,
     ]
   )
@@ -2075,8 +2183,10 @@ export function WorkbenchProvider({
 
   const runningTaskIds = useMemo(() => {
     const ids = new Set<number>()
+    addRunningTasksFromWorkLists(ids, state.projects, state.recentTasks)
+    addRunningTasksFromDevices(ids, state.devices)
     if (state.currentTask && isRunningTaskStatus(state.currentTask.status)) {
-      ids.add(state.currentTask.id)
+      addRunningTaskId(ids, state.currentTask.id)
     }
     for (const message of messages) {
       if (
@@ -2084,11 +2194,11 @@ export function WorkbenchProvider({
         message.status === 'streaming' &&
         message.taskId
       ) {
-        ids.add(message.taskId)
+        addRunningTaskId(ids, message.taskId)
       }
     }
     return ids
-  }, [messages, state.currentTask])
+  }, [messages, state.currentTask, state.devices, state.projects, state.recentTasks])
 
   const value: WorkbenchContextValue = {
     state,

@@ -112,6 +112,19 @@ describe('REST adapters', () => {
     expect(client.get).toHaveBeenCalledWith('/tasks/8?client_origin=wework')
   })
 
+  test('checks task runtime status from the task adapter', async () => {
+    const client = mockClient()
+    vi.mocked(client.get).mockResolvedValueOnce({
+      task_id: 8,
+      task_status: 'RUNNING',
+      active_stream: null,
+    })
+
+    await createTaskApi(client).getTaskRuntimeCheck(8)
+
+    expect(client.get).toHaveBeenCalledWith('/tasks/8/runtime-check')
+  })
+
   test('searches conversation tasks in the wework client origin', async () => {
     const client = mockClient()
     vi.mocked(client.get).mockResolvedValueOnce({ total: 0, items: [] })

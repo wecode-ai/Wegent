@@ -102,6 +102,39 @@ const SIDEBAR_ROW_METADATA_CLASS =
 const SIDEBAR_ROW_ACTIONS_CLASS =
   'absolute inset-0 invisible flex items-center justify-end opacity-0 transition-opacity group-hover/task:visible group-hover/task:opacity-100 group-focus-within/task:visible group-focus-within/task:opacity-100'
 
+function normalizeSidebarTaskId(value: unknown) {
+  const taskId = Number(value)
+  return Number.isInteger(taskId) && taskId > 0 ? taskId : undefined
+}
+
+function hasRunningSidebarTaskId(
+  runningTaskIds: Set<number>,
+  value: unknown,
+) {
+  const taskId = normalizeSidebarTaskId(value)
+  return taskId !== undefined && runningTaskIds.has(taskId)
+}
+
+function SidebarRunningStatusPill({
+  testId,
+  spinnerTestId,
+}: {
+  testId: string
+  spinnerTestId: string
+}) {
+  return (
+    <span
+      data-testid={testId}
+      className="flex h-5 min-w-7 items-center justify-center rounded-full border border-border bg-base px-1.5 text-primary shadow-sm"
+    >
+      <Loader2
+        data-testid={spinnerTestId}
+        className="h-3.5 w-3.5 animate-spin"
+      />
+    </span>
+  )
+}
+
 function SidebarButton({
   icon: Icon,
   label,
@@ -463,12 +496,10 @@ function ProjectTaskRow({
       </span>
       <div className="relative ml-2 flex h-7 w-12 shrink-0 items-center justify-end">
         {running ? (
-          <span className="flex h-7 w-7 items-center justify-center group-hover/task:invisible group-focus-within/task:invisible">
-            <Loader2
-              data-testid={`project-chat-spinner-${task.task_id}`}
-              className="h-3.5 w-3.5 animate-spin text-primary"
-            />
-          </span>
+          <SidebarRunningStatusPill
+            testId={`project-chat-running-pill-${task.task_id}`}
+            spinnerTestId={`project-chat-spinner-${task.task_id}`}
+          />
         ) : (
           <span
             data-testid={`project-chat-time-${task.task_id}`}
@@ -488,30 +519,32 @@ function ProjectTaskRow({
             </span>
           </span>
         )}
-        <div
-          data-testid={`project-chat-actions-${task.task_id}`}
-          className={SIDEBAR_ROW_ACTIONS_CLASS}
-        >
-          <ActionMenu
-            ariaLabel={t('workbench.chat_actions', '会话操作')}
-            testId={`project-chat-menu-${task.task_id}`}
-            triggerClassName="flex h-7 w-7 items-center justify-center text-text-secondary hover:text-text-primary"
-            items={[
-              {
-                label: t('workbench.archive_chat', '归档会话'),
-                icon: Archive,
-                testId: `archive-chat-${task.task_id}`,
-                onSelect: () => onArchiveTask(task.task_id),
-              },
-              {
-                label: t('workbench.rename_chat', '重命名会话'),
-                icon: Edit3,
-                testId: `rename-chat-${task.task_id}`,
-                onSelect: () => onRenameTask(task),
-              },
-            ]}
-          />
-        </div>
+        {!running ? (
+          <div
+            data-testid={`project-chat-actions-${task.task_id}`}
+            className={SIDEBAR_ROW_ACTIONS_CLASS}
+          >
+            <ActionMenu
+              ariaLabel={t('workbench.chat_actions', '会话操作')}
+              testId={`project-chat-menu-${task.task_id}`}
+              triggerClassName="flex h-7 w-7 items-center justify-center text-text-secondary hover:text-text-primary"
+              items={[
+                {
+                  label: t('workbench.archive_chat', '归档会话'),
+                  icon: Archive,
+                  testId: `archive-chat-${task.task_id}`,
+                  onSelect: () => onArchiveTask(task.task_id),
+                },
+                {
+                  label: t('workbench.rename_chat', '重命名会话'),
+                  icon: Edit3,
+                  testId: `rename-chat-${task.task_id}`,
+                  onSelect: () => onRenameTask(task),
+                },
+              ]}
+            />
+          </div>
+        ) : null}
       </div>
     </div>
   )
@@ -554,7 +587,9 @@ function ProjectItem({
   const tasks = useMemo(() => sortProjectTasks(project.tasks), [project.tasks])
   const hasMoreTasks = tasks.length > INITIAL_PROJECT_CHAT_COUNT
   const visibleTasks = showAllTasks ? tasks : tasks.slice(0, INITIAL_PROJECT_CHAT_COUNT)
-  const projectRunning = tasks.some(task => runningTaskIds.has(task.task_id))
+  const projectRunning = tasks.some(task =>
+    hasRunningSidebarTaskId(runningTaskIds, task.task_id),
+  )
   const projectDeviceState = getSidebarDeviceState(getProjectDeviceId(project), devices)
   const canStartProjectChat = isSidebarDeviceOnline(projectDeviceState)
   const newProjectChatTitle = projectDeviceState && !canStartProjectChat
@@ -650,7 +685,7 @@ function ProjectItem({
                 key={task.task_id}
                 task={task}
                 selected={activeTaskId === task.task_id}
-                running={runningTaskIds.has(task.task_id)}
+                running={hasRunningSidebarTaskId(runningTaskIds, task.task_id)}
                 onOpenTask={onOpenTask}
                 projectId={project.id}
                 onArchiveTask={onArchiveTask}
@@ -727,12 +762,10 @@ function RecentTaskRow({
         ].join(' ')}
       >
         {running ? (
-          <span className="flex h-7 w-7 items-center justify-center group-hover/task:invisible group-focus-within/task:invisible">
-            <Loader2
-              data-testid={`history-task-spinner-${task.id}`}
-              className="h-3.5 w-3.5 animate-spin text-primary"
-            />
-          </span>
+          <SidebarRunningStatusPill
+            testId={`history-task-running-pill-${task.id}`}
+            spinnerTestId={`history-task-spinner-${task.id}`}
+          />
         ) : (
           <span
             data-testid={`history-task-time-${task.id}`}
@@ -758,30 +791,32 @@ function RecentTaskRow({
             </span>
           </span>
         )}
-        <div
-          data-testid={`history-task-actions-${task.id}`}
-          className={SIDEBAR_ROW_ACTIONS_CLASS}
-        >
-          <ActionMenu
-            ariaLabel={t('workbench.chat_actions', '会话操作')}
-            testId={`history-task-menu-${task.id}`}
-            triggerClassName="flex h-7 w-7 items-center justify-center text-text-secondary hover:text-text-primary"
-            items={[
-              {
-                label: t('workbench.archive_chat', '归档会话'),
-                icon: Archive,
-                testId: `archive-history-chat-${task.id}`,
-                onSelect: () => onArchiveTask(task.id),
-              },
-              {
-                label: t('workbench.rename_chat', '重命名会话'),
-                icon: Edit3,
-                testId: `rename-history-chat-${task.id}`,
-                onSelect: () => onRenameTask(task),
-              },
-            ]}
-          />
-        </div>
+        {!running ? (
+          <div
+            data-testid={`history-task-actions-${task.id}`}
+            className={SIDEBAR_ROW_ACTIONS_CLASS}
+          >
+            <ActionMenu
+              ariaLabel={t('workbench.chat_actions', '会话操作')}
+              testId={`history-task-menu-${task.id}`}
+              triggerClassName="flex h-7 w-7 items-center justify-center text-text-secondary hover:text-text-primary"
+              items={[
+                {
+                  label: t('workbench.archive_chat', '归档会话'),
+                  icon: Archive,
+                  testId: `archive-history-chat-${task.id}`,
+                  onSelect: () => onArchiveTask(task.id),
+                },
+                {
+                  label: t('workbench.rename_chat', '重命名会话'),
+                  icon: Edit3,
+                  testId: `rename-history-chat-${task.id}`,
+                  onSelect: () => onRenameTask(task),
+                },
+              ]}
+            />
+          </div>
+        ) : null}
       </div>
     </div>
   )
@@ -1222,7 +1257,7 @@ export function DesktopSidebar({
                   key={task.id}
                   task={task}
                   selected={currentTaskId === task.id && currentProjectId === undefined}
-                  running={runningTaskIds.has(task.id)}
+                  running={hasRunningSidebarTaskId(runningTaskIds, task.id)}
                   devices={devices}
                   onOpenTask={onOpenTask}
                   onArchiveTask={onArchiveTask}

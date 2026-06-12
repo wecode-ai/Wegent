@@ -1,5 +1,5 @@
 import '@/i18n'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, test, vi } from 'vitest'
 import type { TurnFileChangesSummary } from '@/types/api'
@@ -67,20 +67,25 @@ describe('FileChangesCard', () => {
     expect(screen.getAllByTestId('file-change-row')).toHaveLength(6)
   })
 
-  test('loads diff only when review opens', async () => {
+  test('loads diff only when a file row opens', async () => {
     const { onLoadDiff } = renderCard()
 
     expect(onLoadDiff).not.toHaveBeenCalled()
-    await userEvent.click(screen.getByTestId('review-file-changes-button'))
+    await userEvent.click(screen.getByText('src/file-1.ts'))
 
     await waitFor(() => expect(onLoadDiff).toHaveBeenCalledWith(21))
-    expect(await screen.findAllByText('src/file-1.ts')).toHaveLength(2)
+    const card = screen.getByTestId('file-changes-card')
+    expect(
+      within(card).getByTestId('inline-file-diff-src/file-1.ts'),
+    ).toBeInTheDocument()
+    expect(within(card).getByText('old')).toBeInTheDocument()
+    expect(within(card).getByText('new')).toBeInTheDocument()
   })
 
   test('disables review and revert while the owning device is offline', () => {
     renderCard({ deviceOnline: false })
 
-    expect(screen.getByTestId('review-file-changes-button')).toBeDisabled()
+    expect(screen.getAllByTestId('file-change-row')[0]).toBeDisabled()
     expect(screen.getByTestId('revert-file-changes-button')).toBeDisabled()
     expect(
       screen.getByText('设备离线，无法审核或撤销'),
@@ -106,16 +111,16 @@ describe('FileChangesCard', () => {
     expect(
       screen.queryByTestId('revert-file-changes-button'),
     ).not.toBeInTheDocument()
-    expect(screen.getByTestId('review-file-changes-button')).toBeEnabled()
+    expect(screen.getAllByTestId('file-change-row')[0]).toBeEnabled()
   })
 
-  test('keeps review available after a revert conflict', () => {
+  test('keeps file diff review available after a revert conflict', () => {
     renderCard({ summary: { ...summary, status: 'conflicted' } })
 
     expect(
       screen.getByText('存在后续冲突，未修改工作区'),
     ).toBeInTheDocument()
-    expect(screen.getByTestId('review-file-changes-button')).toBeEnabled()
+    expect(screen.getAllByTestId('file-change-row')[0]).toBeEnabled()
     expect(
       screen.queryByTestId('revert-file-changes-button'),
     ).not.toBeInTheDocument()

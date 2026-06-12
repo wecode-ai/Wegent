@@ -78,6 +78,7 @@ describe('createChatStream', () => {
     const stream = createChatStream(socket)
     const handlers = {
       onChatChunk: vi.fn(),
+      onTaskStatus: vi.fn(),
       onDeviceSlotUpdate: vi.fn(),
       onDeviceUpgradeStatus: vi.fn(),
     }
@@ -86,6 +87,7 @@ describe('createChatStream', () => {
     cleanup()
 
     expect(socket.on).toHaveBeenCalledWith('chat:chunk', handlers.onChatChunk)
+    expect(socket.on).toHaveBeenCalledWith('task:status', handlers.onTaskStatus)
     expect(socket.on).toHaveBeenCalledWith(
       'device:slot_update',
       handlers.onDeviceSlotUpdate,
@@ -95,6 +97,7 @@ describe('createChatStream', () => {
       handlers.onDeviceUpgradeStatus,
     )
     expect(socket.off).toHaveBeenCalledWith('chat:chunk', handlers.onChatChunk)
+    expect(socket.off).toHaveBeenCalledWith('task:status', handlers.onTaskStatus)
     expect(socket.off).toHaveBeenCalledWith(
       'device:slot_update',
       handlers.onDeviceSlotUpdate,

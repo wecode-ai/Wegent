@@ -14,6 +14,7 @@ import type {
   ChatSendAck,
   ChatSendPayload,
   ChatStartPayload,
+  TaskStatusPayload,
   TaskJoinResponse,
 } from '@/types/api'
 import type {
@@ -32,6 +33,7 @@ export interface ChatStreamHandlers {
   onGuidanceQueued?: (payload: ChatGuidanceQueuedPayload) => void
   onGuidanceApplied?: (payload: ChatGuidanceAppliedPayload) => void
   onGuidanceExpired?: (payload: ChatGuidanceExpiredPayload) => void
+  onTaskStatus?: (payload: TaskStatusPayload) => void
   onDeviceOnline?: (payload: unknown) => void
   onDeviceOffline?: (payload: unknown) => void
   onDeviceStatus?: (payload: unknown) => void
@@ -136,6 +138,7 @@ export function createChatStream(socket: Pick<WorkbenchSocket, 'emit' | 'on' | '
       if (handlers.onGuidanceQueued) socket.on('chat:guidance_queued', handlers.onGuidanceQueued)
       if (handlers.onGuidanceApplied) socket.on('chat:guidance_applied', handlers.onGuidanceApplied)
       if (handlers.onGuidanceExpired) socket.on('chat:guidance_expired', handlers.onGuidanceExpired)
+      if (handlers.onTaskStatus) socket.on('task:status', handlers.onTaskStatus)
       if (handlers.onDeviceOnline) socket.on('device:online', handlers.onDeviceOnline)
       if (handlers.onDeviceOffline) socket.on('device:offline', handlers.onDeviceOffline)
       if (handlers.onDeviceStatus) socket.on('device:status', handlers.onDeviceStatus)
@@ -156,6 +159,7 @@ export function createChatStream(socket: Pick<WorkbenchSocket, 'emit' | 'on' | '
         if (handlers.onGuidanceQueued) socket.off('chat:guidance_queued', handlers.onGuidanceQueued)
         if (handlers.onGuidanceApplied) socket.off('chat:guidance_applied', handlers.onGuidanceApplied)
         if (handlers.onGuidanceExpired) socket.off('chat:guidance_expired', handlers.onGuidanceExpired)
+        if (handlers.onTaskStatus) socket.off('task:status', handlers.onTaskStatus)
         if (handlers.onDeviceOnline) socket.off('device:online', handlers.onDeviceOnline)
         if (handlers.onDeviceOffline) socket.off('device:offline', handlers.onDeviceOffline)
         if (handlers.onDeviceStatus) socket.off('device:status', handlers.onDeviceStatus)
