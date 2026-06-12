@@ -353,7 +353,7 @@ describe('WorkbenchProvider', () => {
     )
   })
 
-  test('keeps running ids from work lists after opening another task', async () => {
+  test('keeps running ids from work lists and device slots after opening another task', async () => {
     window.history.pushState({}, '', '/projects/7/tasks/12')
 
     render(
@@ -393,6 +393,20 @@ describe('WorkbenchProvider', () => {
                       task_status: 'COMPLETED',
                       updated_at: '2026-06-11T00:02:00.000Z',
                     },
+                    {
+                      id: 13,
+                      task_id: 13,
+                      task_title: 'stale status task',
+                      task_status: 'COMPLETED',
+                      updated_at: '2026-06-11T00:03:00.000Z',
+                    },
+                    {
+                      id: 14,
+                      task_id: 14,
+                      task_title: 'pre executed task',
+                      task_status: 'PRE_EXECUTED',
+                      updated_at: '2026-06-11T00:04:00.000Z',
+                    },
                   ],
                 },
               ],
@@ -424,7 +438,18 @@ describe('WorkbenchProvider', () => {
             deleteArchivedTasks: vi.fn(),
           },
           deviceApi: {
-            listDevices: vi.fn().mockResolvedValue([]),
+            listDevices: vi.fn().mockResolvedValue([
+              {
+                id: 1,
+                device_id: 'local-1',
+                name: 'Local Device',
+                status: 'online',
+                is_default: true,
+                device_type: 'local',
+                bind_shell: 'claudecode',
+                running_task_ids: [13],
+              },
+            ]),
             getHomeDirectory: vi.fn(),
             getProjectWorkspaceRoot: vi.fn(),
             listDirectories: vi.fn(),
@@ -443,7 +468,7 @@ describe('WorkbenchProvider', () => {
     )
 
     await waitFor(() =>
-      expect(screen.getByTestId('running-task-ids')).toHaveTextContent('11'),
+      expect(screen.getByTestId('running-task-ids')).toHaveTextContent('11,13,14'),
     )
   })
 

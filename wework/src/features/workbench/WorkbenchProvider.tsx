@@ -554,10 +554,20 @@ function getNewChatModelSelection(user: User | null): ModelSelectionConfig | nul
   return user?.preferences?.wework_new_chat_model_selection ?? null
 }
 
+const RUNNING_TASK_STATUSES = new Set([
+  'PENDING',
+  'RUNNING',
+  'STARTED',
+  'PROCESSING',
+  'IN_PROGRESS',
+  'QUEUED',
+  'WAITING',
+  'INITIALIZED',
+  'PRE_EXECUTED',
+])
+
 function isRunningTaskStatus(status?: string) {
-  return ['PENDING', 'RUNNING', 'STARTED', 'PROCESSING', 'IN_PROGRESS'].includes(
-    String(status ?? '').toUpperCase()
-  )
+  return RUNNING_TASK_STATUSES.has(String(status ?? '').toUpperCase())
 }
 
 function addRunningTasksFromWorkLists(
@@ -576,6 +586,19 @@ function addRunningTasksFromWorkLists(
   for (const task of recentTasks) {
     if (task.id && isRunningTaskStatus(task.status)) {
       ids.add(task.id)
+    }
+  }
+}
+
+function addRunningTasksFromDevices(ids: Set<number>, devices: DeviceInfo[]) {
+  for (const device of devices) {
+    for (const taskId of device.running_task_ids ?? []) {
+      ids.add(taskId)
+    }
+    for (const task of device.running_tasks ?? []) {
+      if (task.task_id) {
+        ids.add(task.task_id)
+      }
     }
   }
 }
@@ -2096,6 +2119,7 @@ export function WorkbenchProvider({
   const runningTaskIds = useMemo(() => {
     const ids = new Set<number>()
     addRunningTasksFromWorkLists(ids, state.projects, state.recentTasks)
+    addRunningTasksFromDevices(ids, state.devices)
     if (state.currentTask && isRunningTaskStatus(state.currentTask.status)) {
       ids.add(state.currentTask.id)
     }
@@ -2109,7 +2133,7 @@ export function WorkbenchProvider({
       }
     }
     return ids
-  }, [messages, state.currentTask, state.projects, state.recentTasks])
+  }, [messages, state.currentTask, state.devices, state.projects, state.recentTasks])
 
   const value: WorkbenchContextValue = {
     state,
