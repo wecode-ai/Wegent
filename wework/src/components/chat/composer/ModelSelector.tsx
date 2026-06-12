@@ -848,16 +848,14 @@ export function ModelSelector({
             {controlsBelowModels.length > 0 && (
               <>
                 <div className="mx-3 my-1.5 border-t border-border" />
-                <div className="space-y-0.5">
-                  {controlsBelowModels.map(renderControlTrigger)}
+                <div className="mb-0.5 space-y-1.5">
+                  {controlsBelowModels.map(renderControlSection)}
                 </div>
               </>
             )}
           </div>
 
-          {activeControl ? (
-            renderDesktopControlSubmenu(activeControl)
-          ) : activeGroup ? (
+          {activeGroup ? (
             <div
               ref={submenuPanelRef}
               data-testid="model-selector-submenu"

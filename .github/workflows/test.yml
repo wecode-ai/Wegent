@@ -295,6 +295,36 @@ jobs:
           flags: frontend
           name: frontend-coverage
 
+  test-wework:
+    name: Test Wework
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18.x'
+          cache: 'npm'
+          cache-dependency-path: ./wework/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ./wework
+        run: npm ci
+
+      - name: Run wework tests
+        working-directory: ./wework
+        run: npm test -- --coverage --passWithNoTests
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          files: ./wework/coverage/coverage-final.json
+          flags: wework
+          name: wework-coverage
+
   test-wegent-cli:
     name: Test wegent CLI
     runs-on: ubuntu-latest
@@ -433,7 +463,7 @@ jobs:
   test-summary:
     name: Test Summary
     runs-on: ubuntu-latest
-    needs: [test-backend, test-executor, test-executor-manager, test-shared, test-knowledge-engine, test-frontend, test-wegent-cli, test-wegent-cli-integration]
+    needs: [test-backend, test-executor, test-executor-manager, test-shared, test-knowledge-engine, test-frontend, test-wework, test-wegent-cli, test-wegent-cli-integration]
     if: always()
 
     steps:
@@ -446,6 +476,7 @@ jobs:
              [[ "${{ needs.test-shared.result }}" == "failure" ]] || \
              [[ "${{ needs.test-knowledge-engine.result }}" == "failure" ]] || \
              [[ "${{ needs.test-frontend.result }}" == "failure" ]] || \
+             [[ "${{ needs.test-wework.result }}" == "failure" ]] || \
              [[ "${{ needs.test-wegent-cli.result }}" == "failure" ]] || \
              [[ "${{ needs.test-wegent-cli-integration.result }}" == "failure" ]]; then
             echo "One or more test jobs failed"

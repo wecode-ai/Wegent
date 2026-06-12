@@ -2004,7 +2004,7 @@ describe('WorkbenchProvider', () => {
         })
       )
     )
-    expect(window.location.pathname + window.location.search).toBe('/projects/0/tasks/100')
+    expect(window.location.pathname + window.location.search).toBe('/tasks/100')
   })
 
   test('treats backend chat ACK without success as successful and reuses task id', async () => {
