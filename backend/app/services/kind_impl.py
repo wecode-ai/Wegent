@@ -18,6 +18,7 @@ from app.models.task import TaskResource
 from app.schemas.kind import Bot, Model, Retriever, Task, Team
 from app.services.adapters.task_kinds import task_kinds_service
 from app.services.kind_base import KindBaseService, TaskResourceBaseService
+from app.stores.tasks import subtask_store, task_store
 from shared.utils.crypto import decrypt_api_key, encrypt_api_key, is_api_key_encrypted
 
 logger = logging.getLogger(__name__)
@@ -394,18 +395,11 @@ class TaskKindService(TaskResourceBaseService):
         workspace_name = task_crd.spec.workspaceRef.name
         workspace_namespace = task_crd.spec.workspaceRef.namespace or "default"
 
-        from app.models.task import TaskResource
-
-        workspace = (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.user_id == user_id,
-                TaskResource.kind == "Workspace",
-                TaskResource.namespace == workspace_namespace,
-                TaskResource.name == workspace_name,
-                TaskResource.is_active == TaskResource.STATE_ACTIVE,
-            )
-            .first()
+        workspace = task_store.get_workspace_by_ref(
+            db,
+            user_id=user_id,
+            name=workspace_name,
+            namespace=workspace_namespace,
         )
 
         if not workspace:
@@ -414,16 +408,11 @@ class TaskKindService(TaskResourceBaseService):
             )
 
         # Check the status of existing task, if not COMPLETED status, modification is not allowed
-        existing_task = (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.user_id == user_id,
-                TaskResource.kind == "Task",
-                TaskResource.namespace == resource["metadata"]["namespace"],
-                TaskResource.name == resource["metadata"]["name"],
-                TaskResource.is_active == TaskResource.STATE_ACTIVE,
-            )
-            .first()
+        existing_task = task_store.get_owned_task_by_name(
+            db,
+            user_id=user_id,
+            name=resource["metadata"]["name"],
+            namespace=resource["metadata"]["namespace"],
         )
 
         if existing_task:
@@ -551,12 +540,7 @@ class TaskKindService(TaskResourceBaseService):
         # Get database connection
         with self.get_db() as db:
             # Query all Subtasks for this Task
-            subtasks = (
-                db.query(Subtask)
-                .filter(Subtask.task_id == resource.id)
-                .order_by(Subtask.message_id.asc())
-                .all()
-            )
+            subtasks = subtask_store.list_by_task_ordered(db, task_id=resource.id)
 
             # Build subtasks array
             subtask_list = []

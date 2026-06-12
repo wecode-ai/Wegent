@@ -10,8 +10,9 @@ import pytest
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from app.models.kind import Kind
 from app.models.project import Project
-from app.models.subtask import Subtask
+from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.task import TaskCreate
@@ -125,6 +126,64 @@ def _create_project(
     db.commit()
     db.refresh(project)
     return project
+
+
+def _create_user(db: Session, name: str) -> User:
+    user = User(
+        user_name=name,
+        password_hash="hash",
+        email=f"{name}@example.com",
+        is_active=True,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+def _create_team_with_bot(db: Session, user_id: int, suffix: str) -> Kind:
+    bot_name = f"bot-{suffix}"
+    team_name = f"team-{suffix}"
+    bot = Kind(
+        user_id=user_id,
+        kind="Bot",
+        name=bot_name,
+        namespace="default",
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Bot",
+            "metadata": {"name": bot_name, "namespace": "default"},
+            "spec": {
+                "ghostRef": {"name": "ghost", "namespace": "default"},
+                "shellRef": {"name": "shell", "namespace": "default"},
+            },
+            "status": {"state": "Available"},
+        },
+        is_active=True,
+    )
+    team = Kind(
+        user_id=user_id,
+        kind="Team",
+        name=team_name,
+        namespace="default",
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Team",
+            "metadata": {"name": team_name, "namespace": "default"},
+            "spec": {
+                "members": [{"botRef": {"name": bot_name, "namespace": "default"}}],
+                "collaborationModel": "coordinate",
+                "description": "",
+                "icon": "bot",
+            },
+            "status": {"state": "Available"},
+        },
+        is_active=True,
+    )
+    db.add_all([bot, team])
+    db.commit()
+    db.refresh(team)
+    return team
 
 
 def test_archive_task_hides_from_personal_list_and_preserves_timestamp(
@@ -518,6 +577,124 @@ def test_append_existing_task_filters_by_client_origin(
     assert exc_info.value.status_code == 404
 
 
+def test_append_existing_task_rejects_non_owner_non_member(
+    test_db: Session,
+    test_user: User,
+):
+    other_user = _create_user(test_db, "append-outsider")
+    task = _create_task(
+        test_db,
+        test_user.id,
+        7027,
+        "Owner completed chat",
+        client_origin="frontend",
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        task_kinds_service.create_task_or_append(
+            test_db,
+            obj_in=TaskCreate(
+                prompt="unauthorized append",
+                client_origin="frontend",
+            ),
+            user=other_user,
+            task_id=task.id,
+        )
+
+    test_db.refresh(task)
+    subtasks = test_db.query(Subtask).filter(Subtask.task_id == task.id).all()
+    assert exc_info.value.status_code == 404
+    assert task.json["status"]["status"] == "COMPLETED"
+    assert subtasks == []
+
+
+def test_append_existing_subscription_task_is_not_treated_as_regular_active_task(
+    test_db: Session,
+    test_user: User,
+):
+    task = _create_task(
+        test_db,
+        test_user.id,
+        7028,
+        "Subscription task",
+        state=TaskResource.STATE_SUBSCRIPTION,
+        type_value="subscription",
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        task_kinds_service.create_task_or_append(
+            test_db,
+            obj_in=TaskCreate(
+                prompt="regular append should not target subscription",
+                client_origin="frontend",
+            ),
+            user=test_user,
+            task_id=task.id,
+        )
+
+    test_db.refresh(task)
+    subtasks = test_db.query(Subtask).filter(Subtask.task_id == task.id).all()
+    assert exc_info.value.status_code == 404
+    assert task.is_active == TaskResource.STATE_SUBSCRIPTION
+    assert task.json["status"]["status"] == "COMPLETED"
+    assert subtasks == []
+
+
+def test_create_task_creates_workspace_task_user_and_assistant_subtasks(
+    test_db: Session,
+    test_user: User,
+):
+    team = _create_team_with_bot(test_db, test_user.id, "create-task")
+
+    result = task_kinds_service.create_task_or_append(
+        test_db,
+        obj_in=TaskCreate(
+            team_id=team.id,
+            title="Create task store path",
+            prompt="Run store-backed task creation",
+            task_type="task",
+            git_url="https://example.com/repo.git",
+            git_repo="repo",
+            git_repo_id=42,
+            git_domain="example.com",
+            branch_name="main",
+        ),
+        user=test_user,
+    )
+
+    task_id = result["id"]
+    task = test_db.get(TaskResource, task_id)
+    workspace = (
+        test_db.query(TaskResource)
+        .filter(
+            TaskResource.user_id == test_user.id,
+            TaskResource.kind == "Workspace",
+            TaskResource.name == f"workspace-{task_id}",
+            TaskResource.namespace == "default",
+        )
+        .first()
+    )
+    subtasks = (
+        test_db.query(Subtask)
+        .filter(Subtask.task_id == task_id)
+        .order_by(Subtask.message_id.asc())
+        .all()
+    )
+
+    assert task is not None
+    assert task.kind == "Task"
+    assert task.json["spec"]["title"] == "Create task store path"
+    assert workspace is not None
+    assert workspace.json["spec"]["repository"]["gitRepo"] == "repo"
+    assert [subtask.role for subtask in subtasks] == [
+        SubtaskRole.USER,
+        SubtaskRole.ASSISTANT,
+    ]
+    assert subtasks[0].prompt == "Run store-backed task creation"
+    assert subtasks[0].status == SubtaskStatus.COMPLETED
+    assert subtasks[1].status == SubtaskStatus.PENDING
+
+
 def test_archive_all_project_chats_leaves_standalone_chats(
     test_db: Session,
     test_user: User,
@@ -654,6 +831,39 @@ def test_delete_task_accepts_archived_tasks(
         "Archived chat to delete",
         state=TaskResource.STATE_ARCHIVED,
     )
+    test_db.add_all(
+        [
+            Subtask(
+                user_id=test_user.id,
+                task_id=task.id,
+                team_id=1,
+                title="user",
+                bot_ids=[],
+                role=SubtaskRole.USER,
+                status=SubtaskStatus.COMPLETED,
+                prompt="hello",
+                message_id=1,
+                parent_id=0,
+                completed_at=datetime(2026, 5, 28, 10, 0, 0),
+            ),
+            Subtask(
+                user_id=test_user.id,
+                task_id=task.id,
+                team_id=1,
+                title="assistant",
+                bot_ids=[],
+                role=SubtaskRole.ASSISTANT,
+                status=SubtaskStatus.RUNNING,
+                prompt="",
+                executor_namespace="default",
+                executor_name="executor-1",
+                message_id=2,
+                parent_id=1,
+                completed_at=datetime(2026, 5, 28, 10, 0, 0),
+            ),
+        ]
+    )
+    test_db.commit()
 
     runtime_client = MagicMock()
     runtime_client.get_sandbox = AsyncMock(return_value=(None, None))
@@ -674,5 +884,8 @@ def test_delete_task_accepts_archived_tasks(
         )
 
     test_db.refresh(task)
+    subtasks = test_db.query(Subtask).filter(Subtask.task_id == task.id).all()
 
     assert task.is_active == TaskResource.STATE_DELETED
+    assert {subtask.status for subtask in subtasks} == {SubtaskStatus.DELETE}
+    assert all(subtask.executor_deleted_at is True for subtask in subtasks)

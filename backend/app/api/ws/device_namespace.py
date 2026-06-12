@@ -38,8 +38,7 @@ from app.api.ws.decorators import trace_websocket_event
 from app.core.auth_utils import is_api_key, verify_api_key
 from app.core.events import TaskCompletedEvent, get_event_bus
 from app.db.session import SessionLocal
-from app.models.subtask import Subtask, SubtaskStatus
-from app.models.task import TaskResource
+from app.models.subtask import SubtaskStatus
 from app.models.user import User
 from app.schemas.device import (
     DeviceHeartbeatPayload,
@@ -63,6 +62,7 @@ from app.services.user_runtime_config import (
     UserRuntimeConfigSyncError,
     user_runtime_config_service,
 )
+from app.stores.tasks import subtask_store
 from shared.models import EventType
 from shared.telemetry.context import set_request_context, set_user_context
 
@@ -110,22 +110,22 @@ def _handle_device_disconnect(user_id: int, device_id: str) -> list[FailedSubtas
 
             # Find and fail running subtasks
             executor_name = f"device-{device_id}"
-            running_subtasks = (
-                db.query(Subtask)
-                .filter(
-                    Subtask.executor_name == executor_name,
-                    Subtask.status == SubtaskStatus.RUNNING,
-                )
-                .all()
+            running_subtasks = subtask_store.list_running_by_executor_name(
+                db,
+                executor_name=executor_name,
             )
 
             # Track unique task IDs to update parent task status
             task_ids_to_fail = set()
 
             for subtask in running_subtasks:
-                subtask.status = SubtaskStatus.FAILED
-                subtask.error_message = "Device disconnected unexpectedly"
-                subtask.completed_at = datetime.now()
+                subtask_store.update_fields(
+                    db,
+                    subtask=subtask,
+                    status=SubtaskStatus.FAILED,
+                    error_message="Device disconnected unexpectedly",
+                    completed_at=datetime.now(),
+                )
                 task_ids_to_fail.add(subtask.task_id)
                 failed_subtasks.append(
                     FailedSubtaskInfo(
@@ -1194,6 +1194,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
         data = args[0]
         if not isinstance(data, dict):
             return {"error": "Invalid event data format"}
+        data = dict(data)
 
         task_id = data.get("task_id")
         subtask_id = data.get("subtask_id")
@@ -1253,8 +1254,17 @@ class DeviceNamespace(socketio.AsyncNamespace):
                     EventType.CANCELLED.value,
                 )
                 if is_terminal:
+                    logger.info(
+                        "[Device WS] Terminal callback received: "
+                        f"event_type={event_type}, task_id={task_id}, "
+                        f"subtask_id={subtask_id}, device_id={device_id}"
+                    )
                     await self._publish_task_completed_event(
-                        task_id, subtask_id, user_id, device_id, event
+                        task_id,
+                        subtask_id,
+                        user_id,
+                        device_id,
+                        event,
                     )
 
             # Clean up lock after terminal event (outside the lock context)

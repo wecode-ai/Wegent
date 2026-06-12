@@ -22,9 +22,9 @@ from app.core.config import settings
 from app.models.kind import Kind
 from app.models.resource_member import ResourceMember
 from app.models.share_link import ResourceType
-from app.models.task import TaskResource
 from app.models.user import User
 from app.services.webhook_notification import Notification, webhook_notification_service
+from app.stores.tasks import task_store
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +81,7 @@ def _get_resource_info(
             spec = team.json.get("spec", {})
             return spec.get("name", team.name), team.user_id
     elif resource_type == ResourceType.TASK.value:
-        task = db.query(TaskResource).filter(TaskResource.id == resource_id).first()
+        task = task_store.get_by_id(db, task_id=resource_id)
         if task:
             return task.name, task.user_id
 

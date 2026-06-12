@@ -410,21 +410,19 @@ def list_skills(
         # This enables shared team scenarios where executor queries skills
         # owned by the original team owner
         if not skill and task_id:
-            from app.models.task import TaskResource
             from app.schemas.kind import Task
             from app.services.task_member_service import task_member_service
+            from app.stores.tasks import task_store
 
             # Verify current user is a member of the task (owner or group member)
             if task_member_service.is_member(db, task_id, current_user.id):
                 # Get task to find the team owner
-                task = (
-                    db.query(TaskResource)
-                    .filter(
-                        TaskResource.id == task_id,
-                        TaskResource.kind == "Task",
-                        TaskResource.is_active.in_(TaskResource.is_active_query()),
-                    )
-                    .first()
+                from app.models.task import TaskResource
+
+                task = task_store.get_task_by_states(
+                    db,
+                    task_id=task_id,
+                    states=TaskResource.is_active_query(),
                 )
                 if task:
                     # Get team owner user_id from task's teamRef
@@ -1451,21 +1449,19 @@ def download_skill(
     # This enables shared team scenarios where executor downloads skills
     # owned by the original team owner
     if not skill and task_id:
-        from app.models.task import TaskResource
         from app.schemas.kind import Task
         from app.services.task_member_service import task_member_service
+        from app.stores.tasks import task_store
 
         # Verify current user is a member of the task (owner or group member)
         if task_member_service.is_member(db, task_id, current_user.id):
             # Get task to find the team owner
-            task = (
-                db.query(TaskResource)
-                .filter(
-                    TaskResource.id == task_id,
-                    TaskResource.kind == "Task",
-                    TaskResource.is_active.in_(TaskResource.is_active_query()),
-                )
-                .first()
+            from app.models.task import TaskResource
+
+            task = task_store.get_task_by_states(
+                db,
+                task_id=task_id,
+                states=TaskResource.is_active_query(),
             )
             if task:
                 # Get team owner user_id from task's teamRef

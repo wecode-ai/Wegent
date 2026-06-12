@@ -1297,7 +1297,7 @@ class TestSetPreserveExecutorAPI:
             mock_member_service.is_member.return_value = True
 
             with patch(
-                "app.services.adapters.task_kinds.operations.flag_modified"
+                "app.stores.tasks.sqlalchemy_task_store.flag_modified"
             ) as mock_flag_modified:
                 result = task_service.set_preserve_executor(
                     mock_db, task_id=123, user_id=1, preserve=True
@@ -1328,7 +1328,7 @@ class TestSetPreserveExecutorAPI:
             mock_member_service.is_member.return_value = True
 
             with patch(
-                "app.services.adapters.task_kinds.operations.flag_modified"
+                "app.stores.tasks.sqlalchemy_task_store.flag_modified"
             ) as mock_flag_modified:
                 result = task_service.set_preserve_executor(
                     mock_db, task_id=123, user_id=1, preserve=False
@@ -1403,7 +1403,7 @@ class TestSetPreserveExecutorAPI:
             mock_member_service.is_member.return_value = True
 
             with patch(
-                "app.services.adapters.task_kinds.operations.flag_modified"
+                "app.stores.tasks.sqlalchemy_task_store.flag_modified"
             ) as mock_flag_modified:
                 result = task_service.set_preserve_executor(
                     mock_db, task_id=123, user_id=2, preserve=True

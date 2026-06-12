@@ -29,7 +29,6 @@ from app.core.events import TaskCompletedEvent
 from app.db.session import get_db_session
 from app.models.kind import Kind
 from app.models.subscription import BackgroundExecution
-from app.models.subtask import Subtask
 from app.models.task import TaskResource
 from app.schemas.kind import Task
 from app.schemas.subscription import (
@@ -43,6 +42,7 @@ from app.services.subscription.notification_dispatcher import (
     subscription_notification_dispatcher,
 )
 from app.services.subscription.state_machine import is_terminal_state
+from app.stores.tasks import subtask_store, task_store
 
 logger = logging.getLogger(__name__)
 
@@ -288,14 +288,10 @@ class SubscriptionTaskCompletionHandler:
             )
             return
 
-        task = (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.id == event.task_id,
-                TaskResource.kind == "Task",
-                TaskResource.is_active.in_(TaskResource.is_active_query()),
-            )
-            .first()
+        task = task_store.get_task_by_states(
+            db,
+            task_id=event.task_id,
+            states=TaskResource.is_active_query(),
         )
         if not task:
             logger.warning(
@@ -313,7 +309,11 @@ class SubscriptionTaskCompletionHandler:
             )
             return
 
-        await self._cleanup_task_runtime(db, event.task_id, "auto-delete task")
+        await self._cleanup_task_runtime(
+            db,
+            event.task_id,
+            "auto-delete task",
+        )
 
     async def _cleanup_completed_managed_subscription_executor(
         self,
@@ -360,13 +360,23 @@ class SubscriptionTaskCompletionHandler:
         cleanup_source: str,
     ) -> None:
         """Delete sandbox or executor runtime for a completed task."""
-        subtasks = (
-            db.query(Subtask)
-            .filter(
-                Subtask.task_id == task_id,
-                Subtask.executor_deleted_at == False,
+        task = task_store.get_task_by_states(
+            db,
+            task_id=task_id,
+            states=TaskResource.is_active_query(),
+        )
+        if not task:
+            logger.warning(
+                "[TaskCompletionHandler] Cannot clean runtime for %s: task_id=%s not found",
+                cleanup_source,
+                task_id,
             )
-            .all()
+            return
+
+        subtasks = subtask_store.list_not_executor_deleted_by_task(
+            db,
+            task_id=task_id,
+            owner_user_id=task.user_id,
         )
         if not subtasks:
             logger.info(
@@ -461,7 +471,11 @@ class SubscriptionTaskCompletionHandler:
         for subtask in subtasks:
             executor_key = ((subtask.executor_namespace or ""), subtask.executor_name)
             if sandbox_deleted or executor_key in successful_keys:
-                subtask.executor_deleted_at = True
+                subtask_store.update_fields(
+                    db,
+                    subtask=subtask,
+                    executor_deleted_at=True,
+                )
 
         db.commit()
         logger.info(

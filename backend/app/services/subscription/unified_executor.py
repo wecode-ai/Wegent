@@ -26,6 +26,7 @@ from app.models.kind import Kind
 from app.models.subtask import Subtask
 from app.models.task import TaskResource
 from app.models.user import User
+from app.stores.tasks import subtask_store, task_store
 
 logger = logging.getLogger(__name__)
 
@@ -195,13 +196,12 @@ def _load_subscription_execution_objects(
     execution_data: SubscriptionExecutionData,
 ) -> Optional[_SubscriptionExecutionObjects]:
     """Load ORM objects required to build the subscription execution request."""
-    task = (
-        db.query(TaskResource)
-        .filter(TaskResource.id == execution_data.task_id, TaskResource.kind == "Task")
-        .first()
-    )
-    assistant_subtask = (
-        db.query(Subtask).filter(Subtask.id == execution_data.subtask_id).first()
+    task = task_store.get_by_id(db, task_id=execution_data.task_id)
+    if task and task.kind != "Task":
+        task = None
+    assistant_subtask = subtask_store.get_basic_by_id(
+        db,
+        subtask_id=execution_data.subtask_id,
     )
     team = (
         db.query(Kind)

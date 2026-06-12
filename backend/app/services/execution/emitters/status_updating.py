@@ -72,6 +72,19 @@ class StatusUpdatingEmitter(ResultEmitter):
         self._executor_namespace = executor_namespace
         self._status_updated = False
 
+    def _resolve_owner_user_id(self) -> Optional[int]:
+        from app.db.session import SessionLocal
+        from app.models.task import TaskResource
+        from app.stores.tasks import task_store
+
+        with SessionLocal() as db:
+            task = task_store.get_task_by_states(
+                db,
+                task_id=self._task_id,
+                states=TaskResource.is_active_query(),
+            )
+            return task.user_id if task else None
+
     async def emit(self, event: ExecutionEvent) -> None:
         """Emit event and update status if terminal.
 
@@ -437,25 +450,9 @@ class StatusUpdatingEmitter(ResultEmitter):
             error: Optional error message
         """
         from app.core.events import TaskCompletedEvent, get_event_bus
-        from app.db.session import SessionLocal
-        from app.models.task import TaskResource
 
         try:
-            # Get user_id from task
-            db = SessionLocal()
-            try:
-                task = (
-                    db.query(TaskResource)
-                    .filter(
-                        TaskResource.id == self._task_id,
-                        TaskResource.kind == "Task",
-                        TaskResource.is_active.in_(TaskResource.is_active_query()),
-                    )
-                    .first()
-                )
-                user_id = task.user_id if task else None
-            finally:
-                db.close()
+            user_id = self._resolve_owner_user_id()
 
             if user_id is None:
                 logger.warning(

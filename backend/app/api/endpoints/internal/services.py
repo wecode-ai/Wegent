@@ -11,13 +11,11 @@ These endpoints are intended for service-to-service communication, not user acce
 
 import asyncio
 import logging
-from datetime import datetime
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
-from sqlalchemy.orm.attributes import flag_modified
 
 from app.api.dependencies import get_db
 from app.models.task import TaskResource
@@ -25,6 +23,7 @@ from app.services.chat.webpage_ws_chat_emitter import (
     get_extended_emitter,
     get_main_event_loop,
 )
+from app.stores.tasks import task_store
 
 logger = logging.getLogger(__name__)
 
@@ -89,14 +88,10 @@ def update_task_services(
     Returns:
         ServiceResponse with updated app data
     """
-    task = (
-        db.query(TaskResource)
-        .filter(
-            TaskResource.id == request.task_id,
-            TaskResource.kind == "Task",
-            TaskResource.is_active == TaskResource.STATE_ACTIVE,
-        )
-        .first()
+    task = task_store.get_task_by_states(
+        db,
+        task_id=request.task_id,
+        states=[TaskResource.STATE_ACTIVE],
     )
 
     if not task:
@@ -120,9 +115,7 @@ def update_task_services(
     # Update task JSON with new app data under status.app
     status_data["app"] = app_data
     task_json["status"] = status_data
-    task.json = task_json
-    task.updated_at = datetime.now()
-    flag_modified(task, "json")
+    task_store.update_json(db, task=task, payload=task_json)
 
     db.commit()
     db.refresh(task)
@@ -162,14 +155,10 @@ def get_task_services(
     Returns:
         ServiceResponse with app data
     """
-    task = (
-        db.query(TaskResource)
-        .filter(
-            TaskResource.id == task_id,
-            TaskResource.kind == "Task",
-            TaskResource.is_active == TaskResource.STATE_ACTIVE,
-        )
-        .first()
+    task = task_store.get_task_by_states(
+        db,
+        task_id=task_id,
+        states=[TaskResource.STATE_ACTIVE],
     )
 
     if not task:

@@ -11,6 +11,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
+from app.models.task import TaskResource
 from app.schemas.device import DeviceType
 from app.schemas.subscription import SubscriptionCreate, SubscriptionUpdate
 from app.services.subscription.service import SubscriptionService
@@ -65,6 +66,26 @@ def _create_device(
     return device
 
 
+def _create_workspace(db: Session, owner_user_id: int, name: str) -> TaskResource:
+    workspace = TaskResource(
+        user_id=owner_user_id,
+        kind="Workspace",
+        name=name,
+        namespace="default",
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Workspace",
+            "metadata": {"name": name, "namespace": "default"},
+            "spec": {},
+        },
+        is_active=TaskResource.STATE_ACTIVE,
+    )
+    db.add(workspace)
+    db.commit()
+    db.refresh(workspace)
+    return workspace
+
+
 def _build_create_payload(team_id: int, execution_target: dict) -> SubscriptionCreate:
     suffix = uuid.uuid4().hex[:8]
     return SubscriptionCreate(
@@ -115,6 +136,27 @@ def test_create_subscription_persists_specific_execution_target(
     assert created_kind.json["spec"]["executionTarget"]["device_id"] == device.name
 
 
+def test_create_subscription_rejects_other_user_workspace(test_db: Session, test_user):
+    service = SubscriptionService()
+    team = _create_team(test_db, test_user.id, name=f"team-{uuid.uuid4().hex[:6]}")
+    other_workspace = _create_workspace(
+        test_db,
+        owner_user_id=test_user.id + 1000,
+        name=f"workspace-{uuid.uuid4().hex[:6]}",
+    )
+    payload = _build_create_payload(team.id, {"type": "managed"})
+    payload.workspace_id = other_workspace.id
+
+    with pytest.raises(HTTPException) as exc_info:
+        service.create_subscription(
+            test_db,
+            subscription_in=payload,
+            user_id=test_user.id,
+        )
+
+    assert exc_info.value.status_code == 400
+
+
 def test_update_subscription_persists_cloud_execution_target(
     test_db: Session, test_user
 ):
@@ -145,6 +187,31 @@ def test_update_subscription_persists_cloud_execution_target(
 
     assert updated.execution_target.type == "cloud"
     assert updated.execution_target.device_id == cloud_device.name
+
+
+def test_update_subscription_rejects_other_user_workspace(test_db: Session, test_user):
+    service = SubscriptionService()
+    team = _create_team(test_db, test_user.id, name=f"team-{uuid.uuid4().hex[:6]}")
+    other_workspace = _create_workspace(
+        test_db,
+        owner_user_id=test_user.id + 1000,
+        name=f"workspace-{uuid.uuid4().hex[:6]}",
+    )
+    created = service.create_subscription(
+        test_db,
+        subscription_in=_build_create_payload(team.id, {"type": "managed"}),
+        user_id=test_user.id,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        service.update_subscription(
+            test_db,
+            subscription_id=created.id,
+            subscription_in=SubscriptionUpdate(workspace_id=other_workspace.id),
+            user_id=test_user.id,
+        )
+
+    assert exc_info.value.status_code == 400
 
 
 def test_create_subscription_rejects_execution_target_device_type_mismatch(

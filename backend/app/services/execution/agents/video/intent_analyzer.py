@@ -75,15 +75,17 @@ class VideoIntentAnalyzer(BaseIntentAnalyzer):
             VideoIntentResult with merged prompt and image info
         """
         from app.db.session import SessionLocal
-        from app.models.subtask import Subtask, SubtaskRole
+        from app.models.subtask import SubtaskRole
+        from app.stores.tasks import subtask_store
 
         db = SessionLocal()
         try:
             # Get previous messages (exclude current subtask pair to avoid self-duplication)
-            query = db.query(Subtask).filter(Subtask.task_id == task_id)
-            if exclude_subtask_ids:
-                query = query.filter(Subtask.id.notin_(exclude_subtask_ids))
-            subtasks = query.order_by(Subtask.message_id.asc()).all()
+            subtasks = subtask_store.list_by_task_ordered(
+                db,
+                task_id=task_id,
+                exclude_subtask_ids=exclude_subtask_ids,
+            )
 
             if len(subtasks) < 2:
                 return VideoIntentResult(

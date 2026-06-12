@@ -24,13 +24,13 @@ from app.models.resource_member import (
     ResourceRole,
 )
 from app.models.share_link import ResourceType
-from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.task_member import MemberStatus as SchemaMemberStatus
 from app.schemas.task_member import (
     TaskMemberListResponse,
     TaskMemberResponse,
 )
+from app.stores.tasks import task_access_store
 
 logger = logging.getLogger(__name__)
 
@@ -38,17 +38,9 @@ logger = logging.getLogger(__name__)
 class TaskMemberService:
     """Service for managing group chat members using ResourceMember."""
 
-    def get_task(self, db: Session, task_id: int) -> Optional[TaskResource]:
+    def get_task(self, db: Session, task_id: int):
         """Get a task by ID (including subscription tasks)"""
-        return (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.id == task_id,
-                TaskResource.kind == "Task",
-                TaskResource.is_active.in_(TaskResource.is_active_query()),
-            )
-            .first()
-        )
+        return task_access_store.get_task(db, task_id=task_id)
 
     def get_user(self, db: Session, user_id: int) -> Optional[User]:
         """Get a user by ID"""
@@ -56,26 +48,19 @@ class TaskMemberService:
 
     def get_task_owner_id(self, db: Session, task_id: int) -> Optional[int]:
         """Get the owner (creator) user_id of a task"""
-        task = self.get_task(db, task_id)
-        if task:
-            return task.user_id
-        return None
+        return task_access_store.get_task_owner_id(db, task_id=task_id)
 
     def is_task_owner(self, db: Session, task_id: int, user_id: int) -> bool:
         """Check if a user is the owner of a task"""
-        task = self.get_task(db, task_id)
-        return task is not None and task.user_id == user_id
+        return task_access_store.is_task_owner(db, task_id=task_id, user_id=user_id)
 
     def is_member(self, db: Session, task_id: int, user_id: int) -> bool:
         """Check if a user is an active member of a task"""
-        # Task owner is always considered a member
         if self.is_task_owner(db, task_id, user_id):
             return True
 
-        # Check ResourceMember for approved status
-        # Exclude share records (copied_resource_id > 0), only consider actual group chat members
         member = (
-            db.query(ResourceMember)
+            db.query(ResourceMember.id)
             .filter(
                 ResourceMember.resource_type == ResourceType.TASK,
                 ResourceMember.resource_id == task_id,
@@ -96,15 +81,13 @@ class TaskMemberService:
             logger.warning(f"[is_group_chat] Task {task_id} not found")
             return False
 
-        task_json = task.json if isinstance(task.json, dict) else {}
-        logger.info(
-            f"[is_group_chat] task_id={task_id}, task_json type={type(task.json)}, is_dict={isinstance(task.json, dict)}"
-        )
-        spec = task_json.get("spec", {})
-        is_group_chat = spec.get("is_group_chat", False)
-        logger.info(
-            f"[is_group_chat] task_id={task_id}, is_group_chat={is_group_chat}, spec={spec}"
-        )
+        model_flag = getattr(task, "is_group_chat", False)
+        if isinstance(model_flag, bool) and model_flag:
+            is_group_chat = True
+        else:
+            task_json = task.json if isinstance(task.json, dict) else {}
+            is_group_chat = bool((task_json.get("spec") or {}).get("is_group_chat"))
+        logger.info(f"[is_group_chat] task_id={task_id}, is_group_chat={is_group_chat}")
         return is_group_chat
 
     def convert_to_group_chat(self, db: Session, task_id: int) -> bool:

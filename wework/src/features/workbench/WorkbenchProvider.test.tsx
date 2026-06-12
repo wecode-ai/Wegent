@@ -2725,7 +2725,7 @@ describe('WorkbenchProvider', () => {
     expect(updateCurrentUser).not.toHaveBeenCalled()
   })
 
-  test('sends an attachment-only project message with fallback text', async () => {
+  test('sends an attachment-only project message without echoing fallback text', async () => {
     const sendMessage = vi.fn().mockResolvedValue({ success: true, task_id: 100 })
 
     function AttachmentOnlyProbe() {
@@ -2744,6 +2744,14 @@ describe('WorkbenchProvider', () => {
         <div>
           <span data-testid="attachment-probe-ready">
             {workbench.state.defaultTeam ? 'ready' : 'loading'}
+          </span>
+          <span data-testid="attachment-message-contents">
+            {workbench.messages
+              .map(message => `${message.role}:${message.status}:${message.content}`)
+              .join('|')}
+          </span>
+          <span data-testid="attachment-current-task-title">
+            {workbench.state.currentTask?.title ?? ''}
           </span>
           <button type="button" onClick={() => workbench.projectChat.addExistingAttachment(attachment)}>
             add attachment
@@ -2829,10 +2837,20 @@ describe('WorkbenchProvider', () => {
     await waitFor(() =>
       expect(sendMessage).toHaveBeenCalledWith(
         expect.objectContaining({
-          message: '请参考附件',
+          message: '',
+          title: '新对话',
           attachment_ids: [55],
         })
       )
+    )
+    expect(screen.getByTestId('attachment-message-contents')).not.toHaveTextContent(
+      '请参考附件'
+    )
+    expect(screen.getByTestId('attachment-message-contents')).toHaveTextContent(
+      'user:done:'
+    )
+    expect(screen.getByTestId('attachment-current-task-title')).toHaveTextContent(
+      '新对话'
     )
   })
 

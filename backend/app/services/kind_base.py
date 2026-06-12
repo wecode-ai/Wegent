@@ -20,6 +20,7 @@ from app.db.session import SessionLocal
 from app.models.kind import Kind
 from app.models.task import TaskResource
 from app.services.group_permission import check_user_group_permission
+from app.stores.tasks import task_store
 
 logger = logging.getLogger(__name__)
 
@@ -373,8 +374,12 @@ class TaskResourceBaseService(KindBaseService):
             return []
 
         with self.get_db() as db:
-            filters = self._build_filters(user_id, namespace)
-            return db.query(TaskResource).filter(and_(*filters)).all()
+            return task_store.list_kind_resources(
+                db,
+                kind=self.kind,
+                user_id=user_id,
+                namespace=namespace,
+            )
 
     def get_resource(
         self, user_id: int, namespace: str, name: str
@@ -385,8 +390,13 @@ class TaskResourceBaseService(KindBaseService):
             return None
 
         with self.get_db() as db:
-            filters = self._build_filters(user_id, namespace, name)
-            return db.query(TaskResource).filter(and_(*filters)).first()
+            return task_store.get_kind_resource(
+                db,
+                kind=self.kind,
+                user_id=user_id,
+                namespace=namespace,
+                name=name,
+            )
 
     def create_resource(self, user_id: int, resource: Dict[str, Any]) -> int:
         """Create a new resource in tasks table and return its ID"""
@@ -414,16 +424,14 @@ class TaskResourceBaseService(KindBaseService):
             # Validate references
             self._validate_references(db, user_id, resource)
 
-            # Create new resource in tasks table
-            db_resource = TaskResource(
+            db_resource = task_store.create_kind_resource(
+                db,
                 user_id=user_id,
                 kind=self.kind,
                 name=resource["metadata"]["name"],
                 namespace=resource["metadata"]["namespace"],
-                json=resource_data,
+                payload=resource_data,
             )
-
-            db.add(db_resource)
             db.commit()
             db.refresh(db_resource)
 
@@ -453,8 +461,13 @@ class TaskResourceBaseService(KindBaseService):
             )
 
         with self.get_db() as db:
-            filters = self._build_filters(user_id, namespace, name)
-            db_resource = db.query(TaskResource).filter(and_(*filters)).first()
+            db_resource = task_store.get_kind_resource(
+                db,
+                kind=self.kind,
+                user_id=user_id,
+                namespace=namespace,
+                name=name,
+            )
             if not db_resource:
                 raise NotFoundException(f"{self.kind} '{name}' not found")
 
@@ -465,8 +478,7 @@ class TaskResourceBaseService(KindBaseService):
             resource_data = self._extract_resource_data(resource)
 
             # Update resource
-            db_resource.json = resource_data
-            db_resource.updated_at = datetime.now()
+            task_store.update_json(db, task=db_resource, payload=resource_data)
 
             db.commit()
             db.refresh(db_resource)
@@ -495,16 +507,24 @@ class TaskResourceBaseService(KindBaseService):
             )
 
         with self.get_db() as db:
-            filters = self._build_filters(user_id, namespace, name)
-            db_resource = db.query(TaskResource).filter(and_(*filters)).first()
+            db_resource = task_store.get_kind_resource(
+                db,
+                kind=self.kind,
+                user_id=user_id,
+                namespace=namespace,
+                name=name,
+            )
             if not db_resource:
                 logger.warning(
                     f"Attempted to soft delete non-existent {self.kind} '{name}' in namespace '{namespace}' for user {user_id}"
                 )
                 raise NotFoundException(f"{self.kind} '{name}' not found")
 
-            db_resource.is_active = TaskResource.STATE_DELETED
-            db_resource.updated_at = datetime.now()
+            task_store.update_fields(
+                db,
+                task=db_resource,
+                is_active=TaskResource.STATE_DELETED,
+            )
 
             # Perform pre-delete side effects
             self._pre_delete_side_effects(db, user_id, db_resource)
@@ -528,8 +548,13 @@ class TaskResourceBaseService(KindBaseService):
             )
 
         with self.get_db() as db:
-            filters = self._build_filters(user_id, namespace, name)
-            db_resource = db.query(TaskResource).filter(and_(*filters)).first()
+            db_resource = task_store.get_kind_resource(
+                db,
+                kind=self.kind,
+                user_id=user_id,
+                namespace=namespace,
+                name=name,
+            )
             if not db_resource:
                 logger.warning(
                     f"Attempted to hard delete non-existent {self.kind} '{name}' in namespace '{namespace}' for user {user_id}"
@@ -541,7 +566,7 @@ class TaskResourceBaseService(KindBaseService):
 
             # Check if deletion should proceed
             if self._should_delete_resource(db, user_id, db_resource):
-                db.delete(db_resource)
+                task_store.delete_resource(db, resource=db_resource)
                 db.commit()
                 logger.info(
                     f"Hard deleted {self.kind} '{name}' from tasks table in namespace '{namespace}' for user {user_id}"

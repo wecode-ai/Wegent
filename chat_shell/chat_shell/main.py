@@ -49,6 +49,18 @@ _storage_provider: Optional[StorageProvider] = None
 _start_time = time.time()
 
 
+def _extract_request_context(body_json: dict) -> dict:
+    """Extract task context from legacy top-level fields or Responses metadata."""
+    metadata = body_json.get("metadata")
+    if not isinstance(metadata, dict):
+        metadata = {}
+
+    return {
+        "task_id": body_json.get("task_id", metadata.get("task_id")),
+        "subtask_id": body_json.get("subtask_id", metadata.get("subtask_id")),
+    }
+
+
 async def get_storage_provider() -> StorageProvider:
     """Get the global storage provider."""
     global _storage_provider
@@ -318,8 +330,9 @@ def create_app(
                     try:
                         body_json = json.loads(request_body)
                         session_id = body_json.get("session_id")
-                        task_id = body_json.get("task_id")
-                        subtask_id = body_json.get("subtask_id")
+                        request_context = _extract_request_context(body_json)
+                        task_id = request_context["task_id"]
+                        subtask_id = request_context["subtask_id"]
                         if task_id is not None or subtask_id is not None:
                             set_task_context(task_id=task_id, subtask_id=subtask_id)
                         user_id = body_json.get("user_id")

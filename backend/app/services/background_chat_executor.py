@@ -26,12 +26,12 @@ from datetime import datetime
 from typing import Any, Callable, Dict, Optional
 
 from sqlalchemy.orm import Session
-from sqlalchemy.orm.attributes import flag_modified
 
 from app.db.session import SessionLocal
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.services.execution import execution_dispatcher
+from app.stores.tasks import subtask_store, task_store
 from shared.models import ExecutionRequest
 
 logger = logging.getLogger(__name__)
@@ -432,9 +432,10 @@ class BackgroundChatExecutor:
         task_id: int,
         assistant_subtask_id: int,
     ) -> tuple[TaskResource, Subtask]:
-        task = db.query(TaskResource).filter(TaskResource.id == task_id).first()
-        assistant_subtask = (
-            db.query(Subtask).filter(Subtask.id == assistant_subtask_id).first()
+        task = task_store.get_by_id(db, task_id=task_id)
+        assistant_subtask = subtask_store.get_by_id(
+            db,
+            subtask_id=assistant_subtask_id,
         )
         if task is None or assistant_subtask is None:
             raise ValueError(
@@ -456,9 +457,13 @@ class BackgroundChatExecutor:
         if parsed_content:
             result["parsed"] = parsed_content
 
-        assistant_subtask.status = SubtaskStatus.COMPLETED
-        assistant_subtask.result = result
-        assistant_subtask.completed_at = datetime.now()
+        subtask_store.update_fields(
+            db,
+            subtask=assistant_subtask,
+            status=SubtaskStatus.COMPLETED,
+            result=result,
+            completed_at=datetime.now(),
+        )
 
         task_json = task.json
         if task_json and "status" in task_json:
@@ -466,8 +471,7 @@ class BackgroundChatExecutor:
             task_json["status"]["progress"] = 100
             task_json["status"]["updatedAt"] = datetime.now().isoformat()
             task_json["status"]["completedAt"] = datetime.now().isoformat()
-            task.json = task_json
-            flag_modified(task, "json")
+            task_store.update_json(db, task=task, payload=task_json)
 
         db.commit()
 
@@ -479,9 +483,13 @@ class BackgroundChatExecutor:
         assistant_subtask: Subtask,
         error: str,
     ) -> None:
-        assistant_subtask.status = SubtaskStatus.FAILED
-        assistant_subtask.error_message = error
-        assistant_subtask.completed_at = datetime.now()
+        subtask_store.update_fields(
+            db,
+            subtask=assistant_subtask,
+            status=SubtaskStatus.FAILED,
+            error_message=error,
+            completed_at=datetime.now(),
+        )
 
         task_json = task.json
         if task_json and "status" in task_json:
@@ -490,8 +498,7 @@ class BackgroundChatExecutor:
             task_json["status"]["errorMessage"] = error
             task_json["status"]["updatedAt"] = datetime.now().isoformat()
             task_json["status"]["completedAt"] = datetime.now().isoformat()
-            task.json = task_json
-            flag_modified(task, "json")
+            task_store.update_json(db, task=task, payload=task_json)
 
         db.commit()
 
@@ -552,26 +559,26 @@ class BackgroundChatExecutor:
             "apiVersion": "agent.wecode.io/v1",
         }
 
-        # Create TaskResource using ORM, let DB generate ID
-        task = TaskResource(
+        task = task_store.create_pending_task_shell(
+            db,
             user_id=self.user_id,
-            kind="Task",
-            name="task-pending",  # Will be updated after flush
-            namespace="system",
-            json=task_json,
-            is_active=True,
+            client_origin="",
         )
-        db.add(task)
-        db.flush()  # Flush to get the auto-generated ID
 
         # Update task name and metadata with the actual ID
-        task.name = f"task-{task.id}"
         task_json["metadata"]["name"] = f"task-{task.id}"
-        task.json = task_json
-        db.flush()
+        task_store.update_fields(
+            db,
+            task=task,
+            name=f"task-{task.id}",
+            namespace="system",
+            is_active=TaskResource.STATE_ACTIVE,
+        )
+        task_store.update_json(db, task=task, payload=task_json)
 
         # Create User Subtask (record input)
-        user_subtask = Subtask(
+        user_subtask = subtask_store.create_subtask(
+            db,
             user_id=self.user_id,
             task_id=task.id,
             team_id=0,
@@ -579,19 +586,19 @@ class BackgroundChatExecutor:
             bot_ids=[],
             role=SubtaskRole.USER,
             prompt=user_message,
-            status=SubtaskStatus.COMPLETED,
-            progress=100,
-            message_id=1,
-            parent_id=0,
             executor_namespace="",
             executor_name="",
+            message_id=1,
+            parent_id=0,
+            status=SubtaskStatus.COMPLETED,
+            progress=100,
+            result=None,
             error_message="",
-            completed_at=datetime.now(),
         )
-        db.add(user_subtask)
 
         # Create Assistant Subtask (record output)
-        assistant_subtask = Subtask(
+        assistant_subtask = subtask_store.create_subtask(
+            db,
             user_id=self.user_id,
             task_id=task.id,
             team_id=0,
@@ -599,16 +606,15 @@ class BackgroundChatExecutor:
             bot_ids=[],
             role=SubtaskRole.ASSISTANT,
             prompt="",
-            status=SubtaskStatus.PENDING,
-            progress=0,
-            message_id=2,
-            parent_id=1,
             executor_namespace="",
             executor_name="",
+            message_id=2,
+            parent_id=1,
+            status=SubtaskStatus.PENDING,
+            progress=0,
+            result=None,
             error_message="",
-            # completed_at will be set when task completes
         )
-        db.add(assistant_subtask)
         db.commit()
 
         return task, user_subtask, assistant_subtask

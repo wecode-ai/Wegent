@@ -25,8 +25,9 @@ from app.db.session import SessionLocal
 from app.services.device_service import device_service
 from app.services.execution.dispatcher import execution_dispatcher
 from app.services.execution.emitters import WebSocketResultEmitter
+from app.stores.tasks import subtask_store
 from shared.models import ExecutionRequest
-from shared.models.db.subtask import Subtask, SubtaskStatus
+from shared.models.db.subtask import SubtaskStatus
 
 logger = logging.getLogger(__name__)
 
@@ -55,14 +56,7 @@ async def check_and_mark_failed_subtasks() -> int:
 
     try:
         # Find all running subtasks that are on local devices
-        running_subtasks = (
-            db.query(Subtask)
-            .filter(
-                Subtask.status == SubtaskStatus.RUNNING,
-                Subtask.executor_name.like("device-%"),
-            )
-            .all()
-        )
+        running_subtasks = subtask_store.list_running_device_subtasks(db)
 
         # Group subtasks by user and device
         # executor_name format: "device-{device_id}"
@@ -98,9 +92,13 @@ async def check_and_mark_failed_subtasks() -> int:
                 )
 
                 # Mark subtask as failed in database
-                subtask.status = SubtaskStatus.FAILED
-                subtask.error_message = "Device connection lost (heartbeat timeout)"
-                subtask.completed_at = datetime.now()
+                subtask_store.update_fields(
+                    db,
+                    subtask=subtask,
+                    status=SubtaskStatus.FAILED,
+                    error_message="Device connection lost (heartbeat timeout)",
+                    completed_at=datetime.now(),
+                )
 
                 # Emit error via ExecutionDispatcher
                 # Create minimal request for routing and emitter creation
