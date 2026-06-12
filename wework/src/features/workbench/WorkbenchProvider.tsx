@@ -85,6 +85,7 @@ import { WorkbenchContext } from './useWorkbench'
 const WEWORK_CLIENT_ORIGIN = 'wework'
 const LOCAL_SKILLS_CACHE_TTL_MS = 60_000
 const STANDALONE_PROJECT_ID = 0
+const EMPTY_MESSAGE_TASK_TITLE = '新对话'
 const DEVICE_STATUS_LABELS: Record<string, string> = {
   online: '在线',
   busy: '忙碌',
@@ -1608,6 +1609,9 @@ export function WorkbenchProvider({
 
       if (attachmentSelection.attachments.length > 0) {
         payload.attachment_ids = attachmentSelection.attachments.map(attachment => attachment.id)
+        if (!message && !state.currentTask) {
+          payload.title = EMPTY_MESSAGE_TASK_TITLE
+        }
       }
 
       return { payload, activeDeviceId }
@@ -1679,14 +1683,14 @@ export function WorkbenchProvider({
 
       if (!state.currentTask && ack.task_id) {
         const projectId = payload.project_id ?? state.currentProject?.id ?? 0
-        const routeProjectId = projectId > 0 ? projectId : undefined
+        const routeProjectId = projectId
         // Navigate to the canonical task route so a freshly created chat shares
         // the same URL shape as opening an existing one (path, not ?taskId=).
         handledTaskRouteRef.current = getTaskRouteKey(ack.task_id, routeProjectId)
         navigateTo(buildTaskRoute({ taskId: ack.task_id, projectId: routeProjectId }))
         const openedTask: Task = {
           id: ack.task_id,
-          title: message.substring(0, 100),
+          title: (payload.title ?? message).substring(0, 100),
           status: 'RUNNING',
           task_type: 'code',
           team_id: payload.team_id,
@@ -1711,6 +1715,7 @@ export function WorkbenchProvider({
     [
       refreshWorkLists,
       resolvedServices.chatStream,
+      state.currentProject?.id,
       state.currentTask,
     ]
   )
@@ -1719,8 +1724,8 @@ export function WorkbenchProvider({
     const trimmedMessage = state.input.trim()
     const hasAttachments = attachmentSelection.attachments.length > 0
     if (!trimmedMessage && !hasAttachments) return
-    const message = trimmedMessage || '请参考附件'
-    const prepared = buildSendPayload(message)
+    const payloadMessage = trimmedMessage
+    const prepared = buildSendPayload(payloadMessage)
     if (!prepared) return
     if (prepared.activeDeviceId) {
       const activeDevice = findWorkbenchDevice(state.devices, prepared.activeDeviceId)
@@ -1772,7 +1777,7 @@ export function WorkbenchProvider({
         ...items,
         {
           id: `queued-${state.currentTask?.id}-${Date.now()}`,
-          content: message,
+          content: payloadMessage,
           status: 'queued',
           createdAt: new Date().toISOString(),
           payload: prepared.payload,
@@ -1785,7 +1790,7 @@ export function WorkbenchProvider({
     }
 
     const sent = await sendPreparedMessage(
-      message,
+      payloadMessage,
       prepared.payload,
       prepared.activeDeviceId,
       attachmentsSnapshot
