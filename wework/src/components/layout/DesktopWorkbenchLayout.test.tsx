@@ -415,7 +415,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('desktop-chat-scroll')).toHaveClass(
       'h-full',
       'overflow-y-auto',
-      'pb-32',
+      'pb-52',
     )
     expect(screen.getByTestId('desktop-floating-composer-backdrop')).toHaveClass(
       'pointer-events-none',
@@ -502,8 +502,8 @@ describe('DesktopWorkbenchLayout', () => {
       />,
     )
 
-    expect(screen.getByTestId('desktop-chat-scroll')).toHaveClass('pb-44')
-    expect(screen.getByTestId('desktop-chat-scroll')).not.toHaveClass('pb-32')
+    expect(screen.getByTestId('desktop-chat-scroll')).toHaveClass('pb-72')
+    expect(screen.getByTestId('desktop-chat-scroll')).not.toHaveClass('pb-52')
   })
 
   test('restores and stores sidebar width in localStorage', () => {
@@ -2009,7 +2009,7 @@ describe('DesktopWorkbenchLayout', () => {
       'overflow-y-auto',
       'scrollbar-none',
     )
-    expect(screen.getByTestId('settings-button')).toHaveClass('h-9', 'flex-1')
+    expect(screen.getByTestId('settings-button')).toHaveClass('h-9', 'w-full')
   })
 
   test('toggles an empty project chat list without selecting the project chat context', async () => {
