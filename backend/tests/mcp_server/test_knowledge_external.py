@@ -15,6 +15,7 @@ from app.core.rate_limit import ExternalMcpRateLimitStatus
 from app.mcp_server import server as mcp_server_module
 from app.mcp_server.tools import knowledge_external
 from app.models.knowledge import DocumentIndexStatus, KnowledgeDocument, KnowledgeFolder
+from app.models.namespace import Namespace
 from app.models.subtask_context import ContextType, SubtaskContext
 from app.schemas.knowledge import ResourceScope
 from app.services.knowledge import external_nodes
@@ -53,11 +54,18 @@ def allow_external_search_rate_limit():
         yield
 
 
-def _make_kb(kb_id: int, user_id: int, name: str, created_at: datetime):
+def _make_kb(
+    kb_id: int,
+    user_id: int,
+    name: str,
+    created_at: datetime,
+    *,
+    namespace: str = "default",
+):
     return SimpleNamespace(
         id=kb_id,
         user_id=user_id,
-        namespace="default",
+        namespace=namespace,
         json={"spec": {"name": name, "description": f"{name} description"}},
         created_at=created_at,
         updated_at=created_at,
@@ -160,8 +168,20 @@ async def test_list_knowledge_bases_rejects_invalid_input_types(test_user):
 async def test_list_knowledge_bases_sorts_by_created_at_and_normalizes_group_name(
     test_user,
 ):
-    older = _make_kb(1, test_user.id, "Older", datetime(2026, 1, 1, 8, 0, 0))
-    newer = _make_kb(2, test_user.id, "Newer", datetime(2026, 1, 2, 8, 0, 0))
+    older = _make_kb(
+        1,
+        test_user.id,
+        "Older",
+        datetime(2026, 1, 1, 8, 0, 0),
+        namespace="team-a",
+    )
+    newer = _make_kb(
+        2,
+        test_user.id,
+        "Newer",
+        datetime(2026, 1, 2, 8, 0, 0),
+        namespace="team-a",
+    )
 
     token = _set_external_user(test_user)
     try:
@@ -176,6 +196,11 @@ async def test_list_knowledge_bases_sorts_by_created_at_and_normalizes_group_nam
                 knowledge_external,
                 "get_document_counts",
                 return_value={1: 2, 2: 1},
+            ),
+            patch.object(
+                knowledge_external,
+                "load_active_namespace_map",
+                return_value={},
             ),
         ):
             mock_db = MagicMock()
@@ -196,6 +221,8 @@ async def test_list_knowledge_bases_sorts_by_created_at_and_normalizes_group_nam
     assert payload["limit"] == knowledge_external.DEFAULT_KNOWLEDGE_BASE_LIST_LIMIT
     assert payload["offset"] == 0
     assert payload["items"][0]["document_count"] == 1
+    assert payload["items"][0]["namespace_level"] == "group"
+    assert payload["items"][0]["namespace_display_name"] == "team-a"
     list_kbs.assert_called_once_with(
         mock_db,
         test_user.id,
@@ -244,6 +271,79 @@ async def test_list_knowledge_bases_paginates_before_counting_documents(test_use
     assert [item["knowledge_base_id"] for item in payload["items"]] == [2]
     assert payload["items"][0]["document_count"] == 5
     get_counts.assert_called_once_with(mock_db, [2])
+
+
+@pytest.mark.asyncio
+async def test_list_knowledge_bases_returns_namespace_fields(test_db, test_user):
+    now = datetime(2026, 1, 4, 8, 0, 0)
+    group_namespace = Namespace(
+        name="team-a",
+        display_name="Team Alpha",
+        owner_user_id=test_user.id,
+        level="group",
+        is_active=True,
+    )
+    organization_namespace = Namespace(
+        name="corp",
+        display_name="Acme Corp",
+        owner_user_id=test_user.id,
+        level="organization",
+        is_active=True,
+    )
+    test_db.add_all([group_namespace, organization_namespace])
+    test_db.commit()
+
+    personal_kb = _make_kb(1, test_user.id, "Personal", now)
+    shared_kb = _make_kb(2, test_user.id + 1, "Shared", now + timedelta(minutes=1))
+    group_kb = _make_kb(
+        3, test_user.id + 2, "Group", now + timedelta(minutes=2), namespace="team-a"
+    )
+    organization_kb = _make_kb(
+        4,
+        test_user.id + 3,
+        "Organization",
+        now + timedelta(minutes=3),
+        namespace="corp",
+    )
+    missing_namespace_kb = _make_kb(
+        5,
+        test_user.id,
+        "Missing Namespace",
+        now + timedelta(minutes=4),
+        namespace="legacy-team",
+    )
+
+    token = _set_external_user(test_user)
+    try:
+        with (
+            patch.object(knowledge_external, "SessionLocal", return_value=test_db),
+            patch.object(
+                knowledge_external.KnowledgeService,
+                "list_knowledge_bases",
+                return_value=[
+                    personal_kb,
+                    shared_kb,
+                    group_kb,
+                    organization_kb,
+                    missing_namespace_kb,
+                ],
+            ),
+        ):
+            result = await knowledge_external.wegent_kb_list_knowledge_bases()
+    finally:
+        _reset_external_user(token)
+
+    items = {item["knowledge_base_id"]: item for item in json.loads(result)["items"]}
+    assert items[1]["namespace_level"] == "personal"
+    assert items[1]["namespace_display_name"] == "personal"
+    assert items[2]["namespace_level"] == "personal"
+    assert items[2]["namespace_display_name"] == "personal"
+    assert items[3]["namespace_level"] == "group"
+    assert items[3]["namespace_display_name"] == "Team Alpha"
+    assert items[4]["namespace_level"] == "organization"
+    assert items[4]["namespace_display_name"] == "Acme Corp"
+    assert items[5]["namespace_level"] == "group"
+    assert items[5]["namespace_display_name"] == "legacy-team"
 
 
 @pytest.mark.asyncio

@@ -13,16 +13,16 @@ from sqlalchemy.orm import Session
 from app.core.exceptions import CustomHTTPException, StructuredValidationException
 from app.models.kind import Kind
 from app.models.knowledge import KnowledgeDocument, KnowledgeFolder
-from app.models.namespace import Namespace
 from app.models.user import User
 from app.schemas.knowledge import TransferDocumentsResponse
-from app.schemas.namespace import GroupLevel, GroupRole
+from app.schemas.namespace import GroupRole
 from app.services.group_permission import get_effective_role_in_group
 from app.services.knowledge.knowledge_service import (
     KnowledgeService,
     _get_delete_gateway,
     _run_async_in_new_loop,
 )
+from app.services.knowledge.namespace_utils import get_namespace_level
 
 # ============== Error Codes for i18n ==============
 
@@ -237,16 +237,7 @@ class KnowledgeTransferService:
     @staticmethod
     def _get_transfer_namespace_level(db: Session, namespace: str) -> str:
         """Return normalized namespace level for transfer rules."""
-        if namespace == "default":
-            return "personal"
-        ns = (
-            db.query(Namespace)
-            .filter(Namespace.name == namespace, Namespace.is_active == True)
-            .first()
-        )
-        if ns and ns.level == GroupLevel.organization.value:
-            return "organization"
-        return "group"
+        return get_namespace_level(db, namespace)
 
     @staticmethod
     def validate_transfer_namespace(
