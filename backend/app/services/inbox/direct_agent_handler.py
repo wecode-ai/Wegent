@@ -14,11 +14,10 @@ from sqlalchemy.orm import Session, make_transient
 from app.core.events import QueueMessageCreatedEvent, TaskCompletedEvent
 from app.db.session import get_db_session
 from app.models.kind import Kind
-from app.models.subtask import Subtask
-from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.work_queue import AutoProcessConfig, TeamRef
 from app.services.readers import KindType, kindReader
+from app.stores.tasks import subtask_store, task_store
 from shared.models.db.enums import QueueMessageStatus
 from shared.models.db.work_queue import QueueMessage
 
@@ -253,16 +252,11 @@ class InboxDirectAgentHandler:
         """Return workspace-related kwargs for TaskCreationParams from the team's
         most recent active Task. Returns an empty dict if no Task with a non-empty
         repository is found (resulting in a pure chat Task)."""
-        latest_task = (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.user_id == user_id,
-                TaskResource.kind == "Task",
-                TaskResource.is_active == TaskResource.STATE_ACTIVE,
-            )
-            .order_by(TaskResource.id.desc())
-            .limit(50)
-            .all()
+        latest_task = task_store.list_regular_active_tasks(
+            db,
+            user_id=user_id,
+            order_by_id_desc=True,
+            limit=50,
         )
 
         for task_resource in latest_task:
@@ -276,16 +270,11 @@ class InboxDirectAgentHandler:
                 workspace_ref = spec.get("workspaceRef")
                 if workspace_ref:
                     # Find the matching Workspace TaskResource
-                    workspace = (
-                        db.query(TaskResource)
-                        .filter(
-                            TaskResource.user_id == user_id,
-                            TaskResource.kind == "Workspace",
-                            TaskResource.name == workspace_ref.get("name"),
-                            TaskResource.namespace
-                            == workspace_ref.get("namespace", "default"),
-                        )
-                        .first()
+                    workspace = task_store.get_workspace_by_ref(
+                        db,
+                        user_id=user_id,
+                        name=workspace_ref.get("name"),
+                        namespace=workspace_ref.get("namespace", "default"),
                     )
                     if workspace:
                         repo = workspace.json.get("spec", {}).get("repository", {})
@@ -493,13 +482,10 @@ class InboxDirectAgentHandler:
         user_id: int,
     ):
         """Load ORM objects required to build a direct-agent request."""
-        task = (
-            db.query(TaskResource)
-            .filter(TaskResource.id == task_id, TaskResource.kind == "Task")
-            .first()
-        )
-        assistant_subtask = (
-            db.query(Subtask).filter(Subtask.id == assistant_subtask_id).first()
+        task = task_store.get_by_id(db, task_id=task_id)
+        assistant_subtask = subtask_store.get_basic_by_id(
+            db,
+            subtask_id=assistant_subtask_id,
         )
         team = db.query(Kind).filter(Kind.id == team_id, Kind.kind == "Team").first()
         user = db.query(User).filter(User.id == user_id).first()

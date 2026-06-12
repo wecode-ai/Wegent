@@ -39,6 +39,7 @@ from app.services.subscription.state_machine import (
     validate_state_transition,
 )
 from app.services.subscription.websocket import emit_background_execution_update
+from app.stores.tasks import subtask_store, task_store
 
 logger = logging.getLogger(__name__)
 
@@ -335,7 +336,7 @@ class BackgroundExecutionManager:
         """
         from datetime import datetime
 
-        from app.models.subtask import Subtask, SubtaskStatus
+        from app.models.subtask import SubtaskStatus
         from app.models.task import TaskResource
         from app.schemas.kind import Task
         from app.services.execution import execution_dispatcher
@@ -343,14 +344,10 @@ class BackgroundExecutionManager:
 
         try:
             # Get the task
-            task = (
-                db.query(TaskResource)
-                .filter(
-                    TaskResource.id == task_id,
-                    TaskResource.kind == "Task",
-                    TaskResource.is_active.in_(TaskResource.is_active_query()),
-                )
-                .first()
+            task = task_store.get_task_by_states(
+                db,
+                task_id=task_id,
+                states=TaskResource.is_active_query(),
             )
 
             if not task:
@@ -369,14 +366,12 @@ class BackgroundExecutionManager:
                 # Add more shell type mappings as needed
 
             # Find running subtask to cancel
-            running_subtask = (
-                db.query(Subtask)
-                .filter(
-                    Subtask.task_id == task_id,
-                    Subtask.status.in_([SubtaskStatus.PENDING, SubtaskStatus.RUNNING]),
-                )
-                .first()
+            running_subtasks = subtask_store.list_by_task_statuses(
+                db,
+                task_id=task_id,
+                statuses=[SubtaskStatus.PENDING, SubtaskStatus.RUNNING],
             )
+            running_subtask = running_subtasks[0] if running_subtasks else None
 
             if running_subtask:
                 # Build ExecutionRequest for cancel
@@ -429,29 +424,29 @@ class BackgroundExecutionManager:
                     task_crd.status.status = "CANCELLED"
                     task_crd.status.updatedAt = datetime.now().isoformat()
                     task_crd.status.completedAt = datetime.now().isoformat()
-                task.json = task_crd.model_dump(mode="json", exclude_none=True)
-                flag_modified(task, "json")
+                task_store.update_json(
+                    db,
+                    task=task,
+                    payload=task_crd.model_dump(mode="json", exclude_none=True),
+                )
                 logger.info(
                     f"[Subscription] Updated task {task_id} status to CANCELLED"
                 )
 
             # Cancel all running subtasks in database
-            running_subtasks = (
-                db.query(Subtask)
-                .filter(
-                    Subtask.task_id == task_id,
-                    Subtask.status.in_([SubtaskStatus.PENDING, SubtaskStatus.RUNNING]),
-                )
-                .all()
+            cancelled_count = subtask_store.mark_task_subtasks_by_statuses(
+                db,
+                task_id=task_id,
+                from_statuses=[SubtaskStatus.PENDING, SubtaskStatus.RUNNING],
+                to_status=SubtaskStatus.CANCELLED,
+                progress=100,
+                completed_at=datetime.now(),
             )
-
-            for subtask in running_subtasks:
-                subtask.status = SubtaskStatus.CANCELLED
-                subtask.progress = 100
-                subtask.completed_at = datetime.now()
-                subtask.updated_at = datetime.now()
+            if cancelled_count:
                 logger.info(
-                    f"[Subscription] Updated subtask {subtask.id} status to CANCELLED"
+                    "[Subscription] Updated %s subtasks to CANCELLED for task %s",
+                    cancelled_count,
+                    task_id,
                 )
 
             db.commit()

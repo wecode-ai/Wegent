@@ -40,24 +40,7 @@ async def test_dispatch_recovers_deleted_executor_before_http_callback():
     task.id = 1385
     task.kind = "Task"
 
-    subtask_query = MagicMock()
-    subtask_query.filter.return_value = subtask_query
-    subtask_query.first.return_value = subtask
-
-    task_query = MagicMock()
-    task_query.filter.return_value = task_query
-    task_query.first.return_value = task
-
     db = MagicMock()
-
-    def query_side_effect(model):
-        if model == Subtask:
-            return subtask_query
-        if model == TaskResource:
-            return task_query
-        return MagicMock()
-
-    db.query.side_effect = query_side_effect
 
     async def recover_side_effect(*, db, subtask, task, request):
         # Recovery service now returns executor info instead of updating subtask
@@ -87,6 +70,14 @@ async def test_dispatch_recovers_deleted_executor_before_http_callback():
             recovery_service,
             create=True,
         ),
+        patch(
+            "app.services.execution.dispatcher.subtask_store.get_by_id",
+            return_value=subtask,
+        ) as get_subtask_mock,
+        patch(
+            "app.services.execution.dispatcher.task_store.get_by_id",
+            return_value=task,
+        ) as get_task_mock,
         patch.object(dispatcher.router, "route", return_value=target),
         patch.object(dispatcher, "_update_subtask_to_running", AsyncMock()),
         patch.object(
@@ -96,6 +87,9 @@ async def test_dispatch_recovers_deleted_executor_before_http_callback():
         await dispatcher.dispatch(request, emitter=emitter)
 
     recovery_service.recover.assert_awaited_once()
+    get_subtask_mock.assert_called_once_with(db, subtask_id=request.subtask_id)
+    get_task_mock.assert_called_once_with(db, task_id=request.task_id)
+    db.query.assert_not_called()
     assert request.executor_name == "recovered-executor"
     assert request.executor_namespace == "default"
     dispatch_mock.assert_awaited_once()
@@ -126,24 +120,7 @@ async def test_dispatch_raises_when_recovery_returns_false_and_emits_error():
     task.id = 2468
     task.kind = "Task"
 
-    subtask_query = MagicMock()
-    subtask_query.filter.return_value = subtask_query
-    subtask_query.first.return_value = subtask
-
-    task_query = MagicMock()
-    task_query.filter.return_value = task_query
-    task_query.first.return_value = task
-
     db = MagicMock()
-
-    def query_side_effect(model):
-        if model == Subtask:
-            return subtask_query
-        if model == TaskResource:
-            return task_query
-        return MagicMock()
-
-    db.query.side_effect = query_side_effect
     task.json = {}
 
     recovery_service = MagicMock()
@@ -162,6 +139,14 @@ async def test_dispatch_raises_when_recovery_returns_false_and_emits_error():
             recovery_service,
             create=True,
         ),
+        patch(
+            "app.services.execution.dispatcher.subtask_store.get_by_id",
+            return_value=subtask,
+        ) as get_subtask_mock,
+        patch(
+            "app.services.execution.dispatcher.task_store.get_by_id",
+            return_value=task,
+        ) as get_task_mock,
         patch.object(dispatcher, "_update_subtask_to_running", AsyncMock()),
         patch.object(
             dispatcher, "_dispatch_http_callback", AsyncMock()
@@ -171,6 +156,9 @@ async def test_dispatch_raises_when_recovery_returns_false_and_emits_error():
             await dispatcher.dispatch(request, emitter=emitter)
 
     recovery_service.recover.assert_awaited_once()
+    get_subtask_mock.assert_called_once_with(db, subtask_id=request.subtask_id)
+    get_task_mock.assert_called_once_with(db, task_id=request.task_id)
+    db.query.assert_not_called()
     dispatch_mock.assert_not_awaited()
     emitter.emit_error.assert_not_awaited()
 
@@ -240,12 +228,7 @@ async def test_dispatch_does_not_scan_historical_deleted_subtasks():
     subtask.executor_name = "active-executor"
     subtask.executor_namespace = "default"
 
-    subtask_query = MagicMock()
-    subtask_query.filter.return_value = subtask_query
-    subtask_query.first.return_value = subtask
-
     db = MagicMock()
-    db.query.return_value = subtask_query
 
     recovery_service = MagicMock()
     recovery_service.recover = AsyncMock()
@@ -266,6 +249,10 @@ async def test_dispatch_does_not_scan_historical_deleted_subtasks():
             recovery_service,
             create=True,
         ),
+        patch(
+            "app.services.execution.dispatcher.subtask_store.get_by_id",
+            return_value=subtask,
+        ) as get_subtask_mock,
         patch.object(dispatcher.router, "route", return_value=target),
         patch.object(dispatcher, "_update_subtask_to_running", AsyncMock()),
         patch.object(
@@ -275,6 +262,8 @@ async def test_dispatch_does_not_scan_historical_deleted_subtasks():
         await dispatcher.dispatch(request, emitter=emitter)
 
     recovery_service.recover.assert_not_awaited()
+    get_subtask_mock.assert_called_once_with(db, subtask_id=request.subtask_id)
+    db.query.assert_not_called()
     dispatch_mock.assert_awaited_once()
 
 

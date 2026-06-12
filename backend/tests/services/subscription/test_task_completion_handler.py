@@ -16,6 +16,7 @@ async def test_completed_managed_subscription_deletes_executor_immediately():
     from app.core.events import TaskCompletedEvent
     from app.models.kind import Kind
     from app.models.subtask import Subtask
+    from app.models.task import TaskResource
     from app.services.subscription.task_completion_handler import (
         SubscriptionTaskCompletionHandler,
     )
@@ -28,6 +29,7 @@ async def test_completed_managed_subscription_deletes_executor_immediately():
         inbox_message_id=0,
     )
     subscription = SimpleNamespace(id=22, name="daily-briefing", json={})
+    task = SimpleNamespace(id=44, user_id=1)
     subtask = SimpleNamespace(
         id=33,
         task_id=44,
@@ -40,6 +42,10 @@ async def test_completed_managed_subscription_deletes_executor_immediately():
     subscription_query.filter.return_value = subscription_query
     subscription_query.first.return_value = subscription
 
+    task_query = MagicMock()
+    task_query.filter.return_value = task_query
+    task_query.first.return_value = task
+
     subtask_query = MagicMock()
     subtask_query.filter.return_value = subtask_query
     subtask_query.all.return_value = [subtask]
@@ -49,6 +55,8 @@ async def test_completed_managed_subscription_deletes_executor_immediately():
     def query_side_effect(model):
         if model == Kind:
             return subscription_query
+        if model == TaskResource:
+            return task_query
         if model == Subtask:
             return subtask_query
         raise AssertionError(f"Unexpected model query: {model}")
@@ -127,6 +135,7 @@ async def test_auto_delete_task_without_background_execution_deletes_executor():
     handler = SubscriptionTaskCompletionHandler()
     task = SimpleNamespace(
         id=44,
+        user_id=1,
         json={
             "apiVersion": "agent.wecode.io/v1",
             "kind": "Task",
@@ -283,6 +292,7 @@ async def test_completed_subscription_deletes_executor_without_managed_target():
     from app.core.events import TaskCompletedEvent
     from app.models.kind import Kind
     from app.models.subtask import Subtask
+    from app.models.task import TaskResource
     from app.services.subscription.task_completion_handler import (
         SubscriptionTaskCompletionHandler,
     )
@@ -295,6 +305,7 @@ async def test_completed_subscription_deletes_executor_without_managed_target():
         inbox_message_id=0,
     )
     subscription = SimpleNamespace(id=22, name="daily-briefing", json={})
+    task = SimpleNamespace(id=44, user_id=1)
     subtask = SimpleNamespace(
         id=33,
         task_id=44,
@@ -307,6 +318,10 @@ async def test_completed_subscription_deletes_executor_without_managed_target():
     subscription_query.filter.return_value = subscription_query
     subscription_query.first.return_value = subscription
 
+    task_query = MagicMock()
+    task_query.filter.return_value = task_query
+    task_query.first.return_value = task
+
     subtask_query = MagicMock()
     subtask_query.filter.return_value = subtask_query
     subtask_query.all.return_value = [subtask]
@@ -316,6 +331,8 @@ async def test_completed_subscription_deletes_executor_without_managed_target():
     def query_side_effect(model):
         if model == Kind:
             return subscription_query
+        if model == TaskResource:
+            return task_query
         if model == Subtask:
             return subtask_query
         raise AssertionError(f"Unexpected model query: {model}")
@@ -385,6 +402,7 @@ async def test_completed_subscription_deletes_sandbox_runtime_immediately():
     from app.core.events import TaskCompletedEvent
     from app.models.kind import Kind
     from app.models.subtask import Subtask
+    from app.models.task import TaskResource
     from app.services.subscription.task_completion_handler import (
         SubscriptionTaskCompletionHandler,
     )
@@ -397,6 +415,7 @@ async def test_completed_subscription_deletes_sandbox_runtime_immediately():
         inbox_message_id=0,
     )
     subscription = SimpleNamespace(id=22, name="daily-briefing", json={})
+    task = SimpleNamespace(id=44, user_id=1)
     subtask = SimpleNamespace(
         id=33,
         task_id=44,
@@ -408,6 +427,10 @@ async def test_completed_subscription_deletes_sandbox_runtime_immediately():
     subscription_query = MagicMock()
     subscription_query.filter.return_value = subscription_query
     subscription_query.first.return_value = subscription
+
+    task_query = MagicMock()
+    task_query.filter.return_value = task_query
+    task_query.first.return_value = task
 
     class FakeSubtaskQuery:
         def __init__(self, items):
@@ -429,6 +452,8 @@ async def test_completed_subscription_deletes_sandbox_runtime_immediately():
     def query_side_effect(model):
         if model == Kind:
             return subscription_query
+        if model == TaskResource:
+            return task_query
         if model == Subtask:
             return FakeSubtaskQuery([subtask])
         raise AssertionError(f"Unexpected model query: {model}")

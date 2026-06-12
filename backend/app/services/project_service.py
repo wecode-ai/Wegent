@@ -45,6 +45,7 @@ from app.services.device.command_service import (
     execute_configured_device_command,
 )
 from app.services.device_service import device_service
+from app.stores.tasks import task_store
 
 GIT_CLONE_TIMEOUT_SECONDS = 600
 GIT_WORKTREE_TIMEOUT_SECONDS = 120
@@ -806,17 +807,14 @@ def _load_worktree_tasks_by_id(
     if not worktree_ids:
         return {}
 
-    query = db.query(TaskResource).filter(
-        TaskResource.id.in_(worktree_ids),
-        TaskResource.user_id == user_id,
-        TaskResource.kind == "Task",
-        TaskResource.is_active.in_(
-            [TaskResource.STATE_ACTIVE, TaskResource.STATE_ARCHIVED]
-        ),
+    tasks = task_store.list_owned_tasks_by_ids_and_states(
+        db,
+        task_ids=worktree_ids,
+        user_id=user_id,
+        states=[TaskResource.STATE_ACTIVE, TaskResource.STATE_ARCHIVED],
+        client_origin=client_origin,
     )
-    if client_origin:
-        query = query.filter(TaskResource.client_origin == client_origin)
-    return {task.id: task for task in query.all()}
+    return {task.id: task for task in tasks}
 
 
 def _build_worktree_task_ref(
@@ -885,19 +883,14 @@ def _find_worktree_tasks(
     worktree_id: str,
     worktree_path: str,
 ) -> list[TaskResource]:
-    query = db.query(TaskResource).filter(
-        TaskResource.id == int(worktree_id),
-        TaskResource.user_id == user_id,
-        TaskResource.project_id == project_id,
-        TaskResource.kind == "Task",
-        TaskResource.is_active.in_(
-            [TaskResource.STATE_ACTIVE, TaskResource.STATE_ARCHIVED]
-        ),
+    task = task_store.get_task_by_states(
+        db,
+        task_id=int(worktree_id),
+        states=[TaskResource.STATE_ACTIVE, TaskResource.STATE_ARCHIVED],
+        user_id=user_id,
+        client_origin=client_origin,
     )
-    if client_origin:
-        query = query.filter(TaskResource.client_origin == client_origin)
-    task = query.first()
-    if not task:
+    if not task or task.project_id != project_id:
         return []
     task_workspace_path = _task_execution_workspace_path(task)
     if task_workspace_path:
@@ -1042,7 +1035,12 @@ def get_project(
         return None
 
     # Get tasks in this project
-    tasks = _get_project_tasks(db, project_id, client_origin=client_origin)
+    tasks = _get_project_tasks(
+        db,
+        project_id,
+        owner_user_id=project.user_id,
+        client_origin=client_origin,
+    )
 
     # Build response manually to avoid auto-validation of tasks relationship
     return ProjectWithTasksResponse(
@@ -1090,7 +1088,12 @@ def list_projects(
     items = []
     for project in projects:
         if include_tasks:
-            tasks = _get_project_tasks(db, project.id, client_origin=client_origin)
+            tasks = _get_project_tasks(
+                db,
+                project.id,
+                owner_user_id=project.user_id,
+                client_origin=client_origin,
+            )
         else:
             tasks = []
 
@@ -1098,17 +1101,12 @@ def list_projects(
             len(tasks)
             if include_tasks
             else (
-                db.query(TaskResource)
-                .filter(
-                    TaskResource.project_id == project.id,
-                    TaskResource.is_active == TaskResource.STATE_ACTIVE,
-                    *(
-                        [TaskResource.client_origin == client_origin]
-                        if client_origin
-                        else []
-                    ),
+                task_store.count_active_project_tasks(
+                    db,
+                    project_id=project.id,
+                    owner_user_id=project.user_id,
+                    client_origin=client_origin,
                 )
-                .count()
             )
         )
 
@@ -1181,14 +1179,11 @@ def update_project(
     db.refresh(project)
 
     response = ProjectResponse.model_validate(project)
-    response.task_count = (
-        db.query(TaskResource)
-        .filter(
-            TaskResource.project_id == project_id,
-            TaskResource.is_active == TaskResource.STATE_ACTIVE,
-            *([TaskResource.client_origin == client_origin] if client_origin else []),
-        )
-        .count()
+    response.task_count = task_store.count_active_project_tasks(
+        db,
+        project_id=project_id,
+        owner_user_id=project.user_id,
+        client_origin=client_origin,
     )
     return response
 
@@ -1259,11 +1254,12 @@ def delete_project(
         raise HTTPException(status_code=404, detail="Project not found")
 
     # Clear project_id for all tasks in this project (set to 0, not NULL)
-    db.query(TaskResource).filter(
-        TaskResource.project_id == project_id,
-        TaskResource.user_id == user_id,
-        *([TaskResource.client_origin == client_origin] if client_origin else []),
-    ).update({TaskResource.project_id: 0})
+    task_store.clear_project_for_owned_tasks(
+        db,
+        project_id=project_id,
+        user_id=user_id,
+        client_origin=client_origin,
+    )
 
     # Soft delete the project
     project.is_active = False
@@ -1316,25 +1312,29 @@ def add_task_to_project(
     project = _get_active_project(db, project_id, user_id, client_origin=client_origin)
 
     # Verify task exists and belongs to user
-    task = (
-        db.query(TaskResource)
-        .filter(
-            TaskResource.id == task_id,
-            TaskResource.user_id == user_id,
-            TaskResource.kind == "Task",
-            TaskResource.is_active == TaskResource.STATE_ACTIVE,
-            *([TaskResource.client_origin == client_origin] if client_origin else []),
-        )
-        .first()
+    task = task_store.get_task_by_states(
+        db,
+        task_id=task_id,
+        states=[TaskResource.STATE_ACTIVE],
+        user_id=user_id,
+        client_origin=client_origin,
     )
 
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
     # Update task's project_id
-    task.project_id = project_id
-    task.client_origin = project.client_origin
-    _set_task_project_label(task, project_id)
+    task_store.update_fields(
+        db,
+        task=task,
+        project_id=project_id,
+        client_origin=project.client_origin,
+    )
+    task_store.update_json(
+        db,
+        task=task,
+        payload=_with_task_project_label(task, project_id),
+    )
     db.commit()
     db.refresh(task)
 
@@ -1376,28 +1376,33 @@ def remove_task_from_project(
     _get_active_project(db, project_id, user_id, client_origin=client_origin)
 
     # Find task and verify it belongs to this project
-    task = (
-        db.query(TaskResource)
-        .filter(
-            TaskResource.id == task_id,
-            TaskResource.project_id == project_id,
-            TaskResource.is_active == TaskResource.STATE_ACTIVE,
-            *([TaskResource.client_origin == client_origin] if client_origin else []),
-        )
-        .first()
+    task = task_store.get_active_project_task(
+        db,
+        task_id=task_id,
+        project_id=project_id,
+        owner_user_id=user_id,
+        client_origin=client_origin,
     )
 
     if not task:
         raise HTTPException(status_code=404, detail="Task not found in project")
 
     # Remove task from project by setting project_id to 0 (default value for no project)
-    task.project_id = 0
-    _set_task_project_label(task, None)
+    task_store.update_fields(db, task=task, project_id=0)
+    task_store.update_json(
+        db,
+        task=task,
+        payload=_with_task_project_label(task, None),
+    )
     db.commit()
 
 
 def _get_project_tasks(
-    db: Session, project_id: int, client_origin: Optional[str] = None
+    db: Session,
+    project_id: int,
+    *,
+    owner_user_id: int,
+    client_origin: Optional[str] = None,
 ) -> list[ProjectTaskResponse]:
     """
     Get all tasks in a project with their details.
@@ -1409,14 +1414,12 @@ def _get_project_tasks(
     Returns:
         List of project tasks with details
     """
-    query = db.query(TaskResource).filter(
-        TaskResource.project_id == project_id,
-        TaskResource.kind == "Task",
-        TaskResource.is_active == TaskResource.STATE_ACTIVE,
+    tasks = task_store.list_active_project_tasks(
+        db,
+        project_id=project_id,
+        owner_user_id=owner_user_id,
+        client_origin=client_origin,
     )
-    if client_origin:
-        query = query.filter(TaskResource.client_origin == client_origin)
-    tasks = query.order_by(TaskResource.updated_at.desc()).all()
 
     result = []
     for task in tasks:
@@ -1465,9 +1468,10 @@ def _dump_config(config: Optional[ProjectConfig]) -> Optional[dict]:
     return config.model_dump(mode="json", exclude_none=True)
 
 
-def _set_task_project_label(task: TaskResource, project_id: Optional[int]) -> None:
-    """Set or clear the projectId task metadata label."""
-
+def _with_task_project_label(
+    task: TaskResource, project_id: Optional[int]
+) -> dict[str, Any]:
+    """Return task JSON with projectId metadata label set or cleared."""
     task_json = dict(task.json or {})
     metadata = dict(task_json.get("metadata") or {})
     labels = dict(metadata.get("labels") or {})
@@ -1477,8 +1481,7 @@ def _set_task_project_label(task: TaskResource, project_id: Optional[int]) -> No
         labels.pop("projectId", None)
     metadata["labels"] = labels
     task_json["metadata"] = metadata
-    task.json = task_json
-    flag_modified(task, "json")
+    return task_json
 
 
 def _build_project_task_create(

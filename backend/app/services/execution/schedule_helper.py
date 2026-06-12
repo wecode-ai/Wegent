@@ -115,10 +115,10 @@ async def _dispatch_task_async(task_id: int) -> None:
         task_id: Task ID to dispatch
     """
     from app.api.dependencies import get_db
-    from app.models.subtask import Subtask, SubtaskStatus
-    from app.models.task import TaskResource
+    from app.models.subtask import SubtaskStatus
     from app.schemas.kind import Task as TaskCRD
     from app.services.readers.kinds import KindType, kindReader
+    from app.stores.tasks import subtask_store, task_store
     from shared.models.db import User
 
     from .dispatcher import execution_dispatcher
@@ -127,27 +127,17 @@ async def _dispatch_task_async(task_id: int) -> None:
     db = next(get_db())
     try:
         # Query task
-        task = (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.id == task_id,
-                TaskResource.kind == "Task",
-            )
-            .first()
-        )
+        task = task_store.get_by_id(db, task_id=task_id)
 
-        if not task:
+        if not task or task.kind != "Task":
             logger.error(f"[schedule_dispatch] Task {task_id} not found")
             return
 
         # Query PENDING subtasks for this task
-        subtasks = (
-            db.query(Subtask)
-            .filter(
-                Subtask.task_id == task_id,
-                Subtask.status == SubtaskStatus.PENDING,
-            )
-            .all()
+        subtasks = subtask_store.list_by_task_status(
+            db,
+            task_id=task_id,
+            status=SubtaskStatus.PENDING,
         )
         if not subtasks:
             logger.debug(
@@ -219,15 +209,21 @@ async def _dispatch_task_async(task_id: int) -> None:
                         logger.error(
                             f"[schedule_dispatch] Failed to recover executor for subtask {subtask.id}"
                         )
-                        subtask.status = SubtaskStatus.FAILED
-                        subtask.error_message = (
-                            "Failed to recover executor after Pod deletion"
+                        subtask_store.update_fields(
+                            db,
+                            subtask=subtask,
+                            status=SubtaskStatus.FAILED,
+                            error_message="Failed to recover executor after Pod deletion",
                         )
                         db.commit()
                         continue
 
                 # Update subtask status to RUNNING
-                subtask.status = SubtaskStatus.RUNNING
+                subtask_store.update_status(
+                    db,
+                    subtask=subtask,
+                    status=SubtaskStatus.RUNNING,
+                )
                 db.commit()
 
                 device_id = _extract_device_id_from_executor_name(subtask.executor_name)
@@ -254,8 +250,12 @@ async def _dispatch_task_async(task_id: int) -> None:
                     exc_info=True,
                 )
                 # Mark subtask as FAILED
-                subtask.status = SubtaskStatus.FAILED
-                subtask.error_message = str(e)
+                subtask_store.update_fields(
+                    db,
+                    subtask=subtask,
+                    status=SubtaskStatus.FAILED,
+                    error_message=str(e),
+                )
                 db.commit()
 
     except Exception as e:
@@ -288,6 +288,8 @@ async def _recover_executor(
     Returns:
         True if recovery successful, False otherwise
     """
+    from app.stores.tasks import subtask_store
+
     from .recovery_service import recovery_service
 
     try:
@@ -299,10 +301,13 @@ async def _recover_executor(
         )
         if recovered_info:
             # Update subtask with new executor info
-            subtask.executor_name = recovered_info["executor_name"]
-            subtask.executor_namespace = recovered_info["executor_namespace"]
-            subtask.executor_deleted_at = False
-            db.add(subtask)
+            subtask_store.update_fields(
+                db,
+                subtask=subtask,
+                executor_name=recovered_info["executor_name"],
+                executor_namespace=recovered_info["executor_namespace"],
+                executor_deleted_at=False,
+            )
             db.commit()
             return True
         return False

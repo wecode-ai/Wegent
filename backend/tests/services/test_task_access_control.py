@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import Mock, patch
 
 import pytest
 from fastapi import HTTPException
@@ -40,98 +40,93 @@ class TestTaskAccessControl:
 
     def test_owner_can_access_task(self, task_service, mock_db, mock_task):
         """Test that task owner can access their task"""
-        # Mock database query to return the task
-        mock_query = MagicMock()
-        mock_db.query.return_value = mock_query
-        mock_query.filter.return_value = mock_query
-        mock_query.first.return_value = mock_task
+        with (
+            patch(
+                "app.services.adapters.task_kinds.queries.task_store"
+            ) as mock_task_store,
+            patch(
+                "app.services.adapters.task_kinds.queries.task_access_store"
+            ) as mock_access_store,
+        ):
+            mock_task_store.get_active_non_deleted_task.return_value = mock_task
+            mock_access_store.is_member.return_value = True
 
-        # Mock task_member_service.is_member to return True for owner
-        with patch(
-            "app.services.task_member_service.task_member_service"
-        ) as mock_service:
-            mock_service.is_member.return_value = True
-
-            # Mock convert_to_task_dict function from converters module
             with patch(
                 "app.services.adapters.task_kinds.queries.convert_to_task_dict"
             ) as mock_convert:
                 mock_convert.return_value = {"id": 123, "user_id": 1}
 
-                # Owner (user_id=1) tries to access task
                 result = task_service.get_task_by_id(mock_db, task_id=123, user_id=1)
 
-                # Should succeed and return task dict
                 assert result is not None
                 assert result["id"] == 123
-                mock_service.is_member.assert_called_once_with(mock_db, 123, 1)
+                mock_task_store.get_active_non_deleted_task.assert_called_once_with(
+                    mock_db, task_id=123, client_origin=None
+                )
+                mock_access_store.is_member.assert_called_once_with(
+                    mock_db, task_id=123, user_id=1
+                )
 
     def test_member_can_access_group_chat(self, task_service, mock_db, mock_task):
         """Test that group chat member can access the task"""
-        # Mock database query to return the task
-        mock_query = MagicMock()
-        mock_db.query.return_value = mock_query
-        mock_query.filter.return_value = mock_query
-        mock_query.first.return_value = mock_task
+        with (
+            patch(
+                "app.services.adapters.task_kinds.queries.task_store"
+            ) as mock_task_store,
+            patch(
+                "app.services.adapters.task_kinds.queries.task_access_store"
+            ) as mock_access_store,
+        ):
+            mock_task_store.get_active_non_deleted_task.return_value = mock_task
+            mock_access_store.is_member.return_value = True
 
-        # Mock task_member_service.is_member to return True for member
-        with patch(
-            "app.services.task_member_service.task_member_service"
-        ) as mock_service:
-            mock_service.is_member.return_value = True
-
-            # Mock convert_to_task_dict function from converters module
             with patch(
                 "app.services.adapters.task_kinds.queries.convert_to_task_dict"
             ) as mock_convert:
                 mock_convert.return_value = {"id": 123, "user_id": 1}
 
-                # Member (user_id=2) tries to access task
                 result = task_service.get_task_by_id(mock_db, task_id=123, user_id=2)
 
-                # Should succeed and return task dict
                 assert result is not None
                 assert result["id"] == 123
-                mock_service.is_member.assert_called_once_with(mock_db, 123, 2)
+                mock_access_store.is_member.assert_called_once_with(
+                    mock_db, task_id=123, user_id=2
+                )
 
     def test_non_member_cannot_access_group_chat(
         self, task_service, mock_db, mock_task
     ):
         """Test that non-member cannot access group chat"""
-        # Mock database query to return the task
-        mock_query = MagicMock()
-        mock_db.query.return_value = mock_query
-        mock_query.filter.return_value = mock_query
-        mock_query.first.return_value = mock_task
+        with (
+            patch(
+                "app.services.adapters.task_kinds.queries.task_store"
+            ) as mock_task_store,
+            patch(
+                "app.services.adapters.task_kinds.queries.task_access_store"
+            ) as mock_access_store,
+        ):
+            mock_task_store.get_active_non_deleted_task.return_value = mock_task
+            mock_access_store.is_member.return_value = False
 
-        # Mock task_member_service.is_member to return False for non-member
-        with patch(
-            "app.services.task_member_service.task_member_service"
-        ) as mock_service:
-            mock_service.is_member.return_value = False
-
-            # Non-member (user_id=3) tries to access task
             with pytest.raises(HTTPException) as exc_info:
                 task_service.get_task_by_id(mock_db, task_id=123, user_id=3)
 
-            # Should raise 404 error
             assert exc_info.value.status_code == 404
             assert exc_info.value.detail == "Task not found"
-            mock_service.is_member.assert_called_once_with(mock_db, 123, 3)
+            mock_access_store.is_member.assert_called_once_with(
+                mock_db, task_id=123, user_id=3
+            )
 
     def test_task_not_found_returns_404(self, task_service, mock_db):
         """Test that non-existent task returns 404"""
-        # Mock database query to return None
-        mock_query = MagicMock()
-        mock_db.query.return_value = mock_query
-        mock_query.filter.return_value = mock_query
-        mock_query.first.return_value = None
+        with patch(
+            "app.services.adapters.task_kinds.queries.task_store"
+        ) as mock_task_store:
+            mock_task_store.get_active_non_deleted_task.return_value = None
 
-        # User tries to access non-existent task
-        with pytest.raises(HTTPException) as exc_info:
-            task_service.get_task_by_id(mock_db, task_id=999, user_id=1)
+            with pytest.raises(HTTPException) as exc_info:
+                task_service.get_task_by_id(mock_db, task_id=999, user_id=1)
 
-        # Should raise 404 error
         assert exc_info.value.status_code == 404
         assert exc_info.value.detail == "Task not found"
 
@@ -145,32 +140,26 @@ class TestTaskAccessControl:
         deleted_task.is_active = True
         deleted_task.json = {"status": {"status": "DELETE"}}
 
-        # Mock database query to return None (filtered out by DELETE status)
-        mock_query = MagicMock()
-        mock_db.query.return_value = mock_query
-        mock_query.filter.return_value = mock_query
-        mock_query.first.return_value = None
+        with patch(
+            "app.services.adapters.task_kinds.queries.task_store"
+        ) as mock_task_store:
+            mock_task_store.get_active_non_deleted_task.return_value = None
 
-        # Owner tries to access deleted task
-        with pytest.raises(HTTPException) as exc_info:
-            task_service.get_task_by_id(mock_db, task_id=123, user_id=1)
+            with pytest.raises(HTTPException) as exc_info:
+                task_service.get_task_by_id(mock_db, task_id=123, user_id=1)
 
-        # Should raise 404 error
         assert exc_info.value.status_code == 404
         assert exc_info.value.detail == "Task not found"
 
     def test_inactive_task_not_accessible(self, task_service, mock_db):
         """Test that inactive tasks are not accessible"""
-        # Mock database query to return None (filtered out by is_active=True)
-        mock_query = MagicMock()
-        mock_db.query.return_value = mock_query
-        mock_query.filter.return_value = mock_query
-        mock_query.first.return_value = None
+        with patch(
+            "app.services.adapters.task_kinds.queries.task_store"
+        ) as mock_task_store:
+            mock_task_store.get_active_non_deleted_task.return_value = None
 
-        # Owner tries to access inactive task
-        with pytest.raises(HTTPException) as exc_info:
-            task_service.get_task_by_id(mock_db, task_id=123, user_id=1)
+            with pytest.raises(HTTPException) as exc_info:
+                task_service.get_task_by_id(mock_db, task_id=123, user_id=1)
 
-        # Should raise 404 error
         assert exc_info.value.status_code == 404
         assert exc_info.value.detail == "Task not found"

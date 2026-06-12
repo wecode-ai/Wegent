@@ -63,6 +63,7 @@ from app.services.channels.model_selection import (
     model_selection_manager,
 )
 from app.services.readers.kinds import KindType, kindReader
+from app.stores.tasks import task_store
 
 logger = logging.getLogger(__name__)
 
@@ -330,7 +331,6 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             - auto_new_conversation: True if new conversation was started due to timeout
         """
         from app.core.config import settings
-        from app.models.task import TaskResource
 
         if not conversation_id:
             return None, False
@@ -349,7 +349,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             # Query task's updated_at from database
             db = SessionLocal()
             try:
-                task = db.query(TaskResource).filter(TaskResource.id == task_id).first()
+                task = task_store.get_by_id(db, task_id=task_id)
                 if task and task.updated_at:
                     now = datetime.now()
                     elapsed_minutes = (now - task.updated_at).total_seconds() / 60

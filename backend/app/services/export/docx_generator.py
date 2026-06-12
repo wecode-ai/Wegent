@@ -27,6 +27,7 @@ from app.models.kind import Kind
 from app.models.subtask import Subtask
 from app.models.subtask_context import SubtaskContext
 from app.models.user import User
+from app.stores.tasks import subtask_store
 from app.utils.prompt_utils import extract_display_prompt
 
 logger = logging.getLogger(__name__)
@@ -47,7 +48,7 @@ def generate_task_docx(
     Args:
         task: Task Kind instance
         db: Database session
-        message_ids: Optional list of subtask IDs to include. If None, includes all subtasks.
+        message_ids: Optional list of message IDs to include. If None, includes all subtasks.
 
     Returns:
         BytesIO buffer containing the DOCX document
@@ -151,15 +152,12 @@ def _add_task_content(
     doc: Document, task: Kind, db: Session, message_ids: Optional[List[int]] = None
 ):
     """Add task subtasks as messages, optionally filtered by message_ids"""
-    # Query subtasks with attachments
-    query = db.query(Subtask).filter(Subtask.task_id == task.id)
-
-    # Filter by message_ids if provided
-    if message_ids is not None and len(message_ids) > 0:
-        query = query.filter(Subtask.id.in_(message_ids))
-
-    # Order by id to maintain original message order
-    subtasks = query.order_by(Subtask.id.asc()).all()
+    subtasks = subtask_store.list_by_task_ordered(
+        db,
+        task_id=task.id,
+        message_ids=message_ids,
+        order_by="id",
+    )
 
     # Get user for display name
     user = db.query(User).filter(User.id == task.user_id).first()

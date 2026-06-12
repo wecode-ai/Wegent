@@ -33,6 +33,7 @@ from app.services.attachment.parser import (
 )
 from app.services.attachment.storage_backend import StorageError, generate_storage_key
 from app.services.attachment.storage_factory import get_storage_backend
+from app.stores.tasks import subtask_store
 from shared.telemetry.decorators import trace_sync
 from shared.utils.crypto import decrypt_attachment, encrypt_attachment
 
@@ -1323,11 +1324,11 @@ class ContextService:
         Returns:
             List of dicts with kb_name and kb_id
         """
-        from app.models.subtask import Subtask
-
         # Get all subtask IDs for the task
-        subtask_ids = db.query(Subtask.id).filter(Subtask.task_id == task_id).all()
-        subtask_ids = [s[0] for s in subtask_ids]
+        subtask_ids = [
+            subtask.id
+            for subtask in subtask_store.list_by_task_unfiltered(db, task_id=task_id)
+        ]
 
         if not subtask_ids:
             return []
@@ -1578,11 +1579,11 @@ class ContextService:
         Returns:
             List of attachment SubtaskContext records for all subtasks of the task
         """
-        from app.models.subtask import Subtask
-
         # Get all subtask IDs for this task
-        subtask_ids = db.query(Subtask.id).filter(Subtask.task_id == task_id).all()
-        subtask_ids = [s[0] for s in subtask_ids]
+        subtask_ids = [
+            subtask.id
+            for subtask in subtask_store.list_by_task_unfiltered(db, task_id=task_id)
+        ]
 
         if not subtask_ids:
             return []
