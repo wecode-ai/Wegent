@@ -14,7 +14,6 @@ from sqlalchemy.orm import Session
 from app.core.exceptions import ForbiddenException, NotFoundException
 from app.db.session import SessionLocal
 from app.models.subtask import Subtask
-from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.subtask import SubtaskContextBrief
 from app.schemas.work_queue import (
@@ -30,6 +29,7 @@ from app.services.work_queue_service import (
     queue_message_service,
     work_queue_service,
 )
+from app.stores.tasks import subtask_store, task_access_store, task_store
 
 logger = logging.getLogger(__name__)
 
@@ -82,35 +82,35 @@ class MessageForwardingService:
         """Forward messages to one or more recipients."""
         with self.get_db() as db:
             # Get the source task
-            task = (
-                db.query(TaskResource)
-                .filter(
-                    TaskResource.id == request.sourceTaskId,
-                    TaskResource.is_active == TaskResource.STATE_ACTIVE,
-                )
-                .first()
+            task = task_store.get_active_task(
+                db,
+                task_id=request.sourceTaskId,
             )
             if not task:
                 raise NotFoundException("Source task not found")
+            if not task_access_store.is_member(
+                db, task_id=request.sourceTaskId, user_id=sender_user_id
+            ):
+                raise ForbiddenException("Access denied")
 
             # Get subtasks (messages) to forward
             if request.subtaskIds:
-                subtasks = (
-                    db.query(Subtask)
-                    .filter(
-                        Subtask.task_id == request.sourceTaskId,
-                        Subtask.id.in_(request.subtaskIds),
+                requested_ids = set(request.subtaskIds)
+                subtasks = [
+                    subtask
+                    for subtask in subtask_store.list_by_task_ordered(
+                        db,
+                        task_id=request.sourceTaskId,
+                        owner_user_id=task.user_id,
                     )
-                    .order_by(Subtask.message_id.asc())
-                    .all()
-                )
+                    if subtask.id in requested_ids
+                ]
             else:
                 # Forward entire conversation
-                subtasks = (
-                    db.query(Subtask)
-                    .filter(Subtask.task_id == request.sourceTaskId)
-                    .order_by(Subtask.message_id.asc())
-                    .all()
+                subtasks = subtask_store.list_by_task_ordered(
+                    db,
+                    task_id=request.sourceTaskId,
+                    owner_user_id=task.user_id,
                 )
 
             if not subtasks:

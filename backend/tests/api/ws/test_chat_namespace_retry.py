@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import sys
+from contextlib import contextmanager
 from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -18,6 +19,7 @@ chat_config_module = ModuleType("app.services.chat.config")
 chat_config_module.get_team_first_bot_shell_type = Mock()
 sys.modules.setdefault("app.services.chat.config", chat_config_module)
 
+from app.api.ws import chat_namespace
 from app.api.ws.chat_namespace import ChatNamespace
 
 
@@ -36,6 +38,38 @@ class _RetryDbMock:
 
     def rollback(self):
         self.rolled_back = True
+
+
+def test_get_device_info_for_close_session_uses_task_owner_for_member(monkeypatch):
+    db = Mock()
+    task = SimpleNamespace(id=100, user_id=7)
+    subtask = SimpleNamespace(executor_name="device-local-1")
+    get_task = Mock(return_value=task)
+    is_member = Mock(return_value=True)
+    get_subtask = Mock(return_value=subtask)
+
+    @contextmanager
+    def fake_db_session():
+        yield db
+
+    monkeypatch.setattr(chat_namespace, "get_db_session", fake_db_session)
+    monkeypatch.setattr(chat_namespace.task_store, "get_regular_active_task", get_task)
+    monkeypatch.setattr(chat_namespace.task_access_store, "is_member", is_member)
+    monkeypatch.setattr(
+        chat_namespace.subtask_store,
+        "get_latest_device_executor_for_task",
+        get_subtask,
+    )
+
+    result = chat_namespace._get_device_info_for_close_session(
+        task_id=100,
+        user_id=9,
+    )
+
+    assert result == {"device_id": "local-1", "user_id": 7}
+    get_task.assert_called_once_with(db, task_id=100)
+    is_member.assert_called_once_with(db, task_id=100, user_id=9)
+    get_subtask.assert_called_once_with(db, task_id=100, owner_user_id=7)
 
 
 @pytest.mark.asyncio
@@ -88,7 +122,7 @@ async def test_chat_retry_default_model_clears_stale_override_labels_without_nam
             "app.api.ws.chat_namespace.trigger_ai_response_unified",
             AsyncMock(),
         ) as mock_trigger,
-        patch("sqlalchemy.orm.attributes.flag_modified") as mock_flag_modified,
+        patch("app.api.ws.chat_namespace.task_store") as mock_task_store,
     ):
         result = await namespace.on_chat_retry(
             "sid-123",
@@ -103,7 +137,9 @@ async def test_chat_retry_default_model_clears_stale_override_labels_without_nam
 
     assert result == {"success": True}
     assert task.json["metadata"]["labels"] == {}
-    mock_flag_modified.assert_called_once_with(task, "json")
+    mock_task_store.update_json.assert_called_once_with(
+        db, task=task, payload=task.json
+    )
     assert db.commit.called
     assert mock_trigger.await_count == 1
     assert mock_trigger.await_args.kwargs["payload"].force_override_bot_model is None
@@ -214,7 +250,7 @@ async def test_chat_retry_new_model_without_type_clears_stale_override_model_typ
             "app.api.ws.chat_namespace.trigger_ai_response_unified",
             AsyncMock(),
         ) as mock_trigger,
-        patch("sqlalchemy.orm.attributes.flag_modified") as mock_flag_modified,
+        patch("app.api.ws.chat_namespace.task_store") as mock_task_store,
     ):
         result = await namespace.on_chat_retry(
             "sid-123",
@@ -232,7 +268,9 @@ async def test_chat_retry_new_model_without_type_clears_stale_override_model_typ
         "modelId": "new-model",
         "forceOverrideBotModel": "true",
     }
-    mock_flag_modified.assert_called_once_with(task, "json")
+    mock_task_store.update_json.assert_called_once_with(
+        db, task=task, payload=task.json
+    )
     assert db.commit.called
     assert mock_trigger.await_count == 1
     assert (

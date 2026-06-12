@@ -11,20 +11,17 @@ This module contains methods for creating, updating, deleting, and canceling tas
 import asyncio
 import json as json_lib
 import logging
-import uuid
 from datetime import datetime
 from typing import Any, Callable, Dict, Optional
 
 import httpx
 from fastapi import HTTPException
-from sqlalchemy import text
 from sqlalchemy.orm import Session
-from sqlalchemy.orm.attributes import flag_modified
 
 from app.core.config import settings
 from app.models.kind import Kind
 from app.models.project import Project
-from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
+from app.models.subtask import SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.kind import Task, Team, Workspace
@@ -33,7 +30,11 @@ from app.services.adapters.executor_kinds import executor_kinds_service
 from app.services.adapters.pipeline_stage import pipeline_stage_service
 from app.services.readers.kinds import KindType, kindReader
 from app.services.task_skill_selection import build_task_skill_labels
-from app.services.task_status import mark_task_pending
+from app.services.task_status import (
+    mark_task_deleted_payload,
+    mark_task_pending_payload,
+)
+from app.stores.tasks import subtask_store, task_access_store, task_store
 
 from .converters import convert_to_task_dict
 from .helpers import create_subtasks
@@ -60,6 +61,7 @@ class TaskOperationsMixin:
         )
         task = None
         team = None
+        requested_task_id = task_id
 
         # Set task ID
         if task_id is None:
@@ -73,20 +75,25 @@ class TaskOperationsMixin:
             )
 
         # Check if already exists
-        existing_task = (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.id == task_id,
-                TaskResource.kind == "Task",
-                TaskResource.is_active == TaskResource.STATE_ACTIVE,
-            )
-            .first()
-        )
+        existing_task = task_store.get_regular_active_task(db, task_id=task_id)
         if existing_task:
+            if not task_access_store.is_member(
+                db, task_id=existing_task.id, user_id=user.id
+            ):
+                raise HTTPException(status_code=404, detail="Task not found")
             task, team = self._handle_existing_task(
                 db, existing_task, obj_in, user, task_id
             )
         else:
+            existing_record = task_store.get_by_id(
+                db,
+                task_id=task_id,
+                owner_user_id=user.id,
+            )
+            if requested_task_id is not None and (
+                existing_record is None or existing_record.kind != "Placeholder"
+            ):
+                raise HTTPException(status_code=404, detail="Task not found")
             task, team = self._create_new_task(db, obj_in, user, task_id)
 
         # Create subtasks for the task
@@ -175,9 +182,9 @@ class TaskOperationsMixin:
         team_name = task_crd.spec.teamRef.name
         team_namespace = task_crd.spec.teamRef.namespace
 
-        from app.services.task_member_service import task_member_service
-
-        is_group_member = task_member_service.is_member(db, task_id, user.id)
+        is_group_member = task_access_store.is_member(
+            db, task_id=task_id, user_id=user.id
+        )
 
         if is_group_member:
             team = kindReader.get_by_name_and_namespace(
@@ -194,7 +201,11 @@ class TaskOperationsMixin:
                 detail=f"Team '{team_name}' not found, it may be deleted or not shared",
             )
 
-        mark_task_pending(existing_task)
+        task_store.update_json(
+            db,
+            task=existing_task,
+            payload=mark_task_pending_payload(existing_task.json),
+        )
 
         return existing_task, team
 
@@ -261,16 +272,14 @@ class TaskOperationsMixin:
             "apiVersion": "agent.wecode.io/v1",
         }
 
-        workspace = TaskResource(
+        task_store.create_workspace(
+            db,
             user_id=user.id,
-            kind="Workspace",
             name=workspace_name,
             namespace="default",
-            json=workspace_json,
-            is_active=True,
+            payload=workspace_json,
             client_origin=obj_in.client_origin,
         )
-        db.add(workspace)
 
         task_json = {
             "kind": "Task",
@@ -337,43 +346,16 @@ class TaskOperationsMixin:
             "apiVersion": "agent.wecode.io/v1",
         }
 
-        # Check if a Placeholder record exists for this task_id
-        # If so, update it instead of inserting to avoid SQLite UNIQUE constraint issues
-        existing_placeholder = (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.id == task_id,
-                TaskResource.kind == "Placeholder",
-            )
-            .first()
+        task = task_store.create_task(
+            db,
+            task_id=task_id,
+            user_id=user.id,
+            name=f"task-{task_id}",
+            namespace="default",
+            payload=task_json,
+            project_id=obj_in.project_id or 0,
+            client_origin=obj_in.client_origin,
         )
-
-        if existing_placeholder:
-            # Update the existing Placeholder record to become a Task
-            existing_placeholder.user_id = user.id
-            existing_placeholder.kind = "Task"
-            existing_placeholder.name = f"task-{task_id}"
-            existing_placeholder.namespace = "default"
-            existing_placeholder.json = task_json
-            existing_placeholder.is_active = True
-            existing_placeholder.project_id = obj_in.project_id or 0
-            existing_placeholder.client_origin = obj_in.client_origin
-            existing_placeholder.updated_at = datetime.now()
-            task = existing_placeholder
-        else:
-            # No placeholder exists, create a new Task record
-            task = TaskResource(
-                id=task_id,
-                user_id=user.id,
-                kind="Task",
-                name=f"task-{task_id}",
-                namespace="default",
-                json=task_json,
-                is_active=True,
-                project_id=obj_in.project_id or 0,
-                client_origin=obj_in.client_origin,
-            )
-            db.add(task)
 
         return task, team
 
@@ -412,15 +394,12 @@ class TaskOperationsMixin:
         """
         Update user Task.
         """
-        query = db.query(TaskResource).filter(
-            TaskResource.id == task_id,
-            TaskResource.user_id == user_id,
-            TaskResource.kind == "Task",
-            TaskResource.is_active == TaskResource.STATE_ACTIVE,
+        task = task_store.get_owned_active_task(
+            db,
+            task_id=task_id,
+            user_id=user_id,
+            client_origin=client_origin,
         )
-        if client_origin:
-            query = query.filter(TaskResource.client_origin == client_origin)
-        task = query.first()
 
         if not task:
             raise HTTPException(status_code=404, detail="Task not found")
@@ -458,9 +437,9 @@ class TaskOperationsMixin:
             ]:
                 task_crd.status.completedAt = datetime.now()
 
-        task.json = task_crd.model_dump(mode="json", exclude_none=True)
-        task.updated_at = datetime.now()
-        flag_modified(task, "json")
+        task_store.update_json(
+            db, task=task, payload=task_crd.model_dump(mode="json", exclude_none=True)
+        )
 
         db.commit()
         db.refresh(task)
@@ -518,16 +497,11 @@ class TaskOperationsMixin:
         if not any(field in update_data for field in git_fields):
             return
 
-        workspace = (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.user_id == user_id,
-                TaskResource.kind == "Workspace",
-                TaskResource.name == task_crd.spec.workspaceRef.name,
-                TaskResource.namespace == task_crd.spec.workspaceRef.namespace,
-                TaskResource.is_active == TaskResource.STATE_ACTIVE,
-            )
-            .first()
+        workspace = task_store.get_workspace_by_ref(
+            db,
+            user_id=user_id,
+            name=task_crd.spec.workspaceRef.name,
+            namespace=task_crd.spec.workspaceRef.namespace,
         )
 
         if workspace:
@@ -544,8 +518,9 @@ class TaskOperationsMixin:
             if "branch_name" in update_data:
                 workspace_crd.spec.repository.branchName = update_data["branch_name"]
 
-            workspace.json = workspace_crd.model_dump()
-            flag_modified(workspace, "json")
+            task_store.update_json(
+                db, task=workspace, payload=workspace_crd.model_dump()
+            )
 
     def delete_task(
         self,
@@ -564,19 +539,17 @@ class TaskOperationsMixin:
 
         # Preserve the existing OpenAPI delete response contract: deletion is
         # keyed by task id, while archived tasks are also accepted.
-        query = db.query(TaskResource).filter(
-            TaskResource.id == task_id,
-            TaskResource.kind == "Task",
-            TaskResource.is_active.in_(
-                [TaskResource.STATE_ACTIVE, TaskResource.STATE_ARCHIVED]
-            ),
+        task = task_store.get_active_or_archived_task(
+            db, task_id=task_id, client_origin=client_origin
         )
-        if client_origin:
-            query = query.filter(TaskResource.client_origin == client_origin)
-        task = query.first()
 
-        # If not the owner, check if user is a group chat member
-        if not task:
+        if task and task.user_id != user_id:
+            task = self._handle_member_leave(
+                db, task_id, user_id, client_origin=client_origin
+            )
+            if task is None:
+                return
+        elif not task:
             task = self._handle_member_leave(
                 db, task_id, user_id, client_origin=client_origin
             )
@@ -584,7 +557,11 @@ class TaskOperationsMixin:
                 return  # User left the group chat
 
         # Get all subtasks for the task
-        task_subtasks = db.query(Subtask).filter(Subtask.task_id == task_id).all()
+        task_subtasks = subtask_store.list_by_task_unfiltered(
+            db,
+            task_id=task_id,
+            owner_user_id=task.user_id,
+        )
 
         # Collect unique executor keys and device IDs
         unique_executor_keys = set()
@@ -677,23 +654,18 @@ class TaskOperationsMixin:
                 )
 
         # Update all subtasks to DELETE status
-        db.query(Subtask).filter(Subtask.task_id == task_id).update(
-            {
-                Subtask.executor_deleted_at: True,
-                Subtask.status: SubtaskStatus.DELETE,
-                Subtask.updated_at: datetime.now(),
-            }
+        subtask_store.mark_task_subtasks_deleted(
+            db,
+            task_id=task_id,
+            owner_user_id=task.user_id,
         )
 
         # Update task status to DELETE
-        task_crd = Task.model_validate(task.json)
-        if task_crd.status:
-            task_crd.status.status = "DELETE"
-            task_crd.status.updatedAt = datetime.now()
-        task.json = task_crd.model_dump(mode="json", exclude_none=True)
-        task.updated_at = datetime.now()
-        task.is_active = TaskResource.STATE_DELETED
-        flag_modified(task, "json")
+        task_store.soft_delete_task(
+            db,
+            task=task,
+            payload=mark_task_deleted_payload(task.json),
+        )
 
         # Clean up long-term memories associated with this task (fire-and-forget)
         # This runs in background and doesn't block task deletion
@@ -712,20 +684,12 @@ class TaskOperationsMixin:
     ) -> tuple[list[ArchivedTask], int]:
         """List archived chats owned by a user."""
 
-        base_query = db.query(TaskResource).filter(
-            TaskResource.user_id == user_id,
-            TaskResource.kind == "Task",
-            TaskResource.namespace != "system",
-            TaskResource.is_active == TaskResource.STATE_ARCHIVED,
-        )
-        if client_origin:
-            base_query = base_query.filter(TaskResource.client_origin == client_origin)
-        total = base_query.count()
-        tasks = (
-            base_query.order_by(TaskResource.updated_at.desc())
-            .offset(skip)
-            .limit(limit)
-            .all()
+        tasks, total = task_store.list_archived_tasks(
+            db,
+            user_id=user_id,
+            skip=skip,
+            limit=limit,
+            client_origin=client_origin,
         )
         project_names = self._get_project_names(db, [task.project_id for task in tasks])
         return [self._to_archived_task(task, project_names) for task in tasks], total
@@ -773,15 +737,12 @@ class TaskOperationsMixin:
     ) -> int:
         """Archive all active personal chat/code tasks owned by a user."""
 
-        query = db.query(TaskResource).filter(
-            TaskResource.user_id == user_id,
-            TaskResource.kind == "Task",
-            TaskResource.namespace != "system",
-            TaskResource.is_active == TaskResource.STATE_ACTIVE,
+        tasks = task_store.list_archivable_active_tasks(
+            db,
+            user_id=user_id,
+            scope="all",
+            client_origin=client_origin,
         )
-        if client_origin:
-            query = query.filter(TaskResource.client_origin == client_origin)
-        tasks = query.all()
         return self._archive_tasks(db, tasks)
 
     def archive_standalone_chats(
@@ -789,16 +750,12 @@ class TaskOperationsMixin:
     ) -> int:
         """Archive all active chat/code tasks that are not associated with projects."""
 
-        query = db.query(TaskResource).filter(
-            TaskResource.user_id == user_id,
-            TaskResource.project_id == 0,
-            TaskResource.kind == "Task",
-            TaskResource.namespace != "system",
-            TaskResource.is_active == TaskResource.STATE_ACTIVE,
+        tasks = task_store.list_archivable_active_tasks(
+            db,
+            user_id=user_id,
+            scope="standalone",
+            client_origin=client_origin,
         )
-        if client_origin:
-            query = query.filter(TaskResource.client_origin == client_origin)
-        tasks = query.all()
         return self._archive_tasks(db, tasks)
 
     def archive_all_project_chats(
@@ -806,16 +763,12 @@ class TaskOperationsMixin:
     ) -> int:
         """Archive all active chat/code tasks associated with any project."""
 
-        query = db.query(TaskResource).filter(
-            TaskResource.user_id == user_id,
-            TaskResource.project_id > 0,
-            TaskResource.kind == "Task",
-            TaskResource.namespace != "system",
-            TaskResource.is_active == TaskResource.STATE_ACTIVE,
+        tasks = task_store.list_archivable_active_tasks(
+            db,
+            user_id=user_id,
+            scope="project",
+            client_origin=client_origin,
         )
-        if client_origin:
-            query = query.filter(TaskResource.client_origin == client_origin)
-        tasks = query.all()
         return self._archive_tasks(db, tasks)
 
     def archive_project_chats(
@@ -828,15 +781,13 @@ class TaskOperationsMixin:
     ) -> int:
         """Archive all active chats in a project owned by a user."""
 
-        query = db.query(TaskResource).filter(
-            TaskResource.user_id == user_id,
-            TaskResource.project_id == project_id,
-            TaskResource.kind == "Task",
-            TaskResource.is_active == TaskResource.STATE_ACTIVE,
+        tasks = task_store.list_archivable_active_tasks(
+            db,
+            user_id=user_id,
+            scope="project_id",
+            project_id=project_id,
+            client_origin=client_origin,
         )
-        if client_origin:
-            query = query.filter(TaskResource.client_origin == client_origin)
-        tasks = query.all()
         return self._archive_tasks(db, tasks)
 
     def delete_all_archived_tasks(
@@ -844,15 +795,9 @@ class TaskOperationsMixin:
     ) -> int:
         """Soft delete every archived chat owned by a user."""
 
-        query = db.query(TaskResource.id).filter(
-            TaskResource.user_id == user_id,
-            TaskResource.kind == "Task",
-            TaskResource.namespace != "system",
-            TaskResource.is_active == TaskResource.STATE_ARCHIVED,
+        task_ids = task_store.list_archived_task_ids(
+            db, user_id=user_id, client_origin=client_origin
         )
-        if client_origin:
-            query = query.filter(TaskResource.client_origin == client_origin)
-        task_ids = [row[0] for row in query.all()]
         for task_id in task_ids:
             self.delete_task(
                 db=db, task_id=task_id, user_id=user_id, client_origin=client_origin
@@ -880,20 +825,7 @@ class TaskOperationsMixin:
         *,
         commit: bool = True,
     ) -> None:
-        original_updated_at = task.updated_at
-        (
-            db.query(TaskResource)
-            .filter(TaskResource.id == task.id)
-            .update(
-                {
-                    TaskResource.is_active: state,
-                    TaskResource.updated_at: original_updated_at,
-                },
-                synchronize_session="fetch",
-            )
-        )
-        if commit:
-            db.commit()
+        task_store.set_archive_state(db, task=task, state=state, commit=commit)
 
     def _get_owned_task_for_archive(
         self,
@@ -904,15 +836,13 @@ class TaskOperationsMixin:
         state: int,
         client_origin: Optional[str] = None,
     ) -> TaskResource:
-        query = db.query(TaskResource).filter(
-            TaskResource.id == task_id,
-            TaskResource.user_id == user_id,
-            TaskResource.kind == "Task",
-            TaskResource.is_active == state,
+        task = task_store.get_owned_task_by_state(
+            db,
+            task_id=task_id,
+            user_id=user_id,
+            state=state,
+            client_origin=client_origin,
         )
-        if client_origin:
-            query = query.filter(TaskResource.client_origin == client_origin)
-        task = query.first()
         if not task:
             raise HTTPException(status_code=404, detail="Task not found")
         if not self._is_archivable_chat(task):
@@ -964,14 +894,9 @@ class TaskOperationsMixin:
         from app.models.resource_member import MemberStatus, ResourceMember
         from app.models.share_link import ResourceType
 
-        query = db.query(TaskResource).filter(
-            TaskResource.id == task_id,
-            TaskResource.kind == "Task",
-            TaskResource.is_active == TaskResource.STATE_ACTIVE,
+        task = task_store.get_active_task(
+            db, task_id=task_id, client_origin=client_origin
         )
-        if client_origin:
-            query = query.filter(TaskResource.client_origin == client_origin)
-        task = query.first()
 
         if not task:
             raise HTTPException(status_code=404, detail="Task not found")
@@ -1049,15 +974,7 @@ class TaskOperationsMixin:
 
     def _is_chat_shell_task(self, db: Session, task_id: int) -> bool:
         """Check if a task is a Chat Shell task."""
-        task_kind = (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.id == task_id,
-                TaskResource.kind == "Task",
-                TaskResource.is_active == TaskResource.STATE_ACTIVE,
-            )
-            .first()
-        )
+        task_kind = task_store.get_active_task(db, task_id=task_id)
 
         if task_kind and task_kind.json:
             task_crd = Task.model_validate(task_kind.json)
@@ -1074,26 +991,22 @@ class TaskOperationsMixin:
         background_task_runner: Optional[Callable],
     ) -> Dict[str, Any]:
         """Cancel a Chat Shell task."""
-        running_subtask = (
-            db.query(Subtask)
-            .filter(
-                Subtask.task_id == task_id,
-                Subtask.user_id == user_id,
-                Subtask.role == SubtaskRole.ASSISTANT,
-                Subtask.status == SubtaskStatus.RUNNING,
-            )
-            .first()
+        running_subtask = subtask_store.get_running_assistant_for_user(
+            db, task_id=task_id, user_id=user_id
         )
 
         if running_subtask:
             if background_task_runner:
                 background_task_runner(self._call_chat_shell_cancel, running_subtask.id)
 
-            running_subtask.status = SubtaskStatus.CANCELLED
-            running_subtask.progress = 100
-            running_subtask.completed_at = datetime.now()
-            running_subtask.updated_at = datetime.now()
-            running_subtask.error_message = ""
+            subtask_store.update_fields(
+                db,
+                subtask=running_subtask,
+                status=SubtaskStatus.CANCELLED,
+                progress=100,
+                completed_at=datetime.now(),
+                error_message="",
+            )
             db.commit()
 
             try:
@@ -1166,6 +1079,15 @@ class TaskOperationsMixin:
                 logger.info(
                     f"Task {task_id} cancelled successfully via executor_manager"
                 )
+        except httpx.HTTPStatusError as e:
+            response = e.response
+            logger.error(
+                "Error calling executor_manager to cancel task %s: "
+                "status_code=%s body=%s",
+                task_id,
+                response.status_code,
+                response.text[:1000],
+            )
         except Exception as e:
             logger.error(
                 f"Error calling executor_manager to cancel task {task_id}: {str(e)}"
@@ -1200,22 +1122,12 @@ class TaskOperationsMixin:
         """
         Get pipeline stage information for a task.
         """
-        task = (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.id == task_id,
-                TaskResource.kind == "Task",
-                TaskResource.is_active == TaskResource.STATE_ACTIVE,
-            )
-            .first()
-        )
+        task = task_store.get_active_task(db, task_id=task_id)
 
         if not task:
             raise HTTPException(status_code=404, detail="Task not found")
 
-        from app.services.task_member_service import task_member_service
-
-        if not task_member_service.is_member(db, task_id, user_id):
+        if not task_access_store.is_member(db, task_id=task_id, user_id=user_id):
             raise HTTPException(status_code=404, detail="Task not found")
 
         task_crd = Task.model_validate(task.json)
@@ -1242,40 +1154,7 @@ class TaskOperationsMixin:
         Create new task id using tasks table auto increment.
         """
         try:
-            placeholder_name = f"temp-placeholder-{uuid.uuid4().hex}"
-
-            placeholder_json = {
-                "kind": "Placeholder",
-                "metadata": {"name": placeholder_name, "namespace": "default"},
-                "spec": {},
-                "status": {"state": "Reserved"},
-            }
-
-            now = datetime.now()
-            result = db.execute(
-                text(
-                    """
-                INSERT INTO tasks (user_id, kind, name, namespace, json, is_active, created_at, updated_at, project_id, is_group_chat)
-                VALUES (:user_id, 'Placeholder', :name, 'default', :json, false, :created_at, :updated_at, :project_id, false)
-            """
-                ),
-                {
-                    "user_id": user_id,
-                    "name": placeholder_name,
-                    "json": json_lib.dumps(placeholder_json),
-                    "created_at": now,
-                    "updated_at": now,
-                    "project_id": 0,
-                },
-            )
-
-            allocated_id = result.lastrowid
-            if not allocated_id:
-                raise Exception("Failed to get allocated ID")
-
-            db.commit()
-
-            return allocated_id
+            return task_store.create_placeholder_task_id(db, user_id=user_id)
 
         except Exception as e:
             db.rollback()
@@ -1291,14 +1170,7 @@ class TaskOperationsMixin:
         will update the existing Placeholder record to avoid SQLite UNIQUE constraint
         issues when re-inserting with the same ID.
         """
-        existing_record = db.execute(
-            text("SELECT kind FROM tasks WHERE id = :task_id"), {"task_id": task_id}
-        ).fetchone()
-
-        if existing_record:
-            return True
-
-        return False
+        return task_store.is_valid_task_id(db, task_id=task_id)
 
     def _cleanup_task_memories(self, user_id: int, task_id: int) -> None:
         """
@@ -1519,15 +1391,7 @@ class TaskOperationsMixin:
                 status_code=404, detail="Task not found or no permission"
             )
 
-        task = (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.id == task_id,
-                TaskResource.kind == "Task",
-                TaskResource.is_active == TaskResource.STATE_ACTIVE,
-            )
-            .first()
-        )
+        task = task_store.get_active_task(db, task_id=task_id)
 
         if not task:
             raise HTTPException(status_code=404, detail="Task not found")
@@ -1551,9 +1415,9 @@ class TaskOperationsMixin:
             )
 
         # Save changes
-        task.json = task_crd.model_dump(mode="json", exclude_none=True)
-        task.updated_at = datetime.now()
-        flag_modified(task, "json")
+        task_store.update_json(
+            db, task=task, payload=task_crd.model_dump(mode="json", exclude_none=True)
+        )
 
         db.commit()
         db.refresh(task)

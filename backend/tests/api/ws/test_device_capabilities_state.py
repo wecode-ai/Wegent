@@ -148,3 +148,90 @@ async def test_heartbeat_runtime_auth_sync_uses_user_preferences(monkeypatch):
         device_ids=["device-1"],
     )
     assert key not in namespace._runtime_auth_sync_inflight
+
+
+@pytest.mark.asyncio
+async def test_responses_api_terminal_event_logs_callback_summary(monkeypatch):
+    namespace = device_namespace.DeviceNamespace()
+    event = SimpleNamespace(
+        type=device_namespace.EventType.DONE.value,
+        result={"content": "done"},
+    )
+    payload = {
+        "task_id": 101,
+        "subtask_id": 202,
+        "message_id": 303,
+        "data": {"output": [{"type": "text", "text": "done"}]},
+    }
+    messages = []
+    completed_event_args = []
+
+    async def fake_get_session(sid):
+        return {"user_id": 7, "device_id": "device-1"}
+
+    def fake_parse(**kwargs):
+        return event
+
+    class FakeWebSocketResultEmitter:
+        def __init__(self, **kwargs):
+            assert kwargs["user_id"] == 7
+            pass
+
+    class FakeStatusUpdatingEmitter:
+        def __init__(self, **kwargs):
+            assert "owner_user_id" not in kwargs
+            pass
+
+        async def emit(self, emitted_event):
+            assert emitted_event is event
+
+        async def close(self):
+            pass
+
+    async def fake_publish_task_completed_event(*args):
+        completed_event_args.append(args)
+
+    async def fake_broadcast_slot_update(*args):
+        pass
+
+    monkeypatch.setattr(namespace, "get_session", fake_get_session)
+    monkeypatch.setattr(namespace._event_parser, "parse", fake_parse)
+    monkeypatch.setattr(
+        device_namespace,
+        "WebSocketResultEmitter",
+        FakeWebSocketResultEmitter,
+    )
+    monkeypatch.setattr(
+        device_namespace,
+        "StatusUpdatingEmitter",
+        FakeStatusUpdatingEmitter,
+    )
+    monkeypatch.setattr(
+        namespace,
+        "_publish_task_completed_event",
+        fake_publish_task_completed_event,
+    )
+    monkeypatch.setattr(
+        namespace,
+        "_broadcast_device_slot_update",
+        fake_broadcast_slot_update,
+    )
+    monkeypatch.setattr(
+        device_namespace.logger,
+        "info",
+        lambda message: messages.append(message),
+    )
+
+    result = await namespace._handle_responses_api_event(
+        "sid-1", "response.completed", payload
+    )
+
+    assert result == {"success": True}
+    assert completed_event_args[0][2] == 7
+    assert any(
+        "[Device WS] Terminal callback received:" in message
+        and "task_id=101" in message
+        and "subtask_id=202" in message
+        for message in messages
+    )
+    assert all("done" not in message for message in messages)

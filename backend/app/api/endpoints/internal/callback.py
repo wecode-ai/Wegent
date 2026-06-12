@@ -36,6 +36,7 @@ from app.services.chat.storage import session_manager
 from app.services.execution.dispatcher import ResponsesAPIEventParser
 from app.services.execution.emitters.status_updating import StatusUpdatingEmitter
 from app.services.execution.emitters.websocket import WebSocketResultEmitter
+from app.stores.tasks import task_store
 
 logger = logging.getLogger(__name__)
 
@@ -152,14 +153,10 @@ async def handle_callback(
             return CallbackResponse(status="ok", message="Lifecycle event skipped")
 
         # Get user_id from task for task:status notification
-        task = (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.id == request.task_id,
-                TaskResource.kind == "Task",
-                TaskResource.is_active == TaskResource.STATE_ACTIVE,
-            )
-            .first()
+        task = task_store.get_task_by_states(
+            db,
+            task_id=request.task_id,
+            states=[TaskResource.STATE_ACTIVE],
         )
         user_id = task.user_id if task else None
 
@@ -258,18 +255,15 @@ async def handle_batch_callback(
                 continue
 
             # Get user_id from cache or database for task:status notification
-            if request.task_id not in task_user_cache:
-                task = (
-                    db.query(TaskResource)
-                    .filter(
-                        TaskResource.id == request.task_id,
-                        TaskResource.kind == "Task",
-                        TaskResource.is_active == TaskResource.STATE_ACTIVE,
-                    )
-                    .first()
+            cache_key = request.task_id
+            if cache_key not in task_user_cache:
+                task = task_store.get_task_by_states(
+                    db,
+                    task_id=request.task_id,
+                    states=[TaskResource.STATE_ACTIVE],
                 )
-                task_user_cache[request.task_id] = task.user_id if task else None
-            user_id = task_user_cache[request.task_id]
+                task_user_cache[cache_key] = task.user_id if task else None
+            user_id = task_user_cache[cache_key]
 
             # Emit event via WebSocketResultEmitter wrapped with StatusUpdatingEmitter
             # StatusUpdatingEmitter handles:

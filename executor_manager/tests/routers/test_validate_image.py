@@ -9,6 +9,11 @@ import pytest
 from executor_manager.routers import routers
 
 
+def _close_background_coroutine(coro):
+    coro.close()
+    return SimpleNamespace()
+
+
 @pytest.mark.asyncio
 async def test_validate_image_schedules_background_submission(mocker):
     request = routers.ValidateImageRequest(
@@ -25,7 +30,9 @@ async def test_validate_image_schedules_background_submission(mocker):
     mocked_bg = mocker.patch.object(
         routers, "_run_validation_task_in_background", new_callable=mocker.AsyncMock
     )
-    mocked_create_task = mocker.patch.object(routers.asyncio, "create_task")
+    mocked_create_task = mocker.patch.object(
+        routers.asyncio, "create_task", side_effect=_close_background_coroutine
+    )
     mocked_process_tasks = mocker.patch.object(routers.task_processor, "process_tasks")
 
     result = await routers.validate_image(request, http_request)
@@ -58,7 +65,9 @@ async def test_validate_image_preserves_https_callback_scheme(mocker):
     mocked_bg = mocker.patch.object(
         routers, "_run_validation_task_in_background", new_callable=mocker.AsyncMock
     )
-    mocker.patch.object(routers.asyncio, "create_task")
+    mocker.patch.object(
+        routers.asyncio, "create_task", side_effect=_close_background_coroutine
+    )
 
     await routers.validate_image(request, http_request)
 

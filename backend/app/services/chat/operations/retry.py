@@ -12,13 +12,13 @@ import logging
 from datetime import datetime
 from typing import Optional, Tuple
 
-from sqlalchemy import and_
-from sqlalchemy.orm import Session, aliased, joinedload
+from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
-from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
+from app.models.subtask import Subtask, SubtaskStatus
 from app.models.task import TaskResource
-from app.services.task_status import mark_task_pending
+from app.services.task_status import mark_task_pending_payload
+from app.stores.tasks import subtask_store, task_store
 
 logger = logging.getLogger(__name__)
 
@@ -44,45 +44,24 @@ def fetch_retry_context(
     Returns:
         Tuple of (failed_ai_subtask, task, team, user_subtask)
     """
-    TaskKind = aliased(TaskResource)
-    TeamKind = aliased(Kind)
+    failed_ai_subtask = subtask_store.get_retry_assistant(
+        db,
+        task_id=task_id,
+        subtask_id=subtask_id,
+    )
+    if not failed_ai_subtask:
+        return None, None, None, None
 
-    # Optimized query: fetch failed_ai_subtask, task, and team in one go
-    query_result = (
-        db.query(
-            Subtask,  # failed_ai_subtask
-            TaskKind,  # task
-            TeamKind,  # team
-        )
-        .select_from(Subtask)  # Explicitly specify the main table
-        .outerjoin(
-            TaskKind,
-            and_(
-                TaskKind.id == task_id,
-                TaskKind.kind == "Task",
-                TaskKind.is_active,
-            ),
-        )
-        .outerjoin(
-            TeamKind,
-            and_(
-                TeamKind.id == Subtask.team_id,
-                TeamKind.kind == "Team",
-                TeamKind.is_active,
-            ),
-        )
+    task = task_store.get_non_deleted_task(db, task_id=task_id)
+    team = (
+        db.query(Kind)
         .filter(
-            Subtask.id == subtask_id,
-            Subtask.task_id == task_id,
-            Subtask.role == SubtaskRole.ASSISTANT,
+            Kind.id == failed_ai_subtask.team_id,
+            Kind.kind == "Team",
+            Kind.is_active,
         )
         .first()
     )
-
-    if not query_result:
-        return None, None, None, None
-
-    failed_ai_subtask, task, team = query_result
 
     # Fetch user subtask separately
     # Key insight: parent_id stores message_id (not subtask.id) throughout the system
@@ -91,15 +70,10 @@ def fetch_retry_context(
     if failed_ai_subtask and failed_ai_subtask.parent_id:
         # Use parent_id as message_id to find the triggering USER subtask
         # This works for both single chat and group chat
-        user_subtask = (
-            db.query(Subtask)
-            .options(joinedload(Subtask.contexts))  # Preload contexts
-            .filter(
-                Subtask.task_id == failed_ai_subtask.task_id,
-                Subtask.message_id == failed_ai_subtask.parent_id,
-                Subtask.role == SubtaskRole.USER,
-            )
-            .first()
+        user_subtask = subtask_store.get_user_by_task_message_id(
+            db,
+            task_id=failed_ai_subtask.task_id,
+            message_id=failed_ai_subtask.parent_id,
         )
         if user_subtask:
             logger.info(
@@ -132,17 +106,24 @@ def reset_subtask_for_retry(
     Raises:
         Exception: If database commit fails
     """
-    # Reset subtask status
-    subtask.status = SubtaskStatus.PENDING
-    subtask.progress = 0
-    subtask.error_message = ""
-    subtask.result = None
-    subtask.updated_at = datetime.now()
+    subtask_store.update_fields(
+        db,
+        subtask=subtask,
+        status=SubtaskStatus.PENDING,
+        progress=0,
+        error_message="",
+        result=None,
+        updated_at=datetime.now(),
+    )
 
     # Also reset Task status to PENDING so executor_manager can fetch it
     # This is critical: executor_manager queries by Task.json.status.status = PENDING
     if task:
-        mark_task_pending(task)
+        task_store.update_json(
+            db,
+            task=task,
+            payload=mark_task_pending_payload(task.json),
+        )
         logger.info(f"Reset task status to PENDING: task_id={task.id}")
 
     try:

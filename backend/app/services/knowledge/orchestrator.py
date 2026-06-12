@@ -46,6 +46,7 @@ from app.services.knowledge.document_read_service import (
     document_read_service,
 )
 from app.services.knowledge.knowledge_service import KnowledgeService
+from app.stores.tasks import task_store
 
 logger = logging.getLogger(__name__)
 
@@ -303,14 +304,9 @@ class KnowledgeOrchestrator:
         )
 
         # 1. Get Task
-        task = (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.id == task_id,
-                TaskResource.kind == "Task",
-            )
-            .first()
-        )
+        task = task_store.get_by_id(db, task_id=task_id)
+        if task and task.kind != "Task":
+            task = None
         if not task:
             logger.warning(f"[Orchestrator] Task not found: task_id={task_id}")
             return None

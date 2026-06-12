@@ -7,8 +7,9 @@ API integration tests for OpenAPI v1/responses endpoints.
 """
 
 import asyncio
+import hashlib
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -21,7 +22,10 @@ from app.api.endpoints.openapi_responses import (
     _filter_current_assistant_turn,
     _task_to_response_object,
 )
+from app.models.api_key import KEY_TYPE_PERSONAL, APIKey
 from app.models.kind import Kind
+from app.models.resource_member import MemberStatus, ResourceMember, ResourceRole
+from app.models.share_link import ResourceType
 from app.models.subtask import SenderType, Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
@@ -406,6 +410,28 @@ class TestOpenAPIResponsesCreate:
         assert response.status_code == 404
         assert "Previous response" in response.json()["detail"]
 
+    def test_create_response_previous_response_user_isolation(
+        self,
+        test_client: TestClient,
+        test_admin_api_key,
+        test_team: Kind,
+        test_bot: Kind,
+        test_task: TaskResource,
+    ):
+        """Test previous_response_id cannot reference another user's response."""
+        response = test_client.post(
+            "/api/v1/responses",
+            headers={"X-API-Key": test_admin_api_key[0]},
+            json={
+                "model": "default#test-team",
+                "input": "Hello",
+                "previous_response_id": f"resp_{test_task.id}",
+            },
+        )
+
+        assert response.status_code == 404
+        assert "Previous response" in response.json()["detail"]
+
     def test_create_response_model_not_found(
         self, test_client: TestClient, test_api_key, test_team: Kind, test_bot: Kind
     ):
@@ -473,6 +499,43 @@ class TestOpenAPIResponsesCreate:
         assert data["id"] == "resp_123"
         assert data["status"] == "completed"
         assert len(data["output"]) == 1
+
+    @patch("app.api.endpoints.openapi_responses._create_non_streaming_response_unified")
+    def test_create_response_uses_authenticated_user_not_body_user_id(
+        self,
+        mock_create_sync,
+        test_client: TestClient,
+        test_api_key,
+        test_user: User,
+        test_team: Kind,
+        test_bot: Kind,
+        test_model: Kind,
+        test_public_shell: Kind,
+    ):
+        """Task creation user must come from API key auth, not request body."""
+        from app.schemas.openapi_response import ResponseObject
+
+        mock_create_sync.return_value = ResponseObject(
+            id="resp_123",
+            created_at=int(datetime.now().timestamp()),
+            status="completed",
+            model="default#test-team",
+            output=[],
+        )
+
+        response = test_client.post(
+            "/api/v1/responses",
+            headers={"X-API-Key": test_api_key[0]},
+            json={
+                "model": "default#test-team",
+                "input": "Hello",
+                "stream": False,
+                "user_id": test_user.id + 999,
+            },
+        )
+
+        assert response.status_code == 200
+        assert mock_create_sync.call_args.kwargs["user"].id == test_user.id
 
     @patch("app.api.endpoints.openapi_responses._create_non_streaming_response_unified")
     def test_create_response_passes_auto_delete_executor_header(
@@ -1407,6 +1470,121 @@ class TestOpenAPIResponsesCancel:
         data = response.json()
         assert data["id"] == f"resp_{task.id}"
 
+    @patch("app.services.chat.storage.session_manager")
+    def test_cancel_response_chat_shell_group_member_success(
+        self,
+        mock_session_manager,
+        test_client: TestClient,
+        test_db: Session,
+        test_user: User,
+        test_team: Kind,
+    ):
+        """Group chat members can cancel their own running response."""
+        member = User(
+            user_name="groupmember",
+            password_hash="hashed",
+            email="groupmember@example.com",
+            is_active=True,
+            git_info=None,
+        )
+        test_db.add(member)
+        test_db.flush()
+
+        raw_key = "wg-group-member-key"
+        member_key = APIKey(
+            user_id=member.id,
+            key_hash=hashlib.sha256(raw_key.encode()).hexdigest(),
+            key_prefix="wg-group...",
+            name="Group Member API Key",
+            key_type=KEY_TYPE_PERSONAL,
+            description="Group member key",
+            expires_at=datetime.utcnow() + timedelta(days=365),
+            is_active=True,
+        )
+        test_db.add(member_key)
+
+        task_json = {
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Task",
+            "metadata": {
+                "name": "task-group-running",
+                "namespace": "default",
+                "labels": {"source": "chat_shell"},
+            },
+            "spec": {
+                "title": "Running group task",
+                "prompt": "Hello",
+                "teamRef": {"name": "test-team", "namespace": "default"},
+                "workspaceRef": {"name": "workspace-1", "namespace": "default"},
+            },
+            "status": {
+                "status": "RUNNING",
+                "progress": 50,
+                "result": None,
+                "errorMessage": "",
+                "createdAt": datetime.now().isoformat(),
+                "updatedAt": datetime.now().isoformat(),
+            },
+        }
+        task = TaskResource(
+            user_id=test_user.id,
+            kind="Task",
+            name="task-group-running",
+            namespace="default",
+            json=task_json,
+            is_active=True,
+            is_group_chat=True,
+        )
+        test_db.add(task)
+        test_db.flush()
+
+        member_record = ResourceMember(
+            resource_type=ResourceType.TASK,
+            resource_id=task.id,
+            entity_type="user",
+            entity_id=str(member.id),
+            user_id=member.id,
+            role=ResourceRole.Reporter.value,
+            status=MemberStatus.APPROVED,
+            copied_resource_id=0,
+        )
+        running_subtask = Subtask(
+            user_id=member.id,
+            task_id=task.id,
+            team_id=test_team.id,
+            title="Assistant response",
+            bot_ids=[1],
+            role=SubtaskRole.ASSISTANT,
+            executor_namespace="",
+            executor_name="",
+            prompt="",
+            status=SubtaskStatus.RUNNING,
+            progress=50,
+            message_id=1,
+            parent_id=0,
+            error_message="",
+            completed_at=datetime(1970, 1, 1, 0, 0, 0),
+            result=None,
+            sender_type=SenderType.TEAM,
+            sender_user_id=member.id,
+        )
+        test_db.add_all([member_record, running_subtask])
+        test_db.commit()
+        test_db.refresh(task)
+
+        mock_session_manager.get_streaming_content = AsyncMock(
+            return_value="Partial content"
+        )
+        mock_session_manager.cancel_stream = AsyncMock()
+
+        response = test_client.post(
+            f"/api/v1/responses/resp_{task.id}/cancel",
+            headers={"X-API-Key": raw_key},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["id"] == f"resp_{task.id}"
+
 
 @pytest.mark.api
 class TestOpenAPIResponsesDelete:
@@ -1522,23 +1700,13 @@ class TestOpenAPIResponsesDelete:
         test_admin_api_key,
         test_task: TaskResource,
     ):
-        """Test user isolation on delete.
-
-        Note: Current implementation of delete_task in task_kinds_service
-        does NOT enforce user isolation - it only checks if the task exists.
-        This test documents the current behavior. Consider adding user_id
-        filtering to delete_task for proper isolation.
-        """
-        # Current behavior: any authenticated user can delete any task
-        # This test documents actual behavior, not ideal behavior
+        """Test users cannot delete other users' responses."""
         response = test_client.delete(
             f"/api/v1/responses/resp_{test_task.id}",
             headers={"X-API-Key": test_admin_api_key[0]},
         )
 
-        # Task can be deleted by any user (current implementation)
-        # Ideally this should return 404 for non-owner
-        assert response.status_code == 200
+        assert response.status_code == 404
 
 
 @pytest.mark.api

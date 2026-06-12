@@ -19,6 +19,7 @@ from app.schemas.prompt_optimization import (
 from app.services.group_permission import get_effective_role_in_group
 from app.services.readers import kindReader
 from app.services.readers.kinds import KindType
+from app.stores.tasks import task_store
 
 
 def can_view_prompt(db: Session, user: User, resource: Kind) -> bool:
@@ -76,14 +77,9 @@ def resolve_team_from_task(db: Session, task_id: int, user_id: int) -> Kind:
     Raises:
         ValueError: If task or team not found
     """
-    task = (
-        db.query(TaskResource)
-        .filter(
-            TaskResource.id == task_id,
-            TaskResource.kind == "Task",
-        )
-        .first()
-    )
+    task = task_store.get_by_id(db, task_id=task_id)
+    if task and task.kind != "Task":
+        task = None
     if not task:
         raise ValueError(f"Task {task_id} not found")
 

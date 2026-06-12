@@ -10,7 +10,6 @@ including subtask creation and batch data fetching.
 """
 
 import logging
-from datetime import datetime
 from typing import Any, Dict, List
 
 from fastapi import HTTPException
@@ -20,13 +19,14 @@ from sqlalchemy.orm import Session
 from app.models.kind import Kind
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
-from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
+from app.models.subtask import Subtask
 from app.models.task import TaskResource
 from app.schemas.kind import Task, Team, Workspace
 from app.services.adapters.pipeline_stage import pipeline_stage_service
 from app.services.device.display_name import resolve_device_display_name
 from app.services.readers.kinds import KindType, kindReader
 from app.services.readers.users import userReader
+from app.stores.tasks import WorkspaceRefLookup, subtask_store, task_store
 
 from .converters import get_task_execution_workspace_source
 
@@ -77,40 +77,30 @@ def create_subtasks(
         )
 
     # For followup tasks: query existing subtasks and add one more
-    existing_subtasks = (
-        db.query(Subtask)
-        .filter(Subtask.task_id == task.id, Subtask.user_id == user_id)
-        .order_by(Subtask.message_id.desc())
-        .all()
+    existing_subtasks = subtask_store.list_latest_by_task(
+        db, task_id=task.id, user_id=user_id
     )
 
     # Get the next message_id for the new subtask
     next_message_id = 1
     parent_id = 0
     if existing_subtasks:
-        next_message_id = existing_subtasks[0].message_id + 1
-        parent_id = existing_subtasks[0].message_id
+        latest_subtask = existing_subtasks[-1]
+        next_message_id = latest_subtask.message_id + 1
+        parent_id = latest_subtask.message_id
 
-    # Create USER role subtask based on task object
-    user_subtask = Subtask(
+    subtask_store.create_user_subtask(
+        db,
         user_id=user_id,
         task_id=task.id,
         team_id=team.id,
         title=f"{task_crd.spec.title} - User",
         bot_ids=bot_ids,
-        role=SubtaskRole.USER,
-        executor_namespace="",
-        executor_name="",
         prompt=user_prompt,
-        status=SubtaskStatus.COMPLETED,
-        progress=0,
         message_id=next_message_id,
         parent_id=parent_id,
-        error_message="",
-        completed_at=datetime.now(),
-        result=None,
+        progress=0,
     )
-    db.add(user_subtask)
 
     # Update id of next message and parent
     if parent_id == 0:
@@ -199,33 +189,16 @@ def _create_pipeline_subtask(
 
     # Pipeline mode: all bots run in the same executor
     # Get executor info from any existing assistant subtask
-    executor_name = ""
-    executor_namespace = ""
-    for s in existing_subtasks:
-        if s.role == SubtaskRole.ASSISTANT and s.executor_name:
-            executor_name = s.executor_name
-            executor_namespace = s.executor_namespace
-            break
-
-    subtask = Subtask(
+    subtask_store.create_assistant_subtask(
+        db,
         user_id=user_id,
         task_id=task.id,
         team_id=team.id,
         title=f"{task_crd.spec.title} - {bot.name}",
         bot_ids=[bot.id],
-        role=SubtaskRole.ASSISTANT,
-        prompt="",
-        status=SubtaskStatus.PENDING,
-        progress=0,
         message_id=next_message_id,
         parent_id=parent_id,
-        executor_name=executor_name,
-        executor_namespace=executor_namespace,
-        error_message="",
-        completed_at=datetime.now(),
-        result=None,
     )
-    db.add(subtask)
 
 
 def _create_standard_subtask(
@@ -240,32 +213,16 @@ def _create_standard_subtask(
     parent_id: int,
 ) -> None:
     """Create subtask for standard (non-pipeline) collaboration models."""
-    executor_name = ""
-    executor_namespace = ""
-    if existing_subtasks:
-        # Take executor_name and executor_namespace from the last existing subtask
-        executor_name = existing_subtasks[0].executor_name
-        executor_namespace = existing_subtasks[0].executor_namespace
-
-    assistant_subtask = Subtask(
+    subtask_store.create_assistant_subtask(
+        db,
         user_id=user_id,
         task_id=task.id,
         team_id=team.id,
         title=f"{task_crd.spec.title} - Assistant",
         bot_ids=bot_ids,
-        role=SubtaskRole.ASSISTANT,
-        prompt="",
-        status=SubtaskStatus.PENDING,
-        progress=0,
         message_id=next_message_id,
         parent_id=parent_id,
-        executor_name=executor_name,
-        executor_namespace=executor_namespace,
-        error_message="",
-        completed_at=datetime.now(),
-        result=None,
     )
-    db.add(assistant_subtask)
 
 
 def get_tasks_related_data_batch(
@@ -426,17 +383,12 @@ def _batch_query_workspaces(
     if not workspace_refs:
         return workspace_data
 
-    workspace_names, workspace_namespaces = zip(*workspace_refs)
-    workspaces = (
-        db.query(TaskResource)
-        .filter(
-            TaskResource.user_id == user_id,
-            TaskResource.kind == "Workspace",
-            TaskResource.name.in_(workspace_names),
-            TaskResource.namespace.in_(workspace_namespaces),
-            TaskResource.is_active == TaskResource.STATE_ACTIVE,
-        )
-        .all()
+    workspaces = task_store.list_workspaces_by_refs(
+        db,
+        refs=[
+            WorkspaceRefLookup(user_id=user_id, name=name, namespace=namespace)
+            for name, namespace in workspace_refs
+        ],
     )
 
     for workspace in workspaces:

@@ -70,15 +70,17 @@ class ImageIntentAnalyzer(BaseIntentAnalyzer):
             ImageIntentResult with merged prompt and reference image info
         """
         from app.db.session import SessionLocal
-        from app.models.subtask import Subtask, SubtaskRole
+        from app.models.subtask import SubtaskRole
+        from app.stores.tasks import subtask_store
 
         db = SessionLocal()
         try:
             # Retrieve relevant subtask history
-            query = db.query(Subtask).filter(Subtask.task_id == task_id)
-            if exclude_subtask_ids:
-                query = query.filter(Subtask.id.notin_(exclude_subtask_ids))
-            subtasks = query.order_by(Subtask.message_id.asc()).all()
+            subtasks = subtask_store.list_by_task_ordered(
+                db,
+                task_id=task_id,
+                exclude_subtask_ids=exclude_subtask_ids,
+            )
 
             # Debug: show basic history snapshot for follow-up detection
             # Note: keep logs minimal and avoid leaking user content.

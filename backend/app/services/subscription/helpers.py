@@ -41,6 +41,7 @@ from app.schemas.subscription import (
     SubscriptionTriggerType,
     SubscriptionWorkspaceRef,
 )
+from app.stores.tasks import task_store
 
 logger = logging.getLogger(__name__)
 
@@ -469,24 +470,16 @@ def create_or_get_workspace(
     Returns:
         Workspace ID
     """
-    from app.core.constants import KIND_WORKSPACE
-    from app.models.task import TaskResource
-
     # Generate a unique workspace name based on repo and branch
     workspace_name = f"{git_repo.replace('/', '-')}-{branch_name}".lower()[:100]
     namespace = "default"
 
     # Check if workspace already exists
-    existing = (
-        db.query(TaskResource)
-        .filter(
-            TaskResource.user_id == user_id,
-            TaskResource.kind == KIND_WORKSPACE,
-            TaskResource.name == workspace_name,
-            TaskResource.namespace == namespace,
-            TaskResource.is_active == TaskResource.STATE_ACTIVE,
-        )
-        .first()
+    existing = task_store.get_workspace_by_ref(
+        db,
+        user_id=user_id,
+        name=workspace_name,
+        namespace=namespace,
     )
 
     if existing:
@@ -514,17 +507,14 @@ def create_or_get_workspace(
         },
     }
 
-    # Create new workspace
-    workspace = TaskResource(
+    workspace = task_store.create_workspace(
+        db,
         user_id=user_id,
-        kind=KIND_WORKSPACE,
         name=workspace_name,
         namespace=namespace,
-        json=workspace_json,
-        is_active=True,
+        payload=workspace_json,
+        client_origin="frontend",
     )
-
-    db.add(workspace)
     db.flush()  # Get the ID without committing
 
     return workspace.id
@@ -561,14 +551,9 @@ def build_workspace_repo_cache(
     if not workspace_id_list:
         return {}
 
-    workspaces = (
-        db.query(TaskResource)
-        .filter(
-            TaskResource.id.in_(workspace_id_list),
-            TaskResource.kind == "Workspace",
-            TaskResource.is_active == TaskResource.STATE_ACTIVE,
-        )
-        .all()
+    workspaces = task_store.list_active_workspaces_by_ids(
+        db,
+        workspace_ids=workspace_id_list,
     )
     return {
         workspace.id: extract_workspace_repo_fields(workspace.json)
@@ -599,26 +584,13 @@ def resolve_workspace_repo_fields(
 
     workspace = None
     if workspace_id:
-        workspace = (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.id == workspace_id,
-                TaskResource.kind == "Workspace",
-                TaskResource.is_active == TaskResource.STATE_ACTIVE,
-            )
-            .first()
-        )
+        workspace = task_store.get_active_workspace_by_id(db, workspace_id=workspace_id)
     elif workspace_ref:
-        workspace = (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.user_id == user_id,
-                TaskResource.kind == "Workspace",
-                TaskResource.name == workspace_ref.name,
-                TaskResource.namespace == workspace_ref.namespace,
-                TaskResource.is_active == TaskResource.STATE_ACTIVE,
-            )
-            .first()
+        workspace = task_store.get_workspace_by_ref(
+            db,
+            user_id=user_id,
+            name=workspace_ref.name,
+            namespace=workspace_ref.namespace,
         )
 
     if not workspace:

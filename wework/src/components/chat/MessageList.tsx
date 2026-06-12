@@ -125,12 +125,19 @@ function UserMessage({ message }: { message: WorkbenchMessage }) {
     <div className="group flex max-w-[80%] flex-col items-end gap-1.5">
       {(imageAttachments.length > 0 || documentAttachments.length > 0) && (
         <div className="flex max-w-full flex-col items-end gap-2">
-          {imageAttachments.map(attachment => (
-            <MessageImageAttachmentPreview
-              key={attachment.id}
-              attachment={attachment}
-            />
-          ))}
+          {imageAttachments.length > 0 && (
+            <div
+              data-testid="message-image-attachments"
+              className="flex max-w-full flex-row flex-wrap justify-end gap-2"
+            >
+              {imageAttachments.map(attachment => (
+                <MessageImageAttachmentPreview
+                  key={attachment.id}
+                  attachment={attachment}
+                />
+              ))}
+            </div>
+          )}
           {documentAttachments.map(attachment => (
             <MessageDocumentAttachment
               key={attachment.id}

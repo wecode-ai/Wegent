@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import hashlib
 from datetime import datetime, timedelta
 
 import pytest
@@ -14,11 +15,13 @@ from app.core.security import (
     authenticate_user,
     create_access_token,
     get_admin_user,
+    get_auth_context,
     get_current_user,
     get_password_hash,
     verify_password,
     verify_token,
 )
+from app.models.api_key import KEY_TYPE_SERVICE, APIKey
 from app.models.user import User
 
 
@@ -327,3 +330,53 @@ class TestGetAdminUser:
 
         assert exc_info.value.status_code == 403
         assert "Permission denied" in exc_info.value.detail
+
+
+@pytest.mark.unit
+class TestGetAuthContextServiceKey:
+    """Test service key authentication for OpenAPI-compatible endpoints."""
+
+    @staticmethod
+    def _create_service_key(db: Session, owner: User, raw_key: str) -> APIKey:
+        service_key = APIKey(
+            user_id=owner.id,
+            key_hash=hashlib.sha256(raw_key.encode()).hexdigest(),
+            key_prefix=f"{raw_key[:10]}...",
+            name="Service Key",
+            key_type=KEY_TYPE_SERVICE,
+            description="Service key for tests",
+            expires_at=datetime.utcnow() + timedelta(days=365),
+            is_active=True,
+        )
+        db.add(service_key)
+        db.commit()
+        db.refresh(service_key)
+        return service_key
+
+    def test_admin_owned_service_key_can_use_wegent_username(
+        self, test_db: Session, test_admin_user: User, test_user: User
+    ):
+        raw_key = "wg-admin-service-key"
+        self._create_service_key(test_db, test_admin_user, raw_key)
+
+        auth_context = get_auth_context(
+            db=test_db,
+            api_key=raw_key,
+            wegent_username=test_user.user_name,
+        )
+
+        assert auth_context.user.id == test_user.id
+
+    def test_non_admin_owned_service_key_can_use_wegent_username(
+        self, test_db: Session, test_user: User
+    ):
+        raw_key = "wg-user-service-key"
+        self._create_service_key(test_db, test_user, raw_key)
+
+        auth_context = get_auth_context(
+            db=test_db,
+            api_key=raw_key,
+            wegent_username=test_user.user_name,
+        )
+
+        assert auth_context.user.id == test_user.id

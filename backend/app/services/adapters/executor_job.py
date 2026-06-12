@@ -459,7 +459,6 @@ class JobService(BaseService[Kind, None, None]):
             task_crd = Task.model_validate(task.json)
             if self._get_task_type(task_crd) == "code":
                 await self._archive_workspace(
-                    subtask=subtask,
                     task=task,
                     executor_name=executor_name,
                     executor_namespace=executor_namespace,
@@ -849,7 +848,6 @@ class JobService(BaseService[Kind, None, None]):
             if task_type == "code":
                 try:
                     await self._archive_workspace(
-                        subtask=subtask,
                         task=task,
                         executor_name=name,
                         executor_namespace=namespace,
@@ -934,7 +932,6 @@ class JobService(BaseService[Kind, None, None]):
 
     async def _archive_workspace(
         self,
-        subtask: Subtask,
         task: TaskResource,
         executor_name: str,
         executor_namespace: str,
@@ -956,7 +953,6 @@ class JobService(BaseService[Kind, None, None]):
         try:
             archive_info = await archive_service.archive_workspace(
                 db=sync_db,
-                subtask=subtask,
                 task=task,
                 executor_name=executor_name,
                 executor_namespace=executor_namespace,
