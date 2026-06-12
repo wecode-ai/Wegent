@@ -273,7 +273,7 @@ describe('ChatInput', () => {
     })
     expect(screen.getByTestId('local-skill-autocomplete')).toHaveClass(
       'bottom-[calc(100%+1rem)]',
-      'z-[80]',
+      'z-popover',
       'bg-background',
       'left-[-1rem]',
       'right-[-3.5rem]',
