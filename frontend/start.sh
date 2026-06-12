@@ -234,5 +234,6 @@ echo ""
 echo -e "${YELLOW}Press Ctrl+C to stop the server${NC}"
 echo ""
 
-# Start Next.js development server
-PORT=$PORT pnpm run dev
+# Start Next.js development server. Do not pass --turbopack because Turbopack
+# cannot resolve Next.js reliably with the pnpm workspace symlink layout.
+env -u TURBOPACK pnpm run dev --port "$PORT"

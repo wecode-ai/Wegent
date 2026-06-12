@@ -850,54 +850,142 @@ patch_backend_service_urls() {
 }
 
 # Check frontend dependencies
-check_frontend_dependencies() {
-    local frontend_dir="$SCRIPT_DIR/frontend"
-    local marker_file="$frontend_dir/node_modules/.install-marker"
+compute_workspace_dependency_fingerprint() {
+    node - "$SCRIPT_DIR" <<'NODE'
+const crypto = require('crypto')
+const fs = require('fs')
+const path = require('path')
 
-    if [ ! -d "$frontend_dir/node_modules" ]; then
-        echo -e "${YELLOW}Frontend dependencies not installed. Installing...${NC}"
+const root = process.argv[2]
+const manifests = [
+  'package.json',
+  'frontend/package.json',
+  'wework/package.json',
+  'packages/chat-core/package.json',
+]
+const manifestKeys = [
+  'dependencies',
+  'devDependencies',
+  'optionalDependencies',
+  'peerDependencies',
+  'peerDependenciesMeta',
+  'packageManager',
+  'pnpm',
+  'resolutions',
+  'overrides',
+  'engines',
+]
+const files = ['pnpm-lock.yaml', 'pnpm-workspace.yaml']
+
+function sortValue(value) {
+  if (Array.isArray(value)) {
+    return value.map(sortValue)
+  }
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, nested]) => [key, sortValue(nested)]),
+    )
+  }
+  return value
+}
+
+const payload = { files: {}, manifests: {} }
+
+for (const manifest of manifests) {
+  const filePath = path.join(root, manifest)
+  const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8'))
+  payload.manifests[manifest] = {}
+
+  for (const key of manifestKeys) {
+    if (Object.prototype.hasOwnProperty.call(parsed, key)) {
+      payload.manifests[manifest][key] = parsed[key]
+    }
+  }
+}
+
+for (const file of files) {
+  const filePath = path.join(root, file)
+  payload.files[file] = fs.existsSync(filePath)
+    ? crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex')
+    : null
+}
+
+const fingerprint = crypto
+  .createHash('sha256')
+  .update(JSON.stringify(sortValue(payload)))
+  .digest('hex')
+
+console.log(fingerprint)
+NODE
+}
+
+mark_workspace_dependencies_installed() {
+    local fingerprint="$1"
+    local workspace_marker="$SCRIPT_DIR/node_modules/.install-marker"
+    local fingerprint_file="$SCRIPT_DIR/node_modules/.install-fingerprint"
+
+    mkdir -p "$SCRIPT_DIR/node_modules"
+    printf "%s\n" "$fingerprint" > "$fingerprint_file"
+    touch "$workspace_marker"
+
+    if [ -d "$SCRIPT_DIR/frontend/node_modules" ]; then
+        touch "$SCRIPT_DIR/frontend/node_modules/.install-marker"
+    fi
+    if [ -d "$SCRIPT_DIR/wework/node_modules" ]; then
+        touch "$SCRIPT_DIR/wework/node_modules/.install-marker"
+    fi
+}
+
+ensure_workspace_dependencies() {
+    local label="$1"
+    local node_modules_dir="$2"
+    local workspace_marker="$SCRIPT_DIR/node_modules/.install-marker"
+    local fingerprint_file="$SCRIPT_DIR/node_modules/.install-fingerprint"
+    local package_marker="$node_modules_dir/.install-marker"
+    local current_fingerprint=""
+    local installed_fingerprint=""
+    local reason=""
+
+    if [ ! -d "$SCRIPT_DIR/node_modules" ]; then
+        reason="Workspace dependencies not installed"
+    elif [ ! -d "$node_modules_dir" ]; then
+        reason="$label dependencies not installed"
+    fi
+
+    current_fingerprint=$(compute_workspace_dependency_fingerprint)
+
+    if [ -z "$reason" ]; then
+        if [ ! -f "$workspace_marker" ] || [ ! -f "$fingerprint_file" ]; then
+            if [ -f "$package_marker" ]; then
+                mark_workspace_dependencies_installed "$current_fingerprint"
+            else
+                reason="Workspace dependency install marker missing"
+            fi
+        else
+            installed_fingerprint=$(cat "$fingerprint_file" 2>/dev/null || true)
+            if [ "$installed_fingerprint" != "$current_fingerprint" ]; then
+                reason="Workspace dependency metadata changed"
+            fi
+        fi
+    fi
+
+    if [ -n "$reason" ]; then
+        echo -e "${YELLOW}$reason. Updating...${NC}"
         cd "$SCRIPT_DIR"
         pnpm install --frozen-lockfile
-        touch "$marker_file"
+        mark_workspace_dependencies_installed "$current_fingerprint"
         cd "$SCRIPT_DIR"
-        echo -e "${GREEN}✓ Frontend dependencies installed${NC}"
+        echo -e "${GREEN}✓ $label dependencies updated${NC}"
         return
     fi
 
-    # Create a marker file to track last successful install
-    if [ ! -f "$marker_file" ]; then
-        echo -e "${YELLOW}Frontend dependency install marker missing. Updating...${NC}"
-        cd "$SCRIPT_DIR"
-        pnpm install --frozen-lockfile && touch "$marker_file"
-        cd "$SCRIPT_DIR"
-        echo -e "${GREEN}✓ Frontend dependencies updated${NC}"
-        return
-    fi
+    echo -e "${GREEN}✓ $label dependencies are up to date${NC}"
+}
 
-    # Check if package.json is newer than the marker file
-    if [ "$frontend_dir/package.json" -nt "$marker_file" ]; then
-        echo -e "${YELLOW}Frontend dependencies may be outdated (package.json changed). Updating...${NC}"
-        cd "$SCRIPT_DIR"
-        pnpm install --frozen-lockfile && touch "$marker_file"
-        cd "$SCRIPT_DIR"
-        echo -e "${GREEN}✓ Frontend dependencies updated${NC}"
-        return
-    fi
-
-    # Check workspace files if any are newer than marker
-    if [ "$SCRIPT_DIR/package.json" -nt "$marker_file" ] || \
-       [ "$SCRIPT_DIR/pnpm-lock.yaml" -nt "$marker_file" ] || \
-       [ "$SCRIPT_DIR/pnpm-workspace.yaml" -nt "$marker_file" ] || \
-       [ "$SCRIPT_DIR/packages/chat-core/package.json" -nt "$marker_file" ]; then
-        echo -e "${YELLOW}Frontend dependencies may be outdated (workspace changed). Updating...${NC}"
-        cd "$SCRIPT_DIR"
-        pnpm install --frozen-lockfile && touch "$marker_file"
-        cd "$SCRIPT_DIR"
-        echo -e "${GREEN}✓ Frontend dependencies updated${NC}"
-        return
-    fi
-
-    echo -e "${GREEN}✓ Frontend dependencies are up to date${NC}"
+check_frontend_dependencies() {
+    ensure_workspace_dependencies "Frontend" "$SCRIPT_DIR/frontend/node_modules"
 }
 
 clean_frontend_cache() {
@@ -2184,33 +2272,7 @@ start_services() {
 
     # Check wework dependencies
     if [ "$start_wework" = true ]; then
-        local wework_marker_file="$SCRIPT_DIR/wework/node_modules/.install-marker"
-        if [ ! -d "$SCRIPT_DIR/wework/node_modules" ]; then
-            echo -e "${YELLOW}WeWork dependencies not installed. Installing...${NC}"
-            cd "$SCRIPT_DIR"
-            pnpm install --frozen-lockfile
-            touch "$wework_marker_file"
-            cd "$SCRIPT_DIR"
-            echo -e "${GREEN}✓ WeWork dependencies installed${NC}"
-        elif [ ! -f "$wework_marker_file" ]; then
-            echo -e "${YELLOW}WeWork dependency install marker missing. Updating...${NC}"
-            cd "$SCRIPT_DIR"
-            pnpm install --frozen-lockfile && touch "$wework_marker_file"
-            cd "$SCRIPT_DIR"
-            echo -e "${GREEN}✓ WeWork dependencies updated${NC}"
-        elif [ "$SCRIPT_DIR/wework/package.json" -nt "$wework_marker_file" ] || \
-             [ "$SCRIPT_DIR/package.json" -nt "$wework_marker_file" ] || \
-             [ "$SCRIPT_DIR/pnpm-lock.yaml" -nt "$wework_marker_file" ] || \
-             [ "$SCRIPT_DIR/pnpm-workspace.yaml" -nt "$wework_marker_file" ] || \
-             [ "$SCRIPT_DIR/packages/chat-core/package.json" -nt "$wework_marker_file" ]; then
-            echo -e "${YELLOW}WeWork dependencies may be outdated (workspace changed). Updating...${NC}"
-            cd "$SCRIPT_DIR"
-            pnpm install --frozen-lockfile && touch "$wework_marker_file"
-            cd "$SCRIPT_DIR"
-            echo -e "${GREEN}✓ WeWork dependencies updated${NC}"
-        else
-            echo -e "${GREEN}✓ WeWork dependencies are up to date${NC}"
-        fi
+        ensure_workspace_dependencies "WeWork" "$SCRIPT_DIR/wework/node_modules"
         echo ""
     fi
 
@@ -2282,7 +2344,7 @@ start_services() {
         # Build the frontend startup command
         # In WSL, use full path to node to ensure we use the correct nvm-installed version
         # instead of potentially using Windows node or a different version
-        local frontend_cmd="PORT=$WEGENT_FRONTEND_PORT pnpm run dev"
+        local frontend_cmd="env -u TURBOPACK pnpm run dev --port $WEGENT_FRONTEND_PORT"
 
         if is_wsl; then
             # Get the full path to node from the current shell (which has nvm loaded)

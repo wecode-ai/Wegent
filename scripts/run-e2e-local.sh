@@ -211,7 +211,7 @@ fi
 
 # Start frontend in dev mode (faster for local development, output to log file)
 echo "Starting frontend in dev mode (logs: $FRONTEND_LOG)..."
-pnpm run dev > "$FRONTEND_LOG" 2>&1 &
+env -u TURBOPACK pnpm run dev --port 3000 > "$FRONTEND_LOG" 2>&1 &
 FRONTEND_PID=$!
 
 # Step 5: Start Mock Model Server
