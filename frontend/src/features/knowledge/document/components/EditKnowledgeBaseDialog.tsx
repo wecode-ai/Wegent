@@ -249,7 +249,6 @@ export function EditKnowledgeBaseDialog({
                 setMaxCalls(nextMax)
                 setExemptCalls(nextExempt)
               }}
-              advancedVariant="collapsible"
               advancedOpen={showAdvanced}
               onAdvancedOpenChange={setShowAdvanced}
               showRetrievalSection={!!kb?.retrieval_config}

@@ -4,21 +4,16 @@
 
 'use client'
 
-import { ReactNode } from 'react'
+import { ReactNode, useId } from 'react'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Switch } from '@/components/ui/switch'
 import { Slider } from '@/components/ui/slider'
 import { Button } from '@/components/ui/button'
-import {
-  Accordion,
-  AccordionContent,
-  AccordionItem,
-  AccordionTrigger,
-} from '@/components/ui/accordion'
-import { ChevronDown, ChevronRight, Plus, X } from 'lucide-react'
+import { ChevronDown, Plus, X } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
+import { cn } from '@/lib/utils'
 import type {
   KnowledgeResourceScope,
   RetrievalConfigDraft,
@@ -46,7 +41,6 @@ interface KnowledgeBaseFormProps {
     exemptCalls: number
   }
   onCallLimitsChange: (limits: { maxCalls: number; exemptCalls: number }) => void
-  advancedVariant: 'accordion' | 'collapsible'
   advancedOpen: boolean
   onAdvancedOpenChange: (open: boolean) => void
   retrievalModeSection?: ReactNode
@@ -57,14 +51,55 @@ interface KnowledgeBaseFormProps {
   retrievalGroupName?: string
   retrievalReadOnly?: boolean
   retrievalPartialReadOnly?: boolean
-  /** Content to render before the auto-summary section */
-  beforeSummarySection?: React.ReactNode
   /** Whether to show guided questions section (only for notebook type) */
   showGuidedQuestions?: boolean
   /** Guided questions list (max 3) */
   guidedQuestions?: string[]
   /** Handler for guided questions change */
   onGuidedQuestionsChange?: (questions: string[]) => void
+}
+
+function FormSection({
+  title,
+  sectionId,
+  open,
+  onOpenChange,
+  children,
+}: {
+  title: string
+  sectionId: string
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  children: ReactNode
+}) {
+  const contentId = useId()
+
+  return (
+    <section className="space-y-4">
+      <button
+        type="button"
+        aria-controls={contentId}
+        aria-expanded={open}
+        data-testid={`${sectionId}-section-trigger`}
+        onClick={() => onOpenChange(!open)}
+        className="group flex w-full items-center gap-3 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+      >
+        <h3 className="shrink-0 text-sm font-semibold text-text-primary">{title}</h3>
+        <div className="h-px flex-1 bg-border transition-colors group-hover:bg-primary/40" />
+        <ChevronDown
+          className={cn(
+            'h-4 w-4 shrink-0 text-text-muted transition-transform duration-200',
+            !open && '-rotate-90'
+          )}
+        />
+      </button>
+      {open && (
+        <div id={contentId} className="space-y-5">
+          {children}
+        </div>
+      )}
+    </section>
+  )
 }
 
 export function KnowledgeBaseForm({
@@ -82,7 +117,6 @@ export function KnowledgeBaseForm({
   bindModel,
   callLimits,
   onCallLimitsChange,
-  advancedVariant,
   advancedOpen,
   onAdvancedOpenChange,
   retrievalModeSection,
@@ -93,7 +127,6 @@ export function KnowledgeBaseForm({
   retrievalGroupName,
   retrievalReadOnly,
   retrievalPartialReadOnly,
-  beforeSummarySection,
   showGuidedQuestions = false,
   guidedQuestions = [],
   onGuidedQuestionsChange,
@@ -135,8 +168,31 @@ export function KnowledgeBaseForm({
   }
 
   const advancedContent = (
-    <div className="space-y-4 pt-2">
-      <div className="space-y-4">
+    <div className="space-y-5">
+      {(retrievalModeSection || showRetrievalSection) && (
+        <div className="space-y-3">
+          <div className="space-y-0.5">
+            <Label className="text-sm font-medium">
+              {t('knowledge:document.ragConfigMode.title')}
+            </Label>
+          </div>
+
+          {retrievalModeSection}
+
+          {showRetrievalSection && (
+            <RetrievalSettingsSection
+              config={retrievalConfig}
+              onChange={onRetrievalConfigChange}
+              scope={retrievalScope}
+              groupName={retrievalGroupName}
+              readOnly={retrievalReadOnly}
+              partialReadOnly={retrievalPartialReadOnly}
+            />
+          )}
+        </div>
+      )}
+
+      <div className="space-y-3">
         <div className="space-y-0.5">
           <Label className="text-sm font-medium">{t('knowledge:document.callLimits.title')}</Label>
           <p className="text-xs text-text-muted">
@@ -184,19 +240,6 @@ export function KnowledgeBaseForm({
           </div>
         </div>
       </div>
-
-      {retrievalModeSection}
-
-      {showRetrievalSection && (
-        <RetrievalSettingsSection
-          config={retrievalConfig}
-          onChange={onRetrievalConfigChange}
-          scope={retrievalScope}
-          groupName={retrievalGroupName}
-          readOnly={retrievalReadOnly}
-          partialReadOnly={retrievalPartialReadOnly}
-        />
-      )}
     </div>
   )
 
@@ -229,8 +272,6 @@ export function KnowledgeBaseForm({
           data-testid="kb-description-input"
         />
       </div>
-
-      {beforeSummarySection}
 
       <div className="space-y-3 border-b border-border pb-4">
         <div className="flex items-center justify-between">
@@ -315,44 +356,14 @@ export function KnowledgeBaseForm({
         </div>
       )}
 
-      {advancedVariant === 'accordion' ? (
-        <Accordion
-          type="single"
-          collapsible
-          className="border-none"
-          value={advancedOpen ? 'advanced' : undefined}
-          onValueChange={value => onAdvancedOpenChange(value === 'advanced')}
-        >
-          <AccordionItem value="advanced" className="border-none">
-            <AccordionTrigger className="text-sm font-medium hover:no-underline">
-              {t('knowledge:document.advancedSettings.title')}
-            </AccordionTrigger>
-            <AccordionContent forceMount className={!advancedOpen ? 'hidden' : ''}>
-              {advancedContent}
-            </AccordionContent>
-          </AccordionItem>
-        </Accordion>
-      ) : (
-        <div className="pt-2">
-          <button
-            type="button"
-            onClick={() => onAdvancedOpenChange(!advancedOpen)}
-            className="flex items-center gap-2 text-sm font-medium text-text-primary hover:text-primary transition-colors"
-          >
-            {advancedOpen ? (
-              <ChevronDown className="w-4 h-4" />
-            ) : (
-              <ChevronRight className="w-4 h-4" />
-            )}
-            {t('knowledge:document.advancedSettings.title')}
-          </button>
-          {advancedOpen && (
-            <div className="mt-4 p-4 bg-bg-muted rounded-lg border border-border space-y-6">
-              {advancedContent}
-            </div>
-          )}
-        </div>
-      )}
+      <FormSection
+        title={t('knowledge:document.advancedSettings.title')}
+        sectionId="knowledge-advanced"
+        open={advancedOpen}
+        onOpenChange={onAdvancedOpenChange}
+      >
+        {advancedContent}
+      </FormSection>
     </div>
   )
 }

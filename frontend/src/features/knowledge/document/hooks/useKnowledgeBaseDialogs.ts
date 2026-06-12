@@ -159,7 +159,6 @@ export function useKnowledgeBaseDialogs({
           guided_questions: data.guided_questions,
           max_calls_per_conversation: data.max_calls_per_conversation,
           exempt_calls_before_check: data.exempt_calls_before_check,
-          members: data.members,
         })
 
         if (data.summary_enabled && data.summary_model_ref) {
