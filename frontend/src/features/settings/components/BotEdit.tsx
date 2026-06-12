@@ -52,7 +52,7 @@ import {
   AllowedModelRef,
 } from '@/features/settings/services/bots'
 import { modelApis, UnifiedModel, ModelTypeEnum } from '@/apis/models'
-import { shellApis, UnifiedShell } from '@/apis/shells'
+import { filterSelectableShells, shellApis, UnifiedShell } from '@/apis/shells'
 import { fetchUnifiedSkillsList, fetchPublicSkillsList, UnifiedSkill } from '@/apis/skills'
 import { publicResourceApis, PublicBotFormData } from '@/apis/publicResources'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -316,7 +316,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
         }
 
         // Filter shells based on allowedAgents prop (using shellType as agent type)
-        let filteredShells = shellData
+        let filteredShells = filterSelectableShells(shellData)
         if (allowedAgents && allowedAgents.length > 0) {
           filteredShells = filteredShells.filter(shell =>
             allowedAgents.includes(shell.shellType as AgentType)

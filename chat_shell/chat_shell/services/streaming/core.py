@@ -126,6 +126,9 @@ class StreamingState:
     # Complete messages chain from LangGraph agent execution (tool calls + results)
     messages_chain: list = field(default_factory=list)
 
+    # Latest context metrics snapshot for observability and refresh recovery
+    context_metrics: Optional[dict[str, Any]] = None
+
     def append_content(self, token: str) -> None:
         """Append token to accumulated response."""
         self.full_response += token
@@ -217,6 +220,8 @@ class StreamingState:
         # Include messages chain for multi-turn tool call history
         if include_value and self.messages_chain:
             result["messages_chain"] = self.messages_chain
+        if self.context_metrics:
+            result["context_metrics"] = self.context_metrics
         return result
 
 
@@ -433,6 +438,7 @@ class StreamingCore:
             loaded_skills=result.get("loaded_skills"),
             messages_chain=result.get("messages_chain"),
             reasoning_content=result.get("reasoning_content"),
+            context_metrics=result.get("context_metrics"),
         )
 
         return result

@@ -52,6 +52,8 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_TEXT_FILE_EXTENSION = "txt"
 MAX_DOCUMENT_READ_LIMIT = 100000
+DEFAULT_KNOWLEDGE_LIST_LIMIT = 50
+MAX_KNOWLEDGE_LIST_LIMIT = 200
 REQUIRED_DOCUMENT_READ_KEYS = (
     "id",
     "name",
@@ -582,6 +584,9 @@ class KnowledgeOrchestrator:
         user: User,
         scope: str = "all",
         group_name: Optional[str] = None,
+        *,
+        offset: int = 0,
+        limit: int = DEFAULT_KNOWLEDGE_LIST_LIMIT,
     ) -> KnowledgeBaseListResponse:
         """
         List knowledge bases accessible to the user.
@@ -599,17 +604,25 @@ class KnowledgeOrchestrator:
             resource_scope = ResourceScope(scope)
         except ValueError:
             resource_scope = ResourceScope.ALL
+        offset = max(0, offset)
+        limit = min(max(1, limit), MAX_KNOWLEDGE_LIST_LIMIT)
 
-        knowledge_bases = KnowledgeService.list_knowledge_bases(
+        knowledge_bases, total = KnowledgeService.list_knowledge_bases_paginated(
             db=db,
             user_id=user.id,
             scope=resource_scope,
             group_name=group_name,
+            offset=offset,
+            limit=limit,
         )
 
         # Use cached document_count from spec to avoid N+1 query problem
         return KnowledgeBaseListResponse(
-            total=len(knowledge_bases),
+            total=total,
+            returned_count=len(knowledge_bases),
+            limit=limit,
+            offset=offset,
+            has_more=offset + len(knowledge_bases) < total,
             items=[
                 KnowledgeBaseResponse.from_kind(
                     kb, kb.json.get("spec", {}).get("document_count", 0)
@@ -624,6 +637,9 @@ class KnowledgeOrchestrator:
         user: User,
         knowledge_base_id: int,
         folder_id: int | None = None,
+        *,
+        offset: int = 0,
+        limit: int = DEFAULT_KNOWLEDGE_LIST_LIMIT,
     ) -> KnowledgeDocumentListResponse:
         """
         List documents in a knowledge base.
@@ -650,12 +666,16 @@ class KnowledgeOrchestrator:
         )
         if not kb or not has_access:
             raise ValueError("Knowledge base not found or access denied")
+        offset = max(0, offset)
+        limit = min(max(1, limit), MAX_KNOWLEDGE_LIST_LIMIT)
 
-        documents = KnowledgeService.list_documents(
+        documents, total = KnowledgeService.list_documents_paginated(
             db=db,
             knowledge_base_id=knowledge_base_id,
             user_id=user.id,
             folder_id=folder_id,
+            offset=offset,
+            limit=limit,
         )
 
         # Batch query user names for created_by field
@@ -674,7 +694,11 @@ class KnowledgeOrchestrator:
             items.append(item)
 
         return KnowledgeDocumentListResponse(
-            total=len(documents),
+            total=total,
+            returned_count=len(items),
+            limit=limit,
+            offset=offset,
+            has_more=offset + len(items) < total,
             items=items,
         )
 

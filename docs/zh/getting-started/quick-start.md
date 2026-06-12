@@ -42,7 +42,7 @@ curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | 
 ## 🏗️ 架构
 
 ```
-Frontend (Next.js) → Backend (FastAPI) → Executor Manager → Executors (ClaudeCode/Agno/Dify/Chat)
+Frontend (Next.js) → Backend (FastAPI) → Executor Manager → Executors (ClaudeCode/Dify/Chat)
 ```
 
 **核心概念：**

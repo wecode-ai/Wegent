@@ -771,7 +771,7 @@
       "namespace_placeholder": "default",
       "config": "Shell Configuration",
       "config_placeholder": "Enter shell configuration as JSON",
-      "config_hint": "The configuration should include spec.shellType (ClaudeCode, Agno, Dify, Chat)"
+      "config_hint": "The configuration should include spec.shellType (ClaudeCode, Dify, Chat)"
     },
     "confirm": {
       "delete_title": "Delete Shell",

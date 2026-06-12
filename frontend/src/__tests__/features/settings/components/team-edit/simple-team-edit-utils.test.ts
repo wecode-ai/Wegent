@@ -6,6 +6,7 @@ import type { UnifiedShell } from '@/apis/shells'
 import type { TaskType } from '@/types/api'
 import {
   getDefaultSimpleBindMode,
+  getCustomShells,
   getSimpleBindModeOptions,
   getSimpleExecutorOptions,
   normalizeExecutorForBindMode,
@@ -39,6 +40,13 @@ const shells: UnifiedShell[] = [
     shellType: 'ClaudeCode',
     namespace: 'dev-group',
   },
+  {
+    name: 'custom-agno',
+    type: 'group',
+    displayName: 'Custom Agno',
+    shellType: 'Agno',
+    namespace: 'dev-group',
+  },
 ]
 
 describe('simple team edit utils', () => {
@@ -68,6 +76,10 @@ describe('simple team edit utils', () => {
 
   it('resolves custom executor by selected custom shell name', () => {
     expect(resolveShellForExecutor(shells, 'custom', 'custom-code')?.name).toBe('custom-code')
+  })
+
+  it('excludes Agno custom shells from custom executor choices', () => {
+    expect(getCustomShells(shells).map(shell => shell.name)).toEqual(['custom-chat', 'custom-code'])
   })
 
   it('does not resolve custom executor without a selected shell', () => {

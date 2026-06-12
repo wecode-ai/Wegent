@@ -338,6 +338,10 @@ class KnowledgeBaseListResponse(BaseModel):
     """Schema for knowledge base list response."""
 
     total: int
+    returned_count: int = 0
+    limit: int | None = None
+    offset: int = 0
+    has_more: bool = False
     items: list[KnowledgeBaseResponse]
 
 
@@ -438,6 +442,10 @@ class KnowledgeDocumentListResponse(BaseModel):
     """Schema for knowledge document list response."""
 
     total: int
+    returned_count: int = 0
+    limit: int | None = None
+    offset: int = 0
+    has_more: bool = False
     items: list[KnowledgeDocumentResponse]
 
 

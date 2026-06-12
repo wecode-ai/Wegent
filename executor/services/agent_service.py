@@ -292,13 +292,18 @@ class AgentService:
                 client = getattr(agent, "client", None)
 
                 if client and session_id:
-                    from executor.agents.claude_code.session_manager import (
-                        SessionManager,
-                    )
-
-                    # Use process termination instead of disconnect() to avoid
-                    # cancel scope issues when called from different asyncio context
-                    await SessionManager._terminate_client_process(client, session_id)
+                    close_client = getattr(agent, "close_client_async", None)
+                    if close_client is None:
+                        return (
+                            TaskStatus.FAILED,
+                            "ClaudeCode agent does not support async client cleanup",
+                        )
+                    closed = await close_client("agent service cleanup")
+                    if not closed:
+                        return (
+                            TaskStatus.FAILED,
+                            f"Failed to close Claude client for session {session_id}",
+                        )
 
                     logger.info(
                         f"[{_format_task_log(task_id, MISSING_SUBTASK_ID)}] Closed Claude client "
@@ -367,7 +372,7 @@ class AgentService:
             logger.exception(f"[{task_id}] Unexpected error deleting session")
             return TaskStatus.FAILED, str(e)
 
-    def cancel_task(self, task_id: int) -> Tuple[TaskStatus, Optional[str]]:
+    async def cancel_task_async(self, task_id: int) -> Tuple[TaskStatus, Optional[str]]:
         """
         Cancel the currently running task for a given task_id
 
@@ -389,8 +394,8 @@ class AgentService:
             agent = session.agent
             agent_name = agent.get_name()
 
-            if hasattr(agent, "cancel_run"):
-                success = agent.cancel_run()
+            if hasattr(agent, "cancel_run_async"):
+                success = await agent.cancel_run_async()
                 if success:
                     logger.info(
                         f"[{_format_task_log(task_id, MISSING_SUBTASK_ID)}] Successfully cancelled {agent_name} task"
@@ -415,6 +420,17 @@ class AgentService:
 
         except Exception as e:
             logger.exception(f"[{task_id}] Error cancelling task: {e}")
+            return TaskStatus.FAILED, str(e)
+
+    def cancel_task(self, task_id: int) -> Tuple[TaskStatus, Optional[str]]:
+        """Cancel a task from a synchronous caller."""
+        try:
+            return asyncio.run(self.cancel_task_async(task_id))
+        except RuntimeError as e:
+            logger.exception(
+                f"[{task_id}] cancel_task() cannot run inside an active event loop; "
+                f"use cancel_task_async()"
+            )
             return TaskStatus.FAILED, str(e)
 
     async def send_cancel_callback_async(self, task_id: int) -> None:

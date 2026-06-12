@@ -73,8 +73,6 @@
   "shell_type_chat_desc": "Great for Q&A, writing, and organizing information",
   "shell_type_claudecode": "Coding Assistant",
   "shell_type_claudecode_desc": "Great for writing code and technical work",
-  "shell_type_agno": "Complex Task Assistant",
-  "shell_type_agno_desc": "Great for tasks that need multiple steps",
   "tab_config": "Configuration",
   "tab_test": "Test It Out",
   "test_hint": "Switch to the 'Test It Out' tab to try your assistant with a sample task",

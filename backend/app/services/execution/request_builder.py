@@ -10,6 +10,7 @@ This module consolidates the logic from the former ChatConfigBuilder,
 providing complete Bot, Model, Ghost, Shell, and Skill resolution.
 """
 
+import json
 import logging
 from typing import Any, List, Optional, Union
 
@@ -17,6 +18,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.constants import CLIENT_ORIGIN_WEWORK
 from app.models.project import Project
 from app.models.subtask import Subtask
 from app.models.task import TaskResource
@@ -45,6 +47,27 @@ logger = logging.getLogger(__name__)
 SELECTED_KB_PRELOAD_SKILL = "wegent-knowledge"
 WEB_RUNTIME_GUIDANCE_MARKER = "<wegent_runtime_guidance>"
 WEB_RUNTIME_GUIDANCE_CLOSE = "</wegent_runtime_guidance>"
+
+
+def _first_present_project_id(*values: Any) -> Optional[int]:
+    """Return the first project id that is explicitly present, preserving 0."""
+
+    for value in values:
+        if value is None:
+            continue
+        return value
+    return None
+
+
+def _is_wework_standalone_chat_project(
+    task: TaskResource,
+    project_id: Optional[int],
+) -> bool:
+    """Return whether the task should use a standalone Wework chat workspace."""
+
+    return (
+        getattr(task, "client_origin", None) == CLIENT_ORIGIN_WEWORK and project_id == 0
+    )
 
 
 class TaskRequestBuilder:
@@ -348,6 +371,10 @@ class TaskRequestBuilder:
                 workspace_path=project_workspace.get("project_workspace_path"),
             )
 
+        request_project_id = _first_present_project_id(
+            project_workspace.get("project_id"), task.project_id
+        )
+
         return ExecutionRequest(
             task_id=task.id,
             subtask_id=subtask.id,
@@ -365,6 +392,7 @@ class TaskRequestBuilder:
             enable_web_search=enable_web_search,
             enable_clarification=enable_clarification,
             enable_deep_thinking=enable_deep_thinking,
+            enable_tool_output_guard=self._is_tool_output_guard_enabled(user),
             skill_names=[s["name"] for s in resolved_skills],
             skill_configs=resolved_skills,
             preload_skills=resolved_preload_skills,
@@ -377,7 +405,10 @@ class TaskRequestBuilder:
             table_contexts=[],
             is_user_selected_kb=is_user_selected_kb,
             workspace=workspace,
-            project_id=project_workspace.get("project_id") or task.project_id or None,
+            project_id=request_project_id,
+            standalone_chat_workspace=_is_wework_standalone_chat_project(
+                task, request_project_id
+            ),
             workspace_source=project_workspace.get("workspace_source"),
             project_workspace_path=project_workspace.get("project_workspace_path"),
             execution_target_type=project_workspace.get("execution_target_type"),
@@ -394,6 +425,7 @@ class TaskRequestBuilder:
             new_session=new_session,
             collaboration_model=collaboration_model,
             mode=collaboration_model,
+            task_mode=self._derive_task_mode(task),
             auth_token=auth_token,
             skill_identity_token=skill_identity_token,
             backend_url=settings.BACKEND_INTERNAL_URL,
@@ -1452,6 +1484,33 @@ class TaskRequestBuilder:
 
         return {"user_mcps": user_mcps}
 
+    @staticmethod
+    def _is_tool_output_guard_enabled(user: User | None) -> bool:
+        """Return whether source-level tool output truncation is enabled."""
+        if not user or not getattr(user, "preferences", None):
+            return False
+
+        raw_preferences = user.preferences
+        if isinstance(raw_preferences, str):
+            try:
+                preferences = json.loads(raw_preferences)
+            except json.JSONDecodeError:
+                logger.warning(
+                    "[TaskRequestBuilder] Failed to parse user preferences for tool output guard toggle"
+                )
+                return False
+            if not isinstance(preferences, dict):
+                logger.warning(
+                    "[TaskRequestBuilder] Ignoring non-object user preferences for tool output guard toggle"
+                )
+                return False
+        elif isinstance(raw_preferences, dict):
+            preferences = raw_preferences
+        else:
+            return False
+
+        return bool(preferences.get("tool_output_guard_enabled", False))
+
     def _build_skill_data(self, skill: Kind, *, user: User | None = None) -> dict:
         """Build skill data dictionary from a Skill Kind object.
 
@@ -2471,7 +2530,9 @@ Response template:
 
         workspace_source = workspace_source.strip()
         existing_project = workspace_data.get("project") or {}
-        project_id = existing_project.get("project_id") or task.project_id or None
+        project_id = _first_present_project_id(
+            existing_project.get("project_id"), task.project_id
+        )
         device_id = existing_project.get("device_id") or spec.get("device_id")
 
         if (
@@ -2616,7 +2677,7 @@ Response template:
             workspace_source = "local_path"
 
         workspace_data["project"] = {
-            "project_id": None,
+            "project_id": _first_present_project_id(getattr(task, "project_id", None)),
             "workspace_source": workspace_source,
             "project_workspace_path": workspace_path.strip(),
             "execution_target_type": "local",

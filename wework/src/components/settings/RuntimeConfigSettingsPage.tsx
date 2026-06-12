@@ -3,6 +3,7 @@ import {
   Download,
   KeyRound,
   Loader2,
+  Network,
   RefreshCw,
   ShieldCheck,
   Upload,
@@ -11,13 +12,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createDeviceApi } from '@/api/devices'
 import { createHttpClient } from '@/api/http'
 import { createUserApi } from '@/api/users'
-import type { UserRuntimeConfig } from '@/api/users'
+import type { UserRuntime, UserRuntimeConfig } from '@/api/users'
 import { getRuntimeConfig } from '@/config/runtime'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isClaudeCodeDevice } from '@/lib/device-capabilities'
 import type { DeviceInfo } from '@/types/devices'
-
-const CODEX_RUNTIME = 'codex'
 
 function createRuntimeSettingsApis() {
   const { apiBaseUrl } = getRuntimeConfig()
@@ -63,7 +62,11 @@ function validateAuthJsonContent(content: string, invalidMessage: string) {
   }
 }
 
-export function RuntimeConfigSettingsPage() {
+interface RuntimeConfigSettingsPageProps {
+  runtime: UserRuntime
+}
+
+export function RuntimeConfigSettingsPage({ runtime }: RuntimeConfigSettingsPageProps) {
   const { t } = useTranslation('common')
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [config, setConfig] = useState<UserRuntimeConfig | null>(null)
@@ -74,6 +77,7 @@ export function RuntimeConfigSettingsPage() {
   const [updating, setUpdating] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [importing, setImporting] = useState(false)
+  const [proxyUpdating, setProxyUpdating] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
 
@@ -100,7 +104,7 @@ export function RuntimeConfigSettingsPage() {
     try {
       const { deviceApi, userApi } = createRuntimeSettingsApis()
       const [nextConfig, nextDevices] = await Promise.all([
-        userApi.getRuntimeConfig(CODEX_RUNTIME),
+        userApi.getRuntimeConfig(runtime),
         deviceApi.getAllDevices(),
       ])
       setConfig(nextConfig)
@@ -116,7 +120,7 @@ export function RuntimeConfigSettingsPage() {
       setLoading(false)
       setRefreshing(false)
     }
-  }, [t])
+  }, [runtime, t])
 
   useEffect(() => {
     void Promise.resolve().then(() => loadRuntimeConfig())
@@ -129,7 +133,7 @@ export function RuntimeConfigSettingsPage() {
     setNotice(null)
     try {
       const { userApi } = createRuntimeSettingsApis()
-      const nextConfig = await userApi.updateRuntimeConfig(CODEX_RUNTIME, {
+      const nextConfig = await userApi.updateRuntimeConfig(runtime, {
         use_user_config: !config.use_user_config,
       })
       setConfig(nextConfig)
@@ -142,6 +146,35 @@ export function RuntimeConfigSettingsPage() {
       )
     } finally {
       setUpdating(false)
+    }
+  }
+
+  const handleToggleUseProxy = async () => {
+    if (!config || proxyUpdating) return
+    if (!config.use_proxy && !config.proxy_configured) {
+      setError(t('workbench.runtime_config_proxy_required'))
+      return
+    }
+
+    setProxyUpdating(true)
+    setError(null)
+    setNotice(null)
+    try {
+      const { userApi } = createRuntimeSettingsApis()
+      const nextConfig = await userApi.updateRuntimeConfig(runtime, {
+        use_user_config: config.use_user_config,
+        use_proxy: !config.use_proxy,
+      })
+      setConfig(nextConfig)
+    } catch (proxyError) {
+      setError(
+        getErrorMessage(
+          proxyError,
+          t('workbench.runtime_config_proxy_toggle_failed'),
+        ),
+      )
+    } finally {
+      setProxyUpdating(false)
     }
   }
 
@@ -160,7 +193,7 @@ export function RuntimeConfigSettingsPage() {
         t('workbench.runtime_config_invalid_json', 'auth.json 必须是有效 JSON 对象'),
       )
       const { userApi } = createRuntimeSettingsApis()
-      const nextConfig = await userApi.uploadRuntimeAuthJson(CODEX_RUNTIME, content)
+      const nextConfig = await userApi.uploadRuntimeAuthJson(runtime, content)
       setConfig(nextConfig)
       setNotice(t('workbench.runtime_config_upload_success', 'auth.json 已保存'))
     } catch (uploadError) {
@@ -183,7 +216,7 @@ export function RuntimeConfigSettingsPage() {
     try {
       const { userApi } = createRuntimeSettingsApis()
       const nextConfig = await userApi.importRuntimeAuthJson(
-        CODEX_RUNTIME,
+        runtime,
         effectiveImportDeviceId,
       )
       setConfig(nextConfig)
@@ -317,6 +350,56 @@ export function RuntimeConfigSettingsPage() {
                     SHA-256 {shortDigest(config.auth_json_sha256)}
                   </div>
                 )}
+              </div>
+            </div>
+
+            <div className="mt-5 rounded-lg border border-border bg-surface p-3">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="flex min-w-0 items-start gap-3">
+                  <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-background text-text-secondary">
+                    <Network className="h-4 w-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <h3 className="text-sm font-semibold text-text-primary">
+                      {t('workbench.runtime_config_proxy_title')}
+                    </h3>
+                    <p className="mt-1 text-xs leading-5 text-text-secondary">
+                      {t('workbench.runtime_config_proxy_description')}
+                    </p>
+                    {config?.proxy_configured ? (
+                      <div className="mt-2 text-xs text-text-secondary">
+                        {t('workbench.runtime_config_proxy_configured', {
+                          proxy: config.proxy_url_masked,
+                        })}
+                      </div>
+                    ) : (
+                      <div className="mt-2 text-xs text-text-muted">
+                        {t('workbench.runtime_config_proxy_not_configured')}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  data-testid="runtime-config-proxy-toggle"
+                  role="switch"
+                  aria-checked={config?.use_proxy ?? false}
+                  onClick={handleToggleUseProxy}
+                  disabled={
+                    proxyUpdating || (!config?.proxy_configured && !config?.use_proxy)
+                  }
+                  className={[
+                    'inline-flex h-8 min-w-[112px] items-center justify-center gap-2 rounded-full px-3 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50',
+                    config?.use_proxy
+                      ? 'bg-primary text-white'
+                      : 'bg-background text-text-secondary hover:bg-muted hover:text-text-primary',
+                  ].join(' ')}
+                >
+                  {proxyUpdating && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                  {config?.use_proxy
+                    ? t('workbench.runtime_config_proxy_enabled')
+                    : t('workbench.runtime_config_proxy_disabled')}
+                </button>
               </div>
             </div>
 

@@ -53,7 +53,7 @@ Code Task = User Prompt + Code Agent + Git Repository + Branch
 Above the input area, click the agent selector:
 
 1. **Click the agent dropdown** - Shows available agents
-2. **Select a code-type agent** - Choose an agent configured with ClaudeCode or Agno Shell
+2. **Select a code-type agent** - Choose an agent configured with a ClaudeCode Shell
 
 > ⚠️ Only agents configured with a code-type Shell can execute code tasks
 

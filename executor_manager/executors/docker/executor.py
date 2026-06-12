@@ -1247,6 +1247,8 @@ class DockerExecutor(Executor):
                 }
             task_ids = result.get("task_ids", [])
 
+            task_ids = result.get("task_ids", [])
+
             container_name = container_detail.get("container_name")
             if not container_name:
                 logger.error(f"Could not find executor name for task {task_id}")

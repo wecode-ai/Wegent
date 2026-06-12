@@ -23,11 +23,13 @@ class TestInjectKbMetaPrompt:
             is_user_selected_kb=False,
         )
 
-        assert result.startswith("<knowledge_base_context>\n")
+        assert result.startswith("<knowledge_base_guidance>\n")
+        assert "<knowledge_base_context>\n" in result
+        assert "Knowledge base routing:" in result
         assert "KB Name: 222, KB ID: 1408" in result
         assert result.endswith(prompt)
 
-    def test_non_local_mode_does_not_inject_kb_meta(self):
+    def test_non_local_chat_task_injects_kb_meta(self):
         prompt = "Save this file to the selected knowledge base."
         kb_meta_prompt = "Available Knowledge Bases:\n- KB Name: 222, KB ID: 1408"
 
@@ -36,6 +38,24 @@ class TestInjectKbMetaPrompt:
             kb_meta_prompt,
             executor_mode="docker",
             is_user_selected_kb=False,
+            task_type="chat",
+        )
+
+        assert result.startswith("<knowledge_base_guidance>\n")
+        assert "Knowledge base routing:" in result
+        assert "KB Name: 222, KB ID: 1408" in result
+        assert result.endswith(prompt)
+
+    def test_code_task_does_not_inject_kb_meta(self):
+        prompt = "Save this file to the selected knowledge base."
+        kb_meta_prompt = "Available Knowledge Bases:\n- KB Name: 222, KB ID: 1408"
+
+        result = inject_kb_meta_prompt(
+            prompt,
+            kb_meta_prompt,
+            executor_mode="local",
+            is_user_selected_kb=False,
+            task_type="code",
         )
 
         assert result == prompt
@@ -52,7 +72,9 @@ class TestInjectKbMetaPrompt:
         )
 
         assert result[0]["type"] == "input_text"
-        assert result[0]["text"].startswith("<knowledge_base_context>\n")
+        assert result[0]["text"].startswith("<knowledge_base_guidance>\n")
+        assert "<knowledge_base_context>\n" in result[0]["text"]
+        assert "Knowledge base routing:" in result[0]["text"]
         assert "KB Name: 222, KB ID: 1408" in result[0]["text"]
         assert result[0]["text"].endswith("Save this file.")
 
@@ -67,8 +89,8 @@ class TestInjectKbMetaPrompt:
             is_user_selected_kb=True,
         )
 
-        assert "use the selected knowledge base first" in result.lower()
-        assert "before web search" in result.lower()
+        assert "provided knowledge base id(s)" in result.lower()
+        assert "web search" in result.lower()
 
     def test_local_mode_tells_executor_to_use_read_document_content_tool(self):
         prompt = "Read the selected knowledge base document."
@@ -103,3 +125,37 @@ class TestInjectKbMetaPrompt:
 
         assert "wegent_kb_list_documents" in result
         assert "identify which document matters" in result.lower()
+
+    def test_guidance_routes_provided_kb_first_then_broadens(self):
+        prompt = "What does the selected knowledge base say?"
+        kb_meta_prompt = "Knowledge Bases In Scope:\n- KB Name: 222, KB ID: 1408"
+
+        result = inject_kb_meta_prompt(
+            prompt,
+            kb_meta_prompt,
+            executor_mode="docker",
+            is_user_selected_kb=True,
+            task_type="chat",
+        )
+
+        assert "were selected by the user" in result
+        assert "First answer by querying the provided knowledge base ID(s)" in result
+        assert "broaden the query to all knowledge bases" in result
+        assert "then use web search or other external tools" in result
+
+    def test_available_kb_guidance_uses_same_fallback_order(self):
+        prompt = "What can you help me with?"
+        kb_meta_prompt = "Available Knowledge Bases:\n- KB Name: 222, KB ID: 1408"
+
+        result = inject_kb_meta_prompt(
+            prompt,
+            kb_meta_prompt,
+            executor_mode="docker",
+            is_user_selected_kb=False,
+            task_type="chat",
+        )
+
+        assert "provides knowledge base IDs that may answer the request" in result
+        assert "First answer by querying the provided knowledge base ID(s)" in result
+        assert "broaden the query to all knowledge bases" in result
+        assert "then use web search or other external tools" in result

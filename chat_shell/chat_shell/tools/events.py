@@ -82,11 +82,21 @@ def create_tool_event_handler(
 
         if kind == "tool_start":
             _handle_tool_start(
-                state, emitter, agent_builder, tool_name, run_id, event_data
+                state,
+                emitter,
+                agent_builder,
+                tool_name,
+                run_id,
+                event_data,
             )
         elif kind == "tool_end":
             _handle_tool_end(
-                state, emitter, agent_builder, tool_name, run_id, event_data
+                state,
+                emitter,
+                agent_builder,
+                tool_name,
+                run_id,
+                event_data,
             )
         elif kind == "tool_argument_start":
             _handle_tool_argument_start(emitter, event_data)

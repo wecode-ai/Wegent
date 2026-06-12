@@ -8,7 +8,6 @@
 
 import asyncio
 import os
-import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
@@ -100,6 +99,8 @@ class ClaudeCodeAgent(Agent):
     Uses SessionManager for client connection management and session persistence.
     Uses HookManager for hook function loading and execution.
     """
+
+    CLIENT_DISCONNECT_TIMEOUT_SECONDS = 3.0
 
     def get_name(self) -> str:
         """Return the agent type name."""
@@ -729,6 +730,7 @@ class ClaudeCodeAgent(Agent):
 
             # Prepare prompt with skill emphasis if user selected skills
             prompt = self.prompt
+            task_mode = self.task_data.task_mode or self.task_data.type
             user_selected_skills = self.task_data.user_selected_skills
             if is_vision_prompt(prompt):
                 # Vision content: append text to the text block in the list
@@ -747,8 +749,12 @@ class ClaudeCodeAgent(Agent):
                     self.task_data.kb_meta_prompt,
                     executor_mode=config.EXECUTOR_MODE,
                     is_user_selected_kb=self.task_data.is_user_selected_kb,
+                    task_type=task_mode,
                 )
-                if self.task_data.kb_meta_prompt and config.EXECUTOR_MODE == "local":
+                if (
+                    self.task_data.kb_meta_prompt
+                    and (task_mode or "").lower() != "code"
+                ):
                     logger.info("Injected kb_meta_prompt into ClaudeCode query prompt")
                 if self.options.get("cwd"):
                     cwd_text = "\nCurrent working directory: " + self.options.get("cwd")
@@ -777,10 +783,11 @@ class ClaudeCodeAgent(Agent):
                         self.task_data.kb_meta_prompt,
                         executor_mode=config.EXECUTOR_MODE,
                         is_user_selected_kb=self.task_data.is_user_selected_kb,
+                        task_type=task_mode,
                     )
                     if (
                         self.task_data.kb_meta_prompt
-                        and config.EXECUTOR_MODE == "local"
+                        and (task_mode or "").lower() != "code"
                     ):
                         logger.info(
                             "Injected kb_meta_prompt into ClaudeCode query prompt"
@@ -810,10 +817,11 @@ class ClaudeCodeAgent(Agent):
                         self.task_data.kb_meta_prompt,
                         executor_mode=config.EXECUTOR_MODE,
                         is_user_selected_kb=self.task_data.is_user_selected_kb,
+                        task_type=task_mode,
                     )
                     if (
                         self.task_data.kb_meta_prompt
-                        and config.EXECUTOR_MODE == "local"
+                        and (task_mode or "").lower() != "code"
                     ):
                         logger.info(
                             "Injected kb_meta_prompt into ClaudeCode query prompt"
@@ -862,6 +870,7 @@ class ClaudeCodeAgent(Agent):
                 interactive_form_answer
             )
 
+            await self.start_turn_file_change_tracking()
             if interactive_form_payload:
                 logger.info(
                     "Sending interactive form answer as tool_result for tool_use_id=%s",
@@ -909,6 +918,9 @@ class ClaudeCodeAgent(Agent):
                 session_id=self.session_id,
                 mcp_servers=self.options.get("mcp_servers")
                 or self.options.get("mcpServers"),
+                completion_fields_provider=(
+                    self.collect_turn_file_change_completion_fields
+                ),
             )
 
             # Task completed or failed
@@ -918,6 +930,9 @@ class ClaudeCodeAgent(Agent):
                 logger.warning("No final result received from process_response")
                 result = TaskStatus.RUNNING
 
+            if result != TaskStatus.COMPLETED:
+                await self.abort_turn_file_change_tracking()
+
             # Update task state based on result
             if result == TaskStatus.COMPLETED:
                 self.task_state_manager.set_state(self.task_id, TaskState.COMPLETED)
@@ -926,15 +941,15 @@ class ClaudeCodeAgent(Agent):
             elif result == TaskStatus.CANCELLED:
                 self.task_state_manager.set_state(self.task_id, TaskState.CANCELLED)
 
-            # Auto-close CC process after completion to free device slot.
-            # Session ID is preserved on disk for resume on next message.
-            # Skip for CANCELLED — cancel/interrupt flow has its own cleanup.
             if result in (TaskStatus.COMPLETED, TaskStatus.FAILED):
                 await self._auto_close_session()
+            elif result == TaskStatus.CANCELLED:
+                await self._close_interrupted_session()
 
             return result
 
         except Exception as e:
+            await self.abort_turn_file_change_tracking()
             return self._handle_execution_error(e, "async execution")
 
     async def _drain_answered_interactive_form_resume_result(
@@ -1187,21 +1202,7 @@ class ClaudeCodeAgent(Agent):
             logger.warning("No client to close for retry")
             return
 
-        try:
-            # Terminate the client process
-            await SessionManager._terminate_client_process(self.client, self.session_id)
-
-            # Clear local client reference
-            # Note: No longer using in-memory cache since each subtask creates new Agent instance
-            self.client = None
-
-            logger.info(
-                f"Closed client for retry, session_id={self.session_id} preserved for resume"
-            )
-        except Exception as e:
-            logger.warning(f"Error closing client for retry: {e}")
-            # Clear client reference anyway to allow new client creation
-            self.client = None
+        await self.close_client_async("retry")
 
     async def _auto_close_session(self) -> None:
         """
@@ -1226,12 +1227,7 @@ class ClaudeCodeAgent(Agent):
                 f"session_id={self.session_id}, task_id={self.task_id}"
             )
 
-            # Terminate the CC process
-            await SessionManager._terminate_client_process(self.client, self.session_id)
-
-            # Clear local client reference
-            # Note: No longer using in-memory cache since each subtask creates new Agent instance
-            self.client = None
+            await self.close_client_async("completion")
 
             # Trigger heartbeat callback to immediately update slot usage
             if self.on_client_created_callback:
@@ -1251,6 +1247,38 @@ class ClaudeCodeAgent(Agent):
             )
         except Exception as e:
             logger.warning(f"Error auto-closing CC session: {e}")
+            self.client = None
+
+    async def _close_interrupted_session(self) -> None:
+        """Close an interrupted turn while preserving its resumable session ID."""
+        await self.close_client_async("interrupt")
+
+    async def close_client_async(self, reason: str = "session cleanup") -> bool:
+        """Disconnect the SDK client and preserve the resumable session ID."""
+        if self.client is None:
+            return True
+
+        client = self.client
+        try:
+            await asyncio.wait_for(
+                client.disconnect(),
+                timeout=self.CLIENT_DISCONNECT_TIMEOUT_SECONDS,
+            )
+            logger.info(
+                f"Disconnected Claude client after {reason}: "
+                f"session_id={self.session_id}, task_id={self.task_id}. "
+                f"Session ID preserved on disk for resume."
+            )
+            return True
+        except Exception as e:
+            logger.warning(
+                f"SDK disconnect failed after {reason} for session "
+                f"{self.session_id}: {e}; forcing process termination"
+            )
+            return await SessionManager._terminate_client_process(
+                client, self.session_id
+            )
+        finally:
             self.client = None
 
     def _handle_execution_result(
@@ -1383,114 +1411,38 @@ class ClaudeCodeAgent(Agent):
         return await SessionManager.cleanup_task_clients(task_id)
 
     def cancel_run(self) -> bool:
-        """
-        Cancel the current running task using multi-level cancellation strategy:
-        1. Set cancellation state to CANCELLED immediately (not CANCELLING)
-        2. Try SDK interrupt
-        3. No longer send callback here, it will be sent asynchronously by background task to avoid blocking
-        4. Wait briefly for cleanup
-
-        Returns:
-            bool: True if cancellation was successful, False otherwise
-        """
+        """Cancel from a synchronous context."""
         try:
-            # Step 1: Immediately set to CANCELLED state (skip CANCELLING)
-            # This ensures response_processor checks will immediately detect cancellation
-            self.task_state_manager.set_state(self.task_id, TaskState.CANCELLED)
-            logger.info(f"Task {self.task_id} marked as cancelled immediately")
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(self.cancel_run_async())
 
-            # Step 2: Try SDK interrupt if client is available
-            if self.client and hasattr(self.client, "interrupt"):
-                self._sync_cancel_run()
-                logger.info(f"Sent interrupt signal to task {self.task_id}")
-            else:
-                logger.warning(
-                    f"No client or interrupt method available for task {self.task_id}"
-                )
+        logger.error(
+            f"cancel_run() cannot run inside an active event loop for task "
+            f"{self.task_id}; use cancel_run_async()"
+        )
+        return False
 
-            # Step 3: Wait briefly (2 seconds max) for graceful cleanup
-            max_wait = min(config.GRACEFUL_SHUTDOWN_TIMEOUT, 2)
-            waited = 0
-            while waited < max_wait:
-                # Check if cleanup completed (task state is None means cleaned up)
-                if self.task_state_manager.get_state(self.task_id) is None:
-                    logger.info(f"Task {self.task_id} cleaned up gracefully")
-                    return True
-                time.sleep(0.1)  # Check more frequently (100ms)
-                waited += 0.1
+    async def cancel_run_async(self) -> bool:
+        """Interrupt the current turn using the Claude Agent SDK."""
+        self.task_state_manager.set_state(self.task_id, TaskState.CANCELLED)
+        logger.info(f"Task {self.task_id} marked as cancelled")
 
-            # Note: No longer send callback here
-            # Callback will be sent asynchronously by background task in main.py to avoid blocking executor_manager's cancel request
-            logger.info(
-                f"Task {self.task_id} cancelled (cleanup may continue in background), callback will be sent asynchronously"
-            )
+        if self.client is None:
+            logger.warning(f"No client available for task {self.task_id}")
             return True
 
+        try:
+            await self.client.interrupt()
+            logger.info(
+                f"Successfully sent interrupt to client for session_id: {self.session_id}"
+            )
+            return True
         except Exception as e:
-            logger.exception(f"Error cancelling task {self.task_id}: {e}")
-            # Ensure cancelled state even on error
-            self.task_state_manager.set_state(self.task_id, TaskState.CANCELLED)
+            logger.exception(
+                f"Error interrupting Claude session {self.session_id}: {str(e)}"
+            )
             return False
-
-    def _sync_cancel_run(self) -> None:
-        """
-        Synchronous helper method to cancel the current run
-        """
-        try:
-            if self.client is not None:
-                # Check if we're in an async context
-                try:
-                    loop = asyncio.get_running_loop()
-                    # If we're in an async context, use run_coroutine_threadsafe
-                    # to ensure interrupt() is actually executed
-                    future = asyncio.run_coroutine_threadsafe(
-                        self._async_cancel_run(), loop
-                    )
-                    # Wait for the interrupt to complete with a timeout
-                    # This ensures cancel_run() doesn't return before interrupt() is sent
-                    future.result(timeout=5)
-                except RuntimeError:
-                    # No running event loop, run the async method in a new loop
-                    # Copy ContextVars before creating new event loop
-                    try:
-                        from shared.telemetry.context import (
-                            copy_context_vars,
-                            restore_context_vars,
-                        )
-
-                        saved_context = copy_context_vars()
-                    except ImportError:
-                        saved_context = None
-
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    try:
-                        # Restore ContextVars in the new event loop
-                        if saved_context:
-                            restore_context_vars(saved_context)
-                        loop.run_until_complete(self._async_cancel_run())
-                    finally:
-                        loop.close()
-        except Exception as e:
-            logger.exception(
-                f"Error during sync interrupt for session_id {self.session_id}: {str(e)}"
-            )
-
-    async def _async_cancel_run(self) -> None:
-        """
-        Asynchronous helper method to cancel the current run.
-        No longer send callback, handled by background task.
-        """
-        try:
-            if self.client is not None:
-                await self.client.interrupt()
-                logger.info(
-                    f"Successfully sent interrupt to client for session_id: {self.session_id}"
-                )
-        except Exception as e:
-            logger.exception(
-                f"Error during async interrupt for session_id {self.session_id}: {str(e)}"
-            )
 
     def _update_git_exclude(self, project_path: str) -> None:
         """Update .git/info/exclude to ignore .claudecode directory.

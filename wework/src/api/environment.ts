@@ -15,7 +15,6 @@ const EMPTY_ENVIRONMENT_INFO: EnvironmentInfo = {
   deletions: '-0',
   executionTarget: 'local',
 }
-const DEFAULT_DIFF_BASE_REFS = ['main', 'origin/main', 'master', 'origin/master']
 const INVALID_BRANCH_CHARACTERS = new Set([' ', '~', '^', ':', '?', '*', '[', '\\', ']'])
 const ENVIRONMENT_INFO_CACHE_TTL_MS = 1500
 
@@ -152,6 +151,15 @@ function validateBranchName(branchName: string): void {
 }
 
 export function parseGitShortStat(value: string): Pick<EnvironmentInfo, 'additions' | 'deletions'> {
+  // Handle "N file(s) pending" format (no-commit repos with pending files)
+  const pendingMatch = value.match(/(\d+)\s+file\(s\)\s+pending/)
+  if (pendingMatch) {
+    return {
+      additions: `+${pendingMatch[1]}`,
+      deletions: '-0',
+    }
+  }
+
   const additionsMatch = value.match(/(\d+)\s+insertions?\(\+\)/)
   const deletionsMatch = value.match(/(\d+)\s+deletions?\(-\)/)
 
@@ -242,24 +250,15 @@ async function loadBranchDiffShortStat(
   deviceId: string,
   path: string,
 ): Promise<string> {
-  for (const baseRef of DEFAULT_DIFF_BASE_REFS) {
-    try {
-      return await runGitCommand(api, deviceId, 'git_diff_shortstat', path, {
-        args: [`${baseRef}...`, '--'],
-      })
-    } catch {
-      // Try the next common base ref when this repository does not have one.
-    }
-  }
-
+  // Use diff against HEAD for tracked uncommitted line changes.
+  // This captures staged + unstaged modifications to tracked files.
   try {
     return await runGitCommand(api, deviceId, 'git_diff_shortstat', path, {
       args: ['HEAD', '--'],
     })
-  } catch (error) {
-    throw error instanceof Error
-      ? error
-      : new Error('Failed to load branch diff stat')
+  } catch {
+    // HEAD may not exist (no commits yet).
+    return ''
   }
 }
 
@@ -305,14 +304,40 @@ async function loadProjectEnvironmentUncached(
     if (!path) {
       return baseInfo
     }
-    const [branchName, shortStat] = await Promise.all([
+    const [branchName, shortStat, porcelain] = await Promise.all([
       runGitCommand(api, deviceId, 'git_branch', path),
       loadBranchDiffShortStat(api, deviceId, path),
+      runGitCommand(api, deviceId, 'git_status_porcelain', path).catch(
+        () => '',
+      ),
     ])
     const remoteUrl = await runGitCommand(api, deviceId, 'git_remote_url', path).catch(
       () => '',
     )
     const diff = parseGitShortStat(shortStat)
+
+    // Count pending files from porcelain (untracked, staged, modified).
+    // git diff --shortstat only covers tracked files, so we merge
+    // porcelain data to include untracked and no-commit scenarios.
+    const porcelainLines = porcelain
+      .split('\n')
+      .filter(line => line.trim().length > 0)
+
+    if (shortStat) {
+      // Repo has commits — diff stat covers tracked changes.
+      // Add untracked file count on top.
+      const untrackedCount = porcelainLines.filter(line =>
+        line.startsWith('??'),
+      ).length
+      if (untrackedCount > 0) {
+        const trackedAdditions =
+          parseInt(diff.additions.replace(/^\+/, ''), 10) || 0
+        diff.additions = `+${trackedAdditions + untrackedCount}`
+      }
+    } else if (porcelainLines.length > 0) {
+      // Repo has no commits — every porcelain line is a pending change.
+      diff.additions = `+${porcelainLines.length}`
+    }
 
     return {
       ...baseInfo,

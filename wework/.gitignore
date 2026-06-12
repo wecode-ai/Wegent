@@ -15,6 +15,9 @@ dist-ssr
 # Vite cache
 .vite
 
+# Local iOS env (personal LAN IP / signing team)
+scripts/ios-env/local.env
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

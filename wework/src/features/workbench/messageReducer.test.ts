@@ -56,6 +56,25 @@ describe('messageReducer', () => {
     })
   })
 
+  test('restores cached assistant streaming content as a message', () => {
+    const state = messageReducer([], {
+      type: 'assistant_cached',
+      taskId: 8,
+      subtaskId: 18,
+      content: '已经输出的内容',
+    })
+
+    expect(state).toHaveLength(1)
+    expect(state[0]).toMatchObject({
+      id: 'assistant-18',
+      taskId: 8,
+      subtaskId: 18,
+      role: 'assistant',
+      content: '已经输出的内容',
+      status: 'streaming',
+    })
+  })
+
   test('streams reasoning chunks into a thinking block', () => {
     const state = messageReducer([], {
       type: 'assistant_started',
@@ -157,5 +176,51 @@ describe('messageReducer', () => {
       status: 'done',
       blocks: [{ id: 'thinking-real', type: 'thinking', status: 'done' }],
     })
+  })
+
+  test('stores file changes on completion and updates them after revert', () => {
+    const activeFileChanges = {
+      version: 1 as const,
+      status: 'active' as const,
+      artifact_id: 'turn-1',
+      device_id: 'device-1',
+      workspace_path: '/workspace/project',
+      file_count: 1,
+      additions: 3,
+      deletions: 1,
+      files: [
+        {
+          path: 'src/main.ts',
+          change_type: 'modified' as const,
+          additions: 3,
+          deletions: 1,
+          binary: false,
+        },
+      ],
+    }
+    const state = messageReducer(
+      messageReducer([], {
+        type: 'assistant_started',
+        taskId: 1,
+        subtaskId: 9,
+      }),
+      {
+        type: 'assistant_done',
+        subtaskId: 9,
+        fileChanges: activeFileChanges,
+      },
+    )
+    const reverted = messageReducer(state, {
+      type: 'file_changes_updated',
+      subtaskId: 9,
+      fileChanges: {
+        ...activeFileChanges,
+        status: 'reverted',
+        reverted_at: '2026-06-11T10:00:00Z',
+      },
+    })
+
+    expect(state[0].fileChanges).toEqual(activeFileChanges)
+    expect(reverted[0].fileChanges?.status).toBe('reverted')
   })
 })

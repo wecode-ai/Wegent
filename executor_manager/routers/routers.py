@@ -24,7 +24,7 @@ from urllib.parse import urlparse
 import httpx
 from fastapi import APIRouter, Body, FastAPI, HTTPException, Request, Response
 from fastapi.responses import PlainTextResponse, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from executor_manager.common.config import ROUTE_PREFIX
 from executor_manager.config.config import EXECUTOR_DISPATCHER_MODE
@@ -698,7 +698,7 @@ async def get_executor_workspace_file(
 
 
 class CancelTaskRequest(BaseModel):
-    task_id: int
+    task_id: int = Field(..., strict=True)
 
 
 class ValidateImageRequest(BaseModel):
@@ -1121,8 +1121,8 @@ class OpenAIResponsesRequest(BaseModel):
 class CancelRequest(BaseModel):
     """Request model for /v1/cancel endpoint."""
 
-    task_id: int
-    subtask_id: Optional[int] = None
+    task_id: int = Field(..., strict=True)
+    subtask_id: Optional[int] = Field(None, strict=True)
     executor_name: Optional[str] = None
 
 
@@ -1436,6 +1436,7 @@ class ArchiveExecutorRequest(BaseModel):
     executor_name: str
     executor_namespace: str
     max_size_mb: int = 500
+    runtime_type: str = "executor"
 
 
 class RestoreExecutorRequest(BaseModel):
@@ -1445,6 +1446,7 @@ class RestoreExecutorRequest(BaseModel):
     download_url: str  # Presigned MinIO download URL
     executor_name: str
     executor_namespace: str
+    runtime_type: str = "executor"
 
 
 @api_router.post("/executor/archive")
@@ -1491,6 +1493,7 @@ async def archive_executor_workspace(
             "task_id": request.task_id,
             "upload_url": request.upload_url,
             "max_size_mb": request.max_size_mb,
+            "runtime_type": request.runtime_type,
         }
 
         logger.info(f"[Archive] Forwarding to executor: {archive_url}")
@@ -1564,6 +1567,7 @@ async def restore_executor_workspace(
         payload = {
             "task_id": request.task_id,
             "download_url": request.download_url,
+            "runtime_type": request.runtime_type,
         }
 
         logger.info(f"[Restore] Forwarding to executor: {restore_url}")

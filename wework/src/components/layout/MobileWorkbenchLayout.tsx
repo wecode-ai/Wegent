@@ -28,6 +28,7 @@ import type {
   GitBranch,
   GitRepoInfo,
   ProjectWithTasks,
+  TurnFileChangesSummary,
 } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
 import type { DeviceUpgradeState } from '@/types/device-events'
@@ -107,6 +108,11 @@ interface MobileWorkbenchLayoutProps {
   onSendQueuedAsGuidance?: (id: string) => void
   onEditQueuedMessage?: (id: string) => void
   onCancelGuidanceMessage?: (id: string) => void
+  onLoadFileChangesDiff?: (subtaskId: number) => Promise<string>
+  onRevertFileChanges?: (
+    subtaskId: number,
+  ) => Promise<TurnFileChangesSummary>
+  onRefreshWorkLists?: () => Promise<void>
   onLogout: () => void
 }
 
@@ -151,6 +157,9 @@ export function MobileWorkbenchLayout({
   onSendQueuedAsGuidance = () => {},
   onEditQueuedMessage = () => {},
   onCancelGuidanceMessage = () => {},
+  onLoadFileChangesDiff,
+  onRevertFileChanges,
+  onRefreshWorkLists,
 }: MobileWorkbenchLayoutProps) {
   const { t } = useTranslation('common')
   const [drawerOpen, setDrawerOpen] = useState(false)
@@ -328,6 +337,9 @@ export function MobileWorkbenchLayout({
               conversationKey={state.currentTask?.id ?? null}
               className="h-full"
               scrollerClassName="pb-28 pt-16"
+              devices={state.devices}
+              onLoadFileChangesDiff={onLoadFileChangesDiff}
+              onRevertFileChanges={onRevertFileChanges}
             />
             <div
               data-testid="mobile-chat-input-dock"
@@ -491,6 +503,7 @@ export function MobileWorkbenchLayout({
         onRenameTask={onRenameTask}
         onSelectProject={onSelectProject}
         onOpenTask={onOpenTask}
+        onRefreshWorkLists={onRefreshWorkLists}
       />
     </div>
   )

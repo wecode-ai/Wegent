@@ -52,6 +52,17 @@ jobs:
           --health-retries=3
 
     steps:
+      - name: Generate internal service token
+        run: |
+          token=$(openssl rand -hex 32)
+          echo "::add-mask::$token"
+          {
+            echo "E2E_INTERNAL_SERVICE_TOKEN=$token"
+            echo "INTERNAL_SERVICE_TOKEN=$token"
+            echo "CHAT_SHELL_REMOTE_STORAGE_TOKEN=$token"
+            echo "CHAT_SHELL_INTERNAL_SERVICE_TOKEN=$token"
+          } >> "$GITHUB_ENV"
+
       - name: Checkout code
         uses: actions/checkout@v4
 
@@ -174,7 +185,6 @@ jobs:
           CHAT_SHELL_MODE: http
           CHAT_SHELL_STORAGE_TYPE: remote
           CHAT_SHELL_REMOTE_STORAGE_URL: http://localhost:8000/api/internal
-          CHAT_SHELL_REMOTE_STORAGE_TOKEN: ""
           EXECUTOR_MANAGER_URL: http://localhost:8001
         run: |
           source .venv/bin/activate
@@ -322,6 +332,17 @@ jobs:
           --health-retries=3
 
     steps:
+      - name: Generate internal service token
+        run: |
+          token=$(openssl rand -hex 32)
+          echo "::add-mask::$token"
+          {
+            echo "E2E_INTERNAL_SERVICE_TOKEN=$token"
+            echo "INTERNAL_SERVICE_TOKEN=$token"
+            echo "CHAT_SHELL_REMOTE_STORAGE_TOKEN=$token"
+            echo "CHAT_SHELL_INTERNAL_SERVICE_TOKEN=$token"
+          } >> "$GITHUB_ENV"
+
       - name: Checkout code
         uses: actions/checkout@v4
 
@@ -488,7 +509,6 @@ jobs:
           CHAT_SHELL_MODE: http
           CHAT_SHELL_STORAGE_TYPE: remote
           CHAT_SHELL_REMOTE_STORAGE_URL: http://localhost:8000/api/internal
-          CHAT_SHELL_REMOTE_STORAGE_TOKEN: ""
           EXECUTOR_MANAGER_URL: http://localhost:8001
         run: |
           source .venv/bin/activate

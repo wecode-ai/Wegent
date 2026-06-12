@@ -30,7 +30,9 @@ from app.schemas.knowledge import (
 from app.schemas.rag import RetrieveResponse
 from app.services.knowledge import KnowledgeService
 from app.services.knowledge.orchestrator import (
+    DEFAULT_KNOWLEDGE_LIST_LIMIT,
     MAX_DOCUMENT_READ_LIMIT,
+    MAX_KNOWLEDGE_LIST_LIMIT,
     knowledge_orchestrator,
 )
 from shared.telemetry.decorators import add_span_event, trace_async, trace_sync
@@ -52,6 +54,17 @@ def list_knowledge_bases_open(
     scope: str = Query(
         default="all",
         description="Scope of knowledge bases to return: 'personal' or 'all'",
+    ),
+    limit: int = Query(
+        default=DEFAULT_KNOWLEDGE_LIST_LIMIT,
+        ge=1,
+        le=MAX_KNOWLEDGE_LIST_LIMIT,
+        description="Maximum number of knowledge bases to return",
+    ),
+    offset: int = Query(
+        default=0,
+        ge=0,
+        description="Start offset for paginated knowledge base listing",
     ),
     auth_context: AuthContext = Depends(get_auth_context),
     db: Session = Depends(get_db),
@@ -85,6 +98,8 @@ def list_knowledge_bases_open(
         db=db,
         user=current_user,
         scope=normalized_scope,
+        limit=limit,
+        offset=offset,
     )
 
 
@@ -102,6 +117,17 @@ def list_documents_open(
     knowledge_base_id: int = Query(
         ...,
         description="Knowledge base ID to list documents from",
+    ),
+    limit: int = Query(
+        default=DEFAULT_KNOWLEDGE_LIST_LIMIT,
+        ge=1,
+        le=MAX_KNOWLEDGE_LIST_LIMIT,
+        description="Maximum number of documents to return",
+    ),
+    offset: int = Query(
+        default=0,
+        ge=0,
+        description="Start offset for paginated document listing",
     ),
     auth_context: AuthContext = Depends(get_auth_context),
     db: Session = Depends(get_db),
@@ -122,6 +148,8 @@ def list_documents_open(
             db=db,
             user=current_user,
             knowledge_base_id=knowledge_base_id,
+            limit=limit,
+            offset=offset,
         )
     except ValueError as exc:
         error_msg = str(exc).lower()
