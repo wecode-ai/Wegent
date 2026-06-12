@@ -287,8 +287,8 @@ pytest tests/test_attachment_service.py
 
 ```bash
 cd frontend
-npm test -- MessageBubble.test.tsx
-npm test -- ContextBadgeList.test.tsx
+pnpm test -- MessageBubble.test.tsx
+pnpm test -- ContextBadgeList.test.tsx
 ```
 
 ## 故障排查

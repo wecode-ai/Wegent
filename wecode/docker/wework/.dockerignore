@@ -1,0 +1,6 @@
+wework/node_modules
+wework/dist
+wework/.vite
+wework/coverage
+packages/*/node_modules
+**/.DS_Store

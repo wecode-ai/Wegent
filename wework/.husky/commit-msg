@@ -1,0 +1,30 @@
+#!/usr/bin/env sh
+
+# Get the commit message
+commit_msg_file=$1
+commit_msg=$(cat "$commit_msg_file")
+
+# Skip validation for merge commits
+if echo "$commit_msg" | grep -qE "^Merge (branch|remote-tracking branch|pull request)"; then
+  exit 0
+fi
+
+# Commit message pattern: should start with a type (feat, fix, docs, style, refactor, test, chore)
+# Example: "feat: add new feature" or "fix: resolve bug"
+pattern="^(feat|fix|docs|style|refactor|test|chore|perf|ci|build|revert)(\(.+\))?: .{1,}"
+
+if ! echo "$commit_msg" | grep -qE "$pattern"; then
+  echo "❌ Invalid commit message format!"
+  echo ""
+  echo "Commit message should follow the pattern:"
+  echo "  <type>(<scope>): <subject>"
+  echo ""
+  echo "Types: feat, fix, docs, style, refactor, test, chore, perf, ci, build, revert"
+  echo ""
+  echo "Examples:"
+  echo "  feat: add user authentication"
+  echo "  fix(api): resolve CORS issue"
+  echo "  docs: update README"
+  echo ""
+  exit 1
+fi

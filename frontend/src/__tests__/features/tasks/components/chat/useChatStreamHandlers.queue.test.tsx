@@ -79,7 +79,7 @@ jest.mock('@/features/projects/contexts/projectContext', () => ({
   }),
 }))
 
-jest.mock('@/features/tasks/state', () => ({
+jest.mock('@wegent/chat-core', () => ({
   generateMessageId: () => 'local-user-1',
 }))
 

@@ -11,10 +11,20 @@ ARG VITE_SOCKET_BASE_URL=wss://wss-wegent.intra.weibo.com
 ARG VITE_SOCKET_PATH=/socket.io
 ARG VITE_CLOUD_DEVICE_SCALING_WIKI_URL=https://wiki.api.weibo.com/zh/weibo_rd/dev/wecode/wegent-device
 
-RUN npm config set registry http://registry.npmmirror.com
-COPY wework/package.json wework/package-lock.json ./
-RUN npm ci
-COPY wework .
+ENV COREPACK_NPM_REGISTRY=https://registry.npmmirror.com
+
+RUN npm config set registry https://registry.npmmirror.com
+RUN corepack enable && corepack prepare pnpm@10.34.3 --activate
+RUN pnpm config set registry https://registry.npmmirror.com
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY wework/package.json ./wework/package.json
+COPY wework/.husky ./wework/.husky
+COPY packages/chat-core/package.json ./packages/chat-core/package.json
+RUN pnpm --filter wework... install --frozen-lockfile
+
+COPY wework ./wework
+COPY packages/chat-core ./packages/chat-core
 
 ENV VITE_LOGIN_MODE=oidc
 ENV VITE_OIDC_LOGIN_TEXT="使用 CAS 登录"
@@ -23,12 +33,12 @@ RUN VITE_APP_BASE_PATH="${VITE_APP_BASE_PATH}" \
     VITE_SOCKET_BASE_URL="${VITE_SOCKET_BASE_URL}" \
     VITE_SOCKET_PATH="${VITE_SOCKET_PATH}" \
     VITE_CLOUD_DEVICE_SCALING_WIKI_URL="${VITE_CLOUD_DEVICE_SCALING_WIKI_URL}" \
-    npm run build
+    pnpm --filter wework build
 
 # ---- Production runtime stage ----
 FROM registry.api.weibo.com/hongyu9/nginx:1.25-alpine
 
-COPY --from=builder /app/dist /usr/share/nginx/html
+COPY --from=builder /app/wework/dist /usr/share/nginx/html
 COPY default.conf /etc/nginx/conf.d/default.conf
 COPY docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh

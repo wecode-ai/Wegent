@@ -97,24 +97,55 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10.34.3
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18.x'
-          cache: 'npm'
-          cache-dependency-path: ./frontend/package-lock.json
+          node-version: '20.x'
+          cache: 'pnpm'
+          cache-dependency-path: ./pnpm-lock.yaml
 
       - name: Install dependencies
-        working-directory: ./frontend
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Run ESLint
-        working-directory: ./frontend
-        run: npm run lint
+        run: pnpm --filter wecode-ai-assistant lint
 
       - name: Run TypeScript check
-        working-directory: ./frontend
-        run: npx tsc --noEmit
+        run: pnpm --filter wecode-ai-assistant exec tsc --noEmit
+
+  lint-wework:
+    name: Lint Wework (ESLint & TypeScript)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093
+        with:
+          version: 10.34.3
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+          cache: 'pnpm'
+          cache-dependency-path: ./pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run ESLint
+        run: pnpm --filter wework lint
+
+      - name: Run TypeScript check
+        run: pnpm --filter wework exec tsc --noEmit
 
   check-settings-config:
     name: Check Settings Configuration
@@ -145,7 +176,7 @@ jobs:
   lint-summary:
     name: Lint Summary
     runs-on: ubuntu-latest
-    needs: [lint-backend, lint-knowledge-engine, lint-frontend, check-settings-config, check-alembic-heads]
+    needs: [lint-backend, lint-knowledge-engine, lint-frontend, lint-wework, check-settings-config, check-alembic-heads]
     if: always()
 
     steps:
@@ -155,6 +186,7 @@ jobs:
           if [[ "${{ needs.lint-backend.result }}" == "failure" ]] || \
              [[ "${{ needs.lint-knowledge-engine.result }}" == "failure" ]] || \
              [[ "${{ needs.lint-frontend.result }}" == "failure" ]] || \
+             [[ "${{ needs.lint-wework.result }}" == "failure" ]] || \
              [[ "${{ needs.check-settings-config.result }}" == "failure" ]] || \
              [[ "${{ needs.check-alembic-heads.result }}" == "failure" ]]; then
             echo "One or more lint jobs failed"

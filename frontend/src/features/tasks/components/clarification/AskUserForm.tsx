@@ -19,7 +19,7 @@ import type {
 } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useOptionalTaskSession } from '../../session/TaskSession'
-import type { UnifiedMessage } from '../../state'
+import type { UnifiedMessage } from '@wegent/chat-core'
 
 const EMPTY_MESSAGES = new Map<string, UnifiedMessage>()
 

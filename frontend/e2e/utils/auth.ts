@@ -1,11 +1,12 @@
 import { Page } from '@playwright/test'
+import { ADMIN_USER } from '../config/test-users'
 
 /**
  * Test credentials for E2E testing
  */
 export const TEST_USER = {
-  username: 'admin',
-  password: 'Wegent2025!',
+  username: ADMIN_USER.username,
+  password: ADMIN_USER.password,
 }
 
 /**
@@ -42,7 +43,7 @@ export async function login(
   // Clear and fill username
   await usernameInput.clear()
   await usernameInput.fill(username)
-  console.log(`Filled username: ${username}`)
+  console.log('Filled username')
 
   // Clear and fill password
   await passwordInput.clear()

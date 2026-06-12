@@ -269,10 +269,8 @@ describe('MessageList', () => {
   })
 
   test('shows user message hover actions with time and copy', async () => {
-    const writeText = vi.fn().mockResolvedValue(undefined)
-    Object.assign(navigator, {
-      clipboard: { writeText },
-    })
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-05-25T16:00:00.000+08:00'))
 
     render(
       <MessageList
@@ -289,6 +287,14 @@ describe('MessageList', () => {
     )
 
     expect(screen.getByTestId('message-hover-time')).toHaveTextContent('15:08')
+
+    vi.useRealTimers()
+
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.assign(navigator, {
+      clipboard: { writeText },
+    })
+
     const copyButton = screen.getByTestId('copy-message-button')
     expect(copyButton).toHaveClass('opacity-0', 'group-hover:opacity-100')
 
@@ -384,10 +390,8 @@ describe('MessageList', () => {
   })
 
   test('shows assistant message hover actions with time and copy', async () => {
-    const writeText = vi.fn().mockResolvedValue(undefined)
-    Object.assign(navigator, {
-      clipboard: { writeText },
-    })
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-05-25T19:00:00.000+08:00'))
 
     render(
       <MessageList
@@ -404,6 +408,14 @@ describe('MessageList', () => {
     )
 
     expect(screen.getByTestId('message-hover-time')).toHaveTextContent('18:38')
+
+    vi.useRealTimers()
+
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.assign(navigator, {
+      clipboard: { writeText },
+    })
+
     const copyButton = screen.getByTestId('copy-message-button')
     expect(copyButton).toHaveClass('opacity-0', 'group-hover:opacity-100')
 

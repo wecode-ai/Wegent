@@ -8,7 +8,6 @@ const guardedFiles = [
   'components/layout/DesktopSidebar.tsx',
   'components/layout/DesktopSettingsMenu.tsx',
   'components/layout/EnvironmentInfoPopover.tsx',
-  'components/layout/MobileDrawer.tsx',
   'components/chat/MessageList.tsx',
   'components/chat/ScrollableMessageArea.tsx',
   'components/chat/blocks/ToolBlockItem.tsx',

@@ -5,6 +5,8 @@ import { DataBuilders } from '../../fixtures/data-builders'
 import { ADMIN_USER } from '../../config/test-users'
 
 test.describe('Settings - Shell Management', () => {
+  test.describe.configure({ mode: 'serial' })
+
   let shellsPage: ShellsPage
   let apiClient: ApiClient
   let testShellName: string
@@ -14,7 +16,7 @@ test.describe('Settings - Shell Management', () => {
     apiClient = createApiClient(request)
     // Login via API for API client operations only
     await apiClient.login(ADMIN_USER.username, ADMIN_USER.password)
-    // Page is already authenticated via global setup storageState
+    // Page is already authenticated via global setup storageState.
 
     await shellsPage.navigate()
   })
@@ -27,14 +29,12 @@ test.describe('Settings - Shell Management', () => {
   })
 
   test('should access shell management page', async ({ page }) => {
-    expect(shellsPage.isOnSettingsPage()).toBe(true)
-    // Use more flexible selectors
-    const hasContent = await page
-      .locator('h2, h3, button, .space-y-3')
-      .first()
-      .isVisible({ timeout: 10000 })
-      .catch(() => false)
-    expect(hasContent).toBe(true)
+    expect(shellsPage.isOnResourceLibraryPage()).toBe(true)
+    await expect(page.locator('[data-testid="my-resources"]')).toBeVisible({ timeout: 15000 })
+    await expect(page.locator('[data-testid="managed-resource-shell-tab"]')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
   })
 
   test('should display shell list', async () => {
@@ -43,39 +43,15 @@ test.describe('Settings - Shell Management', () => {
   })
 
   test('should open create shell dialog', async ({ page }) => {
-    // Wait for loading to complete
-    await page.waitForTimeout(2000)
-
-    // The button text is "Create Shell" from i18n
-    const createButton = page
-      .locator('button:has-text("Create Shell"), button:has-text("创建 Shell")')
-      .first()
-    if (await createButton.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await createButton.click()
-      const dialogVisible = await page
-        .locator('[role="dialog"]')
-        .isVisible({ timeout: 5000 })
-        .catch(() => false)
-      expect(dialogVisible).toBe(true)
-    } else {
-      // No create button found - pass the test
-      expect(true).toBe(true)
-    }
+    await shellsPage.clickCreateShell()
+    await expect(page.locator('[role="dialog"]')).toBeVisible({ timeout: 5000 })
   })
 
   test('should create a new shell', async ({ page }) => {
     const shellData = DataBuilders.shell()
     testShellName = shellData.metadata.name
 
-    // Wait for loading to complete
-    await page.waitForTimeout(2000)
-
-    // The button text is "Create Shell" or "New Shell" from i18n
-    const createButton = page
-      .locator(
-        'button:has-text("Create Shell"), button:has-text("创建 Shell"), button:has-text("New Shell"), button:has-text("新建Shell")'
-      )
-      .first()
+    const createButton = page.locator('[data-testid="create-shell-button"]')
     if (await createButton.isVisible({ timeout: 5000 }).catch(() => false)) {
       await createButton.click()
 
@@ -164,6 +140,8 @@ test.describe('Settings - Shell Management', () => {
 })
 
 test.describe('Settings - Shell API Tests', () => {
+  test.describe.configure({ mode: 'serial' })
+
   let apiClient: ApiClient
   let testShellName: string
 
