@@ -301,7 +301,7 @@ export interface LocalDeviceSkill {
 export interface DeviceCommandResponse {
   success: boolean
   exit_code?: number | null
-  stdout: string | string[] | LocalDeviceSkill[]
+  stdout: string | string[] | LocalDeviceSkill[] | Record<string, unknown>
   stderr: string
   error?: string
   duration?: number
