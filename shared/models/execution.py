@@ -189,6 +189,7 @@ class ExecutionRequest:
     status: Optional[str] = None
     progress: Optional[int] = None
     type: Optional[str] = None  # Task type: "online" or "offline"
+    task_mode: Optional[str] = None  # Task mode label: "chat", "code", etc.
 
     # === Executor Information (from Task) ===
     executor_name: Optional[str] = None

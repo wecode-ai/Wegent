@@ -112,6 +112,7 @@ interface MobileWorkbenchLayoutProps {
   onRevertFileChanges?: (
     subtaskId: number,
   ) => Promise<TurnFileChangesSummary>
+  onRefreshWorkLists?: () => Promise<void>
   onLogout: () => void
 }
 
@@ -158,6 +159,7 @@ export function MobileWorkbenchLayout({
   onCancelGuidanceMessage = () => {},
   onLoadFileChangesDiff,
   onRevertFileChanges,
+  onRefreshWorkLists,
 }: MobileWorkbenchLayoutProps) {
   const { t } = useTranslation('common')
   const [drawerOpen, setDrawerOpen] = useState(false)
@@ -501,6 +503,7 @@ export function MobileWorkbenchLayout({
         onRenameTask={onRenameTask}
         onSelectProject={onSelectProject}
         onOpenTask={onOpenTask}
+        onRefreshWorkLists={onRefreshWorkLists}
       />
     </div>
   )

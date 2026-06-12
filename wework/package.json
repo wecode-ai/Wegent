@@ -6,9 +6,12 @@
   "scripts": {
     "dev": "vite --port 1420",
     "dev:mac": "bash scripts/dev-mac-app.sh",
-    "tauri": "tauri dev",
+    "tauri": "tauri",
     "build": "tsc -b && vite build",
     "build:mac": "bash scripts/build-mac-app.sh",
+    "ios:init": "tauri ios init",
+    "dev:ios": "bash scripts/dev-ios-app.sh",
+    "build:ios": "bash scripts/build-ios-app.sh",
     "tauri:build": "tauri build",
     "lint": "eslint .",
     "preview": "vite preview",

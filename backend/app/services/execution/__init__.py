@@ -214,6 +214,47 @@ class _ExecutorRuntimeClient:
                 ],
             }
 
+    async def cleanup_sandbox_by_task_id(
+        self,
+        *,
+        task_id: int,
+        dry_run: bool = False,
+        archive_before_delete: bool = True,
+    ):
+        """Clean up one sandbox via executor_manager API by task ID."""
+        import httpx
+
+        from app.core.config import settings
+
+        base_url = settings.EXECUTOR_MANAGER_URL.rstrip("/")
+        url = f"{base_url}/executor-manager/sandboxes/cleanup-by-task"
+        payload = {
+            "task_id": task_id,
+            "dry_run": dry_run,
+            "archive_before_delete": archive_before_delete,
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=180.0) as client:
+                response = await client.post(
+                    url,
+                    json=payload,
+                    headers={"Content-Type": "application/json"},
+                )
+                response.raise_for_status()
+                return response.json()
+        except Exception as e:
+            return {
+                "target": "sandbox",
+                "task_id": task_id,
+                "dry_run": dry_run,
+                "archive_before_delete": archive_before_delete,
+                "deleted": False,
+                "redis_cleared": False,
+                "reason": "executor_manager_error",
+                "error": self._format_http_error(e),
+            }
+
     async def prepare_executor(self, request: ExecutionRequest):
         """Prepare a normal executor runtime without dispatching the task."""
         import httpx

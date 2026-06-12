@@ -44,3 +44,36 @@ async def test_cleanup_stale_sandboxes_returns_not_stale_reasons(mocker):
         inactive_hours=24,
         dry_run=False,
     )
+
+
+@pytest.mark.asyncio
+async def test_cleanup_sandbox_by_task_id_calls_manager(mocker):
+    manager = mocker.Mock()
+    manager.cleanup_sandbox_by_task_id = mocker.AsyncMock(
+        return_value={
+            "target": "sandbox",
+            "task_id": 1967,
+            "sandbox_id": "1967",
+            "dry_run": False,
+            "archive_before_delete": False,
+            "deleted": True,
+            "redis_cleared": True,
+        }
+    )
+    mocker.patch.object(sandbox_routes, "get_sandbox_manager", return_value=manager)
+
+    result = await sandbox_routes.cleanup_sandbox_by_task_id(
+        request=sandbox_routes.CleanupSandboxByTaskRequest(
+            task_id=1967,
+            dry_run=False,
+            archive_before_delete=False,
+        ),
+        http_request=SimpleNamespace(client=SimpleNamespace(host="127.0.0.1")),
+    )
+
+    assert result["deleted"] is True
+    manager.cleanup_sandbox_by_task_id.assert_awaited_once_with(
+        task_id=1967,
+        dry_run=False,
+        archive_before_delete=False,
+    )

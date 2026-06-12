@@ -4,6 +4,7 @@
 
 """Unit tests for SandboxManager service."""
 
+import asyncio
 import json
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -184,6 +185,68 @@ class TestSandboxManager:
         assert result["deleted"][0]["sandbox_id"] == "12345"
         terminate.assert_awaited_once_with("12345")
 
+    @pytest.mark.asyncio
+    async def test_cleanup_stale_sandboxes_archives_before_delete(
+        self, sandbox_manager_with_mock_redis, sample_sandbox, mocker
+    ):
+        """Test stale sandbox cleanup archives task files before termination."""
+        manager = sandbox_manager_with_mock_redis
+        sample_sandbox.last_activity_at = time.time() - (25 * 3600)
+        mocker.patch.object(
+            manager._repository, "get_active_sandbox_ids", return_value=["12345"]
+        )
+        mocker.patch.object(
+            manager._repository, "load_sandbox", return_value=sample_sandbox
+        )
+        archive = mocker.patch.object(
+            manager,
+            "_archive_sandbox_before_cleanup",
+            new_callable=AsyncMock,
+            return_value=True,
+        )
+        mocker.patch.object(
+            manager,
+            "terminate_sandbox",
+            new_callable=AsyncMock,
+            return_value=(True, "terminated"),
+        )
+
+        result = await manager.cleanup_stale_sandboxes(inactive_hours=24)
+
+        assert result["deleted"][0]["sandbox_id"] == "12345"
+        archive.assert_awaited_once_with(sample_sandbox)
+
+    @pytest.mark.asyncio
+    async def test_cleanup_stale_sandboxes_continues_when_archive_fails(
+        self, sandbox_manager_with_mock_redis, sample_sandbox, mocker
+    ):
+        """Test archive failure does not block stale sandbox termination."""
+        manager = sandbox_manager_with_mock_redis
+        sample_sandbox.last_activity_at = time.time() - (25 * 3600)
+        mocker.patch.object(
+            manager._repository, "get_active_sandbox_ids", return_value=["12345"]
+        )
+        mocker.patch.object(
+            manager._repository, "load_sandbox", return_value=sample_sandbox
+        )
+        mocker.patch.object(
+            manager,
+            "_archive_sandbox_before_cleanup",
+            new_callable=AsyncMock,
+            return_value=False,
+        )
+        terminate = mocker.patch.object(
+            manager,
+            "terminate_sandbox",
+            new_callable=AsyncMock,
+            return_value=(True, "terminated"),
+        )
+
+        result = await manager.cleanup_stale_sandboxes(inactive_hours=24)
+
+        assert result["deleted"][0]["sandbox_id"] == "12345"
+        terminate.assert_awaited_once_with("12345")
+
     # ----- create_sandbox Tests -----
 
     @pytest.mark.asyncio
@@ -281,6 +344,116 @@ class TestSandboxManager:
         )
 
         assert error == "Container creation failed"
+
+    @pytest.mark.asyncio
+    async def test_create_sandbox_restores_archive_after_new_container_starts(
+        self, sandbox_manager_with_mock_redis, mock_redis_client, mocker
+    ):
+        """Test newly created sandboxes restore archived task files when available."""
+        manager = sandbox_manager_with_mock_redis
+        mock_redis_client.hget.return_value = None
+        mocker.patch.object(
+            manager,
+            "_start_sandbox_container",
+            new_callable=AsyncMock,
+            return_value=None,
+        )
+        restore = mocker.patch.object(
+            manager,
+            "_restore_sandbox_after_create",
+            new_callable=AsyncMock,
+            return_value=True,
+        )
+
+        sandbox, error = await manager.create_sandbox(
+            shell_type="ClaudeCode",
+            user_id=100,
+            user_name="testuser",
+            metadata={"task_id": 99999},
+        )
+
+        assert error is None
+        assert sandbox is not None
+        restore.assert_awaited_once_with(sandbox)
+
+    @pytest.mark.asyncio
+    async def test_create_sandbox_serializes_concurrent_requests_for_same_task(
+        self, sandbox_manager_with_mock_redis, mocker
+    ):
+        """Test concurrent creates for one task reuse one container startup."""
+        manager = sandbox_manager_with_mock_redis
+        saved_sandboxes = {}
+
+        def load_sandbox(sandbox_id):
+            return saved_sandboxes.get(str(sandbox_id))
+
+        def save_sandbox(sandbox):
+            saved_sandboxes[sandbox.sandbox_id] = sandbox
+            return True
+
+        start_count = 0
+        start_entered = asyncio.Event()
+        release_start = asyncio.Event()
+
+        async def start_sandbox(sandbox):
+            nonlocal start_count
+            start_count += 1
+            start_entered.set()
+            await release_start.wait()
+            sandbox.container_name = "wegent-task-testuser-12345"
+            sandbox.set_running("http://localhost:10001")
+            save_sandbox(sandbox)
+            return None
+
+        mocker.patch.object(
+            manager._repository, "load_sandbox", side_effect=load_sandbox
+        )
+        mocker.patch.object(
+            manager._repository, "save_sandbox", side_effect=save_sandbox
+        )
+        mocker.patch.object(
+            manager._health_checker, "check_health_sync", return_value=True
+        )
+        mocker.patch.object(
+            manager,
+            "_start_sandbox_container",
+            new_callable=AsyncMock,
+            side_effect=start_sandbox,
+        )
+        mocker.patch.object(
+            manager,
+            "_restore_sandbox_after_create",
+            new_callable=AsyncMock,
+            return_value=True,
+        )
+
+        first_create = asyncio.create_task(
+            manager.create_sandbox(
+                shell_type="ClaudeCode",
+                user_id=100,
+                user_name="testuser",
+                metadata={"task_id": 12345},
+            )
+        )
+        await start_entered.wait()
+        second_create = asyncio.create_task(
+            manager.create_sandbox(
+                shell_type="ClaudeCode",
+                user_id=100,
+                user_name="testuser",
+                metadata={"task_id": 12345},
+            )
+        )
+        await asyncio.sleep(0)
+        release_start.set()
+
+        results = await asyncio.gather(first_create, second_create)
+
+        assert start_count == 1
+        assert results[0][1] is None
+        assert results[1][1] is None
+        assert results[0][0] is results[1][0]
+        assert results[0][0].base_url == "http://localhost:10001"
 
     # ----- _build_sandbox_task Tests -----
 
@@ -451,6 +624,49 @@ class TestSandboxManager:
 
         await manager.terminate_sandbox("12345")
 
+        mock_redis_client.zrem.assert_called()
+        mock_redis_client.delete.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_cleanup_sandbox_by_task_id_deletes_by_label_when_saved_name_is_stale(
+        self,
+        sandbox_manager_with_mock_redis,
+        mock_redis_client,
+        sample_sandbox_redis_data,
+        mocker,
+    ):
+        """Test task cleanup removes labeled containers when Redis has a stale name."""
+        manager = sandbox_manager_with_mock_redis
+        mock_redis_client.hget.return_value = sample_sandbox_redis_data
+        mock_executor = MagicMock()
+        mock_executor.delete_executor.return_value = {
+            "status": "unauthorized",
+            "error_msg": "stale saved container name",
+        }
+        mock_executor.delete_executor_by_task_id.return_value = {
+            "status": "success",
+            "deleted_containers": ["wegent-task-testuser-orphan"],
+        }
+        mocker.patch(
+            "executor_manager.services.sandbox.manager.ExecutorDispatcher.get_executor",
+            return_value=mock_executor,
+        )
+
+        result = await manager.cleanup_sandbox_by_task_id(
+            task_id=12345,
+            dry_run=False,
+            archive_before_delete=False,
+        )
+
+        assert result["deleted"] is True
+        assert result["redis_cleared"] is True
+        assert result["delete_result"]["deleted_containers"] == [
+            "wegent-task-testuser-orphan"
+        ]
+        mock_executor.delete_executor.assert_called_once_with(
+            "wegent-task-testuser-12345"
+        )
+        mock_executor.delete_executor_by_task_id.assert_called_once_with("12345")
         mock_redis_client.zrem.assert_called()
         mock_redis_client.delete.assert_called()
 

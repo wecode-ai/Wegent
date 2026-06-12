@@ -28,6 +28,7 @@ export function WorkbenchPage() {
     searchTaskDetail,
     rememberExecutionDevice,
     refreshDevices,
+    refreshWorkLists,
     upgradeDevice,
     createProject,
     createGitWorkspaceProject,
@@ -132,6 +133,7 @@ export function WorkbenchPage() {
       onCancelGuidanceMessage={cancelGuidanceMessage}
       onLoadFileChangesDiff={loadTurnFileChangesDiff}
       onRevertFileChanges={revertTurnFileChanges}
+      onRefreshWorkLists={refreshWorkLists}
       onLogout={logout}
     />
   )
