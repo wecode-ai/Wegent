@@ -153,6 +153,8 @@
     "project_empty_title": "我们应该在 {{projectName}} 中构建什么？",
     "input_placeholder": "尽管问",
     "mobile_input_placeholder": "询问 Wework",
+    "code_comment_count": "{{count}} 个评论",
+    "remove_code_comments": "移除代码评论",
     "quick_new_task": "新任务",
     "quick_project_work": "项目工作",
     "quick_search": "查找资料",

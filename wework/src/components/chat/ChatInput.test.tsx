@@ -102,6 +102,37 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('project-work-button')).toBeInTheDocument()
   })
 
+  test('renders and removes code comment context chip in desktop composer', async () => {
+    const onRemoveCodeComment = vi.fn()
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        codeComments={[
+          {
+            id: 'comment-1',
+            filePath: '/workspace/project/src/main.ts',
+            fileName: 'main.ts',
+            startLine: 1,
+            endLine: 1,
+            selectedText: 'const value = 1',
+            comment: 'Check this',
+            createdAt: '2026-06-12T00:00:00.000Z',
+          },
+        ]}
+        onRemoveCodeComment={onRemoveCodeComment}
+      />,
+    )
+
+    expect(screen.getByTestId('code-comment-context-badge')).toHaveTextContent('1 个评论')
+    await userEvent.click(screen.getByTestId('remove-code-comment-context-button'))
+    expect(onRemoveCodeComment).toHaveBeenCalledWith('comment-1')
+  })
+
   test('shows desktop pause button while the assistant is streaming', async () => {
     const onPause = vi.fn()
 
