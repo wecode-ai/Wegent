@@ -1,7 +1,7 @@
 import { useState, type PointerEvent } from 'react'
 
-const RIGHT_DEFAULT_WIDTH = 420
-const RIGHT_MIN_WIDTH = 320
+const RIGHT_DEFAULT_WIDTH = 560
+const RIGHT_MIN_WIDTH = 480
 const RIGHT_MAX_WIDTH = 760
 const BOTTOM_DEFAULT_HEIGHT = 320
 const BOTTOM_MIN_HEIGHT = 220
