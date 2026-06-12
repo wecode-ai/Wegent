@@ -175,7 +175,7 @@ describe('TaskStateMachine recovery', () => {
       expect(computeSendState(machine)).toBe('stop')
     })
 
-    it('state machine probes RUNNING unknown stream and exits when runtime confirms no stream', async () => {
+    it('state machine probes runtime instability and exits unknown stream when runtime confirms no stream', async () => {
       jest.useFakeTimers()
       const pullRuntime = jest.fn().mockResolvedValue({
         task_id: 42,
@@ -211,7 +211,7 @@ describe('TaskStateMachine recovery', () => {
       }
     })
 
-    it('state machine retries unknown stream probe until runtime reaches a stable state', async () => {
+    it('state machine retries runtime instability probe until runtime reaches a stable state', async () => {
       jest.useFakeTimers()
       const pullRuntime = jest
         .fn()
@@ -246,7 +246,7 @@ describe('TaskStateMachine recovery', () => {
       }
     })
 
-    it('state machine stops unknown stream probe when chat:start makes the stream known', async () => {
+    it('state machine stops runtime instability probe when chat:start makes the stream known', async () => {
       jest.useFakeTimers()
       const pullRuntime = jest.fn()
       const machine = new TaskStateMachine(
@@ -270,7 +270,7 @@ describe('TaskStateMachine recovery', () => {
       }
     })
 
-    it('state machine probes cancel pending state and exits when runtime confirms no stream', async () => {
+    it('state machine probes cancel pending state with the same runtime instability delay', async () => {
       jest.useFakeTimers()
       const pullRuntime = jest.fn().mockResolvedValue({
         task_id: 42,
@@ -290,7 +290,7 @@ describe('TaskStateMachine recovery', () => {
         machine.handleChatStart(10, 'Chat', 1)
         machine.setStopping(true)
 
-        await jest.advanceTimersByTimeAsync(4999)
+        await jest.advanceTimersByTimeAsync(2999)
         expect(pullRuntime).not.toHaveBeenCalled()
 
         await jest.advanceTimersByTimeAsync(1)
@@ -306,7 +306,7 @@ describe('TaskStateMachine recovery', () => {
       }
     })
 
-    it('state machine retries cancel pending probe until runtime reaches a stable state', async () => {
+    it('state machine retries cancel pending runtime instability until runtime reaches a stable state', async () => {
       jest.useFakeTimers()
       const pullRuntime = jest
         .fn()
@@ -329,11 +329,11 @@ describe('TaskStateMachine recovery', () => {
         machine.handleChatStart(10, 'Chat', 1)
         machine.setStopping(true)
 
-        await jest.advanceTimersByTimeAsync(5000)
+        await jest.advanceTimersByTimeAsync(3000)
         expect(pullRuntime).toHaveBeenCalledTimes(1)
         expect(machine.getState().isStopping).toBe(true)
 
-        await jest.advanceTimersByTimeAsync(5000)
+        await jest.advanceTimersByTimeAsync(3000)
 
         expect(pullRuntime).toHaveBeenCalledTimes(2)
         expect(machine.getState().isStopping).toBe(false)
@@ -344,7 +344,7 @@ describe('TaskStateMachine recovery', () => {
       }
     })
 
-    it('state machine stops cancel pending probe when chat:cancelled arrives', async () => {
+    it('state machine stops runtime instability probe when chat:cancelled arrives', async () => {
       jest.useFakeTimers()
       const pullRuntime = jest.fn()
       const machine = new TaskStateMachine(
@@ -360,7 +360,7 @@ describe('TaskStateMachine recovery', () => {
         machine.setStopping(true)
         machine.handleChatCancelled(10)
 
-        await jest.advanceTimersByTimeAsync(5000)
+        await jest.advanceTimersByTimeAsync(3000)
 
         expect(pullRuntime).not.toHaveBeenCalled()
         expect(machine.getState().isStopping).toBe(false)

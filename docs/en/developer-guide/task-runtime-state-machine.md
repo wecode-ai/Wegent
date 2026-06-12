@@ -55,24 +55,22 @@ Supported health-check reasons include:
 - `task-selected`
 - `manual-refresh`
 - `network-online`
-- `unknown-stream-probe`
-- `cancel-ack-probe`
+- `runtime-instability-probe`
 
 ## Stable And Unstable Convergence
 
 The state machine has two paths:
 
 - Normal path: server events arrive completely, and the state machine advances through `chat:start`, `chat:chunk`, `chat:done`, `chat:error`, `chat:cancelled`, and `task:status`. States on this path are stable and can be consumed directly by the UI.
-- Exceptional path: key events are missed, cancel ack events are lost, the socket reconnects, or local runtime state diverges from server state. After entering an unstable state, the internal `RuntimeStabilityProbe` delays and triggers `checkHealth(reason)`, pulls server task status and active stream checkpoints through `runtime-check`, and lets the state machine converge back to a stable state.
+- Exceptional path: key events are missed, cancel ack events are lost, the socket reconnects, or local runtime state diverges from server state. After entering an unstable state, the internal `RuntimeStabilityProbe` uses one grace window before triggering `checkHealth(reason)`, pulls server task status and active stream checkpoints through `runtime-check`, and lets the state machine converge back to a stable state.
 
 `RuntimeStabilityProbe` only owns scheduling and retrying checks. It does not own concrete transition logic. The check result is still consumed by the state machine, which performs the actual state transition. After each state change, the state machine resyncs the probe when needed. If a check fails and the unstable condition still exists, the probe is armed again so the state machine does not get stuck after a single failed attempt.
 
-Current internal probe scenarios:
+There is one internal probe scenario:
 
-- `unknown-stream-probe`: the local task status is `RUNNING`, but no active stream is known and the server has not confirmed that no stream exists. The probe waits 3 seconds before checking, so a late `chat:start` is not treated as a missing stream too early.
-- `cancel-ack-probe`: the user has stopped the stream, local state still has an active stream, and the task is not terminal yet. The probe waits 5 seconds before checking, covering missed `chat:cancelled` or cancellation `task:status` events.
+- `runtime-instability-probe`: the local runtime is in an unstable window. This includes a `RUNNING` task with no known active stream and no server confirmation that the stream is absent, or a user stop where local state still has an active stream and the task is not terminal. The probe waits one 3-second grace window before checking so late socket events are not treated as missing too early.
 
-These delays do not have the same timeout meaning. `unknown-stream-probe` handles the startup window where stream existence is unknown. `cancel-ack-probe` handles missing server confirmation after cancellation. Both only trigger state-machine health checks; neither the UI nor the socket layer decides success or failure directly.
+This delay only triggers a state-machine health check. It does not let the UI or socket layer decide success or failure directly. External triggers such as page-visible, WebSocket reconnect, queued-message-blocked, manual refresh, and network-online still call the health check directly without maintaining separate delayed branches.
 
 ## Consistency Rules
 
