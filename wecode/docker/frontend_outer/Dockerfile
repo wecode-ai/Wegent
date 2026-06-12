@@ -7,27 +7,36 @@ FROM registry.api.weibo.com/wecode/node:22-slim AS builder
 
 WORKDIR /app
 
-RUN npm config set registry http://registry.npmmirror.com
-COPY frontend/package.json frontend/package-lock.json ./
-COPY frontend/scripts/download-fonts.cjs ./scripts/
-RUN npm ci
-COPY frontend .
-RUN npm run build
+RUN corepack enable && corepack prepare pnpm@10.34.3 --activate
+RUN pnpm config set registry http://registry.npmmirror.com
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY frontend/package.json ./frontend/package.json
+COPY frontend/scripts ./frontend/scripts
+COPY frontend/.husky ./frontend/.husky
+COPY packages/chat-core/package.json ./packages/chat-core/package.json
+RUN pnpm --filter wecode-ai-assistant... install --frozen-lockfile
+
+COPY frontend ./frontend
+COPY packages/chat-core ./packages/chat-core
+
+ENV NEXT_TELEMETRY_DISABLED=1
+
+RUN pnpm --filter wecode-ai-assistant build
 
 # ---- Production runtime stage ----
 FROM registry.api.weibo.com/wecode/node:22-slim
 
 WORKDIR /app
 
-COPY --from=builder /app/package.json ./
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/.next ./.next
-COPY --from=builder /app/public ./public
-COPY --from=builder /app/next.config.js ./next.config.js
+COPY --from=builder /app/frontend/.next/standalone ./
+COPY --from=builder /app/frontend/.next/static ./.next/static
+COPY --from=builder /app/frontend/public ./public
 
 ENV NODE_ENV=production
 ENV PORT=3000
+ENV HOSTNAME=0.0.0.0
 
 EXPOSE ${PORT}
 
-CMD ["sh", "-c", "npm start -- -p ${PORT}"]
+CMD ["node", "server.js"]
