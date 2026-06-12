@@ -28,6 +28,30 @@ const UserContext = createContext<UserContextType>({
   login: async () => {},
   updatePreferences: async () => {},
 })
+
+type RuntimeUserPreferences = NonNullable<User['preferences']> & {
+  quick_access?: unknown
+}
+
+function sanitizeUserPreferences(
+  preferences: NonNullable<User['preferences']>
+): NonNullable<User['preferences']> {
+  const runtimePreferences = preferences as RuntimeUserPreferences
+  const quickAccess = runtimePreferences.quick_access
+
+  if (quickAccess === undefined) {
+    return preferences
+  }
+
+  if (quickAccess === null || typeof quickAccess !== 'object' || Array.isArray(quickAccess)) {
+    const sanitizedPreferences = { ...runtimePreferences }
+    delete sanitizedPreferences.quick_access
+    return sanitizedPreferences as NonNullable<User['preferences']>
+  }
+
+  return preferences
+}
+
 export const UserProvider = ({ children }: { children: ReactNode }) => {
   const { toast } = useToast()
   const router = useRouter()
@@ -153,7 +177,9 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
         ...user.preferences,
         ...preferences,
       } as NonNullable<User['preferences']>
-      const updatedUser = await userApis.updateUser({ preferences: mergedPreferences })
+      const updatedUser = await userApis.updateUser({
+        preferences: sanitizeUserPreferences(mergedPreferences),
+      })
       setUser(updatedUser)
     } catch (error) {
       console.error('UserContext: Failed to update preferences:', error)

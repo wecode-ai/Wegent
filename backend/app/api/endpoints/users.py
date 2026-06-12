@@ -561,15 +561,23 @@ def _get_system_config_value(db: Session, key: str) -> tuple[int, dict]:
     return config.version, config.config_value or {}
 
 
-def _get_user_quick_access_team_ids(current_user: User) -> list[int]:
+def _get_user_preferences(current_user: User) -> dict:
     preferences = {}
     if current_user.preferences:
         try:
             preferences = json.loads(current_user.preferences)
         except (json.JSONDecodeError, TypeError):
             preferences = {}
+    return preferences if isinstance(preferences, dict) else {}
 
-    quick_access_config = preferences.get("quick_access", {})
+
+def _get_user_quick_access_config(current_user: User) -> dict:
+    quick_access_config = _get_user_preferences(current_user).get("quick_access")
+    return quick_access_config if isinstance(quick_access_config, dict) else {}
+
+
+def _get_user_quick_access_team_ids(current_user: User) -> list[int]:
+    quick_access_config = _get_user_quick_access_config(current_user)
     return quick_access_config.get("teams", [])
 
 
@@ -684,14 +692,7 @@ async def get_user_quick_access(
     )
 
     # Get user preferences
-    user_preferences = {}
-    if current_user.preferences:
-        try:
-            user_preferences = json.loads(current_user.preferences)
-        except (json.JSONDecodeError, TypeError):
-            user_preferences = {}
-
-    quick_access_config = user_preferences.get("quick_access", {})
+    quick_access_config = _get_user_quick_access_config(current_user)
     user_version = quick_access_config.get("version")
     user_team_ids = quick_access_config.get("teams", [])
 
