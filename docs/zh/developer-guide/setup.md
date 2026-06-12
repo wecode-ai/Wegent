@@ -15,7 +15,7 @@ sidebar_position: 2
 ### 必需软件
 
 - **Python 3.10+**: 后端服务、Executor 和 Executor Manager
-- **Node.js 18+**: 前端开发
+- **Node.js 20+**: 前端开发和测试
 - **MySQL 8.0+**: 数据库服务
 - **Redis 7+**: 缓存服务
 - **Docker & Docker Compose**: 容器化部署和开发

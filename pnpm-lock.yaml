@@ -257,9 +257,36 @@ importers:
       lucide-react:
         specifier: ^0.554.0
         version: 0.554.0(react@19.2.7)
+      mdast-util-gfm-footnote:
+        specifier: 2.1.0
+        version: 2.1.0
+      mdast-util-gfm-strikethrough:
+        specifier: 2.0.0
+        version: 2.0.0
+      mdast-util-gfm-table:
+        specifier: 2.0.0
+        version: 2.0.0
+      mdast-util-gfm-task-list-item:
+        specifier: 2.0.0
+        version: 2.0.0
       mermaid:
         specifier: ^11.4.0
         version: 11.15.0
+      micromark-extension-gfm-footnote:
+        specifier: 2.1.0
+        version: 2.1.0
+      micromark-extension-gfm-strikethrough:
+        specifier: 2.1.0
+        version: 2.1.0
+      micromark-extension-gfm-table:
+        specifier: 2.1.1
+        version: 2.1.1
+      micromark-extension-gfm-task-list-item:
+        specifier: 2.1.0
+        version: 2.1.0
+      micromark-util-combine-extensions:
+        specifier: 2.0.1
+        version: 2.0.1
       next:
         specifier: ^15.1.9
         version: 15.5.19(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(babel-plugin-macros@3.1.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)

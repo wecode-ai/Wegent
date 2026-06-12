@@ -252,7 +252,7 @@ frontend/src/__tests__/
    - utils 模块的覆盖率
    - 测试加密和数据脱敏
 
-5. **test-frontend**：前端测试（Node.js 18.x）
+5. **test-frontend**：前端测试（Node.js 20.x）
    - 使用 React Testing Library 的 Jest
    - 使用 `--passWithNoTests` 标志运行
    - 覆盖率上传至 Codecov
@@ -398,7 +398,7 @@ async def test_async_function():
 1. 在 `src/__tests__/` 中创建与源代码结构匹配的测试文件
 2. 使用 `@testing-library/react` 进行组件测试
 3. 模拟 API 调用和外部依赖
-4. 确保测试通过：`npm test`
+4. 确保测试通过：`pnpm --filter wecode-ai-assistant test`
 
 ## 调试测试
 
@@ -468,7 +468,7 @@ pnpm --dir frontend test -- src/__tests__/utils/test_example.test.ts
 - 检查 fixture 是否正确导入
 
 **前端测试失败：**
-- 确保已安装 Node.js 18.x
+- 确保已安装 Node.js 20+
 - 在仓库根目录运行 `pnpm install --frozen-lockfile` 以安装确切的依赖版本
 - 清除 Jest 缓存：`pnpm --dir frontend exec jest --clearCache`
 

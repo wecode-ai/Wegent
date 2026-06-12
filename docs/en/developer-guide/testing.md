@@ -252,7 +252,7 @@ The `.github/workflows/test.yml` workflow runs automatically on:
    - Coverage for utils module
    - Tests cryptography and data masking
 
-5. **test-frontend**: Frontend tests (Node.js 18.x)
+5. **test-frontend**: Frontend tests (Node.js 20.x)
    - Jest with React Testing Library
    - Runs with `--passWithNoTests` flag
    - Coverage uploaded to Codecov
@@ -398,7 +398,7 @@ The backend's `pytest.ini` has `asyncio_mode = auto` which automatically detects
 1. Create test file in `src/__tests__/` matching source structure
 2. Use `@testing-library/react` for component tests
 3. Mock API calls and external dependencies
-4. Ensure tests pass with `npm test`
+4. Ensure tests pass with `pnpm --filter wecode-ai-assistant test`
 
 ## Debugging Tests
 
@@ -468,7 +468,7 @@ pnpm --dir frontend test -- src/__tests__/utils/test_example.test.ts
 - Check that fixtures are imported correctly
 
 **Frontend test failures:**
-- Ensure Node.js 18.x is installed
+- Ensure Node.js 20+ is installed
 - Run `pnpm install --frozen-lockfile` from the repository root to install exact dependency versions
 - Clear Jest cache: `pnpm --dir frontend exec jest --clearCache`
 

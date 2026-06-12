@@ -15,7 +15,7 @@ Before starting, ensure your development environment has the following software 
 ### Required Software
 
 - **Python 3.10+**: For backend service, Executor, and Executor Manager
-- **Node.js 18+**: For frontend development
+- **Node.js 20+**: For frontend development and tests
 - **MySQL 8.0+**: Database service
 - **Redis 7+**: Cache service
 - **Docker & Docker Compose**: For containerized deployment and development

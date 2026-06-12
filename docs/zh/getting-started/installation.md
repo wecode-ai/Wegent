@@ -166,7 +166,7 @@ sudo apt-get update
 sudo apt-get install python3.10 python3-pip python3-venv
 
 # 安装 Node.js
-curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
 sudo apt-get install -y nodejs
 
 # 安装 MySQL
