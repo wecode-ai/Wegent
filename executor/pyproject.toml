@@ -19,7 +19,7 @@ dependencies = [
     "gitpython==3.1.43",
     "google-genai==1.55.0",
     "httpx[socks]==0.28.1",
-    "mcp==1.23.0",
+    "mcp==1.27.2",
     # The Python SDK currently depends on a platform-specific Python CLI binary
     # package that has no manylinux wheel. Linux images install the SDK with
     # --no-deps and use the preinstalled npm Codex binary instead.
