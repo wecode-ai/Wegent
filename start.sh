@@ -2052,6 +2052,10 @@ start_services() {
     local compose_version=$($DOCKER_COMPOSE_CMD version 2>&1 | head -n 1)
     echo -e "  ${GREEN}✓${NC} Docker Compose detected: $compose_version"
 
+    # Docker Compose validates the whole compose file before starting selected
+    # services, so the internal token must exist before any compose command runs.
+    ensure_internal_service_token
+
     # Check and start MySQL and Redis if needed
     check_mysql_redis
 
@@ -2094,10 +2098,6 @@ start_services() {
 
     if [ "$port_resolution_failed" = true ]; then
         exit 1
-    fi
-
-    if [ "$start_backend" = true ] || [ "$start_chat_shell" = true ] || [ "$start_knowledge_runtime" = true ]; then
-        ensure_internal_service_token
     fi
 
     compute_derived_urls "$previous_backend_port" "$previous_executor_manager_port" "$previous_knowledge_runtime_port"
