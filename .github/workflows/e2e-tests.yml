@@ -205,7 +205,7 @@ jobs:
           RUNTIME_INTERNAL_API_URL: http://localhost:8000
           RUNTIME_SOCKET_DIRECT_URL: http://localhost:8000
         run: |
-          nohup pnpm run dev > next-dev.log 2>&1 &
+          nohup pnpm exec next dev > next-dev.log 2>&1 &
           echo $! > next-dev.pid
 
       - name: Start Mock Model Server
@@ -231,7 +231,7 @@ jobs:
             && wait_for_url http://localhost:8100/health \
             && wait_for_url http://localhost:3000 \
             && wait_for_url http://localhost:9999/health \
-            || (cat backend/backend.log && cat backend/chat_shell.log && cat frontend/mock-model-server.log && exit 1)
+            || (cat backend/backend.log && cat backend/chat_shell.log && cat frontend/next-dev.log && cat frontend/mock-model-server.log && exit 1)
 
       - name: Verify backend is running
         run: |
@@ -535,7 +535,7 @@ jobs:
           RUNTIME_INTERNAL_API_URL: http://localhost:8000
           RUNTIME_SOCKET_DIRECT_URL: http://localhost:8000
         run: |
-          nohup pnpm run dev > next-dev.log 2>&1 &
+          nohup pnpm exec next dev > next-dev.log 2>&1 &
           echo $! > next-dev.pid
 
       - name: Start Mock Model Server
@@ -636,7 +636,7 @@ jobs:
             && wait_for_url http://localhost:3000 \
             && wait_for_url http://localhost:9999/health \
             && wait_for_url http://localhost:8001/health \
-            || (cat backend/backend.log && cat backend/chat_shell.log && cat frontend/mock-model-server.log && cat executor/local-executor.log && cat executor_manager/executor_manager.log && exit 1)
+            || (cat backend/backend.log && cat backend/chat_shell.log && cat frontend/next-dev.log && cat frontend/mock-model-server.log && cat executor/local-executor.log && cat executor_manager/executor_manager.log && exit 1)
 
       - name: Verify backend is running
         run: |
