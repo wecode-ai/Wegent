@@ -73,8 +73,9 @@ async def create_sandbox(request: CreateSandboxRequest, http_request: Request):
     """Create a new sandbox.
 
     Creates an isolated execution environment (Docker container) that can
-    run multiple executions. The sandbox will automatically terminate
-    after the specified timeout unless kept alive.
+    run multiple executions. The sandbox remains available for new executions
+    until its active timeout expires, and background cleanup removes idle
+    sandboxes after the inactivity window.
 
     Args:
         request: Sandbox creation parameters
@@ -266,8 +267,8 @@ async def keep_alive(
 ):
     """Extend sandbox timeout.
 
-    Adds additional time to the sandbox expiration. The sandbox will
-    automatically terminate after the new timeout unless kept alive again.
+    Adds additional time to the sandbox active timeout. Idle sandbox cleanup
+    is still controlled by the background inactivity window.
 
     Args:
         sandbox_id: Unique sandbox identifier (internally uses task_id)

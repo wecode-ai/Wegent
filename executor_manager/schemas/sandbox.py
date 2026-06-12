@@ -66,7 +66,7 @@ class CreateSandboxResponse(BaseModel):
         container_name: Docker container name
         shell_type: Execution environment type
         created_at: Timestamp when sandbox was created
-        expires_at: Timestamp when sandbox will auto-terminate
+        expires_at: Timestamp when the active timeout window ends
         message: Optional status message
     """
 
@@ -79,7 +79,9 @@ class CreateSandboxResponse(BaseModel):
         description="Executor namespace when available",
     )
     created_at: float = Field(..., description="Creation timestamp")
-    expires_at: Optional[float] = Field(None, description="Expiration timestamp")
+    expires_at: Optional[float] = Field(
+        None, description="Active-timeout expiration timestamp"
+    )
     message: Optional[str] = Field(None, description="Status message")
 
 
@@ -97,9 +99,9 @@ class SandboxStatusResponse(BaseModel):
         created_at: Creation timestamp
         started_at: When sandbox became running
         last_activity_at: Last activity timestamp
-        expires_at: Expiration timestamp
+        expires_at: Active-timeout expiration timestamp
         uptime: Sandbox uptime in seconds
-        time_remaining: Seconds until expiration
+        time_remaining: Seconds until active-timeout expiration
         execution_count: Number of executions in this sandbox
         error_message: Error message if failed
         metadata: Additional metadata
@@ -157,8 +159,8 @@ class KeepAliveResponse(BaseModel):
 
     Attributes:
         sandbox_id: Unique sandbox identifier
-        expires_at: New expiration timestamp
-        time_remaining: Seconds until expiration
+        expires_at: New active-timeout expiration timestamp
+        time_remaining: Seconds until active-timeout expiration
         message: Status message
     """
 
