@@ -228,6 +228,7 @@ export interface Task {
   id: number
   title: string
   status: string
+  task_status?: string
   task_type?: 'chat' | 'code' | 'task' | 'knowledge' | 'video' | 'image'
   team_id?: number
   project_id?: number

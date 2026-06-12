@@ -129,14 +129,25 @@ function keepDevicesOnTransientEmpty(
   return nextDevices
 }
 
+function getTaskStatus(task: Task): string {
+  return task.status ?? task.task_status ?? ''
+}
+
+function normalizeTaskRuntimeStatus(task: Task): Task {
+  const status = getTaskStatus(task)
+  if (!status || task.status === status) return task
+  return { ...task, status }
+}
+
 function toProjectTask(task: Task): ProjectTask {
+  const status = getTaskStatus(task)
   return {
     id: task.id,
     task_id: task.id,
     task_title: task.title,
-    task_status: task.status,
+    task_status: status,
     title: task.title,
-    status: task.status,
+    status,
     task_type: task.task_type,
     created_at: task.created_at,
     updated_at: task.updated_at,
@@ -185,9 +196,10 @@ function normalizeOpenedTaskProject(
   task: Task,
   project: ProjectWithTasks | null | undefined
 ): Task {
-  if (project === undefined) return task
+  const normalizedTask = normalizeTaskRuntimeStatus(task)
+  if (project === undefined) return normalizedTask
   return {
-    ...task,
+    ...normalizedTask,
     project_id: project?.id ?? 0,
   }
 }
