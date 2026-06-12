@@ -11,8 +11,11 @@ ARG VITE_SOCKET_BASE_URL=wss://wss-wegent.intra.weibo.com
 ARG VITE_SOCKET_PATH=/socket.io
 ARG VITE_CLOUD_DEVICE_SCALING_WIKI_URL=https://wiki.api.weibo.com/zh/weibo_rd/dev/wecode/wegent-device
 
+ENV COREPACK_NPM_REGISTRY=https://registry.npmmirror.com
+
+RUN npm config set registry https://registry.npmmirror.com
 RUN corepack enable && corepack prepare pnpm@10.34.3 --activate
-RUN pnpm config set registry http://registry.npmmirror.com
+RUN pnpm config set registry https://registry.npmmirror.com
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY wework/package.json ./wework/package.json

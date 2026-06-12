@@ -7,8 +7,11 @@ FROM registry.api.weibo.com/wecode/node:22-slim AS builder
 
 WORKDIR /app
 
+ENV COREPACK_NPM_REGISTRY=https://registry.npmmirror.com
+
+RUN npm config set registry https://registry.npmmirror.com
 RUN corepack enable && corepack prepare pnpm@10.34.3 --activate
-RUN pnpm config set registry http://registry.npmmirror.com
+RUN pnpm config set registry https://registry.npmmirror.com
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY frontend/package.json ./frontend/package.json
