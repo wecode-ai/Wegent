@@ -28,6 +28,7 @@ export interface ProjectChatControls {
   uploadingFiles: Map<string, { file: File; progress: number }>
   errors: Map<string, string>
   isOptionsLocked: boolean
+  modelSelectorOpenSignal?: number
   setSelectedModel: (model: UnifiedModel | null) => void
   setSelectedModelOption: (optionId: string, value: string) => void
   toggleSkill: (skill: SkillRef) => void
@@ -110,6 +111,7 @@ export function ChatInput({
       uploadingFiles: new Map(),
       errors: new Map(),
       isOptionsLocked: false,
+      modelSelectorOpenSignal: undefined,
       setSelectedModel: () => {},
       setSelectedModelOption: () => {},
       toggleSkill: () => {},
@@ -146,6 +148,7 @@ export function ChatInput({
           models={controls.models}
           selectedModel={controls.selectedModel}
           selectedModelOptions={controls.selectedModelOptions}
+          modelSelectorOpenSignal={controls.modelSelectorOpenSignal}
           isModelSelectionReady={controls.isModelSelectionReady ?? true}
           attachments={controls.attachments}
           uploadingFiles={controls.uploadingFiles}

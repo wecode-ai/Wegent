@@ -2193,8 +2193,12 @@ describe('DesktopWorkbenchLayout', () => {
       />,
     )
 
-    expect(screen.getByTestId('project-spinner-1')).toBeInTheDocument()
-    expect(screen.getByTestId('history-task-spinner-41')).toBeInTheDocument()
+    expect(screen.getByTestId('project-spinner-1')).toHaveClass(
+      'text-[rgb(var(--color-sidebar-text-muted))]',
+    )
+    expect(screen.getByTestId('history-task-spinner-41')).toHaveClass(
+      'text-[rgb(var(--color-sidebar-text-muted))]',
+    )
   })
 
   test('does not show spinners for stale server running statuses on initial lists', () => {

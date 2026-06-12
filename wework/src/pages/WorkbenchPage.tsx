@@ -56,6 +56,7 @@ export function WorkbenchPage() {
     createEnvironmentBranch,
     setInput,
     sendCurrentInput,
+    retryFailedMessage,
     pauseCurrentResponse,
     isResponseStreaming,
     cancelQueuedMessage,
@@ -125,6 +126,7 @@ export function WorkbenchPage() {
       onCreateEnvironmentBranch={createEnvironmentBranch}
       onInputChange={setInput}
       onSend={sendCurrentInput}
+      onRetryFailedMessage={retryFailedMessage}
       isResponseStreaming={isResponseStreaming}
       onPauseResponse={pauseCurrentResponse}
       onCancelQueuedMessage={cancelQueuedMessage}

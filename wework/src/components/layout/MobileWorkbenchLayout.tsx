@@ -104,6 +104,7 @@ interface MobileWorkbenchLayoutProps {
   onUpgradeDevice?: (deviceId: string) => Promise<void>
   onInputChange: (value: string) => void
   onSend: () => void
+  onRetryFailedMessage?: (messageId: string) => void
   isResponseStreaming?: boolean
   onPauseResponse?: () => void
   onCancelQueuedMessage?: (id: string) => void
@@ -153,6 +154,7 @@ export function MobileWorkbenchLayout({
   onUpgradeDevice = async () => {},
   onInputChange,
   onSend,
+  onRetryFailedMessage,
   isResponseStreaming = false,
   onPauseResponse = () => {},
   onCancelQueuedMessage = () => {},
@@ -165,6 +167,7 @@ export function MobileWorkbenchLayout({
 }: MobileWorkbenchLayoutProps) {
   const { t } = useTranslation('common')
   const [drawerOpen, setDrawerOpen] = useState(false)
+  const [modelSelectorOpenSignal, setModelSelectorOpenSignal] = useState(0)
   const [settingsOpen, setSettingsOpen] = useState(() =>
     isSettingsRoute(stripAppBasePath(window.location.pathname))
   )
@@ -187,6 +190,10 @@ export function MobileWorkbenchLayout({
     isOptionsLocked: false,
     setSelectedModel: () => {},
     setSelectedModelOption: () => {},
+  }
+  const projectChatWithModelSelectorSignal: ProjectChatControls = {
+    ...effectiveProjectChat,
+    modelSelectorOpenSignal,
   }
   const emptyTitle = state.currentProject
     ? t('workbench.project_empty_title', {
@@ -328,6 +335,7 @@ export function MobileWorkbenchLayout({
                     models={effectiveProjectChat.models}
                     selectedModel={effectiveProjectChat.selectedModel}
                     selectedModelOptions={effectiveProjectChat.selectedModelOptions}
+                    openSignal={modelSelectorOpenSignal}
                     disabled={false}
                     onSelectModel={effectiveProjectChat.setSelectedModel}
                     onSelectModelOption={effectiveProjectChat.setSelectedModelOption}
@@ -347,6 +355,10 @@ export function MobileWorkbenchLayout({
               className="h-full"
               scrollerClassName="pb-28 pt-16"
               devices={state.devices}
+              onRetryFailedMessage={message => onRetryFailedMessage?.(message.id)}
+              onSwitchModelForFailedMessage={() =>
+                setModelSelectorOpenSignal(signal => signal + 1)
+              }
               onLoadFileChangesDiff={onLoadFileChangesDiff}
               onRevertFileChanges={onRevertFileChanges}
             />
@@ -382,7 +394,7 @@ export function MobileWorkbenchLayout({
                     'workbench.mobile_input_placeholder',
                     '询问 Wework',
                   )}
-                  projectChat={projectChat}
+                  projectChat={projectChatWithModelSelectorSignal}
                   projectWork={projectWork}
                   queuedMessages={queuedMessages}
                   guidanceMessages={guidanceMessages}
@@ -417,6 +429,7 @@ export function MobileWorkbenchLayout({
                     models={effectiveProjectChat.models}
                     selectedModel={effectiveProjectChat.selectedModel}
                     selectedModelOptions={effectiveProjectChat.selectedModelOptions}
+                    openSignal={modelSelectorOpenSignal}
                     disabled={false}
                     onSelectModel={effectiveProjectChat.setSelectedModel}
                     onSelectModelOption={effectiveProjectChat.setSelectedModelOption}
@@ -472,7 +485,7 @@ export function MobileWorkbenchLayout({
                   'workbench.mobile_input_placeholder',
                   '询问 Wework',
                 )}
-                projectChat={projectChat}
+                projectChat={projectChatWithModelSelectorSignal}
                 projectWork={projectWork}
                 queuedMessages={queuedMessages}
                 guidanceMessages={guidanceMessages}

@@ -95,6 +95,8 @@ const SIDEBAR_ROW_METADATA_CLASS =
   'flex items-center gap-1 text-xs text-[rgb(var(--color-sidebar-text-muted))] group-hover/task:invisible group-focus-within/task:invisible'
 const SIDEBAR_ROW_ACTIONS_CLASS =
   'absolute inset-0 invisible flex items-center justify-end opacity-0 transition-opacity group-hover/task:visible group-hover/task:opacity-100 group-focus-within/task:visible group-focus-within/task:opacity-100'
+const SIDEBAR_RUNNING_SPINNER_CLASS =
+  'h-3.5 w-3.5 animate-spin text-[rgb(var(--color-sidebar-text-muted))]'
 
 function SidebarButton({
   icon: Icon,
@@ -467,7 +469,7 @@ function ProjectTaskRow({
           <span className="flex h-7 w-7 items-center justify-center group-hover/task:invisible group-focus-within/task:invisible">
             <Loader2
               data-testid={`project-chat-spinner-${task.task_id}`}
-              className="h-3.5 w-3.5 animate-spin text-primary"
+              className={SIDEBAR_RUNNING_SPINNER_CLASS}
             />
           </span>
         ) : (
@@ -593,7 +595,7 @@ function ProjectItem({
         {!expanded && projectRunning && (
           <Loader2
             data-testid={`project-spinner-${project.id}`}
-            className="h-3.5 w-3.5 shrink-0 animate-spin text-primary"
+            className={cn(SIDEBAR_RUNNING_SPINNER_CLASS, 'shrink-0')}
           />
         )}
         <div className="absolute right-1 invisible flex shrink-0 items-center opacity-0 transition-opacity group-hover/project:visible group-hover/project:opacity-100 focus-within:visible focus-within:opacity-100">
@@ -731,7 +733,7 @@ function RecentTaskRow({
           <span className="flex h-7 w-7 items-center justify-center group-hover/task:invisible group-focus-within/task:invisible">
             <Loader2
               data-testid={`history-task-spinner-${task.id}`}
-              className="h-3.5 w-3.5 animate-spin text-primary"
+              className={SIDEBAR_RUNNING_SPINNER_CLASS}
             />
           </span>
         ) : (

@@ -1035,6 +1035,96 @@ describe('ChatInput', () => {
     expect(setSelectedModel).toHaveBeenCalledWith(model)
   })
 
+  test('opens the desktop model menu when the external open signal changes', async () => {
+    const model: UnifiedModel = {
+      name: 'overseas-gpt-5.5',
+      type: 'user',
+      displayName: '海外:gpt-5.5',
+      config: {
+        ui: {
+          family: 'gpt',
+          region: 'overseas',
+          modelLabel: 'gpt-5.5',
+          sortOrder: 10,
+        },
+      },
+    }
+    const { rerender } = render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({
+          models: [model],
+          selectedModel: model,
+          modelSelectorOpenSignal: 0,
+        })}
+      />,
+    )
+
+    expect(screen.queryByTestId('model-selector-menu')).not.toBeInTheDocument()
+
+    rerender(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({
+          models: [model],
+          selectedModel: model,
+          modelSelectorOpenSignal: 1,
+        })}
+      />,
+    )
+
+    expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
+  })
+
+  test('closes the desktop model menu after selecting a model opened by external signal', async () => {
+    const model: UnifiedModel = {
+      name: 'ali-qwen3-coder-plus',
+      type: 'user',
+      displayName: 'ali-qwen3-coder-plus',
+      config: {
+        ui: {
+          family: 'qwen',
+          region: 'domestic',
+          modelLabel: 'ali-qwen3-coder-plus',
+          sortOrder: 10,
+        },
+      },
+    }
+    const setSelectedModel = vi.fn()
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({
+          models: [model],
+          selectedModel: null,
+          modelSelectorOpenSignal: 1,
+          setSelectedModel,
+        })}
+      />,
+    )
+
+    expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('model-option-ali-qwen3-coder-plus'))
+
+    expect(setSelectedModel).toHaveBeenCalledWith(model)
+    await waitFor(() =>
+      expect(screen.queryByTestId('model-selector-menu')).not.toBeInTheDocument(),
+    )
+  })
+
   test('moves the desktop model submenu upward when the active family is near the viewport bottom', async () => {
     const originalInnerHeight = window.innerHeight
     Object.defineProperty(window, 'innerHeight', {

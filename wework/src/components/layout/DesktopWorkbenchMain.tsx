@@ -73,6 +73,7 @@ interface DesktopWorkbenchMainProps {
   onUpgradeDevice: (deviceId: string) => Promise<void>
   onInputChange: (value: string) => void
   onSend: () => void
+  onRetryFailedMessage?: (messageId: string) => void
   isResponseStreaming: boolean
   onPauseResponse: () => void
   onCancelQueuedMessage: (id: string) => void
@@ -110,6 +111,7 @@ export function DesktopWorkbenchMain({
   onUpgradeDevice,
   onInputChange,
   onSend,
+  onRetryFailedMessage,
   isResponseStreaming,
   onPauseResponse,
   onCancelQueuedMessage,
@@ -124,6 +126,7 @@ export function DesktopWorkbenchMain({
   const [rightPanelOpen, setRightPanelOpen] = useState(false)
   const [bottomPanelOpen, setBottomPanelOpen] = useState(false)
   const isTauri = isTauriRuntime()
+  const [modelSelectorOpenSignal, setModelSelectorOpenSignal] = useState(0)
   const hasConversation = messages.length > 0 || currentTask
   const hasQueuedComposerRows = queuedMessages.length > 0 || guidanceMessages.length > 0
   const activeDeviceId = getActiveWorkbenchDeviceId({
@@ -147,6 +150,10 @@ export function DesktopWorkbenchMain({
     activeDeviceUnavailable ||
     activeDeviceVersionUnsupported ||
     noStandaloneCompatibleDevice
+  const projectChatWithModelSelectorSignal: ProjectChatControls = {
+    ...projectChat,
+    modelSelectorOpenSignal,
+  }
   const emptyTitle = currentProject
     ? t('workbench.project_empty_title', {
         defaultValue: `我们应该在 ${currentProject.name} 中构建什么？`,
@@ -216,6 +223,10 @@ export function DesktopWorkbenchMain({
                   : DESKTOP_SCROLL_TO_BOTTOM_BUTTON_CLASS
               }
               devices={devices}
+              onRetryFailedMessage={message => onRetryFailedMessage?.(message.id)}
+              onSwitchModelForFailedMessage={() =>
+                setModelSelectorOpenSignal(signal => signal + 1)
+              }
               onLoadFileChangesDiff={onLoadFileChangesDiff}
               onRevertFileChanges={onRevertFileChanges}
             />
@@ -256,7 +267,7 @@ export function DesktopWorkbenchMain({
                   disabled={composerDisabled}
                   placeholder={t('workbench.input_placeholder', '尽管问')}
                   variant="desktop"
-                  projectChat={projectChat}
+                  projectChat={projectChatWithModelSelectorSignal}
                   projectWork={projectWork}
                   showProjectWorkBar={false}
                   queuedMessages={queuedMessages}
@@ -297,7 +308,7 @@ export function DesktopWorkbenchMain({
                 disabled={composerDisabled}
                 placeholder={t('workbench.input_placeholder', '尽管问')}
                 variant="desktop"
-                projectChat={projectChat}
+                projectChat={projectChatWithModelSelectorSignal}
                 projectWork={projectWork}
                 queuedMessages={queuedMessages}
                 guidanceMessages={guidanceMessages}

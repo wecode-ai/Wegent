@@ -91,6 +91,7 @@ interface DesktopWorkbenchLayoutProps {
   ) => Promise<void>
   onInputChange: (value: string) => void
   onSend: () => void
+  onRetryFailedMessage?: (messageId: string) => void
   isResponseStreaming?: boolean
   onPauseResponse?: () => void
   onCancelQueuedMessage?: (id: string) => void
@@ -152,6 +153,7 @@ export function DesktopWorkbenchLayout({
   onCreateEnvironmentBranch,
   onInputChange,
   onSend,
+  onRetryFailedMessage,
   isResponseStreaming = false,
   onPauseResponse = () => {},
   onCancelQueuedMessage = () => {},
@@ -376,6 +378,7 @@ export function DesktopWorkbenchLayout({
           onUpgradeDevice={onUpgradeDevice}
           onInputChange={onInputChange}
           onSend={onSend}
+          onRetryFailedMessage={onRetryFailedMessage}
           isResponseStreaming={isResponseStreaming}
           onPauseResponse={onPauseResponse}
           onCancelQueuedMessage={onCancelQueuedMessage}
