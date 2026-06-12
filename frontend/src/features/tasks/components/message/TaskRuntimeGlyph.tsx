@@ -5,7 +5,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import type { TaskStateSnapshot } from '@/features/tasks/state'
+import type { TaskStateSnapshot } from '@wegent/chat-core'
 
 const GLYPH_VISIBLE_DELAY_MS = 3000
 

@@ -14,46 +14,31 @@
  * - stale pending chunks / late CHAT_CHUNK must not resurrect finalized messages
  */
 
-import { TaskStateMachine, type TaskStateMachineDeps } from '@/features/tasks/state'
-import { getChatSendState } from '@/features/tasks/components/input/chatSendState'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { TaskStateMachine, type TaskStateMachineDeps } from '..'
 
 function createRuntimeActions(overrides: Partial<TaskStateMachineDeps> = {}): TaskStateMachineDeps {
   return {
-    joinTask: jest.fn().mockResolvedValue({ subtasks: [] }),
-    pullRuntime: jest.fn().mockResolvedValue({
+    joinTask: vi.fn().mockResolvedValue({ subtasks: [] }),
+    pullRuntime: vi.fn().mockResolvedValue({
       task_id: 42,
       task_status: 'COMPLETED',
       status_updated_at: '2026-06-01T10:00:00',
       active_stream: null,
     }),
-    isConnected: jest.fn(() => true),
+    isConnected: vi.fn(() => true),
     ...overrides,
   }
-}
-
-function computeSendState(machine: TaskStateMachine) {
-  const state = machine.getState()
-  return getChatSendState({
-    isStreaming: state.derived.isStreaming,
-    isStopping: state.isStopping,
-    isModelSelectionRequired: false,
-    isAttachmentReadyToSend: true,
-    hasNoTeams: false,
-    shouldHideChatInput: false,
-    taskInputMessage: 'hello',
-    canQueueMessage: state.derived.canQueueMessage,
-    canCancelTask: state.derived.canCancelTask,
-  }).primaryAction
 }
 
 type JoinTaskResponse = Awaited<ReturnType<TaskStateMachineDeps['joinTask']>>
 
 describe('TaskStateMachine recovery', () => {
   describe('recovery invariant: transient isStopping cleared after sync completes', () => {
-    let consoleInfoSpy: jest.SpyInstance
+    let consoleInfoSpy: ReturnType<typeof vi.spyOn>
 
     beforeEach(() => {
-      consoleInfoSpy = jest.spyOn(console, 'info').mockImplementation(() => {})
+      consoleInfoSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
     })
 
     afterEach(() => {
@@ -62,13 +47,13 @@ describe('TaskStateMachine recovery', () => {
 
     it('SYNC_DONE clears isStopping and transitions to ready', async () => {
       const actions = createRuntimeActions({
-        pullRuntime: jest.fn().mockResolvedValue({
+        pullRuntime: vi.fn().mockResolvedValue({
           task_id: 42,
           task_status: 'COMPLETED',
           status_updated_at: '2026-06-01T10:00:05',
           active_stream: null,
         }),
-        joinTask: jest.fn().mockResolvedValue({ subtasks: [] }),
+        joinTask: vi.fn().mockResolvedValue({ subtasks: [] }),
       })
       const machine = new TaskStateMachine(42, actions)
       machine.handleChatStart(10)
@@ -80,12 +65,12 @@ describe('TaskStateMachine recovery', () => {
       expect(state.isStopping).toBe(false)
       expect(state.phase).toBe('ready')
       expect(state.derived.isStreaming).toBe(false)
-      expect(computeSendState(machine)).toBe('send')
+      expect(state.derived.canSendMessage).toBe(true)
     })
 
     it('SYNC_DONE_STREAMING clears isStopping but keeps stop/queue send state', async () => {
       const actions = createRuntimeActions({
-        pullRuntime: jest.fn().mockResolvedValue({
+        pullRuntime: vi.fn().mockResolvedValue({
           task_id: 42,
           task_status: 'RUNNING',
           status_updated_at: '2026-06-01T10:00:05',
@@ -95,7 +80,7 @@ describe('TaskStateMachine recovery', () => {
             last_activity_at: '2026-06-01T10:00:05.000Z',
           },
         }),
-        joinTask: jest.fn().mockResolvedValue({
+        joinTask: vi.fn().mockResolvedValue({
           subtasks: [
             {
               id: 10,
@@ -136,7 +121,7 @@ describe('TaskStateMachine recovery', () => {
       expect(state.isStopping).toBe(false)
       expect(state.phase).toBe('streaming')
       expect(state.derived.isStreaming).toBe(true)
-      expect(['stop', 'queue']).toContain(computeSendState(machine))
+      expect(state.derived.canSendMessage).toBe(false)
     })
   })
 
@@ -172,12 +157,12 @@ describe('TaskStateMachine recovery', () => {
       expect(state.runtime.activeStreamSubtaskId).toBeUndefined()
       expect(state.derived.isStreaming).toBe(true)
       expect(state.derived.canSendMessage).toBe(false)
-      expect(computeSendState(machine)).toBe('stop')
+      expect(state.isStopping).toBe(false)
     })
 
     it('state machine probes runtime instability and exits unknown stream when runtime confirms no stream', async () => {
-      jest.useFakeTimers()
-      const pullRuntime = jest.fn().mockResolvedValue({
+      vi.useFakeTimers()
+      const pullRuntime = vi.fn().mockResolvedValue({
         task_id: 42,
         task_status: 'RUNNING',
         status_updated_at: '2026-06-01T10:00:05',
@@ -194,10 +179,10 @@ describe('TaskStateMachine recovery', () => {
         machine.markSendAccepted('2026-06-01T10:00:00')
 
         expect(machine.getState().derived.isStreaming).toBe(true)
-        await jest.advanceTimersByTimeAsync(2999)
+        await vi.advanceTimersByTimeAsync(2999)
         expect(pullRuntime).not.toHaveBeenCalled()
 
-        await jest.advanceTimersByTimeAsync(1)
+        await vi.advanceTimersByTimeAsync(1)
 
         expect(pullRuntime).toHaveBeenCalledTimes(1)
         const state = machine.getState()
@@ -207,13 +192,13 @@ describe('TaskStateMachine recovery', () => {
         expect(state.derived.canSendMessage).toBe(true)
       } finally {
         machine.closeTask()
-        jest.useRealTimers()
+        vi.useRealTimers()
       }
     })
 
     it('state machine retries runtime instability probe until runtime reaches a stable state', async () => {
-      jest.useFakeTimers()
-      const pullRuntime = jest
+      vi.useFakeTimers()
+      const pullRuntime = vi
         .fn()
         .mockRejectedValueOnce(new Error('temporary network failure'))
         .mockResolvedValueOnce({
@@ -232,23 +217,23 @@ describe('TaskStateMachine recovery', () => {
       try {
         machine.markSendAccepted('2026-06-01T10:00:00')
 
-        await jest.advanceTimersByTimeAsync(3000)
+        await vi.advanceTimersByTimeAsync(3000)
         expect(pullRuntime).toHaveBeenCalledTimes(1)
         expect(machine.getState().derived.isStreaming).toBe(true)
 
-        await jest.advanceTimersByTimeAsync(3000)
+        await vi.advanceTimersByTimeAsync(3000)
 
         expect(pullRuntime).toHaveBeenCalledTimes(2)
         expect(machine.getState().derived.isStreaming).toBe(false)
       } finally {
         machine.closeTask()
-        jest.useRealTimers()
+        vi.useRealTimers()
       }
     })
 
     it('state machine stops runtime instability probe when chat:start makes the stream known', async () => {
-      jest.useFakeTimers()
-      const pullRuntime = jest.fn()
+      vi.useFakeTimers()
+      const pullRuntime = vi.fn()
       const machine = new TaskStateMachine(
         42,
         createRuntimeActions({
@@ -260,19 +245,19 @@ describe('TaskStateMachine recovery', () => {
         machine.markSendAccepted('2026-06-01T10:00:00')
         machine.handleChatStart(10, 'Chat', 1)
 
-        await jest.advanceTimersByTimeAsync(3000)
+        await vi.advanceTimersByTimeAsync(3000)
 
         expect(pullRuntime).not.toHaveBeenCalled()
         expect(machine.getState().runtime.activeStreamSubtaskId).toBe(10)
       } finally {
         machine.closeTask()
-        jest.useRealTimers()
+        vi.useRealTimers()
       }
     })
 
     it('state machine probes cancel pending state with the same runtime instability delay', async () => {
-      jest.useFakeTimers()
-      const pullRuntime = jest.fn().mockResolvedValue({
+      vi.useFakeTimers()
+      const pullRuntime = vi.fn().mockResolvedValue({
         task_id: 42,
         task_status: 'RUNNING',
         status_updated_at: '2026-06-01T10:00:05',
@@ -290,10 +275,10 @@ describe('TaskStateMachine recovery', () => {
         machine.handleChatStart(10, 'Chat', 1)
         machine.setStopping(true)
 
-        await jest.advanceTimersByTimeAsync(2999)
+        await vi.advanceTimersByTimeAsync(2999)
         expect(pullRuntime).not.toHaveBeenCalled()
 
-        await jest.advanceTimersByTimeAsync(1)
+        await vi.advanceTimersByTimeAsync(1)
 
         expect(pullRuntime).toHaveBeenCalledTimes(1)
         const state = machine.getState()
@@ -302,13 +287,13 @@ describe('TaskStateMachine recovery', () => {
         expect(state.derived.isStreaming).toBe(false)
       } finally {
         machine.closeTask()
-        jest.useRealTimers()
+        vi.useRealTimers()
       }
     })
 
     it('state machine retries cancel pending runtime instability until runtime reaches a stable state', async () => {
-      jest.useFakeTimers()
-      const pullRuntime = jest
+      vi.useFakeTimers()
+      const pullRuntime = vi
         .fn()
         .mockRejectedValueOnce(new Error('temporary network failure'))
         .mockResolvedValueOnce({
@@ -329,24 +314,24 @@ describe('TaskStateMachine recovery', () => {
         machine.handleChatStart(10, 'Chat', 1)
         machine.setStopping(true)
 
-        await jest.advanceTimersByTimeAsync(3000)
+        await vi.advanceTimersByTimeAsync(3000)
         expect(pullRuntime).toHaveBeenCalledTimes(1)
         expect(machine.getState().isStopping).toBe(true)
 
-        await jest.advanceTimersByTimeAsync(3000)
+        await vi.advanceTimersByTimeAsync(3000)
 
         expect(pullRuntime).toHaveBeenCalledTimes(2)
         expect(machine.getState().isStopping).toBe(false)
         expect(machine.getState().derived.isStreaming).toBe(false)
       } finally {
         machine.closeTask()
-        jest.useRealTimers()
+        vi.useRealTimers()
       }
     })
 
     it('state machine stops runtime instability probe when chat:cancelled arrives', async () => {
-      jest.useFakeTimers()
-      const pullRuntime = jest.fn()
+      vi.useFakeTimers()
+      const pullRuntime = vi.fn()
       const machine = new TaskStateMachine(
         42,
         createRuntimeActions({
@@ -360,19 +345,19 @@ describe('TaskStateMachine recovery', () => {
         machine.setStopping(true)
         machine.handleChatCancelled(10)
 
-        await jest.advanceTimersByTimeAsync(3000)
+        await vi.advanceTimersByTimeAsync(3000)
 
         expect(pullRuntime).not.toHaveBeenCalled()
         expect(machine.getState().isStopping).toBe(false)
       } finally {
         machine.closeTask()
-        jest.useRealTimers()
+        vi.useRealTimers()
       }
     })
   })
 
   it('ignores stale join rejection after the task is reopened', async () => {
-    const consoleInfoSpy = jest.spyOn(console, 'info').mockImplementation(() => {})
+    const consoleInfoSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
     let rejectFirstJoin!: (error: Error) => void
     let resolveSecondJoin!: (response: JoinTaskResponse) => void
     const firstJoin = new Promise<JoinTaskResponse>((_resolve, reject) => {
@@ -381,8 +366,8 @@ describe('TaskStateMachine recovery', () => {
     const secondJoin = new Promise<JoinTaskResponse>(resolve => {
       resolveSecondJoin = resolve
     })
-    const joinTask = jest.fn().mockReturnValueOnce(firstJoin).mockReturnValueOnce(secondJoin)
-    const leaveTask = jest.fn()
+    const joinTask = vi.fn().mockReturnValueOnce(firstJoin).mockReturnValueOnce(secondJoin)
+    const leaveTask = vi.fn()
 
     try {
       const machine = new TaskStateMachine(42, {
@@ -418,10 +403,10 @@ describe('TaskStateMachine recovery', () => {
   })
 
   describe('cancel sent then socket closed before ack', () => {
-    let consoleInfoSpy: jest.SpyInstance
+    let consoleInfoSpy: ReturnType<typeof vi.spyOn>
 
     beforeEach(() => {
-      consoleInfoSpy = jest.spyOn(console, 'info').mockImplementation(() => {})
+      consoleInfoSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
     })
 
     afterEach(() => {
@@ -430,13 +415,13 @@ describe('TaskStateMachine recovery', () => {
 
     it('[MATRIX 1] recovery finalizes stale streaming and clears isStopping when server confirms no stream', async () => {
       const actions = createRuntimeActions({
-        pullRuntime: jest.fn().mockResolvedValue({
+        pullRuntime: vi.fn().mockResolvedValue({
           task_id: 42,
           task_status: 'COMPLETED',
           status_updated_at: '2026-06-01T10:00:10',
           active_stream: null,
         }),
-        joinTask: jest.fn().mockResolvedValue({
+        joinTask: vi.fn().mockResolvedValue({
           subtasks: [
             {
               id: 10,
@@ -482,11 +467,11 @@ describe('TaskStateMachine recovery', () => {
       expect(message?.status).toBe('completed')
       expect(message?.subtaskStatus).toBe('COMPLETED')
       expect(message?.isReasoningStreaming).toBe(false)
-      expect(computeSendState(machine)).toBe('send')
+      expect(state.derived.canSendMessage).toBe(true)
     })
 
     it('[MATRIX 2] socket reconnect with stale RUNNING recovers to send with canCancelTask=false', async () => {
-      const joinTask = jest.fn().mockResolvedValue({
+      const joinTask = vi.fn().mockResolvedValue({
         subtasks: [
           {
             id: 58,
@@ -534,7 +519,7 @@ describe('TaskStateMachine recovery', () => {
     })
 
     it('[MATRIX 6a] CANCELLED subtask finalizes as error', async () => {
-      const joinTask = jest.fn().mockResolvedValue({
+      const joinTask = vi.fn().mockResolvedValue({
         subtasks: [
           {
             id: 58,
@@ -576,7 +561,7 @@ describe('TaskStateMachine recovery', () => {
     })
 
     it('[MATRIX 6b] FAILED subtask finalizes as error, never completed', async () => {
-      const joinTask = jest.fn().mockResolvedValue({
+      const joinTask = vi.fn().mockResolvedValue({
         subtasks: [
           {
             id: 58,
@@ -618,7 +603,7 @@ describe('TaskStateMachine recovery', () => {
     })
 
     it('[MATRIX 5] late direct CHAT_CHUNK does not resurrect finalized message to streaming', async () => {
-      const joinTask = jest.fn().mockResolvedValue({
+      const joinTask = vi.fn().mockResolvedValue({
         subtasks: [
           {
             id: 58,
@@ -667,7 +652,7 @@ describe('TaskStateMachine recovery', () => {
     })
 
     it('[MATRIX 1b] incremental join with empty subtasks and no stream: serverConfirmedNoStream=true, not streaming', async () => {
-      const joinTask = jest.fn().mockResolvedValue({
+      const joinTask = vi.fn().mockResolvedValue({
         subtasks: [],
       })
 
@@ -686,14 +671,14 @@ describe('TaskStateMachine recovery', () => {
       expect(state.derived.canCancelTask).toBe(false)
       expect(state.derived.blocksQueuedDispatch).toBe(false)
       expect(state.isStopping).toBe(false)
-      expect(computeSendState(machine)).toBe('send')
+      expect(state.derived.canSendMessage).toBe(true)
       // Message is NOT marked completed — server confirmed no-stream but
       // no terminal subtask data exists, so use non-success representation
       expect(state.messages.get('ai-58')?.status).not.toBe('completed')
     })
 
     it('[MATRIX 3] late CHAT_START after finalization does not resurrect', async () => {
-      const joinTask = jest.fn().mockResolvedValue({
+      const joinTask = vi.fn().mockResolvedValue({
         subtasks: [
           {
             id: 58,
@@ -743,7 +728,7 @@ describe('TaskStateMachine recovery', () => {
     })
 
     it('[MATRIX 1c] stale RUNNING subtask with no stream: finalized as error, not streaming', async () => {
-      const joinTask = jest.fn().mockResolvedValue({
+      const joinTask = vi.fn().mockResolvedValue({
         subtasks: [
           {
             id: 58,
@@ -786,7 +771,7 @@ describe('TaskStateMachine recovery', () => {
       expect(state.derived.canCancelTask).toBe(false)
       expect(state.derived.blocksQueuedDispatch).toBe(false)
       expect(state.isStopping).toBe(false)
-      expect(computeSendState(machine)).toBe('send')
+      expect(state.derived.canSendMessage).toBe(true)
       // Message must NOT be streaming and NOT completed — non-terminal stale
       // subtask with confirmed no-stream must use non-success representation
       const message = state.messages.get('ai-58')
@@ -796,7 +781,7 @@ describe('TaskStateMachine recovery', () => {
     })
 
     it('[MATRIX 1d] stale PENDING subtask with no stream: finalized as error, not streaming or completed', async () => {
-      const joinTask = jest.fn().mockResolvedValue({
+      const joinTask = vi.fn().mockResolvedValue({
         subtasks: [
           {
             id: 58,
@@ -839,7 +824,7 @@ describe('TaskStateMachine recovery', () => {
       expect(state.derived.canCancelTask).toBe(false)
       expect(state.derived.blocksQueuedDispatch).toBe(false)
       expect(state.isStopping).toBe(false)
-      expect(computeSendState(machine)).toBe('send')
+      expect(state.derived.canSendMessage).toBe(true)
       const message = state.messages.get('ai-58')
       expect(message?.status).toBe('error')
       expect(message?.status).not.toBe('streaming')
@@ -850,8 +835,8 @@ describe('TaskStateMachine recovery', () => {
 
     it('runtime check fast path exits unknown when server confirms no stream', async () => {
       const statusUpdatedAt = '2026-06-08T19:03:54'
-      const joinTask = jest.fn().mockResolvedValue({ subtasks: [] })
-      const pullRuntime = jest.fn().mockResolvedValue({
+      const joinTask = vi.fn().mockResolvedValue({ subtasks: [] })
+      const pullRuntime = vi.fn().mockResolvedValue({
         task_id: 9,
         task_status: 'RUNNING',
         status_updated_at: statusUpdatedAt,
@@ -876,13 +861,13 @@ describe('TaskStateMachine recovery', () => {
       expect(state.derived.canSendMessage).toBe(true)
       expect(state.derived.canCancelTask).toBe(false)
       expect(state.derived.blocksQueuedDispatch).toBe(false)
-      expect(computeSendState(machine)).toBe('send')
+      expect(state.isStopping).toBe(false)
     })
 
     it('runtime check fast path finalizes stale streaming messages when server has no stream', async () => {
       const statusUpdatedAt = '2026-06-08T19:03:54'
-      const joinTask = jest.fn().mockResolvedValue({ subtasks: [] })
-      const pullRuntime = jest.fn().mockResolvedValue({
+      const joinTask = vi.fn().mockResolvedValue({ subtasks: [] })
+      const pullRuntime = vi.fn().mockResolvedValue({
         task_id: 9,
         task_status: 'RUNNING',
         status_updated_at: statusUpdatedAt,

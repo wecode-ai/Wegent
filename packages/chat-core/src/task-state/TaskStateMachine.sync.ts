@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import type { TaskDetailSubtask } from '@/types/api'
+import type { TaskDetailSubtask } from '../api-types'
 import { buildMessagesFromSubtasks } from './TaskStateMachine.messageBuilder'
 import { generateMessageId } from './TaskStateMachine.messageUtils'
 import type {

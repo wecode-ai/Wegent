@@ -515,7 +515,7 @@ export class MockModelServer {
 
 ```bash
 cd frontend
-npx playwright test chat-image-e2e.spec.ts --grep "Image URL Format Unit Tests"
+pnpm exec playwright test chat-image-e2e.spec.ts --grep "Image URL Format Unit Tests"
 ```
 
 ### 9.2 运行完整 E2E 测试
@@ -540,7 +540,7 @@ npx ts-node e2e/utils/mock-model-server.ts
 
 ```bash
 cd frontend
-npx playwright test chat-image-e2e.spec.ts --grep "Chat Image E2E"
+pnpm exec playwright test chat-image-e2e.spec.ts --grep "Chat Image E2E"
 ```
 
 ### 9.3 测试自动创建的资源

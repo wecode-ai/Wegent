@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import type { MessageBlock } from '../components/message/thinking/types'
+import type { MessageBlock } from '../message-blocks'
 import { mergeStreamingBlocks } from './TaskStateMachine.blockMerging'
 import { generateMessageId, mergeChunkContent } from './TaskStateMachine.messageUtils'
 import type {

@@ -44,7 +44,9 @@ describe('useMessageSendQueue', () => {
       'first',
       'second',
     ])
-    expect(result.current.activeTaskQueue).toEqual([])
+    await waitFor(() => {
+      expect(result.current.activeTaskQueue).toEqual([])
+    })
   })
 
   it('pauses later queued messages when one dispatch fails', async () => {
@@ -251,6 +253,10 @@ describe('useMessageSendQueue', () => {
       expect(dispatchMessage).toHaveBeenCalledTimes(1)
     })
     expect(dispatchMessage.mock.calls[0][0].snapshot.message).toBe('active-task')
-    expect(result.current.queuedMessages.map(item => item.snapshot.message)).toEqual(['other-task'])
+    await waitFor(() => {
+      expect(result.current.queuedMessages.map(item => item.snapshot.message)).toEqual([
+        'other-task',
+      ])
+    })
   })
 })

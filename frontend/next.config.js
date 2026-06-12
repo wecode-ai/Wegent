@@ -32,6 +32,7 @@ const nextConfig = {
     '@codemirror/theme-one-dark',
     '@replit/codemirror-vim',
     'katex',
+    '@wegent/chat-core',
     // Note: @novnc/novnc is NOT included here. It ships CJS with top-level await
     // which is incompatible with webpack's module system. Instead, noVNC is
     // pre-built into public/novnc/rfb.min.js and loaded at runtime via <script> tag.

@@ -16,7 +16,7 @@ import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import type { Team, Attachment, SubtaskContextBrief } from '@/types/api'
 import type { SourceReference } from '@/types/socket'
 import type { MessageBlock } from '../components/message/thinking/types'
-import type { UnifiedMessage, SyncOptions } from '../state'
+import type { UnifiedMessage, SyncOptions } from '@wegent/chat-core'
 
 /**
  * Message for display - extends UnifiedMessage with additional rendering info

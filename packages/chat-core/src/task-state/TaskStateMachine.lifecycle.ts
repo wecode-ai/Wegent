@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import type { TaskStatus as ApiTaskStatus } from '@/types/api'
+import type { TaskStatus as ApiTaskStatus } from '../api-types'
 import type {
   MessageStatus,
   TaskMachineInternalState,

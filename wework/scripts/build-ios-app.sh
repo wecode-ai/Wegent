@@ -85,7 +85,7 @@ BUILD_ARGS+=(--export-method "$EXPORT_METHOD")
 [ "$VERBOSE" = "1" ] && BUILD_ARGS+=(--verbose)
 
 if [ "${WEWORK_DRY_RUN:-}" = "1" ]; then
-  echo "  DRY RUN: npx tauri ${BUILD_ARGS[*]}"
+  echo "  DRY RUN: pnpm exec tauri ${BUILD_ARGS[*]}"
   exit 0
 fi
 
@@ -100,4 +100,4 @@ if [ -f "$PBXPROJ" ]; then
 fi
 
 cd "$WEWORK_DIR"
-exec npx tauri "${BUILD_ARGS[@]}"
+exec pnpm exec tauri "${BUILD_ARGS[@]}"

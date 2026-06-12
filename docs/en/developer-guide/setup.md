@@ -1,3 +1,7 @@
+---
+sidebar_position: 2
+---
+
 # 💻 Development Setup
 
 This document provides detailed instructions on setting up a local development environment for Wegent.
@@ -11,7 +15,7 @@ Before starting, ensure your development environment has the following software 
 ### Required Software
 
 - **Python 3.10+**: For backend service, Executor, and Executor Manager
-- **Node.js 18+**: For frontend development
+- **Node.js 20+**: For frontend development and tests
 - **MySQL 8.0+**: Database service
 - **Redis 7+**: Cache service
 - **Docker & Docker Compose**: For containerized deployment and development
@@ -192,10 +196,10 @@ The frontend is a React application based on Next.js 15.
 #### Install Dependencies
 
 ```bash
-cd frontend
+cd wegent
 
-# Install npm dependencies
-npm install
+# Install pnpm workspace dependencies
+pnpm install
 ```
 
 #### Configure Environment Variables
@@ -222,7 +226,7 @@ cp .env.local.example .env.local
 
 ```bash
 # Start development server
-npm run dev
+pnpm --filter wecode-ai-assistant run dev
 ```
 
 Access application: http://localhost:3000
@@ -231,16 +235,16 @@ Access application: http://localhost:3000
 
 ```bash
 # Lint code
-npm run lint
+pnpm --filter wecode-ai-assistant run lint
 
 # Format code
-npm run format
+pnpm --filter wecode-ai-assistant run format
 
 # Production build
-npm run build
+pnpm --filter wecode-ai-assistant run build
 
 # Run production version
-npm run start
+pnpm --filter wecode-ai-assistant run start
 ```
 
 ---
@@ -324,16 +328,16 @@ pytest -m integration
 ### Frontend Testing
 
 ```bash
-cd frontend
+cd wegent
 
 # Run tests
-npm test
+pnpm --filter wecode-ai-assistant test
 
 # Run and watch for changes
-npm run test:watch
+pnpm --filter wecode-ai-assistant run test:watch
 
 # Generate coverage report
-npm run test:coverage
+pnpm --filter wecode-ai-assistant run test:coverage
 ```
 
 ### Executor and Shared Module Testing

@@ -1,5 +1,7 @@
-import { Page } from '@playwright/test'
+import { expect, Page } from '@playwright/test'
 import { BasePage } from '../base.page'
+
+const SHELL_RESOURCES_URL = '/resource-library?tab=mine&type=shell&source=personal'
 
 /**
  * Settings Shell Page Object
@@ -12,29 +14,39 @@ export class ShellsPage extends BasePage {
 
   // Navigation
   async navigate(): Promise<void> {
-    await this.goto('/settings?section=personal&tab=personal-shells')
+    await this.goto(SHELL_RESOURCES_URL)
+    await this.waitForShellResourcePage()
   }
 
   async navigateToGroupShells(groupName?: string): Promise<void> {
     const groupParam = groupName ? `&group=${encodeURIComponent(groupName)}` : ''
-    await this.goto(`/settings?section=groups&tab=group-shells${groupParam}`)
+    await this.goto(`/resource-library?tab=mine&type=shell&source=group${groupParam}`)
+    await this.waitForShellResourcePage()
   }
 
-  isOnSettingsPage(): boolean {
-    return this.page.url().includes('/settings')
+  isOnResourceLibraryPage(): boolean {
+    return this.page.url().includes('/resource-library')
+  }
+
+  async waitForShellResourcePage(): Promise<void> {
+    await expect(this.page.locator('[data-testid="my-resources"]')).toBeVisible({
+      timeout: 15000,
+    })
+    await expect(this.page.locator('[data-testid="managed-resource-shell-tab"]')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
   }
 
   // Shell list operations
   async getShellCount(): Promise<number> {
-    await this.waitForPageLoad()
-    const cards = this.page.locator('[data-testid="shell-card"], .shell-card, .space-y-3 > div')
+    await this.waitForShellResourcePage()
+    const cards = this.page.locator('[data-testid="shell-list-items"] > *')
     return await cards.count()
   }
 
   async clickCreateShell(): Promise<void> {
-    await this.page.click(
-      'button:has-text("Create Shell"), button:has-text("新建Shell"), button:has-text("New Shell")'
-    )
+    await this.page.locator('[data-testid="create-shell-button"]').click()
     await this.waitForDialog()
   }
 

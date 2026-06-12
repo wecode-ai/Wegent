@@ -301,17 +301,15 @@ CHECK_FAILED=0
 if [ "$FRONTEND_COUNT" -gt 0 ] 2>/dev/null; then
     echo -e "${BLUE}🔍 Frontend Checks:${NC}"
     
-    # Check if we're in the right directory and node_modules exists
-    if [ ! -d "frontend/node_modules" ]; then
+    # Check if workspace dependencies are installed.
+    if [ ! -d "node_modules" ] || [ ! -d "frontend/node_modules" ]; then
         echo -e "   ${YELLOW}⚠️ SKIP: node_modules not found${NC}"
-        echo -e "   ${YELLOW}   Run 'cd frontend && npm install' to install dependencies${NC}"
+        echo -e "   ${YELLOW}   Run 'pnpm install' from the repository root to install dependencies${NC}"
         WARNINGS+=("Frontend: node_modules not found, checks skipped")
     else
-        cd frontend
-        
         # ESLint (output to temp file to reduce memory usage)
         echo -e "   Running ESLint..."
-        npm run lint > "$TEMP_DIR/eslint.log" 2>&1
+        pnpm --filter wecode-ai-assistant lint > "$TEMP_DIR/eslint.log" 2>&1
         ESLINT_EXIT=$?
         if [ $ESLINT_EXIT -eq 0 ]; then
             echo -e "   ${GREEN}✅ ESLint: PASSED${NC}"
@@ -324,7 +322,7 @@ if [ "$FRONTEND_COUNT" -gt 0 ] 2>/dev/null; then
         
         # TypeScript type check (output to temp file to reduce memory usage)
         echo -e "   Running TypeScript check..."
-        npx tsc --noEmit > "$TEMP_DIR/tsc.log" 2>&1
+        pnpm --filter wecode-ai-assistant exec tsc --noEmit > "$TEMP_DIR/tsc.log" 2>&1
         TSC_EXIT=$?
         if [ $TSC_EXIT -eq 0 ]; then
             echo -e "   ${GREEN}✅ TypeScript: PASSED${NC}"
@@ -337,9 +335,11 @@ if [ "$FRONTEND_COUNT" -gt 0 ] 2>/dev/null; then
         
         # Unit tests (output to temp file to reduce memory usage)
         echo -e "   Running unit tests..."
-        npm test -- --passWithNoTests > "$TEMP_DIR/test.log" 2>&1
+        pnpm --filter @wegent/chat-core test > "$TEMP_DIR/test.log" 2>&1
+        CORE_TEST_EXIT=$?
+        pnpm --filter wecode-ai-assistant test --passWithNoTests >> "$TEMP_DIR/test.log" 2>&1
         TEST_EXIT=$?
-        if [ $TEST_EXIT -eq 0 ]; then
+        if [ $CORE_TEST_EXIT -eq 0 ] && [ $TEST_EXIT -eq 0 ]; then
             echo -e "   ${GREEN}✅ Unit Tests: PASSED${NC}"
         else
             echo -e "   ${RED}❌ Unit Tests: FAILED${NC}"
@@ -352,7 +352,6 @@ if [ "$FRONTEND_COUNT" -gt 0 ] 2>/dev/null; then
         # Full build verification should be done in CI pipeline.
         
     fi
-    cd ..
     echo ""
 fi
 

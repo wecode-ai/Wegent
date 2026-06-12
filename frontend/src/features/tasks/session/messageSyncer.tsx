@@ -29,8 +29,8 @@ import {
 } from '@/types/socket'
 import type { InteractiveFormAnswerPayload, TaskDetailSubtask, Team, TaskType } from '@/types/api'
 import type { MessageBlock } from '../components/message/thinking/types'
-import { generateMessageId, TaskStateMachine } from '../state'
-import type { TaskStateMachineDeps, UnifiedMessage } from '../state'
+import { generateMessageId, TaskStateMachine } from '@wegent/chat-core'
+import type { TaskStateMachineDeps, UnifiedMessage } from '@wegent/chat-core'
 import DOMPurify from 'dompurify'
 
 /**

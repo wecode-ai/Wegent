@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import type { MessageBlock } from '../components/message/thinking/types'
+import type { MessageBlock } from '../message-blocks'
 
 export type StreamingBlockType = 'text' | 'thinking'
 

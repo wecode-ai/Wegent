@@ -2,18 +2,19 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { TaskStateMachine, type TaskStateMachineDeps } from '@/features/tasks/state'
+import { describe, expect, it, vi } from 'vitest'
+import { TaskStateMachine, type TaskStateMachineDeps } from '..'
 
 function createRuntimeActions(overrides: Partial<TaskStateMachineDeps> = {}): TaskStateMachineDeps {
   return {
-    joinTask: jest.fn().mockResolvedValue({ subtasks: [] }),
-    pullRuntime: jest.fn().mockResolvedValue({
+    joinTask: vi.fn().mockResolvedValue({ subtasks: [] }),
+    pullRuntime: vi.fn().mockResolvedValue({
       task_id: 42,
       task_status: 'COMPLETED',
       status_updated_at: '2026-06-01T10:00:00',
       active_stream: null,
     }),
-    isConnected: jest.fn(() => true),
+    isConnected: vi.fn(() => true),
     ...overrides,
   }
 }
@@ -21,7 +22,7 @@ function createRuntimeActions(overrides: Partial<TaskStateMachineDeps> = {}): Ta
 describe('TaskStateMachine', () => {
   it('stores reasoning chunks as chronological thinking blocks', () => {
     const machine = new TaskStateMachine(100, {
-      joinTask: jest.fn(),
+      joinTask: vi.fn(),
       isConnected: () => true,
     })
 
@@ -78,7 +79,7 @@ describe('TaskStateMachine', () => {
 
   it('preserves new done text blocks when inline thinking blocks exist', () => {
     const machine = new TaskStateMachine(100, {
-      joinTask: jest.fn(),
+      joinTask: vi.fn(),
       isConnected: () => true,
     })
 
@@ -114,7 +115,7 @@ describe('TaskStateMachine', () => {
 
   it('finalizes streaming blocks on chat done without event result', () => {
     const machine = new TaskStateMachine(100, {
-      joinTask: jest.fn(),
+      joinTask: vi.fn(),
       isConnected: () => true,
     })
 
@@ -131,9 +132,9 @@ describe('TaskStateMachine', () => {
   })
 
   it('does not debounce a recovery that exits before the socket is connected', async () => {
-    const nowSpy = jest.spyOn(Date, 'now').mockReturnValue(1000)
-    const consoleInfoSpy = jest.spyOn(console, 'info').mockImplementation(() => {})
-    const joinTask = jest.fn().mockResolvedValue({ subtasks: [] })
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(1000)
+    const consoleInfoSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
+    const joinTask = vi.fn().mockResolvedValue({ subtasks: [] })
     let connected = false
 
     const machine = new TaskStateMachine(100, {
@@ -158,8 +159,8 @@ describe('TaskStateMachine', () => {
   })
 
   it('keeps pending socket recovery when terminal task detail arrives before socket connect', async () => {
-    const joinTask = jest.fn().mockResolvedValue({ subtasks: [] })
-    const pullRuntime = jest.fn().mockResolvedValue({
+    const joinTask = vi.fn().mockResolvedValue({ subtasks: [] })
+    const pullRuntime = vi.fn().mockResolvedValue({
       task_id: 100,
       task_status: 'COMPLETED',
       status_updated_at: '2026-06-01T10:00:00.000Z',
@@ -196,8 +197,8 @@ describe('TaskStateMachine', () => {
   })
 
   it('checks runtime before resolving pending socket recovery on reconnect', async () => {
-    const joinTask = jest.fn().mockResolvedValue({ subtasks: [] })
-    const pullRuntime = jest.fn().mockResolvedValue({
+    const joinTask = vi.fn().mockResolvedValue({ subtasks: [] })
+    const pullRuntime = vi.fn().mockResolvedValue({
       task_id: 100,
       task_status: 'RUNNING',
       active_stream: {
@@ -229,7 +230,7 @@ describe('TaskStateMachine', () => {
   })
 
   it('requires pullRuntime when resolving pending socket recovery on reconnect', async () => {
-    const joinTask = jest.fn().mockResolvedValue({ subtasks: [] })
+    const joinTask = vi.fn().mockResolvedValue({ subtasks: [] })
     let connected = false
 
     const machine = new TaskStateMachine(100, {
@@ -247,10 +248,10 @@ describe('TaskStateMachine', () => {
   })
 
   it('refreshes timestamp when the same AI message receives a new chat:error event', () => {
-    const nowSpy = jest.spyOn(Date, 'now').mockReturnValueOnce(1000).mockReturnValueOnce(2000)
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValueOnce(1000).mockReturnValueOnce(2000)
 
     const machine = new TaskStateMachine(100, {
-      joinTask: jest.fn(),
+      joinTask: vi.fn(),
       isConnected: () => true,
     })
 
@@ -272,7 +273,7 @@ describe('TaskStateMachine', () => {
 
   it('enters running runtime phase and requests room join for active task status', () => {
     const machine = new TaskStateMachine(100, {
-      joinTask: jest.fn(),
+      joinTask: vi.fn(),
       isConnected: () => true,
     })
 
@@ -296,7 +297,7 @@ describe('TaskStateMachine', () => {
 
   it('marks runtime as streaming when chat starts for an active task', () => {
     const machine = new TaskStateMachine(100, {
-      joinTask: jest.fn(),
+      joinTask: vi.fn(),
       isConnected: () => true,
     })
 
@@ -312,7 +313,7 @@ describe('TaskStateMachine', () => {
 
   it('marks runtime as running when a send is accepted before chat start', () => {
     const machine = new TaskStateMachine(100, {
-      joinTask: jest.fn(),
+      joinTask: vi.fn(),
       isConnected: () => true,
     })
 
@@ -335,7 +336,7 @@ describe('TaskStateMachine', () => {
 
   it('send accepted clears old terminal markers for follow-up sends', () => {
     const machine = new TaskStateMachine(100, {
-      joinTask: jest.fn(),
+      joinTask: vi.fn(),
       isConnected: () => true,
     })
 
@@ -357,7 +358,7 @@ describe('TaskStateMachine', () => {
 
   it('terminal task status clears streaming runtime and unblocks queued dispatch', () => {
     const machine = new TaskStateMachine(100, {
-      joinTask: jest.fn(),
+      joinTask: vi.fn(),
       isConnected: () => true,
     })
 
@@ -386,8 +387,8 @@ describe('TaskStateMachine', () => {
   })
 
   it('terminal task status discards pending chunks from a stale stream', async () => {
-    const consoleInfoSpy = jest.spyOn(console, 'info').mockImplementation(() => {})
-    const joinTask = jest.fn().mockResolvedValue({
+    const consoleInfoSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
+    const joinTask = vi.fn().mockResolvedValue({
       subtasks: [
         {
           id: 42,
@@ -431,12 +432,12 @@ describe('TaskStateMachine', () => {
   })
 
   it('syncs join subtasks when task detail marks the task terminal before join ack returns', async () => {
-    const consoleInfoSpy = jest.spyOn(console, 'info').mockImplementation(() => {})
+    const consoleInfoSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
     let resolveJoin: (value: {
       subtasks: Array<Record<string, unknown>>
       streaming?: undefined
     }) => void = () => {}
-    const joinTask = jest.fn(
+    const joinTask = vi.fn(
       () =>
         new Promise<{ subtasks: Array<Record<string, unknown>>; streaming?: undefined }>(
           resolve => {
@@ -499,7 +500,7 @@ describe('TaskStateMachine', () => {
 
   it('ignores stale lifecycle updates after a newer terminal status', () => {
     const machine = new TaskStateMachine(100, {
-      joinTask: jest.fn(),
+      joinTask: vi.fn(),
       isConnected: () => true,
     })
 
@@ -518,7 +519,7 @@ describe('TaskStateMachine', () => {
 
   it('ignores active lifecycle snapshots after an untimestamped terminal status', () => {
     const machine = new TaskStateMachine(100, {
-      joinTask: jest.fn(),
+      joinTask: vi.fn(),
       isConnected: () => true,
     })
 
@@ -537,7 +538,7 @@ describe('TaskStateMachine', () => {
 
   it('uses later chat done content when terminal status arrived first', () => {
     const machine = new TaskStateMachine(100, {
-      joinTask: jest.fn(),
+      joinTask: vi.fn(),
       isConnected: () => true,
     })
 
@@ -556,7 +557,7 @@ describe('TaskStateMachine', () => {
 
   it('keeps failed terminal status authoritative when chat done arrives late', () => {
     const machine = new TaskStateMachine(100, {
-      joinTask: jest.fn(),
+      joinTask: vi.fn(),
       isConnected: () => true,
     })
 
@@ -573,7 +574,7 @@ describe('TaskStateMachine', () => {
 
   it('keeps completed terminal status authoritative when chat error arrives late', () => {
     const machine = new TaskStateMachine(100, {
-      joinTask: jest.fn(),
+      joinTask: vi.fn(),
       isConnected: () => true,
     })
 
@@ -591,7 +592,7 @@ describe('TaskStateMachine', () => {
 
   it('keeps completed terminal status authoritative when chat cancelled arrives late', () => {
     const machine = new TaskStateMachine(100, {
-      joinTask: jest.fn(),
+      joinTask: vi.fn(),
       isConnected: () => true,
     })
 
@@ -607,8 +608,8 @@ describe('TaskStateMachine', () => {
   })
 
   it('updates completed backend content after terminal status finalized a partial stream', async () => {
-    const consoleInfoSpy = jest.spyOn(console, 'info').mockImplementation(() => {})
-    const joinTask = jest.fn().mockResolvedValue({
+    const consoleInfoSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
+    const joinTask = vi.fn().mockResolvedValue({
       subtasks: [
         {
           id: 42,
@@ -654,8 +655,8 @@ describe('TaskStateMachine', () => {
   })
 
   it('does not mark existing streaming message completed from a pending backend snapshot', async () => {
-    const consoleInfoSpy = jest.spyOn(console, 'info').mockImplementation(() => {})
-    const joinTask = jest.fn().mockResolvedValue({
+    const consoleInfoSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
+    const joinTask = vi.fn().mockResolvedValue({
       subtasks: [
         {
           id: 42,
@@ -708,7 +709,7 @@ describe('TaskStateMachine', () => {
 
   it('ignores duplicate chat start for an already finalized terminal message', () => {
     const machine = new TaskStateMachine(100, {
-      joinTask: jest.fn(),
+      joinTask: vi.fn(),
       isConnected: () => true,
     })
 
@@ -730,7 +731,7 @@ describe('TaskStateMachine', () => {
 
   it('allows a new chat start after terminal lifecycle status for follow-up sends', () => {
     const machine = new TaskStateMachine(100, {
-      joinTask: jest.fn(),
+      joinTask: vi.fn(),
       isConnected: () => true,
     })
 
@@ -750,7 +751,7 @@ describe('TaskStateMachine', () => {
 
   it('ignores old terminal snapshots after a follow-up chat start', () => {
     const machine = new TaskStateMachine(100, {
-      joinTask: jest.fn(),
+      joinTask: vi.fn(),
       isConnected: () => true,
     })
 
@@ -771,7 +772,7 @@ describe('TaskStateMachine', () => {
 
   it('ignores old terminal snapshots after an untimestamped terminal and follow-up chat start', () => {
     const machine = new TaskStateMachine(100, {
-      joinTask: jest.fn(),
+      joinTask: vi.fn(),
       isConnected: () => true,
     })
 
@@ -792,7 +793,7 @@ describe('TaskStateMachine', () => {
 
   it('applies deferred terminal snapshot when the active follow-up stream ends', () => {
     const machine = new TaskStateMachine(100, {
-      joinTask: jest.fn(),
+      joinTask: vi.fn(),
       isConnected: () => true,
     })
 
@@ -815,7 +816,7 @@ describe('TaskStateMachine', () => {
 
   it('applies deferred terminal snapshot when the active follow-up stream errors', () => {
     const machine = new TaskStateMachine(100, {
-      joinTask: jest.fn(),
+      joinTask: vi.fn(),
       isConnected: () => true,
     })
 
@@ -838,7 +839,7 @@ describe('TaskStateMachine', () => {
 
   it('applies deferred terminal snapshot when the active follow-up stream is cancelled', () => {
     const machine = new TaskStateMachine(100, {
-      joinTask: jest.fn(),
+      joinTask: vi.fn(),
       isConnected: () => true,
     })
 
@@ -861,7 +862,7 @@ describe('TaskStateMachine', () => {
 
   it('keeps follow-up stream active when old chat done arrives late', () => {
     const machine = new TaskStateMachine(100, {
-      joinTask: jest.fn(),
+      joinTask: vi.fn(),
       isConnected: () => true,
     })
 
@@ -881,7 +882,7 @@ describe('TaskStateMachine', () => {
 
   it('keeps old failed message immutable when chat done arrives after follow-up starts', () => {
     const machine = new TaskStateMachine(100, {
-      joinTask: jest.fn(),
+      joinTask: vi.fn(),
       isConnected: () => true,
     })
 
@@ -898,7 +899,7 @@ describe('TaskStateMachine', () => {
 
   it('keeps old completed message immutable when late chat done reports an error after follow-up starts', () => {
     const machine = new TaskStateMachine(100, {
-      joinTask: jest.fn(),
+      joinTask: vi.fn(),
       isConnected: () => true,
     })
 
@@ -916,7 +917,7 @@ describe('TaskStateMachine', () => {
 
   it('applies equal-timestamp terminal status for the current active stream', () => {
     const machine = new TaskStateMachine(100, {
-      joinTask: jest.fn(),
+      joinTask: vi.fn(),
       isConnected: () => true,
     })
 
@@ -933,7 +934,7 @@ describe('TaskStateMachine', () => {
 
   it('keeps follow-up stream active when old chat error arrives late', () => {
     const machine = new TaskStateMachine(100, {
-      joinTask: jest.fn(),
+      joinTask: vi.fn(),
       isConnected: () => true,
     })
 
@@ -953,7 +954,7 @@ describe('TaskStateMachine', () => {
 
   it('keeps follow-up stream active when old chat cancelled arrives late', () => {
     const machine = new TaskStateMachine(100, {
-      joinTask: jest.fn(),
+      joinTask: vi.fn(),
       isConnected: () => true,
     })
 
@@ -973,7 +974,7 @@ describe('TaskStateMachine', () => {
 
   it('chat done ends the active stream and completes the task runtime', () => {
     const machine = new TaskStateMachine(100, {
-      joinTask: jest.fn(),
+      joinTask: vi.fn(),
       isConnected: () => true,
     })
 
@@ -991,7 +992,7 @@ describe('TaskStateMachine', () => {
 
   it('chat error ends the active stream and fails the task runtime', () => {
     const machine = new TaskStateMachine(100, {
-      joinTask: jest.fn(),
+      joinTask: vi.fn(),
       isConnected: () => true,
     })
 
@@ -1012,7 +1013,7 @@ describe('TaskStateMachine', () => {
 
   it('chat cancelled ends the active stream and cancels the task runtime', () => {
     const machine = new TaskStateMachine(100, {
-      joinTask: jest.fn(),
+      joinTask: vi.fn(),
       isConnected: () => true,
     })
 
@@ -1033,7 +1034,7 @@ describe('TaskStateMachine', () => {
 
   it('ignores stale running snapshots after chat done completed the runtime', () => {
     const machine = new TaskStateMachine(100, {
-      joinTask: jest.fn(),
+      joinTask: vi.fn(),
       isConnected: () => true,
     })
 
@@ -1054,7 +1055,7 @@ describe('TaskStateMachine', () => {
 
   it('checkHealth joins when server has an active stream and local room is not joined', async () => {
     const actions = createRuntimeActions({
-      pullRuntime: jest.fn().mockResolvedValue({
+      pullRuntime: vi.fn().mockResolvedValue({
         task_id: 42,
         task_status: 'RUNNING',
         status_updated_at: '2026-06-01T10:00:00',
@@ -1064,7 +1065,7 @@ describe('TaskStateMachine', () => {
           last_activity_at: '2026-06-01T10:00:01',
         },
       }),
-      joinTask: jest.fn().mockResolvedValue({
+      joinTask: vi.fn().mockResolvedValue({
         streaming: { subtask_id: 77, offset: 12, cached_content: 'hello world!' },
         subtasks: [],
       }),
@@ -1090,15 +1091,15 @@ describe('TaskStateMachine', () => {
   })
 
   it('checkHealth syncs messages when the task updatedAt has not been message-synced', async () => {
-    const consoleInfoSpy = jest.spyOn(console, 'info').mockImplementation(() => {})
+    const consoleInfoSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
     const actions = createRuntimeActions({
-      pullRuntime: jest.fn().mockResolvedValue({
+      pullRuntime: vi.fn().mockResolvedValue({
         task_id: 42,
         task_status: 'COMPLETED',
         status_updated_at: '2026-06-01T10:00:10',
         active_stream: null,
       }),
-      joinTask: jest.fn().mockResolvedValue({
+      joinTask: vi.fn().mockResolvedValue({
         subtasks: [
           {
             id: 77,
@@ -1141,7 +1142,7 @@ describe('TaskStateMachine', () => {
     })
     expect(machine.getState().messages.get('ai-77')?.content).toBe('synced answer')
     expect(machine.getState().runtime.messagesSyncedUpdatedAt).toBe('2026-06-01T10:00:10')
-    ;(actions.joinTask as jest.Mock).mockClear()
+    ;(actions.joinTask as ReturnType<typeof vi.fn>).mockClear()
     await machine.requestRuntimeCheck('page-visible')
     expect(actions.joinTask).not.toHaveBeenCalled()
 
@@ -1150,13 +1151,13 @@ describe('TaskStateMachine', () => {
 
   it('does not synthesize interactive form blocks from messages_chain on refresh', async () => {
     const actions = createRuntimeActions({
-      pullRuntime: jest.fn().mockResolvedValue({
+      pullRuntime: vi.fn().mockResolvedValue({
         task_id: 42,
         task_status: 'COMPLETED',
         status_updated_at: '2026-06-01T10:00:10',
         active_stream: null,
       }),
-      joinTask: jest.fn().mockResolvedValue({
+      joinTask: vi.fn().mockResolvedValue({
         subtasks: [
           {
             id: 77,
@@ -1243,13 +1244,13 @@ describe('TaskStateMachine', () => {
     })
     const toolOutput = [{ type: 'text', text: deferredText, id: 'lc_1266' }]
     const actions = createRuntimeActions({
-      pullRuntime: jest.fn().mockResolvedValue({
+      pullRuntime: vi.fn().mockResolvedValue({
         task_id: 793,
         task_status: 'COMPLETED',
         status_updated_at: '2026-06-03T20:34:56',
         active_stream: null,
       }),
-      joinTask: jest.fn().mockResolvedValue({
+      joinTask: vi.fn().mockResolvedValue({
         subtasks: [
           {
             id: 1266,
@@ -1364,7 +1365,7 @@ describe('TaskStateMachine', () => {
   })
 
   it('checkHealth resyncs the active stream message when chat done was missed', async () => {
-    const consoleInfoSpy = jest.spyOn(console, 'info').mockImplementation(() => {})
+    const consoleInfoSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
     const finalAssistantSubtask = {
       id: 77,
       task_id: 42,
@@ -1389,13 +1390,13 @@ describe('TaskStateMachine', () => {
       bots: [],
     }
     const actions = createRuntimeActions({
-      pullRuntime: jest.fn().mockResolvedValue({
+      pullRuntime: vi.fn().mockResolvedValue({
         task_id: 42,
         task_status: 'COMPLETED',
         status_updated_at: '2026-06-01T10:00:10',
         active_stream: null,
       }),
-      joinTask: jest.fn().mockImplementation((_taskId, options) =>
+      joinTask: vi.fn().mockImplementation((_taskId, options) =>
         Promise.resolve({
           subtasks: options.afterMessageId === 1 ? [finalAssistantSubtask] : [],
         })
@@ -1430,9 +1431,9 @@ describe('TaskStateMachine', () => {
   })
 
   it('uses chat chunk offsets to ignore content already covered by cached recovery', async () => {
-    const consoleInfoSpy = jest.spyOn(console, 'info').mockImplementation(() => {})
+    const consoleInfoSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
     const actions = createRuntimeActions({
-      joinTask: jest.fn().mockResolvedValue({
+      joinTask: vi.fn().mockResolvedValue({
         streaming: {
           subtask_id: 77,
           offset: 11,
@@ -1466,9 +1467,9 @@ describe('TaskStateMachine', () => {
   })
 
   it('uses chunk offset to replace conflicting local stream tails', async () => {
-    const consoleInfoSpy = jest.spyOn(console, 'info').mockImplementation(() => {})
+    const consoleInfoSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
     const actions = createRuntimeActions({
-      joinTask: jest.fn().mockResolvedValue({
+      joinTask: vi.fn().mockResolvedValue({
         streaming: {
           subtask_id: 77,
           offset: 11,
@@ -1495,7 +1496,7 @@ describe('TaskStateMachine', () => {
 
   it('checkHealth clears local streaming when server is terminal with no active stream', async () => {
     const actions = createRuntimeActions({
-      pullRuntime: jest.fn().mockResolvedValue({
+      pullRuntime: vi.fn().mockResolvedValue({
         task_id: 42,
         task_status: 'COMPLETED',
         status_updated_at: '2026-06-01T10:00:10',

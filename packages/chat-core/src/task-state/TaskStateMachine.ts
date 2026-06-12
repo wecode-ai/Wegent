@@ -8,7 +8,7 @@
  * Single source of truth for task messages, runtime state, and recovery.
  */
 
-import type { TaskDetail, TaskDetailSubtask, TaskStatus as ApiTaskStatus } from '@/types/api'
+import type { TaskDetail, TaskDetailSubtask, TaskStatus as ApiTaskStatus } from '../api-types'
 import {
   reduceChatCancelledEvent,
   reduceChatChunkEvent,

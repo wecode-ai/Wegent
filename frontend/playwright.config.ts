@@ -142,7 +142,7 @@ export default defineConfig({
 
   /* Run local dev server before starting the tests (optional for CI) */
   // webServer: {
-  //   command: 'npm run dev',
+  //   command: 'pnpm run dev',
   //   url: 'http://localhost:3000',
   //   reuseExistingServer: !process.env.CI,
   // },

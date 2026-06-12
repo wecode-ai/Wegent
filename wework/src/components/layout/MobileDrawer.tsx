@@ -296,7 +296,7 @@ export function MobileDrawer({
           </button>
           <button
             type="button"
-            data-testid="mobile-avatar-button"
+            data-testid="mobile-settings-button"
             onClick={() => closeAfter(onOpenSettings)}
             className="flex h-10 w-10 items-center justify-center rounded-full bg-[#8E5BBE] text-sm font-semibold text-white"
             aria-label={t('workbench.settings', '设置')}
