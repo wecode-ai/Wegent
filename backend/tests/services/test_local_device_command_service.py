@@ -350,6 +350,7 @@ def test_workspace_tree_script_lists_files_and_directories(
 
     (tmp_path / "backend").mkdir()
     (tmp_path / "README.md").write_text("hello", encoding="utf-8")
+    monkeypatch.setenv("WEGENT_WORKSPACE_ROOTS", str(tmp_path))
     monkeypatch.chdir(tmp_path)
 
     exec(WORKSPACE_TREE_SCRIPT, {"__name__": "__main__"})
@@ -363,6 +364,29 @@ def test_workspace_tree_script_lists_files_and_directories(
     assert output["entries"][1]["size"] == 5
 
 
+def test_workspace_tree_script_allows_configured_executor_projects_dir(
+    tmp_path, monkeypatch, capsys
+):
+    """workspace_tree should allow the same custom projects root as project_workspace_root."""
+    import json
+
+    from app.services.device.command_registry import WORKSPACE_TREE_SCRIPT
+
+    projects_root = tmp_path / "custom-projects"
+    project_dir = projects_root / "Wegent"
+    project_dir.mkdir(parents=True)
+    (project_dir / "README.md").write_text("hello", encoding="utf-8")
+    monkeypatch.delenv("WEGENT_WORKSPACE_ROOTS", raising=False)
+    monkeypatch.setenv("WEGENT_EXECUTOR_PROJECTS_DIR", str(projects_root))
+    monkeypatch.chdir(project_dir)
+
+    exec(WORKSPACE_TREE_SCRIPT, {"__name__": "__main__"})
+    output = json.loads(capsys.readouterr().out)
+
+    assert output["path"] == str(project_dir.resolve())
+    assert [entry["name"] for entry in output["entries"]] == ["README.md"]
+
+
 def test_workspace_tree_script_does_not_classify_symlinked_directory_as_directory(
     tmp_path, monkeypatch, capsys
 ):
@@ -374,6 +398,7 @@ def test_workspace_tree_script_does_not_classify_symlinked_directory_as_director
     external_dir = tmp_path.parent / "external"
     external_dir.mkdir()
     (tmp_path / "linked-dir").symlink_to(external_dir, target_is_directory=True)
+    monkeypatch.setenv("WEGENT_WORKSPACE_ROOTS", str(tmp_path))
     monkeypatch.chdir(tmp_path)
 
     exec(WORKSPACE_TREE_SCRIPT, {"__name__": "__main__"})
@@ -383,6 +408,29 @@ def test_workspace_tree_script_does_not_classify_symlinked_directory_as_director
         entry for entry in output["entries"] if entry["name"] == "linked-dir"
     )
     assert linked_entry["is_directory"] is False
+
+
+def test_workspace_tree_script_rejects_non_workspace_cwd(tmp_path, monkeypatch, capsys):
+    """workspace_tree should reject arbitrary directories outside workspace roots."""
+    import json
+
+    from app.services.device.command_registry import WORKSPACE_TREE_SCRIPT
+
+    monkeypatch.delenv("WEGENT_WORKSPACE_ROOTS", raising=False)
+    monkeypatch.chdir(tmp_path)
+
+    try:
+        exec(WORKSPACE_TREE_SCRIPT, {"__name__": "__main__"})
+    except SystemExit as exc:
+        assert exc.code == 64
+    else:
+        raise AssertionError("workspace_tree should reject non-workspace cwd")
+
+    output = json.loads(capsys.readouterr().out)
+    assert output == {
+        "success": False,
+        "error": "workspace path is outside allowed workspace roots",
+    }
 
 
 def test_workspace_tree_script_keeps_lstat_operations_guarded(
@@ -397,6 +445,7 @@ def test_workspace_tree_script_keeps_lstat_operations_guarded(
     (tmp_path / "backend").mkdir()
     (tmp_path / "README.md").write_text("hello", encoding="utf-8")
     (tmp_path / "blocked.txt").write_text("skip", encoding="utf-8")
+    monkeypatch.setenv("WEGENT_WORKSPACE_ROOTS", str(tmp_path))
     monkeypatch.chdir(tmp_path)
 
     workspace_root = tmp_path.resolve()
@@ -447,6 +496,7 @@ def test_workspace_read_text_file_script_reads_text_and_reports_truncation(
 
     content = "a" * (262144 + 8)
     (tmp_path / "large.py").write_text(content, encoding="utf-8")
+    monkeypatch.setenv("WEGENT_WORKSPACE_ROOTS", str(tmp_path))
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(sys, "argv", ["workspace_read_text_file", "large.py"])
 
@@ -472,6 +522,7 @@ def test_workspace_read_text_file_script_reads_at_most_limit_plus_one(
     file_path = tmp_path / "large.py"
     file_path.write_text("a" * (262144 + 8), encoding="utf-8")
     resolved_file_path = file_path.resolve()
+    monkeypatch.setenv("WEGENT_WORKSPACE_ROOTS", str(tmp_path))
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(sys, "argv", ["workspace_read_text_file", "large.py"])
 
@@ -514,6 +565,34 @@ def test_workspace_read_text_file_script_reads_at_most_limit_plus_one(
     assert read_sizes == [262145]
     assert output["content"] == "a" * 262144
     assert output["truncated"] is True
+
+
+def test_workspace_read_text_file_script_rejects_non_workspace_cwd(
+    tmp_path, monkeypatch, capsys
+):
+    """workspace_read_text_file should reject arbitrary directories."""
+    import json
+    import sys
+
+    from app.services.device.command_registry import WORKSPACE_READ_TEXT_FILE_SCRIPT
+
+    (tmp_path / "README.md").write_text("hello", encoding="utf-8")
+    monkeypatch.delenv("WEGENT_WORKSPACE_ROOTS", raising=False)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["workspace_read_text_file", "README.md"])
+
+    try:
+        exec(WORKSPACE_READ_TEXT_FILE_SCRIPT, {"__name__": "__main__"})
+    except SystemExit as exc:
+        assert exc.code == 64
+    else:
+        raise AssertionError("workspace_read_text_file should reject non-workspace cwd")
+
+    output = json.loads(capsys.readouterr().out)
+    assert output == {
+        "success": False,
+        "error": "workspace path is outside allowed workspace roots",
+    }
 
 
 def test_local_device_command_registry_supports_inline_post_processor():
@@ -684,6 +763,28 @@ def test_json_post_processor_reports_parse_failure():
 
     assert processed["success"] is False
     assert "Failed to parse command JSON output" in processed["error"]
+
+
+def test_json_post_processor_promotes_failed_json_error():
+    """json post processor should expose JSON error payloads from failed commands."""
+    from app.services.device.command_post_processor import apply_command_post_processor
+
+    result = {
+        "success": False,
+        "exit_code": 64,
+        "stdout": '{"success": false, "error": "workspace path is outside allowed workspace roots"}',
+        "stderr": "",
+        "duration": 0.01,
+    }
+
+    processed = apply_command_post_processor(result, "json")
+
+    assert processed["success"] is False
+    assert processed["stdout"] == {
+        "success": False,
+        "error": "workspace path is outside allowed workspace roots",
+    }
+    assert processed["error"] == "workspace path is outside allowed workspace roots"
 
 
 def test_json_post_processor_reports_truncated_output():

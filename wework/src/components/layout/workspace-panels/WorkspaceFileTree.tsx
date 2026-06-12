@@ -54,6 +54,7 @@ export function WorkspaceFileTree({
             value={query}
             onChange={event => setQuery(event.target.value)}
             placeholder={t('workbench.workspace_file_search', '筛选文件...')}
+            aria-label={t('workbench.workspace_file_search', '筛选文件...')}
             className="h-9 min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-text-muted"
           />
           <button

@@ -87,7 +87,43 @@ function normalizeModifiedAt(value: unknown, errorMessage: string): string | nul
   throw new Error(errorMessage)
 }
 
-function normalizeWorkspaceEntry(value: unknown): WorkspaceFileEntry {
+function normalizeAbsoluteWorkspacePath(path: string, errorMessage: string): string {
+  const normalizedSegments: string[] = []
+  const normalizedPath = path.trim().replace(/\/+/g, '/')
+  if (!normalizedPath.startsWith('/')) {
+    throw new Error(errorMessage)
+  }
+
+  for (const segment of normalizedPath.split('/')) {
+    if (!segment || segment === '.') continue
+    if (segment === '..') {
+      if (normalizedSegments.length === 0) {
+        throw new Error(errorMessage)
+      }
+      normalizedSegments.pop()
+      continue
+    }
+    normalizedSegments.push(segment)
+  }
+
+  return `/${normalizedSegments.join('/')}`
+}
+
+function isWorkspacePathWithin(path: string, rootPath: string): boolean {
+  return path === rootPath || path.startsWith(`${rootPath.replace(/\/+$/, '')}/`)
+}
+
+function requireWorkspacePathWithin(
+  path: string,
+  rootPath: string,
+  errorMessage: string,
+) {
+  if (!isWorkspacePathWithin(path, rootPath)) {
+    throw new Error(errorMessage)
+  }
+}
+
+function normalizeWorkspaceEntry(value: unknown, rootPath: string): WorkspaceFileEntry {
   const record = requireRecord(value, 'Invalid workspace tree response')
   if (
     typeof record.name !== 'string' ||
@@ -97,27 +133,53 @@ function normalizeWorkspaceEntry(value: unknown): WorkspaceFileEntry {
   ) {
     throw new Error('Invalid workspace tree response')
   }
+  const path = normalizeAbsoluteWorkspacePath(
+    record.path,
+    'Invalid workspace tree response',
+  )
+  requireWorkspacePathWithin(path, rootPath, 'Invalid workspace tree response')
   return {
     name: record.name,
-    path: record.path,
+    path,
     isDirectory: record.is_directory,
     size: record.size,
     modifiedAt: normalizeModifiedAt(record.modified_at, 'Invalid workspace tree response'),
   }
 }
 
-function normalizeWorkspaceTree(output: unknown): WorkspaceTreeResponse {
+function normalizeWorkspaceTree(
+  output: unknown,
+  requestedPath: string,
+): WorkspaceTreeResponse {
+  const normalizedRequestedPath = normalizeAbsoluteWorkspacePath(
+    requestedPath,
+    'Workspace path must be absolute',
+  )
   const record = requireRecord(output, 'Invalid workspace tree response')
   if (typeof record.path !== 'string' || !Array.isArray(record.entries)) {
     throw new Error('Invalid workspace tree response')
   }
+  const path = normalizeAbsoluteWorkspacePath(
+    record.path,
+    'Invalid workspace tree response',
+  )
+  if (path !== normalizedRequestedPath) {
+    throw new Error('Invalid workspace tree response')
+  }
   return {
-    path: record.path,
-    entries: record.entries.map(normalizeWorkspaceEntry),
+    path,
+    entries: record.entries.map(entry => normalizeWorkspaceEntry(entry, path)),
   }
 }
 
-function normalizeWorkspaceTextFile(output: unknown): WorkspaceTextFileResponse {
+function normalizeWorkspaceTextFile(
+  output: unknown,
+  requestedFilePath: string,
+): WorkspaceTextFileResponse {
+  const normalizedRequestedFilePath = normalizeAbsoluteWorkspacePath(
+    requestedFilePath,
+    'Workspace file path must be absolute',
+  )
   const record = requireRecord(output, 'Invalid workspace text file response')
   if (
     typeof record.path !== 'string' ||
@@ -128,8 +190,15 @@ function normalizeWorkspaceTextFile(output: unknown): WorkspaceTextFileResponse 
   ) {
     throw new Error('Invalid workspace text file response')
   }
+  const path = normalizeAbsoluteWorkspacePath(
+    record.path,
+    'Invalid workspace text file response',
+  )
+  if (path !== normalizedRequestedFilePath) {
+    throw new Error('Invalid workspace text file response')
+  }
   return {
-    path: record.path,
+    path,
     name: record.name,
     content: record.content,
     truncated: record.truncated,
@@ -142,10 +211,10 @@ function splitAbsoluteWorkspaceFilePath(filePath: string): {
   parentPath: string
   fileName: string
 } {
-  const normalizedFilePath = filePath.trim()
-  if (!normalizedFilePath.startsWith('/')) {
-    throw new Error('Workspace file path must be absolute')
-  }
+  const normalizedFilePath = normalizeAbsoluteWorkspacePath(
+    filePath,
+    'Workspace file path must be absolute',
+  )
 
   const separatorIndex = normalizedFilePath.lastIndexOf('/')
   const parentPath = separatorIndex > 0 ? normalizedFilePath.slice(0, separatorIndex) : '/'
@@ -230,11 +299,15 @@ export function createDeviceApi(client: HttpClient) {
     },
 
     async listWorkspaceEntries(deviceId: string, path: string): Promise<WorkspaceTreeResponse> {
+      const normalizedPath = normalizeAbsoluteWorkspacePath(
+        path,
+        'Workspace path must be absolute',
+      )
       const response = await client.post<DeviceCommandResponse>(
         `/devices/${encodeURIComponent(deviceId)}/commands`,
         {
           command_key: 'workspace_tree',
-          path,
+          path: normalizedPath,
           timeout_seconds: 15,
           max_output_bytes: 1024 * 512,
         },
@@ -242,7 +315,7 @@ export function createDeviceApi(client: HttpClient) {
       if (!response.success) {
         throw new Error(response.error || response.stderr || 'Failed to list workspace files')
       }
-      return normalizeWorkspaceTree(response.stdout)
+      return normalizeWorkspaceTree(response.stdout, normalizedPath)
     },
 
     async readWorkspaceTextFile(
@@ -263,7 +336,7 @@ export function createDeviceApi(client: HttpClient) {
       if (!response.success) {
         throw new Error(response.error || response.stderr || 'Failed to read workspace file')
       }
-      return normalizeWorkspaceTextFile(response.stdout)
+      return normalizeWorkspaceTextFile(response.stdout, filePath)
     },
 
     async createDirectory(deviceId: string, path: string): Promise<void> {

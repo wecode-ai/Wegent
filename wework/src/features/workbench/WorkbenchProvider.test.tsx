@@ -1699,10 +1699,10 @@ describe('WorkbenchProvider', () => {
     )
     expect(payload.message).toContain('please inspect')
     expect(payload.message).toContain('<code_comment_context>')
-    expect(payload.message).toContain('File: src/app.ts')
-    expect(payload.message).toContain('Lines: 12-14')
-    expect(payload.message).toContain('const answer = computeAnswer()')
-    expect(payload.message).toContain('User comment: Check whether this handles retries.')
+    expect(payload.message).toContain('"filePath": "src/app.ts"')
+    expect(payload.message).toContain('"lines": "12-14"')
+    expect(payload.message).toContain('"selectedCode": "const answer = computeAnswer()"')
+    expect(payload.message).toContain('"userComment": "Check whether this handles retries."')
     expect(screen.getByTestId('message-contents')).toHaveTextContent('please inspect')
     expect(screen.getByTestId('message-contents')).not.toHaveTextContent(
       '<code_comment_context>'

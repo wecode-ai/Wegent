@@ -10,6 +10,7 @@ interface RightWorkspacePanelProps {
   currentProject: ProjectWithTasks | null
   devices: DeviceInfo[]
   workspaceTarget: WorkspaceTarget | null
+  workspaceTargetError?: string | null
   onAddCodeComment: (context: CodeCommentContext) => void
   onRequestClose: () => void
 }
@@ -18,6 +19,7 @@ export function RightWorkspacePanel({
   currentProject,
   devices,
   workspaceTarget,
+  workspaceTargetError,
   onAddCodeComment,
   onRequestClose,
 }: RightWorkspacePanelProps) {
@@ -52,6 +54,13 @@ export function RightWorkspacePanel({
             target={workspaceTarget}
             onAddCodeComment={onAddCodeComment}
           />
+        ) : workspaceTargetError ? (
+          <section
+            data-testid="workspace-target-error"
+            className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-sm text-red-500"
+          >
+            {workspaceTargetError}
+          </section>
         ) : (
           <WorkspacePanelCards
             currentProject={currentProject}

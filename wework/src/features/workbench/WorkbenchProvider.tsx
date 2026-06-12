@@ -17,6 +17,7 @@ import { createTaskApi } from '@/api/tasks'
 import { createTeamApi } from '@/api/teams'
 import { createUserApi } from '@/api/users'
 import { getRuntimeConfig, stripAppBasePath } from '@/config/runtime'
+import i18n from '@/i18n'
 import { createChatStream } from '@/stream/chatStream'
 import { createSocketClient } from '@/stream/socketClient'
 import { appendCodeCommentContexts } from '@/lib/code-comment-context'
@@ -1755,7 +1756,9 @@ export function WorkbenchProvider({
     const hasAttachments = attachmentSelection.attachments.length > 0
     const hasCodeComments = codeCommentContexts.length > 0
     if (!trimmedMessage && !hasAttachments && !hasCodeComments) return
-    const message = trimmedMessage || (hasCodeComments ? '请参考代码评论' : '请参考附件')
+    const message = trimmedMessage || (
+      hasCodeComments ? i18n.t('workbench.code_comment_fallback') : ''
+    )
     const payloadMessage = appendCodeCommentContexts(message, codeCommentContexts)
     const prepared = buildSendPayload(payloadMessage)
     if (!prepared) return
@@ -1812,7 +1815,7 @@ export function WorkbenchProvider({
         ...items,
         {
           id: `queued-${state.currentTask?.id}-${Date.now()}`,
-          content: payloadMessage,
+          content: message,
           status: 'queued',
           createdAt: new Date().toISOString(),
           payload: prepared.payload,
@@ -1827,7 +1830,7 @@ export function WorkbenchProvider({
     }
 
     const sent = await sendPreparedMessage(
-      payloadMessage,
+      message,
       prepared.payload,
       prepared.activeDeviceId,
       attachmentsSnapshot

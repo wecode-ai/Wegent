@@ -163,7 +163,7 @@ function CodeCommentBadge({
           type="button"
           data-testid="remove-code-comment-context-button"
           onClick={onRemove}
-          className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-text-primary text-white shadow-sm"
+          className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-text-primary text-white shadow-sm transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
           aria-label={t('workbench.remove_code_comments')}
         >
           <X className="h-3 w-3" />

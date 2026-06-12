@@ -18,9 +18,23 @@ function isGitWorkspace(project: ProjectWithTasks): boolean {
   return project.config?.workspace?.source === 'git'
 }
 
+function normalizeRelativeWorkspacePath(path: string): string {
+  const segments: string[] = []
+
+  for (const segment of path.trim().replace(/\\/g, '/').split('/')) {
+    if (!segment || segment === '.') continue
+    if (segment === '..') {
+      throw new Error('Workspace path cannot contain parent traversal')
+    }
+    segments.push(segment)
+  }
+
+  return segments.join('/')
+}
+
 function joinDevicePath(root: string, child: string): string {
   const normalizedRoot = root.trim().replace(/\/+$/, '') || '/'
-  const normalizedChild = child.trim().replace(/^\/+/, '')
+  const normalizedChild = normalizeRelativeWorkspacePath(child.replace(/^\/+/, ''))
   if (!normalizedChild) return normalizedRoot
   return normalizedRoot === '/' ? `/${normalizedChild}` : `${normalizedRoot}/${normalizedChild}`
 }

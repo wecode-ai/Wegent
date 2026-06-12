@@ -63,7 +63,6 @@ function messageWorkspaceTargetKey(
   currentTask: Task | null,
   messages: WorkbenchMessage[],
 ): string {
-  if (!currentTask) return ''
   let latestUnscopedKey = ''
 
   for (const message of [...messages].reverse()) {
@@ -77,7 +76,7 @@ function messageWorkspaceTargetKey(
     }
 
     const key = `${message.taskId ?? ''}:${fileChanges.device_id}:${fileChanges.workspace_path}`
-    if (message.taskId === currentTask.id) {
+    if (currentTask && message.taskId === currentTask.id) {
       return key
     }
     if (message.taskId == null && !latestUnscopedKey) {
@@ -227,7 +226,6 @@ export function DesktopWorkbenchMain({
       })
       .catch(error => {
         if (!cancelled) {
-          setWorkspaceTarget(null)
           setWorkspaceTargetError(
             error instanceof Error ? error.message : 'Failed to resolve workspace',
           )
@@ -398,7 +396,8 @@ export function DesktopWorkbenchMain({
         <RightWorkspacePanel
           currentProject={currentProject}
           devices={devices}
-          workspaceTarget={workspaceTargetError ? null : workspaceTarget}
+          workspaceTarget={workspaceTarget}
+          workspaceTargetError={workspaceTargetError}
           onAddCodeComment={onAddCodeComment}
           onRequestClose={() => setRightPanelOpen(false)}
         />
