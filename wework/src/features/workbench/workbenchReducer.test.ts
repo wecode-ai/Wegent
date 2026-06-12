@@ -170,6 +170,56 @@ describe('workbenchReducer', () => {
     ])
   })
 
+  test('updates task status when list task ids are strings', () => {
+    const bootstrapped = workbenchReducer(initialWorkbenchState, {
+      type: 'bootstrapped',
+      user: { id: 1, user_name: 'admin', email: 'admin@example.com' },
+      defaultTeam: null,
+      projects: [
+        {
+          id: 7,
+          name: 'Repo',
+          tasks: [
+            {
+              id: 2005,
+              task_id: '2005' as unknown as number,
+              task_title: '执行pwd',
+              task_status: 'COMPLETED',
+            },
+          ],
+        },
+      ],
+      devices: [],
+      recentTasks: [
+        {
+          id: '2006' as unknown as number,
+          title: '执行ls',
+          status: 'COMPLETED',
+          created_at: '2026-05-25T00:00:00.000Z',
+        },
+      ],
+    })
+
+    const projectUpdated = workbenchReducer(bootstrapped, {
+      type: 'task_status_changed',
+      taskId: 2005,
+      status: 'RUNNING',
+    })
+    const recentUpdated = workbenchReducer(projectUpdated, {
+      type: 'task_status_changed',
+      taskId: 2006,
+      status: 'RUNNING',
+    })
+
+    expect(recentUpdated.projects[0].tasks?.[0]).toMatchObject({
+      task_status: 'RUNNING',
+      status: 'RUNNING',
+    })
+    expect(recentUpdated.recentTasks[0]).toMatchObject({
+      status: 'RUNNING',
+    })
+  })
+
   test('re-adds current task after a stale list refresh without regressing status', () => {
     const opened = workbenchReducer(initialWorkbenchState, {
       type: 'task_opened',

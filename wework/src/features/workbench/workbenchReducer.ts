@@ -85,10 +85,22 @@ function collectProjectTaskIds(projects: ProjectWithTasks[]): Set<number> {
   const ids = new Set<number>()
   for (const project of projects) {
     for (const task of project.tasks ?? []) {
-      ids.add(task.task_id)
+      const taskId = normalizeTaskId(task.task_id)
+      if (taskId !== undefined) ids.add(taskId)
     }
   }
   return ids
+}
+
+function normalizeTaskId(value: unknown): number | undefined {
+  const taskId = Number(value)
+  return Number.isInteger(taskId) && taskId > 0 ? taskId : undefined
+}
+
+function isSameTaskId(left: unknown, right: unknown): boolean {
+  const leftTaskId = normalizeTaskId(left)
+  const rightTaskId = normalizeTaskId(right)
+  return leftTaskId !== undefined && leftTaskId === rightTaskId
 }
 
 function removeTaskFromProjects(
@@ -96,10 +108,10 @@ function removeTaskFromProjects(
   taskId: number
 ): ProjectWithTasks[] {
   return projects.map(project => {
-    if (!project.tasks?.some(task => task.task_id === taskId)) return project
+    if (!project.tasks?.some(task => isSameTaskId(task.task_id, taskId))) return project
     return {
       ...project,
-      tasks: project.tasks.filter(task => task.task_id !== taskId),
+      tasks: project.tasks.filter(task => !isSameTaskId(task.task_id, taskId)),
     }
   })
 }
@@ -161,7 +173,9 @@ function upsertTask<T>(
   getTaskId: (task: T) => number
 ): T[] {
   const currentTasks = tasks ?? []
-  const existingIndex = currentTasks.findIndex(task => getTaskId(task) === taskId)
+  const existingIndex = currentTasks.findIndex(task =>
+    isSameTaskId(getTaskId(task), taskId)
+  )
   if (existingIndex === -1) return [nextTask, ...currentTasks]
 
   return currentTasks.map((task, index) => (index === existingIndex ? nextTask : task))
@@ -212,11 +226,13 @@ function workListsIncludeTask(
   if (taskBelongsToProject(task)) {
     return projects.some(project =>
       project.id === task.project_id &&
-      (project.tasks ?? []).some(projectTask => projectTask.task_id === task.id)
+      (project.tasks ?? []).some(projectTask =>
+        isSameTaskId(projectTask.task_id, task.id)
+      )
     )
   }
 
-  return recentTasks.some(recentTask => recentTask.id === task.id)
+  return recentTasks.some(recentTask => isSameTaskId(recentTask.id, task.id))
 }
 
 export function workbenchReducer(
@@ -355,16 +371,18 @@ export function workbenchReducer(
       return {
         ...state,
         currentTask:
-          state.currentTask?.id === action.taskId
+          state.currentTask && isSameTaskId(state.currentTask.id, action.taskId)
             ? { ...state.currentTask, status: action.status }
             : state.currentTask,
         recentTasks: state.recentTasks.map(task =>
-          task.id === action.taskId ? { ...task, status: action.status } : task
+          isSameTaskId(task.id, action.taskId)
+            ? { ...task, status: action.status }
+            : task
         ),
         projects: state.projects.map(project => ({
           ...project,
           tasks: project.tasks?.map(task =>
-            task.task_id === action.taskId
+            isSameTaskId(task.task_id, action.taskId)
               ? { ...task, task_status: action.status, status: action.status }
               : task
           ),
