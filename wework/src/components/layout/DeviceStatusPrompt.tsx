@@ -114,7 +114,8 @@ export function DeviceStatusPrompt({
   const [sidebarTooltipOpen, setSidebarTooltipOpen] = useState(false)
   const sidebarActionRef = useRef<HTMLDivElement>(null)
   const sidebarTooltipRef = useRef<HTMLDivElement>(null)
-  const now = Date.now()
+  // eslint-disable-next-line react-hooks/purity, react-hooks/exhaustive-deps
+  const now = useMemo(() => Date.now(), [devices, presentation])
   const sidebarDeviceCache = readSidebarDeviceCache()
   const canUseSidebarDeviceFallback =
     presentation === 'sidebar-action' &&
