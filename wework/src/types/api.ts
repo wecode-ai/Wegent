@@ -911,6 +911,7 @@ export type ModelCompatibilityDisabledReason =
 
 export interface ModelRuntime {
   family?: string | null
+  provider?: string | null
 }
 
 export interface UnifiedModel {

@@ -99,6 +99,7 @@ export function ProjectChatComposer({
           className="max-h-[128px] min-h-9 w-full resize-none overflow-y-auto bg-transparent p-0 text-sm leading-5 text-text-primary outline-none placeholder:text-text-muted"
           skillMenuClassName="left-[-1rem] right-[-0.5rem]"
           onListLocalSkills={onListLocalSkills}
+          selectedModel={selectedModel}
         />
         <ComposerToolbar
           canSend={canSend}

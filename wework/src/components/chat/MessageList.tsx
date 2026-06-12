@@ -7,6 +7,7 @@ import {
   CopyCheck,
   FileText,
   Loader2,
+  Package,
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -325,6 +326,18 @@ function MessageHoverActions({
 
 const LOCAL_SKILL_LINK_PATTERN = /\[\$([^\]]+)]\((skill:\/\/[^)]+SKILL\.md)\)/g
 
+function localSkillTokenTestId(name: string): string {
+  return name.replace(/[^a-zA-Z0-9_-]/g, '-')
+}
+
+function displayLocalSkillName(name: string): string {
+  return name
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ')
+}
+
 function renderUserContent(content: string) {
   const parts: ReactNode[] = []
   let offset = 0
@@ -342,10 +355,15 @@ function renderUserContent(content: string) {
       <a
         key={`skill-${start}`}
         href={href}
-        className="inline-flex items-center rounded-md bg-primary/10 px-1.5 py-0.5 font-medium text-primary underline decoration-primary/40"
+        data-testid={`sent-local-skill-token-${localSkillTokenTestId(skillName)}`}
+        className="inline-flex h-7 max-w-full items-center gap-1 rounded-xl bg-muted px-2 align-baseline text-[13px] font-medium leading-none text-blue-600 no-underline"
         onClick={event => event.preventDefault()}
       >
-        {`$${skillName}`}
+        <Package
+          data-testid={`sent-local-skill-icon-${localSkillTokenTestId(skillName)}`}
+          className="h-3.5 w-3.5 shrink-0 text-blue-600"
+        />
+        <span className="min-w-0 truncate">{displayLocalSkillName(skillName)}</span>
       </a>,
     )
     offset = start + match[0].length

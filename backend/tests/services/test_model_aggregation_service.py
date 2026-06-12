@@ -71,10 +71,16 @@ class TestModelAggregationService:
         model_dict = unified.to_dict()
         full_model_dict = unified.to_full_dict()
 
-        assert model_dict["runtime"] == {"family": "openai.openai-responses"}
+        assert model_dict["runtime"] == {
+            "family": "openai.openai-responses",
+            "provider": "openai",
+        }
         assert "env" not in model_dict["config"]
         assert "env" not in full_model_dict["config"]
-        assert full_model_dict["runtime"] == {"family": "openai.openai-responses"}
+        assert full_model_dict["runtime"] == {
+            "family": "openai.openai-responses",
+            "provider": "openai",
+        }
         assert full_model_dict["config"] == {"protocol": "openai-responses"}
 
     def test_runtime_family_falls_back_to_provider_without_protocol(self):

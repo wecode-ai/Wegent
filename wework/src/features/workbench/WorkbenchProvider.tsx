@@ -29,6 +29,7 @@ import {
 import { buildTaskRoute, navigateTo, parseTaskRoute } from '@/lib/navigation'
 import { supportsGitWorktreeExecution } from '@/lib/projectClassification'
 import {
+  findProjectForTask,
   findWorkbenchDevice,
   getActiveWorkbenchDeviceId,
   getWorkbenchDeviceDisplayName,
@@ -631,11 +632,13 @@ export function WorkbenchProvider({
   const urlTaskOpenAttemptRef = useRef<number | null>(null)
   const isOptionsLocked = Boolean(state.currentTask)
   const currentUser = state.user ?? user
-  const activeDeviceId =
-    state.currentTask?.device_id ??
-    state.currentProject?.config?.execution?.deviceId ??
-    state.currentProject?.config?.device_id ??
-    (!state.currentProject ? state.standaloneDeviceId ?? undefined : undefined)
+  const activeProject =
+    state.currentProject ?? findProjectForTask(state.projects, state.currentTask)
+  const activeDeviceId = getActiveWorkbenchDeviceId({
+    currentTask: state.currentTask,
+    currentProject: activeProject,
+    standaloneDeviceId: state.standaloneDeviceId,
+  })
 
   const selectProjectExecutionMode = useCallback(
     (mode: ProjectExecutionMode) => {
@@ -1227,7 +1230,7 @@ export function WorkbenchProvider({
       )
       const project =
         resolvedProjectId === undefined
-          ? undefined
+          ? findProjectForTask(state.projects, detailTask) ?? undefined
           : resolvedProjectId > 0
             ? state.projects.find(item => item.id === resolvedProjectId) ?? null
             : null
@@ -1563,10 +1566,12 @@ export function WorkbenchProvider({
   const buildSendPayload = useCallback(
     (message: string): { payload: ChatSendPayload; activeDeviceId?: string } | null => {
       if (!state.defaultTeam) return null
+      const activeProject =
+        state.currentProject ?? findProjectForTask(state.projects, state.currentTask)
 
       const activeDeviceId = getActiveWorkbenchDeviceId({
         currentTask: state.currentTask,
-        currentProject: state.currentProject,
+        currentProject: activeProject,
         standaloneDeviceId: state.standaloneDeviceId,
       })
 
@@ -1575,7 +1580,7 @@ export function WorkbenchProvider({
         team_id: state.defaultTeam.id,
         project_id: state.currentTask
           ? undefined
-          : state.currentProject?.id ?? STANDALONE_PROJECT_ID,
+          : activeProject?.id ?? STANDALONE_PROJECT_ID,
         client_origin: WEWORK_CLIENT_ORIGIN,
         device_id: activeDeviceId,
         task_type: 'code',
@@ -1584,9 +1589,9 @@ export function WorkbenchProvider({
 
       if (
         !state.currentTask &&
-        state.currentProject &&
+        activeProject &&
         projectExecutionMode === 'git_worktree' &&
-        supportsGitWorktreeExecution(state.currentProject)
+        supportsGitWorktreeExecution(activeProject)
       ) {
         payload.execution = {
           workspace: {
@@ -1626,6 +1631,7 @@ export function WorkbenchProvider({
       state.currentProject,
       state.currentTask,
       state.defaultTeam,
+      state.projects,
       state.standaloneDeviceId,
     ]
   )

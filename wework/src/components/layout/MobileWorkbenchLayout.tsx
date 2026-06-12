@@ -1,5 +1,5 @@
 import { Bot, Menu } from 'lucide-react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ChatInput } from '@/components/chat/ChatInput'
 import type {
   ProjectChatControls,
@@ -12,6 +12,7 @@ import { stripAppBasePath } from '@/config/runtime'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isSettingsRoute, navigateTo } from '@/lib/navigation'
 import {
+  findProjectForTask,
   findWorkbenchDevice,
   getActiveWorkbenchDeviceId,
   isWorkbenchDeviceOnline,
@@ -38,6 +39,7 @@ import type {
   WorkbenchMessage,
   WorkbenchState,
 } from '@/types/workbench'
+import { ConversationDeviceOfflineBanner } from './ConversationDeviceOfflineBanner'
 import { DeviceStatusPrompt } from './DeviceStatusPrompt'
 import { MobileDrawer } from './MobileDrawer'
 
@@ -172,6 +174,11 @@ export function MobileWorkbenchLayout({
     executionTarget: 'local',
   })
   const hasConversation = messages.length > 0 || state.currentTask
+  const currentTaskProject = useMemo(
+    () => findProjectForTask(state.projects, state.currentTask),
+    [state.currentTask, state.projects],
+  )
+  const activeConversationProject = state.currentProject ?? currentTaskProject
   const effectiveProjectChat = projectChat ?? {
     models: [],
     selectedModel: null,
@@ -240,16 +247,18 @@ export function MobileWorkbenchLayout({
   }
   const activeDeviceId = getActiveWorkbenchDeviceId({
     currentTask: state.currentTask,
-    currentProject: state.currentProject,
+    currentProject: activeConversationProject,
     standaloneDeviceId: effectiveProjectWork.currentStandaloneDeviceId,
   })
   const activeDevice = findWorkbenchDevice(state.devices, activeDeviceId)
   const activeDeviceUnavailable =
     Boolean(activeDeviceId) && !isWorkbenchDeviceOnline(activeDevice)
+  const showConversationDeviceBanner =
+    Boolean(activeDeviceId) && (!activeDevice || activeDevice.status === 'offline')
   const activeDeviceVersionUnsupported =
     Boolean(activeDevice && isDeviceBelowWeWorkVersion(activeDevice))
   const noStandaloneCompatibleDevice =
-    !state.currentProject &&
+    !activeConversationProject &&
     !activeDeviceId &&
     !state.devices.some(device => device.status === 'online' && isWeWorkCompatibleDevice(device))
   const composerDisabled =
@@ -346,16 +355,24 @@ export function MobileWorkbenchLayout({
               className="pointer-events-none absolute bottom-0 left-0 right-0 z-chrome px-4 pb-[max(16px,env(safe-area-inset-bottom))] pt-3"
             >
               <div className="pointer-events-auto">
-                <DeviceStatusPrompt
-                  devices={state.devices}
-                  upgradingDevices={upgradingDevices}
-                  onUpgradeDevice={onUpgradeDevice}
-                  onOpenCloudDeviceSettings={() => navigateTo('/settings')}
-                  activeDeviceId={activeDeviceId}
-                  requiresOnlineCompatibleDevice={noStandaloneCompatibleDevice}
-                  compact
-                  className="mb-2"
-                />
+                {showConversationDeviceBanner ? (
+                  <ConversationDeviceOfflineBanner
+                    device={activeDevice}
+                    deviceId={activeDeviceId}
+                    className="mb-2"
+                  />
+                ) : (
+                  <DeviceStatusPrompt
+                    devices={state.devices}
+                    upgradingDevices={upgradingDevices}
+                    onUpgradeDevice={onUpgradeDevice}
+                    onOpenCloudDeviceSettings={() => navigateTo('/settings')}
+                    activeDeviceId={activeDeviceId}
+                    requiresOnlineCompatibleDevice={noStandaloneCompatibleDevice}
+                    compact
+                    className="mb-2"
+                  />
+                )}
                 <ChatInput
                   value={state.input}
                   onChange={onInputChange}

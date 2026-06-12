@@ -126,6 +126,43 @@ describe('MessageList', () => {
     )
   })
 
+  test('renders sent local skill mentions as polished inline tokens', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: '1',
+            role: 'user',
+            content:
+              '[$browser](skill:///Users/crystal/.codex/skills/browser/SKILL.md) 访问一下浏览器',
+            status: 'done',
+            createdAt: '2026-05-25T00:00:00.000Z',
+          },
+        ]}
+      />,
+    )
+
+    const token = screen.getByTestId('sent-local-skill-token-browser')
+    expect(token).toHaveTextContent('Browser')
+    expect(screen.getByTestId('sent-local-skill-icon-browser')).toBeInTheDocument()
+    expect(token).toHaveClass(
+      'h-7',
+      'gap-1',
+      'rounded-xl',
+      'bg-muted',
+      'text-blue-600',
+      'no-underline',
+    )
+    expect(screen.getByTestId('sent-local-skill-icon-browser')).toHaveClass('text-blue-600')
+    expect(token).not.toHaveClass(
+      'border',
+      'bg-background',
+      'text-text-secondary',
+      'shadow-[0_1px_2px_rgba(15,23,42,0.05)]',
+    )
+    expect(token).not.toHaveClass('bg-primary/10', 'text-primary')
+  })
+
   test('renders image attachments in user messages', async () => {
     URL.createObjectURL = vi.fn(() => 'blob:message-image-preview')
     URL.revokeObjectURL = vi.fn()
@@ -512,14 +549,14 @@ describe('MessageList', () => {
       />,
     )
 
-    const skillLink = screen.getByRole('link', { name: '$env-context' })
+    const skillLink = screen.getByTestId('sent-local-skill-token-env-context')
 
     expect(skillLink).toHaveAttribute(
       'href',
       'skill:///Users/crystal/.codex/skills/env-context/SKILL.md',
     )
     expect(screen.getByTestId('message-user')).toHaveTextContent(
-      'hello $env-context context',
+      'hello Env Context context',
     )
   })
 })

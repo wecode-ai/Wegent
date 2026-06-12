@@ -25,6 +25,7 @@ import type { EnvironmentInfo } from '@/types/environment'
 import type { DeviceUpgradeState } from '@/types/device-events'
 import { stripAppBasePath } from '@/config/runtime'
 import { isSettingsRoute, navigateTo } from '@/lib/navigation'
+import { findProjectForTask } from '@/lib/workbench-device'
 import { DesktopSidebar } from './DesktopSidebar'
 import { ProjectCreateDialog } from '@/components/projects/ProjectCreateDialog'
 import { DesktopWorkbenchMain } from './DesktopWorkbenchMain'
@@ -176,20 +177,18 @@ export function DesktopWorkbenchLayout({
     deletions: '-0',
     executionTarget: 'local',
   })
+  const currentTaskProject = useMemo(
+    () => findProjectForTask(state.projects, state.currentTask),
+    [state.currentTask, state.projects],
+  )
+  const activeConversationProject = state.currentProject ?? currentTaskProject
   const environmentProject = useMemo(
-    () => {
-      const taskProject =
-        state.currentTask?.project_id && state.currentTask.project_id > 0
-          ? state.projects.find(project => project.id === state.currentTask?.project_id)
-          : null
-      return (
-        state.currentProject ??
-        taskProject ??
-        state.projects.find(project => project.config?.mode === 'workspace') ??
-        null
-      )
-    },
-    [state.currentProject, state.currentTask?.project_id, state.projects],
+    () => (
+      activeConversationProject ??
+      state.projects.find(project => project.config?.mode === 'workspace') ??
+      null
+    ),
+    [activeConversationProject, state.projects],
   )
   const completedAssistantMessageIds = useRef<Set<string>>(new Set())
   const completedAssistantMessagesInitialized = useRef(false)
@@ -352,7 +351,7 @@ export function DesktopWorkbenchLayout({
         <DesktopWorkbenchMain
           isBootstrapping={state.isBootstrapping}
           currentTask={state.currentTask}
-          currentProject={state.currentProject}
+          currentProject={activeConversationProject}
           devices={state.devices}
           upgradingDevices={upgradingDevices}
           messages={messages}

@@ -37,6 +37,7 @@ import {
   DesktopTopBar,
   MAC_NATIVE_TOP_BAR_ACTION_INSET,
 } from './DesktopTopBar'
+import { ConversationDeviceOfflineBanner } from './ConversationDeviceOfflineBanner'
 import { DeviceStatusPrompt } from './DeviceStatusPrompt'
 
 const DESKTOP_COMPOSER_FRAME_CLASS =
@@ -133,6 +134,8 @@ export function DesktopWorkbenchMain({
   const activeDevice = findWorkbenchDevice(devices, activeDeviceId)
   const activeDeviceUnavailable =
     Boolean(activeDeviceId) && !isWorkbenchDeviceOnline(activeDevice)
+  const showConversationDeviceBanner =
+    Boolean(activeDeviceId) && (!activeDevice || activeDevice.status === 'offline')
   const activeDeviceVersionUnsupported =
     Boolean(activeDevice && isDeviceBelowWeWorkVersion(activeDevice))
   const noStandaloneCompatibleDevice =
@@ -223,16 +226,24 @@ export function DesktopWorkbenchMain({
                 className="pointer-events-auto"
                 data-testid="desktop-floating-composer-card"
               >
-                <DeviceStatusPrompt
-                  devices={devices}
-                  upgradingDevices={upgradingDevices}
-                  onUpgradeDevice={onUpgradeDevice}
-                  onOpenCloudDeviceSettings={onOpenCloudDeviceSettings}
-                  activeDeviceId={activeDeviceId}
-                  requiresOnlineCompatibleDevice={noStandaloneCompatibleDevice}
-                  hideAvailableUpdates
-                  className="mb-2"
-                />
+                {showConversationDeviceBanner ? (
+                  <ConversationDeviceOfflineBanner
+                    device={activeDevice}
+                    deviceId={activeDeviceId}
+                    className="mb-2"
+                  />
+                ) : (
+                  <DeviceStatusPrompt
+                    devices={devices}
+                    upgradingDevices={upgradingDevices}
+                    onUpgradeDevice={onUpgradeDevice}
+                    onOpenCloudDeviceSettings={onOpenCloudDeviceSettings}
+                    activeDeviceId={activeDeviceId}
+                    requiresOnlineCompatibleDevice={noStandaloneCompatibleDevice}
+                    hideAvailableUpdates
+                    className="mb-2"
+                  />
+                )}
                 <ChatInput
                   value={input}
                   onChange={onInputChange}

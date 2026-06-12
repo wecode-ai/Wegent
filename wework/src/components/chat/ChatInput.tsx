@@ -196,6 +196,7 @@ export function ChatInput({
           void controls.removeAttachment(attachmentId)
         }}
         onListLocalSkills={controls.listLocalSkills}
+        selectedModel={controls.selectedModel}
         isStreaming={isStreaming}
         onPause={onPause}
       />

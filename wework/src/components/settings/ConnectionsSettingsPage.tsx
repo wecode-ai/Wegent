@@ -959,8 +959,8 @@ function ConnectionsDeviceSettingsPage({
 
             <div className="space-y-5">
               {creating && (
-                <div className="flex items-center gap-2 rounded-lg bg-primary/10 px-3 py-2.5 text-xs text-primary">
-                  <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-primary" />
+                <div className="flex items-center gap-2 rounded-lg bg-surface px-3 py-2.5 text-xs text-text-secondary">
+                  <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-text-secondary" />
                   云设备创建中，初始化约需 2-3 分钟，完成后将自动出现在列表中
                 </div>
               )}
