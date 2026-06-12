@@ -127,11 +127,16 @@ class TurnFileChangesService:
             role=SubtaskRole.ASSISTANT,
             owner_user_id=user_id,
         )
-        if subtask is None or not task_store.get_active_task(
-            db,
-            task_id=subtask.task_id,
-            owner_user_id=user_id,
-        ):
+        task = (
+            task_store.get_active_task(
+                db,
+                task_id=subtask.task_id,
+                owner_user_id=user_id,
+            )
+            if subtask is not None
+            else None
+        )
+        if subtask is None or task is None:
             raise _error(
                 404,
                 "TURN_FILE_CHANGES_NOT_FOUND",
