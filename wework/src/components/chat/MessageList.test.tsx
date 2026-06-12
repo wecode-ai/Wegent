@@ -505,6 +505,14 @@ describe('MessageList', () => {
     expect(errorCard).toHaveClass('w-[min(546px,100%)]', 'rounded-[14px]')
     expect(screen.getByText('模型与当前运行协议不匹配')).toBeInTheDocument()
     expect(screen.getByText('切换模型并重试')).toBeInTheDocument()
+    expect(screen.getByTestId('assistant-error-switch-model-retry')).toHaveClass(
+      'bg-text-primary',
+      'text-background',
+    )
+    expect(screen.getByTestId('assistant-error-switch-model-retry')).not.toHaveClass(
+      'bg-primary',
+      'text-bg-base',
+    )
     expect(screen.getByText('重试')).toBeInTheDocument()
     expect(screen.getByTestId('assistant-error-details-toggle')).toHaveAttribute(
       'aria-expanded',

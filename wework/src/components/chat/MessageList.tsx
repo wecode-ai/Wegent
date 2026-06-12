@@ -585,7 +585,7 @@ function AssistantErrorCard({
             type="button"
             data-testid="assistant-error-switch-model-retry"
             onClick={() => onSwitchModel?.(message)}
-            className="h-8 rounded-lg border border-text-primary bg-text-primary px-3 text-xs font-semibold text-bg-base"
+            className="h-8 rounded-lg border border-text-primary bg-text-primary px-3 text-xs font-semibold text-background hover:bg-text-primary/90"
           >
             {t('assistant_error.actions.switch_model_retry', '切换模型并重试')}
           </button>
