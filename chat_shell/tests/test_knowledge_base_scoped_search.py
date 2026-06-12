@@ -119,7 +119,7 @@ async def test_arun_preserves_backend_scoped_search_error_message():
 
 
 @pytest.mark.asyncio
-async def test_arun_passes_scoped_filters_without_mutating_tool_defaults():
+async def test_arun_unscoped_passes_call_filters_without_mutating_tool_defaults():
     tool = KnowledgeBaseTool(
         knowledge_base_ids=[1],
         user_id=7,

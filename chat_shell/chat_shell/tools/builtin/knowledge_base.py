@@ -967,6 +967,8 @@ class KnowledgeBaseTool(BaseTool):
                     query=query,
                     max_results=max_results,
                     route_mode=route_mode,
+                    document_ids=document_ids,
+                    document_names=document_names,
                 )
 
         mode = result.get("mode", InjectionMode.RAG_ONLY)

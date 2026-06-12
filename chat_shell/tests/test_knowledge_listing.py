@@ -47,10 +47,13 @@ class TestKbLsTool:
 
             result = await tool._arun(knowledge_base_id=3, offset=2, limit=1)
 
-        post.assert_awaited_once_with(
-            "http://backend/api/internal/rag/list-docs",
-            json={"knowledge_base_id": 3, "offset": 2, "limit": 1},
-        )
+        post.assert_awaited_once()
+        args, kwargs = post.await_args
+        assert args == ("http://backend/api/internal/rag/list-docs",)
+        assert kwargs["json"] == {"knowledge_base_id": 3, "offset": 2, "limit": 1}
+        auth_header = kwargs["headers"]["Authorization"]
+        assert auth_header.startswith("Bearer ")
+        assert auth_header.removeprefix("Bearer ").strip()
 
         data = json.loads(result)
         assert data["total"] == 5
@@ -100,20 +103,23 @@ class TestKbHeadTool:
 
             result = await tool._arun(document_ids=[101], offset=12, limit=20)
 
-        post.assert_awaited_once_with(
-            "http://backend/api/internal/rag/read-docs",
-            json={
-                "document_ids": [101],
-                "offset": 12,
-                "limit": 20,
-                "knowledge_base_ids": [3, 4],
-                "persistence_context": {
-                    "user_subtask_id": 8,
-                    "user_id": 7,
-                    "restricted_mode": False,
-                },
+        post.assert_awaited_once()
+        args, kwargs = post.await_args
+        assert args == ("http://backend/api/internal/rag/read-docs",)
+        assert kwargs["json"] == {
+            "document_ids": [101],
+            "offset": 12,
+            "limit": 20,
+            "knowledge_base_ids": [3, 4],
+            "persistence_context": {
+                "user_subtask_id": 8,
+                "user_id": 7,
+                "restricted_mode": False,
             },
-        )
+        }
+        auth_header = kwargs["headers"]["Authorization"]
+        assert auth_header.startswith("Bearer ")
+        assert auth_header.removeprefix("Bearer ").strip()
 
         data = json.loads(result)
         assert data["documents"][0]["id"] == 101
