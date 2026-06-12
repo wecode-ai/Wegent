@@ -1,4 +1,6 @@
 import { useState } from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import type { ProcessingBlock, ToolBlock } from '@/types/workbench'
 
 interface ToolBlockItemProps {
@@ -16,7 +18,7 @@ export function ToolBlockItem({ block }: ToolBlockItemProps) {
   const { icon, label } = getBlockLabel(block)
 
   return (
-    <div className="min-w-0 overflow-x-hidden text-sm">
+    <div className="min-w-0 overflow-x-hidden text-[13px]">
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
@@ -54,13 +56,76 @@ function ThinkingBlockItem({
   if (!block.content) return null
 
   return (
-    <div className="min-w-0 overflow-x-hidden text-sm">
+    <div className="min-w-0 overflow-x-hidden text-[13px]">
       <div className="flex max-w-full items-start gap-1.5 text-text-secondary">
         <CommentaryIcon />
-        <p className="min-w-0 whitespace-pre-wrap break-words leading-6">
-          {block.content}
-          {isRunning && <span className="animate-pulse text-xs">...</span>}
-        </p>
+        <div className="thinking-markdown min-w-0 break-words leading-6">
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            components={{
+              p: ({ children }) => (
+                <p className="mb-1.5 min-w-0 break-words leading-6">{children}</p>
+              ),
+              ul: ({ children }) => (
+                <ul className="mb-1.5 list-disc space-y-0.5 pl-5">{children}</ul>
+              ),
+              ol: ({ children }) => (
+                <ol className="mb-1.5 list-decimal space-y-0.5 pl-5">{children}</ol>
+              ),
+              li: ({ children }) => (
+                <li className="min-w-0 break-words leading-6">{children}</li>
+              ),
+              strong: ({ children }) => (
+                <strong className="font-semibold">{children}</strong>
+              ),
+              code: ({ className, children }) => {
+                const match = /language-(\w*)/.exec(className || '')
+                const isBlock = Boolean(match) || String(children).includes('\n')
+                if (isBlock) {
+                  const lang = match ? match[1] || '' : ''
+                  return (
+                    <code className="mb-1.5 block max-w-full overflow-hidden rounded border border-border">
+                      <span className="block border-b border-border bg-surface px-3 py-1 text-xs text-text-muted">
+                        {lang || 'text'}
+                      </span>
+                      <span className="block max-w-full overflow-x-auto px-4 py-2 font-mono text-xs leading-5 text-text-primary">
+                        {String(children).replace(/\n$/, '')}
+                      </span>
+                    </code>
+                  )
+                }
+                return (
+                  <code className="break-words rounded bg-muted px-1.5 py-0.5 text-xs font-medium text-text-primary">
+                    {children}
+                  </code>
+                )
+              },
+              pre: ({ children }) => (
+                <pre className="mb-1.5 max-w-full overflow-hidden">{children}</pre>
+              ),
+              blockquote: ({ children }) => (
+                <blockquote className="mb-1.5 border-l-3 border-border pl-3 opacity-80">
+                  {children}
+                </blockquote>
+              ),
+              a: ({ href, children }) => (
+                <a
+                  href={href}
+                  className="break-words text-primary underline"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  {children}
+                </a>
+              ),
+            }}
+          >
+            {block.content}
+          </ReactMarkdown>
+          {isRunning && (
+            <span className="inline-flex animate-pulse text-xs">...</span>
+          )}
+        </div>
       </div>
     </div>
   )

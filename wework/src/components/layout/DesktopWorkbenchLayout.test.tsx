@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { createDeviceApi } from '@/api/devices'
 import { createQuotaApi } from '@/api/quota'
 import '@/i18n'
+import { TITLEBAR_ACTIONS_PORTAL_ID } from '@/components/topnav/TitlebarActionsPortal'
 import { DesktopWorkbenchLayout } from './DesktopWorkbenchLayout'
 
 function createRect({
@@ -54,6 +55,11 @@ const fetchQuotaMock = vi.fn()
 describe('DesktopWorkbenchLayout', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    document.getElementById(TITLEBAR_ACTIONS_PORTAL_ID)?.remove()
+    const titlebarActions = document.createElement('div')
+    titlebarActions.id = TITLEBAR_ACTIONS_PORTAL_ID
+    titlebarActions.dataset.testid = 'titlebar-actions'
+    document.body.appendChild(titlebarActions)
     delete (window as typeof window & { __TAURI_INTERNALS__?: unknown })
       .__TAURI_INTERNALS__
     localStorage.clear()
@@ -528,23 +534,29 @@ describe('DesktopWorkbenchLayout', () => {
       />,
     )
 
-    expect(
-      screen
-        .getAllByTestId('macos-titlebar-drag-region')
-        .every((region) => region.hasAttribute('data-tauri-drag-region')),
-    ).toBe(true)
     expect(screen.getByTestId('desktop-sidebar-topbar')).toHaveClass(
       'h-[52px]',
-      'pl-2',
     )
+    expect(screen.getByTestId('desktop-workbench-main')).toHaveClass(
+      'mt-1.5',
+      'mb-1.5',
+      'mr-1.5',
+    )
+    expect(screen.getByTestId('desktop-workbench-main')).not.toHaveClass('ml-1.5')
     expect(screen.getByTestId('collapse-sidebar-button')).toHaveClass(
       'h-7',
       'w-7',
       'rounded-lg',
     )
     expect(screen.getByTestId('desktop-window-controls')).toHaveClass('gap-3')
-    expect(screen.getByTestId('workbench-topbar-right-actions')).toHaveClass(
-      'gap-2',
+    expect(screen.getByTestId('workbench-topbar-right-actions')).toContainElement(
+      screen.getByTestId('environment-info-button'),
+    )
+    expect(screen.getByTestId('workbench-topbar-right-actions')).toContainElement(
+      screen.getByTestId('toggle-bottom-workspace-panel-button'),
+    )
+    expect(screen.getByTestId('workbench-topbar-right-actions')).toContainElement(
+      screen.getByTestId('toggle-right-workspace-panel-button'),
     )
 
     await userEvent.click(screen.getByTestId('collapse-sidebar-button'))
@@ -552,10 +564,14 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByText('新对话')).not.toBeInTheDocument()
     expect(document.querySelector('aside')).not.toBeInTheDocument()
     expect(screen.getByTestId('expand-sidebar-button')).toBeInTheDocument()
-    expect(screen.getByTestId('workbench-topbar')).toHaveClass('h-[52px]')
-    expect(screen.getByTestId('workbench-topbar')).toHaveClass('pl-2')
     expect(screen.getByTestId('workbench-topbar-left-actions')).toContainElement(
       screen.getByTestId('desktop-window-controls'),
+    )
+    expect(screen.getByTestId('desktop-workbench-main')).toHaveClass(
+      'mt-1.5',
+      'mb-1.5',
+      'mr-1.5',
+      'ml-1.5',
     )
 
     await userEvent.click(screen.getByTestId('expand-sidebar-button'))
@@ -564,7 +580,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(document.querySelector('aside')).toBeInTheDocument()
   })
 
-  test('reserves native macOS traffic light space in the Tauri title bar', async () => {
+  test('keeps window controls in their page-level positions in Tauri', async () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,
       value: {},
@@ -572,22 +588,47 @@ describe('DesktopWorkbenchLayout', () => {
 
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
-    expect(screen.getByTestId('desktop-sidebar-topbar')).toHaveClass(
-      'h-[52px]',
+    expect(screen.getByTestId('desktop-sidebar-topbar')).toContainElement(
+      screen.getByTestId('collapse-sidebar-button'),
     )
-    expect(screen.getByTestId('desktop-sidebar-topbar')).toHaveStyle({
-      paddingLeft: '89px',
-    })
+    expect(screen.getByTestId('titlebar-actions')).toContainElement(
+      screen.getByTestId('environment-info-button'),
+    )
+    expect(screen.queryByTestId('workbench-topbar')).not.toBeInTheDocument()
+    expect(screen.getByTestId('desktop-workbench-content')).not.toHaveClass(
+      'pt-[52px]',
+    )
+    expect(screen.getByTestId('desktop-workbench-main')).toHaveClass(
+      'mb-1.5',
+      'mr-1.5',
+    )
+    expect(screen.getByTestId('desktop-workbench-main')).not.toHaveClass(
+      'mt-1.5',
+    )
 
     await userEvent.click(screen.getByTestId('collapse-sidebar-button'))
 
-    expect(screen.getByTestId('workbench-topbar')).toHaveStyle({
-      paddingLeft: '89px',
-    })
-    expect(screen.getByTestId('expand-sidebar-button')).toHaveClass(
-      'h-7',
-      'w-7',
+    expect(screen.getByTestId('workbench-topbar')).toContainElement(
+      screen.getByTestId('expand-sidebar-button'),
     )
+    expect(screen.getByTestId('titlebar-actions')).toContainElement(
+      screen.getByTestId('toggle-right-workspace-panel-button'),
+    )
+  })
+
+  test('keeps workspace panel actions in the page topbar on web', () => {
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    expect(screen.getByTestId('workbench-topbar-right-actions')).toContainElement(
+      screen.getByTestId('environment-info-button'),
+    )
+    expect(screen.getByTestId('workbench-topbar-right-actions')).toContainElement(
+      screen.getByTestId('toggle-bottom-workspace-panel-button'),
+    )
+    expect(screen.getByTestId('workbench-topbar-right-actions')).toContainElement(
+      screen.getByTestId('toggle-right-workspace-panel-button'),
+    )
+    expect(screen.getByTestId('titlebar-actions')).toBeEmptyDOMElement()
   })
 
   test('opens and filters the desktop search dialog from the sidebar', async () => {
@@ -1968,7 +2009,7 @@ describe('DesktopWorkbenchLayout', () => {
       'overflow-y-auto',
       'scrollbar-none',
     )
-    expect(screen.getByTestId('settings-button')).toHaveClass('shrink-0', 'w-full')
+    expect(screen.getByTestId('settings-button')).toHaveClass('h-9', 'w-full')
   })
 
   test('toggles an empty project chat list without selecting the project chat context', async () => {
