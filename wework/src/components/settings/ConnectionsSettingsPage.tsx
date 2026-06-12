@@ -37,7 +37,6 @@ import {
   MAC_NATIVE_TOP_BAR_ACTION_INSET,
 } from '@/components/layout/DesktopTopBar'
 import { useResizableSidebar } from '@/components/layout/useResizableSidebar'
-import { buildVncPageUrl } from '@/lib/vnc'
 import {
   isClaudeCodeDevice,
   isCloudDevice,
