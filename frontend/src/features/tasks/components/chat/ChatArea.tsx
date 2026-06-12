@@ -1296,7 +1296,7 @@ function ChatAreaContent({
       // 1. Primary: match by shared messageId (works for messages loaded from backend)
       // 2. Fallback: use Map insertion order - find the last user message that appears
       //    before the AI message in the Map (works for live-session messages that have no messageId yet)
-      let userStateMsg: import('../../state/TaskStateMachine').UnifiedMessage | undefined
+      let userStateMsg: import('../../state').UnifiedMessage | undefined
 
       if (aiStateMsg.messageId != null) {
         // Primary lookup: match by shared messageId
@@ -1311,7 +1311,7 @@ function ChatAreaContent({
       if (!userStateMsg) {
         // Fallback: iterate the Map in insertion order; track the last user message seen
         // before we reach the target AI message entry
-        let lastUserMsg: import('../../state/TaskStateMachine').UnifiedMessage | undefined
+        let lastUserMsg: import('../../state').UnifiedMessage | undefined
         for (const [key, msg] of stateMessages.entries()) {
           if (key === `ai-${aiMsg.subtaskId}`) {
             // Reached the AI message - the previous user message is the one we want

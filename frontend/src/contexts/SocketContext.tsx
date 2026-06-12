@@ -566,19 +566,12 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         return { success: false, error: 'Not connected to server' }
       }
 
-      return new Promise(resolve => {
-        socket.emit(
-          'chat:cancel',
-          {
-            subtask_id: subtaskId,
-            partial_content: partialContent,
-            shell_type: shellType,
-          },
-          (response: { success?: boolean; error?: string }) => {
-            resolve({ success: response.success ?? true, error: response.error })
-          }
-        )
+      socket.emit('chat:cancel', {
+        subtask_id: subtaskId,
+        partial_content: partialContent,
+        shell_type: shellType,
       })
+      return { success: true }
     },
     [socket]
   )
