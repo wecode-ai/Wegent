@@ -119,7 +119,12 @@ export function finalizeStaleStreamingMessagesForNoStream(
     if (!nextMessages) {
       nextMessages = new Map(state.messages)
     }
-    nextMessages.set(staleMsgId, { ...staleMsg, status: finalStatus })
+    nextMessages.set(staleMsgId, {
+      ...staleMsg,
+      status: finalStatus,
+      subtaskStatus: staleSubtask?.status ?? staleMsg.subtaskStatus,
+      isReasoningStreaming: false,
+    })
   }
 
   return nextMessages ? { ...state, messages: nextMessages } : state

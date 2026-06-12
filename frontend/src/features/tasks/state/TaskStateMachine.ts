@@ -893,6 +893,9 @@ export class TaskStateMachine {
         response.streaming
       )
     } catch (error) {
+      if (this.closed || recoveryVersion !== this.recoveryVersion) {
+        return
+      }
       const errorMsg = error instanceof Error ? error.message : 'Unknown error'
       this.enterRecoveryError(errorMsg)
     }

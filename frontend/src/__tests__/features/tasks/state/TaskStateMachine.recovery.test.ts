@@ -46,6 +46,8 @@ function computeSendState(machine: TaskStateMachine) {
   }).primaryAction
 }
 
+type JoinTaskResponse = Awaited<ReturnType<TaskStateMachineDeps['joinTask']>>
+
 describe('TaskStateMachine recovery', () => {
   describe('recovery invariant: transient isStopping cleared after sync completes', () => {
     let consoleInfoSpy: jest.SpyInstance
@@ -369,6 +371,52 @@ describe('TaskStateMachine recovery', () => {
     })
   })
 
+  it('ignores stale join rejection after the task is reopened', async () => {
+    const consoleInfoSpy = jest.spyOn(console, 'info').mockImplementation(() => {})
+    let rejectFirstJoin!: (error: Error) => void
+    let resolveSecondJoin!: (response: JoinTaskResponse) => void
+    const firstJoin = new Promise<JoinTaskResponse>((_resolve, reject) => {
+      rejectFirstJoin = reject
+    })
+    const secondJoin = new Promise<JoinTaskResponse>(resolve => {
+      resolveSecondJoin = resolve
+    })
+    const joinTask = jest.fn().mockReturnValueOnce(firstJoin).mockReturnValueOnce(secondJoin)
+    const leaveTask = jest.fn()
+
+    try {
+      const machine = new TaskStateMachine(42, {
+        joinTask,
+        leaveTask,
+        isConnected: () => true,
+      })
+
+      machine.handleTaskStatus('RUNNING', '2026-06-01T10:00:00')
+      const firstRecover = machine.recover({ force: true })
+      expect(joinTask).toHaveBeenCalledTimes(1)
+
+      machine.closeTask()
+
+      const secondRecover = machine.openTask()
+      expect(joinTask).toHaveBeenCalledTimes(2)
+
+      rejectFirstJoin(new Error('obsolete join failed'))
+      await firstRecover
+
+      expect(machine.getState().phase).toBe('joining')
+      expect(machine.getState().error).toBeNull()
+      expect(leaveTask).toHaveBeenCalledTimes(1)
+
+      resolveSecondJoin({ subtasks: [] })
+      await secondRecover
+
+      expect(machine.getState().phase).toBe('ready')
+      expect(machine.getState().error).toBeNull()
+    } finally {
+      consoleInfoSpy.mockRestore()
+    }
+  })
+
   describe('cancel sent then socket closed before ack', () => {
     let consoleInfoSpy: jest.SpyInstance
 
@@ -430,7 +478,10 @@ describe('TaskStateMachine recovery', () => {
       expect(state.isStopping).toBe(false)
       expect(state.phase).toBe('ready')
       expect(state.derived.isStreaming).toBe(false)
-      expect(state.messages.get('ai-10')?.status).toBe('completed')
+      const message = state.messages.get('ai-10')
+      expect(message?.status).toBe('completed')
+      expect(message?.subtaskStatus).toBe('COMPLETED')
+      expect(message?.isReasoningStreaming).toBe(false)
       expect(computeSendState(machine)).toBe('send')
     })
 
@@ -738,7 +789,10 @@ describe('TaskStateMachine recovery', () => {
       expect(computeSendState(machine)).toBe('send')
       // Message must NOT be streaming and NOT completed — non-terminal stale
       // subtask with confirmed no-stream must use non-success representation
-      expect(state.messages.get('ai-58')?.status).toBe('error')
+      const message = state.messages.get('ai-58')
+      expect(message?.status).toBe('error')
+      expect(message?.subtaskStatus).toBe('RUNNING')
+      expect(message?.isReasoningStreaming).toBe(false)
     })
 
     it('[MATRIX 1d] stale PENDING subtask with no stream: finalized as error, not streaming or completed', async () => {
@@ -786,8 +840,11 @@ describe('TaskStateMachine recovery', () => {
       expect(state.derived.blocksQueuedDispatch).toBe(false)
       expect(state.isStopping).toBe(false)
       expect(computeSendState(machine)).toBe('send')
-      expect(state.messages.get('ai-58')?.status).toBe('error')
-      expect(state.messages.get('ai-58')?.status).not.toBe('streaming')
+      const message = state.messages.get('ai-58')
+      expect(message?.status).toBe('error')
+      expect(message?.status).not.toBe('streaming')
+      expect(message?.subtaskStatus).toBe('PENDING')
+      expect(message?.isReasoningStreaming).toBe(false)
       expect(state.messages.get('ai-58')?.status).not.toBe('completed')
     })
 
@@ -850,7 +907,9 @@ describe('TaskStateMachine recovery', () => {
       expect(state.runtime.activeStreamSubtaskId).toBeUndefined()
       expect(state.isStopping).toBe(false)
       expect(state.derived.isStreaming).toBe(false)
-      expect(state.messages.get('ai-58')?.status).toBe('error')
+      const message = state.messages.get('ai-58')
+      expect(message?.status).toBe('error')
+      expect(message?.isReasoningStreaming).toBe(false)
 
       machine.handleChatChunk(58, ' stale-chunk')
 
