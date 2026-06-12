@@ -1,11 +1,15 @@
-import { useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { createDeviceApi } from '@/api/devices'
+import { createHttpClient } from '@/api/http'
 import { ChatInput } from '@/components/chat/ChatInput'
 import type {
   ProjectChatControls,
   ProjectWorkControls,
 } from '@/components/chat/ChatInput'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
+import { getRuntimeConfig } from '@/config/runtime'
 import { useTranslation } from '@/hooks/useTranslation'
+import { resolveWorkspaceTarget } from '@/lib/workspace-target'
 import {
   findWorkbenchDevice,
   getActiveWorkbenchDeviceId,
@@ -28,6 +32,7 @@ import type {
   QueuedWorkbenchMessage,
   WorkbenchMessage,
 } from '@/types/workbench'
+import type { CodeCommentContext, WorkspaceTarget } from '@/types/workspace-files'
 import { cn } from '@/lib/utils'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { BottomWorkspacePanel } from './workspace-panels/BottomWorkspacePanel'
@@ -49,6 +54,39 @@ const DESKTOP_SCROLL_TO_BOTTOM_BUTTON_CLASS =
   'bottom-36 z-popover bg-background/95 shadow-md'
 const DESKTOP_QUEUED_SCROLL_TO_BOTTOM_BUTTON_CLASS =
   'bottom-52 z-popover bg-background/95 shadow-md'
+
+function workspaceTargetKey(target: WorkspaceTarget | null): string {
+  return target ? `${target.deviceId}:${target.path}:${target.source}` : ''
+}
+
+function messageWorkspaceTargetKey(
+  currentTask: Task | null,
+  messages: WorkbenchMessage[],
+): string {
+  if (!currentTask) return ''
+  let latestUnscopedKey = ''
+
+  for (const message of [...messages].reverse()) {
+    const fileChanges = message.fileChanges
+    if (
+      fileChanges?.status !== 'active' ||
+      !fileChanges.device_id ||
+      !fileChanges.workspace_path
+    ) {
+      continue
+    }
+
+    const key = `${message.taskId ?? ''}:${fileChanges.device_id}:${fileChanges.workspace_path}`
+    if (message.taskId === currentTask.id) {
+      return key
+    }
+    if (message.taskId == null && !latestUnscopedKey) {
+      latestUnscopedKey = key
+    }
+  }
+
+  return latestUnscopedKey
+}
 
 interface DesktopWorkbenchMainProps {
   isBootstrapping: boolean
@@ -83,6 +121,7 @@ interface DesktopWorkbenchMainProps {
   onRevertFileChanges?: (
     subtaskId: number,
   ) => Promise<TurnFileChangesSummary>
+  onAddCodeComment?: (context: CodeCommentContext) => void
   topBarLeftActions?: ReactNode
 }
 
@@ -117,11 +156,20 @@ export function DesktopWorkbenchMain({
   onCancelGuidanceMessage,
   onLoadFileChangesDiff,
   onRevertFileChanges,
+  onAddCodeComment = () => {},
   topBarLeftActions,
 }: DesktopWorkbenchMainProps) {
   const { t } = useTranslation('common')
   const [rightPanelOpen, setRightPanelOpen] = useState(false)
   const [bottomPanelOpen, setBottomPanelOpen] = useState(false)
+  const [workspaceTarget, setWorkspaceTarget] = useState<WorkspaceTarget | null>(null)
+  const [workspaceTargetError, setWorkspaceTargetError] = useState<string | null>(null)
+  const workspaceDeviceApi = useMemo(() => {
+    const { apiBaseUrl } = getRuntimeConfig()
+    return createDeviceApi(createHttpClient({ baseUrl: apiBaseUrl }))
+  }, [])
+  const messagesRef = useRef(messages)
+  const workspaceMessageTargetKey = messageWorkspaceTargetKey(currentTask, messages)
   const hasConversation = messages.length > 0 || currentTask
   const hasQueuedComposerRows = queuedMessages.length > 0 || guidanceMessages.length > 0
   const reserveMacWindowControls = isTauriRuntime()
@@ -150,6 +198,41 @@ export function DesktopWorkbenchMain({
         projectName: currentProject.name,
       })
     : t('workbench.empty_title', '我们该做什么？')
+
+  useEffect(() => {
+    messagesRef.current = messages
+  }, [messages])
+
+  useEffect(() => {
+    let cancelled = false
+    resolveWorkspaceTarget({
+      currentTask,
+      currentProject,
+      messages: messagesRef.current,
+      api: workspaceDeviceApi,
+    })
+      .then(target => {
+        if (!cancelled) {
+          setWorkspaceTarget(current =>
+            workspaceTargetKey(current) === workspaceTargetKey(target)
+              ? current
+              : target,
+          )
+          setWorkspaceTargetError(null)
+        }
+      })
+      .catch(error => {
+        if (!cancelled) {
+          setWorkspaceTarget(null)
+          setWorkspaceTargetError(
+            error instanceof Error ? error.message : 'Failed to resolve workspace',
+          )
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [currentTask, currentProject, workspaceDeviceApi, workspaceMessageTargetKey])
 
   return (
     <main className="relative flex min-w-0 flex-1 overflow-hidden">
@@ -307,6 +390,8 @@ export function DesktopWorkbenchMain({
         <RightWorkspacePanel
           currentProject={currentProject}
           devices={devices}
+          workspaceTarget={workspaceTargetError ? null : workspaceTarget}
+          onAddCodeComment={onAddCodeComment}
           onRequestClose={() => setRightPanelOpen(false)}
         />
       )}

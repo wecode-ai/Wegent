@@ -1,18 +1,24 @@
 import { X } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { DeviceInfo, ProjectWithTasks } from '@/types/api'
+import type { CodeCommentContext, WorkspaceTarget } from '@/types/workspace-files'
+import { FileWorkspacePanel } from './FileWorkspacePanel'
 import { useResizableRightPanel } from './useResizableWorkspacePanel'
 import { WorkspacePanelCards } from './WorkspacePanelCards'
 
 interface RightWorkspacePanelProps {
   currentProject: ProjectWithTasks | null
   devices: DeviceInfo[]
+  workspaceTarget: WorkspaceTarget | null
+  onAddCodeComment: (context: CodeCommentContext) => void
   onRequestClose: () => void
 }
 
 export function RightWorkspacePanel({
   currentProject,
   devices,
+  workspaceTarget,
+  onAddCodeComment,
   onRequestClose,
 }: RightWorkspacePanelProps) {
   const { t } = useTranslation('common')
@@ -40,11 +46,19 @@ export function RightWorkspacePanel({
         <X className="h-4 w-4" />
       </button>
       <div className="flex min-h-0 flex-1 pt-14">
-        <WorkspacePanelCards
-          currentProject={currentProject}
-          devices={devices}
-          onRequestClose={onRequestClose}
-        />
+        {workspaceTarget ? (
+          <FileWorkspacePanel
+            key={`${workspaceTarget.deviceId}:${workspaceTarget.path}`}
+            target={workspaceTarget}
+            onAddCodeComment={onAddCodeComment}
+          />
+        ) : (
+          <WorkspacePanelCards
+            currentProject={currentProject}
+            devices={devices}
+            onRequestClose={onRequestClose}
+          />
+        )}
       </div>
     </section>
   )
