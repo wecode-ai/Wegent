@@ -2,7 +2,32 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import sys
+from dataclasses import dataclass
+from types import ModuleType
 from unittest.mock import MagicMock
+
+
+@dataclass
+class TextInput:
+    text: str
+
+
+@dataclass
+class ImageInput:
+    url: str
+
+
+@dataclass
+class LocalImageInput:
+    path: str
+
+
+openai_codex_stub = ModuleType("openai_codex")
+openai_codex_stub.TextInput = TextInput
+openai_codex_stub.ImageInput = ImageInput
+openai_codex_stub.LocalImageInput = LocalImageInput
+sys.modules.setdefault("openai_codex", openai_codex_stub)
 
 from executor.agents.codex.codex_agent import CodeXAgent
 from executor.services.attachment_downloader import AttachmentDownloadResult
