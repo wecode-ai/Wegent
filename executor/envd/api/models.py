@@ -5,7 +5,7 @@
 Pydantic models for envd REST API
 """
 
-from typing import Dict, Optional
+from typing import Dict, Literal, Optional
 
 from pydantic import BaseModel
 
@@ -55,6 +55,7 @@ class ArchiveRequest(BaseModel):
     task_id: int
     upload_url: str  # Presigned MinIO upload URL
     max_size_mb: int = 500  # Maximum archive size in MB
+    runtime_type: Literal["executor", "sandbox"] = "executor"
 
 
 class ArchiveResponse(BaseModel):
@@ -71,6 +72,7 @@ class RestoreRequest(BaseModel):
 
     task_id: int
     download_url: str  # Presigned MinIO download URL
+    runtime_type: Literal["executor", "sandbox"] = "executor"
 
 
 class RestoreResponse(BaseModel):

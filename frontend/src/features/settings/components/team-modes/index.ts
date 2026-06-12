@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Bot } from '@/types/api'
-import { UnifiedShell } from '@/apis/shells'
+import { isSelectableShell, UnifiedShell } from '@/apis/shells'
 
 export { default as SoloModeEditor } from './SoloModeEditor'
 export { default as PipelineModeEditor } from './PipelineModeEditor'
@@ -18,19 +18,26 @@ export type TeamMode = 'solo' | 'pipeline' | 'route' | 'coordinate' | 'collabora
  */
 export type AgentType = 'ClaudeCode' | 'Agno' | 'Dify'
 
+const SELECTABLE_TEAM_MODES: TeamMode[] = ['solo', 'pipeline', 'coordinate']
+
 /**
- * Mode to supported agent types mapping
- * - solo: All agent types (ClaudeCode, Agno, Dify)
- * - pipeline: ClaudeCode and Agno only (no Dify)
- * - route/collaborate: Agno only (multi-agent collaboration modes)
- * - coordinate: Agno and ClaudeCode (supports both agent types)
+ * Mode to supported agent types mapping for modes that can be selected without Agno.
  */
 const MODE_AGENT_FILTER: Record<TeamMode, AgentType[] | null> = {
-  solo: null, // null means all agents are allowed
-  pipeline: ['ClaudeCode', 'Agno'],
-  route: ['Agno'],
-  coordinate: ['Agno', 'ClaudeCode'],
-  collaborate: ['Agno'],
+  solo: null, // null means all selectable agents are allowed
+  pipeline: ['ClaudeCode'],
+  route: [],
+  coordinate: ['ClaudeCode'],
+  collaborate: [],
+}
+
+export function getSelectableTeamModes(): TeamMode[] {
+  return SELECTABLE_TEAM_MODES
+}
+
+export function getAllowedAgentsForTeamMode(mode: TeamMode): AgentType[] | undefined {
+  const allowedAgents = MODE_AGENT_FILTER[mode]
+  return allowedAgents === null ? undefined : allowedAgents
 }
 
 /**
@@ -73,11 +80,6 @@ export function getFilteredBotsForMode(
 ): Bot[] {
   const allowedAgents = MODE_AGENT_FILTER[mode]
 
-  // If null, all agents are allowed
-  if (allowedAgents === null) {
-    return bots
-  }
-
   // Build shell map for quick lookup
   const shellMap = new Map<string, UnifiedShell>()
   if (shells) {
@@ -89,6 +91,15 @@ export function getFilteredBotsForMode(
   // Filter bots by allowed agent types, resolving custom shell types
   return bots.filter(bot => {
     const actualShellType = getActualShellType(bot.shell_type, shellMap)
+    if (!isSelectableShell({ shellType: actualShellType })) {
+      return false
+    }
+
+    // If null, all selectable agents are allowed
+    if (allowedAgents === null) {
+      return true
+    }
+
     return allowedAgents.includes(actualShellType as AgentType)
   })
 }

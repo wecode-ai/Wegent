@@ -28,6 +28,7 @@ export function WorkbenchPage() {
     searchTaskDetail,
     rememberExecutionDevice,
     refreshDevices,
+    refreshWorkLists,
     upgradeDevice,
     createProject,
     createGitWorkspaceProject,
@@ -61,6 +62,8 @@ export function WorkbenchPage() {
     sendQueuedAsGuidance,
     editQueuedMessage,
     cancelGuidanceMessage,
+    loadTurnFileChangesDiff,
+    revertTurnFileChanges,
   } = useWorkbench()
   const Layout = isMobile ? MobileWorkbenchLayout : DesktopWorkbenchLayout
   const projectWork = {
@@ -128,6 +131,9 @@ export function WorkbenchPage() {
       onSendQueuedAsGuidance={sendQueuedAsGuidance}
       onEditQueuedMessage={editQueuedMessage}
       onCancelGuidanceMessage={cancelGuidanceMessage}
+      onLoadFileChangesDiff={loadTurnFileChangesDiff}
+      onRevertFileChanges={revertTurnFileChanges}
+      onRefreshWorkLists={refreshWorkLists}
       onLogout={logout}
     />
   )

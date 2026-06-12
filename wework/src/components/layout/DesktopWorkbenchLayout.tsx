@@ -19,6 +19,7 @@ import type {
   ProjectWithTasks,
   TaskDetail,
   TaskListResponse,
+  TurnFileChangesSummary,
 } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
 import type { DeviceUpgradeState } from '@/types/device-events'
@@ -95,6 +96,11 @@ interface DesktopWorkbenchLayoutProps {
   onSendQueuedAsGuidance?: (id: string) => void
   onEditQueuedMessage?: (id: string) => void
   onCancelGuidanceMessage?: (id: string) => void
+  onLoadFileChangesDiff?: (subtaskId: number) => Promise<string>
+  onRevertFileChanges?: (
+    subtaskId: number,
+  ) => Promise<TurnFileChangesSummary>
+  onRefreshWorkLists?: () => Promise<void>
   onLogout: () => void
 }
 
@@ -151,6 +157,9 @@ export function DesktopWorkbenchLayout({
   onSendQueuedAsGuidance = () => {},
   onEditQueuedMessage = () => {},
   onCancelGuidanceMessage = () => {},
+  onLoadFileChangesDiff,
+  onRevertFileChanges,
+  onRefreshWorkLists,
   onLogout,
 }: DesktopWorkbenchLayoutProps) {
   const { sidebarCollapsed, setSidebarCollapsed } =
@@ -322,6 +331,7 @@ export function DesktopWorkbenchLayout({
             setSettingsOpen(true)
             navigateTo('/settings')
           }}
+          onRefreshWorkLists={onRefreshWorkLists}
           onLogout={onLogout}
         />
       )}
@@ -372,6 +382,8 @@ export function DesktopWorkbenchLayout({
           onSendQueuedAsGuidance={onSendQueuedAsGuidance}
           onEditQueuedMessage={onEditQueuedMessage}
           onCancelGuidanceMessage={onCancelGuidanceMessage}
+          onLoadFileChangesDiff={onLoadFileChangesDiff}
+          onRevertFileChanges={onRevertFileChanges}
           topBarLeftActions={
             sidebarCollapsed ? (
               <DesktopWindowControls

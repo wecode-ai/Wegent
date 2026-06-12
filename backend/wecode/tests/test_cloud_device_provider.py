@@ -4,8 +4,11 @@
 
 """Tests for wecode cloud device provider creation behavior."""
 
+import base64
+
 import pytest
 
+from app.models.kind import Kind
 from wecode.service import cloud_device_provider as provider_module
 from wecode.service.cloud_device_provider import CloudDeviceProvider
 
@@ -57,3 +60,47 @@ async def test_create_device_passes_git_token_envs_to_nevis(test_db, monkeypatch
         "GIT_INTRA_WEIBO_COM_TOKEN": "git-intra-token",
         "GITLAB_WEIBO_CN_TOKEN": "gitlab-weibo-token",
     }
+
+
+@pytest.mark.asyncio
+async def test_create_device_generates_and_persists_ubuntu_password(
+    test_db, monkeypatch
+):
+    """Cloud device creation should set and store the ubuntu login password."""
+    client = _FakeNevisClient()
+    provider = CloudDeviceProvider(client=client)
+    monkeypatch.setattr(
+        provider_module.nevis_settings,
+        "NEVIS_OPENCLAW_INSTALL_SCRIPT_URL",
+        "",
+    )
+    monkeypatch.setattr(
+        provider_module.secrets,
+        "token_urlsafe",
+        lambda token_bytes: "generated-ubuntu-password",
+    )
+
+    result = await provider.create_device(
+        db=test_db,
+        user_id=7,
+        user_name="alice",
+        auth_token="device-api-key",
+        backend_url="https://backend.example.com",
+    )
+
+    user_data = client.create_sandbox_kwargs["user_data"]
+    script = base64.b64decode(user_data).decode("utf-8")
+    assert 'echo "ubuntu:generated-ubuntu-password" | sudo chpasswd' in script
+
+    device = (
+        test_db.query(Kind)
+        .filter(
+            Kind.user_id == 7,
+            Kind.kind == "Device",
+            Kind.namespace == "default",
+            Kind.name == result["device_id"],
+        )
+        .one()
+    )
+    cloud_config = device.json["spec"]["cloudConfig"]
+    assert cloud_config["ubuntuInitialPassword"] == "generated-ubuntu-password"

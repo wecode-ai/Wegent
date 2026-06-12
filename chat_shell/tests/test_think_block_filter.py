@@ -7,6 +7,7 @@
 import pytest
 
 from chat_shell.messages.think_block_filter import (
+    _clear_google_thought_signatures,
     _infer_provider,
     strip_foreign_reasoning_blocks,
 )
@@ -878,3 +879,229 @@ class TestSanitizeToolIdsForAnthropic:
         ]
         result = strip_foreign_reasoning_blocks(messages, "openai")
         assert result[0]["tool_calls"][0]["id"] == "functions.test:1"
+
+
+class TestClearGoogleThoughtSignatures:
+    """Unit tests for the _clear_google_thought_signatures helper."""
+
+    def test_removes_signature_from_text_block_extras(self):
+        """Signature key is removed from text block extras."""
+        content = [
+            {
+                "type": "text",
+                "text": "",
+                "extras": {"signature": "CiMBjz1rX...base64"},
+            }
+        ]
+        result = _clear_google_thought_signatures(content)
+        assert "extras" not in result[0]
+        assert result[0] == {"type": "text", "text": ""}
+
+    def test_preserves_other_extras_fields(self):
+        """Only the 'signature' key is removed; other extras fields are kept."""
+        content = [
+            {
+                "type": "text",
+                "text": "hello",
+                "extras": {"signature": "abc", "other_key": "value"},
+            }
+        ]
+        result = _clear_google_thought_signatures(content)
+        assert "signature" not in result[0]["extras"]
+        assert result[0]["extras"] == {"other_key": "value"}
+
+    def test_reasoning_blocks_unchanged(self):
+        """Reasoning (thinking) blocks are passed through unchanged."""
+        content = [
+            {
+                "type": "reasoning",
+                "reasoning": "I thought about it...",
+                "extras": {"index": 0},
+            },
+        ]
+        result = _clear_google_thought_signatures(content)
+        assert result == content
+
+    def test_text_block_without_signature_unchanged(self):
+        """Text blocks without extras.signature are not modified."""
+        content = [{"type": "text", "text": "plain text"}]
+        result = _clear_google_thought_signatures(content)
+        assert result[0] == {"type": "text", "text": "plain text"}
+
+    def test_text_block_with_extras_but_no_signature_unchanged(self):
+        """Text blocks with extras but no signature key are not modified."""
+        content = [{"type": "text", "text": "hi", "extras": {"index": 1}}]
+        result = _clear_google_thought_signatures(content)
+        assert result[0]["extras"] == {"index": 1}
+
+    def test_mixed_content_only_text_signature_cleared(self):
+        """In mixed content, only text blocks with signature are affected."""
+        content = [
+            {"type": "reasoning", "reasoning": "thinking", "extras": {"index": 0}},
+            {"type": "text", "text": "", "extras": {"signature": "xyz789"}},
+            {"type": "text", "text": "final answer"},
+        ]
+        result = _clear_google_thought_signatures(content)
+        # reasoning block unchanged
+        assert result[0] == content[0]
+        # signed text block: signature removed, extras dropped (empty)
+        assert "extras" not in result[1]
+        assert result[1] == {"type": "text", "text": ""}
+        # plain text block unchanged
+        assert result[2] == {"type": "text", "text": "final answer"}
+
+    def test_returns_new_list(self):
+        """Returns a new list (does not mutate the input) when changes are made."""
+        content = [{"type": "text", "text": "", "extras": {"signature": "sig"}}]
+        result = _clear_google_thought_signatures(content)
+        assert result is not content
+        # Original unchanged
+        assert content[0]["extras"]["signature"] == "sig"
+
+    def test_empty_content_returns_empty_list(self):
+        """Empty input produces empty output."""
+        assert _clear_google_thought_signatures([]) == []
+
+
+class TestStripForeignReasoningBlocksGoogle:
+    """Tests for the Google provider path in strip_foreign_reasoning_blocks."""
+
+    def _google_msg(self, content: list, *, model: str = "gemini-3-pro") -> dict:
+        return {
+            "role": "assistant",
+            "content": content,
+            "model_info": {"provider": "google", "model": model},
+        }
+
+    def test_google_same_provider_clears_text_signature(self):
+        """Google history text-block signatures are removed to prevent stale-sig 400."""
+        messages = [
+            self._google_msg(
+                [
+                    {
+                        "type": "reasoning",
+                        "reasoning": "thinking...",
+                        "extras": {"index": 0},
+                    },
+                    {
+                        "type": "text",
+                        "text": "",
+                        "extras": {"signature": "CiMBjz1rX..."},
+                    },
+                ]
+            )
+        ]
+        result = strip_foreign_reasoning_blocks(messages, "google")
+        content = result[0]["content"]
+        # reasoning block unchanged
+        assert content[0] == {
+            "type": "reasoning",
+            "reasoning": "thinking...",
+            "extras": {"index": 0},
+        }
+        # text block: signature stripped
+        assert content[1] == {"type": "text", "text": ""}
+        assert "extras" not in content[1]
+
+    def test_google_same_provider_no_signature_passthrough(self):
+        """Google history without signatures is returned as-is (same object reference)."""
+        content = [
+            {"type": "reasoning", "reasoning": "thinking..."},
+            {"type": "text", "text": "answer"},
+        ]
+        messages = [self._google_msg(content)]
+        result = strip_foreign_reasoning_blocks(messages, "google")
+        # No signature → same msg object returned (no unnecessary copy)
+        assert result[0] is messages[0]
+
+    def test_google_same_provider_does_not_mutate_original(self):
+        """Clearing signatures creates a copy; the original message is not modified."""
+        original_content = [
+            {"type": "text", "text": "", "extras": {"signature": "abc"}},
+        ]
+        messages = [self._google_msg(original_content)]
+        strip_foreign_reasoning_blocks(messages, "google")
+        # Original extras still intact
+        assert messages[0]["content"][0]["extras"]["signature"] == "abc"
+
+    def test_google_same_provider_text_with_other_extras_preserved(self):
+        """Other extras fields on text blocks are preserved when stripping signature."""
+        messages = [
+            self._google_msg(
+                [
+                    {
+                        "type": "text",
+                        "text": "hi",
+                        "extras": {"signature": "s1", "index": 2},
+                    },
+                ]
+            )
+        ]
+        result = strip_foreign_reasoning_blocks(messages, "google")
+        assert "signature" not in result[0]["content"][0]["extras"]
+        assert result[0]["content"][0]["extras"] == {"index": 2}
+
+    def test_google_same_provider_string_content_passthrough(self):
+        """String content (non-list) is passed through unchanged."""
+        messages = [
+            {
+                "role": "assistant",
+                "content": "plain answer",
+                "model_info": {"provider": "google", "model": "gemini-3-pro"},
+            }
+        ]
+        result = strip_foreign_reasoning_blocks(messages, "google")
+        assert result[0] is messages[0]
+
+    def test_google_cross_provider_strips_reasoning(self):
+        """Google reasoning in history is stripped when targeting a different provider."""
+        messages = [
+            self._google_msg(
+                [
+                    {"type": "reasoning", "reasoning": "gemini thought"},
+                    {"type": "text", "text": "answer"},
+                ]
+            )
+        ]
+        result = strip_foreign_reasoning_blocks(messages, "anthropic")
+        assert result[0]["content"] == [{"type": "text", "text": "answer"}]
+
+    def test_user_messages_not_affected(self):
+        """User and tool messages are passed through unchanged regardless of provider."""
+        messages = [
+            {"role": "user", "content": "Hello"},
+            {"role": "tool", "content": "result", "tool_call_id": "c1"},
+        ]
+        result = strip_foreign_reasoning_blocks(messages, "google")
+        assert result == messages
+
+    def test_google_multiple_messages_each_cleared(self):
+        """Multiple Google assistant messages each have their signatures stripped."""
+        messages = [
+            self._google_msg(
+                [
+                    {"type": "text", "text": "", "extras": {"signature": "sig1"}},
+                ]
+            ),
+            {"role": "user", "content": "Next question"},
+            self._google_msg(
+                [
+                    {"type": "text", "text": "answer", "extras": {"signature": "sig2"}},
+                ]
+            ),
+        ]
+        result = strip_foreign_reasoning_blocks(messages, "google")
+        assert "extras" not in result[0]["content"][0]
+        assert result[1] is messages[1]
+        assert "extras" not in result[2]["content"][0]
+
+    def test_google_gemini_31_model_name_variant(self):
+        """Fix applies to all gemini-3.x model names."""
+        messages = [
+            self._google_msg(
+                [{"type": "text", "text": "", "extras": {"signature": "abc"}}],
+                model="gemini-3.1-pro-preview",
+            )
+        ]
+        result = strip_foreign_reasoning_blocks(messages, "google")
+        assert "extras" not in result[0]["content"][0]

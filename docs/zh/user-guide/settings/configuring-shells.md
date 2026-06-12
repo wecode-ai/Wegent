@@ -50,7 +50,7 @@ Shell 资源存储在数据库的以下表中:
 2. **公共 Shell**: 如果未找到,则回退到 `public_shells` 表中的系统公共 Shell
 
 这允许用户:
-- 直接使用预设的公共 Shell (如 `ClaudeCode`、`Agno`、`Dify`)
+- 直接使用预设的公共 Shell (如 `ClaudeCode` 和 `Dify`)
 - 通过创建同名 Shell 覆盖公共 Shell
 - 定义只有自己可以访问的私有 Shell
 
@@ -70,7 +70,7 @@ Shell 为 Bot 提供以下核心能力:
 
 ## 📊 运行时选择指南
 
-Wegent 目前支持三种主要运行时:
+Web 配置流程当前提供 ClaudeCode 和 Dify 供用户选择。Chat 作为直接 LLM 运行时在智能体和机器人流程中使用。Agno 正在下线过程中，不再作为 Web UI 可选执行器展示。
 
 ### ClaudeCode 运行时 (推荐)
 
@@ -88,20 +88,6 @@ Wegent 目前支持三种主要运行时:
 - ✅ 成熟稳定
 
 **推荐用于**: 大多数开发任务
-
-### Agno 运行时 (实验性)
-
-**适用场景**:
-- 对话交互
-- 实验性功能测试
-- 特殊的 AI 交互需求
-
-**特性**:
-- ⚡ 基于 Agno 框架
-- ⚠️ 实验性,功能仍在完善
-- 🔬 适合高级用户
-
-**推荐用于**: 对话型任务或实验性场景
 
 ### Dify 运行时
 
@@ -127,15 +113,15 @@ Wegent 目前支持三种主要运行时:
 
 ### 选择决策表
 
-| 特性 | ClaudeCode | Agno | Dify |
-|------|------------|------|------|
-| **稳定性** | ⭐⭐⭐⭐⭐ 成熟 | ⭐⭐⭐ 实验性 | ⭐⭐⭐⭐ 稳定 |
-| **代码开发** | ⭐⭐⭐⭐⭐ 优秀 | ⭐⭐ 基础 | ⭐⭐ 有限 |
-| **工具调用** | ⭐⭐⭐⭐⭐ 完整 | ⭐⭐⭐ 部分 | ⭐⭐⭐ 通过 Dify |
-| **Git 集成** | ⭐⭐⭐⭐⭐ 完整 | ⭐⭐ 有限 | ❌ 无 |
-| **工作流支持** | ⭐⭐ 基础 | ⭐⭐ 基础 | ⭐⭐⭐⭐⭐ 优秀 |
-| **学习曲线** | ⭐⭐⭐⭐ 简单 | ⭐⭐ 较复杂 | ⭐⭐⭐⭐ 简单 |
-| **推荐程度** | ✅ 开发任务 | ⚠️ 高级用户 | ✅ 工作流 |
+| 特性 | ClaudeCode | Dify |
+|------|------------|------|
+| **稳定性** | ⭐⭐⭐⭐⭐ 成熟 | ⭐⭐⭐⭐ 稳定 |
+| **代码开发** | ⭐⭐⭐⭐⭐ 优秀 | ⭐⭐ 有限 |
+| **工具调用** | ⭐⭐⭐⭐⭐ 完整 | ⭐⭐⭐ 通过 Dify |
+| **Git 集成** | ⭐⭐⭐⭐⭐ 完整 | ❌ 无 |
+| **工作流支持** | ⭐⭐ 基础 | ⭐⭐⭐⭐⭐ 优秀 |
+| **学习曲线** | ⭐⭐⭐⭐ 简单 | ⭐⭐⭐⭐ 简单 |
+| **推荐程度** | ✅ 开发任务 | ✅ 工作流 |
 
 ---
 
@@ -156,19 +142,7 @@ Wegent 在初始化时已经预设了以下 Shell,可以直接使用:
 - 代码重构
 - 文档编写
 
-### 2. Agno
-
-**名称**: `Agno`
-**运行时**: `Agno`
-**状态**: ⚠️ 实验性
-**命名空间**: `default`
-
-**推荐场景**:
-- 对话交互
-- 实验性功能
-- 特殊需求
-
-### 3. Dify
+### 2. Dify
 
 **名称**: `Dify`
 **运行时**: `Dify`
@@ -187,7 +161,7 @@ Wegent 在初始化时已经预设了以下 Shell,可以直接使用:
 
 ### 方式 1: 使用预设 Shell (推荐新手)
 
-系统已经预设了 `ClaudeCode` 和 `Agno` Shell,您可以直接在创建 Bot 时引用:
+系统已经预设了 `ClaudeCode` 和 `Dify` 等 Shell,您可以直接在创建 Bot 时引用:
 
 ```yaml
 apiVersion: agent.wecode.io/v1
@@ -228,7 +202,7 @@ spec:
 4. 填写以下字段:
    - **名称**: Shell 的唯一标识符 (小写字母和中划线)
    - **命名空间**: 通常使用 `default`
-   - **运行时类型**: 选择 `ClaudeCode` 或 `Agno`
+   - **运行时类型**: 自定义本地执行 Shell 选择 `ClaudeCode`
    - **支持的模型类型**: (可选) 指定此 Shell 支持的模型类型
 5. 点击 **提交** 创建
 
@@ -270,7 +244,7 @@ status:
 
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `runtime` | string | 是 | 运行时类型,可选值: `ClaudeCode`, `Agno`, `Dify` |
+| `runtime` | string | 是 | Web UI 暴露的运行时类型,可选值: `ClaudeCode`, `Dify` |
 | `supportModel` | array | 否 | 支持的模型类型列表,空数组表示支持所有模型 |
 
 **supportModel 说明**:
@@ -307,27 +281,7 @@ status:
 - 支持所有类型的 AI 模型
 - 适合大多数开发任务
 
-### 示例 2: Agno Shell (实验性)
-
-```yaml
-apiVersion: agent.wecode.io/v1
-kind: Shell
-metadata:
-  name: Agno
-  namespace: default
-spec:
-  runtime: Agno
-  supportModel: []  # 支持所有模型类型
-status:
-  state: "Available"
-```
-
-**说明**:
-- 系统预设的 Agno Shell 配置
-- 实验性功能,适合高级用户
-- 适合对话型交互任务
-
-### 示例 3: Dify Shell
+### 示例 2: Dify Shell
 
 ```yaml
 apiVersion: agent.wecode.io/v1
@@ -348,7 +302,7 @@ status:
 - 支持 chat、chatflow、workflow、agent-chat 模式
 - 适合工作流自动化和多轮对话
 
-### 示例 4: 自定义 Shell (仅支持特定模型)
+### 示例 3: 自定义 Shell (仅支持特定模型)
 
 ```yaml
 apiVersion: agent.wecode.io/v1
@@ -368,7 +322,7 @@ status:
 - 仅支持 Anthropic 模型 (Claude 系列)
 - 适合有特定模型限制的场景
 
-### 示例 5: 开发环境专用 Shell
+### 示例 4: 开发环境专用 Shell
 
 ```yaml
 apiVersion: agent.wecode.io/v1
@@ -449,21 +403,20 @@ spec:
 - 访问 http://localhost:8000/api/docs
 - 使用 Shell 相关的 API 接口查询
 
-### Q2: ClaudeCode、Agno 和 Dify 有什么区别?
+### Q2: ClaudeCode 和 Dify 有什么区别?
 
 **答**:
 
-| 特性 | ClaudeCode | Agno | Dify |
-|------|------------|------|------|
-| **成熟度** | 成熟稳定 | 实验性 | 稳定 |
-| **主要用途** | 代码开发 | 对话交互 | 工作流自动化 |
-| **工具支持** | 完整 | 部分 | 通过 Dify 平台 |
-| **推荐程度** | ✅ 推荐 | ⚠️ 高级用户 | ✅ 工作流 |
+| 特性 | ClaudeCode | Dify |
+|------|------------|------|
+| **成熟度** | 成熟稳定 | 稳定 |
+| **主要用途** | 代码开发 | 工作流自动化 |
+| **工具支持** | 完整 | 通过 Dify 平台 |
+| **推荐程度** | ✅ 推荐 | ✅ 工作流 |
 
 **建议**:
 - 代码开发任务使用 ClaudeCode
 - 工作流自动化和 Dify 集成使用 Dify
-- 实验性功能使用 Agno
 
 ### Q3: Shell 状态检查方法
 
@@ -479,7 +432,7 @@ spec:
 **答**: 常见错误和解决方案:
 
 **错误 1: Shell 状态为 Unavailable**
-- 检查运行时类型是否正确 (`ClaudeCode`、`Agno` 或 `Dify`)
+- 检查运行时类型是否正确 (`ClaudeCode` 或 `Dify`)
 - 检查配置格式是否符合 YAML 规范
 - 查看后端日志: `docker-compose logs backend`
 
@@ -510,7 +463,7 @@ spec:
 
 **答**:
 
-系统预设的 `ClaudeCode` 和 `Agno` Shell 是推荐配置,建议不要修改。
+系统预设的 `ClaudeCode` Shell 是推荐配置,建议不要修改。
 
 如果需要自定义配置:
 - 创建新的 Shell 资源

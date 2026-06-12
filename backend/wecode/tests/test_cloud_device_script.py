@@ -27,6 +27,40 @@ def test_simple_startup_script_exports_current_user_identity():
     assert '-t "device-api-key"' in script
 
 
+def test_simple_startup_script_sets_ubuntu_password():
+    """Cloud device user_data should set the ubuntu user's login password."""
+    encoded = generate_simple_startup_script(
+        user_name="alice",
+        backend_url="https://backend.example.com",
+        auth_token="device-api-key",
+        install_script_url="https://example.com/install.sh",
+        ubuntu_password="new-ubuntu-password",
+    )
+
+    script = base64.b64decode(encoded).decode("utf-8")
+
+    assert 'echo "ubuntu:new-ubuntu-password" | sudo chpasswd' in script
+
+
+def test_simple_startup_script_configures_daily_fstrim_timer():
+    """Cloud device user_data should configure fstrim.timer to run daily."""
+    encoded = generate_simple_startup_script(
+        user_name="alice",
+        backend_url="https://backend.example.com",
+        auth_token="device-api-key",
+        install_script_url="https://example.com/install.sh",
+    )
+
+    script = base64.b64decode(encoded).decode("utf-8")
+
+    assert "mkdir -p /etc/systemd/system/fstrim.timer.d" in script
+    assert "cat > /etc/systemd/system/fstrim.timer.d/override.conf << 'EOF'" in script
+    assert "OnCalendar=daily" in script
+    assert "systemctl daemon-reload" in script
+    assert "systemctl restart fstrim.timer" in script
+    assert "systemctl enable fstrim.timer" in script
+
+
 def test_simple_startup_script_exports_git_token_environment():
     """Cloud device user_data should expose git tokens as domain-specific env vars."""
     encoded = generate_simple_startup_script(

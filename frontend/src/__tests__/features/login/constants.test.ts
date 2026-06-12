@@ -215,6 +215,18 @@ describe('password login URL override', () => {
     expect(isPasswordLoginForced(new URLSearchParams('password_login=false'))).toBe(true)
   })
 
+  it('should ignore password_login when Aidesk auth parameters are present', () => {
+    const searchParams = new URLSearchParams(
+      'source=aidesk&username=testuser&timestamp=1730000000&sign=abcdef&password_login'
+    )
+
+    expect(isPasswordLoginForced(searchParams)).toBe(false)
+    expect(resolveLoginDisplayMode(searchParams, 'oidc')).toEqual({
+      showPasswordLogin: false,
+      showOidcLogin: true,
+    })
+  })
+
   it('should use runtime login mode when password_login parameter is absent', () => {
     expect(resolveLoginDisplayMode(new URLSearchParams(), 'oidc')).toEqual({
       showPasswordLogin: false,

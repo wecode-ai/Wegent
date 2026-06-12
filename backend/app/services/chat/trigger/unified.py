@@ -124,7 +124,7 @@ def _apply_user_runtime_config(
         return None
 
     try:
-        status = user_runtime_config_service.get_config(
+        status = user_runtime_config_service.get_execution_config(
             db,
             user_id=user.id,
             runtime=CODEX_RUNTIME,
@@ -142,7 +142,13 @@ def _apply_user_runtime_config(
         "configured": bool(status.get("configured")),
         "target_path": status.get("target_path"),
         "auth_json_sha256": status.get("auth_json_sha256"),
+        "use_proxy": bool(status.get("use_proxy")),
+        "proxy_configured": bool(status.get("proxy_configured")),
     }
+    if status.get("proxy_url"):
+        proxy = dict(request.model_config.get("proxy") or {})
+        proxy["url"] = status["proxy_url"]
+        request.model_config["proxy"] = proxy
     request.model_config["runtime_config"] = runtime_config
     return status
 
@@ -156,6 +162,16 @@ def _build_executor_attachment_payload(context: Any) -> dict[str, Any]:
         "file_size": context.file_size,
         "subtask_id": context.subtask_id,
     }
+
+
+def _is_local_file_capable_shell(request: "ExecutionRequest") -> bool:
+    """Return whether the shell can analyze downloaded files locally."""
+    shell_type = ""
+    if request.bot and isinstance(request.bot, list):
+        first_bot = request.bot[0] if request.bot else {}
+        if isinstance(first_bot, dict):
+            shell_type = first_bot.get("shell_type", "")
+    return shell_type in {"ClaudeCode", "Agno", "Codex"}
 
 
 def _ensure_selected_kb_skill_priority(request: "ExecutionRequest") -> None:
@@ -386,6 +402,7 @@ async def build_execution_request(
             previous_bot_id=previous_bot_id,
             web_runtime_guidance=web_runtime_guidance,
         )
+        request.device_id = device_id or request.device_id
 
         # Merge reasoning config from API/model selection into model_config.
         # Priority: explicit API reasoning_config > UI model_options > model think_config.
@@ -585,6 +602,7 @@ async def _process_contexts(
         task_id=request.task_id,
         context_window=model_context_window,
         model_config=request.model_config,
+        metadata_only_for_large_attachments=_is_local_file_capable_shell(request),
     )
 
     # Update request with all processed context results.

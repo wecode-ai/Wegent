@@ -938,6 +938,7 @@ class RetrievalService:
                     "content": result.get("content", ""),
                     "score": 1.0,
                     "title": result.get("name", "Unknown"),
+                    "document_id": result.get("id"),
                     "metadata": {
                         "document_id": result.get("id"),
                         "total_length": result.get("total_length", 0),

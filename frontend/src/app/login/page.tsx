@@ -5,27 +5,26 @@
 'use client'
 
 import { useEffect } from 'react'
-import { useRouter, useSearchParams } from 'next/navigation'
+import { useRouter } from 'next/navigation'
 import LogoHeader, { LogoSubTitle } from '@/features/login/components/LogoHeader'
 import LoginForm from '@/features/login/components/LoginForm'
 
 import { UserProvider } from '@/features/common/UserContext'
-import { isPasswordLoginForced } from '@/features/login/constants'
+import { isAuthModeDingTalk } from '@/dingtalk/lib/environment'
 
 export default function LoginPage() {
   const router = useRouter()
-  const searchParams = useSearchParams()
-  const forcePasswordLogin = isPasswordLoginForced(searchParams)
+  const isDingTalkMode = isAuthModeDingTalk()
 
   useEffect(() => {
     // DingTalk exclusive mode: redirect to DingTalk auth
-    if (!forcePasswordLogin && process.env.NEXT_PUBLIC_AUTH_MODE === 'dingtalk') {
+    if (isDingTalkMode) {
       router.replace('/auth/dingtalk')
     }
-  }, [forcePasswordLogin, router])
+  }, [isDingTalkMode, router])
 
   // Hide content during redirect in DingTalk mode
-  if (!forcePasswordLogin && process.env.NEXT_PUBLIC_AUTH_MODE === 'dingtalk') {
+  if (isDingTalkMode) {
     return null
   }
 

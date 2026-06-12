@@ -77,7 +77,7 @@ export function isWeWorkCompatibleDevice(device: DeviceLike): boolean {
 }
 
 export function hasWeWorkUpdateAvailable(device: DeviceLike): boolean {
-  return isWeWorkCompatibleDevice(device) && device.update_available === true
+  return isClaudeCodeDevice(device) && device.update_available === true
 }
 
 export function canRequestDeviceUpgrade(device: DeviceLike): boolean {

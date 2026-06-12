@@ -4,6 +4,8 @@
 
 """Subtask database model."""
 
+from datetime import datetime
+
 from sqlalchemy import JSON, Boolean, Column, DateTime
 from sqlalchemy import Enum as SQLEnum
 from sqlalchemy import Integer, String, Text
@@ -40,7 +42,11 @@ class Subtask(Base):
     error_message = Column(Text)
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
-    completed_at = Column(DateTime, nullable=False, default="1970-01-01 00:00:00")
+    completed_at = Column(
+        DateTime,
+        nullable=False,
+        default=datetime(1970, 1, 1),
+    )
 
     # Group chat fields
     sender_type = Column(

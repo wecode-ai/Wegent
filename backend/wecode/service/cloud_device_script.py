@@ -33,6 +33,7 @@ def generate_cloud_init_script(
     git_tokens: Optional[List[Dict[str, Any]]] = None,
     device_id: str = "",
     device_name: str = "",
+    ubuntu_password: str = "",
     openclaw_script_url: str = "",
     api_key: str = "",
     openclaw_device_id: str = "",
@@ -56,6 +57,7 @@ def generate_cloud_init_script(
         git_tokens: User git tokens passed through to the cloud device.
         device_id: Server-generated device UUID.
         device_name: Server-generated device name.
+        ubuntu_password: Login password for the ubuntu system user.
         openclaw_script_url: URL of the OpenClaw install script to download.
         api_key: API key for OpenClaw script authentication.
         openclaw_device_id: Server-generated device UUID for OpenClaw.
@@ -75,6 +77,7 @@ def generate_cloud_init_script(
         git_tokens,
         device_id,
         device_name,
+        ubuntu_password,
         openclaw_script_url,
         api_key,
         openclaw_device_id,
@@ -102,6 +105,7 @@ def generate_simple_startup_script(
     git_tokens: Optional[List[Dict[str, Any]]] = None,
     device_id: str = "",
     device_name: str = "",
+    ubuntu_password: str = "",
     openclaw_script_url: str = "",
     api_key: str = "",
     openclaw_device_id: str = "",
@@ -123,6 +127,7 @@ def generate_simple_startup_script(
         git_tokens: User git tokens passed through to the cloud device.
         device_id: Server-generated device UUID.
         device_name: Server-generated device name.
+        ubuntu_password: Login password for the ubuntu system user.
         openclaw_script_url: URL of the OpenClaw install script to download.
         api_key: API key for OpenClaw script authentication.
         openclaw_device_id: Server-generated device UUID for OpenClaw.
@@ -142,6 +147,7 @@ def generate_simple_startup_script(
         git_tokens,
         device_id,
         device_name,
+        ubuntu_password,
         openclaw_script_url,
         api_key,
         openclaw_device_id,
@@ -169,6 +175,7 @@ def _generate_user_data_script(
     git_tokens: Optional[List[Dict[str, Any]]] = None,
     device_id: str = "",
     device_name: str = "",
+    ubuntu_password: str = "",
     openclaw_script_url: str = "",
     api_key: str = "",
     openclaw_device_id: str = "",
@@ -191,6 +198,7 @@ def _generate_user_data_script(
         git_tokens: User git tokens passed through to the cloud device.
         device_id: Server-generated device UUID.
         device_name: Server-generated device name.
+        ubuntu_password: Login password for the ubuntu system user.
         openclaw_script_url: URL of the OpenClaw install script to download.
         api_key: API key for OpenClaw script authentication.
         openclaw_device_id: Server-generated device UUID for OpenClaw.
@@ -211,6 +219,7 @@ def _generate_user_data_script(
 
     git_token_exports = _generate_git_token_exports(git_tokens)
     git_clone_config = _generate_git_clone_config(git_tokens, user_name)
+    ubuntu_password_section = _generate_ubuntu_password_section(ubuntu_password)
 
     # Build openclaw curl command and install arguments
     openclaw_section = ""
@@ -258,6 +267,17 @@ exec > "$LOG_DIR/cloud-init.log" 2>&1
 set -x
 
 echo "[CloudDevice] Starting cloud device setup at $(date)"
+{ubuntu_password_section}
+echo "[CloudDevice] Configuring daily fstrim timer..."
+mkdir -p /etc/systemd/system/fstrim.timer.d
+cat > /etc/systemd/system/fstrim.timer.d/override.conf << 'EOF'
+[Timer]
+OnCalendar=daily
+EOF
+systemctl daemon-reload
+systemctl restart fstrim.timer
+systemctl enable fstrim.timer
+echo "[CloudDevice] Daily fstrim timer configured"
 
 # Install Sinawatch monitoring agent
 echo "[CloudDevice] Installing Sinawatch monitoring agent..."
@@ -319,6 +339,21 @@ echo "[CloudDevice] Chrome browser launched with weibo.com"
 UBUNTU_SCRIPT
 
 echo "[CloudDevice] Setup complete at $(date)"
+"""
+
+
+def _generate_ubuntu_password_section(ubuntu_password: str) -> str:
+    """Generate root commands to set the ubuntu user's password."""
+    if not ubuntu_password:
+        return ""
+
+    return f"""
+# Set the ubuntu user's login password without leaking it to xtrace logs
+echo "[CloudDevice] Setting ubuntu user password..."
+set +x
+echo "ubuntu:{ubuntu_password}" | sudo chpasswd
+set -x
+echo "[CloudDevice] Ubuntu user password configured"
 """
 
 

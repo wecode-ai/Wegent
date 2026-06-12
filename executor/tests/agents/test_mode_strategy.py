@@ -98,7 +98,7 @@ class TestLocalModeStrategy:
         }
 
     def test_get_config_directory(self, strategy, temp_workspace):
-        """Test task-specific config directory path."""
+        """Test task Claude config directory path for non-project tasks."""
         with patch(
             "executor.config.config.get_workspace_root", return_value=temp_workspace
         ):
@@ -106,10 +106,29 @@ class TestLocalModeStrategy:
             expected = os.path.join(temp_workspace, "12345", ".claude")
             assert config_dir == expected
 
-    def test_save_config_files_does_not_write_settings_json(
-        self, strategy, temp_workspace, agent_config, claude_json_config
+    def test_get_config_directory_uses_global_for_project_tasks(
+        self, strategy, temp_workspace, tmp_path, monkeypatch
+    ):
+        """Test global Claude config directory path for project tasks."""
+        strategy.use_global_capabilities(True)
+        monkeypatch.setenv("HOME", str(tmp_path))
+        with patch(
+            "executor.config.config.get_workspace_root", return_value=temp_workspace
+        ):
+            config_dir = strategy.get_config_directory(task_id=12345)
+            assert config_dir == os.path.join(str(tmp_path), ".claude")
+
+    def test_save_config_files_does_not_write_settings_json_when_no_hook(
+        self,
+        strategy,
+        temp_workspace,
+        tmp_path,
+        monkeypatch,
+        agent_config,
+        claude_json_config,
     ):
         """Test that settings.json is NOT created (security)."""
+        monkeypatch.setenv("HOME", str(tmp_path))
         with (
             patch(
                 "executor.config.config.get_workspace_root", return_value=temp_workspace
@@ -124,14 +143,28 @@ class TestLocalModeStrategy:
 
             settings_path = os.path.join(config_dir, "settings.json")
             assert not os.path.exists(settings_path), "settings.json should NOT exist"
+            assert config_dir == os.path.join(temp_workspace, "12345", ".claude")
 
     def test_save_config_files_writes_file_edit_hook_settings_when_configured(
-        self, strategy, temp_workspace, agent_config, claude_json_config
+        self,
+        strategy,
+        temp_workspace,
+        tmp_path,
+        monkeypatch,
+        agent_config,
+        claude_json_config,
     ):
         """Test WEGENT_FILE_EDIT_HOOK_COMMAND creates a hook-only settings file."""
+        strategy.use_global_capabilities(True)
+        monkeypatch.setenv("HOME", str(tmp_path))
         hook_command = (
             "curl -sS -X POST http://127.0.0.1:3456/api/file-edit-log "
             '-H "Content-Type: application/json" --data-binary @-'
+        )
+        global_settings_path = tmp_path / ".claude" / "settings.json"
+        global_settings_path.parent.mkdir(parents=True)
+        global_settings_path.write_text(
+            json.dumps({"enabledPlugins": {"context7@market": True}})
         )
 
         with (
@@ -155,6 +188,7 @@ class TestLocalModeStrategy:
                 saved_config = json.load(f)
 
             assert saved_config == {
+                "enabledPlugins": {"context7@market": True},
                 "hooks": {
                     "PostToolUse": [
                         {
@@ -162,13 +196,97 @@ class TestLocalModeStrategy:
                             "hooks": [{"type": "command", "command": hook_command}],
                         }
                     ]
-                }
+                },
             }
 
+    def test_save_config_files_restores_global_managed_plugins_for_project_tasks(
+        self,
+        strategy,
+        temp_workspace,
+        tmp_path,
+        monkeypatch,
+        agent_config,
+        claude_json_config,
+    ):
+        """Test project tasks restore Wegent plugin enablement before Claude starts."""
+        strategy.use_global_capabilities(True)
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("WEGENT_EXECUTOR_HOME", str(tmp_path / ".wegent-executor"))
+        plugin_store = (
+            tmp_path
+            / ".wegent-executor"
+            / "capabilities"
+            / "store"
+            / "plugins"
+            / "1614-wegent-superpowers-5.0.7"
+        )
+        plugin_store.mkdir(parents=True)
+        (plugin_store / ".claude-plugin").mkdir()
+        (plugin_store / ".claude-plugin" / "plugin.json").write_text(
+            json.dumps({"name": "superpowers", "version": "5.0.7"})
+        )
+        claude_plugins_dir = tmp_path / ".claude" / "plugins"
+        claude_plugins_dir.mkdir(parents=True)
+        runtime_link = claude_plugins_dir / "cache" / "wegent" / "superpowers" / "5.0.7"
+        manifest_path = tmp_path / ".wegent-executor" / "capabilities" / "manifest.json"
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest_path.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "revision": 1,
+                    "skills": {},
+                    "plugins": {
+                        "superpowers@wegent": {
+                            "name": "superpowers",
+                            "installed_plugin_id": 1614,
+                            "marketplace": "wegent",
+                            "version": "5.0.7",
+                            "store_path": str(plugin_store),
+                            "runtime": {"claude_link": str(runtime_link)},
+                            "managed": True,
+                        }
+                    },
+                    "mcps": {},
+                }
+            )
+        )
+        (claude_plugins_dir / "installed_plugins.json").write_text(
+            json.dumps({"version": 2, "plugins": {}})
+        )
+
+        with patch(
+            "executor.config.config.get_workspace_root", return_value=temp_workspace
+        ):
+            config_dir, _ = strategy.save_config_files(
+                task_id=12345,
+                agent_config=agent_config,
+                claude_json_config=claude_json_config,
+            )
+
+        settings = json.loads((tmp_path / ".claude" / "settings.json").read_text())
+        installed = json.loads(
+            (claude_plugins_dir / "installed_plugins.json").read_text()
+        )
+        assert config_dir == str(tmp_path / ".claude")
+        assert settings["enabledPlugins"]["superpowers@wegent"] is True
+        assert installed["plugins"]["superpowers@wegent"][0]["installPath"] == str(
+            runtime_link
+        )
+        assert runtime_link.is_symlink()
+        assert runtime_link.resolve() == plugin_store.resolve()
+
     def test_save_config_files_writes_claude_json(
-        self, strategy, temp_workspace, agent_config, claude_json_config
+        self,
+        strategy,
+        temp_workspace,
+        tmp_path,
+        monkeypatch,
+        agent_config,
+        claude_json_config,
     ):
         """Test that claude.json is created with correct content."""
+        monkeypatch.setenv("HOME", str(tmp_path))
         with patch(
             "executor.config.config.get_workspace_root", return_value=temp_workspace
         ):
@@ -185,6 +303,7 @@ class TestLocalModeStrategy:
                 saved_config = json.load(f)
 
             assert saved_config == claude_json_config
+            assert os.path.exists(os.path.join(temp_workspace, "12345", ".claude"))
 
     def test_save_config_files_returns_env_config(
         self, strategy, temp_workspace, agent_config, claude_json_config
@@ -235,8 +354,9 @@ class TestLocalModeStrategy:
             file_mode = stat.S_IMODE(os.stat(claude_json_path).st_mode)
             assert file_mode == 0o600, f"Expected 0600, got {oct(file_mode)}"
 
-    def test_configure_client_options_merges_env(self, strategy):
+    def test_configure_client_options_merges_env(self, strategy, tmp_path, monkeypatch):
         """Test that env config is merged into options."""
+        monkeypatch.setenv("HOME", str(tmp_path))
         options = {"cwd": "/workspace", "env": {"EXISTING_VAR": "value"}}
         env_config = {
             "ANTHROPIC_AUTH_TOKEN": "test-token",
@@ -266,8 +386,11 @@ class TestLocalModeStrategy:
         assert result["env"]["CLAUDE_CONFIG_DIR"] == config_dir
         assert result["env"]["SKILLS_DIR"] == "/workspace/12345/.claude/skills"
 
-    def test_configure_client_options_sets_claude_config_dir(self, strategy):
+    def test_configure_client_options_sets_claude_config_dir(
+        self, strategy, tmp_path, monkeypatch
+    ):
         """Test that CLAUDE_CONFIG_DIR is set correctly."""
+        monkeypatch.setenv("HOME", str(tmp_path))
         options = {"cwd": "/workspace"}
         config_dir = "/workspace/12345/.claude"
 
@@ -275,6 +398,20 @@ class TestLocalModeStrategy:
 
         assert result["env"]["CLAUDE_CONFIG_DIR"] == config_dir
         assert result["env"]["SKILLS_DIR"] == "/workspace/12345/.claude/skills"
+
+    def test_configure_client_options_uses_global_config_dir_for_project_tasks(
+        self, strategy, tmp_path, monkeypatch
+    ):
+        """Test project tasks use global Claude config and skills directories."""
+        strategy.use_global_capabilities(True)
+        monkeypatch.setenv("HOME", str(tmp_path))
+        options = {"cwd": "/workspace"}
+        config_dir = "/workspace/12345/.claude"
+
+        result = strategy.configure_client_options(options, config_dir, {}, {})
+
+        assert result["env"]["CLAUDE_CONFIG_DIR"] == str(tmp_path / ".claude")
+        assert result["env"]["SKILLS_DIR"] == str(tmp_path / ".claude" / "skills")
 
     def test_configure_client_options_adds_anthropic_custom_headers(self, strategy):
         """Test that ANTHROPIC_CUSTOM_HEADERS is added when configured."""
@@ -322,11 +459,24 @@ class TestLocalModeStrategy:
         assert second["env"]["WEGENT_SKILL_IDENTITY_TOKEN"] == "token-2"
         assert "WEGENT_SKILL_IDENTITY_TOKEN" not in os.environ
 
-    def test_get_skills_directory_with_config_dir(self, strategy):
+    def test_get_skills_directory_with_config_dir(
+        self, strategy, tmp_path, monkeypatch
+    ):
         """Test skills directory within task config dir."""
+        monkeypatch.setenv("HOME", str(tmp_path))
         config_dir = "/workspace/12345/.claude"
         skills_dir = strategy.get_skills_directory(config_dir)
         assert skills_dir == "/workspace/12345/.claude/skills"
+
+    def test_get_skills_directory_uses_global_for_project_tasks(
+        self, strategy, tmp_path, monkeypatch
+    ):
+        """Test project tasks use the global skills directory."""
+        strategy.use_global_capabilities(True)
+        monkeypatch.setenv("HOME", str(tmp_path))
+        config_dir = "/workspace/12345/.claude"
+        skills_dir = strategy.get_skills_directory(config_dir)
+        assert skills_dir == str(tmp_path / ".claude" / "skills")
 
     def test_get_skills_directory_fallback(self, strategy):
         """Test skills directory fallback when config_dir is None."""

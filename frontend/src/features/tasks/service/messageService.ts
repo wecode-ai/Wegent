@@ -47,7 +47,7 @@ export function canUseChatContexts(taskType: TaskType | undefined, team: Team | 
     return true
   }
 
-  return isChatShell(team)
+  return isChatShell(team) || isClaudeCode(team)
 }
 
 /**

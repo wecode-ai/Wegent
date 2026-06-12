@@ -5,11 +5,26 @@
 export const POST_LOGIN_REDIRECT_KEY = 'postLoginRedirectPath'
 export const PASSWORD_LOGIN_SEARCH_PARAM = 'password_login'
 
-type SearchParamsLike = Pick<URLSearchParams, 'has'>
+type SearchParamsLike = Pick<URLSearchParams, 'get' | 'has'>
+
+export const hasAideskAuthParams = (
+  searchParams: Pick<URLSearchParams, 'get'> | null | undefined
+): boolean => {
+  return Boolean(
+    searchParams?.get('source') === 'aidesk' &&
+      searchParams.get('username') &&
+      searchParams.get('timestamp') &&
+      searchParams.get('sign')
+  )
+}
 
 export const isPasswordLoginForced = (
   searchParams: SearchParamsLike | null | undefined
 ): boolean => {
+  if (hasAideskAuthParams(searchParams)) {
+    return false
+  }
+
   return Boolean(searchParams?.has(PASSWORD_LOGIN_SEARCH_PARAM))
 }
 

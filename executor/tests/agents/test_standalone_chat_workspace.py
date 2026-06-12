@@ -31,16 +31,63 @@ def test_prompt_text_for_workspace_extracts_text_blocks():
     assert workspace.prompt_text_for_workspace(prompt) == "hello-new-wework\nrun pwd"
 
 
-def test_standalone_chat_workspace_is_disabled_by_default(tmp_path, monkeypatch):
+def test_project_zero_standalone_chat_workspace_is_enabled_by_default(
+    tmp_path,
+    monkeypatch,
+):
     chats_root = tmp_path / "chats"
+    workspace_root = tmp_path / "workspace"
     task_data = SimpleNamespace(
         task_id=120,
-        project_id=None,
+        project_id=0,
+        standalone_chat_workspace=True,
         project_workspace_path=None,
         git_url=None,
     )
 
     monkeypatch.delenv("WEGENT_EXECUTOR_STANDALONE_CHATS_ENABLED", raising=False)
+    monkeypatch.setenv("WEGENT_EXECUTOR_CHATS_DIR", str(chats_root))
+    monkeypatch.setattr(
+        workspace.config, "get_workspace_root", lambda: str(workspace_root)
+    )
+
+    result = workspace.prepare_standalone_chat_workspace(task_data, "hello")
+
+    assert result == str(chats_root / datetime.now().strftime("%Y-%m-%d") / "hello")
+
+
+def test_project_zero_without_standalone_flag_uses_legacy_workspace(
+    tmp_path,
+    monkeypatch,
+):
+    chats_root = tmp_path / "chats"
+    task_data = SimpleNamespace(
+        task_id=120,
+        project_id=0,
+        project_workspace_path=None,
+        git_url=None,
+    )
+
+    monkeypatch.delenv("WEGENT_EXECUTOR_STANDALONE_CHATS_ENABLED", raising=False)
+    monkeypatch.setenv("WEGENT_EXECUTOR_CHATS_DIR", str(chats_root))
+
+    result = workspace.prepare_standalone_chat_workspace(task_data, "hello")
+
+    assert result is None
+    assert not chats_root.exists()
+
+
+def test_standalone_chat_workspace_requires_project_id_zero(tmp_path, monkeypatch):
+    chats_root = tmp_path / "chats"
+    task_data = SimpleNamespace(
+        task_id=120,
+        project_id=None,
+        standalone_chat_workspace=True,
+        project_workspace_path=None,
+        git_url=None,
+    )
+
+    _enable_standalone_chats(monkeypatch)
     monkeypatch.setenv("WEGENT_EXECUTOR_CHATS_DIR", str(chats_root))
 
     result = workspace.prepare_standalone_chat_workspace(task_data, "hello")
@@ -57,12 +104,13 @@ def test_disabled_standalone_chat_workspace_does_not_return_prepared_path(
     workspace_path.mkdir(parents=True)
     task_data = SimpleNamespace(
         task_id=121,
-        project_id=None,
+        project_id=0,
+        standalone_chat_workspace=True,
         project_workspace_path=str(workspace_path),
         git_url=None,
     )
 
-    monkeypatch.delenv("WEGENT_EXECUTOR_STANDALONE_CHATS_ENABLED", raising=False)
+    monkeypatch.setenv("WEGENT_EXECUTOR_STANDALONE_CHATS_ENABLED", "false")
 
     result = workspace.finalize_standalone_chat_workspace(task_data, "response")
 
@@ -82,7 +130,8 @@ def test_prepare_standalone_chat_workspace_uses_request_text_before_execution(
     chats_root = tmp_path / "chats"
     task_data = SimpleNamespace(
         task_id=122,
-        project_id=None,
+        project_id=0,
+        standalone_chat_workspace=True,
         project_workspace_path=None,
         git_url=None,
     )
@@ -111,7 +160,8 @@ def test_finalize_returns_prepared_standalone_workspace_path(tmp_path, monkeypat
     executor_home = tmp_path / ".wegent-executor"
     task_data = SimpleNamespace(
         task_id=121,
-        project_id=None,
+        project_id=0,
+        standalone_chat_workspace=True,
         project_workspace_path=str(workspace_path),
         git_url=None,
     )
@@ -140,7 +190,8 @@ def test_finalize_standalone_chat_workspace_moves_initial_task_workspace(
     executor_home = tmp_path / ".wegent-executor"
     task_data = SimpleNamespace(
         task_id=123,
-        project_id=None,
+        project_id=0,
+        standalone_chat_workspace=True,
         project_workspace_path=None,
         git_url=None,
     )
@@ -180,7 +231,8 @@ def test_finalize_standalone_chat_workspace_keeps_existing_session_root(
     session_file.write_text("current-session-id", encoding="utf-8")
     task_data = SimpleNamespace(
         task_id=126,
-        project_id=None,
+        project_id=0,
+        standalone_chat_workspace=True,
         project_workspace_path=None,
         git_url=None,
     )
@@ -209,7 +261,8 @@ def test_finalize_standalone_chat_workspace_adds_duplicate_suffix(
     existing.mkdir(parents=True)
     task_data = SimpleNamespace(
         task_id=124,
-        project_id=None,
+        project_id=0,
+        standalone_chat_workspace=True,
         project_workspace_path=None,
         git_url=None,
     )
@@ -238,7 +291,8 @@ def test_duplicate_suffix_counts_toward_twenty_character_limit(
     existing.mkdir(parents=True)
     task_data = SimpleNamespace(
         task_id=125,
-        project_id=None,
+        project_id=0,
+        standalone_chat_workspace=True,
         project_workspace_path=None,
         git_url=None,
     )

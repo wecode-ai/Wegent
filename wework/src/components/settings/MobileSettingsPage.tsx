@@ -143,7 +143,7 @@ export function MobileSettingsPage({
           <div className="h-11 min-w-[44px]" />
         </header>
         <div className="mt-6 min-h-0 flex-1 overflow-auto">
-          <RuntimeConfigSettingsPage />
+          <RuntimeConfigSettingsPage runtime="codex" />
         </div>
       </main>
     )

@@ -229,7 +229,7 @@ The user has explicitly selected the following skills for this task. You should 
 The user explicitly selected the Wegent knowledge-base skill for this request.
 When selected knowledge bases are present:
 - Use the selected knowledge bases as the primary source for request content.
-- Use Wegent knowledge tools before web search or other external lookup.
+- Load and follow the `wegent-knowledge` skill before web search or other external lookup.
 - Only fall back to web search when the user explicitly asks for external or current web information, or when the selected knowledge bases cannot answer the request.
 
 ---

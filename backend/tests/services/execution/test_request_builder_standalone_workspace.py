@@ -2,19 +2,44 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from types import SimpleNamespace
 from unittest.mock import Mock
 
+from app.core.constants import CLIENT_ORIGIN_FRONTEND, CLIENT_ORIGIN_WEWORK
 from app.models.task import TaskResource
 from app.services.chat.standalone_workspace import (
     WORKSPACE_PATH_LABEL,
     WORKSPACE_SOURCE_LABEL,
 )
-from app.services.execution.request_builder import TaskRequestBuilder
+from app.services.execution.request_builder import (
+    TaskRequestBuilder,
+    _is_wework_standalone_chat_project,
+)
+
+
+def test_wework_standalone_chat_project_flag_requires_wework_project_zero():
+    task = Mock(spec=TaskResource)
+    task.client_origin = CLIENT_ORIGIN_WEWORK
+
+    assert _is_wework_standalone_chat_project(task, 0) is True
+    assert _is_wework_standalone_chat_project(task, None) is False
+    assert _is_wework_standalone_chat_project(task, 12) is False
+
+    task.client_origin = CLIENT_ORIGIN_FRONTEND
+    assert _is_wework_standalone_chat_project(task, 0) is False
+
+
+def test_wework_standalone_chat_project_flag_handles_missing_client_origin():
+    task = SimpleNamespace()
+
+    assert _is_wework_standalone_chat_project(task, 0) is False
 
 
 def test_merge_standalone_chat_workspace_from_task_labels():
     builder = TaskRequestBuilder.__new__(TaskRequestBuilder)
     task = Mock(spec=TaskResource)
+    task.project_id = 0
+    task.client_origin = CLIENT_ORIGIN_WEWORK
     task.json = {
         "metadata": {
             "labels": {
@@ -28,7 +53,7 @@ def test_merge_standalone_chat_workspace_from_task_labels():
     builder._merge_standalone_chat_workspace(task, workspace_data)
 
     assert workspace_data["project"] == {
-        "project_id": None,
+        "project_id": 0,
         "workspace_source": "local_path",
         "project_workspace_path": "/tmp/chats/2026-05-29/hello",
         "execution_target_type": "local",

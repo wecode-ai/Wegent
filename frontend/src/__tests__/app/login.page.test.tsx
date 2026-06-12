@@ -52,7 +52,17 @@ describe('LoginPage', () => {
     expect(screen.queryByTestId('login-form')).not.toBeInTheDocument()
   })
 
-  it('should show local login page when password_login parameter is present', () => {
+  it('should redirect to DingTalk auth when password_login parameter is present', () => {
+    ;(useSearchParams as jest.Mock).mockReturnValue(new URLSearchParams('password_login'))
+
+    render(<LoginPage />)
+
+    expect(mockReplace).toHaveBeenCalledWith('/auth/dingtalk')
+    expect(screen.queryByTestId('login-form')).not.toBeInTheDocument()
+  })
+
+  it('should show local login page when password_login parameter is present outside DingTalk mode', () => {
+    process.env.NEXT_PUBLIC_AUTH_MODE = 'password'
     ;(useSearchParams as jest.Mock).mockReturnValue(new URLSearchParams('password_login'))
 
     render(<LoginPage />)

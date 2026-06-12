@@ -45,7 +45,7 @@ Bot = Executor + Model + Prompt + Tools
 |-----------|-------------|---------|
 | **Agent** | User-facing AI assistant | "Code Assistant" |
 | **Bot** | Building block of an Agent | "Frontend Developer Bot" |
-| **Executor** | Runtime environment | ClaudeCode, Agno, Chat |
+| **Executor** | Runtime environment | ClaudeCode, Dify, Chat |
 | **Model** | AI brain | Claude Sonnet 4, GPT-4o |
 | **Prompt** | Personality & expertise | System instructions |
 | **Tools** | External capabilities | GitHub MCP, Skills |
@@ -109,9 +109,9 @@ Choose how your agent works:
 |------|------|----------|
 | **Solo** | 1 | Simple tasks, beginners |
 | **Pipeline** | 2+ | Sequential workflows |
-| **Route** | 2+ | Task classification |
 | **Coordinate** | 2+ | Parallel analysis |
-| **Collaborate** | 2+ | Free discussion |
+
+The web UI currently offers Solo, Pipeline, and Coordinate when creating or editing agents.
 
 **Recommendation**: Start with **Solo** mode for simplicity.
 
@@ -120,7 +120,7 @@ Choose how your agent works:
 For **Solo** mode, configure the bot directly:
 
 1. **Name**: Bot identifier
-2. **Executor**: Select runtime (ClaudeCode, Agno, Chat, Dify)
+2. **Executor**: Select runtime (ClaudeCode, Chat, Dify)
 3. **Bind Model**: Select AI model
 4. **Prompt**: Define personality and expertise
 5. **MCP Config**: Add external tools (optional)
@@ -152,7 +152,6 @@ Click **Save** to create your agent. It will appear in your agent list.
 | Executor | Description | Use Case |
 |----------|-------------|----------|
 | **ClaudeCode** | Claude Code SDK in Docker | Code development |
-| **Agno** | Agno framework in Docker | Multi-model tasks |
 | **Chat** | Direct LLM API | Simple conversations |
 | **Dify** | External Dify API | Dify workflows |
 
@@ -227,18 +226,6 @@ Bot A → Bot B → Bot C → Result
 2. Add **Member** bots in order
 3. Optionally enable **Require Confirmation** between stages
 
-### Route Mode
-
-Leader routes tasks to specialists.
-
-```
-            → Frontend Bot
-User → Leader
-            → Backend Bot
-```
-
-**Best for**: Multi-domain support, task classification
-
 ### Coordinate Mode
 
 Leader coordinates parallel work.
@@ -250,16 +237,6 @@ Leader → Bot B (parallel) → Aggregate
 ```
 
 **Best for**: Multi-perspective analysis
-
-### Collaborate Mode
-
-All bots share context and discuss.
-
-```
-Bot A ↔ Bot B ↔ Bot C
-```
-
-**Best for**: Brainstorming, complex decisions
 
 ---
 
@@ -370,7 +347,6 @@ Skills add reusable capabilities to Chat and Claude Code bots.
 | Task | Executor |
 |------|----------|
 | Code development | ClaudeCode |
-| Multi-model chat | Agno |
 | Simple Q&A | Chat |
 | Dify workflows | Dify |
 
@@ -414,9 +390,7 @@ An Agent can have one Bot (Solo) or multiple Bots (other modes).
 |----------|------|
 | Simple tasks | Solo |
 | Sequential workflow | Pipeline |
-| Task routing | Route |
 | Parallel analysis | Coordinate |
-| Discussion | Collaborate |
 
 ### Q: Can I edit an Agent after creation?
 

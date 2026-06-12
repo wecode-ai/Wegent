@@ -126,6 +126,109 @@ class TestKnowledgeTool:
         assert "wegent_kb_list_knowledge_bases" in module.KNOWLEDGE_MCP_TOOLS
         assert "wegent_kb_list_documents" in module.KNOWLEDGE_MCP_TOOLS
         assert "wegent_kb_read_document_content" in module.KNOWLEDGE_MCP_TOOLS
+        assert "wegent_kb_get_document_download" in module.KNOWLEDGE_MCP_TOOLS
+
+    def test_get_document_download_returns_short_lived_credentials(self):
+        """Test that get_document_download returns source-file download credentials."""
+        module = get_knowledge_module()
+        token_info = TaskTokenInfo(
+            task_id=1,
+            subtask_id=2,
+            user_id=3,
+            user_name="alice",
+        )
+        mock_session = MagicMock()
+        access = MagicMock(
+            downloadable=True,
+            previewable=False,
+            knowledge_base_id=77,
+            mime_type=(
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            ),
+            file_name="report.xlsx",
+            file_extension="xlsx",
+            file_size=1234,
+        )
+
+        with (
+            patch.object(module, "SessionLocal", return_value=mock_session),
+            patch.object(
+                module,
+                "get_document_access_or_raise",
+                return_value=access,
+            ) as mock_get_access,
+            patch.object(
+                module,
+                "create_document_download_token",
+                return_value="download-token",
+            ),
+        ):
+            result = module.get_document_download(
+                token_info=token_info,
+                document_id=9,
+            )
+
+        assert result["document_id"] == 9
+        assert result["knowledge_base_id"] == 77
+        assert result["resource_url"] == "/api/mcp/knowledge-external/documents/9/file"
+        assert result["headers"] == {module.DOWNLOAD_TOKEN_HEADER: "download-token"}
+        assert result["disposition"] == "attachment"
+        assert result["file_name"] == "report.xlsx"
+        assert result["download_dir"] == "/home/user/1:executor:knowledge/2"
+        assert result["local_path"] == "/home/user/1:executor:knowledge/2/report.xlsx"
+        assert "${TASK_API_DOMAIN%/}" in result["download_command"]
+        assert "download-token" in result["download_command"]
+        assert "/home/user/1:executor:knowledge/2" in result["download_command"]
+        assert 'mkdir -p "$download_dir"' in result["download_command"]
+        assert '-o "$output_path"' in result["download_command"]
+        mock_get_access.assert_called_once_with(
+            mock_session,
+            user_id=3,
+            document_id=9,
+        )
+        mock_session.close.assert_called_once()
+
+    def test_download_command_sanitizes_output_file_name(self):
+        """Test that generated curl commands cannot write to path traversal names."""
+        module = get_knowledge_module()
+
+        command = module._build_download_command(
+            resource_url="/api/mcp/knowledge-external/documents/9/file",
+            token="download-token",
+            file_name="../../etc/cron.d/malicious",
+        )
+
+        assert "-o 'malicious'" in command
+        assert "../../etc/cron.d/malicious" not in command
+
+    def test_download_command_uses_executor_private_directory_when_task_scoped(self):
+        """Test that task-scoped download commands avoid writing to task files."""
+        module = get_knowledge_module()
+
+        command = module._build_download_command(
+            resource_url="/api/mcp/knowledge-external/documents/9/file",
+            token="download-token",
+            file_name="../../etc/cron.d/malicious",
+            task_id=1,
+            subtask_id=2,
+        )
+
+        assert "/home/user/1:executor:knowledge/2" in command
+        assert 'output_path="$download_dir"/' in command
+        assert "'malicious'" in command
+        assert "../../etc/cron.d/malicious" not in command
+
+    def test_download_command_falls_back_for_unsafe_empty_basename(self):
+        """Test that unsafe empty basenames use a stable fallback output name."""
+        module = get_knowledge_module()
+
+        command = module._build_download_command(
+            resource_url="/api/mcp/knowledge-external/documents/9/file",
+            token="download-token",
+            file_name="../..",
+        )
+
+        assert "-o 'document'" in command
 
     def test_read_document_content_returns_orchestrator_payload(self):
         """Test that read_document_content returns the orchestrator payload."""

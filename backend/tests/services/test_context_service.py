@@ -1551,6 +1551,184 @@ class TestContextServiceFormatting:
         assert "URL: /api/attachments/100/download" in prefix
         assert "truncated" in prefix.lower()
 
+    def test_large_spreadsheet_metadata_prefix_omits_extracted_text(self):
+        """Local executors should receive spreadsheet metadata without parsed text."""
+        from app.models.subtask_context import (
+            ContextStatus,
+            ContextType,
+            SubtaskContext,
+        )
+        from app.services.chat.preprocessing.contexts import (
+            _build_attachment_metadata_only_prefix,
+            _should_skip_attachment_text,
+        )
+
+        context = SubtaskContext(
+            subtask_id=0,
+            user_id=1,
+            context_type=ContextType.ATTACHMENT.value,
+            name="sales.xlsx",
+            status=ContextStatus.READY.value,
+            extracted_text="truncated spreadsheet rows should not be injected",
+            text_length=42,
+            type_data={
+                "file_extension": ".xlsx",
+                "original_filename": "sales.xlsx",
+                "mime_type": (
+                    "application/vnd.openxmlformats-officedocument."
+                    "spreadsheetml.sheet"
+                ),
+                "file_size": 1024,
+            },
+        )
+        context.id = 321
+
+        assert _should_skip_attachment_text(context) is True
+        prefix = _build_attachment_metadata_only_prefix(
+            context,
+            task_id=100,
+            subtask_id=200,
+        )
+
+        assert "sales.xlsx" in prefix
+        assert "ID: 321" in prefix
+        assert "File Path(already in sandbox):" in prefix
+        assert "precise spreadsheet or full-file analysis" in prefix
+        assert "truncated spreadsheet rows should not be injected" not in prefix
+        # Spreadsheets should NOT include a text_preview section
+        assert "<text_preview>" not in prefix
+
+    def test_large_non_spreadsheet_metadata_prefix_includes_preview(self):
+        """Non-spreadsheet large files should include a text preview snippet."""
+        from app.models.subtask_context import (
+            ContextStatus,
+            ContextType,
+            SubtaskContext,
+        )
+        from app.services.chat.preprocessing.contexts import (
+            _build_attachment_metadata_only_prefix,
+            _should_skip_attachment_text,
+        )
+
+        context = SubtaskContext(
+            subtask_id=0,
+            user_id=1,
+            context_type=ContextType.ATTACHMENT.value,
+            name="annual-report.pdf",
+            status=ContextStatus.READY.value,
+            extracted_text="A" * 1000,  # Long extracted text
+            text_length=1000,
+            type_data={
+                "file_extension": ".pdf",
+                "original_filename": "annual-report.pdf",
+                "mime_type": "application/pdf",
+                "file_size": 2048000,
+            },
+        )
+        context.id = 555
+
+        assert _should_skip_attachment_text(context) is False  # PDF, not spreadsheet
+        # But metadata-only prefix should still work and include preview
+        prefix = _build_attachment_metadata_only_prefix(
+            context,
+            task_id=100,
+            subtask_id=200,
+        )
+
+        assert "annual-report.pdf" in prefix
+        assert "ID: 555" in prefix
+        assert "<text_preview>" in prefix
+        assert "truncated" in prefix.lower()
+        # Preview should be limited, not the full 1000 chars
+        assert "A" * 600 not in prefix
+
+    def test_spreadsheet_metadata_prefix_has_no_preview(self):
+        """Spreadsheets should never include parsed text preview."""
+        from app.models.subtask_context import (
+            ContextStatus,
+            ContextType,
+            SubtaskContext,
+        )
+        from app.services.chat.preprocessing.contexts import (
+            _build_attachment_metadata_only_prefix,
+        )
+
+        context = SubtaskContext(
+            subtask_id=0,
+            user_id=1,
+            context_type=ContextType.ATTACHMENT.value,
+            name="data.csv",
+            status=ContextStatus.READY.value,
+            extracted_text="col1,col2\n1,2\n3,4",
+            text_length=20,
+            type_data={
+                "file_extension": ".csv",
+                "original_filename": "data.csv",
+                "mime_type": "text/csv",
+                "file_size": 512,
+            },
+        )
+        context.id = 666
+
+        prefix = _build_attachment_metadata_only_prefix(
+            context,
+            task_id=100,
+            subtask_id=200,
+        )
+
+        assert "<text_preview>" not in prefix
+        assert "col1,col2" not in prefix
+
+    @pytest.mark.asyncio
+    async def test_process_contexts_can_use_metadata_only_for_spreadsheets(self):
+        """Compatibility context processing should support metadata-only mode."""
+        from app.models.subtask_context import (
+            ContextStatus,
+            ContextType,
+            SubtaskContext,
+        )
+        from app.services.chat.preprocessing.contexts import process_contexts
+
+        context = SubtaskContext(
+            subtask_id=0,
+            user_id=1,
+            context_type=ContextType.ATTACHMENT.value,
+            name="sales.xlsx",
+            status=ContextStatus.READY.value,
+            extracted_text="spreadsheet rows should not be injected",
+            text_length=42,
+            type_data={
+                "file_extension": ".xlsx",
+                "original_filename": "sales.xlsx",
+                "mime_type": (
+                    "application/vnd.openxmlformats-officedocument."
+                    "spreadsheetml.sheet"
+                ),
+                "file_size": 1024,
+            },
+        )
+        context.id = 321
+
+        with patch(
+            "app.services.chat.preprocessing.contexts."
+            "context_service.get_context_optional",
+            return_value=context,
+        ):
+            result = await process_contexts(
+                Mock(),
+                [321],
+                "Summarize the file",
+                metadata_only_for_large_documents=True,
+            )
+
+        assert isinstance(result, list)
+        attachment_text = result[0]["text"]
+        user_text = result[1]["text"]
+        assert "sales.xlsx" in attachment_text
+        assert "Source file is available for local tool analysis" in attachment_text
+        assert "spreadsheet rows should not be injected" not in attachment_text
+        assert user_text == "Summarize the file"
+
 
 class TestContextServiceOverwrite:
     """Test attachment overwrite functionality"""

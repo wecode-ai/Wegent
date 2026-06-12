@@ -639,7 +639,7 @@ class DeviceCapabilitySyncService:
         package_ref = spec.get("packageRef") or {}
         payload = {
             "installed_plugin_id": installed.id,
-            "name": installed.name,
+            "name": self._plugin_payload_name(installed, spec, source),
             "display_name": spec.get("displayName") or installed.name,
             "description": spec.get("description", ""),
             "marketplace": marketplace,
@@ -656,6 +656,24 @@ class DeviceCapabilitySyncService:
             payload["checksum"] = package_ref.get("checksum")
             payload["download_path"] = f"/api/plugins/installed/{installed.id}/download"
         return payload
+
+    def _plugin_payload_name(
+        self,
+        installed: Kind,
+        spec: dict[str, Any],
+        source: dict[str, Any],
+    ) -> str:
+        manifest = spec.get("manifest") or {}
+        for candidate in (
+            source.get("pluginKey"),
+            source.get("plugin"),
+            manifest.get("name") if isinstance(manifest, dict) else None,
+            installed.json.get("metadata", {}).get("name"),
+            installed.name,
+        ):
+            if isinstance(candidate, str) and candidate:
+                return candidate
+        return installed.name
 
     def _aggregate_response(
         self,

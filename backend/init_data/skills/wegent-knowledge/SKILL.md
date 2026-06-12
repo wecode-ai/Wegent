@@ -1,5 +1,5 @@
 ---
-description: "Knowledge base management and search tools for Wegent. Provides capabilities to list, create, update, and search knowledge bases and documents using RAG retrieval. Use this skill when the user wants to manage knowledge bases, documents, or search for information programmatically."
+description: "Knowledge base management, RAG search, parsed document reading, and original source-file download tools for Wegent. Use this skill whenever the user selects or references Wegent knowledge bases, asks questions over knowledge documents, or needs precise spreadsheet, binary, parser-failed, or full-file analysis."
 displayName: "知识库工具"
 version: "1.1.0"
 author: "Wegent Team"
@@ -62,6 +62,11 @@ You now have access to Wegent Knowledge Base management tools.
   - limit: Maximum number of characters to return (uses the backend default when omitted)
   - returns: content slice, total_length, returned_length, has_more, kb_id
 
+- **wegent_kb_get_document_download**: Get a short-lived download credential for the original source file
+  - document_id: Document ID to download
+  - disposition: Use "attachment" when saving the file locally (default); use "inline" only for previewable files
+  - returns: resource_url, required headers, expiration_seconds, file metadata, and a curl download command template
+
 - **wegent_kb_update_document_content**: Update a document's content for text documents and editable plain-text files
   - document_id: Document ID to update
   - content: New content (replaces existing content)
@@ -83,6 +88,9 @@ You now have access to Wegent Knowledge Base management tools.
 - Default behavior: if user doesn't specify scope, use `scope="all"` directly (no extra confirmation).
 - Avoid loops: if a tool call fails, report the error once and stop retrying/re-loading the skill unless the user changes inputs.
 - Long documents should be read incrementally: start with the backend default limit, then continue with `offset = previous_offset + previous_returned_length` while `has_more=true`
+- Choose the access mode yourself. Use RAG search for semantic lookup, `wegent_kb_read_document_content` for parsed text slices, and `wegent_kb_get_document_download` when exact spreadsheet calculations, binary formats, parser failures, or full-file analysis require the original source file.
+- Do not ask the user to confirm which access mode to use when enough context is available. Locate the likely document with RAG or list tools, then download the source file if the task needs full-file precision.
+- When using a download credential, use the returned headers exactly. If `resource_url` is relative, prefix it with `TASK_API_DOMAIN` or use the returned `download_command` template.
 
 ## Example Workflow
 
@@ -138,7 +146,15 @@ You now have access to Wegent Knowledge Base management tools.
    )
    ```
 
-7. Search knowledge base using RAG retrieval:
+7. Download the original source file for precise spreadsheet or full-file analysis:
+   ```text
+   wegent_kb_get_document_download(
+     document_id=456,
+     disposition="attachment"
+   )
+   ```
+
+8. Search knowledge base using RAG retrieval:
    ```text
    wegent_kb_search_knowledge_base(
      knowledge_base_id=123,
@@ -147,7 +163,7 @@ You now have access to Wegent Knowledge Base management tools.
    )
    ```
 
-8. Search within specific documents:
+9. Search within specific documents:
    ```text
    wegent_kb_search_knowledge_base(
      knowledge_base_id=123,

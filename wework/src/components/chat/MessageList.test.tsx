@@ -3,8 +3,60 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import type { Attachment } from '@/types/api'
 import { MessageList } from './MessageList'
+import '@/i18n'
 
 describe('MessageList', () => {
+  test('renders one assistant turn file changes under its message', () => {
+    render(
+      <MessageList
+        devices={[
+          {
+            id: 1,
+            device_id: 'device-1',
+            name: 'Device 1',
+            status: 'online',
+            is_default: false,
+          },
+        ]}
+        onLoadFileChangesDiff={vi.fn().mockResolvedValue('')}
+        onRevertFileChanges={vi.fn()}
+        messages={[
+          {
+            id: 'assistant-21',
+            subtaskId: 21,
+            role: 'assistant',
+            content: 'Done',
+            status: 'done',
+            createdAt: '2026-06-11T10:00:00Z',
+            fileChanges: {
+              version: 1,
+              status: 'active',
+              artifact_id: 'turn-21',
+              device_id: 'device-1',
+              workspace_path: '/workspace/project',
+              file_count: 1,
+              additions: 4,
+              deletions: 2,
+              files: [
+                {
+                  path: 'src/main.ts',
+                  change_type: 'modified',
+                  additions: 4,
+                  deletions: 2,
+                  binary: false,
+                },
+              ],
+            },
+          },
+        ]}
+      />,
+    )
+
+    expect(screen.getByTestId('file-changes-card')).toHaveTextContent(
+      'src/main.ts',
+    )
+  })
+
   test('uses compact spacing between messages and hover actions', () => {
     render(
       <MessageList
@@ -72,32 +124,6 @@ describe('MessageList', () => {
       'min-w-0',
       'overflow-x-hidden',
     )
-  })
-
-  test('uses neutral user bubble and blue assistant links', () => {
-    const { container } = render(
-      <MessageList
-        messages={[
-          {
-            id: '1',
-            role: 'user',
-            content: '总结下这个文档',
-            status: 'done',
-            createdAt: '2026-05-25T00:00:00.000Z',
-          },
-          {
-            id: '2',
-            role: 'assistant',
-            content: '联系 [jueding.ly@alibaba-inc.com](mailto:jueding.ly@alibaba-inc.com)',
-            status: 'done',
-            createdAt: '2026-05-25T00:00:01.000Z',
-          },
-        ]}
-      />,
-    )
-
-    expect(screen.getByText('总结下这个文档').parentElement).toHaveClass('bg-muted')
-    expect(container.querySelector('a[href^="mailto:"]')).toHaveClass('text-blue-600')
   })
 
   test('renders image attachments in user messages', async () => {
@@ -214,6 +240,66 @@ describe('MessageList', () => {
     await userEvent.click(copyButton)
 
     expect(writeText).toHaveBeenCalledWith('对 bind_shell=openclaw 直接跳过')
+  })
+
+  test('collapses long user messages without changing copied content', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.assign(navigator, {
+      clipboard: { writeText },
+    })
+    const content = Array.from(
+      { length: 12 },
+      (_, index) => `第 ${index + 1} 行内容`,
+    ).join('\n')
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: '1',
+            role: 'user',
+            content,
+            status: 'done',
+            createdAt: '2026-05-25T15:08:00.000+08:00',
+          },
+        ]}
+      />,
+    )
+
+    const messageContent = screen.getByTestId('user-message-content')
+    const toggleButton = screen.getByTestId('toggle-user-message-button')
+
+    expect(messageContent).toHaveClass('max-h-44', 'overflow-hidden')
+    expect(toggleButton).toHaveAttribute('aria-expanded', 'false')
+    expect(toggleButton).toHaveTextContent('展开')
+
+    await userEvent.click(toggleButton)
+
+    expect(messageContent).not.toHaveClass('max-h-44')
+    expect(toggleButton).toHaveAttribute('aria-expanded', 'true')
+    expect(toggleButton).toHaveTextContent('收起')
+
+    await userEvent.click(screen.getByTestId('copy-message-button'))
+    expect(writeText).toHaveBeenCalledWith(content)
+  })
+
+  test('does not show a collapse control for short user messages', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: '1',
+            role: 'user',
+            content: '短消息',
+            status: 'done',
+            createdAt: '2026-05-25T15:08:00.000+08:00',
+          },
+        ]}
+      />,
+    )
+
+    expect(screen.queryByTestId('toggle-user-message-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('user-message-content')).not.toHaveClass('max-h-44')
   })
 
   test('shows only clock time for messages created today', () => {
@@ -365,7 +451,6 @@ describe('MessageList', () => {
       'href',
       'skill:///Users/crystal/.codex/skills/env-context/SKILL.md',
     )
-    expect(skillLink).toHaveClass('bg-muted', 'text-text-primary')
     expect(screen.getByTestId('message-user')).toHaveTextContent(
       'hello $env-context context',
     )

@@ -97,6 +97,32 @@ describe('createHttpClient', () => {
     })
   })
 
+  test('preserves structured error details and codes', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 409,
+      text: async () =>
+        JSON.stringify({
+          detail: {
+            code: 'TURN_FILE_CHANGES_CONFLICT',
+            message: 'Patch does not apply',
+            file_changes: { status: 'conflicted' },
+          },
+        }),
+    })
+
+    const client = createHttpClient({ baseUrl: '/api' })
+
+    await expect(client.post('/subtasks/9/file-changes/revert')).rejects.toMatchObject({
+      message: 'Patch does not apply',
+      status: 409,
+      errorCode: 'TURN_FILE_CHANGES_CONFLICT',
+      detail: {
+        file_changes: { status: 'conflicted' },
+      },
+    })
+  })
+
   test('posts FormData without forcing a json content type', async () => {
     localStorage.setItem('auth_token', 'token-1')
     fetchMock.mockResolvedValueOnce({

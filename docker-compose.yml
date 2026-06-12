@@ -109,8 +109,7 @@ services:
       # Chat Shell Configuration (uncomment to use HTTP mode)
       CHAT_SHELL_MODE: ${CHAT_SHELL_MODE:-http}
       CHAT_SHELL_URL: ${CHAT_SHELL_URL:-http://chat_shell:8100}
-      # CHAT_SHELL_TOKEN: ${INTERNAL_SERVICE_TOKEN:-chat-shell-token}
-      # INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-chat-shell-token}
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?Set INTERNAL_SERVICE_TOKEN in .env. Generate one with `openssl rand -hex 32`.}
       # Internal URL for MCP and other internal service calls (use container name in Docker)
       BACKEND_INTERNAL_URL: http://backend:8000
       # Knowledge Runtime URL for RAG operations
@@ -183,8 +182,9 @@ services:
       - CHAT_SHELL_MODE=${CHAT_SHELL_MODE:-http}
       - CHAT_SHELL_STORAGE_TYPE=${CHAT_SHELL_STORAGE_TYPE:-remote}
       - CHAT_SHELL_REMOTE_STORAGE_URL=${CHAT_SHELL_REMOTE_STORAGE_URL:-http://backend:8000/api/internal}
+      - CHAT_SHELL_REMOTE_STORAGE_TOKEN=${INTERNAL_SERVICE_TOKEN:?Set INTERNAL_SERVICE_TOKEN in .env. Generate one with `openssl rand -hex 32`.}
+      - CHAT_SHELL_INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:?Set INTERNAL_SERVICE_TOKEN in .env. Generate one with `openssl rand -hex 32`.}
       - EXECUTOR_MANAGER_URL=${EXECUTOR_MANAGER_URL:-http://executor_manager:8001}
-      # - CHAT_SHELL_REMOTE_STORAGE_TOKEN=${INTERNAL_SERVICE_TOKEN:-chat-shell-token}
       # OpenTelemetry Configuration (uncomment to enable)
       # - OTEL_ENABLED=true
       # - OTEL_SERVICE_NAME=wegent-chat-shell
@@ -284,8 +284,8 @@ services:
       - LOG_FILE_ENABLED=${LOG_FILE_ENABLED:-true}
       - LOG_DIR=${LOG_DIR:-/app/logs}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      # Internal service token (uncomment to enable, must match Backend's INTERNAL_SERVICE_TOKEN)
-      # - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:-your-secure-token-here}
+      # Internal service token. Must match Backend's INTERNAL_SERVICE_TOKEN.
+      - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:?Set INTERNAL_SERVICE_TOKEN in .env. Generate one with `openssl rand -hex 32`.}
       # Database connection for config resolution (reference-mode)
       - DATABASE_URL=mysql+pymysql://${MYSQL_USER:-task_user}:${MYSQL_PASSWORD:-task_password}@mysql:3306/${MYSQL_DATABASE:-task_manager}
       # OpenTelemetry Configuration (uncomment to enable)
@@ -317,7 +317,7 @@ services:
     environment:
       TZ: ${TZ:-Asia/Shanghai}
       BACKEND_BASE_URL: ${BACKEND_BASE_URL:-http://backend:8000}
-      BACKEND_INTERNAL_TOKEN: ${INTERNAL_SERVICE_TOKEN:-}
+      BACKEND_INTERNAL_TOKEN: ${INTERNAL_SERVICE_TOKEN:?Set INTERNAL_SERVICE_TOKEN in .env. Generate one with `openssl rand -hex 32`.}
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
       CELERY_BROKER_URL: ${REDIS_URL:-redis://redis:6379/0}
       CELERY_RESULT_BACKEND: ${REDIS_URL:-redis://redis:6379/1}
