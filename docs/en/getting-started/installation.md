@@ -166,7 +166,7 @@ sudo apt-get update
 sudo apt-get install python3.10 python3-pip python3-venv
 
 # Install Node.js
-curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
 sudo apt-get install -y nodejs
 
 # Install MySQL
@@ -249,18 +249,19 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 In a new terminal:
 
 ```bash
-# Enter frontend directory
-cd frontend
+# Return to the repository root
+cd Wegent
 
-# Install dependencies
-npm install
+# Install pnpm workspace dependencies
+pnpm install
 
 # Configure environment variables
+cd frontend
 cp .env.local.example .env.local
 vim .env.local  # Edit configuration
 
 # Run development server
-npm run dev
+pnpm run dev
 ```
 
 ### Step 6: Install Executor Manager

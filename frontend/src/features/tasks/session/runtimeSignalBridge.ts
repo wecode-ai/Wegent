@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useRef } from 'react'
 import { useSocket } from '@/contexts/SocketContext'
 import { usePageVisibility } from '@/hooks/usePageVisibility'
-import type { TaskRecoveryReason, TaskStateMachine } from '../state'
+import type { TaskRecoveryReason, TaskStateMachine } from '@wegent/chat-core'
 
 const MIN_HIDDEN_DURATION_MS = 3000
 

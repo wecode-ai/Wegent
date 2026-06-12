@@ -675,8 +675,8 @@ class InprocessExecutor:
             from executor.services.agent_service import AgentService
 
             agent_service = AgentService()
-            status, _ = agent_service.cancel_task(task_id)
-            return status.value == "success"
+            status, _ = await agent_service.cancel_task_async(task_id)
+            return status == TaskStatus.SUCCESS
         except Exception as e:
             logger.error(
                 f"[InprocessExecutor] Cancel error: task_id={task_id}, error={e}"

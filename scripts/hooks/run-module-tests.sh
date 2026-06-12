@@ -7,7 +7,8 @@
 #
 # Supported modules:
 # - backend: pytest tests/
-# - frontend: npm test
+# - frontend: pnpm test
+# - chat-core: pnpm test
 # - executor: pytest tests/
 # - executor_manager: pytest tests/
 # - shared: pytest tests/
@@ -71,7 +72,7 @@ run_module_tests() {
     echo -e "${BLUE}🧪 Running tests for $module...${NC}"
 
     # Check if tests directory exists
-    if [ "$module" = "frontend" ]; then
+    if [ "$module" = "frontend" ] || [ "$module" = "chat-core" ]; then
         if [ ! -f "$working_dir/package.json" ]; then
             echo -e "${YELLOW}   ⚠️ No package.json found, skipping${NC}"
             return 0
@@ -119,7 +120,13 @@ fi
 # Frontend
 FRONTEND_CHANGES=$(echo "$CHANGED_FILES" | grep -E "^frontend/.*\.(ts|tsx|js|jsx)$" || true)
 if [ -n "$FRONTEND_CHANGES" ]; then
-    run_module_tests "frontend" "npm test -- --passWithNoTests --watchAll=false 2>/dev/null" "$PROJECT_ROOT/frontend"
+    run_module_tests "frontend" "pnpm test --passWithNoTests --watchAll=false 2>/dev/null" "$PROJECT_ROOT/frontend"
+fi
+
+# Shared chat core
+CHAT_CORE_CHANGES=$(echo "$CHANGED_FILES" | grep -E "^packages/chat-core/" || true)
+if [ -n "$CHAT_CORE_CHANGES" ]; then
+    run_module_tests "chat-core" "pnpm test 2>/dev/null" "$PROJECT_ROOT/packages/chat-core"
 fi
 
 # Executor

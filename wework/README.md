@@ -87,7 +87,7 @@ The desktop app is built with [Tauri v2](https://v2.tauri.app/), which also targ
 The Xcode project lives in `src-tauri/gen/apple` and is **git-ignored** (regenerable, and a real build may embed your Apple Team ID into it). Generate it locally with:
 
 ```bash
-npm run ios:init
+pnpm run ios:init
 ```
 
 ### Per-environment configuration
@@ -105,17 +105,17 @@ APPLE_DEVELOPMENT_TEAM=XXXXXXXXXX   # Apple Team ID for signing (device/IPA)
 ### Dev (simulator / device)
 
 ```bash
-npm run dev:ios                          # env=dev (default)
-npm run dev:ios -- --env staging
-npm run dev:ios -- --device "iPhone 16 Pro"
+pnpm run dev:ios                          # env=dev (default)
+pnpm run dev:ios -- --env staging
+pnpm run dev:ios -- --device "iPhone 16 Pro"
 ```
 
 ### Build / package
 
 ```bash
-npm run build:ios -- --env prod                         # device IPA (release-testing)
-npm run build:ios -- --env staging --target sim         # simulator build
-npm run build:ios -- --env prod --export-method app-store-connect
+pnpm run build:ios -- --env prod                         # device IPA (release-testing)
+pnpm run build:ios -- --env staging --target sim         # simulator build
+pnpm run build:ios -- --env prod --export-method app-store-connect
 ```
 
 Useful flags: `--target device|sim|x86_64`, `--export-method app-store-connect|release-testing|debugging`,

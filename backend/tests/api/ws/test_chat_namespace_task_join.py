@@ -8,6 +8,7 @@ import pytest
 
 from app.api.ws.chat_namespace import ChatNamespace
 from app.api.ws.events import ServerEvents
+from app.models.subtask import SubtaskStatus
 
 
 @pytest.mark.asyncio
@@ -65,6 +66,73 @@ async def test_task_join_replays_cached_context_metrics_for_active_stream() -> N
         cached_metrics,
         to="sid-1",
     )
+
+
+@pytest.mark.asyncio
+async def test_chat_cancel_cleans_cached_streaming_state() -> None:
+    """Cancelling a stream should remove refresh recovery cache immediately."""
+
+    namespace = ChatNamespace()
+    namespace.get_session = AsyncMock(return_value={"user_id": 1})
+    namespace._check_token_expiry = AsyncMock(return_value=False)
+    mark_cancelled_calls = []
+
+    async def run_sync_side_effect(func, *args):
+        if func.__name__ == "_get_subtask_for_cancel":
+            return {
+                "task_id": 101,
+                "status": SubtaskStatus.RUNNING,
+                "executor_name": "device-local-device",
+            }
+        if func.__name__ == "_mark_subtask_and_task_cancelled":
+            mark_cancelled_calls.append(args)
+            return None
+        raise AssertionError(f"Unexpected sync function: {func.__name__}")
+
+    with (
+        patch(
+            "app.api.ws.chat_namespace.run_sync_in_executor",
+            AsyncMock(side_effect=run_sync_side_effect),
+        ),
+        patch(
+            "app.services.execution.dispatcher.execution_dispatcher.cancel",
+            AsyncMock(return_value=True),
+        ),
+        patch(
+            "app.services.chat.trigger.lifecycle.collect_completed_result",
+            AsyncMock(
+                return_value={
+                    "value": "collected output",
+                    "blocks": [{"type": "thinking", "content": "collected thought"}],
+                }
+            ),
+        ) as collect_completed_result,
+        patch(
+            "app.api.ws.chat_namespace.session_manager.cleanup_streaming_state",
+            AsyncMock(),
+        ) as cleanup_streaming_state,
+    ):
+        result = await namespace.on_chat_cancel(
+            "sid-1",
+            {
+                "subtask_id": 55,
+                "partial_content": "partial",
+                "shell_type": "ClaudeCode",
+            },
+        )
+
+    assert result == {"success": True}
+    collect_completed_result.assert_awaited_once_with(55, status="CANCELLED")
+    assert mark_cancelled_calls == [
+        (
+            55,
+            {
+                "value": "collected output",
+                "blocks": [{"type": "thinking", "content": "collected thought"}],
+            },
+        )
+    ]
+    cleanup_streaming_state.assert_awaited_once_with(55, task_id=101)
 
 
 @pytest.mark.asyncio
