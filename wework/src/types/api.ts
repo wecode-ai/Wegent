@@ -249,6 +249,26 @@ export interface TaskListResponse {
   items: Task[]
 }
 
+export interface TaskRuntimeActiveStream {
+  subtask_id: number
+  cursor: number
+  last_activity_at?: string | null
+}
+
+export interface TaskRuntimeCheck {
+  task_id: number
+  task_status: string
+  status_updated_at?: string | null
+  active_stream: TaskRuntimeActiveStream | null
+}
+
+export interface TaskStatusPayload {
+  task_id: number
+  status: string
+  progress?: number | null
+  completed_at?: string | null
+}
+
 export interface ArchivedTask {
   id: number
   title: string

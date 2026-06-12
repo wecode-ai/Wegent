@@ -54,6 +54,7 @@ import type {
   Task,
   TaskDetail,
   TaskListResponse,
+  TaskRuntimeCheck,
   TurnFileChangesSummary,
   UnifiedModel,
   UnifiedSkill,
@@ -176,9 +177,15 @@ export interface WorkbenchServices {
   gitApi?: ReturnType<typeof createGitApi>
   taskApi: Omit<
     ReturnType<typeof createTaskApi>,
-    'searchTasks' | 'getTurnFileChangesDiff' | 'revertTurnFileChanges'
+    | 'searchTasks'
+    | 'getTaskRuntimeCheck'
+    | 'getTurnFileChangesDiff'
+    | 'revertTurnFileChanges'
   > & {
     searchTasks?: ReturnType<typeof createTaskApi>['searchTasks']
+    getTaskRuntimeCheck?: ReturnType<
+      typeof createTaskApi
+    >['getTaskRuntimeCheck']
     getTurnFileChangesDiff?: ReturnType<
       typeof createTaskApi
     >['getTurnFileChangesDiff']
@@ -631,6 +638,19 @@ function addRunningTasksFromDevices(ids: Set<number>, devices: DeviceInfo[]) {
   }
 }
 
+function mergeTaskRuntimeCheck(
+  task: TaskDetail,
+  runtimeCheck: TaskRuntimeCheck | null,
+): TaskDetail {
+  if (!runtimeCheck || runtimeCheck.task_id !== task.id) return task
+  return {
+    ...task,
+    status: runtimeCheck.task_status,
+    task_status: runtimeCheck.task_status,
+    updated_at: runtimeCheck.status_updated_at ?? task.updated_at,
+  }
+}
+
 function normalizeGuidanceError(error?: string) {
   if (!error) return '引导发送失败'
   if (error.includes('Chat Shell')) {
@@ -1011,6 +1031,13 @@ export function WorkbenchProvider({
       onDeviceStatus: handleDeviceChanged,
       onDeviceSlotUpdate: handleDeviceSlotUpdate,
       onDeviceUpgradeStatus: handleDeviceUpgradeStatus,
+      onTaskStatus: payload => {
+        dispatch({
+          type: 'task_status_changed',
+          taskId: payload.task_id,
+          status: payload.status,
+        })
+      },
       onChatStart: payload => {
         setIsAwaitingAssistantStart(false)
         dispatch({
@@ -1291,7 +1318,13 @@ export function WorkbenchProvider({
 
   const openTask = useCallback(
     async (taskId: number, projectId?: number) => {
-      const detail = await resolvedServices.taskApi.getTaskDetail(taskId)
+      const [rawDetail, runtimeCheck] = await Promise.all([
+        resolvedServices.taskApi.getTaskDetail(taskId),
+        resolvedServices.taskApi
+          .getTaskRuntimeCheck?.(taskId)
+          .catch(() => null) ?? Promise.resolve(null),
+      ])
+      const detail = mergeTaskRuntimeCheck(rawDetail, runtimeCheck)
       const detailTask = detail as Task
       const listTask = state.recentTasks.find(item => item.id === taskId)
       const resolvedProjectId = resolveOpenedTaskProjectId(
