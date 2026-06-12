@@ -31,7 +31,7 @@ interface ProjectChatComposerProps {
   onSelectModelOption: (optionId: string, value: string) => void
   onFileSelect: (files: File | File[]) => void
   onRemoveAttachment: (attachmentId: number) => void
-  onRemoveCodeComment?: (commentId: string) => void
+  onClearCodeComments?: () => void
   onListLocalSkills?: () => Promise<LocalDeviceSkill[]>
   projectWork: ProjectWorkControls
   showProjectWorkBar?: boolean
@@ -58,7 +58,7 @@ export function ProjectChatComposer({
   onSelectModelOption,
   onFileSelect,
   onRemoveAttachment,
-  onRemoveCodeComment,
+  onClearCodeComments,
   onListLocalSkills,
   projectWork,
   showProjectWorkBar = true,
@@ -85,7 +85,7 @@ export function ProjectChatComposer({
           errors={attachmentErrors}
           codeComments={codeComments}
           onRemoveAttachment={onRemoveAttachment}
-          onRemoveCodeComment={onRemoveCodeComment}
+          onClearCodeComments={onClearCodeComments}
         />
         {disabledReason && (
           <div

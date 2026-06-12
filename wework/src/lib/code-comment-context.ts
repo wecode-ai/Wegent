@@ -11,6 +11,7 @@ export function appendCodeCommentContexts(
   contexts: CodeCommentContext[],
 ): string {
   if (contexts.length === 0) return message
+  const trimmedMessage = message.trim()
 
   const blocks = contexts.map((context, index) =>
     [
@@ -25,11 +26,11 @@ export function appendCodeCommentContexts(
     ].join('\n'),
   )
 
-  return [
-    message.trim(),
-    '',
+  const contextBlock = [
     '<code_comment_context>',
     blocks.join('\n\n'),
     '</code_comment_context>',
   ].join('\n')
+
+  return trimmedMessage ? [trimmedMessage, '', contextBlock].join('\n') : contextBlock
 }
