@@ -71,6 +71,8 @@ class CodeXAgent(Agent):
         self._bot_id = self._resolve_bot_id(task_data)
         self._session_store = CodeXSessionStore()
         self._local_image_paths: list[str | None] = []
+        self._cancel_requested = False
+        self._turn_interrupt_requested = False
         self.on_client_created_callback: Optional[Callable[[], Any]] = None
 
     def initialize(self) -> TaskStatus:
@@ -146,6 +148,9 @@ class CodeXAgent(Agent):
 
             turn_input = self._build_turn_input()
             effort, summary = self._build_reasoning_params()
+            if self._cancel_requested:
+                await self.emitter.incomplete(reason="cancelled")
+                return TaskStatus.CANCELLED
             await self.start_turn_file_change_tracking()
             self._turn = await self._thread.turn(
                 turn_input,
@@ -155,6 +160,8 @@ class CodeXAgent(Agent):
                 sandbox=self._sandbox_full_access(),
                 summary=summary,
             )
+            if self._cancel_requested:
+                await self._interrupt_active_turn()
 
             async for event in self._turn.stream():
                 status = await mapper.handle(event)
@@ -172,16 +179,45 @@ class CodeXAgent(Agent):
         finally:
             await self.cleanup_async()
 
-    def cancel_run(self) -> bool:
+    async def cancel_run_async(self) -> bool:
+        self._cancel_requested = True
         if self._turn is None:
-            logger.warning("CodeXAgent has no active turn to cancel: %s", self.task_id)
+            logger.info(
+                "CodeXAgent cancel requested before turn start: %s", self.task_id
+            )
+            return True
+        return await self._interrupt_active_turn()
+
+    async def _interrupt_active_turn(self) -> bool:
+        if getattr(self, "_turn_interrupt_requested", False):
+            return True
+        if self._turn is None:
             return False
+
+        self._turn_interrupt_requested = True
         try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(self._turn.interrupt())
+            await self._turn.interrupt()
+            logger.info("CodeXAgent turn interrupt requested: %s", self.task_id)
+            return True
+        except Exception as exc:
+            logger.exception(
+                "Failed to interrupt CodeXAgent turn: task_id=%s error=%s",
+                self.task_id,
+                exc,
+            )
+            return False
+
+    def cancel_run(self) -> bool:
+        try:
+            asyncio.get_running_loop()
         except RuntimeError:
-            asyncio.run(self._turn.interrupt())
-        return True
+            return asyncio.run(self.cancel_run_async())
+        logger.warning(
+            "CodeXAgent.cancel_run() called inside a running event loop; "
+            "use cancel_run_async() for task_id=%s",
+            self.task_id,
+        )
+        return False
 
     async def cleanup_async(self) -> None:
         if self._codex is not None:

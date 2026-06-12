@@ -113,6 +113,96 @@ def test_active_streaming_db_fallback_uses_subtask_store(monkeypatch):
     assert result["subtask_id"] == 10
 
 
+def test_active_streaming_subtask_validation_rejects_terminal_subtask(monkeypatch):
+    store = SimpleNamespace(
+        get_basic_by_id=lambda db, subtask_id: _subtask(status=SubtaskStatus.CANCELLED)
+    )
+    monkeypatch.setattr(permissions, "subtask_store", store, raising=False)
+
+    result = permissions._is_streaming_subtask_active.__wrapped__(
+        _NoModelCrudDb(),
+        100,
+        10,
+    )
+
+    assert result is False
+
+
+@pytest.mark.asyncio
+async def test_active_streaming_ignores_stale_redis_status(monkeypatch):
+    mock_session_manager = SimpleNamespace(
+        get_task_streaming_status=AsyncMock(
+            return_value={
+                "subtask_id": 10,
+                "user_id": 7,
+            }
+        ),
+        cleanup_streaming_state=AsyncMock(),
+    )
+    monkeypatch.setattr(
+        "app.services.chat.storage.session_manager",
+        mock_session_manager,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        permissions,
+        "_is_streaming_subtask_active",
+        AsyncMock(return_value=False),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        permissions,
+        "_get_active_streaming_from_db",
+        AsyncMock(return_value=None),
+        raising=False,
+    )
+
+    result = await permissions.get_active_streaming(100)
+
+    assert result is None
+    mock_session_manager.cleanup_streaming_state.assert_awaited_once_with(
+        10,
+        task_id=100,
+    )
+
+
+@pytest.mark.asyncio
+async def test_active_streaming_keeps_valid_redis_status(monkeypatch):
+    mock_session_manager = SimpleNamespace(
+        get_task_streaming_status=AsyncMock(
+            return_value={
+                "subtask_id": "10",
+                "user_id": 7,
+            }
+        ),
+        get_streaming_content=AsyncMock(return_value="hello"),
+        cleanup_streaming_state=AsyncMock(),
+    )
+    monkeypatch.setattr(
+        "app.services.chat.storage.session_manager",
+        mock_session_manager,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        permissions,
+        "_is_streaming_subtask_active",
+        AsyncMock(return_value=True),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        permissions,
+        "_get_active_streaming_from_db",
+        AsyncMock(return_value=None),
+        raising=False,
+    )
+
+    result = await permissions.get_active_streaming(100)
+
+    assert result == {"subtask_id": 10, "user_id": 7}
+    mock_session_manager.get_streaming_content.assert_awaited_once_with(10)
+    mock_session_manager.cleanup_streaming_state.assert_not_awaited()
+
+
 def test_correction_history_reads_subtasks_through_store(monkeypatch):
     store = SimpleNamespace(
         list_completed_before_message_id=lambda db, task_id, before_message_id: [
