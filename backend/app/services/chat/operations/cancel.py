@@ -14,9 +14,11 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
+from app.db.session import SessionLocal
 from app.models.subtask import Subtask, SubtaskStatus
 from app.models.task import TaskResource
 from app.schemas.kind import Task
+from app.stores.tasks import subtask_store, task_store
 
 logger = logging.getLogger(__name__)
 
@@ -58,12 +60,11 @@ async def cancel_chat_stream(
     else:
         # For Executor tasks, call executor_manager API
         # Get task_id from subtask
-        from app.db.session import SessionLocal
         from app.services.chat.operations.executor import call_executor_cancel
 
         db = SessionLocal()
         try:
-            subtask = db.query(Subtask).filter(Subtask.id == subtask_id).first()
+            subtask = subtask_store.get_by_id(db, subtask_id=subtask_id)
             if subtask:
                 await call_executor_cancel(subtask.task_id)
         finally:
@@ -83,15 +84,16 @@ def update_subtask_on_cancel(
         subtask: Subtask to update
         partial_content: Optional partial content to save
     """
-    subtask.status = SubtaskStatus.CANCELLED
-    subtask.progress = 100
-    subtask.completed_at = datetime.now()
-    subtask.updated_at = datetime.now()
-
-    if partial_content:
-        subtask.result = {"value": partial_content}
-    else:
-        subtask.result = {"value": ""}
+    now = datetime.now()
+    subtask_store.update_fields(
+        db,
+        subtask=subtask,
+        status=SubtaskStatus.CANCELLED,
+        progress=100,
+        completed_at=now,
+        updated_at=now,
+        result={"value": partial_content or ""},
+    )
 
 
 def update_task_on_cancel(db: Session, task: TaskResource) -> None:
@@ -102,8 +104,6 @@ def update_task_on_cancel(db: Session, task: TaskResource) -> None:
         db: Database session
         task: Task to update
     """
-    from sqlalchemy.orm.attributes import flag_modified
-
     task_crd = Task.model_validate(task.json)
     if task_crd.status:
         task_crd.status.status = "CANCELLED"
@@ -111,6 +111,4 @@ def update_task_on_cancel(db: Session, task: TaskResource) -> None:
         task_crd.status.updatedAt = datetime.now()
         task_crd.status.completedAt = datetime.now()
 
-    task.json = task_crd.model_dump(mode="json")
-    task.updated_at = datetime.now()
-    flag_modified(task, "json")
+    task_store.update_json(db, task=task, payload=task_crd.model_dump(mode="json"))

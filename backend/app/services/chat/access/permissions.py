@@ -17,9 +17,8 @@ from typing import Any, Dict, Optional
 
 from sqlalchemy.orm import Session
 
-from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
-from app.models.task import TaskResource
 from app.services.chat.storage.db import with_session_in_executor
+from app.stores.tasks import subtask_store, task_access_store
 
 logger = logging.getLogger(__name__)
 
@@ -49,40 +48,7 @@ def can_access_task(db: Session, user_id: int, task_id: int) -> bool:
         # Call as async function (db is injected automatically):
         result = await can_access_task(user_id, task_id)
     """
-    task = (
-        db.query(TaskResource)
-        .filter(
-            TaskResource.id == task_id,
-            TaskResource.kind == "Task",
-            TaskResource.is_active.in_(TaskResource.is_active_query()),
-        )
-        .first()
-    )
-
-    if not task:
-        return False
-
-    # User owns the task
-    if task.user_id == user_id:
-        return True
-
-    # Check if user is a member via ResourceMember (includes shared tasks and group chat members)
-    from app.models.resource_member import MemberStatus, ResourceMember
-    from app.models.share_link import ResourceType
-
-    member = (
-        db.query(ResourceMember)
-        .filter(
-            ResourceMember.resource_type == ResourceType.TASK,
-            ResourceMember.resource_id == task_id,
-            ResourceMember.entity_type == "user",
-            ResourceMember.entity_id == str(user_id),
-            ResourceMember.status == MemberStatus.APPROVED,
-        )
-        .first()
-    )
-
-    return member is not None
+    return task_access_store.is_member(db, task_id=task_id, user_id=user_id)
 
 
 async def get_active_streaming(task_id: int) -> Optional[Dict[str, Any]]:
@@ -149,15 +115,9 @@ def _get_active_streaming_from_db(
         Streaming info dict if active, None otherwise
     """
     # Find running assistant subtask
-    subtask = (
-        db.query(Subtask)
-        .filter(
-            Subtask.task_id == task_id,
-            Subtask.role == SubtaskRole.ASSISTANT,
-            Subtask.status == SubtaskStatus.RUNNING,
-        )
-        .order_by(Subtask.id.desc())
-        .first()
+    subtask = subtask_store.get_latest_running_assistant_by_task(
+        db,
+        task_id=task_id,
     )
 
     if subtask:

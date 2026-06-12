@@ -63,16 +63,24 @@ async def test_recover_executor_updates_current_subtask_from_recovered_info():
         bot=[{"shell_type": "ClaudeCode"}],
     )
 
-    with patch.object(
-        recovery_service,
-        "recover",
-        AsyncMock(
-            return_value={
-                "executor_name": "new-executor",
-                "executor_namespace": "default",
-            }
+    with (
+        patch.object(
+            recovery_service,
+            "recover",
+            AsyncMock(
+                return_value={
+                    "executor_name": "new-executor",
+                    "executor_namespace": "default",
+                }
+            ),
         ),
+        patch("app.stores.tasks.subtask_store") as mock_subtask_store,
     ):
+        mock_subtask_store.update_fields.side_effect = (
+            lambda _db, *, subtask, **fields: [
+                setattr(subtask, name, value) for name, value in fields.items()
+            ]
+        )
         result = await _recover_executor(
             db=db,
             subtask=subtask,
@@ -84,7 +92,13 @@ async def test_recover_executor_updates_current_subtask_from_recovered_info():
     assert subtask.executor_name == "new-executor"
     assert subtask.executor_namespace == "default"
     assert subtask.executor_deleted_at is False
-    db.add.assert_called_once_with(subtask)
+    mock_subtask_store.update_fields.assert_called_once_with(
+        db,
+        subtask=subtask,
+        executor_name="new-executor",
+        executor_namespace="default",
+        executor_deleted_at=False,
+    )
     db.commit.assert_called_once()
 
 

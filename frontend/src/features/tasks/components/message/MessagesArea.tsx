@@ -665,6 +665,7 @@ function MessagesArea({
 
           return {
             id: msg.subtaskId?.toString() || msg.id,
+            messageId: msg.messageId,
             type: msg.type,
             content,
             timestamp: msg.timestamp,

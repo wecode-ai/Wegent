@@ -12,7 +12,6 @@ from typing import List, Optional
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
-from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.kind import Kind
 from app.models.task import TaskResource
@@ -21,6 +20,7 @@ from app.schemas.kind import KnowledgeBaseTaskRef
 from app.services.knowledge.knowledge_service import KnowledgeService
 from app.services.share import knowledge_share_service
 from app.services.task_member_service import task_member_service
+from app.stores.tasks import task_store
 
 logger = logging.getLogger(__name__)
 
@@ -68,15 +68,7 @@ class TaskKnowledgeBaseService:
 
     def get_task(self, db: Session, task_id: int) -> Optional[TaskResource]:
         """Get a task by ID"""
-        return (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.id == task_id,
-                TaskResource.kind == "Task",
-                TaskResource.is_active == TaskResource.STATE_ACTIVE,
-            )
-            .first()
-        )
+        return task_store.get_regular_active_task(db, task_id=task_id)
 
     def get_user(self, db: Session, user_id: int) -> Optional[User]:
         """Get a user by ID"""
@@ -149,40 +141,12 @@ class TaskKnowledgeBaseService:
         Returns:
             True if KB is bound to at least one group chat where user is a member
         """
-        from app.models.resource_member import MemberStatus, ResourceMember
-        from app.models.share_link import ResourceType
-        from app.models.task import TaskResource
-
         # Query all group chat tasks where this KB is bound and user is a member
         # We need to check task.json->spec->knowledgeBaseRefs for the KB binding
-        # First, get tasks where user is the owner
-        owned_tasks = (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.kind == "Task",
-                TaskResource.is_active == TaskResource.STATE_ACTIVE,
-                TaskResource.user_id == user_id,
-            )
-            .all()
+        tasks_with_kb = task_store.list_accessible_active_tasks_for_user(
+            db,
+            user_id=user_id,
         )
-
-        # Then, get tasks where user is an approved member via ResourceMember
-        member_tasks = (
-            db.query(TaskResource)
-            .join(ResourceMember, ResourceMember.resource_id == TaskResource.id)
-            .filter(
-                TaskResource.kind == "Task",
-                TaskResource.is_active == TaskResource.STATE_ACTIVE,
-                ResourceMember.resource_type == ResourceType.TASK,
-                ResourceMember.entity_type == "user",
-                ResourceMember.entity_id == str(user_id),
-                ResourceMember.status == MemberStatus.APPROVED,
-            )
-            .all()
-        )
-
-        # Combine owned and member tasks
-        tasks_with_kb = list(owned_tasks) + list(member_tasks)
 
         for task in tasks_with_kb:
             task_json = task.json if isinstance(task.json, dict) else {}
@@ -492,8 +456,7 @@ class TaskKnowledgeBaseService:
                 kb_refs[ref_index]["id"] = kb_id
                 spec["knowledgeBaseRefs"] = kb_refs
                 task_json["spec"] = spec
-                task.json = task_json
-                flag_modified(task, "json")
+                task_store.update_json(db, task=task, payload=task_json)
                 db.commit()
                 logger.info(
                     f"Migrated KB reference from name to ID: "
@@ -539,8 +502,7 @@ class TaskKnowledgeBaseService:
 
             spec["knowledgeBaseRefs"] = kb_refs
             task_json["spec"] = spec
-            task.json = task_json
-            flag_modified(task, "json")
+            task_store.update_json(db, task=task, payload=task_json)
             db.commit()
 
             logger.info(
@@ -771,10 +733,7 @@ class TaskKnowledgeBaseService:
         # Update task spec
         spec["knowledgeBaseRefs"] = kb_refs
         task_json["spec"] = spec
-        task.json = task_json
-        flag_modified(task, "json")
-
-        task.updated_at = datetime.utcnow()
+        task_store.update_json(db, task=task, payload=task_json)
         db.commit()
         db.refresh(task)
 
@@ -866,10 +825,7 @@ class TaskKnowledgeBaseService:
         # Update task spec
         spec["knowledgeBaseRefs"] = new_refs
         task_json["spec"] = spec
-        task.json = task_json
-        flag_modified(task, "json")
-
-        task.updated_at = datetime.utcnow()
+        task_store.update_json(db, task=task, payload=task_json)
         db.commit()
 
         logger.info(
@@ -994,10 +950,7 @@ class TaskKnowledgeBaseService:
             # Update task spec
             spec["knowledgeBaseRefs"] = kb_refs
             task_json["spec"] = spec
-            task.json = task_json
-            flag_modified(task, "json")
-
-            task.updated_at = datetime.utcnow()
+            task_store.update_json(db, task=task, payload=task_json)
             db.commit()
             db.refresh(task)
 

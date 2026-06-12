@@ -11,10 +11,10 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
-from app.models.subtask import Subtask
 from app.models.task import TaskResource
 from app.schemas.kind import ArchiveInfo
 from app.services.workspace_archive import archive_service
+from app.stores.tasks import subtask_store, task_store
 
 logger = logging.getLogger(__name__)
 
@@ -35,29 +35,19 @@ async def archive_task_workspace(
     db: Session = Depends(get_db),
 ):
     """Archive the current task workspace and persist archive metadata."""
-    task = (
-        db.query(TaskResource)
-        .filter(
-            TaskResource.id == task_id,
-            TaskResource.kind == "Task",
-            TaskResource.is_active == TaskResource.STATE_ACTIVE,
-        )
-        .first()
+    task = task_store.get_task_by_states(
+        db,
+        task_id=task_id,
+        states=[TaskResource.STATE_ACTIVE],
     )
 
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
-    subtask = (
-        db.query(Subtask)
-        .filter(
-            Subtask.task_id == task_id,
-            Subtask.executor_name.isnot(None),
-            Subtask.executor_name != "",
-            Subtask.executor_deleted_at == False,
-        )
-        .order_by(Subtask.id.desc())
-        .first()
+    subtask = subtask_store.get_latest_active_executor_for_task(
+        db,
+        task_id=task_id,
+        owner_user_id=task.user_id,
     )
 
     if not subtask:

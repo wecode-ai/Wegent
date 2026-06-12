@@ -547,6 +547,7 @@ class TestRunningTaskTracker:
         mock_send_error.assert_called_once()
         call_kwargs = mock_send_error.call_args[1]
         assert "Out Of Memory" in call_kwargs["error_message"]
+        assert "user_id" not in call_kwargs
 
         # Verify cleanup
         mock_heartbeat.delete_heartbeat.assert_called_once()

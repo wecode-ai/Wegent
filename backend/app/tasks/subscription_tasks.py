@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session
 from app.core.celery_app import celery_app
 from app.core.config import settings
 from app.services.subscription.helpers import validate_subscription_for_read
+from app.stores.tasks import task_store
 from shared.telemetry.context import get_request_id, set_request_context
 
 logger = logging.getLogger(__name__)
@@ -109,7 +110,6 @@ def _load_subscription_execution_context(
     from app.core.constants import KIND_TEAM
     from app.models.kind import Kind
     from app.models.subscription import BackgroundExecution
-    from app.models.task import TaskResource
     from app.models.user import User
     from app.schemas.subscription import Subscription, SubscriptionVisibility
 
@@ -294,21 +294,10 @@ def _init_subscription_request_context(
 
 def _load_workspace_info(db: Session, workspace_id: Optional[int]) -> WorkspaceInfo:
     """Load workspace information if workspace_id is specified."""
-    from app.core.constants import KIND_WORKSPACE
-    from app.models.task import TaskResource
-
     if not workspace_id:
         return WorkspaceInfo()
 
-    workspace = (
-        db.query(TaskResource)
-        .filter(
-            TaskResource.id == workspace_id,
-            TaskResource.kind == KIND_WORKSPACE,
-            TaskResource.is_active == TaskResource.STATE_ACTIVE,
-        )
-        .first()
-    )
+    workspace = task_store.get_active_workspace_by_id(db, workspace_id=workspace_id)
 
     if not workspace:
         return WorkspaceInfo()
@@ -534,14 +523,10 @@ async def _create_subscription_task(
         # Check if the bound task still exists and is valid
         # Note: Subscription tasks have is_active=STATE_SUBSCRIPTION (2), not STATE_ACTIVE (1)
         # We need to check for both states to properly reuse the bound task
-        bound_task = (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.id == ctx.bound_task_id,
-                TaskResource.kind == "Task",
-                TaskResource.is_active.in_(TaskResource.is_active_query()),
-            )
-            .first()
+        bound_task = task_store.get_task_by_states(
+            db,
+            task_id=ctx.bound_task_id,
+            states=TaskResource.is_active_query(),
         )
 
         if bound_task:
@@ -702,10 +687,10 @@ def _add_subscription_labels_to_task(
     task_crd.metadata.labels[LABEL_SUBSCRIPTION_ID] = str(subscription_id)
     task_crd.metadata.labels[LABEL_EXECUTION_ID] = str(execution_id)
     task_crd.metadata.labels[LABEL_BACKGROUND_EXECUTION_ID] = str(execution_id)
-    task.json = task_crd.model_dump(mode="json")
+    task_store.update_json(db, task=task, payload=task_crd.model_dump(mode="json"))
 
     # Set is_active = STATE_SUBSCRIPTION for subscription tasks
-    task.is_active = TaskResource.STATE_SUBSCRIPTION
+    task_store.update_fields(db, task=task, is_active=TaskResource.STATE_SUBSCRIPTION)
 
     db.commit()
     logger.info(

@@ -10,7 +10,6 @@ for the chat functionality.
 
 import json as json_lib
 import logging
-import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -21,7 +20,7 @@ from sqlalchemy.orm import Session
 from app.core.constants import CLIENT_ORIGIN_FRONTEND
 from app.models.kind import Kind
 from app.models.project import Project
-from app.models.subtask import SenderType, Subtask, SubtaskRole, SubtaskStatus
+from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.kind import Bot, Task, Team
@@ -30,7 +29,8 @@ from app.services.chat.task_default_knowledge_bases import (
 )
 from app.services.readers import KindType, kindReader
 from app.services.task_skill_selection import build_task_skill_labels
-from app.services.task_status import mark_task_completed, mark_task_pending
+from app.services.task_status import mark_task_completed
+from app.stores.tasks import subtask_store, task_access_store, task_store
 
 logger = logging.getLogger(__name__)
 
@@ -158,48 +158,20 @@ def get_task_with_access_check(
         to use for creating subtasks (owner's ID for group chats).
         Returns (None, user_id) if task not found or access denied.
     """
-    from app.models.resource_member import MemberStatus, ResourceMember
-    from app.models.share_link import ResourceType
-
     # First try to get task as owner
-    task = (
-        db.query(TaskResource)
-        .filter(
-            TaskResource.id == task_id,
-            TaskResource.user_id == user_id,
-            TaskResource.kind == "Task",
-            TaskResource.is_active,
-        )
-        .first()
+    task = task_store.get_owned_active_task(
+        db,
+        task_id=task_id,
+        user_id=user_id,
     )
 
     if task:
         return task, user_id
 
     # Check if user is a group chat member using ResourceMember
-    member = (
-        db.query(ResourceMember)
-        .filter(
-            ResourceMember.resource_type == ResourceType.TASK,
-            ResourceMember.resource_id == task_id,
-            ResourceMember.entity_type == "user",
-            ResourceMember.entity_id == str(user_id),
-            ResourceMember.status == MemberStatus.APPROVED,
-        )
-        .first()
-    )
-
-    if member:
+    if task_access_store.is_member(db, task_id=task_id, user_id=user_id):
         # User is a group member, get task without user_id check
-        task = (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.id == task_id,
-                TaskResource.kind == "Task",
-                TaskResource.is_active,
-            )
-            .first()
-        )
+        task = task_store.get_active_task(db, task_id=task_id)
         if task:
             # For group members, use task owner's user_id for subtasks
             return task, task.user_id
@@ -261,19 +233,13 @@ def create_new_task(
         if not project_exists:
             raise HTTPException(status_code=404, detail="Project not found")
 
-    task = TaskResource(
+    task = task_store.create_pending_task_shell(
+        db,
         user_id=user.id,
-        kind="Task",
-        name=f"task-pending-{uuid.uuid4().hex}",
-        namespace="default",
-        json={"kind": "Task"},
-        is_active=True,
         is_group_chat=params.is_group_chat,
         client_origin=params.client_origin,
-        **({"project_id": params.project_id} if params.project_id else {}),
+        project_id=params.project_id or 0,
     )
-    db.add(task)
-    db.flush()
     new_task_id = task.id
     if not new_task_id:
         raise HTTPException(status_code=500, detail="Failed to create task ID")
@@ -296,16 +262,14 @@ def create_new_task(
         "apiVersion": "agent.wecode.io/v1",
     }
 
-    workspace = TaskResource(
+    task_store.create_workspace(
+        db,
         user_id=user.id,
-        kind="Workspace",
         name=workspace_name,
         namespace="default",
-        json=workspace_json,
-        is_active=True,
+        payload=workspace_json,
         client_origin=params.client_origin,
     )
-    db.add(workspace)
 
     # Create task
     # Use custom title if provided, otherwise generate from message
@@ -397,13 +361,16 @@ def create_new_task(
         "apiVersion": "agent.wecode.io/v1",
     }
 
-    task.name = f"task-{new_task_id}"
-    task.json = task_json
-    task.is_active = True
-    task.is_group_chat = params.is_group_chat
-    task.client_origin = params.client_origin
-    if params.project_id:
-        task.project_id = params.project_id
+    task_store.update_fields(
+        db,
+        task=task,
+        name=f"task-{new_task_id}",
+        is_active=TaskResource.STATE_ACTIVE,
+        is_group_chat=params.is_group_chat,
+        client_origin=params.client_origin,
+        project_id=params.project_id or 0,
+    )
+    task_store.update_json(db, task=task, payload=task_json)
 
     logger.info(
         f"[create_new_task] Created task {new_task_id} with task_json.spec.is_group_chat="
@@ -510,27 +477,19 @@ def create_user_subtask(
     if video_config:
         result = {"video_config": video_config}
 
-    user_subtask = Subtask(
+    user_subtask = subtask_store.create_user_subtask(
+        db,
         user_id=subtask_user_id,
         task_id=task_id,
         team_id=team_id,
         title="User message",
         bot_ids=bot_ids,
-        role=SubtaskRole.USER,
-        executor_namespace="",
-        executor_name="",
         prompt=message,
-        status=SubtaskStatus.COMPLETED,
-        progress=100,
         message_id=next_message_id,
         parent_id=parent_id,
-        error_message="",
-        completed_at=datetime.now(),
         result=result,
-        sender_type=SenderType.USER,
         sender_user_id=sender_user_id,
     )
-    db.add(user_subtask)
     return user_subtask
 
 
@@ -558,54 +517,18 @@ def create_assistant_subtask(
     Returns:
         Created Subtask
     """
-    # Resolve executor metadata from previous subtasks for container reuse or recovery.
-    executor_name = ""
-    executor_namespace = ""
-    executor_deleted_at = False
-    previous = (
-        db.query(
-            Subtask.executor_name,
-            Subtask.executor_namespace,
-            Subtask.executor_deleted_at,
-        )
-        .filter(
-            Subtask.task_id == task_id,
-            Subtask.role == SubtaskRole.ASSISTANT,
-            Subtask.executor_name != "",
-            Subtask.executor_name.isnot(None),
-        )
-        .order_by(Subtask.id.desc())
-        .first()
-    )
-    if previous:
-        executor_name = previous.executor_name or ""
-        executor_namespace = previous.executor_namespace or ""
-        executor_deleted_at = bool(previous.executor_deleted_at)
-
     # Note: completed_at is set to a placeholder value because the DB column doesn't allow NULL
     # It will be updated when the stream completes
-    assistant_subtask = Subtask(
+    assistant_subtask = subtask_store.create_assistant_subtask(
+        db,
         user_id=subtask_user_id,
         task_id=task_id,
         team_id=team_id,
         title="Assistant response",
         bot_ids=bot_ids,
-        role=SubtaskRole.ASSISTANT,
-        executor_namespace=executor_namespace,
-        executor_name=executor_name,
-        executor_deleted_at=executor_deleted_at,
-        prompt="",
-        status=SubtaskStatus.PENDING,
-        progress=0,
         message_id=next_message_id,
         parent_id=parent_id,
-        error_message="",
-        result=None,
-        completed_at=datetime.now(),  # Placeholder, will be updated when stream completes
-        sender_type=SenderType.TEAM,
-        sender_user_id=0,  # AI has no user_id, use 0 instead of None
     )
-    db.add(assistant_subtask)
     return assistant_subtask
 
 
@@ -623,18 +546,18 @@ def get_next_message_id(
     Returns:
         Tuple of (next_message_id, parent_id)
     """
-    existing_subtasks = (
-        db.query(Subtask)
-        .filter(Subtask.task_id == task_id, Subtask.user_id == subtask_user_id)
-        .order_by(Subtask.message_id.desc())
-        .all()
+    existing_subtasks = subtask_store.list_latest_by_task(
+        db,
+        task_id=task_id,
+        user_id=subtask_user_id,
     )
 
     next_message_id = 1
     parent_id = 0
     if existing_subtasks:
-        next_message_id = existing_subtasks[0].message_id + 1
-        parent_id = existing_subtasks[0].message_id
+        latest_subtask = existing_subtasks[-1]
+        next_message_id = latest_subtask.message_id + 1
+        parent_id = latest_subtask.message_id
 
     return next_message_id, parent_id
 
@@ -653,11 +576,10 @@ def get_existing_subtasks(
     Returns:
         List of existing subtasks ordered by message_id descending
     """
-    return (
-        db.query(Subtask)
-        .filter(Subtask.task_id == task_id, Subtask.user_id == subtask_user_id)
-        .order_by(Subtask.message_id.desc())
-        .all()
+    return subtask_store.list_latest_by_task(
+        db,
+        task_id=task_id,
+        user_id=subtask_user_id,
     )
 
 
@@ -669,15 +591,12 @@ def update_task_timestamp(db: Session, task: TaskResource) -> None:
         db: Database session
         task: Task resource to update
     """
-    from sqlalchemy.orm.attributes import flag_modified
-
     task.updated_at = datetime.now()
     # Also update the JSON status.updatedAt for consistency
     task_crd = Task.model_validate(task.json)
     if task_crd.status:
         task_crd.status.updatedAt = datetime.now()
-        task.json = task_crd.model_dump(mode="json")
-        flag_modified(task, "json")
+        task_store.update_json(db, task=task, payload=task_crd.model_dump(mode="json"))
 
 
 async def initialize_redis_chat_history(

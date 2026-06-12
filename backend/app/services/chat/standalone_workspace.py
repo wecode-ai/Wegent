@@ -8,9 +8,8 @@ import logging
 from typing import Any, Optional
 
 from sqlalchemy.orm import Session
-from sqlalchemy.orm.attributes import flag_modified
 
-from app.models.task import TaskResource
+from app.stores.tasks import task_store
 
 logger = logging.getLogger(__name__)
 
@@ -39,15 +38,7 @@ def persist_standalone_workspace_path(
 ) -> bool:
     """Store the standalone chat workspace path in task metadata labels."""
 
-    task = (
-        db.query(TaskResource)
-        .filter(
-            TaskResource.id == task_id,
-            TaskResource.kind == "Task",
-            TaskResource.is_active.in_(TaskResource.is_active_query()),
-        )
-        .first()
-    )
+    task = task_store.get_active_task(db, task_id=task_id)
     if not task:
         logger.warning(
             "[StandaloneWorkspace] Task %s not found while persisting workspace path",
@@ -65,8 +56,7 @@ def persist_standalone_workspace_path(
     labels[WORKSPACE_SOURCE_LABEL] = "local_path"
     metadata["labels"] = labels
     task_json["metadata"] = metadata
-    task.json = task_json
-    flag_modified(task, "json")
+    task_store.update_json(db, task=task, payload=task_json)
     db.commit()
     logger.info(
         "[StandaloneWorkspace] Persisted workspace path for task %s: %s",
