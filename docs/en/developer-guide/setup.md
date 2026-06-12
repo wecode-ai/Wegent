@@ -196,7 +196,7 @@ The frontend is a React application based on Next.js 15.
 #### Install Dependencies
 
 ```bash
-cd Wegent
+cd wegent
 
 # Install pnpm workspace dependencies
 pnpm install
@@ -226,7 +226,7 @@ cp .env.local.example .env.local
 
 ```bash
 # Start development server
-pnpm --dir frontend run dev
+pnpm --filter wecode-ai-assistant run dev
 ```
 
 Access application: http://localhost:3000
@@ -235,16 +235,16 @@ Access application: http://localhost:3000
 
 ```bash
 # Lint code
-pnpm --dir frontend run lint
+pnpm --filter wecode-ai-assistant run lint
 
 # Format code
-pnpm --dir frontend run format
+pnpm --filter wecode-ai-assistant run format
 
 # Production build
-pnpm --dir frontend run build
+pnpm --filter wecode-ai-assistant run build
 
 # Run production version
-pnpm --dir frontend run start
+pnpm --filter wecode-ai-assistant run start
 ```
 
 ---
@@ -328,16 +328,16 @@ pytest -m integration
 ### Frontend Testing
 
 ```bash
-cd Wegent
+cd wegent
 
 # Run tests
-pnpm --dir frontend test
+pnpm --filter wecode-ai-assistant test
 
 # Run and watch for changes
-pnpm --dir frontend run test:watch
+pnpm --filter wecode-ai-assistant run test:watch
 
 # Generate coverage report
-pnpm --dir frontend run test:coverage
+pnpm --filter wecode-ai-assistant run test:coverage
 ```
 
 ### Executor and Shared Module Testing

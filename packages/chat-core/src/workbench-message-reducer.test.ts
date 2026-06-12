@@ -1,5 +1,9 @@
 import { describe, expect, test } from 'vitest'
-import { reduceWorkbenchMessages, type WorkbenchMessage } from './index'
+import {
+  normalizeWorkbenchBlockStatus,
+  reduceWorkbenchMessages,
+  type WorkbenchMessage,
+} from './index'
 
 describe('reduceWorkbenchMessages', () => {
   test('adds user message and streams assistant chunks into one message', () => {
@@ -69,5 +73,37 @@ describe('reduceWorkbenchMessages', () => {
       { type: 'thinking', status: 'done' },
       { type: 'tool', toolName: 'bash', status: 'pending' },
     ])
+  })
+
+  test('preserves state for unknown runtime actions', () => {
+    const state: WorkbenchMessage[] = [
+      {
+        id: 'assistant-9',
+        role: 'assistant',
+        content: 'hello',
+        status: 'done',
+        createdAt: '2026-05-25T00:00:00.000Z',
+      },
+    ]
+
+    const next = reduceWorkbenchMessages(
+      state,
+      { type: 'unexpected' } as unknown as Parameters<typeof reduceWorkbenchMessages>[1]
+    )
+
+    expect(next).toBe(state)
+  })
+})
+
+describe('normalizeWorkbenchBlockStatus', () => {
+  test('keeps supported statuses and normalizes legacy or unknown statuses', () => {
+    expect(normalizeWorkbenchBlockStatus('generating_arguments')).toBe('generating_arguments')
+    expect(normalizeWorkbenchBlockStatus('pending')).toBe('pending')
+    expect(normalizeWorkbenchBlockStatus('streaming')).toBe('streaming')
+    expect(normalizeWorkbenchBlockStatus('done')).toBe('done')
+    expect(normalizeWorkbenchBlockStatus('error')).toBe('error')
+    expect(normalizeWorkbenchBlockStatus('running')).toBe('pending')
+    expect(normalizeWorkbenchBlockStatus('unsupported')).toBe('pending')
+    expect(normalizeWorkbenchBlockStatus()).toBe('pending')
   })
 })

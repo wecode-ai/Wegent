@@ -1,3 +1,7 @@
+---
+sidebar_position: 7
+---
+
 # 🔧 Troubleshooting Guide
 
 This guide helps you diagnose and resolve common issues when using the Wegent platform.

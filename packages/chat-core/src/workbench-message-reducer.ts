@@ -201,12 +201,23 @@ export function reduceWorkbenchMessages<TAttachment = unknown, TFileChanges = un
             }
           : message
       )
+    default:
+      return state
   }
 }
 
 export function normalizeWorkbenchBlockStatus(status?: string): WorkbenchToolBlockStatus {
-  if (status === 'running') return 'pending'
-  return (status as WorkbenchToolBlockStatus) ?? 'pending'
+  switch (status) {
+    case 'generating_arguments':
+    case 'pending':
+    case 'streaming':
+    case 'done':
+    case 'error':
+      return status
+    case 'running':
+    default:
+      return 'pending'
+  }
 }
 
 function getChunkBlocks<TAttachment, TFileChanges>(

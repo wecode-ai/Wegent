@@ -207,10 +207,10 @@ shared/tests/
 ### 运行测试
 
 ```bash
-cd Wegent
-pnpm --dir frontend test                  # 运行所有测试
-pnpm --dir frontend run test:watch        # 监视模式
-pnpm --dir frontend run test:coverage     # 生成覆盖率报告
+# 从仓库根目录运行：
+pnpm --filter wecode-ai-assistant test                  # 运行所有测试
+pnpm --filter wecode-ai-assistant run test:watch        # 监视模式
+pnpm --filter wecode-ai-assistant run test:coverage     # 生成覆盖率报告
 ```
 
 ### 测试结构
@@ -419,10 +419,10 @@ pytest -s
 
 ```bash
 # 在监视模式下运行测试
-pnpm --dir frontend run test:watch
+pnpm --filter wecode-ai-assistant run test:watch
 
 # 调试特定测试文件
-pnpm --dir frontend test -- src/__tests__/utils/test_example.test.ts
+pnpm --filter wecode-ai-assistant test -- src/__tests__/utils/test_example.test.ts
 ```
 
 ## 配置文件
@@ -470,7 +470,7 @@ pnpm --dir frontend test -- src/__tests__/utils/test_example.test.ts
 **前端测试失败：**
 - 确保已安装 Node.js 20+
 - 在仓库根目录运行 `pnpm install --frozen-lockfile` 以安装确切的依赖版本
-- 清除 Jest 缓存：`pnpm --dir frontend exec jest --clearCache`
+- 清除 Jest 缓存：`pnpm --filter wecode-ai-assistant exec jest --clearCache`
 
 ## 资源
 
