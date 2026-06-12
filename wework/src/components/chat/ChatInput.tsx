@@ -11,6 +11,7 @@ import type {
   UnifiedSkill,
 } from '@/types/api'
 import type { GuidanceWorkbenchMessage, QueuedWorkbenchMessage } from '@/types/workbench'
+import type { CodeCommentContext } from '@/types/workspace-files'
 import { ConversationQueuePanel } from './ConversationQueuePanel'
 import { CompactChatComposer } from './composer/CompactChatComposer'
 import { ProjectChatComposer } from './composer/ProjectChatComposer'
@@ -68,10 +69,12 @@ interface ChatInputProps {
   showProjectWorkBar?: boolean
   queuedMessages?: QueuedWorkbenchMessage[]
   guidanceMessages?: GuidanceWorkbenchMessage[]
+  codeComments?: CodeCommentContext[]
   onCancelQueuedMessage?: (id: string) => void
   onSendQueuedAsGuidance?: (id: string) => void
   onEditQueuedMessage?: (id: string) => void
   onCancelGuidanceMessage?: (id: string) => void
+  onRemoveCodeComment?: (commentId: string) => void
   isStreaming?: boolean
   onPause?: () => void
 }
@@ -89,10 +92,12 @@ export function ChatInput({
   showProjectWorkBar = true,
   queuedMessages = [],
   guidanceMessages = [],
+  codeComments = [],
   onCancelQueuedMessage,
   onSendQueuedAsGuidance,
   onEditQueuedMessage,
   onCancelGuidanceMessage,
+  onRemoveCodeComment,
   isStreaming = false,
   onPause,
 }: ChatInputProps) {
@@ -148,6 +153,7 @@ export function ChatInput({
           selectedModelOptions={controls.selectedModelOptions}
           isModelSelectionReady={controls.isModelSelectionReady ?? true}
           attachments={controls.attachments}
+          codeComments={codeComments}
           uploadingFiles={controls.uploadingFiles}
           attachmentErrors={controls.errors}
           onSelectModel={controls.setSelectedModel}
@@ -158,6 +164,7 @@ export function ChatInput({
           onRemoveAttachment={attachmentId => {
             void controls.removeAttachment(attachmentId)
           }}
+          onRemoveCodeComment={onRemoveCodeComment}
           projectWork={
             projectWork ?? {
               projects: [],

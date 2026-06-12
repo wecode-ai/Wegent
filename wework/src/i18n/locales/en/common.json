@@ -153,6 +153,8 @@
     "project_empty_title": "What should we build in {{projectName}}?",
     "input_placeholder": "Ask anything",
     "mobile_input_placeholder": "Ask Wework",
+    "code_comment_count": "{{count}} comments",
+    "remove_code_comments": "Remove code comments",
     "quick_new_task": "New task",
     "quick_project_work": "Project work",
     "quick_search": "Find resources",

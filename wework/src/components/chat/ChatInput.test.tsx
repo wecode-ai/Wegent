@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { StrictMode, useState } from 'react'
 import { describe, expect, test, vi } from 'vitest'
@@ -100,6 +100,37 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('model-selector-button')).toBeInTheDocument()
     expect(screen.queryByTestId('skill-selector-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('project-work-button')).toBeInTheDocument()
+  })
+
+  test('renders and removes code comment context chip in desktop composer', async () => {
+    const onRemoveCodeComment = vi.fn()
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        codeComments={[
+          {
+            id: 'comment-1',
+            filePath: '/workspace/project/src/main.ts',
+            fileName: 'main.ts',
+            startLine: 1,
+            endLine: 1,
+            selectedText: 'const value = 1',
+            comment: 'Check this',
+            createdAt: '2026-06-12T00:00:00.000Z',
+          },
+        ]}
+        onRemoveCodeComment={onRemoveCodeComment}
+      />,
+    )
+
+    expect(screen.getByTestId('code-comment-context-badge')).toHaveTextContent('1 个评论')
+    await userEvent.click(screen.getByTestId('remove-code-comment-context-button'))
+    expect(onRemoveCodeComment).toHaveBeenCalledWith('comment-1')
   })
 
   test('shows desktop pause button while the assistant is streaming', async () => {
