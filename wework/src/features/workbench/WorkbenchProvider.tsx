@@ -71,10 +71,13 @@ import type {
   WorkbenchMessage,
   WorkbenchState,
 } from '@/types/workbench'
+import {
+  normalizeWorkbenchBlockStatus,
+  reduceWorkbenchMessages,
+} from '@wegent/chat-core'
 import { useWorkbenchAttachments } from './useWorkbenchAttachments'
 import { useWorkbenchModels } from './useWorkbenchModels'
 import { useWorkbenchSkills } from './useWorkbenchSkills'
-import { messageReducer, normalizeBlockStatus } from './messageReducer'
 import { normalizeTurnFileChanges } from './turnFileChanges'
 import {
   initialWorkbenchState,
@@ -347,7 +350,7 @@ function normalizeProcessingBlock(
   if (!isRecord(block)) return null
 
   const timestamp = getBlockTimestamp(block.timestamp)
-  const status = normalizeBlockStatus(
+  const status = normalizeWorkbenchBlockStatus(
     typeof block.status === 'string' ? block.status : undefined
   )
 
@@ -621,7 +624,10 @@ export function WorkbenchProvider({
     workbenchReducer,
     initialWorkbenchState
   )
-  const [messages, dispatchMessages] = useReducer(messageReducer, [])
+  const [messages, dispatchMessages] = useReducer(
+    reduceWorkbenchMessages<Attachment, TurnFileChangesSummary>,
+    [] as WorkbenchMessage[]
+  )
   const [queuedSends, setQueuedSends] = useState<QueuedWorkbenchSend[]>([])
   const [guidanceMessages, setGuidanceMessages] = useState<GuidanceWorkbenchMessage[]>([])
   const [upgradingDevices, setUpgradingDevices] = useState<
@@ -1025,7 +1031,7 @@ export function WorkbenchProvider({
             ...(payload.content !== undefined && { content: payload.content }),
             ...(payload.tool_input !== undefined && { toolInput: payload.tool_input }),
             ...(payload.tool_output !== undefined && { toolOutput: payload.tool_output }),
-            ...(payload.status && { status: normalizeBlockStatus(payload.status) }),
+            ...(payload.status && { status: normalizeWorkbenchBlockStatus(payload.status) }),
           },
         })
       },

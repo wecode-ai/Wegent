@@ -9,12 +9,19 @@ export class RuntimeStabilityProbe {
   private running: boolean = false
   private generation: number = 0
   private reason?: TaskRecoveryReason
+  private readonly runCheck: (reason: TaskRecoveryReason) => Promise<void>
+  private readonly resync: () => void
+  private readonly isClosed: () => boolean
 
   constructor(
-    private readonly runCheck: (reason: TaskRecoveryReason) => Promise<void>,
-    private readonly resync: () => void,
-    private readonly isClosed: () => boolean
-  ) {}
+    runCheck: (reason: TaskRecoveryReason) => Promise<void>,
+    resync: () => void,
+    isClosed: () => boolean
+  ) {
+    this.runCheck = runCheck
+    this.resync = resync
+    this.isClosed = isClosed
+  }
 
   schedule(reason: TaskRecoveryReason, delayMs: number): void {
     if (this.reason === reason && (this.timer !== null || this.running)) {

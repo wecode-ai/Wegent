@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { messageReducer } from './messageReducer'
+import { reduceWorkbenchMessages as messageReducer } from '@wegent/chat-core'
 import type { WorkbenchMessage } from '@/types/workbench'
 
 describe('messageReducer', () => {

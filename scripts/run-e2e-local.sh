@@ -198,27 +198,27 @@ export RUNTIME_INTERNAL_API_URL="http://localhost:8000"
 export RUNTIME_SOCKET_DIRECT_URL="http://localhost:8000"
 
 # Install dependencies if needed
-if [ ! -d "node_modules" ]; then
+if [ ! -d "$PROJECT_ROOT/node_modules" ] || [ ! -d "node_modules" ]; then
     echo "Installing frontend dependencies..."
-    npm ci
+    pnpm --dir "$PROJECT_ROOT" install --frozen-lockfile
 fi
 
 # Install Playwright browsers if needed
 if [ ! -d "$HOME/.cache/ms-playwright" ]; then
     echo "Installing Playwright browsers..."
-    npx playwright install chromium --with-deps
+    pnpm exec playwright install chromium --with-deps
 fi
 
 # Start frontend in dev mode (faster for local development, output to log file)
 echo "Starting frontend in dev mode (logs: $FRONTEND_LOG)..."
-npm run dev > "$FRONTEND_LOG" 2>&1 &
+env -u TURBOPACK pnpm run dev --port 3000 > "$FRONTEND_LOG" 2>&1 &
 FRONTEND_PID=$!
 
 # Step 5: Start Mock Model Server
 echo -e "\n${YELLOW}Step 5: Starting Mock Model Server...${NC}"
 MOCK_SERVER_LOG="$LOG_DIR/mock-server.log"
 echo "Starting mock model server (logs: $MOCK_SERVER_LOG)..."
-npx tsx e2e/utils/mock-model-server.ts > "$MOCK_SERVER_LOG" 2>&1 &
+pnpm exec tsx e2e/utils/mock-model-server.ts > "$MOCK_SERVER_LOG" 2>&1 &
 MOCK_SERVER_PID=$!
 export MOCK_MODEL_SERVER_URL="http://localhost:9999"
 
@@ -280,23 +280,23 @@ set +e
 case "$E2E_MODE" in
     "ui")
         echo "Running E2E tests in UI mode..."
-        npx playwright test --ui
+        pnpm exec playwright test --ui
         ;;
     "debug")
         echo "Running E2E tests in debug mode..."
-        npx playwright test --debug
+        pnpm exec playwright test --debug
         ;;
     "headed")
         echo "Running E2E tests with visible browser..."
-        npx playwright test --headed
+        pnpm exec playwright test --headed
         ;;
     "report")
         echo "Opening E2E test report..."
-        npx playwright show-report
+        pnpm exec playwright show-report
         ;;
     *)
         echo "Running E2E tests (headless)..."
-        npx playwright test
+        pnpm exec playwright test
         ;;
 esac
 

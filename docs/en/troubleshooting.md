@@ -1,3 +1,7 @@
+---
+sidebar_position: 7
+---
+
 # 🔧 Troubleshooting Guide
 
 This guide helps you diagnose and resolve common issues when using the Wegent platform.
@@ -580,21 +584,20 @@ uv sync
 
 ```bash
 # 1. Clean cache
-npm cache clean --force
-rm -rf node_modules package-lock.json
+pnpm store prune
+rm -rf node_modules frontend/node_modules wework/node_modules pnpm-lock.yaml
 
-# 2. Use npm mirror
-npm config set registry https://registry.npmmirror.com
-npm install
+# 2. Use mirror registry
+pnpm config set registry https://registry.npmmirror.com
+pnpm install
 
-# 3. Use yarn
-npm install -g yarn
-yarn install
+# 3. Install from lockfile
+pnpm install --frozen-lockfile
 
 # 4. Downgrade Node.js version (if compatibility issue)
 nvm install 18
 nvm use 18
-npm install
+pnpm install
 ```
 
 ---
