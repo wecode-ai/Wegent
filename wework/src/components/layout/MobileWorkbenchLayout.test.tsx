@@ -509,7 +509,7 @@ describe('MobileWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('open-mobile-drawer-button'))
 
     const mobileDrawer = screen.getByText('Wework').closest('.fixed')
-    expect(mobileDrawer).toHaveClass('z-critical', 'bg-white')
+    expect(mobileDrawer).toHaveClass('z-critical', 'bg-background')
     expect(mobileDrawer).not.toHaveClass('rounded-r-[28px]')
     expect(screen.getByTestId('mobile-new-project-button')).toHaveTextContent('新建项目')
     expect(screen.queryByText('项目')).not.toBeInTheDocument()
@@ -527,16 +527,16 @@ describe('MobileWorkbenchLayout', () => {
       'false',
     )
     expect(screen.getByTestId('mobile-project-item-button')).toHaveClass(
-      'text-[#111111]',
+      'text-text-primary',
     )
     expect(screen.getByText('对话')).toBeInTheDocument()
     expect(screen.getByText('远程连接 Claude Code')).toBeInTheDocument()
     expect(screen.getByTestId('mobile-recent-task-button')).toHaveClass(
-      'text-[#111111]',
+      'text-text-primary',
     )
     expect(screen.queryByText('4d')).not.toBeInTheDocument()
     expect(screen.getByTestId('mobile-new-chat-button')).toHaveTextContent('聊天')
-    expect(screen.getByTestId('mobile-new-chat-button')).toHaveClass('bg-[#1F1F1F]')
+    expect(screen.getByTestId('mobile-new-chat-button')).toHaveClass('bg-primary')
     expect(screen.getByTestId('mobile-drawer-scroll')).toHaveClass('overflow-y-auto')
   })
 

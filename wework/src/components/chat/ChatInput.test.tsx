@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { StrictMode, useState } from 'react'
 import { describe, expect, test, vi } from 'vitest'
@@ -273,7 +273,7 @@ describe('ChatInput', () => {
     })
     expect(screen.getByTestId('local-skill-autocomplete')).toHaveClass(
       'bottom-[calc(100%+1rem)]',
-      'z-[80]',
+      'z-modal',
       'bg-background',
       'left-[-1rem]',
       'right-[-3.5rem]',
@@ -761,7 +761,7 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('model-selector-submenu')).toBeInTheDocument()
     expect(screen.getByTestId('model-family-gpt')).toBeInTheDocument()
     expect(screen.getByTestId('model-control-reasoning-high')).toBeInTheDocument()
-    expect(screen.getByTestId('model-control-speed-fast')).toBeInTheDocument()
+    expect(screen.getByTestId('model-control-trigger-speed')).toBeInTheDocument()
     expect(screen.queryByTestId('model-option-default')).not.toBeInTheDocument()
     expect(screen.getByTestId('model-selector-button')).toHaveTextContent('海外:gpt-5.5 High')
     const modelOption = screen.getByTestId('model-option-overseas-gpt-5.5')
@@ -1340,8 +1340,6 @@ describe('ChatInput', () => {
   })
 
   test('shows no-project transition from the standalone entry', async () => {
-    const onSelectStandaloneDevice = vi.fn()
-
     render(
       <ChatInput
         value=""
@@ -1352,7 +1350,6 @@ describe('ChatInput', () => {
         projectWork={projectWorkControls({
           projects: [{ id: 7, name: 'Wegent', tasks: [] }],
           currentProjectId: 7,
-          onSelectStandaloneDevice,
         })}
       />,
     )
@@ -1360,12 +1357,10 @@ describe('ChatInput', () => {
     await userEvent.click(screen.getByTestId('project-work-button'))
     await userEvent.click(screen.getByTestId('no-project-option'))
 
-    expect(onSelectStandaloneDevice).toHaveBeenCalledWith(null)
+    expect(screen.getByTestId('standalone-device-submenu')).toBeInTheDocument()
   })
 
   test('shows no-project option before selecting a concrete project', async () => {
-    const onSelectStandaloneDevice = vi.fn()
-
     render(
       <ChatInput
         value=""
@@ -1376,7 +1371,6 @@ describe('ChatInput', () => {
         projectWork={projectWorkControls({
           projects: [{ id: 7, name: 'Wegent', tasks: [] }],
           currentProjectId: undefined,
-          onSelectStandaloneDevice,
         })}
       />,
     )
@@ -1387,7 +1381,7 @@ describe('ChatInput', () => {
 
     await userEvent.click(screen.getByTestId('no-project-option'))
 
-    expect(onSelectStandaloneDevice).toHaveBeenCalledWith(null)
+    expect(screen.getByTestId('standalone-device-submenu')).toBeInTheDocument()
   })
 
   test('lists standalone devices under no-project and defaults to online cloud devices', async () => {
@@ -1436,16 +1430,18 @@ describe('ChatInput', () => {
     )
 
     await userEvent.click(screen.getByTestId('project-work-button'))
+    await userEvent.click(screen.getByTestId('no-project-option'))
 
-    expect(screen.getByTestId('standalone-device-list')).toBeInTheDocument()
+    expect(screen.getByTestId('standalone-device-submenu')).toBeInTheDocument()
     expect(screen.getByText('Cloud Online')).toBeInTheDocument()
     expect(screen.getByText('Local Online')).toBeInTheDocument()
     expect(screen.getByTestId('standalone-device-option-local-offline')).toBeDisabled()
 
-    await userEvent.click(screen.getByTestId('no-project-option'))
+    await userEvent.click(screen.getByTestId('standalone-device-option-cloud-online'))
     expect(onSelectStandaloneDevice).toHaveBeenCalledWith('cloud-online')
 
     await userEvent.click(screen.getByTestId('project-work-button'))
+    await userEvent.click(screen.getByTestId('no-project-option'))
     await userEvent.click(screen.getByTestId('standalone-device-option-local-online'))
     expect(onSelectStandaloneDevice).toHaveBeenLastCalledWith('local-online')
   })
@@ -1523,6 +1519,7 @@ describe('ChatInput', () => {
     )
 
     await userEvent.click(screen.getByTestId('project-work-button'))
+    await userEvent.click(screen.getByTestId('no-project-option'))
 
     expect(
       screen.getByTestId('standalone-device-selected-icon-local-online')

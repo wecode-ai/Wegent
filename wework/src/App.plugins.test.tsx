@@ -609,7 +609,7 @@ describe('App plugins route', () => {
     expect(await screen.findByText('暂无已安装插件')).toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('open-mobile-drawer-button'))
-    await userEvent.click(screen.getByTestId('mobile-settings-button'))
+    await userEvent.click(screen.getByTestId('mobile-avatar-button'))
 
     expect(screen.getByTestId('mobile-settings-page')).toBeInTheDocument()
 

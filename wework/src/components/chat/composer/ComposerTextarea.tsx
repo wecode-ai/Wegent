@@ -668,7 +668,7 @@ export function ComposerTextarea({
           data-testid="local-skill-autocomplete"
           role="listbox"
           className={[
-            'absolute bottom-[calc(100%+1rem)] z-[80] max-h-72 overflow-y-auto rounded-2xl border border-border bg-background p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]',
+            'absolute bottom-[calc(100%+1rem)] z-modal max-h-72 overflow-y-auto rounded-2xl border border-border bg-background p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]',
             skillMenuClassName,
           ].join(' ')}
         >

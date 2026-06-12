@@ -1,5 +1,5 @@
 import { AlertCircle, ArrowUpCircle, Loader2, PlusCircle } from 'lucide-react'
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
@@ -71,6 +71,15 @@ function writeSidebarDeviceCache(devices: DeviceInfo[], updatedAt: number) {
   }
 }
 
+function clearSidebarDeviceCache() {
+  sidebarDeviceMemoryCache = null
+  try {
+    window.sessionStorage.removeItem(SIDEBAR_DEVICE_CACHE_KEY)
+  } catch {
+    // Ignore storage failures; the in-memory cache is already cleared.
+  }
+}
+
 function getDeviceName(device: DeviceInfo): string {
   return device.name || device.device_id
 }
@@ -114,19 +123,28 @@ export function DeviceStatusPrompt({
   const [sidebarTooltipOpen, setSidebarTooltipOpen] = useState(false)
   const sidebarActionRef = useRef<HTMLDivElement>(null)
   const sidebarTooltipRef = useRef<HTMLDivElement>(null)
-  const now = Date.now()
-  const sidebarDeviceCache = readSidebarDeviceCache()
-  const canUseSidebarDeviceFallback =
-    presentation === 'sidebar-action' &&
-    devices.length === 0 &&
-    sidebarDeviceCache !== null &&
-    now - sidebarDeviceCache.updatedAt < SIDEBAR_EMPTY_DEVICE_FALLBACK_MS
-  if (presentation === 'sidebar-action' && devices.length > 0) {
-    writeSidebarDeviceCache(devices, now)
-  }
-  const effectiveDevices = canUseSidebarDeviceFallback
-    ? sidebarDeviceCache?.devices ?? devices
-    : devices
+  // Read cache during render (sessionStorage access is allowed in render).
+  // Freshness is enforced by the pruning effect below, not here, so the render
+  // path stays pure and never calls `Date.now()`.
+  const sidebarDeviceCache =
+    presentation === 'sidebar-action' && devices.length === 0
+      ? readSidebarDeviceCache()
+      : null
+  const effectiveDevices = useMemo(
+    () => sidebarDeviceCache?.devices ?? devices,
+    [sidebarDeviceCache, devices],
+  )
+  useEffect(() => {
+    if (presentation === 'sidebar-action' && devices.length > 0) {
+      writeSidebarDeviceCache(devices, Date.now())
+    }
+  }, [presentation, devices])
+  useEffect(() => {
+    const cache = readSidebarDeviceCache()
+    if (cache && Date.now() - cache.updatedAt >= SIDEBAR_EMPTY_DEVICE_FALLBACK_MS) {
+      clearSidebarDeviceCache()
+    }
+  }, [presentation, devices])
   const claudeCodeDevices = useMemo(
     () => effectiveDevices.filter(isClaudeCodeDevice),
     [effectiveDevices],
