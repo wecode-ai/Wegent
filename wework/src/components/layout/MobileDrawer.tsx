@@ -6,6 +6,7 @@ import {
   FolderOpen,
   FolderPlus,
   Loader2,
+  RotateCw,
   Search,
   SquarePen,
   X,
@@ -13,7 +14,9 @@ import {
 import { useMemo, useRef, useState } from 'react'
 import { ProjectCreateDialog } from '@/components/projects/ProjectCreateDialog'
 import { useTranslation } from '@/hooks/useTranslation'
+import { usePullToRefresh } from '@/hooks/usePullToRefresh'
 import { selectStandaloneConversations } from '@/lib/taskLists'
+import { cn } from '@/lib/utils'
 import type {
   CreateGitWorkspaceProjectRequest,
   CreateProjectRequest,
@@ -64,6 +67,7 @@ interface MobileDrawerProps {
   onRenameTask?: (taskId: number, title: string) => Promise<void>
   onSelectProject: (projectId: number) => void
   onOpenTask: (taskId: number, projectId?: number) => void
+  onRefreshWorkLists?: () => Promise<void>
 }
 
 function formatRelativeTime(value?: string) {
@@ -128,8 +132,16 @@ export function MobileDrawer({
   onRenameTask,
   onSelectProject,
   onOpenTask,
+  onRefreshWorkLists,
 }: MobileDrawerProps) {
   const { t } = useTranslation('common')
+  const {
+    scrollRef,
+    pullDistance,
+    refreshing,
+    threshold,
+    handlers: pullHandlers,
+  } = usePullToRefresh(onRefreshWorkLists ?? (async () => {}))
   const [searchOpen, setSearchOpen] = useState(false)
   const [projectCreateMenuOpen, setProjectCreateMenuOpen] = useState(false)
   const [projectCreateMode, setProjectCreateMode] = useState<ProjectCreateMode | null>(null)
@@ -310,9 +322,39 @@ export function MobileDrawer({
       <div className="mx-6 mt-7 h-px shrink-0 bg-[#EDEDED]" />
 
       <div
-        className="min-h-0 flex-1 overflow-y-auto pb-28 pt-2 scrollbar-none"
+        ref={scrollRef}
+        onTouchStart={pullHandlers.onTouchStart}
+        onTouchMove={pullHandlers.onTouchMove}
+        onTouchEnd={pullHandlers.onTouchEnd}
+        className="relative min-h-0 flex-1 overflow-y-auto pb-28 pt-2 scrollbar-none"
         data-testid="mobile-drawer-scroll"
       >
+        {onRefreshWorkLists && (pullDistance > 0 || refreshing) && (
+          <div
+            data-testid="mobile-pull-refresh-indicator"
+            className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-center justify-center"
+            style={{ height: refreshing ? threshold : pullDistance }}
+          >
+            <RotateCw
+              className={cn('h-5 w-5 text-[#6B7280]', refreshing && 'animate-spin')}
+              style={
+                refreshing
+                  ? undefined
+                  : {
+                      opacity: Math.min(1, pullDistance / threshold),
+                      transform: `rotate(${(pullDistance / threshold) * 270}deg)`,
+                    }
+              }
+            />
+          </div>
+        )}
+        <div
+          style={{
+            transform: pullDistance ? `translateY(${pullDistance}px)` : undefined,
+            transition:
+              refreshing || pullDistance === 0 ? 'transform 0.2s ease' : undefined,
+          }}
+        >
         <section>
           <div className="space-y-1">
             <div className="relative">
@@ -667,6 +709,7 @@ export function MobileDrawer({
             })}
           </div>
         </section>
+        </div>
       </div>
 
       <button

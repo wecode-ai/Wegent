@@ -1,5 +1,6 @@
 import { AlertCircle, ArrowUpCircle, Loader2, PlusCircle } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   WEWORK_MIN_EXECUTOR_VERSION,
@@ -22,7 +23,52 @@ interface DeviceStatusPromptProps {
   activeDeviceId?: string | null
   requiresOnlineCompatibleDevice?: boolean
   compact?: boolean
+  presentation?: 'banner' | 'sidebar-action'
+  hideAvailableUpdates?: boolean
   className?: string
+}
+
+const SIDEBAR_EMPTY_DEVICE_FALLBACK_MS = 30_000
+const SIDEBAR_TOOLTIP_MAX_WIDTH = 288
+const SIDEBAR_TOOLTIP_MARGIN = 8
+const SIDEBAR_DEVICE_CACHE_KEY = 'wework.sidebar.lastNonEmptyDevices'
+
+let sidebarDeviceMemoryCache: {
+  devices: DeviceInfo[]
+  updatedAt: number
+} | null = null
+
+function readSidebarDeviceCache() {
+  if (sidebarDeviceMemoryCache) return sidebarDeviceMemoryCache
+
+  try {
+    const value = window.sessionStorage.getItem(SIDEBAR_DEVICE_CACHE_KEY)
+    if (!value) return null
+    const parsed = JSON.parse(value)
+    if (
+      !parsed ||
+      !Array.isArray(parsed.devices) ||
+      typeof parsed.updatedAt !== 'number'
+    ) {
+      return null
+    }
+    sidebarDeviceMemoryCache = parsed
+    return parsed as { devices: DeviceInfo[]; updatedAt: number }
+  } catch {
+    return null
+  }
+}
+
+function writeSidebarDeviceCache(devices: DeviceInfo[], updatedAt: number) {
+  sidebarDeviceMemoryCache = { devices, updatedAt }
+  try {
+    window.sessionStorage.setItem(
+      SIDEBAR_DEVICE_CACHE_KEY,
+      JSON.stringify(sidebarDeviceMemoryCache),
+    )
+  } catch {
+    // Keep the in-memory cache when browser storage is unavailable.
+  }
 }
 
 function getDeviceName(device: DeviceInfo): string {
@@ -54,20 +100,45 @@ export function DeviceStatusPrompt({
   activeDeviceId,
   requiresOnlineCompatibleDevice = false,
   compact = false,
+  presentation = 'banner',
+  hideAvailableUpdates = false,
   className,
 }: DeviceStatusPromptProps) {
   const { t } = useTranslation('common')
   const [manualPending, setManualPending] = useState(false)
+  const [sidebarTooltipPosition, setSidebarTooltipPosition] = useState<{
+    left: number
+    top: number
+    maxWidth: number
+  } | null>(null)
+  const [sidebarTooltipOpen, setSidebarTooltipOpen] = useState(false)
+  const sidebarActionRef = useRef<HTMLDivElement>(null)
+  const sidebarTooltipRef = useRef<HTMLDivElement>(null)
+  const now = Date.now()
+  const sidebarDeviceCache = readSidebarDeviceCache()
+  const canUseSidebarDeviceFallback =
+    presentation === 'sidebar-action' &&
+    devices.length === 0 &&
+    sidebarDeviceCache !== null &&
+    now - sidebarDeviceCache.updatedAt < SIDEBAR_EMPTY_DEVICE_FALLBACK_MS
+  if (presentation === 'sidebar-action' && devices.length > 0) {
+    writeSidebarDeviceCache(devices, now)
+  }
+  const effectiveDevices = canUseSidebarDeviceFallback
+    ? sidebarDeviceCache?.devices ?? devices
+    : devices
   const claudeCodeDevices = useMemo(
-    () => devices.filter(isClaudeCodeDevice),
-    [devices],
+    () => effectiveDevices.filter(isClaudeCodeDevice),
+    [effectiveDevices],
   )
   const activeDevice = activeDeviceId
     ? claudeCodeDevices.find(device => device.device_id === activeDeviceId) ?? null
     : null
   const compatibleDevices = claudeCodeDevices.filter(isWeWorkCompatibleDevice)
   const outdatedDevices = claudeCodeDevices.filter(isDeviceBelowWeWorkVersion)
-  const updateCandidates = compatibleDevices.filter(hasWeWorkUpdateAvailable)
+  const updateCandidates = claudeCodeDevices.filter(
+    device => device.status !== 'offline' && hasWeWorkUpdateAvailable(device),
+  )
   const activeUpgradeDevice = (() => {
     if (activeDevice && isUpgradeActive(upgradingDevices[activeDevice.device_id])) {
       return activeDevice
@@ -96,7 +167,120 @@ export function DeviceStatusPrompt({
     }
   }
 
+  const updateSidebarTooltipPosition = () => {
+    const rect = sidebarActionRef.current?.getBoundingClientRect()
+    if (!rect) return
+
+    const viewportMaxWidth = Math.max(
+      0,
+      window.innerWidth - SIDEBAR_TOOLTIP_MARGIN * 2,
+    )
+    const maxWidth = Math.min(SIDEBAR_TOOLTIP_MAX_WIDTH, viewportMaxWidth)
+    const measuredWidth = sidebarTooltipRef.current?.offsetWidth ?? 0
+    const tooltipWidth = measuredWidth > 0 ? measuredWidth : maxWidth
+    const maxLeft = Math.max(
+      SIDEBAR_TOOLTIP_MARGIN,
+      window.innerWidth - tooltipWidth - SIDEBAR_TOOLTIP_MARGIN,
+    )
+
+    setSidebarTooltipPosition({
+      left: Math.max(SIDEBAR_TOOLTIP_MARGIN, Math.min(rect.left, maxLeft)),
+      top: rect.bottom + SIDEBAR_TOOLTIP_MARGIN,
+      maxWidth,
+    })
+  }
+
+  const openSidebarTooltip = () => {
+    updateSidebarTooltipPosition()
+    setSidebarTooltipOpen(true)
+    window.requestAnimationFrame(updateSidebarTooltipPosition)
+  }
+
+  const closeSidebarTooltip = () => {
+    setSidebarTooltipOpen(false)
+  }
+
+  const renderSidebarAction = ({
+    message,
+    actionLabel,
+    deviceIds,
+    tone,
+    loading = false,
+  }: {
+    message: string
+    actionLabel: string
+    deviceIds: string[]
+    tone: 'primary' | 'danger'
+    loading?: boolean
+  }) => {
+    const toneClass = tone === 'danger'
+      ? 'bg-red-50 text-red-600 hover:bg-red-100 disabled:hover:bg-red-50'
+      : 'bg-primary/10 text-primary hover:bg-primary/15 disabled:hover:bg-primary/10'
+    const tooltip = (
+      <div
+        ref={sidebarTooltipRef}
+        data-testid="device-status-sidebar-tooltip"
+        style={
+          sidebarTooltipPosition
+            ? {
+                left: sidebarTooltipPosition.left,
+                top: sidebarTooltipPosition.top,
+                maxWidth: sidebarTooltipPosition.maxWidth,
+              }
+            : undefined
+        }
+        className={cn(
+          'pointer-events-none fixed z-system-popover w-max min-w-0 whitespace-normal break-words rounded-md border border-border bg-background px-3 py-2 text-xs leading-5 text-text-primary shadow-[0_16px_44px_rgba(0,0,0,0.16)] ring-1 ring-black/5',
+          sidebarTooltipOpen ? 'block' : 'hidden',
+        )}
+      >
+        {message}
+      </div>
+    )
+
+    return (
+      <>
+        <div
+          ref={sidebarActionRef}
+          data-testid="device-status-prompt"
+          className={cn('relative shrink-0', className)}
+          onMouseEnter={openSidebarTooltip}
+          onMouseMove={updateSidebarTooltipPosition}
+          onMouseLeave={closeSidebarTooltip}
+          onFocusCapture={openSidebarTooltip}
+          onBlurCapture={closeSidebarTooltip}
+        >
+          <button
+            type="button"
+            data-testid="device-status-sidebar-action-button"
+            disabled={manualPending || loading || deviceIds.length === 0}
+            onClick={() => void runUpgrades(deviceIds)}
+            aria-label={message}
+            className={cn(
+              'inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60',
+              toneClass,
+            )}
+          >
+            {manualPending || loading ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <ArrowUpCircle className="h-3.5 w-3.5" />
+            )}
+            <span>{actionLabel}</span>
+          </button>
+        </div>
+        {typeof document === 'undefined' ? (
+          tooltip
+        ) : (
+          createPortal(tooltip, document.body)
+          )}
+      </>
+    )
+  }
+
   if (claudeCodeDevices.length === 0) {
+    if (presentation === 'sidebar-action') return null
+
     return (
       <div
         data-testid="device-status-prompt"
@@ -125,6 +309,20 @@ export function DeviceStatusPrompt({
 
   if (activeUpgradeDevice) {
     const upgradeState = upgradingDevices[activeUpgradeDevice.device_id]
+    const message = t('workbench.device_status_upgrading', {
+      device: getDeviceName(activeUpgradeDevice),
+      message: upgradeState?.message ?? t('workbench.device_status_checking'),
+    })
+    if (presentation === 'sidebar-action') {
+      return renderSidebarAction({
+        message,
+        actionLabel: t('workbench.device_status_upgrade_action'),
+        deviceIds: [],
+        tone: 'primary',
+        loading: true,
+      })
+    }
+
     return (
       <div
         data-testid="device-status-prompt"
@@ -136,10 +334,7 @@ export function DeviceStatusPrompt({
       >
         <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-primary" />
         <span className="min-w-0 flex-1 truncate">
-          {t('workbench.device_status_upgrading', {
-            device: getDeviceName(activeUpgradeDevice),
-            message: upgradeState?.message ?? t('workbench.device_status_checking'),
-          })}
+          {message}
         </span>
         {typeof upgradeState?.progress === 'number' && (
           <span className="shrink-0 tabular-nums text-text-muted">
@@ -153,6 +348,27 @@ export function DeviceStatusPrompt({
   if (activeDevice && isDeviceBelowWeWorkVersion(activeDevice)) {
     const canUpgrade = canRequestDeviceUpgrade(activeDevice)
     const upgradeDeviceIds = canUpgrade ? [activeDevice.device_id] : []
+    const message = canUpgrade
+      ? t('workbench.device_status_active_upgrade_required', {
+          device: getDeviceName(activeDevice),
+          version: WEWORK_MIN_EXECUTOR_VERSION,
+        })
+      : t('workbench.device_status_active_upgrade_waiting', {
+          device: getDeviceName(activeDevice),
+          reason: getBlockedReason(activeDevice, t),
+          version: WEWORK_MIN_EXECUTOR_VERSION,
+        })
+
+    if (presentation === 'sidebar-action') {
+      if (!canUpgrade) return null
+
+      return renderSidebarAction({
+        message,
+        actionLabel: t('workbench.device_status_upgrade_action'),
+        deviceIds: upgradeDeviceIds,
+        tone: 'danger',
+      })
+    }
 
     return (
       <div
@@ -165,16 +381,7 @@ export function DeviceStatusPrompt({
       >
         <AlertCircle className="h-3.5 w-3.5 shrink-0 text-amber-600" />
         <span className="min-w-0 flex-1">
-          {canUpgrade
-            ? t('workbench.device_status_active_upgrade_required', {
-                device: getDeviceName(activeDevice),
-                version: WEWORK_MIN_EXECUTOR_VERSION,
-              })
-            : t('workbench.device_status_active_upgrade_waiting', {
-                device: getDeviceName(activeDevice),
-                reason: getBlockedReason(activeDevice, t),
-                version: WEWORK_MIN_EXECUTOR_VERSION,
-              })}
+          {message}
         </span>
         {upgradeDeviceIds.length > 0 && (
           <button
@@ -197,6 +404,8 @@ export function DeviceStatusPrompt({
   }
 
   if (activeDevice && activeDevice.status !== 'online') {
+    if (presentation === 'sidebar-action') return null
+
     const messageKey = isDeviceRunningTask(activeDevice) || activeDevice.status === 'busy'
       ? 'workbench.device_status_active_busy'
       : activeDevice.status === 'offline'
@@ -225,6 +434,33 @@ export function DeviceStatusPrompt({
     const upgradeDeviceIds = upgradeDevices.map(device => device.device_id)
     const blockedDevice = lowVersionBlockedDevices[0]
     const upgradeDevice = upgradeDevices[0]
+    const message = blockedDevice && upgradeDeviceIds.length === 0
+      ? t('workbench.device_status_upgrade_waiting', {
+          device: getDeviceName(blockedDevice),
+          reason: getBlockedReason(blockedDevice, t),
+          version: WEWORK_MIN_EXECUTOR_VERSION,
+        })
+      : upgradeDevices.length === 1 && upgradeDevice
+        ? t('workbench.device_status_upgrade_required_device', {
+            device: getDeviceName(upgradeDevice),
+            version: WEWORK_MIN_EXECUTOR_VERSION,
+          })
+        : t('workbench.device_status_upgrade_required_devices', {
+            count: upgradeDevices.length,
+            version: WEWORK_MIN_EXECUTOR_VERSION,
+          })
+
+    if (presentation === 'sidebar-action') {
+      if (upgradeDeviceIds.length === 0) return null
+
+      return renderSidebarAction({
+        message,
+        actionLabel: t('workbench.device_status_upgrade_action'),
+        deviceIds: upgradeDeviceIds,
+        tone: 'danger',
+      })
+    }
+
     return (
       <div
         data-testid="device-status-prompt"
@@ -236,21 +472,7 @@ export function DeviceStatusPrompt({
       >
         <AlertCircle className="h-3.5 w-3.5 shrink-0 text-amber-600" />
         <span className="min-w-0 flex-1">
-          {blockedDevice && upgradeDeviceIds.length === 0
-            ? t('workbench.device_status_upgrade_waiting', {
-                device: getDeviceName(blockedDevice),
-                reason: getBlockedReason(blockedDevice, t),
-                version: WEWORK_MIN_EXECUTOR_VERSION,
-              })
-            : upgradeDevices.length === 1 && upgradeDevice
-              ? t('workbench.device_status_upgrade_required_device', {
-                  device: getDeviceName(upgradeDevice),
-                  version: WEWORK_MIN_EXECUTOR_VERSION,
-                })
-              : t('workbench.device_status_upgrade_required_devices', {
-                  count: upgradeDevices.length,
-                  version: WEWORK_MIN_EXECUTOR_VERSION,
-                })}
+          {message}
         </span>
         {upgradeDeviceIds.length > 0 && (
           <button
@@ -281,6 +503,8 @@ export function DeviceStatusPrompt({
     compatibleDevices.length > 0 &&
     !compatibleDevices.some(device => device.status === 'online')
   ) {
+    if (presentation === 'sidebar-action') return null
+
     return (
       <div
         data-testid="device-status-prompt"
@@ -299,9 +523,24 @@ export function DeviceStatusPrompt({
   }
 
   if (updateCandidates.length > 0) {
+    if (hideAvailableUpdates) return null
+
     const upgradeDeviceIds = updateCandidates
       .filter(canRequestDeviceUpgrade)
       .map(device => device.device_id)
+    const message = t('workbench.device_status_update_available', {
+      count: updateCandidates.length,
+    })
+
+    if (presentation === 'sidebar-action') {
+      return renderSidebarAction({
+        message,
+        actionLabel: t('workbench.device_status_update_action'),
+        deviceIds: upgradeDeviceIds,
+        tone: 'primary',
+      })
+    }
+
     if (upgradeDeviceIds.length === 0) return null
 
     return (

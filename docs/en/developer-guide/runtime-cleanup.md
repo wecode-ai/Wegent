@@ -20,7 +20,8 @@ Request body:
 {
   "task_id": 123,
   "inactive_hours": 24,
-  "dry_run": false
+  "dry_run": false,
+  "archive_before_delete": true
 }
 ```
 
@@ -32,7 +33,7 @@ When calling with `curl`, set the JSON Content-Type:
 curl "https://<host>/api/admin/runtime-cleanup/stale" \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
-  -d '{"task_id":123,"inactive_hours":24,"dry_run":false}'
+  -d '{"task_id":123,"inactive_hours":24,"dry_run":false,"archive_before_delete":true}'
 ```
 
 Fields:
@@ -42,6 +43,7 @@ Fields:
 | `task_id` | Task ID whose runtime should be cleaned up. Required. | - |
 | `inactive_hours` | Minimum inactive hours before deletion is allowed | `24` |
 | `dry_run` | Return the planned result without deleting runtimes | `false` |
+| `archive_before_delete` | Archive the sandbox workspace before deleting it | `true` |
 
 ## Rules
 
@@ -53,7 +55,7 @@ The endpoint only processes the specified task:
 - Tasks with `preserveExecutor=true` are not deleted.
 - Device executors are not deleted by this endpoint.
 - Successful executor deletion marks related Subtasks with `executor_deleted_at=true`.
-- Sandbox deletion is performed by Executor Manager.
+- Sandbox deletion is performed by Executor Manager and archives the workspace first by default.
 
 ## Response Example
 
@@ -62,6 +64,7 @@ The endpoint only processes the specified task:
   "task_id": 123,
   "inactive_hours": 24,
   "dry_run": false,
+  "archive_before_delete": true,
   "results": {
     "task_executor": {
       "task_id": 123,

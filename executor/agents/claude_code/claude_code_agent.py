@@ -745,6 +745,7 @@ class ClaudeCodeAgent(Agent):
 
             # Prepare prompt with skill emphasis if user selected skills
             prompt = self.prompt
+            task_mode = self.task_data.task_mode or self.task_data.type
             user_selected_skills = self.task_data.user_selected_skills
             if is_vision_prompt(prompt):
                 # Vision content: append text to the text block in the list
@@ -763,8 +764,12 @@ class ClaudeCodeAgent(Agent):
                     self.task_data.kb_meta_prompt,
                     executor_mode=config.EXECUTOR_MODE,
                     is_user_selected_kb=self.task_data.is_user_selected_kb,
+                    task_type=task_mode,
                 )
-                if self.task_data.kb_meta_prompt and config.EXECUTOR_MODE == "local":
+                if (
+                    self.task_data.kb_meta_prompt
+                    and (task_mode or "").lower() != "code"
+                ):
                     logger.info("Injected kb_meta_prompt into ClaudeCode query prompt")
                 if self.options.get("cwd"):
                     cwd_text = "\nCurrent working directory: " + self.options.get("cwd")
@@ -793,10 +798,11 @@ class ClaudeCodeAgent(Agent):
                         self.task_data.kb_meta_prompt,
                         executor_mode=config.EXECUTOR_MODE,
                         is_user_selected_kb=self.task_data.is_user_selected_kb,
+                        task_type=task_mode,
                     )
                     if (
                         self.task_data.kb_meta_prompt
-                        and config.EXECUTOR_MODE == "local"
+                        and (task_mode or "").lower() != "code"
                     ):
                         logger.info(
                             "Injected kb_meta_prompt into ClaudeCode query prompt"
@@ -826,10 +832,11 @@ class ClaudeCodeAgent(Agent):
                         self.task_data.kb_meta_prompt,
                         executor_mode=config.EXECUTOR_MODE,
                         is_user_selected_kb=self.task_data.is_user_selected_kb,
+                        task_type=task_mode,
                     )
                     if (
                         self.task_data.kb_meta_prompt
-                        and config.EXECUTOR_MODE == "local"
+                        and (task_mode or "").lower() != "code"
                     ):
                         logger.info(
                             "Injected kb_meta_prompt into ClaudeCode query prompt"

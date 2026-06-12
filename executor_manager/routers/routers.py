@@ -1425,6 +1425,7 @@ class ArchiveExecutorRequest(BaseModel):
     executor_name: str
     executor_namespace: str
     max_size_mb: int = 500
+    runtime_type: str = "executor"
 
 
 class RestoreExecutorRequest(BaseModel):
@@ -1434,6 +1435,7 @@ class RestoreExecutorRequest(BaseModel):
     download_url: str  # Presigned MinIO download URL
     executor_name: str
     executor_namespace: str
+    runtime_type: str = "executor"
 
 
 @api_router.post("/executor/archive")
@@ -1480,6 +1482,7 @@ async def archive_executor_workspace(
             "task_id": request.task_id,
             "upload_url": request.upload_url,
             "max_size_mb": request.max_size_mb,
+            "runtime_type": request.runtime_type,
         }
 
         logger.info(f"[Archive] Forwarding to executor: {archive_url}")
@@ -1553,6 +1556,7 @@ async def restore_executor_workspace(
         payload = {
             "task_id": request.task_id,
             "download_url": request.download_url,
+            "runtime_type": request.runtime_type,
         }
 
         logger.info(f"[Restore] Forwarding to executor: {restore_url}")

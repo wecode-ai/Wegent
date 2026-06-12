@@ -42,6 +42,7 @@ async def test_archive_executor_workspace_forwards_payload(mocker):
         executor_name="executor-1",
         executor_namespace="default",
         max_size_mb=321,
+        runtime_type="sandbox",
     )
     http_request = SimpleNamespace(client=SimpleNamespace(host="127.0.0.1"))
     mock_executor = mocker.MagicMock()
@@ -71,6 +72,49 @@ async def test_archive_executor_workspace_forwards_payload(mocker):
             "task_id": 1385,
             "upload_url": "https://minio.local/upload/archive",
             "max_size_mb": 321,
+            "runtime_type": "sandbox",
+        },
+        headers={"Content-Type": "application/json"},
+    )
+
+
+@pytest.mark.asyncio
+async def test_restore_executor_workspace_forwards_runtime_type(mocker):
+    request = routers.RestoreExecutorRequest(
+        task_id=1385,
+        download_url="https://minio.local/download/archive",
+        executor_name="executor-1",
+        executor_namespace="default",
+        runtime_type="sandbox",
+    )
+    http_request = SimpleNamespace(client=SimpleNamespace(host="127.0.0.1"))
+    mock_executor = mocker.MagicMock()
+    mock_executor.get_container_address.return_value = {
+        "status": "success",
+        "base_url": "http://executor.local:8000",
+    }
+    mocker.patch.object(
+        routers.ExecutorDispatcher, "get_executor", return_value=mock_executor
+    )
+
+    response = mocker.MagicMock()
+    response.raise_for_status.return_value = None
+    response.json.return_value = {"success": True}
+    client = mocker.MagicMock()
+    client.__aenter__ = mocker.AsyncMock(return_value=client)
+    client.__aexit__ = mocker.AsyncMock(return_value=None)
+    client.post = mocker.AsyncMock(return_value=response)
+    mocker.patch.object(routers, "traced_async_client", return_value=client)
+
+    result = await routers.restore_executor_workspace(request, http_request)
+
+    assert result == {"success": True}
+    client.post.assert_awaited_once_with(
+        "http://executor.local:8000/api/restore",
+        json={
+            "task_id": 1385,
+            "download_url": "https://minio.local/download/archive",
+            "runtime_type": "sandbox",
         },
         headers={"Content-Type": "application/json"},
     )
