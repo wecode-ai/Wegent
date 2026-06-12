@@ -1,3 +1,7 @@
+---
+sidebar_position: 4
+---
+
 # Test Framework Documentation
 
 This document describes the unit testing framework setup for the Wegent project.
@@ -203,10 +207,10 @@ shared/tests/
 ### Running Tests
 
 ```bash
-cd frontend
-npm test                     # Run all tests
-npm run test:watch          # Watch mode
-npm run test:coverage       # With coverage report
+cd Wegent
+pnpm --dir frontend test                  # Run all tests
+pnpm --dir frontend run test:watch        # Watch mode
+pnpm --dir frontend run test:coverage     # With coverage report
 ```
 
 ### Test Structure
@@ -415,10 +419,10 @@ pytest -s
 
 ```bash
 # Run tests in watch mode
-npm run test:watch
+pnpm --dir frontend run test:watch
 
 # Debug specific test file
-npm test -- src/__tests__/utils/test_example.test.ts
+pnpm --dir frontend test -- src/__tests__/utils/test_example.test.ts
 ```
 
 ## Configuration Files
@@ -465,8 +469,8 @@ npm test -- src/__tests__/utils/test_example.test.ts
 
 **Frontend test failures:**
 - Ensure Node.js 18.x is installed
-- Run `npm ci` to install exact dependency versions
-- Clear Jest cache: `npx jest --clearCache`
+- Run `pnpm install --frozen-lockfile` from the repository root to install exact dependency versions
+- Clear Jest cache: `pnpm --dir frontend exec jest --clearCache`
 
 ## Resources
 

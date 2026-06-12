@@ -13,7 +13,7 @@ import ClarificationQuestion from './ClarificationQuestion'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useOptionalTaskSession } from '@/features/tasks/session/TaskSession'
 import { useToast } from '@/hooks/use-toast'
-import type { UnifiedMessage } from '../../state'
+import type { UnifiedMessage } from '@wegent/chat-core'
 
 const EMPTY_MESSAGES = new Map<string, UnifiedMessage>()
 

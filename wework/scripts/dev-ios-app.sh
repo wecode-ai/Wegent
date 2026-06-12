@@ -53,9 +53,9 @@ DEV_ARGS=(ios dev)
 [ "$VERBOSE" = "1" ] && DEV_ARGS+=(--verbose)
 
 if [ "${WEWORK_DRY_RUN:-}" = "1" ]; then
-  echo "  DRY RUN: npx tauri ${DEV_ARGS[*]}"
+  echo "  DRY RUN: pnpm exec tauri ${DEV_ARGS[*]}"
   exit 0
 fi
 
 cd "$WEWORK_DIR"
-exec npx tauri "${DEV_ARGS[@]}"
+exec pnpm exec tauri "${DEV_ARGS[@]}"

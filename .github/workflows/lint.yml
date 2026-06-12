@@ -97,24 +97,26 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10.34.3
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '18.x'
-          cache: 'npm'
-          cache-dependency-path: ./frontend/package-lock.json
+          cache: 'pnpm'
+          cache-dependency-path: ./pnpm-lock.yaml
 
       - name: Install dependencies
-        working-directory: ./frontend
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Run ESLint
-        working-directory: ./frontend
-        run: npm run lint
+        run: pnpm --filter wecode-ai-assistant lint
 
       - name: Run TypeScript check
-        working-directory: ./frontend
-        run: npx tsc --noEmit
+        run: pnpm --filter wecode-ai-assistant exec tsc --noEmit
 
   lint-wework:
     name: Lint Wework (ESLint & TypeScript)

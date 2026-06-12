@@ -249,18 +249,19 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 In a new terminal:
 
 ```bash
-# Enter frontend directory
-cd frontend
+# Return to the repository root
+cd Wegent
 
-# Install dependencies
-npm install
+# Install pnpm workspace dependencies
+pnpm install
 
 # Configure environment variables
+cd frontend
 cp .env.local.example .env.local
 vim .env.local  # Edit configuration
 
 # Run development server
-npm run dev
+pnpm run dev
 ```
 
 ### Step 6: Install Executor Manager

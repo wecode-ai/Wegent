@@ -261,32 +261,38 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10.34.3
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '18.x'
-          cache: 'npm'
-          cache-dependency-path: ./frontend/package-lock.json
+          cache: 'pnpm'
+          cache-dependency-path: ./pnpm-lock.yaml
 
       - name: Cache Next.js build
         uses: actions/cache@v4
         with:
           path: |
             ./frontend/.next/cache
-          key: ${{ runner.os }}-nextjs-${{ hashFiles('./frontend/package-lock.json') }}-${{ hashFiles('./frontend/src/**/*.[jt]s', './frontend/src/**/*.[jt]sx') }}
+          key: ${{ runner.os }}-nextjs-${{ hashFiles('./pnpm-lock.yaml') }}-${{ hashFiles('./frontend/src/**/*.[jt]s', './frontend/src/**/*.[jt]sx') }}
           restore-keys: |
-            ${{ runner.os }}-nextjs-${{ hashFiles('./frontend/package-lock.json') }}-
+            ${{ runner.os }}-nextjs-${{ hashFiles('./pnpm-lock.yaml') }}-
             ${{ runner.os }}-nextjs-
 
       - name: Install dependencies
-        working-directory: ./frontend
-        run: npm ci
+        run: pnpm install --frozen-lockfile
+
+      - name: Run chat core tests
+        run: pnpm --filter @wegent/chat-core test
 
       - name: Run frontend tests
-        working-directory: ./frontend
         env:
           NEXT_TELEMETRY_DISABLED: 1
-        run: npm test -- --coverage --passWithNoTests
+        run: pnpm --filter wecode-ai-assistant test --coverage --passWithNoTests
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v3

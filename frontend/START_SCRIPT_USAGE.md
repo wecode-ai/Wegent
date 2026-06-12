@@ -181,8 +181,8 @@ I18N_LNG=en     # For English
 A: Try clearing the cache and reinstalling:
 
 ```bash
-rm -rf node_modules package-lock.json
-npm install
+rm -rf ../node_modules node_modules
+pnpm install --dir ..
 ```
 
 ### Q: How to enable mock API mode?
@@ -205,7 +205,7 @@ This will hide the context selector in the chat interface.
 
 ## Technical Details
 
-- **Package Manager**: npm (Node Package Manager)
+- **Package Manager**: pnpm workspace
 - **Framework**: Next.js 15 with React 19
 - **Development Server**: Next.js dev server with hot reload
 - **Environment**: Configured via `.env.local`
@@ -273,13 +273,13 @@ cd frontend
 
 **Solution**: Install Node.js 18 or higher from https://nodejs.org/
 
-### Issue: "npm install" fails
+### Issue: "pnpm install" fails
 
 **Solution**:
 
-1. Clear npm cache: `npm cache clean --force`
-2. Delete node_modules: `rm -rf node_modules`
-3. Try again: `npm install`
+1. Clear pnpm store metadata if needed: `pnpm store prune`
+2. Delete node_modules: `rm -rf ../node_modules node_modules`
+3. Try again from the repository root: `pnpm install`
 
 ### Issue: "Port already in use"
 

@@ -93,6 +93,7 @@
     "@types/prismjs": "^1.26.6",
     "@uiw/react-markdown-editor": "^6.1.4",
     "@uiw/react-md-editor": "^4.0.8",
+    "@wegent/chat-core": "workspace:*",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
@@ -133,6 +134,8 @@
     "zod": "^4.1.12"
   },
   "devDependencies": {
+    "@eslint/eslintrc": "^3.3.5",
+    "@eslint/js": "^9.39.4",
     "@istanbuljs/nyc-config-typescript": "^1.0.2",
     "@playwright/test": "^1.57.0",
     "@testing-library/jest-dom": "^6.1.0",

@@ -249,18 +249,19 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 在新终端中：
 
 ```bash
-# 进入前端目录
-cd frontend
+# 回到仓库根目录
+cd Wegent
 
-# 安装依赖
-npm install
+# 安装 pnpm workspace 依赖
+pnpm install
 
 # 配置环境变量
+cd frontend
 cp .env.local.example .env.local
 vim .env.local  # 编辑配置
 
 # 运行开发服务器
-npm run dev
+pnpm run dev
 ```
 
 ### 步骤 6: 安装 Executor Manager

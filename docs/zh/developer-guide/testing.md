@@ -1,3 +1,7 @@
+---
+sidebar_position: 4
+---
+
 # 测试框架文档
 
 本文档介绍 Wegent 项目的单元测试框架设置。
@@ -203,10 +207,10 @@ shared/tests/
 ### 运行测试
 
 ```bash
-cd frontend
-npm test                     # 运行所有测试
-npm run test:watch          # 监视模式
-npm run test:coverage       # 生成覆盖率报告
+cd Wegent
+pnpm --dir frontend test                  # 运行所有测试
+pnpm --dir frontend run test:watch        # 监视模式
+pnpm --dir frontend run test:coverage     # 生成覆盖率报告
 ```
 
 ### 测试结构
@@ -415,10 +419,10 @@ pytest -s
 
 ```bash
 # 在监视模式下运行测试
-npm run test:watch
+pnpm --dir frontend run test:watch
 
 # 调试特定测试文件
-npm test -- src/__tests__/utils/test_example.test.ts
+pnpm --dir frontend test -- src/__tests__/utils/test_example.test.ts
 ```
 
 ## 配置文件
@@ -465,8 +469,8 @@ npm test -- src/__tests__/utils/test_example.test.ts
 
 **前端测试失败：**
 - 确保已安装 Node.js 18.x
-- 运行 `npm ci` 以安装确切的依赖版本
-- 清除 Jest 缓存：`npx jest --clearCache`
+- 在仓库根目录运行 `pnpm install --frozen-lockfile` 以安装确切的依赖版本
+- 清除 Jest 缓存：`pnpm --dir frontend exec jest --clearCache`
 
 ## 资源
 

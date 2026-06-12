@@ -15,14 +15,14 @@ import React, {
   ReactNode,
 } from 'react'
 import type { Task } from '@/types/api'
-import { TaskStateMachine } from '../state'
+import { TaskStateMachine } from '@wegent/chat-core'
 import type {
   SyncOptions,
   TaskRecoveryReason,
   TaskStateMachineDeps,
   TaskStateSnapshot,
   UnifiedMessage,
-} from '../state'
+} from '@wegent/chat-core'
 import { MessageSyncer, useMessageSyncer } from './messageSyncer'
 import { useRuntimeSignalBridge } from './runtimeSignalBridge'
 import { TaskPuller, useTaskPuller } from './taskPuller'

@@ -1,3 +1,7 @@
+---
+sidebar_position: 2
+---
+
 # 💻 Development Setup
 
 This document provides detailed instructions on setting up a local development environment for Wegent.
@@ -192,10 +196,10 @@ The frontend is a React application based on Next.js 15.
 #### Install Dependencies
 
 ```bash
-cd frontend
+cd Wegent
 
-# Install npm dependencies
-npm install
+# Install pnpm workspace dependencies
+pnpm install
 ```
 
 #### Configure Environment Variables
@@ -222,7 +226,7 @@ cp .env.local.example .env.local
 
 ```bash
 # Start development server
-npm run dev
+pnpm --dir frontend run dev
 ```
 
 Access application: http://localhost:3000
@@ -231,16 +235,16 @@ Access application: http://localhost:3000
 
 ```bash
 # Lint code
-npm run lint
+pnpm --dir frontend run lint
 
 # Format code
-npm run format
+pnpm --dir frontend run format
 
 # Production build
-npm run build
+pnpm --dir frontend run build
 
 # Run production version
-npm run start
+pnpm --dir frontend run start
 ```
 
 ---
@@ -324,16 +328,16 @@ pytest -m integration
 ### Frontend Testing
 
 ```bash
-cd frontend
+cd Wegent
 
 # Run tests
-npm test
+pnpm --dir frontend test
 
 # Run and watch for changes
-npm run test:watch
+pnpm --dir frontend run test:watch
 
 # Generate coverage report
-npm run test:coverage
+pnpm --dir frontend run test:coverage
 ```
 
 ### Executor and Shared Module Testing

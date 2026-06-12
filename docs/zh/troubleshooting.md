@@ -708,21 +708,20 @@ uv sync
 
 ```bash
 # 1. 清理缓存
-npm cache clean --force
-rm -rf node_modules package-lock.json
+pnpm store prune
+rm -rf node_modules frontend/node_modules wework/node_modules pnpm-lock.yaml
 
 # 2. 使用淘宝镜像
-npm config set registry https://registry.npmmirror.com
-npm install
+pnpm config set registry https://registry.npmmirror.com
+pnpm install
 
-# 3. 使用 yarn
-npm install -g yarn
-yarn install
+# 3. 使用锁文件安装
+pnpm install --frozen-lockfile
 
 # 4. 降低 Node.js 版本（如果兼容性问题）
 nvm install 18
 nvm use 18
-npm install
+pnpm install
 ```
 
 ### 问题 17: 热重载不工作
@@ -734,7 +733,7 @@ echo fs.inotify.max_user_watches=524288 | sudo tee -a /etc/sysctl.conf
 sudo sysctl -p
 
 # 重启开发服务器
-npm run dev
+pnpm --dir frontend run dev
 ```
 
 **后端热重载**:
