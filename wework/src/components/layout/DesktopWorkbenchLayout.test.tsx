@@ -1894,7 +1894,7 @@ describe('DesktopWorkbenchLayout', () => {
               tasks: [
                 {
                   id: 31,
-                  task_id: 31,
+                  task_id: '31' as unknown as number,
                   task_title: 'Running project chat',
                   task_status: 'RUNNING',
                   updated_at: new Date().toISOString(),
@@ -1904,7 +1904,7 @@ describe('DesktopWorkbenchLayout', () => {
           ],
           recentTasks: [
             {
-              id: 41,
+              id: '41' as unknown as number,
               title: 'Running standalone chat',
               status: 'RUNNING',
               task_type: 'code',

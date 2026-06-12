@@ -102,6 +102,19 @@ const SIDEBAR_ROW_METADATA_CLASS =
 const SIDEBAR_ROW_ACTIONS_CLASS =
   'absolute inset-0 invisible flex items-center justify-end opacity-0 transition-opacity group-hover/task:visible group-hover/task:opacity-100 group-focus-within/task:visible group-focus-within/task:opacity-100'
 
+function normalizeSidebarTaskId(value: unknown) {
+  const taskId = Number(value)
+  return Number.isInteger(taskId) && taskId > 0 ? taskId : undefined
+}
+
+function hasRunningSidebarTaskId(
+  runningTaskIds: Set<number>,
+  value: unknown,
+) {
+  const taskId = normalizeSidebarTaskId(value)
+  return taskId !== undefined && runningTaskIds.has(taskId)
+}
+
 function SidebarRunningStatusPill({
   testId,
   spinnerTestId,
@@ -574,7 +587,9 @@ function ProjectItem({
   const tasks = useMemo(() => sortProjectTasks(project.tasks), [project.tasks])
   const hasMoreTasks = tasks.length > INITIAL_PROJECT_CHAT_COUNT
   const visibleTasks = showAllTasks ? tasks : tasks.slice(0, INITIAL_PROJECT_CHAT_COUNT)
-  const projectRunning = tasks.some(task => runningTaskIds.has(task.task_id))
+  const projectRunning = tasks.some(task =>
+    hasRunningSidebarTaskId(runningTaskIds, task.task_id),
+  )
   const projectDeviceState = getSidebarDeviceState(getProjectDeviceId(project), devices)
   const canStartProjectChat = isSidebarDeviceOnline(projectDeviceState)
   const newProjectChatTitle = projectDeviceState && !canStartProjectChat
@@ -670,7 +685,7 @@ function ProjectItem({
                 key={task.task_id}
                 task={task}
                 selected={activeTaskId === task.task_id}
-                running={runningTaskIds.has(task.task_id)}
+                running={hasRunningSidebarTaskId(runningTaskIds, task.task_id)}
                 onOpenTask={onOpenTask}
                 projectId={project.id}
                 onArchiveTask={onArchiveTask}
@@ -1242,7 +1257,7 @@ export function DesktopSidebar({
                   key={task.id}
                   task={task}
                   selected={currentTaskId === task.id && currentProjectId === undefined}
-                  running={runningTaskIds.has(task.id)}
+                  running={hasRunningSidebarTaskId(runningTaskIds, task.id)}
                   devices={devices}
                   onOpenTask={onOpenTask}
                   onArchiveTask={onArchiveTask}

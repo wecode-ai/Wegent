@@ -401,4 +401,50 @@ describe('workbenchReducer', () => {
 
     expect(refreshed.devices).toEqual([device])
   })
+
+  test('merges device slot updates into existing devices', () => {
+    const state = {
+      ...initialWorkbenchState,
+      devices: [
+        {
+          id: 1,
+          device_id: 'device-1',
+          name: 'Device 1',
+          status: 'online' as const,
+          is_default: false,
+          bind_shell: 'claudecode',
+          slot_used: 0,
+          slot_max: 5,
+          running_tasks: [],
+        },
+      ],
+    }
+
+    const updated = workbenchReducer(state, {
+      type: 'device_slot_updated',
+      payload: {
+        device_id: 'device-1',
+        slot_used: 1,
+        slot_max: 5,
+        running_tasks: [
+          {
+            task_id: '31' as unknown as number,
+            title: 'Running task',
+            status: 'RUNNING',
+          },
+        ],
+      },
+    })
+
+    expect(updated.devices[0]).toMatchObject({
+      slot_used: 1,
+      slot_max: 5,
+      running_tasks: [
+        expect.objectContaining({
+          task_id: '31',
+          status: 'RUNNING',
+        }),
+      ],
+    })
+  })
 })

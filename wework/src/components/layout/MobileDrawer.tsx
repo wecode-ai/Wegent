@@ -96,6 +96,16 @@ function getProjectTaskTime(task: ProjectTask) {
   return task.updated_at || task.created_at
 }
 
+function normalizeDrawerTaskId(value: unknown) {
+  const taskId = Number(value)
+  return Number.isInteger(taskId) && taskId > 0 ? taskId : undefined
+}
+
+function hasRunningDrawerTaskId(runningTaskIds: Set<number>, value: unknown) {
+  const taskId = normalizeDrawerTaskId(value)
+  return taskId !== undefined && runningTaskIds.has(taskId)
+}
+
 function sortProjectTasks(tasks: ProjectTask[] = []) {
   return [...tasks].sort((left, right) => {
     const leftTime = new Date(getProjectTaskTime(left) || 0).getTime()
@@ -511,7 +521,10 @@ export function MobileDrawer({
                   {expanded && (
                     <div className="ml-[66px] mr-6 mt-1 space-y-1">
                       {tasks.map(task => {
-                        const running = runningTaskIds.has(task.task_id)
+                        const running = hasRunningDrawerTaskId(
+                          runningTaskIds,
+                          task.task_id,
+                        )
                         return (
                           <button
                             key={task.task_id}

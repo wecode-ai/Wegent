@@ -381,7 +381,7 @@ describe('WorkbenchProvider', () => {
                   tasks: [
                     {
                       id: 11,
-                      task_id: 11,
+                      task_id: '11' as unknown as number,
                       task_title: 'hello',
                       task_status: 'RUNNING',
                       updated_at: '2026-06-11T00:01:00.000Z',
@@ -406,6 +406,13 @@ describe('WorkbenchProvider', () => {
                       task_title: 'pre executed task',
                       task_status: 'PRE_EXECUTED',
                       updated_at: '2026-06-11T00:04:00.000Z',
+                    },
+                    {
+                      id: 15,
+                      task_id: 15,
+                      task_title: 'phase running task',
+                      status: { phase: 'RUNNING' } as unknown as string,
+                      updated_at: '2026-06-11T00:05:00.000Z',
                     },
                   ],
                 },
@@ -447,7 +454,7 @@ describe('WorkbenchProvider', () => {
                 is_default: true,
                 device_type: 'local',
                 bind_shell: 'claudecode',
-                running_task_ids: [13],
+                running_task_ids: ['13' as unknown as number],
               },
             ]),
             getHomeDirectory: vi.fn(),
@@ -468,7 +475,9 @@ describe('WorkbenchProvider', () => {
     )
 
     await waitFor(() =>
-      expect(screen.getByTestId('running-task-ids')).toHaveTextContent('11,13,14'),
+      expect(screen.getByTestId('running-task-ids')).toHaveTextContent(
+        '11,13,14,15',
+      ),
     )
   })
 

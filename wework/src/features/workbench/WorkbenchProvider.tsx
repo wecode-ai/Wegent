@@ -60,6 +60,7 @@ import type {
   User,
 } from '@/types/api'
 import type {
+  DeviceSlotUpdatePayload,
   DeviceUpgradeState,
   DeviceUpgradeStatusPayload,
 } from '@/types/device-events'
@@ -554,9 +555,10 @@ function getNewChatModelSelection(user: User | null): ModelSelectionConfig | nul
   return user?.preferences?.wework_new_chat_model_selection ?? null
 }
 
-const RUNNING_TASK_STATUSES = new Set([
+const ACTIVE_TASK_STATUSES = new Set([
   'PENDING',
   'RUNNING',
+  'CANCELLING',
   'STARTED',
   'PROCESSING',
   'IN_PROGRESS',
@@ -565,9 +567,47 @@ const RUNNING_TASK_STATUSES = new Set([
   'INITIALIZED',
   'PRE_EXECUTED',
 ])
+const TERMINAL_TASK_STATUSES = new Set([
+  'COMPLETED',
+  'SUCCESS',
+  'FAILED',
+  'CANCELLED',
+  'CANCELED',
+  'DELETE',
+  'TIMEOUT',
+])
+const WAITING_FOR_USER_TASK_STATUSES = new Set(['PENDING_CONFIRMATION'])
 
-function isRunningTaskStatus(status?: string) {
-  return RUNNING_TASK_STATUSES.has(String(status ?? '').toUpperCase())
+function normalizeTaskStatus(value: unknown): string | undefined {
+  if (typeof value === 'string') return value.toUpperCase()
+  if (!value || typeof value !== 'object') return undefined
+
+  const record = value as Record<string, unknown>
+  const nestedStatus = record.status
+  if (typeof nestedStatus === 'string') return nestedStatus.toUpperCase()
+
+  const phase = record.phase
+  if (typeof phase === 'string') return phase.toUpperCase()
+
+  return undefined
+}
+
+function isRunningTaskStatus(status?: unknown) {
+  const normalizedStatus = normalizeTaskStatus(status)
+  if (!normalizedStatus) return false
+  if (TERMINAL_TASK_STATUSES.has(normalizedStatus)) return false
+  if (WAITING_FOR_USER_TASK_STATUSES.has(normalizedStatus)) return false
+  return ACTIVE_TASK_STATUSES.has(normalizedStatus)
+}
+
+function normalizeRunningTaskId(value: unknown) {
+  const taskId = Number(value)
+  return Number.isInteger(taskId) && taskId > 0 ? taskId : undefined
+}
+
+function addRunningTaskId(ids: Set<number>, value: unknown) {
+  const taskId = normalizeRunningTaskId(value)
+  if (taskId !== undefined) ids.add(taskId)
 }
 
 function addRunningTasksFromWorkLists(
@@ -578,14 +618,14 @@ function addRunningTasksFromWorkLists(
   for (const project of projects) {
     for (const task of project.tasks ?? []) {
       if (task.task_id && isRunningTaskStatus(task.task_status ?? task.status)) {
-        ids.add(task.task_id)
+        addRunningTaskId(ids, task.task_id)
       }
     }
   }
 
   for (const task of recentTasks) {
     if (task.id && isRunningTaskStatus(task.status)) {
-      ids.add(task.id)
+      addRunningTaskId(ids, task.id)
     }
   }
 }
@@ -593,11 +633,11 @@ function addRunningTasksFromWorkLists(
 function addRunningTasksFromDevices(ids: Set<number>, devices: DeviceInfo[]) {
   for (const device of devices) {
     for (const taskId of device.running_task_ids ?? []) {
-      ids.add(taskId)
+      addRunningTaskId(ids, taskId)
     }
     for (const task of device.running_tasks ?? []) {
       if (task.task_id) {
-        ids.add(task.task_id)
+        addRunningTaskId(ids, task.task_id)
       }
     }
   }
@@ -961,6 +1001,10 @@ export function WorkbenchProvider({
     const handleDeviceChanged = () => {
       void refreshDevices()
     }
+    const handleDeviceSlotUpdate = (payload: DeviceSlotUpdatePayload) => {
+      dispatch({ type: 'device_slot_updated', payload })
+      void refreshDevices()
+    }
     const handleDeviceUpgradeStatus = (payload: DeviceUpgradeStatusPayload) => {
       setDeviceUpgradeState(payload.device_id, {
         status: payload.status,
@@ -977,7 +1021,7 @@ export function WorkbenchProvider({
       onDeviceOnline: handleDeviceChanged,
       onDeviceOffline: handleDeviceChanged,
       onDeviceStatus: handleDeviceChanged,
-      onDeviceSlotUpdate: handleDeviceChanged,
+      onDeviceSlotUpdate: handleDeviceSlotUpdate,
       onDeviceUpgradeStatus: handleDeviceUpgradeStatus,
       onChatStart: payload => {
         setIsAwaitingAssistantStart(false)
@@ -2121,7 +2165,7 @@ export function WorkbenchProvider({
     addRunningTasksFromWorkLists(ids, state.projects, state.recentTasks)
     addRunningTasksFromDevices(ids, state.devices)
     if (state.currentTask && isRunningTaskStatus(state.currentTask.status)) {
-      ids.add(state.currentTask.id)
+      addRunningTaskId(ids, state.currentTask.id)
     }
     for (const message of messages) {
       if (
@@ -2129,7 +2173,7 @@ export function WorkbenchProvider({
         message.status === 'streaming' &&
         message.taskId
       ) {
-        ids.add(message.taskId)
+        addRunningTaskId(ids, message.taskId)
       }
     }
     return ids

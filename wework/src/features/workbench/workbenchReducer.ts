@@ -8,6 +8,7 @@ import type {
   User,
   UserPreferences,
 } from '@/types/api'
+import type { DeviceSlotUpdatePayload } from '@/types/device-events'
 import type { WorkbenchState } from '@/types/workbench'
 
 export const initialWorkbenchState: WorkbenchState = {
@@ -47,6 +48,10 @@ export type WorkbenchAction =
       type: 'devices_refreshed'
       devices: DeviceInfo[]
       standaloneDeviceId?: string | null
+    }
+  | {
+      type: 'device_slot_updated'
+      payload: DeviceSlotUpdatePayload
     }
   | { type: 'bootstrap_failed'; error: string }
   | { type: 'project_selected'; project: ProjectWithTasks }
@@ -258,6 +263,22 @@ export function workbenchReducer(
           action.standaloneDeviceId === undefined
             ? state.standaloneDeviceId
             : action.standaloneDeviceId,
+      }
+    case 'device_slot_updated':
+      return {
+        ...state,
+        devices: state.devices.map(device =>
+          device.device_id === action.payload.device_id
+            ? {
+                ...device,
+                slot_used: action.payload.slot_used,
+                slot_max: action.payload.slot_max ?? device.slot_max,
+                running_tasks: action.payload.running_tasks ?? device.running_tasks,
+                running_task_ids:
+                  action.payload.running_task_ids ?? device.running_task_ids,
+              }
+            : device
+        ),
       }
     case 'bootstrap_failed':
       return { ...state, isBootstrapping: false, error: action.error }
