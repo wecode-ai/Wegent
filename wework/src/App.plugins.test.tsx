@@ -553,7 +553,7 @@ describe('App plugins route', () => {
     expect(screen.getByTestId('plugins-button')).toBeInTheDocument()
   })
 
-  test('reserves native macOS traffic light space on collapsed plugin routes in Tauri', async () => {
+  test('does not reserve traffic light space on collapsed plugin routes in Tauri', async () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,
       value: {},
@@ -565,9 +565,8 @@ describe('App plugins route', () => {
     expect(await screen.findByText('暂无已安装插件')).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('collapse-sidebar-button'))
 
-    expect(screen.getByTestId('plugins-topbar')).toHaveStyle({
-      paddingLeft: '89px',
-    })
+    expect(screen.getByTestId('plugins-topbar')).toHaveClass('md:pl-6')
+    expect(screen.getByTestId('plugins-topbar').style.paddingLeft).toBe('')
   })
 
   test('collapses and expands the desktop sidebar on plugin management route', async () => {

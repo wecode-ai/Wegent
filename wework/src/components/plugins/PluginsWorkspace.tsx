@@ -13,7 +13,6 @@ import { useTranslation } from '@/hooks/useTranslation'
 import {
   DESKTOP_TOP_BAR_BUTTON_CLASS,
   DesktopTopBar,
-  MAC_NATIVE_TOP_BAR_ACTION_INSET,
 } from '@/components/layout/DesktopTopBar'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { createHttpClient } from '@/api/http'
@@ -22,7 +21,6 @@ import { createPluginApi } from '@/api/plugins'
 import { createSystemSkillApi } from '@/api/systemSkills'
 import { getRuntimeConfig } from '@/config/runtime'
 import { navigateTo } from '@/lib/navigation'
-import { isTauriRuntime } from '@/lib/runtime-environment'
 import type {
   InstalledSkill,
   InstalledPlugin,
@@ -350,7 +348,6 @@ export function PluginsWorkspace({
 }: PluginsWorkspaceProps) {
   const { t } = useTranslation('common')
   const isMobile = useIsMobile()
-  const reserveMacWindowControls = isTauriRuntime()
   const [activeTab, setActiveTab] = useState<CatalogTab>('plugins')
   const [query, setQuery] = useState('')
   const [sectionFilter, setSectionFilter] = useState<CatalogSectionId | 'all'>(
@@ -1160,17 +1157,8 @@ export function PluginsWorkspace({
           testId="plugins-topbar"
           className={[
             'mx-auto h-12 max-w-[1420px] pl-20 pr-5 md:h-[52px] md:pr-7',
-            sidebarCollapsed
-              ? reserveMacWindowControls
-                ? undefined
-                : 'md:pl-6'
-              : 'md:pl-7',
+            sidebarCollapsed ? 'md:pl-6' : 'md:pl-7',
           ].join(' ')}
-          style={
-            sidebarCollapsed && reserveMacWindowControls
-              ? { paddingLeft: MAC_NATIVE_TOP_BAR_ACTION_INSET }
-              : undefined
-          }
           left={(
             <>
               {topBarLeftActions}

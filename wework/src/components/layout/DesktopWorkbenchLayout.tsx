@@ -281,7 +281,7 @@ export function DesktopWorkbenchLayout({
   }, [refreshEnvironmentInfo, state.currentProject, state.currentTask])
 
   return (
-    <div className="relative flex h-screen overflow-hidden bg-background text-text-primary">
+    <div className="relative flex h-full overflow-hidden bg-transparent text-text-primary">
       {!settingsOpen && !sidebarCollapsed && (
         <DesktopSidebar
           user={state.user}
@@ -350,6 +350,7 @@ export function DesktopWorkbenchLayout({
         />
       ) : (
         <DesktopWorkbenchMain
+          sidebarCollapsed={sidebarCollapsed}
           isBootstrapping={state.isBootstrapping}
           currentTask={state.currentTask}
           currentProject={state.currentProject}
