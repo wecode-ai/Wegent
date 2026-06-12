@@ -9,7 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from app.models.subtask import Subtask, SubtaskRole
+from app.models.subtask import SubtaskRole
+from app.stores.tasks import subtask_store
 
 INTERACTIVE_FORM_TOOL_MARKER = "interactive_form_question"
 
@@ -99,12 +100,7 @@ def get_pending_interactive_form(
     task_id: int,
 ) -> PendingInteractiveForm | None:
     """Return the latest unresolved interactive form for a task, if any."""
-    subtasks = (
-        db.query(Subtask)
-        .filter(Subtask.task_id == task_id)
-        .order_by(Subtask.message_id.desc(), Subtask.id.desc())
-        .all()
-    )
+    subtasks = subtask_store.list_by_task_desc(db, task_id=task_id)
 
     for subtask in subtasks:
         if subtask.role == SubtaskRole.USER:

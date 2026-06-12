@@ -101,8 +101,7 @@ export type TaskRecoveryReason =
   | 'join-ack'
   | 'queued-message-blocked'
   | 'manual-refresh'
-  | 'unknown-stream-probe'
-  | 'cancel-ack-probe'
+  | 'runtime-instability-probe'
   | 'network-online'
 
 export interface TaskRuntimeState {

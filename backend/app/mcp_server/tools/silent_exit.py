@@ -64,23 +64,25 @@ def _update_subtask_silent_exit(subtask_id: int, reason: str) -> None:
     """
     from datetime import datetime
 
-    from sqlalchemy.orm.attributes import flag_modified
-
-    from app.models.subtask import Subtask, SubtaskStatus
+    from app.models.subtask import SubtaskStatus
+    from app.stores.tasks import subtask_store
 
     db = SessionLocal()
     try:
-        subtask = db.query(Subtask).filter(Subtask.id == subtask_id).first()
+        subtask = subtask_store.get_by_id(db, subtask_id=subtask_id)
         if subtask:
             # Update result to include silent_exit marker
-            if subtask.result is None:
-                subtask.result = {}
-            subtask.result["silent_exit"] = True
-            subtask.result["silent_exit_reason"] = reason
-            subtask.status = SubtaskStatus.COMPLETED
-            subtask.progress = 100
-            subtask.updated_at = datetime.now()
-            flag_modified(subtask, "result")
+            result = dict(subtask.result or {})
+            result["silent_exit"] = True
+            result["silent_exit_reason"] = reason
+            subtask_store.update_fields(
+                db,
+                subtask=subtask,
+                result=result,
+                status=SubtaskStatus.COMPLETED,
+                progress=100,
+                completed_at=datetime.now(),
+            )
             db.commit()
             logger.info(f"[MCP] Marked subtask {subtask_id} as silent exit")
         else:

@@ -7,14 +7,13 @@ from datetime import datetime
 from typing import List, Optional, Tuple
 
 from fastapi import HTTPException
-from sqlalchemy.orm import Session, load_only, subqueryload, undefer
+from sqlalchemy.orm import Session
 
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.schemas.subtask import SubtaskCreate, SubtaskUpdate
 from app.services.base import BaseService
+from app.stores.tasks import subtask_store, task_access_store
 from app.utils.prompt_utils import extract_display_prompt
-from shared.models.db.enums import ContextType
-from shared.models.db.subtask_context import SubtaskContext
 
 logger = logging.getLogger(__name__)
 
@@ -30,18 +29,24 @@ class SubtaskService(BaseService[Subtask, SubtaskCreate, SubtaskUpdate]):
         """
         Create user Subtask
         """
-        db_obj = Subtask(
+        db_obj = subtask_store.create_subtask(
+            db,
             user_id=user_id,
             task_id=obj_in.task_id,
             team_id=obj_in.team_id,
             title=obj_in.title,
-            bot_id=obj_in.bot_id,
+            bot_ids=obj_in.bot_ids,
+            role=obj_in.role,
+            prompt=obj_in.prompt,
             executor_namespace=obj_in.executor_namespace,
             executor_name=obj_in.executor_name,
             message_id=obj_in.message_id,
-            status=SubtaskStatus.PENDING,
+            parent_id=obj_in.parent_id,
+            status=obj_in.status,
+            progress=obj_in.progress,
+            result=obj_in.result,
+            error_message=obj_in.error_message,
         )
-        db.add(db_obj)
         db.commit()
         db.refresh(db_obj)
         return db_obj
@@ -52,13 +57,11 @@ class SubtaskService(BaseService[Subtask, SubtaskCreate, SubtaskUpdate]):
         """
         Get user's Subtask list
         """
-        return (
-            db.query(Subtask)
-            .filter(Subtask.user_id == user_id)
-            .order_by(Subtask.created_at.desc())
-            .offset(skip)
-            .limit(limit)
-            .all()
+        return subtask_store.list_by_user(
+            db,
+            user_id=user_id,
+            skip=skip,
+            limit=limit,
         )
 
     def get_by_task(
@@ -95,93 +98,16 @@ class SubtaskService(BaseService[Subtask, SubtaskCreate, SubtaskUpdate]):
             before_message_id: If provided, return messages before this message_id
                               (for loading older messages when scrolling up)
         """
-        from app.services.task_member_service import task_member_service
-
-        # Check if this is a group chat and user is a member
-        is_member = task_member_service.is_member(db, task_id, user_id)
-
-        # Phase 1: Get sorted subtask IDs without loading large columns
-        # Only select columns needed for filtering and sorting
-        if is_member:
-            # For group chat members, return all subtasks
-            base_query = db.query(Subtask.id).filter(Subtask.task_id == task_id)
-        else:
-            # For non-members, only return user's own subtasks
-            base_query = db.query(Subtask.id).filter(
-                Subtask.task_id == task_id, Subtask.user_id == user_id
-            )
-
-        # Apply before_message_id filter for loading older messages
-        if before_message_id is not None:
-            base_query = base_query.filter(Subtask.message_id < before_message_id)
-
-        if from_latest:
-            # Get the latest N messages by ordering DESC first, then reverse
-            subtask_ids_query = (
-                base_query.order_by(
-                    Subtask.message_id.desc(), Subtask.created_at.desc()
-                )
-                .offset(skip)
-                .limit(limit)
-            )
-            # Reverse to get ascending order for display
-            subtask_ids = [row[0] for row in subtask_ids_query.all()][::-1]
-        else:
-            # Traditional pagination from the beginning
-            subtask_ids_query = (
-                base_query.order_by(Subtask.message_id.asc(), Subtask.created_at.asc())
-                .offset(skip)
-                .limit(limit)
-            )
-            subtask_ids = [row[0] for row in subtask_ids_query.all()]
-
-        if not subtask_ids:
-            return []
-
-        # Phase 2: Load full subtask data for the selected IDs
-        # Use subqueryload for contexts to avoid JOIN issues
-        # Use undefer to explicitly load the deferred columns
-        subtasks = (
-            db.query(Subtask)
-            .options(
-                subqueryload(Subtask.contexts),
-                undefer(Subtask.prompt),
-                undefer(Subtask.result),
-                undefer(Subtask.error_message),
-            )
-            .filter(Subtask.id.in_(subtask_ids))
-            .all()
+        return subtask_store.list_by_task(
+            db,
+            task_id=task_id,
+            user_id=user_id,
+            access_store=task_access_store,
+            skip=skip,
+            limit=limit,
+            from_latest=from_latest,
+            before_message_id=before_message_id,
         )
-
-        # Add sender_user_name for group chat messages
-        # Query all unique sender_user_ids from subtasks
-        from app.models.user import User
-
-        sender_ids = set()
-        for subtask in subtasks:
-            if (
-                subtask.sender_user_id and subtask.sender_user_id > 0
-            ):  # Check > 0 instead of truthy
-                sender_ids.add(subtask.sender_user_id)
-
-        # Batch query users
-        user_name_map = {}
-        if sender_ids:
-            users = db.query(User).filter(User.id.in_(sender_ids)).all()
-            user_name_map = {user.id: user.user_name for user in users}
-
-        # Set sender_user_name for each subtask
-        for subtask in subtasks:
-            if (
-                subtask.sender_user_id
-                and subtask.sender_user_id > 0
-                and subtask.sender_user_id in user_name_map
-            ):  # Check > 0
-                subtask.sender_user_name = user_name_map[subtask.sender_user_id]
-
-        # Restore the original order (IN clause doesn't preserve order)
-        id_to_subtask = {s.id: s for s in subtasks}
-        return [id_to_subtask[sid] for sid in subtask_ids if sid in id_to_subtask]
 
     def get_subtask_by_id(
         self, db: Session, *, subtask_id: int, user_id: int
@@ -190,34 +116,12 @@ class SubtaskService(BaseService[Subtask, SubtaskCreate, SubtaskUpdate]):
         Get Subtask by ID and user ID.
         For group chat members, allows access to any subtask in the task.
         """
-        from app.services.task_member_service import task_member_service
-
-        # First try to find subtask owned by user
-        subtask = (
-            db.query(Subtask)
-            .options(subqueryload(Subtask.contexts))
-            .filter(Subtask.id == subtask_id, Subtask.user_id == user_id)
-            .first()
+        subtask = subtask_store.get_accessible_by_id(
+            db,
+            subtask_id=subtask_id,
+            user_id=user_id,
+            access_store=task_access_store,
         )
-
-        # If not found and user is a group chat member, allow access
-        if not subtask:
-            # Get the subtask to check its task_id
-            subtask_check = (
-                db.query(Subtask)
-                .options(subqueryload(Subtask.contexts))
-                .filter(Subtask.id == subtask_id)
-                .first()
-            )
-
-            if subtask_check:
-                # Check if user is a member of this task's group chat
-                is_member = task_member_service.is_member(
-                    db, subtask_check.task_id, user_id
-                )
-                if is_member:
-                    subtask = subtask_check
-
         if not subtask:
             raise HTTPException(status_code=404, detail="Subtask not found")
 
@@ -235,10 +139,7 @@ class SubtaskService(BaseService[Subtask, SubtaskCreate, SubtaskUpdate]):
 
         update_data = obj_in.model_dump(exclude_unset=True)
 
-        for field, value in update_data.items():
-            setattr(subtask, field, value)
-
-        db.add(subtask)
+        subtask_store.update_fields(db, subtask=subtask, **update_data)
         db.commit()
         db.refresh(subtask)
         return subtask
@@ -251,7 +152,7 @@ class SubtaskService(BaseService[Subtask, SubtaskCreate, SubtaskUpdate]):
         if not subtask:
             raise HTTPException(status_code=404, detail="Subtask not found")
 
-        db.delete(subtask)
+        subtask_store.delete(db, subtask=subtask)
         db.commit()
 
     def get_new_messages_since(
@@ -277,51 +178,34 @@ class SubtaskService(BaseService[Subtask, SubtaskCreate, SubtaskUpdate]):
         Returns:
             List of subtask dictionaries with sender information
         """
-        from app.models.user import User
-        from app.services.task_member_service import task_member_service
-
         # Check if user is a member of this task
-        is_member = task_member_service.is_member(db, task_id, user_id)
+        is_member = task_access_store.is_member(db, task_id=task_id, user_id=user_id)
         if not is_member:
             raise HTTPException(
                 status_code=403, detail="Not authorized to access this task"
             )
 
-        # Build query with contexts
-        from sqlalchemy.orm import subqueryload
-
-        query = (
-            db.query(Subtask, User.user_name.label("sender_username"))
-            .options(subqueryload(Subtask.contexts))
-            .outerjoin(User, Subtask.sender_user_id == User.id)
-            .filter(Subtask.task_id == task_id)
-        )
-
-        # Apply filters
-        if last_subtask_id:
-            query = query.filter(Subtask.id > last_subtask_id)
-
+        since_dt = None
         if since:
-            from datetime import datetime
-
             try:
                 since_dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
-                query = query.filter(Subtask.created_at > since_dt)
             except ValueError:
                 pass  # Ignore invalid timestamp
 
-        # Order by message_id and created_at
-        query = query.order_by(Subtask.message_id.asc(), Subtask.created_at.asc())
-
-        # Execute query
-        results = query.all()
+        subtasks = subtask_store.list_new_messages_since(
+            db,
+            task_id=task_id,
+            last_subtask_id=last_subtask_id,
+            since=since_dt,
+        )
 
         # Convert to dict format
         messages = []
-        for subtask, sender_username in results:
+        for subtask in subtasks:
             # Serialize contexts using SubtaskContextBrief
             from app.schemas.subtask_context import SubtaskContextBrief as ContextBrief
 
+            sender_username = getattr(subtask, "sender_user_name", None)
             contexts = []
             if hasattr(subtask, "contexts") and subtask.contexts:
                 for ctx in subtask.contexts:
@@ -396,40 +280,11 @@ class SubtaskService(BaseService[Subtask, SubtaskCreate, SubtaskUpdate]):
         Returns:
             Number of deleted subtasks
         """
-        # Get all subtasks to delete (message_id >= from_message_id)
-        subtasks_to_delete = (
-            db.query(Subtask)
-            .filter(
-                Subtask.task_id == task_id,
-                Subtask.message_id >= from_message_id,
-            )
-            .all()
+        deleted_count = subtask_store.delete_from_message_id(
+            db,
+            task_id=task_id,
+            from_message_id=from_message_id,
         )
-
-        if not subtasks_to_delete:
-            return 0
-
-        deleted_count = len(subtasks_to_delete)
-        subtask_ids_to_delete = [s.id for s in subtasks_to_delete]
-
-        # Handle SubtaskContexts:
-        # - Preserve attachment contexts (reset subtask_id to 0 so they can be re-linked)
-        # - Delete non-attachment contexts (knowledge_base, table, etc.)
-        # This allows attachments to be reused when regenerating responses
-        db.query(SubtaskContext).filter(
-            SubtaskContext.subtask_id.in_(subtask_ids_to_delete),
-            SubtaskContext.context_type == ContextType.ATTACHMENT.value,
-        ).update({"subtask_id": 0}, synchronize_session=False)
-
-        db.query(SubtaskContext).filter(
-            SubtaskContext.subtask_id.in_(subtask_ids_to_delete),
-            SubtaskContext.context_type != ContextType.ATTACHMENT.value,
-        ).delete(synchronize_session="fetch")
-
-        # Delete the subtasks
-        for subtask in subtasks_to_delete:
-            db.delete(subtask)
-
         db.commit()
 
         logger.info(
@@ -461,40 +316,11 @@ class SubtaskService(BaseService[Subtask, SubtaskCreate, SubtaskUpdate]):
         Returns:
             Number of deleted subtasks
         """
-        # Get all subtasks to delete (message_id > after_message_id)
-        subtasks_to_delete = (
-            db.query(Subtask)
-            .filter(
-                Subtask.task_id == task_id,
-                Subtask.message_id > after_message_id,
-            )
-            .all()
+        deleted_count = subtask_store.delete_after_message_id(
+            db,
+            task_id=task_id,
+            after_message_id=after_message_id,
         )
-
-        if not subtasks_to_delete:
-            return 0
-
-        deleted_count = len(subtasks_to_delete)
-        subtask_ids_to_delete = [s.id for s in subtasks_to_delete]
-
-        # Handle SubtaskContexts:
-        # - Preserve attachment contexts (reset subtask_id to 0 so they can be re-linked)
-        # - Delete non-attachment contexts (knowledge_base, table, etc.)
-        # This allows attachments to be reused when regenerating responses
-        db.query(SubtaskContext).filter(
-            SubtaskContext.subtask_id.in_(subtask_ids_to_delete),
-            SubtaskContext.context_type == ContextType.ATTACHMENT.value,
-        ).update({"subtask_id": 0}, synchronize_session=False)
-
-        db.query(SubtaskContext).filter(
-            SubtaskContext.subtask_id.in_(subtask_ids_to_delete),
-            SubtaskContext.context_type != ContextType.ATTACHMENT.value,
-        ).delete(synchronize_session="fetch")
-
-        # Delete the subtasks
-        for subtask in subtasks_to_delete:
-            db.delete(subtask)
-
         db.commit()
 
         logger.info(
@@ -530,17 +356,10 @@ class SubtaskService(BaseService[Subtask, SubtaskCreate, SubtaskUpdate]):
         Raises:
             HTTPException: If validation fails
         """
-        from app.models.task import TaskResource as Task
-        from app.services.task_member_service import task_member_service
-
         # Get the subtask
-        subtask = (
-            db.query(Subtask)
-            .filter(Subtask.id == subtask_id, Subtask.user_id == user_id)
-            .first()
-        )
+        subtask = subtask_store.get_by_id(db, subtask_id=subtask_id)
 
-        if not subtask:
+        if not subtask or subtask.user_id != user_id:
             raise HTTPException(status_code=404, detail="Message not found")
 
         # Verify it's a user message (role == USER)
@@ -550,25 +369,13 @@ class SubtaskService(BaseService[Subtask, SubtaskCreate, SubtaskUpdate]):
             )
 
         # Check if task is a group chat (edit not supported in group chat)
-        task = db.query(Task).filter(Task.id == subtask.task_id).first()
-        if task and task.json:
-            task_spec = task.json.get("spec", {})
-            if task_spec.get("is_group_chat", False):
-                raise HTTPException(
-                    status_code=400, detail="Edit not supported in group chat"
-                )
+        if task_access_store.is_group_chat(db, task_id=subtask.task_id):
+            raise HTTPException(
+                status_code=400, detail="Edit not supported in group chat"
+            )
 
         # Check if there's an AI response currently being generated
-        running_assistant = (
-            db.query(Subtask)
-            .filter(
-                Subtask.task_id == subtask.task_id,
-                Subtask.role == SubtaskRole.ASSISTANT,
-                Subtask.status.in_([SubtaskStatus.PENDING, SubtaskStatus.RUNNING]),
-            )
-            .first()
-        )
-        if running_assistant:
+        if subtask_store.has_running_assistant(db, task_id=subtask.task_id):
             raise HTTPException(
                 status_code=400, detail="Cannot edit while AI is generating a response"
             )

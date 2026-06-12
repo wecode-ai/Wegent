@@ -52,6 +52,7 @@ from app.services.subscription.market_access import (
     filter_existing_market_whitelist_user_ids,
     get_market_whitelist_user_ids_from_internal,
 )
+from app.stores.tasks import task_store
 
 logger = logging.getLogger(__name__)
 
@@ -267,14 +268,10 @@ class SubscriptionService:
         workspace = None
         workspace_id = subscription_in.workspace_id
         if subscription_in.workspace_id:
-            workspace = (
-                db.query(TaskResource)
-                .filter(
-                    TaskResource.id == subscription_in.workspace_id,
-                    TaskResource.kind == "Workspace",
-                    TaskResource.is_active == TaskResource.STATE_ACTIVE,
-                )
-                .first()
+            workspace = task_store.get_active_workspace_by_id(
+                db,
+                workspace_id=subscription_in.workspace_id,
+                owner_user_id=user_id,
             )
 
             if not workspace:
@@ -536,14 +533,10 @@ class SubscriptionService:
         # Update workspace reference if changed
         if "workspace_id" in update_data:
             if update_data["workspace_id"]:
-                workspace = (
-                    db.query(TaskResource)
-                    .filter(
-                        TaskResource.id == update_data["workspace_id"],
-                        TaskResource.kind == "Workspace",
-                        TaskResource.is_active == TaskResource.STATE_ACTIVE,
-                    )
-                    .first()
+                workspace = task_store.get_active_workspace_by_id(
+                    db,
+                    workspace_id=update_data["workspace_id"],
+                    owner_user_id=user_id,
                 )
                 if not workspace:
                     raise HTTPException(
@@ -571,14 +564,9 @@ class SubscriptionService:
                     git_domain=update_data.get("git_domain") or "github.com",
                     branch_name=update_data.get("branch_name") or "main",
                 )
-                workspace = (
-                    db.query(TaskResource)
-                    .filter(
-                        TaskResource.id == workspace_id,
-                        TaskResource.kind == "Workspace",
-                        TaskResource.is_active == TaskResource.STATE_ACTIVE,
-                    )
-                    .first()
+                workspace = task_store.get_active_workspace_by_id(
+                    db,
+                    workspace_id=workspace_id,
                 )
                 if workspace:
                     subscription_crd.spec.workspaceRef = SubscriptionWorkspaceRef(

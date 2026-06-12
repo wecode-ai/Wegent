@@ -52,12 +52,10 @@ def _get_tracer() -> "Tracer":
 
 
 def _set_user_context(user_id: str, user_name: str) -> None:
-    """Set user context for telemetry (lazy import from span.py directly)."""
-    if is_telemetry_enabled():
-        # Import directly from span.py to avoid loading propagation.py which imports opentelemetry
-        from shared.telemetry.context.span import set_user_context
+    """Set user context in ContextVars and current span when telemetry is enabled."""
+    from shared.telemetry.context.span import set_user_context
 
-        set_user_context(user_id=user_id, user_name=user_name)
+    set_user_context(user_id=user_id, user_name=user_name)
 
 
 # Password hashing context

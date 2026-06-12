@@ -31,6 +31,7 @@ from app.services.prompt_draft.transcript import (
     collect_conversation_blocks as _collect_prompt_draft_conversation_blocks,
 )
 from app.services.task_member_service import task_member_service
+from app.stores.tasks import task_store
 
 logger = logging.getLogger(__name__)
 
@@ -107,16 +108,10 @@ def _prepare_prompt_draft_context(
     current_user: User,
     model: str | None,
 ) -> dict[str, Any]:
-    task = (
-        db.query(TaskResource)
-        .filter(
-            TaskResource.id == task_id,
-            TaskResource.kind == "Task",
-            TaskResource.is_active.in_(
-                [TaskResource.STATE_ACTIVE, TaskResource.STATE_SUBSCRIPTION]
-            ),
-        )
-        .first()
+    task = task_store.get_task_by_states(
+        db,
+        task_id=task_id,
+        states=[TaskResource.STATE_ACTIVE, TaskResource.STATE_SUBSCRIPTION],
     )
     if not task or not task_member_service.is_member(db, task_id, current_user.id):
         raise PromptDraftTaskNotFoundError("task_not_found")

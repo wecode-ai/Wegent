@@ -7,7 +7,6 @@
 import json
 from typing import Any, Dict, List, Tuple
 
-from sqlalchemy import String, cast, or_
 from sqlalchemy.orm import Session
 
 from app.core.constants import CLIENT_ORIGIN_WEWORK
@@ -18,6 +17,7 @@ from app.services.adapters.task_kinds.converters import convert_to_task_dict_opt
 from app.services.adapters.task_kinds.filters import filter_tasks_for_display
 from app.services.adapters.task_kinds.helpers import get_tasks_related_data_batch
 from app.services.adapters.task_kinds.query_utils import restore_task_order
+from app.stores.tasks import subtask_store, task_store
 
 SEARCH_RESULT_FALLBACK_TASK_LIMIT = 300
 SEARCH_RESULT_FALLBACK_SUBTASK_LIMIT = 1000
@@ -122,17 +122,12 @@ def _load_visible_wework_tasks(
     user_id: int,
     client_origin: str,
 ) -> Tuple[List[int], Dict[int, TaskResource]]:
-    tasks = (
-        db.query(TaskResource)
-        .filter(
-            TaskResource.kind == "Task",
-            TaskResource.is_active == TaskResource.STATE_ACTIVE,
-            TaskResource.namespace != "system",
-            TaskResource.user_id == user_id,
-            TaskResource.client_origin == client_origin,
-        )
-        .order_by(TaskResource.updated_at.desc())
-        .all()
+    tasks = task_store.list_regular_active_tasks(
+        db,
+        user_id=user_id,
+        client_origin=client_origin,
+        exclude_system_namespace=True,
+        order_by_updated_at_desc=True,
     )
     visible_task_by_id = filter_tasks_for_display(tasks)
     task_ids = [task.id for task in tasks if task.id in visible_task_by_id]
@@ -170,21 +165,11 @@ def _match_subtasks_in_database(
     task_ids: List[int],
     keyword: str,
 ) -> set[int]:
-    like_pattern = f"%{keyword}%"
-    rows = (
-        db.query(Subtask.task_id)
-        .filter(Subtask.task_id.in_(task_ids))
-        .filter(
-            or_(
-                Subtask.prompt.ilike(like_pattern),
-                Subtask.error_message.ilike(like_pattern),
-                cast(Subtask.result, String).ilike(like_pattern),
-            )
-        )
-        .distinct()
-        .all()
+    return subtask_store.search_task_ids_by_content(
+        db,
+        task_ids=task_ids,
+        keyword=keyword,
     )
-    return {row[0] for row in rows}
 
 
 def _match_subtasks_with_python_fallback(
@@ -202,12 +187,10 @@ def _match_subtasks_with_python_fallback(
     if not fallback_task_ids:
         return set()
 
-    subtasks = (
-        db.query(Subtask)
-        .filter(Subtask.task_id.in_(fallback_task_ids))
-        .order_by(Subtask.updated_at.desc())
-        .limit(SEARCH_RESULT_FALLBACK_SUBTASK_LIMIT)
-        .all()
+    subtasks = subtask_store.list_recent_by_task_ids(
+        db,
+        task_ids=fallback_task_ids,
+        limit=SEARCH_RESULT_FALLBACK_SUBTASK_LIMIT,
     )
     return {
         subtask.task_id

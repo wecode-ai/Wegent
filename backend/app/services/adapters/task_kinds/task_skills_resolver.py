@@ -2,6 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from __future__ import annotations
+
 """Skill resolution chain for task skill queries."""
 
 import json as json_lib
@@ -13,7 +15,6 @@ from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.models.subscription import BackgroundExecution
-from app.models.task import TaskResource
 from app.schemas.kind import Bot, Ghost, Task, Team
 from app.services.skill_binding_service import (
     SkillBindingContext,
@@ -30,6 +31,7 @@ from app.services.task_skill_selection import (
     parse_additional_skill_names_from_labels,
     parse_requested_skill_refs_from_labels,
 )
+from app.stores.tasks import task_store
 
 logger = logging.getLogger(__name__)
 
@@ -119,15 +121,7 @@ def resolve_task_skills(db: Session, *, task_id: int, user_id: int) -> Dict[str,
     from app.services.readers.kinds import KindType, kindReader
     from app.services.task_member_service import task_member_service
 
-    task = (
-        db.query(TaskResource)
-        .filter(
-            TaskResource.id == task_id,
-            TaskResource.kind == "Task",
-            TaskResource.is_active.in_(TaskResource.is_active_query()),
-        )
-        .first()
-    )
+    task = task_store.get_active_task(db, task_id=task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 

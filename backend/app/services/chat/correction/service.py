@@ -13,9 +13,9 @@ from datetime import datetime
 from typing import Any, Callable, Optional
 
 from sqlalchemy.orm import Session
-from sqlalchemy.orm.attributes import flag_modified
 
-from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
+from app.models.subtask import Subtask, SubtaskRole
+from app.stores.tasks import subtask_store
 
 logger = logging.getLogger(__name__)
 
@@ -57,16 +57,10 @@ def build_chat_history(
     if before_message_id <= 1:
         return history
 
-    # Get all subtasks before this message
-    previous_subtasks = (
-        db.query(Subtask)
-        .filter(
-            Subtask.task_id == task_id,
-            Subtask.message_id < before_message_id,
-            Subtask.status == SubtaskStatus.COMPLETED,
-        )
-        .order_by(Subtask.message_id.asc())
-        .all()
+    previous_subtasks = subtask_store.list_completed_before_message_id(
+        db,
+        task_id=task_id,
+        before_message_id=before_message_id,
     )
 
     for prev_subtask in previous_subtasks:
@@ -149,8 +143,7 @@ async def evaluate_and_save_correction(
         "corrected_at": datetime.utcnow().isoformat() + "Z",
     }
 
-    subtask.result = subtask_result
-    flag_modified(subtask, "result")
+    subtask_store.update_result(db, subtask=subtask, result=subtask_result)
     db.commit()
 
     logger.info(f"Saved correction result for subtask {subtask.id} to database")
@@ -172,8 +165,7 @@ def delete_correction_from_subtask(db: Session, subtask: Subtask) -> bool:
     result = subtask.result or {}
     if isinstance(result, dict) and "correction" in result:
         del result["correction"]
-        subtask.result = result
-        flag_modified(subtask, "result")
+        subtask_store.update_result(db, subtask=subtask, result=result)
         db.commit()
         logger.info(f"Deleted correction for subtask {subtask.id}")
         return True
@@ -212,8 +204,7 @@ def apply_correction_to_subtask(
         subtask_result["correction"]["applied_at"] = datetime.utcnow().isoformat() + "Z"
         subtask_result["correction"]["original_value"] = original_value
 
-    subtask.result = subtask_result
-    flag_modified(subtask, "result")
+    subtask_store.update_result(db, subtask=subtask, result=subtask_result)
     db.commit()
 
     logger.info(f"Applied correction for subtask {subtask.id}")

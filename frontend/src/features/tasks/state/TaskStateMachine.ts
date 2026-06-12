@@ -49,9 +49,7 @@ import {
   isWaitingForUserTaskStatus,
 } from './taskStatusClassifier'
 
-const CANCEL_ACK_PROBE_DELAY_MS = 5000
-const NETWORK_ONLINE_PROBE_DELAY_MS = 500
-const UNKNOWN_STREAM_PROBE_DELAY_MS = 3000
+const RUNTIME_CONSISTENCY_GRACE_MS = 3000
 
 /**
  * TaskStateMachine - manages message state for a single task
@@ -264,11 +262,6 @@ export class TaskStateMachine {
   async requestRuntimeCheck(reason: TaskRecoveryReason): Promise<void> {
     if (this.closed || !this.deps.isConnected() || !this.deps.pullRuntime) {
       this.syncRuntimeStabilityProbe()
-      return
-    }
-
-    if (reason === 'network-online') {
-      this.runtimeStabilityProbe.schedule(reason, NETWORK_ONLINE_PROBE_DELAY_MS)
       return
     }
 
@@ -547,26 +540,17 @@ export class TaskStateMachine {
     }
   }
 
-  private shouldProbeRunningUnknownStream(): boolean {
-    return (
+  private shouldProbeRuntimeInstability(): boolean {
+    const waitingForStream =
       this.state.runtime.taskStatus === 'RUNNING' &&
       this.state.runtime.activeStreamSubtaskId === undefined &&
-      !this.state.runtime.serverConfirmedNoStream &&
-      this.state.status !== 'joining' &&
-      this.state.status !== 'syncing' &&
-      this.state.status !== 'waiting_socket'
-    )
-  }
-
-  private shouldProbeCancelAckPending(): boolean {
-    return (
+      !this.state.runtime.serverConfirmedNoStream
+    const cancelPending =
       this.state.isStopping &&
       this.state.runtime.activeStreamSubtaskId !== undefined &&
-      !isTerminalTaskStatus(this.state.runtime.taskStatus) &&
-      this.state.status !== 'joining' &&
-      this.state.status !== 'syncing' &&
-      this.state.status !== 'waiting_socket'
-    )
+      !isTerminalTaskStatus(this.state.runtime.taskStatus)
+
+    return !this.isRecoveryStatus() && (waitingForStream || cancelPending)
   }
 
   private syncRuntimeStabilityProbe(): void {
@@ -575,13 +559,8 @@ export class TaskStateMachine {
       return
     }
 
-    if (this.shouldProbeCancelAckPending()) {
-      this.runtimeStabilityProbe.schedule('cancel-ack-probe', CANCEL_ACK_PROBE_DELAY_MS)
-      return
-    }
-
-    if (this.shouldProbeRunningUnknownStream()) {
-      this.runtimeStabilityProbe.schedule('unknown-stream-probe', UNKNOWN_STREAM_PROBE_DELAY_MS)
+    if (this.shouldProbeRuntimeInstability()) {
+      this.runtimeStabilityProbe.schedule('runtime-instability-probe', RUNTIME_CONSISTENCY_GRACE_MS)
       return
     }
 

@@ -4,9 +4,10 @@
 
 """Tests for chat task manager subtask creation."""
 
+from contextlib import contextmanager
 from datetime import datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from sqlalchemy.orm import Session
@@ -21,6 +22,109 @@ from app.services.chat.storage.task_manager import (
     create_new_task,
     create_task_and_subtasks,
 )
+
+
+@contextmanager
+def _mock_db_session(db):
+    yield db
+
+
+def test_database_handler_updates_subtask_status_through_store():
+    """Runtime executor callbacks should mutate subtasks through SubtaskStore."""
+    from app.services.chat.storage.db import DatabaseHandler
+
+    db = MagicMock()
+    subtask = SimpleNamespace(
+        id=1861,
+        task_id=1385,
+        status=SubtaskStatus.PENDING,
+        result=None,
+        executor_name="",
+    )
+    handler = DatabaseHandler()
+
+    with (
+        patch(
+            "app.services.chat.storage.db._db_session",
+            return_value=_mock_db_session(db),
+        ),
+        patch(
+            "app.services.chat.storage.db.subtask_store.get_by_id",
+            return_value=subtask,
+        ) as get_subtask_mock,
+        patch(
+            "app.services.chat.storage.db.subtask_store.update_fields"
+        ) as update_mock,
+        patch.object(handler, "_update_task_status_sync") as update_task_mock,
+    ):
+        handler._update_subtask_sync(
+            subtask_id=1861,
+            status="COMPLETED",
+            result={"value": "done"},
+        )
+
+    get_subtask_mock.assert_called_once_with(db, subtask_id=1861)
+    update_task_mock.assert_called_once_with(1385)
+    update_kwargs = update_mock.call_args.kwargs
+    assert update_kwargs["subtask"] is subtask
+    assert update_kwargs["status"] == SubtaskStatus.COMPLETED
+    assert update_kwargs["result"] == {"value": "done"}
+    assert update_kwargs["completed_at"] is not None
+    db.query.assert_not_called()
+
+
+def test_database_handler_recomputes_task_status_from_subtask_store():
+    """Runtime task status recomputation should read assistant subtasks through store."""
+    from app.services.chat.storage.db import DatabaseHandler
+
+    db = MagicMock()
+    task = _build_existing_task(task_id=1385, user_id=7)
+    last_subtask = SimpleNamespace(
+        id=1861,
+        task_id=1385,
+        status=SubtaskStatus.COMPLETED,
+        result={"value": "done"},
+        error_message="",
+    )
+    strategy = MagicMock()
+    strategy.get_task_status_on_subtask_complete.return_value = ("COMPLETED", 100)
+    strategy.get_auto_advance_info.return_value = None
+
+    with (
+        patch(
+            "app.services.chat.storage.db._db_session",
+            return_value=_mock_db_session(db),
+        ),
+        patch(
+            "app.services.chat.storage.db.task_store.get_task_by_states",
+            return_value=task,
+        ) as get_task_mock,
+        patch(
+            "app.services.chat.storage.db.subtask_store.list_assistant_by_task",
+            return_value=[last_subtask],
+        ) as list_subtasks_mock,
+        patch(
+            "app.services.adapters.collaboration_strategy."
+            "CollaborationStrategyFactory.get_strategy_for_task",
+            return_value=strategy,
+        ),
+        patch(
+            "app.services.chat.storage.db.task_store.update_json"
+        ) as update_task_mock,
+    ):
+        DatabaseHandler()._update_task_status_sync(task_id=1385)
+
+    get_task_mock.assert_called_once_with(
+        db,
+        task_id=1385,
+        states=TaskResource.is_active_query(),
+    )
+    list_subtasks_mock.assert_called_once_with(db, task_id=1385, owner_user_id=7)
+    update_payload = update_task_mock.call_args.kwargs["payload"]
+    assert update_payload["status"]["status"] == "COMPLETED"
+    assert update_payload["status"]["progress"] == 100
+    assert update_payload["status"]["result"] == {"value": "done"}
+    db.query.assert_not_called()
 
 
 def test_create_assistant_subtask_inherits_deleted_executor_state_for_recovery(

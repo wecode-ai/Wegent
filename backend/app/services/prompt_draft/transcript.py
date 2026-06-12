@@ -10,7 +10,8 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.models.subtask import Subtask, SubtaskRole
+from app.models.subtask import SubtaskRole
+from app.stores.tasks import subtask_store
 
 
 def _extract_text_blocks(content: Any) -> list[str]:
@@ -130,11 +131,10 @@ def extract_assistant_turn_blocks(result: Any) -> list[tuple[str, str]]:
 
 
 def collect_conversation_blocks(db: Session, task_id: int) -> list[tuple[str, str]]:
-    subtasks = (
-        db.query(Subtask)
-        .filter(Subtask.task_id == task_id)
-        .order_by(Subtask.created_at.asc(), Subtask.id.asc())
-        .all()
+    subtasks = subtask_store.list_by_task_ordered(
+        db,
+        task_id=task_id,
+        order_by="created_at",
     )
 
     blocks: list[tuple[str, str]] = []
