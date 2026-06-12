@@ -1,11 +1,12 @@
 import { Page } from '@playwright/test'
+import { ADMIN_USER } from '../config/test-users'
 
 /**
  * Test credentials for E2E testing
  */
 export const TEST_USER = {
-  username: 'admin',
-  password: 'Wegent2025!',
+  username: ADMIN_USER.username,
+  password: ADMIN_USER.password,
 }
 
 /**
