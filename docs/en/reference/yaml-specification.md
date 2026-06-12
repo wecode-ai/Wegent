@@ -345,6 +345,22 @@ spec:
 
 KnowledgeBase is used to manage document knowledge bases, retrieval configuration, and summary capabilities.
 
+### Retrieval Configuration
+
+| Field | Type | Required | Description |
+|------|------|----------|-------------|
+| `spec.retrievalConfig` | object | No | RAG retrieval configuration. Missing or `null` means the knowledge base has no RAG configuration |
+| `spec.retrievalConfig.retriever_name` | string | Yes* | Retriever name |
+| `spec.retrievalConfig.retriever_namespace` | string | No | Namespace where the retriever is defined, defaults to `default` |
+| `spec.retrievalConfig.embedding_config.model_name` | string | Yes* | Embedding model name |
+| `spec.retrievalConfig.embedding_config.model_namespace` | string | No | Namespace where the embedding model is defined, defaults to `default` |
+| `spec.retrievalConfig.retrieval_mode` | string | No | Retrieval mode: `vector`, `keyword`, or `hybrid` |
+| `spec.retrievalConfig.top_k` | integer | No | Number of results to return |
+| `spec.retrievalConfig.score_threshold` | number | No | Minimum relevance threshold |
+| `spec.retrievalConfig.hybrid_weights` | object | No | Hybrid retrieval weights |
+
+`retriever_name` and `embedding_config.model_name` are required only when `spec.retrievalConfig` exists. The create API field `rag_config_mode` expresses creation intent only (auto, manual, or disabled) and is not persisted as a KnowledgeBase YAML field. The persisted stable states are either a complete `retrievalConfig` or no `retrievalConfig`.
+
 ### Summary-Related Configuration
 
 | Field | Type | Required | Description |

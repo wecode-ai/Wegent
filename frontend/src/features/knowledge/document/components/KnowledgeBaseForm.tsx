@@ -46,6 +46,7 @@ interface KnowledgeBaseFormProps {
   advancedOpen: boolean
   onAdvancedOpenChange: (open: boolean) => void
   advancedDescription?: string
+  retrievalModeSection?: ReactNode
   showRetrievalSection: boolean
   retrievalConfig: Partial<RetrievalConfig>
   onRetrievalConfigChange: (config: Partial<RetrievalConfig>) => void
@@ -82,6 +83,7 @@ export function KnowledgeBaseForm({
   advancedOpen,
   onAdvancedOpenChange,
   advancedDescription,
+  retrievalModeSection,
   showRetrievalSection,
   retrievalConfig,
   onRetrievalConfigChange,
@@ -182,6 +184,8 @@ export function KnowledgeBaseForm({
           </div>
         </div>
       </div>
+
+      {retrievalModeSection}
 
       {showRetrievalSection && (
         <RetrievalSettingsSection

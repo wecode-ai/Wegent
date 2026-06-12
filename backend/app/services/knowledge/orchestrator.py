@@ -276,6 +276,107 @@ class KnowledgeOrchestrator:
             "model_namespace": first.get("namespace", "default"),
         }
 
+    def _resolve_retrieval_config(
+        self,
+        *,
+        db: Session,
+        user: User,
+        namespace: str,
+        retrieval_config: Optional[Dict[str, Any]],
+        rag_config_mode: Literal["auto", "manual", "disabled"] = "auto",
+        retriever_name: Optional[str] = None,
+        retriever_namespace: Optional[str] = None,
+        embedding_model_name: Optional[str] = None,
+        embedding_model_namespace: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Resolve retrieval config according to the caller's explicit intent."""
+        if rag_config_mode == "disabled":
+            return None
+
+        resolved_config = dict(retrieval_config or {})
+        embedding_config = dict(resolved_config.get("embedding_config") or {})
+
+        retriever_name = resolved_config.get("retriever_name") or retriever_name
+        retriever_namespace = (
+            resolved_config.get("retriever_namespace") or retriever_namespace
+        )
+        embedding_model_name = (
+            embedding_config.get("model_name") or embedding_model_name
+        )
+        embedding_model_namespace = (
+            embedding_config.get("model_namespace") or embedding_model_namespace
+        )
+
+        if rag_config_mode == "manual":
+            if not retriever_name or not embedding_model_name:
+                raise ValueError(
+                    "Manual RAG configuration requires retriever_name and "
+                    "embedding_config.model_name"
+                )
+            return self._build_complete_retrieval_config(
+                base_config=resolved_config,
+                retriever_name=retriever_name,
+                retriever_namespace=retriever_namespace,
+                embedding_model_name=embedding_model_name,
+                embedding_model_namespace=embedding_model_namespace,
+            )
+
+        if not retriever_name:
+            default_retriever = self.get_default_retriever(db, user.id, namespace)
+            if default_retriever:
+                retriever_name = default_retriever["retriever_name"]
+                retriever_namespace = default_retriever["retriever_namespace"]
+
+        if not embedding_model_name:
+            default_embedding = self.get_default_embedding_model(db, user.id, namespace)
+            if default_embedding:
+                embedding_model_name = default_embedding["model_name"]
+                embedding_model_namespace = default_embedding["model_namespace"]
+
+        if not retriever_name or not embedding_model_name:
+            logger.warning(
+                "[Orchestrator] Could not build retrieval_config: "
+                "retriever=%s, embedding=%s",
+                retriever_name,
+                embedding_model_name,
+            )
+            return None
+
+        logger.info(
+            "[Orchestrator] Built retrieval_config: retriever=%s, embedding=%s",
+            retriever_name,
+            embedding_model_name,
+        )
+        return self._build_complete_retrieval_config(
+            base_config=resolved_config,
+            retriever_name=retriever_name,
+            retriever_namespace=retriever_namespace,
+            embedding_model_name=embedding_model_name,
+            embedding_model_namespace=embedding_model_namespace,
+        )
+
+    def _build_complete_retrieval_config(
+        self,
+        *,
+        base_config: Dict[str, Any],
+        retriever_name: str,
+        retriever_namespace: Optional[str],
+        embedding_model_name: str,
+        embedding_model_namespace: Optional[str],
+    ) -> Dict[str, Any]:
+        """Build the only retrieval_config shape allowed to be persisted."""
+        resolved_config = dict(base_config)
+        resolved_config["retriever_name"] = retriever_name
+        resolved_config["retriever_namespace"] = retriever_namespace or "default"
+        resolved_config["embedding_config"] = {
+            "model_name": embedding_model_name,
+            "model_namespace": embedding_model_namespace or "default",
+        }
+        resolved_config.setdefault("retrieval_mode", "vector")
+        resolved_config.setdefault("top_k", 5)
+        resolved_config.setdefault("score_threshold", 0.5)
+        return resolved_config
+
     def get_task_model_as_summary_model(
         self,
         db: Session,
@@ -959,6 +1060,7 @@ class KnowledgeOrchestrator:
         namespace: str = "default",
         kb_type: str = "notebook",
         summary_enabled: bool = False,
+        rag_config_mode: Literal["auto", "manual", "disabled"] = "auto",
         # REST API scenario: pass complete config
         retrieval_config: Optional[Dict[str, Any]] = None,
         # MCP scenario: auto-select or explicitly specify
@@ -973,11 +1075,12 @@ class KnowledgeOrchestrator:
         """
         Create a knowledge base with auto-configuration support.
 
-        Supports two modes:
-        1. REST API mode: Pass complete retrieval_config dict
-        2. MCP mode: Auto-select or specify individual retriever/embedding params
+        Supports three RAG configuration modes:
+        1. auto: Auto-select missing retriever/embedding while preserving tuning fields
+        2. manual: Require a complete retrieval_config dict
+        3. disabled: Create a knowledge base without RAG
 
-        Auto-selection logic (when retrieval_config is None):
+        Auto-selection logic (when rag_config_mode is auto):
         1. retriever: If not specified, auto-select using get_default_retriever()
         2. embedding: If not specified, auto-select using get_default_embedding_model()
         3. summary_model: If not specified and summary_enabled=True:
@@ -992,6 +1095,7 @@ class KnowledgeOrchestrator:
             namespace: Namespace (default for personal, group name for group)
             kb_type: Type (notebook or classic)
             summary_enabled: Enable summary generation
+            rag_config_mode: RAG configuration mode
             retrieval_config: Complete retrieval config dict (REST API mode)
             retriever_name: Optional retriever name (MCP mode)
             retriever_namespace: Optional retriever namespace (MCP mode)
@@ -1009,53 +1113,22 @@ class KnowledgeOrchestrator:
         logger.info(
             f"[Orchestrator] create_knowledge_base called: name={name}, namespace={namespace}, "
             f"kb_type={kb_type}, summary_enabled={summary_enabled}, task_id={task_id}, "
+            f"rag_config_mode={rag_config_mode}, "
             f"user_id={user.id}, has_retrieval_config={retrieval_config is not None}, "
             f"has_summary_model_ref={summary_model_ref is not None}"
         )
 
-        # Use provided retrieval_config or build one from individual params
-        resolved_retrieval_config = retrieval_config
-
-        if resolved_retrieval_config is None:
-            # MCP mode: auto-select or use provided individual params
-            # Auto-select retriever if not specified
-            if retriever_name is None:
-                default_retriever = self.get_default_retriever(db, user.id, namespace)
-                if default_retriever:
-                    retriever_name = default_retriever["retriever_name"]
-                    retriever_namespace = default_retriever["retriever_namespace"]
-
-            # Auto-select embedding model if not specified
-            if embedding_model_name is None:
-                default_embedding = self.get_default_embedding_model(
-                    db, user.id, namespace
-                )
-                if default_embedding:
-                    embedding_model_name = default_embedding["model_name"]
-                    embedding_model_namespace = default_embedding["model_namespace"]
-
-            # Build retrieval_config if we have both retriever and embedding
-            if retriever_name and embedding_model_name:
-                resolved_retrieval_config = {
-                    "retriever_name": retriever_name,
-                    "retriever_namespace": retriever_namespace or "default",
-                    "embedding_config": {
-                        "model_name": embedding_model_name,
-                        "model_namespace": embedding_model_namespace or "default",
-                    },
-                    "retrieval_mode": "vector",
-                    "top_k": 5,
-                    "score_threshold": 0.5,
-                }
-                logger.info(
-                    f"[Orchestrator] Built retrieval_config: retriever={retriever_name}, "
-                    f"embedding={embedding_model_name}"
-                )
-            else:
-                logger.warning(
-                    f"[Orchestrator] Could not build retrieval_config: "
-                    f"retriever={retriever_name}, embedding={embedding_model_name}"
-                )
+        resolved_retrieval_config = self._resolve_retrieval_config(
+            db=db,
+            user=user,
+            namespace=namespace,
+            retrieval_config=retrieval_config,
+            rag_config_mode=rag_config_mode,
+            retriever_name=retriever_name,
+            retriever_namespace=retriever_namespace,
+            embedding_model_name=embedding_model_name,
+            embedding_model_namespace=embedding_model_namespace,
+        )
 
         # Auto-select summary model if summary_enabled and not specified
         resolved_summary_model_ref = summary_model_ref

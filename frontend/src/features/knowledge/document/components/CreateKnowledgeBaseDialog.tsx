@@ -27,6 +27,7 @@ import type {
   SummaryModelRef,
   KnowledgeBaseType,
   RetrievalConfig,
+  RagConfigMode,
   InitialMember,
   MemberRole,
 } from '@/types/knowledge'
@@ -49,6 +50,7 @@ interface CreateKnowledgeBaseDialogProps {
     name: string
     description?: string
     retrieval_config?: Partial<RetrievalConfig>
+    rag_config_mode?: RagConfigMode
     summary_enabled?: boolean
     summary_model_ref?: SummaryModelRef | null
     guided_questions?: string[]
@@ -117,6 +119,7 @@ export function CreateKnowledgeBaseDialog({
   const [summaryModelRef, setSummaryModelRef] = useState<SummaryModelRef | null>(null)
   const [summaryModelError, setSummaryModelError] = useState('')
   const [guidedQuestions, setGuidedQuestions] = useState<string[]>([])
+  const [ragConfigMode, setRagConfigMode] = useState<RagConfigMode>('auto')
   const [retrievalConfig, setRetrievalConfig] = useState<Partial<RetrievalConfig>>({
     retrieval_mode: 'vector',
     top_k: 5,
@@ -185,9 +188,6 @@ export function CreateKnowledgeBaseDialog({
       return
     }
 
-    // Note: retrieval_config is now optional - users can create KB without RAG
-    // AI will use kb_ls/kb_head tools to explore documents instead of RAG search
-
     try {
       // Filter out empty guided questions
       const validGuidedQuestions = guidedQuestions.filter(q => q.trim().length > 0)
@@ -197,11 +197,19 @@ export function CreateKnowledgeBaseDialog({
         role: e.role,
         entity_display_name: e.label,
       })) as InitialMember[]
+      const hasCompleteRetrievalConfig =
+        retrievalConfig.retriever_name && retrievalConfig.embedding_config?.model_name
+      if (ragConfigMode === 'manual' && !hasCompleteRetrievalConfig) {
+        setError(t('knowledge:document.ragConfigMode.manualIncomplete'))
+        setAccordionValue('advanced')
+        return
+      }
 
       await onSubmit({
         name: name.trim(),
         description: description.trim() || undefined,
-        retrieval_config: retrievalConfig,
+        retrieval_config: ragConfigMode === 'disabled' ? undefined : retrievalConfig,
+        rag_config_mode: ragConfigMode,
         summary_enabled: summaryEnabled,
         summary_model_ref: summaryEnabled ? summaryModelRef : null,
         guided_questions:
@@ -221,6 +229,7 @@ export function CreateKnowledgeBaseDialog({
       setSummaryEnabled(true)
       setSummaryModelRef(null)
       setGuidedQuestions([])
+      setRagConfigMode('auto')
       setRetrievalConfig({
         retrieval_mode: 'vector',
         top_k: 5,
@@ -248,6 +257,7 @@ export function CreateKnowledgeBaseDialog({
       setSummaryModelRef(null)
       setSummaryModelError('')
       setGuidedQuestions([])
+      setRagConfigMode('auto')
       setRetrievalConfig({
         retrieval_mode: 'vector',
         top_k: 5,
@@ -284,6 +294,7 @@ export function CreateKnowledgeBaseDialog({
 
   // Determine if this is a notebook type
   const isNotebook = selectedKbType === 'notebook'
+  const ragModeOptions: RagConfigMode[] = ['auto', 'manual', 'disabled']
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -402,7 +413,28 @@ export function CreateKnowledgeBaseDialog({
             advancedOpen={accordionValue === 'advanced'}
             onAdvancedOpenChange={open => setAccordionValue(open ? 'advanced' : '')}
             advancedDescription={t('knowledge:document.advancedSettings.collapsed')}
-            showRetrievalSection={true}
+            retrievalModeSection={
+              <div className="space-y-2">
+                <Label className="text-sm font-medium">
+                  {t('knowledge:document.ragConfigMode.title')}
+                </Label>
+                <div className="grid grid-cols-3 gap-2">
+                  {ragModeOptions.map(mode => (
+                    <Button
+                      key={mode}
+                      type="button"
+                      variant={ragConfigMode === mode ? 'primary' : 'outline'}
+                      className="h-11 min-w-[44px] px-2 text-xs"
+                      onClick={() => setRagConfigMode(mode)}
+                      data-testid={`rag-mode-${mode}`}
+                    >
+                      {t(`knowledge:document.ragConfigMode.${mode}`)}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+            }
+            showRetrievalSection={ragConfigMode !== 'disabled'}
             retrievalConfig={retrievalConfig}
             onRetrievalConfigChange={setRetrievalConfig}
             retrievalScope={effectiveScope}
