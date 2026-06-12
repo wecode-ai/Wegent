@@ -12,8 +12,9 @@ const isTurbopack = process.env.TURBOPACK === '1'
 const nextConfig = {
   reactStrictMode: false,
   output: 'standalone',
+  outputFileTracingRoot: path.join(__dirname, '..'),
   turbopack: {
-    root: __dirname,
+    root: path.join(__dirname, '..'),
   },
   // Allow cross-origin requests in development mode
   // This prevents "Cross origin request detected" warning
