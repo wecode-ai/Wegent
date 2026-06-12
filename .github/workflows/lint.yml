@@ -126,24 +126,26 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093
+        with:
+          version: 10.34.3
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '22.x'
-          cache: 'npm'
-          cache-dependency-path: ./wework/package-lock.json
+          cache: 'pnpm'
+          cache-dependency-path: ./pnpm-lock.yaml
 
       - name: Install dependencies
-        working-directory: ./wework
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Run ESLint
-        working-directory: ./wework
-        run: npm run lint
+        run: pnpm --filter wework lint
 
       - name: Run TypeScript check
-        working-directory: ./wework
-        run: npx tsc --noEmit
+        run: pnpm --filter wework exec tsc --noEmit
 
   check-settings-config:
     name: Check Settings Configuration
