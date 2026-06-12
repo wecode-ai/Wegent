@@ -2,11 +2,12 @@
 // Build script to create browser-compatible noVNC bundle
 // Produces public/novnc/rfb.min.js which exposes window.noVNC as RFB constructor
 //
-// noVNC 1.6.0 ships as CJS but has a top-level await in util/browser.js (line 179).
-// Webpack only supports top-level await in ESM mode, but ESM mode breaks CJS exports.
+// noVNC ships with a top-level await in util/browser.js.
+// Webpack can parse it, but producing a classic script bundle for runtime loading
+// is simpler if the feature check updates asynchronously instead.
 //
 // Solution: Use a custom inline webpack loader to patch out the top-level await
-// in browser.js at build time, then bundle with standard CJS mode.
+// in browser.js at build time, then expose the RFB constructor on window.noVNC.
 
 const path = require('path')
 const webpack = require('webpack')
@@ -18,12 +19,17 @@ fs.writeFileSync(
   patchLoaderPath,
   `module.exports = function(source) {
   // Replace top-level await with .then() pattern
-  // Original: exports.supportsWebCodecsH264Decode = supportsWebCodecsH264Decode = await _checkWebCodecsH264DecodeSupport();
-  // Patched: async .then() that sets the value after resolution (initial value stays undefined)
-  return source.replace(
+  // noVNC 1.6 used CJS exports; noVNC 1.7 uses ESM assignment.
+  // Patched: async .then() that sets the value after resolution.
+  return source
+    .replace(
     /exports\\.supportsWebCodecsH264Decode\\s*=\\s*supportsWebCodecsH264Decode\\s*=\\s*await\\s+_checkWebCodecsH264DecodeSupport\\(\\);/,
     '_checkWebCodecsH264DecodeSupport().then(function(v) { exports.supportsWebCodecsH264Decode = supportsWebCodecsH264Decode = v; });'
-  );
+    )
+    .replace(
+      /supportsWebCodecsH264Decode\\s*=\\s*await\\s+_checkWebCodecsH264DecodeSupport\\(\\);/,
+      '_checkWebCodecsH264DecodeSupport().then(function(v) { supportsWebCodecsH264Decode = v; });'
+    );
 };
 `
 )
@@ -37,6 +43,7 @@ const config = {
     library: {
       name: 'noVNC',
       type: 'window',
+      export: 'default',
     },
   },
   module: {
@@ -44,7 +51,7 @@ const config = {
       {
         // Apply patch loader only to browser.js to remove top-level await
         test: /browser\.js$/,
-        include: /node_modules[\\/]@novnc[\\/]novnc[\\/]lib[\\/]util/,
+        include: /node_modules[\\/]@novnc[\\/]novnc[\\/](lib|core)[\\/]util/,
         use: [patchLoaderPath],
       },
     ],
