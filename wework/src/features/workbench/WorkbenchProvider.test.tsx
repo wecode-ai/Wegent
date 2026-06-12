@@ -414,6 +414,13 @@ describe('WorkbenchProvider', () => {
                       status: { phase: 'RUNNING' } as unknown as string,
                       updated_at: '2026-06-11T00:05:00.000Z',
                     },
+                    {
+                      id: 16,
+                      task_id: 16,
+                      task_title: 'unknown active task',
+                      task_status: 'BACKEND_DISPATCHED',
+                      updated_at: '2026-06-11T00:06:00.000Z',
+                    },
                   ],
                 },
               ],
@@ -476,7 +483,7 @@ describe('WorkbenchProvider', () => {
 
     await waitFor(() =>
       expect(screen.getByTestId('running-task-ids')).toHaveTextContent(
-        '11,13,14,15',
+        '11,13,14,15,16',
       ),
     )
   })

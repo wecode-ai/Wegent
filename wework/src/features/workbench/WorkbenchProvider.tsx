@@ -555,18 +555,6 @@ function getNewChatModelSelection(user: User | null): ModelSelectionConfig | nul
   return user?.preferences?.wework_new_chat_model_selection ?? null
 }
 
-const ACTIVE_TASK_STATUSES = new Set([
-  'PENDING',
-  'RUNNING',
-  'CANCELLING',
-  'STARTED',
-  'PROCESSING',
-  'IN_PROGRESS',
-  'QUEUED',
-  'WAITING',
-  'INITIALIZED',
-  'PRE_EXECUTED',
-])
 const TERMINAL_TASK_STATUSES = new Set([
   'COMPLETED',
   'SUCCESS',
@@ -597,7 +585,7 @@ function isRunningTaskStatus(status?: unknown) {
   if (!normalizedStatus) return false
   if (TERMINAL_TASK_STATUSES.has(normalizedStatus)) return false
   if (WAITING_FOR_USER_TASK_STATUSES.has(normalizedStatus)) return false
-  return ACTIVE_TASK_STATUSES.has(normalizedStatus)
+  return true
 }
 
 function normalizeRunningTaskId(value: unknown) {
