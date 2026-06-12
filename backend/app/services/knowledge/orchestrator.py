@@ -283,12 +283,16 @@ class KnowledgeOrchestrator:
         user: User,
         namespace: str,
         retrieval_config: Optional[Dict[str, Any]],
+        rag_config_mode: Literal["auto", "disabled"] = "auto",
         retriever_name: Optional[str] = None,
         retriever_namespace: Optional[str] = None,
         embedding_model_name: Optional[str] = None,
         embedding_model_namespace: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Build a complete retrieval config, auto-filling missing core fields."""
+        if rag_config_mode == "disabled":
+            return None
+
         resolved_config = dict(retrieval_config or {})
         embedding_config = dict(resolved_config.get("embedding_config") or {})
 
@@ -1042,6 +1046,7 @@ class KnowledgeOrchestrator:
         namespace: str = "default",
         kb_type: str = "notebook",
         summary_enabled: bool = False,
+        rag_config_mode: Literal["auto", "disabled"] = "auto",
         # REST API scenario: pass complete config
         retrieval_config: Optional[Dict[str, Any]] = None,
         # MCP scenario: auto-select or explicitly specify
@@ -1055,6 +1060,10 @@ class KnowledgeOrchestrator:
     ) -> KnowledgeBaseResponse:
         """
         Create a knowledge base with auto-configuration support.
+
+        Supports two RAG modes:
+        1. auto: Use a complete provided config or auto-select missing defaults.
+        2. disabled: Create a knowledge base without RAG retrieval config.
 
         Auto-selection logic:
         1. retriever: If not specified, auto-select using get_default_retriever()
@@ -1071,6 +1080,7 @@ class KnowledgeOrchestrator:
             namespace: Namespace (default for personal, group name for group)
             kb_type: Type (notebook or classic)
             summary_enabled: Enable summary generation
+            rag_config_mode: RAG configuration mode
             retrieval_config: Complete retrieval config dict (REST API mode)
             retriever_name: Optional retriever name (MCP mode)
             retriever_namespace: Optional retriever namespace (MCP mode)
@@ -1088,6 +1098,7 @@ class KnowledgeOrchestrator:
         logger.info(
             f"[Orchestrator] create_knowledge_base called: name={name}, namespace={namespace}, "
             f"kb_type={kb_type}, summary_enabled={summary_enabled}, task_id={task_id}, "
+            f"rag_config_mode={rag_config_mode}, "
             f"user_id={user.id}, has_retrieval_config={retrieval_config is not None}, "
             f"has_summary_model_ref={summary_model_ref is not None}"
         )
@@ -1097,6 +1108,7 @@ class KnowledgeOrchestrator:
             user=user,
             namespace=namespace,
             retrieval_config=retrieval_config,
+            rag_config_mode=rag_config_mode,
             retriever_name=retriever_name,
             retriever_namespace=retriever_namespace,
             embedding_model_name=embedding_model_name,

@@ -538,6 +538,11 @@
       "expanded": "点击收起",
       "readOnly": "只读"
     },
+    "ragConfigMode": {
+      "title": "RAG 检索",
+      "auto": "自动配置",
+      "disabled": "无 RAG"
+    },
     "retrieval": {
       "retriever": "检索引擎",
       "retrieverSelect": "选择检索引擎",

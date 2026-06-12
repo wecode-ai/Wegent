@@ -8,7 +8,7 @@ Pydantic schemas for knowledge base and document management.
 
 from datetime import datetime
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -126,6 +126,10 @@ class KnowledgeBaseCreate(BaseModel):
     )
     retrieval_config: Optional[RetrievalConfigCreate] = Field(
         None, description="Retrieval configuration"
+    )
+    rag_config_mode: Literal["auto", "disabled"] = Field(
+        "auto",
+        description="RAG configuration mode: auto-fill or disabled",
     )
     summary_enabled: bool = Field(
         default=False,

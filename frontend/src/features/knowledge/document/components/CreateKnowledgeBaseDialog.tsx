@@ -27,6 +27,7 @@ import type {
   SummaryModelRef,
   KnowledgeBaseType,
   RetrievalConfigDraft,
+  RagConfigMode,
   InitialMember,
   MemberRole,
 } from '@/types/knowledge'
@@ -49,6 +50,7 @@ interface CreateKnowledgeBaseDialogProps {
     name: string
     description?: string
     retrieval_config?: RetrievalConfigDraft
+    rag_config_mode?: RagConfigMode
     summary_enabled?: boolean
     summary_model_ref?: SummaryModelRef | null
     guided_questions?: string[]
@@ -117,6 +119,7 @@ export function CreateKnowledgeBaseDialog({
   const [summaryModelRef, setSummaryModelRef] = useState<SummaryModelRef | null>(null)
   const [summaryModelError, setSummaryModelError] = useState('')
   const [guidedQuestions, setGuidedQuestions] = useState<string[]>([])
+  const [ragConfigMode, setRagConfigMode] = useState<RagConfigMode>('auto')
   const [retrievalConfig, setRetrievalConfig] = useState<RetrievalConfigDraft>({
     retrieval_mode: 'vector',
     top_k: 5,
@@ -197,7 +200,8 @@ export function CreateKnowledgeBaseDialog({
       await onSubmit({
         name: name.trim(),
         description: description.trim() || undefined,
-        retrieval_config: retrievalConfig,
+        retrieval_config: ragConfigMode === 'disabled' ? undefined : retrievalConfig,
+        rag_config_mode: ragConfigMode,
         summary_enabled: summaryEnabled,
         summary_model_ref: summaryEnabled ? summaryModelRef : null,
         guided_questions:
@@ -217,6 +221,7 @@ export function CreateKnowledgeBaseDialog({
       setSummaryEnabled(true)
       setSummaryModelRef(null)
       setGuidedQuestions([])
+      setRagConfigMode('auto')
       setRetrievalConfig({
         retrieval_mode: 'vector',
         top_k: 5,
@@ -244,6 +249,7 @@ export function CreateKnowledgeBaseDialog({
       setSummaryModelRef(null)
       setSummaryModelError('')
       setGuidedQuestions([])
+      setRagConfigMode('auto')
       setRetrievalConfig({
         retrieval_mode: 'vector',
         top_k: 5,
@@ -280,6 +286,7 @@ export function CreateKnowledgeBaseDialog({
 
   // Determine if this is a notebook type
   const isNotebook = selectedKbType === 'notebook'
+  const ragModeOptions: RagConfigMode[] = ['auto', 'disabled']
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -397,7 +404,28 @@ export function CreateKnowledgeBaseDialog({
             advancedVariant="accordion"
             advancedOpen={accordionValue === 'advanced'}
             onAdvancedOpenChange={open => setAccordionValue(open ? 'advanced' : '')}
-            showRetrievalSection
+            retrievalModeSection={
+              <div className="space-y-2">
+                <Label className="text-sm font-medium">
+                  {t('knowledge:document.ragConfigMode.title')}
+                </Label>
+                <div className="grid grid-cols-2 gap-2">
+                  {ragModeOptions.map(mode => (
+                    <Button
+                      key={mode}
+                      type="button"
+                      variant={ragConfigMode === mode ? 'primary' : 'outline'}
+                      className="h-11 min-w-[44px] px-2 text-xs"
+                      onClick={() => setRagConfigMode(mode)}
+                      data-testid={`rag-mode-${mode}`}
+                    >
+                      {t(`knowledge:document.ragConfigMode.${mode}`)}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+            }
+            showRetrievalSection={ragConfigMode !== 'disabled'}
             retrievalConfig={retrievalConfig}
             onRetrievalConfigChange={setRetrievalConfig}
             retrievalScope={effectiveScope}

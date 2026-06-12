@@ -278,6 +278,26 @@ class TestKnowledgeOrchestrator:
         mock_get_retriever.assert_called_once_with(mock_db, mock_user.id, "default")
         mock_get_embedding.assert_called_once_with(mock_db, mock_user.id, "default")
 
+    def test_resolve_retrieval_config_disabled_returns_none_without_auto_select(
+        self, orchestrator, mock_db, mock_user
+    ):
+        """Test disabled mode creates a knowledge base without RAG."""
+        with patch.object(orchestrator, "get_default_retriever") as mock_get_retriever:
+            with patch.object(
+                orchestrator, "get_default_embedding_model"
+            ) as mock_get_embedding:
+                result = orchestrator._resolve_retrieval_config(
+                    db=mock_db,
+                    user=mock_user,
+                    namespace="default",
+                    retrieval_config={"retrieval_mode": "vector"},
+                    rag_config_mode="disabled",
+                )
+
+        assert result is None
+        mock_get_retriever.assert_not_called()
+        mock_get_embedding.assert_not_called()
+
     def test_resolve_retrieval_config_complete_explicit_config_does_not_auto_select(
         self, orchestrator, mock_db, mock_user
     ):

@@ -538,6 +538,11 @@
       "expanded": "Click to collapse",
       "readOnly": "Read-only"
     },
+    "ragConfigMode": {
+      "title": "RAG Retrieval",
+      "auto": "Auto",
+      "disabled": "No RAG"
+    },
     "retrieval": {
       "retriever": "Retriever",
       "retrieverSelect": "Select a retriever",

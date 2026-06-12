@@ -302,6 +302,7 @@ export interface SummaryModelRef {
 // - notebook: Three-column layout with chat area and document panel (new style)
 // - classic: Document list only without chat functionality (legacy style)
 export type KnowledgeBaseType = 'notebook' | 'classic'
+export type RagConfigMode = 'auto' | 'disabled'
 
 // Knowledge Base types
 export interface KnowledgeBase {
@@ -341,6 +342,7 @@ export interface KnowledgeBaseCreate {
   description?: string
   namespace?: string
   retrieval_config?: RetrievalConfigDraft
+  rag_config_mode?: RagConfigMode
   summary_enabled?: boolean
   summary_model_ref?: SummaryModelRef | null
   /** Knowledge base display type: 'notebook' (three-column with chat) or 'classic' (document list only) */
