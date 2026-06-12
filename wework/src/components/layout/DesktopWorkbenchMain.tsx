@@ -32,10 +32,6 @@ import { cn } from '@/lib/utils'
 import { BottomWorkspacePanel } from './workspace-panels/BottomWorkspacePanel'
 import { RightWorkspacePanel } from './workspace-panels/RightWorkspacePanel'
 import { WorkspacePanelActions } from './workspace-panels/WorkspacePanelActions'
-import {
-  DesktopTopBar,
-  MAC_NATIVE_TOP_BAR_ACTION_INSET,
-} from './DesktopTopBar'
 import { ConversationDeviceOfflineBanner } from './ConversationDeviceOfflineBanner'
 import { DeviceStatusPrompt } from './DeviceStatusPrompt'
 import { TitlebarActionsPortal } from '@/components/topnav/TitlebarActionsPortal'
