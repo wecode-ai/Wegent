@@ -83,6 +83,10 @@ function formatSize(bytes) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
+function formatDuration(startTime) {
+  return `${((Date.now() - startTime) / 1000).toFixed(1)}s`
+}
+
 function isFontComplete(filePath, minSize) {
   if (!fs.existsSync(filePath)) return false
   const { size } = fs.statSync(filePath)
@@ -103,6 +107,7 @@ function downloadFile(url, destPath, options = {}, maxRedirects = 5) {
   const tempPath = destPath + '.downloading'
   const protocol = url.startsWith('https') ? https : http
   const headers = options.headers || {}
+  const startedAt = Date.now()
 
   return new Promise((resolve, reject) => {
     if (maxRedirects <= 0) {
@@ -149,6 +154,7 @@ function downloadFile(url, destPath, options = {}, maxRedirects = 5) {
         fileStream.close(() => {
           try {
             fs.renameSync(tempPath, destPath)
+            console.log(`  ✓ Saved ${path.basename(destPath)} in ${formatDuration(startedAt)}`)
             resolve()
           } catch (err) {
             fs.unlink(tempPath, () => {})
@@ -305,15 +311,21 @@ async function downloadPdfFonts() {
 }
 
 function tarExtract(archivePath, cwd) {
+  const startedAt = Date.now()
+  console.log(`  ↪ Extracting ${path.basename(archivePath)}...`)
   return new Promise((resolve, reject) => {
     execFile('tar', ['-xzf', archivePath, '-C', cwd], (err, _stdout, stderr) => {
       if (err) reject(new Error(stderr || err.message))
-      else resolve()
+      else {
+        console.log(`  ✓ Extracted ${path.basename(archivePath)} in ${formatDuration(startedAt)}`)
+        resolve()
+      }
     })
   })
 }
 
 async function downloadGoogleSansBundleFromUrl(url) {
+  const startedAt = Date.now()
   const tempGzPath = path.join(GOOGLE_SANS_DIR, '_bundle.tar.gz')
   await downloadFile(url, tempGzPath)
 
@@ -338,6 +350,8 @@ async function downloadGoogleSansBundleFromUrl(url) {
       throw new Error('google-sans-local.css not found in bundle')
     }
 
+    console.log('  ↪ Installing Google Sans bundle files...')
+
     // Move font files to GOOGLE_SANS_DIR
     for (const file of fs.readdirSync(extractedFontsDir)) {
       fs.renameSync(path.join(extractedFontsDir, file), path.join(GOOGLE_SANS_DIR, file))
@@ -352,6 +366,7 @@ async function downloadGoogleSansBundleFromUrl(url) {
     ensureDirectory(path.dirname(GOOGLE_SANS_CSS_OUTPUT))
     fs.writeFileSync(GOOGLE_SANS_CSS_OUTPUT, cssText, 'utf8')
     console.log(`✓ Generated ${path.relative(process.cwd(), GOOGLE_SANS_CSS_OUTPUT)}\n`)
+    console.log(`✓ Google Sans bundle installed in ${formatDuration(startedAt)}\n`)
   } finally {
     // Clean up temp extraction directory
     fs.rmSync(extractDir, { recursive: true, force: true })
