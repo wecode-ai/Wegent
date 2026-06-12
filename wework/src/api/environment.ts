@@ -34,10 +34,10 @@ function outputAsString(output: DeviceCommandResponse['stdout']): string {
   if (typeof output === 'string') {
     return output
   }
-  if (Array.isArray(output)) {
+  if (Array.isArray(output) && output.every(item => typeof item === 'string')) {
     return output.join('\n')
   }
-  return JSON.stringify(output)
+  throw new Error('Expected text stdout from device command')
 }
 
 function environmentInfoCacheKey(project: ProjectWithTasks): string | null {

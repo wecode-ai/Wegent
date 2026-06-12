@@ -194,6 +194,7 @@ export function ChatInput({
       <CompactChatComposer
         {...composerProps}
         attachments={controls.attachments}
+        codeComments={codeComments}
         uploadingFiles={controls.uploadingFiles}
         attachmentErrors={controls.errors}
         onFileSelect={files => {
@@ -202,6 +203,7 @@ export function ChatInput({
         onRemoveAttachment={attachmentId => {
           void controls.removeAttachment(attachmentId)
         }}
+        onClearCodeComments={onClearCodeComments}
         onListLocalSkills={controls.listLocalSkills}
         isStreaming={isStreaming}
         onPause={onPause}

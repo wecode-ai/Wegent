@@ -23,6 +23,11 @@ interface CommentState {
   value: string
 }
 
+interface WorkspaceFilePreviewContentProps {
+  file: WorkspaceTextFileResponse
+  onAddCodeComment: (context: CodeCommentContext) => void
+}
+
 function elementFromSelectionNode(node: Node): Element | null {
   return node.nodeType === Node.ELEMENT_NODE
     ? node as Element
@@ -48,25 +53,21 @@ function lineRangeForSelection(
   }
 }
 
-export function WorkspaceFilePreview({
+function WorkspaceFilePreviewContent({
   file,
-  loading,
-  error,
-  onRetry,
   onAddCodeComment,
-}: WorkspaceFilePreviewProps) {
+}: WorkspaceFilePreviewContentProps) {
   const { t } = useTranslation('common')
   const [selection, setSelection] = useState<SelectionState | null>(null)
   const [commentState, setCommentState] = useState<CommentState>({
     filePath: null,
     value: '',
   })
-  const lines = useMemo(() => file?.content.split('\n') ?? [], [file?.content])
-  const activeSelection = selection?.filePath === file?.path ? selection : null
-  const comment = commentState.filePath === file?.path ? commentState.value : ''
+  const lines = useMemo(() => file.content.split('\n'), [file.content])
+  const activeSelection = selection?.filePath === file.path ? selection : null
+  const comment = commentState.filePath === file.path ? commentState.value : ''
 
   const captureSelection = () => {
-    if (!file) return
     const browserSelection = window.getSelection()
     const selectedText = browserSelection?.toString().trim() ?? ''
     if (!selectedText) {
@@ -100,38 +101,6 @@ export function WorkspaceFilePreview({
     })
     setSelection(null)
     setCommentState({ filePath: file.path, value: '' })
-  }
-
-  if (loading) {
-    return (
-      <section className="flex min-w-0 flex-1 items-center justify-center text-sm text-text-secondary">
-        {t('workbench.workspace_file_preview_loading', '正在加载文件...')}
-      </section>
-    )
-  }
-
-  if (error) {
-    return (
-      <section className="flex min-w-0 flex-1 flex-col items-center justify-center gap-2 text-sm text-red-500">
-        <p>{error}</p>
-        <button
-          type="button"
-          data-testid="workspace-file-preview-retry-button"
-          className="underline"
-          onClick={onRetry}
-        >
-          {t('workbench.workspace_file_retry', '重试')}
-        </button>
-      </section>
-    )
-  }
-
-  if (!file) {
-    return (
-      <section className="flex min-w-0 flex-1 items-center justify-center text-sm text-text-muted">
-        {t('workbench.workspace_file_preview_empty', '选择文件查看内容')}
-      </section>
-    )
   }
 
   return (
@@ -205,5 +174,55 @@ export function WorkspaceFilePreview({
         </div>
       )}
     </section>
+  )
+}
+
+export function WorkspaceFilePreview({
+  file,
+  loading,
+  error,
+  onRetry,
+  onAddCodeComment,
+}: WorkspaceFilePreviewProps) {
+  const { t } = useTranslation('common')
+
+  if (loading) {
+    return (
+      <section className="flex min-w-0 flex-1 items-center justify-center text-sm text-text-secondary">
+        {t('workbench.workspace_file_preview_loading', '正在加载文件...')}
+      </section>
+    )
+  }
+
+  if (error) {
+    return (
+      <section className="flex min-w-0 flex-1 flex-col items-center justify-center gap-2 text-sm text-red-500">
+        <p>{error}</p>
+        <button
+          type="button"
+          data-testid="workspace-file-preview-retry-button"
+          className="underline"
+          onClick={onRetry}
+        >
+          {t('workbench.workspace_file_retry', '重试')}
+        </button>
+      </section>
+    )
+  }
+
+  if (!file) {
+    return (
+      <section className="flex min-w-0 flex-1 items-center justify-center text-sm text-text-muted">
+        {t('workbench.workspace_file_preview_empty', '选择文件查看内容')}
+      </section>
+    )
+  }
+
+  return (
+    <WorkspaceFilePreviewContent
+      key={file.path}
+      file={file}
+      onAddCodeComment={onAddCodeComment}
+    />
   )
 }

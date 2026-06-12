@@ -85,6 +85,56 @@ describe('createDeviceApi', () => {
     )
   })
 
+  test('listWorkspaceEntries rejects tree responses for a different directory', async () => {
+    const post = vi.fn().mockResolvedValue({
+      success: true,
+      stdout: {
+        path: '/workspace/other',
+        entries: [],
+      },
+      stderr: '',
+    })
+    const api = createDeviceApi({ post } as never)
+
+    await expect(api.listWorkspaceEntries('device-a', '/workspace/project')).rejects.toThrow(
+      'Invalid workspace tree response',
+    )
+  })
+
+  test('listWorkspaceEntries rejects escaped child paths', async () => {
+    const post = vi.fn().mockResolvedValue({
+      success: true,
+      stdout: {
+        path: '/workspace/project',
+        entries: [
+          {
+            name: 'secret',
+            path: '/workspace/project/../secret',
+            is_directory: false,
+            size: 6,
+            modified_at: null,
+          },
+        ],
+      },
+      stderr: '',
+    })
+    const api = createDeviceApi({ post } as never)
+
+    await expect(api.listWorkspaceEntries('device-a', '/workspace/project')).rejects.toThrow(
+      'Invalid workspace tree response',
+    )
+  })
+
+  test('listWorkspaceEntries rejects relative paths before sending', async () => {
+    const post = vi.fn()
+    const api = createDeviceApi({ post } as never)
+
+    await expect(api.listWorkspaceEntries('device-a', 'workspace/project')).rejects.toThrow(
+      'Workspace path must be absolute',
+    )
+    expect(post).not.toHaveBeenCalled()
+  })
+
   test('readWorkspaceTextFile calls parent path with file name arg', async () => {
     const post = vi.fn().mockResolvedValue({
       success: true,
@@ -126,6 +176,56 @@ describe('createDeviceApi', () => {
       'Workspace file path must be absolute',
     )
     expect(post).not.toHaveBeenCalled()
+  })
+
+  test('readWorkspaceTextFile normalizes absolute paths before sending', async () => {
+    const post = vi.fn().mockResolvedValue({
+      success: true,
+      stdout: {
+        path: '/workspace/project/main.ts',
+        name: 'main.ts',
+        content: 'export {}',
+        truncated: false,
+        size: 9,
+        modified_at: null,
+      },
+      stderr: '',
+    })
+    const api = createDeviceApi({ post } as never)
+
+    await expect(
+      api.readWorkspaceTextFile('device-a', '/workspace/project/src/../main.ts'),
+    ).resolves.toMatchObject({
+      path: '/workspace/project/main.ts',
+      name: 'main.ts',
+    })
+    expect(post).toHaveBeenCalledWith('/devices/device-a/commands', {
+      command_key: 'workspace_read_text_file',
+      path: '/workspace/project',
+      args: ['main.ts'],
+      timeout_seconds: 15,
+      max_output_bytes: 1024 * 1024 * 2,
+    })
+  })
+
+  test('readWorkspaceTextFile rejects responses for a different file', async () => {
+    const post = vi.fn().mockResolvedValue({
+      success: true,
+      stdout: {
+        path: '/workspace/project/src/other.ts',
+        name: 'other.ts',
+        content: 'export {}',
+        truncated: false,
+        size: 9,
+        modified_at: null,
+      },
+      stderr: '',
+    })
+    const api = createDeviceApi({ post } as never)
+
+    await expect(
+      api.readWorkspaceTextFile('device-a', '/workspace/project/src/main.ts'),
+    ).rejects.toThrow('Invalid workspace text file response')
   })
 
   test('readWorkspaceTextFile rejects malformed successful file output', async () => {

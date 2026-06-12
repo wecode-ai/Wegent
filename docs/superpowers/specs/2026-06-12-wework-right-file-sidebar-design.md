@@ -36,9 +36,9 @@ panel changes the layout into:
 - Right: searchable workspace file tree.
 
 The right file tree supports directory expansion, file selection, loading and
-empty states, and error retry. The file preview supports text/code files in the
-first version. Unsupported files show an explicit unsupported state instead of
-trying to render arbitrary content.
+empty states, and error retry. The file preview supports UTF-8 text/code files
+in the first version, reading with replacement characters if a file contains
+invalid UTF-8 bytes.
 
 When the user selects text in the preview, Wework shows a small comment action
 near the selection. Submitting the comment creates a local code-comment context
@@ -69,9 +69,9 @@ not use `attachment_ids`.
 ## Send Flow
 
 When the user sends a message, Wework formats pending code comments into a
-structured text block appended to the outgoing message. The outgoing message
-contains the original user text plus code-comment context blocks with file path,
-line range, selected code, and comment.
+JSON context payload appended to the outgoing message. The outgoing message
+contains the original user text plus code-comment context with file path, line
+range, selected code, and comment.
 
 If the composer contains only code comments and no typed text, the visible
 message uses a short default prompt such as `请参考代码评论`. After a successful
@@ -96,7 +96,8 @@ execution from the UI.
 - Directory load failure: show retry in the tree.
 - File load failure: show retry in the preview pane.
 - Very large text files: cap preview size and show truncation information.
-- Binary/unsupported file: show unsupported state.
+- Files with invalid UTF-8 bytes: keep the preview readable with replacement
+  characters.
 - Selection without text: do not show the comment action.
 
 ## Testing

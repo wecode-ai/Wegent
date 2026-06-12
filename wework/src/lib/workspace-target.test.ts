@@ -3,8 +3,10 @@ import type { ProjectWithTasks } from '@/types/api'
 import type { WorkbenchMessage } from '@/types/workbench'
 import { resolveWorkspaceTarget } from './workspace-target'
 
-const api = {
-  getProjectWorkspaceRoot: vi.fn().mockResolvedValue('/workspace/projects'),
+function createApi() {
+  return {
+    getProjectWorkspaceRoot: vi.fn().mockResolvedValue('/workspace/projects'),
+  }
 }
 
 describe('resolveWorkspaceTarget', () => {
@@ -35,7 +37,7 @@ describe('resolveWorkspaceTarget', () => {
         currentTask: { id: 1, title: 'Task', status: 'RUNNING', created_at: 'now' },
         currentProject: null,
         messages,
-        api,
+        api: createApi(),
       }),
     ).resolves.toEqual({
       deviceId: 'device-a',
@@ -91,7 +93,7 @@ describe('resolveWorkspaceTarget', () => {
         currentTask: { id: 1, title: 'Task', status: 'RUNNING', created_at: 'now' },
         currentProject: null,
         messages,
-        api,
+        api: createApi(),
       }),
     ).resolves.toEqual({
       deviceId: 'device-a',
@@ -117,7 +119,7 @@ describe('resolveWorkspaceTarget', () => {
         currentTask: null,
         currentProject: project,
         messages: [],
-        api,
+        api: createApi(),
       }),
     ).resolves.toEqual({
       deviceId: 'device-b',

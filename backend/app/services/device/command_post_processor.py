@@ -64,9 +64,6 @@ def _directory_list_processor(result: CommandResult) -> CommandResult:
 
 
 def _json_processor(result: CommandResult) -> CommandResult:
-    if not result.get("success"):
-        return result
-
     if result.get("stdout_truncated"):
         result["success"] = False
         result["error"] = (
@@ -77,10 +74,19 @@ def _json_processor(result: CommandResult) -> CommandResult:
 
     stdout = result.get("stdout") or ""
     try:
-        result["stdout"] = json.loads(str(stdout))
+        parsed_stdout = json.loads(str(stdout))
     except json.JSONDecodeError as exc:
+        if not result.get("success"):
+            return result
         result["success"] = False
         result["error"] = f"Failed to parse command JSON output: {exc}"
+        return result
+
+    result["stdout"] = parsed_stdout
+    if not result.get("success") and isinstance(parsed_stdout, dict):
+        error = parsed_stdout.get("error")
+        if isinstance(error, str) and error.strip() and not result.get("error"):
+            result["error"] = error
     return result
 
 

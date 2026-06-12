@@ -6,6 +6,20 @@ function lineRangeLabel(context: CodeCommentContext): string {
     : `${context.startLine}-${context.endLine}`
 }
 
+function serializedCodeCommentContexts(contexts: CodeCommentContext[]): string {
+  const payload = contexts.map((context, index) => ({
+    commentNumber: index + 1,
+    filePath: context.filePath,
+    fileName: context.fileName,
+    lines: lineRangeLabel(context),
+    selectedCode: context.selectedText,
+    userComment: context.comment,
+    createdAt: context.createdAt,
+  }))
+
+  return JSON.stringify(payload, null, 2).replace(/</g, '\\u003c')
+}
+
 export function appendCodeCommentContexts(
   message: string,
   contexts: CodeCommentContext[],
@@ -13,22 +27,9 @@ export function appendCodeCommentContexts(
   if (contexts.length === 0) return message
   const trimmedMessage = message.trim()
 
-  const blocks = contexts.map((context, index) =>
-    [
-      `Comment ${index + 1}`,
-      `File: ${context.filePath}`,
-      `Lines: ${lineRangeLabel(context)}`,
-      'Selected code:',
-      '```',
-      context.selectedText,
-      '```',
-      `User comment: ${context.comment}`,
-    ].join('\n'),
-  )
-
   const contextBlock = [
     '<code_comment_context>',
-    blocks.join('\n\n'),
+    serializedCodeCommentContexts(contexts),
     '</code_comment_context>',
   ].join('\n')
 
