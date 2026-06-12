@@ -130,23 +130,7 @@ function downloadFile(url, destPath, options = {}, maxRedirects = 5) {
         return
       }
 
-      const total = Number(res.headers['content-length'] || 0)
-      let downloaded = 0
-
       const fileStream = fs.createWriteStream(tempPath)
-
-      res.on('data', chunk => {
-        downloaded += chunk.length
-        if (total) {
-          process.stdout.write(
-            `\r  ${(downloaded / 1024 / 1024).toFixed(1)} / ${(total / 1024 / 1024).toFixed(1)} MB`
-          )
-        }
-      })
-
-      res.on('end', () => {
-        process.stdout.write('\n')
-      })
 
       res.pipe(fileStream)
 
