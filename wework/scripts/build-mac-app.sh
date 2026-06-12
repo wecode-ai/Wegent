@@ -56,4 +56,4 @@ if [ "${WEWORK_DRY_RUN:-}" = "1" ]; then
 fi
 
 cd "$WEWORK_DIR"
-exec npm run tauri:build
+exec pnpm run tauri:build

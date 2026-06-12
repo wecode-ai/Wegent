@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional, Tuple
 
 from executor.agents.base import Agent
+from executor.agents.codex.attachment_handler import process_codex_attachments
 from executor.agents.codex.config_builder import CodeXConfig, build_codex_config
 from executor.agents.codex.event_mapper import CodeXEventMapper
 from executor.agents.codex.session_store import CodeXSessionStore
@@ -69,6 +70,9 @@ class CodeXAgent(Agent):
         self._turn = None
         self._bot_id = self._resolve_bot_id(task_data)
         self._session_store = CodeXSessionStore()
+        self._local_image_paths: list[str | None] = []
+        self._cancel_requested = False
+        self._turn_interrupt_requested = False
         self.on_client_created_callback: Optional[Callable[[], Any]] = None
 
     def initialize(self) -> TaskStatus:
@@ -140,18 +144,24 @@ class CodeXAgent(Agent):
             await self._start_codex_client()
             await self._open_thread()
             await self._notify_client_created()
+            self._process_attachments_for_codex()
 
-            input_text = self._build_turn_input()
+            turn_input = self._build_turn_input()
             effort, summary = self._build_reasoning_params()
+            if self._cancel_requested:
+                await self.emitter.incomplete(reason="cancelled")
+                return TaskStatus.CANCELLED
             await self.start_turn_file_change_tracking()
             self._turn = await self._thread.turn(
-                input_text,
+                turn_input,
                 cwd=self.project_path,
                 effort=effort,
                 model=self.codex_config.model,
                 sandbox=self._sandbox_full_access(),
                 summary=summary,
             )
+            if self._cancel_requested:
+                await self._interrupt_active_turn()
 
             async for event in self._turn.stream():
                 status = await mapper.handle(event)
@@ -169,16 +179,45 @@ class CodeXAgent(Agent):
         finally:
             await self.cleanup_async()
 
-    def cancel_run(self) -> bool:
+    async def cancel_run_async(self) -> bool:
+        self._cancel_requested = True
         if self._turn is None:
-            logger.warning("CodeXAgent has no active turn to cancel: %s", self.task_id)
+            logger.info(
+                "CodeXAgent cancel requested before turn start: %s", self.task_id
+            )
+            return True
+        return await self._interrupt_active_turn()
+
+    async def _interrupt_active_turn(self) -> bool:
+        if getattr(self, "_turn_interrupt_requested", False):
+            return True
+        if self._turn is None:
             return False
+
+        self._turn_interrupt_requested = True
         try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(self._turn.interrupt())
+            await self._turn.interrupt()
+            logger.info("CodeXAgent turn interrupt requested: %s", self.task_id)
+            return True
+        except Exception as exc:
+            logger.exception(
+                "Failed to interrupt CodeXAgent turn: task_id=%s error=%s",
+                self.task_id,
+                exc,
+            )
+            return False
+
+    def cancel_run(self) -> bool:
+        try:
+            asyncio.get_running_loop()
         except RuntimeError:
-            asyncio.run(self._turn.interrupt())
-        return True
+            return asyncio.run(self.cancel_run_async())
+        logger.warning(
+            "CodeXAgent.cancel_run() called inside a running event loop; "
+            "use cancel_run_async() for task_id=%s",
+            self.task_id,
+        )
+        return False
 
     async def cleanup_async(self) -> None:
         if self._codex is not None:
@@ -263,14 +302,34 @@ class CodeXAgent(Agent):
         except Exception as exc:
             logger.warning("CodeXAgent client-created callback failed: %s", exc)
 
-    def _build_turn_input(self) -> str:
+    def _process_attachments_for_codex(self) -> None:
+        result = process_codex_attachments(
+            task_data=self.task_data,
+            task_id=self.task_id,
+            subtask_id=self.subtask_id,
+            prompt=self.prompt,
+        )
+        self.prompt = result.prompt
+        self._local_image_paths = result.local_image_paths
+
+    def _build_turn_input(self) -> Any:
+        from openai_codex import ImageInput, LocalImageInput, TextInput
+
         prompt = self.prompt
         if isinstance(prompt, str):
-            return prompt
+            if not self._local_image_paths:
+                return prompt
+            items: list[Any] = [TextInput(self._build_files_mentioned_text([prompt]))]
+            items.extend(
+                LocalImageInput(path) for path in self._local_image_paths if path
+            )
+            return items
         if not isinstance(prompt, list):
             return str(prompt)
 
-        parts: list[str] = []
+        text_parts: list[str] = []
+        image_items: list[Any] = []
+        local_image_index = 0
         for block in prompt:
             if not isinstance(block, dict):
                 continue
@@ -278,10 +337,90 @@ class CodeXAgent(Agent):
             if block_type in {"input_text", "text"}:
                 text = block.get("text")
                 if text:
-                    parts.append(str(text))
+                    text_parts.append(str(text))
             elif block_type in {"input_image", "image_url"}:
-                parts.append("[Image input omitted by CodeXAgent]")
-        return "\n\n".join(parts)
+                local_path = None
+                if local_image_index < len(self._local_image_paths):
+                    local_path = self._next_local_image_path(local_image_index)
+                    local_image_index += 1
+                if local_path:
+                    image_items.append(LocalImageInput(local_path))
+                    continue
+
+                image_url = self._extract_image_url(block)
+                if image_url:
+                    image_items.append(ImageInput(image_url))
+
+        items: list[Any] = []
+        if self._has_local_images():
+            items.append(TextInput(self._build_files_mentioned_text(text_parts)))
+        elif text_parts:
+            items.append(TextInput("\n\n".join(text_parts)))
+        items.extend(image_items)
+        return items or ""
+
+    def _next_local_image_path(self, index: int) -> Optional[str]:
+        if index >= len(self._local_image_paths):
+            return None
+        return self._local_image_paths[index]
+
+    def _has_local_images(self) -> bool:
+        return any(self._local_image_paths)
+
+    def _build_files_mentioned_text(self, text_parts: list[str]) -> str:
+        file_lines = "\n".join(
+            f"## {os.path.basename(path)}: {path}"
+            for path in self._local_image_paths
+            if path
+        )
+        request_text = self._extract_user_request_text(text_parts)
+        return (
+            "\n# Files mentioned by the user:\n\n"
+            f"{file_lines}\n\n"
+            "## My request for Codex:\n"
+            f"{request_text}\n"
+        )
+
+    @classmethod
+    def _extract_user_request_text(cls, text_parts: list[str]) -> str:
+        request_parts = []
+        for text in text_parts:
+            user_text = cls._strip_attachment_warnings(
+                cls._strip_attachment_blocks(str(text))
+            ).strip()
+            if user_text:
+                request_parts.append(user_text)
+        return "\n\n".join(request_parts)
+
+    @staticmethod
+    def _strip_attachment_blocks(text: str) -> str:
+        remaining = text
+        while True:
+            start = remaining.find("<attachment>")
+            if start < 0:
+                return remaining
+            end = remaining.find("</attachment>", start)
+            if end < 0:
+                return remaining
+            remaining = remaining[:start] + remaining[end + len("</attachment>") :]
+
+    @staticmethod
+    def _strip_attachment_warnings(text: str) -> str:
+        warning_marker = "\n\n⚠️ The following attachments failed to download"
+        marker_index = text.find(warning_marker)
+        if marker_index < 0:
+            return text
+        return text[:marker_index]
+
+    @staticmethod
+    def _extract_image_url(block: dict[str, Any]) -> Optional[str]:
+        image_url = block.get("image_url")
+        if isinstance(image_url, str):
+            return image_url
+        if isinstance(image_url, dict):
+            url = image_url.get("url")
+            return str(url) if url else None
+        return None
 
     def _build_developer_instructions(self) -> Optional[str]:
         parts = [

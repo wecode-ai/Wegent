@@ -123,7 +123,7 @@ export function CompactChatComposer({
           data-testid="compact-input-pill"
           className={[
             'relative flex min-h-[52px] min-w-0 flex-1 items-end rounded-[26px] border border-border bg-background pl-4 shadow-[0_12px_40px_rgba(0,0,0,0.08)]',
-            'z-[60]',
+            'z-chrome',
             hasText ? 'pr-14' : 'pr-[92px]',
           ].join(' ')}
         >
@@ -187,7 +187,7 @@ export function CompactChatComposer({
       {contextSheetOpen && (
         <div
           data-testid="mobile-context-sheet-backdrop"
-          className="fixed inset-0 z-50 bg-black/20"
+          className="fixed inset-0 z-modal bg-black/20"
           onClick={() => setContextSheetOpen(false)}
         >
           <div
@@ -220,7 +220,7 @@ export function CompactChatComposer({
       {fullscreenInputOpen && (
         <div
           data-testid="fullscreen-input-sheet"
-          className="fixed inset-0 z-50 flex h-dvh flex-col bg-background px-5 pb-[max(18px,env(safe-area-inset-bottom))] pt-[max(18px,env(safe-area-inset-top))] text-text-primary"
+          className="fixed inset-0 z-modal flex h-dvh flex-col bg-background px-5 pb-[max(18px,env(safe-area-inset-bottom))] pt-[max(18px,env(safe-area-inset-top))] text-text-primary"
         >
           <div className="relative min-h-0 flex-1">
             <button

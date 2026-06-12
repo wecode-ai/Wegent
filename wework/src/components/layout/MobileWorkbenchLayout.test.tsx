@@ -806,7 +806,7 @@ describe('MobileWorkbenchLayout', () => {
     )
 
     await userEvent.click(screen.getByTestId('open-mobile-drawer-button'))
-    await userEvent.click(screen.getByTestId('mobile-avatar-button'))
+    await userEvent.click(screen.getByTestId('mobile-settings-button'))
 
     expect(screen.getByTestId('mobile-settings-page')).toBeInTheDocument()
     expect(screen.queryByTestId('wework-settings-page')).not.toBeInTheDocument()

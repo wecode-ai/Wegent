@@ -71,10 +71,13 @@ import type {
   WorkbenchMessage,
   WorkbenchState,
 } from '@/types/workbench'
+import {
+  normalizeWorkbenchBlockStatus,
+  reduceWorkbenchMessages,
+} from '@wegent/chat-core'
 import { useWorkbenchAttachments } from './useWorkbenchAttachments'
 import { useWorkbenchModels } from './useWorkbenchModels'
 import { useWorkbenchSkills } from './useWorkbenchSkills'
-import { messageReducer, normalizeBlockStatus } from './messageReducer'
 import { normalizeTurnFileChanges } from './turnFileChanges'
 import {
   initialWorkbenchState,
@@ -85,6 +88,7 @@ import { WorkbenchContext } from './useWorkbench'
 const WEWORK_CLIENT_ORIGIN = 'wework'
 const LOCAL_SKILLS_CACHE_TTL_MS = 60_000
 const STANDALONE_PROJECT_ID = 0
+const EMPTY_MESSAGE_TASK_TITLE = '新对话'
 const DEVICE_STATUS_LABELS: Record<string, string> = {
   online: '在线',
   busy: '忙碌',
@@ -346,7 +350,7 @@ function normalizeProcessingBlock(
   if (!isRecord(block)) return null
 
   const timestamp = getBlockTimestamp(block.timestamp)
-  const status = normalizeBlockStatus(
+  const status = normalizeWorkbenchBlockStatus(
     typeof block.status === 'string' ? block.status : undefined
   )
 
@@ -560,6 +564,17 @@ function isRunningTaskStatus(status?: string) {
   )
 }
 
+function shouldRestoreCachedStreaming(
+  task: Task,
+  subtasks: Subtask[] | undefined,
+  subtaskId: number
+) {
+  if (!isRunningTaskStatus(task.status)) return false
+
+  const subtask = subtasks?.find(item => item.id === subtaskId)
+  return subtask ? isRunningTaskStatus(subtask.status) : true
+}
+
 function normalizeGuidanceError(error?: string) {
   if (!error) return '引导发送失败'
   if (error.includes('Chat Shell')) {
@@ -609,7 +624,10 @@ export function WorkbenchProvider({
     workbenchReducer,
     initialWorkbenchState
   )
-  const [messages, dispatchMessages] = useReducer(messageReducer, [])
+  const [messages, dispatchMessages] = useReducer(
+    reduceWorkbenchMessages<Attachment, TurnFileChangesSummary>,
+    [] as WorkbenchMessage[]
+  )
   const [queuedSends, setQueuedSends] = useState<QueuedWorkbenchSend[]>([])
   const [guidanceMessages, setGuidanceMessages] = useState<GuidanceWorkbenchMessage[]>([])
   const [upgradingDevices, setUpgradingDevices] = useState<
@@ -1013,7 +1031,7 @@ export function WorkbenchProvider({
             ...(payload.content !== undefined && { content: payload.content }),
             ...(payload.tool_input !== undefined && { toolInput: payload.tool_input }),
             ...(payload.tool_output !== undefined && { toolOutput: payload.tool_output }),
-            ...(payload.status && { status: normalizeBlockStatus(payload.status) }),
+            ...(payload.status && { status: normalizeWorkbenchBlockStatus(payload.status) }),
           },
         })
       },
@@ -1252,7 +1270,14 @@ export function WorkbenchProvider({
       setQueuedSends([])
       setGuidanceMessages([])
       const joinResponse = await resolvedServices.chatStream.joinTask(taskId)
-      if (joinResponse?.streaming) {
+      if (
+        joinResponse?.streaming &&
+        shouldRestoreCachedStreaming(
+          detailTask,
+          detail.subtasks,
+          joinResponse.streaming.subtask_id
+        )
+      ) {
         dispatchMessages({
           type: 'assistant_cached',
           taskId,
@@ -1608,6 +1633,9 @@ export function WorkbenchProvider({
 
       if (attachmentSelection.attachments.length > 0) {
         payload.attachment_ids = attachmentSelection.attachments.map(attachment => attachment.id)
+        if (!message && !state.currentTask) {
+          payload.title = EMPTY_MESSAGE_TASK_TITLE
+        }
       }
 
       return { payload, activeDeviceId }
@@ -1679,14 +1707,14 @@ export function WorkbenchProvider({
 
       if (!state.currentTask && ack.task_id) {
         const projectId = payload.project_id ?? state.currentProject?.id ?? 0
-        const routeProjectId = projectId > 0 ? projectId : undefined
+        const routeProjectId = projectId
         // Navigate to the canonical task route so a freshly created chat shares
         // the same URL shape as opening an existing one (path, not ?taskId=).
         handledTaskRouteRef.current = getTaskRouteKey(ack.task_id, routeProjectId)
         navigateTo(buildTaskRoute({ taskId: ack.task_id, projectId: routeProjectId }))
         const openedTask: Task = {
           id: ack.task_id,
-          title: message.substring(0, 100),
+          title: (payload.title ?? message).substring(0, 100),
           status: 'RUNNING',
           task_type: 'code',
           team_id: payload.team_id,
@@ -1711,6 +1739,7 @@ export function WorkbenchProvider({
     [
       refreshWorkLists,
       resolvedServices.chatStream,
+      state.currentProject?.id,
       state.currentTask,
     ]
   )
@@ -1719,8 +1748,8 @@ export function WorkbenchProvider({
     const trimmedMessage = state.input.trim()
     const hasAttachments = attachmentSelection.attachments.length > 0
     if (!trimmedMessage && !hasAttachments) return
-    const message = trimmedMessage || '请参考附件'
-    const prepared = buildSendPayload(message)
+    const payloadMessage = trimmedMessage
+    const prepared = buildSendPayload(payloadMessage)
     if (!prepared) return
     if (prepared.activeDeviceId) {
       const activeDevice = findWorkbenchDevice(state.devices, prepared.activeDeviceId)
@@ -1772,7 +1801,7 @@ export function WorkbenchProvider({
         ...items,
         {
           id: `queued-${state.currentTask?.id}-${Date.now()}`,
-          content: message,
+          content: payloadMessage,
           status: 'queued',
           createdAt: new Date().toISOString(),
           payload: prepared.payload,
@@ -1785,7 +1814,7 @@ export function WorkbenchProvider({
     }
 
     const sent = await sendPreparedMessage(
-      message,
+      payloadMessage,
       prepared.payload,
       prepared.activeDeviceId,
       attachmentsSnapshot

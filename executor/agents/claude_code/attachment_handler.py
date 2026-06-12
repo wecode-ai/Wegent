@@ -75,37 +75,24 @@ def download_attachments(
         )
 
     try:
-        from executor.config import config
         from executor.services.attachment_downloader import AttachmentDownloader
         from executor.services.attachment_prompt_processor import (
             AttachmentPromptProcessor,
         )
 
-        # Determine workspace path for attachments. Project workspace mode keeps
-        # attachments under the shared project directory but still scoped by
-        # task_id/subtask_id.
-        project_workspace = task_data.project_workspace_path
-        if not project_workspace and task_data.project_id and task_data.git_url:
-            repo_name = git_util.get_repo_name_from_url(task_data.git_url)
-            safe_repo_name = repo_name.replace("/", "_").replace("\\", "_")
-            project_workspace = os.path.join(
-                "projects", str(task_data.project_id), safe_repo_name
-            )
-        project_layout = bool(task_data.project_id and project_workspace)
-        if project_layout:
-            project_workspace = os.path.expanduser(str(project_workspace))
-            if not os.path.isabs(project_workspace):
-                project_workspace = os.path.join(
-                    config.get_workspace_root(), project_workspace
-                )
-            workspace = os.path.join(project_workspace, ".wegent", "attachments")
-        else:
-            workspace = os.path.join(config.get_workspace_root(), str(task_id))
+        workspace, project_layout = _resolve_attachment_workspace(
+            task_data,
+            task_id,
+        )
+        attachment_subtask_id = _resolve_attachment_subtask_id(
+            attachments,
+            fallback=getattr(task_data, "user_subtask_id", None) or subtask_id,
+        )
 
         downloader = AttachmentDownloader(
             workspace=workspace,
             task_id=str(task_id),
-            subtask_id=str(subtask_id),
+            subtask_id=str(attachment_subtask_id),
             auth_token=auth_token,
             project_layout=project_layout,
         )
@@ -124,7 +111,7 @@ def download_attachments(
                 result.success,
                 result.failed,
                 task_id=task_id,
-                subtask_id=subtask_id,
+                subtask_id=attachment_subtask_id,
             )
 
             # String prompts may still rely on explicit attachment context. For
@@ -171,6 +158,46 @@ def download_attachments(
             success_count=0,
             failed_count=len(attachments),
         )
+
+
+def _resolve_attachment_workspace(
+    task_data: ExecutionRequest,
+    task_id: int,
+) -> tuple[str, bool]:
+    """Resolve attachment root and layout for Claude Code downloads."""
+
+    from executor.config import config
+
+    project_workspace = getattr(task_data, "project_workspace_path", None)
+    if not project_workspace and task_data.project_id and task_data.git_url:
+        repo_name = git_util.get_repo_name_from_url(task_data.git_url)
+        safe_repo_name = repo_name.replace("/", "_").replace("\\", "_")
+        project_workspace = os.path.join(
+            "projects", str(task_data.project_id), safe_repo_name
+        )
+
+    if project_workspace:
+        project_workspace = os.path.expanduser(str(project_workspace))
+        if not os.path.isabs(project_workspace):
+            project_workspace = os.path.join(
+                config.get_workspace_root(), project_workspace
+            )
+        return os.path.join(project_workspace, ".wegent", "attachments"), True
+
+    return os.path.join(config.get_workspace_root(), str(task_id)), False
+
+
+def _resolve_attachment_subtask_id(
+    attachments: list[dict[str, Any]],
+    fallback: int,
+) -> int:
+    """Prefer the source user-message subtask id embedded in attachment metadata."""
+
+    for attachment in attachments:
+        subtask_id = attachment.get("subtask_id")
+        if subtask_id is not None:
+            return int(subtask_id)
+    return int(fallback)
 
 
 def get_attachment_thinking_step_details(

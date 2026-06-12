@@ -1189,12 +1189,28 @@ class ChatNamespace(socketio.AsyncNamespace):
                 # Even if cancel request failed, we should still return success
                 # The executor may have already completed or the connection may be lost
 
+            from app.services.chat.trigger.lifecycle import collect_completed_result
+
+            cancel_result = await collect_completed_result(
+                payload.subtask_id,
+                status="CANCELLED",
+            )
+            if payload.partial_content:
+                if cancel_result is None:
+                    cancel_result = {"value": payload.partial_content}
+                elif not cancel_result.get("value"):
+                    cancel_result["value"] = payload.partial_content
+
             # Force update database state immediately after sending cancel request.
             # Keep this simple and deterministic even if no event consumer is available.
             await run_sync_in_executor(
                 _mark_subtask_and_task_cancelled,
                 payload.subtask_id,
-                payload.partial_content,
+                cancel_result,
+            )
+            await session_manager.cleanup_streaming_state(
+                payload.subtask_id,
+                task_id=subtask_info["task_id"],
             )
             logger.info(
                 f"[WS] chat:cancel Cancel request sent and status force-updated to CANCELLED "
@@ -1887,7 +1903,7 @@ def _subtask_belongs_to_task(subtask_id: int, task_id: int) -> bool:
 
 
 def _mark_subtask_and_task_cancelled(
-    subtask_id: int, partial_content: Optional[str] = None
+    subtask_id: int, result: Optional[dict] = None
 ) -> None:
     """Force mark subtask and task as CANCELLED."""
     with get_db_session() as db:
@@ -1896,7 +1912,7 @@ def _mark_subtask_and_task_cancelled(
             return
 
         # Force subtask to CANCELLED
-        update_subtask_on_cancel(db, subtask, partial_content)
+        update_subtask_on_cancel(db, subtask, result=result)
 
         # Force task to CANCELLED
         task = task_store.get_regular_active_task(db, task_id=subtask.task_id)

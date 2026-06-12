@@ -179,6 +179,61 @@ describe('MessageList', () => {
     )
   })
 
+  test('lays out multiple image attachments horizontally in user messages', async () => {
+    URL.createObjectURL = vi.fn(() => 'blob:message-image-preview')
+    URL.revokeObjectURL = vi.fn()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        blob: vi.fn().mockResolvedValue(new Blob(['image'], { type: 'image/png' })),
+      })
+    )
+
+    const attachments: Attachment[] = [
+      {
+        id: 43,
+        filename: 'first.png',
+        file_size: 1024,
+        mime_type: 'image/png',
+        status: 'ready',
+        file_extension: '.png',
+        created_at: '2026-05-25T15:08:00.000+08:00',
+      },
+      {
+        id: 44,
+        filename: 'second.png',
+        file_size: 1024,
+        mime_type: 'image/png',
+        status: 'ready',
+        file_extension: '.png',
+        created_at: '2026-05-25T15:08:00.000+08:00',
+      },
+    ]
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: '1',
+            role: 'user',
+            content: '',
+            status: 'done',
+            attachments,
+            createdAt: '2026-05-25T15:08:00.000+08:00',
+          },
+        ]}
+      />
+    )
+
+    expect(await screen.findAllByTestId('message-image-preview')).toHaveLength(2)
+    expect(screen.getByTestId('message-image-attachments')).toHaveClass(
+      'flex-row',
+      'flex-wrap',
+      'justify-end',
+    )
+  })
+
   test('renders document attachments in user messages', () => {
     const attachment: Attachment = {
       id: 44,
@@ -214,10 +269,8 @@ describe('MessageList', () => {
   })
 
   test('shows user message hover actions with time and copy', async () => {
-    const writeText = vi.fn().mockResolvedValue(undefined)
-    Object.assign(navigator, {
-      clipboard: { writeText },
-    })
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-05-25T16:00:00.000+08:00'))
 
     render(
       <MessageList
@@ -234,6 +287,14 @@ describe('MessageList', () => {
     )
 
     expect(screen.getByTestId('message-hover-time')).toHaveTextContent('15:08')
+
+    vi.useRealTimers()
+
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.assign(navigator, {
+      clipboard: { writeText },
+    })
+
     const copyButton = screen.getByTestId('copy-message-button')
     expect(copyButton).toHaveClass('opacity-0', 'group-hover:opacity-100')
 
@@ -329,10 +390,8 @@ describe('MessageList', () => {
   })
 
   test('shows assistant message hover actions with time and copy', async () => {
-    const writeText = vi.fn().mockResolvedValue(undefined)
-    Object.assign(navigator, {
-      clipboard: { writeText },
-    })
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-05-25T19:00:00.000+08:00'))
 
     render(
       <MessageList
@@ -349,6 +408,14 @@ describe('MessageList', () => {
     )
 
     expect(screen.getByTestId('message-hover-time')).toHaveTextContent('18:38')
+
+    vi.useRealTimers()
+
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.assign(navigator, {
+      clipboard: { writeText },
+    })
+
     const copyButton = screen.getByTestId('copy-message-button')
     expect(copyButton).toHaveClass('opacity-0', 'group-hover:opacity-100')
 

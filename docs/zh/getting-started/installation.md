@@ -166,7 +166,7 @@ sudo apt-get update
 sudo apt-get install python3.10 python3-pip python3-venv
 
 # 安装 Node.js
-curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
 sudo apt-get install -y nodejs
 
 # 安装 MySQL
@@ -249,18 +249,19 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 在新终端中：
 
 ```bash
-# 进入前端目录
-cd frontend
+# 回到仓库根目录
+cd Wegent
 
-# 安装依赖
-npm install
+# 安装 pnpm workspace 依赖
+pnpm install
 
 # 配置环境变量
+cd frontend
 cp .env.local.example .env.local
 vim .env.local  # 编辑配置
 
 # 运行开发服务器
-npm run dev
+pnpm run dev
 ```
 
 ### 步骤 6: 安装 Executor Manager

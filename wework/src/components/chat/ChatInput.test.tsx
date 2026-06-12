@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { StrictMode, useState } from 'react'
 import { describe, expect, test, vi } from 'vitest'
@@ -273,7 +273,7 @@ describe('ChatInput', () => {
     })
     expect(screen.getByTestId('local-skill-autocomplete')).toHaveClass(
       'bottom-[calc(100%+1rem)]',
-      'z-[80]',
+      'z-popover',
       'bg-background',
       'left-[-1rem]',
       'right-[-3.5rem]',
