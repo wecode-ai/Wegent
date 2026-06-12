@@ -6,7 +6,8 @@
  * Task State exports
  */
 
-export { TaskStateMachine, generateMessageId } from './TaskStateMachine'
+export { TaskStateMachine } from './TaskStateMachine'
+export { generateMessageId } from './TaskStateMachine.messageUtils'
 export type {
   TaskStatus,
   MessageStatus,
@@ -20,7 +21,7 @@ export type {
   SyncOptions,
   StateListener,
   TaskStateMachineDeps,
-} from './TaskStateMachine'
+} from './TaskStateMachine.types'
 
 export {
   getRuntimePhaseForTaskStatus,

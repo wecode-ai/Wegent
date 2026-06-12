@@ -181,4 +181,42 @@ describe('SocketProvider reconnect notification', () => {
 
     expect(mockReconnectCallback).toHaveBeenCalledTimes(1)
   })
+
+  it('emits chat cancel without owning ack timeout recovery', async () => {
+    const socket = createMockSocket()
+    mockIo.mockReturnValue(socket)
+
+    let socketApi: ReturnType<typeof useSocket> | undefined
+    render(
+      <SocketProvider>
+        <SocketProbe
+          onReady={api => {
+            socketApi = api
+          }}
+        />
+      </SocketProvider>
+    )
+
+    await waitFor(() => expect(socketApi?.socket).toBe(socket))
+
+    await act(async () => {
+      socket.triggerSocket('connect')
+    })
+
+    socket.emit.mockClear()
+
+    await act(async () => {
+      await socketApi!.cancelChatStream(77, 'partial', 'Chat')
+    })
+
+    expect(socket.emit).toHaveBeenCalledTimes(1)
+    const [event, payload, ack] = socket.emit.mock.calls[0]
+    expect(event).toBe('chat:cancel')
+    expect(payload).toEqual({
+      subtask_id: 77,
+      partial_content: 'partial',
+      shell_type: 'Chat',
+    })
+    expect(ack).toBeUndefined()
+  })
 })

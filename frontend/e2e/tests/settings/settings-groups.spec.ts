@@ -4,6 +4,8 @@ import { DataBuilders } from '../../fixtures/data-builders'
 import { ADMIN_USER } from '../../config/test-users'
 
 test.describe('Settings - Group Management UI', () => {
+  test.describe.configure({ mode: 'serial' })
+
   let apiClient: ApiClient
   let testGroupName: string
 
