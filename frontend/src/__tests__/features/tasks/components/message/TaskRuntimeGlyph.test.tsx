@@ -30,6 +30,7 @@ function createTaskState(taskId: number): TaskStateSnapshot {
       canQueueMessage: false,
       canCancelTask: false,
       blocksQueuedDispatch: false,
+      serverConfirmedNoStream: false,
     },
   }
 }

@@ -252,6 +252,7 @@ export function MobileChatInputControls({
         title={t('actions.stop')}
         icon={<CircleStop className="h-4 w-4 text-orange-500" />}
         className="hover:bg-orange-100"
+        data-testid="stop-stream-button"
       />
     )
 
