@@ -116,7 +116,7 @@ describe('AppearanceProvider', () => {
     expect(document.documentElement.style.getPropertyValue('--color-primary')).toBe('1 105 204')
 
     await userEvent.click(screen.getByTestId('reset'))
-    expect(screen.getByTestId('accent-color')).toHaveTextContent('#14b8a6')
+    expect(screen.getByTestId('accent-color')).toHaveTextContent('#2563eb')
   })
 
   test('keeps mobile drawer backgrounds opaque enough to hide page content', () => {

@@ -28,6 +28,7 @@
   --appearance-contrast: 50;
   --radius: 0.5rem;
   --z-chrome: 20;
+  --z-titlebar: 15;
   --z-popover: 40;
   --z-modal: 80;
   --z-critical: 100;
@@ -122,6 +123,10 @@ button:disabled {
 
   .z-chrome {
     z-index: var(--z-chrome);
+  }
+
+  .z-titlebar {
+    z-index: var(--z-titlebar);
   }
 
   .z-popover {

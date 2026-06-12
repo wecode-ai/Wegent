@@ -312,7 +312,7 @@ export function BranchSelector({
                   type="submit"
                   data-testid={`${prefix}-confirm-new-branch-button`}
                   disabled={!newBranchName.trim() || action === 'creating'}
-                  className="h-8 rounded-md bg-primary px-2 text-xs font-medium text-primary-contrast disabled:opacity-50"
+                  className="h-8 rounded-md bg-text-primary px-2 text-xs font-medium text-background hover:bg-text-primary/90 disabled:opacity-50"
                 >
                   {action === 'creating'
                     ? t('workbench.environment_branch_creating', '创建中')
