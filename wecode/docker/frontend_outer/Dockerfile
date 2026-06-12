@@ -37,8 +37,8 @@ FROM registry.api.weibo.com/wecode/node:22-slim
 WORKDIR /app
 
 COPY --from=builder /app/frontend/.next/standalone ./
-COPY --from=builder /app/frontend/.next/static ./.next/static
-COPY --from=builder /app/frontend/public ./public
+COPY --from=builder /app/frontend/.next/static ./frontend/.next/static
+COPY --from=builder /app/frontend/public ./frontend/public
 
 ENV NODE_ENV=production
 ENV PORT=3000
@@ -46,4 +46,4 @@ ENV HOSTNAME=0.0.0.0
 
 EXPOSE ${PORT}
 
-CMD ["node", "server.js"]
+CMD ["node", "frontend/server.js"]
