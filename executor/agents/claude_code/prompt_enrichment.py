@@ -29,20 +29,22 @@ def inject_kb_meta_prompt(
     guidance_lines = [
         "<knowledge_base_guidance>",
         "Knowledge base routing:",
+        "- Load and follow the `wegent-knowledge` skill before web search or external lookup.",
     ]
     if is_user_selected_kb:
         guidance_lines.append(
-            "- The knowledge base IDs in the context below were selected by the user."
+            "- The context below provides the user-selected knowledge base scope."
         )
     else:
         guidance_lines.append(
-            "- The context below provides knowledge base IDs that may answer the request."
+            "- The context below provides the initial knowledge base scope."
         )
     guidance_lines.extend(
         [
-            "- First answer by querying the provided knowledge base ID(s). When a Wegent knowledge tool accepts `knowledge_base_id` or `knowledge_base_ids`, pass the ID(s) from the context.",
-            "- If the provided knowledge base ID(s) cannot satisfy the request because results are empty, irrelevant, inaccessible, or incomplete, broaden the query to all knowledge bases when the tool supports it.",
-            "- If knowledge base retrieval still cannot answer the request, then use web search or other external tools when available and appropriate.",
+            "- Retrieval order:",
+            "  1. Query the provided knowledge base ID(s) first. When a Wegent knowledge tool accepts `knowledge_base_id` or `knowledge_base_ids`, pass the ID(s) from the context.",
+            "  2. If scoped results are empty, irrelevant, inaccessible, or incomplete, broaden the query to all knowledge bases when the tool supports it.",
+            "  3. If knowledge base retrieval still cannot answer the request, use web search or other external tools when available and appropriate.",
             "- When you need to identify which document matters, call `wegent_kb_list_documents` first.",
             "- When you need the content of a specific knowledge base document, call",
             "  `wegent_kb_read_document_content` with `document_id` and optional `offset`/`limit`.",

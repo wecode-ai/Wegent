@@ -138,10 +138,12 @@ class TestInjectKbMetaPrompt:
             task_type="chat",
         )
 
-        assert "were selected by the user" in result
-        assert "First answer by querying the provided knowledge base ID(s)" in result
+        assert "user-selected knowledge base scope" in result
+        assert "Load and follow the `wegent-knowledge` skill" in result
+        assert "Retrieval order:" in result
+        assert "Query the provided knowledge base ID(s) first" in result
         assert "broaden the query to all knowledge bases" in result
-        assert "then use web search or other external tools" in result
+        assert "use web search or other external tools" in result
 
     def test_available_kb_guidance_uses_same_fallback_order(self):
         prompt = "What can you help me with?"
@@ -155,7 +157,9 @@ class TestInjectKbMetaPrompt:
             task_type="chat",
         )
 
-        assert "provides knowledge base IDs that may answer the request" in result
-        assert "First answer by querying the provided knowledge base ID(s)" in result
+        assert "provides the initial knowledge base scope" in result
+        assert "Load and follow the `wegent-knowledge` skill" in result
+        assert "Retrieval order:" in result
+        assert "Query the provided knowledge base ID(s) first" in result
         assert "broaden the query to all knowledge bases" in result
-        assert "then use web search or other external tools" in result
+        assert "use web search or other external tools" in result
