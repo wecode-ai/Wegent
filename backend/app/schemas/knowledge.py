@@ -8,7 +8,7 @@ Pydantic schemas for knowledge base and document management.
 
 from datetime import datetime
 from enum import Enum
-from typing import Dict, List, Literal, Optional
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -94,6 +94,26 @@ class InitialMemberCreate(BaseModel):
     )
 
 
+class RetrievalConfigCreate(BaseModel):
+    """Partial retrieval configuration accepted during knowledge base creation."""
+
+    retriever_name: Optional[str] = Field(None, description="Retriever name")
+    retriever_namespace: str = Field("default", description="Retriever namespace")
+    embedding_config: Optional[EmbeddingModelRef] = Field(
+        None, description="Embedding model configuration"
+    )
+    retrieval_mode: str = Field(
+        "vector", description="Retrieval mode: 'vector', 'keyword', or 'hybrid'"
+    )
+    top_k: int = Field(5, ge=1, le=10, description="Number of results to return")
+    score_threshold: float = Field(
+        0.7, ge=0.0, le=1.0, description="Minimum score threshold"
+    )
+    hybrid_weights: Optional[HybridWeights] = Field(
+        None, description="Hybrid search weights"
+    )
+
+
 class KnowledgeBaseCreate(BaseModel):
     """Schema for creating a knowledge base."""
 
@@ -104,12 +124,8 @@ class KnowledgeBaseCreate(BaseModel):
         "notebook",
         description="Knowledge base type: 'notebook' (3-column layout with chat) or 'classic' (document list only)",
     )
-    retrieval_config: Optional[RetrievalConfig] = Field(
+    retrieval_config: Optional[RetrievalConfigCreate] = Field(
         None, description="Retrieval configuration"
-    )
-    rag_config_mode: Literal["auto", "manual", "disabled"] = Field(
-        "auto",
-        description="RAG configuration mode: auto-fill, manual validation, or disabled",
     )
     summary_enabled: bool = Field(
         default=False,

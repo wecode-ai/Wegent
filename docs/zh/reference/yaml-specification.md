@@ -359,7 +359,7 @@ KnowledgeBase 用于管理文档知识库、检索配置和摘要能力。
 | `spec.retrievalConfig.score_threshold` | number | 否 | 最低相关性阈值 |
 | `spec.retrievalConfig.hybrid_weights` | object | 否 | 混合检索权重 |
 
-`retriever_name` 和 `embedding_config.model_name` 只有在 `spec.retrievalConfig` 存在时必填。创建 API 中的 `rag_config_mode` 只表达创建意图（自动配置、手动选择或不启用），不会作为 KnowledgeBase YAML 字段持久化。持久化后的稳定状态只有两种：完整的 `retrievalConfig`，或无 `retrievalConfig`。
+`retriever_name` 和 `embedding_config.model_name` 只有在 `spec.retrievalConfig` 存在时必填。创建知识库时，后端会自动补齐缺失的检索器和 Embedding 模型；如果无法找到可用默认配置，则不会写入 `retrievalConfig`。持久化后的稳定状态只有两种：完整的 `retrievalConfig`，或无 `retrievalConfig`。
 
 ### 摘要相关配置
 

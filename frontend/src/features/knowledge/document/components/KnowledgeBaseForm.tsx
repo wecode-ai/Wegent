@@ -19,7 +19,11 @@ import {
 } from '@/components/ui/accordion'
 import { ChevronDown, ChevronRight, Plus, X } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { KnowledgeResourceScope, RetrievalConfig, SummaryModelRef } from '@/types/knowledge'
+import type {
+  KnowledgeResourceScope,
+  RetrievalConfigDraft,
+  SummaryModelRef,
+} from '@/types/knowledge'
 import { RetrievalSettingsSection } from './RetrievalSettingsSection'
 import { SummaryModelSelector } from './SummaryModelSelector'
 
@@ -45,11 +49,10 @@ interface KnowledgeBaseFormProps {
   advancedVariant: 'accordion' | 'collapsible'
   advancedOpen: boolean
   onAdvancedOpenChange: (open: boolean) => void
-  advancedDescription?: string
   retrievalModeSection?: ReactNode
   showRetrievalSection: boolean
-  retrievalConfig: Partial<RetrievalConfig>
-  onRetrievalConfigChange: (config: Partial<RetrievalConfig>) => void
+  retrievalConfig: RetrievalConfigDraft
+  onRetrievalConfigChange: (config: RetrievalConfigDraft) => void
   retrievalScope?: KnowledgeResourceScope
   retrievalGroupName?: string
   retrievalReadOnly?: boolean
@@ -82,7 +85,6 @@ export function KnowledgeBaseForm({
   advancedVariant,
   advancedOpen,
   onAdvancedOpenChange,
-  advancedDescription,
   retrievalModeSection,
   showRetrievalSection,
   retrievalConfig,
@@ -134,8 +136,6 @@ export function KnowledgeBaseForm({
 
   const advancedContent = (
     <div className="space-y-4 pt-2">
-      {advancedDescription && <p className="text-xs text-text-muted">{advancedDescription}</p>}
-
       <div className="space-y-4">
         <div className="space-y-0.5">
           <Label className="text-sm font-medium">{t('knowledge:document.callLimits.title')}</Label>

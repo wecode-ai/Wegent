@@ -810,6 +810,13 @@ class EmbeddingModelRef(BaseModel):
     model_namespace: str = Field("default", description="Embedding model namespace")
 
 
+class CompleteEmbeddingModelRef(BaseModel):
+    """Complete reference to an Embedding Model."""
+
+    model_name: str = Field(..., min_length=1, description="Embedding model name")
+    model_namespace: str = Field("default", description="Embedding model namespace")
+
+
 class RetrieverRef(BaseModel):
     """Reference to a Retriever"""
 
@@ -835,16 +842,12 @@ class HybridWeights(BaseModel):
 
 
 class RetrievalConfig(BaseModel):
-    """Retrieval configuration for knowledge base
+    """Complete retrieval configuration for a RAG-enabled knowledge base."""
 
-    Note: retriever_name and embedding_config are optional to support knowledge bases
-    that don't use RAG (using kb_ls/kb_head tools instead for document exploration).
-    """
-
-    retriever_name: Optional[str] = Field(None, description="Retriever name")
+    retriever_name: str = Field(..., min_length=1, description="Retriever name")
     retriever_namespace: str = Field("default", description="Retriever namespace")
-    embedding_config: Optional[EmbeddingModelRef] = Field(
-        None, description="Embedding model configuration"
+    embedding_config: CompleteEmbeddingModelRef = Field(
+        ..., description="Embedding model configuration"
     )
     retrieval_mode: str = Field(
         "vector", description="Retrieval mode: 'vector', 'keyword', or 'hybrid'"

@@ -379,23 +379,13 @@ This approach is **less efficient** than RAG retrieval:
 | Accuracy | Semantic understanding | Depends on document summaries |
 | Best For | Large knowledge bases | Small knowledge bases (<50 docs) |
 
-### Setting Up No-RAG Mode
+### Automatic Configuration On Creation
 
-When creating a knowledge base, **RAG Configuration** in **Advanced Settings** provides three modes:
+When creating a knowledge base, the system automatically selects an available retriever and embedding model while preserving retrieval parameters you changed in advanced settings.
 
-| Mode | Behavior | Best For |
-|------|----------|----------|
-| Auto | The system selects an available retriever and embedding model while preserving retrieval parameters you changed | Recommended default |
-| Manual | You must explicitly select both a retriever and an embedding model; creation is blocked if either one is missing | Fixed storage backend or model requirements |
-| Disabled | Creates a no-RAG knowledge base without writing retrieval configuration | No vector database, small knowledge bases, or testing |
+If the current environment has no usable default retriever or embedding model, the knowledge base can still be created, but no RAG retrieval configuration is written. Uploaded documents are stored, and AI will use knowledge exploration tools to read the content in later conversations.
 
-To create a no-RAG knowledge base:
-
-1. **Create Knowledge Base**: Open advanced settings in the create dialog and set **RAG Configuration** to **Disabled**
-2. **Upload Documents**: Documents are stored but not indexed for RAG
-3. **Start Chatting**: AI will automatically use exploration tools
-
-> **Note**: You can always add RAG configuration later by editing the knowledge base settings after configuring a retriever.
+> **Note**: After configuring a retriever and embedding model, newly created knowledge bases will automatically receive RAG retrieval configuration.
 
 ## Related Documentation
 

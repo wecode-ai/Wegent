@@ -535,16 +535,8 @@
     },
     "advancedSettings": {
       "title": "高级设置",
-      "collapsed": "点击展开高级设置",
       "expanded": "点击收起",
       "readOnly": "只读"
-    },
-    "ragConfigMode": {
-      "title": "RAG 配置",
-      "auto": "自动配置",
-      "manual": "手动选择",
-      "disabled": "不启用",
-      "manualIncomplete": "手动选择 RAG 时必须选择检索引擎和 Embedding 模型"
     },
     "retrieval": {
       "retriever": "检索引擎",

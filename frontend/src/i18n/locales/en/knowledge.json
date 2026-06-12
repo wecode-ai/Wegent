@@ -535,16 +535,8 @@
     },
     "advancedSettings": {
       "title": "Advanced Settings",
-      "collapsed": "Click to expand advanced settings",
       "expanded": "Click to collapse",
       "readOnly": "Read-only"
-    },
-    "ragConfigMode": {
-      "title": "RAG Configuration",
-      "auto": "Auto",
-      "manual": "Manual",
-      "disabled": "Disabled",
-      "manualIncomplete": "Manual RAG requires both a retriever and an embedding model"
     },
     "retrieval": {
       "retriever": "Retriever",

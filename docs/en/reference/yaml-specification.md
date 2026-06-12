@@ -359,7 +359,7 @@ KnowledgeBase is used to manage document knowledge bases, retrieval configuratio
 | `spec.retrievalConfig.score_threshold` | number | No | Minimum relevance threshold |
 | `spec.retrievalConfig.hybrid_weights` | object | No | Hybrid retrieval weights |
 
-`retriever_name` and `embedding_config.model_name` are required only when `spec.retrievalConfig` exists. The create API field `rag_config_mode` expresses creation intent only (auto, manual, or disabled) and is not persisted as a KnowledgeBase YAML field. The persisted stable states are either a complete `retrievalConfig` or no `retrievalConfig`.
+`retriever_name` and `embedding_config.model_name` are required only when `spec.retrievalConfig` exists. When creating a knowledge base, the backend automatically fills in a missing retriever and embedding model; if no usable defaults are available, it does not write `retrievalConfig`. The persisted stable states are either a complete `retrievalConfig` or no `retrievalConfig`.
 
 ### Summary-Related Configuration
 

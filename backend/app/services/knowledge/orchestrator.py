@@ -283,16 +283,12 @@ class KnowledgeOrchestrator:
         user: User,
         namespace: str,
         retrieval_config: Optional[Dict[str, Any]],
-        rag_config_mode: Literal["auto", "manual", "disabled"] = "auto",
         retriever_name: Optional[str] = None,
         retriever_namespace: Optional[str] = None,
         embedding_model_name: Optional[str] = None,
         embedding_model_namespace: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        """Resolve retrieval config according to the caller's explicit intent."""
-        if rag_config_mode == "disabled":
-            return None
-
+        """Build a complete retrieval config, auto-filling missing core fields."""
         resolved_config = dict(retrieval_config or {})
         embedding_config = dict(resolved_config.get("embedding_config") or {})
 
@@ -306,20 +302,6 @@ class KnowledgeOrchestrator:
         embedding_model_namespace = (
             embedding_config.get("model_namespace") or embedding_model_namespace
         )
-
-        if rag_config_mode == "manual":
-            if not retriever_name or not embedding_model_name:
-                raise ValueError(
-                    "Manual RAG configuration requires retriever_name and "
-                    "embedding_config.model_name"
-                )
-            return self._build_complete_retrieval_config(
-                base_config=resolved_config,
-                retriever_name=retriever_name,
-                retriever_namespace=retriever_namespace,
-                embedding_model_name=embedding_model_name,
-                embedding_model_namespace=embedding_model_namespace,
-            )
 
         if not retriever_name:
             default_retriever = self.get_default_retriever(db, user.id, namespace)
@@ -1060,7 +1042,6 @@ class KnowledgeOrchestrator:
         namespace: str = "default",
         kb_type: str = "notebook",
         summary_enabled: bool = False,
-        rag_config_mode: Literal["auto", "manual", "disabled"] = "auto",
         # REST API scenario: pass complete config
         retrieval_config: Optional[Dict[str, Any]] = None,
         # MCP scenario: auto-select or explicitly specify
@@ -1075,12 +1056,7 @@ class KnowledgeOrchestrator:
         """
         Create a knowledge base with auto-configuration support.
 
-        Supports three RAG configuration modes:
-        1. auto: Auto-select missing retriever/embedding while preserving tuning fields
-        2. manual: Require a complete retrieval_config dict
-        3. disabled: Create a knowledge base without RAG
-
-        Auto-selection logic (when rag_config_mode is auto):
+        Auto-selection logic:
         1. retriever: If not specified, auto-select using get_default_retriever()
         2. embedding: If not specified, auto-select using get_default_embedding_model()
         3. summary_model: If not specified and summary_enabled=True:
@@ -1095,7 +1071,6 @@ class KnowledgeOrchestrator:
             namespace: Namespace (default for personal, group name for group)
             kb_type: Type (notebook or classic)
             summary_enabled: Enable summary generation
-            rag_config_mode: RAG configuration mode
             retrieval_config: Complete retrieval config dict (REST API mode)
             retriever_name: Optional retriever name (MCP mode)
             retriever_namespace: Optional retriever namespace (MCP mode)
@@ -1113,7 +1088,6 @@ class KnowledgeOrchestrator:
         logger.info(
             f"[Orchestrator] create_knowledge_base called: name={name}, namespace={namespace}, "
             f"kb_type={kb_type}, summary_enabled={summary_enabled}, task_id={task_id}, "
-            f"rag_config_mode={rag_config_mode}, "
             f"user_id={user.id}, has_retrieval_config={retrieval_config is not None}, "
             f"has_summary_model_ref={summary_model_ref is not None}"
         )
@@ -1123,7 +1097,6 @@ class KnowledgeOrchestrator:
             user=user,
             namespace=namespace,
             retrieval_config=retrieval_config,
-            rag_config_mode=rag_config_mode,
             retriever_name=retriever_name,
             retriever_namespace=retriever_namespace,
             embedding_model_name=embedding_model_name,

@@ -15,27 +15,12 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { useRetrievers } from '../hooks/useRetrievers'
 import { useEmbeddingModels } from '../hooks/useEmbeddingModels'
 import { useRetrievalMethods } from '../hooks/useRetrievalMethods'
+import type { RetrievalConfigDraft } from '@/types/knowledge'
 import Link from 'next/link'
 
-export interface RetrievalConfig {
-  retriever_name?: string
-  retriever_namespace?: string
-  embedding_config?: {
-    model_name?: string
-    model_namespace?: string
-  }
-  retrieval_mode?: 'vector' | 'keyword' | 'hybrid'
-  top_k?: number
-  score_threshold?: number
-  hybrid_weights?: {
-    vector_weight: number
-    keyword_weight: number
-  }
-}
-
 interface RetrievalSettingsSectionProps {
-  config: Partial<RetrievalConfig>
-  onChange: (config: Partial<RetrievalConfig>) => void
+  config: RetrievalConfigDraft
+  onChange: (config: RetrievalConfigDraft) => void
   readOnly?: boolean
   partialReadOnly?: boolean // When true, only retriever and embedding model are read-only
   scope?: 'personal' | 'group' | 'organization' | 'all'

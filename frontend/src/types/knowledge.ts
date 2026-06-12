@@ -29,6 +29,22 @@ export type KnowledgeResourceScope = 'personal' | 'organization' | 'group' | 'al
 
 // Retrieval Config types
 export interface RetrievalConfig {
+  retriever_name: string
+  retriever_namespace?: string
+  embedding_config: {
+    model_name: string
+    model_namespace?: string
+  }
+  retrieval_mode?: 'vector' | 'keyword' | 'hybrid'
+  top_k?: number
+  score_threshold?: number
+  hybrid_weights?: {
+    vector_weight: number
+    keyword_weight: number
+  }
+}
+
+export interface RetrievalConfigDraft {
   retriever_name?: string
   retriever_namespace?: string
   embedding_config?: {
@@ -286,7 +302,6 @@ export interface SummaryModelRef {
 // - notebook: Three-column layout with chat area and document panel (new style)
 // - classic: Document list only without chat functionality (legacy style)
 export type KnowledgeBaseType = 'notebook' | 'classic'
-export type RagConfigMode = 'auto' | 'manual' | 'disabled'
 
 // Knowledge Base types
 export interface KnowledgeBase {
@@ -325,8 +340,7 @@ export interface KnowledgeBaseCreate {
   name: string
   description?: string
   namespace?: string
-  retrieval_config?: Partial<RetrievalConfig>
-  rag_config_mode?: RagConfigMode
+  retrieval_config?: RetrievalConfigDraft
   summary_enabled?: boolean
   summary_model_ref?: SummaryModelRef | null
   /** Knowledge base display type: 'notebook' (three-column with chat) or 'classic' (document list only) */

@@ -394,7 +394,6 @@ def create_knowledge_base(
             namespace=data.namespace or "default",
             kb_type=data.kb_type or "notebook",
             summary_enabled=data.summary_enabled,
-            rag_config_mode=data.rag_config_mode,
             retrieval_config=(
                 data.retrieval_config.model_dump() if data.retrieval_config else None
             ),
