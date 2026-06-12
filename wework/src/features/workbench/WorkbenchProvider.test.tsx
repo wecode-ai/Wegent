@@ -622,6 +622,120 @@ describe('WorkbenchProvider', () => {
     )
   })
 
+  test('ignores stale cached streaming when opening a cancelled task', async () => {
+    const getTaskDetail = vi.fn().mockResolvedValue({
+      id: 8,
+      title: 'Cancelled task',
+      status: 'CANCELLED',
+      task_type: 'code',
+      project_id: 0,
+      device_id: 'local-online',
+      created_at: '2026-06-04T00:00:00.000Z',
+      updated_at: '2026-06-04T00:01:00.000Z',
+      subtasks: [
+        {
+          id: 20,
+          task_id: 8,
+          role: 'user',
+          prompt: '写个故事',
+          status: 'COMPLETED',
+          created_at: '2026-06-04T00:00:00.000Z',
+        },
+        {
+          id: 21,
+          task_id: 8,
+          role: 'assistant',
+          result: { value: '' },
+          status: 'CANCELLED',
+          created_at: '2026-06-04T00:00:01.000Z',
+        },
+      ],
+    })
+    const joinTask = vi.fn().mockResolvedValue({
+      streaming: {
+        subtask_id: 21,
+        offset: 9,
+        cached_content: '旧的缓存内容',
+      },
+    })
+
+    render(
+      <WorkbenchProvider
+        user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+        services={{
+          teamApi: {
+            getDefaultWorkbenchTeam: vi
+              .fn()
+              .mockResolvedValue({ id: 2, name: 'coder', is_active: true }),
+          },
+          modelApi: { listModels: vi.fn().mockResolvedValue({ data: [] }) },
+          skillApi: {
+            listSkills: vi.fn().mockResolvedValue([]),
+            getTeamSkills: vi.fn().mockResolvedValue({ skills: [], preload_skills: [] }),
+          },
+          projectApi: {
+            listProjects: vi.fn().mockResolvedValue({ items: [] }),
+            getProject: vi.fn(),
+            createProject: vi.fn(),
+            updateProject: vi.fn(),
+            deleteProject: vi.fn(),
+            archiveProjectChats: vi.fn(),
+            archiveAllProjectChats: vi.fn(),
+            createConversation: vi.fn(),
+          },
+          taskApi: {
+            listRecentTasks: vi.fn().mockResolvedValue({ total: 0, items: [] }),
+            getTaskDetail,
+            renameTask: vi.fn(),
+            archiveTask: vi.fn(),
+            archiveAllChats: vi.fn(),
+            listArchivedTasks: vi.fn(),
+            unarchiveTask: vi.fn(),
+            deleteTask: vi.fn(),
+            deleteArchivedTasks: vi.fn(),
+          },
+          deviceApi: {
+            listDevices: vi.fn().mockResolvedValue([
+              {
+                id: 1,
+                device_id: 'local-online',
+                name: 'Local Device',
+                status: 'online',
+                is_default: false,
+                device_type: 'local',
+                bind_shell: 'claudecode',
+              },
+            ]),
+            getHomeDirectory: vi.fn(),
+            getProjectWorkspaceRoot: vi.fn(),
+            listDirectories: vi.fn(),
+            listSkills: vi.fn().mockResolvedValue([]),
+          },
+          chatStream: {
+            joinTask,
+            leaveTask: vi.fn(),
+            sendMessage: vi.fn(),
+            sendGuidance: vi.fn(),
+            cancelStream: vi.fn(),
+            subscribe: vi.fn(() => vi.fn()),
+          },
+        }}
+      >
+        <TaskMessagesProbe />
+      </WorkbenchProvider>
+    )
+
+    await userEvent.click(await screen.findByText('open task'))
+
+    await waitFor(() => expect(joinTask).toHaveBeenCalledWith(8))
+    expect(screen.getByTestId('message-contents')).toHaveTextContent(
+      'assistant:done:'
+    )
+    expect(screen.getByTestId('message-contents')).not.toHaveTextContent(
+      'assistant:streaming'
+    )
+  })
+
   test('uses the opened task model as the runtime compatibility anchor', async () => {
     const models: UnifiedModel[] = [
       {

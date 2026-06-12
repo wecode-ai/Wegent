@@ -561,6 +561,17 @@ function isRunningTaskStatus(status?: string) {
   )
 }
 
+function shouldRestoreCachedStreaming(
+  task: Task,
+  subtasks: Subtask[] | undefined,
+  subtaskId: number
+) {
+  if (!isRunningTaskStatus(task.status)) return false
+
+  const subtask = subtasks?.find(item => item.id === subtaskId)
+  return subtask ? isRunningTaskStatus(subtask.status) : true
+}
+
 function normalizeGuidanceError(error?: string) {
   if (!error) return '引导发送失败'
   if (error.includes('Chat Shell')) {
@@ -1253,7 +1264,14 @@ export function WorkbenchProvider({
       setQueuedSends([])
       setGuidanceMessages([])
       const joinResponse = await resolvedServices.chatStream.joinTask(taskId)
-      if (joinResponse?.streaming) {
+      if (
+        joinResponse?.streaming &&
+        shouldRestoreCachedStreaming(
+          detailTask,
+          detail.subtasks,
+          joinResponse.streaming.subtask_id
+        )
+      ) {
         dispatchMessages({
           type: 'assistant_cached',
           taskId,

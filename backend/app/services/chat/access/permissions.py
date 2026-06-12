@@ -17,10 +17,19 @@ from typing import Any, Dict, Optional
 
 from sqlalchemy.orm import Session
 
+from app.models.subtask import SubtaskStatus
 from app.services.chat.storage.db import with_session_in_executor
 from app.stores.tasks import subtask_store, task_access_store
 
 logger = logging.getLogger(__name__)
+
+_ACTIVE_STREAMING_SUBTASK_STATUSES = {
+    SubtaskStatus.PENDING,
+    SubtaskStatus.RUNNING,
+}
+_ACTIVE_STREAMING_STATUS_VALUES = {
+    status.value for status in _ACTIVE_STREAMING_SUBTASK_STATUSES
+}
 
 
 @with_session_in_executor
@@ -80,6 +89,31 @@ async def get_active_streaming(task_id: int) -> Optional[Dict[str, Any]]:
 
     if redis_status:
         subtask_id = redis_status.get("subtask_id")
+        try:
+            subtask_id = int(subtask_id)
+        except (TypeError, ValueError):
+            logger.warning(
+                "[get_active_streaming] Invalid Redis streaming status for task %s: %s",
+                task_id,
+                redis_status,
+            )
+            await session_manager.clear_task_streaming_status(task_id)
+            return await _get_active_streaming_from_db(task_id)
+
+        if not await _is_streaming_subtask_active(task_id, subtask_id):
+            logger.info(
+                "[get_active_streaming] Ignoring stale Redis streaming status for "
+                "task_id=%s subtask_id=%s",
+                task_id,
+                subtask_id,
+            )
+            await session_manager.cleanup_streaming_state(
+                subtask_id,
+                task_id=task_id,
+            )
+            return await _get_active_streaming_from_db(task_id)
+
+        redis_status["subtask_id"] = subtask_id
         # Also get cached content to verify stream is active
         cached_content = await session_manager.get_streaming_content(subtask_id)
         logger.info(
@@ -95,6 +129,19 @@ async def get_active_streaming(task_id: int) -> Optional[Dict[str, Any]]:
         f"[get_active_streaming] No Redis status, falling back to DB query for task_id={task_id}"
     )
     return await _get_active_streaming_from_db(task_id)
+
+
+@with_session_in_executor
+def _is_streaming_subtask_active(db: Session, task_id: int, subtask_id: int) -> bool:
+    """Return True only when the cached streaming subtask is still active."""
+    subtask = subtask_store.get_basic_by_id(db, subtask_id=subtask_id)
+    if not subtask or subtask.task_id != task_id:
+        return False
+
+    if isinstance(subtask.status, str):
+        return subtask.status.upper() in _ACTIVE_STREAMING_STATUS_VALUES
+
+    return subtask.status in _ACTIVE_STREAMING_SUBTASK_STATUSES
 
 
 @with_session_in_executor

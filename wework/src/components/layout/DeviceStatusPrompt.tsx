@@ -1,5 +1,5 @@
 import { AlertCircle, ArrowUpCircle, Loader2, PlusCircle } from 'lucide-react'
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
@@ -59,6 +59,13 @@ function readSidebarDeviceCache() {
   }
 }
 
+function readFreshSidebarDeviceCache(maxAgeMs: number) {
+  const cached = readSidebarDeviceCache()
+  if (!cached) return null
+
+  return Date.now() - cached.updatedAt < maxAgeMs ? cached : null
+}
+
 function writeSidebarDeviceCache(devices: DeviceInfo[], updatedAt: number) {
   sidebarDeviceMemoryCache = { devices, updatedAt }
   try {
@@ -114,16 +121,21 @@ export function DeviceStatusPrompt({
   const [sidebarTooltipOpen, setSidebarTooltipOpen] = useState(false)
   const sidebarActionRef = useRef<HTMLDivElement>(null)
   const sidebarTooltipRef = useRef<HTMLDivElement>(null)
-  const now = Date.now()
-  const sidebarDeviceCache = readSidebarDeviceCache()
+
+  useEffect(() => {
+    if (presentation === 'sidebar-action' && devices.length > 0) {
+      writeSidebarDeviceCache(devices, Date.now())
+    }
+  }, [devices, presentation])
+
+  const sidebarDeviceCache =
+    presentation === 'sidebar-action'
+      ? readFreshSidebarDeviceCache(SIDEBAR_EMPTY_DEVICE_FALLBACK_MS)
+      : null
   const canUseSidebarDeviceFallback =
     presentation === 'sidebar-action' &&
     devices.length === 0 &&
-    sidebarDeviceCache !== null &&
-    now - sidebarDeviceCache.updatedAt < SIDEBAR_EMPTY_DEVICE_FALLBACK_MS
-  if (presentation === 'sidebar-action' && devices.length > 0) {
-    writeSidebarDeviceCache(devices, now)
-  }
+    sidebarDeviceCache !== null
   const effectiveDevices = canUseSidebarDeviceFallback
     ? sidebarDeviceCache?.devices ?? devices
     : devices
