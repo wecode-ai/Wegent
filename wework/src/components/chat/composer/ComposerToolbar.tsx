@@ -1,4 +1,4 @@
-import { ArrowUp, Mic, Square } from 'lucide-react'
+import { ArrowUp, Square } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { ModelOptions, UnifiedModel } from '@/types/api'
 import { AddContextMenu } from './AddContextMenu'
@@ -10,6 +10,7 @@ interface ComposerToolbarProps {
   models: UnifiedModel[]
   selectedModel: UnifiedModel | null
   selectedModelOptions: ModelOptions
+  modelSelectorOpenSignal?: number
   isModelSelectionReady: boolean
   onSelectModel: (model: UnifiedModel | null) => void
   onSelectModelOption: (optionId: string, value: string) => void
@@ -24,6 +25,7 @@ export function ComposerToolbar({
   models,
   selectedModel,
   selectedModelOptions,
+  modelSelectorOpenSignal,
   isModelSelectionReady,
   onSelectModel,
   onSelectModelOption,
@@ -44,6 +46,7 @@ export function ComposerToolbar({
             models={models}
             selectedModel={selectedModel}
             selectedModelOptions={selectedModelOptions}
+            openSignal={modelSelectorOpenSignal}
             disabled={disabled}
             onSelectModel={onSelectModel}
             onSelectModelOption={onSelectModelOption}
@@ -54,14 +57,6 @@ export function ComposerToolbar({
             data-testid="model-selector-loading"
           />
         )}
-        <button
-          type="button"
-          data-testid="voice-input-button"
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full p-0 text-text-secondary hover:bg-muted"
-          aria-label={t('workbench.voice_input', '语音输入')}
-        >
-          <Mic className="h-4 w-4" />
-        </button>
         {isStreaming ? (
           <button
             type="button"

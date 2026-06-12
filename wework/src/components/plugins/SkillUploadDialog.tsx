@@ -237,7 +237,7 @@ export function SkillUploadDialog({
           <button
             type="button"
             data-testid="skill-upload-confirm-button"
-            className="flex h-9 items-center gap-2 rounded-xl bg-primary px-4 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-60"
+            className="flex h-9 items-center gap-2 rounded-xl bg-text-primary px-4 text-sm font-semibold text-background hover:bg-text-primary/90 disabled:opacity-60"
             onClick={() => void submit()}
             disabled={isUploading || !selectedPackage}
           >

@@ -167,7 +167,7 @@ export function CustomMcpForm({
             <button
               type="button"
               data-testid="custom-mcp-apply-json-button"
-              className="h-8 rounded-lg bg-primary px-3 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-60"
+              className="h-8 rounded-lg bg-text-primary px-3 text-xs font-semibold text-background hover:bg-text-primary/90 disabled:opacity-60"
               disabled={!jsonImportText.trim()}
               onClick={() => applyJsonImport(jsonImportText)}
             >
@@ -266,7 +266,7 @@ export function CustomMcpForm({
         <button
           type="submit"
           data-testid="custom-mcp-submit-button"
-          className="flex h-9 items-center gap-2 rounded-xl bg-primary px-4 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-60"
+          className="flex h-9 items-center gap-2 rounded-xl bg-text-primary px-4 text-sm font-semibold text-background hover:bg-text-primary/90 disabled:opacity-60"
           disabled={isSubmitting}
         >
           {isSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
@@ -444,7 +444,7 @@ export function McpProviderBlock({
           <button
             type="button"
             data-testid={`mcp-provider-save-token-${provider.key}`}
-            className="flex h-10 items-center gap-2 rounded-xl bg-primary px-4 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-60"
+            className="flex h-10 items-center gap-2 rounded-xl bg-text-primary px-4 text-sm font-semibold text-background hover:bg-text-primary/90 disabled:opacity-60"
             disabled={isSaving || !tokenInput.trim()}
             onClick={onSaveToken}
           >

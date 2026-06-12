@@ -48,6 +48,26 @@ const branches: GitBranch[] = [
 ]
 
 describe('ProjectCreateDialog', () => {
+  test('uses a black primary action button in the dialog footer', () => {
+    render(
+      <ProjectCreateDialog
+        open
+        mode="scratch"
+        devices={devices}
+        onClose={vi.fn()}
+        onCreateProject={vi.fn()}
+        onGetDeviceHomeDirectory={vi.fn().mockResolvedValue('/home/user')}
+        onGetProjectWorkspaceRoot={vi.fn().mockResolvedValue('/workspace/projects')}
+        onListDeviceDirectories={vi.fn().mockResolvedValue([])}
+        onCreateDeviceDirectory={vi.fn()}
+      />,
+    )
+
+    const createButton = screen.getByTestId('create-project-button')
+    expect(createButton).toHaveClass('bg-text-primary', 'text-background')
+    expect(createButton).not.toHaveClass('bg-[#14b8a6]', 'hover:bg-[#0f9f93]')
+  })
+
   test('offers a settings link to create a cloud device when no project devices are available', async () => {
     const onOpenCloudDeviceSettings = vi.fn()
 

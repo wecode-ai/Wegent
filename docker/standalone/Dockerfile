@@ -11,8 +11,10 @@ FROM node:22-slim AS frontend-builder
 WORKDIR /app
 
 # Copy dependency files and postinstall scripts
-COPY frontend/package.json frontend/package-lock.json ./
-COPY frontend/scripts ./scripts
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY packages/chat-core/package.json ./packages/chat-core/package.json
+COPY frontend/package.json ./frontend/package.json
+COPY frontend/scripts ./frontend/scripts
 
 # Font download configuration for internal deployments
 ARG GOOGLE_SANS_CSS_URLS=""
@@ -21,12 +23,17 @@ ARG SKIP_PDF_FONT_DOWNLOAD=""
 ENV GOOGLE_SANS_CSS_URLS=${GOOGLE_SANS_CSS_URLS}
 ENV SKIP_UI_FONT_DOWNLOAD=${SKIP_UI_FONT_DOWNLOAD}
 ENV SKIP_PDF_FONT_DOWNLOAD=${SKIP_PDF_FONT_DOWNLOAD}
+ENV HUSKY=0
 
-# Install dependencies
-RUN npm ci && npm cache clean --force
+# Install workspace dependencies needed by the frontend.
+RUN corepack enable \
+    && corepack prepare pnpm@10.34.3 --activate \
+    && pnpm install --frozen-lockfile --filter wecode-ai-assistant...
 
 # Copy source code
-COPY frontend .
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY packages ./packages
+COPY frontend ./frontend
 
 # App version injected at build time (e.g. "0.1.5")
 ARG APP_VERSION="dev"
@@ -34,9 +41,13 @@ ENV NEXT_PUBLIC_APP_VERSION=${APP_VERSION}
 
 # Disable Next.js telemetry
 ENV NEXT_TELEMETRY_DISABLED=1
+ENV HUSKY=0
 
 # Build Next.js application
-RUN npm run build
+WORKDIR /app/frontend
+RUN corepack enable \
+    && corepack prepare pnpm@10.34.3 --activate \
+    && pnpm run build
 
 # ========== Stage 2: Build Python Base with Tools ==========
 FROM ghcr.io/wecode-ai/wegent-base-python3.12:latest AS python-base
@@ -124,9 +135,9 @@ COPY backend/alembic /app/backend/alembic
 COPY backend/alembic.ini /app/backend/alembic.ini
 
 # Copy frontend build (standalone output)
-COPY --from=frontend-builder /app/.next/standalone /app/frontend
-COPY --from=frontend-builder /app/.next/static /app/frontend/.next/static
-COPY --from=frontend-builder /app/public /app/frontend/public
+COPY --from=frontend-builder /app/frontend/.next/standalone /app
+COPY --from=frontend-builder /app/frontend/.next/static /app/frontend/.next/static
+COPY --from=frontend-builder /app/frontend/public /app/frontend/public
 
 # Copy init_data directory with default resources and skills
 COPY backend/init_data /app/init_data

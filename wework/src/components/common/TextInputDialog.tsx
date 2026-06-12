@@ -103,7 +103,7 @@ function TextInputDialogContent({
                 setSubmitting(false)
               }
             }}
-            className="h-11 min-w-[44px] rounded-md bg-[#14b8a6] px-4 text-[13px] font-medium leading-[18px] text-white hover:bg-[#0f9f93] disabled:opacity-50"
+            className="h-11 min-w-[44px] rounded-md bg-text-primary px-4 text-[13px] font-medium leading-[18px] text-background hover:bg-text-primary/90 disabled:opacity-50"
           >
             {confirmLabel}
           </button>

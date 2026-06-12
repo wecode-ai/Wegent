@@ -27,7 +27,7 @@ describe('macOS window chrome', () => {
     expect(mainWindow.titleBarStyle).toBe('Overlay')
     expect(mainWindow.hiddenTitle).toBe(true)
     expect(mainWindow.decorations).toBe(true)
-    expect(mainWindow.trafficLightPosition).toEqual({ x: 19, y: 29 })
+    expect(mainWindow.trafficLightPosition).toEqual({ x: 19, y: 21 })
   })
 
   test('grants permission to start native window dragging', () => {

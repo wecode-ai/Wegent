@@ -50,6 +50,7 @@ interface ModelSelectorProps {
   disabled: boolean
   onSelectModel: (model: UnifiedModel | null) => void
   onSelectModelOption: (optionId: string, value: string) => void
+  openSignal?: number
   menuPlacement?: 'above' | 'below'
   buttonClassName?: string
   menuClassName?: string
@@ -62,6 +63,7 @@ export function ModelSelector({
   disabled,
   onSelectModel,
   onSelectModelOption,
+  openSignal,
   menuPlacement = 'above',
   buttonClassName = '',
   menuClassName = '',
@@ -74,6 +76,7 @@ export function ModelSelector({
   const submenuPanelRef = useRef<HTMLDivElement>(null)
   const mobileMenuRef = useRef<HTMLDivElement>(null)
   const mobileCloseButtonRef = useRef<HTMLButtonElement>(null)
+  const handledOpenSignalRef = useRef<number | undefined>(undefined)
   const familyButtonRefs = useRef(new Map<string, HTMLButtonElement>())
   const [open, setOpen] = useState(false)
   const [mobileQuery, setMobileQuery] = useState('')
@@ -91,6 +94,15 @@ export function ModelSelector({
     activeFamilyId || selectedFamily || familyGroups[0]?.config.id || ''
   const activeGroup =
     familyGroups.find(group => group.config.id === displayedFamilyId) ?? familyGroups[0]
+
+  useEffect(() => {
+    if (!openSignal || disabled || open) return
+    if (handledOpenSignalRef.current === openSignal) return
+
+    handledOpenSignalRef.current = openSignal
+    buttonRef.current?.click()
+  }, [disabled, open, openSignal])
+
   const closeMenu = useCallback(() => {
     setOpen(false)
     setMobileQuery('')

@@ -79,7 +79,7 @@ export function AppearanceSettingsPage() {
                 className={[
                   'flex h-11 items-center justify-center gap-2 rounded-md border text-sm font-medium transition-colors',
                   active
-                    ? 'border-primary bg-primary text-primary-contrast'
+                    ? 'border-text-primary bg-text-primary text-background'
                     : 'border-border bg-background text-text-primary hover:bg-muted',
                 ].join(' ')}
               >
@@ -95,7 +95,7 @@ export function AppearanceSettingsPage() {
               <span className="text-xs font-medium text-text-secondary">
                 {t('workbench.appearance_preview', '预览')}
               </span>
-              <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary">
+              <span className="rounded-full bg-surface px-2 py-0.5 text-xs text-text-secondary">
                 {resolvedMode}
               </span>
             </div>
@@ -111,7 +111,7 @@ export function AppearanceSettingsPage() {
                 <div className="h-3 w-3/4 rounded bg-text-muted/25" />
                 <button
                   type="button"
-                  className="h-8 rounded-md bg-primary px-3 text-xs font-medium text-primary-contrast"
+                  className="h-8 rounded-md bg-text-primary px-3 text-xs font-medium text-background"
                 >
                   {t('workbench.appearance_preview_action', '操作')}
                 </button>
@@ -144,7 +144,7 @@ export function AppearanceSettingsPage() {
                   }
                   className="peer sr-only"
                 />
-                <span className="absolute inset-0 rounded-full bg-muted transition peer-checked:bg-primary" />
+                <span className="absolute inset-0 rounded-full bg-muted transition peer-checked:bg-text-primary" />
                 <span className="absolute left-1 h-5 w-5 rounded-full bg-background shadow transition peer-checked:translate-x-5" />
               </label>
             </SettingRow>
@@ -157,7 +157,7 @@ export function AppearanceSettingsPage() {
                   max="100"
                   value={appearance.contrast}
                   onChange={event => setAppearance({ contrast: Number(event.target.value) })}
-                  className="w-36 accent-[rgb(var(--color-primary))]"
+                  className="w-36 accent-[rgb(var(--color-text-primary))]"
                 />
                 <span className="w-8 text-right text-sm text-text-secondary">
                   {appearance.contrast}
@@ -179,7 +179,7 @@ export function AppearanceSettingsPage() {
             data-testid="appearance-ui-font-input"
             value={appearance.uiFont}
             onChange={event => setAppearance({ uiFont: event.target.value })}
-            className="h-9 w-[min(24rem,52vw)] rounded-md border border-border bg-background px-3 text-sm text-text-primary outline-none focus:border-primary"
+            className="h-9 w-[min(24rem,52vw)] rounded-md border border-border bg-background px-3 text-sm text-text-primary outline-none focus:border-text-primary"
           />
         </SettingRow>
         <SettingRow label={t('workbench.appearance_code_font', '代码字体')}>
@@ -187,7 +187,7 @@ export function AppearanceSettingsPage() {
             data-testid="appearance-code-font-input"
             value={appearance.codeFont}
             onChange={event => setAppearance({ codeFont: event.target.value })}
-            className="h-9 w-[min(24rem,52vw)] rounded-md border border-border bg-background px-3 font-mono text-sm text-text-primary outline-none focus:border-primary"
+            className="h-9 w-[min(24rem,52vw)] rounded-md border border-border bg-background px-3 font-mono text-sm text-text-primary outline-none focus:border-text-primary"
           />
         </SettingRow>
       </section>

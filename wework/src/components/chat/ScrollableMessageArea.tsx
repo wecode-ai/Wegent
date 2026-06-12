@@ -27,6 +27,8 @@ interface ScrollableMessageAreaProps {
   scrollTestId?: string
   conversationKey?: string | number | null
   devices?: DeviceInfo[]
+  onRetryFailedMessage?: (message: WorkbenchMessage) => void
+  onSwitchModelForFailedMessage?: (message: WorkbenchMessage) => void
   onLoadFileChangesDiff?: (subtaskId: number) => Promise<string>
   onRevertFileChanges?: (
     subtaskId: number,
@@ -41,6 +43,8 @@ export function ScrollableMessageArea({
   scrollTestId = 'chat-message-scroll-area',
   conversationKey,
   devices,
+  onRetryFailedMessage,
+  onSwitchModelForFailedMessage,
   onLoadFileChangesDiff,
   onRevertFileChanges,
 }: ScrollableMessageAreaProps) {
@@ -234,6 +238,8 @@ export function ScrollableMessageArea({
             <MessageList
               messages={messages}
               devices={devices}
+              onRetryFailedMessage={onRetryFailedMessage}
+              onSwitchModelForFailedMessage={onSwitchModelForFailedMessage}
               onLoadFileChangesDiff={onLoadFileChangesDiff}
               onRevertFileChanges={onRevertFileChanges}
             />

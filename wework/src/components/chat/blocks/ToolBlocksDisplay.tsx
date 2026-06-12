@@ -110,7 +110,7 @@ function ToolActivityGroup({
   const Icon = hasCommandBlocks(row.blocks) ? SquareTerminal : Search
 
   return (
-    <div className="min-w-0 overflow-x-hidden text-sm">
+    <div className="min-w-0 overflow-x-hidden text-[13px]">
       <button
         type="button"
         data-testid="processing-activity-group-toggle"
@@ -148,7 +148,7 @@ function hasCommandBlocks(blocks: ToolBlock[]): boolean {
 
 function ThinkingIndicator() {
   return (
-    <div className="flex items-center gap-1.5 text-sm text-text-muted">
+    <div className="flex items-center gap-1.5 text-[13px] text-text-muted">
       <span>正在思考</span>
       <span className="flex items-center gap-0.5" aria-hidden="true">
         <span className="h-1 w-1 animate-pulse rounded-full bg-current" />
