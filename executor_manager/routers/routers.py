@@ -283,7 +283,8 @@ async def callback_handler(event_data: dict = Body(...), http_request: Request =
             if response.status_code != 200:
                 logger.warning(
                     f"[Callback] Backend returned error: "
-                    f"status_code={response.status_code}"
+                    f"status_code={response.status_code}, "
+                    f"body_preview={_to_log_preview(response.text)}"
                 )
 
         # Handle terminal events - remove from RunningTaskTracker
@@ -860,7 +861,8 @@ async def _update_validation_status_from_callback(
             else:
                 logger.warning(
                     f"[Callback] Failed to update validation status: "
-                    f"status_code={response.status_code}"
+                    f"status_code={response.status_code}, "
+                    f"body_preview={_to_log_preview(response.text)}"
                 )
     except Exception as e:
         logger.error(

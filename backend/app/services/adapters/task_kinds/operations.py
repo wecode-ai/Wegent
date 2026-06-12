@@ -1079,6 +1079,15 @@ class TaskOperationsMixin:
                 logger.info(
                     f"Task {task_id} cancelled successfully via executor_manager"
                 )
+        except httpx.HTTPStatusError as e:
+            response = e.response
+            logger.error(
+                "Error calling executor_manager to cancel task %s: "
+                "status_code=%s body=%s",
+                task_id,
+                response.status_code,
+                response.text[:1000],
+            )
         except Exception as e:
             logger.error(
                 f"Error calling executor_manager to cancel task {task_id}: {str(e)}"
