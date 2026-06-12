@@ -56,6 +56,27 @@ describe('messageReducer', () => {
     })
   })
 
+  test('preserves backend error type on stream error', () => {
+    const state = messageReducer([], {
+      type: 'assistant_started',
+      taskId: 1,
+      subtaskId: 9,
+    })
+
+    const failed = messageReducer(state, {
+      type: 'assistant_error',
+      subtaskId: 9,
+      error: 'too many requests',
+      errorType: 'rate_limit',
+    })
+
+    expect(failed[0]).toMatchObject({
+      status: 'failed',
+      error: 'too many requests',
+      errorType: 'rate_limit',
+    })
+  })
+
   test('restores cached assistant streaming content as a message', () => {
     const state = messageReducer([], {
       type: 'assistant_cached',
