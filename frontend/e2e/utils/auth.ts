@@ -43,7 +43,7 @@ export async function login(
   // Clear and fill username
   await usernameInput.clear()
   await usernameInput.fill(username)
-  console.log(`Filled username: ${username}`)
+  console.log('Filled username')
 
   // Clear and fill password
   await passwordInput.clear()
