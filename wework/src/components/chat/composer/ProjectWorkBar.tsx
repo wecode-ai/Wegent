@@ -399,7 +399,7 @@ export function ProjectWorkBar({
   }
 
   const handleActivateCreateSubmenu = () => {
-    updateSideSubmenuPlacement('create')
+    updateSideSubmenuPlacement()
     setActiveSubmenu('create')
   }
 

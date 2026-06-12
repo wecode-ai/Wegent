@@ -14,6 +14,7 @@ const config: Config = {
   setupFilesAfterEnv: ['<rootDir>/jest.setup.js'],
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/src/$1',
+    '^@wegent/chat-core$': '<rootDir>/../packages/chat-core/src/index.ts',
     // Mock ESM-only markdown-related packages
     '^react-markdown$': '<rootDir>/src/__mocks__/react-markdown.tsx',
     '^@/lib/remark-gfm-safe$': '<rootDir>/src/__mocks__/remark-gfm-safe.ts',

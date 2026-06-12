@@ -51,6 +51,7 @@ class RunningTaskInfo:
     task_data: ExecutionRequest
     agent: Optional[Any] = None
     asyncio_task: Optional[asyncio.Task] = None
+    cancel_requested: bool = False
 
 
 class LocalRunner:
@@ -95,6 +96,8 @@ class LocalRunner:
 
         # Running tasks tracking (task_id -> RunningTaskInfo)
         self._running_tasks: Dict[int, RunningTaskInfo] = {}
+        self._pending_cancel_task_ids: set[int] = set()
+        self._pending_cancel_subtask_ids: set[int] = set()
 
         # Runner state
         self._running = False
@@ -306,7 +309,7 @@ class LocalRunner:
         logger.info(f"Enqueuing task: task_id={task_id}")
         await self.task_queue.put(task_data)
 
-    async def cancel_task(self, task_id: int) -> None:
+    async def cancel_task(self, task_id: int, subtask_id: Optional[int] = None) -> None:
         """Cancel a running task.
 
         Note: Cancel callback will be sent by response_processor after SDK interrupt
@@ -314,6 +317,7 @@ class LocalRunner:
         """
         info = self._running_tasks.get(task_id)
         if info:
+            info.cancel_requested = True
             if info.agent and hasattr(info.agent, "cancel_run_async"):
                 cancelled = await info.agent.cancel_run_async()
                 if cancelled:
@@ -325,10 +329,20 @@ class LocalRunner:
                 # after SDK interrupt messages are fully processed, avoiding duplicate callbacks
             else:
                 logger.warning(
-                    f"Cannot cancel task {task_id}: agent doesn't support cancellation"
+                    "Cancel requested before agent is ready: task_id=%s subtask_id=%s",
+                    task_id,
+                    subtask_id,
                 )
         else:
-            logger.warning(f"Cannot cancel task {task_id}: not currently running")
+            if subtask_id is not None:
+                self._pending_cancel_subtask_ids.add(int(subtask_id))
+            else:
+                self._pending_cancel_task_ids.add(int(task_id))
+            logger.info(
+                "Stored pending cancel request: task_id=%s subtask_id=%s",
+                task_id,
+                subtask_id,
+            )
 
     async def close_task_session(self, task_id: int) -> None:
         """Close a task session completely, freeing up the slot.
@@ -448,7 +462,10 @@ class LocalRunner:
                 logger.info(f"Dispatching task in parallel: task_id={task_id}")
 
                 # Register the task and dispatch it concurrently
-                info = RunningTaskInfo(task_data=task_data)
+                info = RunningTaskInfo(
+                    task_data=task_data,
+                    cancel_requested=self._consume_pending_cancel(task_data),
+                )
                 self._running_tasks[task_id] = info
                 info.asyncio_task = asyncio.create_task(
                     self._run_task_wrapper(task_data)
@@ -460,6 +477,15 @@ class LocalRunner:
                 break
 
         logger.info("Task processing loop ended")
+
+    def _consume_pending_cancel(self, task_data: ExecutionRequest) -> bool:
+        task_cancelled = task_data.task_id in self._pending_cancel_task_ids
+        subtask_cancelled = task_data.subtask_id in self._pending_cancel_subtask_ids
+        if task_cancelled:
+            self._pending_cancel_task_ids.discard(task_data.task_id)
+        if subtask_cancelled:
+            self._pending_cancel_subtask_ids.discard(task_data.subtask_id)
+        return task_cancelled or subtask_cancelled
 
     async def _run_task_wrapper(self, task_data: ExecutionRequest) -> None:
         """Wrapper that executes a task and handles cleanup on completion."""
@@ -544,12 +570,22 @@ class LocalRunner:
         # Create WebSocket emitter for local mode
         ws_emitter = self._create_emitter(task_id, subtask_id)
 
+        info = self._running_tasks.get(task_id)
+        if info and info.cancel_requested:
+            logger.info(
+                "Task was cancelled before execution started: task_id=%s subtask_id=%s",
+                task_id,
+                subtask_id,
+            )
+            await ws_emitter.incomplete(reason="cancelled")
+            return
+
         # Create and initialize agent with WebSocket emitter
         agent = AgentFactory.get_code_agent(task_data, emitter=ws_emitter)
 
         # Register agent in running tasks
-        if task_id in self._running_tasks:
-            self._running_tasks[task_id].agent = agent
+        if info:
+            info.agent = agent
 
         agent.on_client_created_callback = lambda: self._on_client_created(task_id)
         agent.report_progress = self._make_emitter_report_progress(ws_emitter)
@@ -563,6 +599,9 @@ class LocalRunner:
             logger.error(f"Agent initialization failed: {init_status}")
             await ws_emitter.error("Agent initialization failed", "init_error")
             return
+        if info and info.cancel_requested:
+            await ws_emitter.incomplete(reason="cancelled")
+            return
 
         # Pre-execute
         pre_status, pre_error = await agent.pre_execute()
@@ -570,6 +609,9 @@ class LocalRunner:
             error_msg = pre_error or "Agent pre-execution failed"
             logger.error(f"Agent pre-execution failed: {error_msg}")
             await ws_emitter.error(error_msg, "pre_execute_error")
+            return
+        if info and info.cancel_requested:
+            await ws_emitter.incomplete(reason="cancelled")
             return
 
         # Execute the task (agent client creation triggers heartbeat callback)

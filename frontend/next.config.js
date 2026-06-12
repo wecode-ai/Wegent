@@ -32,6 +32,7 @@ const nextConfig = {
     '@codemirror/theme-one-dark',
     '@replit/codemirror-vim',
     'katex',
+    '@wegent/chat-core',
   ],
   // Webpack configuration for production builds
   // Note: In development mode with Turbopack, this is not used

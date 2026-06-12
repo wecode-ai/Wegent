@@ -72,10 +72,13 @@ import type {
   WorkbenchMessage,
   WorkbenchState,
 } from '@/types/workbench'
+import {
+  normalizeWorkbenchBlockStatus,
+  reduceWorkbenchMessages,
+} from '@wegent/chat-core'
 import { useWorkbenchAttachments } from './useWorkbenchAttachments'
 import { useWorkbenchModels } from './useWorkbenchModels'
 import { useWorkbenchSkills } from './useWorkbenchSkills'
-import { messageReducer, normalizeBlockStatus } from './messageReducer'
 import { normalizeTurnFileChanges } from './turnFileChanges'
 import {
   initialWorkbenchState,
@@ -348,7 +351,7 @@ function normalizeProcessingBlock(
   if (!isRecord(block)) return null
 
   const timestamp = getBlockTimestamp(block.timestamp)
-  const status = normalizeBlockStatus(
+  const status = normalizeWorkbenchBlockStatus(
     typeof block.status === 'string' ? block.status : undefined
   )
 
@@ -562,6 +565,17 @@ function isRunningTaskStatus(status?: string) {
   )
 }
 
+function shouldRestoreCachedStreaming(
+  task: Task,
+  subtasks: Subtask[] | undefined,
+  subtaskId: number
+) {
+  if (!isRunningTaskStatus(task.status)) return false
+
+  const subtask = subtasks?.find(item => item.id === subtaskId)
+  return subtask ? isRunningTaskStatus(subtask.status) : true
+}
+
 function normalizeGuidanceError(error?: string) {
   if (!error) return '引导发送失败'
   if (error.includes('Chat Shell')) {
@@ -611,7 +625,10 @@ export function WorkbenchProvider({
     workbenchReducer,
     initialWorkbenchState
   )
-  const [messages, dispatchMessages] = useReducer(messageReducer, [])
+  const [messages, dispatchMessages] = useReducer(
+    reduceWorkbenchMessages<Attachment, TurnFileChangesSummary>,
+    [] as WorkbenchMessage[]
+  )
   const [queuedSends, setQueuedSends] = useState<QueuedWorkbenchSend[]>([])
   const [guidanceMessages, setGuidanceMessages] = useState<GuidanceWorkbenchMessage[]>([])
   const [upgradingDevices, setUpgradingDevices] = useState<
@@ -1017,7 +1034,7 @@ export function WorkbenchProvider({
             ...(payload.content !== undefined && { content: payload.content }),
             ...(payload.tool_input !== undefined && { toolInput: payload.tool_input }),
             ...(payload.tool_output !== undefined && { toolOutput: payload.tool_output }),
-            ...(payload.status && { status: normalizeBlockStatus(payload.status) }),
+            ...(payload.status && { status: normalizeWorkbenchBlockStatus(payload.status) }),
           },
         })
       },
@@ -1256,7 +1273,14 @@ export function WorkbenchProvider({
       setQueuedSends([])
       setGuidanceMessages([])
       const joinResponse = await resolvedServices.chatStream.joinTask(taskId)
-      if (joinResponse?.streaming) {
+      if (
+        joinResponse?.streaming &&
+        shouldRestoreCachedStreaming(
+          detailTask,
+          detail.subtasks,
+          joinResponse.streaming.subtask_id
+        )
+      ) {
         dispatchMessages({
           type: 'assistant_cached',
           taskId,
