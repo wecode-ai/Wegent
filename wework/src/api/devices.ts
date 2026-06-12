@@ -1,5 +1,10 @@
 import type { DeviceCommandResponse, LocalDeviceSkill } from '@/types/api'
 import type {
+  WorkspaceFileEntry,
+  WorkspaceTextFileResponse,
+  WorkspaceTreeResponse,
+} from '@/types/workspace-files'
+import type {
   CloudDeviceResponse,
   CloudDeviceMetricsResponse,
   DeviceInfo,
@@ -12,9 +17,16 @@ import type {
 } from '@/types/devices'
 import type { HttpClient } from './http'
 
+const WORKSPACE_TEXT_FILE_MAX_OUTPUT_BYTES = 1024 * 1024 * 2
+
 function getCommandText(response: DeviceCommandResponse): string {
-  const output = Array.isArray(response.stdout) ? response.stdout.join('\n') : response.stdout
-  return output.trim()
+  if (typeof response.stdout === 'string') {
+    return response.stdout.trim()
+  }
+  if (Array.isArray(response.stdout)) {
+    return response.stdout.join('\n').trim()
+  }
+  return JSON.stringify(response.stdout).trim()
 }
 
 function getStringArrayOutput(response: DeviceCommandResponse): string[] {
@@ -60,6 +72,90 @@ function sortSkillsByName(skills: LocalDeviceSkill[]): LocalDeviceSkill[] {
   return [...skills].sort((left, right) =>
     left.name.localeCompare(right.name, undefined, { sensitivity: 'base' }),
   )
+}
+
+function requireRecord(value: unknown, errorMessage: string): Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error(errorMessage)
+  }
+  return value as Record<string, unknown>
+}
+
+function normalizeModifiedAt(value: unknown, errorMessage: string): string | null {
+  if (value === undefined || value === null) return null
+  if (typeof value === 'string') return value
+  throw new Error(errorMessage)
+}
+
+function normalizeWorkspaceEntry(value: unknown): WorkspaceFileEntry {
+  const record = requireRecord(value, 'Invalid workspace tree response')
+  if (
+    typeof record.name !== 'string' ||
+    typeof record.path !== 'string' ||
+    typeof record.is_directory !== 'boolean' ||
+    typeof record.size !== 'number'
+  ) {
+    throw new Error('Invalid workspace tree response')
+  }
+  return {
+    name: record.name,
+    path: record.path,
+    isDirectory: record.is_directory,
+    size: record.size,
+    modifiedAt: normalizeModifiedAt(record.modified_at, 'Invalid workspace tree response'),
+  }
+}
+
+function normalizeWorkspaceTree(output: unknown): WorkspaceTreeResponse {
+  const record = requireRecord(output, 'Invalid workspace tree response')
+  if (typeof record.path !== 'string' || !Array.isArray(record.entries)) {
+    throw new Error('Invalid workspace tree response')
+  }
+  return {
+    path: record.path,
+    entries: record.entries.map(normalizeWorkspaceEntry),
+  }
+}
+
+function normalizeWorkspaceTextFile(output: unknown): WorkspaceTextFileResponse {
+  const record = requireRecord(output, 'Invalid workspace text file response')
+  if (
+    typeof record.path !== 'string' ||
+    typeof record.name !== 'string' ||
+    typeof record.content !== 'string' ||
+    typeof record.truncated !== 'boolean' ||
+    typeof record.size !== 'number'
+  ) {
+    throw new Error('Invalid workspace text file response')
+  }
+  return {
+    path: record.path,
+    name: record.name,
+    content: record.content,
+    truncated: record.truncated,
+    size: record.size,
+    modifiedAt: normalizeModifiedAt(record.modified_at, 'Invalid workspace text file response'),
+  }
+}
+
+function splitAbsoluteWorkspaceFilePath(filePath: string): {
+  parentPath: string
+  fileName: string
+} {
+  const normalizedFilePath = filePath.trim()
+  if (!normalizedFilePath.startsWith('/')) {
+    throw new Error('Workspace file path must be absolute')
+  }
+
+  const separatorIndex = normalizedFilePath.lastIndexOf('/')
+  const parentPath = separatorIndex > 0 ? normalizedFilePath.slice(0, separatorIndex) : '/'
+  const fileName = separatorIndex >= 0
+    ? normalizedFilePath.slice(separatorIndex + 1)
+    : normalizedFilePath
+  if (!fileName) {
+    throw new Error('Workspace file name is required')
+  }
+  return { parentPath, fileName }
 }
 
 export function createDeviceApi(client: HttpClient) {
@@ -131,6 +227,43 @@ export function createDeviceApi(client: HttpClient) {
         throw new Error(response.error || response.stderr || 'Failed to list skills')
       }
       return getSkillArrayOutput(response)
+    },
+
+    async listWorkspaceEntries(deviceId: string, path: string): Promise<WorkspaceTreeResponse> {
+      const response = await client.post<DeviceCommandResponse>(
+        `/devices/${encodeURIComponent(deviceId)}/commands`,
+        {
+          command_key: 'workspace_tree',
+          path,
+          timeout_seconds: 15,
+          max_output_bytes: 1024 * 512,
+        },
+      )
+      if (!response.success) {
+        throw new Error(response.error || response.stderr || 'Failed to list workspace files')
+      }
+      return normalizeWorkspaceTree(response.stdout)
+    },
+
+    async readWorkspaceTextFile(
+      deviceId: string,
+      filePath: string,
+    ): Promise<WorkspaceTextFileResponse> {
+      const { parentPath, fileName } = splitAbsoluteWorkspaceFilePath(filePath)
+      const response = await client.post<DeviceCommandResponse>(
+        `/devices/${encodeURIComponent(deviceId)}/commands`,
+        {
+          command_key: 'workspace_read_text_file',
+          path: parentPath,
+          args: [fileName],
+          timeout_seconds: 15,
+          max_output_bytes: WORKSPACE_TEXT_FILE_MAX_OUTPUT_BYTES,
+        },
+      )
+      if (!response.success) {
+        throw new Error(response.error || response.stderr || 'Failed to read workspace file')
+      }
+      return normalizeWorkspaceTextFile(response.stdout)
     },
 
     async createDirectory(deviceId: string, path: string): Promise<void> {
