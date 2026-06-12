@@ -23,6 +23,7 @@ import type {
 } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
 import type { DeviceUpgradeState } from '@/types/device-events'
+import type { CodeCommentContext } from '@/types/workspace-files'
 import { stripAppBasePath } from '@/config/runtime'
 import { isSettingsRoute, navigateTo } from '@/lib/navigation'
 import { DesktopSidebar } from './DesktopSidebar'
@@ -37,6 +38,7 @@ interface DesktopWorkbenchLayoutProps {
   messages: WorkbenchMessage[]
   queuedMessages?: QueuedWorkbenchMessage[]
   guidanceMessages?: GuidanceWorkbenchMessage[]
+  codeCommentContexts?: CodeCommentContext[]
   runningTaskIds: Set<number>
   upgradingDevices?: Record<string, DeviceUpgradeState>
   activeItem?: 'chat' | 'plugins' | 'automation'
@@ -100,6 +102,8 @@ interface DesktopWorkbenchLayoutProps {
   onRevertFileChanges?: (
     subtaskId: number,
   ) => Promise<TurnFileChangesSummary>
+  onAddCodeComment?: (context: CodeCommentContext) => void
+  onClearCodeComments?: () => void
   onRefreshWorkLists?: () => Promise<void>
   onLogout: () => void
 }
@@ -109,6 +113,7 @@ export function DesktopWorkbenchLayout({
   messages,
   queuedMessages = [],
   guidanceMessages = [],
+  codeCommentContexts = [],
   runningTaskIds,
   upgradingDevices = {},
   activeItem = 'chat',
@@ -159,6 +164,8 @@ export function DesktopWorkbenchLayout({
   onCancelGuidanceMessage = () => {},
   onLoadFileChangesDiff,
   onRevertFileChanges,
+  onAddCodeComment = () => {},
+  onClearCodeComments,
   onRefreshWorkLists,
   onLogout,
 }: DesktopWorkbenchLayoutProps) {
@@ -358,6 +365,7 @@ export function DesktopWorkbenchLayout({
           messages={messages}
           queuedMessages={queuedMessages}
           guidanceMessages={guidanceMessages}
+          codeCommentContexts={codeCommentContexts}
           projectChat={projectChat}
           projectWork={projectWorkWithCreation}
           input={state.input}
@@ -384,6 +392,8 @@ export function DesktopWorkbenchLayout({
           onCancelGuidanceMessage={onCancelGuidanceMessage}
           onLoadFileChangesDiff={onLoadFileChangesDiff}
           onRevertFileChanges={onRevertFileChanges}
+          onAddCodeComment={onAddCodeComment}
+          onClearCodeComments={onClearCodeComments}
           topBarLeftActions={
             sidebarCollapsed ? (
               <DesktopWindowControls

@@ -97,6 +97,7 @@ interface DesktopWorkbenchMainProps {
   messages: WorkbenchMessage[]
   queuedMessages: QueuedWorkbenchMessage[]
   guidanceMessages: GuidanceWorkbenchMessage[]
+  codeCommentContexts?: CodeCommentContext[]
   projectChat: ProjectChatControls
   projectWork: ProjectWorkControls
   input: string
@@ -122,6 +123,7 @@ interface DesktopWorkbenchMainProps {
     subtaskId: number,
   ) => Promise<TurnFileChangesSummary>
   onAddCodeComment?: (context: CodeCommentContext) => void
+  onClearCodeComments?: () => void
   topBarLeftActions?: ReactNode
 }
 
@@ -134,6 +136,7 @@ export function DesktopWorkbenchMain({
   messages,
   queuedMessages,
   guidanceMessages,
+  codeCommentContexts = [],
   projectChat,
   projectWork,
   input,
@@ -157,6 +160,7 @@ export function DesktopWorkbenchMain({
   onLoadFileChangesDiff,
   onRevertFileChanges,
   onAddCodeComment = () => {},
+  onClearCodeComments,
   topBarLeftActions,
 }: DesktopWorkbenchMainProps) {
   const { t } = useTranslation('common')
@@ -328,12 +332,14 @@ export function DesktopWorkbenchMain({
                   showProjectWorkBar={false}
                   queuedMessages={queuedMessages}
                   guidanceMessages={guidanceMessages}
+                  codeComments={codeCommentContexts}
                   isStreaming={isResponseStreaming}
                   onPause={onPauseResponse}
                   onCancelQueuedMessage={onCancelQueuedMessage}
                   onSendQueuedAsGuidance={onSendQueuedAsGuidance}
                   onEditQueuedMessage={onEditQueuedMessage}
                   onCancelGuidanceMessage={onCancelGuidanceMessage}
+                  onClearCodeComments={onClearCodeComments}
                 />
               </div>
             </div>
@@ -368,12 +374,14 @@ export function DesktopWorkbenchMain({
                 projectWork={projectWork}
                 queuedMessages={queuedMessages}
                 guidanceMessages={guidanceMessages}
+                codeComments={codeCommentContexts}
                 isStreaming={isResponseStreaming}
                 onPause={onPauseResponse}
                 onCancelQueuedMessage={onCancelQueuedMessage}
                 onSendQueuedAsGuidance={onSendQueuedAsGuidance}
                 onEditQueuedMessage={onEditQueuedMessage}
                 onCancelGuidanceMessage={onCancelGuidanceMessage}
+                onClearCodeComments={onClearCodeComments}
               />
             </div>
           </div>
