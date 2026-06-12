@@ -225,7 +225,8 @@ EXECUTOR_MGR_COUNT=$(echo "$CHANGED_FILES" | grep -c "^executor_manager/" 2>/dev
 SHARED_COUNT=$(echo "$CHANGED_FILES" | grep -c "^shared/" 2>/dev/null || echo 0)
 KNOWLEDGE_ENGINE_COUNT=$(echo "$CHANGED_FILES" | grep -c "^knowledge_engine/" 2>/dev/null || echo 0)
 KNOWLEDGE_RUNTIME_COUNT=$(echo "$CHANGED_FILES" | grep -c "^knowledge_runtime/" 2>/dev/null || echo 0)
-OTHER_COUNT=$(echo "$CHANGED_FILES" | grep -cvE "^(backend|frontend|executor|executor_manager|shared|knowledge_engine|knowledge_runtime)/" 2>/dev/null || echo 0)
+WEWORK_COUNT=$(echo "$CHANGED_FILES" | grep -c "^wework/" 2>/dev/null || echo 0)
+OTHER_COUNT=$(echo "$CHANGED_FILES" | grep -cvE "^(backend|frontend|executor|executor_manager|shared|knowledge_engine|knowledge_runtime|wework)/" 2>/dev/null || echo 0)
 
 echo -e "   ${BLUE}Modules affected:${NC}"
 [ "$BACKEND_COUNT" -gt 0 ] 2>/dev/null && echo -e "   - Backend: $BACKEND_COUNT file(s)"
@@ -235,6 +236,7 @@ echo -e "   ${BLUE}Modules affected:${NC}"
 [ "$SHARED_COUNT" -gt 0 ] 2>/dev/null && echo -e "   - Shared: $SHARED_COUNT file(s)"
 [ "$KNOWLEDGE_ENGINE_COUNT" -gt 0 ] 2>/dev/null && echo -e "   - Knowledge Engine: $KNOWLEDGE_ENGINE_COUNT file(s)"
 [ "$KNOWLEDGE_RUNTIME_COUNT" -gt 0 ] 2>/dev/null && echo -e "   - Knowledge Runtime: $KNOWLEDGE_RUNTIME_COUNT file(s)"
+[ "$WEWORK_COUNT" -gt 0 ] 2>/dev/null && echo -e "   - Wework: $WEWORK_COUNT file(s)"
 [ "$OTHER_COUNT" -gt 0 ] 2>/dev/null && echo -e "   - Other: $OTHER_COUNT file(s)"
 echo ""
 
@@ -268,7 +270,7 @@ if [ -n "$CONFIG_FILES" ]; then
 fi
 
 # Any code change → Consider updating AGENTS.md and README
-ANY_CODE=$(echo "$CHANGED_FILES" | grep -E "^(backend|frontend|executor|executor_manager|shared|knowledge_engine|knowledge_runtime)/.*\.(py|ts|tsx)$" || true)
+ANY_CODE=$(echo "$CHANGED_FILES" | grep -E "^(backend|frontend|executor|executor_manager|shared|knowledge_engine|knowledge_runtime|wework)/.*\.(py|ts|tsx)$" || true)
 if [ -n "$ANY_CODE" ]; then
     DOC_REMINDERS+=("Code changed → Consider updating AGENTS.md and README.md/README_zh.md if needed")
 fi
@@ -353,6 +355,60 @@ if [ "$FRONTEND_COUNT" -gt 0 ] 2>/dev/null; then
         
     fi
     cd ..
+    echo ""
+fi
+
+# -----------------------------------------------------------------------------
+# Wework Checks (if wework files changed)
+# -----------------------------------------------------------------------------
+if [ "$WEWORK_COUNT" -gt 0 ] 2>/dev/null; then
+    echo -e "${BLUE}🔍 Wework Checks:${NC}"
+
+    if [ ! -d "wework/node_modules" ]; then
+        echo -e "   ${YELLOW}⚠️ SKIP: node_modules not found${NC}"
+        echo -e "   ${YELLOW}   Run 'cd wework && npm install' to install dependencies${NC}"
+        WARNINGS+=("Wework: node_modules not found, checks skipped")
+    else
+        cd wework
+
+        echo -e "   Running ESLint..."
+        npm run lint > "$TEMP_DIR/wework_eslint.log" 2>&1
+        ESLINT_EXIT=$?
+        if [ $ESLINT_EXIT -eq 0 ]; then
+            echo -e "   ${GREEN}✅ ESLint: PASSED${NC}"
+        else
+            echo -e "   ${RED}❌ ESLint: FAILED${NC}"
+            CHECK_FAILED=1
+            FAILED_CHECKS+=("Wework ESLint")
+            FAILED_LOGS+=("$TEMP_DIR/wework_eslint.log")
+        fi
+
+        echo -e "   Running TypeScript check..."
+        npx tsc --noEmit > "$TEMP_DIR/wework_tsc.log" 2>&1
+        TSC_EXIT=$?
+        if [ $TSC_EXIT -eq 0 ]; then
+            echo -e "   ${GREEN}✅ TypeScript: PASSED${NC}"
+        else
+            echo -e "   ${RED}❌ TypeScript: FAILED${NC}"
+            CHECK_FAILED=1
+            FAILED_CHECKS+=("Wework TypeScript")
+            FAILED_LOGS+=("$TEMP_DIR/wework_tsc.log")
+        fi
+
+        echo -e "   Running unit tests..."
+        npm test -- --passWithNoTests > "$TEMP_DIR/wework_test.log" 2>&1
+        TEST_EXIT=$?
+        if [ $TEST_EXIT -eq 0 ]; then
+            echo -e "   ${GREEN}✅ Unit Tests: PASSED${NC}"
+        else
+            echo -e "   ${RED}❌ Unit Tests: FAILED${NC}"
+            CHECK_FAILED=1
+            FAILED_CHECKS+=("Wework Unit Tests")
+            FAILED_LOGS+=("$TEMP_DIR/wework_test.log")
+        fi
+
+        cd ..
+    fi
     echo ""
 fi
 
