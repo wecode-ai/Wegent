@@ -639,10 +639,9 @@ class TestDockerExecutor:
         assert "456" in result["task_ids"]
         assert len(result["containers"]) == 2
 
-    @patch("executor_manager.executors.docker.executor.get_container_ports")
-    @patch("executor_manager.executors.docker.executor.get_running_task_details")
+    @patch.object(docker_executor_module, "get_running_task_details")
     def test_cancel_task_uses_container_details_when_task_ids_empty(
-        self, mock_get_running_task_details, mock_get_container_ports, executor
+        self, mock_get_running_task_details, executor
     ):
         """Cancel should use matching container details even when task_ids is empty."""
         mock_get_running_task_details.return_value = {
@@ -658,15 +657,12 @@ class TestDockerExecutor:
                 }
             ],
         }
-        mock_get_container_ports.return_value = {
-            "status": "success",
-            "ports": [{"container_port": 10000, "host_port": 10000}],
-        }
         executor.requests.post.return_value = MagicMock(
             raise_for_status=MagicMock(),
         )
 
-        result = executor.cancel_task(6296)
+        with patch.object(executor, "_get_container_port", return_value=(10000, None)):
+            result = executor.cancel_task(6296)
 
         assert result["status"] == "success"
         executor.requests.post.assert_called_once_with(

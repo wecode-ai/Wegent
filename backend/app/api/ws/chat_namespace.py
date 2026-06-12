@@ -1882,12 +1882,8 @@ def _get_subtask_for_cancel(subtask_id: int) -> Optional[dict]:
 def _subtask_belongs_to_task(subtask_id: int, task_id: int) -> bool:
     """Return True when *subtask_id* belongs to *task_id*."""
     with get_db_session() as db:
-        return (
-            db.query(Subtask.id)
-            .filter(Subtask.id == subtask_id, Subtask.task_id == task_id)
-            .first()
-            is not None
-        )
+        subtask = subtask_store.get_basic_by_id(db, subtask_id=subtask_id)
+        return subtask is not None and subtask.task_id == task_id
 
 
 def _mark_subtask_and_task_cancelled(

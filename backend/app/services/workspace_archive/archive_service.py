@@ -21,7 +21,6 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.core.config import settings
-from app.models.subtask import Subtask
 from app.models.task import TaskResource
 from app.schemas.kind import ArchiveInfo, Task
 from app.utils.workspace_archive_time import (
@@ -59,7 +58,6 @@ class ArchiveService:
     async def archive_workspace(
         self,
         db: Session,
-        subtask: Subtask,
         task: TaskResource,
         executor_name: str,
         executor_namespace: str,
@@ -69,7 +67,6 @@ class ArchiveService:
 
         Args:
             db: Database session
-            subtask: Subtask with executor info
             task: Task resource
             executor_name: Executor name
             executor_namespace: Executor namespace

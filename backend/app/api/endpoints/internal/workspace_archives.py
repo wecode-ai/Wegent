@@ -11,7 +11,6 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
-from app.models.subtask import Subtask
 from app.models.task import TaskResource
 from app.schemas.kind import ArchiveInfo
 from app.services.workspace_archive import archive_service
@@ -75,7 +74,6 @@ async def archive_task_workspace(
 
     archive_info = await archive_service.archive_workspace(
         db=db,
-        subtask=subtask,
         task=task,
         executor_name=subtask.executor_name,
         executor_namespace=subtask.executor_namespace or "",
@@ -105,11 +103,9 @@ async def archive_sandbox_workspace(
 ):
     """Archive sandbox runtime files and persist archive metadata."""
     task = _get_active_task(db, task_id)
-    subtask = Subtask(task_id=task_id)
 
     archive_info = await archive_service.archive_workspace(
         db=db,
-        subtask=subtask,
         task=task,
         executor_name=request.executor_name,
         executor_namespace=request.executor_namespace,
