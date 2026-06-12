@@ -418,9 +418,10 @@ function AssistantMessage({
               li: ({ children }) => <li className="min-w-0 break-words leading-6">{children}</li>,
               strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
               code: ({ className, children }) => {
-                const isBlock = className?.includes('language-')
+                const match = /language-(\w*)/.exec(className || '')
+                const isBlock = Boolean(match) || String(children).includes('\n')
                 if (isBlock) {
-                  const lang = className?.replace('language-', '') ?? ''
+                  const lang = match ? (match[1] || '') : ''
                   return <CodeBlock lang={lang}>{children}</CodeBlock>
                 }
                 return (

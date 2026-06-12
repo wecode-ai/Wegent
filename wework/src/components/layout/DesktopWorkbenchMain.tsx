@@ -29,7 +29,6 @@ import type {
   WorkbenchMessage,
 } from '@/types/workbench'
 import { cn } from '@/lib/utils'
-import { isTauriRuntime } from '@/lib/runtime-environment'
 import { BottomWorkspacePanel } from './workspace-panels/BottomWorkspacePanel'
 import { RightWorkspacePanel } from './workspace-panels/RightWorkspacePanel'
 import { WorkspacePanelActions } from './workspace-panels/WorkspacePanelActions'
@@ -39,6 +38,9 @@ import {
 } from './DesktopTopBar'
 import { ConversationDeviceOfflineBanner } from './ConversationDeviceOfflineBanner'
 import { DeviceStatusPrompt } from './DeviceStatusPrompt'
+import { TitlebarActionsPortal } from '@/components/topnav/TitlebarActionsPortal'
+import { DesktopTopBar } from './DesktopTopBar'
+import { isTauriRuntime } from '@/lib/runtime-environment'
 
 const DESKTOP_COMPOSER_FRAME_CLASS =
   'mx-auto w-[min(58vw,62rem)] min-w-[32rem] max-w-[calc(100vw-4rem)] -translate-y-12'
@@ -52,6 +54,7 @@ const DESKTOP_QUEUED_SCROLL_TO_BOTTOM_BUTTON_CLASS =
   'bottom-52 z-popover bg-background/95 shadow-md'
 
 interface DesktopWorkbenchMainProps {
+  sidebarCollapsed: boolean
   isBootstrapping: boolean
   currentTask: Task | null
   currentProject: ProjectWithTasks | null
@@ -88,6 +91,7 @@ interface DesktopWorkbenchMainProps {
 }
 
 export function DesktopWorkbenchMain({
+  sidebarCollapsed,
   isBootstrapping,
   currentTask,
   currentProject,
@@ -123,9 +127,9 @@ export function DesktopWorkbenchMain({
   const { t } = useTranslation('common')
   const [rightPanelOpen, setRightPanelOpen] = useState(false)
   const [bottomPanelOpen, setBottomPanelOpen] = useState(false)
+  const isTauri = isTauriRuntime()
   const hasConversation = messages.length > 0 || currentTask
   const hasQueuedComposerRows = queuedMessages.length > 0 || guidanceMessages.length > 0
-  const reserveMacWindowControls = isTauriRuntime()
   const activeDeviceId = getActiveWorkbenchDeviceId({
     currentTask,
     currentProject,
@@ -153,44 +157,49 @@ export function DesktopWorkbenchMain({
         projectName: currentProject.name,
       })
     : t('workbench.empty_title', '我们该做什么？')
+  const workspacePanelActions = (
+    <WorkspacePanelActions
+      environmentInfo={environmentInfo}
+      onRefreshEnvironmentInfo={onRefreshEnvironmentInfo}
+      onCommitEnvironmentChanges={onCommitEnvironmentChanges}
+      onListEnvironmentBranches={onListEnvironmentBranches}
+      onCheckoutEnvironmentBranch={onCheckoutEnvironmentBranch}
+      onCreateEnvironmentBranch={onCreateEnvironmentBranch}
+      rightPanelOpen={rightPanelOpen}
+      bottomPanelOpen={bottomPanelOpen}
+      onToggleRightPanel={() => setRightPanelOpen((open) => !open)}
+      onToggleBottomPanel={() => setBottomPanelOpen((open) => !open)}
+    />
+  )
+  const showPageTopBar = !isTauri || Boolean(topBarLeftActions)
 
   return (
-    <main className="relative flex min-w-0 flex-1 overflow-hidden">
-      <DesktopTopBar
-        testId="workbench-topbar"
-        rightClassName="gap-2"
-        className={cn(
-          'absolute inset-x-0 top-0 z-chrome bg-background/95 pr-7 backdrop-blur-xl',
-          topBarLeftActions && reserveMacWindowControls
-            ? undefined
-            : topBarLeftActions
-              ? 'pl-2'
-              : 'pl-6',
-        )}
-        style={
-          topBarLeftActions && reserveMacWindowControls
-            ? { paddingLeft: MAC_NATIVE_TOP_BAR_ACTION_INSET }
-            : undefined
-        }
-        left={topBarLeftActions}
-        right={(
-          <WorkspacePanelActions
-            environmentInfo={environmentInfo}
-            onRefreshEnvironmentInfo={onRefreshEnvironmentInfo}
-            onCommitEnvironmentChanges={onCommitEnvironmentChanges}
-            onListEnvironmentBranches={onListEnvironmentBranches}
-            onCheckoutEnvironmentBranch={onCheckoutEnvironmentBranch}
-            onCreateEnvironmentBranch={onCreateEnvironmentBranch}
-            rightPanelOpen={rightPanelOpen}
-            bottomPanelOpen={bottomPanelOpen}
-            onToggleRightPanel={() => setRightPanelOpen((open) => !open)}
-            onToggleBottomPanel={() => setBottomPanelOpen((open) => !open)}
-          />
-        )}
-      />
+    <main
+      data-testid="desktop-workbench-main"
+      className={cn(
+        'relative mb-1.5 mr-1.5 flex min-w-0 flex-1 overflow-hidden rounded-xl border border-border/60 bg-background shadow-[0_3px_16px_rgba(0,0,0,0.04)]',
+        !isTauri && 'mt-1.5',
+        sidebarCollapsed && 'ml-1.5',
+      )}
+    >
+      {isTauri && (
+        <TitlebarActionsPortal>{workspacePanelActions}</TitlebarActionsPortal>
+      )}
+      {showPageTopBar && (
+        <DesktopTopBar
+          testId="workbench-topbar"
+          className="absolute inset-x-0 top-0 z-chrome bg-transparent pl-2 pr-7"
+          left={topBarLeftActions}
+          right={isTauri ? undefined : workspacePanelActions}
+          rightClassName="gap-2"
+        />
+      )}
       <div
         data-testid="desktop-workbench-content"
-        className="relative flex min-w-0 flex-1 flex-col overflow-hidden pt-[52px]"
+        className={cn(
+          'relative flex min-w-0 flex-1 flex-col overflow-hidden',
+          showPageTopBar && 'pt-[52px]',
+        )}
       >
         {isBootstrapping ? (
           <div

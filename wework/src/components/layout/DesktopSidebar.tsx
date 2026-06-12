@@ -24,7 +24,6 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
 import { selectStandaloneConversations } from '@/lib/taskLists'
 import { cn } from '@/lib/utils'
-import { isTauriRuntime } from '@/lib/runtime-environment'
 import type {
   CreateGitWorkspaceProjectRequest,
   CreateProjectRequest,
@@ -41,12 +40,8 @@ import type {
 import type { DeviceUpgradeState } from '@/types/device-events'
 import { DesktopSettingsMenu } from './DesktopSettingsMenu'
 import { DesktopSearchDialog } from './DesktopSearchDialog'
+import { DesktopTopBar } from './DesktopTopBar'
 import { DesktopWindowControls } from './DesktopWindowControls'
-import { DeviceStatusPrompt } from './DeviceStatusPrompt'
-import {
-  DesktopTopBar,
-  MAC_NATIVE_TOP_BAR_ACTION_INSET,
-} from './DesktopTopBar'
 import { useResizableSidebar } from './useResizableSidebar'
 
 interface DesktopSidebarProps {
@@ -836,7 +831,7 @@ export function DesktopSidebar({
 }: DesktopSidebarProps) {
   const { t } = useTranslation('common')
   const { sidebarWidth, handleResizeStart } = useResizableSidebar()
-  const reserveMacWindowControls = isTauriRuntime()
+
   const storageScope = getDesktopSidebarStorageScope(user)
   const projectsExpandedStorageKey = getDesktopSidebarStorageKey(
     storageScope,
@@ -1048,38 +1043,18 @@ export function DesktopSidebar({
 
   return (
     <aside
-      className="relative flex shrink-0 flex-col border-r border-border/70 bg-[rgb(var(--color-sidebar))] px-1.5 pb-4 shadow-[inset_-1px_0_0_rgb(var(--color-border))] backdrop-blur-xl backdrop-saturate-150"
+      className="relative flex shrink-0 flex-col bg-transparent px-1.5 pb-4"
       style={{ width: sidebarWidth }}
     >
       <DesktopTopBar
         testId="desktop-sidebar-topbar"
-        className={cn(
-          '-mx-1.5 mb-2 w-[calc(100%+0.75rem)] bg-transparent pr-2',
-          reserveMacWindowControls ? undefined : 'pl-2',
-        )}
-        style={
-          reserveMacWindowControls
-            ? { paddingLeft: MAC_NATIVE_TOP_BAR_ACTION_INSET }
-            : undefined
-        }
+        className="-mx-1.5 w-[calc(100%+0.75rem)] bg-transparent px-2"
         left={(
           <DesktopWindowControls
             sidebarCollapsed={false}
             onToggleSidebar={onCollapse}
           />
         )}
-        right={(
-          <DeviceStatusPrompt
-            devices={devices}
-            upgradingDevices={upgradingDevices}
-            onUpgradeDevice={onUpgradeDevice ?? (async () => {})}
-            onOpenCloudDeviceSettings={() =>
-              onOpenSettings({ autoOpenAddCloudDeviceDialog: true })
-            }
-            presentation="sidebar-action"
-          />
-        )}
-        rightClassName="gap-2"
       />
 
       <nav className="space-y-0.5">

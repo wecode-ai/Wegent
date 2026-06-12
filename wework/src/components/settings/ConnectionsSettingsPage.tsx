@@ -31,11 +31,7 @@ import { getRuntimeConfig, stripAppBasePath } from '@/config/runtime'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
 import { cn } from '@/lib/utils'
-import { isTauriRuntime } from '@/lib/runtime-environment'
-import {
-  DesktopTopBar,
-  MAC_NATIVE_TOP_BAR_ACTION_INSET,
-} from '@/components/layout/DesktopTopBar'
+import { DesktopTopBar } from '@/components/layout/DesktopTopBar'
 import { useResizableSidebar } from '@/components/layout/useResizableSidebar'
 import { buildVncPageUrl } from '@/lib/vnc'
 import {
@@ -1167,7 +1163,6 @@ export function ConnectionsSettingsPage({
   onDeleteArchivedTasks = noopArchivedAction,
 }: ConnectionsSettingsPageProps) {
   const { t } = useTranslation('common')
-  const reserveMacWindowControls = isTauriRuntime()
   const { sidebarWidth, handleResizeStart } = useResizableSidebar()
   const [activeNav, setActiveNav] = useState(() =>
     getSettingsNavFromPath(window.location.pathname)
@@ -1194,13 +1189,8 @@ export function ConnectionsSettingsPage({
           testId="settings-sidebar-topbar"
           className={cn(
             '-mx-1.5 mb-2 w-[calc(100%+0.75rem)] bg-transparent pr-2',
-            reserveMacWindowControls ? undefined : 'pl-2',
+            'pl-2',
           )}
-          style={
-            reserveMacWindowControls
-              ? { paddingLeft: MAC_NATIVE_TOP_BAR_ACTION_INSET }
-              : undefined
-          }
           left={
             <button
               type="button"
