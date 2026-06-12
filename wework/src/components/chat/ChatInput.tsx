@@ -74,7 +74,7 @@ interface ChatInputProps {
   onSendQueuedAsGuidance?: (id: string) => void
   onEditQueuedMessage?: (id: string) => void
   onCancelGuidanceMessage?: (id: string) => void
-  onRemoveCodeComment?: (commentId: string) => void
+  onClearCodeComments?: () => void
   isStreaming?: boolean
   onPause?: () => void
 }
@@ -97,7 +97,7 @@ export function ChatInput({
   onSendQueuedAsGuidance,
   onEditQueuedMessage,
   onCancelGuidanceMessage,
-  onRemoveCodeComment,
+  onClearCodeComments,
   isStreaming = false,
   onPause,
 }: ChatInputProps) {
@@ -164,7 +164,7 @@ export function ChatInput({
           onRemoveAttachment={attachmentId => {
             void controls.removeAttachment(attachmentId)
           }}
-          onRemoveCodeComment={onRemoveCodeComment}
+          onClearCodeComments={onClearCodeComments}
           projectWork={
             projectWork ?? {
               projects: [],

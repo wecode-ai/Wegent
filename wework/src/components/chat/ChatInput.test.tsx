@@ -10,6 +10,25 @@ import type {
   UnifiedModel,
 } from '@/types/api'
 import type { GuidanceWorkbenchMessage, QueuedWorkbenchMessage } from '@/types/workbench'
+
+vi.mock('@/hooks/useTranslation', () => ({
+  useTranslation: () => ({
+    t: (
+      key: string,
+      options?: string | { count?: number },
+    ) => {
+      if (typeof options === 'string') return options
+      if (key === 'workbench.code_comment_count') {
+        return `${options?.count ?? 0} 个评论`
+      }
+      if (key === 'workbench.remove_code_comments') {
+        return '移除代码评论'
+      }
+      return key
+    },
+  }),
+}))
+
 import { ChatInput } from './ChatInput'
 import type { ProjectChatControls, ProjectWorkControls } from './ChatInput'
 
@@ -102,8 +121,8 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('project-work-button')).toBeInTheDocument()
   })
 
-  test('renders and removes code comment context chip in desktop composer', async () => {
-    const onRemoveCodeComment = vi.fn()
+  test('renders and clears code comment context chip in desktop composer', async () => {
+    const onClearCodeComments = vi.fn()
 
     render(
       <ChatInput
@@ -124,13 +143,44 @@ describe('ChatInput', () => {
             createdAt: '2026-06-12T00:00:00.000Z',
           },
         ]}
-        onRemoveCodeComment={onRemoveCodeComment}
+        onClearCodeComments={onClearCodeComments}
       />,
     )
 
     expect(screen.getByTestId('code-comment-context-badge')).toHaveTextContent('1 个评论')
     await userEvent.click(screen.getByTestId('remove-code-comment-context-button'))
-    expect(onRemoveCodeComment).toHaveBeenCalledWith('comment-1')
+    expect(onClearCodeComments).toHaveBeenCalledTimes(1)
+  })
+
+  test('submits comments-only desktop composer', async () => {
+    const onSubmit = vi.fn()
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={onSubmit}
+        disabled={false}
+        variant="desktop"
+        codeComments={[
+          {
+            id: 'comment-1',
+            filePath: '/workspace/project/src/main.ts',
+            fileName: 'main.ts',
+            startLine: 1,
+            endLine: 1,
+            selectedText: 'const value = 1',
+            comment: 'Check this',
+            createdAt: '2026-06-12T00:00:00.000Z',
+          },
+        ]}
+        onClearCodeComments={vi.fn()}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('send-message-button'))
+
+    expect(onSubmit).toHaveBeenCalledTimes(1)
   })
 
   test('shows desktop pause button while the assistant is streaming', async () => {

@@ -15,7 +15,7 @@ interface AttachmentBadgesProps {
   errors: Map<string, string>
   codeComments?: CodeCommentContext[]
   onRemoveAttachment: (attachmentId: number) => void
-  onRemoveCodeComment?: (commentId: string) => void
+  onClearCodeComments?: () => void
 }
 
 function ImageAttachmentPreview({ attachment }: { attachment: Attachment }) {
@@ -157,19 +157,14 @@ function CodeCommentBadge({
       className="relative inline-flex h-14 items-center gap-2 rounded-xl border border-border bg-background px-3 pr-8 text-sm font-medium text-text-primary shadow-sm"
     >
       <MessageSquare className="h-4 w-4 text-text-secondary" />
-      <span>
-        {t('workbench.code_comment_count', {
-          count,
-          defaultValue: `${count} 个评论`,
-        })}
-      </span>
+      <span>{t('workbench.code_comment_count', { count })}</span>
       {onRemove && (
         <button
           type="button"
           data-testid="remove-code-comment-context-button"
           onClick={onRemove}
           className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-text-primary text-white shadow-sm"
-          aria-label={t('workbench.remove_code_comments', '移除代码评论')}
+          aria-label={t('workbench.remove_code_comments')}
         >
           <X className="h-3 w-3" />
         </button>
@@ -184,7 +179,7 @@ export function AttachmentBadges({
   errors,
   codeComments = [],
   onRemoveAttachment,
-  onRemoveCodeComment,
+  onClearCodeComments,
 }: AttachmentBadgesProps) {
   const codeCommentCount = codeComments?.length ?? 0
   if (
@@ -201,11 +196,7 @@ export function AttachmentBadges({
       {codeCommentCount > 0 && (
         <CodeCommentBadge
           count={codeCommentCount}
-          onRemove={
-            onRemoveCodeComment
-              ? () => codeComments?.forEach(comment => onRemoveCodeComment(comment.id))
-              : undefined
-          }
+          onRemove={onClearCodeComments}
         />
       )}
       {attachments.map(attachment =>
