@@ -30,6 +30,8 @@ import type {
   RagConfigMode,
 } from '@/types/knowledge'
 import { KnowledgeBaseForm } from './KnowledgeBaseForm'
+import { useRetrievers } from '../hooks/useRetrievers'
+import { useEmbeddingModels } from '../hooks/useEmbeddingModels'
 
 /** Available group for selection */
 export interface AvailableGroup {
@@ -90,6 +92,18 @@ function GroupTypeIcon({ type }: { type: 'personal' | 'group' | 'organization' |
   }
 }
 
+function createDefaultRetrievalConfig(): RetrievalConfigDraft {
+  return {
+    retrieval_mode: 'vector',
+    top_k: 5,
+    score_threshold: 0.5,
+    hybrid_weights: {
+      vector_weight: 0.7,
+      keyword_weight: 0.3,
+    },
+  }
+}
+
 export function CreateKnowledgeBaseDialog({
   open,
   onOpenChange,
@@ -115,21 +129,39 @@ export function CreateKnowledgeBaseDialog({
   const [summaryModelError, setSummaryModelError] = useState('')
   const [guidedQuestions, setGuidedQuestions] = useState<string[]>([])
   const [ragConfigMode, setRagConfigMode] = useState<RagConfigMode>('auto')
-  const [retrievalConfig, setRetrievalConfig] = useState<RetrievalConfigDraft>({
-    retrieval_mode: 'vector',
-    top_k: 5,
-    score_threshold: 0.5,
-    hybrid_weights: {
-      vector_weight: 0.7,
-      keyword_weight: 0.3,
-    },
-  })
+  const [retrievalConfig, setRetrievalConfig] = useState<RetrievalConfigDraft>(
+    createDefaultRetrievalConfig
+  )
   const [error, setError] = useState('')
   const [accordionValue, setAccordionValue] = useState<string>('')
   const [maxCalls, setMaxCalls] = useState(10)
   const [exemptCalls, setExemptCalls] = useState(5)
   // Selected group for creating KB (used when showGroupSelector is true)
   const [selectedGroupId, setSelectedGroupId] = useState<string>(defaultGroupId || 'personal')
+
+  // Get the selected group for retrieval scope
+  const selectedGroup = availableGroups?.find(g => g.id === selectedGroupId)
+  // Map dingtalk to personal scope since KBs cannot be created in dingtalk scope
+  const mapScope = (
+    t: 'personal' | 'group' | 'organization' | 'dingtalk' | 'all' | undefined
+  ): 'personal' | 'organization' | 'group' | 'all' => {
+    if (t === 'dingtalk') return 'personal'
+    return t || 'personal'
+  }
+  const effectiveScope = mapScope(showGroupSelector && selectedGroup ? selectedGroup.type : scope)
+  const effectiveGroupName =
+    showGroupSelector && selectedGroup && selectedGroup.type === 'group'
+      ? selectedGroup.name
+      : groupName
+  const { retrievers, loading: loadingRetrievers } = useRetrievers(
+    effectiveScope,
+    effectiveGroupName
+  )
+  const { models: embeddingModels, loading: loadingEmbeddingModels } = useEmbeddingModels(
+    effectiveScope,
+    effectiveGroupName
+  )
+
   // Reset selectedKbType and selectedGroupId when dialog opens
   useEffect(() => {
     if (open) {
@@ -143,7 +175,62 @@ export function CreateKnowledgeBaseDialog({
     setSelectedKbType(newType)
   }
 
-  // Note: Auto-selection of retriever and embedding model is handled by RetrievalSettingsSection
+  useEffect(() => {
+    if (!open || ragConfigMode === 'disabled' || loadingRetrievers || retrievers.length === 0) {
+      return
+    }
+
+    setRetrievalConfig(current => {
+      const currentRetrieverExists =
+        current.retriever_name &&
+        retrievers.some(
+          retriever =>
+            retriever.name === current.retriever_name &&
+            retriever.namespace === current.retriever_namespace
+        )
+
+      if (currentRetrieverExists) {
+        return current
+      }
+
+      const defaultRetriever = retrievers[0]
+      return {
+        ...current,
+        retriever_name: defaultRetriever.name,
+        retriever_namespace: defaultRetriever.namespace,
+      }
+    })
+  }, [open, ragConfigMode, loadingRetrievers, retrievers])
+
+  useEffect(() => {
+    if (
+      !open ||
+      ragConfigMode === 'disabled' ||
+      loadingEmbeddingModels ||
+      embeddingModels.length === 0
+    ) {
+      return
+    }
+
+    setRetrievalConfig(current => {
+      const currentModelExists =
+        current.embedding_config?.model_name &&
+        embeddingModels.some(model => model.name === current.embedding_config?.model_name)
+
+      if (currentModelExists) {
+        return current
+      }
+
+      const defaultModel = embeddingModels[0]
+      return {
+        ...current,
+        embedding_config: {
+          model_name: defaultModel.name,
+          model_namespace: defaultModel.namespace || 'default',
+        },
+      }
+    })
+  }, [open, ragConfigMode, loadingEmbeddingModels, embeddingModels])
 
   const handleSubmit = async () => {
     setError('')
@@ -199,15 +286,7 @@ export function CreateKnowledgeBaseDialog({
       setSummaryModelRef(null)
       setGuidedQuestions([])
       setRagConfigMode('auto')
-      setRetrievalConfig({
-        retrieval_mode: 'vector',
-        top_k: 5,
-        score_threshold: 0.5,
-        hybrid_weights: {
-          vector_weight: 0.7,
-          keyword_weight: 0.3,
-        },
-      })
+      setRetrievalConfig(createDefaultRetrievalConfig())
       setMaxCalls(10)
       setExemptCalls(5)
     } catch (err) {
@@ -226,15 +305,7 @@ export function CreateKnowledgeBaseDialog({
       setSummaryModelError('')
       setGuidedQuestions([])
       setRagConfigMode('auto')
-      setRetrievalConfig({
-        retrieval_mode: 'vector',
-        top_k: 5,
-        score_threshold: 0.5,
-        hybrid_weights: {
-          vector_weight: 0.7,
-          keyword_weight: 0.3,
-        },
-      })
+      setRetrievalConfig(createDefaultRetrievalConfig())
       setMaxCalls(10)
       setExemptCalls(5)
       setError('')
@@ -244,21 +315,6 @@ export function CreateKnowledgeBaseDialog({
     onOpenChange(newOpen)
   }
 
-  // Get the selected group for retrieval scope
-  const selectedGroup = availableGroups?.find(g => g.id === selectedGroupId)
-  // Map dingtalk to personal scope since KBs cannot be created in dingtalk scope
-  const mapScope = (
-    t: 'personal' | 'group' | 'organization' | 'dingtalk' | 'all' | undefined
-  ): 'personal' | 'organization' | 'group' | 'all' => {
-    if (t === 'dingtalk') return 'personal'
-    return t || 'personal'
-  }
-  const effectiveScope = mapScope(showGroupSelector && selectedGroup ? selectedGroup.type : scope)
-  const effectiveGroupName =
-    showGroupSelector && selectedGroup && selectedGroup.type === 'group'
-      ? selectedGroup.name
-      : groupName
-
   // Determine if this is a notebook type
   const isNotebook = selectedKbType === 'notebook'
   const ragModeOptions: RagConfigMode[] = ['auto', 'disabled']
@@ -266,13 +322,13 @@ export function CreateKnowledgeBaseDialog({
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent
-        className="max-w-2xl max-h-[90vh] overflow-hidden flex flex-col"
+        className="max-w-3xl max-h-[90vh] overflow-hidden flex flex-col"
         data-testid="create-kb-dialog"
       >
         <DialogHeader>
           <DialogTitle>{t('knowledge:document.knowledgeBase.create')}</DialogTitle>
         </DialogHeader>
-        <div className="flex-1 overflow-y-auto space-y-4 py-4">
+        <div className="flex-1 overflow-y-auto space-y-4 py-4 pr-3 [scrollbar-gutter:stable]">
           <KnowledgeBaseForm
             typeSection={
               <>

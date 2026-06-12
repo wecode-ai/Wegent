@@ -169,29 +169,6 @@ export function KnowledgeBaseForm({
 
   const advancedContent = (
     <div className="space-y-5">
-      {(retrievalModeSection || showRetrievalSection) && (
-        <div className="space-y-3">
-          <div className="space-y-0.5">
-            <Label className="text-sm font-medium">
-              {t('knowledge:document.ragConfigMode.title')}
-            </Label>
-          </div>
-
-          {retrievalModeSection}
-
-          {showRetrievalSection && (
-            <RetrievalSettingsSection
-              config={retrievalConfig}
-              onChange={onRetrievalConfigChange}
-              scope={retrievalScope}
-              groupName={retrievalGroupName}
-              readOnly={retrievalReadOnly}
-              partialReadOnly={retrievalPartialReadOnly}
-            />
-          )}
-        </div>
-      )}
-
       <div className="space-y-3">
         <div className="space-y-0.5">
           <Label className="text-sm font-medium">{t('knowledge:document.callLimits.title')}</Label>
@@ -240,6 +217,29 @@ export function KnowledgeBaseForm({
           </div>
         </div>
       </div>
+
+      {(retrievalModeSection || showRetrievalSection) && (
+        <div className="space-y-3">
+          <div className="space-y-0.5">
+            <Label className="text-sm font-medium">
+              {t('knowledge:document.ragConfigMode.title')}
+            </Label>
+          </div>
+
+          {retrievalModeSection}
+
+          {showRetrievalSection && (
+            <RetrievalSettingsSection
+              config={retrievalConfig}
+              onChange={onRetrievalConfigChange}
+              scope={retrievalScope}
+              groupName={retrievalGroupName}
+              readOnly={retrievalReadOnly}
+              partialReadOnly={retrievalPartialReadOnly}
+            />
+          )}
+        </div>
+      )}
     </div>
   )
 
@@ -273,7 +273,7 @@ export function KnowledgeBaseForm({
         />
       </div>
 
-      <div className="space-y-3 border-b border-border pb-4">
+      <div className="space-y-3">
         <div className="flex items-center justify-between">
           <div className="space-y-0.5">
             <Label htmlFor="knowledge-summary-enabled">
@@ -304,7 +304,7 @@ export function KnowledgeBaseForm({
       </div>
 
       {showGuidedQuestions && (
-        <div className="space-y-3 border-b border-border pb-4">
+        <div className="space-y-3">
           <div className="space-y-0.5">
             <Label>{t('knowledge:document.guidedQuestions.label')}</Label>
             <p className="text-xs text-text-muted">
