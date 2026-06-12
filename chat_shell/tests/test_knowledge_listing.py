@@ -3,11 +3,14 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import json
+import sys
+import types
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from chat_shell.tools.builtin.knowledge_listing import KbHeadTool, KbLsTool
+from shared.models.knowledge import KnowledgeBaseScope
 
 
 class TestKbLsTool:
@@ -62,6 +65,90 @@ class TestKbLsTool:
         assert data["limit"] == 1
         assert data["has_more"] is True
         assert data["documents"][0]["id"] == 101
+
+    @pytest.mark.asyncio
+    async def test_http_mode_forwards_scoped_list_docs(self) -> None:
+        """Scoped listing should pass per-KB scopes to Backend."""
+        tool = KbLsTool(
+            knowledge_base_ids=[3],
+            knowledge_base_scopes=[
+                KnowledgeBaseScope(
+                    knowledge_base_id=3,
+                    scope_restricted=True,
+                    document_ids=[101],
+                )
+            ],
+        )
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "documents": [],
+            "total": 0,
+            "returned_count": 0,
+            "offset": 0,
+            "limit": 20,
+            "has_more": False,
+        }
+
+        with (
+            patch(
+                "chat_shell.tools.builtin.knowledge_listing._get_backend_url",
+                return_value="http://backend",
+            ),
+            patch("httpx.AsyncClient") as mock_client,
+        ):
+            post = AsyncMock(return_value=mock_response)
+            mock_client.return_value.__aenter__.return_value.post = post
+
+            await tool._arun(knowledge_base_id=3)
+
+        payload = post.call_args.kwargs["json"]
+        assert payload["knowledge_base_scopes"] == [
+            {
+                "knowledge_base_id": 3,
+                "scope_restricted": True,
+                "document_ids": [101],
+            }
+        ]
+
+    @pytest.mark.asyncio
+    async def test_package_mode_rejects_kb_outside_scope(self) -> None:
+        """Package mode should fail closed when scopes omit the requested KB."""
+        fake_app = types.ModuleType("app")
+        fake_models = types.ModuleType("app.models")
+        fake_knowledge = types.ModuleType("app.models.knowledge")
+        fake_knowledge.KnowledgeDocument = type(
+            "KnowledgeDocument",
+            (),
+            {"kind_id": MagicMock()},
+        )
+        tool = KbLsTool(
+            knowledge_base_ids=[3, 4],
+            knowledge_base_scopes=[
+                KnowledgeBaseScope(
+                    knowledge_base_id=3,
+                    scope_restricted=True,
+                    document_ids=[101],
+                )
+            ],
+            db_session=MagicMock(),
+        )
+
+        with patch.dict(
+            sys.modules,
+            {
+                "app": fake_app,
+                "app.models": fake_models,
+                "app.models.knowledge": fake_knowledge,
+            },
+        ):
+            result = json.loads(
+                await tool._list_docs_package_mode(
+                    knowledge_base_id=4, offset=0, limit=20
+                )
+            )
+
+        assert result["error_code"] == "document_scope_violation"
 
 
 class TestKbHeadTool:
@@ -172,3 +259,23 @@ class TestKbHeadTool:
         assert json.loads(result) == {
             "error": "No accessible knowledge bases configured"
         }
+
+    @pytest.mark.asyncio
+    async def test_arun_rejects_out_of_scope_document_ids(self) -> None:
+        """Scoped-only kb_head should reject out-of-scope documents before IO."""
+        tool = KbHeadTool(
+            knowledge_base_ids=[3],
+            knowledge_base_scopes=[
+                KnowledgeBaseScope(
+                    knowledge_base_id=3,
+                    scope_restricted=True,
+                    document_ids=[101],
+                )
+            ],
+            user_id=7,
+            user_subtask_id=8,
+        )
+
+        result = json.loads(await tool._arun(document_ids=[999]))
+
+        assert result["error_code"] == "document_scope_violation"

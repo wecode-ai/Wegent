@@ -539,6 +539,20 @@ class KnowledgeBaseTaskRef(BaseModel):
     boundAt: Optional[str] = None  # Binding timestamp in ISO format
 
 
+class KnowledgeBaseTaskScopeRef(BaseModel):
+    """Task-level knowledge base scope for API follow-up inheritance."""
+
+    id: Optional[int] = None
+    namespace: str = "default"
+    name: str
+    scopeRestricted: bool = False
+    folderIds: Optional[List[int]] = None
+    explicitDocumentIds: Optional[List[int]] = None
+    includeSubfolders: bool = True
+    boundBy: Optional[str] = None
+    boundAt: Optional[str] = None
+
+
 class TaskExecutionWorkspace(BaseModel):
     """Task-specific execution workspace override."""
 
@@ -564,6 +578,9 @@ class TaskSpec(BaseModel):
     is_group_chat: bool = False  # Whether this task is a group chat
     knowledgeBaseRefs: Optional[List[KnowledgeBaseTaskRef]] = (
         None  # Bound knowledge bases for group chat
+    )
+    knowledgeBaseScopes: Optional[List[KnowledgeBaseTaskScopeRef]] = (
+        None  # Per-KB scope refs for OpenAPI follow-up inheritance
     )
     device_id: Optional[str] = None  # Device ID used for execution (for task history)
     execution: Optional[TaskExecutionSpec] = None

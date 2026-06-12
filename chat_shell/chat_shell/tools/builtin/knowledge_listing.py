@@ -19,6 +19,7 @@ from langchain_core.callbacks import CallbackManagerForToolRun
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field, PrivateAttr
 
+from shared.models.knowledge import KnowledgeBaseScope
 from shared.telemetry.context.large_data import log_large_string_list
 from shared.telemetry.decorators import add_span_event, set_span_attribute, trace_async
 
@@ -122,6 +123,46 @@ def _build_backend_post_kwargs(data: dict[str, Any], auth_token: str = "") -> di
     return kwargs
 
 
+def _scope_payloads(scopes: list[KnowledgeBaseScope]) -> list[dict[str, Any]]:
+    """Serialize KB scopes for Backend internal APIs."""
+    return [
+        {
+            "knowledge_base_id": scope.knowledge_base_id,
+            "scope_restricted": scope.scope_restricted,
+            "document_ids": scope.document_ids,
+        }
+        for scope in scopes
+    ]
+
+
+def _restricted_scope_for_kb(
+    scopes: list[KnowledgeBaseScope],
+    knowledge_base_id: int,
+) -> KnowledgeBaseScope | None:
+    """Return the restricted scope for a KB, if one exists."""
+    for scope in scopes:
+        if scope.knowledge_base_id == knowledge_base_id and scope.scope_restricted:
+            return scope
+    return None
+
+
+def _scope_kb_ids(scopes: list[KnowledgeBaseScope]) -> set[int]:
+    """Return KB IDs represented by scope payloads."""
+    return {scope.knowledge_base_id for scope in scopes}
+
+
+def _format_scope_violation(message: str) -> str:
+    """Format a document scope violation."""
+    return json.dumps(
+        {
+            "status": "error",
+            "error_code": "document_scope_violation",
+            "message": message,
+        },
+        ensure_ascii=False,
+    )
+
+
 # ============== kb_ls Tool ==============
 
 
@@ -163,6 +204,7 @@ class KbLsTool(BaseTool):
 
     # Knowledge base IDs this tool can access (set when creating the tool)
     knowledge_base_ids: list[int] = Field(default_factory=list)
+    knowledge_base_scopes: list[KnowledgeBaseScope] = Field(default_factory=list)
 
     # Database session (optional, used in package mode)
     db_session: Optional[Any] = None
@@ -287,6 +329,25 @@ class KbLsTool(BaseTool):
             base_query = self.db_session.query(KnowledgeDocument).filter(
                 KnowledgeDocument.kind_id == knowledge_base_id
             )
+            if self.knowledge_base_scopes and knowledge_base_id not in _scope_kb_ids(
+                self.knowledge_base_scopes
+            ):
+                return (
+                    _format_scope_violation(
+                        "Requested documents are outside the allowed knowledge scope."
+                    ),
+                    0,
+                )
+            restricted_scope = _restricted_scope_for_kb(
+                self.knowledge_base_scopes,
+                knowledge_base_id,
+            )
+            if restricted_scope is not None:
+                if not restricted_scope.document_ids:
+                    return [], 0
+                base_query = base_query.filter(
+                    KnowledgeDocument.id.in_(restricted_scope.document_ids)
+                )
             total = base_query.count()
             documents = (
                 base_query.order_by(KnowledgeDocument.created_at.desc())
@@ -297,6 +358,8 @@ class KbLsTool(BaseTool):
             return documents, total
 
         documents, total = await asyncio.to_thread(_query_docs)
+        if isinstance(documents, str):
+            return documents
 
         doc_items = []
         for doc in documents:
@@ -356,24 +419,46 @@ class KbLsTool(BaseTool):
 
         try:
             add_span_event("http_request_started")
+            request_data: dict[str, Any] = {
+                "knowledge_base_id": knowledge_base_id,
+                "offset": offset,
+                "limit": limit,
+            }
+            if self.knowledge_base_scopes:
+                request_data["knowledge_base_scopes"] = _scope_payloads(
+                    self.knowledge_base_scopes
+                )
 
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(
                     f"{backend_url}/api/internal/rag/list-docs",
-                    **_build_backend_post_kwargs(
-                        {
-                            "knowledge_base_id": knowledge_base_id,
-                            "offset": offset,
-                            "limit": limit,
-                        },
-                        self.auth_token,
-                    ),
+                    **_build_backend_post_kwargs(request_data, self.auth_token),
                 )
 
                 if response.status_code != 200:
                     logger.warning(
                         f"[KbLsTool] HTTP list-docs returned {response.status_code}"
                     )
+                    try:
+                        error_detail = response.json().get("detail")
+                        if (
+                            isinstance(error_detail, dict)
+                            and error_detail.get("error_code")
+                            == "document_scope_violation"
+                        ):
+                            return json.dumps(
+                                {
+                                    "status": "error",
+                                    "error_code": "document_scope_violation",
+                                    "message": error_detail.get(
+                                        "message",
+                                        "Requested documents are outside the allowed knowledge scope.",
+                                    ),
+                                },
+                                ensure_ascii=False,
+                            )
+                    except Exception:
+                        pass
                     return json.dumps(
                         {
                             "error": f"Failed to list documents: HTTP {response.status_code}"
@@ -460,6 +545,7 @@ class KbHeadTool(BaseTool):
 
     # Knowledge base IDs this tool can access (set when creating the tool)
     knowledge_base_ids: list[int] = Field(default_factory=list)
+    knowledge_base_scopes: list[KnowledgeBaseScope] = Field(default_factory=list)
 
     # User ID for context creation when auto-creating records
     user_id: int = 0
@@ -526,6 +612,9 @@ class KbHeadTool(BaseTool):
                     {"error": "No accessible knowledge bases configured"},
                     ensure_ascii=False,
                 )
+            violation = self._validate_scoped_document_ids(document_ids)
+            if violation:
+                return violation
 
             logger.info(
                 f"[KbHeadTool] Reading {len(document_ids)} documents, offset={offset}, limit={limit}"
@@ -544,6 +633,34 @@ class KbHeadTool(BaseTool):
                 {"error": f"Failed to read documents: {str(e)}"}, ensure_ascii=False
             )
 
+    def _validate_scoped_document_ids(self, document_ids: list[int]) -> str | None:
+        """Reject obvious scoped-only document access violations before IO."""
+        restricted_scopes = [
+            scope for scope in self.knowledge_base_scopes if scope.scope_restricted
+        ]
+        if not restricted_scopes:
+            return None
+        has_unscoped_scope = any(
+            not scope.scope_restricted for scope in self.knowledge_base_scopes
+        )
+        if has_unscoped_scope:
+            return None
+        allowed_document_ids = {
+            document_id
+            for scope in restricted_scopes
+            for document_id in scope.document_ids
+        }
+        out_of_scope = [
+            document_id
+            for document_id in document_ids
+            if document_id not in allowed_document_ids
+        ]
+        if not out_of_scope:
+            return None
+        return _format_scope_violation(
+            "Requested documents are outside the allowed knowledge scope."
+        )
+
     @trace_async(
         span_name="kb_head_read_docs_package_mode",
         tracer_name="chat_shell.tools.kb_head",
@@ -554,7 +671,7 @@ class KbHeadTool(BaseTool):
         """Read documents using direct database access."""
         import asyncio
 
-        from app.services.rag.document_read_service import document_read_service
+        from app.services.knowledge.document_read_service import document_read_service
 
         # Check if we have a sync session with query method
         if not hasattr(self.db_session, "query"):
@@ -575,6 +692,12 @@ class KbHeadTool(BaseTool):
                 "user_id": self.user_id,
             }
 
+        scope_violation = await self._validate_scoped_document_ids_package_mode(
+            document_ids
+        )
+        if scope_violation:
+            return scope_violation
+
         results = await asyncio.to_thread(
             document_read_service.read_documents,
             self.db_session,
@@ -590,6 +713,46 @@ class KbHeadTool(BaseTool):
         logger.info(f"[KbHeadTool] Read {len(results)} documents (package mode)")
 
         return json.dumps({"documents": results}, ensure_ascii=False)
+
+    async def _validate_scoped_document_ids_package_mode(
+        self,
+        document_ids: list[int],
+    ) -> str | None:
+        """Validate requested document IDs against per-KB scopes in package mode."""
+        if not self.knowledge_base_scopes:
+            return None
+        if not hasattr(self.db_session, "query"):
+            return None
+
+        import asyncio
+
+        from app.models.knowledge import KnowledgeDocument
+
+        scope_by_kb = {
+            scope.knowledge_base_id: scope for scope in self.knowledge_base_scopes
+        }
+
+        def _load_doc_kbs() -> dict[int, int]:
+            rows = (
+                self.db_session.query(KnowledgeDocument.id, KnowledgeDocument.kind_id)
+                .filter(KnowledgeDocument.id.in_(document_ids))
+                .all()
+            )
+            return {doc_id: kb_id for doc_id, kb_id in rows}
+
+        doc_kb_map = await asyncio.to_thread(_load_doc_kbs)
+        for document_id in document_ids:
+            kb_id = doc_kb_map.get(document_id)
+            scope = scope_by_kb.get(kb_id)
+            if scope is None:
+                return _format_scope_violation(
+                    "Requested documents are outside the allowed knowledge scope."
+                )
+            if scope.scope_restricted and document_id not in scope.document_ids:
+                return _format_scope_violation(
+                    "Requested documents are outside the allowed knowledge scope."
+                )
+        return None
 
     @trace_async(
         span_name="kb_head_read_docs_http_mode", tracer_name="chat_shell.tools.kb_head"
@@ -614,6 +777,10 @@ class KbHeadTool(BaseTool):
         }
         if self.knowledge_base_ids:
             request_data["knowledge_base_ids"] = self.knowledge_base_ids
+        if self.knowledge_base_scopes:
+            request_data["knowledge_base_scopes"] = _scope_payloads(
+                self.knowledge_base_scopes
+            )
         if self.user_subtask_id and self.user_id > 0:
             request_data["persistence_context"] = {
                 "user_subtask_id": self.user_subtask_id,
@@ -633,6 +800,25 @@ class KbHeadTool(BaseTool):
                 logger.warning(
                     f"[KbHeadTool] HTTP read-docs returned {response.status_code}"
                 )
+                try:
+                    error_detail = response.json().get("detail")
+                    if (
+                        isinstance(error_detail, dict)
+                        and error_detail.get("error_code") == "document_scope_violation"
+                    ):
+                        return json.dumps(
+                            {
+                                "status": "error",
+                                "error_code": "document_scope_violation",
+                                "message": error_detail.get(
+                                    "message",
+                                    "Requested documents are outside the allowed knowledge scope.",
+                                ),
+                            },
+                            ensure_ascii=False,
+                        )
+                except Exception:
+                    pass
                 return json.dumps(
                     {"error": f"Failed to read documents: HTTP {response.status_code}"},
                     ensure_ascii=False,

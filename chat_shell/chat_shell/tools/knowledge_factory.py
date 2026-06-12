@@ -13,6 +13,7 @@ from typing import Any, List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.models.knowledge import (
+    KnowledgeBaseScope,
     KnowledgeBaseToolAccessMode,
     KnowledgeBaseToolsResult,
 )
@@ -30,6 +31,7 @@ async def prepare_knowledge_base_tools(
     user_subtask_id: Optional[int] = None,
     is_user_selected: bool = True,
     document_ids: Optional[list[int]] = None,
+    knowledge_base_scopes: Optional[list[KnowledgeBaseScope]] = None,
     model_id: Optional[str] = None,
     context_window: Optional[int] = None,
     model_config: Optional[dict[str, Any]] = None,
@@ -81,6 +83,7 @@ async def prepare_knowledge_base_tools(
         KbLsTool,
         KBToolCallCounter,
         KnowledgeBaseTool,
+        ScopedKnowledgeBaseTool,
     )
 
     restricted_search_only = (
@@ -92,9 +95,16 @@ async def prepare_knowledge_base_tools(
     # Pass user_subtask_id for persisting RAG results to context database
     # Pass document_ids for filtering to specific documents
     # Pass context_window from Model CRD for injection strategy decisions
-    kb_tool = KnowledgeBaseTool(
+    has_restricted_scope = any(
+        scope.scope_restricted for scope in (knowledge_base_scopes or [])
+    )
+    kb_tool_class = (
+        ScopedKnowledgeBaseTool if has_restricted_scope else KnowledgeBaseTool
+    )
+    kb_tool = kb_tool_class(
         knowledge_base_ids=knowledge_base_ids,
         document_ids=document_ids or [],
+        knowledge_base_scopes=knowledge_base_scopes or [],
         user_id=user_id,
         user_name=user_name,
         auth_token=auth_token,
@@ -132,6 +142,7 @@ async def prepare_knowledge_base_tools(
         # They share a call counter to enforce combined call limits
         kb_ls_tool = KbLsTool(
             knowledge_base_ids=knowledge_base_ids,
+            knowledge_base_scopes=knowledge_base_scopes or [],
             db_session=db,
             auth_token=auth_token,
         )
@@ -139,6 +150,7 @@ async def prepare_knowledge_base_tools(
 
         kb_head_tool = KbHeadTool(
             knowledge_base_ids=knowledge_base_ids,
+            knowledge_base_scopes=knowledge_base_scopes or [],
             user_id=user_id,
             db_session=db,
             user_subtask_id=user_subtask_id,

@@ -294,6 +294,7 @@ async def build_execution_request(
     preload_skills: Optional[list] = None,
     previous_bot_id: Optional[int] = None,
     knowledge_base_names: Optional[List[Dict[str, str]]] = None,
+    knowledge_base_refs: Optional[List[Dict[str, Any]]] = None,
     reasoning_config: Optional[Dict[str, Any]] = None,
 ):
     """Build ExecutionRequest without dispatching.
@@ -317,7 +318,8 @@ async def build_execution_request(
         enable_web_search: Whether to enable web search (default: False)
         enable_clarification: Whether to enable clarification mode (default: False)
         preload_skills: Optional list of skills to preload
-        knowledge_base_names: Optional list of KB names in {'namespace': str, 'name': str} format
+        knowledge_base_names: Optional legacy list of KB names in {'namespace': str, 'name': str} format
+        knowledge_base_refs: Optional normalized KB refs with optional folder/document scope
         reasoning_config: Optional reasoning config dict with 'effort' and 'summary' keys
 
     Returns:
@@ -497,10 +499,13 @@ async def build_execution_request(
             "context" if current_request_id else "generated",
         )
 
-        # Process knowledge base names from API request (OpenAPI v1/responses)
+        # Process knowledge base refs from API request (OpenAPI v1/responses)
         # This creates SubtaskContext records for KBs specified in the request
+        normalized_kb_refs = knowledge_base_refs
+        if normalized_kb_refs is None:
+            normalized_kb_refs = knowledge_base_names
         processed_subtask_id = None
-        if knowledge_base_names:
+        if normalized_kb_refs:
             processed_subtask_id = (
                 user_subtask_id if user_subtask_id else assistant_subtask.id
             )
@@ -513,7 +518,7 @@ async def build_execution_request(
                 db,
                 user.id,
                 processed_subtask_id,
-                knowledge_base_names,
+                normalized_kb_refs,
                 task=task,
                 user_name=user.user_name,
             )
@@ -601,9 +606,10 @@ async def _process_contexts(
     ]
     if ctx.kb.knowledge_base_ids:
         request.knowledge_base_ids = ctx.kb.knowledge_base_ids
+        request.knowledge_base_scopes = ctx.kb.knowledge_base_scopes
         request.is_user_selected_kb = ctx.kb.is_user_selected_kb
         request.kb_tool_access_mode = ctx.kb.kb_tool_access_mode
-        if ctx.kb.document_ids:
+        if ctx.kb.document_ids and not ctx.kb.knowledge_base_scopes:
             request.document_ids = ctx.kb.document_ids
         _ensure_selected_kb_skill_priority(request)
 
@@ -623,7 +629,7 @@ async def _create_kb_contexts_from_api_request(
     db: "Session",
     user_id: int,
     user_subtask_id: int,
-    knowledge_base_names: List[Dict[str, str]],
+    knowledge_base_names: List[Dict[str, Any]],
     task=None,
     user_name: Optional[str] = None,
 ) -> None:

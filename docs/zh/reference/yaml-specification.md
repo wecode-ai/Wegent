@@ -482,6 +482,14 @@ spec:
   workspaceRef:
     name: project-workspace
     namespace: default
+  knowledgeBaseScopes:
+    - id: 101
+      namespace: default
+      name: Product Docs
+      scopeRestricted: true
+      folderIds: [12]
+      explicitDocumentIds: null
+      includeSubfolders: true
 ```
 
 ### 字段说明
@@ -494,6 +502,21 @@ spec:
 | `spec.prompt` | string | 是 | 任务描述 |
 | `spec.teamRef` | object | 是 | Team 引用 |
 | `spec.workspaceRef` | object | 是 | Workspace 引用 |
+| `spec.knowledgeBaseScopes` | array | 否 | `/api/v1/responses` 绑定的知识库访问范围，用于后续对话继承目录或文档级 scope |
+
+### 知识库范围
+
+`spec.knowledgeBaseScopes` 由 OpenAPI Responses 知识库工具自动维护。启用目录或文档范围后，后续带 `previous_response_id` 的请求会继承该范围，并在当前轮次重新解析目录内文档。
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `id` | integer | 否 | 知识库 ID，存在时优先用于解析 |
+| `namespace` | string | 否 | 知识库命名空间，默认 `default` |
+| `name` | string | 是 | 知识库名称 |
+| `scopeRestricted` | boolean | 否 | 是否限制到指定目录或文档 |
+| `folderIds` | array | 否 | 允许访问的目录 ID，`0` 表示根目录直接文档 |
+| `explicitDocumentIds` | array | 否 | 显式允许访问的文档 ID |
+| `includeSubfolders` | boolean | 否 | 目录范围是否包含子目录，默认 `true` |
 
 ### 任务状态
 

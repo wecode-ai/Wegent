@@ -1606,6 +1606,69 @@ class TestOpenAPIResponsesHelpers:
         result = parse_wegent_tools(tools)
         assert result["enable_chat_bot"] is True
 
+    def test_get_inherited_knowledge_base_refs_uses_task_scopes(self):
+        """Follow-up requests without current KB refs should inherit task scopes."""
+        from unittest.mock import MagicMock
+
+        from app.api.endpoints.openapi_responses import (
+            _get_inherited_knowledge_base_refs,
+        )
+
+        task = MagicMock()
+        task.json = {
+            "spec": {
+                "knowledgeBaseScopes": [
+                    {
+                        "id": 1,
+                        "namespace": "default",
+                        "name": "kb1",
+                        "scopeRestricted": True,
+                        "folderIds": [9],
+                        "explicitDocumentIds": [101],
+                        "includeSubfolders": False,
+                    }
+                ]
+            }
+        }
+
+        refs = _get_inherited_knowledge_base_refs(task=task, current_refs=[])
+
+        assert refs == [
+            {
+                "id": 1,
+                "namespace": "default",
+                "name": "kb1",
+                "folder_ids": [9],
+                "document_ids": [101],
+                "include_subfolders": False,
+                "scope_specified": True,
+            }
+        ]
+
+    def test_get_inherited_knowledge_base_refs_skips_when_current_refs_exist(self):
+        """Current KB refs should override previously bound task scopes."""
+        from unittest.mock import MagicMock
+
+        from app.api.endpoints.openapi_responses import (
+            _get_inherited_knowledge_base_refs,
+        )
+
+        task = MagicMock()
+        task.json = {
+            "spec": {
+                "knowledgeBaseScopes": [
+                    {"id": 1, "namespace": "default", "name": "kb1"}
+                ]
+            }
+        }
+
+        refs = _get_inherited_knowledge_base_refs(
+            task=task,
+            current_refs=[{"namespace": "default", "name": "kb2"}],
+        )
+
+        assert refs == []
+
     def test_wegent_status_to_openai_status(self):
         """Test status conversion from Wegent to OpenAI format."""
         from app.services.openapi.helpers import wegent_status_to_openai_status

@@ -30,6 +30,7 @@ from app.services.context import context_service
 from shared.models.db import ContextStatus as DBContextStatus
 from shared.models.knowledge import (
     ChatContextsResult,
+    KnowledgeBaseScope,
     KnowledgeBaseToolAccessMode,
     KnowledgeBaseToolsResult,
 )
@@ -786,6 +787,7 @@ def _prepare_contexts_for_creation(
                 type_data_dict = {
                     "knowledge_id": int(knowledge_id) if knowledge_id else 0,
                     "document_count": document_count,
+                    "scope_restricted": bool(document_ids),
                 }
                 # Only add document_ids if provided
                 if document_ids:
@@ -1154,6 +1156,7 @@ async def prepare_contexts_for_chat(
         knowledge_base_ids=kb_result.knowledge_base_ids,
         is_user_selected_kb=kb_result.is_user_selected_kb,
         document_ids=kb_result.document_ids,
+        knowledge_base_scopes=kb_result.knowledge_base_scopes,
         kb_tool_access_mode=kb_result.kb_tool_access_mode,
     )
     return ChatContextsResult(
@@ -1269,17 +1272,23 @@ def _prepare_kb_tools_from_contexts(
     # Track whether KB is user-selected (strict mode) or inherited from task (relaxed mode)
     is_user_selected_kb = bool(subtask_kb_ids)
 
+    knowledge_base_scopes: List[KnowledgeBaseScope] = []
+
     # Determine which knowledge bases to use based on priority
     if subtask_kb_ids:
         # Use subtask-level KBs only (user's explicit selection takes precedence)
         knowledge_base_ids = subtask_kb_ids
+        knowledge_base_scopes = _build_scopes_from_kb_contexts(kb_contexts)
         logger.info(
             f"[_prepare_kb_tools_from_contexts] Using {len(knowledge_base_ids)} "
             f"subtask-level knowledge bases (priority 1, strict mode): {knowledge_base_ids}"
         )
     elif task_id:
         # Priority 2: Fall back to task-level bound knowledge bases
-        knowledge_base_ids = _get_bound_knowledge_base_ids(db, task_id)
+        knowledge_base_scopes = _get_bound_knowledge_base_scopes(db, task_id, user_id)
+        knowledge_base_ids = [
+            scope.knowledge_base_id for scope in knowledge_base_scopes
+        ] or _get_bound_knowledge_base_ids(db, task_id)
         if knowledge_base_ids:
             logger.info(
                 f"[_prepare_kb_tools_from_contexts] Using {len(knowledge_base_ids)} "
@@ -1295,22 +1304,12 @@ def _prepare_kb_tools_from_contexts(
         seen_doc_ids: set[int] = set()
         for c in kb_contexts:
             if c.type_data and isinstance(c.type_data, dict):
-                raw_doc_ids = c.type_data.get("document_ids", [])
-                if isinstance(raw_doc_ids, list):
-                    for doc_id in raw_doc_ids:
-                        try:
-                            normalized = int(doc_id)
-                        except (TypeError, ValueError):
-                            logger.warning(
-                                "[_prepare_kb_tools_from_contexts] Ignore invalid "
-                                "document_id=%s in context_id=%s",
-                                doc_id,
-                                getattr(c, "id", None),
-                            )
-                            continue
-                        if normalized not in seen_doc_ids:
-                            seen_doc_ids.add(normalized)
-                            document_ids.append(normalized)
+                for normalized in _normalize_document_ids(
+                    c.type_data.get("document_ids", [])
+                ):
+                    if normalized not in seen_doc_ids:
+                        seen_doc_ids.add(normalized)
+                        document_ids.append(normalized)
 
     if not knowledge_base_ids:
         return KnowledgeBaseToolsResult(
@@ -1320,6 +1319,7 @@ def _prepare_kb_tools_from_contexts(
             knowledge_base_ids=[],
             is_user_selected_kb=False,
             document_ids=[],
+            knowledge_base_scopes=[],
             kb_tool_access_mode=KnowledgeBaseToolAccessMode.FULL,
         )
 
@@ -1344,14 +1344,21 @@ def _prepare_kb_tools_from_contexts(
         f"{len(knowledge_base_ids)} knowledge bases: {knowledge_base_ids}"
     )
 
-    # Import KnowledgeBaseTool
-    from chat_shell.tools.builtin import KnowledgeBaseTool
+    # Import knowledge base tools
+    from chat_shell.tools.builtin import KnowledgeBaseTool, ScopedKnowledgeBaseTool
 
     # Create KnowledgeBaseTool with the specified knowledge bases
     # KB configs (max_calls, exempt_calls, name) are now fetched from Backend API
-    kb_tool = KnowledgeBaseTool(
+    has_restricted_scope = any(
+        scope.scope_restricted for scope in knowledge_base_scopes
+    )
+    kb_tool_class = (
+        ScopedKnowledgeBaseTool if has_restricted_scope else KnowledgeBaseTool
+    )
+    kb_tool = kb_tool_class(
         knowledge_base_ids=knowledge_base_ids,
         document_ids=document_ids or [],
+        knowledge_base_scopes=knowledge_base_scopes,
         user_id=user_id,
         db_session=db,
         user_subtask_id=user_subtask_id,
@@ -1401,8 +1408,54 @@ def _prepare_kb_tools_from_contexts(
         knowledge_base_ids=knowledge_base_ids,
         is_user_selected_kb=is_user_selected_kb,
         document_ids=document_ids,
+        knowledge_base_scopes=knowledge_base_scopes,
         kb_tool_access_mode=kb_tool_access_mode,
     )
+
+
+def _build_scopes_from_kb_contexts(
+    kb_contexts: List[SubtaskContext],
+) -> List[KnowledgeBaseScope]:
+    """Build per-KB scopes from subtask KB context type_data."""
+    scopes: List[KnowledgeBaseScope] = []
+    for context in kb_contexts:
+        knowledge_id = context.knowledge_id
+        if knowledge_id is None:
+            continue
+        type_data = context.type_data if isinstance(context.type_data, dict) else {}
+        document_ids = _normalize_document_ids(type_data.get("document_ids", []))
+        scope_restricted = bool(type_data.get("scope_restricted", False))
+        if document_ids and "scope_restricted" not in type_data:
+            scope_restricted = True
+        scopes.append(
+            KnowledgeBaseScope(
+                knowledge_base_id=knowledge_id,
+                scope_restricted=scope_restricted,
+                document_ids=document_ids if scope_restricted else [],
+            )
+        )
+    return scopes
+
+
+def _normalize_document_ids(raw_doc_ids: Any) -> List[int]:
+    """Normalize document IDs, skipping invalid values while preserving order."""
+    if not isinstance(raw_doc_ids, list):
+        return []
+    normalized_ids: List[int] = []
+    seen_doc_ids: set[int] = set()
+    for doc_id in raw_doc_ids:
+        try:
+            normalized = int(doc_id)
+        except (TypeError, ValueError):
+            logger.warning(
+                "[_prepare_kb_tools_from_contexts] Ignore invalid document_id=%s",
+                doc_id,
+            )
+            continue
+        if normalized not in seen_doc_ids:
+            seen_doc_ids.add(normalized)
+            normalized_ids.append(normalized)
+    return normalized_ids
 
 
 def _get_bound_knowledge_base_ids(db: Session, task_id: int) -> List[int]:
@@ -1440,6 +1493,54 @@ def _get_bound_knowledge_base_ids(db: Session, task_id: int) -> List[int]:
         # Catch all exceptions to ensure robustness - this function should
         # never block chat functionality even if KB lookup fails
         logger.warning(f"Failed to get bound KB IDs for task {task_id}: {e}")
+        return []
+
+
+def _get_bound_knowledge_base_scopes(
+    db: Session,
+    task_id: int,
+    user_id: int,
+) -> List[KnowledgeBaseScope]:
+    """Resolve task-level API KB scopes for follow-up requests."""
+    from app.services.knowledge.task_knowledge_base_service import (
+        task_knowledge_base_service,
+    )
+    from app.services.openapi.kb_context import get_task_knowledge_base_scope_refs
+    from app.services.openapi.kb_resolver import KnowledgeBaseNameResolver
+
+    try:
+        task = task_knowledge_base_service.get_task(db, task_id)
+        if task is None:
+            return []
+        scope_refs = get_task_knowledge_base_scope_refs(task)
+        if not scope_refs:
+            return []
+
+        resolver = KnowledgeBaseNameResolver(db, user_id)
+        resolution = resolver.resolve(scope_refs, raise_on_error=True)
+        scopes = [
+            KnowledgeBaseScope(
+                knowledge_base_id=ref.kb_id,
+                scope_restricted=ref.scope_restricted,
+                document_ids=ref.resolved_document_ids if ref.scope_restricted else [],
+            )
+            for ref in resolution.resolved
+        ]
+        logger.info(
+            "[_get_bound_knowledge_base_scopes] Resolved %d task scope refs for task_id=%d",
+            len(scopes),
+            task_id,
+        )
+        return scopes
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning(
+            "Failed to get bound KB scopes for task %s: %s",
+            task_id,
+            exc,
+            exc_info=True,
+        )
         return []
 
 

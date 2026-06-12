@@ -16,7 +16,7 @@ from langchain_core.callbacks import CallbackManagerForToolRun
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field, PrivateAttr
 
-from shared.models.knowledge import KnowledgeBaseToolAccessMode
+from shared.models.knowledge import KnowledgeBaseScope, KnowledgeBaseToolAccessMode
 
 from ...compression.config import get_model_context_config
 from ..knowledge_content_cleaner import get_content_cleaner
@@ -56,6 +56,18 @@ class KnowledgeBaseInput(BaseModel):
     )
 
 
+class ScopedKnowledgeBaseInput(BaseModel):
+    """Input schema for scoped knowledge base retrieval."""
+
+    query: str = Field(
+        description="Search query to find relevant information in the scoped knowledge base"
+    )
+    max_results: int = Field(
+        default=20,
+        description="Maximum number of results to return.",
+    )
+
+
 class KnowledgeBaseTool(BaseTool):
     """Knowledge base retrieval tool with intelligent context injection.
 
@@ -82,6 +94,7 @@ class KnowledgeBaseTool(BaseTool):
     # When set, only chunks from these documents will be returned
     document_ids: list[int] = Field(default_factory=list)
     document_names: list[str] = Field(default_factory=list)
+    knowledge_base_scopes: list[KnowledgeBaseScope] = Field(default_factory=list)
 
     # User ID for access control
     user_id: int = 0
@@ -504,6 +517,10 @@ class KnowledgeBaseTool(BaseTool):
         document_names: Optional[list[str]] = None,
     ) -> tuple[list[int], list[str]]:
         """Resolve per-call filters without mutating tool instance state."""
+        if self._has_restricted_scope() and (document_ids or document_names):
+            raise ValueError(
+                "Per-call document filters are not allowed for scoped knowledge base access"
+            )
         effective_document_ids = (
             self.document_ids if document_ids is None else document_ids
         )
@@ -521,10 +538,15 @@ class KnowledgeBaseTool(BaseTool):
         run_manager: CallbackManagerForToolRun | None = None,
     ) -> str:
         """Execute knowledge base search with optional per-call scoped filters."""
-        effective_document_ids, effective_document_names = self._resolve_scoped_filters(
-            document_ids=document_ids,
-            document_names=document_names,
-        )
+        try:
+            effective_document_ids, effective_document_names = (
+                self._resolve_scoped_filters(
+                    document_ids=document_ids,
+                    document_names=document_names,
+                )
+            )
+        except ValueError as exc:
+            return self._format_scope_violation(str(exc))
         return await self._arun_impl(
             query,
             max_results,
@@ -566,6 +588,15 @@ class KnowledgeBaseTool(BaseTool):
             if not self.knowledge_base_ids:
                 return json.dumps(
                     {"error": "No knowledge bases configured for this conversation."}
+                )
+            if self._has_only_empty_restricted_scopes():
+                return json.dumps(
+                    {
+                        "status": "success",
+                        "results": [],
+                        "message": "No documents are available in the current knowledge scope.",
+                    },
+                    ensure_ascii=False,
                 )
 
             # Step 0: Fetch KB info to populate cache (if not already fetched)
@@ -655,6 +686,18 @@ class KnowledgeBaseTool(BaseTool):
 
             if route_mode == "restricted_safe_summary":
                 return json.dumps(raw_result, ensure_ascii=False)
+            if raw_result.get("error_code") == "document_scope_violation":
+                return json.dumps(
+                    {
+                        "status": "error",
+                        "error_code": "document_scope_violation",
+                        "message": raw_result.get(
+                            "message",
+                            "Requested documents are outside the allowed knowledge scope.",
+                        ),
+                    },
+                    ensure_ascii=False,
+                )
 
             kb_chunks = self._group_retrieved_records_by_kb(
                 raw_result.get("records", [])
@@ -882,6 +925,22 @@ class KnowledgeBaseTool(BaseTool):
             )
         else:
             try:
+                if self._has_restricted_scope():
+                    result = await self._retrieve_with_scopes_package_mode(
+                        query=query,
+                        max_results=max_results,
+                        route_mode=route_mode,
+                        document_ids=document_ids,
+                        document_names=document_names,
+                    )
+                    mode = result.get("mode", InjectionMode.RAG_ONLY)
+                    logger.info(
+                        "[KnowledgeBaseTool] Retrieved %d scoped records via Backend route mode=%s",
+                        len(result.get("records", [])),
+                        mode,
+                    )
+                    return mode, result
+
                 resolved_document_ids = document_ids or None
                 if not resolved_document_ids and document_names:
                     from app.services.knowledge import KnowledgeService
@@ -979,6 +1038,151 @@ class KnowledgeBaseTool(BaseTool):
         )
         return mode, result
 
+    def _has_restricted_scope(self) -> bool:
+        """Return whether any configured KB scope is restricted."""
+        return any(scope.scope_restricted for scope in self.knowledge_base_scopes or [])
+
+    def _has_only_empty_restricted_scopes(self) -> bool:
+        """Return whether all configured scopes are restricted and empty."""
+        scopes = self.knowledge_base_scopes or []
+        return bool(scopes) and all(
+            scope.scope_restricted and not scope.document_ids for scope in scopes
+        )
+
+    def _format_scope_violation(self, message: str) -> str:
+        """Format a scoped knowledge access violation."""
+        return json.dumps(
+            {
+                "status": "error",
+                "error_code": "document_scope_violation",
+                "message": message,
+            },
+            ensure_ascii=False,
+        )
+
+    def _scope_payloads(self) -> list[dict[str, Any]]:
+        """Serialize configured KB scopes for Backend internal APIs."""
+        return [
+            {
+                "knowledge_base_id": scope.knowledge_base_id,
+                "scope_restricted": scope.scope_restricted,
+                "document_ids": scope.document_ids,
+            }
+            for scope in (self.knowledge_base_scopes or [])
+        ]
+
+    async def _retrieve_with_scopes_package_mode(
+        self,
+        query: str,
+        max_results: int,
+        route_mode: str,
+        document_ids: Optional[list[int]] = None,
+        document_names: Optional[list[str]] = None,
+    ) -> Dict[str, Any]:
+        """Retrieve data in package mode while preserving per-KB scopes."""
+        if document_ids or document_names:
+            raise ValueError(
+                "Per-call document filters are not allowed for scoped knowledge base access"
+            )
+
+        from app.services.rag.retrieval_service import RetrievalService
+
+        retrieval_service = RetrievalService()
+        records: list[dict[str, Any]] = []
+        total_estimated_tokens = 0
+        modes: set[str] = set()
+
+        unscoped_kb_ids = [
+            scope.knowledge_base_id
+            for scope in self.knowledge_base_scopes
+            if not scope.scope_restricted
+        ]
+        retrieve_groups: list[tuple[list[int], Optional[list[int]]]] = []
+        if unscoped_kb_ids:
+            retrieve_groups.append((unscoped_kb_ids, None))
+        for scope in self.knowledge_base_scopes:
+            if scope.scope_restricted and scope.document_ids:
+                retrieve_groups.append(
+                    ([scope.knowledge_base_id], list(scope.document_ids))
+                )
+
+        if not retrieve_groups:
+            return {
+                "mode": InjectionMode.RAG_ONLY,
+                "records": [],
+                "total": 0,
+                "total_estimated_tokens": 0,
+                "message": "No documents are available in the current knowledge scope.",
+            }
+
+        for kb_ids, scoped_document_ids in retrieve_groups:
+            result = await retrieval_service.retrieve_with_routing(
+                query=query,
+                knowledge_base_ids=kb_ids,
+                db=self.db_session,
+                max_results=max_results,
+                document_ids=scoped_document_ids,
+                user_name=self.user_name,
+                route_mode=route_mode,
+                user_id=self.user_id,
+                context_window=self._get_effective_context_window(),
+                used_context_tokens=self._get_used_context_tokens(),
+                reserved_output_tokens=self._get_reserved_output_tokens(),
+                context_buffer_ratio=self.context_buffer_ratio,
+                max_direct_chunks=self.max_direct_chunks,
+                restricted_mode=self._is_restricted_search_only(),
+            )
+            modes.add(result.get("mode", InjectionMode.RAG_ONLY))
+            total_estimated_tokens += result.get("total_estimated_tokens", 0)
+            records.extend(result.get("records", []))
+
+        records.sort(key=lambda item: item.get("score") or 0, reverse=True)
+        records = records[:max_results]
+        mode = (
+            InjectionMode.DIRECT_INJECTION
+            if modes == {InjectionMode.DIRECT_INJECTION}
+            else InjectionMode.RAG_ONLY
+        )
+        result = {
+            "mode": mode,
+            "records": records,
+            "total": len(records),
+            "total_estimated_tokens": total_estimated_tokens,
+        }
+        if self.user_subtask_id:
+            from app.services.knowledge.retrieval_persistence import (
+                retrieval_persistence_service,
+            )
+
+            retrieval_persistence_service.persist_retrieval_result(
+                db=self.db_session,
+                user_subtask_id=self.user_subtask_id,
+                user_id=self.user_id,
+                query=query,
+                mode=mode,
+                records=records,
+                restricted_mode=self._is_restricted_search_only(),
+            )
+
+        if self._is_restricted_search_only():
+            from app.services.knowledge.protected_mediation import (
+                protected_knowledge_mediator,
+            )
+
+            mediated_result = await protected_knowledge_mediator.transform(
+                db=self.db_session,
+                query=query,
+                retrieval_mode=mode,
+                records=records,
+                mediation_context=self._build_mediation_context(),
+                knowledge_base_ids=self.knowledge_base_ids,
+                total_estimated_tokens=total_estimated_tokens,
+                user_id=self.user_id,
+                user_name=self.user_name or "system",
+            )
+            result = mediated_result.model_dump()
+        return result
+
     async def _retrieve_with_strategy_via_http(
         self,
         query: str,
@@ -1005,6 +1209,8 @@ class KnowledgeBaseTool(BaseTool):
             "route_mode": route_mode,
             "runtime_context": self._build_runtime_context(),
         }
+        if self.knowledge_base_scopes:
+            payload["knowledge_base_scopes"] = self._scope_payloads()
         persistence_context = self._build_persistence_context()
         if persistence_context:
             payload["persistence_context"] = persistence_context
@@ -1036,6 +1242,25 @@ class KnowledgeBaseTool(BaseTool):
                     response.status_code,
                     response.text,
                 )
+                try:
+                    error_detail = response.json().get("detail")
+                    if (
+                        isinstance(error_detail, dict)
+                        and error_detail.get("error_code") == "document_scope_violation"
+                    ):
+                        return {
+                            "mode": InjectionMode.RAG_ONLY,
+                            "records": [],
+                            "total": 0,
+                            "status": "error",
+                            "error_code": "document_scope_violation",
+                            "message": error_detail.get(
+                                "message",
+                                "Requested documents are outside the allowed knowledge scope.",
+                            ),
+                        }
+                except Exception:
+                    pass
                 return {
                     "mode": InjectionMode.RAG_ONLY,
                     "records": [],
@@ -1202,3 +1427,9 @@ class KnowledgeBaseTool(BaseTool):
             },
             ensure_ascii=False,
         )
+
+
+class ScopedKnowledgeBaseTool(KnowledgeBaseTool):
+    """Knowledge base search tool for pre-scoped sessions."""
+
+    args_schema: type[BaseModel] = ScopedKnowledgeBaseInput
