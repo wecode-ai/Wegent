@@ -30,8 +30,6 @@ import type {
   RagConfigMode,
 } from '@/types/knowledge'
 import { KnowledgeBaseForm } from './KnowledgeBaseForm'
-import { useRetrievers } from '../hooks/useRetrievers'
-import { useEmbeddingModels } from '../hooks/useEmbeddingModels'
 
 /** Available group for selection */
 export interface AvailableGroup {
@@ -153,14 +151,6 @@ export function CreateKnowledgeBaseDialog({
     showGroupSelector && selectedGroup && selectedGroup.type === 'group'
       ? selectedGroup.name
       : groupName
-  const { retrievers, loading: loadingRetrievers } = useRetrievers(
-    effectiveScope,
-    effectiveGroupName
-  )
-  const { models: embeddingModels, loading: loadingEmbeddingModels } = useEmbeddingModels(
-    effectiveScope,
-    effectiveGroupName
-  )
 
   // Reset selectedKbType and selectedGroupId when dialog opens
   useEffect(() => {
@@ -174,63 +164,6 @@ export function CreateKnowledgeBaseDialog({
   const handleKbTypeChange = (newType: KnowledgeBaseType) => {
     setSelectedKbType(newType)
   }
-
-  useEffect(() => {
-    if (!open || ragConfigMode === 'disabled' || loadingRetrievers || retrievers.length === 0) {
-      return
-    }
-
-    setRetrievalConfig(current => {
-      const currentRetrieverExists =
-        current.retriever_name &&
-        retrievers.some(
-          retriever =>
-            retriever.name === current.retriever_name &&
-            retriever.namespace === current.retriever_namespace
-        )
-
-      if (currentRetrieverExists) {
-        return current
-      }
-
-      const defaultRetriever = retrievers[0]
-      return {
-        ...current,
-        retriever_name: defaultRetriever.name,
-        retriever_namespace: defaultRetriever.namespace,
-      }
-    })
-  }, [open, ragConfigMode, loadingRetrievers, retrievers])
-
-  useEffect(() => {
-    if (
-      !open ||
-      ragConfigMode === 'disabled' ||
-      loadingEmbeddingModels ||
-      embeddingModels.length === 0
-    ) {
-      return
-    }
-
-    setRetrievalConfig(current => {
-      const currentModelExists =
-        current.embedding_config?.model_name &&
-        embeddingModels.some(model => model.name === current.embedding_config?.model_name)
-
-      if (currentModelExists) {
-        return current
-      }
-
-      const defaultModel = embeddingModels[0]
-      return {
-        ...current,
-        embedding_config: {
-          model_name: defaultModel.name,
-          model_namespace: defaultModel.namespace || 'default',
-        },
-      }
-    })
-  }, [open, ragConfigMode, loadingEmbeddingModels, embeddingModels])
 
   const handleSubmit = async () => {
     setError('')

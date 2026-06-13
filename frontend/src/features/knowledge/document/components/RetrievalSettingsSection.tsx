@@ -41,7 +41,7 @@ export function RetrievalSettingsSection({
   const { methods: retrievalMethods, loading: loadingMethods } = useRetrievalMethods()
 
   const [topK, setTopK] = useState(config.top_k ?? 5)
-  const [scoreThreshold, setScoreThreshold] = useState(config.score_threshold ?? 0.7)
+  const [scoreThreshold, setScoreThreshold] = useState(config.score_threshold ?? 0.5)
   const [vectorWeight, setVectorWeight] = useState(config.hybrid_weights?.vector_weight ?? 0.7)
 
   // Use ref to store the latest config to avoid stale closure issues in useEffect
@@ -56,7 +56,7 @@ export function RetrievalSettingsSection({
   }, [config.top_k])
 
   useEffect(() => {
-    setScoreThreshold(config.score_threshold ?? 0.7)
+    setScoreThreshold(config.score_threshold ?? 0.5)
   }, [config.score_threshold])
 
   useEffect(() => {

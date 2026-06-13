@@ -854,7 +854,7 @@ class RetrievalConfig(BaseModel):
     )
     top_k: int = Field(5, ge=1, le=10, description="Number of results to return")
     score_threshold: float = Field(
-        0.7, ge=0.0, le=1.0, description="Minimum score threshold"
+        0.5, ge=0.0, le=1.0, description="Minimum score threshold"
     )
     hybrid_weights: Optional[HybridWeights] = Field(
         None, description="Hybrid search weights"

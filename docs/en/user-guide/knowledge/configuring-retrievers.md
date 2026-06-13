@@ -118,7 +118,7 @@ Pure vector similarity search for semantic understanding:
 |-----------|-------------|---------|
 | `retrieval_mode` | Retrieval mode | `vector` |
 | `top_k` | Number of results | 5 |
-| `score_threshold` | Relevance threshold | 0.7 |
+| `score_threshold` | Relevance threshold | 0.5 |
 
 **Use cases**: Concept matching, understanding questions, semantic search
 
@@ -143,7 +143,7 @@ Combines vector similarity with BM25 keyword matching:
 | `vector_weight` | Vector weight | 0.7 |
 | `keyword_weight` | Keyword weight | 0.3 |
 | `top_k` | Number of results | 5 |
-| `score_threshold` | Relevance threshold | 0.7 |
+| `score_threshold` | Relevance threshold | 0.5 |
 
 **Weight recommendations**:
 - **Conceptual queries** (0.8/0.2): Understanding, explanations
@@ -197,7 +197,7 @@ Content-Type: application/json
     "api_key": "sk-..."
   },
   "top_k": 5,
-  "score_threshold": 0.7,
+  "score_threshold": 0.5,
   "retrieval_mode": "hybrid",
   "hybrid_weights": {
     "vector_weight": 0.7,
