@@ -305,13 +305,16 @@ class KnowledgeBaseResponse(BaseModel):
 
     @staticmethod
     def _normalize_retrieval_config_for_response(
-        config: Optional[Dict[str, Any]], knowledge_base_id: int
+        config: Optional[Any], knowledge_base_id: int
     ) -> Optional[Dict[str, Any]]:
         """Drop historical incomplete retrieval configs before response validation."""
-        if not config:
+        if not isinstance(config, dict):
             return None
 
         embedding_config = config.get("embedding_config") or {}
+        if not isinstance(embedding_config, dict):
+            embedding_config = {}
+
         if config.get("retriever_name") and embedding_config.get("model_name"):
             return config
 

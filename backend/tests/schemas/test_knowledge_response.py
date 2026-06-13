@@ -72,3 +72,24 @@ def test_from_kind_drops_retrieval_config_missing_embedding_model():
     )
 
     assert response.retrieval_config is None
+
+
+def test_from_kind_drops_non_dict_retrieval_config():
+    response = KnowledgeBaseResponse.from_kind(make_kind("legacy-invalid-config"))
+
+    assert response.retrieval_config is None
+
+
+def test_from_kind_drops_retrieval_config_with_non_dict_embedding_config():
+    response = KnowledgeBaseResponse.from_kind(
+        make_kind(
+            {
+                "retriever_name": "duckdb",
+                "retriever_namespace": "default",
+                "embedding_config": "legacy-invalid-embedding",
+                "retrieval_mode": "vector",
+            }
+        )
+    )
+
+    assert response.retrieval_config is None
