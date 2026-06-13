@@ -1392,7 +1392,7 @@ export function PluginsWorkspace({
                 <button
                   type="button"
                   data-testid="plugins-upload-empty-button"
-                  className="rounded-xl bg-primary px-4 py-2 text-primary-contrast hover:bg-primary/90"
+                  className="rounded-xl bg-text-primary px-4 py-2 text-background hover:bg-text-primary/90"
                   onClick={() => {
                     setPluginUploadError(null)
                     setShowPluginUploadDialog(true)

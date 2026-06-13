@@ -227,7 +227,7 @@ export function DeviceStatusPrompt({
   }) => {
     const toneClass = tone === 'danger'
       ? 'bg-red-50 text-red-600 hover:bg-red-100 disabled:hover:bg-red-50'
-      : 'bg-primary/10 text-primary hover:bg-primary/15 disabled:hover:bg-primary/10'
+      : 'bg-blue-50 text-blue-600 hover:bg-blue-100 disabled:hover:bg-blue-50'
     const tooltip = (
       <div
         ref={sidebarTooltipRef}

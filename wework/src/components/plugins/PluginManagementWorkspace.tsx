@@ -819,7 +819,7 @@ export function PluginManagementWorkspace({
                 <button
                   type="button"
                   data-testid="plugin-management-upload-plugin-button"
-                  className="rounded-xl bg-primary px-4 py-2 text-white hover:bg-primary/90"
+                  className="rounded-xl bg-text-primary px-4 py-2 text-background hover:bg-text-primary/90"
                   onClick={() => setShowPluginUploadDialog(true)}
                 >
                   {t(

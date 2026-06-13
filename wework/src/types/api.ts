@@ -326,6 +326,7 @@ export interface Subtask {
   role: string
   prompt?: string
   result?: unknown
+  error_message?: string | null
   status: string
   message_id?: number
   created_at: string
@@ -489,6 +490,7 @@ export interface ChatErrorPayload {
   task_id?: number
   subtask_id: number
   error: string
+  type?: string
   message_id?: number
 }
 
@@ -911,6 +913,7 @@ export type ModelCompatibilityDisabledReason =
 
 export interface ModelRuntime {
   family?: string | null
+  provider?: string | null
 }
 
 export interface UnifiedModel {

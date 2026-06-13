@@ -34,6 +34,7 @@ from typing import Any, Dict, Generator, Optional
 import socketio
 from sqlalchemy.orm import Session
 
+from app.api.ws.connection_utils import enter_connect_room, save_connect_session
 from app.api.ws.decorators import trace_websocket_event
 from app.core.auth_utils import is_api_key, verify_api_key
 from app.core.events import TaskCompletedEvent, get_event_bus
@@ -553,6 +554,16 @@ class DeviceNamespace(socketio.AsyncNamespace):
         # Fall back to REMOTE_ADDR
         return environ.get("REMOTE_ADDR")
 
+    def _get_client_ip_log_context(self, environ: dict) -> tuple[Optional[str], str]:
+        """Build log context for WebSocket client IP attribution."""
+        client_ip = self._get_client_ip(environ)
+        return client_ip, (
+            f"client_ip={client_ip} "
+            f"remote_addr={environ.get('REMOTE_ADDR')} "
+            f"x_forwarded_for={environ.get('HTTP_X_FORWARDED_FOR')} "
+            f"x_real_ip={environ.get('HTTP_X_REAL_IP')}"
+        )
+
     async def _match_cloud_device(
         self, user_id: int, client_ip: str, executor_device_id: str
     ) -> Optional[str]:
@@ -624,8 +635,9 @@ class DeviceNamespace(socketio.AsyncNamespace):
 
         request_id = str(uuid.uuid4())[:8]
         set_request_context(request_id)
+        client_ip, ip_log_context = self._get_client_ip_log_context(environ)
 
-        logger.info(f"[Device WS] Connection attempt sid={sid}")
+        logger.info(f"[Device WS] Connection attempt sid={sid} {ip_log_context}")
 
         # Reject new connections during graceful shutdown
         if shutdown_manager.is_shutting_down:
@@ -674,34 +686,43 @@ class DeviceNamespace(socketio.AsyncNamespace):
             # Extract token expiry for JWT
             token_exp = get_token_expiry(token)
 
-        # Get client IP from environ
-        client_ip = self._get_client_ip(environ)
-
-        # Save user info to session (device_id will be added on register)
-        await self.save_session(
+        session_saved = await save_connect_session(
+            self,
             sid,
-            {
+            session_data={
                 "user_id": user_id,
                 "user_name": user_name,
                 "request_id": request_id,
                 "token_exp": token_exp,
                 "auth_token": token,
                 "auth_type": auth_type,
-                "device_id": None,  # Set on device:register
+                "device_id": None,
                 "registered": False,
-                "client_ip": client_ip,  # For cloud device matching
+                "client_ip": client_ip,
             },
+            logger=logger,
+            log_prefix="[Device WS]",
         )
+        if not session_saved:
+            return False
 
         set_user_context(user_id=str(user_id), user_name=user_name)
 
         # Join user room for device-related notifications
         user_room = f"user:{user_id}"
-        await self.enter_room(sid, user_room)
+        room_entered = await enter_connect_room(
+            self,
+            sid,
+            user_room,
+            logger=logger,
+            log_prefix="[Device WS]",
+        )
+        if not room_entered:
+            return False
 
         logger.info(
             f"[Device WS] Connected user={user_id} ({user_name}) via {auth_type} "
-            f"sid={sid}, awaiting registration"
+            f"sid={sid} {ip_log_context}, awaiting registration"
         )
 
     async def on_disconnect(self, sid: str):
