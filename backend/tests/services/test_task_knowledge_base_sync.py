@@ -335,6 +335,54 @@ class TestKBPriorityLogic:
                     assert call_args[1]["knowledge_base_ids"] == [10]
                     assert len(kb_result.extra_tools) == 1
 
+    def test_scoped_context_uses_scopes_without_legacy_document_filters(self, mock_db):
+        """Scoped document IDs should only be represented by per-KB scopes."""
+        from app.services.chat.preprocessing.contexts import (
+            _prepare_kb_tools_from_contexts,
+        )
+
+        kb_context = Mock(spec=SubtaskContext)
+        kb_context.knowledge_id = 10
+        kb_context.type_data = {
+            "scope_restricted": True,
+            "document_ids": [101, 102],
+        }
+
+        with patch(
+            "app.services.chat.preprocessing.contexts._get_bound_knowledge_base_ids"
+        ) as mock_get_bound:
+            mock_get_bound.return_value = []
+
+            with patch(
+                "chat_shell.tools.builtin.ScopedKnowledgeBaseTool"
+            ) as mock_scoped_tool:
+                mock_scoped_tool.return_value = Mock()
+
+                with patch(
+                    "app.services.chat.preprocessing.contexts._get_user_kb_tool_access_mode",
+                    return_value=("full", ""),
+                ):
+                    kb_result = _prepare_kb_tools_from_contexts(
+                        kb_contexts=[kb_context],
+                        user_id=1,
+                        db=mock_db,
+                        base_system_prompt="Base prompt",
+                        task_id=100,
+                        user_subtask_id=1,
+                    )
+
+        mock_scoped_tool.assert_called_once()
+        call_kwargs = mock_scoped_tool.call_args.kwargs
+        assert call_kwargs["knowledge_base_ids"] == [10]
+        assert call_kwargs["document_ids"] == []
+        assert len(call_kwargs["knowledge_base_scopes"]) == 1
+        scope = call_kwargs["knowledge_base_scopes"][0]
+        assert scope.knowledge_base_id == 10
+        assert scope.scope_restricted is True
+        assert scope.document_ids == [101, 102]
+        assert kb_result.document_ids == []
+        assert kb_result.knowledge_base_scopes == [scope]
+
     def test_fallback_to_task_kb_when_no_subtask_kb(self, mock_db):
         """Test that task-level KB is used when subtask has no KB"""
         from app.services.chat.preprocessing.contexts import (

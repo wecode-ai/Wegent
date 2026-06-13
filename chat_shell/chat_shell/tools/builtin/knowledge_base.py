@@ -517,10 +517,12 @@ class KnowledgeBaseTool(BaseTool):
         document_names: Optional[list[str]] = None,
     ) -> tuple[list[int], list[str]]:
         """Resolve per-call filters without mutating tool instance state."""
-        if self._has_restricted_scope() and (document_ids or document_names):
-            raise ValueError(
-                "Per-call document filters are not allowed for scoped knowledge base access"
-            )
+        if self._has_restricted_scope():
+            if document_ids or document_names:
+                raise ValueError(
+                    "Per-call document filters are not allowed for scoped knowledge base access"
+                )
+            return [], []
         effective_document_ids = (
             self.document_ids if document_ids is None else document_ids
         )

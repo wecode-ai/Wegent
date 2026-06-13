@@ -1355,9 +1355,12 @@ def _prepare_kb_tools_from_contexts(
     kb_tool_class = (
         ScopedKnowledgeBaseTool if has_restricted_scope else KnowledgeBaseTool
     )
+    # Restricted scopes must be represented only by knowledge_base_scopes.
+    # The legacy document_ids field is for non-scoped document filters.
+    legacy_document_ids = [] if has_restricted_scope else document_ids
     kb_tool = kb_tool_class(
         knowledge_base_ids=knowledge_base_ids,
-        document_ids=document_ids or [],
+        document_ids=legacy_document_ids,
         knowledge_base_scopes=knowledge_base_scopes,
         user_id=user_id,
         db_session=db,
@@ -1407,7 +1410,7 @@ def _prepare_kb_tools_from_contexts(
         kb_meta_prompt=kb_meta_prompt,
         knowledge_base_ids=knowledge_base_ids,
         is_user_selected_kb=is_user_selected_kb,
-        document_ids=document_ids,
+        document_ids=legacy_document_ids,
         knowledge_base_scopes=knowledge_base_scopes,
         kb_tool_access_mode=kb_tool_access_mode,
     )

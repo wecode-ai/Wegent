@@ -101,9 +101,12 @@ async def prepare_knowledge_base_tools(
     kb_tool_class = (
         ScopedKnowledgeBaseTool if has_restricted_scope else KnowledgeBaseTool
     )
+    # Restricted scopes must be represented only by knowledge_base_scopes.
+    # The legacy document_ids field is for non-scoped document filters.
+    legacy_document_ids = [] if has_restricted_scope else (document_ids or [])
     kb_tool = kb_tool_class(
         knowledge_base_ids=knowledge_base_ids,
-        document_ids=document_ids or [],
+        document_ids=legacy_document_ids,
         knowledge_base_scopes=knowledge_base_scopes or [],
         user_id=user_id,
         user_name=user_name,

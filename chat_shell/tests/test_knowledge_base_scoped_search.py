@@ -246,3 +246,63 @@ async def test_scoped_arun_rejects_per_call_document_filters():
     result = json.loads(await tool._arun(query="release checklist", document_ids=[999]))
 
     assert result["error_code"] == "document_scope_violation"
+
+
+@pytest.mark.asyncio
+async def test_scoped_arun_ignores_instance_legacy_document_filters():
+    """Configured scope documents must not be mistaken for per-call filters."""
+    tool = ScopedKnowledgeBaseTool(
+        knowledge_base_ids=[1],
+        document_ids=[101],
+        document_names=["legacy.md"],
+        knowledge_base_scopes=[
+            KnowledgeBaseScope(
+                knowledge_base_id=1,
+                scope_restricted=True,
+                document_ids=[101],
+            )
+        ],
+        user_id=7,
+    )
+
+    async def _fake_retrieve(**kwargs):
+        assert kwargs["document_ids"] == []
+        assert kwargs["document_names"] == []
+        return (
+            "rag_retrieval",
+            {
+                "mode": "rag_retrieval",
+                "records": [],
+                "total": 0,
+                "total_estimated_tokens": 0,
+            },
+        )
+
+    with (
+        patch.object(
+            tool,
+            "_get_kb_info",
+            AsyncMock(
+                return_value={
+                    "items": [
+                        {
+                            "id": 1,
+                            "name": "Scoped KB",
+                            "rag_enabled": True,
+                            "max_calls_per_conversation": 10,
+                            "exempt_calls_before_check": 5,
+                        }
+                    ]
+                }
+            ),
+        ),
+        patch.object(
+            tool,
+            "_retrieve_with_strategy_from_all_kbs",
+            AsyncMock(side_effect=_fake_retrieve),
+        ),
+    ):
+        result = json.loads(await tool._arun(query="release checklist"))
+
+    assert result["count"] == 0
+    assert "error" not in result
