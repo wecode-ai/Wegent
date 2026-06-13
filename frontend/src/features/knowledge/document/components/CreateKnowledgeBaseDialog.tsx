@@ -14,7 +14,6 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
-import { Label } from '@/components/ui/label'
 import {
   Select,
   SelectContent,
@@ -23,6 +22,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useTranslation } from '@/hooks/useTranslation'
+import { SimpleConfigRow } from '@/features/settings/components/team-edit/SimpleConfigLayout'
 import type {
   SummaryModelRef,
   KnowledgeBaseType,
@@ -333,56 +333,65 @@ export function CreateKnowledgeBaseDialog({
             typeSection={
               <>
                 {/* KB Type selector - subtle style */}
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <Label>{t('knowledge:document.knowledgeBase.type')}</Label>
-                    <button
-                      type="button"
-                      onClick={() => handleKbTypeChange(isNotebook ? 'classic' : 'notebook')}
-                      className="text-xs text-text-muted hover:text-primary transition-colors"
-                      data-testid="switch-kb-type"
-                    >
-                      {isNotebook
-                        ? t('knowledge:document.knowledgeBase.convertToClassic')
-                        : t('knowledge:document.knowledgeBase.convertToNotebook')}
-                    </button>
-                  </div>
-                  <div
-                    className={`flex items-center gap-3 p-3 rounded-md border ${
-                      isNotebook ? 'bg-primary/5 border-primary/20' : 'bg-muted border-border'
-                    }`}
-                  >
+                <SimpleConfigRow label={t('knowledge:document.knowledgeBase.type')} align="start">
+                  <div className="space-y-2">
+                    <div className="flex justify-end">
+                      <button
+                        type="button"
+                        onClick={() => handleKbTypeChange(isNotebook ? 'classic' : 'notebook')}
+                        className="text-xs text-text-muted hover:text-primary transition-colors"
+                        data-testid="switch-kb-type"
+                      >
+                        {isNotebook
+                          ? t('knowledge:document.knowledgeBase.convertToClassic')
+                          : t('knowledge:document.knowledgeBase.convertToNotebook')}
+                      </button>
+                    </div>
                     <div
-                      className={`flex-shrink-0 w-8 h-8 rounded-md flex items-center justify-center ${
-                        isNotebook ? 'bg-primary/10 text-primary' : 'bg-surface text-text-secondary'
+                      className={`flex items-center gap-3 p-3 rounded-md border ${
+                        isNotebook ? 'bg-primary/5 border-primary/20' : 'bg-muted border-border'
                       }`}
                     >
-                      {isNotebook ? (
-                        <BookOpen className="w-4 h-4" />
-                      ) : (
-                        <Database className="w-4 h-4" />
-                      )}
-                    </div>
-                    <div>
-                      <div className="font-medium text-sm">
-                        {isNotebook
-                          ? t('knowledge:document.knowledgeBase.typeNotebook')
-                          : t('knowledge:document.knowledgeBase.typeClassic')}
+                      <div
+                        className={`flex-shrink-0 w-8 h-8 rounded-md flex items-center justify-center ${
+                          isNotebook
+                            ? 'bg-primary/10 text-primary'
+                            : 'bg-surface text-text-secondary'
+                        }`}
+                      >
+                        {isNotebook ? (
+                          <BookOpen className="w-4 h-4" />
+                        ) : (
+                          <Database className="w-4 h-4" />
+                        )}
                       </div>
-                      <div className="text-xs text-text-muted">
-                        {isNotebook
-                          ? t('knowledge:document.knowledgeBase.notebookDesc')
-                          : t('knowledge:document.knowledgeBase.classicDesc')}
+                      <div>
+                        <div className="font-medium text-sm">
+                          {isNotebook
+                            ? t('knowledge:document.knowledgeBase.typeNotebook')
+                            : t('knowledge:document.knowledgeBase.typeClassic')}
+                        </div>
+                        <div className="text-xs text-text-muted">
+                          {isNotebook
+                            ? t('knowledge:document.knowledgeBase.notebookDesc')
+                            : t('knowledge:document.knowledgeBase.classicDesc')}
+                        </div>
                       </div>
                     </div>
                   </div>
-                </div>
+                </SimpleConfigRow>
                 {/* Group selector - only show when showGroupSelector is true */}
                 {showGroupSelector && availableGroups && availableGroups.length > 0 && (
-                  <div className="space-y-2 mt-4">
-                    <Label>{t('knowledge:document.knowledgeBase.targetGroup', '归属')} *</Label>
+                  <SimpleConfigRow
+                    label={
+                      <>
+                        {t('knowledge:document.knowledgeBase.targetGroup', '归属')}{' '}
+                        <span className="text-red-400">*</span>
+                      </>
+                    }
+                  >
                     <Select value={selectedGroupId} onValueChange={setSelectedGroupId}>
-                      <SelectTrigger data-testid="group-selector">
+                      <SelectTrigger data-testid="group-selector" className="bg-base">
                         <SelectValue
                           placeholder={t(
                             'knowledge:document.knowledgeBase.selectGroup',
@@ -403,7 +412,7 @@ export function CreateKnowledgeBaseDialog({
                           ))}
                       </SelectContent>
                     </Select>
-                  </div>
+                  </SimpleConfigRow>
                 )}
               </>
             }
