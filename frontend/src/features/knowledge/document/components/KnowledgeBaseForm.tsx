@@ -353,10 +353,10 @@ export function KnowledgeBaseForm({
                       variant="ghost"
                       size="icon"
                       onClick={() => handleRemoveGuidedQuestion(index)}
-                      className="h-9 w-9 flex-shrink-0"
+                      className="h-11 w-11 flex-shrink-0"
                       data-testid={`remove-guided-question-${index}`}
                     >
-                      <X className="h-4 w-4" />
+                      <X className="h-5 w-5" />
                     </Button>
                   </div>
                 ))}
