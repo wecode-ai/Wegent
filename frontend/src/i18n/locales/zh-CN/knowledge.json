@@ -545,7 +545,7 @@
     },
     "ragConfigMode": {
       "title": "RAG 检索",
-      "auto": "自动配置",
+      "auto": "启用 RAG",
       "disabled": "无 RAG"
     },
     "retrieval": {
