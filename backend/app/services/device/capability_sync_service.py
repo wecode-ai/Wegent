@@ -221,6 +221,7 @@ class DeviceCapabilitySyncService:
         user_id: int,
         device_id: str,
         payload: dict[str, Any],
+        timeout_seconds: int = SYNC_TIMEOUT_SECONDS,
     ) -> DeviceCapabilitySyncResult:
         """Push an already-built desired payload to one online device."""
         online_info = await device_service.get_device_online_info(user_id, device_id)
@@ -253,7 +254,7 @@ class DeviceCapabilitySyncService:
                 payload,
                 to=socket_id,
                 namespace=SYNC_NAMESPACE,
-                timeout=SYNC_TIMEOUT_SECONDS,
+                timeout=timeout_seconds,
             )
         except Exception as exc:
             logger.warning(

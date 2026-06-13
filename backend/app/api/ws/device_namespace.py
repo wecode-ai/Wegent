@@ -25,6 +25,7 @@ Events:
 
 import asyncio
 import logging
+import time
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -69,6 +70,10 @@ from shared.telemetry.context import set_request_context, set_user_context
 
 logger = logging.getLogger(__name__)
 CODEX_RUNTIME = "codex"
+DEVICE_CONNECT_RATE_LIMIT_WINDOW_SECONDS = 30
+DEVICE_CONNECT_RATE_LIMIT_MAX_ATTEMPTS = 30
+DEVICE_REGISTER_UPSERT_DEBOUNCE_SECONDS = 10
+REGISTER_CAPABILITY_SYNC_TIMEOUT_SECONDS = 5
 
 
 @contextmanager
@@ -471,6 +476,68 @@ class DeviceNamespace(socketio.AsyncNamespace):
         # events arrive concurrently for the same subtask
         self._subtask_locks: Dict[int, asyncio.Lock] = {}
         self._runtime_auth_sync_inflight: set[tuple[int, str, str]] = set()
+        self._connection_attempts: Dict[str, list[float]] = {}
+        self._recent_registrations: Dict[tuple[int, str], tuple[float, str]] = {}
+        self._background_tasks: set[asyncio.Task] = set()
+
+    def _is_connection_rate_limited(
+        self, key: str, now: Optional[float] = None
+    ) -> bool:
+        """Return True when the connection attempt key exceeds the local window."""
+        current = time.monotonic() if now is None else now
+        cutoff = current - DEVICE_CONNECT_RATE_LIMIT_WINDOW_SECONDS
+        attempts = [
+            attempt
+            for attempt in self._connection_attempts.get(key, [])
+            if attempt > cutoff
+        ]
+        if len(attempts) >= DEVICE_CONNECT_RATE_LIMIT_MAX_ATTEMPTS:
+            self._connection_attempts[key] = attempts
+            return True
+
+        attempts.append(current)
+        self._connection_attempts[key] = attempts
+        return False
+
+    def _get_recent_registration_display_name(
+        self, user_id: int, device_id: str
+    ) -> Optional[str]:
+        """Return cached display name when a device just registered successfully."""
+        key = (user_id, device_id)
+        cached = self._recent_registrations.get(key)
+        if not cached:
+            return None
+
+        registered_at, display_name = cached
+        if time.monotonic() - registered_at > DEVICE_REGISTER_UPSERT_DEBOUNCE_SECONDS:
+            self._recent_registrations.pop(key, None)
+            return None
+        return display_name
+
+    def _remember_registration(
+        self, user_id: int, device_id: str, display_name: str
+    ) -> None:
+        """Record a successful registration to absorb immediate reconnect storms."""
+        self._recent_registrations[(user_id, device_id)] = (
+            time.monotonic(),
+            display_name,
+        )
+
+    def _schedule_background_task(self, coro, description: str) -> None:
+        """Run best-effort follow-up work without blocking device registration."""
+        task = asyncio.create_task(coro)
+        self._background_tasks.add(task)
+
+        def _on_done(done_task: asyncio.Task) -> None:
+            self._background_tasks.discard(done_task)
+            try:
+                done_task.result()
+            except asyncio.CancelledError:
+                logger.debug("[Device WS] Background task cancelled: %s", description)
+            except Exception:
+                logger.exception("[Device WS] Background task failed: %s", description)
+
+        task.add_done_callback(_on_done)
 
     def _get_subtask_lock(self, subtask_id: int) -> asyncio.Lock:
         """Get or create a lock for the given subtask.
@@ -646,6 +713,13 @@ class DeviceNamespace(socketio.AsyncNamespace):
             )
             raise ConnectionRefusedError("Server is shutting down")
 
+        rate_limit_key = f"ip:{client_ip or 'unknown'}"
+        if self._is_connection_rate_limited(rate_limit_key):
+            logger.warning(
+                f"[Device WS] Rate limited connection sid={sid}, key={rate_limit_key}"
+            )
+            raise ConnectionRefusedError("Too many device connection attempts")
+
         # Check auth token
         if not auth or not isinstance(auth, dict):
             logger.warning(f"[Device WS] Missing auth data sid={sid}")
@@ -750,6 +824,21 @@ class DeviceNamespace(socketio.AsyncNamespace):
             )
 
             if user_id and device_id:
+                online_info = await device_service.get_device_online_info(
+                    user_id, device_id
+                )
+                online_socket_id = online_info.get("socket_id") if online_info else None
+                if online_socket_id and online_socket_id != sid:
+                    logger.info(
+                        "[Device WS] Ignoring stale disconnect: user=%s, device=%s, "
+                        "sid=%s, current_sid=%s",
+                        user_id,
+                        device_id,
+                        sid,
+                        online_socket_id,
+                    )
+                    return
+
                 # Remove from Redis online status
                 await device_service.set_device_offline(user_id, device_id)
 
@@ -830,17 +919,24 @@ class DeviceNamespace(socketio.AsyncNamespace):
         # Pass client_ip to _register_device for tracking
         # Run in executor to avoid blocking event loop
         if not is_cloud_device:
-            success, persisted_display_name, error = await run_sync_in_executor(
-                _register_device,
-                user_id,
-                payload.device_id,
-                payload.name,
-                payload.client_ip,
-                payload.device_type.value,
-                payload.bind_shell.value,
+            persisted_display_name = self._get_recent_registration_display_name(
+                user_id, payload.device_id
             )
-            if not success:
-                return {"error": f"Registration failed: {error}"}
+            if persisted_display_name is None:
+                success, persisted_display_name, error = await run_sync_in_executor(
+                    _register_device,
+                    user_id,
+                    payload.device_id,
+                    payload.name,
+                    payload.client_ip,
+                    payload.device_type.value,
+                    payload.bind_shell.value,
+                )
+                if not success:
+                    return {"error": f"Registration failed: {error}"}
+                self._remember_registration(
+                    user_id, payload.device_id, persisted_display_name or payload.name
+                )
         else:
             persisted_display_name = payload.name
 
@@ -869,9 +965,12 @@ class DeviceNamespace(socketio.AsyncNamespace):
         await self._broadcast_device_online(
             user_id, payload.device_id, effective_device_name
         )
-        await self._sync_global_capabilities_to_registered_device(
-            user_id=user_id,
-            device_id=payload.device_id,
+        self._schedule_background_task(
+            self._sync_global_capabilities_to_registered_device(
+                user_id=user_id,
+                device_id=payload.device_id,
+            ),
+            "sync global capabilities after device registration",
         )
 
         logger.info(
@@ -897,6 +996,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 user_id=user_id,
                 device_id=device_id,
                 payload=payload,
+                timeout_seconds=REGISTER_CAPABILITY_SYNC_TIMEOUT_SECONDS,
             )
             if not result.success:
                 logger.warning(
