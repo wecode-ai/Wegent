@@ -4,7 +4,7 @@
 
 'use client'
 
-import { ReactNode, useId } from 'react'
+import { ReactNode, useId, useState } from 'react'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -14,6 +14,10 @@ import { Button } from '@/components/ui/button'
 import { ChevronDown, Plus, X } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
+import {
+  SimpleConfigGroup,
+  SimpleConfigRow,
+} from '@/features/settings/components/team-edit/SimpleConfigLayout'
 import type {
   KnowledgeResourceScope,
   RetrievalConfigDraft,
@@ -64,24 +68,37 @@ function FormSection({
   sectionId,
   open,
   onOpenChange,
+  defaultOpen = true,
   children,
 }: {
   title: string
   sectionId: string
-  open: boolean
-  onOpenChange: (open: boolean) => void
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
+  defaultOpen?: boolean
   children: ReactNode
 }) {
   const contentId = useId()
+  const [internalOpen, setInternalOpen] = useState(defaultOpen)
+  const isOpen = open ?? internalOpen
+
+  const handleOpenChange = () => {
+    const nextOpen = !isOpen
+    if (onOpenChange) {
+      onOpenChange(nextOpen)
+      return
+    }
+    setInternalOpen(nextOpen)
+  }
 
   return (
     <section className="space-y-4">
       <button
         type="button"
         aria-controls={contentId}
-        aria-expanded={open}
+        aria-expanded={isOpen}
         data-testid={`${sectionId}-section-trigger`}
-        onClick={() => onOpenChange(!open)}
+        onClick={handleOpenChange}
         className="group flex w-full items-center gap-3 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
       >
         <h3 className="shrink-0 text-sm font-semibold text-text-primary">{title}</h3>
@@ -89,11 +106,11 @@ function FormSection({
         <ChevronDown
           className={cn(
             'h-4 w-4 shrink-0 text-text-muted transition-transform duration-200',
-            !open && '-rotate-90'
+            !isOpen && '-rotate-90'
           )}
         />
       </button>
-      {open && (
+      {isOpen && (
         <div id={contentId} className="space-y-5">
           {children}
         </div>
@@ -168,14 +185,12 @@ export function KnowledgeBaseForm({
   }
 
   const advancedContent = (
-    <div className="space-y-5">
-      <div className="space-y-3">
-        <div className="space-y-0.5">
-          <Label className="text-sm font-medium">{t('knowledge:document.callLimits.title')}</Label>
-          <p className="text-xs text-text-muted">
-            {t('knowledge:document.callLimits.description')}
-          </p>
-        </div>
+    <SimpleConfigGroup>
+      <SimpleConfigRow
+        label={t('knowledge:document.callLimits.title')}
+        description={t('knowledge:document.callLimits.description')}
+        align="start"
+      >
         <div className="space-y-4">
           <div className="space-y-2">
             <div className="flex items-center justify-between">
@@ -216,144 +231,156 @@ export function KnowledgeBaseForm({
             </p>
           </div>
         </div>
-      </div>
+      </SimpleConfigRow>
 
       {(retrievalModeSection || showRetrievalSection) && (
-        <div className="space-y-3">
-          <div className="space-y-0.5">
-            <Label className="text-sm font-medium">
-              {t('knowledge:document.ragConfigMode.title')}
-            </Label>
+        <SimpleConfigRow label={t('knowledge:document.ragConfigMode.title')} align="start">
+          <div className="space-y-4">
+            {retrievalModeSection}
+
+            {showRetrievalSection && (
+              <RetrievalSettingsSection
+                config={retrievalConfig}
+                onChange={onRetrievalConfigChange}
+                scope={retrievalScope}
+                groupName={retrievalGroupName}
+                readOnly={retrievalReadOnly}
+                partialReadOnly={retrievalPartialReadOnly}
+              />
+            )}
           </div>
-
-          {retrievalModeSection}
-
-          {showRetrievalSection && (
-            <RetrievalSettingsSection
-              config={retrievalConfig}
-              onChange={onRetrievalConfigChange}
-              scope={retrievalScope}
-              groupName={retrievalGroupName}
-              readOnly={retrievalReadOnly}
-              partialReadOnly={retrievalPartialReadOnly}
-            />
-          )}
-        </div>
+        </SimpleConfigRow>
       )}
-    </div>
+    </SimpleConfigGroup>
   )
 
   return (
-    <div className="space-y-4">
-      {typeSection}
+    <div className="space-y-5">
+      <FormSection title={t('knowledge:document.formSections.basic')} sectionId="knowledge-basic">
+        <SimpleConfigGroup>
+          {typeSection}
 
-      <div className="space-y-2">
-        <Label htmlFor="knowledge-name">{t('knowledge:document.knowledgeBase.name')}</Label>
-        <Input
-          id="knowledge-name"
-          value={name}
-          onChange={e => onNameChange(e.target.value)}
-          placeholder={t('knowledge:document.knowledgeBase.namePlaceholder')}
-          maxLength={100}
-          data-testid="kb-name-input"
-        />
-      </div>
-      <div className="space-y-2">
-        <Label htmlFor="knowledge-description">
-          {t('knowledge:document.knowledgeBase.description')}
-        </Label>
-        <Textarea
-          id="knowledge-description"
-          value={description}
-          onChange={e => onDescriptionChange(e.target.value)}
-          placeholder={t('knowledge:document.knowledgeBase.descriptionPlaceholder')}
-          maxLength={500}
-          rows={3}
-          data-testid="kb-description-input"
-        />
-      </div>
-
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <div className="space-y-0.5">
-            <Label htmlFor="knowledge-summary-enabled">
-              {t('knowledge:document.summary.enableLabel')}
-            </Label>
-            <p className="text-xs text-text-muted">
-              {t('knowledge:document.summary.enableDescription')}
-            </p>
-          </div>
-          <Switch
-            id="knowledge-summary-enabled"
-            checked={summaryEnabled}
-            onCheckedChange={checked => onSummaryEnabledChange(checked)}
-          />
-        </div>
-        {summaryEnabled && (
-          <div className="space-y-2 pt-2">
-            <Label>{t('knowledge:document.summary.selectModel')}</Label>
-            <SummaryModelSelector
-              value={summaryModelRef}
-              onChange={onSummaryModelChange}
-              error={summaryModelError}
-              knowledgeDefaultTeamId={knowledgeDefaultTeamId}
-              bindModel={bindModel}
+          <SimpleConfigRow
+            label={
+              <>
+                {t('knowledge:document.knowledgeBase.name')} <span className="text-red-400">*</span>
+              </>
+            }
+          >
+            <Input
+              id="knowledge-name"
+              value={name}
+              onChange={e => onNameChange(e.target.value)}
+              placeholder={t('knowledge:document.knowledgeBase.namePlaceholder')}
+              maxLength={100}
+              data-testid="kb-name-input"
+              className="bg-base"
             />
-          </div>
-        )}
-      </div>
+          </SimpleConfigRow>
+
+          <SimpleConfigRow label={t('knowledge:document.knowledgeBase.description')} align="start">
+            <Textarea
+              id="knowledge-description"
+              value={description}
+              onChange={e => onDescriptionChange(e.target.value)}
+              placeholder={t('knowledge:document.knowledgeBase.descriptionPlaceholder')}
+              maxLength={500}
+              rows={3}
+              data-testid="kb-description-input"
+              className="bg-base"
+            />
+          </SimpleConfigRow>
+        </SimpleConfigGroup>
+      </FormSection>
+
+      <FormSection
+        title={t('knowledge:document.formSections.summary')}
+        sectionId="knowledge-summary"
+      >
+        <SimpleConfigGroup>
+          <SimpleConfigRow
+            label={t('knowledge:document.summary.enableLabel')}
+            description={t('knowledge:document.summary.enableDescription')}
+          >
+            <div className="flex justify-end">
+              <Switch
+                id="knowledge-summary-enabled"
+                checked={summaryEnabled}
+                onCheckedChange={checked => onSummaryEnabledChange(checked)}
+              />
+            </div>
+          </SimpleConfigRow>
+
+          {summaryEnabled && (
+            <SimpleConfigRow label={t('knowledge:document.summary.selectModel')}>
+              <SummaryModelSelector
+                value={summaryModelRef}
+                onChange={onSummaryModelChange}
+                error={summaryModelError}
+                knowledgeDefaultTeamId={knowledgeDefaultTeamId}
+                bindModel={bindModel}
+              />
+            </SimpleConfigRow>
+          )}
+        </SimpleConfigGroup>
+      </FormSection>
 
       {showGuidedQuestions && (
-        <div className="space-y-3">
-          <div className="space-y-0.5">
-            <Label>{t('knowledge:document.guidedQuestions.label')}</Label>
-            <p className="text-xs text-text-muted">
-              {t('knowledge:document.guidedQuestions.helpText')}
-            </p>
-          </div>
-          <div className="space-y-2">
-            {guidedQuestions.map((question, index) => (
-              <div key={index} className="flex items-center gap-2">
-                <Input
-                  value={question}
-                  onChange={e => handleUpdateGuidedQuestion(index, e.target.value)}
-                  placeholder={t('knowledge:document.guidedQuestions.placeholder')}
-                  maxLength={MAX_QUESTION_LENGTH}
-                  data-testid={`guided-question-input-${index}`}
-                  aria-label={`${t('knowledge:document.guidedQuestions.label')} ${index + 1}`}
-                />
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => handleRemoveGuidedQuestion(index)}
-                  className="h-9 w-9 flex-shrink-0"
-                  data-testid={`remove-guided-question-${index}`}
-                >
-                  <X className="h-4 w-4" />
-                </Button>
+        <FormSection
+          title={t('knowledge:document.formSections.guidedQuestions')}
+          sectionId="knowledge-guided-questions"
+        >
+          <SimpleConfigGroup>
+            <SimpleConfigRow
+              label={t('knowledge:document.guidedQuestions.label')}
+              description={t('knowledge:document.guidedQuestions.helpText')}
+              align="start"
+            >
+              <div className="space-y-2">
+                {guidedQuestions.map((question, index) => (
+                  <div key={index} className="flex items-center gap-2">
+                    <Input
+                      value={question}
+                      onChange={e => handleUpdateGuidedQuestion(index, e.target.value)}
+                      placeholder={t('knowledge:document.guidedQuestions.placeholder')}
+                      maxLength={MAX_QUESTION_LENGTH}
+                      data-testid={`guided-question-input-${index}`}
+                      aria-label={`${t('knowledge:document.guidedQuestions.label')} ${index + 1}`}
+                      className="bg-base"
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => handleRemoveGuidedQuestion(index)}
+                      className="h-9 w-9 flex-shrink-0"
+                      data-testid={`remove-guided-question-${index}`}
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ))}
+                {guidedQuestions.length < MAX_GUIDED_QUESTIONS && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleAddGuidedQuestion}
+                    data-testid="add-guided-question"
+                  >
+                    <Plus className="h-4 w-4 mr-1" />
+                    {t('knowledge:document.guidedQuestions.addButton')}
+                  </Button>
+                )}
+                {guidedQuestions.length >= MAX_GUIDED_QUESTIONS && (
+                  <p className="text-xs text-text-muted">
+                    {t('knowledge:document.guidedQuestions.maxReached')}
+                  </p>
+                )}
               </div>
-            ))}
-            {guidedQuestions.length < MAX_GUIDED_QUESTIONS && (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={handleAddGuidedQuestion}
-                className="mt-2"
-                data-testid="add-guided-question"
-              >
-                <Plus className="h-4 w-4 mr-1" />
-                {t('knowledge:document.guidedQuestions.addButton')}
-              </Button>
-            )}
-            {guidedQuestions.length >= MAX_GUIDED_QUESTIONS && (
-              <p className="text-xs text-text-muted">
-                {t('knowledge:document.guidedQuestions.maxReached')}
-              </p>
-            )}
-          </div>
-        </div>
+            </SimpleConfigRow>
+          </SimpleConfigGroup>
+        </FormSection>
       )}
 
       <FormSection

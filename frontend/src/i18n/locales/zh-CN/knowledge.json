@@ -538,6 +538,11 @@
       "expanded": "点击收起",
       "readOnly": "只读"
     },
+    "formSections": {
+      "basic": "基础设置",
+      "summary": "摘要设置",
+      "guidedQuestions": "引导问题"
+    },
     "ragConfigMode": {
       "title": "RAG 检索",
       "auto": "自动配置",
