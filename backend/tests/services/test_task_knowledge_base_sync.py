@@ -15,6 +15,7 @@ NOTE:
 """
 
 import logging
+from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
@@ -25,6 +26,156 @@ from app.models.subtask_context import SubtaskContext
 from app.models.task import TaskResource
 from app.services.knowledge import TaskKnowledgeBaseService
 from app.services.share import knowledge_share_service
+
+
+@pytest.mark.unit
+class TestPrepareContextsForCreation:
+    """Test generic context creation payload normalization."""
+
+    def test_preserves_explicit_empty_knowledge_base_scope(self):
+        from app.services.chat.preprocessing.contexts import (
+            _prepare_contexts_for_creation,
+        )
+
+        context_item = SimpleNamespace(
+            type="knowledge_base",
+            data={
+                "knowledge_id": 10,
+                "name": "Empty Folder Scope",
+                "scope_restricted": True,
+                "document_ids": [],
+            },
+        )
+
+        kb_contexts, table_contexts, selected_docs_contexts = (
+            _prepare_contexts_for_creation(
+                contexts=[context_item],
+                subtask_id=100,
+                user_id=1,
+            )
+        )
+
+        assert len(kb_contexts) == 1
+        assert table_contexts == []
+        assert selected_docs_contexts == []
+        assert kb_contexts[0].type_data == {
+            "knowledge_id": 10,
+            "document_count": None,
+            "scope_restricted": True,
+            "document_ids": [],
+        }
+
+    def test_legacy_empty_knowledge_base_scope_remains_unrestricted(self):
+        from app.services.chat.preprocessing.contexts import (
+            _prepare_contexts_for_creation,
+        )
+
+        context_item = SimpleNamespace(
+            type="knowledge_base",
+            data={
+                "knowledge_id": 10,
+                "name": "Whole KB",
+                "document_ids": [],
+            },
+        )
+
+        kb_contexts, _, _ = _prepare_contexts_for_creation(
+            contexts=[context_item],
+            subtask_id=100,
+            user_id=1,
+        )
+
+        assert len(kb_contexts) == 1
+        assert kb_contexts[0].type_data == {
+            "knowledge_id": 10,
+            "document_count": None,
+            "scope_restricted": False,
+        }
+
+    def test_legacy_document_ids_imply_restricted_scope(self):
+        from app.services.chat.preprocessing.contexts import (
+            _prepare_contexts_for_creation,
+        )
+
+        context_item = SimpleNamespace(
+            type="knowledge_base",
+            data={
+                "knowledge_id": 10,
+                "name": "Selected Documents",
+                "document_ids": [101, 102],
+            },
+        )
+
+        kb_contexts, _, _ = _prepare_contexts_for_creation(
+            contexts=[context_item],
+            subtask_id=100,
+            user_id=1,
+        )
+
+        assert len(kb_contexts) == 1
+        assert kb_contexts[0].type_data == {
+            "knowledge_id": 10,
+            "document_count": None,
+            "scope_restricted": True,
+            "document_ids": [101, 102],
+        }
+
+    def test_document_ids_remain_restricted_with_explicit_false(self):
+        from app.services.chat.preprocessing.contexts import (
+            _prepare_contexts_for_creation,
+        )
+
+        context_item = SimpleNamespace(
+            type="knowledge_base",
+            data={
+                "knowledge_id": 10,
+                "name": "Selected Documents",
+                "scope_restricted": False,
+                "document_ids": [101],
+            },
+        )
+
+        kb_contexts, _, _ = _prepare_contexts_for_creation(
+            contexts=[context_item],
+            subtask_id=100,
+            user_id=1,
+        )
+
+        assert len(kb_contexts) == 1
+        assert kb_contexts[0].type_data == {
+            "knowledge_id": 10,
+            "document_count": None,
+            "scope_restricted": True,
+            "document_ids": [101],
+        }
+
+    def test_empty_restricted_context_builds_empty_restricted_scope(self):
+        from app.services.chat.preprocessing.contexts import (
+            _build_scopes_from_kb_contexts,
+            _prepare_contexts_for_creation,
+        )
+
+        context_item = SimpleNamespace(
+            type="knowledge_base",
+            data={
+                "knowledge_id": 10,
+                "name": "Empty Folder Scope",
+                "scope_restricted": True,
+                "document_ids": [],
+            },
+        )
+
+        kb_contexts, _, _ = _prepare_contexts_for_creation(
+            contexts=[context_item],
+            subtask_id=100,
+            user_id=1,
+        )
+        scopes = _build_scopes_from_kb_contexts(kb_contexts)
+
+        assert len(scopes) == 1
+        assert scopes[0].knowledge_base_id == 10
+        assert scopes[0].scope_restricted is True
+        assert scopes[0].document_ids == []
 
 
 @pytest.mark.unit

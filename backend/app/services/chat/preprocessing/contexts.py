@@ -780,17 +780,21 @@ def _prepare_contexts_for_creation(
                 knowledge_id = kb_data.get("knowledge_id")
                 kb_name = kb_data.get("name", f"Knowledge Base {knowledge_id}")
                 document_count = kb_data.get("document_count")
-                # Get document_ids if user referenced specific documents
-                document_ids = kb_data.get("document_ids", [])
+                # Get document_ids if user referenced specific documents.
+                # Explicit scope_restricted=True with an empty list means an
+                # intentionally empty scope, not unrestricted full-KB access.
+                document_ids = kb_data.get("document_ids") or []
+                explicit_scope_restricted = bool(kb_data.get("scope_restricted"))
+                scope_restricted = explicit_scope_restricted or bool(document_ids)
 
                 # Build type_data
                 type_data_dict = {
                     "knowledge_id": int(knowledge_id) if knowledge_id else 0,
                     "document_count": document_count,
-                    "scope_restricted": bool(document_ids),
+                    "scope_restricted": scope_restricted,
                 }
-                # Only add document_ids if provided
-                if document_ids:
+                # Preserve explicit empty scoped ranges as document_ids=[].
+                if scope_restricted:
                     type_data_dict["document_ids"] = document_ids
 
                 # Create SubtaskContext object (not yet committed)
