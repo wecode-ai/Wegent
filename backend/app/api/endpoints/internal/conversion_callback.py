@@ -90,14 +90,18 @@ def conversion_completed_callback(
 ) -> ConversionCompletedResponse:
     """Handle conversion completion callback from converter service.
 
-    Atomically performs:
+    Performs, in order:
     1. Validate base64 payload (fail early on bad input)
-    2. Create a new attachment for the converted Markdown (preserve original)
-    3. State transition (CONVERTING -> QUEUED, with staleness check)
-    4. Dispatch indexing task (compensate to FAILED if dispatch fails)
+    2. Validate payload<->document binding (attachment_id / KB / document_id)
+    3. Staleness pre-check: reject superseded generations BEFORE any mutation
+    4. Create a new attachment for the converted Markdown (preserve original)
+    5. State transition (CONVERTING -> QUEUED); roll back the attachment if a
+       newer generation sneaks in during the race window after step 3
+    6. Dispatch indexing task (compensate to FAILED if dispatch fails)
 
-    If the conversion is stale (superseded by a newer generation),
-    the original attachment is NOT modified and indexing is NOT dispatched.
+    If the conversion is stale (superseded by a newer generation), no attachment
+    is created, converted_attachment_id is not changed, and indexing is NOT
+    dispatched.
     """
     # Step 1: Validate base64 payload before any DB mutation
     try:
@@ -183,6 +187,39 @@ def conversion_completed_callback(
             detail="Original attachment not found",
         )
 
+    # Staleness pre-check (read-only): reject superseded callbacks BEFORE any
+    # mutation. Without this, a late callback from an older generation would
+    # create an orphan Markdown attachment and point converted_attachment_id at
+    # stale content (which DocumentReadService then prefers over the original).
+    # The filter mirrors mark_document_conversion_succeeded so the pre-check and
+    # the transition agree on what "current" means.
+    from app.models.knowledge import DocumentIndexStatus
+
+    is_current_generation = (
+        db.query(KnowledgeDocument)
+        .filter(
+            KnowledgeDocument.id == request.document_id,
+            KnowledgeDocument.index_generation == request.generation,
+            KnowledgeDocument.index_status.in_(
+                [
+                    DocumentIndexStatus.CONVERTING,
+                    DocumentIndexStatus.PENDING_CONVERSION,
+                ]
+            ),
+        )
+        .count()
+        > 0
+    )
+    if not is_current_generation:
+        logger.info(
+            f"[ConversionCallback] Stale conversion callback: "
+            f"document_id={request.document_id}, generation={request.generation} "
+            f"is not current; skipping attachment creation"
+        )
+        return ConversionCompletedResponse(
+            ok=True, skipped=True, skip_reason="stale_conversion"
+        )
+
     try:
         converted_context, _ = context_service.upload_attachment(
             db=db,
@@ -203,7 +240,10 @@ def conversion_completed_callback(
         f"for document {request.document_id} (original attachment {attachment_id} preserved)"
     )
 
-    # Step 3: Store converted_attachment_id in source_config and state transition
+    # Step 3: Store converted_attachment_id and state transition.
+    # Capture the previous reference first so a later staleness rollback can
+    # restore it instead of leaving a dangling converted_attachment_id.
+    previous_converted_id = doc.converted_attachment_id
     try:
         doc.converted_attachment_id = converted_context.id
         db.flush()
@@ -231,6 +271,29 @@ def conversion_completed_callback(
         generation=request.generation,
     )
     if not succeeded:
+        # Race window: a newer generation superseded this callback between the
+        # pre-check above and the state transition. Roll back BOTH side effects
+        # (the converted_attachment_id pointer and the newly created attachment)
+        # so we neither leak an orphan nor serve stale converted content.
+        doc.converted_attachment_id = previous_converted_id
+        try:
+            context_service.delete_context(
+                db=db,
+                context_id=converted_context.id,
+                user_id=original_attachment.user_id,
+            )
+        except Exception:
+            logger.exception(
+                f"[ConversionCallback] Failed to roll back orphan converted "
+                f"attachment {converted_context.id} for stale callback "
+                f"document_id={request.document_id}"
+            )
+        db.commit()
+        logger.info(
+            f"[ConversionCallback] Rolled back stale conversion callback: "
+            f"document_id={request.document_id}, generation={request.generation}, "
+            f"removed orphan attachment {converted_context.id}"
+        )
         return ConversionCompletedResponse(
             ok=True, skipped=True, skip_reason="stale_conversion"
         )

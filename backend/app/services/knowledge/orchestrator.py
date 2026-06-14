@@ -1470,21 +1470,34 @@ class KnowledgeOrchestrator:
 
         # If the document has a converted attachment, clean it up.
         # Content has been modified so the conversion result is stale.
+        # Delete first and only drop the reference on success: if delete_context
+        # returns False (missing / owner mismatch / still subtask-linked) we keep
+        # the reference so an orphan-cleanup pass can still locate it, and we
+        # surface the failure via a warning rather than logging a false success.
         old_converted_id = document.converted_attachment_id
         if old_converted_id:
             from app.services.context.context_service import context_service as _ctx_svc
 
-            document.converted_attachment_id = None
             try:
-                _ctx_svc.delete_context(
+                deleted = _ctx_svc.delete_context(
                     db=db,
                     context_id=old_converted_id,
                     user_id=document.user_id,
                 )
-                logger.info(
-                    f"[Orchestrator] Cleaned up stale converted attachment "
-                    f"{old_converted_id} for document {document_id}"
-                )
+                if deleted:
+                    document.converted_attachment_id = None
+                    db.commit()
+                    logger.info(
+                        f"[Orchestrator] Cleaned up stale converted attachment "
+                        f"{old_converted_id} for document {document_id}"
+                    )
+                else:
+                    logger.warning(
+                        f"[Orchestrator] Converted attachment {old_converted_id} "
+                        f"not deleted for document {document_id} "
+                        f"(not found / owner mismatch / subtask-linked); "
+                        f"reference retained for orphan cleanup"
+                    )
             except Exception as e:
                 logger.warning(
                     f"[Orchestrator] Failed to delete old converted attachment "
