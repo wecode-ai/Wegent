@@ -7,6 +7,7 @@ import { LoginPage } from '@/pages/LoginPage'
 import { WorkbenchPage } from '@/pages/WorkbenchPage'
 import { PluginsPage } from '@/pages/PluginsPage'
 import { PluginManagementPage } from '@/pages/PluginManagementPage'
+import { AppsPage } from '@/pages/AppsPage'
 import { stripAppBasePath } from '@/config/runtime'
 import { AppearanceProvider } from '@/features/appearance'
 import { ChromeTitlebar } from '@/components/topnav/ChromeTitlebar'
@@ -55,6 +56,8 @@ function AppRoutes() {
         <PluginManagementPage />
       ) : path === '/plugins' ? (
         <PluginsPage />
+      ) : path === '/apps' ? (
+        <AppsPage />
       ) : (
         <WorkbenchPage />
       )}

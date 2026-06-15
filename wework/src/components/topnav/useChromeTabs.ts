@@ -9,6 +9,12 @@ export function useChromeTabs(currentPath: string) {
   const activeAppKey = useMemo(() => {
     const match = normalizedPath.match(/^\/app\/([^/]+)/)
     if (match && APP_TABS.some(t => t.key === match[1])) return match[1]
+
+    const nativeMatch = APP_TABS.find(
+      tab => tab.mode === 'native' && tab.path && tab.path !== '/' && normalizedPath === tab.path,
+    )
+    if (nativeMatch) return nativeMatch.key
+
     return DEFAULT_APP_KEY
   }, [normalizedPath])
 
@@ -17,11 +23,14 @@ export function useChromeTabs(currentPath: string) {
     [activeAppKey],
   )
 
-  const isNativeApp = activeAppKey === DEFAULT_APP_KEY
+  const isNativeApp = activeTab?.mode === 'native'
 
   const navigateToApp = useCallback((appKey: string) => {
-    if (appKey === DEFAULT_APP_KEY) {
-      navigateTo('/')
+    const tab = APP_TABS.find(item => item.key === appKey)
+    if (!tab) return
+
+    if (tab.mode === 'native') {
+      navigateTo(tab.path || '/')
     } else {
       navigateTo(`/app/${appKey}`)
     }

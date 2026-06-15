@@ -2,13 +2,15 @@ export interface AppTab {
   key: string
   label: string
   mode: 'native' | 'iframe'
+  path?: string
   url?: string
   requiresAuth?: boolean
   hidden?: boolean
 }
 
 export const APP_TABS: AppTab[] = [
-  { key: 'wework', label: 'WeWork', mode: 'native', requiresAuth: true },
+  { key: 'wework', label: 'WeWork', mode: 'native', path: '/', requiresAuth: true },
+  { key: 'apps', label: '应用', mode: 'native', path: '/apps', requiresAuth: true },
   {
     key: 'wegent',
     label: 'Wegent',
