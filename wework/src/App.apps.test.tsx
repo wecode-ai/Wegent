@@ -6,6 +6,7 @@ import App from './App'
 
 const tauriState = vi.hoisted(() => ({
   executorRunning: false,
+  cliAvailable: true,
   actionPending: false,
   envSaveCalls: 0,
   invokeCommands: [] as string[],
@@ -35,12 +36,14 @@ vi.mock('@tauri-apps/api/core', () => ({
           error: null,
         },
         cli: {
-          available: true,
-          path: '/Users/alice/.wecode/wecode-cli/bin/wecode',
-          version: 'wecode 1.2.3',
-          error: null,
+          available: tauriState.cliAvailable,
+          path: tauriState.cliAvailable
+            ? '/Users/alice/.wecode/wecode-cli/bin/wecode'
+            : null,
+          version: tauriState.cliAvailable ? 'wecode 1.2.3' : null,
+          error: tauriState.cliAvailable ? null : 'wecode not found',
         },
-        installed: true,
+        installed: tauriState.cliAvailable,
         running: tauriState.executorRunning,
         pid: tauriState.executorRunning ? 12345 : null,
         version: null,
@@ -161,6 +164,7 @@ describe('App center route', () => {
   beforeEach(() => {
     localStorage.clear()
     tauriState.executorRunning = false
+    tauriState.cliAvailable = true
     tauriState.actionPending = false
     tauriState.envSaveCalls = 0
     tauriState.invokeCommands = []
@@ -346,6 +350,29 @@ describe('App center route', () => {
     expect(output).toHaveTextContent('$ wecode executor start')
     expect(output).toHaveTextContent('Starting executor...')
     expect(output).toHaveTextContent('Executor started successfully')
+  })
+
+  test('offers automatic WeCode CLI installation when CLI is missing', async () => {
+    tauriState.cliAvailable = false
+    window.history.pushState({}, '', '/apps')
+
+    render(<App />)
+
+    expect(await screen.findByText('Executor 状态')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('apps-nav-local-management'))
+
+    const installButton = await screen.findByTestId(
+      'executor-primary-action-button',
+    )
+    expect(installButton).toHaveTextContent('安装 WeCode CLI')
+    await userEvent.click(installButton)
+
+    await waitFor(() =>
+      expect(tauriState.invokeCommands).toContain('run_executor_command'),
+    )
+    expect(screen.getByTestId('executor-command-output')).toHaveTextContent(
+      '$ 安装 WeCode CLI',
+    )
   })
 
   test('shows four environment variables without clipping and autosaves edits', async () => {

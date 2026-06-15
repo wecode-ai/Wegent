@@ -7,6 +7,11 @@ use std::process::{Command, Output, Stdio};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager};
 
+#[cfg(not(target_os = "windows"))]
+const WECODE_CLI_INSTALL_SCRIPT_UNIX: &str = "https://git.intra.weibo.com/api/v4/projects/weibo_rd%2Fcommon%2Fwecode%2Fwecode-cli-cc/repository/files/scripts%2Finstall.sh/raw?ref=master";
+#[cfg(target_os = "windows")]
+const WECODE_CLI_INSTALL_SCRIPT_WINDOWS: &str = "https://git.intra.weibo.com/api/v4/projects/weibo_rd%2Fcommon%2Fwecode%2Fwecode-cli-cc/repository/files/scripts%2Finstall.ps1/raw?ref=master";
+
 #[derive(Serialize)]
 struct WecodeCommandResult {
     success: bool,
@@ -179,17 +184,29 @@ fn run_wecode_args_with_env_streaming(
     args: &[&str],
     env_vars: &[StartupEnvVar],
 ) -> Result<WecodeCommandResult, String> {
+    let command_env = env_vars
+        .iter()
+        .filter(|item| item.enabled && is_valid_env_key(item.key.trim()))
+        .map(|item| (item.key.trim().to_string(), item.value.clone()))
+        .collect::<Vec<_>>();
+    run_program_streaming(app, execution_id, path, args, &command_env)
+}
+
+fn run_program_streaming(
+    app: &AppHandle,
+    execution_id: &str,
+    path: &PathBuf,
+    args: &[&str],
+    env_vars: &[(String, String)],
+) -> Result<WecodeCommandResult, String> {
     let mut command = Command::new(path);
     command
         .args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    for env_var in env_vars.iter().filter(|item| item.enabled) {
-        let key = env_var.key.trim();
-        if is_valid_env_key(key) {
-            command.env(key, &env_var.value);
-        }
+    for (key, value) in env_vars {
+        command.env(key, value);
     }
 
     let mut child = command
@@ -237,6 +254,23 @@ fn run_wecode_args_with_env_streaming(
         stdout: captured_output(&stdout_buffer)?,
         stderr: captured_output(&stderr_buffer)?,
     })
+}
+
+fn emit_command_output(
+    app: &AppHandle,
+    execution_id: &str,
+    stream: &str,
+    content: impl Into<String>,
+) -> Result<(), String> {
+    app.emit(
+        "executor-command-output",
+        ExecutorCommandOutput {
+            execution_id: execution_id.to_string(),
+            stream: stream.to_string(),
+            content: content.into(),
+        },
+    )
+    .map_err(|error| format!("Failed to emit command {stream}: {error}"))
 }
 
 fn stream_command_output<R: Read + Send + 'static>(
@@ -560,6 +594,10 @@ fn run_executor_action(
     action: &str,
     execution_id: &str,
 ) -> Result<WecodeCommandResult, String> {
+    if action == "install-cli" {
+        return install_wecode_cli(app, execution_id);
+    }
+
     let cli = resolve_wecode_cli();
     let path = cli.path.map(PathBuf::from).ok_or_else(|| {
         cli.error
@@ -614,6 +652,83 @@ fn run_executor_action(
     } else {
         result
     })
+}
+
+fn wecode_cli_download_token() -> Option<String> {
+    env::var("WECODE_CLI_DOWNLOAD_TOKEN")
+        .ok()
+        .or_else(|| env::var("EXECUTOR_DOWNLOAD_TOKEN").ok())
+        .or_else(|| option_env!("WECODE_CLI_DOWNLOAD_TOKEN").map(ToOwned::to_owned))
+        .or_else(|| option_env!("EXECUTOR_DOWNLOAD_TOKEN").map(ToOwned::to_owned))
+        .filter(|token| !token.trim().is_empty())
+}
+
+fn install_wecode_cli(app: &AppHandle, execution_id: &str) -> Result<WecodeCommandResult, String> {
+    let token = wecode_cli_download_token().ok_or_else(|| {
+        "WeCode CLI 安装凭据未配置，请在打包环境设置 WECODE_CLI_DOWNLOAD_TOKEN".to_string()
+    })?;
+    emit_command_output(app, execution_id, "stdout", "正在下载安装脚本...\n")?;
+
+    #[cfg(target_os = "windows")]
+    let result = {
+        let script_path = env::temp_dir().join(format!("install-wecode-{execution_id}.ps1"));
+        let command = PathBuf::from("pwsh");
+        let args = [
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            "$headers = @{\"PRIVATE-TOKEN\"=$env:WECODE_CLI_DOWNLOAD_TOKEN; \"Cache-Control\"=\"no-cache\"}; Invoke-WebRequest -UseBasicParsing -Uri $env:WECODE_CLI_INSTALL_SCRIPT_URL -Headers $headers -OutFile $env:WECODE_CLI_INSTALL_SCRIPT; & $env:WECODE_CLI_INSTALL_SCRIPT",
+        ];
+        let command_env = vec![
+            ("WECODE_CLI_DOWNLOAD_TOKEN".to_string(), token),
+            (
+                "WECODE_CLI_INSTALL_SCRIPT_URL".to_string(),
+                WECODE_CLI_INSTALL_SCRIPT_WINDOWS.to_string(),
+            ),
+            (
+                "WECODE_CLI_INSTALL_SCRIPT".to_string(),
+                script_path.to_string_lossy().to_string(),
+            ),
+        ];
+        let result = run_program_streaming(app, execution_id, &command, &args, &command_env)?;
+        let _ = fs::remove_file(script_path);
+        result
+    };
+
+    #[cfg(not(target_os = "windows"))]
+    let result = {
+        let script_path = env::temp_dir().join(format!("install-wecode-{execution_id}.sh"));
+        let command = PathBuf::from("/bin/sh");
+        let args = [
+            "-c",
+            "curl -fsSL -H \"PRIVATE-TOKEN: ${WECODE_CLI_DOWNLOAD_TOKEN}\" \"${WECODE_CLI_INSTALL_SCRIPT_URL}\" -o \"${WECODE_CLI_INSTALL_SCRIPT}\" && /bin/bash \"${WECODE_CLI_INSTALL_SCRIPT}\"",
+        ];
+        let command_env = vec![
+            ("WECODE_CLI_DOWNLOAD_TOKEN".to_string(), token),
+            (
+                "WECODE_CLI_INSTALL_SCRIPT_URL".to_string(),
+                WECODE_CLI_INSTALL_SCRIPT_UNIX.to_string(),
+            ),
+            (
+                "WECODE_CLI_INSTALL_SCRIPT".to_string(),
+                script_path.to_string_lossy().to_string(),
+            ),
+        ];
+        let result = run_program_streaming(app, execution_id, &command, &args, &command_env)?;
+        let _ = fs::remove_file(script_path);
+        result
+    };
+
+    if result.success {
+        emit_command_output(
+            app,
+            execution_id,
+            "stdout",
+            "WeCode CLI 安装完成，正在重新检测...\n",
+        )?;
+    }
+    Ok(result)
 }
 
 fn normalize_executor_start_result(

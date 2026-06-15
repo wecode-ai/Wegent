@@ -76,6 +76,20 @@ export default defineConfig([
 
 The desktop app is built with [Tauri v2](https://v2.tauri.app/), which also targets iOS.
 
+## Desktop local executor management
+
+The macOS and Windows apps can install WeCode CLI from the local management page.
+Provide the internal download credential through the build environment:
+
+```dotenv
+WECODE_CLI_DOWNLOAD_TOKEN=<internal-gitlab-download-token>
+```
+
+`scripts/dev-mac-app.sh` and `scripts/build-mac-app.sh` load the repository `.env`
+file. Release pipelines should inject the same variable as a protected secret. The
+token is compiled into packaged desktop builds as a fallback and is never rendered
+in command output.
+
 ### Prerequisites
 
 - Xcode + Command Line Tools

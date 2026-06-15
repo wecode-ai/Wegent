@@ -3,6 +3,7 @@ import { listen } from '@tauri-apps/api/event'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 
 export type ExecutorAction =
+  | 'install-cli'
   | 'install'
   | 'start'
   | 'stop'

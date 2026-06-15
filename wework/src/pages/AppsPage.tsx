@@ -912,6 +912,21 @@ function ExecutorPrimaryActionButton({
   activeAction: ExecutorAction | null
   onRunAction: (action: ExecutorAction) => void
 }) {
+  if (readiness === 'cli_missing') {
+    return (
+      <ExecutorActionButton
+        testId={testId}
+        icon={Download}
+        label="安装 WeCode CLI"
+        loading={activeAction === 'install-cli'}
+        loadingLabel="安装 CLI 中..."
+        disabled={disabled}
+        primary
+        onClick={() => onRunAction('install-cli')}
+      />
+    )
+  }
+
   if (readiness === 'executor_missing') {
     return (
       <ExecutorActionButton
@@ -1438,7 +1453,10 @@ export function AppsPage() {
         activeAction: action,
         error: null,
         message: null,
-        commandOutput: `$ wecode executor ${action}\n`,
+        commandOutput:
+          action === 'install-cli'
+            ? '$ 安装 WeCode CLI\n'
+            : `$ wecode executor ${action}\n`,
         commandSucceeded: null,
         commandExitCode: null,
       }))
