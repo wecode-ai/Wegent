@@ -1,7 +1,7 @@
 from typing import Any
 
 from app.services.web_scraper.classifier import ScrapeResultClassifier
-from app.services.web_scraper.models import InternalScrapeResult
+from app.services.web_scraper.models import ERROR_SSRF_BLOCKED, InternalScrapeResult
 from app.services.web_scraper.policy import ScrapePolicy
 from app.services.web_scraper.proxy import ProxyMode, ProxyPlan
 from app.services.web_scraper.quality import MarkdownQualityEvaluator
@@ -114,3 +114,84 @@ async def test_proxy_fallback_keeps_proxy_result_for_transport_failure() -> None
     )
 
     assert result is proxy
+
+
+async def test_proxy_fallback_keeps_reachable_empty_over_proxy_ssrf_block() -> None:
+    """A proxy-path SSRF block must not surface over a reachable-but-empty direct
+    result: direct already passed SSRF validation and the Playwright fallback
+    re-validates, so this is deliberate and safe."""
+    direct = InternalScrapeResult(
+        url="https://example.com",
+        success=False,
+        status_code=200,
+        error_message="Blocked by anti-bot protection: minimal_text",
+    )
+    proxy = InternalScrapeResult(
+        url="https://example.com",
+        success=False,
+        error_message="Redirect target resolves to a private network",
+        security_error_code=ERROR_SSRF_BLOCKED,
+    )
+    strategy = _build_strategy(direct, proxy)
+
+    result = await strategy.scrape(
+        url="https://example.com",
+        policy=ScrapePolicy(),
+        profile=None,
+        proxy_plan=ProxyPlan(mode=ProxyMode.FALLBACK, raw_url="http://proxy:8080"),
+        guard=WebScraperUrlGuard(),
+    )
+
+    assert result is direct
+
+
+async def test_proxy_fallback_keeps_reachable_empty_over_proxy_blocked() -> None:
+    direct = InternalScrapeResult(
+        url="https://example.com",
+        success=False,
+        status_code=200,
+        error_message="Blocked by anti-bot protection: minimal_text",
+    )
+    proxy = InternalScrapeResult(
+        url="https://example.com",
+        success=False,
+        status_code=403,
+        error_message="Forbidden",
+    )
+    strategy = _build_strategy(direct, proxy)
+
+    result = await strategy.scrape(
+        url="https://example.com",
+        policy=ScrapePolicy(),
+        profile=None,
+        proxy_plan=ProxyPlan(mode=ProxyMode.FALLBACK, raw_url="http://proxy:8080"),
+        guard=WebScraperUrlGuard(),
+    )
+
+    assert result is direct
+
+
+async def test_proxy_fallback_keeps_reachable_empty_over_proxy_rate_limited() -> None:
+    direct = InternalScrapeResult(
+        url="https://example.com",
+        success=False,
+        status_code=200,
+        error_message="Blocked by anti-bot protection: minimal_text",
+    )
+    proxy = InternalScrapeResult(
+        url="https://example.com",
+        success=False,
+        status_code=429,
+        error_message="Too Many Requests",
+    )
+    strategy = _build_strategy(direct, proxy)
+
+    result = await strategy.scrape(
+        url="https://example.com",
+        policy=ScrapePolicy(),
+        profile=None,
+        proxy_plan=ProxyPlan(mode=ProxyMode.FALLBACK, raw_url="http://proxy:8080"),
+        guard=WebScraperUrlGuard(),
+    )
+
+    assert result is direct

@@ -130,11 +130,23 @@ class Crawl4AIScrapeStrategy:
     ) -> InternalScrapeResult:
         """Pick the result that gives the best downstream recovery chance.
 
-        Proxy retry is meant to recover transport-level failures. When the
-        direct attempt reached the page (2xx) but extraction failed, a hard
-        proxy failure (network error, timeout, auth, rate limit) is strictly
-        worse: it hides the reachable-but-empty signal the service layer needs
-        to trigger the Playwright fallback. In that case keep the direct result.
+        Proxy retry exists to recover the page when the direct attempt could not
+        reach or extract it. If the proxy attempt produced a clean success, use
+        it. Otherwise, when the direct attempt reached the page (2xx) but the
+        primary strategy extracted nothing, keep that reachable-but-empty result
+        for ANY non-success proxy status (network failure, timeout, auth, rate
+        limit, block, or even a proxy-path SSRF block). This preserves the signal
+        the service layer needs to trigger the Playwright fallback instead of
+        surfacing a proxy-attempt error that would fail an otherwise reachable
+        page.
+
+        This does not weaken SSRF protection: a direct result can only be in
+        REACHABLE_EXTRACTION_FAILURES when it had no security error (the
+        classifier maps any security_error_code to SSRF_BLOCKED first), so the
+        direct result we keep was already validated. The Playwright fallback then
+        re-validates redirects, the final URL, and frame URLs through the same
+        guard (and the same proxy), so a proxy-path SSRF is re-enforced there
+        rather than silently bypassed.
         """
         proxy_quality = self._quality_evaluator.evaluate(
             proxy_result.markdown, policy, proxy_result.quality_level
