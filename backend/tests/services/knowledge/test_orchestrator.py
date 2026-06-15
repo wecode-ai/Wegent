@@ -1114,7 +1114,8 @@ class TestKnowledgeOrchestrator:
     def test_update_document_content_cleans_converted_attachment_on_success(
         self, orchestrator, mock_db, mock_user
     ):
-        """On successful delete, converted_attachment_id is cleared and committed."""
+        """converted_attachment_id is cleared unconditionally; on a successful
+        delete the orphan attachment is gone too."""
         document = SimpleNamespace(
             id=1, kind_id=10, user_id=42, converted_attachment_id=999
         )
@@ -1139,18 +1140,24 @@ class TestKnowledgeOrchestrator:
             )
 
         assert result["success"] is True
-        # Reference dropped only after a confirmed delete
+        # Reference cleared so reindex uses the freshly-overwritten source
         assert document.converted_attachment_id is None
         mock_ctx_svc.delete_context.assert_called_once_with(
             db=mock_db, context_id=999, user_id=42
         )
         mock_db.commit.assert_called()
+        # The document handed to reindex carries no stale converted pointer
         mock_schedule.assert_called_once()
+        assert (
+            mock_schedule.call_args.kwargs["document"].converted_attachment_id is None
+        )
 
-    def test_update_document_content_retains_reference_when_delete_returns_false(
+    def test_update_document_content_clears_reference_even_when_delete_returns_false(
         self, orchestrator, mock_db, mock_user
     ):
-        """When delete_context returns False, keep the reference (no false success)."""
+        """Even when delete_context fails, the stale reference must be cleared so
+        the next reindex uses the freshly-overwritten source, not the old
+        converted Markdown (tmp/2.md P1). The leftover attachment is an orphan."""
         document = SimpleNamespace(
             id=1, kind_id=10, user_id=42, converted_attachment_id=999
         )
@@ -1165,7 +1172,7 @@ class TestKnowledgeOrchestrator:
         ):
             mock_svc.update_document_content.return_value = document
             mock_svc.get_knowledge_base.return_value = (kb, True)
-            mock_ctx_svc.delete_context.return_value = False  # not deleted
+            mock_ctx_svc.delete_context.return_value = False  # physical delete failed
 
             result = orchestrator.update_document_content(
                 db=mock_db,
@@ -1175,10 +1182,14 @@ class TestKnowledgeOrchestrator:
             )
 
         assert result["success"] is True
-        # Reference retained so an orphan-cleanup pass can still locate it
-        assert document.converted_attachment_id == 999
+        # Reference cleared unconditionally — reindex must not see the stale id
+        assert document.converted_attachment_id is None
         mock_ctx_svc.delete_context.assert_called_once_with(
             db=mock_db, context_id=999, user_id=42
+        )
+        mock_schedule.assert_called_once()
+        assert (
+            mock_schedule.call_args.kwargs["document"].converted_attachment_id is None
         )
 
     def test_reindex_document_returns_reason_specific_skip_message(
