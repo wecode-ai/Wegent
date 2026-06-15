@@ -55,7 +55,7 @@ export function MessageList({
   }
 
   return (
-    <div className="mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-4 overflow-x-hidden px-6 py-8">
+    <div className="mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-4 overflow-x-hidden px-6 py-2">
       {messages.map(message => (
         <article
           key={message.id}
