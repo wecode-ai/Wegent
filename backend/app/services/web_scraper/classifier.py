@@ -57,6 +57,14 @@ class ScrapeResultClassifier:
                     error_message=result.error_message,
                     is_pdf=is_pdf,
                 )
+            if self._has_successful_http_status(result.status_code):
+                return ScrapeDecision(
+                    status=ScrapeStatus.EMPTY,
+                    error_code=ERROR_EMPTY_CONTENT,
+                    error_message="No extractable content found on the page",
+                    should_try_fallback=True,
+                    is_pdf=is_pdf,
+                )
             return ScrapeDecision(
                 status=ScrapeStatus.NETWORK_FAILED,
                 error_code=ERROR_FETCH_FAILED,
@@ -141,3 +149,12 @@ class ScrapeResultClassifier:
 
     def _looks_like_timeout(self, error_message: str | None) -> bool:
         return bool(error_message and "timeout" in error_message.lower())
+
+    def _has_successful_http_status(self, status_code: int | None) -> bool:
+        """Whether the page was reachable with a successful HTTP response.
+
+        A 2xx response with a failed extraction means the content is present
+        but unreachable by the primary strategy (e.g. nested iframes), so the
+        Playwright fallback is worth attempting.
+        """
+        return status_code is not None and 200 <= status_code < 300
