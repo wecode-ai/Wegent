@@ -26,6 +26,31 @@ class WorkspaceConfig(BaseModel):
     )
 
 
+class KnowledgeBaseRefConfig(BaseModel):
+    """Knowledge base reference with optional folder/document scope."""
+
+    name: str = Field(
+        ...,
+        min_length=1,
+        description="Knowledge base name in 'namespace#name' or 'name' format.",
+    )
+    folder_ids: Optional[List[int]] = Field(
+        default=None,
+        description=(
+            "Folder IDs to restrict this knowledge base. Use [0] for root-level "
+            "documents. Omit for full knowledge-base access."
+        ),
+    )
+    document_ids: Optional[List[int]] = Field(
+        default=None,
+        description="Document IDs to restrict this knowledge base.",
+    )
+    include_subfolders: bool = Field(
+        default=True,
+        description="Whether folder_ids include descendant folders.",
+    )
+
+
 class WegentTool(BaseModel):
     """Custom Wegent tool configuration.
 
@@ -101,6 +126,22 @@ class WegentTool(BaseModel):
     knowledge_base_names: Optional[List[str]] = Field(
         default=None,
         description="List of knowledge base names in 'namespace#name' format. Required when type='knowledge_base'",
+    )
+    knowledge_base_refs: Optional[List[KnowledgeBaseRefConfig]] = Field(
+        default=None,
+        description="Knowledge base refs with optional folder/document scope.",
+    )
+    folder_ids: Optional[List[int]] = Field(
+        default=None,
+        description="Single-KB compatibility scope. Only valid with one knowledge_base_names entry.",
+    )
+    document_ids: Optional[List[int]] = Field(
+        default=None,
+        description="Single-KB compatibility scope. Only valid with one knowledge_base_names entry.",
+    )
+    include_subfolders: bool = Field(
+        default=True,
+        description="Whether top-level folder_ids include descendant folders.",
     )
 
 

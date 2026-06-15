@@ -102,6 +102,7 @@ POST /api/v1/responses
 | `wegent_code_bot` | 启用代码任务并指定 Git 仓库（用于 Executor 类型的 Team） |
 | `mcp` | 添加自定义 MCP 服务器 |
 | `skill` | 预加载特定技能 |
+| `knowledge_base` | 让 Chat Shell 智能体使用指定知识库，可按目录或文档限定访问范围 |
 
 **代码任务配置：**
 ```json
@@ -150,6 +151,54 @@ POST /api/v1/responses
   ]
 }
 ```
+
+**知识库配置：**
+
+整库访问继续使用 `knowledge_base_names`：
+
+```json
+{
+  "tools": [
+    {
+      "type": "knowledge_base",
+      "knowledge_base_names": ["default#产品文档"]
+    }
+  ]
+}
+```
+
+按目录或文档限定访问范围时，推荐使用 `knowledge_base_refs`：
+
+```json
+{
+  "tools": [
+    {
+      "type": "knowledge_base",
+      "knowledge_base_refs": [
+        {
+          "name": "default#产品文档",
+          "folder_ids": [10],
+          "document_ids": [101],
+          "include_subfolders": true
+        }
+      ]
+    }
+  ]
+}
+```
+
+目录范围规则：
+
+- `folder_ids` 和 `document_ids` 同时传时，范围取并集。
+- `folder_ids: [0]` 表示知识库根目录直接文档，不表示整库。
+- 整库访问不要传 `folder_ids` 或 `document_ids`。
+- `folder_ids: []` 和 `document_ids: []` 是非法参数。
+- `knowledge_base_refs` 与 `knowledge_base_names` 不能同时使用。
+- 顶层 `folder_ids` / `document_ids` 只作为单知识库兼容写法；多知识库请求必须使用 `knowledge_base_refs`。
+
+范围是强访问边界。启用目录或文档范围后，智能体的 `knowledge_base_search`、`kb_ls`、`kb_head` 只能搜索、列出或读取范围内文档；越界读取会返回 `document_scope_violation`。
+
+当请求带有 `previous_response_id` 且本轮没有重新传入 `knowledge_base` tool 时，系统会继承该任务上一次绑定的知识库范围，并在本轮重新解析目录内文档。显式传入新的 `knowledge_base` tool 会覆盖之前的范围。
 
 #### 响应行为
 

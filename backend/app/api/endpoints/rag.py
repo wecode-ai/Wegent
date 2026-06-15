@@ -77,7 +77,7 @@ async def retrieve_documents(
                 "namespace": "default"
             },
             "top_k": 5,
-            "score_threshold": 0.7,
+            "score_threshold": 0.5,
             "retrieval_mode": "hybrid",
             "hybrid_weights": {
                 "vector_weight": 0.7,

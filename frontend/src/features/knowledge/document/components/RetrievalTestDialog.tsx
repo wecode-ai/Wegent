@@ -88,7 +88,7 @@ export function RetrievalTestDialog({
   // Test config - frontend only, overrides database config
   const [testConfig, setTestConfig] = useState<TestConfig>({
     retrieval_mode: 'vector',
-    score_threshold: 0.7,
+    score_threshold: 0.5,
     top_k: 5,
   })
   const [searchHintsText, setSearchHintsText] = useState('')
@@ -159,7 +159,7 @@ export function RetrievalTestDialog({
         const config = knowledgeBase.retrieval_config!
         setTestConfig({
           retrieval_mode: config.retrieval_mode ?? 'vector',
-          score_threshold: config.score_threshold ?? 0.7,
+          score_threshold: config.score_threshold ?? 0.5,
           top_k: config.top_k ?? 5,
         })
       } catch (err) {
@@ -280,7 +280,7 @@ export function RetrievalTestDialog({
 
     return (
       testConfig.retrieval_mode !== (dbConfig.retrieval_mode ?? 'vector') ||
-      testConfig.score_threshold !== (dbConfig.score_threshold ?? 0.7) ||
+      testConfig.score_threshold !== (dbConfig.score_threshold ?? 0.5) ||
       testConfig.top_k !== (dbConfig.top_k ?? 5)
     )
   }, [testConfig, knowledgeBase.retrieval_config])

@@ -677,7 +677,38 @@ describe('QuickAccessCards', () => {
     expect(screen.queryByText('regular-team')).not.toBeInTheDocument()
   })
 
-  test('opens quick access teams from the more popover', async () => {
+  test('shows no quick access teams when only system recommendations are returned', async () => {
+    renderQuickAccessCards(
+      [
+        makeTeam({ id: 2, name: 'system-team', description: 'System description' }),
+        makeTeam({ id: 3, name: 'regular-team', description: 'Regular description' }),
+      ],
+      {
+        system_version: 2,
+        system_team_ids: [2],
+        user_version: null,
+        show_system_recommended: true,
+        teams: [
+          {
+            id: 2,
+            name: 'system-team',
+            display_name: 'System Team Display',
+            is_system: true,
+            recommended_mode: 'chat',
+          },
+        ],
+      }
+    )
+
+    expect(await screen.findByTestId('quick-launch-cards')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByText('More'))
+
+    expect(await screen.findByText('common:teams.quick_access_empty')).toBeInTheDocument()
+    expect(screen.queryByTestId('quick-access-more-team-system-team')).not.toBeInTheDocument()
+  })
+
+  test('opens favorite teams from the more popover and keeps system recommendations in all agents', async () => {
     renderQuickAccessCards(
       [
         makeTeam({ id: 2, name: 'system-team', description: 'System description' }),
@@ -711,11 +742,15 @@ describe('QuickAccessCards', () => {
 
     fireEvent.click(screen.getByText('More'))
 
+    expect(await screen.findByTestId('quick-access-more-team-favorite-team')).toHaveTextContent(
+      'Favorite Team Display'
+    )
+    expect(screen.queryByTestId('quick-access-more-team-system-team')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('quick-access-view-all-agents'))
+
     expect(await screen.findByTestId('quick-access-more-team-system-team')).toHaveTextContent(
       'System Team Display'
-    )
-    expect(screen.getByTestId('quick-access-more-team-favorite-team')).toHaveTextContent(
-      'Favorite Team Display'
     )
   })
 

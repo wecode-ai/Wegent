@@ -5,7 +5,7 @@
 """Tests for OpenAI request conversion defaults."""
 
 from shared.models.execution import ExecutionRequest
-from shared.models.knowledge import KnowledgeBaseToolAccessMode
+from shared.models.knowledge import KnowledgeBaseScope, KnowledgeBaseToolAccessMode
 from shared.models.openai_converter import OpenAIRequestConverter
 
 
@@ -104,3 +104,43 @@ def test_to_execution_request_preserves_message_history_and_stateless_flag():
     assert request.enable_tools is False
     assert request.history == [{"role": "user", "content": "第一条用户消息"}]
     assert request.prompt == "第二条用户消息"
+
+
+def test_round_trip_preserves_knowledge_base_scopes():
+    request = ExecutionRequest(
+        knowledge_base_ids=[1, 2],
+        knowledge_base_scopes=[
+            KnowledgeBaseScope(
+                knowledge_base_id=1,
+                scope_restricted=True,
+                document_ids=[101, 102],
+            ),
+            KnowledgeBaseScope(knowledge_base_id=2, scope_restricted=False),
+        ],
+    )
+
+    openai_request = OpenAIRequestConverter.from_execution_request(request)
+    converted = OpenAIRequestConverter.to_execution_request(openai_request)
+
+    assert converted.knowledge_base_scopes == request.knowledge_base_scopes
+
+
+def test_to_execution_request_ignores_malformed_scope_document_ids():
+    request = OpenAIRequestConverter.to_execution_request(
+        {
+            "input": "hello",
+            "metadata": {
+                "knowledge_base_scopes": [
+                    {
+                        "knowledge_base_id": 1,
+                        "scope_restricted": True,
+                        "document_ids": 101,
+                    }
+                ]
+            },
+        }
+    )
+
+    assert request.knowledge_base_scopes == [
+        KnowledgeBaseScope(knowledge_base_id=1, scope_restricted=True)
+    ]
