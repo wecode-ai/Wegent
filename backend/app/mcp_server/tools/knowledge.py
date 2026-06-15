@@ -167,7 +167,7 @@ async def search_knowledge_base(
     description="List all knowledge bases accessible to the current user.",
     server="knowledge",
     param_descriptions={
-        "scope": "Resource scope - 'all', 'personal', or 'group'",
+        "scope": "Resource scope - 'all', 'personal', 'group', or 'organization'",
         "group_name": "Group name (required when scope='group')",
         "limit": "Maximum number of knowledge bases to return",
         "offset": "Start offset for paginated listing",
@@ -185,7 +185,7 @@ def list_knowledge_bases(
 
     Args:
         token_info: Task token information containing user context
-        scope: Resource scope - "all", "personal", or "group"
+        scope: Resource scope - "all", "personal", "group", or "organization"
         group_name: Group name (required when scope="group")
 
     Returns:

@@ -23,11 +23,16 @@ import { Textarea } from '@/components/ui/textarea'
 import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
-import type { ResourceLibraryTypeFilter, VisibleResourceLibraryResourceType } from '../types'
+import type {
+  ResourceLibraryPublishSource,
+  ResourceLibraryTypeFilter,
+  VisibleResourceLibraryResourceType,
+} from '../types'
 
 interface PublishResourceDialogProps {
   open: boolean
   resourceType: ResourceLibraryTypeFilter
+  sourceResource?: ResourceLibraryPublishSource | null
   onOpenChange: (open: boolean) => void
   onPublished: () => void
 }
@@ -41,6 +46,10 @@ function parseTags(value: string): string[] {
     .filter(Boolean)
 }
 
+function formatTags(tags?: string[]): string {
+  return tags?.join(', ') ?? ''
+}
+
 function defaultPublishType(
   resourceType: ResourceLibraryTypeFilter
 ): VisibleResourceLibraryResourceType {
@@ -50,6 +59,7 @@ function defaultPublishType(
 export function PublishResourceDialog({
   open,
   resourceType,
+  sourceResource,
   onOpenChange,
   onPublished,
 }: PublishResourceDialogProps) {
@@ -67,10 +77,23 @@ export function PublishResourceDialog({
   const [isPublishing, setIsPublishing] = useState(false)
 
   useEffect(() => {
-    if (open) {
-      setSelectedType(defaultPublishType(resourceType))
+    if (!open) {
+      return
     }
-  }, [open, resourceType])
+
+    if (sourceResource) {
+      setSelectedType(sourceResource.resourceType)
+      setSourceId(String(sourceResource.sourceId))
+      setName(sourceResource.name)
+      setDisplayName(sourceResource.displayName || sourceResource.name)
+      setDescription(sourceResource.description || '')
+      setTags(formatTags(sourceResource.tags))
+      setVersion('1.0.0')
+      return
+    }
+
+    setSelectedType(defaultPublishType(resourceType))
+  }, [open, resourceType, sourceResource])
 
   const canPublish = useMemo(() => {
     return Boolean(Number(sourceId) > 0 && name.trim() && displayName.trim() && version.trim())
@@ -128,34 +151,53 @@ export function PublishResourceDialog({
             <DialogDescription>{t('publish.description')}</DialogDescription>
           </DialogHeader>
 
-          <div className="grid grid-cols-3 gap-2" role="group" aria-label={t('fields.type')}>
-            {publishableResourceTypes.map(type => (
-              <Button
-                key={type}
-                type="button"
-                variant={selectedType === type ? 'primary' : 'outline'}
-                className={cn('h-11 min-w-[44px]', selectedType === type && 'border-primary')}
-                onClick={() => setSelectedType(type)}
-                aria-pressed={selectedType === type}
-                data-testid={`publish-resource-type-${type}-button`}
-              >
-                {t(`filters.${type}`)}
-              </Button>
-            ))}
-          </div>
-
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-2">
-              <Label htmlFor="resource-library-source-id">{t('fields.source_id')}</Label>
-              <Input
-                id="resource-library-source-id"
-                value={sourceId}
-                onChange={event => setSourceId(event.target.value)}
-                inputMode="numeric"
-                className="h-11"
-                data-testid="publish-resource-source-id-input"
-              />
+          {sourceResource ? (
+            <div
+              className="rounded-lg border border-border bg-surface p-3"
+              data-testid="publish-resource-source-summary"
+            >
+              <div className="text-xs text-text-muted">{t('publish.selected_resource')}</div>
+              <div className="mt-1 flex min-w-0 flex-wrap items-center gap-2">
+                <span className="truncate text-sm font-medium text-text-primary">
+                  {sourceResource.displayName || sourceResource.name}
+                </span>
+                <span className="rounded-md bg-primary/10 px-2 py-0.5 text-xs text-primary">
+                  {t(`filters.${sourceResource.resourceType}`)}
+                </span>
+              </div>
             </div>
+          ) : (
+            <div className="grid grid-cols-3 gap-2" role="group" aria-label={t('fields.type')}>
+              {publishableResourceTypes.map(type => (
+                <Button
+                  key={type}
+                  type="button"
+                  variant={selectedType === type ? 'primary' : 'outline'}
+                  className={cn('h-11 min-w-[44px]', selectedType === type && 'border-primary')}
+                  onClick={() => setSelectedType(type)}
+                  aria-pressed={selectedType === type}
+                  data-testid={`publish-resource-type-${type}-button`}
+                >
+                  {t(`filters.${type}`)}
+                </Button>
+              ))}
+            </div>
+          )}
+
+          <div className={cn('grid gap-4', !sourceResource && 'sm:grid-cols-2')}>
+            {!sourceResource && (
+              <div className="space-y-2">
+                <Label htmlFor="resource-library-source-id">{t('fields.source_id')}</Label>
+                <Input
+                  id="resource-library-source-id"
+                  value={sourceId}
+                  onChange={event => setSourceId(event.target.value)}
+                  inputMode="numeric"
+                  className="h-11"
+                  data-testid="publish-resource-source-id-input"
+                />
+              </div>
+            )}
             <div className="space-y-2">
               <Label htmlFor="resource-library-version">{t('fields.version')}</Label>
               <Input

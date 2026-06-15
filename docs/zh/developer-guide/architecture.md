@@ -150,6 +150,7 @@ frontend/src/
 │   ├── devices/     # 设备管理（新）
 │   ├── feed/        # 发现与订阅
 │   ├── knowledge/   # 知识库管理
+│   ├── resource-library/ # 资源库发现与发布
 │   ├── settings/    # 代理配置
 │   └── tasks/       # 任务核心功能
 ├── components/      # 通用组件
@@ -165,6 +166,7 @@ frontend/src/
 | **tasks** | 任务创建、聊天、群聊、工作台 |
 | **devices** | 本地设备管理、执行器指南 |
 | **knowledge** | 知识库、文档、权限管理 |
+| **resource-library** | 可复用资源的发现、发布、接受和发现助手 |
 | **settings** | 智能体、模型、Shell、技能配置 |
 | **feed** | 订阅市场、触发器管理 |
 
@@ -212,6 +214,7 @@ frontend/src/
 ├── /tasks           # Task 资源管理
 ├── /devices         # Device 设备管理（新）
 ├── /knowledge       # 知识库管理
+├── /resource-library # 资源库发布、发现和接受
 ├── /groups          # 组织/组管理
 ├── /share           # 分享链接管理
 └── /admin           # 管理员操作（用户管理、公共模型）

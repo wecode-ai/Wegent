@@ -8,6 +8,7 @@ import { useState, useEffect, type ReactNode } from 'react'
 import TeamList from './TeamList'
 import { GroupSelector } from './groups/GroupSelector'
 import { listGroups } from '@/apis/groups'
+import type { ResourceLibraryPublishSource } from '@/features/resource-library/types'
 import type { BaseRole } from '@/types/base-role'
 import type { Group } from '@/types/group'
 import type { ManagedResourceSourceFilter } from '@/features/resource-library/types'
@@ -17,6 +18,7 @@ interface TeamListWithScopeProps {
   scope: 'personal' | 'group' | 'all'
   selectedGroup?: string | null
   onGroupChange?: (groupName: string | null) => void
+  onPublishResource?: (source: ResourceLibraryPublishSource) => void
   sourceControls?: ReactNode
   sortControls?: ReactNode
   sourceFilter?: ManagedResourceSourceFilter
@@ -28,6 +30,7 @@ export function TeamListWithScope({
   scope,
   selectedGroup: externalSelectedGroup,
   onGroupChange,
+  onPublishResource,
   sourceControls,
   sortControls,
   sourceFilter,
@@ -80,6 +83,7 @@ export function TeamListWithScope({
     return (
       <TeamList
         scope="personal"
+        onPublishResource={onPublishResource}
         sourceControls={sourceControls}
         sortControls={sortControls}
         sourceFilter={sourceFilter}
@@ -94,6 +98,7 @@ export function TeamListWithScope({
       <TeamList
         scope="all"
         groupRoleMap={groupRoleMap}
+        onPublishResource={onPublishResource}
         sourceControls={sourceControls}
         sortControls={sortControls}
         sourceFilter={sourceFilter}
@@ -118,6 +123,7 @@ export function TeamListWithScope({
         groupName={selectedGroup || undefined}
         groupRoleMap={groupRoleMap}
         onEditResource={handleEditResource}
+        onPublishResource={onPublishResource}
         sourceControls={sourceControls}
         sortControls={sortControls}
         sourceFilter={sourceFilter}

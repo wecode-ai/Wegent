@@ -2,15 +2,25 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-export type ResourceLibraryResourceType = 'agent' | 'skill' | 'mcp'
+export type ResourceLibraryResourceType = 'agent' | 'skill'
 
-export type VisibleResourceLibraryResourceType = Exclude<ResourceLibraryResourceType, 'mcp'>
+export type VisibleResourceLibraryResourceType = ResourceLibraryResourceType
 
 export type ResourceLibraryTypeFilter = 'all' | VisibleResourceLibraryResourceType
 
 export type ManagedResourceType = 'agent' | 'model' | 'shell' | 'skill' | 'retriever'
 
 export type ManagedResourceSourceFilter = 'all' | 'personal' | 'group' | 'system'
+
+export interface ResourceLibraryPublishSource {
+  resourceType: VisibleResourceLibraryResourceType
+  sourceId: number
+  name: string
+  displayName?: string | null
+  description?: string | null
+  tags?: string[]
+  namespace?: string | null
+}
 
 export type ResourceLibraryListingStatus = 'published' | 'archived'
 
@@ -60,6 +70,22 @@ export interface ResourceLibraryListResponse<T> {
   limit?: number
 }
 
+export interface ResourceLibraryKnowledgeBaseRef {
+  id?: number | null
+  name?: string | null
+  namespace?: string | null
+}
+
+export interface ResourceLibraryTeamRef {
+  name: string
+  namespace: string
+}
+
+export interface ResourceLibraryDiscoveryConfig {
+  knowledge_base_ref?: ResourceLibraryKnowledgeBaseRef | null
+  assistant_team_ref: ResourceLibraryTeamRef
+}
+
 export interface ResourceLibraryCreateListingRequest {
   resource_type: ResourceLibraryResourceType
   source_id: number
@@ -79,7 +105,7 @@ export interface ResourceLibraryInstallRequest {
 }
 
 export interface ResourceLibraryInstallApiRequest {
-  target_namespace: string
+  target_namespace?: string
   version_id?: number
   install_options?: Record<string, unknown>
 }

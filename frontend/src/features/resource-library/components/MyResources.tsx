@@ -22,7 +22,12 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type { Group } from '@/types/group'
 import { getResourceLibrarySortMode, type ResourceLibrarySortMode } from '../resourceSorting'
-import type { ManagedResourceSourceFilter, ManagedResourceType } from '../types'
+import type {
+  ManagedResourceSourceFilter,
+  ManagedResourceType,
+  ResourceLibraryPublishSource,
+} from '../types'
+import { PublishResourceDialog } from './PublishResourceDialog'
 
 const managedResourceTypes: ManagedResourceType[] = [
   'agent',
@@ -197,7 +202,7 @@ function ManagedResourceTabs({
             variant={isActive ? 'primary' : 'outline'}
             aria-pressed={isActive}
             data-testid={`managed-resource-${type}-tab`}
-            className="h-11 min-w-[44px] px-4 lg:h-9"
+            className="h-11 min-w-[44px] px-4 md:h-9"
             onClick={() => onValueChange(type)}
           >
             {t(`filters.${type}`)}
@@ -465,6 +470,9 @@ export function MyResources({ title }: MyResourcesProps = {}) {
     useState<ManagedResourceSourceFilter>(getInitialSourceFilter)
   const [groups, setGroups] = useState<Group[]>([])
   const [selectedGroup, setSelectedGroup] = useState<string | null>(getInitialGroupName)
+  const [publishingSource, setPublishingSource] = useState<ResourceLibraryPublishSource | null>(
+    null
+  )
   const [sortMode, setSortMode] = useState<ResourceLibrarySortMode>(getInitialSortMode)
 
   const replaceResourceLibraryUrl = useCallback(
@@ -579,6 +587,16 @@ export function MyResources({ title }: MyResourcesProps = {}) {
     }
   }, [])
 
+  const handlePublishDialogOpenChange = (nextOpen: boolean) => {
+    if (!nextOpen) {
+      setPublishingSource(null)
+    }
+  }
+
+  const handlePublished = () => {
+    setPublishingSource(null)
+  }
+
   const renderManager = () => {
     const managerScope = sourceFilterToScope(sourceFilter)
     const sourceControls = (
@@ -600,6 +618,7 @@ export function MyResources({ title }: MyResourcesProps = {}) {
         <TeamListWithScope
           scope={managerScope}
           selectedGroup={groupName}
+          onPublishResource={setPublishingSource}
           sourceFilter={sourceFilter}
           sourceControls={sourceControls}
           sortControls={sortControls}
@@ -639,6 +658,7 @@ export function MyResources({ title }: MyResourcesProps = {}) {
         <SkillListWithScope
           scope={managerScope}
           selectedGroup={groupName}
+          onPublishResource={setPublishingSource}
           sourceFilter={sourceFilter}
           sourceControls={sourceControls}
           sortControls={sortControls}
@@ -675,6 +695,14 @@ export function MyResources({ title }: MyResourcesProps = {}) {
       </div>
 
       <div>{renderManager()}</div>
+
+      <PublishResourceDialog
+        open={publishingSource !== null}
+        resourceType={publishingSource?.resourceType ?? 'all'}
+        sourceResource={publishingSource}
+        onOpenChange={handlePublishDialogOpenChange}
+        onPublished={handlePublished}
+      />
     </div>
   )
 }

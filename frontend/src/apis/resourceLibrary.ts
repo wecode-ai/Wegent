@@ -5,6 +5,7 @@
 import apiClient from '@/apis/client'
 import type {
   ResourceLibraryCreateListingRequest,
+  ResourceLibraryDiscoveryConfig,
   ResourceLibraryInstallApiRequest,
   ResourceLibraryInstallRequest,
   ResourceLibraryInstall,
@@ -49,14 +50,24 @@ function buildListingsQuery(params?: ResourceLibraryListListingsParams): string 
 function toInstallApiRequest(
   request: ResourceLibraryInstallRequest
 ): ResourceLibraryInstallApiRequest {
-  return {
-    version_id: request.versionId,
-    target_namespace: request.targetNamespace || 'default',
-    install_options: request.installOptions || {},
+  const payload: ResourceLibraryInstallApiRequest = {}
+  if (request.versionId !== undefined) {
+    payload.version_id = request.versionId
   }
+  if (request.targetNamespace) {
+    payload.target_namespace = request.targetNamespace
+  }
+  if (request.installOptions) {
+    payload.install_options = request.installOptions
+  }
+  return payload
 }
 
 export const resourceLibraryApi = {
+  getDiscoveryConfig(): Promise<ResourceLibraryDiscoveryConfig> {
+    return apiClient.get(`${RESOURCE_LIBRARY_BASE_PATH}/discovery-config`)
+  },
+
   listListings(
     params?: ResourceLibraryListListingsParams
   ): Promise<ResourceLibraryListResponse<ResourceLibraryListing>> {

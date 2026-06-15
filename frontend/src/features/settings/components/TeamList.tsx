@@ -42,7 +42,7 @@ import { isGroupTeam, isPublicTeam, isSharedTeam } from '@/utils/team-permission
 import type { BaseRole } from '@/types/base-role'
 import { sortBotsByUpdatedAt } from '@/utils/bot'
 import { useRouter } from 'next/navigation'
-import { Loader2 } from 'lucide-react'
+import { Loader2, UploadCloud } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import {
@@ -62,6 +62,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown'
 import { listGroups } from '@/apis/groups'
+import type { ResourceLibraryPublishSource } from '@/features/resource-library/types'
 import type { Group } from '@/types/group'
 import {
   hasResourceCreateTargets,
@@ -88,6 +89,7 @@ interface TeamListProps {
   groupName?: string
   groupRoleMap?: Map<string, BaseRole>
   onEditResource?: (namespace: string) => void
+  onPublishResource?: (source: ResourceLibraryPublishSource) => void
   sourceControls?: ReactNode
   sortControls?: ReactNode
   sourceFilter?: ManagedResourceSourceFilter
@@ -108,6 +110,7 @@ export default function TeamList({
   groupName,
   groupRoleMap,
   onEditResource,
+  onPublishResource,
   sourceControls,
   sortControls,
   sourceFilter = 'all',
@@ -539,6 +542,27 @@ export default function TeamList({
     return true
   }
 
+  const shouldShowPublish = (team: Team) => {
+    if (!onPublishResource) return false
+    if (isPublicTeam(team)) return false
+    if (isSharedTeam(team)) return false
+    if (isGroupTeam(team)) {
+      return canEditGroupResource(team.namespace!)
+    }
+    return true
+  }
+
+  const handlePublishTeam = (team: Team) => {
+    onPublishResource?.({
+      resourceType: 'agent',
+      sourceId: team.id,
+      name: team.name,
+      displayName: getTeamDisplayName(team),
+      description: team.description,
+      namespace: team.namespace || 'default',
+    })
+  }
+
   const createGroups = groups.length > 0 ? groups : writableGroups
 
   const modeFilterOptions: Array<{
@@ -857,6 +881,19 @@ export default function TeamList({
                             disabled={sharingId === team.id}
                           >
                             <ShareIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                          </Button>
+                        )}
+                        {shouldShowPublish(team) && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handlePublishTeam(team)}
+                            title={t('resource-library:actions.publish_to_library')}
+                            aria-label={`${t('resource-library:actions.publish_to_library')} ${getTeamDisplayName(team)}`}
+                            className="h-7 w-7 sm:h-8 sm:w-8"
+                            data-testid={`publish-team-${team.id}-button`}
+                          >
+                            <UploadCloud className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                           </Button>
                         )}
                         {shouldShowDelete(team) && (

@@ -7,8 +7,14 @@ import { render, screen } from '@testing-library/react'
 
 import Page from '@/app/(tasks)/resource-library/page'
 
+const mockRefreshTeams = jest.fn()
+
 jest.mock('@/apis/resourceLibrary', () => ({
   resourceLibraryApi: {
+    getDiscoveryConfig: jest.fn().mockResolvedValue({
+      assistant_team_ref: { name: 'resource-discovery-assistant', namespace: 'default' },
+      knowledge_base_ref: null,
+    }),
     listListings: jest.fn().mockResolvedValue({ items: [], total: 0 }),
     listMyInstalls: jest.fn().mockResolvedValue({ items: [], total: 0 }),
     listMyPublished: jest.fn().mockResolvedValue({ items: [], total: 0 }),
@@ -22,6 +28,18 @@ jest.mock('@/hooks/use-toast', () => ({
   useToast: () => ({
     toast: jest.fn(),
   }),
+}))
+
+jest.mock('@/contexts/TeamContext', () => ({
+  useTeamContext: () => ({
+    teams: [],
+    isTeamsLoading: false,
+    refreshTeams: mockRefreshTeams,
+  }),
+}))
+
+jest.mock('@/features/tasks/components/chat', () => ({
+  ChatArea: () => <div data-testid="discover-assistant-chat-area" />,
 }))
 
 jest.mock('next/navigation', () => ({
@@ -79,13 +97,37 @@ jest.mock('@/hooks/useTranslation', () => ({
         title: '资源库',
         'tabs.discover': '发现',
         'tabs.mine': '我的',
-        'tabs.installed': '已安装',
+        'tabs.installed': '已接受',
         'tabs.published': '我发布的',
+        'discover.assistant.action': '发现助手',
+        'discover.assistant.agent_badge': 'Agent',
+        'discover.assistant.callout_description': '描述你要做的事，发现助手会推荐合适资源。',
+        'discover.assistant.callout_title': '不知道用哪个资源？',
+        'discover.assistant.description':
+          '这是一个实际智能体，会通过聊天帮你梳理任务并选择合适资源。',
+        'discover.assistant.empty_description':
+          '输入你要完成的任务或遇到的问题，它会帮你判断该接受哪个资源。',
+        'discover.assistant.empty_title': '让发现助手帮你找资源',
+        'discover.assistant.loading': '正在加载发现助手',
+        'discover.assistant.prompts.code_review': '代码评审',
+        'discover.assistant.prompts.doc_summary': '文档总结',
+        'discover.assistant.prompts.weekly_report': '写周报',
+        'discover.assistant.title': '发现助手',
+        'discover.assistant.unavailable_description':
+          '系统还没有可用的发现助手智能体，请先初始化公开资源后再使用。',
+        'discover.assistant.unavailable_title': '发现助手未初始化',
+        'discover.card.no_tags': '暂无标签',
+        'discover.description': '查找团队共享的资源，接受后可在“我的”中使用。',
+        'discover.title': '发现资源',
         'filters.all': '全部',
         'filters.agent': '智能体',
         'filters.skill': '技能',
         'fields.tags': '标签',
         'search.placeholder': '搜索资源',
+        'actions.close': '关闭',
+        'actions.details': '详情',
+        'actions.install': '接受分享',
+        'actions.installed': '已接受',
         'actions.search': '搜索',
         'actions.publish': '发布资源',
         'actions.retry': '重试',
@@ -99,7 +141,7 @@ jest.mock('@/hooks/useTranslation', () => ({
 }))
 
 describe('ResourceLibrary route page', () => {
-  it('renders with the task sidebar active on resource library', async () => {
+  it('renders with the task sidebar active and discover selected by default', async () => {
     render(<Page />)
 
     expect(screen.getByTestId('resource-library-task-sidebar')).toHaveAttribute(
@@ -108,8 +150,13 @@ describe('ResourceLibrary route page', () => {
     )
     expect(screen.getByTestId('resource-library-top-navigation')).toHaveTextContent('资源库')
     expect(screen.queryByRole('heading', { name: '资源库' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '发现' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '我的' })).not.toBeInTheDocument()
-    expect(await screen.findByTestId('my-resource-management')).toBeInTheDocument()
+    expect(screen.getByTestId('resource-library-discover-tab')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+    expect(screen.getByTestId('resource-library-mine-tab')).toBeInTheDocument()
+    expect(screen.getByTestId('discover-resources')).toBeInTheDocument()
+    expect(screen.queryByTestId('my-resource-management')).not.toBeInTheDocument()
+    expect(await screen.findByText('暂无资源')).toBeInTheDocument()
   })
 })

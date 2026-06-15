@@ -3,8 +3,50 @@
   "tabs": {
     "discover": "Discover",
     "mine": "Mine",
-    "installed": "Installed",
+    "installed": "Accepted",
     "published": "Published by me"
+  },
+  "discover": {
+    "title": "Discover Resources",
+    "description": "Find shared resources from your team. Accept one to use it from My Resources.",
+    "assistant": {
+      "action": "Discover Assistant",
+      "title": "Discover Assistant",
+      "agent_badge": "Agent",
+      "description": "This is a real Agent that helps you clarify a task and choose suitable resources through chat.",
+      "callout_title": "Not sure which resource to use?",
+      "callout_description": "Describe what you want to do and the Discover Assistant will recommend matching resources.",
+      "empty_title": "Ask the Discover Assistant",
+      "empty_description": "Describe your task or blocker. It will help decide which resource to accept.",
+      "loading": "Loading Discover Assistant",
+      "unavailable_title": "Discover Assistant is not initialized",
+      "unavailable_description": "No Discover Assistant Agent is available yet. Initialize public resources before using it.",
+      "prompts": {
+        "weekly_report": "Weekly reports",
+        "code_review": "Code review",
+        "doc_summary": "Document summary"
+      }
+    },
+    "card": {
+      "solution_label": "Shared resource",
+      "best_for": "Tags",
+      "start_hint": "Accept it to use from My Resources",
+      "no_tags": "No tags"
+    }
+  },
+  "detail": {
+    "sections": {
+      "solves": "Overview",
+      "get_started": "How to use",
+      "examples": "Example",
+      "resource_info": "Resource information"
+    },
+    "start_steps": {
+      "accept": "Accept resource",
+      "open_mine": "Find the resource in My Resources",
+      "use": "Start using it"
+    },
+    "example_prompt": "Help me use {{title}} for this task"
   },
   "filters": {
     "all": "All",
@@ -35,14 +77,16 @@
     "select": "Select"
   },
   "actions": {
-    "install": "Install",
-    "installed": "Installed",
+    "install": "Accept Share",
+    "installed": "Accepted",
     "publish": "Publish Resource",
+    "publish_to_library": "Publish to library",
     "upgrade": "Upgrade",
     "archive": "Archive",
     "configure": "Configure",
     "view_detail": "View Details",
     "details": "Details",
+    "view_usage": "View Usage",
     "manage_groups": "Manage...",
     "retry": "Retry",
     "create_to_personal": "Create in My Resources",
@@ -54,7 +98,7 @@
     "cancel": "Cancel"
   },
   "status": {
-    "installed": "Installed",
+    "installed": "Accepted",
     "requires_configuration": "Requires Configuration",
     "draft": "Draft",
     "published": "Published",
@@ -71,7 +115,7 @@
     "source_id": "Source resource ID",
     "version": "Version",
     "publisher": "Publisher",
-    "install_count": "Installs",
+    "install_count": "Accepts",
     "updated_at": "Updated"
   },
   "sort": {
@@ -95,13 +139,14 @@
     "groups_empty": "No matching teams"
   },
   "messages": {
-    "install_success": "Installed",
-    "install_requires_configuration": "Installed, configuration required",
-    "install_failed": "Install failed",
+    "install_success": "Share accepted",
+    "install_requires_configuration": "Share accepted, configuration required",
+    "install_failed": "Failed to accept share",
     "publish_success": "Published",
     "publish_failed": "Publish failed"
   },
   "publish": {
-    "description": "Publish an existing Agent or Skill to the resource library"
+    "description": "Publish an existing Agent or Skill description to the resource library",
+    "selected_resource": "Selected resource"
   }
 }

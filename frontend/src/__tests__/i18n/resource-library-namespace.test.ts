@@ -19,5 +19,12 @@ describe('resource library i18n namespace', () => {
 
     expect(i18n.hasResourceBundle('zh-CN', 'resource-library')).toBe(true)
     expect(i18n.hasResourceBundle('en', 'resource-library')).toBe(true)
+    expect(i18n.t('resource-library:title')).toBe('Resource Library')
+
+    await i18n.changeLanguage('zh-CN')
+
+    expect(i18n.t('resource-library:title')).toBe('资源库')
+    expect(i18n.t('resource-library:tabs.discover')).toBe('发现')
+    expect(i18n.t('resource-library:actions.retry')).toBe('重试')
   })
 })
