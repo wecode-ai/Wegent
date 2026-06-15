@@ -5,6 +5,8 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+WEWORK_MIN_EXECUTOR_VERSION = "1.8.5"
+
 
 def load_build_local_module():
     script_path = Path(__file__).parents[2] / "scripts" / "build_local.py"
@@ -13,6 +15,33 @@ def load_build_local_module():
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module
+
+
+def is_version_at_least(version: str, minimum_version: str) -> bool:
+    def parse(value: str) -> list[int]:
+        return [
+            int(part) for part in value.removeprefix("v").split("-", 1)[0].split(".")
+        ]
+
+    current = parse(version)
+    minimum = parse(minimum_version)
+    for index in range(max(len(current), len(minimum))):
+        current_part = current[index] if index < len(current) else 0
+        minimum_part = minimum[index] if index < len(minimum) else 0
+        if current_part > minimum_part:
+            return True
+        if current_part < minimum_part:
+            return False
+    return True
+
+
+def test_default_build_version_meets_wework_minimum():
+    build_local = load_build_local_module()
+
+    assert is_version_at_least(
+        build_local.get_version_from_pyproject(),
+        WEWORK_MIN_EXECUTOR_VERSION,
+    )
 
 
 def test_append_claude_cli_binary_skips_lookup_when_disabled(monkeypatch):
