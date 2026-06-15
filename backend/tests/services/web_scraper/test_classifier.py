@@ -99,6 +99,43 @@ def test_deep_iframe_fallback_can_override_empty_fallback_flag() -> None:
     assert classifier.should_use_playwright_fallback(decision, None, policy)
 
 
+def test_reachable_failure_classified_as_empty_and_triggers_fallback() -> None:
+    policy = ScrapePolicy()
+    classifier = ScrapeResultClassifier()
+    decision = classifier.classify(
+        InternalScrapeResult(
+            url="https://example.com",
+            success=False,
+            status_code=200,
+            error_message=(
+                "Blocked by anti-bot protection: Structural: minimal_text, "
+                "no_content_elements, script_heavy_shell (11330 bytes, 24 chars visible)"
+            ),
+        )
+    )
+
+    assert decision.status == ScrapeStatus.EMPTY
+    assert decision.error_code == ERROR_EMPTY_CONTENT
+    assert decision.should_try_fallback is True
+    assert classifier.should_use_playwright_fallback(decision, None, policy)
+
+
+def test_genuine_network_failure_stays_network_failed_without_fallback() -> None:
+    policy = ScrapePolicy()
+    classifier = ScrapeResultClassifier()
+    decision = classifier.classify(
+        InternalScrapeResult(
+            url="https://example.com",
+            success=False,
+            status_code=None,
+            error_message="Connection refused",
+        )
+    )
+
+    assert decision.status == ScrapeStatus.NETWORK_FAILED
+    assert not classifier.should_use_playwright_fallback(decision, None, policy)
+
+
 def test_fallback_enabled_disables_deep_iframe_fallback() -> None:
     policy = ScrapePolicy(
         deep_iframe_extraction=True,
