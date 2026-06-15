@@ -90,14 +90,18 @@ def conversion_completed_callback(
 ) -> ConversionCompletedResponse:
     """Handle conversion completion callback from converter service.
 
-    Atomically performs:
+    Performs, in order:
     1. Validate base64 payload (fail early on bad input)
-    2. State transition (CONVERTING -> QUEUED, with staleness check)
-    3. Overwrite attachment with markdown content
-    4. Dispatch indexing task (compensate to FAILED if dispatch fails)
+    2. Validate payload<->document binding (attachment_id / KB / document_id)
+    3. Staleness pre-check: reject superseded generations BEFORE any mutation
+    4. Create a new attachment for the converted Markdown (preserve original)
+    5. State transition (CONVERTING -> QUEUED); roll back the attachment if a
+       newer generation sneaks in during the race window after step 3
+    6. Dispatch indexing task (compensate to FAILED if dispatch fails)
 
-    If the conversion is stale (superseded by a newer generation),
-    the attachment is NOT overwritten and indexing is NOT dispatched.
+    If the conversion is stale (superseded by a newer generation), no attachment
+    is created, converted_attachment_id is not changed, and indexing is NOT
+    dispatched.
     """
     # Step 1: Validate base64 payload before any DB mutation
     try:
@@ -108,11 +112,7 @@ def conversion_completed_callback(
             detail="Invalid base64 payload for markdown_bytes",
         )
 
-    # Step 2: Overwrite attachment BEFORE state transition
-    # If overwrite fails, status remains CONVERTING and stale scanner will
-    # properly mark it FAILED. This avoids metadata (file_extension, name,
-    # file_size) being updated to md format while the actual attachment
-    # content is still the original PDF.
+    # Step 2: Create a new attachment for converted content (preserve original)
     payload = request.index_dispatch_payload
     try:
         attachment_id = payload["attachment_id"]
@@ -169,36 +169,137 @@ def conversion_completed_callback(
             detail="payload knowledge_base_id does not match the target document's KB",
         )
 
-    try:
-        context_service.overwrite_attachment_internal(
-            db=db,
-            context_id=attachment_id,
-            filename=request.converted_name,
-            reason="conversion_callback",
-            binary_data=markdown_bytes,
-        )
-    except Exception:
-        logger.exception(
-            f"[ConversionCallback] Attachment overwrite failed: "
-            f"document_id={request.document_id}"
-        )
-        raise
+    # Create a new SubtaskContext for the converted Markdown content
+    # instead of overwriting the original attachment.
+    from app.models.subtask_context import ContextType, SubtaskContext
 
-    # Step 3: State transition with staleness check (after attachment overwrite)
-    succeeded = mark_document_conversion_succeeded(
-        db=db,
-        document_id=request.document_id,
-        generation=request.generation,
-        converted_extension=request.converted_extension,
-        converted_name=request.converted_name,
-        converted_file_size=request.file_size,
+    original_attachment = (
+        db.query(SubtaskContext)
+        .filter(
+            SubtaskContext.id == attachment_id,
+            SubtaskContext.context_type == ContextType.ATTACHMENT.value,
+        )
+        .first()
     )
-    if not succeeded:
+    if not original_attachment:
+        raise HTTPException(
+            status_code=400,
+            detail="Original attachment not found",
+        )
+
+    # Staleness pre-check (read-only): reject superseded callbacks BEFORE any
+    # mutation. Without this, a late callback from an older generation would
+    # create an orphan Markdown attachment and point converted_attachment_id at
+    # stale content (which DocumentReadService then prefers over the original).
+    # The filter mirrors mark_document_conversion_succeeded so the pre-check and
+    # the transition agree on what "current" means.
+    from app.models.knowledge import DocumentIndexStatus
+
+    is_current_generation = (
+        db.query(KnowledgeDocument)
+        .filter(
+            KnowledgeDocument.id == request.document_id,
+            KnowledgeDocument.index_generation == request.generation,
+            KnowledgeDocument.index_status.in_(
+                [
+                    DocumentIndexStatus.CONVERTING,
+                    DocumentIndexStatus.PENDING_CONVERSION,
+                ]
+            ),
+        )
+        .count()
+        > 0
+    )
+    if not is_current_generation:
+        logger.info(
+            f"[ConversionCallback] Stale conversion callback: "
+            f"document_id={request.document_id}, generation={request.generation} "
+            f"is not current; skipping attachment creation"
+        )
         return ConversionCompletedResponse(
             ok=True, skipped=True, skip_reason="stale_conversion"
         )
 
-    # Step 4: Dispatch indexing task (compensate on failure)
+    try:
+        converted_context, _ = context_service.upload_attachment(
+            db=db,
+            user_id=original_attachment.user_id,
+            filename=request.converted_name,
+            binary_data=markdown_bytes,
+            subtask_id=0,
+        )
+    except Exception:
+        logger.exception(
+            f"[ConversionCallback] Failed to create converted attachment: "
+            f"document_id={request.document_id}"
+        )
+        raise
+
+    logger.info(
+        f"[ConversionCallback] Created converted attachment {converted_context.id} "
+        f"for document {request.document_id} (original attachment {attachment_id} preserved)"
+    )
+
+    # Step 3: Store converted_attachment_id and state transition.
+    # Capture the previous reference first so a later staleness rollback can
+    # restore it instead of leaving a dangling converted_attachment_id.
+    previous_converted_id = doc.converted_attachment_id
+    try:
+        doc.converted_attachment_id = converted_context.id
+        db.flush()
+    except Exception:
+        # Compensate: delete the converted attachment we just created
+        logger.exception(
+            f"[ConversionCallback] Failed to update document source_config, "
+            f"cleaning up converted attachment {converted_context.id}"
+        )
+        try:
+            context_service.delete_context(
+                db=db,
+                context_id=converted_context.id,
+                user_id=original_attachment.user_id,
+            )
+        except Exception:
+            logger.exception(
+                f"[ConversionCallback] Failed to cleanup converted attachment {converted_context.id}"
+            )
+        raise
+
+    succeeded = mark_document_conversion_succeeded(
+        db=db,
+        document_id=request.document_id,
+        generation=request.generation,
+    )
+    if not succeeded:
+        # Race window: a newer generation superseded this callback between the
+        # pre-check above and the state transition. Roll back BOTH side effects
+        # (the converted_attachment_id pointer and the newly created attachment)
+        # so we neither leak an orphan nor serve stale converted content.
+        doc.converted_attachment_id = previous_converted_id
+        try:
+            context_service.delete_context(
+                db=db,
+                context_id=converted_context.id,
+                user_id=original_attachment.user_id,
+            )
+        except Exception:
+            logger.exception(
+                f"[ConversionCallback] Failed to roll back orphan converted "
+                f"attachment {converted_context.id} for stale callback "
+                f"document_id={request.document_id}"
+            )
+        db.commit()
+        logger.info(
+            f"[ConversionCallback] Rolled back stale conversion callback: "
+            f"document_id={request.document_id}, generation={request.generation}, "
+            f"removed orphan attachment {converted_context.id}"
+        )
+        return ConversionCompletedResponse(
+            ok=True, skipped=True, skip_reason="stale_conversion"
+        )
+
+    # Step 4: Dispatch indexing task using the converted attachment ID
+    payload["attachment_id"] = converted_context.id
     try:
         async_result = index_document_task.delay(**payload)
     except Exception:
@@ -215,6 +316,7 @@ def conversion_completed_callback(
 
     logger.info(
         f"[ConversionCallback] Completed: document_id={request.document_id}, "
+        f"converted_attachment_id={converted_context.id}, "
         f"index_task_id={async_result.id}"
     )
     return ConversionCompletedResponse(

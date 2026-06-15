@@ -102,6 +102,7 @@ The `tools` array enables additional server-side capabilities:
 | `wegent_code_bot` | Enable code task with git repository (for Executor-based Teams) |
 | `mcp` | Add custom MCP servers |
 | `skill` | Preload specific skills |
+| `knowledge_base` | Let a Chat Shell agent use selected knowledge bases, optionally scoped to folders or documents |
 
 **Code Bot Configuration (for code tasks):**
 ```json
@@ -150,6 +151,54 @@ The `tools` array enables additional server-side capabilities:
   ]
 }
 ```
+
+**Knowledge Base Configuration:**
+
+Use `knowledge_base_names` for whole-knowledge-base access:
+
+```json
+{
+  "tools": [
+    {
+      "type": "knowledge_base",
+      "knowledge_base_names": ["default#Product Docs"]
+    }
+  ]
+}
+```
+
+Use `knowledge_base_refs` when access must be scoped to folders or documents:
+
+```json
+{
+  "tools": [
+    {
+      "type": "knowledge_base",
+      "knowledge_base_refs": [
+        {
+          "name": "default#Product Docs",
+          "folder_ids": [10],
+          "document_ids": [101],
+          "include_subfolders": true
+        }
+      ]
+    }
+  ]
+}
+```
+
+Scope rules:
+
+- When both `folder_ids` and `document_ids` are provided, the scope is their union.
+- `folder_ids: [0]` means documents directly under the knowledge-base root. It does not mean whole-knowledge-base access.
+- For whole-knowledge-base access, omit both `folder_ids` and `document_ids`.
+- `folder_ids: []` and `document_ids: []` are invalid.
+- `knowledge_base_refs` and `knowledge_base_names` are mutually exclusive.
+- Top-level `folder_ids` / `document_ids` are only a single-KB compatibility form. Multi-KB scoped requests must use `knowledge_base_refs`.
+
+The scope is an access boundary. When a folder or document scope is enabled, `knowledge_base_search`, `kb_ls`, and `kb_head` can only search, list, or read documents inside that scope. Out-of-scope document reads return `document_scope_violation`.
+
+When a request includes `previous_response_id` and does not provide a new `knowledge_base` tool, the system inherits the previously bound knowledge-base scope for that task and re-resolves folder membership for the current turn. Passing a new `knowledge_base` tool explicitly replaces the previous scope.
 
 #### Response Behavior
 

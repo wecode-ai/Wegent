@@ -9,12 +9,51 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from app.models.kind import Kind
 from app.models.knowledge import KnowledgeDocument
+from app.schemas.knowledge import KnowledgeBaseCreate
 from app.services.context import context_service
 from app.services.knowledge.knowledge_service import (
     KnowledgeService,
     _run_async_in_new_loop,
 )
+
+
+@pytest.mark.unit
+class TestKnowledgeServiceCreateKnowledgeBase:
+    def test_create_knowledge_base_persists_retrieval_config_as_dict(
+        self, test_db, test_user
+    ) -> None:
+        """Create schema coercion must not leak Pydantic models into CRD spec."""
+        knowledge_base_id = KnowledgeService.create_knowledge_base(
+            db=test_db,
+            user_id=test_user.id,
+            data=KnowledgeBaseCreate(
+                name="rag-kb",
+                retrieval_config={
+                    "retriever_name": "retriever-1",
+                    "retriever_namespace": "default",
+                    "embedding_config": {
+                        "model_name": "embedding-1",
+                        "model_namespace": "default",
+                    },
+                    "retrieval_mode": "vector",
+                    "top_k": 5,
+                    "score_threshold": 0.5,
+                    "hybrid_weights": {
+                        "vector_weight": 0.7,
+                        "keyword_weight": 0.3,
+                    },
+                },
+            ),
+        )
+
+        knowledge_base = test_db.query(Kind).filter(Kind.id == knowledge_base_id).one()
+        retrieval_config = knowledge_base.json["spec"]["retrievalConfig"]
+
+        assert isinstance(retrieval_config, dict)
+        assert retrieval_config["retriever_name"] == "retriever-1"
+        assert retrieval_config["embedding_config"]["model_name"] == "embedding-1"
 
 
 @pytest.mark.unit
@@ -177,6 +216,8 @@ class TestKnowledgeServiceDeleteDocument:
             id=8,
             kind_id=10,
             attachment_id=20,
+            user_id=42,
+            converted_attachment_id=None,
         )
         knowledge_base = SimpleNamespace(
             id=10,
@@ -221,7 +262,7 @@ class TestKnowledgeServiceDeleteDocument:
                 context_service,
                 "delete_context",
                 return_value=True,
-            ),
+            ) as mock_delete_context,
             patch(
                 "app.services.knowledge.knowledge_service._get_delete_gateway",
                 return_value=mock_gateway,
@@ -253,6 +294,90 @@ class TestKnowledgeServiceDeleteDocument:
             knowledge_base=knowledge_base,
             current_user_id=7,
         )
+        # Original attachment must be deleted with the document owner's user_id,
+        # not the requester's, because delete_context enforces ownership filtering.
+        mock_delete_context.assert_called_once_with(db=db, context_id=20, user_id=42)
+
+    def test_delete_document_uses_owner_id_for_both_attachments(self) -> None:
+        """Both original and converted attachments must be deleted with the
+        document owner's user_id, not the requester's. delete_context enforces
+        ownership filtering — passing the requester's id would silently fail
+        and leave orphaned context/storage when an admin deletes another user's
+        document."""
+        db = MagicMock()
+        document = SimpleNamespace(
+            id=9,
+            kind_id=10,
+            attachment_id=30,
+            user_id=42,
+            converted_attachment_id=99,
+        )
+        knowledge_base = SimpleNamespace(
+            id=10,
+            user_id=42,
+            namespace="default",
+            json={
+                "spec": {
+                    "retrievalConfig": {
+                        "retriever_name": "retriever-a",
+                        "retriever_namespace": "default",
+                    }
+                }
+            },
+        )
+
+        kb_query = MagicMock()
+        kb_query.filter.return_value.first.return_value = knowledge_base
+        db.query.return_value = kb_query
+        mock_gateway = MagicMock()
+        mock_gateway.delete_document_index = MagicMock()
+
+        with (
+            patch.object(KnowledgeService, "get_document", return_value=document),
+            patch.object(
+                KnowledgeService,
+                "_assert_can_manage_document",
+                return_value=None,
+            ),
+            patch.object(
+                KnowledgeService,
+                "_update_document_count_cache",
+                return_value=None,
+            ),
+            patch(
+                "app.services.knowledge.index_runtime.build_kb_index_info",
+                return_value=SimpleNamespace(
+                    index_owner_user_id=7, summary_enabled=False
+                ),
+            ),
+            patch.object(
+                context_service,
+                "delete_context",
+                return_value=True,
+            ) as mock_delete_context,
+            patch(
+                "app.services.knowledge.knowledge_service._get_delete_gateway",
+                return_value=mock_gateway,
+            ),
+            patch(
+                "app.services.rag.runtime_resolver.RagRuntimeResolver.build_delete_runtime_spec",
+                return_value=object(),
+            ),
+            patch(
+                "app.services.knowledge.knowledge_service._run_async_in_new_loop",
+                return_value={"status": "success"},
+            ),
+        ):
+            KnowledgeService.delete_document(
+                db=db,
+                document_id=9,
+                user_id=7,
+            )
+
+        # Both calls must use the document owner's user_id (42), not the requester's (7)
+        assert mock_delete_context.call_count == 2
+        mock_delete_context.assert_any_call(db=db, context_id=30, user_id=42)
+        mock_delete_context.assert_any_call(db=db, context_id=99, user_id=42)
 
     def test_delete_document_treats_deleted_status_as_success(self) -> None:
         db = MagicMock()
@@ -260,6 +385,8 @@ class TestKnowledgeServiceDeleteDocument:
             id=8,
             kind_id=10,
             attachment_id=None,
+            user_id=42,
+            converted_attachment_id=None,
         )
         knowledge_base = SimpleNamespace(
             id=10,

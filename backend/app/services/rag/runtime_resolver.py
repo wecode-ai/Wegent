@@ -505,7 +505,7 @@ class RagRuntimeResolver:
                     ),
                     retrieval_config=RuntimeRetrievalConfig(
                         top_k=retrieval_config.get("top_k", 20),
-                        score_threshold=retrieval_config.get("score_threshold", 0.7),
+                        score_threshold=retrieval_config.get("score_threshold", 0.5),
                         retrieval_mode=retrieval_mode,
                         vector_weight=(
                             hybrid_weights.get("vector_weight")

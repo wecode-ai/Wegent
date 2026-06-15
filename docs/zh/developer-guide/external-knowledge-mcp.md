@@ -121,7 +121,7 @@ set_external_knowledge_auth_handler(enterprise_auth_handler)
 
 | 名称 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `scope` | `string` | `all` | 可见范围，取值与内部知识库列表一致，例如 `all`、`personal`、`group` |
+| `scope` | `string` | `all` | 可见范围，取值与内部知识库列表一致，例如 `all`、`personal`、`group`、`organization` |
 | `group_name` | `string \| null` | `null` | 可选的空间或分组名称。`scope=group` 时必填，空字符串会被视为缺失 |
 | `query` | `string \| null` | `null` | 可选关键字，按知识库名称和描述做大小写不敏感过滤 |
 | `limit` | `int` | `50` | 返回数量，范围 `1..100` |
@@ -131,6 +131,7 @@ set_external_knowledge_auth_handler(enterprise_auth_handler)
 
 - 结果按 `created_at` 倒序排序，业务方展示时不需要再次排序。
 - `document_count` 统计知识库下的全部文档，包括 inactive 文档，保持与内部知识库列表口径一致。
+- 每个 `items[]` 会返回 `namespace_level` 和 `namespace_display_name`：个人知识库为 `personal` / `personal`，群组知识库为 `group` / 群组展示名，公司知识库为 `organization` / 公司展示名。`namespace_display_name` 只表达空间展示名，不表达分享或创建者关系。
 - 只对当前页知识库统计 `document_count`，避免一次请求放大成大量统计查询。
 - 响应中的 `total` 表示过滤后的总知识库数量，`total_returned` 表示当前页返回数量，`has_more` 表示是否还有下一页。调用方应使用 `limit`/`offset` 翻页。
 

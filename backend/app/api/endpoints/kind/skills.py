@@ -56,7 +56,7 @@ from app.services.git_skill import git_skill_service
 from app.services.group_permission import check_group_permission
 from app.services.skill_binding_service import skill_binding_service
 
-router = APIRouter()
+router = APIRouter(prefix="/kinds/skills")
 
 
 def _extract_bearer_token(authorization: str, oauth2_token: Optional[str]) -> str:

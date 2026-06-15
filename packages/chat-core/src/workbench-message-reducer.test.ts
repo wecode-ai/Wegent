@@ -75,6 +75,43 @@ describe('reduceWorkbenchMessages', () => {
     ])
   })
 
+  test('finalizes incoming processing blocks on done', () => {
+    const state = reduceWorkbenchMessages([], {
+      type: 'assistant_started',
+      taskId: 1,
+      subtaskId: 9,
+    })
+
+    const done = reduceWorkbenchMessages(state, {
+      type: 'assistant_done',
+      subtaskId: 9,
+      content: 'Final',
+      blocks: [
+        {
+          id: 'thinking-real',
+          subtaskId: 9,
+          type: 'thinking',
+          content: 'Drafting',
+          status: 'streaming',
+          createdAt: 1770000000000,
+        },
+        {
+          id: 'call_1',
+          subtaskId: 9,
+          type: 'tool',
+          toolName: 'bash',
+          status: 'pending',
+          createdAt: 1770000001000,
+        },
+      ],
+    })
+
+    expect(done[0].blocks).toMatchObject([
+      { id: 'thinking-real', type: 'thinking', status: 'done' },
+      { id: 'call_1', type: 'tool', status: 'done' },
+    ])
+  })
+
   test('preserves state for unknown runtime actions', () => {
     const state: WorkbenchMessage[] = [
       {
@@ -102,7 +139,11 @@ describe('normalizeWorkbenchBlockStatus', () => {
     expect(normalizeWorkbenchBlockStatus('streaming')).toBe('streaming')
     expect(normalizeWorkbenchBlockStatus('done')).toBe('done')
     expect(normalizeWorkbenchBlockStatus('error')).toBe('error')
+    expect(normalizeWorkbenchBlockStatus('completed')).toBe('done')
+    expect(normalizeWorkbenchBlockStatus('succeeded')).toBe('done')
+    expect(normalizeWorkbenchBlockStatus('failed')).toBe('error')
     expect(normalizeWorkbenchBlockStatus('running')).toBe('pending')
+    expect(normalizeWorkbenchBlockStatus('inProgress')).toBe('pending')
     expect(normalizeWorkbenchBlockStatus('unsupported')).toBe('pending')
     expect(normalizeWorkbenchBlockStatus()).toBe('pending')
   })

@@ -331,16 +331,13 @@ export interface Subtask {
   message_id?: number
   created_at: string
   updated_at?: string
+  completed_at?: string | null
   contexts?: TaskContextData[]
   attachments?: Attachment[]
   sender_user_name?: string
 }
 
-export type TurnFileChangesStatus =
-  | 'active'
-  | 'reverted'
-  | 'conflicted'
-  | 'artifact_missing'
+export type TurnFileChangesStatus = 'active' | 'reverted' | 'conflicted' | 'artifact_missing'
 
 export interface TurnFileChangeItem {
   old_path?: string | null

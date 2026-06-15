@@ -1,7 +1,7 @@
 import { cn } from '@/lib/utils'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import type { AppTab } from '@/config/apps'
-import { Globe2 } from 'lucide-react'
+import { Grid3X3, Globe2 } from 'lucide-react'
 import { TITLEBAR_ACTIONS_PORTAL_ID } from './TitlebarActionsPortal'
 
 function getPlatform(): 'mac' | 'win' | 'linux' {
@@ -55,6 +55,12 @@ export function ChromeTitlebar({ tabs, activeKey, onNavigate }: ChromeTitlebarPr
           >
             {tab.key === 'wework' && (
               <Globe2
+                aria-hidden="true"
+                className="h-4 w-4 shrink-0 stroke-[1.8]"
+              />
+            )}
+            {tab.key === 'apps' && (
+              <Grid3X3
                 aria-hidden="true"
                 className="h-4 w-4 shrink-0 stroke-[1.8]"
               />

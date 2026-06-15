@@ -379,7 +379,7 @@ def _verify_api_key_sync(token: str) -> Optional[tuple[int, str]]:
         Tuple of (user_id, user_name) if valid, None otherwise.
     """
     with get_db_session() as db:
-        user = verify_api_key(db, token)
+        user = verify_api_key(db, token, update_last_used_at=False)
         if user:
             return (user.id, user.user_name)
     return None

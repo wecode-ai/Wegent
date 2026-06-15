@@ -118,7 +118,7 @@ Pure vector similarity search for semantic understanding:
 |-----------|-------------|---------|
 | `retrieval_mode` | Retrieval mode | `vector` |
 | `top_k` | Number of results | 5 |
-| `score_threshold` | Relevance threshold | 0.7 |
+| `score_threshold` | Relevance threshold | 0.5 |
 
 **Use cases**: Concept matching, understanding questions, semantic search
 
@@ -143,7 +143,7 @@ Combines vector similarity with BM25 keyword matching:
 | `vector_weight` | Vector weight | 0.7 |
 | `keyword_weight` | Keyword weight | 0.3 |
 | `top_k` | Number of results | 5 |
-| `score_threshold` | Relevance threshold | 0.7 |
+| `score_threshold` | Relevance threshold | 0.5 |
 
 **Weight recommendations**:
 - **Conceptual queries** (0.8/0.2): Understanding, explanations
@@ -197,7 +197,7 @@ Content-Type: application/json
     "api_key": "sk-..."
   },
   "top_k": 5,
-  "score_threshold": 0.7,
+  "score_threshold": 0.5,
   "retrieval_mode": "hybrid",
   "hybrid_weights": {
     "vector_weight": 0.7,
@@ -379,13 +379,24 @@ This approach is **less efficient** than RAG retrieval:
 | Accuracy | Semantic understanding | Depends on document summaries |
 | Best For | Large knowledge bases | Small knowledge bases (<50 docs) |
 
-### Setting Up No-RAG Mode
+### Choosing The RAG Mode On Creation
 
-1. **Create Knowledge Base**: In the create dialog, skip the retrieval configuration section
+When creating a knowledge base, **RAG Retrieval** in **Advanced Settings** provides two modes:
+
+| Mode | Behavior | Best For |
+|------|----------|----------|
+| Auto | The system selects an available retriever and embedding model while preserving retrieval parameters you changed | Recommended default |
+| No RAG | Creates a no-RAG knowledge base without writing retrieval configuration | No vector database, small knowledge bases, or testing |
+
+If you choose automatic configuration but the current environment has no usable default retriever or embedding model, the knowledge base can still be created, but no RAG retrieval configuration is written. Uploaded documents are stored, and AI will use knowledge exploration tools to read the content in later conversations.
+
+To create a no-RAG knowledge base:
+
+1. **Create Knowledge Base**: Open advanced settings in the create dialog and set **RAG Retrieval** to **No RAG**
 2. **Upload Documents**: Documents are stored but not indexed for RAG
 3. **Start Chatting**: AI will automatically use exploration tools
 
-> **Note**: You can always add RAG configuration later by editing the knowledge base settings after configuring a retriever.
+> **Note**: After configuring a retriever and embedding model, newly created knowledge bases will automatically receive RAG retrieval configuration.
 
 ## Related Documentation
 

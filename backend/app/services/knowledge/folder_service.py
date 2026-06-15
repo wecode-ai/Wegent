@@ -531,6 +531,89 @@ class KnowledgeFolderService:
         )
 
     @staticmethod
+    def resolve_document_ids_for_scope(
+        db: Session,
+        knowledge_base_id: int,
+        user_id: int,
+        folder_ids: list[int] | None = None,
+        document_ids: list[int] | None = None,
+        include_subfolders: bool = True,
+    ) -> list[int]:
+        """Resolve folder/document scope into document IDs for retrieval.
+
+        ``folder_ids=[0]`` means root-level documents only.  Folder ``0`` is
+        not a real tree node and is never expanded to the whole knowledge base.
+        """
+        KnowledgeFolderService._check_kb_access(db, knowledge_base_id, user_id)
+
+        if folder_ids == []:
+            raise ValueError("folder_ids must not be empty")
+        if document_ids == []:
+            raise ValueError("document_ids must not be empty")
+
+        resolved_ids: list[int] = []
+        seen_document_ids: set[int] = set()
+
+        if document_ids:
+            unique_document_ids = list(dict.fromkeys(document_ids))
+            documents = KnowledgeFolderService._bulk_load_documents(
+                db, unique_document_ids
+            )
+            documents_by_id = {doc.id: doc for doc in documents}
+            for document_id in unique_document_ids:
+                document = documents_by_id.get(document_id)
+                if document is None or document.kind_id != knowledge_base_id:
+                    raise ValueError(
+                        f"Document {document_id} not found in this knowledge base"
+                    )
+                if document.id not in seen_document_ids:
+                    seen_document_ids.add(document.id)
+                    resolved_ids.append(document.id)
+
+        if folder_ids:
+            folder_id_set = set(folder_ids)
+            positive_folder_ids = [
+                folder_id for folder_id in folder_ids if folder_id > 0
+            ]
+            if positive_folder_ids:
+                folders = (
+                    db.query(KnowledgeFolder)
+                    .filter(
+                        KnowledgeFolder.kind_id == knowledge_base_id,
+                        KnowledgeFolder.id.in_(positive_folder_ids),
+                    )
+                    .all()
+                )
+                found_folder_ids = {folder.id for folder in folders}
+                for folder_id in positive_folder_ids:
+                    if folder_id not in found_folder_ids:
+                        raise ValueError(
+                            f"Folder {folder_id} not found in this knowledge base"
+                        )
+                    if include_subfolders:
+                        folder_id_set.update(
+                            KnowledgeFolderService._collect_descendant_ids(
+                                db, folder_id, knowledge_base_id
+                            )
+                        )
+
+            folder_documents = (
+                db.query(KnowledgeDocument.id)
+                .filter(
+                    KnowledgeDocument.kind_id == knowledge_base_id,
+                    KnowledgeDocument.folder_id.in_(folder_id_set),
+                )
+                .order_by(KnowledgeDocument.id)
+                .all()
+            )
+            for (document_id,) in folder_documents:
+                if document_id not in seen_document_ids:
+                    seen_document_ids.add(document_id)
+                    resolved_ids.append(document_id)
+
+        return resolved_ids
+
+    @staticmethod
     def _bulk_load_documents(
         db: Session, document_ids: list[int]
     ) -> list[KnowledgeDocument]:
