@@ -106,6 +106,14 @@ export default function MobileCorrectionModeToggle({
     }
   }
 
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (disabled) return
+    if (event.key !== 'Enter' && event.key !== ' ') return
+
+    event.preventDefault()
+    handleClick()
+  }
+
   const handleModelSelect = (model: UnifiedModel) => {
     const displayName = model.displayName || model.name
     onToggle(true, model.name, displayName)
@@ -143,21 +151,24 @@ export default function MobileCorrectionModeToggle({
 
   return (
     <>
-      <button
-        type="button"
+      <div
+        role="button"
+        data-testid="toggle-correction-mode"
+        tabIndex={disabled ? -1 : 0}
+        aria-disabled={disabled}
         onClick={handleClick}
-        disabled={disabled}
+        onKeyDown={handleKeyDown}
         className={cn(
           'w-full flex items-center justify-between px-3 py-2.5',
           'text-left transition-colors',
           'hover:bg-hover active:bg-hover',
-          'disabled:opacity-50 disabled:cursor-not-allowed'
+          disabled && 'cursor-not-allowed opacity-50'
         )}
       >
         <div className="flex items-center gap-3">
           <Sparkles className="h-4 w-4 text-text-muted" />
           <div className="flex flex-col">
-            <span className="text-sm">纠错模式</span>
+            <span className="text-sm">{t('chat:correction.label')}</span>
             {enabled && correctionModelName && (
               <span className="text-xs text-text-muted truncate max-w-[120px]">
                 {correctionModelName}
@@ -166,6 +177,7 @@ export default function MobileCorrectionModeToggle({
           </div>
         </div>
         <Switch
+          data-testid="correction-mode-switch"
           checked={enabled}
           disabled={disabled}
           onClick={e => e.stopPropagation()}
@@ -178,7 +190,7 @@ export default function MobileCorrectionModeToggle({
             }
           }}
         />
-      </button>
+      </div>
 
       {/* Model Selection Dialog */}
       <Dialog open={showModelSelector} onOpenChange={handleDialogClose}>
