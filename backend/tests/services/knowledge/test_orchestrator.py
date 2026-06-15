@@ -1192,6 +1192,49 @@ class TestKnowledgeOrchestrator:
             mock_schedule.call_args.kwargs["document"].converted_attachment_id is None
         )
 
+    def test_update_document_content_clears_reference_even_when_delete_raises_exception(
+        self, orchestrator, mock_db, mock_user
+    ):
+        """Even when delete_context raises an exception, the stale reference must
+        be cleared so the next reindex uses the freshly-overwritten source, not
+        the old converted Markdown (tmp/2.md P1, exception path). The leftover
+        attachment is an orphan."""
+        document = SimpleNamespace(
+            id=1, kind_id=10, user_id=42, converted_attachment_id=999
+        )
+        kb = SimpleNamespace(id=10)
+
+        with (
+            patch("app.services.knowledge.orchestrator.KnowledgeService") as mock_svc,
+            patch(
+                "app.services.context.context_service.context_service"
+            ) as mock_ctx_svc,
+            patch.object(orchestrator, "_schedule_indexing_celery") as mock_schedule,
+        ):
+            mock_svc.update_document_content.return_value = document
+            mock_svc.get_knowledge_base.return_value = (kb, True)
+            mock_ctx_svc.delete_context.side_effect = RuntimeError(
+                "storage unavailable"
+            )
+
+            result = orchestrator.update_document_content(
+                db=mock_db,
+                user=mock_user,
+                document_id=1,
+                content="new content",
+            )
+
+        assert result["success"] is True
+        # Reference cleared unconditionally — reindex must not see the stale id
+        assert document.converted_attachment_id is None
+        mock_ctx_svc.delete_context.assert_called_once_with(
+            db=mock_db, context_id=999, user_id=42
+        )
+        mock_schedule.assert_called_once()
+        assert (
+            mock_schedule.call_args.kwargs["document"].converted_attachment_id is None
+        )
+
     def test_reindex_document_returns_reason_specific_skip_message(
         self, orchestrator, mock_db, mock_user
     ):
