@@ -54,7 +54,7 @@ export function AddCloudDeviceDialog({
         onClick={e => e.stopPropagation()}
       >
         <div className="flex items-start gap-3">
-          <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+          <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-surface text-text-secondary">
             <Cloud className="h-4 w-4" />
           </div>
           <div className="min-w-0 flex-1">
@@ -95,7 +95,7 @@ export function AddCloudDeviceDialog({
             data-testid="add-cloud-device-confirm"
             onClick={handleCreate}
             disabled={loading}
-            className="h-8 rounded-md bg-primary px-3 text-sm font-medium text-primary-contrast hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+            className="h-8 rounded-md bg-text-primary px-3 text-sm font-medium text-background hover:bg-text-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {loading ? '创建中...' : '确认创建'}
           </button>

@@ -1,20 +1,63 @@
-import type {
-  ProcessingBlock,
-  ToolBlockStatus,
-  WorkbenchMessage,
-} from '@/types/workbench'
-import type { TurnFileChangesSummary } from '@/types/api'
+// SPDX-FileCopyrightText: 2026 Weibo, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+export type WorkbenchMessageRole = 'user' | 'assistant' | 'system'
+export type WorkbenchMessageStatus = 'pending' | 'streaming' | 'done' | 'failed'
+export type WorkbenchToolBlockStatus =
+  | 'generating_arguments'
+  | 'pending'
+  | 'streaming'
+  | 'done'
+  | 'error'
+
+export interface BaseWorkbenchProcessingBlock {
+  id: string
+  subtaskId: number
+  status: WorkbenchToolBlockStatus
+  createdAt: number
+}
+
+export interface WorkbenchToolBlock extends BaseWorkbenchProcessingBlock {
+  type: 'tool'
+  toolName: string
+  toolInput?: Record<string, unknown>
+  toolOutput?: unknown
+}
+
+export interface WorkbenchThinkingBlock extends BaseWorkbenchProcessingBlock {
+  type: 'thinking'
+  content: string
+}
+
+export type WorkbenchProcessingBlock = WorkbenchToolBlock | WorkbenchThinkingBlock
+
+export interface WorkbenchMessage<TAttachment = unknown, TFileChanges = unknown> {
+  id: string
+  taskId?: number
+  subtaskId?: number
+  shellType?: string
+  role: WorkbenchMessageRole
+  content: string
+  status: WorkbenchMessageStatus
+  error?: string
+  errorType?: string
+  attachments?: TAttachment[]
+  blocks?: WorkbenchProcessingBlock[]
+  fileChanges?: TFileChanges
+  createdAt: string
+}
 
 type ProcessingBlockUpdate = {
   content?: string
   toolInput?: Record<string, unknown>
   toolOutput?: unknown
-  status?: ToolBlockStatus
+  status?: WorkbenchToolBlockStatus
 }
 
-export type MessageAction =
-  | { type: 'reset'; messages: WorkbenchMessage[] }
-  | { type: 'user_added'; message: WorkbenchMessage }
+export type WorkbenchMessageAction<TAttachment = unknown, TFileChanges = unknown> =
+  | { type: 'reset'; messages: WorkbenchMessage<TAttachment, TFileChanges>[] }
+  | { type: 'user_added'; message: WorkbenchMessage<TAttachment, TFileChanges> }
   | { type: 'assistant_started'; taskId?: number; subtaskId: number; shellType?: string }
   | { type: 'assistant_cached'; taskId?: number; subtaskId: number; content: string }
   | {
@@ -22,28 +65,28 @@ export type MessageAction =
       subtaskId: number
       content: string
       reasoningChunk?: string
-      blocks?: ProcessingBlock[]
+      blocks?: WorkbenchProcessingBlock[]
     }
   | {
       type: 'assistant_done'
       subtaskId: number
       content?: string
-      blocks?: ProcessingBlock[]
-      fileChanges?: TurnFileChangesSummary
+      blocks?: WorkbenchProcessingBlock[]
+      fileChanges?: TFileChanges
     }
   | {
       type: 'file_changes_updated'
       subtaskId: number
-      fileChanges: TurnFileChangesSummary
+      fileChanges: TFileChanges
     }
-  | { type: 'assistant_error'; subtaskId: number; error: string }
-  | { type: 'block_created'; subtaskId: number; block: ProcessingBlock }
+  | { type: 'assistant_error'; subtaskId: number; error: string; errorType?: string }
+  | { type: 'block_created'; subtaskId: number; block: WorkbenchProcessingBlock }
   | { type: 'block_updated'; subtaskId: number; blockId: string; updates: ProcessingBlockUpdate }
 
-export function messageReducer(
-  state: WorkbenchMessage[],
-  action: MessageAction
-): WorkbenchMessage[] {
+export function reduceWorkbenchMessages<TAttachment = unknown, TFileChanges = unknown>(
+  state: WorkbenchMessage<TAttachment, TFileChanges>[],
+  action: WorkbenchMessageAction<TAttachment, TFileChanges>
+): WorkbenchMessage<TAttachment, TFileChanges>[] {
   switch (action.type) {
     case 'reset':
       return action.messages
@@ -134,7 +177,12 @@ export function messageReducer(
     case 'assistant_error':
       return state.map(message =>
         message.subtaskId === action.subtaskId
-          ? { ...message, status: 'failed' as const, error: action.error }
+          ? {
+              ...message,
+              status: 'failed' as const,
+              error: action.error,
+              errorType: action.errorType,
+            }
           : message
       )
     case 'block_created':
@@ -142,10 +190,7 @@ export function messageReducer(
         message.subtaskId === action.subtaskId
           ? {
               ...message,
-              blocks: mergeProcessingBlock(
-                finalizeThinkingBlocks(message.blocks),
-                action.block
-              ),
+              blocks: mergeProcessingBlock(finalizeThinkingBlocks(message.blocks), action.block),
             }
           : message
       )
@@ -156,23 +201,34 @@ export function messageReducer(
               ...message,
               blocks: (message.blocks ?? []).map(block =>
                 block.id === action.blockId
-                  ? ({ ...block, ...action.updates } as ProcessingBlock)
+                  ? ({ ...block, ...action.updates } as WorkbenchProcessingBlock)
                   : block
               ),
             }
           : message
       )
+    default:
+      return state
   }
 }
 
-export function normalizeBlockStatus(status?: string): ToolBlockStatus {
-  if (status === 'running') return 'pending'
-  return (status as ToolBlockStatus) ?? 'pending'
+export function normalizeWorkbenchBlockStatus(status?: string): WorkbenchToolBlockStatus {
+  switch (status) {
+    case 'generating_arguments':
+    case 'pending':
+    case 'streaming':
+    case 'done':
+    case 'error':
+      return status
+    case 'running':
+    default:
+      return 'pending'
+  }
 }
 
-function getChunkBlocks(
-  message: WorkbenchMessage,
-  action: Extract<MessageAction, { type: 'assistant_chunk' }>
+function getChunkBlocks<TAttachment, TFileChanges>(
+  message: WorkbenchMessage<TAttachment, TFileChanges>,
+  action: Extract<WorkbenchMessageAction<TAttachment, TFileChanges>, { type: 'assistant_chunk' }>
 ) {
   const withReasoning = appendThinkingChunk(
     message.blocks,
@@ -185,10 +241,10 @@ function getChunkBlocks(
 }
 
 function appendThinkingChunk(
-  blocks: ProcessingBlock[] | undefined,
+  blocks: WorkbenchProcessingBlock[] | undefined,
   subtaskId: number,
   chunk?: string
-): ProcessingBlock[] | undefined {
+): WorkbenchProcessingBlock[] | undefined {
   if (!chunk) return blocks
 
   const nextBlocks = [...(blocks ?? [])]
@@ -216,8 +272,8 @@ function appendThinkingChunk(
 }
 
 function finalizeThinkingBlocks(
-  blocks: ProcessingBlock[] | undefined
-): ProcessingBlock[] {
+  blocks: WorkbenchProcessingBlock[] | undefined
+): WorkbenchProcessingBlock[] {
   return (blocks ?? []).map(block =>
     block.type === 'thinking' && block.status === 'streaming'
       ? { ...block, status: 'done' as const }
@@ -226,20 +282,20 @@ function finalizeThinkingBlocks(
 }
 
 function finalizeProcessingBlocks(
-  blocks: ProcessingBlock[] | undefined
-): ProcessingBlock[] | undefined {
+  blocks: WorkbenchProcessingBlock[] | undefined
+): WorkbenchProcessingBlock[] | undefined {
   if (!blocks) return undefined
   return finalizeThinkingBlocks(blocks)
 }
 
 function mergeProcessingBlock(
-  blocks: ProcessingBlock[],
-  incomingBlock: ProcessingBlock
-): ProcessingBlock[] {
+  blocks: WorkbenchProcessingBlock[],
+  incomingBlock: WorkbenchProcessingBlock
+): WorkbenchProcessingBlock[] {
   const index = blocks.findIndex(block => block.id === incomingBlock.id)
   if (index === -1) return [...blocks, incomingBlock]
 
   const nextBlocks = [...blocks]
-  nextBlocks[index] = { ...nextBlocks[index], ...incomingBlock } as ProcessingBlock
+  nextBlocks[index] = { ...nextBlocks[index], ...incomingBlock } as WorkbenchProcessingBlock
   return nextBlocks
 }

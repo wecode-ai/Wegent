@@ -130,17 +130,17 @@ test.beforeEach(async ({ page }) => {
 ```bash
 # 1. 运行所有测试
 cd frontend
-npm run test:e2e
+pnpm run test:e2e
 
 # 2. 仅运行 chromium 测试
-npx playwright test --project=chromium
+pnpm exec playwright test --project=chromium
 
 # 3. 仅运行 API 测试
-npx playwright test --project=api
+pnpm exec playwright test --project=api
 
 # 4. 运行特定测试文件
-npx playwright test e2e/tests/auth/login.spec.ts
-npx playwright test e2e/tests/admin/admin-users.spec.ts
+pnpm exec playwright test e2e/tests/auth/login.spec.ts
+pnpm exec playwright test e2e/tests/admin/admin-users.spec.ts
 ```
 
 ## 后续建议

@@ -142,7 +142,7 @@ export function ActionMenu({
               top: menuPosition?.top ?? 0,
               visibility: menuPosition ? 'visible' : 'hidden',
             }}
-            className="fixed z-[70] min-w-[176px] rounded-lg border border-black/10 bg-[#2b2b2b] py-1.5 text-white shadow-xl"
+            className="fixed z-[70] min-w-[176px] rounded-2xl border border-border bg-background p-1.5 text-text-primary shadow-[0_16px_44px_rgba(0,0,0,0.16)]"
           >
             {items.map(item => (
               <button
@@ -163,10 +163,10 @@ export function ActionMenu({
                   void handleItemSelect(item)
                 }}
                 className={[
-                  'flex h-8 w-full items-center gap-2 px-3 text-left text-[13px] leading-[18px]',
+                  'flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-[13px] leading-[18px]',
                   item.danger
-                    ? 'text-[#ff7b7b] hover:bg-white/10'
-                    : 'text-white hover:bg-white/10',
+                    ? 'text-red-500 hover:bg-red-50'
+                    : 'text-text-primary hover:bg-muted',
                 ].join(' ')}
               >
                 <item.icon className="h-4 w-4 shrink-0" />

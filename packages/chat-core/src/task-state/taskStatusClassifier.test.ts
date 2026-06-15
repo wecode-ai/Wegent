@@ -1,9 +1,10 @@
+import { describe, expect, it } from 'vitest'
 import {
   getRuntimePhaseForTaskStatus,
   isActiveExecutionTaskStatus,
   isTerminalTaskStatus,
   isWaitingForUserTaskStatus,
-} from '@/features/tasks/state/taskStatusClassifier'
+} from '..'
 
 describe('taskStatusClassifier', () => {
   it.each(['PENDING', 'RUNNING', 'CANCELLING'] as const)(

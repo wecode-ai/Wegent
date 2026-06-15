@@ -1,3 +1,7 @@
+---
+sidebar_position: 2
+---
+
 # 💻 开发环境搭建
 
 本文档详细介绍如何在本地环境搭建 Wegent 开发环境。
@@ -11,7 +15,7 @@
 ### 必需软件
 
 - **Python 3.10+**: 后端服务、Executor 和 Executor Manager
-- **Node.js 18+**: 前端开发
+- **Node.js 20+**: 前端开发和测试
 - **MySQL 8.0+**: 数据库服务
 - **Redis 7+**: 缓存服务
 - **Docker & Docker Compose**: 容器化部署和开发
@@ -192,10 +196,10 @@ backend/
 #### 安装依赖
 
 ```bash
-cd frontend
+cd Wegent
 
-# 安装 npm 依赖
-npm install
+# 安装 pnpm workspace 依赖
+pnpm install
 ```
 
 #### 配置环境变量
@@ -222,7 +226,7 @@ cp .env.local.example .env.local
 
 ```bash
 # 启动开发服务器
-npm run dev
+pnpm --dir frontend run dev
 ```
 
 访问应用: http://localhost:3000
@@ -231,16 +235,16 @@ npm run dev
 
 ```bash
 # 代码检查
-npm run lint
+pnpm --dir frontend run lint
 
 # 代码格式化
-npm run format
+pnpm --dir frontend run format
 
 # 生产构建
-npm run build
+pnpm --dir frontend run build
 
 # 运行生产版本
-npm run start
+pnpm --dir frontend run start
 ```
 
 ---
@@ -324,16 +328,16 @@ pytest -m integration
 ### 前端测试
 
 ```bash
-cd frontend
+cd Wegent
 
 # 运行测试
-npm test
+pnpm --dir frontend test
 
 # 运行并监视更改
-npm run test:watch
+pnpm --dir frontend run test:watch
 
 # 生成覆盖率报告
-npm run test:coverage
+pnpm --dir frontend run test:coverage
 ```
 
 ### Executor 和 Shared 模块测试

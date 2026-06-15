@@ -8,32 +8,32 @@ This directory contains end-to-end tests for the Wegent frontend using Playwrigh
 
 ```bash
 # Run all E2E tests
-npm run e2e
+pnpm run e2e
 
 # Run tests with UI mode
-npm run e2e:ui
+pnpm run e2e:ui
 
 # Run tests in debug mode
-npm run e2e:debug
+pnpm run e2e:debug
 
 # Run tests in headed mode (see browser)
-npm run e2e:headed
+pnpm run e2e:headed
 
 # View test report
-npm run e2e:report
+pnpm run e2e:report
 ```
 
 ### Local Development
 
 ```bash
 # Run E2E tests locally (starts services automatically)
-npm run e2e:local
+pnpm run e2e:local
 
 # With UI mode
-npm run e2e:local:ui
+pnpm run e2e:local:ui
 
 # With debug mode
-npm run e2e:local:debug
+pnpm run e2e:local:debug
 ```
 
 ## Code Coverage
@@ -44,10 +44,10 @@ The E2E tests can collect code coverage data from the frontend application durin
 
 ```bash
 # Run tests and generate coverage report
-npm run e2e:coverage
+pnpm run e2e:coverage
 
 # Generate coverage report from existing data
-npm run e2e:coverage:report
+pnpm run e2e:coverage:report
 ```
 
 ### Coverage Reports
@@ -168,13 +168,13 @@ test('login test', async ({ page }) => {
 
 ```bash
 # Run with UI mode to see tests execute
-npm run e2e:ui
+pnpm run e2e:ui
 
 # Run in headed mode to see browser
-npm run e2e:headed
+pnpm run e2e:headed
 
 # Run in debug mode with breakpoints
-npm run e2e:debug
+pnpm run e2e:debug
 ```
 
 ### Trace Viewer
@@ -183,7 +183,7 @@ When tests fail, traces are automatically captured:
 
 ```bash
 # View trace for failed test
-npx playwright show-trace test-results/path-to-trace.zip
+pnpm exec playwright show-trace test-results/path-to-trace.zip
 ```
 
 ## CI/CD Integration
@@ -196,7 +196,7 @@ E2E tests run automatically in GitHub Actions:
 
 See [`.github/workflows/e2e-tests.yml`](../../.github/workflows/e2e-tests.yml) for configuration.
 
-CI starts the frontend with `npm run dev` instead of `npm run build && npm start`
+CI starts the frontend with `pnpm run dev` instead of `pnpm run build && pnpm start`
 so E2E jobs do not spend time on a production Next.js build. This keeps E2E
 focused on browser/API behavior; production build failures need separate build
 coverage outside this workflow.
