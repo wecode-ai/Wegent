@@ -97,7 +97,7 @@ _thread_pool: ThreadPoolExecutor | None = None
 
 def _resolve_dispatch_message(db: Session, subtask: "Subtask") -> str:
     """Resolve the user message that triggered a pending assistant subtask."""
-    from app.models.subtask import Subtask, SubtaskRole
+    from app.stores.tasks import subtask_store
 
     assistant_prompt = extract_display_prompt(subtask.prompt) or ""
     if assistant_prompt:
@@ -106,15 +106,10 @@ def _resolve_dispatch_message(db: Session, subtask: "Subtask") -> str:
     if not subtask.parent_id:
         return ""
 
-    user_subtask = (
-        db.query(Subtask)
-        .filter(
-            Subtask.task_id == subtask.task_id,
-            Subtask.role == SubtaskRole.USER,
-            Subtask.message_id == subtask.parent_id,
-        )
-        .order_by(Subtask.id.desc())
-        .first()
+    user_subtask = subtask_store.get_user_by_task_message_id(
+        db,
+        task_id=subtask.task_id,
+        message_id=subtask.parent_id,
     )
     if not user_subtask:
         return ""

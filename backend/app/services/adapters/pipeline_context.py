@@ -8,7 +8,8 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.models.subtask import Subtask, SubtaskRole
+from app.models.subtask import Subtask
+from app.stores.tasks import subtask_store
 from app.utils.prompt_utils import extract_display_prompt
 
 CONTEXT_PASSING_NONE = "none"
@@ -62,15 +63,10 @@ def _get_original_user_prompt(
     task_id: int,
     current_subtask: Subtask,
 ) -> str:
-    user_subtask = (
-        db.query(Subtask)
-        .filter(
-            Subtask.task_id == task_id,
-            Subtask.role == SubtaskRole.USER,
-            Subtask.message_id < current_subtask.message_id,
-        )
-        .order_by(Subtask.message_id.asc())
-        .first()
+    user_subtask = subtask_store.get_first_user_before_message_id(
+        db,
+        task_id=task_id,
+        before_message_id=current_subtask.message_id,
     )
     if not user_subtask:
         return ""

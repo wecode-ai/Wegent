@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.kind import Kind
-from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
+from app.models.subtask import SubtaskStatus
 from app.models.task import TaskResource
 from app.schemas.kind import Task, Team
 from app.services.adapters.pipeline_context import (
@@ -401,15 +401,10 @@ class PipelineStageService:
         context_passing = normalize_context_passing(
             getattr(current_member, "contextPassing", None)
         )
-        current_subtask = (
-            db.query(Subtask)
-            .filter(
-                Subtask.task_id == task_id,
-                Subtask.role == SubtaskRole.ASSISTANT,
-                Subtask.status == SubtaskStatus.COMPLETED,
-            )
-            .order_by(Subtask.message_id.desc())
-            .first()
+        current_subtask = subtask_store.get_latest_assistant_by_statuses(
+            db,
+            task_id=task_id,
+            statuses=[SubtaskStatus.COMPLETED],
         )
         handoff_message = ""
         if current_subtask:

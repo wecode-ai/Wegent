@@ -727,10 +727,8 @@ test.describe('Agent conversation regression', () => {
   async function sendMessage(page: Page, message: string): Promise<void> {
     await ensureMessageInputReady(page)
     const input = page.getByTestId('message-input')
-    await input.click()
-    await page.keyboard.press(process.platform === 'darwin' ? 'Meta+A' : 'Control+A')
-    await page.keyboard.press('Backspace')
-    await input.pressSequentially(message)
+    await input.fill(message)
+    await expect(input).toContainText(message, { timeout: 10_000 })
 
     const sendButton = page.getByTestId('send-button')
     await expect(sendButton).toBeVisible({ timeout: 10_000 })
@@ -739,7 +737,9 @@ test.describe('Agent conversation regression', () => {
   }
 
   async function ensureMessageInputReady(page: Page): Promise<void> {
-    await expect(page.getByTestId('message-input')).toBeVisible({ timeout: 20_000 })
+    const input = page.getByTestId('message-input')
+    await expect(input).toBeVisible({ timeout: 20_000 })
+    await expect(input).toHaveAttribute('contenteditable', 'true', { timeout: 20_000 })
     await expect(page.getByTestId('send-button')).toBeVisible({ timeout: 20_000 })
   }
 
