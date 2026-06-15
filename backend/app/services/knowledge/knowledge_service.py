@@ -1382,7 +1382,7 @@ class KnowledgeService:
                 deleted = context_service.delete_context(
                     db=db,
                     context_id=attachment_id,
-                    user_id=user_id,
+                    user_id=context_owner_user_id,
                 )
                 if deleted:
                     logger.info(
