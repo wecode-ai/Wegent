@@ -2376,13 +2376,22 @@ start_services() {
     # 6. Start WeWork (run in background)
     if [ "$start_wework" = true ]; then
         echo -e "  Starting ${BLUE}wework${NC}..."
+
+        # Kill any existing wework process on the port first
+        local old_wework_pids=$(get_port_listener_pids "$WEWORK_PORT" 2>/dev/null | tr '\n' ' ')
+        if [ -n "$old_wework_pids" ]; then
+            echo -e "  ${YELLOW}Killing existing wework processes on port $WEWORK_PORT: $old_wework_pids${NC}"
+            echo "$old_wework_pids" | xargs kill -9 2>/dev/null || true
+            sleep 1
+        fi
+
         cd "$SCRIPT_DIR/wework"
 
         export VITE_API_PROXY_TARGET=http://localhost:$BACKEND_PORT
         export VITE_SOCKET_PROXY_TARGET=$WEGENT_SOCKET_URL
         export VITE_SOCKET_BASE_URL=$WEGENT_SOCKET_URL
 
-        local wework_cmd="pnpm run dev -- --host 0.0.0.0 --port $WEWORK_PORT"
+        local wework_cmd="pnpm exec vite --host 0.0.0.0 --port $WEWORK_PORT"
 
         if is_wsl; then
             local node_path=$(command -v node)
