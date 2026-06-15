@@ -31,17 +31,18 @@ import wecode.api.gitlab_provider_patch  # noqa: F401  ensures GitLabProvider is
 import wecode.api.models_endpoint_patch  # noqa: F401  patch app.api.endpoints.models to enforce admin-only endpoints
 import wecode.api.oidc_endpoint_patch  # noqa: F401  patch app.api.endpoints.oidc OIDC callback for wecode-specific git_info handling
 import wecode.api.quota_endpoint_patch  # noqa: F401  patch app.api.endpoints.quota to proxy quota requests to external service
+import wecode.api.share_service_patch  # noqa: F401  ERP name priority for share members
 import wecode.api.user_service_patch  # noqa: F401  patch app.services.user without modifying source
 import wecode.api.users_endpoint_patch  # noqa: F401  patch app.api.endpoints.users without modifying source
+import wecode.mcp_server  # noqa: F401  replace external MCP auth with ERP employee_id handler
 import wecode.service.cloud_device_monitor_patch  # noqa: F401  register cloud device monitor background worker
 import wecode.service.cloud_device_patch  # noqa: F401  register CloudDeviceProvider with factory
 import wecode.service.dispatch_tasks_patch  # noqa: F401  patch executor_kinds_service.dispatch_tasks to replace API key placeholders (push mode)
+import wecode.service.jobs  # noqa: F401  register notification and evaluation grading monitor background workers
 import wecode.service.local_device_patch  # noqa: F401  register LocalDeviceProvider with factory
 import wecode.service.openclaw_token_monitor_patch  # noqa: F401  register OpenClaw token monitor background worker
 import wecode.service.request_builder_patch  # noqa: F401  patch TaskRequestBuilder.build to replace ${WECODE_USER_API_KEY} (new dispatcher flow)
 import wecode.service.storage_backend_patch  # noqa: F401  register MinIO/S3 storage backends for attachment service
-import wecode.api.share_service_patch  # noqa: F401  ERP name priority for share members
-import wecode.mcp_server  # noqa: F401  replace external MCP auth with ERP employee_id handler
 from app.api.endpoints.admin.router import router as admin_router
 from app.api.router import api_router
 from wecode.api.admin_published_apps import router as admin_published_apps_router
