@@ -21,7 +21,7 @@ The service selects an extraction path based on content type and quality:
 1. Validate the initial URL and reject non-HTTP(S), local, private-network, and unsafe redirect targets.
 2. Use the PDF extractor for PDF URLs, including final response URL validation.
 3. Use the Crawl4AI strategy first for regular web pages and convert the result to Markdown.
-4. Enable Playwright frame extraction only when the primary result is empty or low quality and policy allows fallback.
+4. Enable Playwright frame extraction only when the primary result is empty or low quality and policy allows fallback. A failed primary extraction that still returns a 2xx HTTP status (the page is reachable but the primary strategy extracted nothing, e.g. content lives in nested iframes) is treated as empty content and is also fallback-eligible.
 5. Run fallback output through the Markdown cleaner, classifier, and quality evaluator.
 
 ```mermaid
@@ -136,7 +136,9 @@ When `fallback_enabled=true`:
 
 - `fallback_on_empty=true` allows empty content to trigger fallback.
 - `deep_iframe_extraction=true` allows empty or low-quality content to trigger fallback.
-- Auth-required, rate-limited, SSRF-blocked, network-failed, and other states that rendering cannot fix do not automatically trigger fallback through deep iframe extraction.
+- A failed primary extraction with a 2xx HTTP status is treated as reachable-but-empty (classified as empty content) and triggers fallback per `fallback_on_empty`. This covers content in nested iframes and SPA shells that the primary strategy misclassifies as anti-bot.
+- Genuine transport failures (no HTTP response, e.g. connection refused or DNS failure) are classified as network failures and do not trigger fallback, since re-rendering cannot help.
+- Auth-required, rate-limited, SSRF-blocked, and other states that rendering cannot fix do not automatically trigger fallback through deep iframe extraction.
 - Whether blocked pages trigger fallback is controlled by `fallback_on_blocked`.
 
 ## Security Boundary
