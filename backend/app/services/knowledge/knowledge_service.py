@@ -8,7 +8,7 @@ Knowledge base and document service using kinds table.
 
 import asyncio
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Any, Optional
 
 from sqlalchemy import and_, case, func
 from sqlalchemy.orm import Session
@@ -71,6 +71,15 @@ def _build_attachment_filename(name: str, file_extension: str) -> str:
     if name.lower().endswith(suffix.lower()):
         return name
     return f"{name}{suffix}"
+
+
+def _to_json_dict(value: Any) -> Optional[dict[str, Any]]:
+    """Convert model-like values to plain JSON dictionaries for CRD persistence."""
+    if value is None:
+        return None
+    if hasattr(value, "model_dump"):
+        return value.model_dump(mode="json")
+    return dict(value)
 
 
 def _get_delete_gateway():
@@ -238,7 +247,7 @@ class KnowledgeService:
             "description": data.description or "",
             "kbType": data.kb_type
             or "notebook",  # Default to 'notebook' if not provided
-            "retrievalConfig": data.retrieval_config,
+            "retrievalConfig": _to_json_dict(data.retrieval_config),
             "summaryEnabled": data.summary_enabled,
         }
         # Add summaryModelRef if provided

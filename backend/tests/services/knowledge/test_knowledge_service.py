@@ -9,12 +9,51 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from app.models.kind import Kind
 from app.models.knowledge import KnowledgeDocument
+from app.schemas.knowledge import KnowledgeBaseCreate
 from app.services.context import context_service
 from app.services.knowledge.knowledge_service import (
     KnowledgeService,
     _run_async_in_new_loop,
 )
+
+
+@pytest.mark.unit
+class TestKnowledgeServiceCreateKnowledgeBase:
+    def test_create_knowledge_base_persists_retrieval_config_as_dict(
+        self, test_db, test_user
+    ) -> None:
+        """Create schema coercion must not leak Pydantic models into CRD spec."""
+        knowledge_base_id = KnowledgeService.create_knowledge_base(
+            db=test_db,
+            user_id=test_user.id,
+            data=KnowledgeBaseCreate(
+                name="rag-kb",
+                retrieval_config={
+                    "retriever_name": "retriever-1",
+                    "retriever_namespace": "default",
+                    "embedding_config": {
+                        "model_name": "embedding-1",
+                        "model_namespace": "default",
+                    },
+                    "retrieval_mode": "vector",
+                    "top_k": 5,
+                    "score_threshold": 0.5,
+                    "hybrid_weights": {
+                        "vector_weight": 0.7,
+                        "keyword_weight": 0.3,
+                    },
+                },
+            ),
+        )
+
+        knowledge_base = test_db.query(Kind).filter(Kind.id == knowledge_base_id).one()
+        retrieval_config = knowledge_base.json["spec"]["retrievalConfig"]
+
+        assert isinstance(retrieval_config, dict)
+        assert retrieval_config["retriever_name"] == "retriever-1"
+        assert retrieval_config["embedding_config"]["model_name"] == "embedding-1"
 
 
 @pytest.mark.unit
