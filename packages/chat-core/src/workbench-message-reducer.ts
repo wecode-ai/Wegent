@@ -163,7 +163,7 @@ export function reduceWorkbenchMessages<TAttachment = unknown, TFileChanges = un
               ...message,
               content: action.content ?? message.content,
               status: 'done' as const,
-              blocks: action.blocks ?? finalizeProcessingBlocks(message.blocks),
+              blocks: finalizeProcessingBlocks(action.blocks ?? message.blocks, 'done'),
               fileChanges: action.fileChanges ?? message.fileChanges,
             }
           : message
@@ -182,6 +182,7 @@ export function reduceWorkbenchMessages<TAttachment = unknown, TFileChanges = un
               status: 'failed' as const,
               error: action.error,
               errorType: action.errorType,
+              blocks: finalizeProcessingBlocks(message.blocks, 'error'),
             }
           : message
       )
@@ -213,14 +214,26 @@ export function reduceWorkbenchMessages<TAttachment = unknown, TFileChanges = un
 }
 
 export function normalizeWorkbenchBlockStatus(status?: string): WorkbenchToolBlockStatus {
-  switch (status) {
+  const normalizedStatus = status?.trim().toLowerCase().replace(/[\s-]+/g, '_')
+
+  switch (normalizedStatus) {
     case 'generating_arguments':
     case 'pending':
     case 'streaming':
     case 'done':
     case 'error':
-      return status
+      return normalizedStatus
+    case 'completed':
+    case 'complete':
+    case 'succeeded':
+    case 'success':
+      return 'done'
+    case 'failed':
+    case 'failure':
+      return 'error'
     case 'running':
+    case 'in_progress':
+    case 'inprogress':
     default:
       return 'pending'
   }
@@ -274,18 +287,32 @@ function appendThinkingChunk(
 function finalizeThinkingBlocks(
   blocks: WorkbenchProcessingBlock[] | undefined
 ): WorkbenchProcessingBlock[] {
-  return (blocks ?? []).map(block =>
-    block.type === 'thinking' && block.status === 'streaming'
-      ? { ...block, status: 'done' as const }
-      : block
-  )
+  return finalizeBlocks(blocks)
+}
+
+function finalizeBlocks(
+  blocks: WorkbenchProcessingBlock[] | undefined,
+  finalStatus?: Extract<WorkbenchToolBlockStatus, 'done' | 'error'>
+): WorkbenchProcessingBlock[] {
+  return (blocks ?? []).map(block => {
+    if (block.type === 'thinking' && block.status === 'streaming') {
+      return { ...block, status: 'done' as const }
+    }
+
+    if (!finalStatus || block.status === 'done' || block.status === 'error') {
+      return block
+    }
+
+    return { ...block, status: finalStatus } as WorkbenchProcessingBlock
+  })
 }
 
 function finalizeProcessingBlocks(
-  blocks: WorkbenchProcessingBlock[] | undefined
+  blocks: WorkbenchProcessingBlock[] | undefined,
+  finalStatus: Extract<WorkbenchToolBlockStatus, 'done' | 'error'> = 'done'
 ): WorkbenchProcessingBlock[] | undefined {
   if (!blocks) return undefined
-  return finalizeThinkingBlocks(blocks)
+  return finalizeBlocks(blocks, finalStatus)
 }
 
 function mergeProcessingBlock(
