@@ -55,7 +55,7 @@ See [Knowledge Base Types](./knowledge-base-types.md) for detailed comparison.
 |---------|---------|-------------|
 | **Retrieval Mode** | Vector / Keyword / Hybrid | Search method |
 | **top_k** | 1-10 (default: 5) | Number of results |
-| **score_threshold** | 0.0-1.0 (default: 0.7) | Minimum relevance score |
+| **score_threshold** | 0.0-1.0 (default: 0.5) | Minimum relevance score |
 
 ### Step 5: Upload Documents
 

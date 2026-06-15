@@ -7,7 +7,7 @@
 from .data_table import DataTableTool
 from .evaluation import SubmitEvaluationResultTool
 from .file_reader import FileListSkill, FileReaderSkill
-from .knowledge_base import KnowledgeBaseTool
+from .knowledge_base import KnowledgeBaseTool, ScopedKnowledgeBaseTool
 from .knowledge_listing import KbHeadTool, KbLsTool, KBToolCallCounter
 from .load_skill import LoadSkillTool
 from .silent_exit import SilentExitException
@@ -16,6 +16,7 @@ from .web_search import WebSearchTool
 __all__ = [
     "WebSearchTool",
     "KnowledgeBaseTool",
+    "ScopedKnowledgeBaseTool",
     "KbLsTool",
     "KbHeadTool",
     "KBToolCallCounter",

@@ -68,6 +68,7 @@ Web documents support re-scraping for updates. When webpage content changes, use
 - **Search**: Search documents by name
 - **Sort**: Sort by name, size, or date
 - **Filter**: Filter documents by status
+- **Folder filter**: Open APIs can list documents directly under a specific folder by `folder_id`
 
 ### Document Status
 
@@ -80,6 +81,35 @@ Web documents support re-scraping for updates. When webpage content changes, use
 | **Converting** | Document being converted to Markdown |
 | **Indexing** | Document being indexed for RAG |
 | **Error** | Indexing failed |
+
+---
+
+## 📁 Folder Management
+
+Knowledge base documents can be organized by folders. Folders are document metadata, not attachment metadata; the generic attachment upload API does not accept `folder_id`.
+
+Folder ID semantics:
+
+- `folder_id=0` means the root folder.
+- Omitting `folder_id` means no folder filter.
+- When listing documents by folder, the folder filter returns only direct documents in that folder and does not recursively include subfolders.
+- For the complete open APIs for creating, moving, deleting folders, and moving documents, see [Knowledge Open API](../../reference/knowledge-open-api.md).
+
+---
+
+## 🔎 Scoped Open Search
+
+Open search can be scoped to folders or specific documents. This is useful when you only want to search inside a topic folder, root-level documents, or a selected document set.
+
+Parameter rules:
+
+- Whole-knowledge-base search: omit both `folder_ids` and `document_ids`.
+- Root-folder search: pass `folder_ids: [0]`.
+- Subfolder search: pass `folder_ids: [10]` and use `include_subfolders` to control whether descendants are included.
+- When both `folder_ids` and `document_ids` are provided, the scope is their union.
+- `folder_ids=[]` or `document_ids=[]` is invalid. Empty arrays must not be used to mean whole knowledge base.
+- If the specified scope contains no documents, the API returns empty results and does not fall back to whole-knowledge-base search.
+- For request examples and the full parameter reference, see [Knowledge Open API](../../reference/knowledge-open-api.md).
 
 ---
 

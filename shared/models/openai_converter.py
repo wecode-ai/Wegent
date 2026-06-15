@@ -22,7 +22,7 @@ from dataclasses import asdict
 from typing import Any, Optional
 
 from .execution import ExecutionRequest
-from .knowledge import KnowledgeBaseToolAccessMode
+from .knowledge import KnowledgeBaseScope, KnowledgeBaseToolAccessMode
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +56,34 @@ def get_metadata_field(task: dict, field: str, default=None):
         return value if value is not None else default
     value = task.get(field, default)
     return value if value is not None else default
+
+
+def _coerce_knowledge_base_scopes(value: Any) -> list[KnowledgeBaseScope]:
+    """Coerce metadata scope payloads into KnowledgeBaseScope instances."""
+    scopes: list[KnowledgeBaseScope] = []
+    if not isinstance(value, list):
+        return scopes
+    for item in value:
+        if isinstance(item, KnowledgeBaseScope):
+            scopes.append(item)
+        elif isinstance(item, dict):
+            try:
+                knowledge_base_id = int(item.get("knowledge_base_id"))
+            except (TypeError, ValueError):
+                continue
+            if knowledge_base_id <= 0:
+                continue
+            raw_document_ids = item.get("document_ids") or []
+            if not isinstance(raw_document_ids, list):
+                raw_document_ids = []
+            scopes.append(
+                KnowledgeBaseScope(
+                    knowledge_base_id=knowledge_base_id,
+                    scope_restricted=bool(item.get("scope_restricted", False)),
+                    document_ids=raw_document_ids,
+                )
+            )
+    return scopes
 
 
 class OpenAIRequestConverter:
@@ -171,6 +199,14 @@ class OpenAIRequestConverter:
             "preload_skill_refs": request.preload_skill_refs,
             "knowledge_base_ids": request.knowledge_base_ids,
             "document_ids": request.document_ids,
+            "knowledge_base_scopes": [
+                {
+                    "knowledge_base_id": scope.knowledge_base_id,
+                    "scope_restricted": scope.scope_restricted,
+                    "document_ids": scope.document_ids,
+                }
+                for scope in (request.knowledge_base_scopes or [])
+            ],
             "is_user_selected_kb": request.is_user_selected_kb,
             "kb_tool_access_mode": normalize_kb_tool_access_mode(
                 request.kb_tool_access_mode
@@ -329,6 +365,9 @@ class OpenAIRequestConverter:
             mcp_servers=mcp_servers,
             knowledge_base_ids=metadata.get("knowledge_base_ids"),
             document_ids=metadata.get("document_ids"),
+            knowledge_base_scopes=_coerce_knowledge_base_scopes(
+                metadata.get("knowledge_base_scopes")
+            ),
             is_user_selected_kb=metadata.get("is_user_selected_kb", True),
             kb_tool_access_mode=normalize_kb_tool_access_mode(
                 metadata.get("kb_tool_access_mode")
