@@ -247,8 +247,13 @@ describe('App center route', () => {
     expect(
       await screen.findByTestId('local-management-page'),
     ).toBeInTheDocument()
-    expect(await screen.findByText('启动环境变量')).toBeInTheDocument()
     expect(await screen.findByText('v22.12.0')).toBeInTheDocument()
+    expect(screen.getByText('本机依赖检测')).toBeInTheDocument()
+    expect(screen.getByText('快捷操作')).toBeInTheDocument()
+    expect(screen.queryByText('启动环境变量')).not.toBeInTheDocument()
+    expect(screen.queryByText('连接诊断')).not.toBeInTheDocument()
+    expect(screen.queryByText('本机插件')).not.toBeInTheDocument()
+    expect(screen.queryByText('最近输出')).not.toBeInTheDocument()
     expect(
       await screen.findByTestId('executor-primary-action-button'),
     ).toHaveTextContent('启动 Executor')
@@ -261,12 +266,97 @@ describe('App center route', () => {
     expect(
       screen.queryByTestId('executor-env-save-button'),
     ).not.toBeInTheDocument()
-    expect(screen.getByTestId('executor-open-logs-button')).toHaveTextContent(
-      '打开日志目录',
-    )
+    expect(
+      screen.queryByTestId('executor-open-logs-button'),
+    ).not.toBeInTheDocument()
     expect(screen.queryByText('Skills')).not.toBeInTheDocument()
     expect(screen.queryByText('MCP')).not.toBeInTheDocument()
     expect(screen.queryByText('插件包')).not.toBeInTheDocument()
+  })
+
+  test('unlocks local management advanced settings after five title clicks', async () => {
+    window.history.pushState({}, '', '/apps')
+
+    render(<App />)
+
+    expect(await screen.findByText('Executor 状态')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('apps-nav-local-management'))
+
+    const title = await screen.findByTestId('local-management-title')
+    for (let clickCount = 0; clickCount < 4; clickCount += 1) {
+      fireEvent.click(title)
+    }
+
+    expect(screen.queryByText('启动环境变量')).not.toBeInTheDocument()
+
+    fireEvent.click(title)
+
+    expect(screen.getByText('启动环境变量')).toBeInTheDocument()
+    expect(screen.getByText('连接诊断')).toBeInTheDocument()
+    expect(screen.getByText('本机插件')).toBeInTheDocument()
+    expect(screen.getByText('最近输出')).toBeInTheDocument()
+    expect(screen.getByTestId('advanced-settings-toast')).toHaveTextContent(
+      '已开启高级设置',
+    )
+    expect(
+      localStorage.getItem('wework.localManagement.advancedSettingsEnabled'),
+    ).toBe('true')
+  })
+
+  test('resets the title click sequence after three seconds', async () => {
+    let currentTime = 1_000
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => currentTime)
+    window.history.pushState({}, '', '/apps')
+
+    render(<App />)
+
+    expect(await screen.findByText('Executor 状态')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('apps-nav-local-management'))
+
+    const title = await screen.findByTestId('local-management-title')
+    for (let clickCount = 0; clickCount < 4; clickCount += 1) {
+      fireEvent.click(title)
+    }
+
+    currentTime += 3_001
+    fireEvent.click(title)
+    for (let clickCount = 0; clickCount < 3; clickCount += 1) {
+      fireEvent.click(title)
+    }
+
+    expect(screen.queryByText('启动环境变量')).not.toBeInTheDocument()
+
+    fireEvent.click(title)
+
+    expect(screen.getByText('启动环境变量')).toBeInTheDocument()
+    nowSpy.mockRestore()
+  })
+
+  test('restores persisted advanced settings without showing the unlock toast', async () => {
+    localStorage.setItem(
+      'wework.localManagement.advancedSettingsEnabled',
+      'true',
+    )
+    window.history.pushState({}, '', '/apps')
+
+    render(<App />)
+
+    expect(await screen.findByText('Executor 状态')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('apps-nav-local-management'))
+
+    expect(await screen.findByText('启动环境变量')).toBeInTheDocument()
+    expect(screen.getByText('连接诊断')).toBeInTheDocument()
+    expect(screen.getByText('本机插件')).toBeInTheDocument()
+    expect(screen.getByText('最近输出')).toBeInTheDocument()
+    expect(
+      screen.queryByTestId('advanced-settings-toast'),
+    ).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('local-management-title'))
+
+    expect(
+      screen.queryByTestId('advanced-settings-toast'),
+    ).not.toBeInTheDocument()
   })
 
   test('collapses the apps page header while scrolling the overview', async () => {
@@ -375,7 +465,30 @@ describe('App center route', () => {
     )
   })
 
+  test('opens local management from the startup indicator', async () => {
+    window.history.pushState({}, '', '/')
+
+    render(<App />)
+
+    const indicator = await screen.findByTestId('local-startup-indicator')
+    expect(indicator).toBeInTheDocument()
+    await userEvent.click(
+      screen.getByTestId('local-startup-open-management-button'),
+    )
+
+    await waitFor(() =>
+      expect(window.location.search).toBe('?section=local-management'),
+    )
+    expect(
+      await screen.findByTestId('local-management-page'),
+    ).toBeInTheDocument()
+  })
+
   test('shows four environment variables without clipping and autosaves edits', async () => {
+    localStorage.setItem(
+      'wework.localManagement.advancedSettingsEnabled',
+      'true',
+    )
     window.history.pushState({}, '', '/apps')
 
     render(<App />)

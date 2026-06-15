@@ -40,6 +40,7 @@ import {
 import { createUserApi } from '@/api/users'
 import type { UserRuntimeConfig, UserProxyConfig } from '@/api/users'
 import { getRuntimeConfig } from '@/config/runtime'
+import { useLocalManagementAdvancedSettings } from '@/hooks/useLocalManagementAdvancedSettings'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
 import type { DeviceInfo } from '@/types/devices'
@@ -109,6 +110,18 @@ type AppsSection =
   | 'local-management'
   | 'coding-agent'
   | 'installed-apps'
+
+function getAppsSectionFromLocation(): AppsSection {
+  const section = new URLSearchParams(window.location.search).get('section')
+  if (
+    section === 'local-management' ||
+    section === 'coding-agent' ||
+    section === 'installed-apps'
+  ) {
+    return section
+  }
+  return 'overview'
+}
 
 const HEADER_COLLAPSE_DISTANCE = 96
 const EXECUTOR_ACTION_MIN_FEEDBACK_MS = 400
@@ -467,6 +480,8 @@ function LocalManagementPage({
   onAddEnv,
   onDeleteEnv,
   onToggleEnvExpanded,
+  advancedSettingsEnabled,
+  onTitleClick,
 }: {
   state: LocalExecutorState
   devices: DeviceInfo[]
@@ -477,6 +492,8 @@ function LocalManagementPage({
   onAddEnv: () => void
   onDeleteEnv: (index: number) => void
   onToggleEnvExpanded: () => void
+  advancedSettingsEnabled: boolean
+  onTitleClick: () => void
 }) {
   const readiness = getExecutorReadiness(state.status)
   const copy = getReadinessCopy(readiness)
@@ -500,7 +517,11 @@ function LocalManagementPage({
           <div className="text-xs font-bold uppercase tracking-[0.12em] text-primary">
             Local Management
           </div>
-          <h1 className="mt-1 text-2xl font-bold tracking-[-0.02em] text-text-primary">
+          <h1
+            data-testid="local-management-title"
+            className="mt-1 text-2xl font-bold tracking-[-0.02em] text-text-primary"
+            onClick={onTitleClick}
+          >
             本机管理
           </h1>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-text-secondary">
@@ -710,190 +731,192 @@ function LocalManagementPage({
           </section>
         </div>
 
-        <section className="mt-4 rounded-2xl border border-border bg-background">
-          <div className="flex flex-col gap-3 border-b border-border p-4 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <h2 className="text-base font-bold text-text-primary">
-                启动环境变量
-              </h2>
-              <p className="mt-1 text-xs leading-5 text-text-muted">
-                启动 executor 时自动注入。多于 4
-                项时默认折叠，展开后可查看全部。
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <ExecutorActionButton
-                testId="executor-env-add-button"
-                icon={Plus}
-                label="新增变量"
-                disabled={false}
-                onClick={onAddEnv}
-              />
-            </div>
-          </div>
-          <div className="p-4">
-            <div className="grid gap-3">
-              {envRows.map((envVar, index) => (
-                <EnvVarRow
-                  key={`${envVar.key}-${index}`}
-                  envVar={envVar}
-                  index={index}
-                  onChange={onChangeEnv}
-                  onDelete={onDeleteEnv}
-                />
-              ))}
-            </div>
-            <div
-              className={`mt-3 flex flex-col gap-3 sm:flex-row sm:items-center ${
-                hasCollapsibleEnvVars ? 'sm:justify-between' : 'sm:justify-end'
-              }`}
-            >
-              {hasCollapsibleEnvVars && (
-                <button
-                  type="button"
-                  data-testid="executor-env-toggle-button"
-                  onClick={onToggleEnvExpanded}
-                  className="inline-flex h-9 items-center gap-2 text-sm font-semibold text-primary"
-                >
-                  <ChevronDown
-                    className={`h-4 w-4 transition ${
-                      state.envExpanded ? 'rotate-180' : ''
-                    }`}
+        {advancedSettingsEnabled ? (
+          <>
+            <section className="mt-4 rounded-2xl border border-border bg-background">
+              <div className="flex flex-col gap-3 border-b border-border p-4 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                  <h2 className="text-base font-bold text-text-primary">
+                    启动环境变量
+                  </h2>
+                  <p className="mt-1 text-xs leading-5 text-text-muted">
+                    启动 executor 时自动注入。多于 4
+                    项时默认折叠，展开后可查看全部。
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <ExecutorActionButton
+                    testId="executor-env-add-button"
+                    icon={Plus}
+                    label="新增变量"
+                    disabled={false}
+                    onClick={onAddEnv}
                   />
-                  {state.envExpanded
-                    ? '收起环境变量'
-                    : `展开全部 ${state.envVars.length} 项`}
-                </button>
-              )}
-              <StatusPill
-                label={
-                  !envVarsSavable
-                    ? '填写变量名后自动保存'
-                    : state.isSavingEnv
-                      ? '保存中...'
-                      : '已自动保存，重启后生效'
-                }
-                tone={
-                  !envVarsSavable || state.isSavingEnv ? 'warning' : 'neutral'
-                }
-              />
-            </div>
-            <div className="mt-3 rounded-xl bg-primary/10 px-3 py-2 text-xs leading-5 text-primary">
-              启动动作会读取本机保存的 env 配置，再执行 wecode executor start。
-              敏感值显示为掩码，配置仅保存在本机 App。
-            </div>
-          </div>
-        </section>
-
-        <section className="mt-4 rounded-2xl border border-border bg-background">
-          <div className="flex items-center justify-between gap-3 border-b border-border p-4">
-            <div>
-              <h2 className="text-base font-bold text-text-primary">
-                连接诊断
-              </h2>
-              <p className="mt-1 text-xs leading-5 text-text-muted">
-                把 Node、CLI、进程和 Backend 在线状态拆开显示。
-              </p>
-            </div>
-            <StatusPill label="5 步检查" tone="neutral" />
-          </div>
-          <div className="grid gap-3 p-4 md:grid-cols-5">
-            <DiagnosticStep
-              index={1}
-              title="Node 可用"
-              detail="Node >= 20，路径可执行。"
-            />
-            <DiagnosticStep
-              index={2}
-              title="CLI 可用"
-              detail="通过 PATH 或 ~/.wecode 查找 wecode。"
-            />
-            <DiagnosticStep
-              index={3}
-              title="Executor 已安装"
-              detail="读取 status 的 Installed 字段。"
-            />
-            <DiagnosticStep
-              index={4}
-              title="本机进程运行"
-              detail="展示 PID、启动错误和日志。"
-            />
-            <DiagnosticStep
-              index={5}
-              title="设备在线"
-              detail="对照 Backend /devices 的 local device。"
-            />
-          </div>
-        </section>
-
-        <div className="mt-4 grid gap-4 xl:grid-cols-2">
-          <section className="rounded-2xl border border-border bg-background">
-            <div className="border-b border-border p-4">
-              <h2 className="text-base font-bold text-text-primary">
-                本机插件
-              </h2>
-              <p className="mt-1 text-xs leading-5 text-text-muted">
-                安装 executor 可选能力。
-              </p>
-            </div>
-            <div className="grid gap-3 p-4">
-              <PluginAction
-                title="Browser 自动化"
-                detail="用于浏览器检查、截图和网页交互。"
-                disabled={isBusy}
-                onClick={() => onRunAction('install-browser')}
-              />
-              <PluginAction
-                title="Mail 客户端"
-                detail="用于本机邮件工作流。"
-                disabled={isBusy}
-                onClick={() => onRunAction('install-mail')}
-              />
-            </div>
-          </section>
-
-          <section className="rounded-2xl border border-border bg-background">
-            <div className="flex flex-col gap-3 border-b border-border p-4 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <h2 className="text-base font-bold text-text-primary">
-                  最近输出
-                </h2>
-                <p className="mt-1 text-xs leading-5 text-text-muted">
-                  保留最近一次检测或操作结果。
-                </p>
+                </div>
               </div>
-              <ExecutorActionButton
-                testId="executor-open-logs-button"
-                icon={FolderOpen}
-                label="打开日志目录"
-                loading={state.isOpeningLogs}
-                loadingLabel="打开中..."
-                disabled={state.isOpeningLogs}
-                onClick={onOpenLogs}
-              />
+              <div className="p-4">
+                <div className="grid gap-3">
+                  {envRows.map((envVar, index) => (
+                    <EnvVarRow
+                      key={`${envVar.key}-${index}`}
+                      envVar={envVar}
+                      index={index}
+                      onChange={onChangeEnv}
+                      onDelete={onDeleteEnv}
+                    />
+                  ))}
+                </div>
+                <div
+                  className={`mt-3 flex flex-col gap-3 sm:flex-row sm:items-center ${
+                    hasCollapsibleEnvVars
+                      ? 'sm:justify-between'
+                      : 'sm:justify-end'
+                  }`}
+                >
+                  {hasCollapsibleEnvVars && (
+                    <button
+                      type="button"
+                      data-testid="executor-env-toggle-button"
+                      onClick={onToggleEnvExpanded}
+                      className="inline-flex h-9 items-center gap-2 text-sm font-semibold text-primary"
+                    >
+                      <ChevronDown
+                        className={`h-4 w-4 transition ${state.envExpanded ? 'rotate-180' : ''}`}
+                      />
+                      {state.envExpanded
+                        ? '收起环境变量'
+                        : `展开全部 ${state.envVars.length} 项`}
+                    </button>
+                  )}
+                  <StatusPill
+                    label={
+                      !envVarsSavable
+                        ? '填写变量名后自动保存'
+                        : state.isSavingEnv
+                          ? '保存中...'
+                          : '已自动保存，重启后生效'
+                    }
+                    tone={
+                      !envVarsSavable || state.isSavingEnv
+                        ? 'warning'
+                        : 'neutral'
+                    }
+                  />
+                </div>
+                <div className="mt-3 rounded-xl bg-primary/10 px-3 py-2 text-xs leading-5 text-primary">
+                  启动动作会读取本机保存的 env 配置，再执行 wecode executor
+                  start。 敏感值显示为掩码，配置仅保存在本机 App。
+                </div>
+              </div>
+            </section>
+
+            <section className="mt-4 rounded-2xl border border-border bg-background">
+              <div className="flex items-center justify-between gap-3 border-b border-border p-4">
+                <div>
+                  <h2 className="text-base font-bold text-text-primary">
+                    连接诊断
+                  </h2>
+                  <p className="mt-1 text-xs leading-5 text-text-muted">
+                    把 Node、CLI、进程和 Backend 在线状态拆开显示。
+                  </p>
+                </div>
+                <StatusPill label="5 步检查" tone="neutral" />
+              </div>
+              <div className="grid gap-3 p-4 md:grid-cols-5">
+                <DiagnosticStep
+                  index={1}
+                  title="Node 可用"
+                  detail="Node >= 20，路径可执行。"
+                />
+                <DiagnosticStep
+                  index={2}
+                  title="CLI 可用"
+                  detail="通过 PATH 或 ~/.wecode 查找 wecode。"
+                />
+                <DiagnosticStep
+                  index={3}
+                  title="Executor 已安装"
+                  detail="读取 status 的 Installed 字段。"
+                />
+                <DiagnosticStep
+                  index={4}
+                  title="本机进程运行"
+                  detail="展示 PID、启动错误和日志。"
+                />
+                <DiagnosticStep
+                  index={5}
+                  title="设备在线"
+                  detail="对照 Backend /devices 的 local device。"
+                />
+              </div>
+            </section>
+
+            <div className="mt-4 grid gap-4 xl:grid-cols-2">
+              <section className="rounded-2xl border border-border bg-background">
+                <div className="border-b border-border p-4">
+                  <h2 className="text-base font-bold text-text-primary">
+                    本机插件
+                  </h2>
+                  <p className="mt-1 text-xs leading-5 text-text-muted">
+                    安装 executor 可选能力。
+                  </p>
+                </div>
+                <div className="grid gap-3 p-4">
+                  <PluginAction
+                    title="Browser 自动化"
+                    detail="用于浏览器检查、截图和网页交互。"
+                    disabled={isBusy}
+                    onClick={() => onRunAction('install-browser')}
+                  />
+                  <PluginAction
+                    title="Mail 客户端"
+                    detail="用于本机邮件工作流。"
+                    disabled={isBusy}
+                    onClick={() => onRunAction('install-mail')}
+                  />
+                </div>
+              </section>
+
+              <section className="rounded-2xl border border-border bg-background">
+                <div className="flex flex-col gap-3 border-b border-border p-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <h2 className="text-base font-bold text-text-primary">
+                      最近输出
+                    </h2>
+                    <p className="mt-1 text-xs leading-5 text-text-muted">
+                      保留最近一次检测或操作结果。
+                    </p>
+                  </div>
+                  <ExecutorActionButton
+                    testId="executor-open-logs-button"
+                    icon={FolderOpen}
+                    label="打开日志目录"
+                    loading={state.isOpeningLogs}
+                    loadingLabel="打开中..."
+                    disabled={state.isOpeningLogs}
+                    onClick={onOpenLogs}
+                  />
+                </div>
+                <div className="space-y-2 p-4">
+                  <LogLine
+                    text={`node: ${node?.version || 'not found'}, path=${node?.path || '--'}`}
+                  />
+                  <LogLine
+                    text={`wecode: ${cli?.version || 'not found'}, path=${cli?.path || '--'}`}
+                  />
+                  <LogLine
+                    text={`executor: installed=${
+                      state.status?.installed ? 'yes' : 'no'
+                    }, running=${state.status?.running ? 'yes' : 'no'}`}
+                  />
+                  <LogLine
+                    text={`startup env: ${state.envVars.length} variables loaded from local app config`}
+                  />
+                </div>
+              </section>
             </div>
-            <div className="space-y-2 p-4">
-              <LogLine
-                text={`node: ${node?.version || 'not found'}, path=${
-                  node?.path || '--'
-                }`}
-              />
-              <LogLine
-                text={`wecode: ${cli?.version || 'not found'}, path=${
-                  cli?.path || '--'
-                }`}
-              />
-              <LogLine
-                text={`executor: installed=${
-                  state.status?.installed ? 'yes' : 'no'
-                }, running=${state.status?.running ? 'yes' : 'no'}`}
-              />
-              <LogLine
-                text={`startup env: ${state.envVars.length} variables loaded from local app config`}
-              />
-            </div>
-          </section>
-        </div>
+          </>
+        ) : null}
       </div>
     </div>
   )
@@ -1405,12 +1428,19 @@ export function AppsPage() {
   const [state, setState] = useState<AppsPageState>(initialState)
   const [localExecutorState, setLocalExecutorState] =
     useState<LocalExecutorState>(initialLocalExecutorState)
-  const [activeSection, setActiveSection] = useState<AppsSection>('overview')
+  const [activeSection, setActiveSection] = useState<AppsSection>(() =>
+    getAppsSectionFromLocation(),
+  )
   const [headerCollapseProgress, setHeaderCollapseProgress] = useState(0)
   const scrollFrameRef = useRef<number | null>(null)
   const envSaveTimerRef = useRef<number | null>(null)
   const envSaveGenerationRef = useRef(0)
   const lastSavedEnvSnapshotRef = useRef<string | null>(null)
+  const {
+    advancedSettingsEnabled,
+    showAdvancedSettingsToast,
+    handleTitleClick,
+  } = useLocalManagementAdvancedSettings()
 
   const refreshLocalExecutor = useCallback(async () => {
     setLocalExecutorState((prev) => ({
@@ -1610,6 +1640,14 @@ export function AppsPage() {
   }, [refreshLocalExecutor])
 
   useEffect(() => {
+    const syncSectionFromLocation = () => {
+      setActiveSection(getAppsSectionFromLocation())
+    }
+    window.addEventListener('popstate', syncSectionFromLocation)
+    return () => window.removeEventListener('popstate', syncSectionFromLocation)
+  }, [])
+
+  useEffect(() => {
     if (localExecutorState.isLoading) return
 
     const envVars = localExecutorState.envVars
@@ -1733,6 +1771,8 @@ export function AppsPage() {
               onAddEnv={addExecutorEnv}
               onDeleteEnv={deleteExecutorEnv}
               onToggleEnvExpanded={toggleExecutorEnvExpanded}
+              advancedSettingsEnabled={advancedSettingsEnabled}
+              onTitleClick={handleTitleClick}
             />
           ) : activeSection === 'coding-agent' ? (
             <PlaceholderSection
@@ -1844,6 +1884,16 @@ export function AppsPage() {
           )}
         </div>
       </section>
+      {showAdvancedSettingsToast ? (
+        <div
+          role="status"
+          aria-live="polite"
+          data-testid="advanced-settings-toast"
+          className="fixed bottom-5 right-5 z-50 rounded-xl border border-border bg-background px-4 py-3 text-sm font-semibold text-text-primary shadow-lg"
+        >
+          已开启高级设置
+        </div>
+      ) : null}
     </div>
   )
 }

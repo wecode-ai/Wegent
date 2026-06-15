@@ -3,6 +3,7 @@ import { isTauriRuntime } from '@/lib/runtime-environment'
 import type { AppTab } from '@/config/apps'
 import { Grid3X3, Globe2 } from 'lucide-react'
 import { TITLEBAR_ACTIONS_PORTAL_ID } from './TitlebarActionsPortal'
+import { LocalExecutorStartupIndicator } from '@/features/local-executor/LocalExecutorStartupIndicator'
 
 function getPlatform(): 'mac' | 'win' | 'linux' {
   if (typeof navigator === 'undefined') return 'mac'
@@ -19,7 +20,11 @@ interface ChromeTitlebarProps {
   onNavigate: (appKey: string) => void
 }
 
-export function ChromeTitlebar({ tabs, activeKey, onNavigate }: ChromeTitlebarProps) {
+export function ChromeTitlebar({
+  tabs,
+  activeKey,
+  onNavigate,
+}: ChromeTitlebarProps) {
   const isTauri = isTauriRuntime()
   const platform = getPlatform()
 
@@ -40,7 +45,7 @@ export function ChromeTitlebar({ tabs, activeKey, onNavigate }: ChromeTitlebarPr
 
       {/* Tab strip */}
       <div className="flex min-w-0 items-center gap-1 overflow-hidden">
-        {tabs.map(tab => (
+        {tabs.map((tab) => (
           <button
             key={tab.key}
             type="button"
@@ -74,6 +79,7 @@ export function ChromeTitlebar({ tabs, activeKey, onNavigate }: ChromeTitlebarPr
         className="min-w-6 flex-1"
         {...(isTauri ? { 'data-tauri-drag-region': '' } : {})}
       />
+      {isTauri && <LocalExecutorStartupIndicator />}
       <div
         id={TITLEBAR_ACTIONS_PORTAL_ID}
         data-testid="titlebar-actions"
