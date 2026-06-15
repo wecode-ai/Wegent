@@ -1,40 +1,47 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
-import type { ReactNode } from 'react'
-import { createDeviceApi } from '@/api/devices'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from "react";
+import type { ReactNode } from "react";
+import { createDeviceApi } from "@/api/devices";
 import {
   checkoutProjectBranch,
   commitProjectChanges,
   createAndCheckoutProjectBranch,
   listProjectBranches,
   loadProjectEnvironment,
-} from '@/api/environment'
-import { createGitApi } from '@/api/git'
-import { ApiError, createHttpClient } from '@/api/http'
-import { createModelApi } from '@/api/models'
-import { createProjectApi } from '@/api/projects'
-import { createSkillApi } from '@/api/skills'
-import { createTaskApi } from '@/api/tasks'
-import { createTeamApi } from '@/api/teams'
-import { createUserApi } from '@/api/users'
-import { getRuntimeConfig, stripAppBasePath } from '@/config/runtime'
-import { createChatStream } from '@/stream/chatStream'
-import { createSocketClient } from '@/stream/socketClient'
-import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
+} from "@/api/environment";
+import { createGitApi } from "@/api/git";
+import { ApiError, createHttpClient } from "@/api/http";
+import { createModelApi } from "@/api/models";
+import { createProjectApi } from "@/api/projects";
+import { createSkillApi } from "@/api/skills";
+import { createTaskApi } from "@/api/tasks";
+import { createTeamApi } from "@/api/teams";
+import { createUserApi } from "@/api/users";
+import { getRuntimeConfig, stripAppBasePath } from "@/config/runtime";
+import { createChatStream } from "@/stream/chatStream";
+import { createSocketClient } from "@/stream/socketClient";
+import { getPreferredStandaloneDeviceId } from "@/lib/device-selection";
 import {
   WEWORK_MIN_EXECUTOR_VERSION,
   canRequestDeviceUpgrade,
   isDeviceBelowWeWorkVersion,
   isWeWorkCompatibleDevice,
-} from '@/lib/device-capabilities'
-import { buildTaskRoute, navigateTo, parseTaskRoute } from '@/lib/navigation'
-import { supportsGitWorktreeExecution } from '@/lib/projectClassification'
+} from "@/lib/device-capabilities";
+import { buildTaskRoute, navigateTo, parseTaskRoute } from "@/lib/navigation";
+import { supportsGitWorktreeExecution } from "@/lib/projectClassification";
 import {
   findProjectForTask,
   findWorkbenchDevice,
   getActiveWorkbenchDeviceId,
   getWorkbenchDeviceDisplayName,
   isWorkbenchDeviceOnline,
-} from '@/lib/workbench-device'
+} from "@/lib/workbench-device";
 import type {
   Attachment,
   ArchivedTaskListResponse,
@@ -59,74 +66,76 @@ import type {
   UnifiedModel,
   UnifiedSkill,
   User,
-} from '@/types/api'
+} from "@/types/api";
 import type {
   DeviceUpgradeState,
   DeviceUpgradeStatusPayload,
-} from '@/types/device-events'
-import type { EnvironmentInfo } from '@/types/environment'
+} from "@/types/device-events";
+import type { EnvironmentInfo } from "@/types/environment";
 import type {
   GuidanceWorkbenchMessage,
   ProcessingBlock,
   QueuedWorkbenchMessage,
   WorkbenchMessage,
   WorkbenchState,
-} from '@/types/workbench'
+} from "@/types/workbench";
 import {
   normalizeWorkbenchBlockStatus,
   reduceWorkbenchMessages,
-} from '@wegent/chat-core'
-import { useWorkbenchAttachments } from './useWorkbenchAttachments'
-import { useWorkbenchModels } from './useWorkbenchModels'
-import { useWorkbenchSkills } from './useWorkbenchSkills'
-import { normalizeTurnFileChanges } from './turnFileChanges'
-import {
-  initialWorkbenchState,
-  workbenchReducer,
-} from './workbenchReducer'
-import { WorkbenchContext } from './useWorkbench'
+} from "@wegent/chat-core";
+import { useWorkbenchAttachments } from "./useWorkbenchAttachments";
+import { useWorkbenchModels } from "./useWorkbenchModels";
+import { useWorkbenchSkills } from "./useWorkbenchSkills";
+import { normalizeTurnFileChanges } from "./turnFileChanges";
+import { initialWorkbenchState, workbenchReducer } from "./workbenchReducer";
+import { WorkbenchContext } from "./useWorkbench";
 
-const WEWORK_CLIENT_ORIGIN = 'wework'
-const LOCAL_SKILLS_CACHE_TTL_MS = 60_000
-const STANDALONE_PROJECT_ID = 0
-const EMPTY_MESSAGE_TASK_TITLE = '新对话'
+const WEWORK_CLIENT_ORIGIN = "wework";
+const LOCAL_SKILLS_CACHE_TTL_MS = 60_000;
+const STANDALONE_PROJECT_ID = 0;
+const EMPTY_MESSAGE_TASK_TITLE = "新对话";
 const DEVICE_STATUS_LABELS: Record<string, string> = {
-  online: '在线',
-  busy: '忙碌',
-  offline: '离线',
-}
-const TERMINAL_UPGRADE_STATUSES = new Set(['success', 'error', 'skipped', 'busy'])
-const UPGRADE_STATE_CLEAR_DELAY_MS = 5000
-const UPGRADE_REFRESH_INTERVAL_MS = 3000
-const DEVICE_LIST_CACHE_KEY = 'wework.workbench.lastNonEmptyDevices'
-const DEVICE_LIST_CACHE_TTL_MS = 5 * 60 * 1000
+  online: "在线",
+  busy: "忙碌",
+  offline: "离线",
+};
+const TERMINAL_UPGRADE_STATUSES = new Set([
+  "success",
+  "error",
+  "skipped",
+  "busy",
+]);
+const UPGRADE_STATE_CLEAR_DELAY_MS = 5000;
+const UPGRADE_REFRESH_INTERVAL_MS = 3000;
+const DEVICE_LIST_CACHE_KEY = "wework.workbench.lastNonEmptyDevices";
+const DEVICE_LIST_CACHE_TTL_MS = 5 * 60 * 1000;
 
 function readCachedDeviceList(): DeviceInfo[] {
   try {
-    const value = window.sessionStorage.getItem(DEVICE_LIST_CACHE_KEY)
-    if (!value) return []
-    const parsed = JSON.parse(value)
+    const value = window.sessionStorage.getItem(DEVICE_LIST_CACHE_KEY);
+    if (!value) return [];
+    const parsed = JSON.parse(value);
     if (
       !parsed ||
       !Array.isArray(parsed.devices) ||
-      typeof parsed.updatedAt !== 'number'
+      typeof parsed.updatedAt !== "number"
     ) {
-      return []
+      return [];
     }
-    if (Date.now() - parsed.updatedAt > DEVICE_LIST_CACHE_TTL_MS) return []
-    return parsed.devices
+    if (Date.now() - parsed.updatedAt > DEVICE_LIST_CACHE_TTL_MS) return [];
+    return parsed.devices;
   } catch {
-    return []
+    return [];
   }
 }
 
 function writeCachedDeviceList(devices: DeviceInfo[]) {
-  if (devices.length === 0) return
+  if (devices.length === 0) return;
   try {
     window.sessionStorage.setItem(
       DEVICE_LIST_CACHE_KEY,
       JSON.stringify({ devices, updatedAt: Date.now() }),
-    )
+    );
   } catch {
     // The live state remains authoritative when browser storage is unavailable.
   }
@@ -134,170 +143,172 @@ function writeCachedDeviceList(devices: DeviceInfo[]) {
 
 function resolveDeviceListWithCache(devices: DeviceInfo[]): DeviceInfo[] {
   if (devices.length > 0) {
-    writeCachedDeviceList(devices)
-    return devices
+    writeCachedDeviceList(devices);
+    return devices;
   }
 
-  const cachedDevices = readCachedDeviceList()
+  const cachedDevices = readCachedDeviceList();
   if (cachedDevices.length > 0) {
-    return cachedDevices
+    return cachedDevices;
   }
 
-  return devices
+  return devices;
 }
 
 interface QueuedWorkbenchSend extends QueuedWorkbenchMessage {
-  payload: ChatSendPayload
-  activeDeviceId?: string
-  attachments?: Attachment[]
+  payload: ChatSendPayload;
+  activeDeviceId?: string;
+  attachments?: Attachment[];
 }
 
 function isTerminalDeviceUpgradeStatus(status: string): boolean {
-  return TERMINAL_UPGRADE_STATUSES.has(status)
+  return TERMINAL_UPGRADE_STATUSES.has(status);
 }
 
 function getUpgradeStatusMessage(payload: DeviceUpgradeStatusPayload): string {
-  if (payload.message) return payload.message
-  if (payload.status === 'success') return '升级完成，正在检查设备版本'
-  if (payload.status === 'error') return payload.error ?? '升级失败'
-  if (payload.status === 'busy') return '设备正在执行任务，空闲后再升级'
-  if (payload.status === 'skipped') return '设备已是最新版本'
-  return '设备升级中'
+  if (payload.message) return payload.message;
+  if (payload.status === "success") return "升级完成，正在检查设备版本";
+  if (payload.status === "error") return payload.error ?? "升级失败";
+  if (payload.status === "busy") return "设备正在执行任务，空闲后再升级";
+  if (payload.status === "skipped") return "设备已是最新版本";
+  return "设备升级中";
 }
 
 export interface WorkbenchServices {
-  teamApi: ReturnType<typeof createTeamApi>
-  modelApi: ReturnType<typeof createModelApi>
-  skillApi: ReturnType<typeof createSkillApi>
+  teamApi: ReturnType<typeof createTeamApi>;
+  modelApi: ReturnType<typeof createModelApi>;
+  skillApi: ReturnType<typeof createSkillApi>;
   projectApi: Omit<
     ReturnType<typeof createProjectApi>,
-    'createGitWorkspaceProject'
+    "createGitWorkspaceProject"
   > & {
     createGitWorkspaceProject?: ReturnType<
       typeof createProjectApi
-    >['createGitWorkspaceProject']
-  }
-  gitApi?: ReturnType<typeof createGitApi>
+    >["createGitWorkspaceProject"];
+  };
+  gitApi?: ReturnType<typeof createGitApi>;
   taskApi: Omit<
     ReturnType<typeof createTaskApi>,
-    'searchTasks' | 'getTurnFileChangesDiff' | 'revertTurnFileChanges'
+    "searchTasks" | "getTurnFileChangesDiff" | "revertTurnFileChanges"
   > & {
-    searchTasks?: ReturnType<typeof createTaskApi>['searchTasks']
+    searchTasks?: ReturnType<typeof createTaskApi>["searchTasks"];
     getTurnFileChangesDiff?: ReturnType<
       typeof createTaskApi
-    >['getTurnFileChangesDiff']
+    >["getTurnFileChangesDiff"];
     revertTurnFileChanges?: ReturnType<
       typeof createTaskApi
-    >['revertTurnFileChanges']
-  }
-  deviceApi: ReturnType<typeof createDeviceApi>
-  userApi?: ReturnType<typeof createUserApi>
-  chatStream: ReturnType<typeof createChatStream>
+    >["revertTurnFileChanges"];
+  };
+  deviceApi: ReturnType<typeof createDeviceApi>;
+  userApi?: ReturnType<typeof createUserApi>;
+  chatStream: ReturnType<typeof createChatStream>;
 }
 
 export interface WorkbenchContextValue {
-  state: WorkbenchState
-  messages: WorkbenchMessage[]
-  queuedMessages: QueuedWorkbenchMessage[]
-  guidanceMessages: GuidanceWorkbenchMessage[]
+  state: WorkbenchState;
+  messages: WorkbenchMessage[];
+  queuedMessages: QueuedWorkbenchMessage[];
+  guidanceMessages: GuidanceWorkbenchMessage[];
   projectChat: {
-    models: UnifiedModel[]
-    skills: UnifiedSkill[]
-    selectedModel: UnifiedModel | null
-    selectedModelOptions: ModelOptions
-    isModelSelectionReady: boolean
-    selectedSkills: SkillRef[]
-    attachments: Attachment[]
-    uploadingFiles: Map<string, { file: File; progress: number }>
-    errors: Map<string, string>
-    isOptionsLocked: boolean
-    isAttachmentReadyToSend: boolean
-    setSelectedModel: (model: UnifiedModel | null) => void
-    setSelectedModelOption: (optionId: string, value: string) => void
-    setSelectedSkills: (skills: SkillRef[]) => void
-    toggleSkill: (skill: SkillRef) => void
-    handleFileSelect: (files: File | File[]) => Promise<void>
-    addExistingAttachment: (attachment: Attachment) => void
-    removeAttachment: (attachmentId: number) => Promise<void>
-    resetAttachments: () => void
-    listLocalSkills: () => Promise<LocalDeviceSkill[]>
-  }
-  runningTaskIds: Set<number>
-  upgradingDevices: Record<string, DeviceUpgradeState>
-  projectExecutionMode: ProjectExecutionMode
-  setProjectExecutionMode: (mode: ProjectExecutionMode) => void
-  selectProject: (projectId: number | null) => void
-  selectStandaloneDevice: (deviceId: string | null) => void
-  startNewChat: () => void
-  startStandaloneChat: () => void
-  startNewProjectChat: (projectId: number) => void
-  openTask: (taskId: number, projectId?: number) => Promise<void>
-  searchTasks: (query: string) => Promise<TaskListResponse>
-  searchTaskDetail: (taskId: number) => Promise<TaskDetail>
-  rememberExecutionDevice: (deviceId: string) => void
-  refreshWorkLists: () => Promise<void>
-  refreshDevices: () => Promise<void>
-  upgradeDevice: (deviceId: string) => Promise<void>
-  createProject: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
+    models: UnifiedModel[];
+    skills: UnifiedSkill[];
+    selectedModel: UnifiedModel | null;
+    selectedModelOptions: ModelOptions;
+    isModelSelectionReady: boolean;
+    selectedSkills: SkillRef[];
+    attachments: Attachment[];
+    uploadingFiles: Map<string, { file: File; progress: number }>;
+    errors: Map<string, string>;
+    isOptionsLocked: boolean;
+    isAttachmentReadyToSend: boolean;
+    setSelectedModel: (model: UnifiedModel | null) => void;
+    setSelectedModelOption: (optionId: string, value: string) => void;
+    setSelectedSkills: (skills: SkillRef[]) => void;
+    toggleSkill: (skill: SkillRef) => void;
+    handleFileSelect: (files: File | File[]) => Promise<void>;
+    addExistingAttachment: (attachment: Attachment) => void;
+    removeAttachment: (attachmentId: number) => Promise<void>;
+    resetAttachments: () => void;
+    listLocalSkills: () => Promise<LocalDeviceSkill[]>;
+  };
+  runningTaskIds: Set<number>;
+  upgradingDevices: Record<string, DeviceUpgradeState>;
+  projectExecutionMode: ProjectExecutionMode;
+  setProjectExecutionMode: (mode: ProjectExecutionMode) => void;
+  selectProject: (projectId: number | null) => void;
+  selectStandaloneDevice: (deviceId: string | null) => void;
+  startNewChat: () => void;
+  startStandaloneChat: () => void;
+  startNewProjectChat: (projectId: number) => void;
+  openTask: (taskId: number, projectId?: number) => Promise<void>;
+  searchTasks: (query: string) => Promise<TaskListResponse>;
+  searchTaskDetail: (taskId: number) => Promise<TaskDetail>;
+  rememberExecutionDevice: (deviceId: string) => void;
+  refreshWorkLists: () => Promise<void>;
+  refreshDevices: () => Promise<void>;
+  upgradeDevice: (deviceId: string) => Promise<void>;
+  createProject: (data: CreateProjectRequest) => Promise<ProjectWithTasks>;
   createGitWorkspaceProject: (
     data: CreateGitWorkspaceProjectRequest,
-  ) => Promise<ProjectWithTasks>
-  listGitRepositories: () => Promise<GitRepoInfo[]>
-  listGitBranches: (repo: GitRepoInfo) => Promise<GitBranch[]>
-  updateProjectName: (projectId: number, name: string) => Promise<void>
-  removeProject: (projectId: number) => Promise<void>
-  archiveAllChats: () => Promise<void>
-  archiveAllProjectChats: () => Promise<void>
-  archiveProjectChats: (projectId: number) => Promise<void>
-  archiveTask: (taskId: number) => Promise<void>
-  renameTask: (taskId: number, title: string) => Promise<void>
-  listArchivedTasks: () => Promise<ArchivedTaskListResponse>
-  unarchiveTask: (taskId: number) => Promise<void>
-  deleteTask: (taskId: number) => Promise<void>
-  deleteArchivedTasks: () => Promise<void>
-  getDeviceHomeDirectory: (deviceId: string) => Promise<string>
-  getProjectWorkspaceRoot: (deviceId: string) => Promise<string>
-  listDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
-  createDeviceDirectory: (deviceId: string, path: string) => Promise<void>
-  loadEnvironmentInfo: (project: ProjectWithTasks | null) => Promise<EnvironmentInfo>
+  ) => Promise<ProjectWithTasks>;
+  listGitRepositories: () => Promise<GitRepoInfo[]>;
+  listGitBranches: (repo: GitRepoInfo) => Promise<GitBranch[]>;
+  updateProjectName: (projectId: number, name: string) => Promise<void>;
+  removeProject: (projectId: number) => Promise<void>;
+  archiveAllChats: () => Promise<void>;
+  archiveAllProjectChats: () => Promise<void>;
+  archiveProjectChats: (projectId: number) => Promise<void>;
+  archiveTask: (taskId: number) => Promise<void>;
+  renameTask: (taskId: number, title: string) => Promise<void>;
+  listArchivedTasks: () => Promise<ArchivedTaskListResponse>;
+  unarchiveTask: (taskId: number) => Promise<void>;
+  deleteTask: (taskId: number) => Promise<void>;
+  deleteArchivedTasks: () => Promise<void>;
+  getDeviceHomeDirectory: (deviceId: string) => Promise<string>;
+  getProjectWorkspaceRoot: (deviceId: string) => Promise<string>;
+  listDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>;
+  createDeviceDirectory: (deviceId: string, path: string) => Promise<void>;
+  loadEnvironmentInfo: (
+    project: ProjectWithTasks | null,
+  ) => Promise<EnvironmentInfo>;
   commitEnvironmentChanges: (
     project: ProjectWithTasks | null,
     message: string,
-  ) => Promise<void>
-  listEnvironmentBranches: (project: ProjectWithTasks | null) => Promise<string[]>
+  ) => Promise<void>;
+  listEnvironmentBranches: (
+    project: ProjectWithTasks | null,
+  ) => Promise<string[]>;
   checkoutEnvironmentBranch: (
     project: ProjectWithTasks | null,
     branchName: string,
-  ) => Promise<void>
+  ) => Promise<void>;
   createEnvironmentBranch: (
     project: ProjectWithTasks | null,
     branchName: string,
-  ) => Promise<void>
-  setInput: (input: string) => void
-  sendCurrentInput: () => Promise<void>
-  retryFailedMessage: (messageId: string) => Promise<void>
-  pauseCurrentResponse: () => Promise<void>
-  isResponseStreaming: boolean
-  cancelQueuedMessage: (id: string) => void
-  sendQueuedAsGuidance: (id: string) => Promise<void>
-  editQueuedMessage: (id: string) => void
-  cancelGuidanceMessage: (id: string) => void
-  loadTurnFileChangesDiff: (subtaskId: number) => Promise<string>
-  revertTurnFileChanges: (
-    subtaskId: number,
-  ) => Promise<TurnFileChangesSummary>
+  ) => Promise<void>;
+  setInput: (input: string) => void;
+  sendCurrentInput: () => Promise<void>;
+  retryFailedMessage: (messageId: string) => Promise<void>;
+  pauseCurrentResponse: () => Promise<void>;
+  isResponseStreaming: boolean;
+  cancelQueuedMessage: (id: string) => void;
+  sendQueuedAsGuidance: (id: string) => Promise<void>;
+  editQueuedMessage: (id: string) => void;
+  cancelGuidanceMessage: (id: string) => void;
+  loadTurnFileChangesDiff: (subtaskId: number) => Promise<string>;
+  revertTurnFileChanges: (subtaskId: number) => Promise<TurnFileChangesSummary>;
 }
 
 interface WorkbenchProviderProps {
-  children: ReactNode
-  user: User
-  services?: WorkbenchServices
+  children: ReactNode;
+  user: User;
+  services?: WorkbenchServices;
 }
 
 function createDefaultServices(): WorkbenchServices {
-  const { apiBaseUrl } = getRuntimeConfig()
-  const client = createHttpClient({ baseUrl: apiBaseUrl })
-  const socket = createSocketClient()
+  const { apiBaseUrl } = getRuntimeConfig();
+  const client = createHttpClient({ baseUrl: apiBaseUrl });
+  const socket = createSocketClient();
 
   return {
     teamApi: createTeamApi(client),
@@ -309,239 +320,282 @@ function createDefaultServices(): WorkbenchServices {
     deviceApi: createDeviceApi(client),
     userApi: createUserApi(client),
     chatStream: createChatStream(socket),
-  }
+  };
 }
 
 function getCurrentAppPath(): string {
-  return stripAppBasePath(window.location.pathname)
+  return stripAppBasePath(window.location.pathname);
 }
 
 function getTaskRouteKey(taskId: number, projectId?: number): string {
-  return `${projectId ?? STANDALONE_PROJECT_ID}:${taskId}`
+  return `${projectId ?? STANDALONE_PROJECT_ID}:${taskId}`;
 }
 
 interface SubtaskResult {
-  value?: string
-  error?: string
-  errorType?: string
-  blocks?: unknown[]
-  fileChanges?: TurnFileChangesSummary
+  value?: string;
+  error?: string;
+  errorType?: string;
+  blocks?: unknown[];
+  fileChanges?: TurnFileChangesSummary;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null
+  return typeof value === "object" && value !== null;
 }
 
 function getSubtaskResult(result: unknown): SubtaskResult | undefined {
-  if (!isRecord(result)) return undefined
+  if (!isRecord(result)) return undefined;
   return {
-    value: typeof result.value === 'string' ? result.value : undefined,
-    error: typeof result.error === 'string' ? result.error : undefined,
+    value: typeof result.value === "string" ? result.value : undefined,
+    error: typeof result.error === "string" ? result.error : undefined,
     errorType:
-      typeof result.error_type === 'string'
+      typeof result.error_type === "string"
         ? result.error_type
-        : typeof result.error_code === 'string'
+        : typeof result.error_code === "string"
           ? result.error_code
           : undefined,
     blocks: Array.isArray(result.blocks) ? result.blocks : undefined,
     fileChanges: normalizeTurnFileChanges(result.file_changes),
-  }
+  };
 }
 
-function getBlockTimestamp(value: unknown): number {
-  if (typeof value !== 'number') return Date.now()
-  return value > 1_000_000_000_000 ? value : Date.now()
+function parseTimestampMs(value?: string | null): number | undefined {
+  if (!value) return undefined;
+  const timestamp = new Date(value).getTime();
+  return Number.isFinite(timestamp) ? timestamp : undefined;
+}
+
+function getBlockTimestamp(
+  value: unknown,
+  fallbackTimestamp = Date.now(),
+): number {
+  if (typeof value !== "number" || !Number.isFinite(value))
+    return fallbackTimestamp;
+  if (value > 1_000_000_000_000) return value;
+  if (value > 1_000_000_000) return value * 1000;
+  return fallbackTimestamp;
 }
 
 function normalizeProcessingBlock(
   subtaskId: number,
   block: unknown,
-  index: number
+  index: number,
+  fallbackTimestamp?: number,
 ): ProcessingBlock | null {
-  if (!isRecord(block)) return null
+  if (!isRecord(block)) return null;
 
-  const timestamp = getBlockTimestamp(block.timestamp)
+  const timestamp = getBlockTimestamp(block.timestamp, fallbackTimestamp);
   const status = normalizeWorkbenchBlockStatus(
-    typeof block.status === 'string' ? block.status : undefined
-  )
+    typeof block.status === "string" ? block.status : undefined,
+  );
 
-  if (block.type === 'tool') {
+  if (block.type === "tool") {
     const id =
-      typeof block.id === 'string'
+      typeof block.id === "string"
         ? block.id
-        : typeof block.tool_use_id === 'string'
+        : typeof block.tool_use_id === "string"
           ? block.tool_use_id
-          : `tool-${subtaskId}-${index}`
+          : `tool-${subtaskId}-${index}`;
     return {
       id,
       subtaskId,
-      type: 'tool',
-      toolName: typeof block.tool_name === 'string' ? block.tool_name : 'unknown',
+      type: "tool",
+      toolName:
+        typeof block.tool_name === "string" ? block.tool_name : "unknown",
       toolInput: isRecord(block.tool_input) ? block.tool_input : undefined,
       toolOutput: block.tool_output,
       status,
       createdAt: timestamp,
-    }
+    };
   }
 
-  if (block.type === 'thinking') {
+  if (block.type === "thinking") {
     const id =
-      typeof block.id === 'string' ? block.id : `thinking-${subtaskId}-${index}`
+      typeof block.id === "string"
+        ? block.id
+        : `thinking-${subtaskId}-${index}`;
     return {
       id,
       subtaskId,
-      type: 'thinking',
-      content: typeof block.content === 'string' ? block.content : '',
+      type: "thinking",
+      content: typeof block.content === "string" ? block.content : "",
       status,
       createdAt: timestamp,
-    }
+    };
   }
 
-  return null
+  return null;
 }
 
 function normalizeProcessingBlocks(
   subtaskId: number,
-  blocks?: unknown[]
+  blocks?: unknown[],
+  fallbackTimestamp?: number,
 ): ProcessingBlock[] {
-  if (!blocks) return []
+  if (!blocks) return [];
 
   return blocks.flatMap((block, index) => {
-    const normalized = normalizeProcessingBlock(subtaskId, block, index)
-    return normalized ? [normalized] : []
-  })
+    const normalized = normalizeProcessingBlock(
+      subtaskId,
+      block,
+      index,
+      fallbackTimestamp,
+    );
+    return normalized ? [normalized] : [];
+  });
 }
 
 function getResultBlocks(
   subtaskId: number,
-  result: unknown
+  result: unknown,
 ): ProcessingBlock[] | undefined {
-  if (!isRecord(result) || !Array.isArray(result.blocks)) return undefined
-  const blocks = normalizeProcessingBlocks(subtaskId, result.blocks)
-  return blocks.length > 0 ? blocks : undefined
+  if (!isRecord(result) || !Array.isArray(result.blocks)) return undefined;
+  const blocks = normalizeProcessingBlocks(subtaskId, result.blocks);
+  return blocks.length > 0 ? blocks : undefined;
 }
 
 function getReasoningChunk(result: unknown): string | undefined {
-  if (!isRecord(result)) return undefined
-  return typeof result.reasoning_chunk === 'string'
+  if (!isRecord(result)) return undefined;
+  return typeof result.reasoning_chunk === "string"
     ? result.reasoning_chunk
-    : undefined
+    : undefined;
 }
 
 function normalizeChatBlock(
   subtaskId: number,
-  block: ChatBlock
+  block: ChatBlock,
 ): ProcessingBlock | null {
-  return normalizeProcessingBlock(subtaskId, block, 0)
+  return normalizeProcessingBlock(subtaskId, block, 0);
 }
 
-function normalizeAttachmentStatus(status?: string): Attachment['status'] {
-  const normalized = status?.toLowerCase()
+function normalizeAttachmentStatus(status?: string): Attachment["status"] {
+  const normalized = status?.toLowerCase();
   if (
-    normalized === 'uploading' ||
-    normalized === 'parsing' ||
-    normalized === 'ready' ||
-    normalized === 'failed'
+    normalized === "uploading" ||
+    normalized === "parsing" ||
+    normalized === "ready" ||
+    normalized === "failed"
   ) {
-    return normalized
+    return normalized;
   }
 
-  return 'ready'
+  return "ready";
 }
 
 function getSubtaskAttachments(subtask: Subtask): Attachment[] | undefined {
   if (subtask.attachments && subtask.attachments.length > 0) {
-    return subtask.attachments
+    return subtask.attachments;
   }
 
   const attachments = (subtask.contexts ?? [])
-    .filter(context => context.context_type === 'attachment')
-    .map(context => ({
+    .filter((context) => context.context_type === "attachment")
+    .map((context) => ({
       id: context.id,
       filename: context.name,
       file_size: context.file_size ?? 0,
-      mime_type: context.mime_type ?? 'application/octet-stream',
+      mime_type: context.mime_type ?? "application/octet-stream",
       status: normalizeAttachmentStatus(context.status),
       subtask_id: subtask.id,
-      file_extension: context.file_extension ?? '',
+      file_extension: context.file_extension ?? "",
       created_at: subtask.created_at,
-    }))
+    }));
 
-  return attachments.length > 0 ? attachments : undefined
+  return attachments.length > 0 ? attachments : undefined;
 }
 
 function subtaskToMessage(subtask: Subtask): WorkbenchMessage {
-  const result = getSubtaskResult(subtask.result)
-  const role = subtask.role.toLowerCase() === 'user' ? 'user' : 'assistant'
-  const blocks = normalizeProcessingBlocks(subtask.id, result?.blocks)
+  const result = getSubtaskResult(subtask.result);
+  const role = subtask.role.toLowerCase() === "user" ? "user" : "assistant";
+  const blockFallbackTimestamp =
+    parseTimestampMs(subtask.completed_at) ??
+    parseTimestampMs(subtask.updated_at) ??
+    parseTimestampMs(subtask.created_at);
+  const blocks = finalizeBlocksForTerminalSubtask(
+    normalizeProcessingBlocks(
+      subtask.id,
+      result?.blocks,
+      blockFallbackTimestamp,
+    ),
+    subtask.status,
+  );
   return {
     id: `subtask-${subtask.id}`,
     taskId: subtask.task_id,
     subtaskId: subtask.id,
     role,
-    content: subtask.prompt || result?.value || '',
-    status: subtask.status === 'FAILED' ? 'failed' : 'done',
+    content: subtask.prompt || result?.value || "",
+    status: subtask.status === "FAILED" ? "failed" : "done",
     error: subtask.error_message || result?.error,
     errorType: result?.errorType,
     attachments: getSubtaskAttachments(subtask),
     blocks: blocks.length > 0 ? blocks : undefined,
     fileChanges: result?.fileChanges,
     createdAt: subtask.created_at,
-  }
+  };
 }
 
 function sortSubtasksForDisplay(subtasks: Subtask[]): Subtask[] {
   return [...subtasks].sort((left, right) => {
-    const leftMessageId = left.message_id ?? Number.MAX_SAFE_INTEGER
-    const rightMessageId = right.message_id ?? Number.MAX_SAFE_INTEGER
+    const leftMessageId = left.message_id ?? Number.MAX_SAFE_INTEGER;
+    const rightMessageId = right.message_id ?? Number.MAX_SAFE_INTEGER;
     if (leftMessageId !== rightMessageId) {
-      return leftMessageId - rightMessageId
+      return leftMessageId - rightMessageId;
     }
 
-    return new Date(left.created_at).getTime() - new Date(right.created_at).getTime()
-  })
+    return (
+      new Date(left.created_at).getTime() - new Date(right.created_at).getTime()
+    );
+  });
 }
 
 function getLastProjectStorageKey(userId: number) {
-  return `wework.lastProjectId.${userId}`
+  return `wework.lastProjectId.${userId}`;
 }
 
 function readTaskIdFromUrl(): number | null {
-  if (typeof window === 'undefined') return null
-  const params = new URLSearchParams(window.location.search)
-  const value = params.get('taskId') || params.get('task_id') || params.get('taskid')
-  if (!value) return null
-  const taskId = Number(value)
-  return Number.isFinite(taskId) && taskId > 0 ? taskId : null
+  if (typeof window === "undefined") return null;
+  const params = new URLSearchParams(window.location.search);
+  const value =
+    params.get("taskId") || params.get("task_id") || params.get("taskid");
+  if (!value) return null;
+  const taskId = Number(value);
+  return Number.isFinite(taskId) && taskId > 0 ? taskId : null;
 }
 
 function writeTaskIdToUrl(taskId: number | null) {
-  if (typeof window === 'undefined') return
-  const url = new URL(window.location.href)
-  url.searchParams.delete('task_id')
-  url.searchParams.delete('taskid')
+  if (typeof window === "undefined") return;
+  const url = new URL(window.location.href);
+  url.searchParams.delete("task_id");
+  url.searchParams.delete("taskid");
   if (taskId) {
-    url.searchParams.set('taskId', String(taskId))
+    url.searchParams.set("taskId", String(taskId));
   } else {
-    url.searchParams.delete('taskId')
+    url.searchParams.delete("taskId");
   }
-  window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`)
+  window.history.replaceState(
+    {},
+    "",
+    `${url.pathname}${url.search}${url.hash}`,
+  );
 }
 
 function readLastProjectId(userId: number): number | null {
   try {
-    const value = window.localStorage.getItem(getLastProjectStorageKey(userId))
-    if (!value) return null
-    const id = Number(value)
-    return Number.isFinite(id) && id > 0 ? id : null
+    const value = window.localStorage.getItem(getLastProjectStorageKey(userId));
+    if (!value) return null;
+    const id = Number(value);
+    return Number.isFinite(id) && id > 0 ? id : null;
   } catch {
-    return null
+    return null;
   }
 }
 
 function writeLastProjectId(userId: number, projectId: number) {
   try {
-    window.localStorage.setItem(getLastProjectStorageKey(userId), String(projectId))
+    window.localStorage.setItem(
+      getLastProjectStorageKey(userId),
+      String(projectId),
+    );
   } catch {
     // Ignore storage failures; project selection still works for the current session.
   }
@@ -550,78 +604,111 @@ function writeLastProjectId(userId: number, projectId: number) {
 function normalizeStoredModelOptions(
   options?: Record<string, unknown> | null,
 ): ModelOptions {
-  if (!options) return {}
+  if (!options) return {};
   return Object.fromEntries(
     Object.entries(options).filter((entry): entry is [string, string] => {
-      return typeof entry[1] === 'string'
+      return typeof entry[1] === "string";
     }),
-  )
+  );
 }
 
 function getTaskModelSelection(task: Task | null): ModelSelectionConfig | null {
-  if (!task?.model_id) return null
+  if (!task?.model_id) return null;
   return {
     modelName: task.model_id,
     modelType: task.force_override_bot_model_type ?? null,
     options: normalizeStoredModelOptions(task.model_options),
-  }
+  };
 }
 
-function getNewChatModelSelection(user: User | null): ModelSelectionConfig | null {
-  return user?.preferences?.wework_new_chat_model_selection ?? null
+function getNewChatModelSelection(
+  user: User | null,
+): ModelSelectionConfig | null {
+  return user?.preferences?.wework_new_chat_model_selection ?? null;
 }
 
 function isRunningTaskStatus(status?: string) {
-  return ['PENDING', 'RUNNING', 'STARTED', 'PROCESSING', 'IN_PROGRESS'].includes(
-    String(status ?? '').toUpperCase()
-  )
+  return [
+    "PENDING",
+    "RUNNING",
+    "STARTED",
+    "PROCESSING",
+    "IN_PROGRESS",
+  ].includes(String(status ?? "").toUpperCase());
+}
+
+function isTerminalSubtaskStatus(status?: string) {
+  return ["COMPLETED", "FAILED", "CANCELLED"].includes(
+    String(status ?? "").toUpperCase(),
+  );
+}
+
+function finalizeBlocksForTerminalSubtask(
+  blocks: ProcessingBlock[],
+  subtaskStatus: string,
+): ProcessingBlock[] {
+  if (!isTerminalSubtaskStatus(subtaskStatus)) return blocks;
+
+  const finalStatus =
+    String(subtaskStatus).toUpperCase() === "FAILED" ? "error" : "done";
+  let changed = false;
+  const finalized = blocks.map((block) => {
+    if (block.status === "done" || block.status === "error") return block;
+    changed = true;
+    return {
+      ...block,
+      status: finalStatus,
+    } as ProcessingBlock;
+  });
+
+  return changed ? finalized : blocks;
 }
 
 function shouldRestoreCachedStreaming(
   task: Task,
   subtasks: Subtask[] | undefined,
-  subtaskId: number
+  subtaskId: number,
 ) {
-  if (!isRunningTaskStatus(task.status)) return false
+  if (!isRunningTaskStatus(task.status)) return false;
 
-  const subtask = subtasks?.find(item => item.id === subtaskId)
-  return subtask ? isRunningTaskStatus(subtask.status) : true
+  const subtask = subtasks?.find((item) => item.id === subtaskId);
+  return subtask ? isRunningTaskStatus(subtask.status) : true;
 }
 
 function normalizeGuidanceError(error?: string) {
-  if (!error) return '引导发送失败'
-  if (error.includes('Chat Shell')) {
-    return '当前智能体不支持引导，请编辑后排队发送'
+  if (!error) return "引导发送失败";
+  if (error.includes("Chat Shell")) {
+    return "当前智能体不支持引导，请编辑后排队发送";
   }
-  if (error.includes('Subtask not found')) {
-    return '当前回复已结束，请编辑后重新发送'
+  if (error.includes("Subtask not found")) {
+    return "当前回复已结束，请编辑后重新发送";
   }
-  if (error.includes('Not connected') || error.includes('连接未建立')) {
-    return '连接未建立，请稍后重试'
+  if (error.includes("Not connected") || error.includes("连接未建立")) {
+    return "连接未建立，请稍后重试";
   }
-  return error
+  return error;
 }
 
 function resolveOpenedTaskProjectId(
   task: Task,
   listTask: Task | undefined,
-  explicitProjectId?: number
+  explicitProjectId?: number,
 ): number | undefined {
-  if (explicitProjectId !== undefined) return explicitProjectId
-  if (task.project_id !== undefined) return task.project_id
-  if (listTask?.project_id !== undefined) return listTask.project_id
-  return undefined
+  if (explicitProjectId !== undefined) return explicitProjectId;
+  if (task.project_id !== undefined) return task.project_id;
+  if (listTask?.project_id !== undefined) return listTask.project_id;
+  return undefined;
 }
 
 function getRememberedStandaloneDeviceId(
   user: User,
   devices: DeviceInfo[],
-  fallbackDeviceId?: string | null
+  fallbackDeviceId?: string | null,
 ) {
   return getPreferredStandaloneDeviceId(
     devices,
-    user.preferences?.default_execution_target ?? fallbackDeviceId
-  )
+    user.preferences?.default_execution_target ?? fallbackDeviceId,
+  );
 }
 
 export function WorkbenchProvider({
@@ -631,87 +718,91 @@ export function WorkbenchProvider({
 }: WorkbenchProviderProps) {
   const resolvedServices = useMemo(
     () => services ?? createDefaultServices(),
-    [services]
-  )
-  const [state, dispatch] = useReducer(
-    workbenchReducer,
-    initialWorkbenchState
-  )
+    [services],
+  );
+  const [state, dispatch] = useReducer(workbenchReducer, initialWorkbenchState);
   const [messages, dispatchMessages] = useReducer(
     reduceWorkbenchMessages<Attachment, TurnFileChangesSummary>,
-    [] as WorkbenchMessage[]
-  )
-  const [queuedSends, setQueuedSends] = useState<QueuedWorkbenchSend[]>([])
-  const [guidanceMessages, setGuidanceMessages] = useState<GuidanceWorkbenchMessage[]>([])
+    [] as WorkbenchMessage[],
+  );
+  const [queuedSends, setQueuedSends] = useState<QueuedWorkbenchSend[]>([]);
+  const [guidanceMessages, setGuidanceMessages] = useState<
+    GuidanceWorkbenchMessage[]
+  >([]);
   const [upgradingDevices, setUpgradingDevices] = useState<
     Record<string, DeviceUpgradeState>
-  >({})
-  const [isAwaitingAssistantStart, setIsAwaitingAssistantStart] = useState(false)
+  >({});
+  const [isAwaitingAssistantStart, setIsAwaitingAssistantStart] =
+    useState(false);
   const [liveRunningTaskIds, setLiveRunningTaskIds] = useState<Set<number>>(
-    () => new Set()
-  )
-  const [routePath, setRoutePath] = useState(getCurrentAppPath)
+    () => new Set(),
+  );
+  const [routePath, setRoutePath] = useState(getCurrentAppPath);
   const [projectExecutionMode, setProjectExecutionMode] =
-    useState<ProjectExecutionMode>('current_workspace')
-  const guidanceSendInFlightRef = useRef(false)
+    useState<ProjectExecutionMode>("current_workspace");
+  const guidanceSendInFlightRef = useRef(false);
   const upgradeClearTimersRef = useRef<
     Record<string, ReturnType<typeof window.setTimeout>>
-  >({})
+  >({});
   const localSkillsCacheRef = useRef<
     Map<string, { expiresAt: number; skills: LocalDeviceSkill[] }>
-  >(new Map())
-  const handledTaskRouteRef = useRef<string | null>(null)
-  const urlTaskOpenAttemptRef = useRef<number | null>(null)
-  const isOptionsLocked = Boolean(state.currentTask)
-  const currentUser = state.user ?? user
+  >(new Map());
+  const handledTaskRouteRef = useRef<string | null>(null);
+  const urlTaskOpenAttemptRef = useRef<number | null>(null);
+  const isOptionsLocked = Boolean(state.currentTask);
+  const currentUser = state.user ?? user;
   const activeProject =
-    state.currentProject ?? findProjectForTask(state.projects, state.currentTask)
+    state.currentProject ??
+    findProjectForTask(state.projects, state.currentTask);
   const activeDeviceId = getActiveWorkbenchDeviceId({
     currentTask: state.currentTask,
     currentProject: activeProject,
     standaloneDeviceId: state.standaloneDeviceId,
-  })
+  });
 
   const markTaskRunning = useCallback((taskId: number | null | undefined) => {
-    if (!taskId) return
-    setLiveRunningTaskIds(previous => {
-      if (previous.has(taskId)) return previous
-      const next = new Set(previous)
-      next.add(taskId)
-      return next
-    })
-  }, [])
+    if (!taskId) return;
+    setLiveRunningTaskIds((previous) => {
+      if (previous.has(taskId)) return previous;
+      const next = new Set(previous);
+      next.add(taskId);
+      return next;
+    });
+  }, []);
 
-  const markTaskNotRunning = useCallback((taskId: number | null | undefined) => {
-    if (!taskId) return
-    setLiveRunningTaskIds(previous => {
-      if (!previous.has(taskId)) return previous
-      const next = new Set(previous)
-      next.delete(taskId)
-      return next
-    })
-  }, [])
+  const markTaskNotRunning = useCallback(
+    (taskId: number | null | undefined) => {
+      if (!taskId) return;
+      setLiveRunningTaskIds((previous) => {
+        if (!previous.has(taskId)) return previous;
+        const next = new Set(previous);
+        next.delete(taskId);
+        return next;
+      });
+    },
+    [],
+  );
 
   const selectProjectExecutionMode = useCallback(
     (mode: ProjectExecutionMode) => {
-      setProjectExecutionMode(mode)
+      setProjectExecutionMode(mode);
       if (
         state.currentTask ||
         !state.currentProject ||
         !supportsGitWorktreeExecution(state.currentProject)
       ) {
-        return
+        return;
       }
       const preferences = {
         ...(currentUser.preferences ?? {}),
         wework_project_execution_mode: mode,
-      }
-      dispatch({ type: 'user_preferences_updated', preferences })
+      };
+      dispatch({ type: "user_preferences_updated", preferences });
       void resolvedServices.userApi
         ?.updateCurrentUser({ preferences })
         .catch(() => {
-          dispatch({ type: 'error_set', error: '启动模式保存失败' })
-        })
+          dispatch({ type: "error_set", error: "启动模式保存失败" });
+        });
     },
     [
       currentUser.preferences,
@@ -719,7 +810,7 @@ export function WorkbenchProvider({
       state.currentProject,
       state.currentTask,
     ],
-  )
+  );
 
   useEffect(() => {
     if (
@@ -727,28 +818,29 @@ export function WorkbenchProvider({
       !state.currentProject ||
       !supportsGitWorktreeExecution(state.currentProject)
     ) {
-      setProjectExecutionMode('current_workspace')
-      return
+      setProjectExecutionMode("current_workspace");
+      return;
     }
     setProjectExecutionMode(
-      currentUser.preferences?.wework_project_execution_mode ?? 'current_workspace',
-    )
+      currentUser.preferences?.wework_project_execution_mode ??
+        "current_workspace",
+    );
   }, [
     currentUser.preferences?.wework_project_execution_mode,
     state.currentProject,
     state.currentTask,
-  ])
+  ]);
   const modelSelectionConfig = useMemo(
     () =>
       getTaskModelSelection(state.currentTask) ??
       getNewChatModelSelection(currentUser) ??
       null,
-    [currentUser, state.currentTask]
-  )
+    [currentUser, state.currentTask],
+  );
   const modelCompatibilityConfig = useMemo(
     () => getTaskModelSelection(state.currentTask),
-    [state.currentTask]
-  )
+    [state.currentTask],
+  );
   const persistNewChatModelSelection = useCallback(
     (selection: ModelSelectionConfig) => {
       if (state.currentTask) {
@@ -759,29 +851,29 @@ export function WorkbenchProvider({
         // re-saving to the user preferences: that preference is for new chats
         // and would leak the per-task override into future conversations.
         dispatch({
-          type: 'current_task_model_selection_changed',
+          type: "current_task_model_selection_changed",
           selection,
-        })
-        return
+        });
+        return;
       }
       const preferences = {
         ...(currentUser.preferences ?? {}),
         wework_new_chat_model_selection: selection,
-      }
-      dispatch({ type: 'user_preferences_updated', preferences })
+      };
+      dispatch({ type: "user_preferences_updated", preferences });
       void resolvedServices.userApi
         ?.updateCurrentUser({ preferences })
         .catch(() => {
-          dispatch({ type: 'error_set', error: '模型配置保存失败' })
-        })
+          dispatch({ type: "error_set", error: "模型配置保存失败" });
+        });
     },
-    [currentUser.preferences, resolvedServices.userApi, state.currentTask]
-  )
+    [currentUser.preferences, resolvedServices.userApi, state.currentTask],
+  );
   useEffect(() => {
-    const handlePopState = () => setRoutePath(getCurrentAppPath())
-    window.addEventListener('popstate', handlePopState)
-    return () => window.removeEventListener('popstate', handlePopState)
-  }, [])
+    const handlePopState = () => setRoutePath(getCurrentAppPath());
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
 
   const modelSelection = useWorkbenchModels({
     api: resolvedServices.modelApi,
@@ -790,176 +882,188 @@ export function WorkbenchProvider({
     compatibilityConfig: modelCompatibilityConfig,
     selectionReady: !state.isBootstrapping,
     onSelectionChange: persistNewChatModelSelection,
-  })
+  });
   const skillSelection = useWorkbenchSkills({
     api: resolvedServices.skillApi,
     teamId: state.defaultTeam?.id,
     locked: isOptionsLocked,
-  })
-  const attachmentSelection = useWorkbenchAttachments()
+  });
+  const attachmentSelection = useWorkbenchAttachments();
 
   useEffect(() => {
-    let cancelled = false
+    let cancelled = false;
 
     async function bootstrap() {
-      const [defaultTeamResult, projectsResult, recentTasksResult, devicesResult] = await Promise.allSettled([
+      const [
+        defaultTeamResult,
+        projectsResult,
+        recentTasksResult,
+        devicesResult,
+      ] = await Promise.allSettled([
         resolvedServices.teamApi.getDefaultWorkbenchTeam(),
         resolvedServices.projectApi.listProjects(),
         resolvedServices.taskApi.listRecentTasks({ limit: 20 }),
         resolvedServices.deviceApi.listDevices(),
-      ])
+      ]);
 
-      if (cancelled) return
+      if (cancelled) return;
 
       const projects =
-        projectsResult.status === 'fulfilled' ? projectsResult.value.items : []
-      const rawDevices = devicesResult.status === 'fulfilled' ? devicesResult.value : []
-      const devices = resolveDeviceListWithCache(rawDevices)
-      const lastProjectId = readLastProjectId(user.id)
+        projectsResult.status === "fulfilled" ? projectsResult.value.items : [];
+      const rawDevices =
+        devicesResult.status === "fulfilled" ? devicesResult.value : [];
+      const devices = resolveDeviceListWithCache(rawDevices);
+      const lastProjectId = readLastProjectId(user.id);
       const currentProject =
         lastProjectId === null
           ? null
-          : projects.find(project => project.id === lastProjectId) ?? null
+          : (projects.find((project) => project.id === lastProjectId) ?? null);
 
       dispatch({
-        type: 'bootstrapped',
+        type: "bootstrapped",
         user,
-        defaultTeam: defaultTeamResult.status === 'fulfilled' ? defaultTeamResult.value : null,
+        defaultTeam:
+          defaultTeamResult.status === "fulfilled"
+            ? defaultTeamResult.value
+            : null,
         projects,
         devices,
         recentTasks:
-          recentTasksResult.status === 'fulfilled' ? recentTasksResult.value.items : [],
+          recentTasksResult.status === "fulfilled"
+            ? recentTasksResult.value.items
+            : [],
         currentProject,
         standaloneDeviceId: getRememberedStandaloneDeviceId(user, devices),
-      })
+      });
     }
 
-    bootstrap()
+    bootstrap();
     return () => {
-      cancelled = true
-    }
-  }, [resolvedServices, user])
+      cancelled = true;
+    };
+  }, [resolvedServices, user]);
 
   const refreshWorkLists = useCallback(async () => {
-    const [projectsResult, recentTasksResult, devicesResult] = await Promise.all([
-      resolvedServices.projectApi.listProjects(),
-      resolvedServices.taskApi.listRecentTasks({ limit: 20 }),
-      resolvedServices.deviceApi.listDevices().catch(error => {
-        const cachedDevices = readCachedDeviceList()
-        if (cachedDevices.length === 0) throw error
-        return cachedDevices
-      }),
-    ])
-    const devices = resolveDeviceListWithCache(devicesResult)
+    const [projectsResult, recentTasksResult, devicesResult] =
+      await Promise.all([
+        resolvedServices.projectApi.listProjects(),
+        resolvedServices.taskApi.listRecentTasks({ limit: 20 }),
+        resolvedServices.deviceApi.listDevices().catch((error) => {
+          const cachedDevices = readCachedDeviceList();
+          if (cachedDevices.length === 0) throw error;
+          return cachedDevices;
+        }),
+      ]);
+    const devices = resolveDeviceListWithCache(devicesResult);
     dispatch({
-      type: 'lists_refreshed',
+      type: "lists_refreshed",
       projects: projectsResult.items,
       recentTasks: recentTasksResult.items,
       devices,
       standaloneDeviceId: getPreferredStandaloneDeviceId(
         devices,
-        state.standaloneDeviceId
+        state.standaloneDeviceId,
       ),
-    })
-  }, [resolvedServices, state.standaloneDeviceId])
+    });
+  }, [resolvedServices, state.standaloneDeviceId]);
 
   const refreshDevices = useCallback(async () => {
-    let devices: DeviceInfo[]
+    let devices: DeviceInfo[];
     try {
-      devices = await resolvedServices.deviceApi.listDevices()
+      devices = await resolvedServices.deviceApi.listDevices();
     } catch (error) {
-      const cachedDevices = readCachedDeviceList()
+      const cachedDevices = readCachedDeviceList();
       if (cachedDevices.length > 0) {
-        devices = cachedDevices
+        devices = cachedDevices;
       } else {
-        throw error
+        throw error;
       }
     }
-    devices = resolveDeviceListWithCache(devices)
+    devices = resolveDeviceListWithCache(devices);
     dispatch({
-      type: 'devices_refreshed',
+      type: "devices_refreshed",
       devices,
       standaloneDeviceId: getPreferredStandaloneDeviceId(
         devices,
-        state.standaloneDeviceId
+        state.standaloneDeviceId,
       ),
-    })
-  }, [resolvedServices, state.standaloneDeviceId])
+    });
+  }, [resolvedServices, state.standaloneDeviceId]);
 
   const clearUpgradeStateTimer = useCallback((deviceId: string) => {
-    const timer = upgradeClearTimersRef.current[deviceId]
-    if (!timer) return
-    window.clearTimeout(timer)
-    delete upgradeClearTimersRef.current[deviceId]
-  }, [])
+    const timer = upgradeClearTimersRef.current[deviceId];
+    if (!timer) return;
+    window.clearTimeout(timer);
+    delete upgradeClearTimersRef.current[deviceId];
+  }, []);
 
   const scheduleUpgradeStateClear = useCallback(
     (deviceId: string) => {
-      clearUpgradeStateTimer(deviceId)
+      clearUpgradeStateTimer(deviceId);
       upgradeClearTimersRef.current[deviceId] = window.setTimeout(() => {
-        setUpgradingDevices(current => {
-          const next = { ...current }
-          delete next[deviceId]
-          return next
-        })
-        delete upgradeClearTimersRef.current[deviceId]
-      }, UPGRADE_STATE_CLEAR_DELAY_MS)
+        setUpgradingDevices((current) => {
+          const next = { ...current };
+          delete next[deviceId];
+          return next;
+        });
+        delete upgradeClearTimersRef.current[deviceId];
+      }, UPGRADE_STATE_CLEAR_DELAY_MS);
     },
     [clearUpgradeStateTimer],
-  )
+  );
 
   const setDeviceUpgradeState = useCallback(
     (deviceId: string, upgradeState: DeviceUpgradeState) => {
-      clearUpgradeStateTimer(deviceId)
-      setUpgradingDevices(current => ({
+      clearUpgradeStateTimer(deviceId);
+      setUpgradingDevices((current) => ({
         ...current,
         [deviceId]: upgradeState,
-      }))
+      }));
       if (isTerminalDeviceUpgradeStatus(upgradeState.status)) {
-        scheduleUpgradeStateClear(deviceId)
+        scheduleUpgradeStateClear(deviceId);
       }
     },
     [clearUpgradeStateTimer, scheduleUpgradeStateClear],
-  )
+  );
 
   const upgradeDevice = useCallback(
     async (deviceId: string) => {
-      const device = state.devices.find(item => item.device_id === deviceId)
+      const device = state.devices.find((item) => item.device_id === deviceId);
       if (device && !canRequestDeviceUpgrade(device)) {
         const message =
-          device.status !== 'online'
-            ? '设备离线，恢复在线后再升级'
-            : '设备正在执行任务，空闲后再升级'
+          device.status !== "online"
+            ? "设备离线，恢复在线后再升级"
+            : "设备正在执行任务，空闲后再升级";
         setDeviceUpgradeState(deviceId, {
-          status: 'busy',
+          status: "busy",
           message,
-        })
-        dispatch({ type: 'error_set', error: message })
-        return
+        });
+        dispatch({ type: "error_set", error: message });
+        return;
       }
 
       setDeviceUpgradeState(deviceId, {
-        status: 'pending',
-        message: '正在发送升级指令',
-      })
+        status: "pending",
+        message: "正在发送升级指令",
+      });
 
       try {
         await resolvedServices.deviceApi.upgradeDevice(deviceId, {
           auto_confirm: true,
-        })
+        });
         setDeviceUpgradeState(deviceId, {
-          status: 'checking',
-          message: '升级指令已发送，正在等待设备更新',
-        })
-        void refreshDevices().catch(() => undefined)
+          status: "checking",
+          message: "升级指令已发送，正在等待设备更新",
+        });
+        void refreshDevices().catch(() => undefined);
       } catch (error) {
-        const message = error instanceof Error ? error.message : '升级失败'
+        const message = error instanceof Error ? error.message : "升级失败";
         setDeviceUpgradeState(deviceId, {
-          status: 'error',
+          status: "error",
           message,
           error: message,
-        })
-        dispatch({ type: 'error_set', error: message })
+        });
+        dispatch({ type: "error_set", error: message });
       }
     },
     [
@@ -968,23 +1072,23 @@ export function WorkbenchProvider({
       setDeviceUpgradeState,
       state.devices,
     ],
-  )
+  );
 
   useEffect(() => {
     const handleDeviceChanged = () => {
-      void refreshDevices()
-    }
+      void refreshDevices();
+    };
     const handleDeviceUpgradeStatus = (payload: DeviceUpgradeStatusPayload) => {
       setDeviceUpgradeState(payload.device_id, {
         status: payload.status,
         message: getUpgradeStatusMessage(payload),
         progress: payload.progress,
         error: payload.error,
-      })
-      if (payload.status === 'success' || payload.status === 'skipped') {
-        void refreshDevices()
+      });
+      if (payload.status === "success" || payload.status === "skipped") {
+        void refreshDevices();
       }
-    }
+    };
 
     return resolvedServices.chatStream.subscribe({
       onDeviceOnline: handleDeviceChanged,
@@ -992,124 +1096,131 @@ export function WorkbenchProvider({
       onDeviceStatus: handleDeviceChanged,
       onDeviceSlotUpdate: handleDeviceChanged,
       onDeviceUpgradeStatus: handleDeviceUpgradeStatus,
-      onChatStart: payload => {
-        setIsAwaitingAssistantStart(false)
-        markTaskRunning(payload.task_id)
+      onChatStart: (payload) => {
+        setIsAwaitingAssistantStart(false);
+        markTaskRunning(payload.task_id);
         dispatch({
-          type: 'task_status_changed',
+          type: "task_status_changed",
           taskId: payload.task_id,
-          status: 'RUNNING',
-        })
+          status: "RUNNING",
+        });
         dispatchMessages({
-          type: 'assistant_started',
+          type: "assistant_started",
           taskId: payload.task_id,
           subtaskId: payload.subtask_id,
           shellType: payload.shell_type,
-        })
+        });
       },
-      onChatChunk: payload =>
+      onChatChunk: (payload) =>
         dispatchMessages({
-          type: 'assistant_chunk',
+          type: "assistant_chunk",
           subtaskId: payload.subtask_id,
           content: payload.content,
           reasoningChunk: getReasoningChunk(payload.result),
           blocks: getResultBlocks(payload.subtask_id, payload.result),
         }),
-      onChatDone: payload => {
-        setIsAwaitingAssistantStart(false)
-        const taskId = payload.task_id ?? state.currentTask?.id
+      onChatDone: (payload) => {
+        setIsAwaitingAssistantStart(false);
+        const taskId = payload.task_id ?? state.currentTask?.id;
         if (taskId) {
-          markTaskNotRunning(taskId)
+          markTaskNotRunning(taskId);
           dispatch({
-            type: 'task_status_changed',
+            type: "task_status_changed",
             taskId,
-            status: 'COMPLETED',
-          })
+            status: "COMPLETED",
+          });
         }
         dispatchMessages({
-          type: 'assistant_done',
+          type: "assistant_done",
           subtaskId: payload.subtask_id,
           content:
-            typeof payload.result.value === 'string'
+            typeof payload.result.value === "string"
               ? payload.result.value
               : undefined,
           blocks: getResultBlocks(payload.subtask_id, payload.result),
           fileChanges: normalizeTurnFileChanges(payload.result.file_changes),
-        })
+        });
       },
-      onChatError: payload => {
-        setIsAwaitingAssistantStart(false)
-        const taskId = payload.task_id ?? state.currentTask?.id
+      onChatError: (payload) => {
+        setIsAwaitingAssistantStart(false);
+        const taskId = payload.task_id ?? state.currentTask?.id;
         if (taskId) {
-          markTaskNotRunning(taskId)
+          markTaskNotRunning(taskId);
           dispatch({
-            type: 'task_status_changed',
+            type: "task_status_changed",
             taskId,
-            status: 'FAILED',
-          })
+            status: "FAILED",
+          });
         }
         dispatchMessages({
-          type: 'assistant_error',
+          type: "assistant_error",
           subtaskId: payload.subtask_id,
           error: payload.error,
           errorType: payload.type,
-        })
+        });
       },
-      onBlockCreated: payload => {
-        const block = normalizeChatBlock(payload.subtask_id, payload.block)
-        if (!block) return
+      onBlockCreated: (payload) => {
+        const block = normalizeChatBlock(payload.subtask_id, payload.block);
+        if (!block) return;
         dispatchMessages({
-          type: 'block_created',
+          type: "block_created",
           subtaskId: payload.subtask_id,
           block,
-        })
+        });
       },
-      onBlockUpdated: payload => {
+      onBlockUpdated: (payload) => {
         dispatchMessages({
-          type: 'block_updated',
+          type: "block_updated",
           subtaskId: payload.subtask_id,
           blockId: payload.block_id,
           updates: {
             ...(payload.content !== undefined && { content: payload.content }),
-            ...(payload.tool_input !== undefined && { toolInput: payload.tool_input }),
-            ...(payload.tool_output !== undefined && { toolOutput: payload.tool_output }),
-            ...(payload.status && { status: normalizeWorkbenchBlockStatus(payload.status) }),
+            ...(payload.tool_input !== undefined && {
+              toolInput: payload.tool_input,
+            }),
+            ...(payload.tool_output !== undefined && {
+              toolOutput: payload.tool_output,
+            }),
+            ...(payload.status && {
+              status: normalizeWorkbenchBlockStatus(payload.status),
+            }),
           },
-        })
+        });
       },
-      onGuidanceQueued: payload => {
-        setGuidanceMessages(items =>
-          items.map(item =>
+      onGuidanceQueued: (payload) => {
+        setGuidanceMessages((items) =>
+          items.map((item) =>
             item.id === payload.guidance_id ||
             item.id === payload.client_guidance_id
               ? {
                   ...item,
                   id: payload.guidance_id,
                   content: payload.message ?? payload.content ?? item.content,
-                  status: 'queued',
+                  status: "queued",
                 }
-              : item
-          )
-        )
+              : item,
+          ),
+        );
       },
-      onGuidanceApplied: payload => {
-        setGuidanceMessages(items =>
-          items.filter(item =>
-            item.id !== payload.guidance_id &&
-            item.id !== payload.client_guidance_id
-          )
-        )
+      onGuidanceApplied: (payload) => {
+        setGuidanceMessages((items) =>
+          items.filter(
+            (item) =>
+              item.id !== payload.guidance_id &&
+              item.id !== payload.client_guidance_id,
+          ),
+        );
       },
-      onGuidanceExpired: payload => {
-        setGuidanceMessages(items =>
-          items.map(item =>
+      onGuidanceExpired: (payload) => {
+        setGuidanceMessages((items) =>
+          items.map((item) =>
             payload.guidance_ids.includes(item.id)
-              ? { ...item, status: 'expired' }
-              : item
-          )
-        )
+              ? { ...item, status: "expired" }
+              : item,
+          ),
+        );
       },
-    })
+    });
   }, [
     markTaskNotRunning,
     markTaskRunning,
@@ -1117,53 +1228,59 @@ export function WorkbenchProvider({
     resolvedServices,
     setDeviceUpgradeState,
     state.currentTask?.id,
-  ])
+  ]);
 
   useEffect(() => {
     return () => {
-      Object.values(upgradeClearTimersRef.current).forEach(timer => {
-        window.clearTimeout(timer)
-      })
-      upgradeClearTimersRef.current = {}
-    }
-  }, [])
+      Object.values(upgradeClearTimersRef.current).forEach((timer) => {
+        window.clearTimeout(timer);
+      });
+      upgradeClearTimersRef.current = {};
+    };
+  }, []);
 
   useEffect(() => {
     const hasActiveUpgrade = Object.values(upgradingDevices).some(
-      upgradeState => !isTerminalDeviceUpgradeStatus(upgradeState.status),
-    )
-    if (!hasActiveUpgrade) return undefined
+      (upgradeState) => !isTerminalDeviceUpgradeStatus(upgradeState.status),
+    );
+    if (!hasActiveUpgrade) return undefined;
 
     const interval = window.setInterval(() => {
-      void refreshDevices().catch(() => undefined)
-    }, UPGRADE_REFRESH_INTERVAL_MS)
+      void refreshDevices().catch(() => undefined);
+    }, UPGRADE_REFRESH_INTERVAL_MS);
 
-    return () => window.clearInterval(interval)
-  }, [refreshDevices, upgradingDevices])
+    return () => window.clearInterval(interval);
+  }, [refreshDevices, upgradingDevices]);
 
   useEffect(() => {
-    setUpgradingDevices(current => {
-      let changed = false
-      const next = { ...current }
-      Object.keys(next).forEach(deviceId => {
-        const device = state.devices.find(item => item.device_id === deviceId)
-        if (device && device.status === 'online' && isWeWorkCompatibleDevice(device)) {
-          clearUpgradeStateTimer(deviceId)
-          delete next[deviceId]
-          changed = true
+    setUpgradingDevices((current) => {
+      let changed = false;
+      const next = { ...current };
+      Object.keys(next).forEach((deviceId) => {
+        const device = state.devices.find(
+          (item) => item.device_id === deviceId,
+        );
+        if (
+          device &&
+          device.status === "online" &&
+          isWeWorkCompatibleDevice(device)
+        ) {
+          clearUpgradeStateTimer(deviceId);
+          delete next[deviceId];
+          changed = true;
         }
-      })
-      return changed ? next : current
-    })
-  }, [clearUpgradeStateTimer, state.devices])
+      });
+      return changed ? next : current;
+    });
+  }, [clearUpgradeStateTimer, state.devices]);
 
   const rememberExecutionDevice = useCallback(
     (deviceId: string) => {
       dispatch({
-        type: 'standalone_device_preference_changed',
+        type: "standalone_device_preference_changed",
         standaloneDeviceId:
           getPreferredStandaloneDeviceId(state.devices, deviceId) ?? deviceId,
-      })
+      });
       void resolvedServices.userApi
         ?.updateCurrentUser({
           preferences: {
@@ -1173,171 +1290,178 @@ export function WorkbenchProvider({
         })
         .catch(() => {
           // Keep the in-session selection even if preference persistence fails.
-        })
+        });
     },
-    [currentUser.preferences, resolvedServices.userApi, state.devices]
-  )
+    [currentUser.preferences, resolvedServices.userApi, state.devices],
+  );
 
   const selectProject = useCallback(
     (projectId: number | null) => {
-      writeTaskIdToUrl(null)
+      writeTaskIdToUrl(null);
       if (projectId === null) {
         dispatch({
-          type: 'project_cleared',
+          type: "project_cleared",
           standaloneDeviceId: getRememberedStandaloneDeviceId(
             user,
             state.devices,
-            state.standaloneDeviceId
+            state.standaloneDeviceId,
           ),
-        })
-        dispatchMessages({ type: 'reset', messages: [] })
-        setQueuedSends([])
-        setGuidanceMessages([])
-        handledTaskRouteRef.current = null
-        navigateTo('/')
-        return
+        });
+        dispatchMessages({ type: "reset", messages: [] });
+        setQueuedSends([]);
+        setGuidanceMessages([]);
+        handledTaskRouteRef.current = null;
+        navigateTo("/");
+        return;
       }
-      const project = state.projects.find(item => item.id === projectId)
+      const project = state.projects.find((item) => item.id === projectId);
       if (project) {
-        writeLastProjectId(user.id, project.id)
-        dispatch({ type: 'project_selected', project })
-        dispatchMessages({ type: 'reset', messages: [] })
-        setQueuedSends([])
-        setGuidanceMessages([])
-        handledTaskRouteRef.current = null
-        navigateTo('/')
+        writeLastProjectId(user.id, project.id);
+        dispatch({ type: "project_selected", project });
+        dispatchMessages({ type: "reset", messages: [] });
+        setQueuedSends([]);
+        setGuidanceMessages([]);
+        handledTaskRouteRef.current = null;
+        navigateTo("/");
       }
     },
-    [state.devices, state.projects, state.standaloneDeviceId, user]
-  )
+    [state.devices, state.projects, state.standaloneDeviceId, user],
+  );
 
   const selectStandaloneDevice = useCallback(
     (deviceId: string | null) => {
-      writeTaskIdToUrl(null)
+      writeTaskIdToUrl(null);
       const standaloneDeviceId = getPreferredStandaloneDeviceId(
         state.devices,
-        deviceId ?? user.preferences?.default_execution_target ?? state.standaloneDeviceId
-      )
+        deviceId ??
+          user.preferences?.default_execution_target ??
+          state.standaloneDeviceId,
+      );
       if (standaloneDeviceId) {
-        rememberExecutionDevice(standaloneDeviceId)
+        rememberExecutionDevice(standaloneDeviceId);
       }
       dispatch({
-        type: 'project_cleared',
+        type: "project_cleared",
         standaloneDeviceId,
-      })
-      dispatchMessages({ type: 'reset', messages: [] })
-      setQueuedSends([])
-      setGuidanceMessages([])
-      handledTaskRouteRef.current = null
-      navigateTo('/')
+      });
+      dispatchMessages({ type: "reset", messages: [] });
+      setQueuedSends([]);
+      setGuidanceMessages([]);
+      handledTaskRouteRef.current = null;
+      navigateTo("/");
     },
     [
       rememberExecutionDevice,
       state.devices,
       state.standaloneDeviceId,
       user.preferences?.default_execution_target,
-    ]
-  )
+    ],
+  );
 
   const startNewChat = useCallback(() => {
-    writeTaskIdToUrl(null)
+    writeTaskIdToUrl(null);
     dispatch({
-      type: 'project_cleared',
+      type: "project_cleared",
       standaloneDeviceId: getRememberedStandaloneDeviceId(
         user,
         state.devices,
-        state.standaloneDeviceId
+        state.standaloneDeviceId,
       ),
-    })
-    dispatchMessages({ type: 'reset', messages: [] })
-    setQueuedSends([])
-    setGuidanceMessages([])
-    handledTaskRouteRef.current = null
-    navigateTo(`/?projectId=${STANDALONE_PROJECT_ID}`)
-  }, [state.devices, state.standaloneDeviceId, user])
+    });
+    dispatchMessages({ type: "reset", messages: [] });
+    setQueuedSends([]);
+    setGuidanceMessages([]);
+    handledTaskRouteRef.current = null;
+    navigateTo(`/?projectId=${STANDALONE_PROJECT_ID}`);
+  }, [state.devices, state.standaloneDeviceId, user]);
 
   const startStandaloneChat = useCallback(() => {
-    writeTaskIdToUrl(null)
+    writeTaskIdToUrl(null);
     dispatch({
-      type: 'project_cleared',
+      type: "project_cleared",
       standaloneDeviceId: getRememberedStandaloneDeviceId(
         user,
         state.devices,
-        state.standaloneDeviceId
+        state.standaloneDeviceId,
       ),
-    })
-    dispatchMessages({ type: 'reset', messages: [] })
-    setQueuedSends([])
-    setGuidanceMessages([])
-    handledTaskRouteRef.current = null
-    navigateTo(`/?projectId=${STANDALONE_PROJECT_ID}`)
-  }, [state.devices, state.standaloneDeviceId, user])
+    });
+    dispatchMessages({ type: "reset", messages: [] });
+    setQueuedSends([]);
+    setGuidanceMessages([]);
+    handledTaskRouteRef.current = null;
+    navigateTo(`/?projectId=${STANDALONE_PROJECT_ID}`);
+  }, [state.devices, state.standaloneDeviceId, user]);
 
   const startNewProjectChat = useCallback(
     (projectId: number) => {
-      selectProject(projectId)
-      dispatchMessages({ type: 'reset', messages: [] })
+      selectProject(projectId);
+      dispatchMessages({ type: "reset", messages: [] });
     },
-    [selectProject]
-  )
+    [selectProject],
+  );
 
   const openTask = useCallback(
     async (taskId: number, projectId?: number) => {
-      const detail = await resolvedServices.taskApi.getTaskDetail(taskId)
-      const detailTask = detail as Task
-      const listTask = state.recentTasks.find(item => item.id === taskId)
+      const detail = await resolvedServices.taskApi.getTaskDetail(taskId);
+      const detailTask = detail as Task;
+      const listTask = state.recentTasks.find((item) => item.id === taskId);
       const resolvedProjectId = resolveOpenedTaskProjectId(
         detailTask,
         listTask,
-        projectId
-      )
+        projectId,
+      );
       const project =
         resolvedProjectId === undefined
-          ? findProjectForTask(state.projects, detailTask) ?? undefined
+          ? (findProjectForTask(state.projects, detailTask) ?? undefined)
           : resolvedProjectId > 0
-            ? state.projects.find(item => item.id === resolvedProjectId) ?? null
-            : null
+            ? (state.projects.find((item) => item.id === resolvedProjectId) ??
+              null)
+            : null;
       if (project) {
-        writeLastProjectId(user.id, project.id)
+        writeLastProjectId(user.id, project.id);
       }
       dispatch({
-        type: 'task_opened',
+        type: "task_opened",
         task: detail as Task,
         project,
         standaloneDeviceId:
           project === null
             ? getPreferredStandaloneDeviceId(
                 state.devices,
-                detailTask.device_id ?? listTask?.device_id ?? state.standaloneDeviceId
+                detailTask.device_id ??
+                  listTask?.device_id ??
+                  state.standaloneDeviceId,
               )
             : undefined,
-      })
+      });
       dispatchMessages({
-        type: 'reset',
-        messages: sortSubtasksForDisplay(detail.subtasks ?? []).map(subtaskToMessage),
-      })
-      setQueuedSends([])
-      setGuidanceMessages([])
-      const joinResponse = await resolvedServices.chatStream.joinTask(taskId)
+        type: "reset",
+        messages: sortSubtasksForDisplay(detail.subtasks ?? []).map(
+          subtaskToMessage,
+        ),
+      });
+      setQueuedSends([]);
+      setGuidanceMessages([]);
+      const joinResponse = await resolvedServices.chatStream.joinTask(taskId);
       if (
         joinResponse?.streaming &&
         shouldRestoreCachedStreaming(
           detailTask,
           detail.subtasks,
-          joinResponse.streaming.subtask_id
+          joinResponse.streaming.subtask_id,
         )
       ) {
         dispatchMessages({
-          type: 'assistant_cached',
+          type: "assistant_cached",
           taskId,
           subtaskId: joinResponse.streaming.subtask_id,
           content: joinResponse.streaming.cached_content,
-        })
+        });
       }
       const routeProjectId =
-        resolvedProjectId === undefined ? undefined : resolvedProjectId
-      handledTaskRouteRef.current = getTaskRouteKey(taskId, routeProjectId)
-      navigateTo(buildTaskRoute({ taskId, projectId: routeProjectId }))
+        resolvedProjectId === undefined ? undefined : resolvedProjectId;
+      handledTaskRouteRef.current = getTaskRouteKey(taskId, routeProjectId);
+      navigateTo(buildTaskRoute({ taskId, projectId: routeProjectId }));
     },
     [
       resolvedServices,
@@ -1346,354 +1470,380 @@ export function WorkbenchProvider({
       state.recentTasks,
       state.standaloneDeviceId,
       user.id,
-    ]
-  )
+    ],
+  );
 
   const searchTaskDetail = useCallback(
     (taskId: number) => resolvedServices.taskApi.getTaskDetail(taskId),
-    [resolvedServices]
-  )
+    [resolvedServices],
+  );
 
   useEffect(() => {
-    if (state.isBootstrapping) return
+    if (state.isBootstrapping) return;
 
-    const taskRoute = parseTaskRoute(routePath, window.location.search)
-    if (!taskRoute) return
+    const taskRoute = parseTaskRoute(routePath, window.location.search);
+    if (!taskRoute) return;
 
-    const routeKey = getTaskRouteKey(taskRoute.taskId, taskRoute.projectId)
-    if (handledTaskRouteRef.current === routeKey) return
+    const routeKey = getTaskRouteKey(taskRoute.taskId, taskRoute.projectId);
+    if (handledTaskRouteRef.current === routeKey) return;
 
     if (
       state.currentTask?.id === taskRoute.taskId &&
       (taskRoute.projectId === undefined ||
         state.currentTask.project_id === taskRoute.projectId)
     ) {
-      handledTaskRouteRef.current = routeKey
-      return
+      handledTaskRouteRef.current = routeKey;
+      return;
     }
 
-    handledTaskRouteRef.current = routeKey
-    void openTask(taskRoute.taskId, taskRoute.projectId)
+    handledTaskRouteRef.current = routeKey;
+    void openTask(taskRoute.taskId, taskRoute.projectId);
   }, [
     openTask,
     routePath,
     state.currentTask?.id,
     state.currentTask?.project_id,
     state.isBootstrapping,
-  ])
+  ]);
 
   const searchTasks = useCallback(
     (query: string) =>
       resolvedServices.taskApi.searchTasks?.(query, { limit: 30 }) ??
       Promise.resolve({ total: 0, items: [] }),
-    [resolvedServices]
-  )
+    [resolvedServices],
+  );
 
   useEffect(() => {
-    if (state.isBootstrapping) return
-    const taskId = readTaskIdFromUrl()
-    if (!taskId || state.currentTask?.id === taskId) return
-    if (urlTaskOpenAttemptRef.current === taskId) return
+    if (state.isBootstrapping) return;
+    const taskId = readTaskIdFromUrl();
+    if (!taskId || state.currentTask?.id === taskId) return;
+    if (urlTaskOpenAttemptRef.current === taskId) return;
 
-    urlTaskOpenAttemptRef.current = taskId
-    void openTask(taskId).catch(error => {
+    urlTaskOpenAttemptRef.current = taskId;
+    void openTask(taskId).catch((error) => {
       dispatch({
-        type: 'error_set',
-        error: error instanceof Error ? error.message : '会话加载失败',
-      })
-      writeTaskIdToUrl(null)
+        type: "error_set",
+        error: error instanceof Error ? error.message : "会话加载失败",
+      });
+      writeTaskIdToUrl(null);
       if (urlTaskOpenAttemptRef.current === taskId) {
-        urlTaskOpenAttemptRef.current = null
+        urlTaskOpenAttemptRef.current = null;
       }
-    })
-  }, [openTask, state.currentTask?.id, state.isBootstrapping])
+    });
+  }, [openTask, state.currentTask?.id, state.isBootstrapping]);
 
   const setInput = useCallback((input: string) => {
-    dispatch({ type: 'input_changed', input })
-  }, [])
+    dispatch({ type: "input_changed", input });
+  }, []);
 
   const createProject = useCallback(
     async (data: CreateProjectRequest) => {
-      const project = await resolvedServices.projectApi.createProject(data)
-      const projectDeviceId = data.config?.execution?.deviceId ?? data.config?.device_id
+      const project = await resolvedServices.projectApi.createProject(data);
+      const projectDeviceId =
+        data.config?.execution?.deviceId ?? data.config?.device_id;
       if (projectDeviceId) {
-        rememberExecutionDevice(projectDeviceId)
+        rememberExecutionDevice(projectDeviceId);
       }
-      await refreshWorkLists()
-      writeLastProjectId(user.id, project.id)
-      dispatch({ type: 'project_selected', project })
-      dispatchMessages({ type: 'reset', messages: [] })
-      setQueuedSends([])
-      setGuidanceMessages([])
-      return project
+      await refreshWorkLists();
+      writeLastProjectId(user.id, project.id);
+      dispatch({ type: "project_selected", project });
+      dispatchMessages({ type: "reset", messages: [] });
+      setQueuedSends([]);
+      setGuidanceMessages([]);
+      return project;
     },
-    [refreshWorkLists, rememberExecutionDevice, resolvedServices, user.id]
-  )
+    [refreshWorkLists, rememberExecutionDevice, resolvedServices, user.id],
+  );
 
   const createGitWorkspaceProject = useCallback(
     async (data: CreateGitWorkspaceProjectRequest) => {
       if (!resolvedServices.projectApi.createGitWorkspaceProject) {
-        throw new Error('Git workspace project creation is unavailable')
+        throw new Error("Git workspace project creation is unavailable");
       }
-      const response = await resolvedServices.projectApi.createGitWorkspaceProject(data)
+      const response =
+        await resolvedServices.projectApi.createGitWorkspaceProject(data);
       const project: ProjectWithTasks = {
         ...response.project,
         tasks: response.project.tasks ?? [],
-      }
-      rememberExecutionDevice(data.device_id)
-      await refreshWorkLists()
-      writeLastProjectId(user.id, project.id)
-      dispatch({ type: 'project_selected', project })
-      dispatchMessages({ type: 'reset', messages: [] })
-      setQueuedSends([])
-      setGuidanceMessages([])
-      return project
+      };
+      rememberExecutionDevice(data.device_id);
+      await refreshWorkLists();
+      writeLastProjectId(user.id, project.id);
+      dispatch({ type: "project_selected", project });
+      dispatchMessages({ type: "reset", messages: [] });
+      setQueuedSends([]);
+      setGuidanceMessages([]);
+      return project;
     },
-    [refreshWorkLists, rememberExecutionDevice, resolvedServices, user.id]
-  )
+    [refreshWorkLists, rememberExecutionDevice, resolvedServices, user.id],
+  );
 
   const listGitRepositories = useCallback(
     () => resolvedServices.gitApi?.listRepositories() ?? Promise.resolve([]),
-    [resolvedServices]
-  )
+    [resolvedServices],
+  );
 
   const listGitBranches = useCallback(
-    (repo: GitRepoInfo) => resolvedServices.gitApi?.listBranches(repo) ?? Promise.resolve([]),
-    [resolvedServices]
-  )
+    (repo: GitRepoInfo) =>
+      resolvedServices.gitApi?.listBranches(repo) ?? Promise.resolve([]),
+    [resolvedServices],
+  );
 
   const updateProjectName = useCallback(
     async (projectId: number, name: string) => {
-      await resolvedServices.projectApi.updateProject(projectId, { name })
-      await refreshWorkLists()
+      await resolvedServices.projectApi.updateProject(projectId, { name });
+      await refreshWorkLists();
     },
-    [refreshWorkLists, resolvedServices]
-  )
+    [refreshWorkLists, resolvedServices],
+  );
 
   const removeProject = useCallback(
     async (projectId: number) => {
-      await resolvedServices.projectApi.deleteProject(projectId)
-      await refreshWorkLists()
+      await resolvedServices.projectApi.deleteProject(projectId);
+      await refreshWorkLists();
     },
-    [refreshWorkLists, resolvedServices]
-  )
+    [refreshWorkLists, resolvedServices],
+  );
 
   const archiveAllChats = useCallback(async () => {
-    await resolvedServices.taskApi.archiveAllChats()
-    if (!state.currentProject && (!state.currentTask || !state.currentTask.project_id)) {
-      writeTaskIdToUrl(null)
-      dispatch({ type: 'current_task_cleared' })
-      dispatchMessages({ type: 'reset', messages: [] })
-      navigateTo(`/?projectId=${STANDALONE_PROJECT_ID}`)
+    await resolvedServices.taskApi.archiveAllChats();
+    if (
+      !state.currentProject &&
+      (!state.currentTask || !state.currentTask.project_id)
+    ) {
+      writeTaskIdToUrl(null);
+      dispatch({ type: "current_task_cleared" });
+      dispatchMessages({ type: "reset", messages: [] });
+      navigateTo(`/?projectId=${STANDALONE_PROJECT_ID}`);
     }
-    await refreshWorkLists()
-  }, [refreshWorkLists, resolvedServices, state.currentProject, state.currentTask])
+    await refreshWorkLists();
+  }, [
+    refreshWorkLists,
+    resolvedServices,
+    state.currentProject,
+    state.currentTask,
+  ]);
 
   const archiveAllProjectChats = useCallback(async () => {
-    await resolvedServices.projectApi.archiveAllProjectChats()
+    await resolvedServices.projectApi.archiveAllProjectChats();
     if (state.currentProject || (state.currentTask?.project_id ?? 0) > 0) {
-      writeTaskIdToUrl(null)
-      dispatch({ type: 'current_task_cleared' })
-      dispatchMessages({ type: 'reset', messages: [] })
-      navigateTo('/')
+      writeTaskIdToUrl(null);
+      dispatch({ type: "current_task_cleared" });
+      dispatchMessages({ type: "reset", messages: [] });
+      navigateTo("/");
     }
-    await refreshWorkLists()
-  }, [refreshWorkLists, resolvedServices, state.currentProject, state.currentTask?.project_id])
+    await refreshWorkLists();
+  }, [
+    refreshWorkLists,
+    resolvedServices,
+    state.currentProject,
+    state.currentTask?.project_id,
+  ]);
 
   const archiveProjectChats = useCallback(
     async (projectId: number) => {
-      await resolvedServices.projectApi.archiveProjectChats(projectId)
-      writeTaskIdToUrl(null)
-      dispatch({ type: 'current_task_cleared' })
-      dispatchMessages({ type: 'reset', messages: [] })
-      navigateTo('/')
-      await refreshWorkLists()
+      await resolvedServices.projectApi.archiveProjectChats(projectId);
+      writeTaskIdToUrl(null);
+      dispatch({ type: "current_task_cleared" });
+      dispatchMessages({ type: "reset", messages: [] });
+      navigateTo("/");
+      await refreshWorkLists();
     },
-    [refreshWorkLists, resolvedServices]
-  )
+    [refreshWorkLists, resolvedServices],
+  );
 
   const archiveTask = useCallback(
     async (taskId: number) => {
-      await resolvedServices.taskApi.archiveTask(taskId)
+      await resolvedServices.taskApi.archiveTask(taskId);
       if (state.currentTask?.id === taskId) {
-        writeTaskIdToUrl(null)
-        dispatch({ type: 'current_task_cleared' })
-        dispatchMessages({ type: 'reset', messages: [] })
-        navigateTo(`/?projectId=${STANDALONE_PROJECT_ID}`)
+        writeTaskIdToUrl(null);
+        dispatch({ type: "current_task_cleared" });
+        dispatchMessages({ type: "reset", messages: [] });
+        navigateTo(`/?projectId=${STANDALONE_PROJECT_ID}`);
       }
-      await refreshWorkLists()
+      await refreshWorkLists();
     },
-    [refreshWorkLists, resolvedServices, state.currentTask?.id]
-  )
+    [refreshWorkLists, resolvedServices, state.currentTask?.id],
+  );
 
   const renameTask = useCallback(
     async (taskId: number, title: string) => {
-      await resolvedServices.taskApi.renameTask(taskId, title)
-      await refreshWorkLists()
+      await resolvedServices.taskApi.renameTask(taskId, title);
+      await refreshWorkLists();
     },
-    [refreshWorkLists, resolvedServices]
-  )
+    [refreshWorkLists, resolvedServices],
+  );
 
   const listArchivedTasks = useCallback(
     () => resolvedServices.taskApi.listArchivedTasks(),
-    [resolvedServices]
-  )
+    [resolvedServices],
+  );
 
   const unarchiveTask = useCallback(
     async (taskId: number) => {
-      await resolvedServices.taskApi.unarchiveTask(taskId)
-      await refreshWorkLists()
+      await resolvedServices.taskApi.unarchiveTask(taskId);
+      await refreshWorkLists();
     },
-    [refreshWorkLists, resolvedServices]
-  )
+    [refreshWorkLists, resolvedServices],
+  );
 
   const deleteTask = useCallback(
     async (taskId: number) => {
-      await resolvedServices.taskApi.deleteTask(taskId)
+      await resolvedServices.taskApi.deleteTask(taskId);
       if (state.currentTask?.id === taskId) {
-        writeTaskIdToUrl(null)
-        dispatch({ type: 'current_task_cleared' })
-        dispatchMessages({ type: 'reset', messages: [] })
-        navigateTo(`/?projectId=${STANDALONE_PROJECT_ID}`)
+        writeTaskIdToUrl(null);
+        dispatch({ type: "current_task_cleared" });
+        dispatchMessages({ type: "reset", messages: [] });
+        navigateTo(`/?projectId=${STANDALONE_PROJECT_ID}`);
       }
-      await refreshWorkLists()
+      await refreshWorkLists();
     },
-    [refreshWorkLists, resolvedServices, state.currentTask?.id]
-  )
+    [refreshWorkLists, resolvedServices, state.currentTask?.id],
+  );
 
   const deleteArchivedTasks = useCallback(async () => {
-    await resolvedServices.taskApi.deleteArchivedTasks()
-    await refreshWorkLists()
-  }, [refreshWorkLists, resolvedServices])
+    await resolvedServices.taskApi.deleteArchivedTasks();
+    await refreshWorkLists();
+  }, [refreshWorkLists, resolvedServices]);
 
   const getDeviceHomeDirectory = useCallback(
     (deviceId: string) => resolvedServices.deviceApi.getHomeDirectory(deviceId),
-    [resolvedServices]
-  )
+    [resolvedServices],
+  );
 
   const getProjectWorkspaceRoot = useCallback(
-    (deviceId: string) => resolvedServices.deviceApi.getProjectWorkspaceRoot(deviceId),
-    [resolvedServices]
-  )
+    (deviceId: string) =>
+      resolvedServices.deviceApi.getProjectWorkspaceRoot(deviceId),
+    [resolvedServices],
+  );
 
   const listDeviceDirectories = useCallback(
     (deviceId: string, path: string) =>
       resolvedServices.deviceApi.listDirectories(deviceId, path),
-    [resolvedServices]
-  )
+    [resolvedServices],
+  );
 
   const createDeviceDirectory = useCallback(
     (deviceId: string, path: string) =>
       resolvedServices.deviceApi.createDirectory(deviceId, path),
-    [resolvedServices]
-  )
+    [resolvedServices],
+  );
 
   const loadEnvironmentInfo = useCallback(
     (project: ProjectWithTasks | null) =>
       loadProjectEnvironment(resolvedServices.deviceApi, project),
-    [resolvedServices]
-  )
+    [resolvedServices],
+  );
 
   const commitEnvironmentChanges = useCallback(
     (project: ProjectWithTasks | null, message: string) =>
       commitProjectChanges(resolvedServices.deviceApi, project, message),
-    [resolvedServices]
-  )
+    [resolvedServices],
+  );
 
   const listEnvironmentBranches = useCallback(
     (project: ProjectWithTasks | null) =>
       listProjectBranches(resolvedServices.deviceApi, project),
-    [resolvedServices]
-  )
+    [resolvedServices],
+  );
 
   const checkoutEnvironmentBranch = useCallback(
     (project: ProjectWithTasks | null, branchName: string) =>
       checkoutProjectBranch(resolvedServices.deviceApi, project, branchName),
-    [resolvedServices]
-  )
+    [resolvedServices],
+  );
 
   const createEnvironmentBranch = useCallback(
     (project: ProjectWithTasks | null, branchName: string) =>
-      createAndCheckoutProjectBranch(resolvedServices.deviceApi, project, branchName),
-    [resolvedServices]
-  )
+      createAndCheckoutProjectBranch(
+        resolvedServices.deviceApi,
+        project,
+        branchName,
+      ),
+    [resolvedServices],
+  );
 
   const activeAssistantMessage = useMemo(
     () =>
       [...messages]
         .reverse()
         .find(
-          message =>
-            message.role === 'assistant' &&
-            message.status === 'streaming' &&
+          (message) =>
+            message.role === "assistant" &&
+            message.status === "streaming" &&
             message.subtaskId &&
-            (!state.currentTask || message.taskId === state.currentTask.id)
+            (!state.currentTask || message.taskId === state.currentTask.id),
         ),
-    [messages, state.currentTask]
-  )
-  const hasActiveTurn = Boolean(activeAssistantMessage)
+    [messages, state.currentTask],
+  );
+  const hasActiveTurn = Boolean(activeAssistantMessage);
 
   const buildSendPayload = useCallback(
     (
       message: string,
-      sourceAttachments?: Attachment[]
+      sourceAttachments?: Attachment[],
     ): { payload: ChatSendPayload; activeDeviceId?: string } | null => {
-      if (!state.defaultTeam) return null
+      if (!state.defaultTeam) return null;
       const activeProject =
-        state.currentProject ?? findProjectForTask(state.projects, state.currentTask)
+        state.currentProject ??
+        findProjectForTask(state.projects, state.currentTask);
 
       const activeDeviceId = getActiveWorkbenchDeviceId({
         currentTask: state.currentTask,
         currentProject: activeProject,
         standaloneDeviceId: state.standaloneDeviceId,
-      })
+      });
 
       const payload: ChatSendPayload = {
         task_id: state.currentTask?.id,
         team_id: state.defaultTeam.id,
         project_id: state.currentTask
           ? undefined
-          : activeProject?.id ?? STANDALONE_PROJECT_ID,
+          : (activeProject?.id ?? STANDALONE_PROJECT_ID),
         client_origin: WEWORK_CLIENT_ORIGIN,
         device_id: activeDeviceId,
-        task_type: 'code',
+        task_type: "code",
         message,
-      }
+      };
 
       if (
         !state.currentTask &&
         activeProject &&
-        projectExecutionMode === 'git_worktree' &&
+        projectExecutionMode === "git_worktree" &&
         supportsGitWorktreeExecution(activeProject)
       ) {
         payload.execution = {
           workspace: {
-            source: 'git_worktree',
+            source: "git_worktree",
           },
-        }
+        };
       }
 
       if (modelSelection.selectedModel) {
-        payload.force_override_bot_model = modelSelection.selectedModel.name
-        payload.force_override_bot_model_type = modelSelection.selectedModel.type
+        payload.force_override_bot_model = modelSelection.selectedModel.name;
+        payload.force_override_bot_model_type =
+          modelSelection.selectedModel.type;
         if (Object.keys(modelSelection.selectedModelOptions).length > 0) {
-          payload.model_options = modelSelection.selectedModelOptions
+          payload.model_options = modelSelection.selectedModelOptions;
         }
       }
 
       if (!isOptionsLocked && skillSelection.selectedSkills.length > 0) {
-        payload.additional_skills = skillSelection.selectedSkills
+        payload.additional_skills = skillSelection.selectedSkills;
       }
 
-      const payloadAttachments = sourceAttachments ?? attachmentSelection.attachments
+      const payloadAttachments =
+        sourceAttachments ?? attachmentSelection.attachments;
       if (payloadAttachments.length > 0) {
-        payload.attachment_ids = payloadAttachments.map(attachment => attachment.id)
+        payload.attachment_ids = payloadAttachments.map(
+          (attachment) => attachment.id,
+        );
         if (!message && !state.currentTask) {
-          payload.title = EMPTY_MESSAGE_TASK_TITLE
+          payload.title = EMPTY_MESSAGE_TASK_TITLE;
         }
       }
 
-      return { payload, activeDeviceId }
+      return { payload, activeDeviceId };
     },
     [
       attachmentSelection.attachments,
@@ -1707,73 +1857,79 @@ export function WorkbenchProvider({
       state.defaultTeam,
       state.projects,
       state.standaloneDeviceId,
-    ]
-  )
+    ],
+  );
 
   const sendPreparedMessage = useCallback(
     async (
       message: string,
       payload: ChatSendPayload,
       activeDeviceId?: string,
-      attachments?: Attachment[]
+      attachments?: Attachment[],
     ): Promise<boolean> => {
-      dispatch({ type: 'sending_started' })
-      setIsAwaitingAssistantStart(true)
+      dispatch({ type: "sending_started" });
+      setIsAwaitingAssistantStart(true);
       dispatchMessages({
-        type: 'user_added',
+        type: "user_added",
         message: {
           id: `local-${Date.now()}`,
           taskId: payload.task_id,
-          role: 'user',
+          role: "user",
           content: message,
-          status: 'done',
-          attachments: attachments && attachments.length > 0 ? attachments : undefined,
+          status: "done",
+          attachments:
+            attachments && attachments.length > 0 ? attachments : undefined,
           createdAt: new Date().toISOString(),
         },
-      })
+      });
 
-      let ack
+      let ack;
       try {
-        ack = await resolvedServices.chatStream.sendMessage(payload)
+        ack = await resolvedServices.chatStream.sendMessage(payload);
       } catch (error) {
-        setIsAwaitingAssistantStart(false)
+        setIsAwaitingAssistantStart(false);
         dispatch({
-          type: 'error_set',
-          error: error instanceof Error ? error.message : '发送失败',
-        })
-        return false
+          type: "error_set",
+          error: error instanceof Error ? error.message : "发送失败",
+        });
+        return false;
       } finally {
-        dispatch({ type: 'sending_finished' })
+        dispatch({ type: "sending_finished" });
       }
 
       if (ack.error || ack.success === false) {
-        setIsAwaitingAssistantStart(false)
-        dispatch({ type: 'error_set', error: ack.error ?? '发送失败' })
-        return false
+        setIsAwaitingAssistantStart(false);
+        dispatch({ type: "error_set", error: ack.error ?? "发送失败" });
+        return false;
       }
 
-      const activeTaskId = ack.task_id ?? payload.task_id
+      const activeTaskId = ack.task_id ?? payload.task_id;
       if (activeTaskId) {
-        markTaskRunning(activeTaskId)
+        markTaskRunning(activeTaskId);
         dispatch({
-          type: 'task_status_changed',
+          type: "task_status_changed",
           taskId: activeTaskId,
-          status: 'RUNNING',
-        })
+          status: "RUNNING",
+        });
       }
 
       if (!state.currentTask && ack.task_id) {
-        const projectId = payload.project_id ?? state.currentProject?.id ?? 0
-        const routeProjectId = projectId
+        const projectId = payload.project_id ?? state.currentProject?.id ?? 0;
+        const routeProjectId = projectId;
         // Navigate to the canonical task route so a freshly created chat shares
         // the same URL shape as opening an existing one (path, not ?taskId=).
-        handledTaskRouteRef.current = getTaskRouteKey(ack.task_id, routeProjectId)
-        navigateTo(buildTaskRoute({ taskId: ack.task_id, projectId: routeProjectId }))
+        handledTaskRouteRef.current = getTaskRouteKey(
+          ack.task_id,
+          routeProjectId,
+        );
+        navigateTo(
+          buildTaskRoute({ taskId: ack.task_id, projectId: routeProjectId }),
+        );
         const openedTask: Task = {
           id: ack.task_id,
           title: (payload.title ?? message).substring(0, 100),
-          status: 'RUNNING',
-          task_type: 'code',
+          status: "RUNNING",
+          task_type: "code",
           team_id: payload.team_id,
           project_id: projectId,
           client_origin: WEWORK_CLIENT_ORIGIN,
@@ -1782,16 +1938,16 @@ export function WorkbenchProvider({
           force_override_bot_model_type: payload.force_override_bot_model_type,
           model_options: payload.model_options,
           created_at: new Date().toISOString(),
-        }
+        };
         dispatch({
-          type: 'task_opened',
+          type: "task_opened",
           task: openedTask,
-        })
-        await refreshWorkLists()
-        dispatch({ type: 'task_upserted', task: openedTask })
+        });
+        await refreshWorkLists();
+        dispatch({ type: "task_upserted", task: openedTask });
       }
 
-      return true
+      return true;
     },
     [
       markTaskRunning,
@@ -1799,86 +1955,90 @@ export function WorkbenchProvider({
       resolvedServices.chatStream,
       state.currentProject?.id,
       state.currentTask,
-    ]
-  )
+    ],
+  );
 
   const sendCurrentInput = useCallback(async () => {
-    const trimmedMessage = state.input.trim()
-    const hasAttachments = attachmentSelection.attachments.length > 0
-    if (!trimmedMessage && !hasAttachments) return
-    const payloadMessage = trimmedMessage
-    const prepared = buildSendPayload(payloadMessage)
-    if (!prepared) return
+    const trimmedMessage = state.input.trim();
+    const hasAttachments = attachmentSelection.attachments.length > 0;
+    if (!trimmedMessage && !hasAttachments) return;
+    const payloadMessage = trimmedMessage;
+    const prepared = buildSendPayload(payloadMessage);
+    if (!prepared) return;
     if (prepared.activeDeviceId) {
-      const activeDevice = findWorkbenchDevice(state.devices, prepared.activeDeviceId)
+      const activeDevice = findWorkbenchDevice(
+        state.devices,
+        prepared.activeDeviceId,
+      );
       if (!isWorkbenchDeviceOnline(activeDevice)) {
         const deviceName = getWorkbenchDeviceDisplayName(
           activeDevice,
           prepared.activeDeviceId,
-        )
+        );
         const status = activeDevice
-          ? DEVICE_STATUS_LABELS[activeDevice.status] ?? activeDevice.status
-          : '不可用'
+          ? (DEVICE_STATUS_LABELS[activeDevice.status] ?? activeDevice.status)
+          : "不可用";
         dispatch({
-          type: 'error_set',
+          type: "error_set",
           error: `${deviceName} ${status}，恢复在线后可继续对话`,
-        })
-        return
+        });
+        return;
       }
       if (activeDevice && isDeviceBelowWeWorkVersion(activeDevice)) {
         const deviceName = getWorkbenchDeviceDisplayName(
           activeDevice,
           prepared.activeDeviceId,
-        )
+        );
         dispatch({
-          type: 'error_set',
+          type: "error_set",
           error: `${deviceName} 版本低于 ${WEWORK_MIN_EXECUTOR_VERSION}，升级后可继续对话`,
-        })
-        return
+        });
+        return;
       }
     } else if (!state.currentProject && !state.currentTask) {
       const hasOnlineCompatibleDevice = state.devices.some(
-        device => device.status === 'online' && isWeWorkCompatibleDevice(device),
-      )
+        (device) =>
+          device.status === "online" && isWeWorkCompatibleDevice(device),
+      );
       if (!hasOnlineCompatibleDevice) {
         dispatch({
-          type: 'error_set',
+          type: "error_set",
           error: `暂无满足 ${WEWORK_MIN_EXECUTOR_VERSION} 的在线设备，请连接或升级设备`,
-        })
-        return
+        });
+        return;
       }
     }
     const attachmentsSnapshot = hasAttachments
       ? [...attachmentSelection.attachments]
-      : undefined
+      : undefined;
 
-    dispatch({ type: 'input_changed', input: '' })
+    dispatch({ type: "input_changed", input: "" });
 
     if (hasActiveTurn && state.currentTask?.id) {
-      setQueuedSends(items => [
+      setQueuedSends((items) => [
         ...items,
         {
           id: `queued-${state.currentTask?.id}-${Date.now()}`,
           content: payloadMessage,
-          status: 'queued',
+          status: "queued",
           createdAt: new Date().toISOString(),
           payload: prepared.payload,
           activeDeviceId: prepared.activeDeviceId,
           attachments: attachmentsSnapshot,
         },
-      ])
-      attachmentSelection.resetAttachments()
-      return
+      ]);
+      attachmentSelection.resetAttachments();
+      return;
     }
 
     const sent = await sendPreparedMessage(
       payloadMessage,
       prepared.payload,
       prepared.activeDeviceId,
-      attachmentsSnapshot
-    )
+      attachmentsSnapshot,
+    );
     if (sent) {
-      attachmentSelection.resetAttachments()
+      attachmentSelection.resetAttachments();
     }
   }, [
     attachmentSelection,
@@ -1889,50 +2049,50 @@ export function WorkbenchProvider({
     state.currentProject,
     state.currentTask,
     state.input,
-  ])
+  ]);
 
   const retryFailedMessage = useCallback(
     async (messageId: string) => {
       const failedMessageIndex = messages.findIndex(
-        message =>
+        (message) =>
           message.id === messageId &&
-          message.role === 'assistant' &&
-          message.status === 'failed',
-      )
+          message.role === "assistant" &&
+          message.status === "failed",
+      );
       if (failedMessageIndex === -1) {
-        dispatch({ type: 'error_set', error: '未找到可重试的失败消息' })
-        return
+        dispatch({ type: "error_set", error: "未找到可重试的失败消息" });
+        return;
       }
 
       const previousUserMessage = [...messages]
         .slice(0, failedMessageIndex)
         .reverse()
-        .find(message => message.role === 'user')
+        .find((message) => message.role === "user");
       if (!previousUserMessage) {
-        dispatch({ type: 'error_set', error: '未找到可重试的用户消息' })
-        return
+        dispatch({ type: "error_set", error: "未找到可重试的用户消息" });
+        return;
       }
 
       const prepared = buildSendPayload(
         previousUserMessage.content,
         previousUserMessage.attachments ?? [],
-      )
-      if (!prepared) return
+      );
+      if (!prepared) return;
 
       if (hasActiveTurn && state.currentTask?.id) {
-        setQueuedSends(items => [
+        setQueuedSends((items) => [
           ...items,
           {
             id: `queued-${state.currentTask?.id}-${Date.now()}`,
             content: previousUserMessage.content,
-            status: 'queued',
+            status: "queued",
             createdAt: new Date().toISOString(),
             payload: prepared.payload,
             activeDeviceId: prepared.activeDeviceId,
             attachments: previousUserMessage.attachments,
           },
-        ])
-        return
+        ]);
+        return;
       }
 
       await sendPreparedMessage(
@@ -1940,7 +2100,7 @@ export function WorkbenchProvider({
         prepared.payload,
         prepared.activeDeviceId,
         previousUserMessage.attachments,
-      )
+      );
     },
     [
       buildSendPayload,
@@ -1949,251 +2109,257 @@ export function WorkbenchProvider({
       sendPreparedMessage,
       state.currentTask?.id,
     ],
-  )
+  );
 
   const sendNextQueuedMessage = useCallback(
     async (item: QueuedWorkbenchSend) => {
-      setQueuedSends(items =>
-        items.map(queued =>
-          queued.id === item.id ? { ...queued, status: 'sending' } : queued
-        )
-      )
+      setQueuedSends((items) =>
+        items.map((queued) =>
+          queued.id === item.id ? { ...queued, status: "sending" } : queued,
+        ),
+      );
 
       const sent = await sendPreparedMessage(
         item.content,
         item.payload,
         item.activeDeviceId,
-        item.attachments
-      )
+        item.attachments,
+      );
 
-      setQueuedSends(items =>
+      setQueuedSends((items) =>
         sent
-          ? items.filter(queued => queued.id !== item.id)
-          : items.map(queued =>
+          ? items.filter((queued) => queued.id !== item.id)
+          : items.map((queued) =>
               queued.id === item.id
-                ? { ...queued, status: 'failed', error: '发送失败' }
-                : queued
-            )
-      )
+                ? { ...queued, status: "failed", error: "发送失败" }
+                : queued,
+            ),
+      );
     },
-    [sendPreparedMessage]
-  )
+    [sendPreparedMessage],
+  );
 
   useEffect(() => {
-    const next = queuedSends.find(item => item.status === 'queued')
-    if (!next || hasActiveTurn || isAwaitingAssistantStart || state.isSending) return
+    const next = queuedSends.find((item) => item.status === "queued");
+    if (!next || hasActiveTurn || isAwaitingAssistantStart || state.isSending)
+      return;
 
     const timer = window.setTimeout(() => {
-      void sendNextQueuedMessage(next)
-    }, 0)
+      void sendNextQueuedMessage(next);
+    }, 0);
 
-    return () => window.clearTimeout(timer)
+    return () => window.clearTimeout(timer);
   }, [
     hasActiveTurn,
     isAwaitingAssistantStart,
     queuedSends,
     sendNextQueuedMessage,
     state.isSending,
-  ])
+  ]);
 
   const cancelQueuedMessage = useCallback((id: string) => {
-    setQueuedSends(items => items.filter(item => item.id !== id))
-  }, [])
+    setQueuedSends((items) => items.filter((item) => item.id !== id));
+  }, []);
 
-  const editQueuedMessage = useCallback((id: string) => {
-    const item = queuedSends.find(queued => queued.id === id)
-    if (!item || item.status === 'sending') return
+  const editQueuedMessage = useCallback(
+    (id: string) => {
+      const item = queuedSends.find((queued) => queued.id === id);
+      if (!item || item.status === "sending") return;
 
-    dispatch({ type: 'input_changed', input: item.content })
-    for (const attachment of item.attachments ?? []) {
-      attachmentSelection.addExistingAttachment(attachment)
-    }
-    setQueuedSends(items => items.filter(queued => queued.id !== id))
-  }, [attachmentSelection, queuedSends])
+      dispatch({ type: "input_changed", input: item.content });
+      for (const attachment of item.attachments ?? []) {
+        attachmentSelection.addExistingAttachment(attachment);
+      }
+      setQueuedSends((items) => items.filter((queued) => queued.id !== id));
+    },
+    [attachmentSelection, queuedSends],
+  );
 
   const cancelGuidanceMessage = useCallback((id: string) => {
-    setGuidanceMessages(items => items.filter(item => item.id !== id))
-  }, [])
+    setGuidanceMessages((items) => items.filter((item) => item.id !== id));
+  }, []);
 
   const loadTurnFileChangesDiff = useCallback(
     async (subtaskId: number) => {
-      const loadDiff = resolvedServices.taskApi.getTurnFileChangesDiff
-      if (!loadDiff) throw new Error('File changes review is unavailable')
-      const response = await loadDiff(subtaskId)
-      return response.diff
+      const loadDiff = resolvedServices.taskApi.getTurnFileChangesDiff;
+      if (!loadDiff) throw new Error("File changes review is unavailable");
+      const response = await loadDiff(subtaskId);
+      return response.diff;
     },
     [resolvedServices.taskApi],
-  )
+  );
 
   const revertTurnFileChanges = useCallback(
     async (subtaskId: number) => {
-      const revert = resolvedServices.taskApi.revertTurnFileChanges
-      if (!revert) throw new Error('File changes revert is unavailable')
+      const revert = resolvedServices.taskApi.revertTurnFileChanges;
+      if (!revert) throw new Error("File changes revert is unavailable");
       try {
-        const response = await revert(subtaskId)
-        const fileChanges = normalizeTurnFileChanges(response.file_changes)
+        const response = await revert(subtaskId);
+        const fileChanges = normalizeTurnFileChanges(response.file_changes);
         if (!fileChanges) {
-          throw new Error('Invalid file changes response')
+          throw new Error("Invalid file changes response");
         }
         dispatchMessages({
-          type: 'file_changes_updated',
+          type: "file_changes_updated",
           subtaskId,
           fileChanges,
-        })
-        return fileChanges
+        });
+        return fileChanges;
       } catch (error) {
         if (error instanceof ApiError && isRecord(error.detail)) {
           const fileChanges = normalizeTurnFileChanges(
             error.detail.file_changes,
-          )
+          );
           if (fileChanges) {
             dispatchMessages({
-              type: 'file_changes_updated',
+              type: "file_changes_updated",
               subtaskId,
               fileChanges,
-            })
+            });
           }
         }
-        throw error
+        throw error;
       }
     },
     [resolvedServices.taskApi],
-  )
+  );
 
   const pauseCurrentResponse = useCallback(async () => {
-    if (!activeAssistantMessage?.subtaskId) return
+    if (!activeAssistantMessage?.subtaskId) return;
 
     const ack = await resolvedServices.chatStream.cancelStream({
       subtask_id: activeAssistantMessage.subtaskId,
       partial_content: activeAssistantMessage.content,
       shell_type: activeAssistantMessage.shellType,
-    })
+    });
 
     if (ack.error || ack.success === false) {
       dispatch({
-        type: 'error_set',
-        error: normalizeGuidanceError(ack.error ?? '取消当前回复失败'),
-      })
-      return
+        type: "error_set",
+        error: normalizeGuidanceError(ack.error ?? "取消当前回复失败"),
+      });
+      return;
     }
 
     dispatchMessages({
-      type: 'assistant_done',
+      type: "assistant_done",
       subtaskId: activeAssistantMessage.subtaskId,
       content: activeAssistantMessage.content,
-    })
+    });
     if (state.currentTask?.id) {
-      markTaskNotRunning(state.currentTask.id)
+      markTaskNotRunning(state.currentTask.id);
       dispatch({
-        type: 'task_status_changed',
+        type: "task_status_changed",
         taskId: state.currentTask.id,
-        status: 'CANCELLED',
-      })
+        status: "CANCELLED",
+      });
     }
   }, [
     activeAssistantMessage,
     markTaskNotRunning,
     resolvedServices.chatStream,
     state.currentTask,
-  ])
+  ]);
 
   const sendQueuedAsGuidance = useCallback(
     async (id: string) => {
-      if (guidanceSendInFlightRef.current) return
+      if (guidanceSendInFlightRef.current) return;
 
-      const item = queuedSends.find(queued => queued.id === id)
-      const taskId = state.currentTask?.id ?? item?.payload.task_id
-      const activeSubtaskId = activeAssistantMessage?.subtaskId
-      if (!item) return
+      const item = queuedSends.find((queued) => queued.id === id);
+      const taskId = state.currentTask?.id ?? item?.payload.task_id;
+      const activeSubtaskId = activeAssistantMessage?.subtaskId;
+      if (!item) return;
 
       if (!taskId || !activeSubtaskId || !state.defaultTeam) {
-        setQueuedSends(items =>
-          items.map(queued =>
+        setQueuedSends((items) =>
+          items.map((queued) =>
             queued.id === id
               ? {
                   ...queued,
-                  status: 'failed',
-                  error: '当前没有可引导的回复',
+                  status: "failed",
+                  error: "当前没有可引导的回复",
                 }
-              : queued
-          )
-        )
-        return
+              : queued,
+          ),
+        );
+        return;
       }
 
-      guidanceSendInFlightRef.current = true
-      setQueuedSends(items =>
-        items.map(queued =>
+      guidanceSendInFlightRef.current = true;
+      setQueuedSends((items) =>
+        items.map((queued) =>
           queued.id === id
-            ? { ...queued, status: 'sending', error: undefined }
-            : queued
-        )
-      )
+            ? { ...queued, status: "sending", error: undefined }
+            : queued,
+        ),
+      );
 
       try {
         const cancelAck = await resolvedServices.chatStream.cancelStream({
           subtask_id: activeSubtaskId,
           partial_content: activeAssistantMessage.content,
           shell_type: activeAssistantMessage.shellType,
-        })
+        });
 
         if (cancelAck.error || cancelAck.success === false) {
-          setQueuedSends(items =>
-            items.map(queued =>
+          setQueuedSends((items) =>
+            items.map((queued) =>
               queued.id === id
                 ? {
                     ...queued,
-                    status: 'failed',
-                    error: normalizeGuidanceError(cancelAck.error ?? '取消当前回复失败'),
+                    status: "failed",
+                    error: normalizeGuidanceError(
+                      cancelAck.error ?? "取消当前回复失败",
+                    ),
                   }
-                : queued
-            )
-          )
-          return
+                : queued,
+            ),
+          );
+          return;
         }
 
         dispatchMessages({
-          type: 'assistant_done',
+          type: "assistant_done",
           subtaskId: activeSubtaskId,
           content: activeAssistantMessage.content,
-        })
+        });
 
         const sent = await sendPreparedMessage(
           item.content,
           item.payload,
           item.activeDeviceId,
-          item.attachments
-        )
+          item.attachments,
+        );
 
-        setQueuedSends(items =>
+        setQueuedSends((items) =>
           !sent
-            ? items.map(queued =>
+            ? items.map((queued) =>
                 queued.id === id
                   ? {
                       ...queued,
-                      status: 'failed',
-                      error: '引导发送失败',
+                      status: "failed",
+                      error: "引导发送失败",
                     }
-                  : queued
+                  : queued,
               )
-            : items.filter(queued => queued.id !== id)
-        )
+            : items.filter((queued) => queued.id !== id),
+        );
       } catch (error) {
-        setQueuedSends(items =>
-          items.map(queued =>
+        setQueuedSends((items) =>
+          items.map((queued) =>
             queued.id === id
               ? {
                   ...queued,
-                  status: 'failed',
+                  status: "failed",
                   error: normalizeGuidanceError(
-                    error instanceof Error ? error.message : '取消当前回复失败',
+                    error instanceof Error ? error.message : "取消当前回复失败",
                   ),
                 }
-              : queued
-          )
-        )
+              : queued,
+          ),
+        );
       } finally {
-        guidanceSendInFlightRef.current = false
+        guidanceSendInFlightRef.current = false;
       }
     },
     [
@@ -2203,41 +2369,41 @@ export function WorkbenchProvider({
       sendPreparedMessage,
       state.currentTask?.id,
       state.defaultTeam,
-    ]
-  )
+    ],
+  );
 
   const listLocalSkills = useCallback(async () => {
-    if (!activeDeviceId) return []
+    if (!activeDeviceId) return [];
 
-    const cached = localSkillsCacheRef.current.get(activeDeviceId)
+    const cached = localSkillsCacheRef.current.get(activeDeviceId);
     if (cached && cached.expiresAt > Date.now()) {
-      return cached.skills
+      return cached.skills;
     }
 
-    const skills = await resolvedServices.deviceApi.listSkills(activeDeviceId)
+    const skills = await resolvedServices.deviceApi.listSkills(activeDeviceId);
     localSkillsCacheRef.current.set(activeDeviceId, {
       expiresAt: Date.now() + LOCAL_SKILLS_CACHE_TTL_MS,
       skills,
-    })
-    return skills
-  }, [activeDeviceId, resolvedServices.deviceApi])
+    });
+    return skills;
+  }, [activeDeviceId, resolvedServices.deviceApi]);
 
   const runningTaskIds = useMemo(() => {
-    const ids = new Set<number>(liveRunningTaskIds)
+    const ids = new Set<number>(liveRunningTaskIds);
     if (state.currentTask && isRunningTaskStatus(state.currentTask.status)) {
-      ids.add(state.currentTask.id)
+      ids.add(state.currentTask.id);
     }
     for (const message of messages) {
       if (
-        message.role === 'assistant' &&
-        message.status === 'streaming' &&
+        message.role === "assistant" &&
+        message.status === "streaming" &&
         message.taskId
       ) {
-        ids.add(message.taskId)
+        ids.add(message.taskId);
       }
     }
-    return ids
-  }, [liveRunningTaskIds, messages, state.currentTask])
+    return ids;
+  }, [liveRunningTaskIds, messages, state.currentTask]);
 
   const value: WorkbenchContextValue = {
     state,
@@ -2317,11 +2483,11 @@ export function WorkbenchProvider({
     cancelGuidanceMessage,
     loadTurnFileChangesDiff,
     revertTurnFileChanges,
-  }
+  };
 
   return (
     <WorkbenchContext.Provider value={value}>
       {children}
     </WorkbenchContext.Provider>
-  )
+  );
 }
