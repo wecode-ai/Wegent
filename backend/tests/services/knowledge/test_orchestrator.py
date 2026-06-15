@@ -171,6 +171,165 @@ class TestKnowledgeOrchestrator:
 
             assert result is None
 
+    def test_resolve_retrieval_config_completes_partial_explicit_config(
+        self, orchestrator, mock_db, mock_user
+    ):
+        """Test explicit retrieval config is completed before persistence."""
+        partial_config = {
+            "retrieval_mode": "vector",
+            "top_k": 5,
+            "score_threshold": 0.5,
+            "embedding_config": {
+                "model_name": "embedding-1",
+                "model_namespace": "default",
+            },
+        }
+
+        with patch.object(
+            orchestrator,
+            "get_default_retriever",
+            return_value={
+                "retriever_name": "retriever-1",
+                "retriever_namespace": "default",
+            },
+        ) as mock_get_retriever:
+            with patch.object(
+                orchestrator, "get_default_embedding_model"
+            ) as mock_get_embedding:
+                result = orchestrator._resolve_retrieval_config(
+                    db=mock_db,
+                    user=mock_user,
+                    namespace="default",
+                    retrieval_config=partial_config,
+                )
+
+        assert result == {
+            "retriever_name": "retriever-1",
+            "retriever_namespace": "default",
+            "embedding_config": {
+                "model_name": "embedding-1",
+                "model_namespace": "default",
+            },
+            "retrieval_mode": "vector",
+            "top_k": 5,
+            "score_threshold": 0.5,
+        }
+        mock_get_retriever.assert_called_once_with(mock_db, mock_user.id, "default")
+        mock_get_embedding.assert_not_called()
+
+    def test_resolve_retrieval_config_auto_selects_when_config_absent(
+        self, orchestrator, mock_db, mock_user
+    ):
+        """Test auto mode builds a complete config when no config is provided."""
+        with patch.object(
+            orchestrator,
+            "get_default_retriever",
+            return_value={
+                "retriever_name": "retriever-1",
+                "retriever_namespace": "default",
+            },
+        ) as mock_get_retriever:
+            with patch.object(
+                orchestrator,
+                "get_default_embedding_model",
+                return_value={
+                    "model_name": "embedding-1",
+                    "model_namespace": "default",
+                },
+            ) as mock_get_embedding:
+                result = orchestrator._resolve_retrieval_config(
+                    db=mock_db,
+                    user=mock_user,
+                    namespace="default",
+                    retrieval_config=None,
+                )
+
+        assert result == {
+            "retriever_name": "retriever-1",
+            "retriever_namespace": "default",
+            "embedding_config": {
+                "model_name": "embedding-1",
+                "model_namespace": "default",
+            },
+            "retrieval_mode": "vector",
+            "top_k": 5,
+            "score_threshold": 0.5,
+        }
+        mock_get_retriever.assert_called_once_with(mock_db, mock_user.id, "default")
+        mock_get_embedding.assert_called_once_with(mock_db, mock_user.id, "default")
+
+    def test_resolve_retrieval_config_returns_none_when_defaults_unavailable(
+        self, orchestrator, mock_db, mock_user
+    ):
+        with patch.object(
+            orchestrator, "get_default_retriever", return_value=None
+        ) as mock_get_retriever:
+            with patch.object(
+                orchestrator, "get_default_embedding_model", return_value=None
+            ) as mock_get_embedding:
+                result = orchestrator._resolve_retrieval_config(
+                    db=mock_db,
+                    user=mock_user,
+                    namespace="default",
+                    retrieval_config=None,
+                )
+
+        assert result is None
+        mock_get_retriever.assert_called_once_with(mock_db, mock_user.id, "default")
+        mock_get_embedding.assert_called_once_with(mock_db, mock_user.id, "default")
+
+    def test_resolve_retrieval_config_disabled_returns_none_without_auto_select(
+        self, orchestrator, mock_db, mock_user
+    ):
+        """Test disabled mode creates a knowledge base without RAG."""
+        with patch.object(orchestrator, "get_default_retriever") as mock_get_retriever:
+            with patch.object(
+                orchestrator, "get_default_embedding_model"
+            ) as mock_get_embedding:
+                result = orchestrator._resolve_retrieval_config(
+                    db=mock_db,
+                    user=mock_user,
+                    namespace="default",
+                    retrieval_config={"retrieval_mode": "vector"},
+                    rag_config_mode="disabled",
+                )
+
+        assert result is None
+        mock_get_retriever.assert_not_called()
+        mock_get_embedding.assert_not_called()
+
+    def test_resolve_retrieval_config_complete_explicit_config_does_not_auto_select(
+        self, orchestrator, mock_db, mock_user
+    ):
+        """Test a complete explicit config is persisted without default selection."""
+        with patch.object(orchestrator, "get_default_retriever") as mock_get_retriever:
+            with patch.object(
+                orchestrator, "get_default_embedding_model"
+            ) as mock_get_embedding:
+                result = orchestrator._resolve_retrieval_config(
+                    db=mock_db,
+                    user=mock_user,
+                    namespace="default",
+                    retrieval_config={
+                        "retriever_name": "retriever-1",
+                        "embedding_config": {"model_name": "embedding-1"},
+                    },
+                )
+
+        assert result == {
+            "retriever_name": "retriever-1",
+            "retriever_namespace": "default",
+            "embedding_config": {
+                "model_name": "embedding-1",
+                "model_namespace": "default",
+            },
+            "retrieval_mode": "vector",
+            "top_k": 5,
+            "score_threshold": 0.5,
+        }
+        mock_get_retriever.assert_not_called()
+        mock_get_embedding.assert_not_called()
+
     def test_get_task_model_returns_none_when_task_not_found(
         self, orchestrator, mock_db
     ):

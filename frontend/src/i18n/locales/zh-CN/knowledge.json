@@ -535,9 +535,18 @@
     },
     "advancedSettings": {
       "title": "高级设置",
-      "collapsed": "点击展开高级设置",
       "expanded": "点击收起",
       "readOnly": "只读"
+    },
+    "formSections": {
+      "basic": "基础设置",
+      "summary": "摘要设置",
+      "guidedQuestions": "引导问题"
+    },
+    "ragConfigMode": {
+      "title": "RAG 检索",
+      "auto": "启用 RAG",
+      "disabled": "无 RAG"
     },
     "retrieval": {
       "retriever": "检索引擎",

@@ -6,9 +6,10 @@
 Pydantic schemas for knowledge base and document management.
 """
 
+import logging
 from datetime import datetime
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -27,6 +28,8 @@ from app.schemas.knowledge_search import KnowledgeSearchRequest
 # Import SplitterConfig from rag.py to use unified splitter configuration
 from app.schemas.rag import SplitterConfig
 from app.services.knowledge.splitter_config import normalize_splitter_config
+
+logger = logging.getLogger(__name__)
 
 
 class DocumentStatus(str, Enum):
@@ -94,6 +97,26 @@ class InitialMemberCreate(BaseModel):
     )
 
 
+class RetrievalConfigCreate(BaseModel):
+    """Partial retrieval configuration accepted during knowledge base creation."""
+
+    retriever_name: Optional[str] = Field(None, description="Retriever name")
+    retriever_namespace: str = Field("default", description="Retriever namespace")
+    embedding_config: Optional[EmbeddingModelRef] = Field(
+        None, description="Embedding model configuration"
+    )
+    retrieval_mode: str = Field(
+        "vector", description="Retrieval mode: 'vector', 'keyword', or 'hybrid'"
+    )
+    top_k: int = Field(5, ge=1, le=10, description="Number of results to return")
+    score_threshold: float = Field(
+        0.5, ge=0.0, le=1.0, description="Minimum score threshold"
+    )
+    hybrid_weights: Optional[HybridWeights] = Field(
+        None, description="Hybrid search weights"
+    )
+
+
 class KnowledgeBaseCreate(BaseModel):
     """Schema for creating a knowledge base."""
 
@@ -104,8 +127,12 @@ class KnowledgeBaseCreate(BaseModel):
         "notebook",
         description="Knowledge base type: 'notebook' (3-column layout with chat) or 'classic' (document list only)",
     )
-    retrieval_config: Optional[RetrievalConfig] = Field(
+    retrieval_config: Optional[RetrievalConfigCreate] = Field(
         None, description="Retrieval configuration"
+    )
+    rag_config_mode: Literal["auto", "disabled"] = Field(
+        "auto",
+        description="RAG configuration mode: auto-fill or disabled",
     )
     summary_enabled: bool = Field(
         default=False,
@@ -276,6 +303,27 @@ class KnowledgeBaseResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+    @staticmethod
+    def _normalize_retrieval_config_for_response(
+        config: Optional[Any], knowledge_base_id: int
+    ) -> Optional[Dict[str, Any]]:
+        """Drop historical incomplete retrieval configs before response validation."""
+        if not isinstance(config, dict):
+            return None
+
+        embedding_config = config.get("embedding_config") or {}
+        if not isinstance(embedding_config, dict):
+            embedding_config = {}
+
+        if config.get("retriever_name") and embedding_config.get("model_name"):
+            return config
+
+        logger.warning(
+            "Dropping incomplete retrievalConfig from knowledge base response: kb_id=%s",
+            knowledge_base_id,
+        )
+        return None
+
     @classmethod
     def from_kind(cls, kind, document_count: int = 0):
         """Create response from Kind object
@@ -318,7 +366,9 @@ class KnowledgeBaseResponse(BaseModel):
             namespace=kind.namespace,
             kb_type=kb_type,
             document_count=document_count,
-            retrieval_config=spec.get("retrievalConfig"),
+            retrieval_config=cls._normalize_retrieval_config_for_response(
+                spec.get("retrievalConfig"), kind.id
+            ),
             summary_enabled=spec.get("summaryEnabled", False),
             summary_model_ref=summary_model_ref,
             summary=summary,

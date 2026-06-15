@@ -82,7 +82,7 @@ class TestKnowledgeBaseInitialMembers:
             "/api/knowledge-bases",
             json={
                 "name": "kb-with-members",
-                "retrieval_config": {"retriever_name": "test"},
+                "rag_config_mode": "disabled",
                 "members": [
                     {
                         "entity_type": "user",
@@ -119,7 +119,7 @@ class TestKnowledgeBaseInitialMembers:
             "/api/knowledge-bases",
             json={
                 "name": "kb-with-ns-member",
-                "retrieval_config": {"retriever_name": "test"},
+                "rag_config_mode": "disabled",
                 "members": [
                     {
                         "entity_type": "namespace",
@@ -158,7 +158,7 @@ class TestKnowledgeBaseInitialMembers:
             "/api/knowledge-bases",
             json={
                 "name": "kb-invalid-user",
-                "retrieval_config": {"retriever_name": "test"},
+                "rag_config_mode": "disabled",
                 "members": [
                     {
                         "entity_type": "user",
@@ -183,7 +183,7 @@ class TestKnowledgeBaseInitialMembers:
             "/api/knowledge-bases",
             json={
                 "name": "kb-dup-members",
-                "retrieval_config": {"retriever_name": "test"},
+                "rag_config_mode": "disabled",
                 "members": [
                     {
                         "entity_type": "user",
