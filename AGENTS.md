@@ -8,7 +8,8 @@ Wegent is an open-source AI-native operating system for defining, organizing, an
 
 **Multi-module architecture:**
 - **Backend** (FastAPI + SQLAlchemy + MySQL): RESTful API and business logic
-- **Frontend** (Next.js 15 + TypeScript + React 19): Web UI with shadcn/ui components
+- **Frontend (`frontend/`)** (Next.js 15 + TypeScript + React 19): Wegent main web frontend, focused on AI coding and chat experiences with shadcn/ui components
+- **Wework (`wework/`)** (Tauri + Vite + React + TypeScript): Office/work scenario frontend for the desktop app, currently covering workplace workflows while also supporting coding scenarios
 - **Executor**: Task execution engine (Claude Code, Agno, Dify, ImageValidator)
 - **Executor Manager**: Task orchestration via Docker
 - **Chat Shell**: Lightweight AI chat engine for Chat Shell type (LangGraph + multi-LLM)

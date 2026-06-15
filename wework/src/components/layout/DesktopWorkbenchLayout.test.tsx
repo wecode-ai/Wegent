@@ -420,8 +420,9 @@ describe('DesktopWorkbenchLayout', () => {
     )
     expect(screen.getByTestId('desktop-chat-scroll')).toHaveClass(
       'h-full',
+      'overflow-x-hidden',
       'overflow-y-auto',
-      'pb-52',
+      'pb-40',
     )
     expect(screen.getByTestId('desktop-floating-composer-backdrop')).toHaveClass(
       'pointer-events-none',
@@ -508,8 +509,8 @@ describe('DesktopWorkbenchLayout', () => {
       />,
     )
 
-    expect(screen.getByTestId('desktop-chat-scroll')).toHaveClass('pb-72')
-    expect(screen.getByTestId('desktop-chat-scroll')).not.toHaveClass('pb-52')
+    expect(screen.getByTestId('desktop-chat-scroll')).toHaveClass('pb-52')
+    expect(screen.getByTestId('desktop-chat-scroll')).not.toHaveClass('pb-40')
   })
 
   test('restores and stores sidebar width in localStorage', () => {
