@@ -1222,6 +1222,184 @@ class TestKnowledgeOrchestrator:
                     user=mock_user,
                 )
 
+    def test_schedule_indexing_celery_uses_converted_attachment_when_present(
+        self, orchestrator, mock_db, mock_user
+    ):
+        """Already-converted documents index the converted attachment directly."""
+        mock_kb = MagicMock()
+        mock_kb.id = 1
+        mock_kb.namespace = "default"
+        mock_kb.json = {
+            "spec": {
+                "retrievalConfig": {
+                    "retriever_name": "retriever-1",
+                    "retriever_namespace": "default",
+                    "embedding_config": {
+                        "model_name": "embedding-1",
+                        "model_namespace": "default",
+                    },
+                }
+            }
+        }
+
+        mock_document = MagicMock()
+        mock_document.id = 10
+        mock_document.attachment_id = 20  # original source attachment
+        mock_document.converted_attachment_id = 77  # converted -> must be used
+        mock_document.file_extension = "pdf"
+
+        with patch(
+            "app.services.knowledge.index_state_machine.prepare_document_index_enqueue"
+        ) as mock_prepare:
+            mock_prepare.return_value = SimpleNamespace(
+                should_enqueue=True,
+                generation=7,
+                reason="scheduled",
+                previous_status="failed",
+            )
+
+            with patch(
+                "app.tasks.knowledge_tasks.index_document_task.delay"
+            ) as mock_delay:
+                mock_delay.return_value = SimpleNamespace(id="celery-task-1")
+
+                result = orchestrator._schedule_indexing_celery(
+                    db=mock_db,
+                    knowledge_base=mock_kb,
+                    document=mock_document,
+                    user=mock_user,
+                )
+
+        assert result["scheduled"] is True
+        mock_delay.assert_called_once()
+        # Indexing dispatches with the converted attachment id (77), not the
+        # original (20), so re-conversion is skipped for already-converted docs.
+        assert mock_delay.call_args.kwargs["attachment_id"] == 77
+
+    def test_update_document_content_cleans_converted_attachment_on_success(
+        self, orchestrator, mock_db, mock_user
+    ):
+        """converted_attachment_id is cleared unconditionally; on a successful
+        delete the orphan attachment is gone too."""
+        document = SimpleNamespace(
+            id=1, kind_id=10, user_id=42, converted_attachment_id=999
+        )
+        kb = SimpleNamespace(id=10)
+
+        with (
+            patch("app.services.knowledge.orchestrator.KnowledgeService") as mock_svc,
+            patch(
+                "app.services.context.context_service.context_service"
+            ) as mock_ctx_svc,
+            patch.object(orchestrator, "_schedule_indexing_celery") as mock_schedule,
+        ):
+            mock_svc.update_document_content.return_value = document
+            mock_svc.get_knowledge_base.return_value = (kb, True)
+            mock_ctx_svc.delete_context.return_value = True
+
+            result = orchestrator.update_document_content(
+                db=mock_db,
+                user=mock_user,
+                document_id=1,
+                content="new content",
+            )
+
+        assert result["success"] is True
+        # Reference cleared so reindex uses the freshly-overwritten source
+        assert document.converted_attachment_id is None
+        mock_ctx_svc.delete_context.assert_called_once_with(
+            db=mock_db, context_id=999, user_id=42
+        )
+        mock_db.commit.assert_called()
+        # The document handed to reindex carries no stale converted pointer
+        mock_schedule.assert_called_once()
+        assert (
+            mock_schedule.call_args.kwargs["document"].converted_attachment_id is None
+        )
+
+    def test_update_document_content_clears_reference_even_when_delete_returns_false(
+        self, orchestrator, mock_db, mock_user
+    ):
+        """Even when delete_context fails, the stale reference must be cleared so
+        the next reindex uses the freshly-overwritten source, not the old
+        converted Markdown (tmp/2.md P1). The leftover attachment is an orphan."""
+        document = SimpleNamespace(
+            id=1, kind_id=10, user_id=42, converted_attachment_id=999
+        )
+        kb = SimpleNamespace(id=10)
+
+        with (
+            patch("app.services.knowledge.orchestrator.KnowledgeService") as mock_svc,
+            patch(
+                "app.services.context.context_service.context_service"
+            ) as mock_ctx_svc,
+            patch.object(orchestrator, "_schedule_indexing_celery") as mock_schedule,
+        ):
+            mock_svc.update_document_content.return_value = document
+            mock_svc.get_knowledge_base.return_value = (kb, True)
+            mock_ctx_svc.delete_context.return_value = False  # physical delete failed
+
+            result = orchestrator.update_document_content(
+                db=mock_db,
+                user=mock_user,
+                document_id=1,
+                content="new content",
+            )
+
+        assert result["success"] is True
+        # Reference cleared unconditionally — reindex must not see the stale id
+        assert document.converted_attachment_id is None
+        mock_ctx_svc.delete_context.assert_called_once_with(
+            db=mock_db, context_id=999, user_id=42
+        )
+        mock_schedule.assert_called_once()
+        assert (
+            mock_schedule.call_args.kwargs["document"].converted_attachment_id is None
+        )
+
+    def test_update_document_content_clears_reference_even_when_delete_raises_exception(
+        self, orchestrator, mock_db, mock_user
+    ):
+        """Even when delete_context raises an exception, the stale reference must
+        be cleared so the next reindex uses the freshly-overwritten source, not
+        the old converted Markdown (tmp/2.md P1, exception path). The leftover
+        attachment is an orphan."""
+        document = SimpleNamespace(
+            id=1, kind_id=10, user_id=42, converted_attachment_id=999
+        )
+        kb = SimpleNamespace(id=10)
+
+        with (
+            patch("app.services.knowledge.orchestrator.KnowledgeService") as mock_svc,
+            patch(
+                "app.services.context.context_service.context_service"
+            ) as mock_ctx_svc,
+            patch.object(orchestrator, "_schedule_indexing_celery") as mock_schedule,
+        ):
+            mock_svc.update_document_content.return_value = document
+            mock_svc.get_knowledge_base.return_value = (kb, True)
+            mock_ctx_svc.delete_context.side_effect = RuntimeError(
+                "storage unavailable"
+            )
+
+            result = orchestrator.update_document_content(
+                db=mock_db,
+                user=mock_user,
+                document_id=1,
+                content="new content",
+            )
+
+        assert result["success"] is True
+        # Reference cleared unconditionally — reindex must not see the stale id
+        assert document.converted_attachment_id is None
+        mock_ctx_svc.delete_context.assert_called_once_with(
+            db=mock_db, context_id=999, user_id=42
+        )
+        mock_schedule.assert_called_once()
+        assert (
+            mock_schedule.call_args.kwargs["document"].converted_attachment_id is None
+        )
+
     def test_reindex_document_returns_reason_specific_skip_message(
         self, orchestrator, mock_db, mock_user
     ):
