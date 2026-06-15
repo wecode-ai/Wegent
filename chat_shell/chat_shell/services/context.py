@@ -370,6 +370,7 @@ class ChatContext:
             user_subtask_id=self._request.user_subtask_id,  # Use user_subtask_id for RAG persistence
             is_user_selected=self._request.is_user_selected_kb,
             document_ids=self._request.document_ids,
+            knowledge_base_scopes=self._request.knowledge_base_scopes,
             model_id=model_id,
             context_window=context_window,
             model_config=self._request.model_config,

@@ -119,6 +119,20 @@ class RetrieveMediationContext(BaseModel):
     )
 
 
+class KnowledgeBaseScopePayload(BaseModel):
+    """Per-KB scope payload for internal knowledge APIs."""
+
+    knowledge_base_id: int = Field(..., ge=1, description="Knowledge base ID")
+    scope_restricted: bool = Field(
+        default=False,
+        description="Whether this KB is restricted to document_ids.",
+    )
+    document_ids: list[int] = Field(
+        default_factory=list,
+        description="Allowed document IDs when scope_restricted is true.",
+    )
+
+
 class InternalRetrieveRequest(BaseModel):
     """Simplified retrieve request for internal use."""
 
@@ -138,6 +152,10 @@ class InternalRetrieveRequest(BaseModel):
     document_names: Optional[list[str]] = Field(
         default=None,
         description="Optional exact document names to resolve into document IDs before retrieval.",
+    )
+    knowledge_base_scopes: Optional[list[KnowledgeBaseScopePayload]] = Field(
+        default=None,
+        description="Optional per-KB access scopes for scoped Responses requests.",
     )
     route_mode: Literal["auto", "direct_injection", "rag_retrieval"] = Field(
         default="auto",
@@ -163,7 +181,11 @@ class InternalRetrieveRequest(BaseModel):
     @model_validator(mode="after")
     def validate_knowledge_base_targets(self):
         """Require at least one KB target and normalize single-id requests."""
-        if self.knowledge_base_id is None and not self.knowledge_base_ids:
+        if (
+            self.knowledge_base_id is None
+            and not self.knowledge_base_ids
+            and not self.knowledge_base_scopes
+        ):
             raise ValueError("knowledge_base_id or knowledge_base_ids is required")
         return self
 
@@ -202,6 +224,157 @@ def _resolve_document_names(
         knowledge_base_ids=knowledge_base_ids,
         document_names=document_names,
     )
+
+
+def _scope_kb_ids(scopes: list[KnowledgeBaseScopePayload]) -> list[int]:
+    """Return KB IDs from scope payloads preserving order."""
+    return list(dict.fromkeys(scope.knowledge_base_id for scope in scopes))
+
+
+def _scope_violation() -> HTTPException:
+    """Build a document scope violation HTTP error."""
+    return HTTPException(
+        status_code=403,
+        detail={
+            "error_code": "document_scope_violation",
+            "message": "Requested documents are outside the allowed knowledge scope.",
+        },
+    )
+
+
+def _group_document_ids_by_kb(
+    db: Session,
+    document_ids: list[int],
+) -> dict[int, list[int]]:
+    """Group document IDs by owning KB while preserving requested order."""
+    if not document_ids:
+        return {}
+    from app.models.knowledge import KnowledgeDocument
+
+    rows = (
+        db.query(KnowledgeDocument.id, KnowledgeDocument.kind_id)
+        .filter(KnowledgeDocument.id.in_(document_ids))
+        .all()
+    )
+    kb_by_doc_id = {doc_id: kb_id for doc_id, kb_id in rows}
+    grouped: dict[int, list[int]] = {}
+    for document_id in document_ids:
+        kb_id = kb_by_doc_id.get(document_id)
+        if kb_id is None:
+            continue
+        grouped.setdefault(kb_id, []).append(document_id)
+    return grouped
+
+
+def _validate_document_ids_against_scopes(
+    db: Session,
+    document_ids: list[int],
+    scopes: list[KnowledgeBaseScopePayload],
+) -> dict[int, list[int]]:
+    """Validate document IDs against per-KB scopes and group them by KB."""
+    grouped = _group_document_ids_by_kb(db, document_ids)
+    scope_by_kb = {scope.knowledge_base_id: scope for scope in scopes}
+    for document_id in document_ids:
+        matched_kb_id = None
+        for kb_id, ids in grouped.items():
+            if document_id in ids:
+                matched_kb_id = kb_id
+                break
+        if matched_kb_id is None:
+            raise _scope_violation()
+        scope = scope_by_kb.get(matched_kb_id)
+        if scope is None:
+            raise _scope_violation()
+        if scope.scope_restricted and document_id not in scope.document_ids:
+            raise _scope_violation()
+    return grouped
+
+
+async def _execute_scoped_retrieve(
+    *,
+    request: InternalRetrieveRequest,
+    db: Session,
+    scopes: list[KnowledgeBaseScopePayload],
+    resolved_document_ids: list[int],
+    runtime_context: DirectInjectionRuntimeContext | None,
+    restricted_mode: bool,
+    persistence_context: RetrievePersistenceContext | None,
+) -> dict:
+    """Execute retrieve grouped by per-KB scopes."""
+    if resolved_document_ids:
+        grouped_doc_ids = _validate_document_ids_against_scopes(
+            db,
+            resolved_document_ids,
+            scopes,
+        )
+        retrieve_groups = [
+            ([kb_id], doc_ids) for kb_id, doc_ids in grouped_doc_ids.items()
+        ]
+    else:
+        unscoped_kb_ids = [
+            scope.knowledge_base_id for scope in scopes if not scope.scope_restricted
+        ]
+        retrieve_groups: list[tuple[list[int], list[int] | None]] = []
+        if unscoped_kb_ids:
+            retrieve_groups.append((unscoped_kb_ids, None))
+        for scope in scopes:
+            if scope.scope_restricted and scope.document_ids:
+                retrieve_groups.append(
+                    ([scope.knowledge_base_id], list(scope.document_ids))
+                )
+
+    if not retrieve_groups:
+        return {
+            "mode": "rag_retrieval",
+            "records": [],
+            "total": 0,
+            "total_estimated_tokens": 0,
+            "message": "No documents are available in the current knowledge scope.",
+        }
+
+    all_records: list[dict] = []
+    modes: set[str] = set()
+    total_estimated_tokens = 0
+    for kb_ids, group_document_ids in retrieve_groups:
+        runtime_spec = runtime_resolver.build_query_runtime_spec(
+            db=db,
+            knowledge_base_ids=kb_ids,
+            query=request.query,
+            max_results=request.max_results,
+            document_ids=group_document_ids,
+            route_mode=request.route_mode,
+            user_id=persistence_context.user_id if persistence_context else None,
+            user_name=request.user_name,
+            context_window=runtime_context.context_window if runtime_context else None,
+            used_context_tokens=(
+                runtime_context.used_context_tokens if runtime_context else 0
+            ),
+            reserved_output_tokens=(
+                runtime_context.reserved_output_tokens if runtime_context else 4096
+            ),
+            context_buffer_ratio=(
+                runtime_context.context_buffer_ratio if runtime_context else 0.1
+            ),
+            max_direct_chunks=(
+                runtime_context.max_direct_chunks if runtime_context else 500
+            ),
+            restricted_mode=restricted_mode,
+        )
+        runtime_spec = _finalize_query_runtime_spec(runtime_spec, db, runtime_context)
+        result = await _execute_query_with_remote_fallback(runtime_spec, db)
+        modes.add(result.get("mode", "rag_retrieval"))
+        total_estimated_tokens += result.get("total_estimated_tokens", 0)
+        all_records.extend(result.get("records", []))
+
+    all_records.sort(key=lambda record: record.get("score") or 0, reverse=True)
+    all_records = all_records[: request.max_results]
+    mode = "direct_injection" if modes == {"direct_injection"} else "rag_retrieval"
+    return {
+        "mode": mode,
+        "records": all_records,
+        "total": len(all_records),
+        "total_estimated_tokens": total_estimated_tokens,
+    }
 
 
 def _resolve_query_gateway(runtime_spec):
@@ -299,9 +472,20 @@ async def internal_retrieve(
         Retrieval results with records
     """
     try:
+        scopes = request.knowledge_base_scopes or []
         knowledge_base_ids = request.knowledge_base_ids or []
+        if scopes:
+            knowledge_base_ids = _scope_kb_ids(scopes)
         if request.knowledge_base_id is not None:
             knowledge_base_ids = [request.knowledge_base_id]
+            if scopes:
+                scopes = [
+                    scope
+                    for scope in scopes
+                    if scope.knowledge_base_id == request.knowledge_base_id
+                ]
+                if not scopes:
+                    raise _scope_violation()
 
         resolved_document_ids = request.document_ids or []
         if not resolved_document_ids and request.document_names:
@@ -332,32 +516,49 @@ async def internal_retrieve(
             persistence_context and persistence_context.restricted_mode
         )
 
-        runtime_spec = runtime_resolver.build_query_runtime_spec(
-            db=db,
-            knowledge_base_ids=knowledge_base_ids,
-            query=request.query,
-            max_results=request.max_results,
-            document_ids=resolved_document_ids or None,
-            route_mode=request.route_mode,
-            user_id=persistence_context.user_id if persistence_context else None,
-            user_name=request.user_name,
-            context_window=runtime_context.context_window if runtime_context else None,
-            used_context_tokens=(
-                runtime_context.used_context_tokens if runtime_context else 0
-            ),
-            reserved_output_tokens=(
-                runtime_context.reserved_output_tokens if runtime_context else 4096
-            ),
-            context_buffer_ratio=(
-                runtime_context.context_buffer_ratio if runtime_context else 0.1
-            ),
-            max_direct_chunks=(
-                runtime_context.max_direct_chunks if runtime_context else 500
-            ),
-            restricted_mode=restricted_mode,
-        )
-        runtime_spec = _finalize_query_runtime_spec(runtime_spec, db, runtime_context)
-        result = await _execute_query_with_remote_fallback(runtime_spec, db)
+        if scopes:
+            result = await _execute_scoped_retrieve(
+                request=request,
+                db=db,
+                scopes=scopes,
+                resolved_document_ids=resolved_document_ids,
+                runtime_context=runtime_context,
+                restricted_mode=restricted_mode,
+                persistence_context=persistence_context,
+            )
+        else:
+            runtime_spec = runtime_resolver.build_query_runtime_spec(
+                db=db,
+                knowledge_base_ids=knowledge_base_ids,
+                query=request.query,
+                max_results=request.max_results,
+                document_ids=resolved_document_ids or None,
+                route_mode=request.route_mode,
+                user_id=persistence_context.user_id if persistence_context else None,
+                user_name=request.user_name,
+                context_window=(
+                    runtime_context.context_window if runtime_context else None
+                ),
+                used_context_tokens=(
+                    runtime_context.used_context_tokens if runtime_context else 0
+                ),
+                reserved_output_tokens=(
+                    runtime_context.reserved_output_tokens if runtime_context else 4096
+                ),
+                context_buffer_ratio=(
+                    runtime_context.context_buffer_ratio if runtime_context else 0.1
+                ),
+                max_direct_chunks=(
+                    runtime_context.max_direct_chunks if runtime_context else 500
+                ),
+                restricted_mode=restricted_mode,
+            )
+            runtime_spec = _finalize_query_runtime_spec(
+                runtime_spec,
+                db,
+                runtime_context,
+            )
+            result = await _execute_query_with_remote_fallback(runtime_spec, db)
 
         records = result.get("records", [])
 
@@ -460,6 +661,8 @@ async def internal_retrieve(
     except ValueError as e:
         logger.warning("[internal_rag] Retrieval error: %s", e)
         raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
     except RemoteRagGatewayError as e:
         logger.warning("[internal_rag] Remote retrieval failed: %s", e)
         raise HTTPException(status_code=e.status_code or 502, detail=str(e)) from e
@@ -768,6 +971,10 @@ class ListDocsRequest(BaseModel):
         le=100,
         description="Maximum number of documents to return",
     )
+    knowledge_base_scopes: Optional[list[KnowledgeBaseScopePayload]] = Field(
+        default=None,
+        description="Optional per-KB access scopes for scoped Responses requests.",
+    )
 
 
 class DocItem(BaseModel):
@@ -820,6 +1027,33 @@ async def list_documents(
         base_query = db.query(KnowledgeDocument).filter(
             KnowledgeDocument.kind_id == request.knowledge_base_id
         )
+        restricted_scope = None
+        if (
+            request.knowledge_base_scopes
+            and request.knowledge_base_id
+            not in _scope_kb_ids(request.knowledge_base_scopes)
+        ):
+            raise _scope_violation()
+        for scope in request.knowledge_base_scopes or []:
+            if (
+                scope.knowledge_base_id == request.knowledge_base_id
+                and scope.scope_restricted
+            ):
+                restricted_scope = scope
+                break
+        if restricted_scope is not None:
+            if not restricted_scope.document_ids:
+                return ListDocsResponse(
+                    documents=[],
+                    total=0,
+                    returned_count=0,
+                    offset=request.offset,
+                    limit=request.limit,
+                    has_more=False,
+                )
+            base_query = base_query.filter(
+                KnowledgeDocument.id.in_(restricted_scope.document_ids)
+            )
         total = base_query.count()
         documents = (
             base_query.order_by(KnowledgeDocument.created_at.desc())
@@ -865,6 +1099,8 @@ async def list_documents(
             has_more=request.offset + len(doc_items) < total,
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(
             "[internal_rag] List documents failed for KB %d: %s",
@@ -893,6 +1129,10 @@ class ReadDocRequest(BaseModel):
         default=None,
         description="Optional list of allowed KB IDs for security validation",
     )
+    knowledge_base_scopes: Optional[list[KnowledgeBaseScopePayload]] = Field(
+        default=None,
+        description="Optional per-KB access scopes for scoped Responses requests.",
+    )
 
 
 class ReadDocsRequest(BaseModel):
@@ -909,6 +1149,10 @@ class ReadDocsRequest(BaseModel):
     knowledge_base_ids: Optional[list[int]] = Field(
         default=None,
         description="Optional list of allowed KB IDs for security validation",
+    )
+    knowledge_base_scopes: Optional[list[KnowledgeBaseScopePayload]] = Field(
+        default=None,
+        description="Optional per-KB access scopes for scoped Responses requests.",
     )
     persistence_context: Optional[RetrievePersistenceContext] = Field(
         default=None,
@@ -981,6 +1225,12 @@ async def read_document(
             document_read_service,
         )
 
+        if request.knowledge_base_scopes:
+            _validate_document_ids_against_scopes(
+                db,
+                [request.document_id],
+                request.knowledge_base_scopes,
+            )
         results = document_read_service.read_documents(
             db=db,
             document_ids=[request.document_id],
@@ -1040,6 +1290,12 @@ async def read_documents(
         from app.services.knowledge.document_read_service import document_read_service
 
         persistence_context = request.persistence_context
+        if request.knowledge_base_scopes:
+            _validate_document_ids_against_scopes(
+                db,
+                request.document_ids,
+                request.knowledge_base_scopes,
+            )
         results = document_read_service.read_documents(
             db=db,
             document_ids=request.document_ids,
@@ -1076,6 +1332,8 @@ async def read_documents(
             ],
             total=len(results),
         )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("[internal_rag] Read documents failed: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e)) from e

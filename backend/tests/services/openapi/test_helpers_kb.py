@@ -94,6 +94,14 @@ class TestParseWegentToolsWithKnowledgeBase:
             "name": "kb1",
         }
         assert result["knowledge_base_names"][1] == {"namespace": "org", "name": "kb2"}
+        assert result["knowledge_base_refs"][0] == {
+            "namespace": "default",
+            "name": "kb1",
+            "folder_ids": None,
+            "document_ids": None,
+            "include_subfolders": True,
+            "scope_specified": False,
+        }
 
     def test_parse_knowledge_base_without_names(self):
         """Test parsing knowledge_base tool without knowledge_base_names."""
@@ -168,6 +176,79 @@ class TestParseWegentToolsWithKnowledgeBase:
         ]
 
         # Act & Assert
+        with pytest.raises(HTTPException) as exc_info:
+            parse_wegent_tools(tools)
+
+        assert exc_info.value.status_code == 400
+
+    def test_parse_knowledge_base_refs_with_scope(self):
+        """Knowledge base refs should preserve per-KB scope fields."""
+        tools = [
+            WegentTool(
+                type="knowledge_base",
+                knowledge_base_refs=[
+                    {
+                        "name": "default#kb1",
+                        "folder_ids": [2, 2],
+                        "document_ids": [10, 10],
+                        "include_subfolders": False,
+                    }
+                ],
+            )
+        ]
+
+        result = parse_wegent_tools(tools)
+
+        assert result["knowledge_base_refs"] == [
+            {
+                "namespace": "default",
+                "name": "kb1",
+                "folder_ids": [2],
+                "document_ids": [10],
+                "include_subfolders": False,
+                "scope_specified": True,
+            }
+        ]
+
+    def test_parse_rejects_names_and_refs_together(self):
+        """knowledge_base_names and knowledge_base_refs are mutually exclusive."""
+        tools = [
+            WegentTool(
+                type="knowledge_base",
+                knowledge_base_names=["default#kb1"],
+                knowledge_base_refs=[{"name": "default#kb2"}],
+            )
+        ]
+
+        with pytest.raises(HTTPException) as exc_info:
+            parse_wegent_tools(tools)
+
+        assert exc_info.value.status_code == 400
+
+    def test_parse_rejects_top_level_scope_with_multiple_names(self):
+        """Top-level folder/document scope is only valid for one KB name."""
+        tools = [
+            WegentTool(
+                type="knowledge_base",
+                knowledge_base_names=["default#kb1", "default#kb2"],
+                folder_ids=[1],
+            )
+        ]
+
+        with pytest.raises(HTTPException) as exc_info:
+            parse_wegent_tools(tools)
+
+        assert exc_info.value.status_code == 400
+
+    def test_parse_rejects_empty_scope_arrays(self):
+        """Scope arrays must not be empty."""
+        tools = [
+            WegentTool(
+                type="knowledge_base",
+                knowledge_base_refs=[{"name": "default#kb1", "folder_ids": []}],
+            )
+        ]
+
         with pytest.raises(HTTPException) as exc_info:
             parse_wegent_tools(tools)
 

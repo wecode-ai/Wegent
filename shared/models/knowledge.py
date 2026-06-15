@@ -12,7 +12,7 @@ All comments must be written in English.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Union
 
 
@@ -21,6 +21,19 @@ class KnowledgeBaseToolAccessMode:
 
     FULL = "full"
     RESTRICTED_SEARCH_ONLY = "restricted_search_only"
+
+
+@dataclass(frozen=True)
+class KnowledgeBaseScope:
+    """Per-knowledge-base access scope for knowledge tools."""
+
+    knowledge_base_id: int
+    scope_restricted: bool = False
+    document_ids: list[int] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if self.document_ids is None:
+            object.__setattr__(self, "document_ids", [])
 
 
 @dataclass(frozen=True)
@@ -36,6 +49,7 @@ class KnowledgeBaseToolsResult:
     knowledge_base_ids: list[int] = None  # type: ignore[assignment]
     is_user_selected_kb: bool = False
     document_ids: list[int] = None  # type: ignore[assignment]
+    knowledge_base_scopes: list[KnowledgeBaseScope] = None  # type: ignore[assignment]
     kb_tool_access_mode: str = KnowledgeBaseToolAccessMode.FULL
 
     def __post_init__(self) -> None:
@@ -44,6 +58,8 @@ class KnowledgeBaseToolsResult:
             object.__setattr__(self, "knowledge_base_ids", [])
         if self.document_ids is None:
             object.__setattr__(self, "document_ids", [])
+        if self.knowledge_base_scopes is None:
+            object.__setattr__(self, "knowledge_base_scopes", [])
 
 
 @dataclass(frozen=True)
