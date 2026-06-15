@@ -43,7 +43,7 @@ executor Pods and Sandbox runtimes use the same executor/envd code. The archive 
 
 | runtime_type | Archived paths | Archive roots | Notes |
 | --- | --- | --- | --- |
-| `executor` | `$HOME` and `/workspace/{task_id}` | `home/`, `workspace/` | Default value; captures the executor's full home children and task workspace |
+| `executor` | Claude config under `$HOME` and `/workspace/{task_id}` | `home/`, `workspace/` | Default value; only keeps `.claude/` and `.claude.json` to avoid archiving credentials and runtime mounts |
 | `sandbox` | `/home/user` and `/workspace/{task_id}` | `home/`, `workspace/` | Covers the Sandbox working directory and compatibility workspace path |
 
 Archives exclude common large directories and caches, including:
@@ -59,6 +59,8 @@ Archives exclude common large directories and caches, including:
 - `*.log`
 
 During restore, `workspace/*` is written back to `/workspace/{task_id}`. `home/*` is written back to `$HOME` for executor runtimes and `/home/user` for sandbox runtimes.
+
+Executor home restore uses the same allowlist. If an old archive contains `.ssh/`, `.npmrc`, `.config/`, `.local/`, `.gvm/`, or code-server runtime directories, envd skips those members to avoid restoring credentials or writing into Kubernetes read-only mounts.
 
 ## Failure Handling
 

@@ -47,6 +47,11 @@ def _build_mineru_config() -> MinerUConfig:
         table_enable=settings.MINERU_TABLE_ENABLE,
         poll_interval_seconds=settings.MINERU_POLL_INTERVAL_SECONDS,
         max_wait_seconds=settings.MINERU_MAX_WAIT_SECONDS,
+        submit_timeout_seconds=settings.MINERU_SUBMIT_TIMEOUT_SECONDS,
+        status_timeout_seconds=settings.MINERU_STATUS_TIMEOUT_SECONDS,
+        download_timeout_seconds=settings.MINERU_DOWNLOAD_TIMEOUT_SECONDS,
+        max_consecutive_errors=settings.MINERU_MAX_CONSECUTIVE_ERRORS,
+        error_retry_interval_seconds=settings.MINERU_ERROR_RETRY_INTERVAL_SECONDS,
     )
 
 
