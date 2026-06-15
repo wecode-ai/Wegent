@@ -539,6 +539,20 @@ class KnowledgeBaseTaskRef(BaseModel):
     boundAt: Optional[str] = None  # Binding timestamp in ISO format
 
 
+class KnowledgeBaseTaskScopeRef(BaseModel):
+    """Task-level knowledge base scope for API follow-up inheritance."""
+
+    id: Optional[int] = None
+    namespace: str = "default"
+    name: str
+    scopeRestricted: bool = False
+    folderIds: Optional[List[int]] = None
+    explicitDocumentIds: Optional[List[int]] = None
+    includeSubfolders: bool = True
+    boundBy: Optional[str] = None
+    boundAt: Optional[str] = None
+
+
 class TaskExecutionWorkspace(BaseModel):
     """Task-specific execution workspace override."""
 
@@ -564,6 +578,9 @@ class TaskSpec(BaseModel):
     is_group_chat: bool = False  # Whether this task is a group chat
     knowledgeBaseRefs: Optional[List[KnowledgeBaseTaskRef]] = (
         None  # Bound knowledge bases for group chat
+    )
+    knowledgeBaseScopes: Optional[List[KnowledgeBaseTaskScopeRef]] = (
+        None  # Per-KB scope refs for OpenAPI follow-up inheritance
     )
     device_id: Optional[str] = None  # Device ID used for execution (for task history)
     execution: Optional[TaskExecutionSpec] = None
@@ -810,6 +827,13 @@ class EmbeddingModelRef(BaseModel):
     model_namespace: str = Field("default", description="Embedding model namespace")
 
 
+class CompleteEmbeddingModelRef(BaseModel):
+    """Complete reference to an Embedding Model."""
+
+    model_name: str = Field(..., min_length=1, description="Embedding model name")
+    model_namespace: str = Field("default", description="Embedding model namespace")
+
+
 class RetrieverRef(BaseModel):
     """Reference to a Retriever"""
 
@@ -835,23 +859,19 @@ class HybridWeights(BaseModel):
 
 
 class RetrievalConfig(BaseModel):
-    """Retrieval configuration for knowledge base
+    """Complete retrieval configuration for a RAG-enabled knowledge base."""
 
-    Note: retriever_name and embedding_config are optional to support knowledge bases
-    that don't use RAG (using kb_ls/kb_head tools instead for document exploration).
-    """
-
-    retriever_name: Optional[str] = Field(None, description="Retriever name")
+    retriever_name: str = Field(..., min_length=1, description="Retriever name")
     retriever_namespace: str = Field("default", description="Retriever namespace")
-    embedding_config: Optional[EmbeddingModelRef] = Field(
-        None, description="Embedding model configuration"
+    embedding_config: CompleteEmbeddingModelRef = Field(
+        ..., description="Embedding model configuration"
     )
     retrieval_mode: str = Field(
         "vector", description="Retrieval mode: 'vector', 'keyword', or 'hybrid'"
     )
     top_k: int = Field(5, ge=1, le=10, description="Number of results to return")
     score_threshold: float = Field(
-        0.7, ge=0.0, le=1.0, description="Minimum score threshold"
+        0.5, ge=0.0, le=1.0, description="Minimum score threshold"
     )
     hybrid_weights: Optional[HybridWeights] = Field(
         None, description="Hybrid search weights"

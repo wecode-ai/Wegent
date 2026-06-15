@@ -345,6 +345,22 @@ spec:
 
 KnowledgeBase 用于管理文档知识库、检索配置和摘要能力。
 
+### 检索配置
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `spec.retrievalConfig` | object | 否 | RAG 检索配置。缺失或为 `null` 时表示无 RAG 知识库 |
+| `spec.retrievalConfig.retriever_name` | string | 是* | 检索器名称 |
+| `spec.retrievalConfig.retriever_namespace` | string | 否 | 检索器所在 namespace，默认 `default` |
+| `spec.retrievalConfig.embedding_config.model_name` | string | 是* | Embedding 模型名称 |
+| `spec.retrievalConfig.embedding_config.model_namespace` | string | 否 | Embedding 模型所在 namespace，默认 `default` |
+| `spec.retrievalConfig.retrieval_mode` | string | 否 | 检索模式：`vector`、`keyword` 或 `hybrid` |
+| `spec.retrievalConfig.top_k` | integer | 否 | 返回结果数量 |
+| `spec.retrievalConfig.score_threshold` | number | 否 | 最低相关性阈值 |
+| `spec.retrievalConfig.hybrid_weights` | object | 否 | 混合检索权重 |
+
+`retriever_name` 和 `embedding_config.model_name` 只有在 `spec.retrievalConfig` 存在时必填。创建知识库默认会自动补齐缺失的检索器和 Embedding 模型；如果创建请求明确使用无 RAG 模式，或无法找到可用默认配置，则不会写入 `retrievalConfig`。创建请求中的 `rag_config_mode` 只表达创建意图，不作为 KnowledgeBase YAML 字段持久化。持久化后的稳定状态只有两种：完整的 `retrievalConfig`，或无 `retrievalConfig`。
+
 ### 摘要相关配置
 
 | 字段 | 类型 | 必填 | 说明 |
@@ -482,6 +498,14 @@ spec:
   workspaceRef:
     name: project-workspace
     namespace: default
+  knowledgeBaseScopes:
+    - id: 101
+      namespace: default
+      name: Product Docs
+      scopeRestricted: true
+      folderIds: [12]
+      explicitDocumentIds: null
+      includeSubfolders: true
 ```
 
 ### 字段说明
@@ -494,6 +518,21 @@ spec:
 | `spec.prompt` | string | 是 | 任务描述 |
 | `spec.teamRef` | object | 是 | Team 引用 |
 | `spec.workspaceRef` | object | 是 | Workspace 引用 |
+| `spec.knowledgeBaseScopes` | array | 否 | `/api/v1/responses` 绑定的知识库访问范围，用于后续对话继承目录或文档级 scope |
+
+### 知识库范围
+
+`spec.knowledgeBaseScopes` 由 OpenAPI Responses 知识库工具自动维护。启用目录或文档范围后，后续带 `previous_response_id` 的请求会继承该范围，并在当前轮次重新解析目录内文档。
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `id` | integer | 否 | 知识库 ID，存在时优先用于解析 |
+| `namespace` | string | 否 | 知识库命名空间，默认 `default` |
+| `name` | string | 是 | 知识库名称 |
+| `scopeRestricted` | boolean | 否 | 是否限制到指定目录或文档 |
+| `folderIds` | array | 否 | 允许访问的目录 ID，`0` 表示根目录直接文档 |
+| `explicitDocumentIds` | array | 否 | 显式允许访问的文档 ID |
+| `includeSubfolders` | boolean | 否 | 目录范围是否包含子目录，默认 `true` |
 
 ### 任务状态
 

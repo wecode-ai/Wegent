@@ -112,6 +112,8 @@ export function QuickAccessCards({
   }, [teams])
 
   const filteredTeams = filterTeamsByMode(teams, currentMode)
+  const systemRecommendedQuickAccessIds = quickAccessResponse?.system_team_ids ?? []
+  const systemRecommendedQuickAccessIdSet = new Set(systemRecommendedQuickAccessIds)
 
   // Get all quick access teams matched with full team data
   const allDisplayTeams: DisplayTeam[] = quickAccessTeams
@@ -129,8 +131,12 @@ export function QuickAccessCards({
     })
     .filter((t): t is DisplayTeam => t !== null)
 
+  const favoriteDisplayTeams = allDisplayTeams.filter(
+    team => !team.is_system && !systemRecommendedQuickAccessIdSet.has(team.id)
+  )
+
   // Filter out default team only (keep selected team visible with selection state)
-  const displayTeams = allDisplayTeams.filter(t => {
+  const displayTeams = favoriteDisplayTeams.filter(t => {
     if (defaultTeam && t.id === defaultTeam.id) return false
     return true
   })
@@ -150,10 +156,8 @@ export function QuickAccessCards({
     team => !quickAccessTeamIds.has(team.id)
   )
   const morePopoverTeams = showAllTeamsInMore ? allSelectableTeams : displayTeams
-  const systemRecommendedQuickAccessIds = quickAccessResponse?.system_team_ids ?? []
-  const systemRecommendedQuickAccessIdSet = new Set(systemRecommendedQuickAccessIds)
   const favoriteQuickAccessTeamIds = quickAccessTeams
-    .filter(team => !systemRecommendedQuickAccessIdSet.has(team.id))
+    .filter(team => !team.is_system && !systemRecommendedQuickAccessIdSet.has(team.id))
     .map(team => team.id)
   const {
     favoriteTeamIdSet,
@@ -465,7 +469,7 @@ export function QuickAccessCards({
               onToggleFavorite={handleToggleFavorite}
               optionTestIdPrefix="quick-access-more-team"
               showReorderHandle={!showAllTeamsInMore}
-              canReorder={quickAccessTeams.length > 1}
+              canReorder={displayTeams.length > 1}
               dragOverTeamId={dragOverTeamId}
               onTeamDragStart={handleQuickAccessDragStart}
               onTeamDragOver={handleQuickAccessDragOver}

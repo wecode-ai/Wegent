@@ -276,6 +276,93 @@ class KnowledgeOrchestrator:
             "model_namespace": first.get("namespace", "default"),
         }
 
+    def _resolve_retrieval_config(
+        self,
+        *,
+        db: Session,
+        user: User,
+        namespace: str,
+        retrieval_config: Optional[Dict[str, Any]],
+        rag_config_mode: Literal["auto", "disabled"] = "auto",
+        retriever_name: Optional[str] = None,
+        retriever_namespace: Optional[str] = None,
+        embedding_model_name: Optional[str] = None,
+        embedding_model_namespace: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Build a complete retrieval config, auto-filling missing core fields."""
+        if rag_config_mode == "disabled":
+            return None
+
+        resolved_config = dict(retrieval_config or {})
+        embedding_config = dict(resolved_config.get("embedding_config") or {})
+
+        retriever_name = resolved_config.get("retriever_name") or retriever_name
+        retriever_namespace = (
+            resolved_config.get("retriever_namespace") or retriever_namespace
+        )
+        embedding_model_name = (
+            embedding_config.get("model_name") or embedding_model_name
+        )
+        embedding_model_namespace = (
+            embedding_config.get("model_namespace") or embedding_model_namespace
+        )
+
+        if not retriever_name:
+            default_retriever = self.get_default_retriever(db, user.id, namespace)
+            if default_retriever:
+                retriever_name = default_retriever["retriever_name"]
+                retriever_namespace = default_retriever["retriever_namespace"]
+
+        if not embedding_model_name:
+            default_embedding = self.get_default_embedding_model(db, user.id, namespace)
+            if default_embedding:
+                embedding_model_name = default_embedding["model_name"]
+                embedding_model_namespace = default_embedding["model_namespace"]
+
+        if not retriever_name or not embedding_model_name:
+            logger.warning(
+                "[Orchestrator] Could not build retrieval_config: "
+                "retriever=%s, embedding=%s",
+                retriever_name,
+                embedding_model_name,
+            )
+            return None
+
+        logger.info(
+            "[Orchestrator] Built retrieval_config: retriever=%s, embedding=%s",
+            retriever_name,
+            embedding_model_name,
+        )
+        return self._build_complete_retrieval_config(
+            base_config=resolved_config,
+            retriever_name=retriever_name,
+            retriever_namespace=retriever_namespace,
+            embedding_model_name=embedding_model_name,
+            embedding_model_namespace=embedding_model_namespace,
+        )
+
+    def _build_complete_retrieval_config(
+        self,
+        *,
+        base_config: Dict[str, Any],
+        retriever_name: str,
+        retriever_namespace: Optional[str],
+        embedding_model_name: str,
+        embedding_model_namespace: Optional[str],
+    ) -> Dict[str, Any]:
+        """Build the only retrieval_config shape allowed to be persisted."""
+        resolved_config = dict(base_config)
+        resolved_config["retriever_name"] = retriever_name
+        resolved_config["retriever_namespace"] = retriever_namespace or "default"
+        resolved_config["embedding_config"] = {
+            "model_name": embedding_model_name,
+            "model_namespace": embedding_model_namespace or "default",
+        }
+        resolved_config.setdefault("retrieval_mode", "vector")
+        resolved_config.setdefault("top_k", 5)
+        resolved_config.setdefault("score_threshold", 0.5)
+        return resolved_config
+
     def get_task_model_as_summary_model(
         self,
         db: Session,
@@ -959,6 +1046,7 @@ class KnowledgeOrchestrator:
         namespace: str = "default",
         kb_type: str = "notebook",
         summary_enabled: bool = False,
+        rag_config_mode: Literal["auto", "disabled"] = "auto",
         # REST API scenario: pass complete config
         retrieval_config: Optional[Dict[str, Any]] = None,
         # MCP scenario: auto-select or explicitly specify
@@ -973,11 +1061,11 @@ class KnowledgeOrchestrator:
         """
         Create a knowledge base with auto-configuration support.
 
-        Supports two modes:
-        1. REST API mode: Pass complete retrieval_config dict
-        2. MCP mode: Auto-select or specify individual retriever/embedding params
+        Supports two RAG modes:
+        1. auto: Use a complete provided config or auto-select missing defaults.
+        2. disabled: Create a knowledge base without RAG retrieval config.
 
-        Auto-selection logic (when retrieval_config is None):
+        Auto-selection logic:
         1. retriever: If not specified, auto-select using get_default_retriever()
         2. embedding: If not specified, auto-select using get_default_embedding_model()
         3. summary_model: If not specified and summary_enabled=True:
@@ -992,6 +1080,7 @@ class KnowledgeOrchestrator:
             namespace: Namespace (default for personal, group name for group)
             kb_type: Type (notebook or classic)
             summary_enabled: Enable summary generation
+            rag_config_mode: RAG configuration mode
             retrieval_config: Complete retrieval config dict (REST API mode)
             retriever_name: Optional retriever name (MCP mode)
             retriever_namespace: Optional retriever namespace (MCP mode)
@@ -1009,53 +1098,22 @@ class KnowledgeOrchestrator:
         logger.info(
             f"[Orchestrator] create_knowledge_base called: name={name}, namespace={namespace}, "
             f"kb_type={kb_type}, summary_enabled={summary_enabled}, task_id={task_id}, "
+            f"rag_config_mode={rag_config_mode}, "
             f"user_id={user.id}, has_retrieval_config={retrieval_config is not None}, "
             f"has_summary_model_ref={summary_model_ref is not None}"
         )
 
-        # Use provided retrieval_config or build one from individual params
-        resolved_retrieval_config = retrieval_config
-
-        if resolved_retrieval_config is None:
-            # MCP mode: auto-select or use provided individual params
-            # Auto-select retriever if not specified
-            if retriever_name is None:
-                default_retriever = self.get_default_retriever(db, user.id, namespace)
-                if default_retriever:
-                    retriever_name = default_retriever["retriever_name"]
-                    retriever_namespace = default_retriever["retriever_namespace"]
-
-            # Auto-select embedding model if not specified
-            if embedding_model_name is None:
-                default_embedding = self.get_default_embedding_model(
-                    db, user.id, namespace
-                )
-                if default_embedding:
-                    embedding_model_name = default_embedding["model_name"]
-                    embedding_model_namespace = default_embedding["model_namespace"]
-
-            # Build retrieval_config if we have both retriever and embedding
-            if retriever_name and embedding_model_name:
-                resolved_retrieval_config = {
-                    "retriever_name": retriever_name,
-                    "retriever_namespace": retriever_namespace or "default",
-                    "embedding_config": {
-                        "model_name": embedding_model_name,
-                        "model_namespace": embedding_model_namespace or "default",
-                    },
-                    "retrieval_mode": "vector",
-                    "top_k": 5,
-                    "score_threshold": 0.5,
-                }
-                logger.info(
-                    f"[Orchestrator] Built retrieval_config: retriever={retriever_name}, "
-                    f"embedding={embedding_model_name}"
-                )
-            else:
-                logger.warning(
-                    f"[Orchestrator] Could not build retrieval_config: "
-                    f"retriever={retriever_name}, embedding={embedding_model_name}"
-                )
+        resolved_retrieval_config = self._resolve_retrieval_config(
+            db=db,
+            user=user,
+            namespace=namespace,
+            retrieval_config=retrieval_config,
+            rag_config_mode=rag_config_mode,
+            retriever_name=retriever_name,
+            retriever_namespace=retriever_namespace,
+            embedding_model_name=embedding_model_name,
+            embedding_model_namespace=embedding_model_namespace,
+        )
 
         # Auto-select summary model if summary_enabled and not specified
         resolved_summary_model_ref = summary_model_ref
@@ -1488,6 +1546,45 @@ class KnowledgeOrchestrator:
 
         logger.info(f"[Orchestrator] Updated document {document_id} content")
 
+        # If the document has a converted attachment, clean it up.
+        # Content has been modified so the conversion result is stale.
+        # Drop the reference UNCONDITIONALLY: converted_attachment_id means
+        # "the current valid conversion result", and once the source content
+        # changes that semantics is void. Keeping the pointer (e.g. when
+        # delete_context returns False) would make the next reindex index the
+        # OLD converted Markdown (see tmp/2.md P1). If the physical attachment
+        # cannot be deleted now, leave it as an orphan for separate cleanup
+        # rather than holding onto the stale pointer.
+        old_converted_id = document.converted_attachment_id
+        if old_converted_id:
+            from app.services.context.context_service import context_service as _ctx_svc
+
+            document.converted_attachment_id = None
+            db.commit()
+            try:
+                deleted = _ctx_svc.delete_context(
+                    db=db,
+                    context_id=old_converted_id,
+                    user_id=document.user_id,
+                )
+                if deleted:
+                    logger.info(
+                        f"[Orchestrator] Cleaned up stale converted attachment "
+                        f"{old_converted_id} for document {document_id}"
+                    )
+                else:
+                    logger.warning(
+                        f"[Orchestrator] Converted attachment {old_converted_id} "
+                        f"not deleted for document {document_id} "
+                        f"(not found / owner mismatch / subtask-linked); "
+                        f"reference cleared, orphan left for cleanup"
+                    )
+            except Exception as e:
+                logger.warning(
+                    f"[Orchestrator] Failed to delete old converted attachment "
+                    f"{old_converted_id}: {e}; reference cleared, orphan left for cleanup"
+                )
+
         # Get knowledge base for indexing config
         kb, has_access = KnowledgeService.get_knowledge_base(
             db=db,
@@ -1661,7 +1758,32 @@ class KnowledgeOrchestrator:
 
         try:
             normalized_extension = _normalize_file_extension(document.file_extension)
-            if settings.needs_conversion(normalized_extension):
+            converted_id = document.converted_attachment_id
+            # Actual attachment dispatched to the index/conversion task. Defaults
+            # to the source attachment; the converted branch overrides it so the
+            # enqueue log reflects what really enters the RAG pipeline.
+            dispatched_attachment_id = document.attachment_id
+
+            if converted_id:
+                # Already converted — index directly using the converted attachment,
+                # skip re-conversion even if the file type normally requires it.
+                async_result = index_document_task.delay(
+                    knowledge_base_id=str(knowledge_base.id),
+                    attachment_id=converted_id,
+                    retriever_name=retriever_name,
+                    retriever_namespace=retriever_namespace,
+                    embedding_model_name=embedding_model_name,
+                    embedding_model_namespace=embedding_model_namespace,
+                    user_id=index_owner_user_id,
+                    user_name=user.user_name,
+                    document_id=document.id,
+                    index_generation=generation,
+                    splitter_config_dict=splitter_config,
+                    trigger_summary=trigger_summary,
+                )
+                dispatched_attachment_id = converted_id
+
+            elif settings.needs_conversion(normalized_extension):
                 # File type requires conversion before indexing
                 # Task is dispatched to knowledge_doc_converter microservice
                 # via the shared Celery broker (knowledge_conversion queue)
@@ -1756,7 +1878,7 @@ class KnowledgeOrchestrator:
 
         logger.info(
             f"[Orchestrator] RAG indexing task enqueued: "
-            f"document_id={document.id}, attachment_id={document.attachment_id}, "
+            f"document_id={document.id}, attachment_id={dispatched_attachment_id}, "
             f"kb_id={knowledge_base.id}, index_generation={generation}, "
             f"celery_task_id={async_result.id}"
         )

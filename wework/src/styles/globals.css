@@ -23,7 +23,8 @@
   --color-mobile-drawer: 238 242 247;
   --color-popover: 255 255 255;
   --color-code-bg: 243 244 246;
-  --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --font-ui:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
   --font-code: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
   --appearance-contrast: 50;
   --radius: 0.5rem;
@@ -73,14 +74,14 @@ html,
 body,
 #root {
   min-height: 100%;
-  overflow-x: hidden;
+  overflow: hidden;
 }
 
 body {
   font-family: var(--font-ui);
   background-color: rgb(var(--color-bg-base));
   color: rgb(var(--color-text-primary));
-  overflow-x: hidden;
+  overflow: hidden;
 }
 
 button,

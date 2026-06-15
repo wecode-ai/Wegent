@@ -210,6 +210,7 @@ export function useKnowledgeDialogs(props: KnowledgeDialogsProps): KnowledgeDial
           description: data.description,
           namespace,
           retrieval_config: data.retrieval_config,
+          rag_config_mode: data.rag_config_mode,
           summary_enabled: data.summary_enabled,
           summary_model_ref: data.summary_model_ref,
           kb_type: kbType,

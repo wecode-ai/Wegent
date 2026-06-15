@@ -505,16 +505,18 @@ class Settings(BaseSettings):
     # - SOCKS5: "socks5://proxy.example.com:1080"
     # If empty, no proxy will be used (direct connection)
     WEBSCRAPER_PROXY: str = ""
-    # Proxy mode: "direct" or "fallback"
-    # - "direct": Always use proxy for all requests (proxy must be configured)
+    # Proxy mode: "none", "fallback", "proxy", or legacy "direct"
+    # - "none": Never use proxy
     # - "fallback": Try direct connection first, use proxy only if direct fails
+    # - "proxy": Always use proxy for all requests (proxy must be configured)
+    # - "direct": Legacy alias for "proxy"
     # Default is "fallback" for better reliability
     WEBSCRAPER_PROXY_MODE: str = "fallback"
     # Web scraper site-specific configuration
     # Configuration for specific sites that require special handling
     # due to anti-bot detection, dynamic content loading, or navigation patterns
     # Format: JSON object with site URL patterns as keys
-    # WEB_SCRAPER_SITE_CONFIG={"Example.com":{"wait_until":"networkidle","page_timeout":30000,"delay_before_return_html":3.0}}
+    # WEB_SCRAPER_SITE_CONFIG={"example.com":{"wait_until":"networkidle","page_timeout_ms":30000,"delay_before_return_html":3.0}}
     WEB_SCRAPER_SITE_CONFIG: str = "{}"
 
     # Web search configuration

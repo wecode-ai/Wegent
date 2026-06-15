@@ -15,6 +15,7 @@ NOTE:
 """
 
 import logging
+from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
@@ -25,6 +26,156 @@ from app.models.subtask_context import SubtaskContext
 from app.models.task import TaskResource
 from app.services.knowledge import TaskKnowledgeBaseService
 from app.services.share import knowledge_share_service
+
+
+@pytest.mark.unit
+class TestPrepareContextsForCreation:
+    """Test generic context creation payload normalization."""
+
+    def test_preserves_explicit_empty_knowledge_base_scope(self):
+        from app.services.chat.preprocessing.contexts import (
+            _prepare_contexts_for_creation,
+        )
+
+        context_item = SimpleNamespace(
+            type="knowledge_base",
+            data={
+                "knowledge_id": 10,
+                "name": "Empty Folder Scope",
+                "scope_restricted": True,
+                "document_ids": [],
+            },
+        )
+
+        kb_contexts, table_contexts, selected_docs_contexts = (
+            _prepare_contexts_for_creation(
+                contexts=[context_item],
+                subtask_id=100,
+                user_id=1,
+            )
+        )
+
+        assert len(kb_contexts) == 1
+        assert table_contexts == []
+        assert selected_docs_contexts == []
+        assert kb_contexts[0].type_data == {
+            "knowledge_id": 10,
+            "document_count": None,
+            "scope_restricted": True,
+            "document_ids": [],
+        }
+
+    def test_legacy_empty_knowledge_base_scope_remains_unrestricted(self):
+        from app.services.chat.preprocessing.contexts import (
+            _prepare_contexts_for_creation,
+        )
+
+        context_item = SimpleNamespace(
+            type="knowledge_base",
+            data={
+                "knowledge_id": 10,
+                "name": "Whole KB",
+                "document_ids": [],
+            },
+        )
+
+        kb_contexts, _, _ = _prepare_contexts_for_creation(
+            contexts=[context_item],
+            subtask_id=100,
+            user_id=1,
+        )
+
+        assert len(kb_contexts) == 1
+        assert kb_contexts[0].type_data == {
+            "knowledge_id": 10,
+            "document_count": None,
+            "scope_restricted": False,
+        }
+
+    def test_legacy_document_ids_imply_restricted_scope(self):
+        from app.services.chat.preprocessing.contexts import (
+            _prepare_contexts_for_creation,
+        )
+
+        context_item = SimpleNamespace(
+            type="knowledge_base",
+            data={
+                "knowledge_id": 10,
+                "name": "Selected Documents",
+                "document_ids": [101, 102],
+            },
+        )
+
+        kb_contexts, _, _ = _prepare_contexts_for_creation(
+            contexts=[context_item],
+            subtask_id=100,
+            user_id=1,
+        )
+
+        assert len(kb_contexts) == 1
+        assert kb_contexts[0].type_data == {
+            "knowledge_id": 10,
+            "document_count": None,
+            "scope_restricted": True,
+            "document_ids": [101, 102],
+        }
+
+    def test_document_ids_remain_restricted_with_explicit_false(self):
+        from app.services.chat.preprocessing.contexts import (
+            _prepare_contexts_for_creation,
+        )
+
+        context_item = SimpleNamespace(
+            type="knowledge_base",
+            data={
+                "knowledge_id": 10,
+                "name": "Selected Documents",
+                "scope_restricted": False,
+                "document_ids": [101],
+            },
+        )
+
+        kb_contexts, _, _ = _prepare_contexts_for_creation(
+            contexts=[context_item],
+            subtask_id=100,
+            user_id=1,
+        )
+
+        assert len(kb_contexts) == 1
+        assert kb_contexts[0].type_data == {
+            "knowledge_id": 10,
+            "document_count": None,
+            "scope_restricted": True,
+            "document_ids": [101],
+        }
+
+    def test_empty_restricted_context_builds_empty_restricted_scope(self):
+        from app.services.chat.preprocessing.contexts import (
+            _build_scopes_from_kb_contexts,
+            _prepare_contexts_for_creation,
+        )
+
+        context_item = SimpleNamespace(
+            type="knowledge_base",
+            data={
+                "knowledge_id": 10,
+                "name": "Empty Folder Scope",
+                "scope_restricted": True,
+                "document_ids": [],
+            },
+        )
+
+        kb_contexts, _, _ = _prepare_contexts_for_creation(
+            contexts=[context_item],
+            subtask_id=100,
+            user_id=1,
+        )
+        scopes = _build_scopes_from_kb_contexts(kb_contexts)
+
+        assert len(scopes) == 1
+        assert scopes[0].knowledge_base_id == 10
+        assert scopes[0].scope_restricted is True
+        assert scopes[0].document_ids == []
 
 
 @pytest.mark.unit
@@ -332,6 +483,54 @@ class TestKBPriorityLogic:
                     call_args = mock_kb_tool.call_args
                     assert call_args[1]["knowledge_base_ids"] == [10]
                     assert len(kb_result.extra_tools) == 1
+
+    def test_scoped_context_uses_scopes_without_legacy_document_filters(self, mock_db):
+        """Scoped document IDs should only be represented by per-KB scopes."""
+        from app.services.chat.preprocessing.contexts import (
+            _prepare_kb_tools_from_contexts,
+        )
+
+        kb_context = Mock(spec=SubtaskContext)
+        kb_context.knowledge_id = 10
+        kb_context.type_data = {
+            "scope_restricted": True,
+            "document_ids": [101, 102],
+        }
+
+        with patch(
+            "app.services.chat.preprocessing.contexts._get_bound_knowledge_base_ids"
+        ) as mock_get_bound:
+            mock_get_bound.return_value = []
+
+            with patch(
+                "chat_shell.tools.builtin.ScopedKnowledgeBaseTool"
+            ) as mock_scoped_tool:
+                mock_scoped_tool.return_value = Mock()
+
+                with patch(
+                    "app.services.chat.preprocessing.contexts._get_user_kb_tool_access_mode",
+                    return_value=("full", ""),
+                ):
+                    kb_result = _prepare_kb_tools_from_contexts(
+                        kb_contexts=[kb_context],
+                        user_id=1,
+                        db=mock_db,
+                        base_system_prompt="Base prompt",
+                        task_id=100,
+                        user_subtask_id=1,
+                    )
+
+        mock_scoped_tool.assert_called_once()
+        call_kwargs = mock_scoped_tool.call_args.kwargs
+        assert call_kwargs["knowledge_base_ids"] == [10]
+        assert call_kwargs["document_ids"] == []
+        assert len(call_kwargs["knowledge_base_scopes"]) == 1
+        scope = call_kwargs["knowledge_base_scopes"][0]
+        assert scope.knowledge_base_id == 10
+        assert scope.scope_restricted is True
+        assert scope.document_ids == [101, 102]
+        assert kb_result.document_ids == []
+        assert kb_result.knowledge_base_scopes == [scope]
 
     def test_fallback_to_task_kb_when_no_subtask_kb(self, mock_db):
         """Test that task-level KB is used when subtask has no KB"""

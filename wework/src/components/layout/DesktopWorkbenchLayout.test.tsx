@@ -64,9 +64,7 @@ describe('DesktopWorkbenchLayout', () => {
     return { promise, resolve, reject }
   }
 
-  function createMockDeviceApi(
-    overrides: Record<string, unknown> = {},
-  ) {
+  function createMockDeviceApi(overrides: Record<string, unknown> = {}) {
     return {
       getHomeDirectory: vi.fn().mockResolvedValue('/home/ubuntu'),
       getProjectWorkspaceRoot: vi.fn().mockResolvedValue('/workspace/projects'),
@@ -120,8 +118,7 @@ describe('DesktopWorkbenchLayout', () => {
     titlebarActions.id = TITLEBAR_ACTIONS_PORTAL_ID
     titlebarActions.dataset.testid = 'titlebar-actions'
     document.body.appendChild(titlebarActions)
-    delete (window as typeof window & { __TAURI_INTERNALS__?: unknown })
-      .__TAURI_INTERNALS__
+    delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
     localStorage.clear()
     window.history.pushState({}, '', '/')
     Object.defineProperty(navigator, 'clipboard', {
@@ -238,11 +235,13 @@ describe('DesktopWorkbenchLayout', () => {
         'https://github.com/wecode-ai/Wegent/compare/human%2Fnarwhal-20260528-073440?expand=1',
     }),
     onCommitEnvironmentChanges: vi.fn().mockResolvedValue(undefined),
-    onListEnvironmentBranches: vi.fn().mockResolvedValue([
-      'main',
-      'human/chipmunk-20260603-053420',
-      'human/narwhal-20260528-073440',
-    ]),
+    onListEnvironmentBranches: vi
+      .fn()
+      .mockResolvedValue([
+        'main',
+        'human/chipmunk-20260603-053420',
+        'human/narwhal-20260528-073440',
+      ]),
     onCheckoutEnvironmentBranch: vi.fn().mockResolvedValue(undefined),
     onCreateEnvironmentBranch: vi.fn().mockResolvedValue(undefined),
     onInputChange: vi.fn(),
@@ -300,7 +299,7 @@ describe('DesktopWorkbenchLayout', () => {
           devices: workspacePanelState.devices,
           currentProjectId: workspacePanelState.currentProject.id,
         }}
-      />,
+      />
     )
   }
 
@@ -418,7 +417,7 @@ describe('DesktopWorkbenchLayout', () => {
       'w-[min(58vw,62rem)]',
       'min-w-[32rem]',
       'max-w-[calc(100vw-4rem)]',
-      '-translate-y-12',
+      '-translate-y-12'
     )
   })
 
@@ -435,23 +434,22 @@ describe('DesktopWorkbenchLayout', () => {
             createdAt: '2026-05-29T00:00:00.000Z',
           },
         ]}
-      />,
+      />
     )
 
-    expect(screen.getByTestId('desktop-workbench-content')).toHaveClass(
-      'pt-[52px]',
-    )
+    expect(screen.getByTestId('desktop-workbench-content')).toHaveClass('pt-[52px]')
     expect(screen.getByTestId('desktop-chat-scroll')).toHaveClass(
       'h-full',
+      'overflow-x-hidden',
       'overflow-y-auto',
-      'pb-52',
+      'pb-40'
     )
     expect(screen.getByTestId('desktop-floating-composer-backdrop')).toHaveClass(
       'pointer-events-none',
       'absolute',
       'bottom-0',
       'z-10',
-      'from-background',
+      'from-background'
     )
     expect(screen.getByTestId('desktop-floating-composer-layer')).toHaveClass(
       'pointer-events-none',
@@ -459,11 +457,9 @@ describe('DesktopWorkbenchLayout', () => {
       'bottom-4',
       'left-1/2',
       'z-chrome',
-      '-translate-x-1/2',
+      '-translate-x-1/2'
     )
-    expect(screen.getByTestId('desktop-floating-composer-card')).toHaveClass(
-      'pointer-events-auto',
-    )
+    expect(screen.getByTestId('desktop-floating-composer-card')).toHaveClass('pointer-events-auto')
     expect(screen.queryByTestId('project-work-button')).not.toBeInTheDocument()
   })
 
@@ -480,7 +476,7 @@ describe('DesktopWorkbenchLayout', () => {
             createdAt: '2026-05-29T00:00:00.000Z',
           },
         ]}
-      />,
+      />
     )
 
     const scroller = screen.getByTestId('desktop-chat-scroll')
@@ -500,10 +496,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     fireEvent.scroll(scroller)
 
-    expect(screen.getByTestId('scroll-to-bottom-button')).toHaveClass(
-      'bottom-36',
-      'z-popover',
-    )
+    expect(screen.getByTestId('scroll-to-bottom-button')).toHaveClass('bottom-36', 'z-popover')
   })
 
   test('reserves extra bottom space when queued messages are shown above the composer', () => {
@@ -528,11 +521,11 @@ describe('DesktopWorkbenchLayout', () => {
             createdAt: '2026-05-29T00:01:00.000Z',
           },
         ]}
-      />,
+      />
     )
 
-    expect(screen.getByTestId('desktop-chat-scroll')).toHaveClass('pb-72')
-    expect(screen.getByTestId('desktop-chat-scroll')).not.toHaveClass('pb-52')
+    expect(screen.getByTestId('desktop-chat-scroll')).toHaveClass('pb-52')
+    expect(screen.getByTestId('desktop-chat-scroll')).not.toHaveClass('pb-40')
   })
 
   test('restores and stores sidebar width in localStorage', () => {
@@ -557,35 +550,21 @@ describe('DesktopWorkbenchLayout', () => {
   })
 
   test('collapses and expands the sidebar', async () => {
-    render(
-      <DesktopWorkbenchLayout
-        {...baseProps}
-      />,
-    )
+    render(<DesktopWorkbenchLayout {...baseProps} />)
 
-    expect(screen.getByTestId('desktop-sidebar-topbar')).toHaveClass(
-      'h-[52px]',
-    )
-    expect(screen.getByTestId('desktop-workbench-main')).toHaveClass(
-      'mt-1.5',
-      'mb-1.5',
-      'mr-1.5',
-    )
+    expect(screen.getByTestId('desktop-sidebar-topbar')).toHaveClass('h-[52px]')
+    expect(screen.getByTestId('desktop-workbench-main')).toHaveClass('mt-1.5', 'mb-1.5', 'mr-1.5')
     expect(screen.getByTestId('desktop-workbench-main')).not.toHaveClass('ml-1.5')
-    expect(screen.getByTestId('collapse-sidebar-button')).toHaveClass(
-      'h-7',
-      'w-7',
-      'rounded-lg',
-    )
+    expect(screen.getByTestId('collapse-sidebar-button')).toHaveClass('h-7', 'w-7', 'rounded-lg')
     expect(screen.getByTestId('desktop-window-controls')).toHaveClass('gap-3')
     expect(screen.getByTestId('workbench-topbar-right-actions')).toContainElement(
-      screen.getByTestId('environment-info-button'),
+      screen.getByTestId('environment-info-button')
     )
     expect(screen.getByTestId('workbench-topbar-right-actions')).toContainElement(
-      screen.getByTestId('toggle-bottom-workspace-panel-button'),
+      screen.getByTestId('toggle-bottom-workspace-panel-button')
     )
     expect(screen.getByTestId('workbench-topbar-right-actions')).toContainElement(
-      screen.getByTestId('toggle-right-workspace-panel-button'),
+      screen.getByTestId('toggle-right-workspace-panel-button')
     )
 
     await userEvent.click(screen.getByTestId('collapse-sidebar-button'))
@@ -594,13 +573,13 @@ describe('DesktopWorkbenchLayout', () => {
     expect(document.querySelector('aside')).not.toBeInTheDocument()
     expect(screen.getByTestId('expand-sidebar-button')).toBeInTheDocument()
     expect(screen.getByTestId('workbench-topbar-left-actions')).toContainElement(
-      screen.getByTestId('desktop-window-controls'),
+      screen.getByTestId('desktop-window-controls')
     )
     expect(screen.getByTestId('desktop-workbench-main')).toHaveClass(
       'mt-1.5',
       'mb-1.5',
       'mr-1.5',
-      'ml-1.5',
+      'ml-1.5'
     )
 
     await userEvent.click(screen.getByTestId('expand-sidebar-button'))
@@ -618,30 +597,23 @@ describe('DesktopWorkbenchLayout', () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
     expect(screen.getByTestId('desktop-sidebar-topbar')).toContainElement(
-      screen.getByTestId('collapse-sidebar-button'),
+      screen.getByTestId('collapse-sidebar-button')
     )
     expect(screen.getByTestId('titlebar-actions')).toContainElement(
-      screen.getByTestId('environment-info-button'),
+      screen.getByTestId('environment-info-button')
     )
     expect(screen.queryByTestId('workbench-topbar')).not.toBeInTheDocument()
-    expect(screen.getByTestId('desktop-workbench-content')).not.toHaveClass(
-      'pt-[52px]',
-    )
-    expect(screen.getByTestId('desktop-workbench-main')).toHaveClass(
-      'mb-1.5',
-      'mr-1.5',
-    )
-    expect(screen.getByTestId('desktop-workbench-main')).not.toHaveClass(
-      'mt-1.5',
-    )
+    expect(screen.getByTestId('desktop-workbench-content')).not.toHaveClass('pt-[52px]')
+    expect(screen.getByTestId('desktop-workbench-main')).toHaveClass('mb-1.5', 'mr-1.5')
+    expect(screen.getByTestId('desktop-workbench-main')).not.toHaveClass('mt-1.5')
 
     await userEvent.click(screen.getByTestId('collapse-sidebar-button'))
 
     expect(screen.getByTestId('workbench-topbar')).toContainElement(
-      screen.getByTestId('expand-sidebar-button'),
+      screen.getByTestId('expand-sidebar-button')
     )
     expect(screen.getByTestId('titlebar-actions')).toContainElement(
-      screen.getByTestId('toggle-right-workspace-panel-button'),
+      screen.getByTestId('toggle-right-workspace-panel-button')
     )
   })
 
@@ -649,13 +621,13 @@ describe('DesktopWorkbenchLayout', () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
     expect(screen.getByTestId('workbench-topbar-right-actions')).toContainElement(
-      screen.getByTestId('environment-info-button'),
+      screen.getByTestId('environment-info-button')
     )
     expect(screen.getByTestId('workbench-topbar-right-actions')).toContainElement(
-      screen.getByTestId('toggle-bottom-workspace-panel-button'),
+      screen.getByTestId('toggle-bottom-workspace-panel-button')
     )
     expect(screen.getByTestId('workbench-topbar-right-actions')).toContainElement(
-      screen.getByTestId('toggle-right-workspace-panel-button'),
+      screen.getByTestId('toggle-right-workspace-panel-button')
     )
     expect(screen.getByTestId('titlebar-actions')).toBeEmptyDOMElement()
   })
@@ -694,7 +666,7 @@ describe('DesktopWorkbenchLayout', () => {
             },
           ],
         }}
-      />,
+      />
     )
 
     expect(screen.queryByTestId('desktop-search-dialog')).not.toBeInTheDocument()
@@ -761,7 +733,7 @@ describe('DesktopWorkbenchLayout', () => {
             },
           ],
         }}
-      />,
+      />
     )
 
     await userEvent.click(screen.getByTestId('search-button'))
@@ -809,7 +781,7 @@ describe('DesktopWorkbenchLayout', () => {
           ],
           recentTasks: [],
         }}
-      />,
+      />
     )
 
     await userEvent.click(screen.getByTestId('search-button'))
@@ -847,7 +819,7 @@ describe('DesktopWorkbenchLayout', () => {
             },
           ],
         }}
-      />,
+      />
     )
 
     await userEvent.click(screen.getByTestId('search-button'))
@@ -896,12 +868,10 @@ describe('DesktopWorkbenchLayout', () => {
             updated_at: selectedTask.updated_at,
           },
         }}
-      />,
+      />
     )
 
-    const selectedRow = await screen.findByTestId(
-      `project-chat-row-${selectedTask.task_id}`,
-    )
+    const selectedRow = await screen.findByTestId(`project-chat-row-${selectedTask.task_id}`)
 
     expect(selectedRow).toHaveTextContent('项目会话 7')
     expect(selectedRow).toHaveClass('bg-[rgb(var(--color-sidebar-active))]')
@@ -955,17 +925,11 @@ describe('DesktopWorkbenchLayout', () => {
     expect(usagePanel).not.toHaveTextContent('使用率')
     expect(usagePanel).not.toHaveTextContent('总额度')
     expect(usagePanel).not.toHaveClass('pl-12')
-    expect(within(usagePanel).getByRole('progressbar')).toHaveAttribute(
-      'aria-valuenow',
-      '100'
-    )
+    expect(within(usagePanel).getByRole('progressbar')).toHaveAttribute('aria-valuenow', '100')
     const quotaLink = await screen.findByRole('link', {
       name: '额度与计费说明',
     })
-    expect(quotaLink).toHaveAttribute(
-      'href',
-      'https://space.intra.weibo.com/develop/model-quota'
-    )
+    expect(quotaLink).toHaveAttribute('href', 'https://space.intra.weibo.com/develop/model-quota')
     expect(quotaLink).toHaveClass('text-text-secondary')
     expect(quotaLink).not.toHaveClass('text-primary')
   })
@@ -1002,7 +966,7 @@ describe('DesktopWorkbenchLayout', () => {
             },
           ],
         }}
-      />,
+      />
     )
 
     await userEvent.click(screen.getByTestId('projects-more-button'))
@@ -1037,8 +1001,8 @@ describe('DesktopWorkbenchLayout', () => {
               localPath: '/workspace/projects/alpha-app',
             },
           }),
-        }),
-      ),
+        })
+      )
     )
   })
 
@@ -1055,9 +1019,9 @@ describe('DesktopWorkbenchLayout', () => {
         type: 'github',
       },
     ])
-    const onListGitBranches = vi.fn().mockResolvedValue([
-      { name: 'main', default: true, protected: false },
-    ])
+    const onListGitBranches = vi
+      .fn()
+      .mockResolvedValue([{ name: 'main', default: true, protected: false }])
     const onCreateGitWorkspaceProject = vi.fn().mockResolvedValue({
       id: 9,
       name: 'Wegent',
@@ -1084,7 +1048,7 @@ describe('DesktopWorkbenchLayout', () => {
             },
           ],
         }}
-      />,
+      />
     )
 
     await userEvent.click(screen.getByTestId('projects-create-button'))
@@ -1094,7 +1058,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('git-repository-select'))
     await userEvent.click(screen.getByTestId('git-repository-select-option'))
     await waitFor(() =>
-      expect(screen.getByTestId('git-branch-select')).toHaveTextContent('main（默认）'),
+      expect(screen.getByTestId('git-branch-select')).toHaveTextContent('main（默认）')
     )
     await userEvent.click(screen.getByTestId('create-project-button'))
 
@@ -1106,8 +1070,8 @@ describe('DesktopWorkbenchLayout', () => {
             url: 'https://github.com/wecode-ai/Wegent.git',
             branch: 'main',
           }),
-        }),
-      ),
+        })
+      )
     )
   })
 
@@ -1118,13 +1082,13 @@ describe('DesktopWorkbenchLayout', () => {
       () =>
         new Promise<void>(resolve => {
           resolveRefreshDevices = resolve
-        }),
+        })
     )
     const onListGitRepositories = vi.fn(
       () =>
         new Promise<[]>(resolve => {
           resolveRepositories = () => resolve([])
-        }),
+        })
     )
 
     render(
@@ -1146,7 +1110,7 @@ describe('DesktopWorkbenchLayout', () => {
             },
           ],
         }}
-      />,
+      />
     )
 
     await userEvent.click(screen.getByTestId('projects-create-button'))
@@ -1184,7 +1148,7 @@ describe('DesktopWorkbenchLayout', () => {
             },
           ],
         }}
-      />,
+      />
     )
 
     await userEvent.click(screen.getByTestId('projects-create-button'))
@@ -1192,7 +1156,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(screen.getByTestId('project-create-dialog')).toBeInTheDocument()
     expect(screen.getByTestId('project-device-unavailable-old-device')).toHaveTextContent(
-      '当前 v1.8.4，需要 1.8.5 或以上',
+      '当前 v1.8.4，需要 1.8.5 或以上'
     )
 
     const upgradeButton = screen.getByTestId('upgrade-project-device-old-device')
@@ -1294,16 +1258,14 @@ describe('DesktopWorkbenchLayout', () => {
             },
           ],
         }}
-      />,
+      />
     )
 
     await userEvent.click(screen.getByTestId('project-work-button'))
 
     const menu = screen.getByTestId('project-work-menu')
     const addProjectOption = screen.getByTestId('add-project-option')
-    expect(
-      [...menu.querySelectorAll('button')].map(button => button.dataset.testid),
-    ).toEqual([
+    expect([...menu.querySelectorAll('button')].map(button => button.dataset.testid)).toEqual([
       'project-option-1',
       'add-project-option',
       'no-project-option',
@@ -1401,17 +1363,15 @@ describe('DesktopWorkbenchLayout', () => {
             },
           ],
         }}
-      />,
+      />
     )
 
     await userEvent.click(screen.getByTestId('projects-create-button'))
     await userEvent.click(screen.getByTestId('project-existing-folder-button'))
 
+    await waitFor(() => expect(onGetDeviceHomeDirectory).toHaveBeenCalledWith('device-1'))
     await waitFor(() =>
-      expect(onGetDeviceHomeDirectory).toHaveBeenCalledWith('device-1'),
-    )
-    await waitFor(() =>
-      expect(onListDeviceDirectories).toHaveBeenCalledWith('device-1', '/home/ubuntu'),
+      expect(onListDeviceDirectories).toHaveBeenCalledWith('device-1', '/home/ubuntu')
     )
     expect(screen.queryByText('.cache')).not.toBeInTheDocument()
     expect(screen.queryByTestId('select-current-directory-button')).not.toBeInTheDocument()
@@ -1426,7 +1386,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     await userEvent.dblClick(repoEntry)
     await waitFor(() =>
-      expect(onListDeviceDirectories).toHaveBeenCalledWith('device-1', '/home/ubuntu/repo'),
+      expect(onListDeviceDirectories).toHaveBeenCalledWith('device-1', '/home/ubuntu/repo')
     )
 
     await userEvent.click(screen.getByTestId('create-project-button'))
@@ -1441,8 +1401,8 @@ describe('DesktopWorkbenchLayout', () => {
               localPath: '/home/ubuntu/repo',
             },
           }),
-        }),
-      ),
+        })
+      )
     )
   })
 
@@ -1479,7 +1439,7 @@ describe('DesktopWorkbenchLayout', () => {
             },
           ],
         }}
-      />,
+      />
     )
 
     await userEvent.click(screen.getByTestId('project-new-conversation-button'))
@@ -1489,19 +1449,16 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('project-menu-1-menu')).toHaveClass(
       'bg-background',
       'text-text-primary',
-      'border-border',
+      'border-border'
     )
     expect(screen.getByTestId('rename-project-1')).toHaveTextContent('重命名项目')
     expect(screen.getByTestId('rename-project-1')).toHaveClass(
       'text-text-primary',
-      'hover:bg-muted',
+      'hover:bg-muted'
     )
     expect(screen.getByTestId('archive-project-chats-1')).toHaveTextContent('归档会话')
     expect(screen.getByTestId('remove-project-1')).toHaveTextContent('移除')
-    expect(screen.getByTestId('remove-project-1')).toHaveClass(
-      'text-red-500',
-      'hover:bg-red-50',
-    )
+    expect(screen.getByTestId('remove-project-1')).toHaveClass('text-red-500', 'hover:bg-red-50')
 
     await userEvent.click(screen.getByTestId('rename-project-1'))
     await userEvent.clear(screen.getByTestId('rename-project-input'))
@@ -1513,12 +1470,9 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByText('2h')).toBeInTheDocument()
     expect(screen.getByTestId('project-chat-time-11')).toHaveClass(
       'group-hover/task:invisible',
-      'group-focus-within/task:invisible',
+      'group-focus-within/task:invisible'
     )
-    expect(screen.getByTestId('project-chat-time-value-11')).toHaveClass(
-      'w-7',
-      'justify-center',
-    )
+    expect(screen.getByTestId('project-chat-time-value-11')).toHaveClass('w-7', 'justify-center')
     expect(screen.getByTestId('project-chat-actions-11')).toHaveClass(
       'absolute',
       'invisible',
@@ -1526,15 +1480,15 @@ describe('DesktopWorkbenchLayout', () => {
       'opacity-0',
       'group-hover/task:visible',
       'group-hover/task:opacity-100',
-      'group-focus-within/task:visible',
+      'group-focus-within/task:visible'
     )
     expect(screen.getByTestId('project-chat-menu-11')).not.toHaveClass(
       'rounded-md',
-      'hover:bg-background',
+      'hover:bg-background'
     )
     expect(screen.getByTestId('project-chat-row-11')).toHaveClass(
       'bg-[rgb(var(--color-sidebar-active))]',
-      'pl-9',
+      'pl-9'
     )
     await userEvent.click(screen.getByTestId('project-chat-button'))
     expect(baseProps.onOpenTask).toHaveBeenCalledWith(11, 1)
@@ -1598,7 +1552,7 @@ describe('DesktopWorkbenchLayout', () => {
             },
           ],
         }}
-      />,
+      />
     )
 
     const rows = screen.getAllByTestId('history-task-button')
@@ -1608,12 +1562,9 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByText('1h')).toBeInTheDocument()
     expect(screen.getByTestId('history-task-time-5')).toHaveClass(
       'group-hover/task:invisible',
-      'group-focus-within/task:invisible',
+      'group-focus-within/task:invisible'
     )
-    expect(screen.getByTestId('history-task-time-value-5')).toHaveClass(
-      'w-7',
-      'justify-center',
-    )
+    expect(screen.getByTestId('history-task-time-value-5')).toHaveClass('w-7', 'justify-center')
     expect(screen.getByTestId('history-task-actions-5')).toHaveClass(
       'absolute',
       'invisible',
@@ -1621,11 +1572,11 @@ describe('DesktopWorkbenchLayout', () => {
       'opacity-0',
       'group-hover/task:visible',
       'group-hover/task:opacity-100',
-      'group-focus-within/task:visible',
+      'group-focus-within/task:visible'
     )
     expect(screen.getByTestId('history-task-menu-5')).not.toHaveClass(
       'rounded-md',
-      'hover:bg-background',
+      'hover:bg-background'
     )
     await userEvent.click(rows[0])
     expect(baseProps.onOpenTask).toHaveBeenCalledWith(5, 0)
@@ -1710,7 +1661,7 @@ describe('DesktopWorkbenchLayout', () => {
             },
           ],
         }}
-      />,
+      />
     )
 
     const projectRow = screen.getByTestId('project-row-7')
@@ -1722,23 +1673,18 @@ describe('DesktopWorkbenchLayout', () => {
       'justify-end',
       'text-right',
       'group-hover/project:invisible',
-      'group-focus-within/project:invisible',
+      'group-focus-within/project:invisible'
     )
     expect(projectRow).toHaveClass('relative')
     expect(screen.getByTestId('project-menu-7').parentElement?.parentElement).toHaveClass(
       'absolute',
       'right-1',
-      'group-hover/project:visible',
+      'group-hover/project:visible'
     )
 
-    const projectChatButton = within(projectRow).getByTestId(
-      'project-new-conversation-button',
-    )
+    const projectChatButton = within(projectRow).getByTestId('project-new-conversation-button')
     expect(projectChatButton).toBeDisabled()
-    expect(projectChatButton).toHaveAttribute(
-      'title',
-      '设备离线，无法新建项目对话：Offline Device',
-    )
+    expect(projectChatButton).toHaveAttribute('title', '设备离线，无法新建项目对话：Offline Device')
 
     await userEvent.click(projectChatButton)
     expect(baseProps.onStartNewProjectChat).not.toHaveBeenCalled()
@@ -1747,7 +1693,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('project-chat-device-status-71')).not.toBeInTheDocument()
     expect(screen.getByTestId('project-chat-git-worktree-icon-71')).toHaveAttribute(
       'aria-label',
-      'Git worktree',
+      'Git worktree'
     )
 
     await userEvent.click(screen.getByTestId('project-chat-button'))
@@ -1758,7 +1704,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(historyDeviceStatus).toHaveAttribute('title', 'Offline Device · 离线')
     expect(screen.getByTestId('history-task-git-worktree-icon-81')).toHaveAttribute(
       'aria-label',
-      'Git worktree',
+      'Git worktree'
     )
 
     await userEvent.click(screen.getByTestId('history-task-button'))
@@ -1802,16 +1748,12 @@ describe('DesktopWorkbenchLayout', () => {
             },
           ],
         }}
-      />,
+      />
     )
 
     const projectRow = screen.getByTestId('project-row-7')
-    expect(
-      within(projectRow).queryByTestId('project-device-status-7'),
-    ).not.toBeInTheDocument()
-    expect(
-      within(projectRow).getByTestId('project-new-conversation-button'),
-    ).not.toBeDisabled()
+    expect(within(projectRow).queryByTestId('project-device-status-7')).not.toBeInTheDocument()
+    expect(within(projectRow).getByTestId('project-new-conversation-button')).not.toBeDisabled()
   })
 
   test('keeps offline project conversations readable but locks the composer', async () => {
@@ -1870,13 +1812,13 @@ describe('DesktopWorkbenchLayout', () => {
           devices: [offlineDevice],
           currentProjectId: 7,
         }}
-      />,
+      />
     )
 
     expect(screen.getByTestId('desktop-chat-scroll')).toHaveTextContent('hello')
     expect(screen.queryByTestId('composer-disabled-reason')).not.toBeInTheDocument()
     expect(screen.getByTestId('conversation-device-offline-banner')).toHaveTextContent(
-      'Offline Device 已离线，恢复在线后可继续对话',
+      'Offline Device 已离线，恢复在线后可继续对话'
     )
     expect(screen.queryByTestId('device-status-prompt')).not.toBeInTheDocument()
     expect(screen.getByTestId('send-message-button')).toBeDisabled()
@@ -1954,21 +1896,21 @@ describe('DesktopWorkbenchLayout', () => {
             createdAt: new Date().toISOString(),
           },
         ]}
-      />,
+      />
     )
 
     expect(screen.queryByTestId('device-status-prompt')).not.toBeInTheDocument()
     expect(
       within(screen.getByTestId('desktop-floating-composer-card')).getByTestId(
-        'conversation-device-offline-banner',
-      ),
+        'conversation-device-offline-banner'
+      )
     ).toBeInTheDocument()
     expect(screen.getByTestId('conversation-device-offline-banner')).toHaveTextContent(
-      'Offline Project Device 已离线，恢复在线后可继续对话',
+      'Offline Project Device 已离线，恢复在线后可继续对话'
     )
     expect(screen.getByTestId('conversation-device-offline-banner')).toHaveClass(
       'bg-background/95',
-      'text-text-secondary',
+      'text-text-secondary'
     )
     expect(screen.getByTestId('desktop-chat-scroll')).not.toHaveClass('pt-14')
     expect(screen.getByTestId('send-message-button')).toBeDisabled()
@@ -2023,14 +1965,14 @@ describe('DesktopWorkbenchLayout', () => {
             createdAt: new Date().toISOString(),
           },
         ]}
-      />,
+      />
     )
 
     expect(screen.getByTestId('conversation-device-offline-banner')).toHaveTextContent(
-      '当前设备 不可用，恢复在线后可继续对话',
+      '当前设备 不可用，恢复在线后可继续对话'
     )
     expect(screen.getByTestId('conversation-device-offline-banner')).not.toHaveTextContent(
-      'b2f75045-2062-4a94-b5c0-ffb9f3b94a90',
+      'b2f75045-2062-4a94-b5c0-ffb9f3b94a90'
     )
   })
 
@@ -2101,11 +2043,11 @@ describe('DesktopWorkbenchLayout', () => {
             createdAt: new Date().toISOString(),
           },
         ]}
-      />,
+      />
     )
 
     expect(screen.getByTestId('conversation-device-offline-banner')).toHaveTextContent(
-      'Nested Offline Project Device 已离线，恢复在线后可继续对话',
+      'Nested Offline Project Device 已离线，恢复在线后可继续对话'
     )
     expect(screen.queryByTestId('device-status-prompt')).not.toBeInTheDocument()
     expect(screen.getByTestId('send-message-button')).toBeDisabled()
@@ -2166,12 +2108,12 @@ describe('DesktopWorkbenchLayout', () => {
           devices: [oldDevice, compatibleDevice],
           currentProjectId: 7,
         }}
-      />,
+      />
     )
 
     expect(screen.queryByTestId('composer-disabled-reason')).not.toBeInTheDocument()
     expect(screen.getByTestId('device-status-prompt')).toHaveTextContent(
-      'Old Device 版本低于 1.8.5，升级后可继续对话',
+      'Old Device 版本低于 1.8.5，升级后可继续对话'
     )
     expect(screen.getByTestId('send-message-button')).toBeDisabled()
 
@@ -2213,14 +2155,14 @@ describe('DesktopWorkbenchLayout', () => {
             },
           ],
         }}
-      />,
+      />
     )
 
     expect(screen.getByTestId('project-spinner-1')).toHaveClass(
-      'text-[rgb(var(--color-sidebar-text-muted))]',
+      'text-[rgb(var(--color-sidebar-text-muted))]'
     )
     expect(screen.getByTestId('history-task-spinner-41')).toHaveClass(
-      'text-[rgb(var(--color-sidebar-text-muted))]',
+      'text-[rgb(var(--color-sidebar-text-muted))]'
     )
   })
 
@@ -2257,7 +2199,7 @@ describe('DesktopWorkbenchLayout', () => {
             },
           ],
         }}
-      />,
+      />
     )
 
     expect(screen.queryByTestId('project-spinner-1')).not.toBeInTheDocument()
@@ -2270,7 +2212,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('sidebar-worklists-scroll')).toHaveClass(
       'flex-1',
       'overflow-y-auto',
-      'scrollbar-none',
+      'scrollbar-none'
     )
     expect(screen.getByTestId('settings-button')).toHaveClass('h-9', 'w-full')
   })
@@ -2312,7 +2254,7 @@ describe('DesktopWorkbenchLayout', () => {
           ...baseProps.state,
           projects: [{ id: 1, name: 'github_wegent', tasks: projectTasks }],
         }}
-      />,
+      />
     )
 
     await userEvent.click(screen.getByTestId('project-item-button'))
@@ -2351,12 +2293,7 @@ describe('DesktopWorkbenchLayout', () => {
       ],
     })
 
-    render(
-      <DesktopWorkbenchLayout
-        {...baseProps}
-        onListArchivedTasks={onListArchivedTasks}
-      />,
-    )
+    render(<DesktopWorkbenchLayout {...baseProps} onListArchivedTasks={onListArchivedTasks} />)
 
     await userEvent.click(screen.getByTestId('settings-button'))
     await userEvent.click(screen.getByTestId('settings-menu-button'))
@@ -2400,20 +2337,20 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByText('可连接这台设备的云设备')).not.toBeInTheDocument()
     expect(await screen.findByText('云设备')).toBeInTheDocument()
     expect(
-      screen.getByTestId('connection-device-24a59054-4638-4744-983d-372706c30fcd'),
+      screen.getByTestId('connection-device-24a59054-4638-4744-983d-372706c30fcd')
     ).toBeInTheDocument()
     expect(screen.getByText('yunpeng7-executor-372706c30fcd')).toBeInTheDocument()
     expect(screen.getByText('v1.712')).toBeInTheDocument()
     expect(screen.getByText('在线')).toBeInTheDocument()
     expect(screen.queryByText('Online')).not.toBeInTheDocument()
     expect(
-      screen.getByTestId('connection-terminal-button-24a59054-4638-4744-983d-372706c30fcd'),
+      screen.getByTestId('connection-terminal-button-24a59054-4638-4744-983d-372706c30fcd')
     ).toBeInTheDocument()
     expect(
-      screen.getByTestId('connection-code-server-button-24a59054-4638-4744-983d-372706c30fcd'),
+      screen.getByTestId('connection-code-server-button-24a59054-4638-4744-983d-372706c30fcd')
     ).toBeInTheDocument()
     expect(
-      screen.getByTestId('connection-vnc-button-24a59054-4638-4744-983d-372706c30fcd'),
+      screen.getByTestId('connection-vnc-button-24a59054-4638-4744-983d-372706c30fcd')
     ).toBeInTheDocument()
     expect(screen.getByText('终端')).toBeInTheDocument()
     expect(screen.getByText('IDE')).toBeInTheDocument()
@@ -2453,16 +2390,8 @@ describe('DesktopWorkbenchLayout', () => {
     const content = screen.getByTestId('desktop-workbench-content')
     expect(content).toHaveStyle({ width: '420px' })
     expect(panel).toHaveClass('min-w-0', 'flex-1', 'basis-0')
-    expect(panel).toHaveClass(
-      'transition-[opacity,transform]',
-      'duration-300',
-      'ease-out',
-    )
-    expect(content).toHaveClass(
-      'transition-[width]',
-      'duration-300',
-      'ease-out',
-    )
+    expect(panel).toHaveClass('transition-[opacity,transform]', 'duration-300', 'ease-out')
+    expect(content).toHaveClass('transition-[width]', 'duration-300', 'ease-out')
 
     fireEvent.pointerDown(screen.getByTestId('right-workspace-resize-handle'), { clientX: 700 })
     fireEvent.pointerMove(document, { clientX: 640 })
@@ -2496,32 +2425,25 @@ describe('DesktopWorkbenchLayout', () => {
           devices: workspacePanelState.devices,
           currentProjectId: workspacePanelState.currentProject.id,
         }}
-      />,
+      />
     )
 
     const content = screen.getByTestId('desktop-workbench-content')
     const topBar = screen.getByTestId('workbench-topbar')
     const rightPanelShell = screen.getByTestId('right-workspace-panel-shell')
     expect(topBar).toHaveStyle({ width: '100%' })
-    expect(content).toHaveClass(
-      'flex-none',
-      'transition-[width]',
-      'duration-300',
-      'ease-out',
-    )
+    expect(content).toHaveClass('flex-none', 'transition-[width]', 'duration-300', 'ease-out')
     expect(content).toHaveStyle({ width: '100%' })
     expect(rightPanelShell).toHaveClass(
       'overflow-hidden',
       'opacity-0',
       'transition-[width,opacity]',
       'duration-300',
-      'ease-out',
+      'ease-out'
     )
     expect(rightPanelShell).toHaveStyle({ width: '0px' })
     expect(screen.queryByTestId('right-workspace-panel')).not.toBeInTheDocument()
-    expect(screen.getByTestId('desktop-floating-composer-layer')).toHaveClass(
-      'min-w-[32rem]',
-    )
+    expect(screen.getByTestId('desktop-floating-composer-layer')).toHaveClass('min-w-[32rem]')
 
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
 
@@ -2530,7 +2452,7 @@ describe('DesktopWorkbenchLayout', () => {
       'border-r',
       'transition-[width]',
       'duration-300',
-      'ease-out',
+      'ease-out'
     )
     expect(content).toHaveStyle({ width: '420px' })
     expect(topBar).toHaveStyle({ width: '420px' })
@@ -2542,16 +2464,14 @@ describe('DesktopWorkbenchLayout', () => {
       'basis-0',
       'transition-[opacity,transform]',
       'duration-300',
-      'ease-out',
+      'ease-out'
     )
     expect(screen.getByTestId('desktop-floating-composer-layer')).toHaveClass(
       'w-[calc(100%_-_1.5rem)]',
       'min-w-0',
-      'max-w-[calc(100%_-_1.5rem)]',
+      'max-w-[calc(100%_-_1.5rem)]'
     )
-    expect(screen.getByTestId('desktop-floating-composer-layer')).not.toHaveClass(
-      'min-w-[32rem]',
-    )
+    expect(screen.getByTestId('desktop-floating-composer-layer')).not.toHaveClass('min-w-[32rem]')
   })
 
   test('right workspace panel renders the file workspace inside a tab strip', async () => {
@@ -2575,26 +2495,25 @@ describe('DesktopWorkbenchLayout', () => {
   test('right workspace panel shows file tree and read-only preview', async () => {
     const user = userEvent.setup()
     const workspacePanelState = createCloudWorkspacePanelState()
-    const listWorkspaceEntries = vi.fn()
-      .mockResolvedValueOnce({
-        path: '/workspace/project',
-        entries: [
-          {
-            name: 'src',
-            path: '/workspace/project/src',
-            isDirectory: true,
-            size: 0,
-            modifiedAt: null,
-          },
-          {
-            name: 'README.md',
-            path: '/workspace/project/README.md',
-            isDirectory: false,
-            size: 11,
-            modifiedAt: null,
-          },
-        ],
-      })
+    const listWorkspaceEntries = vi.fn().mockResolvedValueOnce({
+      path: '/workspace/project',
+      entries: [
+        {
+          name: 'src',
+          path: '/workspace/project/src',
+          isDirectory: true,
+          size: 0,
+          modifiedAt: null,
+        },
+        {
+          name: 'README.md',
+          path: '/workspace/project/README.md',
+          isDirectory: false,
+          size: 11,
+          modifiedAt: null,
+        },
+      ],
+    })
     const readWorkspaceTextFile = vi.fn().mockResolvedValue({
       path: '/workspace/project/README.md',
       name: 'README.md',
@@ -2603,10 +2522,12 @@ describe('DesktopWorkbenchLayout', () => {
       size: 11,
       modifiedAt: null,
     })
-    createDeviceApiMock.mockReturnValue(createMockDeviceApi({
-      listWorkspaceEntries,
-      readWorkspaceTextFile,
-    }) as never)
+    createDeviceApiMock.mockReturnValue(
+      createMockDeviceApi({
+        listWorkspaceEntries,
+        readWorkspaceTextFile,
+      }) as never
+    )
 
     render(
       <DesktopWorkbenchLayout
@@ -2621,7 +2542,7 @@ describe('DesktopWorkbenchLayout', () => {
           devices: workspacePanelState.devices,
           currentProjectId: workspacePanelState.currentProject?.id,
         }}
-      />,
+      />
     )
 
     await user.click(screen.getByTestId('toggle-right-workspace-panel-button'))
@@ -2699,9 +2620,11 @@ describe('DesktopWorkbenchLayout', () => {
         ],
       })
     })
-    createDeviceApiMock.mockReturnValue(createMockDeviceApi({
-      listWorkspaceEntries,
-    }) as never)
+    createDeviceApiMock.mockReturnValue(
+      createMockDeviceApi({
+        listWorkspaceEntries,
+      }) as never
+    )
 
     render(
       <DesktopWorkbenchLayout
@@ -2716,32 +2639,34 @@ describe('DesktopWorkbenchLayout', () => {
           devices: workspacePanelState.devices,
           currentProjectId: workspacePanelState.currentProject?.id,
         }}
-      />,
+      />
     )
 
     await user.click(screen.getByTestId('toggle-right-workspace-panel-button'))
     await user.click(await screen.findByText('backend'))
 
-    const backendRow = screen.getByText('backend').closest('[data-testid="workspace-directory-row"]')
+    const backendRow = screen
+      .getByText('backend')
+      .closest('[data-testid="workspace-directory-row"]')
     const alembicRow = await screen.findByText('alembic')
     expect(backendRow).toHaveAttribute('aria-expanded', 'true')
     expect(backendRow).toHaveAttribute('data-depth', '0')
     expect(alembicRow.closest('[data-testid="workspace-directory-row"]')).toHaveAttribute(
       'data-depth',
-      '1',
+      '1'
     )
     expect(screen.getByText('frontend')).toBeInTheDocument()
 
     await user.click(alembicRow)
 
-    const selectedAlembicRow = screen.getByText('alembic')
+    const selectedAlembicRow = screen
+      .getByText('alembic')
       .closest('[data-testid="workspace-directory-row"]')
     expect(selectedAlembicRow).toHaveClass('ring-1', 'ring-primary')
     expect(await screen.findByText('__pycache__')).toBeInTheDocument()
-    expect(screen.getByText('env.py').closest('[data-testid="workspace-file-row"]')).toHaveAttribute(
-      'data-depth',
-      '2',
-    )
+    expect(
+      screen.getByText('env.py').closest('[data-testid="workspace-file-row"]')
+    ).toHaveAttribute('data-depth', '2')
     expect(screen.getAllByTestId('workspace-tree-indent-guide').length).toBeGreaterThan(0)
   })
 
@@ -2784,12 +2709,14 @@ describe('DesktopWorkbenchLayout', () => {
       ],
     })
     const readWorkspaceTextFile = vi.fn((_deviceId: string, path: string) =>
-      path.endsWith('README.md') ? readmeFile.promise : notesFile.promise,
+      path.endsWith('README.md') ? readmeFile.promise : notesFile.promise
     )
-    createDeviceApiMock.mockReturnValue(createMockDeviceApi({
-      listWorkspaceEntries,
-      readWorkspaceTextFile,
-    }) as never)
+    createDeviceApiMock.mockReturnValue(
+      createMockDeviceApi({
+        listWorkspaceEntries,
+        readWorkspaceTextFile,
+      }) as never
+    )
 
     render(
       <DesktopWorkbenchLayout
@@ -2804,7 +2731,7 @@ describe('DesktopWorkbenchLayout', () => {
           devices: workspacePanelState.devices,
           currentProjectId: workspacePanelState.currentProject?.id,
         }}
-      />,
+      />
     )
 
     await user.click(screen.getByTestId('toggle-right-workspace-panel-button'))
@@ -2883,9 +2810,11 @@ describe('DesktopWorkbenchLayout', () => {
         ],
       })
     })
-    createDeviceApiMock.mockReturnValue(createMockDeviceApi({
-      listWorkspaceEntries,
-    }) as never)
+    createDeviceApiMock.mockReturnValue(
+      createMockDeviceApi({
+        listWorkspaceEntries,
+      }) as never
+    )
 
     render(
       <DesktopWorkbenchLayout
@@ -2900,7 +2829,7 @@ describe('DesktopWorkbenchLayout', () => {
           devices: workspacePanelState.devices,
           currentProjectId: workspacePanelState.currentProject?.id,
         }}
-      />,
+      />
     )
 
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
@@ -2944,7 +2873,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(screen.getByText('docs').closest('[data-testid="workspace-directory-row"]')).toHaveClass(
       'ring-1',
-      'ring-primary',
+      'ring-primary'
     )
     expect(screen.getByText('guide.md')).toBeInTheDocument()
     expect(screen.getByText('main.ts')).toBeInTheDocument()
@@ -2986,9 +2915,11 @@ describe('DesktopWorkbenchLayout', () => {
         ],
       })
     })
-    createDeviceApiMock.mockReturnValue(createMockDeviceApi({
-      listWorkspaceEntries,
-    }) as never)
+    createDeviceApiMock.mockReturnValue(
+      createMockDeviceApi({
+        listWorkspaceEntries,
+      }) as never
+    )
 
     render(
       <DesktopWorkbenchLayout
@@ -3003,7 +2934,7 @@ describe('DesktopWorkbenchLayout', () => {
           devices: workspacePanelState.devices,
           currentProjectId: workspacePanelState.currentProject?.id,
         }}
-      />,
+      />
     )
 
     await user.click(screen.getByTestId('toggle-right-workspace-panel-button'))
@@ -3015,7 +2946,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(await screen.findByText('main.ts')).toBeInTheDocument()
     expect(listWorkspaceEntries).toHaveBeenLastCalledWith(
       'workspace-cloud-device',
-      '/workspace/project/src',
+      '/workspace/project/src'
     )
   })
 
@@ -3025,9 +2956,11 @@ describe('DesktopWorkbenchLayout', () => {
       path: '/workspace/project',
       entries: [],
     })
-    createDeviceApiMock.mockReturnValue(createMockDeviceApi({
-      listWorkspaceEntries,
-    }) as never)
+    createDeviceApiMock.mockReturnValue(
+      createMockDeviceApi({
+        listWorkspaceEntries,
+      }) as never
+    )
     const layoutProps = {
       ...baseProps,
       state: {
@@ -3060,7 +2993,7 @@ describe('DesktopWorkbenchLayout', () => {
             createdAt: '2026-06-12T00:00:00.000Z',
           },
         ]}
-      />,
+      />
     )
     await act(async () => {
       await Promise.resolve()
@@ -3087,7 +3020,7 @@ describe('DesktopWorkbenchLayout', () => {
         loading={false}
         onRetry={vi.fn()}
         onAddCodeComment={onAddCodeComment}
-      />,
+      />
     )
     const secondRepeat = screen.getAllByText('repeat')[1]
     const range = document.createRange()
@@ -3107,7 +3040,7 @@ describe('DesktopWorkbenchLayout', () => {
         endLine: 3,
         selectedText: 'repeat',
         comment: 'check second repeat',
-      }),
+      })
     )
   })
 
@@ -3134,7 +3067,7 @@ describe('DesktopWorkbenchLayout', () => {
         loading={false}
         onRetry={vi.fn()}
         onAddCodeComment={vi.fn()}
-      />,
+      />
     )
     const firstText = screen.getByText('first file')
     const range = document.createRange()
@@ -3152,7 +3085,7 @@ describe('DesktopWorkbenchLayout', () => {
         loading={false}
         onRetry={vi.fn()}
         onAddCodeComment={vi.fn()}
-      />,
+      />
     )
 
     expect(screen.queryByTestId('workspace-file-comment-input')).not.toBeInTheDocument()
@@ -3170,7 +3103,7 @@ describe('DesktopWorkbenchLayout', () => {
       'text-text-primary',
       'border-border',
       'backdrop-blur-3xl',
-      'backdrop-saturate-150',
+      'backdrop-saturate-150'
     )
     expect(screen.getByText('环境信息')).toBeInTheDocument()
     expect(screen.getByText('变更')).toBeInTheDocument()
@@ -3179,10 +3112,7 @@ describe('DesktopWorkbenchLayout', () => {
     const deviceId = screen.getByTestId('environment-device-id')
     expect(deviceId).toHaveTextContent('e13e1a10...0bb4')
     expect(deviceId).toHaveClass('ml-auto', 'text-right')
-    expect(deviceButton).toHaveAttribute(
-      'title',
-      '本地 · e13e1a10-5377-4a87-a3b3-634a098d0bb4',
-    )
+    expect(deviceButton).toHaveAttribute('title', '本地 · e13e1a10-5377-4a87-a3b3-634a098d0bb4')
     expect(await screen.findByText('+173')).toBeInTheDocument()
     expect(await screen.findByText('-13366')).toBeInTheDocument()
     expect(await screen.findByText('human/narwhal-20260528-073440')).toBeInTheDocument()
@@ -3194,7 +3124,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(deviceButton)
 
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
-      'e13e1a10-5377-4a87-a3b3-634a098d0bb4',
+      'e13e1a10-5377-4a87-a3b3-634a098d0bb4'
     )
     expect(screen.getByText('已复制')).toBeInTheDocument()
 
@@ -3228,7 +3158,7 @@ describe('DesktopWorkbenchLayout', () => {
             },
           },
         }}
-      />,
+      />
     )
 
     await userEvent.click(screen.getByTestId('environment-info-button'))
@@ -3239,18 +3169,16 @@ describe('DesktopWorkbenchLayout', () => {
     await waitFor(() =>
       expect(onCommitEnvironmentChanges).toHaveBeenCalledWith(
         expect.objectContaining({ id: 1, name: 'github_wegent' }),
-        'feat: ship',
-      ),
+        'feat: ship'
+      )
     )
     expect(screen.getByText('已提交')).toBeInTheDocument()
   })
 
   test('switches and creates branches from the environment popover', async () => {
-    const onListEnvironmentBranches = vi.fn().mockResolvedValue([
-      'main',
-      'human/chipmunk-20260603-053420',
-      'human/alpaca-20260603-050330',
-    ])
+    const onListEnvironmentBranches = vi
+      .fn()
+      .mockResolvedValue(['main', 'human/chipmunk-20260603-053420', 'human/alpaca-20260603-050330'])
     const onCheckoutEnvironmentBranch = vi.fn().mockResolvedValue(undefined)
     const onCreateEnvironmentBranch = vi.fn().mockResolvedValue(undefined)
 
@@ -3279,7 +3207,7 @@ describe('DesktopWorkbenchLayout', () => {
             },
           },
         }}
-      />,
+      />
     )
 
     await userEvent.click(screen.getByTestId('environment-info-button'))
@@ -3298,8 +3226,8 @@ describe('DesktopWorkbenchLayout', () => {
     await waitFor(() =>
       expect(onCheckoutEnvironmentBranch).toHaveBeenCalledWith(
         expect.anything(),
-        'human/alpaca-20260603-050330',
-      ),
+        'human/alpaca-20260603-050330'
+      )
     )
 
     await userEvent.click(screen.getByTestId('environment-branch-row'))
@@ -3308,10 +3236,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('environment-confirm-new-branch-button'))
 
     await waitFor(() =>
-      expect(onCreateEnvironmentBranch).toHaveBeenCalledWith(
-        expect.anything(),
-        'human/new-branch',
-      ),
+      expect(onCreateEnvironmentBranch).toHaveBeenCalledWith(expect.anything(), 'human/new-branch')
     )
   })
 
@@ -3345,13 +3270,13 @@ describe('DesktopWorkbenchLayout', () => {
         })}
         onListEnvironmentBranches={vi.fn().mockResolvedValue([])}
         onCheckoutEnvironmentBranch={vi.fn().mockResolvedValue(undefined)}
-      />,
+      />
     )
 
     await userEvent.click(screen.getByTestId('environment-info-button'))
 
     await waitFor(() =>
-      expect(screen.queryByTestId('environment-branch-row')).not.toBeInTheDocument(),
+      expect(screen.queryByTestId('environment-branch-row')).not.toBeInTheDocument()
     )
   })
 
@@ -3366,7 +3291,7 @@ describe('DesktopWorkbenchLayout', () => {
     fireEvent.keyDown(window, { key: 'Escape' })
 
     await waitFor(() =>
-      expect(screen.queryByTestId('environment-branch-menu')).not.toBeInTheDocument(),
+      expect(screen.queryByTestId('environment-branch-menu')).not.toBeInTheDocument()
     )
     expect(screen.getByTestId('environment-info-popover')).toBeInTheDocument()
   })
@@ -3407,7 +3332,7 @@ describe('DesktopWorkbenchLayout', () => {
             },
           ],
         }}
-      />,
+      />
     )
 
     expect(onLoadEnvironmentInfo).not.toHaveBeenCalled()
@@ -3416,8 +3341,8 @@ describe('DesktopWorkbenchLayout', () => {
 
     await waitFor(() =>
       expect(onLoadEnvironmentInfo).toHaveBeenCalledWith(
-        expect.objectContaining({ id: 2, name: 'workspace' }),
-      ),
+        expect.objectContaining({ id: 2, name: 'workspace' })
+      )
     )
   })
 
@@ -3481,7 +3406,7 @@ describe('DesktopWorkbenchLayout', () => {
             sinaProject,
           ],
         }}
-      />,
+      />
     )
 
     await userEvent.click(screen.getByTestId('environment-info-button'))
@@ -3529,7 +3454,7 @@ describe('DesktopWorkbenchLayout', () => {
           currentProject: workspaceProject,
         }}
         messages={[streamingMessage]}
-      />,
+      />
     )
 
     await waitFor(() => {
@@ -3551,7 +3476,7 @@ describe('DesktopWorkbenchLayout', () => {
             status: 'done' as const,
           },
         ]}
-      />,
+      />
     )
 
     await waitFor(() => expect(onLoadEnvironmentInfo).toHaveBeenCalledTimes(2))

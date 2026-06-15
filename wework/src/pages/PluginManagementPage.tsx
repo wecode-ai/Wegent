@@ -48,8 +48,7 @@ export function PluginManagementPage() {
   } = useWorkbench()
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
-  const { sidebarCollapsed, setSidebarCollapsed } =
-    useDesktopSidebarCollapsed()
+  const { sidebarCollapsed, setSidebarCollapsed } = useDesktopSidebarCollapsed()
 
   const handleSelectProject = (projectId: number) => {
     navigateTo('/')
@@ -103,7 +102,7 @@ export function PluginManagementPage() {
   }
 
   return (
-    <div className="flex h-dvh overflow-hidden bg-background text-text-primary lg:h-screen">
+    <div className="flex h-full overflow-hidden bg-background text-text-primary">
       {!isMobile && !sidebarCollapsed && (
         <DesktopSidebar
           user={state.user}

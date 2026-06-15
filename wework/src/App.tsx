@@ -7,6 +7,7 @@ import { LoginPage } from '@/pages/LoginPage'
 import { WorkbenchPage } from '@/pages/WorkbenchPage'
 import { PluginsPage } from '@/pages/PluginsPage'
 import { PluginManagementPage } from '@/pages/PluginManagementPage'
+import { AppsPage } from '@/pages/AppsPage'
 import { stripAppBasePath } from '@/config/runtime'
 import { AppearanceProvider } from '@/features/appearance'
 import { ChromeTitlebar } from '@/components/topnav/ChromeTitlebar'
@@ -55,6 +56,8 @@ function AppRoutes() {
         <PluginManagementPage />
       ) : path === '/plugins' ? (
         <PluginsPage />
+      ) : path === '/apps' ? (
+        <AppsPage />
       ) : (
         <WorkbenchPage />
       )}
@@ -86,11 +89,7 @@ function AppShell() {
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-surface">
       {isTauri && (
-        <ChromeTitlebar
-          tabs={tabs}
-          activeKey={activeAppKey}
-          onNavigate={navigateToApp}
-        />
+        <ChromeTitlebar tabs={tabs} activeKey={activeAppKey} onNavigate={navigateToApp} />
       )}
       <div className="min-h-0 flex-1 overflow-hidden">
         <AppRoutes />

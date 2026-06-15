@@ -2,10 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createDeviceApi } from '@/api/devices'
 import { createHttpClient } from '@/api/http'
 import { ChatInput } from '@/components/chat/ChatInput'
-import type {
-  ProjectChatControls,
-  ProjectWorkControls,
-} from '@/components/chat/ChatInput'
+import type { ProjectChatControls, ProjectWorkControls } from '@/components/chat/ChatInput'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
 import { getRuntimeConfig } from '@/config/runtime'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -15,16 +12,8 @@ import {
   getActiveWorkbenchDeviceId,
   isWorkbenchDeviceOnline,
 } from '@/lib/workbench-device'
-import {
-  isDeviceBelowWeWorkVersion,
-  isWeWorkCompatibleDevice,
-} from '@/lib/device-capabilities'
-import type {
-  DeviceInfo,
-  ProjectWithTasks,
-  Task,
-  TurnFileChangesSummary,
-} from '@/types/api'
+import { isDeviceBelowWeWorkVersion, isWeWorkCompatibleDevice } from '@/lib/device-capabilities'
+import type { DeviceInfo, ProjectWithTasks, Task, TurnFileChangesSummary } from '@/types/api'
 import type { DeviceUpgradeState } from '@/types/device-events'
 import type { EnvironmentInfo } from '@/types/environment'
 import type {
@@ -54,8 +43,7 @@ const DESKTOP_SPLIT_COMPOSER_FRAME_CLASS =
   'mx-auto w-[calc(100%_-_1.5rem)] min-w-0 max-w-[calc(100%_-_1.5rem)] -translate-y-12'
 const DESKTOP_FLOATING_COMPOSER_BACKDROP_CLASS =
   'pointer-events-none absolute inset-x-0 bottom-0 z-10 h-32 bg-gradient-to-t from-background via-background to-transparent'
-const DESKTOP_SCROLL_TO_BOTTOM_BUTTON_CLASS =
-  'bottom-36 z-popover bg-background/95 shadow-md'
+const DESKTOP_SCROLL_TO_BOTTOM_BUTTON_CLASS = 'bottom-36 z-popover bg-background/95 shadow-md'
 const DESKTOP_QUEUED_SCROLL_TO_BOTTOM_BUTTON_CLASS =
   'bottom-52 z-popover bg-background/95 shadow-md'
 
@@ -63,19 +51,12 @@ function workspaceTargetKey(target: WorkspaceTarget | null): string {
   return target ? `${target.deviceId}:${target.path}:${target.source}` : ''
 }
 
-function messageWorkspaceTargetKey(
-  currentTask: Task | null,
-  messages: WorkbenchMessage[],
-): string {
+function messageWorkspaceTargetKey(currentTask: Task | null, messages: WorkbenchMessage[]): string {
   let latestUnscopedKey = ''
 
   for (const message of [...messages].reverse()) {
     const fileChanges = message.fileChanges
-    if (
-      fileChanges?.status !== 'active' ||
-      !fileChanges.device_id ||
-      !fileChanges.workspace_path
-    ) {
+    if (fileChanges?.status !== 'active' || !fileChanges.device_id || !fileChanges.workspace_path) {
       continue
     }
 
@@ -124,9 +105,7 @@ interface DesktopWorkbenchMainProps {
   onEditQueuedMessage: (id: string) => void
   onCancelGuidanceMessage: (id: string) => void
   onLoadFileChangesDiff?: (subtaskId: number) => Promise<string>
-  onRevertFileChanges?: (
-    subtaskId: number,
-  ) => Promise<TurnFileChangesSummary>
+  onRevertFileChanges?: (subtaskId: number) => Promise<TurnFileChangesSummary>
   onAddCodeComment?: (context: CodeCommentContext) => void
   onClearCodeComments?: () => void
   topBarLeftActions?: ReactNode
@@ -175,14 +154,10 @@ export function DesktopWorkbenchMain({
   const [bottomPanelOpen, setBottomPanelOpen] = useState(false)
   const [workspaceTarget, setWorkspaceTarget] = useState<WorkspaceTarget | null>(null)
   const [workspaceTargetError, setWorkspaceTargetError] = useState<string | null>(null)
-  const {
-    width: rightSplitChatWidth,
-    handleResizeStart: handleRightSplitResizeStart,
-  } = useResizableRightSplitChat()
+  const { width: rightSplitChatWidth, handleResizeStart: handleRightSplitResizeStart } =
+    useResizableRightSplitChat()
   const chatColumnWidth = rightPanelOpen ? rightSplitChatWidth : '100%'
-  const rightPanelShellWidth = rightPanelOpen
-    ? `calc(100% - ${rightSplitChatWidth}px)`
-    : '0px'
+  const rightPanelShellWidth = rightPanelOpen ? `calc(100% - ${rightSplitChatWidth}px)` : '0px'
   const workspaceDeviceApi = useMemo(() => {
     const { apiBaseUrl } = getRuntimeConfig()
     return createDeviceApi(createHttpClient({ baseUrl: apiBaseUrl }))
@@ -199,12 +174,12 @@ export function DesktopWorkbenchMain({
     standaloneDeviceId: projectWork.currentStandaloneDeviceId,
   })
   const activeDevice = findWorkbenchDevice(devices, activeDeviceId)
-  const activeDeviceUnavailable =
-    Boolean(activeDeviceId) && !isWorkbenchDeviceOnline(activeDevice)
+  const activeDeviceUnavailable = Boolean(activeDeviceId) && !isWorkbenchDeviceOnline(activeDevice)
   const showConversationDeviceBanner =
     Boolean(activeDeviceId) && (!activeDevice || activeDevice.status === 'offline')
-  const activeDeviceVersionUnsupported =
-    Boolean(activeDevice && isDeviceBelowWeWorkVersion(activeDevice))
+  const activeDeviceVersionUnsupported = Boolean(
+    activeDevice && isDeviceBelowWeWorkVersion(activeDevice)
+  )
   const noStandaloneCompatibleDevice =
     !currentProject &&
     !activeDeviceId &&
@@ -234,8 +209,8 @@ export function DesktopWorkbenchMain({
       onCreateEnvironmentBranch={onCreateEnvironmentBranch}
       rightPanelOpen={rightPanelOpen}
       bottomPanelOpen={bottomPanelOpen}
-      onToggleRightPanel={() => setRightPanelOpen((open) => !open)}
-      onToggleBottomPanel={() => setBottomPanelOpen((open) => !open)}
+      onToggleRightPanel={() => setRightPanelOpen(open => !open)}
+      onToggleBottomPanel={() => setBottomPanelOpen(open => !open)}
     />
   )
   const showPageTopBar = !isTauri || Boolean(topBarLeftActions)
@@ -255,9 +230,7 @@ export function DesktopWorkbenchMain({
       .then(target => {
         if (!cancelled) {
           setWorkspaceTarget(current =>
-            workspaceTargetKey(current) === workspaceTargetKey(target)
-              ? current
-              : target,
+            workspaceTargetKey(current) === workspaceTargetKey(target) ? current : target
           )
           setWorkspaceTargetError(null)
         }
@@ -265,7 +238,7 @@ export function DesktopWorkbenchMain({
       .catch(error => {
         if (!cancelled) {
           setWorkspaceTargetError(
-            error instanceof Error ? error.message : 'Failed to resolve workspace',
+            error instanceof Error ? error.message : 'Failed to resolve workspace'
           )
         }
       })
@@ -280,12 +253,10 @@ export function DesktopWorkbenchMain({
       className={cn(
         'relative mb-1.5 mr-1.5 flex min-w-0 flex-1 overflow-hidden rounded-xl border border-border/60 bg-background shadow-[0_3px_16px_rgba(0,0,0,0.04)]',
         !isTauri && 'mt-1.5',
-        sidebarCollapsed && 'ml-1.5',
+        sidebarCollapsed && 'ml-1.5'
       )}
     >
-      {isTauri && (
-        <TitlebarActionsPortal>{workspacePanelActions}</TitlebarActionsPortal>
-      )}
+      {isTauri && <TitlebarActionsPortal>{workspacePanelActions}</TitlebarActionsPortal>}
       {showPageTopBar && (
         <DesktopTopBar
           testId="workbench-topbar"
@@ -301,15 +272,12 @@ export function DesktopWorkbenchMain({
         className={cn(
           'relative flex min-w-0 flex-none flex-col overflow-hidden transition-[width] duration-300 ease-out',
           showPageTopBar && 'pt-[52px]',
-          rightPanelOpen && 'border-r border-border',
+          rightPanelOpen && 'border-r border-border'
         )}
         style={{ width: chatColumnWidth }}
       >
         {isBootstrapping ? (
-          <div
-            className="flex flex-1"
-            data-testid="desktop-workbench-loading"
-          />
+          <div className="flex flex-1" data-testid="desktop-workbench-loading" />
         ) : hasConversation ? (
           <div className="relative min-h-0 flex-1 overflow-hidden">
             <ScrollableMessageArea
@@ -317,7 +285,7 @@ export function DesktopWorkbenchMain({
               conversationKey={currentTask?.id ?? null}
               className="h-full"
               scrollTestId="desktop-chat-scroll"
-              scrollerClassName={hasQueuedComposerRows ? 'pb-72' : 'pb-52'}
+              scrollerClassName={hasQueuedComposerRows ? 'pb-52' : 'pb-40'}
               scrollButtonClassName={
                 hasQueuedComposerRows
                   ? DESKTOP_QUEUED_SCROLL_TO_BOTTOM_BUTTON_CLASS
@@ -325,9 +293,7 @@ export function DesktopWorkbenchMain({
               }
               devices={devices}
               onRetryFailedMessage={message => onRetryFailedMessage?.(message.id)}
-              onSwitchModelForFailedMessage={() =>
-                setModelSelectorOpenSignal(signal => signal + 1)
-              }
+              onSwitchModelForFailedMessage={() => setModelSelectorOpenSignal(signal => signal + 1)}
               onLoadFileChangesDiff={onLoadFileChangesDiff}
               onRevertFileChanges={onRevertFileChanges}
             />
@@ -336,15 +302,14 @@ export function DesktopWorkbenchMain({
               data-testid="desktop-floating-composer-backdrop"
             />
             <div
-              className={rightPanelOpen
-                ? DESKTOP_SPLIT_FLOATING_COMPOSER_CLASS
-                : DESKTOP_FLOATING_COMPOSER_CLASS}
+              className={
+                rightPanelOpen
+                  ? DESKTOP_SPLIT_FLOATING_COMPOSER_CLASS
+                  : DESKTOP_FLOATING_COMPOSER_CLASS
+              }
               data-testid="desktop-floating-composer-layer"
             >
-              <div
-                className="pointer-events-auto"
-                data-testid="desktop-floating-composer-card"
-              >
+              <div className="pointer-events-auto" data-testid="desktop-floating-composer-card">
                 {showConversationDeviceBanner ? (
                   <ConversationDeviceOfflineBanner
                     device={activeDevice}
@@ -390,9 +355,9 @@ export function DesktopWorkbenchMain({
         ) : (
           <div className="flex flex-1 items-center justify-center px-10">
             <div
-              className={rightPanelOpen
-                ? DESKTOP_SPLIT_COMPOSER_FRAME_CLASS
-                : DESKTOP_COMPOSER_FRAME_CLASS}
+              className={
+                rightPanelOpen ? DESKTOP_SPLIT_COMPOSER_FRAME_CLASS : DESKTOP_COMPOSER_FRAME_CLASS
+              }
               data-testid="desktop-empty-composer-frame"
             >
               <h1 className="mb-9 text-center text-[28px] font-medium leading-9 tracking-normal">
@@ -443,7 +408,7 @@ export function DesktopWorkbenchMain({
         data-testid="right-workspace-panel-shell"
         className={cn(
           'min-w-0 shrink-0 overflow-hidden bg-background transition-[width,opacity] duration-300 ease-out',
-          rightPanelOpen ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0',
+          rightPanelOpen ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0'
         )}
         style={{ width: rightPanelShellWidth }}
         aria-hidden={!rightPanelOpen}
