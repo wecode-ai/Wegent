@@ -17,6 +17,9 @@ export function ToolBlockItem({ block }: ToolBlockItemProps) {
   if (block.type === 'thinking') {
     return <ThinkingBlockItem block={block} isRunning={isRunning} />
   }
+  if (block.type === 'text') {
+    return <ProcessTextBlockItem block={block} isRunning={isRunning} />
+  }
 
   const { icon, label } = getBlockLabel(block)
 
@@ -58,7 +61,7 @@ function ThinkingBlockItem({
   if (!block.content) return null
 
   if (isRunning) {
-    const preview = buildThinkingPreview(block.content)
+    const preview = buildBlockPreview(block.content)
 
     return (
       <div className="min-w-0 overflow-x-hidden text-[13px]">
@@ -101,14 +104,77 @@ function ThinkingBlockItem({
           className="mt-2 min-w-0 overflow-x-hidden border-l border-border pl-4"
           data-testid="thinking-detail"
         >
-          <ThinkingMarkdown content={block.content} />
+          <ProcessMarkdown content={block.content} />
         </div>
       )}
     </div>
   )
 }
 
-function ThinkingMarkdown({ content }: { content: string }) {
+function ProcessTextBlockItem({
+  block,
+  isRunning,
+}: {
+  block: Extract<ProcessingBlock, { type: 'text' }>
+  isRunning: boolean
+}) {
+  const { t } = useTranslation('chat')
+  const [expanded, setExpanded] = useState(false)
+
+  if (!block.content) return null
+
+  if (isRunning) {
+    const preview = buildBlockPreview(block.content)
+
+    return (
+      <div className="min-w-0 overflow-x-hidden text-[13px]">
+        <div
+          className="flex max-w-full items-center gap-1.5 text-text-secondary"
+          role="status"
+          aria-live="polite"
+          data-testid="process-text-live-preview"
+        >
+          <CommentaryIcon className="h-4 w-4 shrink-0 text-text-muted" />
+          <span className="shrink-0">{t('process_text.running')}</span>
+          <span className="shrink-0 text-text-muted">·</span>
+          <span className="min-w-0 truncate text-text-muted">
+            {preview || t('process_text.updating')}
+          </span>
+        </div>
+      </div>
+    )
+  }
+
+  const charCount = block.content.length
+
+  return (
+    <div className="min-w-0 overflow-x-hidden text-[13px]">
+      <button
+        type="button"
+        data-testid="process-text-toggle-button"
+        aria-expanded={expanded}
+        onClick={() => setExpanded(value => !value)}
+        className="flex max-w-full items-center gap-1.5 text-text-muted hover:text-text-secondary"
+      >
+        <CommentaryIcon className="h-4 w-4 shrink-0" />
+        <span className="min-w-0 truncate">
+          {t('process_text.completed')} · {charCount} {t('thinking.chars')}
+        </span>
+        <DisclosureChevron expanded={expanded} />
+      </button>
+      {expanded && (
+        <div
+          className="mt-2 min-w-0 overflow-x-hidden border-l border-border pl-4"
+          data-testid="process-text-detail"
+        >
+          <ProcessMarkdown content={block.content} />
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ProcessMarkdown({ content }: { content: string }) {
   return (
     <div className="thinking-markdown min-w-0 break-words leading-6 text-text-secondary">
       <ReactMarkdown
@@ -487,7 +553,7 @@ function truncate(str: string, maxLen: number): string {
   return str.substring(0, maxLen) + '...'
 }
 
-function buildThinkingPreview(content: string): string {
+function buildBlockPreview(content: string): string {
   const normalized = content
     .replace(/```[\s\S]*?```/g, ' ')
     .replace(/`([^`]*)`/g, '$1')

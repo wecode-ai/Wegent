@@ -5,6 +5,11 @@
     "completed": "Thought process",
     "chars": "chars"
   },
+  "process_text": {
+    "running": "Working",
+    "updating": "Updating...",
+    "completed": "Process note"
+  },
   "file_changes": {
     "edited_files": "Edited {{count}} files",
     "show_more": "Show {{count}} more files",

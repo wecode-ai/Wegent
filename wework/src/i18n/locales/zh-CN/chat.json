@@ -5,6 +5,11 @@
     "completed": "思考过程",
     "chars": "字符"
   },
+  "process_text": {
+    "running": "正在处理",
+    "updating": "正在更新...",
+    "completed": "过程说明"
+  },
   "file_changes": {
     "edited_files": "已编辑 {{count}} 个文件",
     "show_more": "再显示 {{count}} 个文件",

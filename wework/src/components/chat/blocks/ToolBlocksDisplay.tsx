@@ -51,10 +51,10 @@ export function ToolBlocksDisplay({ blocks, isStreaming, startedAt }: ToolBlocks
   const duration = getDurationText(blocks, turnStartedAt, now, completedAt, isRunning)
   const rows = buildProcessingDisplayRows(blocks)
   const expanded = isRunning || userExpanded
-  const hasLiveThinkingBlock = rows.some(
+  const hasLiveNarrativeBlock = rows.some(
     row =>
       row.type === 'block' &&
-      row.block.type === 'thinking' &&
+      (row.block.type === 'thinking' || row.block.type === 'text') &&
       row.block.status !== 'done' &&
       row.block.status !== 'error' &&
       Boolean(row.block.content)
@@ -95,7 +95,7 @@ export function ToolBlocksDisplay({ blocks, isStreaming, startedAt }: ToolBlocks
               <ToolBlockItem key={row.id} block={row.block} />
             )
           )}
-          {isRunning && !hasLiveThinkingBlock && <ThinkingIndicator />}
+          {isRunning && !hasLiveNarrativeBlock && <ThinkingIndicator />}
         </div>
       )}
     </div>

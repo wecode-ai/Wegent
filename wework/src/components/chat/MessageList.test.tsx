@@ -516,6 +516,77 @@ describe('MessageList', () => {
     expect(screen.getAllByText('正在思考')).toHaveLength(1)
   })
 
+  test('renders process text inside the processing timeline before the following tool', () => {
+    const processBlock: ProcessingBlock = {
+      id: 'text-1',
+      subtaskId: 1,
+      type: 'text',
+      content: 'Let me explore the repository structure.',
+      status: 'done',
+      createdAt: 1770000000000,
+    }
+    const runningBlock: ProcessingBlock = {
+      id: 'call-1',
+      subtaskId: 1,
+      type: 'tool',
+      toolName: 'Bash',
+      toolInput: { command: 'ls' },
+      status: 'streaming',
+      createdAt: 1770000000001,
+    }
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: '2',
+            role: 'assistant',
+            content: '',
+            status: 'streaming',
+            createdAt: '2026-05-25T18:46:00.000+08:00',
+            blocks: [processBlock, runningBlock],
+          },
+        ]}
+      />
+    )
+
+    const processToggle = screen.getByTestId('process-text-toggle-button')
+    const runningTool = screen.getByText(/正在运行 ls/)
+
+    expect(processToggle.compareDocumentPosition(runningTool)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    )
+  })
+
+  test('does not duplicate a text block that matches the final assistant content', () => {
+    const finalTextBlock: ProcessingBlock = {
+      id: 'text-final',
+      subtaskId: 1,
+      type: 'text',
+      content: '这是最终回答。',
+      status: 'done',
+      createdAt: 1770000000000,
+    }
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: '2',
+            role: 'assistant',
+            content: '这是最终回答。',
+            status: 'done',
+            createdAt: '2026-05-25T18:46:00.000+08:00',
+            blocks: [finalTextBlock],
+          },
+        ]}
+      />
+    )
+
+    expect(screen.queryByTestId('process-text-toggle-button')).not.toBeInTheDocument()
+    expect(screen.getByText('这是最终回答。')).toBeInTheDocument()
+  })
+
   test('renders failed assistant messages in the approved error-card layout', () => {
     const rawError =
       'API Error: 400 {"error":{"message":"模型 deepseek-v3.1 不支持 Anthropic 协议, model_id: ali-deepseek-v3.1"}}'

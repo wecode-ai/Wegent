@@ -2,11 +2,7 @@ import { describe, expect, test } from 'vitest'
 import type { ProcessingBlock, ToolBlock } from '@/types/workbench'
 import { buildProcessingDisplayRows, summarizeToolBlocks } from './toolBlockActivity'
 
-function tool(
-  id: string,
-  command: string,
-  status: ToolBlock['status'] = 'done'
-): ToolBlock {
+function tool(id: string, command: string, status: ToolBlock['status'] = 'done'): ToolBlock {
   return {
     id,
     subtaskId: 1,
@@ -41,19 +37,28 @@ describe('toolBlockActivity', () => {
     }
     const rows = buildProcessingDisplayRows([
       thinking,
+      {
+        id: 'text-1',
+        subtaskId: 1,
+        type: 'text',
+        content: 'Let me inspect package files.',
+        status: 'done',
+        createdAt: 1770000000001,
+      },
       tool('search-1', 'find . -name package.json'),
       tool('cmd-1', 'python3 analyze.py', 'streaming'),
       tool('read-1', 'cat README.md'),
     ])
 
-    expect(rows).toHaveLength(4)
+    expect(rows).toHaveLength(5)
     expect(rows[0]).toMatchObject({ type: 'block', id: 'thinking-1' })
-    expect(rows[1]).toMatchObject({
+    expect(rows[1]).toMatchObject({ type: 'block', id: 'text-1' })
+    expect(rows[2]).toMatchObject({
       type: 'activity_group',
       label: '已探索 1 次搜索',
     })
-    expect(rows[2]).toMatchObject({ type: 'block', id: 'cmd-1' })
-    expect(rows[3]).toMatchObject({
+    expect(rows[3]).toMatchObject({ type: 'block', id: 'cmd-1' })
+    expect(rows[4]).toMatchObject({
       type: 'activity_group',
       label: '已探索 1 个文件',
     })

@@ -149,4 +149,20 @@ describe('ToolBlocksDisplay', () => {
     expect(screen.getByTestId('thinking-live-preview')).toBeInTheDocument()
     expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
   })
+
+  test('does not duplicate the generic thinking indicator when live process text is visible', () => {
+    const textBlock: ProcessingBlock = {
+      id: 'text-1',
+      subtaskId: 1,
+      type: 'text',
+      content: 'Let me explore the repository structure.',
+      status: 'streaming',
+      createdAt: 1770000000000,
+    }
+
+    render(<ToolBlocksDisplay blocks={[textBlock]} isStreaming={true} />)
+
+    expect(screen.getByTestId('process-text-live-preview')).toBeInTheDocument()
+    expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
+  })
 })
