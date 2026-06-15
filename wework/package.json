@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite --port 1420",
+    "dev": "vite",
     "dev:mac": "bash scripts/dev-mac-app.sh",
     "tauri": "tauri",
     "build": "tsc -b && vite build",

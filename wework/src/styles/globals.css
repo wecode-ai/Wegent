@@ -73,14 +73,14 @@ html,
 body,
 #root {
   min-height: 100%;
-  overflow-x: hidden;
+  overflow: hidden;
 }
 
 body {
   font-family: var(--font-ui);
   background-color: rgb(var(--color-bg-base));
   color: rgb(var(--color-text-primary));
-  overflow-x: hidden;
+  overflow: hidden;
 }
 
 button,

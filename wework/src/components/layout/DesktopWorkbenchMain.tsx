@@ -216,7 +216,7 @@ export function DesktopWorkbenchMain({
               conversationKey={currentTask?.id ?? null}
               className="h-full"
               scrollTestId="desktop-chat-scroll"
-              scrollerClassName={hasQueuedComposerRows ? 'pb-72' : 'pb-52'}
+              scrollerClassName={hasQueuedComposerRows ? 'pb-52' : 'pb-40'}
               scrollButtonClassName={
                 hasQueuedComposerRows
                   ? DESKTOP_QUEUED_SCROLL_TO_BOTTOM_BUTTON_CLASS

@@ -17,16 +17,19 @@ DEFAULT_FILE_EDIT_HOOK_COMMAND='tee -a /tmp/hook-debug.log | curl -sS -X POST ht
 
 usage() {
     cat <<EOF
-Usage: ./local.sh [command]
+Usage: ./local.sh [command] [version]
 
 Commands:
-  all       Build the local binary, then restart it
-  build     Run uv sync --group build and build the local binary
-  start     Start dist/wegent-executor in the background
-  stop      Stop the background executor process
-  restart   Stop, then start the executor process
-  status    Show whether the executor process is running
-  logs      Tail the executor log
+  all [version]    Build the local binary, then restart it
+  build [version]  Run uv sync --group build and build the local binary
+  start            Start dist/wegent-executor in the background
+  stop             Stop the background executor process
+  restart          Stop, then start the executor process
+  status           Show whether the executor process is running
+  logs             Tail the executor log
+
+If [version] is provided for 'build' or 'all', it overrides the version from
+pyproject.toml (passed as --version to the build script).
 
 Environment:
   WEGENT_AUTH_TOKEN              Required by the local executor
@@ -37,6 +40,8 @@ Environment:
 Examples:
   WEGENT_AUTH_TOKEN=wg-xxx ./local.sh all
   WEGENT_AUTH_TOKEN=wg-xxx ./local.sh restart
+  ./local.sh build 1.2.3
+  ./local.sh all 1.2.3
 EOF
 }
 
@@ -55,12 +60,18 @@ is_running() {
 }
 
 build_executor() {
+    local version_arg="${1:-}"
     ensure_pid_dir
     echo "Building local executor. Log: $BUILD_LOG"
     (
         cd "$ROOT_DIR"
         uv sync --group build
-        uv run python scripts/build_local.py
+        if [[ -n "$version_arg" ]]; then
+            echo "Building with version: $version_arg"
+            uv run python scripts/build_local.py --version "$version_arg"
+        else
+            uv run python scripts/build_local.py
+        fi
     ) 2>&1 | tee "$BUILD_LOG"
 }
 
@@ -151,15 +162,16 @@ tail_logs() {
 }
 
 command="${1:-restart}"
+version="${2:-}"
 
 case "$command" in
     all)
-        build_executor
+        build_executor "$version"
         stop_executor
         start_executor
         ;;
     build)
-        build_executor
+        build_executor "$version"
         ;;
     start)
         start_executor
