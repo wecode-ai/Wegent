@@ -15,7 +15,12 @@ import {
   isDeviceBelowWeWorkVersion,
   isWeWorkCompatibleDevice,
 } from '@/lib/device-capabilities'
-import type { DeviceInfo, ProjectWithTasks, Task } from '@/types/api'
+import type {
+  DeviceInfo,
+  ProjectWithTasks,
+  Task,
+  TurnFileChangesSummary,
+} from '@/types/api'
 import type { DeviceUpgradeState } from '@/types/device-events'
 import type { EnvironmentInfo } from '@/types/environment'
 import type {
@@ -24,28 +29,28 @@ import type {
   WorkbenchMessage,
 } from '@/types/workbench'
 import { cn } from '@/lib/utils'
-import { isTauriRuntime } from '@/lib/runtime-environment'
 import { BottomWorkspacePanel } from './workspace-panels/BottomWorkspacePanel'
 import { RightWorkspacePanel } from './workspace-panels/RightWorkspacePanel'
 import { WorkspacePanelActions } from './workspace-panels/WorkspacePanelActions'
-import {
-  DesktopTopBar,
-  MAC_NATIVE_TOP_BAR_ACTION_INSET,
-} from './DesktopTopBar'
+import { ConversationDeviceOfflineBanner } from './ConversationDeviceOfflineBanner'
 import { DeviceStatusPrompt } from './DeviceStatusPrompt'
+import { TitlebarActionsPortal } from '@/components/topnav/TitlebarActionsPortal'
+import { DesktopTopBar } from './DesktopTopBar'
+import { isTauriRuntime } from '@/lib/runtime-environment'
 
 const DESKTOP_COMPOSER_FRAME_CLASS =
   'mx-auto w-[min(58vw,62rem)] min-w-[32rem] max-w-[calc(100vw-4rem)] -translate-y-12'
 const DESKTOP_FLOATING_COMPOSER_CLASS =
   'pointer-events-none absolute bottom-4 left-1/2 z-chrome w-[min(58vw,62rem)] min-w-[32rem] max-w-[calc(100%_-_3rem)] -translate-x-1/2'
 const DESKTOP_FLOATING_COMPOSER_BACKDROP_CLASS =
-  'pointer-events-none absolute inset-x-0 bottom-0 z-10 h-56 bg-gradient-to-t from-background via-background to-transparent'
+  'pointer-events-none absolute inset-x-0 bottom-0 z-10 h-32 bg-gradient-to-t from-background via-background to-transparent'
 const DESKTOP_SCROLL_TO_BOTTOM_BUTTON_CLASS =
   'bottom-36 z-popover bg-background/95 shadow-md'
 const DESKTOP_QUEUED_SCROLL_TO_BOTTOM_BUTTON_CLASS =
-  'bottom-64 z-popover bg-background/95 shadow-md'
+  'bottom-52 z-popover bg-background/95 shadow-md'
 
 interface DesktopWorkbenchMainProps {
+  sidebarCollapsed: boolean
   isBootstrapping: boolean
   currentTask: Task | null
   currentProject: ProjectWithTasks | null
@@ -68,16 +73,22 @@ interface DesktopWorkbenchMainProps {
   onUpgradeDevice: (deviceId: string) => Promise<void>
   onInputChange: (value: string) => void
   onSend: () => void
+  onRetryFailedMessage?: (messageId: string) => void
   isResponseStreaming: boolean
   onPauseResponse: () => void
   onCancelQueuedMessage: (id: string) => void
   onSendQueuedAsGuidance: (id: string) => void
   onEditQueuedMessage: (id: string) => void
   onCancelGuidanceMessage: (id: string) => void
+  onLoadFileChangesDiff?: (subtaskId: number) => Promise<string>
+  onRevertFileChanges?: (
+    subtaskId: number,
+  ) => Promise<TurnFileChangesSummary>
   topBarLeftActions?: ReactNode
 }
 
 export function DesktopWorkbenchMain({
+  sidebarCollapsed,
   isBootstrapping,
   currentTask,
   currentProject,
@@ -100,20 +111,24 @@ export function DesktopWorkbenchMain({
   onUpgradeDevice,
   onInputChange,
   onSend,
+  onRetryFailedMessage,
   isResponseStreaming,
   onPauseResponse,
   onCancelQueuedMessage,
   onSendQueuedAsGuidance,
   onEditQueuedMessage,
   onCancelGuidanceMessage,
+  onLoadFileChangesDiff,
+  onRevertFileChanges,
   topBarLeftActions,
 }: DesktopWorkbenchMainProps) {
   const { t } = useTranslation('common')
   const [rightPanelOpen, setRightPanelOpen] = useState(false)
   const [bottomPanelOpen, setBottomPanelOpen] = useState(false)
+  const isTauri = isTauriRuntime()
+  const [modelSelectorOpenSignal, setModelSelectorOpenSignal] = useState(0)
   const hasConversation = messages.length > 0 || currentTask
   const hasQueuedComposerRows = queuedMessages.length > 0 || guidanceMessages.length > 0
-  const reserveMacWindowControls = isTauriRuntime()
   const activeDeviceId = getActiveWorkbenchDeviceId({
     currentTask,
     currentProject,
@@ -122,6 +137,8 @@ export function DesktopWorkbenchMain({
   const activeDevice = findWorkbenchDevice(devices, activeDeviceId)
   const activeDeviceUnavailable =
     Boolean(activeDeviceId) && !isWorkbenchDeviceOnline(activeDevice)
+  const showConversationDeviceBanner =
+    Boolean(activeDeviceId) && (!activeDevice || activeDevice.status === 'offline')
   const activeDeviceVersionUnsupported =
     Boolean(activeDevice && isDeviceBelowWeWorkVersion(activeDevice))
   const noStandaloneCompatibleDevice =
@@ -133,50 +150,59 @@ export function DesktopWorkbenchMain({
     activeDeviceUnavailable ||
     activeDeviceVersionUnsupported ||
     noStandaloneCompatibleDevice
+  const projectChatWithModelSelectorSignal: ProjectChatControls = {
+    ...projectChat,
+    modelSelectorOpenSignal,
+  }
   const emptyTitle = currentProject
     ? t('workbench.project_empty_title', {
         defaultValue: `我们应该在 ${currentProject.name} 中构建什么？`,
         projectName: currentProject.name,
       })
     : t('workbench.empty_title', '我们该做什么？')
+  const workspacePanelActions = (
+    <WorkspacePanelActions
+      environmentInfo={environmentInfo}
+      onRefreshEnvironmentInfo={onRefreshEnvironmentInfo}
+      onCommitEnvironmentChanges={onCommitEnvironmentChanges}
+      onListEnvironmentBranches={onListEnvironmentBranches}
+      onCheckoutEnvironmentBranch={onCheckoutEnvironmentBranch}
+      onCreateEnvironmentBranch={onCreateEnvironmentBranch}
+      rightPanelOpen={rightPanelOpen}
+      bottomPanelOpen={bottomPanelOpen}
+      onToggleRightPanel={() => setRightPanelOpen((open) => !open)}
+      onToggleBottomPanel={() => setBottomPanelOpen((open) => !open)}
+    />
+  )
+  const showPageTopBar = !isTauri || Boolean(topBarLeftActions)
 
   return (
-    <main className="relative flex min-w-0 flex-1 overflow-hidden">
-      <DesktopTopBar
-        testId="workbench-topbar"
-        rightClassName="gap-2"
-        className={cn(
-          'absolute inset-x-0 top-0 z-chrome bg-background/95 pr-7 backdrop-blur-xl',
-          topBarLeftActions && reserveMacWindowControls
-            ? undefined
-            : topBarLeftActions
-              ? 'pl-2'
-              : 'pl-6',
-        )}
-        style={
-          topBarLeftActions && reserveMacWindowControls
-            ? { paddingLeft: MAC_NATIVE_TOP_BAR_ACTION_INSET }
-            : undefined
-        }
-        left={topBarLeftActions}
-        right={(
-          <WorkspacePanelActions
-            environmentInfo={environmentInfo}
-            onRefreshEnvironmentInfo={onRefreshEnvironmentInfo}
-            onCommitEnvironmentChanges={onCommitEnvironmentChanges}
-            onListEnvironmentBranches={onListEnvironmentBranches}
-            onCheckoutEnvironmentBranch={onCheckoutEnvironmentBranch}
-            onCreateEnvironmentBranch={onCreateEnvironmentBranch}
-            rightPanelOpen={rightPanelOpen}
-            bottomPanelOpen={bottomPanelOpen}
-            onToggleRightPanel={() => setRightPanelOpen((open) => !open)}
-            onToggleBottomPanel={() => setBottomPanelOpen((open) => !open)}
-          />
-        )}
-      />
+    <main
+      data-testid="desktop-workbench-main"
+      className={cn(
+        'relative mb-1.5 mr-1.5 flex min-w-0 flex-1 overflow-hidden rounded-xl border border-border/60 bg-background shadow-[0_3px_16px_rgba(0,0,0,0.04)]',
+        !isTauri && 'mt-1.5',
+        sidebarCollapsed && 'ml-1.5',
+      )}
+    >
+      {isTauri && (
+        <TitlebarActionsPortal>{workspacePanelActions}</TitlebarActionsPortal>
+      )}
+      {showPageTopBar && (
+        <DesktopTopBar
+          testId="workbench-topbar"
+          className="absolute inset-x-0 top-0 z-chrome bg-transparent pl-2 pr-7"
+          left={topBarLeftActions}
+          right={isTauri ? undefined : workspacePanelActions}
+          rightClassName="gap-2"
+        />
+      )}
       <div
         data-testid="desktop-workbench-content"
-        className="relative flex min-w-0 flex-1 flex-col overflow-hidden pt-[52px]"
+        className={cn(
+          'relative flex min-w-0 flex-1 flex-col overflow-hidden',
+          showPageTopBar && 'pt-[52px]',
+        )}
       >
         {isBootstrapping ? (
           <div
@@ -196,6 +222,13 @@ export function DesktopWorkbenchMain({
                   ? DESKTOP_QUEUED_SCROLL_TO_BOTTOM_BUTTON_CLASS
                   : DESKTOP_SCROLL_TO_BOTTOM_BUTTON_CLASS
               }
+              devices={devices}
+              onRetryFailedMessage={message => onRetryFailedMessage?.(message.id)}
+              onSwitchModelForFailedMessage={() =>
+                setModelSelectorOpenSignal(signal => signal + 1)
+              }
+              onLoadFileChangesDiff={onLoadFileChangesDiff}
+              onRevertFileChanges={onRevertFileChanges}
             />
             <div
               className={DESKTOP_FLOATING_COMPOSER_BACKDROP_CLASS}
@@ -209,15 +242,24 @@ export function DesktopWorkbenchMain({
                 className="pointer-events-auto"
                 data-testid="desktop-floating-composer-card"
               >
-                <DeviceStatusPrompt
-                  devices={devices}
-                  upgradingDevices={upgradingDevices}
-                  onUpgradeDevice={onUpgradeDevice}
-                  onOpenCloudDeviceSettings={onOpenCloudDeviceSettings}
-                  activeDeviceId={activeDeviceId}
-                  requiresOnlineCompatibleDevice={noStandaloneCompatibleDevice}
-                  className="mb-2"
-                />
+                {showConversationDeviceBanner ? (
+                  <ConversationDeviceOfflineBanner
+                    device={activeDevice}
+                    deviceId={activeDeviceId}
+                    className="mb-2"
+                  />
+                ) : (
+                  <DeviceStatusPrompt
+                    devices={devices}
+                    upgradingDevices={upgradingDevices}
+                    onUpgradeDevice={onUpgradeDevice}
+                    onOpenCloudDeviceSettings={onOpenCloudDeviceSettings}
+                    activeDeviceId={activeDeviceId}
+                    requiresOnlineCompatibleDevice={noStandaloneCompatibleDevice}
+                    hideAvailableUpdates
+                    className="mb-2"
+                  />
+                )}
                 <ChatInput
                   value={input}
                   onChange={onInputChange}
@@ -225,7 +267,7 @@ export function DesktopWorkbenchMain({
                   disabled={composerDisabled}
                   placeholder={t('workbench.input_placeholder', '尽管问')}
                   variant="desktop"
-                  projectChat={projectChat}
+                  projectChat={projectChatWithModelSelectorSignal}
                   projectWork={projectWork}
                   showProjectWorkBar={false}
                   queuedMessages={queuedMessages}
@@ -256,6 +298,7 @@ export function DesktopWorkbenchMain({
                 onOpenCloudDeviceSettings={onOpenCloudDeviceSettings}
                 activeDeviceId={activeDeviceId}
                 requiresOnlineCompatibleDevice={noStandaloneCompatibleDevice}
+                hideAvailableUpdates
                 className="mb-3"
               />
               <ChatInput
@@ -265,7 +308,7 @@ export function DesktopWorkbenchMain({
                 disabled={composerDisabled}
                 placeholder={t('workbench.input_placeholder', '尽管问')}
                 variant="desktop"
-                projectChat={projectChat}
+                projectChat={projectChatWithModelSelectorSignal}
                 projectWork={projectWork}
                 queuedMessages={queuedMessages}
                 guidanceMessages={guidanceMessages}

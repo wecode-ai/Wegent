@@ -6,7 +6,7 @@ import React from 'react'
 import { act, render, screen } from '@testing-library/react'
 import MessagesArea from '@/features/tasks/components/message/MessagesArea'
 import type { DisplayMessage } from '@/features/tasks/presentation/useMessagePresenter'
-import type { TaskStateSnapshot } from '@/features/tasks/state'
+import type { TaskStateSnapshot } from '@wegent/chat-core'
 
 const messageBubbleRenderSpy = jest.fn()
 
@@ -67,6 +67,7 @@ const createTaskStateSnapshot = (
       canQueueMessage: false,
       canCancelTask: false,
       blocksQueuedDispatch: false,
+      serverConfirmedNoStream: false,
     },
   }
 

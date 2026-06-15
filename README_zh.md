@@ -138,7 +138,7 @@ Wegent 内部把一个 AI 助手拆成几块可复用配置：
 
 ```text
 Ghost（提示词 + MCP + Skills）
-  + Shell（Chat / ClaudeCode / Agno / Dify）
+  + Shell（Chat / ClaudeCode / Dify）
   + Model（Claude / OpenAI / Gemini / DeepSeek / GLM 等）
   = Bot（机器人）
 
@@ -176,7 +176,7 @@ graph TB
     Backend --> ExecutorManager["Executor Manager"]
     Backend --> KnowledgeRuntime["Knowledge Runtime"]
 
-    ExecutorManager --> CloudExecutor["云端 Executor<br/>ClaudeCode / Agno / Dify"]
+    ExecutorManager --> CloudExecutor["云端 Executor<br/>ClaudeCode / Dify"]
     Backend <--> LocalExecutor["本地 Executor<br/>WebSocket"]
     KnowledgeRuntime --> VectorStore["Elasticsearch / Qdrant / Milvus"]
     Backend --> DocConverter["Knowledge Doc Converter<br/>MinerU OCR"]
@@ -352,6 +352,13 @@ graph TB
     </td></tr>
 <tr>
     <td align="center">
+        <a href="https://github.com/jnhu76">
+            <img src="https://avatars.githubusercontent.com/u/5766215?v=4" width="80;" alt="jnhu76"/>
+            <br />
+            <sub><b>Jm.hu</b></sub>
+        </a>
+    </td>
+    <td align="center">
         <a href="https://github.com/kerwin612">
             <img src="https://avatars.githubusercontent.com/u/3371163?v=4" width="80;" alt="kerwin612"/>
             <br />
@@ -377,13 +384,6 @@ graph TB
             <img src="https://avatars.githubusercontent.com/u/10198622?v=4" width="80;" alt="junbaor"/>
             <br />
             <sub><b>Junbaor</b></sub>
-        </a>
-    </td>
-    <td align="center">
-        <a href="https://github.com/jnhu76">
-            <img src="https://avatars.githubusercontent.com/u/5766215?v=4" width="80;" alt="jnhu76"/>
-            <br />
-            <sub><b>Jm.hu</b></sub>
         </a>
     </td>
     <td align="center">

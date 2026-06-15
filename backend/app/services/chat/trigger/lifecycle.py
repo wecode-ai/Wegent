@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.db.session import SessionLocal
 from app.models.kind import Kind
 from app.models.subtask import Subtask
 from app.models.task import TaskResource
@@ -29,6 +30,8 @@ from app.services.chat.storage.task_manager import (
     get_task_with_access_check,
 )
 from app.services.readers.kinds import KindType, kindReader
+from app.services.task_status import mark_task_pending_payload
+from app.stores.tasks import subtask_store, task_store
 
 logger = logging.getLogger(__name__)
 
@@ -103,8 +106,6 @@ def prepare_execution_session(
     prepared_task: Optional[TaskResource] = None,
 ) -> ExecutionSessionSetup:
     """Create or reuse task/session state before building an execution request."""
-    from app.services.task_status import mark_task_pending
-
     resolved_task_params = task_params
     if resolved_task_params is None:
         if model_info is None:
@@ -177,14 +178,16 @@ def prepare_execution_session(
         if not resolved_task_params.skip_status_check:
             check_task_status(db, task)
         if should_trigger_ai:
-            mark_task_pending(task)
+            task_store.update_json(
+                db,
+                task=task,
+                payload=mark_task_pending_payload(task.json),
+            )
         if (
             resolved_task_params.model_id
             or resolved_task_params.model_options
             or resolved_task_params.auto_delete_executor is not None
         ):
-            from sqlalchemy.orm.attributes import flag_modified
-
             from app.schemas.kind import Task
 
             task_crd = Task.model_validate(task.json)
@@ -206,8 +209,9 @@ def prepare_execution_session(
                 task_crd.metadata.labels["autoDeleteExecutor"] = (
                     resolved_task_params.auto_delete_executor
                 )
-            task.json = task_crd.model_dump(mode="json")
-            flag_modified(task, "json")
+            task_store.update_json(
+                db, task=task, payload=task_crd.model_dump(mode="json")
+            )
             logger.info(
                 "[prepare_execution_session] Updated metadata for existing task %s to modelId=%s autoDeleteExecutor=%s",
                 task.id,
@@ -223,18 +227,18 @@ def prepare_execution_session(
         task = create_new_task(db, user, team, resolved_task_params)
         subtask_user_id = user.id
 
-    existing_subtasks = (
-        db.query(Subtask)
-        .filter(Subtask.task_id == task.id, Subtask.user_id == subtask_user_id)
-        .order_by(Subtask.message_id.desc())
-        .all()
+    existing_subtasks = subtask_store.list_latest_by_task(
+        db,
+        task_id=task.id,
+        user_id=subtask_user_id,
     )
 
     next_message_id = 1
     parent_id = 0
     if existing_subtasks:
-        next_message_id = existing_subtasks[0].message_id + 1
-        parent_id = existing_subtasks[0].message_id
+        latest_subtask = existing_subtasks[-1]
+        next_message_id = latest_subtask.message_id + 1
+        parent_id = latest_subtask.message_id
 
     user_subtask = create_user_subtask(
         db=db,
@@ -281,12 +285,9 @@ def prepare_execution_session(
 
 async def _get_existing_subtask_result(subtask_id: int) -> Dict[str, Any]:
     """Load the stored subtask result so we can preserve existing fields."""
-    from app.db.session import SessionLocal
-    from app.models.subtask import Subtask
-
     db = SessionLocal()
     try:
-        subtask = db.get(Subtask, subtask_id)
+        subtask = subtask_store.get_by_id(db, subtask_id=subtask_id)
         if subtask and isinstance(subtask.result, dict):
             return dict(subtask.result)
         return {}
@@ -400,13 +401,17 @@ async def persist_completed_result(
 
     normalized_status = status.upper()
 
+    update_kwargs = {
+        "result": result,
+        "error": error,
+        "executor_name": executor_name,
+        "executor_namespace": executor_namespace,
+    }
+
     await chat_db.db_handler.update_subtask_status(
         subtask_id,
         normalized_status,
-        result=result,
-        error=error,
-        executor_name=executor_name,
-        executor_namespace=executor_namespace,
+        **update_kwargs,
     )
     if normalized_status == "COMPLETED":
         await _persist_standalone_workspace_path(task_id, result)

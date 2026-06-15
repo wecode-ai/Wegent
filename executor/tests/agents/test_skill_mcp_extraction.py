@@ -11,6 +11,8 @@ the executor correctly passes through the pre-processed MCP servers from
 bot_config into Claude Code SDK options.
 """
 
+import json
+
 from executor.agents.claude_code.config_manager import (
     extract_claude_options,
 )
@@ -162,3 +164,43 @@ class TestExtractClaudeOptionsWithMcp:
         assert options["mcp_servers"]["dube-mcp"]["url"] == (
             "http://10.185.16.187:8121/mcp"
         )
+
+    def test_global_streamable_http_mcp_is_normalized_for_claude_sdk(
+        self, tmp_path, monkeypatch
+    ):
+        """Installed MCPs use provider type names but Claude SDK expects http."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        manifest_path = tmp_path / ".wegent-executor" / "capabilities" / "manifest.json"
+        manifest_path.parent.mkdir(parents=True)
+        manifest_path.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "revision": 1,
+                    "skills": {},
+                    "plugins": {},
+                    "mcps": {
+                        "docs": {
+                            "server": {
+                                "type": "streamable-http",
+                                "url": "https://mcp.example.com/docs",
+                                "base_url": "https://mcp.example.com/docs",
+                                "headers": {"Authorization": "Bearer test"},
+                            }
+                        }
+                    },
+                }
+            )
+        )
+        task_data = ExecutionRequest(
+            task_id=1,
+            bot=[{"system_prompt": "You are helpful."}],
+        )
+
+        options = extract_claude_options(task_data)
+
+        assert options["mcp_servers"]["docs"] == {
+            "type": "http",
+            "url": "https://mcp.example.com/docs",
+            "headers": {"Authorization": "Bearer test"},
+        }

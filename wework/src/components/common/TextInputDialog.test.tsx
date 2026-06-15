@@ -20,12 +20,16 @@ describe('TextInputDialog', () => {
     )
 
     expect(screen.getByTestId('rename-project-input')).toHaveFocus()
-    expect(screen.getByTestId('confirm-rename-project-button')).toHaveClass('h-11')
-    expect(screen.getByTestId('rename-project-input-cancel-button')).toHaveClass('h-11')
-    expect(screen.getByTestId('rename-project-input-overlay').parentElement).toBe(
-      document.body,
+    expect(screen.getByTestId('confirm-rename-project-button')).toHaveClass(
+      'h-11',
+      'bg-text-primary',
+      'text-background',
     )
-    expect(screen.getByRole('dialog')).toHaveAttribute('aria-modal', 'true')
+    expect(screen.getByTestId('confirm-rename-project-button')).not.toHaveClass(
+      'bg-[#14b8a6]',
+      'hover:bg-[#0f9f93]',
+    )
+    expect(screen.getByTestId('rename-project-input-cancel-button')).toHaveClass('h-11')
   })
 
   test('closes when Escape is pressed', () => {

@@ -34,15 +34,37 @@ Each runtime uses one user-owned Kind resource:
 }
 ```
 
-The resource follows the normal Kind lookup rule: `user_id + namespace + name`. The `name` is the runtime identifier, for example `codex`. Future Claude support can add a `claude` resource.
+The personal proxy configuration uses an independent user-owned Kind resource so it is not tied to one runtime:
 
-Whether personal configuration is enabled is not stored in `UserRuntimeConfig`. It is a user preference stored in `users.preferences`:
+```json
+{
+  "apiVersion": "agent.wecode.io/v1",
+  "kind": "UserProxyConfig",
+  "metadata": {
+    "name": "default",
+    "namespace": "default"
+  },
+  "spec": {
+    "proxy": {
+      "encryptedUrl": "...",
+      "sha256": "...",
+      "updatedAt": "..."
+    },
+    "updatedAt": "..."
+  }
+}
+```
+
+Resources follow the normal Kind lookup rule: `user_id + namespace + name`. For `UserRuntimeConfig`, `name` is the runtime identifier, for example `codex`; future Claude support can add a `claude` resource. For `UserProxyConfig`, `name` is fixed to `default`, representing the current user's default personal proxy.
+
+Whether personal configuration is enabled and whether a runtime uses the personal proxy are not stored in Kind resources. They are user preferences stored in `users.preferences`:
 
 ```json
 {
   "runtime_configs": {
     "codex": {
-      "use_user_config": true
+      "use_user_config": true,
+      "use_proxy": true
     }
   }
 }
@@ -53,7 +75,17 @@ Whether personal configuration is enabled is not stored in `UserRuntimeConfig`. 
 - Uploaded content must be valid JSON with an object at the top level.
 - Backend storage uses `shared.utils.crypto.encrypt_sensitive_data()`.
 - API responses only expose configuration state, timestamps, target path, and digest. Plaintext and ciphertext are never returned.
+- Proxy URLs are also stored encrypted; API responses only include a masked display value.
 - Frontend state, toast messages, and sync results must not display auth content.
+
+## Execution Proxy
+
+Personal proxy configuration is injected only at execution time. It is not synced into device auth files. When Backend builds an execution request, it includes top-level `proxy.url` only if the user enabled `use_proxy` for `codex` and saved a proxy URL in `UserProxyConfig/default`. Consumers decide whether to use that proxy based on their own runtime switch.
+
+executor injects the proxy URL into the Codex SDK environment as `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, and the matching lowercase variables. `NO_PROXY` follows these rules:
+
+- If the executor environment already has `NO_PROXY` or `no_proxy`, keep that value.
+- Otherwise, use `localhost,127.0.0.1,::1,host.docker.internal` so local stdio/localhost style access bypasses the proxy.
 
 ## Heartbeat Sync
 

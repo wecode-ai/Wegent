@@ -74,13 +74,13 @@ Wegent 是一个开源的 AI 原生操作系统，使您能够大规模定义、
 通过 YAML 配置定义和运行个性化 Agent 团队，提供网页 UI，无需二次开发。
 
 ### ⚙️ 多引擎架构
-底层支持 Agno 和 Claude Code 两个 Agent 执行引擎，上层支持对话和编码两种模式。
+底层支持 Chat、Claude Code 和 Dify 等执行路径，上层支持对话、编码和工作流模式。
 
 ### 🔒 独立沙箱环境
 每个 Agent 团队运行在独立沙箱环境中，支持多个 Agent 团队同时运行。
 
 ### 🤝 高级协作模式
-对话模式可以实现并行、Leader 等 Agent 协作模式，完成新闻洞察、内容检索等复杂工作流。
+智能体团队支持 Solo、Pipeline 和 Coordinate 等协作模式，完成内容检索、代码审查等复杂工作流。
 
 ### 💻 AI 编码集成
 编码模式可以与 GitHub/GitLab 等代码服务对接，实现代码开发、review 等 AI Coding 工作流。

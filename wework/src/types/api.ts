@@ -17,7 +17,13 @@ export interface UserPreferences {
   default_execution_target?: string | null
   wework_new_chat_model_selection?: ModelSelectionConfig | null
   wework_project_execution_mode?: ProjectExecutionMode | null
-  runtime_configs?: Record<string, { use_user_config?: boolean }> | null
+  runtime_configs?: Record<
+    string,
+    {
+      use_user_config?: boolean
+      use_proxy?: boolean
+    }
+  > | null
 }
 
 export interface Team {
@@ -320,6 +326,7 @@ export interface Subtask {
   role: string
   prompt?: string
   result?: unknown
+  error_message?: string | null
   status: string
   message_id?: number
   created_at: string
@@ -327,6 +334,44 @@ export interface Subtask {
   contexts?: TaskContextData[]
   attachments?: Attachment[]
   sender_user_name?: string
+}
+
+export type TurnFileChangesStatus =
+  | 'active'
+  | 'reverted'
+  | 'conflicted'
+  | 'artifact_missing'
+
+export interface TurnFileChangeItem {
+  old_path?: string | null
+  path: string
+  change_type: 'created' | 'modified' | 'deleted' | 'renamed'
+  additions: number
+  deletions: number
+  binary: boolean
+}
+
+export interface TurnFileChangesSummary {
+  version: 1
+  status: TurnFileChangesStatus
+  artifact_id: string
+  device_id: string
+  workspace_path: string
+  file_count: number
+  additions: number
+  deletions: number
+  files: TurnFileChangeItem[]
+  reverted_at?: string | null
+}
+
+export interface TurnFileChangesDiffResponse {
+  subtask_id: number
+  diff: string
+}
+
+export interface TurnFileChangesRevertResponse {
+  subtask_id: number
+  file_changes: TurnFileChangesSummary
 }
 
 export interface TaskDetail extends Task {
@@ -422,6 +467,7 @@ export type ChatResultPayload = Record<string, unknown> & {
   error?: string
   reasoning_chunk?: string
   blocks?: ChatBlock[]
+  file_changes?: TurnFileChangesSummary
 }
 
 export interface ChatChunkPayload {
@@ -444,6 +490,7 @@ export interface ChatErrorPayload {
   task_id?: number
   subtask_id: number
   error: string
+  type?: string
   message_id?: number
 }
 
@@ -866,6 +913,7 @@ export type ModelCompatibilityDisabledReason =
 
 export interface ModelRuntime {
   family?: string | null
+  provider?: string | null
 }
 
 export interface UnifiedModel {

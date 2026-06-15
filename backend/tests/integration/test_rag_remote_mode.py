@@ -58,6 +58,11 @@ EXPECTED_QUERY_RESPONSE = {
 }
 
 
+@pytest.fixture(autouse=True)
+def configure_internal_service_token(monkeypatch):
+    monkeypatch.setattr(settings, "INTERNAL_SERVICE_TOKEN", "test-internal-token")
+
+
 def _internal_headers() -> dict[str, str]:
     token = settings.INTERNAL_SERVICE_TOKEN
     return {"Authorization": f"Bearer {token}"} if token else {}

@@ -28,6 +28,7 @@ export function WorkbenchPage() {
     searchTaskDetail,
     rememberExecutionDevice,
     refreshDevices,
+    refreshWorkLists,
     upgradeDevice,
     createProject,
     createGitWorkspaceProject,
@@ -55,12 +56,15 @@ export function WorkbenchPage() {
     createEnvironmentBranch,
     setInput,
     sendCurrentInput,
+    retryFailedMessage,
     pauseCurrentResponse,
     isResponseStreaming,
     cancelQueuedMessage,
     sendQueuedAsGuidance,
     editQueuedMessage,
     cancelGuidanceMessage,
+    loadTurnFileChangesDiff,
+    revertTurnFileChanges,
   } = useWorkbench()
   const Layout = isMobile ? MobileWorkbenchLayout : DesktopWorkbenchLayout
   const projectWork = {
@@ -122,12 +126,16 @@ export function WorkbenchPage() {
       onCreateEnvironmentBranch={createEnvironmentBranch}
       onInputChange={setInput}
       onSend={sendCurrentInput}
+      onRetryFailedMessage={retryFailedMessage}
       isResponseStreaming={isResponseStreaming}
       onPauseResponse={pauseCurrentResponse}
       onCancelQueuedMessage={cancelQueuedMessage}
       onSendQueuedAsGuidance={sendQueuedAsGuidance}
       onEditQueuedMessage={editQueuedMessage}
       onCancelGuidanceMessage={cancelGuidanceMessage}
+      onLoadFileChangesDiff={loadTurnFileChangesDiff}
+      onRevertFileChanges={revertTurnFileChanges}
+      onRefreshWorkLists={refreshWorkLists}
       onLogout={logout}
     />
   )

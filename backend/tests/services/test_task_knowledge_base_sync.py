@@ -237,7 +237,7 @@ class TestSyncSubtaskKBToTask:
         ) as mock_access:
             # Mock flag_modified to avoid SQLAlchemy state error
             with patch(
-                "app.services.knowledge.task_knowledge_base_service.flag_modified"
+                "app.stores.tasks.sqlalchemy_task_store.flag_modified"
             ) as mock_flag:
                 result = service.sync_subtask_kb_to_task(
                     db=mock_db,
@@ -399,9 +399,7 @@ class TestSyncSubtaskKBToTask:
             "_get_resource",
             return_value=shared_kb,
         ) as mock_get_resource:
-            with patch(
-                "app.services.knowledge.task_knowledge_base_service.flag_modified"
-            ):
+            with patch("app.stores.tasks.sqlalchemy_task_store.flag_modified"):
                 result = service.sync_subtask_kb_to_task(
                     db=mock_db,
                     task=mock_task,
@@ -848,7 +846,7 @@ class TestKBRefIdBasedLookup:
                             ) as mock_member:
                                 mock_member.is_member.return_value = True
                                 with patch(
-                                    "app.services.knowledge.task_knowledge_base_service.flag_modified"
+                                    "app.stores.tasks.sqlalchemy_task_store.flag_modified"
                                 ):
                                     with patch(
                                         "app.services.knowledge.task_knowledge_base_service.KnowledgeService"
@@ -938,9 +936,7 @@ class TestKBRefIdBasedLookup:
         mock_query.first.return_value = mock_knowledge_base
 
         with patch.object(service, "can_access_knowledge_base", return_value=True):
-            with patch(
-                "app.services.knowledge.task_knowledge_base_service.flag_modified"
-            ):
+            with patch("app.stores.tasks.sqlalchemy_task_store.flag_modified"):
                 result = service.sync_subtask_kb_to_task(
                     db=mock_db,
                     task=mock_task,
@@ -983,9 +979,7 @@ class TestKBRefIdBasedLookup:
         mock_query.first.return_value = appended_kb
 
         with patch.object(service, "can_access_knowledge_base", return_value=True):
-            with patch(
-                "app.services.knowledge.task_knowledge_base_service.flag_modified"
-            ):
+            with patch("app.stores.tasks.sqlalchemy_task_store.flag_modified"):
                 result = service.sync_subtask_kb_to_task(
                     db=mock_db,
                     task=mock_task,
@@ -1037,9 +1031,7 @@ class TestKBRefIdBasedLookup:
         with patch.object(
             service, "_is_kb_bound_to_user_group_chat", return_value=False
         ):
-            with patch(
-                "app.services.knowledge.task_knowledge_base_service.flag_modified"
-            ):
+            with patch("app.stores.tasks.sqlalchemy_task_store.flag_modified"):
                 result = service.sync_subtask_kb_to_task(
                     db=mock_db,
                     task=mock_task,
@@ -1184,9 +1176,7 @@ class TestKBRefAutoMigration:
 
         refs_to_migrate = [(0, 10), (1, 20)]
 
-        with patch(
-            "app.services.knowledge.task_knowledge_base_service.flag_modified"
-        ) as mock_flag:
+        with patch("app.stores.tasks.sqlalchemy_task_store.flag_modified") as mock_flag:
             service._batch_migrate_kb_refs(mock_db, mock_task, refs_to_migrate)
 
             # Verify refs were updated with IDs

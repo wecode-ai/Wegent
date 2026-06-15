@@ -29,8 +29,8 @@ import {
 } from '@/types/socket'
 import type { InteractiveFormAnswerPayload, TaskDetailSubtask, Team, TaskType } from '@/types/api'
 import type { MessageBlock } from '../components/message/thinking/types'
-import { generateMessageId, TaskStateMachine } from '../state'
-import type { TaskStateMachineDeps, UnifiedMessage } from '../state'
+import { generateMessageId, TaskStateMachine } from '@wegent/chat-core'
+import type { TaskStateMachineDeps, UnifiedMessage } from '@wegent/chat-core'
 import DOMPurify from 'dompurify'
 
 /**
@@ -800,6 +800,7 @@ export function useMessageSyncer({
         return
       }
 
+      let shouldClearStopping = true
       machine.setStopping(true)
       try {
         const state = machine.getState()
@@ -842,24 +843,22 @@ export function useMessageSyncer({
           }
         }
 
-        // Call backend to cancel
         if (subtaskId) {
           try {
             const result = await cancelChatStream(subtaskId, partialContent, shellType)
             if (result.error) {
               console.error('[messageSyncer] Failed to cancel stream:', result.error)
+            } else if (result.success) {
+              shouldClearStopping = false
             }
           } catch (error) {
             console.error('[messageSyncer] Exception during cancelChatStream:', error)
           }
         }
-
-        // Update state machine - mark as cancelled
-        if (subtaskId) {
-          machine.handleChatCancelled(subtaskId)
-        }
       } finally {
-        machine.setStopping(false)
+        if (shouldClearStopping) {
+          machine.setStopping(false)
+        }
       }
     },
     [cancelChatStream, getMachineForTask]

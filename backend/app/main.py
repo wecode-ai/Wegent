@@ -41,6 +41,9 @@ from app.core.yaml_init import run_yaml_initialization
 from app.db.base import Base
 from app.db.session import SessionLocal, engine
 from app.models import *  # noqa: F401,F403
+from app.services.auth.internal_service_token import (
+    require_internal_service_token_configured,
+)
 from app.services.jobs import start_background_jobs, stop_background_jobs
 from shared.telemetry.context.large_data import log_json_body
 
@@ -48,11 +51,42 @@ from shared.telemetry.context.large_data import log_json_body
 # Only used to prevent concurrent initialization, not to skip initialization
 STARTUP_LOCK_KEY = "wegent:startup_lock"
 STARTUP_LOCK_TIMEOUT = 120  # 120 seconds timeout for migrations + YAML init
+FORWARDED_LOG_HEADER_NAMES = (
+    "x-forwarded-for",
+    "x-forwarded-proto",
+    "x-forwarded-host",
+    "x-forwarded-port",
+    "x-forwarded-prefix",
+    "x-real-ip",
+    "forwarded",
+)
+MAX_LOGGED_HEADER_VALUE_LENGTH = 512
 
 
 # Initialize logging at module level for use in lifespan
 setup_logging()
 _logger = logging.getLogger(__name__)
+
+
+def _truncate_logged_header_value(value: str) -> str:
+    if len(value) <= MAX_LOGGED_HEADER_VALUE_LENGTH:
+        return value
+    return f"{value[:MAX_LOGGED_HEADER_VALUE_LENGTH]}... [truncated]"
+
+
+def _format_forwarded_headers_for_log(headers) -> str:
+    forwarded_headers = []
+    for header_name in FORWARDED_LOG_HEADER_NAMES:
+        header_value = headers.get(header_name)
+        if header_value:
+            forwarded_headers.append(
+                f"{header_name}={_truncate_logged_header_value(header_value)}"
+            )
+
+    if not forwarded_headers:
+        return ""
+
+    return f" headers={{{', '.join(forwarded_headers)}}}"
 
 
 def _get_mcp_lifespan_servers():
@@ -91,6 +125,8 @@ async def lifespan(app: FastAPI):
     logger = _logger
 
     # ==================== STARTUP ====================
+    require_internal_service_token_configured()
+
     # Try to get Redis client for distributed locking
     redis_client = None
     try:
@@ -496,6 +532,7 @@ def create_app():
         username = get_username_from_request(request)
 
         client_ip = request.client.host if request.client else "Unknown"
+        forwarded_headers_log = _format_forwarded_headers_for_log(request.headers)
 
         # Always set request context for logging (works even without OTEL)
         from shared.telemetry.context import (
@@ -562,9 +599,11 @@ def create_app():
                         log_json_body("http.request.body", request_body)
 
         # Pre-request logging with request ID
-        logger.info(
-            f"request : {request.method} {request.url.path} {request.query_params} {request_id} {client_ip} [{username}]"
+        request_log_message = (
+            f"request : {request.method} {request.url.path} {request.query_params} "
+            f"{request_id} {client_ip} [{username}]{forwarded_headers_log}"
         )
+        logger.info(request_log_message)
 
         # Process request
         response = await call_next(request)
@@ -635,9 +674,12 @@ def create_app():
                                 logger.debug(f"Failed to capture response body: {e}")
 
         # Post-request logging with request ID
-        logger.info(
-            f"response: {request.method} {request.url.path} {request.query_params} {request_id} {client_ip} [{username}] {response.status_code} {process_time:.2f}ms"
+        response_log_message = (
+            f"response: {request.method} {request.url.path} {request.query_params} "
+            f"{request_id} {client_ip} [{username}]{forwarded_headers_log} "
+            f"{response.status_code} {process_time:.2f}ms"
         )
+        logger.info(response_log_message)
 
         # Add request ID to response headers for client-side tracking
         response.headers["X-Request-ID"] = request_id

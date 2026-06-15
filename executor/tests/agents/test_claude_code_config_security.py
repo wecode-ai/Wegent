@@ -100,7 +100,7 @@ class TestSaveClaudeConfigFiles:
             ), f"settings.json should NOT exist in Local mode: {settings_path}"
 
     def test_local_mode_writes_claude_json(
-        self, task_data, agent_config_with_sensitive_data, temp_workspace
+        self, task_data, agent_config_with_sensitive_data, temp_workspace, monkeypatch
     ):
         """
         Test that Local mode writes non-sensitive claude.json file.
@@ -108,6 +108,7 @@ class TestSaveClaudeConfigFiles:
         claude.json contains user preferences only (no API keys) and is
         required by the SDK for proper operation.
         """
+        monkeypatch.setenv("HOME", temp_workspace)
         with (
             patch("executor.config.config.EXECUTOR_MODE", "local"),
             patch(
@@ -164,13 +165,14 @@ class TestSaveClaudeConfigFiles:
             assert "ANTHROPIC_AUTH_TOKEN" in agent._claude_env_config
 
     def test_local_mode_directory_permissions(
-        self, task_data, agent_config_with_sensitive_data, temp_workspace
+        self, task_data, agent_config_with_sensitive_data, temp_workspace, monkeypatch
     ):
         """
         Test that .claude directory has restricted permissions (0700) in Local mode.
 
         Only the owner should be able to read/write/execute the directory.
         """
+        monkeypatch.setenv("HOME", temp_workspace)
         with (
             patch("executor.config.config.EXECUTOR_MODE", "local"),
             patch(
@@ -190,13 +192,14 @@ class TestSaveClaudeConfigFiles:
             ), f"Directory permissions should be 0700, got {oct(dir_mode)}"
 
     def test_local_mode_claude_json_file_permissions(
-        self, task_data, agent_config_with_sensitive_data, temp_workspace
+        self, task_data, agent_config_with_sensitive_data, temp_workspace, monkeypatch
     ):
         """
         Test that claude.json has restricted permissions (0600) in Local mode.
 
         Only the owner should be able to read/write the file.
         """
+        monkeypatch.setenv("HOME", temp_workspace)
         with (
             patch("executor.config.config.EXECUTOR_MODE", "local"),
             patch(

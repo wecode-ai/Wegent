@@ -9,7 +9,7 @@ import {
   loadProjectEnvironment,
 } from '@/api/environment'
 import { createGitApi } from '@/api/git'
-import { createHttpClient } from '@/api/http'
+import { ApiError, createHttpClient } from '@/api/http'
 import { createModelApi } from '@/api/models'
 import { createProjectApi } from '@/api/projects'
 import { createSkillApi } from '@/api/skills'
@@ -29,6 +29,7 @@ import {
 import { buildTaskRoute, navigateTo, parseTaskRoute } from '@/lib/navigation'
 import { supportsGitWorktreeExecution } from '@/lib/projectClassification'
 import {
+  findProjectForTask,
   findWorkbenchDevice,
   getActiveWorkbenchDeviceId,
   getWorkbenchDeviceDisplayName,
@@ -54,6 +55,7 @@ import type {
   Task,
   TaskDetail,
   TaskListResponse,
+  TurnFileChangesSummary,
   UnifiedModel,
   UnifiedSkill,
   User,
@@ -70,10 +72,14 @@ import type {
   WorkbenchMessage,
   WorkbenchState,
 } from '@/types/workbench'
+import {
+  normalizeWorkbenchBlockStatus,
+  reduceWorkbenchMessages,
+} from '@wegent/chat-core'
 import { useWorkbenchAttachments } from './useWorkbenchAttachments'
 import { useWorkbenchModels } from './useWorkbenchModels'
 import { useWorkbenchSkills } from './useWorkbenchSkills'
-import { messageReducer, normalizeBlockStatus } from './messageReducer'
+import { normalizeTurnFileChanges } from './turnFileChanges'
 import {
   initialWorkbenchState,
   workbenchReducer,
@@ -82,6 +88,8 @@ import { WorkbenchContext } from './useWorkbench'
 
 const WEWORK_CLIENT_ORIGIN = 'wework'
 const LOCAL_SKILLS_CACHE_TTL_MS = 60_000
+const STANDALONE_PROJECT_ID = 0
+const EMPTY_MESSAGE_TASK_TITLE = '新对话'
 const DEVICE_STATUS_LABELS: Record<string, string> = {
   online: '在线',
   busy: '忙碌',
@@ -90,6 +98,53 @@ const DEVICE_STATUS_LABELS: Record<string, string> = {
 const TERMINAL_UPGRADE_STATUSES = new Set(['success', 'error', 'skipped', 'busy'])
 const UPGRADE_STATE_CLEAR_DELAY_MS = 5000
 const UPGRADE_REFRESH_INTERVAL_MS = 3000
+const DEVICE_LIST_CACHE_KEY = 'wework.workbench.lastNonEmptyDevices'
+const DEVICE_LIST_CACHE_TTL_MS = 5 * 60 * 1000
+
+function readCachedDeviceList(): DeviceInfo[] {
+  try {
+    const value = window.sessionStorage.getItem(DEVICE_LIST_CACHE_KEY)
+    if (!value) return []
+    const parsed = JSON.parse(value)
+    if (
+      !parsed ||
+      !Array.isArray(parsed.devices) ||
+      typeof parsed.updatedAt !== 'number'
+    ) {
+      return []
+    }
+    if (Date.now() - parsed.updatedAt > DEVICE_LIST_CACHE_TTL_MS) return []
+    return parsed.devices
+  } catch {
+    return []
+  }
+}
+
+function writeCachedDeviceList(devices: DeviceInfo[]) {
+  if (devices.length === 0) return
+  try {
+    window.sessionStorage.setItem(
+      DEVICE_LIST_CACHE_KEY,
+      JSON.stringify({ devices, updatedAt: Date.now() }),
+    )
+  } catch {
+    // The live state remains authoritative when browser storage is unavailable.
+  }
+}
+
+function resolveDeviceListWithCache(devices: DeviceInfo[]): DeviceInfo[] {
+  if (devices.length > 0) {
+    writeCachedDeviceList(devices)
+    return devices
+  }
+
+  const cachedDevices = readCachedDeviceList()
+  if (cachedDevices.length > 0) {
+    return cachedDevices
+  }
+
+  return devices
+}
 
 interface QueuedWorkbenchSend extends QueuedWorkbenchMessage {
   payload: ChatSendPayload
@@ -123,8 +178,17 @@ export interface WorkbenchServices {
     >['createGitWorkspaceProject']
   }
   gitApi?: ReturnType<typeof createGitApi>
-  taskApi: Omit<ReturnType<typeof createTaskApi>, 'searchTasks'> & {
+  taskApi: Omit<
+    ReturnType<typeof createTaskApi>,
+    'searchTasks' | 'getTurnFileChangesDiff' | 'revertTurnFileChanges'
+  > & {
     searchTasks?: ReturnType<typeof createTaskApi>['searchTasks']
+    getTurnFileChangesDiff?: ReturnType<
+      typeof createTaskApi
+    >['getTurnFileChangesDiff']
+    revertTurnFileChanges?: ReturnType<
+      typeof createTaskApi
+    >['revertTurnFileChanges']
   }
   deviceApi: ReturnType<typeof createDeviceApi>
   userApi?: ReturnType<typeof createUserApi>
@@ -211,12 +275,17 @@ export interface WorkbenchContextValue {
   ) => Promise<void>
   setInput: (input: string) => void
   sendCurrentInput: () => Promise<void>
+  retryFailedMessage: (messageId: string) => Promise<void>
   pauseCurrentResponse: () => Promise<void>
   isResponseStreaming: boolean
   cancelQueuedMessage: (id: string) => void
   sendQueuedAsGuidance: (id: string) => Promise<void>
   editQueuedMessage: (id: string) => void
   cancelGuidanceMessage: (id: string) => void
+  loadTurnFileChangesDiff: (subtaskId: number) => Promise<string>
+  revertTurnFileChanges: (
+    subtaskId: number,
+  ) => Promise<TurnFileChangesSummary>
 }
 
 interface WorkbenchProviderProps {
@@ -248,12 +317,15 @@ function getCurrentAppPath(): string {
 }
 
 function getTaskRouteKey(taskId: number, projectId?: number): string {
-  return `${projectId ?? 0}:${taskId}`
+  return `${projectId ?? STANDALONE_PROJECT_ID}:${taskId}`
 }
 
 interface SubtaskResult {
   value?: string
+  error?: string
+  errorType?: string
   blocks?: unknown[]
+  fileChanges?: TurnFileChangesSummary
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -264,7 +336,15 @@ function getSubtaskResult(result: unknown): SubtaskResult | undefined {
   if (!isRecord(result)) return undefined
   return {
     value: typeof result.value === 'string' ? result.value : undefined,
+    error: typeof result.error === 'string' ? result.error : undefined,
+    errorType:
+      typeof result.error_type === 'string'
+        ? result.error_type
+        : typeof result.error_code === 'string'
+          ? result.error_code
+          : undefined,
     blocks: Array.isArray(result.blocks) ? result.blocks : undefined,
+    fileChanges: normalizeTurnFileChanges(result.file_changes),
   }
 }
 
@@ -281,7 +361,7 @@ function normalizeProcessingBlock(
   if (!isRecord(block)) return null
 
   const timestamp = getBlockTimestamp(block.timestamp)
-  const status = normalizeBlockStatus(
+  const status = normalizeWorkbenchBlockStatus(
     typeof block.status === 'string' ? block.status : undefined
   )
 
@@ -401,8 +481,11 @@ function subtaskToMessage(subtask: Subtask): WorkbenchMessage {
     role,
     content: subtask.prompt || result?.value || '',
     status: subtask.status === 'FAILED' ? 'failed' : 'done',
+    error: subtask.error_message || result?.error,
+    errorType: result?.errorType,
     attachments: getSubtaskAttachments(subtask),
     blocks: blocks.length > 0 ? blocks : undefined,
+    fileChanges: result?.fileChanges,
     createdAt: subtask.created_at,
   }
 }
@@ -494,6 +577,17 @@ function isRunningTaskStatus(status?: string) {
   )
 }
 
+function shouldRestoreCachedStreaming(
+  task: Task,
+  subtasks: Subtask[] | undefined,
+  subtaskId: number
+) {
+  if (!isRunningTaskStatus(task.status)) return false
+
+  const subtask = subtasks?.find(item => item.id === subtaskId)
+  return subtask ? isRunningTaskStatus(subtask.status) : true
+}
+
 function normalizeGuidanceError(error?: string) {
   if (!error) return '引导发送失败'
   if (error.includes('Chat Shell')) {
@@ -543,13 +637,19 @@ export function WorkbenchProvider({
     workbenchReducer,
     initialWorkbenchState
   )
-  const [messages, dispatchMessages] = useReducer(messageReducer, [])
+  const [messages, dispatchMessages] = useReducer(
+    reduceWorkbenchMessages<Attachment, TurnFileChangesSummary>,
+    [] as WorkbenchMessage[]
+  )
   const [queuedSends, setQueuedSends] = useState<QueuedWorkbenchSend[]>([])
   const [guidanceMessages, setGuidanceMessages] = useState<GuidanceWorkbenchMessage[]>([])
   const [upgradingDevices, setUpgradingDevices] = useState<
     Record<string, DeviceUpgradeState>
   >({})
   const [isAwaitingAssistantStart, setIsAwaitingAssistantStart] = useState(false)
+  const [liveRunningTaskIds, setLiveRunningTaskIds] = useState<Set<number>>(
+    () => new Set()
+  )
   const [routePath, setRoutePath] = useState(getCurrentAppPath)
   const [projectExecutionMode, setProjectExecutionMode] =
     useState<ProjectExecutionMode>('current_workspace')
@@ -564,11 +664,33 @@ export function WorkbenchProvider({
   const urlTaskOpenAttemptRef = useRef<number | null>(null)
   const isOptionsLocked = Boolean(state.currentTask)
   const currentUser = state.user ?? user
-  const activeDeviceId =
-    state.currentTask?.device_id ??
-    state.currentProject?.config?.execution?.deviceId ??
-    state.currentProject?.config?.device_id ??
-    (!state.currentProject ? state.standaloneDeviceId ?? undefined : undefined)
+  const activeProject =
+    state.currentProject ?? findProjectForTask(state.projects, state.currentTask)
+  const activeDeviceId = getActiveWorkbenchDeviceId({
+    currentTask: state.currentTask,
+    currentProject: activeProject,
+    standaloneDeviceId: state.standaloneDeviceId,
+  })
+
+  const markTaskRunning = useCallback((taskId: number | null | undefined) => {
+    if (!taskId) return
+    setLiveRunningTaskIds(previous => {
+      if (previous.has(taskId)) return previous
+      const next = new Set(previous)
+      next.add(taskId)
+      return next
+    })
+  }, [])
+
+  const markTaskNotRunning = useCallback((taskId: number | null | undefined) => {
+    if (!taskId) return
+    setLiveRunningTaskIds(previous => {
+      if (!previous.has(taskId)) return previous
+      const next = new Set(previous)
+      next.delete(taskId)
+      return next
+    })
+  }, [])
 
   const selectProjectExecutionMode = useCallback(
     (mode: ProjectExecutionMode) => {
@@ -691,7 +813,8 @@ export function WorkbenchProvider({
 
       const projects =
         projectsResult.status === 'fulfilled' ? projectsResult.value.items : []
-      const devices = devicesResult.status === 'fulfilled' ? devicesResult.value : []
+      const rawDevices = devicesResult.status === 'fulfilled' ? devicesResult.value : []
+      const devices = resolveDeviceListWithCache(rawDevices)
       const lastProjectId = readLastProjectId(user.id)
       const currentProject =
         lastProjectId === null
@@ -721,22 +844,38 @@ export function WorkbenchProvider({
     const [projectsResult, recentTasksResult, devicesResult] = await Promise.all([
       resolvedServices.projectApi.listProjects(),
       resolvedServices.taskApi.listRecentTasks({ limit: 20 }),
-      resolvedServices.deviceApi.listDevices(),
+      resolvedServices.deviceApi.listDevices().catch(error => {
+        const cachedDevices = readCachedDeviceList()
+        if (cachedDevices.length === 0) throw error
+        return cachedDevices
+      }),
     ])
+    const devices = resolveDeviceListWithCache(devicesResult)
     dispatch({
       type: 'lists_refreshed',
       projects: projectsResult.items,
       recentTasks: recentTasksResult.items,
-      devices: devicesResult,
+      devices,
       standaloneDeviceId: getPreferredStandaloneDeviceId(
-        devicesResult,
+        devices,
         state.standaloneDeviceId
       ),
     })
   }, [resolvedServices, state.standaloneDeviceId])
 
   const refreshDevices = useCallback(async () => {
-    const devices = await resolvedServices.deviceApi.listDevices()
+    let devices: DeviceInfo[]
+    try {
+      devices = await resolvedServices.deviceApi.listDevices()
+    } catch (error) {
+      const cachedDevices = readCachedDeviceList()
+      if (cachedDevices.length > 0) {
+        devices = cachedDevices
+      } else {
+        throw error
+      }
+    }
+    devices = resolveDeviceListWithCache(devices)
     dispatch({
       type: 'devices_refreshed',
       devices,
@@ -855,6 +994,7 @@ export function WorkbenchProvider({
       onDeviceUpgradeStatus: handleDeviceUpgradeStatus,
       onChatStart: payload => {
         setIsAwaitingAssistantStart(false)
+        markTaskRunning(payload.task_id)
         dispatch({
           type: 'task_status_changed',
           taskId: payload.task_id,
@@ -879,6 +1019,7 @@ export function WorkbenchProvider({
         setIsAwaitingAssistantStart(false)
         const taskId = payload.task_id ?? state.currentTask?.id
         if (taskId) {
+          markTaskNotRunning(taskId)
           dispatch({
             type: 'task_status_changed',
             taskId,
@@ -893,12 +1034,14 @@ export function WorkbenchProvider({
               ? payload.result.value
               : undefined,
           blocks: getResultBlocks(payload.subtask_id, payload.result),
+          fileChanges: normalizeTurnFileChanges(payload.result.file_changes),
         })
       },
       onChatError: payload => {
         setIsAwaitingAssistantStart(false)
         const taskId = payload.task_id ?? state.currentTask?.id
         if (taskId) {
+          markTaskNotRunning(taskId)
           dispatch({
             type: 'task_status_changed',
             taskId,
@@ -909,6 +1052,7 @@ export function WorkbenchProvider({
           type: 'assistant_error',
           subtaskId: payload.subtask_id,
           error: payload.error,
+          errorType: payload.type,
         })
       },
       onBlockCreated: payload => {
@@ -929,7 +1073,7 @@ export function WorkbenchProvider({
             ...(payload.content !== undefined && { content: payload.content }),
             ...(payload.tool_input !== undefined && { toolInput: payload.tool_input }),
             ...(payload.tool_output !== undefined && { toolOutput: payload.tool_output }),
-            ...(payload.status && { status: normalizeBlockStatus(payload.status) }),
+            ...(payload.status && { status: normalizeWorkbenchBlockStatus(payload.status) }),
           },
         })
       },
@@ -966,7 +1110,14 @@ export function WorkbenchProvider({
         )
       },
     })
-  }, [refreshDevices, resolvedServices, setDeviceUpgradeState, state.currentTask?.id])
+  }, [
+    markTaskNotRunning,
+    markTaskRunning,
+    refreshDevices,
+    resolvedServices,
+    setDeviceUpgradeState,
+    state.currentTask?.id,
+  ])
 
   useEffect(() => {
     return () => {
@@ -1090,28 +1241,20 @@ export function WorkbenchProvider({
 
   const startNewChat = useCallback(() => {
     writeTaskIdToUrl(null)
-    const lastProjectId = readLastProjectId(user.id)
-    const project = lastProjectId
-      ? state.projects.find(item => item.id === lastProjectId)
-      : null
-    if (project) {
-      dispatch({ type: 'project_selected', project })
-    } else {
-      dispatch({
-        type: 'project_cleared',
-        standaloneDeviceId: getRememberedStandaloneDeviceId(
-          user,
-          state.devices,
-          state.standaloneDeviceId
-        ),
-      })
-    }
+    dispatch({
+      type: 'project_cleared',
+      standaloneDeviceId: getRememberedStandaloneDeviceId(
+        user,
+        state.devices,
+        state.standaloneDeviceId
+      ),
+    })
     dispatchMessages({ type: 'reset', messages: [] })
     setQueuedSends([])
     setGuidanceMessages([])
     handledTaskRouteRef.current = null
-    navigateTo('/')
-  }, [state.devices, state.projects, state.standaloneDeviceId, user])
+    navigateTo(`/?projectId=${STANDALONE_PROJECT_ID}`)
+  }, [state.devices, state.standaloneDeviceId, user])
 
   const startStandaloneChat = useCallback(() => {
     writeTaskIdToUrl(null)
@@ -1127,7 +1270,7 @@ export function WorkbenchProvider({
     setQueuedSends([])
     setGuidanceMessages([])
     handledTaskRouteRef.current = null
-    navigateTo('/')
+    navigateTo(`/?projectId=${STANDALONE_PROJECT_ID}`)
   }, [state.devices, state.standaloneDeviceId, user])
 
   const startNewProjectChat = useCallback(
@@ -1150,7 +1293,7 @@ export function WorkbenchProvider({
       )
       const project =
         resolvedProjectId === undefined
-          ? undefined
+          ? findProjectForTask(state.projects, detailTask) ?? undefined
           : resolvedProjectId > 0
             ? state.projects.find(item => item.id === resolvedProjectId) ?? null
             : null
@@ -1176,7 +1319,14 @@ export function WorkbenchProvider({
       setQueuedSends([])
       setGuidanceMessages([])
       const joinResponse = await resolvedServices.chatStream.joinTask(taskId)
-      if (joinResponse?.streaming) {
+      if (
+        joinResponse?.streaming &&
+        shouldRestoreCachedStreaming(
+          detailTask,
+          detail.subtasks,
+          joinResponse.streaming.subtask_id
+        )
+      ) {
         dispatchMessages({
           type: 'assistant_cached',
           taskId,
@@ -1185,7 +1335,7 @@ export function WorkbenchProvider({
         })
       }
       const routeProjectId =
-        resolvedProjectId && resolvedProjectId > 0 ? resolvedProjectId : undefined
+        resolvedProjectId === undefined ? undefined : resolvedProjectId
       handledTaskRouteRef.current = getTaskRouteKey(taskId, routeProjectId)
       navigateTo(buildTaskRoute({ taskId, projectId: routeProjectId }))
     },
@@ -1207,7 +1357,7 @@ export function WorkbenchProvider({
   useEffect(() => {
     if (state.isBootstrapping) return
 
-    const taskRoute = parseTaskRoute(routePath)
+    const taskRoute = parseTaskRoute(routePath, window.location.search)
     if (!taskRoute) return
 
     const routeKey = getTaskRouteKey(taskRoute.taskId, taskRoute.projectId)
@@ -1334,6 +1484,7 @@ export function WorkbenchProvider({
       writeTaskIdToUrl(null)
       dispatch({ type: 'current_task_cleared' })
       dispatchMessages({ type: 'reset', messages: [] })
+      navigateTo(`/?projectId=${STANDALONE_PROJECT_ID}`)
     }
     await refreshWorkLists()
   }, [refreshWorkLists, resolvedServices, state.currentProject, state.currentTask])
@@ -1344,6 +1495,7 @@ export function WorkbenchProvider({
       writeTaskIdToUrl(null)
       dispatch({ type: 'current_task_cleared' })
       dispatchMessages({ type: 'reset', messages: [] })
+      navigateTo('/')
     }
     await refreshWorkLists()
   }, [refreshWorkLists, resolvedServices, state.currentProject, state.currentTask?.project_id])
@@ -1354,6 +1506,7 @@ export function WorkbenchProvider({
       writeTaskIdToUrl(null)
       dispatch({ type: 'current_task_cleared' })
       dispatchMessages({ type: 'reset', messages: [] })
+      navigateTo('/')
       await refreshWorkLists()
     },
     [refreshWorkLists, resolvedServices]
@@ -1366,6 +1519,7 @@ export function WorkbenchProvider({
         writeTaskIdToUrl(null)
         dispatch({ type: 'current_task_cleared' })
         dispatchMessages({ type: 'reset', messages: [] })
+        navigateTo(`/?projectId=${STANDALONE_PROJECT_ID}`)
       }
       await refreshWorkLists()
     },
@@ -1400,6 +1554,7 @@ export function WorkbenchProvider({
         writeTaskIdToUrl(null)
         dispatch({ type: 'current_task_cleared' })
         dispatchMessages({ type: 'reset', messages: [] })
+        navigateTo(`/?projectId=${STANDALONE_PROJECT_ID}`)
       }
       await refreshWorkLists()
     },
@@ -1479,19 +1634,26 @@ export function WorkbenchProvider({
   const hasActiveTurn = Boolean(activeAssistantMessage)
 
   const buildSendPayload = useCallback(
-    (message: string): { payload: ChatSendPayload; activeDeviceId?: string } | null => {
+    (
+      message: string,
+      sourceAttachments?: Attachment[]
+    ): { payload: ChatSendPayload; activeDeviceId?: string } | null => {
       if (!state.defaultTeam) return null
+      const activeProject =
+        state.currentProject ?? findProjectForTask(state.projects, state.currentTask)
 
       const activeDeviceId = getActiveWorkbenchDeviceId({
         currentTask: state.currentTask,
-        currentProject: state.currentProject,
+        currentProject: activeProject,
         standaloneDeviceId: state.standaloneDeviceId,
       })
 
       const payload: ChatSendPayload = {
         task_id: state.currentTask?.id,
         team_id: state.defaultTeam.id,
-        project_id: state.currentTask ? undefined : state.currentProject?.id,
+        project_id: state.currentTask
+          ? undefined
+          : activeProject?.id ?? STANDALONE_PROJECT_ID,
         client_origin: WEWORK_CLIENT_ORIGIN,
         device_id: activeDeviceId,
         task_type: 'code',
@@ -1500,9 +1662,9 @@ export function WorkbenchProvider({
 
       if (
         !state.currentTask &&
-        state.currentProject &&
+        activeProject &&
         projectExecutionMode === 'git_worktree' &&
-        supportsGitWorktreeExecution(state.currentProject)
+        supportsGitWorktreeExecution(activeProject)
       ) {
         payload.execution = {
           workspace: {
@@ -1523,8 +1685,12 @@ export function WorkbenchProvider({
         payload.additional_skills = skillSelection.selectedSkills
       }
 
-      if (attachmentSelection.attachments.length > 0) {
-        payload.attachment_ids = attachmentSelection.attachments.map(attachment => attachment.id)
+      const payloadAttachments = sourceAttachments ?? attachmentSelection.attachments
+      if (payloadAttachments.length > 0) {
+        payload.attachment_ids = payloadAttachments.map(attachment => attachment.id)
+        if (!message && !state.currentTask) {
+          payload.title = EMPTY_MESSAGE_TASK_TITLE
+        }
       }
 
       return { payload, activeDeviceId }
@@ -1539,6 +1705,7 @@ export function WorkbenchProvider({
       state.currentProject,
       state.currentTask,
       state.defaultTeam,
+      state.projects,
       state.standaloneDeviceId,
     ]
   )
@@ -1587,6 +1754,7 @@ export function WorkbenchProvider({
 
       const activeTaskId = ack.task_id ?? payload.task_id
       if (activeTaskId) {
+        markTaskRunning(activeTaskId)
         dispatch({
           type: 'task_status_changed',
           taskId: activeTaskId,
@@ -1595,15 +1763,15 @@ export function WorkbenchProvider({
       }
 
       if (!state.currentTask && ack.task_id) {
-        const projectId = state.currentProject?.id ?? 0
-        const routeProjectId = projectId > 0 ? projectId : undefined
+        const projectId = payload.project_id ?? state.currentProject?.id ?? 0
+        const routeProjectId = projectId
         // Navigate to the canonical task route so a freshly created chat shares
         // the same URL shape as opening an existing one (path, not ?taskId=).
         handledTaskRouteRef.current = getTaskRouteKey(ack.task_id, routeProjectId)
         navigateTo(buildTaskRoute({ taskId: ack.task_id, projectId: routeProjectId }))
         const openedTask: Task = {
           id: ack.task_id,
-          title: message.substring(0, 100),
+          title: (payload.title ?? message).substring(0, 100),
           status: 'RUNNING',
           task_type: 'code',
           team_id: payload.team_id,
@@ -1626,6 +1794,7 @@ export function WorkbenchProvider({
       return true
     },
     [
+      markTaskRunning,
       refreshWorkLists,
       resolvedServices.chatStream,
       state.currentProject?.id,
@@ -1637,8 +1806,8 @@ export function WorkbenchProvider({
     const trimmedMessage = state.input.trim()
     const hasAttachments = attachmentSelection.attachments.length > 0
     if (!trimmedMessage && !hasAttachments) return
-    const message = trimmedMessage || '请参考附件'
-    const prepared = buildSendPayload(message)
+    const payloadMessage = trimmedMessage
+    const prepared = buildSendPayload(payloadMessage)
     if (!prepared) return
     if (prepared.activeDeviceId) {
       const activeDevice = findWorkbenchDevice(state.devices, prepared.activeDeviceId)
@@ -1690,7 +1859,7 @@ export function WorkbenchProvider({
         ...items,
         {
           id: `queued-${state.currentTask?.id}-${Date.now()}`,
-          content: message,
+          content: payloadMessage,
           status: 'queued',
           createdAt: new Date().toISOString(),
           payload: prepared.payload,
@@ -1703,7 +1872,7 @@ export function WorkbenchProvider({
     }
 
     const sent = await sendPreparedMessage(
-      message,
+      payloadMessage,
       prepared.payload,
       prepared.activeDeviceId,
       attachmentsSnapshot
@@ -1721,6 +1890,66 @@ export function WorkbenchProvider({
     state.currentTask,
     state.input,
   ])
+
+  const retryFailedMessage = useCallback(
+    async (messageId: string) => {
+      const failedMessageIndex = messages.findIndex(
+        message =>
+          message.id === messageId &&
+          message.role === 'assistant' &&
+          message.status === 'failed',
+      )
+      if (failedMessageIndex === -1) {
+        dispatch({ type: 'error_set', error: '未找到可重试的失败消息' })
+        return
+      }
+
+      const previousUserMessage = [...messages]
+        .slice(0, failedMessageIndex)
+        .reverse()
+        .find(message => message.role === 'user')
+      if (!previousUserMessage) {
+        dispatch({ type: 'error_set', error: '未找到可重试的用户消息' })
+        return
+      }
+
+      const prepared = buildSendPayload(
+        previousUserMessage.content,
+        previousUserMessage.attachments ?? [],
+      )
+      if (!prepared) return
+
+      if (hasActiveTurn && state.currentTask?.id) {
+        setQueuedSends(items => [
+          ...items,
+          {
+            id: `queued-${state.currentTask?.id}-${Date.now()}`,
+            content: previousUserMessage.content,
+            status: 'queued',
+            createdAt: new Date().toISOString(),
+            payload: prepared.payload,
+            activeDeviceId: prepared.activeDeviceId,
+            attachments: previousUserMessage.attachments,
+          },
+        ])
+        return
+      }
+
+      await sendPreparedMessage(
+        previousUserMessage.content,
+        prepared.payload,
+        prepared.activeDeviceId,
+        previousUserMessage.attachments,
+      )
+    },
+    [
+      buildSendPayload,
+      hasActiveTurn,
+      messages,
+      sendPreparedMessage,
+      state.currentTask?.id,
+    ],
+  )
 
   const sendNextQueuedMessage = useCallback(
     async (item: QueuedWorkbenchSend) => {
@@ -1786,6 +2015,51 @@ export function WorkbenchProvider({
     setGuidanceMessages(items => items.filter(item => item.id !== id))
   }, [])
 
+  const loadTurnFileChangesDiff = useCallback(
+    async (subtaskId: number) => {
+      const loadDiff = resolvedServices.taskApi.getTurnFileChangesDiff
+      if (!loadDiff) throw new Error('File changes review is unavailable')
+      const response = await loadDiff(subtaskId)
+      return response.diff
+    },
+    [resolvedServices.taskApi],
+  )
+
+  const revertTurnFileChanges = useCallback(
+    async (subtaskId: number) => {
+      const revert = resolvedServices.taskApi.revertTurnFileChanges
+      if (!revert) throw new Error('File changes revert is unavailable')
+      try {
+        const response = await revert(subtaskId)
+        const fileChanges = normalizeTurnFileChanges(response.file_changes)
+        if (!fileChanges) {
+          throw new Error('Invalid file changes response')
+        }
+        dispatchMessages({
+          type: 'file_changes_updated',
+          subtaskId,
+          fileChanges,
+        })
+        return fileChanges
+      } catch (error) {
+        if (error instanceof ApiError && isRecord(error.detail)) {
+          const fileChanges = normalizeTurnFileChanges(
+            error.detail.file_changes,
+          )
+          if (fileChanges) {
+            dispatchMessages({
+              type: 'file_changes_updated',
+              subtaskId,
+              fileChanges,
+            })
+          }
+        }
+        throw error
+      }
+    },
+    [resolvedServices.taskApi],
+  )
+
   const pauseCurrentResponse = useCallback(async () => {
     if (!activeAssistantMessage?.subtaskId) return
 
@@ -1809,6 +2083,7 @@ export function WorkbenchProvider({
       content: activeAssistantMessage.content,
     })
     if (state.currentTask?.id) {
+      markTaskNotRunning(state.currentTask.id)
       dispatch({
         type: 'task_status_changed',
         taskId: state.currentTask.id,
@@ -1817,6 +2092,7 @@ export function WorkbenchProvider({
     }
   }, [
     activeAssistantMessage,
+    markTaskNotRunning,
     resolvedServices.chatStream,
     state.currentTask,
   ])
@@ -1947,7 +2223,7 @@ export function WorkbenchProvider({
   }, [activeDeviceId, resolvedServices.deviceApi])
 
   const runningTaskIds = useMemo(() => {
-    const ids = new Set<number>()
+    const ids = new Set<number>(liveRunningTaskIds)
     if (state.currentTask && isRunningTaskStatus(state.currentTask.status)) {
       ids.add(state.currentTask.id)
     }
@@ -1961,7 +2237,7 @@ export function WorkbenchProvider({
       }
     }
     return ids
-  }, [messages, state.currentTask])
+  }, [liveRunningTaskIds, messages, state.currentTask])
 
   const value: WorkbenchContextValue = {
     state,
@@ -2032,12 +2308,15 @@ export function WorkbenchProvider({
     createEnvironmentBranch,
     setInput,
     sendCurrentInput,
+    retryFailedMessage,
     pauseCurrentResponse,
     isResponseStreaming: hasActiveTurn,
     cancelQueuedMessage,
     sendQueuedAsGuidance,
     editQueuedMessage,
     cancelGuidanceMessage,
+    loadTurnFileChangesDiff,
+    revertTurnFileChanges,
   }
 
   return (

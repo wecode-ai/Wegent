@@ -124,7 +124,7 @@ def _apply_user_runtime_config(
         return None
 
     try:
-        status = user_runtime_config_service.get_config(
+        status = user_runtime_config_service.get_execution_config(
             db,
             user_id=user.id,
             runtime=CODEX_RUNTIME,
@@ -142,7 +142,13 @@ def _apply_user_runtime_config(
         "configured": bool(status.get("configured")),
         "target_path": status.get("target_path"),
         "auth_json_sha256": status.get("auth_json_sha256"),
+        "use_proxy": bool(status.get("use_proxy")),
+        "proxy_configured": bool(status.get("proxy_configured")),
     }
+    if status.get("proxy_url"):
+        proxy = dict(request.model_config.get("proxy") or {})
+        proxy["url"] = status["proxy_url"]
+        request.model_config["proxy"] = proxy
     request.model_config["runtime_config"] = runtime_config
     return status
 
@@ -388,6 +394,7 @@ async def build_execution_request(
             previous_bot_id=previous_bot_id,
             web_runtime_guidance=web_runtime_guidance,
         )
+        request.device_id = device_id or request.device_id
 
         # Merge reasoning config from API/model selection into model_config.
         # Priority: explicit API reasoning_config > UI model_options > model think_config.

@@ -3,8 +3,60 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import type { Attachment } from '@/types/api'
 import { MessageList } from './MessageList'
+import '@/i18n'
 
 describe('MessageList', () => {
+  test('renders one assistant turn file changes under its message', () => {
+    render(
+      <MessageList
+        devices={[
+          {
+            id: 1,
+            device_id: 'device-1',
+            name: 'Device 1',
+            status: 'online',
+            is_default: false,
+          },
+        ]}
+        onLoadFileChangesDiff={vi.fn().mockResolvedValue('')}
+        onRevertFileChanges={vi.fn()}
+        messages={[
+          {
+            id: 'assistant-21',
+            subtaskId: 21,
+            role: 'assistant',
+            content: 'Done',
+            status: 'done',
+            createdAt: '2026-06-11T10:00:00Z',
+            fileChanges: {
+              version: 1,
+              status: 'active',
+              artifact_id: 'turn-21',
+              device_id: 'device-1',
+              workspace_path: '/workspace/project',
+              file_count: 1,
+              additions: 4,
+              deletions: 2,
+              files: [
+                {
+                  path: 'src/main.ts',
+                  change_type: 'modified',
+                  additions: 4,
+                  deletions: 2,
+                  binary: false,
+                },
+              ],
+            },
+          },
+        ]}
+      />,
+    )
+
+    expect(screen.getByTestId('file-changes-card')).toHaveTextContent(
+      'src/main.ts',
+    )
+  })
+
   test('uses compact spacing between messages and hover actions', () => {
     render(
       <MessageList
@@ -74,30 +126,41 @@ describe('MessageList', () => {
     )
   })
 
-  test('uses neutral user bubble and blue assistant links', () => {
-    const { container } = render(
+  test('renders sent local skill mentions as polished inline tokens', () => {
+    render(
       <MessageList
         messages={[
           {
             id: '1',
             role: 'user',
-            content: '总结下这个文档',
+            content:
+              '[$browser](skill:///Users/crystal/.codex/skills/browser/SKILL.md) 访问一下浏览器',
             status: 'done',
             createdAt: '2026-05-25T00:00:00.000Z',
-          },
-          {
-            id: '2',
-            role: 'assistant',
-            content: '联系 [jueding.ly@alibaba-inc.com](mailto:jueding.ly@alibaba-inc.com)',
-            status: 'done',
-            createdAt: '2026-05-25T00:00:01.000Z',
           },
         ]}
       />,
     )
 
-    expect(screen.getByText('总结下这个文档').parentElement).toHaveClass('bg-muted')
-    expect(container.querySelector('a[href^="mailto:"]')).toHaveClass('text-blue-600')
+    const token = screen.getByTestId('sent-local-skill-token-browser')
+    expect(token).toHaveTextContent('Browser')
+    expect(screen.getByTestId('sent-local-skill-icon-browser')).toBeInTheDocument()
+    expect(token).toHaveClass(
+      'h-7',
+      'gap-1',
+      'rounded-xl',
+      'bg-muted',
+      'text-blue-600',
+      'no-underline',
+    )
+    expect(screen.getByTestId('sent-local-skill-icon-browser')).toHaveClass('text-blue-600')
+    expect(token).not.toHaveClass(
+      'border',
+      'bg-background',
+      'text-text-secondary',
+      'shadow-[0_1px_2px_rgba(15,23,42,0.05)]',
+    )
+    expect(token).not.toHaveClass('bg-primary/10', 'text-primary')
   })
 
   test('renders image attachments in user messages', async () => {
@@ -153,6 +216,61 @@ describe('MessageList', () => {
     )
   })
 
+  test('lays out multiple image attachments horizontally in user messages', async () => {
+    URL.createObjectURL = vi.fn(() => 'blob:message-image-preview')
+    URL.revokeObjectURL = vi.fn()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        blob: vi.fn().mockResolvedValue(new Blob(['image'], { type: 'image/png' })),
+      })
+    )
+
+    const attachments: Attachment[] = [
+      {
+        id: 43,
+        filename: 'first.png',
+        file_size: 1024,
+        mime_type: 'image/png',
+        status: 'ready',
+        file_extension: '.png',
+        created_at: '2026-05-25T15:08:00.000+08:00',
+      },
+      {
+        id: 44,
+        filename: 'second.png',
+        file_size: 1024,
+        mime_type: 'image/png',
+        status: 'ready',
+        file_extension: '.png',
+        created_at: '2026-05-25T15:08:00.000+08:00',
+      },
+    ]
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: '1',
+            role: 'user',
+            content: '',
+            status: 'done',
+            attachments,
+            createdAt: '2026-05-25T15:08:00.000+08:00',
+          },
+        ]}
+      />
+    )
+
+    expect(await screen.findAllByTestId('message-image-preview')).toHaveLength(2)
+    expect(screen.getByTestId('message-image-attachments')).toHaveClass(
+      'flex-row',
+      'flex-wrap',
+      'justify-end',
+    )
+  })
+
   test('renders document attachments in user messages', () => {
     const attachment: Attachment = {
       id: 44,
@@ -188,10 +306,8 @@ describe('MessageList', () => {
   })
 
   test('shows user message hover actions with time and copy', async () => {
-    const writeText = vi.fn().mockResolvedValue(undefined)
-    Object.assign(navigator, {
-      clipboard: { writeText },
-    })
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-05-25T16:00:00.000+08:00'))
 
     render(
       <MessageList
@@ -208,6 +324,14 @@ describe('MessageList', () => {
     )
 
     expect(screen.getByTestId('message-hover-time')).toHaveTextContent('15:08')
+
+    vi.useRealTimers()
+
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.assign(navigator, {
+      clipboard: { writeText },
+    })
+
     const copyButton = screen.getByTestId('copy-message-button')
     expect(copyButton).toHaveClass('opacity-0', 'group-hover:opacity-100')
 
@@ -303,10 +427,8 @@ describe('MessageList', () => {
   })
 
   test('shows assistant message hover actions with time and copy', async () => {
-    const writeText = vi.fn().mockResolvedValue(undefined)
-    Object.assign(navigator, {
-      clipboard: { writeText },
-    })
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-05-25T19:00:00.000+08:00'))
 
     render(
       <MessageList
@@ -323,6 +445,14 @@ describe('MessageList', () => {
     )
 
     expect(screen.getByTestId('message-hover-time')).toHaveTextContent('18:38')
+
+    vi.useRealTimers()
+
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.assign(navigator, {
+      clipboard: { writeText },
+    })
+
     const copyButton = screen.getByTestId('copy-message-button')
     expect(copyButton).toHaveClass('opacity-0', 'group-hover:opacity-100')
 
@@ -349,6 +479,160 @@ describe('MessageList', () => {
     expect(screen.queryByTestId('message-hover-time')).not.toBeInTheDocument()
     expect(screen.queryByTestId('copy-message-button')).not.toBeInTheDocument()
     expect(screen.getByText('正在思考')).toBeInTheDocument()
+  })
+
+  test('renders failed assistant messages in the approved error-card layout', () => {
+    const rawError =
+      'API Error: 400 {"error":{"message":"模型 deepseek-v3.1 不支持 Anthropic 协议, model_id: ali-deepseek-v3.1"}}'
+
+    const { container } = render(
+      <MessageList
+        messages={[
+          {
+            id: '2',
+            role: 'assistant',
+            content: '',
+            status: 'failed',
+            error: rawError,
+            createdAt: '2026-05-25T18:46:00.000+08:00',
+          },
+        ]}
+      />,
+    )
+
+    const errorCard = screen.getByTestId('assistant-error-card')
+    expect(errorCard).toBeInTheDocument()
+    expect(errorCard).toHaveClass('w-[min(546px,100%)]', 'rounded-[14px]')
+    expect(screen.getByText('模型与当前运行协议不匹配')).toBeInTheDocument()
+    expect(screen.getByText('切换模型并重试')).toBeInTheDocument()
+    expect(screen.getByTestId('assistant-error-switch-model-retry')).toHaveClass(
+      'bg-text-primary',
+      'text-background',
+    )
+    expect(screen.getByTestId('assistant-error-switch-model-retry')).not.toHaveClass(
+      'bg-primary',
+      'text-bg-base',
+    )
+    expect(screen.getByText('重试')).toBeInTheDocument()
+    expect(screen.getByTestId('assistant-error-details-toggle')).toHaveAttribute(
+      'aria-expanded',
+      'false',
+    )
+    expect(screen.getByTestId('assistant-error-details')).toHaveTextContent(rawError)
+    expect(screen.getByTestId('assistant-error-details')).toHaveClass('truncate')
+    expect(container.querySelector('.assistant-markdown')).not.toBeInTheDocument()
+    expect(screen.queryByText(rawError, { selector: 'p.text-red-500' })).not.toBeInTheDocument()
+  })
+
+  test('classifies hidden raw failed content before generic task status errors', () => {
+    const rawError =
+      'API Error: 400 {"error":{"message":"模型 deepseek-v3.1 不支持 Anthropic 协议, model_id: ali-deepseek-v3.1"}}'
+
+    const { container } = render(
+      <MessageList
+        messages={[
+          {
+            id: '2',
+            role: 'assistant',
+            content: rawError,
+            status: 'failed',
+            error: 'Task failed with status: FAILED',
+            createdAt: '2026-05-25T18:46:00.000+08:00',
+          },
+        ]}
+      />,
+    )
+
+    expect(container.querySelector('.assistant-markdown')).not.toBeInTheDocument()
+    expect(screen.getByTestId('assistant-error-card')).toHaveTextContent(
+      '模型与当前运行协议不匹配',
+    )
+    expect(screen.getByText('ali-deepseek-v3.1 不支持当前运行协议。请切换兼容模型后重试。')).toBeInTheDocument()
+    expect(screen.getByTestId('assistant-error-details')).toHaveTextContent(rawError)
+  })
+
+  test('expands raw error details from the compact details row', async () => {
+    const user = userEvent.setup()
+    const rawError = 'Task failed with status: FAILED'
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: '2',
+            role: 'assistant',
+            content: '',
+            status: 'failed',
+            error: rawError,
+            createdAt: '2026-05-25T18:46:00.000+08:00',
+          },
+        ]}
+      />,
+    )
+
+    await user.click(screen.getByTestId('assistant-error-details-toggle'))
+
+    expect(screen.getByTestId('assistant-error-details-toggle')).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    )
+    expect(screen.getByTestId('assistant-error-details')).toHaveClass(
+      'whitespace-pre-wrap',
+    )
+  })
+
+  test('calls retry and switch-model handlers from failed assistant actions', async () => {
+    const user = userEvent.setup()
+    const onRetryFailedMessage = vi.fn()
+    const onSwitchModelForFailedMessage = vi.fn()
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: '2',
+            role: 'assistant',
+            content: '',
+            status: 'failed',
+            error: 'Task failed with status: FAILED',
+            createdAt: '2026-05-25T18:46:00.000+08:00',
+          },
+        ]}
+        onRetryFailedMessage={onRetryFailedMessage}
+        onSwitchModelForFailedMessage={onSwitchModelForFailedMessage}
+      />,
+    )
+
+    await user.click(screen.getByTestId('assistant-error-retry'))
+    await user.click(screen.getByTestId('assistant-error-switch-model-retry'))
+
+    expect(onRetryFailedMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ id: '2' }),
+    )
+    expect(onSwitchModelForFailedMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ id: '2' }),
+    )
+  })
+
+  test('uses backend error type before raw error text when rendering failed messages', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: '2',
+            role: 'assistant',
+            content: '',
+            status: 'failed',
+            error: 'network down',
+            errorType: 'rate_limit',
+            createdAt: '2026-05-25T18:46:00.000+08:00',
+          },
+        ]}
+      />,
+    )
+
+    expect(screen.getByText('请求过于频繁，请稍后再试')).toBeInTheDocument()
+    expect(screen.queryByText('网络连接失败：请检查网络连接后重试')).not.toBeInTheDocument()
   })
 
   test('keeps regular long content inside the page while tables and code scroll locally', () => {
@@ -419,15 +703,14 @@ describe('MessageList', () => {
       />,
     )
 
-    const skillLink = screen.getByRole('link', { name: '$env-context' })
+    const skillLink = screen.getByTestId('sent-local-skill-token-env-context')
 
     expect(skillLink).toHaveAttribute(
       'href',
       'skill:///Users/crystal/.codex/skills/env-context/SKILL.md',
     )
-    expect(skillLink).toHaveClass('bg-muted', 'text-text-primary')
     expect(screen.getByTestId('message-user')).toHaveTextContent(
-      'hello $env-context context',
+      'hello Env Context context',
     )
   })
 })

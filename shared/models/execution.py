@@ -134,9 +134,11 @@ class ExecutionRequest:
     # === Workspace Configuration ===
     workspace: dict = field(default_factory=dict)
     project_id: Optional[int] = None
+    standalone_chat_workspace: bool = False
     workspace_source: Optional[str] = None
     project_workspace_path: Optional[str] = None
     execution_target_type: Optional[str] = None
+    device_id: Optional[str] = None
 
     # === Git Configuration (from Task) ===
     git_domain: Optional[str] = None
@@ -188,6 +190,7 @@ class ExecutionRequest:
     status: Optional[str] = None
     progress: Optional[int] = None
     type: Optional[str] = None  # Task type: "online" or "offline"
+    task_mode: Optional[str] = None  # Task mode label: "chat", "code", etc.
 
     # === Executor Information (from Task) ===
     executor_name: Optional[str] = None

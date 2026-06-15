@@ -19,6 +19,8 @@ export interface DeviceInfo {
     imageId?: string
     deviceId?: string
     deviceName?: string
+    ubuntuInitialPassword?: string
+    ubuntuPassword?: string
     createdAt?: string
   }
 }

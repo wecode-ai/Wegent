@@ -125,7 +125,7 @@ export function ActionMenu({
         onClick={handleTriggerClick}
         className={
           triggerClassName ??
-          'flex h-7 w-7 items-center justify-center rounded-md text-text-secondary hover:bg-background hover:text-text-primary'
+          'flex h-7 w-7 items-center justify-center rounded-md text-[#606368] hover:bg-white/80 hover:text-[#2d2d2d]'
         }
         aria-label={ariaLabel}
         aria-expanded={open}
@@ -142,7 +142,7 @@ export function ActionMenu({
               top: menuPosition?.top ?? 0,
               visibility: menuPosition ? 'visible' : 'hidden',
             }}
-            className="fixed z-popover min-w-[176px] rounded-lg border border-border bg-background py-1.5 text-text-primary shadow-[0_12px_32px_rgba(15,23,42,0.14)]"
+            className="fixed z-[70] min-w-[176px] rounded-2xl border border-border bg-background p-1.5 text-text-primary shadow-[0_16px_44px_rgba(0,0,0,0.16)]"
           >
             {items.map(item => (
               <button
@@ -163,9 +163,9 @@ export function ActionMenu({
                   void handleItemSelect(item)
                 }}
                 className={[
-                  'flex h-8 w-full items-center gap-2 px-3 text-left text-[13px] leading-[18px]',
+                  'flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-[13px] leading-[18px]',
                   item.danger
-                    ? 'text-red-500 hover:bg-red-500/10'
+                    ? 'text-red-500 hover:bg-red-50'
                     : 'text-text-primary hover:bg-muted',
                 ].join(' ')}
               >

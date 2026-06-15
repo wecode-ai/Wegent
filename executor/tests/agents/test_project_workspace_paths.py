@@ -133,6 +133,8 @@ def test_initial_standalone_chat_prepares_request_named_cwd(tmp_path, monkeypatc
     request = ExecutionRequest(
         task_id=1003,
         subtask_id=2003,
+        project_id=0,
+        standalone_chat_workspace=True,
         prompt="hello-new-wework",
     )
     agent = ClaudeCodeAgent.__new__(ClaudeCodeAgent)
@@ -215,6 +217,8 @@ def test_initial_standalone_chat_coordinate_mode_keeps_claude_out_of_chat_dir(
     request = ExecutionRequest(
         task_id=1004,
         subtask_id=2004,
+        project_id=0,
+        standalone_chat_workspace=True,
         prompt="coordinate-chat",
         mode="coordinate",
         bot=[

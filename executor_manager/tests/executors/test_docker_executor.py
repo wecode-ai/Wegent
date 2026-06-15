@@ -639,6 +639,37 @@ class TestDockerExecutor:
         assert "456" in result["task_ids"]
         assert len(result["containers"]) == 2
 
+    @patch.object(docker_executor_module, "get_running_task_details")
+    def test_cancel_task_uses_container_details_when_task_ids_empty(
+        self, mock_get_running_task_details, executor
+    ):
+        """Cancel should use matching container details even when task_ids is empty."""
+        mock_get_running_task_details.return_value = {
+            "status": "success",
+            "task_ids": [],
+            "containers": [
+                {
+                    "task_id": "6296",
+                    "subtask_id": "8754",
+                    "container_name": "wegent-task-admin-fe182dcc899e086",
+                    "subtask_next_id": "",
+                    "task_type": "online",
+                }
+            ],
+        }
+        executor.requests.post.return_value = MagicMock(
+            raise_for_status=MagicMock(),
+        )
+
+        with patch.object(executor, "_get_container_port", return_value=(10000, None)):
+            result = executor.cancel_task(6296)
+
+        assert result["status"] == "success"
+        executor.requests.post.assert_called_once_with(
+            f"http://{docker_executor_module.DEFAULT_DOCKER_HOST}:10000/api/tasks/cancel?task_id=6296",
+            timeout=10,
+        )
+
     def test_call_callback_success(self, executor):
         """Test calling callback successfully"""
         mock_callback = MagicMock()

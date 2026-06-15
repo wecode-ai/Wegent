@@ -55,7 +55,7 @@ const PROJECT_MENU_ACTION_HEIGHT = 32
 const PROJECT_MENU_ACTION_GAP = 2
 const EXECUTION_MODE_MENU_HEIGHT = 126
 const CREATE_PROJECT_SUBMENU_HEIGHT = 128
-const STANDALONE_DEVICE_SUBMENU_MAX_HEIGHT = 280
+
 const CLIPPING_OVERFLOW_RE = /(auto|hidden|scroll|clip)/
 
 function getMenuVisibleBounds(element: HTMLElement | null) {
@@ -113,6 +113,10 @@ function getProjectMenuFitHeight(
   )
 }
 
+function getProjectDeviceId(project: ProjectWithTasks): string | undefined {
+  return project.config?.execution?.deviceId ?? project.config?.device_id
+}
+
 interface ProjectWorkBarProps {
   projects: ProjectWithTasks[]
   devices: DeviceInfo[]
@@ -165,12 +169,12 @@ export function ProjectWorkBar({
   const triggerButtonRef = useRef<HTMLButtonElement>(null)
   const executionModeButtonRef = useRef<HTMLButtonElement>(null)
   const createOptionButtonRef = useRef<HTMLButtonElement>(null)
-  const standaloneOptionButtonRef = useRef<HTMLButtonElement>(null)
+
   const searchInputRef = useRef<HTMLInputElement>(null)
   const [open, setOpen] = useState(false)
   const [executionModeOpenProjectId, setExecutionModeOpenProjectId] =
     useState<number | null>(null)
-  const [activeSubmenu, setActiveSubmenu] = useState<'create' | 'standalone' | null>(null)
+  const [activeSubmenu, setActiveSubmenu] = useState<'create' | null>(null)
   const [projectQuery, setProjectQuery] = useState('')
   const [menuLayout, setMenuLayout] = useState<{
     placement: 'below' | 'above'
@@ -180,10 +184,9 @@ export function ProjectWorkBar({
     'below' | 'above'
   >('below')
   const [sideSubmenuPlacement, setSideSubmenuPlacement] = useState<
-    Record<'create' | 'standalone', 'below' | 'above'>
+    Record<'create', 'below' | 'above'>
   >({
     create: 'below',
-    standalone: 'below',
   })
   const closeMenu = useCallback(() => {
     setOpen(false)
@@ -257,35 +260,23 @@ export function ProjectWorkBar({
     })
   }, [executionModeOpen])
 
-  const updateSideSubmenuPlacement = useCallback(
-    (submenu: 'create' | 'standalone') => {
+  const updateSideSubmenuPlacement = useCallback(() => {
       if (typeof window === 'undefined') return
 
-      const trigger =
-        submenu === 'create'
-          ? createOptionButtonRef.current
-          : standaloneOptionButtonRef.current
+      const trigger = createOptionButtonRef.current
       if (!trigger) return
 
       const triggerRect = trigger.getBoundingClientRect()
-      const submenuHeight =
-        submenu === 'create'
-          ? CREATE_PROJECT_SUBMENU_HEIGHT
-          : Math.min(
-              Math.max(standaloneDevices.length, 1) * 40 + 16,
-              STANDALONE_DEVICE_SUBMENU_MAX_HEIGHT,
-            )
+      const submenuHeight = CREATE_PROJECT_SUBMENU_HEIGHT
       const visibleBounds = getMenuVisibleBounds(containerRef.current)
       const spaceBelow = visibleBounds.bottom - triggerRect.top
       const placement = spaceBelow >= submenuHeight ? 'below' : 'above'
 
       setSideSubmenuPlacement(current => {
-        if (current[submenu] === placement) return current
-        return { ...current, [submenu]: placement }
+        if (current.create === placement) return current
+        return { create: placement }
       })
-    },
-    [standaloneDevices.length],
-  )
+    }, [])
 
   useLayoutEffect(() => {
     updateMenuLayout()
@@ -301,7 +292,7 @@ export function ProjectWorkBar({
     const handleResize = () => {
       updateMenuLayout()
       if (activeSubmenu) {
-        updateSideSubmenuPlacement(activeSubmenu)
+        updateSideSubmenuPlacement()
       }
     }
 
@@ -319,7 +310,7 @@ export function ProjectWorkBar({
   useLayoutEffect(() => {
     if (!activeSubmenu) return
 
-    updateSideSubmenuPlacement(activeSubmenu)
+    updateSideSubmenuPlacement()
   }, [activeSubmenu, updateSideSubmenuPlacement])
 
   useEffect(() => {
@@ -330,20 +321,35 @@ export function ProjectWorkBar({
   }, [isMobile, open])
 
   const getDeviceForProject = useCallback((project: ProjectWithTasks): DeviceInfo | undefined => {
-    const deviceId = project.config?.execution?.deviceId ?? project.config?.device_id
+    const deviceId = getProjectDeviceId(project)
     if (!deviceId) return undefined
     return devices.find(d => d.device_id === deviceId)
   }, [devices])
+  const isProjectAvailable = useCallback((project: ProjectWithTasks): boolean => {
+    const deviceId = getProjectDeviceId(project)
+    if (!deviceId) return true
+
+    const device = getDeviceForProject(project)
+    return Boolean(
+      device &&
+      isOnlineDevice(device) &&
+      isWeWorkExecutorVersionCompatible(device.executor_version),
+    )
+  }, [getDeviceForProject])
+  const availableProjects = useMemo(
+    () => projects.filter(isProjectAvailable),
+    [isProjectAvailable, projects],
+  )
 
   const sortedProjects = useMemo(() => {
-    return [...projects].sort((a, b) => {
+    return [...availableProjects].sort((a, b) => {
       const deviceA = getDeviceForProject(a)
       const deviceB = getDeviceForProject(b)
       const onlineA = deviceA?.status === 'online' ? 1 : 0
       const onlineB = deviceB?.status === 'online' ? 1 : 0
       return onlineB - onlineA
     })
-  }, [projects, getDeviceForProject])
+  }, [availableProjects, getDeviceForProject])
   const normalizedProjectQuery = projectQuery.trim().toLowerCase()
   const filteredProjects = useMemo(() => {
     if (!normalizedProjectQuery) return sortedProjects
@@ -374,7 +380,7 @@ export function ProjectWorkBar({
     closeMenu()
   }
 
-  const handleSelectStandaloneDevice = (deviceId: string) => {
+  const handleSelectStandaloneDevice = (deviceId: string | null) => {
     onSelectStandaloneDevice(deviceId)
     closeMenu()
   }
@@ -392,9 +398,9 @@ export function ProjectWorkBar({
     closeMenu()
   }
 
-  const handleActivateSubmenu = (submenu: 'create' | 'standalone') => {
-    updateSideSubmenuPlacement(submenu)
-    setActiveSubmenu(submenu)
+  const handleActivateCreateSubmenu = () => {
+    updateSideSubmenuPlacement()
+    setActiveSubmenu('create')
   }
 
   const handleToggleMenu = () => {
@@ -509,7 +515,7 @@ export function ProjectWorkBar({
                 )}
               />
             </label>
-            {projects.length === 0 ? (
+            {availableProjects.length === 0 ? (
               <div className="px-4 py-3 text-[13px] leading-[18px] text-text-muted">
                 {t('workbench.no_projects', '暂无项目')}
               </div>
@@ -532,66 +538,39 @@ export function ProjectWorkBar({
                 {filteredProjects.map(project => {
                   const device = getDeviceForProject(project)
                   const DeviceIcon = device && isCloudDevice(device) ? Cloud : HardDrive
-                  const isUnavailable = Boolean(device && device.status !== 'online')
                   const selected = project.id === currentProjectId
-                  const projectTextClass = isUnavailable
-                    ? 'text-text-muted'
-                    : selected
-                      ? 'text-text-primary'
-                      : 'text-text-secondary'
+                  const projectTextClass = selected ? 'text-text-primary' : 'text-text-secondary'
                   return (
                     <button
                       key={project.id}
                       type="button"
                       data-testid={`project-option-${project.id}`}
-                      disabled={isUnavailable}
-                      aria-disabled={isUnavailable}
-                      onClick={() => {
-                        if (!isUnavailable) handleSelectProject(project.id)
-                      }}
-                      className={`flex h-9 w-full rounded-lg px-4 text-left hover:bg-muted disabled:cursor-not-allowed disabled:hover:bg-transparent ${projectTextClass}`}
+                      onClick={() => handleSelectProject(project.id)}
+                      className={`flex h-9 w-full rounded-lg px-4 text-left hover:bg-muted ${projectTextClass}`}
                     >
                       <div className="flex min-h-0 w-full items-center gap-3">
                         <ProjectFolderIcon
                           project={project}
-                          testId={
-                            isUnavailable
-                              ? `project-unavailable-icon-${project.id}`
-                              : `project-available-icon-${project.id}`
-                          }
-                          className={`h-4 w-4 shrink-0 ${
-                            isUnavailable ? 'text-text-muted' : 'text-text-secondary'
-                          }`}
+                          testId={`project-available-icon-${project.id}`}
+                          className="h-4 w-4 shrink-0 text-text-secondary"
                         />
                         <div className="flex min-w-0 flex-1 items-center gap-2">
                           <span
                             className={cn(
                               'min-w-0 truncate text-[13px] font-semibold leading-[18px]',
                               device ? 'max-w-[9rem] shrink' : 'flex-1',
-                              isUnavailable ? 'text-text-muted' : 'text-text-primary',
+                              'text-text-primary',
                             )}
                           >
                             {project.name}
                           </span>
                           {device && (
-                            <span
-                              className={`flex min-w-0 flex-1 items-center gap-1.5 text-xs leading-4 ${
-                                device.status === 'online' ? 'text-text-secondary' : 'text-text-muted'
-                              }`}
-                            >
+                            <span className="flex min-w-0 flex-1 items-center gap-1.5 text-xs leading-4 text-text-secondary">
                               <DeviceIcon className="h-3.5 w-3.5 shrink-0" />
                               <span
                                 className={`h-1.5 w-1.5 shrink-0 rounded-full ${getDeviceStatusDotClass(device)}`}
                               />
-                              <span
-                                className={`min-w-0 truncate ${
-                                  device.status === 'online'
-                                    ? 'text-text-secondary'
-                                    : 'text-text-muted'
-                                }`}
-                              >
-                                {device.name}
-                              </span>
+                              <span className="min-w-0 truncate text-text-secondary">{device.name}</span>
                               <span className="shrink-0">{getCompactDeviceStatusLabel(device)}</span>
                             </span>
                           )}
@@ -599,9 +578,7 @@ export function ProjectWorkBar({
                         {selected && (
                           <Check
                             data-testid={`project-selected-icon-${project.id}`}
-                            className={`h-3.5 w-3.5 shrink-0 ${
-                              isUnavailable ? 'text-text-muted' : 'text-text-primary'
-                            }`}
+                            className="h-3.5 w-3.5 shrink-0 text-text-primary"
                           />
                         )}
                       </div>
@@ -615,14 +592,14 @@ export function ProjectWorkBar({
               {onCreateProjectMode && (
                 <div
                   className="relative"
-                  onMouseEnter={() => handleActivateSubmenu('create')}
-                  onFocus={() => handleActivateSubmenu('create')}
+                  onMouseEnter={() => handleActivateCreateSubmenu()}
+                  onFocus={() => handleActivateCreateSubmenu()}
                 >
                   <button
                     ref={createOptionButtonRef}
                     type="button"
                     data-testid="add-project-option"
-                    onClick={() => handleActivateSubmenu('create')}
+                    onClick={() => handleActivateCreateSubmenu()}
                     className={cn(
                       'flex h-8 w-full items-center gap-3 rounded-lg px-4 text-left text-[13px] font-medium leading-[18px] text-text-secondary hover:bg-muted',
                       activeSubmenu === 'create' && 'bg-muted text-text-primary',
@@ -675,89 +652,64 @@ export function ProjectWorkBar({
                   )}
                 </div>
               )}
-              <div
-                className="relative"
-                onMouseEnter={() => handleActivateSubmenu('standalone')}
-                onFocus={() => handleActivateSubmenu('standalone')}
-              >
+              <div>
                 <button
-                  ref={standaloneOptionButtonRef}
                   type="button"
                   data-testid="no-project-option"
-                  onClick={() => handleActivateSubmenu('standalone')}
-                  className={cn(
-                    'flex h-8 w-full items-center gap-3 rounded-lg px-4 text-left text-[13px] font-medium leading-[18px] text-text-secondary hover:bg-muted',
-                    activeSubmenu === 'standalone' && 'bg-muted text-text-primary',
-                  )}
+                  onClick={() => handleSelectStandaloneDevice(selectedStandaloneDeviceId ?? null)}
+                  className="flex h-8 w-full items-center gap-3 rounded-lg px-4 text-left text-[13px] font-medium leading-[18px] text-text-secondary hover:bg-muted"
                 >
                   <FolderX className="h-4 w-4 shrink-0" />
                   <span className="min-w-0 flex-1">{t('workbench.no_project', '不使用项目')}</span>
-                  <ChevronRight className="h-4 w-4 shrink-0" />
                 </button>
-                {activeSubmenu === 'standalone' && (
-                  <div
-                    className={cn(
-                      'absolute left-full z-popover pl-2',
-                      sideSubmenuPlacement.standalone === 'below' ? 'top-0' : 'bottom-0',
-                    )}
-                  >
-                    <div
-                      data-testid="standalone-device-submenu"
-                      className="w-72 rounded-2xl border border-border bg-background p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]"
-                    >
-                      {standaloneDevices.length === 0 ? (
-                        <div className="px-4 py-2 text-xs text-text-muted">
-                          {t('workbench.project_no_available_devices', '暂无可用设备')}
-                        </div>
-                      ) : (
-                        standaloneDevices.map(device => {
-                          const online = isOnlineDevice(device)
-                          const compatible = isWeWorkExecutorVersionCompatible(
-                            device.executor_version,
-                          )
-                          const selected = isStandaloneMode && device.device_id === selectedStandaloneDeviceId
-                          const DeviceIcon = isCloudDevice(device) ? Cloud : HardDrive
-                          const selectable = online && compatible
-                          return (
-                            <button
-                              key={device.device_id}
-                              type="button"
-                              data-testid={`standalone-device-option-${device.device_id}`}
-                              disabled={!selectable}
-                              onClick={() => handleSelectStandaloneDevice(device.device_id)}
-                              className={[
-                                'flex min-h-10 w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-xs',
-                                selectable
-                                  ? 'text-text-secondary hover:bg-muted'
-                                  : 'cursor-not-allowed text-text-muted opacity-60',
-                                selected ? 'bg-muted text-text-primary' : '',
-                              ].join(' ')}
-                            >
-                              <DeviceIcon className="h-3.5 w-3.5 shrink-0" />
-                              <span
-                                className={`h-1.5 w-1.5 shrink-0 rounded-full ${getDeviceStatusDotClass(device)}`}
-                              />
-                              <span className="min-w-0 flex-1 truncate">
-                                {device.name || device.device_id}
-                              </span>
-                              <span className={selectable ? 'text-text-secondary' : 'text-text-muted'}>
-                                {getCompactDeviceStatusLabel(device)}
-                              </span>
-                              {selected && selectable && (
-                                <Check
-                                  data-testid={`standalone-device-selected-icon-${device.device_id}`}
-                                  className="h-3.5 w-3.5 shrink-0"
-                                />
-                              )}
-                            </button>
-                          )
-                        })
-                      )}
-                    </div>
-                  </div>
-                )}
               </div>
             </div>
+            {standaloneDevices.length > 0 && (
+              <>
+                <div className="my-1.5 shrink-0 border-t border-border" />
+                <div
+                  data-testid="standalone-device-list"
+                  className="shrink-0 space-y-0.5"
+                >
+                  {standaloneDevices.map(device => {
+                    const online = isOnlineDevice(device)
+                    const compatible = isWeWorkExecutorVersionCompatible(
+                      device.executor_version,
+                    )
+                    const selected = isStandaloneMode && device.device_id === selectedStandaloneDeviceId
+                    const DeviceIcon = isCloudDevice(device) ? Cloud : HardDrive
+                    const selectable = online && compatible
+                    return (
+                      <button
+                        key={device.device_id}
+                        type="button"
+                        data-testid={`standalone-device-option-${device.device_id}`}
+                        disabled={!selectable}
+                        onClick={() => handleSelectStandaloneDevice(device.device_id)}
+                        className="flex h-9 w-full items-center gap-2 rounded-lg px-4 text-left text-[13px] leading-[18px] text-text-secondary hover:bg-muted disabled:cursor-not-allowed disabled:text-text-muted disabled:opacity-60 disabled:hover:bg-transparent"
+                      >
+                        <DeviceIcon className="h-4 w-4 shrink-0" />
+                        <span
+                          className={`h-1.5 w-1.5 shrink-0 rounded-full ${getDeviceStatusDotClass(device)}`}
+                        />
+                        <span className="min-w-0 flex-1 truncate">
+                          {device.name || device.device_id}
+                        </span>
+                        <span className={selectable ? 'text-text-secondary' : 'text-text-muted'}>
+                          {getCompactDeviceStatusLabel(device)}
+                        </span>
+                        {selected && selectable && (
+                          <Check
+                            data-testid={`standalone-device-selected-icon-${device.device_id}`}
+                            className="h-3.5 w-3.5 shrink-0"
+                          />
+                        )}
+                      </button>
+                    )
+                  })}
+                </div>
+              </>
+            )}
             </div>
           </div>
         )}

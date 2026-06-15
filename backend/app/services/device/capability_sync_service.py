@@ -221,6 +221,7 @@ class DeviceCapabilitySyncService:
         user_id: int,
         device_id: str,
         payload: dict[str, Any],
+        timeout_seconds: int = SYNC_TIMEOUT_SECONDS,
     ) -> DeviceCapabilitySyncResult:
         """Push an already-built desired payload to one online device."""
         online_info = await device_service.get_device_online_info(user_id, device_id)
@@ -253,7 +254,7 @@ class DeviceCapabilitySyncService:
                 payload,
                 to=socket_id,
                 namespace=SYNC_NAMESPACE,
-                timeout=SYNC_TIMEOUT_SECONDS,
+                timeout=timeout_seconds,
             )
         except Exception as exc:
             logger.warning(
@@ -639,7 +640,7 @@ class DeviceCapabilitySyncService:
         package_ref = spec.get("packageRef") or {}
         payload = {
             "installed_plugin_id": installed.id,
-            "name": installed.name,
+            "name": self._plugin_payload_name(installed, spec, source),
             "display_name": spec.get("displayName") or installed.name,
             "description": spec.get("description", ""),
             "marketplace": marketplace,
@@ -656,6 +657,24 @@ class DeviceCapabilitySyncService:
             payload["checksum"] = package_ref.get("checksum")
             payload["download_path"] = f"/api/plugins/installed/{installed.id}/download"
         return payload
+
+    def _plugin_payload_name(
+        self,
+        installed: Kind,
+        spec: dict[str, Any],
+        source: dict[str, Any],
+    ) -> str:
+        manifest = spec.get("manifest") or {}
+        for candidate in (
+            source.get("pluginKey"),
+            source.get("plugin"),
+            manifest.get("name") if isinstance(manifest, dict) else None,
+            installed.json.get("metadata", {}).get("name"),
+            installed.name,
+        ):
+            if isinstance(candidate, str) and candidate:
+                return candidate
+        return installed.name
 
     def _aggregate_response(
         self,

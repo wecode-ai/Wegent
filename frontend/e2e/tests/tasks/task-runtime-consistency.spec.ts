@@ -31,6 +31,11 @@ type RuntimeCheckTracker = {
   count: () => number
 }
 
+type SocketDropOptions = {
+  chatEvents?: string[]
+  terminalTaskStatuses?: string[]
+}
+
 test.describe.configure({ mode: 'serial' })
 
 test.describe('Task runtime consistency', () => {
@@ -85,6 +90,145 @@ test.describe('Task runtime consistency', () => {
     await expectChatInputCanSubmit(page, `${TEST_PREFIX} normal readiness probe`)
     await expectNoQueuedMessages(page)
     expect(runtimeChecks.count()).toBeLessThan(8)
+  })
+
+  test('keeps previous messages and resumes streaming after page refresh', async ({
+    page,
+    request,
+  }) => {
+    const messageText = `${TEST_PREFIX} refresh during streaming request`
+    const initialMarker = `${TEST_PREFIX}-refresh-initial`
+    const continuationMarker = `${TEST_PREFIX}-refresh-continuation`
+    const finalMarker = `${TEST_PREFIX}-refresh-final`
+
+    await configureStreamRule(request, messageText, {
+      responseContent: [
+        initialMarker,
+        'cached',
+        'partial',
+        'content',
+        'before',
+        'the',
+        'browser',
+        'refreshes',
+        'and',
+        'then',
+        continuationMarker,
+        'keeps',
+        'arriving',
+        'after',
+        'reload',
+        finalMarker,
+      ].join(' '),
+      chunkDelayMs: 300,
+      doneDelayMs: 1500,
+    })
+
+    await gotoChatWithTestTeam(page)
+    await sendChatMessage(page, messageText)
+
+    const taskId = await waitForTaskId(page)
+    await waitForBackendStatus(request, taskId, ['RUNNING'])
+    await expect(page.getByTestId('messages-container')).toContainText(messageText, {
+      timeout: 15000,
+    })
+    await expect(page.getByTestId('messages-container')).toContainText(initialMarker, {
+      timeout: 15000,
+    })
+
+    await reloadCurrentTaskPage(page)
+
+    await expect(page.getByTestId('messages-container')).toContainText(messageText, {
+      timeout: 30000,
+    })
+    await expect(page.getByTestId('messages-container')).toContainText(initialMarker, {
+      timeout: 30000,
+    })
+    await expect(page.getByTestId('messages-container')).toContainText(continuationMarker, {
+      timeout: 30000,
+    })
+    await expect(page.getByTestId('messages-container')).toContainText(finalMarker, {
+      timeout: 30000,
+    })
+    await waitForBackendTerminal(request, taskId)
+
+    await expectChatInputCanSubmit(page, `${TEST_PREFIX} refresh readiness probe`)
+    await expectNoQueuedMessages(page)
+    await expectSingleVisibleResponse(page, finalMarker)
+  })
+
+  test('restores streaming content after reopening the task page mid-stream', async ({
+    context,
+    page,
+    request,
+  }) => {
+    const messageText = `${TEST_PREFIX} reopen during streaming request`
+    const initialMarker = `${TEST_PREFIX}-reopen-initial`
+    const continuationMarker = `${TEST_PREFIX}-reopen-continuation`
+    const finalMarker = `${TEST_PREFIX}-reopen-final`
+
+    await configureStreamRule(request, messageText, {
+      responseContent: [
+        initialMarker,
+        'the',
+        'original',
+        'page',
+        'is',
+        'closed',
+        'while',
+        'the',
+        'model',
+        'continues',
+        'streaming',
+        'cached',
+        'content',
+        'for',
+        'the',
+        'next',
+        'page',
+        continuationMarker,
+        'continues',
+        'through',
+        'socket',
+        'resume',
+        'until',
+        finalMarker,
+      ].join(' '),
+      chunkDelayMs: 300,
+      doneDelayMs: 1500,
+    })
+
+    await gotoChatWithTestTeam(page)
+    await sendChatMessage(page, messageText)
+
+    const taskId = await waitForTaskId(page)
+    await waitForBackendStatus(request, taskId, ['RUNNING'])
+    await expect(page.getByTestId('messages-container')).toContainText(initialMarker, {
+      timeout: 15000,
+    })
+
+    const taskUrl = page.url()
+    await page.close()
+    const recoveredPage = await openTaskPageInFreshTab(context, taskUrl)
+
+    await expect(recoveredPage.getByTestId('messages-container')).toContainText(messageText, {
+      timeout: 30000,
+    })
+    await expect(recoveredPage.getByTestId('messages-container')).toContainText(initialMarker, {
+      timeout: 30000,
+    })
+    await expect(recoveredPage.getByTestId('messages-container')).toContainText(
+      continuationMarker,
+      { timeout: 30000 }
+    )
+    await expect(recoveredPage.getByTestId('messages-container')).toContainText(finalMarker, {
+      timeout: 30000,
+    })
+    await waitForBackendTerminal(request, taskId)
+
+    await expectChatInputCanSubmit(recoveredPage, `${TEST_PREFIX} reopen readiness probe`)
+    await expectNoQueuedMessages(recoveredPage)
+    await expectSingleVisibleResponse(recoveredPage, finalMarker)
   })
 
   test('recovers when the terminal push event is missed while returning from background', async ({
@@ -172,6 +316,124 @@ test.describe('Task runtime consistency', () => {
       timeout: 30000,
     })
     await expectChatInputCanSubmit(page, `${TEST_PREFIX} network readiness probe`)
+    await expectNoQueuedMessages(page)
+  })
+
+  test('recovers RUNNING with unknown stream through the state machine probe', async ({
+    page,
+    request,
+  }) => {
+    const socketDropper = await dropChatStartSocketEvents(page)
+    const runtimeChecks = trackRuntimeChecks(page)
+    const messageText = `${TEST_PREFIX} unknown stream probe request`
+    const responseMarker = `${TEST_PREFIX}-unknown-response`
+
+    await configureStreamRule(request, messageText, {
+      responseContent: [
+        responseMarker,
+        'keeps',
+        'streaming',
+        'after',
+        'the',
+        'start',
+        'event',
+        'is',
+        'lost',
+        'so',
+        'runtime',
+        'probe',
+        'can',
+        'resume',
+      ].join(' '),
+      chunkDelayMs: 250,
+      doneDelayMs: 3000,
+    })
+
+    await gotoChatWithTestTeam(page)
+    const checksBeforeSend = runtimeChecks.count()
+    await sendChatMessage(page, messageText)
+
+    const taskId = await waitForTaskId(page)
+    await waitForBackendTerminal(request, taskId)
+
+    await expect
+      .poll(() => socketDropper.droppedMessages.some(message => message.includes('chat:start')), {
+        message: 'The E2E fault injection should drop chat:start',
+        timeout: 10000,
+      })
+      .toBe(true)
+
+    await expect
+      .poll(() => runtimeChecks.count(), {
+        message: 'Dropped chat:start should trigger the internal runtime probe',
+        timeout: 15000,
+      })
+      .toBeGreaterThan(checksBeforeSend)
+
+    await expect(page.getByTestId('messages-container')).toContainText(responseMarker, {
+      timeout: 30000,
+    })
+    await expectChatInputCanSubmit(page, `${TEST_PREFIX} unknown readiness probe`)
+    await expectNoQueuedMessages(page)
+  })
+
+  test('recovers when stream cancellation ack events are missed', async ({ page, request }) => {
+    const socketDropper = await dropTerminalSocketEvents(page)
+    const runtimeChecks = trackRuntimeChecks(page)
+    const messageText = `${TEST_PREFIX} cancel ack probe request`
+    const responseMarker = `${TEST_PREFIX}-cancel-response`
+
+    await configureStreamRule(request, messageText, {
+      responseContent: [
+        responseMarker,
+        'keeps',
+        'streaming',
+        'long',
+        'enough',
+        'for',
+        'the',
+        'browser',
+        'to',
+        'send',
+        'a',
+        'stop',
+        'request',
+        'before',
+        'the',
+        'model',
+        'finishes',
+      ].join(' '),
+      chunkDelayMs: 250,
+      doneDelayMs: 20000,
+    })
+
+    await gotoChatWithTestTeam(page)
+    await sendChatMessage(page, messageText)
+
+    const taskId = await waitForTaskId(page)
+    await expect(page.getByTestId('messages-container')).toContainText(responseMarker, {
+      timeout: 15000,
+    })
+
+    const checksBeforeStop = runtimeChecks.count()
+    await stopActiveStream(page)
+    await waitForBackendStatus(request, taskId, ['CANCELLED'])
+
+    await expect
+      .poll(() => socketDropper.droppedMessages.some(message => message.includes('CANCELLED')), {
+        message: 'The E2E fault injection should drop cancellation terminal events',
+        timeout: 10000,
+      })
+      .toBe(true)
+
+    await expect
+      .poll(() => runtimeChecks.count(), {
+        message: 'Missing cancellation ack should trigger the internal runtime probe',
+        timeout: 20000,
+      })
+      .toBeGreaterThan(checksBeforeStop)
+
+    await expectChatInputCanSubmit(page, `${TEST_PREFIX} cancel readiness probe`)
     await expectNoQueuedMessages(page)
   })
 
@@ -311,6 +573,22 @@ test.describe('Task runtime consistency', () => {
     await ensureTestTeamSelected(page)
   }
 
+  async function reloadCurrentTaskPage(page: Page): Promise<void> {
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    await dismissOnboardingTour(page)
+    await expect(page.getByTestId('messages-container')).toBeVisible({ timeout: 30000 })
+  }
+
+  async function openTaskPageInFreshTab(context: BrowserContext, taskUrl: string): Promise<Page> {
+    const recoveredPage = await context.newPage()
+    await skipOnboardingTour(recoveredPage)
+    await recoveredPage.goto(taskUrl)
+    await recoveredPage.waitForLoadState('domcontentloaded')
+    await dismissOnboardingTour(recoveredPage)
+    await expect(recoveredPage.getByTestId('messages-container')).toBeVisible({ timeout: 30000 })
+    return recoveredPage
+  }
+
   async function sendChatMessage(page: Page, message: string): Promise<void> {
     await fillMessageInput(page, message)
     const sendButton = page.getByTestId('send-button')
@@ -331,6 +609,16 @@ test.describe('Task runtime consistency', () => {
   async function expectChatInputCanSubmit(page: Page, probeMessage: string): Promise<void> {
     await fillMessageInput(page, probeMessage)
     await expect(page.getByTestId('send-button')).toBeEnabled({ timeout: 30000 })
+  }
+
+  async function stopActiveStream(page: Page): Promise<void> {
+    const stopButton = page
+      .getByTestId('stop-stream-button')
+      .or(page.locator('button[title="Stop generating"]'))
+      .first()
+    await expect(stopButton).toBeVisible({ timeout: 15000 })
+    await expect(stopButton).toBeEnabled({ timeout: 15000 })
+    await stopButton.click()
   }
 
   async function expectNoQueuedMessages(page: Page): Promise<void> {
@@ -365,6 +653,16 @@ test.describe('Task runtime consistency', () => {
   }
 
   async function waitForBackendTerminal(request: APIRequestContext, taskId: number): Promise<void> {
+    await waitForBackendStatus(request, taskId, ['COMPLETED', 'COMPLETED_SILENT'])
+  }
+
+  async function waitForBackendStatus(
+    request: APIRequestContext,
+    taskId: number,
+    expectedStatuses: string[]
+  ): Promise<void> {
+    const normalizedExpectedStatuses = new Set(expectedStatuses.map(status => status.toUpperCase()))
+
     await expect
       .poll(
         async () => {
@@ -377,14 +675,14 @@ test.describe('Task runtime consistency', () => {
 
           const runtime = (await response.json()) as RuntimeCheckResponse
           const status = String(runtime.task_status || '').toUpperCase()
-          return status === 'COMPLETED' || status === 'COMPLETED_SILENT' ? 'TERMINAL' : status
+          return normalizedExpectedStatuses.has(status) ? 'EXPECTED' : status
         },
         {
-          message: `Backend task ${taskId} should reach a terminal status`,
+          message: `Backend task ${taskId} should reach one of: ${expectedStatuses.join(', ')}`,
           timeout: 30000,
         }
       )
-      .toBe('TERMINAL')
+      .toBe('EXPECTED')
   }
 
   function trackRuntimeChecks(page: Page): RuntimeCheckTracker {
@@ -402,6 +700,22 @@ test.describe('Task runtime consistency', () => {
   }
 
   async function dropTerminalSocketEvents(page: Page): Promise<{ droppedMessages: string[] }> {
+    return dropSocketEvents(page, {
+      chatEvents: ['chat:done', 'chat:error', 'chat:cancelled'],
+      terminalTaskStatuses: ['COMPLETED', 'COMPLETED_SILENT', 'FAILED', 'CANCELLED'],
+    })
+  }
+
+  async function dropChatStartSocketEvents(page: Page): Promise<{ droppedMessages: string[] }> {
+    return dropSocketEvents(page, {
+      chatEvents: ['chat:start'],
+    })
+  }
+
+  async function dropSocketEvents(
+    page: Page,
+    options: SocketDropOptions
+  ): Promise<{ droppedMessages: string[] }> {
     const droppedMessages: string[] = []
 
     await page.routeWebSocket(/\/socket\.io\/.*transport=websocket/, ws => {
@@ -413,14 +727,13 @@ test.describe('Task runtime consistency', () => {
 
       server.onMessage(message => {
         const text = typeof message === 'string' ? message : message.toString()
-        const isTerminalChatEvent =
-          text.includes('chat:done') ||
-          text.includes('chat:error') ||
-          text.includes('chat:cancelled')
+        const isDroppedChatEvent =
+          options.chatEvents?.some(eventName => text.includes(eventName)) ?? false
         const isTerminalTaskStatus =
-          text.includes('task:status') && /COMPLETED|COMPLETED_SILENT|FAILED|CANCELLED/.test(text)
+          text.includes('task:status') &&
+          (options.terminalTaskStatuses?.some(status => text.includes(status)) ?? false)
 
-        if (isTerminalChatEvent || isTerminalTaskStatus) {
+        if (isDroppedChatEvent || isTerminalTaskStatus) {
           droppedMessages.push(text)
           return
         }

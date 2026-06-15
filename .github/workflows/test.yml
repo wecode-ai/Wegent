@@ -261,32 +261,38 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10.34.3
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18.x'
-          cache: 'npm'
-          cache-dependency-path: ./frontend/package-lock.json
+          node-version: '20.x'
+          cache: 'pnpm'
+          cache-dependency-path: ./pnpm-lock.yaml
 
       - name: Cache Next.js build
         uses: actions/cache@v4
         with:
           path: |
             ./frontend/.next/cache
-          key: ${{ runner.os }}-nextjs-${{ hashFiles('./frontend/package-lock.json') }}-${{ hashFiles('./frontend/src/**/*.[jt]s', './frontend/src/**/*.[jt]sx') }}
+          key: ${{ runner.os }}-nextjs-${{ hashFiles('./pnpm-lock.yaml') }}-${{ hashFiles('./frontend/src/**/*.[jt]s', './frontend/src/**/*.[jt]sx') }}
           restore-keys: |
-            ${{ runner.os }}-nextjs-${{ hashFiles('./frontend/package-lock.json') }}-
+            ${{ runner.os }}-nextjs-${{ hashFiles('./pnpm-lock.yaml') }}-
             ${{ runner.os }}-nextjs-
 
       - name: Install dependencies
-        working-directory: ./frontend
-        run: npm ci
+        run: pnpm install --frozen-lockfile
+
+      - name: Run chat core tests
+        run: pnpm --filter @wegent/chat-core test
 
       - name: Run frontend tests
-        working-directory: ./frontend
         env:
           NEXT_TELEMETRY_DISABLED: 1
-        run: npm test -- --coverage --passWithNoTests
+        run: pnpm --filter wecode-ai-assistant test --coverage --passWithNoTests
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v3
@@ -294,6 +300,41 @@ jobs:
           files: ./frontend/coverage/coverage-final.json
           flags: frontend
           name: frontend-coverage
+
+  test-wework:
+    name: Test Wework
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093
+        with:
+          version: 10.34.3
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+          cache: 'pnpm'
+          cache-dependency-path: ./pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run wework tests
+        env:
+          TZ: Asia/Shanghai
+        run: pnpm --filter wework exec vitest run --coverage --passWithNoTests
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          files: ./wework/coverage/coverage-final.json
+          flags: wework
+          name: wework-coverage
 
   test-wegent-cli:
     name: Test wegent CLI
@@ -367,6 +408,12 @@ jobs:
           --health-retries=5
 
     steps:
+      - name: Generate internal service token
+        run: |
+          token=$(openssl rand -hex 32)
+          echo "::add-mask::$token"
+          echo "INTERNAL_SERVICE_TOKEN=$token" >> "$GITHUB_ENV"
+
       - name: Checkout code
         uses: actions/checkout@v4
 
@@ -427,7 +474,7 @@ jobs:
   test-summary:
     name: Test Summary
     runs-on: ubuntu-latest
-    needs: [test-backend, test-executor, test-executor-manager, test-shared, test-knowledge-engine, test-frontend, test-wegent-cli, test-wegent-cli-integration]
+    needs: [test-backend, test-executor, test-executor-manager, test-shared, test-knowledge-engine, test-frontend, test-wework, test-wegent-cli, test-wegent-cli-integration]
     if: always()
 
     steps:
@@ -440,6 +487,7 @@ jobs:
              [[ "${{ needs.test-shared.result }}" == "failure" ]] || \
              [[ "${{ needs.test-knowledge-engine.result }}" == "failure" ]] || \
              [[ "${{ needs.test-frontend.result }}" == "failure" ]] || \
+             [[ "${{ needs.test-wework.result }}" == "failure" ]] || \
              [[ "${{ needs.test-wegent-cli.result }}" == "failure" ]] || \
              [[ "${{ needs.test-wegent-cli-integration.result }}" == "failure" ]]; then
             echo "One or more test jobs failed"

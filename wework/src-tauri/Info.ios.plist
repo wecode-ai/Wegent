@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  Merged into the generated iOS Info.plist at build time by Tauri.
+	  Allows cleartext HTTP to a LAN backend during development/internal testing.
+	  NOTE: App Store review rejects NSAllowsArbitraryLoads without justification;
+	  for production use HTTPS and remove this exception (or scope it per-domain).
+	-->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+</dict>
+</plist>

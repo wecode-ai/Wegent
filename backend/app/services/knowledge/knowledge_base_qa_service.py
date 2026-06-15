@@ -18,6 +18,7 @@ from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
+from app.models.subtask import Subtask, SubtaskRole
 from app.schemas.knowledge_qa_history import (
     EmbeddingConfigInfo,
     HybridWeightsInfo,
@@ -29,8 +30,7 @@ from app.schemas.knowledge_qa_history import (
     QAHistoryResponse,
     RetrievalConfigInfo,
 )
-from shared.models.db.enums import SubtaskRole
-from shared.models.db.subtask import Subtask
+from app.stores.tasks import subtask_store
 from shared.models.db.subtask_context import SubtaskContext
 
 logger = logging.getLogger(__name__)
@@ -160,31 +160,26 @@ class KnowledgeBaseQAService:
         """
         try:
             # Get the USER subtask that this context belongs to
-            user_subtask = (
-                db.query(Subtask)
-                .filter(
-                    Subtask.id == context.subtask_id,
-                    Subtask.role == SubtaskRole.USER,
-                )
-                .first()
+            user_subtask = subtask_store.get_by_id_and_role(
+                db,
+                subtask_id=context.subtask_id,
+                role=SubtaskRole.USER,
             )
 
             if not user_subtask:
                 # Try to find the USER subtask by context's subtask_id
                 # The context might be linked to an ASSISTANT subtask, so find the parent
-                subtask = (
-                    db.query(Subtask).filter(Subtask.id == context.subtask_id).first()
+                subtask = subtask_store.get_by_id(
+                    db,
+                    subtask_id=context.subtask_id,
                 )
                 if subtask and subtask.role == SubtaskRole.ASSISTANT:
                     # Find the USER subtask by parent_id
-                    user_subtask = (
-                        db.query(Subtask)
-                        .filter(
-                            Subtask.task_id == subtask.task_id,
-                            Subtask.message_id == subtask.parent_id,
-                            Subtask.role == SubtaskRole.USER,
-                        )
-                        .first()
+                    user_subtask = subtask_store.get_by_task_message_id_and_role(
+                        db,
+                        task_id=subtask.task_id,
+                        message_id=subtask.parent_id,
+                        role=SubtaskRole.USER,
                     )
                 if not user_subtask:
                     logger.warning(
@@ -241,14 +236,11 @@ class KnowledgeBaseQAService:
         """
         try:
             # Find ASSISTANT subtask by task_id and parent_id matching USER's message_id
-            assistant_subtask = (
-                db.query(Subtask)
-                .filter(
-                    Subtask.task_id == user_subtask.task_id,
-                    Subtask.parent_id == user_subtask.message_id,
-                    Subtask.role == SubtaskRole.ASSISTANT,
-                )
-                .first()
+            assistant_subtask = subtask_store.get_by_task_parent_id_and_role(
+                db,
+                task_id=user_subtask.task_id,
+                parent_id=user_subtask.message_id,
+                role=SubtaskRole.ASSISTANT,
             )
 
             if assistant_subtask and assistant_subtask.result:
@@ -384,3 +376,21 @@ class KnowledgeBaseQAService:
 
 # Singleton instance for service
 knowledge_base_qa_service = KnowledgeBaseQAService()
+
+
+def get_qa_history(
+    db: Session,
+    start_time: datetime,
+    end_time: datetime,
+    user_id: Optional[int] = None,
+    page: int = 1,
+    page_size: int = 20,
+) -> QAHistoryResponse:
+    return knowledge_base_qa_service.get_qa_history(
+        db=db,
+        start_time=start_time,
+        end_time=end_time,
+        user_id=user_id,
+        page=page,
+        page_size=page_size,
+    )

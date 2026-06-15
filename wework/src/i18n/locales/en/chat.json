@@ -1,0 +1,111 @@
+{
+  "file_changes": {
+    "edited_files": "Edited {{count}} files",
+    "show_more": "Show {{count}} more files",
+    "show_less": "Show less",
+    "review": "Review",
+    "review_title": "Changes from this turn",
+    "revert": "Revert",
+    "confirm_revert_title": "Revert this turn's file changes?",
+    "confirm_revert_description": "The workspace changes only when the reverse patch applies safely. Later changes are never overwritten.",
+    "confirm_revert": "Confirm revert",
+    "cancel": "Cancel",
+    "close": "Close",
+    "reverting": "Reverting",
+    "loading_diff": "Loading changes from the device...",
+    "empty_diff": "No text changes to display",
+    "review_failed": "Failed to load file changes",
+    "revert_failed": "Failed to revert file changes",
+    "device_offline": "The device is offline. Review and revert are unavailable.",
+    "reverted": "Reverted",
+    "conflicted": "Later changes conflict, so the workspace was not modified",
+    "artifact_missing": "The change artifact is no longer available",
+    "binary_file": "Binary file"
+  },
+  "assistant_error": {
+    "details": "Error details",
+    "actions": {
+      "switch_model_retry": "Switch model and retry",
+      "retry": "Retry"
+    },
+    "types": {
+      "context_length_exceeded": {
+        "title": "The conversation is too long for this model's context window",
+        "description": "Try a model with a larger context window, or start a fresh conversation."
+      },
+      "quota_exceeded": {
+        "title": "The model's usage quota has been exhausted",
+        "description": "Switch to another available model, or continue after quota is restored."
+      },
+      "rate_limit": {
+        "title": "Too many requests. Please wait a moment before trying again",
+        "description": "Wait briefly and retry, or switch to another available model."
+      },
+      "payload_too_large": {
+        "title": "Content too large: conversation history or attachment exceeds the limit",
+        "description": "Reduce attachments or context content, then retry."
+      },
+      "network_error": {
+        "title": "Network error: Please check your connection and try again",
+        "description": "The connection was interrupted or the service is temporarily unreachable."
+      },
+      "timeout_error": {
+        "title": "Request timeout: Service response time exceeded",
+        "description": "The service did not respond in time. Try sending the message again later."
+      },
+      "llm_error": {
+        "title": "Model error: The model is temporarily unavailable",
+        "description": "The model service is unavailable. Try again later or switch models."
+      },
+      "llm_unsupported": {
+        "title": "Current model does not support this request",
+        "description": "This input or attachment type is not supported by the model. Switch to a compatible model."
+      },
+      "invalid_parameter": {
+        "title": "Invalid parameter: Request parameters are incorrect",
+        "description": "The request does not match the model requirements. Adjust the input and retry."
+      },
+      "forbidden": {
+        "title": "Access denied: You do not have permission to use this resource",
+        "description": "Check your account, device, or model permissions and retry."
+      },
+      "container_oom": {
+        "title": "Executor out of memory",
+        "description": "Start a new conversation to retry, or contact an administrator to increase memory."
+      },
+      "container_error": {
+        "title": "Executor error",
+        "description": "The container or local executor is temporarily unavailable. Try again later."
+      },
+      "content_filter": {
+        "title": "Content triggered security review and was rejected",
+        "description": "Modify the parts that may trigger the safety policy and retry."
+      },
+      "provider_error": {
+        "title": "Model service error. Please try again later",
+        "description": "The upstream model service returned an error. Retry later or switch models."
+      },
+      "image_too_large": {
+        "title": "Image exceeds size limit. Please compress the image and retry",
+        "description": "Compress the image or reduce the number of images, then send again."
+      },
+      "model_protocol_error": {
+        "title": "Model and runtime protocol do not match",
+        "description": "The current model does not support this request format. Switch to a compatible model and retry.",
+        "description_with_model": "{{model}} does not support the current runtime protocol. Switch to a compatible model and retry."
+      },
+      "invalid_role": {
+        "title": "Model parameter error: Message role format is incompatible",
+        "description": "The current model does not support this message format. Switch models and retry."
+      },
+      "permission_denied": {
+        "title": "No permission to use the current model",
+        "description": "Check model access permissions, or switch to a model within your permissions."
+      },
+      "generic_error": {
+        "title": "Message generation failed",
+        "description": "The request could not be completed. Try again later, or view the error details."
+      }
+    }
+  }
+}

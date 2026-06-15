@@ -6,7 +6,7 @@ import '@testing-library/jest-dom'
 import { act, render, screen } from '@testing-library/react'
 
 import { TaskRuntimeGlyph } from '@/features/tasks/components/message/TaskRuntimeGlyph'
-import type { TaskStateSnapshot } from '@/features/tasks/state'
+import type { TaskStateSnapshot } from '@wegent/chat-core'
 
 function createTaskState(taskId: number): TaskStateSnapshot {
   return {
@@ -30,6 +30,7 @@ function createTaskState(taskId: number): TaskStateSnapshot {
       canQueueMessage: false,
       canCancelTask: false,
       blocksQueuedDispatch: false,
+      serverConfirmedNoStream: false,
     },
   }
 }

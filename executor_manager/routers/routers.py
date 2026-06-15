@@ -14,6 +14,7 @@ to backend's callback endpoint without processing.
 """
 
 import asyncio
+import json
 import os
 import time
 import uuid
@@ -54,6 +55,7 @@ _validation_task_registry: Dict[int, Dict[str, Any]] = {}
 # Maximum age for validation registry entries before cleanup (seconds)
 _VALIDATION_REGISTRY_MAX_AGE = 300
 
+
 # Create FastAPI app
 app = FastAPI(
     title="Executor Manager API",
@@ -89,6 +91,7 @@ task_processor = TaskProcessor()
 
 # Health check paths that should skip logging to reduce overhead
 HEALTH_CHECK_PATHS = {"/", "/health"}
+SENSITIVE_BODY_CAPTURE_PATHS = {f"{ROUTE_PREFIX}/callback", "/callback"}
 
 
 @app.middleware("http")
@@ -114,12 +117,14 @@ async def log_requests(request: Request, call_next):
 
     # Get OTEL config
     otel_config = get_otel_config()
+    should_capture_body = request.url.path not in SENSITIVE_BODY_CAPTURE_PATHS
 
     # Capture request body if OTEL is enabled and body capture is configured
     request_body = None
     if (
         otel_config.enabled
         and otel_config.capture_request_body
+        and should_capture_body
         and request.method in ("POST", "PUT", "PATCH")
     ):
         try:
@@ -186,7 +191,7 @@ async def log_requests(request: Request, call_next):
                             )
 
                     # Capture response body (only for non-streaming responses)
-                    if otel_config.capture_response_body:
+                    if otel_config.capture_response_body and should_capture_body:
                         if not isinstance(response, StreamingResponse):
                             try:
                                 response_body_chunks = []
@@ -261,6 +266,10 @@ async def callback_handler(event_data: dict = Body(...), http_request: Request =
             f"[Callback] Received from {client_ip}: "
             f"event_type={event_type}, task_id={task_id}, subtask_id={subtask_id}"
         )
+        logger.info(
+            f"[Callback] Summary: event_type={event_type}, task_id={task_id}, "
+            f"subtask_id={subtask_id}, keys={sorted(event_data.keys())}"
+        )
 
         # Set task context for tracing
         set_task_context(task_id=task_id, subtask_id=subtask_id)
@@ -274,7 +283,8 @@ async def callback_handler(event_data: dict = Body(...), http_request: Request =
             if response.status_code != 200:
                 logger.warning(
                     f"[Callback] Backend returned error: "
-                    f"{response.status_code} {response.text}"
+                    f"status_code={response.status_code}, "
+                    f"body_preview={_to_log_preview(response.text)}"
                 )
 
         # Handle terminal events - remove from RunningTaskTracker
@@ -851,7 +861,8 @@ async def _update_validation_status_from_callback(
             else:
                 logger.warning(
                     f"[Callback] Failed to update validation status: "
-                    f"{response.status_code} {response.text}"
+                    f"status_code={response.status_code}, "
+                    f"body_preview={_to_log_preview(response.text)}"
                 )
     except Exception as e:
         logger.error(
@@ -1425,6 +1436,7 @@ class ArchiveExecutorRequest(BaseModel):
     executor_name: str
     executor_namespace: str
     max_size_mb: int = 500
+    runtime_type: str = "executor"
 
 
 class RestoreExecutorRequest(BaseModel):
@@ -1434,6 +1446,7 @@ class RestoreExecutorRequest(BaseModel):
     download_url: str  # Presigned MinIO download URL
     executor_name: str
     executor_namespace: str
+    runtime_type: str = "executor"
 
 
 @api_router.post("/executor/archive")
@@ -1480,6 +1493,7 @@ async def archive_executor_workspace(
             "task_id": request.task_id,
             "upload_url": request.upload_url,
             "max_size_mb": request.max_size_mb,
+            "runtime_type": request.runtime_type,
         }
 
         logger.info(f"[Archive] Forwarding to executor: {archive_url}")
@@ -1553,6 +1567,7 @@ async def restore_executor_workspace(
         payload = {
             "task_id": request.task_id,
             "download_url": request.download_url,
+            "runtime_type": request.runtime_type,
         }
 
         logger.info(f"[Restore] Forwarding to executor: {restore_url}")

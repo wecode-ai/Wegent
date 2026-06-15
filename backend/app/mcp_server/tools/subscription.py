@@ -112,9 +112,9 @@ def _get_task_info(db: SessionLocal, task_id: int) -> Optional[dict]:
     """
     try:
         from app.models.kind import Kind
-        from app.models.task import TaskResource
+        from app.stores.tasks import task_store
 
-        task = db.query(TaskResource).filter(TaskResource.id == task_id).first()
+        task = task_store.get_by_id(db, task_id=task_id)
         if not task:
             return None
 

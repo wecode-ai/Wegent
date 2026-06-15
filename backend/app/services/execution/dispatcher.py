@@ -32,9 +32,8 @@ if TYPE_CHECKING:
 
 from app.core.async_utils import run_in_main_loop
 from app.db.session import SessionLocal
-from app.models.subtask import Subtask
-from app.models.task import TaskResource
 from app.services.task_status import extract_task_error
+from app.stores.tasks import subtask_store, task_store
 from shared.models import (
     EventType,
     ExecutionEvent,
@@ -177,6 +176,7 @@ def extract_completed_result(response_data: dict) -> dict:
         "standalone_chat_workspace_path": response_data.get(
             "standalone_chat_workspace_path"
         ),
+        "file_changes": response_data.get("file_changes"),
         "reasoning_content": reasoning_content,
     }
 
@@ -837,7 +837,7 @@ class ExecutionDispatcher:
 
         db = SessionLocal()
         try:
-            subtask = db.query(Subtask).filter(Subtask.id == request.subtask_id).first()
+            subtask = subtask_store.get_by_id(db, subtask_id=request.subtask_id)
             if not subtask:
                 return
 
@@ -847,14 +847,7 @@ class ExecutionDispatcher:
             if not subtask.executor_deleted_at:
                 return
 
-            task = (
-                db.query(TaskResource)
-                .filter(
-                    TaskResource.id == request.task_id,
-                    TaskResource.kind == "Task",
-                )
-                .first()
-            )
+            task = task_store.get_by_id(db, task_id=request.task_id)
             if not task:
                 raise RuntimeError(
                     f"Task {request.task_id} not found for executor recovery"
@@ -888,10 +881,13 @@ class ExecutionDispatcher:
                 raise RuntimeError(error_message)
 
             # Update the current subtask to reflect the recovered executor.
-            current_subtask.executor_name = recovered_info["executor_name"]
-            current_subtask.executor_namespace = recovered_info["executor_namespace"]
-            current_subtask.executor_deleted_at = False
-            db.add(current_subtask)
+            subtask_store.update_fields(
+                db,
+                subtask=current_subtask,
+                executor_name=recovered_info["executor_name"],
+                executor_namespace=recovered_info["executor_namespace"],
+                executor_deleted_at=False,
+            )
             db.commit()
 
             request.executor_name = recovered_info["executor_name"]
@@ -944,15 +940,16 @@ class ExecutionDispatcher:
             device_id: Device ID
             user_id: User ID
         """
-        from app.db.session import SessionLocal
-        from app.models.subtask import Subtask
-
         db = SessionLocal()
         try:
-            subtask = db.query(Subtask).filter(Subtask.id == subtask_id).first()
+            subtask = subtask_store.get_by_id(db, subtask_id=subtask_id)
             if subtask:
-                subtask.executor_name = f"device-{device_id}"
-                subtask.executor_namespace = f"user-{user_id}" if user_id else None
+                subtask_store.update_executor_info(
+                    db,
+                    subtask=subtask,
+                    executor_name=f"device-{device_id}",
+                    executor_namespace=f"user-{user_id}" if user_id else "",
+                )
                 db.commit()
                 logger.info(
                     f"[ExecutionDispatcher] Set executor on subtask {subtask_id}: "

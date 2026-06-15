@@ -8,11 +8,11 @@ import logging
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException
-from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.models.task import TaskResource
 from app.schemas.kind import Task
+from app.stores.tasks import task_access_store, task_store
 
 from .converters import convert_to_task_dict, convert_to_task_dict_optimized
 from .filters import filter_tasks_for_display, filter_tasks_with_title_match
@@ -291,22 +291,14 @@ class TaskQueryMixin:
 
         Allows access if user is owner or approved member.
         """
-        from app.services.task_member_service import task_member_service
-
-        query = db.query(TaskResource).filter(
-            TaskResource.id == task_id,
-            TaskResource.kind == "Task",
-            TaskResource.is_active.in_(TaskResource.is_active_query()),
-            text("JSON_EXTRACT(json, '$.status.status') != 'DELETE'"),
+        task = task_store.get_active_non_deleted_task(
+            db, task_id=task_id, client_origin=client_origin
         )
-        if client_origin:
-            query = query.filter(TaskResource.client_origin == client_origin)
-        task = query.first()
 
         if not task:
             raise HTTPException(status_code=404, detail="Task not found")
 
-        if not task_member_service.is_member(db, task_id, user_id):
+        if not task_access_store.is_member(db, task_id=task_id, user_id=user_id):
             raise HTTPException(status_code=404, detail="Task not found")
 
         return convert_to_task_dict(task, db, task.user_id)
@@ -324,20 +316,16 @@ class TaskQueryMixin:
         from app.services.readers.kinds import KindType, kindReader
         from app.services.readers.users import userReader
         from app.services.subtask import subtask_service
-        from app.services.task_member_service import task_member_service
 
         task_dict = self.get_task_by_id(
             db, task_id=task_id, user_id=user_id, client_origin=client_origin
         )
 
         # Get the raw task resource to extract requested skills from labels
-        task_resource = (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.id == task_id,
-                TaskResource.kind == "Task",
-            )
-            .first()
+        task_resource = task_store.get_by_id(
+            db,
+            task_id=task_id,
+            owner_user_id=task_dict.get("user_id"),
         )
         if task_resource and task_resource.json:
             task_crd_for_skills = Task.model_validate(task_resource.json)
@@ -358,7 +346,7 @@ class TaskQueryMixin:
             )
             team = kindReader.get_by_id(db, KindType.TEAM, team_id)
             if team:
-                task_owner_id = task_member_service.get_task_owner_id(db, task_id)
+                task_owner_id = task_access_store.get_task_owner_id(db, task_id=task_id)
                 logger.info(
                     "[get_task_detail] task_owner_id=%s, team found: %s",
                     task_owner_id,

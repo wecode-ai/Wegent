@@ -138,7 +138,7 @@ Internally, Wegent splits an AI assistant into reusable pieces:
 
 ```text
 Ghost (prompt + MCP + Skills)
-  + Shell (Chat / ClaudeCode / Agno / Dify)
+  + Shell (Chat / ClaudeCode / Dify)
   + Model (Claude / OpenAI / Gemini / DeepSeek / GLM, etc.)
   = Bot
 
@@ -176,7 +176,7 @@ graph TB
     Backend --> ExecutorManager["Executor Manager"]
     Backend --> KnowledgeRuntime["Knowledge Runtime"]
 
-    ExecutorManager --> CloudExecutor["Cloud Executor<br/>ClaudeCode / Agno / Dify"]
+    ExecutorManager --> CloudExecutor["Cloud Executor<br/>ClaudeCode / Dify"]
     Backend <--> LocalExecutor["Local Executor<br/>WebSocket"]
     KnowledgeRuntime --> VectorStore["Elasticsearch / Qdrant / Milvus"]
     Backend --> DocConverter["Knowledge Doc Converter<br/>MinerU OCR"]
@@ -352,6 +352,13 @@ Thanks to the following developers for their contributions and efforts to make t
     </td></tr>
 <tr>
     <td align="center">
+        <a href="https://github.com/jnhu76">
+            <img src="https://avatars.githubusercontent.com/u/5766215?v=4" width="80;" alt="jnhu76"/>
+            <br />
+            <sub><b>Jm.hu</b></sub>
+        </a>
+    </td>
+    <td align="center">
         <a href="https://github.com/kerwin612">
             <img src="https://avatars.githubusercontent.com/u/3371163?v=4" width="80;" alt="kerwin612"/>
             <br />
@@ -377,13 +384,6 @@ Thanks to the following developers for their contributions and efforts to make t
             <img src="https://avatars.githubusercontent.com/u/10198622?v=4" width="80;" alt="junbaor"/>
             <br />
             <sub><b>Junbaor</b></sub>
-        </a>
-    </td>
-    <td align="center">
-        <a href="https://github.com/jnhu76">
-            <img src="https://avatars.githubusercontent.com/u/5766215?v=4" width="80;" alt="jnhu76"/>
-            <br />
-            <sub><b>Jm.hu</b></sub>
         </a>
     </td>
     <td align="center">

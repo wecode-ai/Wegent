@@ -38,6 +38,8 @@ Wegent is an open-source AI-native operating system for defining, organizing, an
 - English version: [`docs/en/developer-guide/external-knowledge-mcp.md`](docs/en/developer-guide/external-knowledge-mcp.md)
 - User runtime config (encrypted user CLI auth storage and device sync): [`docs/zh/developer-guide/user-runtime-config.md`](docs/zh/developer-guide/user-runtime-config.md)
 - English version: [`docs/en/developer-guide/user-runtime-config.md`](docs/en/developer-guide/user-runtime-config.md)
+- Sandbox workspace archive (preserve Sandbox files across idle cleanup and recreation): [`docs/zh/developer-guide/sandbox-workspace-archive.md`](docs/zh/developer-guide/sandbox-workspace-archive.md)
+- English version: [`docs/en/developer-guide/sandbox-workspace-archive.md`](docs/en/developer-guide/sandbox-workspace-archive.md)
 
 **📚 Documentation Writing Rules:**
 - All documentation files MUST include frontmatter with `sidebar_position` for ordering:
@@ -152,7 +154,7 @@ black . && isort .
 **Standards:** TypeScript strict mode, functional components, Prettier, ESLint, single quotes, no semicolons
 
 ```bash
-npm run format && npm run lint
+pnpm --filter wecode-ai-assistant format && pnpm --filter wecode-ai-assistant lint
 ```
 
 **Guidelines:**
@@ -668,11 +670,12 @@ cd chat_shell && uv run pytest
 cd knowledge_runtime && uv run pytest
 cd knowledge_doc_converter && uv run pytest
 cd shared && uv run pytest
-cd frontend && npm test
+pnpm --filter @wegent/chat-core test
+pnpm --dir frontend test
 
 # Format code
 cd backend && black . && isort .
-cd frontend && npm run format
+pnpm --dir frontend run format
 
 # Database migration
 cd backend && uv run alembic revision --autogenerate -m "msg" && uv run alembic upgrade head

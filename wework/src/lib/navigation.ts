@@ -16,7 +16,8 @@ export function toBrowserPath(path: string): string {
 
 export function navigateTo(path: string) {
   const browserPath = toBrowserPath(path)
-  if (window.location.pathname === browserPath) return
+  const currentPath = `${window.location.pathname}${window.location.search}`
+  if (currentPath === browserPath) return
 
   window.history.pushState({}, '', browserPath)
   window.dispatchEvent(new PopStateEvent('popstate'))
@@ -27,7 +28,27 @@ export interface TaskRoute {
   projectId?: number
 }
 
-export function parseTaskRoute(path: string): TaskRoute | null {
+function getNumericSearchParam(
+  searchParams: URLSearchParams,
+  ...names: string[]
+): number | undefined {
+  for (const name of names) {
+    const value = searchParams.get(name)
+    if (value === null || value.trim() === '') continue
+
+    const numberValue = Number(value)
+    if (Number.isInteger(numberValue) && numberValue >= 0) {
+      return numberValue
+    }
+  }
+
+  return undefined
+}
+
+export function parseTaskRoute(path: string, search = ''): TaskRoute | null {
+  const searchParams = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search)
+  const queryProjectId = getNumericSearchParam(searchParams, 'projectId', 'project_id')
+
   const projectTaskMatch = path.match(/^\/projects\/(\d+)\/tasks\/(\d+)$/)
   if (projectTaskMatch) {
     return {
@@ -38,14 +59,19 @@ export function parseTaskRoute(path: string): TaskRoute | null {
 
   const taskMatch = path.match(/^\/tasks\/(\d+)$/)
   if (taskMatch) {
-    return { taskId: Number(taskMatch[1]) }
+    return { taskId: Number(taskMatch[1]), projectId: queryProjectId }
+  }
+
+  const queryTaskId = getNumericSearchParam(searchParams, 'taskId', 'task_id', 'taskid')
+  if (queryTaskId !== undefined) {
+    return { taskId: queryTaskId, projectId: queryProjectId }
   }
 
   return null
 }
 
 export function buildTaskRoute({ taskId, projectId }: TaskRoute): string {
-  if (projectId && projectId > 0) {
+  if (projectId !== undefined) {
     return `/projects/${projectId}/tasks/${taskId}`
   }
   return `/tasks/${taskId}`

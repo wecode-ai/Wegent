@@ -8,7 +8,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useSocket } from '@/contexts/SocketContext'
 import { useUser } from '@/features/common/UserContext'
 import { useOptionalTaskSession } from '@/features/tasks/session/TaskSession'
-import type { UnifiedMessage } from '@/features/tasks/state/TaskStateMachine'
+import type { UnifiedMessage } from '@wegent/chat-core'
 import type { ChatStatusUpdatedPayload } from '@/types/socket'
 
 const CONTEXT_REMAINING_STATUS_ITEM = 'context-remaining'

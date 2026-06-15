@@ -123,3 +123,21 @@ async def test_execute_raises_and_emits_error_when_agent_lifecycle_returns_faile
 
     emitter.emit_error.assert_awaited_once()
     mock_cleanup.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_cancel_awaits_agent_service_async_cancel() -> None:
+    """In-process cancellation should not call the sync asyncio.run wrapper."""
+    executor = InprocessExecutor()
+    agent_service = MagicMock()
+    agent_service.cancel_task_async = AsyncMock(return_value=(TaskStatus.SUCCESS, None))
+    agent_service.cancel_task = MagicMock()
+    fake_module = types.ModuleType("executor.services.agent_service")
+    fake_module.AgentService = MagicMock(return_value=agent_service)
+
+    with patch.dict(sys.modules, {"executor.services.agent_service": fake_module}):
+        success = await executor.cancel(33)
+
+    assert success is True
+    agent_service.cancel_task_async.assert_awaited_once_with(33)
+    agent_service.cancel_task.assert_not_called()

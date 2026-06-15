@@ -92,6 +92,8 @@ chmod +x wegent-executor
 
 默认情况下，executor 会使用 Wegent 下发的 Claude/Codex 模型和 provider 配置。需要使用个人 Codex 登录信息时，在 Wework 的【设置】->【个人】中从设备导入或上传 `~/.codex/auth.json`，再启用“个人配置”。设备心跳发现本机缺少 Codex auth 文件时，会在后台同步该认证；如果设备上已存在 `~/.codex/auth.json`，不会覆盖。使用 Codex 的 GPT 模型会通过该认证账户访问 Codex。
 
+如果访问 Codex 需要代理，可以先在 Wework 的【设置】->【个人】->【代理】中保存个人代理地址，再回到【Codex 认证】中启用“Codex 代理”。Wegent 会在执行 Codex 时注入 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY` 以及对应的小写环境变量。已有 `NO_PROXY` 或 `no_proxy` 时会沿用现有值；未配置时默认绕过 `localhost`、`127.0.0.1`、`::1` 和 `host.docker.internal`。
+
 Wegent 会根据用户设置在执行请求中显式标记 Codex 是否使用个人配置，不再通过 `WEGENT_LOCAL_CLI_CONFIG_RUNTIMES` 环境变量判断。
 
 ### 构建设备镜像
@@ -140,9 +142,9 @@ docker run -d --platform linux/amd64 \
 
 ### 非项目会话工作区
 
-当聊天未选择项目但绑定到在线设备时，Executor 侧的独立 Chats 工作区功能当前默认关闭。如需启用，可在设备运行环境中设置 `WEGENT_EXECUTOR_STANDALONE_CHATS_ENABLED=true`。
+Wework 入口的新对话在未选择项目（`project_id=0`）且绑定到在线设备时，Executor 会默认使用独立 Chats 工作区。如需关闭，可在设备运行环境中设置 `WEGENT_EXECUTOR_STANDALONE_CHATS_ENABLED=false`。Frontend 设备对话保留旧行为，仍使用任务临时工作区。
 
-启用后，首轮任务先在临时任务目录中执行；回复完成后，Executor 会根据日期和回复摘要生成目录名，并把临时目录移动到 Chats 工作区树中。默认根目录为 `~/.wecode/wegent-executor/workspace/chats`。如需自定义位置，可在设备运行环境中设置 `WEGENT_EXECUTOR_CHATS_DIR`。Backend 会把最终路径写入任务元数据标签 `standaloneChatWorkspacePath`，后续继续该会话或打开历史会话时会复用同一目录。
+首轮任务会在 Chats 工作区树中创建目录，目录名根据日期和用户请求生成。默认根目录为 `~/.wecode/wegent-executor/workspace/chats`。如需自定义位置，可在设备运行环境中设置 `WEGENT_EXECUTOR_CHATS_DIR`。Backend 会把最终路径写入任务元数据标签 `standaloneChatWorkspacePath`，后续继续该会话或打开历史会话时会复用同一目录。
 
 项目会话不使用此路径；项目会话仍然使用项目配置中的 `workspace.localPath` 或 `workspace.checkoutPath`。
 

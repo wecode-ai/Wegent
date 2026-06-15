@@ -1,44 +1,37 @@
-import type { Attachment, DeviceInfo, ProjectWithTasks, Task, Team, User } from './api'
+import type {
+  Attachment,
+  DeviceInfo,
+  ProjectWithTasks,
+  Task,
+  Team,
+  TurnFileChangesSummary,
+  User,
+} from './api'
+import type {
+  BaseWorkbenchProcessingBlock,
+  WorkbenchMessage as CoreWorkbenchMessage,
+  WorkbenchMessageRole,
+  WorkbenchMessageStatus,
+  WorkbenchProcessingBlock,
+  WorkbenchThinkingBlock,
+  WorkbenchToolBlock,
+  WorkbenchToolBlockStatus,
+} from '@wegent/chat-core'
 
-export type MessageRole = 'user' | 'assistant' | 'system'
-export type MessageStatus = 'pending' | 'streaming' | 'done' | 'failed'
+export type MessageRole = WorkbenchMessageRole
+export type MessageStatus = WorkbenchMessageStatus
 
-export type ToolBlockStatus = 'generating_arguments' | 'pending' | 'streaming' | 'done' | 'error'
+export type ToolBlockStatus = WorkbenchToolBlockStatus
 
-export interface BaseProcessingBlock {
-  id: string
-  subtaskId: number
-  status: ToolBlockStatus
-  createdAt: number
-}
+export type BaseProcessingBlock = BaseWorkbenchProcessingBlock
 
-export interface ToolBlock extends BaseProcessingBlock {
-  type: 'tool'
-  toolName: string
-  toolInput?: Record<string, unknown>
-  toolOutput?: unknown
-}
+export type ToolBlock = WorkbenchToolBlock
 
-export interface ThinkingBlock extends BaseProcessingBlock {
-  type: 'thinking'
-  content: string
-}
+export type ThinkingBlock = WorkbenchThinkingBlock
 
-export type ProcessingBlock = ToolBlock | ThinkingBlock
+export type ProcessingBlock = WorkbenchProcessingBlock
 
-export interface WorkbenchMessage {
-  id: string
-  taskId?: number
-  subtaskId?: number
-  shellType?: string
-  role: MessageRole
-  content: string
-  status: MessageStatus
-  error?: string
-  attachments?: Attachment[]
-  blocks?: ProcessingBlock[]
-  createdAt: string
-}
+export type WorkbenchMessage = CoreWorkbenchMessage<Attachment, TurnFileChangesSummary>
 
 export type QueuedMessageStatus = 'queued' | 'sending' | 'failed'
 export type GuidanceMessageStatus = 'sending' | 'queued' | 'applied' | 'expired' | 'failed'
