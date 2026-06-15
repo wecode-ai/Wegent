@@ -17,7 +17,7 @@ from executor.envd.api.routes import register_rest_api
 
 
 @pytest.mark.asyncio
-async def test_executor_archive_and_restore_includes_workspace_and_full_home(
+async def test_executor_archive_and_restore_includes_workspace_and_claude_home(
     tmp_path: Path, monkeypatch
 ):
     task_id = 1385
@@ -49,6 +49,9 @@ async def test_executor_archive_and_restore_includes_workspace_and_full_home(
         encoding="utf-8",
     )
     (home_path / "notes.md").write_text("home-notes", encoding="utf-8")
+    (home_path / ".ssh").mkdir()
+    (home_path / ".ssh" / "id_rsa").write_text("secret", encoding="utf-8")
+    (home_path / ".npmrc").write_text("//registry/:_authToken=secret", encoding="utf-8")
     (home_path / ".cache").mkdir()
     (home_path / ".cache" / "large.bin").write_text("skip", encoding="utf-8")
 
@@ -98,7 +101,9 @@ async def test_executor_archive_and_restore_includes_workspace_and_full_home(
         assert "workspace/.git/HEAD" in member_names
         assert "home/.claude/home-memory.md" in member_names
         assert "home/.claude.json" in member_names
-        assert "home/notes.md" in member_names
+        assert "home/notes.md" not in member_names
+        assert "home/.ssh/id_rsa" not in member_names
+        assert "home/.npmrc" not in member_names
         assert "home/.cache" not in member_names
 
         shutil.rmtree(workspace_path / ".claude")
@@ -134,7 +139,7 @@ async def test_executor_archive_and_restore_includes_workspace_and_full_home(
     assert json.loads((home_path / ".claude.json").read_text(encoding="utf-8")) == {
         "theme": "dark"
     }
-    assert (home_path / "notes.md").read_text(encoding="utf-8") == "home-notes"
+    assert not (home_path / "notes.md").exists()
 
 
 @pytest.mark.asyncio
@@ -368,6 +373,128 @@ async def test_restore_succeeds_without_home_payload(tmp_path: Path, monkeypatch
     assert restore_response.json()["success"] is True
     assert restore_response.json()["session_restored"] is False
     assert restore_response.json()["git_restored"] is False
+
+
+@pytest.mark.asyncio
+async def test_executor_archive_excludes_code_server_runtime_state(
+    tmp_path: Path, monkeypatch
+):
+    task_id = 9753
+    upload_url = "https://minio.local/upload/code-server"
+
+    workspace_path = tmp_path / "workspace" / str(task_id)
+    workspace_path.mkdir(parents=True)
+    (workspace_path / "keep.txt").write_text("keep", encoding="utf-8")
+
+    home_path = tmp_path / "home"
+    cert_path = home_path / ".local" / "share" / "code-server" / "cert"
+    cert_path.mkdir(parents=True)
+    (cert_path / "tls.crt").write_text("runtime-cert", encoding="utf-8")
+    (home_path / "notes.md").write_text("home-notes", encoding="utf-8")
+
+    monkeypatch.setattr(routes, "get_workspace_path", lambda _: workspace_path)
+    monkeypatch.setattr(routes, "get_home_path", lambda: home_path)
+
+    archive_blob_store: dict[str, bytes] = {}
+
+    async def _mock_upload_archive(upload_url: str, content: bytes) -> None:
+        archive_blob_store[upload_url] = content
+
+    monkeypatch.setattr(routes, "upload_archive_to_url", _mock_upload_archive)
+
+    app = FastAPI()
+    register_rest_api(app)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(
+        transport=transport,
+        base_url="http://testserver",
+    ) as client:
+        archive_response = await client.post(
+            "/api/archive",
+            json={
+                "task_id": task_id,
+                "upload_url": upload_url,
+                "max_size_mb": 10,
+            },
+        )
+
+    assert archive_response.status_code == 200
+    with tarfile.open(
+        fileobj=BytesIO(archive_blob_store[upload_url]),
+        mode="r:gz",
+    ) as tar:
+        member_names = tar.getnames()
+
+    assert "home/notes.md" not in member_names
+    assert "workspace/keep.txt" in member_names
+    assert "home/.local/share/code-server/cert/tls.crt" not in member_names
+
+
+@pytest.mark.asyncio
+async def test_restore_skips_code_server_runtime_members_from_old_archives(
+    tmp_path: Path, monkeypatch
+):
+    task_id = 9764
+    download_url = "https://minio.local/download/old-code-server"
+
+    workspace_path = tmp_path / "workspace" / str(task_id)
+    workspace_path.mkdir(parents=True)
+    home_path = tmp_path / "home"
+    home_path.mkdir(parents=True)
+
+    archive_buffer = BytesIO()
+    with tarfile.open(fileobj=archive_buffer, mode="w:gz") as tar:
+        keep_bytes = b"restored"
+        keep_info = tarfile.TarInfo("workspace/keep.txt")
+        keep_info.size = len(keep_bytes)
+        tar.addfile(keep_info, BytesIO(keep_bytes))
+
+        cert_bytes = b"runtime-cert"
+        cert_info = tarfile.TarInfo("home/.local/share/code-server/cert/tls.crt")
+        cert_info.size = len(cert_bytes)
+        tar.addfile(cert_info, BytesIO(cert_bytes))
+
+        claude_bytes = b"claude-home"
+        claude_info = tarfile.TarInfo("home/.claude/home-memory.md")
+        claude_info.size = len(claude_bytes)
+        tar.addfile(claude_info, BytesIO(claude_bytes))
+
+        ssh_bytes = b"secret"
+        ssh_info = tarfile.TarInfo("home/.ssh/id_rsa")
+        ssh_info.size = len(ssh_bytes)
+        tar.addfile(ssh_info, BytesIO(ssh_bytes))
+
+    async def _mock_download_archive(download_url: str) -> bytes:
+        return archive_buffer.getvalue()
+
+    monkeypatch.setattr(routes, "get_workspace_path", lambda _: workspace_path)
+    monkeypatch.setattr(routes, "get_home_path", lambda: home_path)
+    monkeypatch.setattr(routes, "download_archive_from_url", _mock_download_archive)
+
+    app = FastAPI()
+    register_rest_api(app)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(
+        transport=transport,
+        base_url="http://testserver",
+    ) as client:
+        restore_response = await client.post(
+            "/api/restore",
+            json={
+                "task_id": task_id,
+                "download_url": download_url,
+            },
+        )
+
+    assert restore_response.status_code == 200
+    assert (workspace_path / "keep.txt").read_text(encoding="utf-8") == "restored"
+    assert (home_path / ".claude" / "home-memory.md").read_text(
+        encoding="utf-8"
+    ) == "claude-home"
+    assert not (home_path / ".local" / "share" / "code-server").exists()
+    assert not (home_path / ".ssh").exists()
 
 
 def test_sandbox_home_path_is_not_process_home(monkeypatch):

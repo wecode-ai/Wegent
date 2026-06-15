@@ -68,6 +68,16 @@ class ConverterSettings(BaseSettings):
     MINERU_POLL_INTERVAL_SECONDS: int = 3
     MINERU_MAX_WAIT_SECONDS: int = 600
 
+    # ---- MinerU HTTP Request ----
+    # Timeout in seconds for MinerU API HTTP requests
+    MINERU_SUBMIT_TIMEOUT_SECONDS: int = 60  # Task submission request timeout
+    MINERU_STATUS_TIMEOUT_SECONDS: int = 10  # Status polling request timeout
+    MINERU_DOWNLOAD_TIMEOUT_SECONDS: int = 120  # Result download request timeout
+    # Maximum consecutive errors before aborting the polling loop
+    MINERU_MAX_CONSECUTIVE_ERRORS: int = 5
+    # Seconds to wait before retrying after a transient polling error
+    MINERU_ERROR_RETRY_INTERVAL_SECONDS: int = 3
+
     # ---- S3 (image upload) ----
     WORKER_CONVERSION_S3_ENABLED: bool = False
     WORKER_CONVERSION_S3_ENDPOINT: str = ""

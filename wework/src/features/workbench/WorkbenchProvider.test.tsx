@@ -7,11 +7,7 @@ import type { Attachment, SkillRef, UnifiedModel } from '@/types/api'
 
 function Probe() {
   const { state } = useWorkbench()
-  return (
-    <div data-testid="probe">
-      {state.isBootstrapping ? 'loading' : state.user?.user_name}
-    </div>
-  )
+  return <div data-testid="probe">{state.isBootstrapping ? 'loading' : state.user?.user_name}</div>
 }
 
 function ProjectChatProbe() {
@@ -42,14 +38,10 @@ function ProjectChatProbe() {
     <div>
       <span data-testid="message-attachment-filenames">
         {workbench.messages
-          .flatMap(message =>
-            (message.attachments ?? []).map(attachment => attachment.filename)
-          )
+          .flatMap(message => (message.attachments ?? []).map(attachment => attachment.filename))
           .join(',')}
       </span>
-      <span data-testid="project-execution-mode">
-        {workbench.projectExecutionMode}
-      </span>
+      <span data-testid="project-execution-mode">{workbench.projectExecutionMode}</span>
       <span data-testid="workbench-input">{workbench.state.input}</span>
       <span data-testid="workbench-error">{workbench.state.error ?? ''}</span>
       <button type="button" onClick={() => workbench.selectProject(7)}>
@@ -67,10 +59,7 @@ function ProjectChatProbe() {
       <button type="button" onClick={() => projectChat.addExistingAttachment(attachment)}>
         add attachment
       </button>
-      <button
-        type="button"
-        onClick={() => workbench.setProjectExecutionMode('git_worktree')}
-      >
+      <button type="button" onClick={() => workbench.setProjectExecutionMode('git_worktree')}>
         select worktree
       </button>
       <button type="button" onClick={() => workbench.setInput('build it')}>
@@ -86,7 +75,7 @@ function ProjectChatProbe() {
 function RetryFailedMessageProbe() {
   const workbench = useWorkbench()
   const failedMessage = workbench.messages.find(
-    message => message.role === 'assistant' && message.status === 'failed',
+    message => message.role === 'assistant' && message.status === 'failed'
   )
 
   return (
@@ -126,10 +115,7 @@ function ModelCompatibilityProbe() {
       </button>
       <div data-testid="model-compatibility-status">
         {workbench.projectChat.models
-          .map(
-            model =>
-              `${model.name}:${model.compatibilityDisabledReason ?? 'enabled'}`
-          )
+          .map(model => `${model.name}:${model.compatibilityDisabledReason ?? 'enabled'}`)
           .join('|')}
       </div>
     </div>
@@ -143,9 +129,7 @@ function ProjectTaskSendProbe() {
     <div>
       <span data-testid="workbench-input">{workbench.state.input}</span>
       <span data-testid="workbench-error">{workbench.state.error ?? ''}</span>
-      <span data-testid="current-task-id">
-        {workbench.state.currentTask?.id ?? 'no-task'}
-      </span>
+      <span data-testid="current-task-id">{workbench.state.currentTask?.id ?? 'no-task'}</span>
       <span data-testid="project-count">{workbench.state.projects.length}</span>
       <button type="button" onClick={() => void workbench.openTask(71)}>
         open project task
@@ -185,7 +169,9 @@ function RunningTasksProbe() {
   return (
     <div>
       <span data-testid="running-task-ids">
-        {Array.from(workbench.runningTaskIds).sort((a, b) => a - b).join(',')}
+        {Array.from(workbench.runningTaskIds)
+          .sort((a, b) => a - b)
+          .join(',')}
       </span>
       <span data-testid="current-task-title">
         {workbench.state.currentTask?.title ?? 'no-task'}
@@ -428,9 +414,7 @@ describe('WorkbenchProvider', () => {
       </WorkbenchProvider>
     )
 
-    await waitFor(() =>
-      expect(screen.getByTestId('probe')).toHaveTextContent('alice')
-    )
+    await waitFor(() => expect(screen.getByTestId('probe')).toHaveTextContent('alice'))
   })
 
   test('does not automatically upgrade old online devices during bootstrap', async () => {
@@ -505,9 +489,7 @@ describe('WorkbenchProvider', () => {
       </WorkbenchProvider>
     )
 
-    await waitFor(() =>
-      expect(screen.getByTestId('device-list')).toHaveTextContent('Old Device')
-    )
+    await waitFor(() => expect(screen.getByTestId('device-list')).toHaveTextContent('Old Device'))
     expect(upgradeDevice).not.toHaveBeenCalled()
   })
 
@@ -594,9 +576,7 @@ describe('WorkbenchProvider', () => {
     )
 
     await waitFor(() => expect(getTaskDetail).toHaveBeenCalledWith(8))
-    expect(await screen.findByTestId('current-task-title')).toHaveTextContent(
-      'Restored task',
-    )
+    expect(await screen.findByTestId('current-task-title')).toHaveTextContent('Restored task')
     expect(joinTask).toHaveBeenCalledWith(8)
   })
 
@@ -817,12 +797,8 @@ describe('WorkbenchProvider', () => {
     await userEvent.click(await screen.findByText('open task'))
 
     await waitFor(() => expect(joinTask).toHaveBeenCalledWith(8))
-    expect(screen.getByTestId('message-contents')).toHaveTextContent(
-      'assistant:done:'
-    )
-    expect(screen.getByTestId('message-contents')).not.toHaveTextContent(
-      'assistant:streaming'
-    )
+    expect(screen.getByTestId('message-contents')).toHaveTextContent('assistant:done:')
+    expect(screen.getByTestId('message-contents')).not.toHaveTextContent('assistant:streaming')
   })
 
   test('uses the opened task model as the runtime compatibility anchor', async () => {
@@ -1028,9 +1004,7 @@ describe('WorkbenchProvider', () => {
     )
 
     await waitFor(() =>
-      expect(screen.getByTestId('device-list')).toHaveTextContent(
-        'Linux-Device-0b18648b2e82'
-      )
+      expect(screen.getByTestId('device-list')).toHaveTextContent('Linux-Device-0b18648b2e82')
     )
 
     handlers.onDeviceOnline?.({
@@ -1040,9 +1014,7 @@ describe('WorkbenchProvider', () => {
     })
 
     await waitFor(() =>
-      expect(screen.getByTestId('device-list')).toHaveTextContent(
-        'macOS-Device-cb8262d8f25a'
-      )
+      expect(screen.getByTestId('device-list')).toHaveTextContent('macOS-Device-cb8262d8f25a')
     )
     expect(listDevices).toHaveBeenCalledTimes(2)
   })
@@ -1772,9 +1744,7 @@ describe('WorkbenchProvider', () => {
         })
       )
     )
-    expect(screen.getByTestId('message-attachment-filenames')).toHaveTextContent(
-      'brief.pdf'
-    )
+    expect(screen.getByTestId('message-attachment-filenames')).toHaveTextContent('brief.pdf')
     expect(updateCurrentUser).toHaveBeenCalledWith({
       preferences: {
         wework_new_chat_model_selection: {
@@ -1882,7 +1852,7 @@ describe('WorkbenchProvider', () => {
     expect(sendMessage).not.toHaveBeenCalled()
     expect(screen.getByTestId('workbench-input')).toHaveTextContent('build it')
     expect(screen.getByTestId('workbench-error')).toHaveTextContent(
-      'Offline Device 离线，恢复在线后可继续对话',
+      'Offline Device 离线，恢复在线后可继续对话'
     )
   })
 
@@ -1984,14 +1954,10 @@ describe('WorkbenchProvider', () => {
       </WorkbenchProvider>
     )
 
-    await waitFor(() =>
-      expect(screen.getByTestId('project-count')).toHaveTextContent('1')
-    )
+    await waitFor(() => expect(screen.getByTestId('project-count')).toHaveTextContent('1'))
 
     await userEvent.click(screen.getByText('open project task'))
-    await waitFor(() =>
-      expect(screen.getByTestId('current-task-id')).toHaveTextContent('71')
-    )
+    await waitFor(() => expect(screen.getByTestId('current-task-id')).toHaveTextContent('71'))
 
     await userEvent.click(screen.getByText('set input'))
     await userEvent.click(screen.getByText('send'))
@@ -1999,7 +1965,7 @@ describe('WorkbenchProvider', () => {
     expect(sendMessage).not.toHaveBeenCalled()
     expect(screen.getByTestId('workbench-input')).toHaveTextContent('continue')
     expect(screen.getByTestId('workbench-error')).toHaveTextContent(
-      'missing-device 不可用，恢复在线后可继续对话',
+      'missing-device 不可用，恢复在线后可继续对话'
     )
   })
 
@@ -2239,9 +2205,7 @@ describe('WorkbenchProvider', () => {
     await userEvent.click(screen.getByText('start project 8 chat'))
 
     await waitFor(() =>
-      expect(screen.getByTestId('project-execution-mode')).toHaveTextContent(
-        'git_worktree'
-      )
+      expect(screen.getByTestId('project-execution-mode')).toHaveTextContent('git_worktree')
     )
 
     await userEvent.click(screen.getByText('set input'))
@@ -2359,9 +2323,7 @@ describe('WorkbenchProvider', () => {
     )
 
     await waitFor(() =>
-      expect(screen.getByTestId('standalone-device-id')).toHaveTextContent(
-        'cloud-online'
-      )
+      expect(screen.getByTestId('standalone-device-id')).toHaveTextContent('cloud-online')
     )
 
     await userEvent.click(screen.getByText('set input'))
@@ -2393,9 +2355,7 @@ describe('WorkbenchProvider', () => {
       const workbench = useWorkbench()
       return (
         <div>
-          <span data-testid="current-task-id">
-            {workbench.state.currentTask?.id ?? 'no-task'}
-          </span>
+          <span data-testid="current-task-id">{workbench.state.currentTask?.id ?? 'no-task'}</span>
           <button type="button" onClick={() => workbench.selectProject(7)}>
             select project
           </button>
@@ -2471,9 +2431,7 @@ describe('WorkbenchProvider', () => {
     await userEvent.click(screen.getByText('set first input'))
     await userEvent.click(screen.getByText('send'))
 
-    await waitFor(() =>
-      expect(screen.getByTestId('current-task-id')).toHaveTextContent('99')
-    )
+    await waitFor(() => expect(screen.getByTestId('current-task-id')).toHaveTextContent('99'))
 
     await userEvent.click(screen.getByText('set second input'))
     await userEvent.click(screen.getByText('send'))
@@ -2491,11 +2449,7 @@ describe('WorkbenchProvider', () => {
 
   test('keeps later guidance queued while one guidance send is in progress', async () => {
     let streamHandlers: {
-      onChatStart?: (payload: {
-        task_id: number
-        subtask_id: number
-        shell_type?: string
-      }) => void
+      onChatStart?: (payload: { task_id: number; subtask_id: number; shell_type?: string }) => void
     } = {}
     let resolveCancel: ((value: { success: boolean }) => void) | undefined
     const cancelStream = vi.fn().mockImplementation(
@@ -2605,11 +2559,7 @@ describe('WorkbenchProvider', () => {
 
   test('does not drain remaining queued messages before the guided response starts', async () => {
     let streamHandlers: {
-      onChatStart?: (payload: {
-        task_id: number
-        subtask_id: number
-        shell_type?: string
-      }) => void
+      onChatStart?: (payload: { task_id: number; subtask_id: number; shell_type?: string }) => void
     } = {}
     const cancelStream = vi.fn().mockResolvedValue({ success: true })
     const sendMessage = vi.fn().mockResolvedValue({ success: true, task_id: 8 })
@@ -2704,11 +2654,7 @@ describe('WorkbenchProvider', () => {
 
   test('retries a failed assistant message using the previous user message', async () => {
     type StreamHandlers = {
-      onChatStart?: (payload: {
-        task_id: number
-        subtask_id: number
-        shell_type?: string
-      }) => void
+      onChatStart?: (payload: { task_id: number; subtask_id: number; shell_type?: string }) => void
       onChatError?: (payload: {
         task_id?: number
         subtask_id: number
@@ -2794,9 +2740,7 @@ describe('WorkbenchProvider', () => {
     })
 
     await waitFor(() =>
-      expect(screen.getByTestId('retry-message-states')).toHaveTextContent(
-        'assistant::failed',
-      )
+      expect(screen.getByTestId('retry-message-states')).toHaveTextContent('assistant::failed')
     )
 
     await userEvent.click(screen.getByText('retry failed message'))
@@ -2806,7 +2750,7 @@ describe('WorkbenchProvider', () => {
       expect.objectContaining({
         task_id: 8,
         message: 'hi',
-      }),
+      })
     )
   })
 
@@ -2932,9 +2876,7 @@ describe('WorkbenchProvider', () => {
         'user:我叫胡云鹏assistant:你好，胡云鹏！'
       )
     )
-    expect(screen.getByTestId('history-attachment-filenames')).toHaveTextContent(
-      'diagram.png'
-    )
+    expect(screen.getByTestId('history-attachment-filenames')).toHaveTextContent('diagram.png')
   })
 
   test('restores persisted tool blocks when opening task history', async () => {
@@ -2952,7 +2894,7 @@ describe('WorkbenchProvider', () => {
                   ? [
                       <li key={block.id}>
                         {block.toolName}:{String(block.toolInput?.command)}:
-                        {String(block.toolOutput)}
+                        {String(block.toolOutput)}:{block.status}
                       </li>,
                     ]
                   : [
@@ -3015,20 +2957,21 @@ describe('WorkbenchProvider', () => {
                         tool_name: 'exec',
                         tool_input: { command: 'pwd' },
                         tool_output: '/Users/yunpeng7/AIGCWorkSpace',
-                        status: 'done',
-                        timestamp: 1770000000000,
+                        status: 'completed',
+                        timestamp: 1770000000,
                       },
                       {
                         id: 'thinking_1',
                         type: 'thinking',
                         content: 'I will inspect the workspace',
-                        status: 'done',
+                        status: 'streaming',
                         timestamp: 1770000000100,
                       },
                     ],
                   },
                   status: 'COMPLETED',
                   created_at: '2026-05-27T00:02:00.000Z',
+                  completed_at: '2026-05-27T00:03:00.000Z',
                 },
               ],
             }),
@@ -3063,7 +3006,7 @@ describe('WorkbenchProvider', () => {
 
     await waitFor(() =>
       expect(screen.getByTestId('tool-blocks')).toHaveTextContent(
-        'exec:pwd:/Users/yunpeng7/AIGCWorkSpace'
+        'exec:pwd:/Users/yunpeng7/AIGCWorkSpace:done'
       )
     )
     expect(screen.getByTestId('tool-blocks')).toHaveTextContent(
@@ -3237,7 +3180,10 @@ describe('WorkbenchProvider', () => {
           <span data-testid="attachment-current-task-title">
             {workbench.state.currentTask?.title ?? ''}
           </span>
-          <button type="button" onClick={() => workbench.projectChat.addExistingAttachment(attachment)}>
+          <button
+            type="button"
+            onClick={() => workbench.projectChat.addExistingAttachment(attachment)}
+          >
             add attachment
           </button>
           <button type="button" onClick={() => void workbench.sendCurrentInput()}>
@@ -3327,15 +3273,9 @@ describe('WorkbenchProvider', () => {
         })
       )
     )
-    expect(screen.getByTestId('attachment-message-contents')).not.toHaveTextContent(
-      '请参考附件'
-    )
-    expect(screen.getByTestId('attachment-message-contents')).toHaveTextContent(
-      'user:done:'
-    )
-    expect(screen.getByTestId('attachment-current-task-title')).toHaveTextContent(
-      '新对话'
-    )
+    expect(screen.getByTestId('attachment-message-contents')).not.toHaveTextContent('请参考附件')
+    expect(screen.getByTestId('attachment-message-contents')).toHaveTextContent('user:done:')
+    expect(screen.getByTestId('attachment-current-task-title')).toHaveTextContent('新对话')
   })
 
   test('clears the open task and messages after archiving all chats', async () => {
@@ -3547,26 +3487,18 @@ describe('WorkbenchProvider', () => {
     // 1. Open the task; the dropdown anchors on the task's saved model.
     await userEvent.click(await screen.findByText('open task'))
     await waitFor(() =>
-      expect(screen.getByTestId('current-task-model')).toHaveTextContent(
-        'wecode-claude-sonnet-4-5'
-      )
+      expect(screen.getByTestId('current-task-model')).toHaveTextContent('wecode-claude-sonnet-4-5')
     )
-    expect(screen.getByTestId('selected-model')).toHaveTextContent(
-      'wecode-claude-sonnet-4-5'
-    )
+    expect(screen.getByTestId('selected-model')).toHaveTextContent('wecode-claude-sonnet-4-5')
 
     // 2. User picks a different model. The dropdown updates immediately
     //    AND the open task's model_id is mirrored so subsequent
     //    task_status updates (e.g. chat:start) can't revert it.
     await userEvent.click(screen.getByTestId('switch-to-opus'))
     await waitFor(() =>
-      expect(screen.getByTestId('current-task-model')).toHaveTextContent(
-        'wecode-claude-opus-4'
-      )
+      expect(screen.getByTestId('current-task-model')).toHaveTextContent('wecode-claude-opus-4')
     )
-    expect(screen.getByTestId('selected-model')).toHaveTextContent(
-      'wecode-claude-opus-4'
-    )
+    expect(screen.getByTestId('selected-model')).toHaveTextContent('wecode-claude-opus-4')
 
     // 3. The next turn's chat:start event flips task status from SUCCESS to
     //    RUNNING. Before the fix this rebuilt state.currentTask and the
@@ -3580,13 +3512,9 @@ describe('WorkbenchProvider', () => {
     })
 
     await waitFor(() =>
-      expect(screen.getByTestId('selected-model')).toHaveTextContent(
-        'wecode-claude-opus-4'
-      )
+      expect(screen.getByTestId('selected-model')).toHaveTextContent('wecode-claude-opus-4')
     )
-    expect(screen.getByTestId('current-task-model')).toHaveTextContent(
-      'wecode-claude-opus-4'
-    )
+    expect(screen.getByTestId('current-task-model')).toHaveTextContent('wecode-claude-opus-4')
   })
 
   test('keeps a live running task indicator after switching to another task', async () => {
@@ -3692,9 +3620,7 @@ describe('WorkbenchProvider', () => {
       streamHandlers?.onChatStart?.({ task_id: 8, subtask_id: 80 })
     })
 
-    await waitFor(() =>
-      expect(screen.getByTestId('running-task-ids')).toHaveTextContent('8')
-    )
+    await waitFor(() => expect(screen.getByTestId('running-task-ids')).toHaveTextContent('8'))
 
     await userEvent.click(screen.getByText('open task 9'))
     await waitFor(() =>
