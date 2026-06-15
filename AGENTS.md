@@ -137,6 +137,8 @@ Task = Team + Workspace (代码仓库)
 
 10. **Avoid backward compatibility - design for the ideal state**: When implementing changes, design as if there is no legacy burden - consider "what would be the best approach if we were starting fresh". Avoid writing compatibility shims or workarounds for old logic. If backward compatibility is absolutely unavoidable, consult with the user before proceeding.
 
+11. **Do not implement features in fallback paths**: The primary path should be efficient, elegant, and safe. Avoid adding excessive fallback logic as a substitute for a well-designed main flow; it makes code harder to understand and can eventually create a confusing dual-track structure where both the main path and fallback path behave like first-class implementations. Use fallbacks only for truly exceptional recovery or compatibility cases.
+
 ### Python (Backend, Executor, Shared)
 
 **Standards:** PEP 8, Black formatter (line length: 88), isort, type hints required
