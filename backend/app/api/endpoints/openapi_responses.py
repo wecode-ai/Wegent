@@ -53,6 +53,7 @@ from app.services.openapi.output_builder import (
     extract_pending_user_input_state,
 )
 from app.services.readers.kinds import KindType, kindReader
+from app.stores.tasks import subtask_store, task_access_store, task_store
 from shared.telemetry.decorators import (
     add_span_event,
     set_span_attribute,
@@ -144,6 +145,33 @@ def _latest_assistant_subtask(subtasks: list[Subtask]) -> list[Subtask]:
         if subtask.role == SubtaskRole.ASSISTANT:
             return [subtask]
     return []
+
+
+def _get_current_knowledge_base_refs(tool_settings: Dict[str, Any]) -> list[dict]:
+    """Return explicitly requested normalized KB refs from the current request."""
+    refs = tool_settings.get("knowledge_base_refs") or []
+    return refs if isinstance(refs, list) else []
+
+
+def _get_inherited_knowledge_base_refs(
+    *,
+    task: TaskResource,
+    current_refs: list[dict],
+) -> list[dict]:
+    """Return task-level API KB scopes only when the current request has no KB refs."""
+    if current_refs:
+        return []
+
+    from app.services.openapi.kb_context import get_task_knowledge_base_scope_refs
+
+    return get_task_knowledge_base_scope_refs(task)
+
+
+def _exception_message(exc: HTTPException) -> str:
+    """Convert HTTPException detail to a readable persisted error message."""
+    if isinstance(exc.detail, str):
+        return exc.detail
+    return json.dumps(exc.detail, ensure_ascii=False)
 
 
 async def _persist_terminal_failure(
@@ -260,14 +288,11 @@ async def create_response(
                 )
 
             # Verify previous task exists and belongs to the current user
-            existing_task = (
-                db.query(TaskResource)
-                .filter(
-                    TaskResource.id == previous_task_id,
-                    TaskResource.kind == "Task",
-                    TaskResource.is_active == TaskResource.STATE_ACTIVE,
-                )
-                .first()
+            existing_task = task_store.get_task_by_states(
+                db,
+                task_id=previous_task_id,
+                states=[TaskResource.STATE_ACTIVE],
+                owner_user_id=current_user.id,
             )
             if not existing_task:
                 raise HTTPException(
@@ -453,12 +478,15 @@ async def _create_non_streaming_response_unified(
     preload_skills = tool_settings.get("preload_skills", [])
     user_id = user.id
 
-    # Extract knowledge base names from tool settings
-    knowledge_base_names = tool_settings.get("knowledge_base_names", [])
+    current_kb_refs = _get_current_knowledge_base_refs(tool_settings)
+    inherited_kb_refs = _get_inherited_knowledge_base_refs(
+        task=setup.task,
+        current_refs=current_kb_refs,
+    )
 
     # Auto-enable tools when knowledge_base is specified
     # This ensures KB tools and skill tools are actually added to the agent
-    enable_tools = enable_chat_bot or bool(knowledge_base_names)
+    enable_tools = enable_chat_bot or bool(current_kb_refs) or bool(inherited_kb_refs)
 
     # Link attachments to user subtask if provided
     if request_body.attachment_ids:
@@ -492,9 +520,17 @@ async def _create_non_streaming_response_unified(
             enable_deep_thinking=enable_chat_bot,
             enable_web_search=enable_chat_bot and settings.WEB_SEARCH_ENABLED,
             preload_skills=preload_skills,
-            knowledge_base_names=knowledge_base_names,
+            knowledge_base_refs=current_kb_refs,
             reasoning_config=reasoning_config,
         )
+    except HTTPException as e:
+        logger.warning("Failed to build execution request: %s", e.detail)
+        await _persist_terminal_failure(
+            subtask_id=assistant_subtask_id,
+            task_id=task_kind_id,
+            error_message=_exception_message(e),
+        )
+        raise
     except Exception as e:
         logger.error(f"Failed to build execution request: {e}")
         await _persist_terminal_failure(
@@ -542,11 +578,10 @@ async def _create_non_streaming_response_unified(
     def _query_subtasks():
         query_db = SessionLocal()
         try:
-            return (
-                query_db.query(Subtask)
-                .filter(Subtask.task_id == task_kind_id, Subtask.user_id == user_id)
-                .order_by(Subtask.message_id.asc())
-                .all()
+            return subtask_store.list_by_task_for_user_ordered(
+                query_db,
+                task_id=task_kind_id,
+                user_id=user_id,
             )
         finally:
             query_db.close()
@@ -755,12 +790,15 @@ async def _create_streaming_response_unified(
     user_id = user.id
     user_name = user.user_name
 
-    # Extract knowledge base names from tool settings
-    knowledge_base_names = tool_settings.get("knowledge_base_names", [])
+    current_kb_refs = _get_current_knowledge_base_refs(tool_settings)
+    inherited_kb_refs = _get_inherited_knowledge_base_refs(
+        task=setup.task,
+        current_refs=current_kb_refs,
+    )
 
     # Auto-enable tools when knowledge_base is specified
     # This ensures KB tools and skill tools are actually added to the agent
-    enable_tools = enable_chat_bot or bool(knowledge_base_names)
+    enable_tools = enable_chat_bot or bool(current_kb_refs) or bool(inherited_kb_refs)
 
     # Link attachments to user subtask if provided
     if request_body.attachment_ids:
@@ -794,9 +832,17 @@ async def _create_streaming_response_unified(
             enable_deep_thinking=enable_chat_bot,
             enable_web_search=enable_chat_bot and settings.WEB_SEARCH_ENABLED,
             preload_skills=preload_skills,
-            knowledge_base_names=knowledge_base_names,
+            knowledge_base_refs=current_kb_refs,
             reasoning_config=reasoning_config,
         )
+    except HTTPException as e:
+        logger.warning("Failed to build execution request: %s", e.detail)
+        await _persist_terminal_failure(
+            subtask_id=assistant_subtask_id,
+            task_id=task_kind_id,
+            error_message=_exception_message(e),
+        )
+        raise
     except Exception as e:
         logger.error(f"Failed to build execution request: {e}")
         await _persist_terminal_failure(
@@ -1320,22 +1366,18 @@ async def get_response(
         raise
 
     # Get subtasks for output
-    subtasks = (
-        db.query(Subtask)
-        .filter(Subtask.task_id == task_id, Subtask.user_id == current_user.id)
-        .order_by(Subtask.message_id.asc())
-        .all()
+    subtasks = subtask_store.list_by_task_for_user_ordered(
+        db,
+        task_id=task_id,
+        user_id=current_user.id,
     )
 
     # Reconstruct model string from task team reference
-    task_kind = (
-        db.query(TaskResource)
-        .filter(
-            TaskResource.id == task_id,
-            TaskResource.kind == "Task",
-            TaskResource.is_active == TaskResource.STATE_ACTIVE,
-        )
-        .first()
+    task_kind = task_store.get_task_by_states(
+        db,
+        task_id=task_id,
+        states=[TaskResource.STATE_ACTIVE],
+        owner_user_id=current_user.id,
     )
 
     model_string = "unknown"
@@ -1379,8 +1421,6 @@ async def cancel_response(
     Returns:
         ResponseObject with status 'cancelled' or current status
     """
-    from sqlalchemy.orm.attributes import flag_modified
-
     from app.services.chat.storage import db_handler, session_manager
 
     # Extract task_id from response_id
@@ -1399,15 +1439,24 @@ async def cancel_response(
         )
 
     # Get task to check if it's a Chat Shell type
-    task_kind = (
-        db.query(TaskResource)
-        .filter(
-            TaskResource.id == task_id,
-            TaskResource.kind == "Task",
-            TaskResource.is_active == TaskResource.STATE_ACTIVE,
-        )
-        .first()
+    task_kind = task_store.get_task_by_states(
+        db,
+        task_id=task_id,
+        states=[TaskResource.STATE_ACTIVE],
+        owner_user_id=current_user.id,
     )
+    if not task_kind:
+        member_task = task_store.get_task_by_states(
+            db,
+            task_id=task_id,
+            states=[TaskResource.STATE_ACTIVE],
+        )
+        if member_task and task_access_store.is_member(
+            db,
+            task_id=task_id,
+            user_id=current_user.id,
+        ):
+            task_kind = member_task
 
     if not task_kind:
         raise HTTPException(
@@ -1429,21 +1478,11 @@ async def cancel_response(
     if is_chat_shell:
         # For Chat Shell tasks, use session_manager to cancel the stream
         # Find running assistant subtask
-        running_subtask = (
-            db.query(Subtask)
-            .filter(
-                Subtask.task_id == task_id,
-                Subtask.user_id == current_user.id,
-                Subtask.role == SubtaskRole.ASSISTANT,
-                Subtask.status.in_(
-                    [
-                        SubtaskStatus.PENDING,
-                        SubtaskStatus.RUNNING,
-                    ]
-                ),
-            )
-            .order_by(Subtask.id.desc())
-            .first()
+        running_subtask = subtask_store.get_latest_assistant_for_user_by_statuses(
+            db,
+            task_id=task_id,
+            user_id=current_user.id,
+            statuses=[SubtaskStatus.PENDING, SubtaskStatus.RUNNING],
         )
 
         if running_subtask:
@@ -1464,11 +1503,14 @@ async def cancel_response(
             logger.info(f"[CANCEL] Stream cancelled for subtask {running_subtask.id}")
 
             # Update subtask status to COMPLETED with partial content
-            running_subtask.status = SubtaskStatus.COMPLETED
-            running_subtask.progress = 100
-            running_subtask.completed_at = datetime.now()
-            running_subtask.updated_at = datetime.now()
-            running_subtask.result = {"value": partial_content or ""}
+            subtask_store.update_fields(
+                db,
+                subtask=running_subtask,
+                status=SubtaskStatus.COMPLETED,
+                progress=100,
+                completed_at=datetime.now(),
+                result={"value": partial_content or ""},
+            )
 
             # Update task status to COMPLETED
             if task_crd.status:
@@ -1478,9 +1520,11 @@ async def cancel_response(
                 task_crd.status.completedAt = datetime.now()
                 task_crd.status.result = {"value": partial_content or ""}
 
-            task_kind.json = task_crd.model_dump(mode="json")
-            task_kind.updated_at = datetime.now()
-            flag_modified(task_kind, "json")
+            task_store.update_json(
+                db,
+                task=task_kind,
+                payload=task_crd.model_dump(mode="json"),
+            )
 
             db.commit()
             db.refresh(task_kind)
@@ -1524,11 +1568,10 @@ async def cancel_response(
         )
 
     # Get subtasks for output (to include partial content)
-    subtasks = (
-        db.query(Subtask)
-        .filter(Subtask.task_id == task_id, Subtask.user_id == current_user.id)
-        .order_by(Subtask.message_id.asc())
-        .all()
+    subtasks = subtask_store.list_by_task_for_user_ordered(
+        db,
+        task_id=task_id,
+        user_id=current_user.id,
     )
 
     # Reconstruct model string
@@ -1588,14 +1631,11 @@ async def delete_response(
         )
 
     # Get task to check if it's a Chat Shell type with running stream
-    task_kind = (
-        db.query(TaskResource)
-        .filter(
-            TaskResource.id == task_id,
-            TaskResource.kind == "Task",
-            TaskResource.is_active == TaskResource.STATE_ACTIVE,
-        )
-        .first()
+    task_kind = task_store.get_task_by_states(
+        db,
+        task_id=task_id,
+        states=[TaskResource.STATE_ACTIVE],
+        owner_user_id=current_user.id,
     )
 
     if task_kind:
@@ -1608,21 +1648,11 @@ async def delete_response(
 
         if is_chat_shell:
             # For Chat Shell tasks, stop any running stream before deleting
-            running_subtask = (
-                db.query(Subtask)
-                .filter(
-                    Subtask.task_id == task_id,
-                    Subtask.user_id == current_user.id,
-                    Subtask.role == SubtaskRole.ASSISTANT,
-                    Subtask.status.in_(
-                        [
-                            SubtaskStatus.PENDING,
-                            SubtaskStatus.RUNNING,
-                        ]
-                    ),
-                )
-                .order_by(Subtask.id.desc())
-                .first()
+            running_subtask = subtask_store.get_latest_assistant_for_user_by_statuses(
+                db,
+                task_id=task_id,
+                user_id=current_user.id,
+                statuses=[SubtaskStatus.PENDING, SubtaskStatus.RUNNING],
             )
 
             if running_subtask:
@@ -1637,7 +1667,11 @@ async def delete_response(
                 logger.info(f"[DELETE] Stream stopped for subtask {running_subtask.id}")
 
     try:
-        task_kinds_service.delete_task(db, task_id=task_id, user_id=current_user.id)
+        task_kinds_service.delete_task(
+            db,
+            task_id=task_id,
+            user_id=current_user.id,
+        )
     except HTTPException as e:
         if e.status_code == 404:
             raise HTTPException(

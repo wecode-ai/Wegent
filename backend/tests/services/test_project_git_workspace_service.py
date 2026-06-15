@@ -110,7 +110,10 @@ def test_project_task_list_includes_device_and_execution_workspace_source(
     test_db.commit()
 
     items = project_service._get_project_tasks(
-        test_db, project.id, client_origin="wework"
+        test_db,
+        project.id,
+        owner_user_id=test_user.id,
+        client_origin="wework",
     )
 
     assert len(items) == 1

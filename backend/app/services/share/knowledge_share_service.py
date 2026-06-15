@@ -45,6 +45,7 @@ from app.services.group_permission import (
 )
 from app.services.knowledge.namespace_utils import is_organization_namespace
 from app.services.share.base_service import UnifiedShareService
+from app.stores.tasks import task_store
 from shared.models.knowledge import KnowledgeBaseToolAccessMode
 from shared.telemetry.decorators import add_span_event, set_span_attribute, trace_sync
 
@@ -828,40 +829,12 @@ class KnowledgeShareService(UnifiedShareService):
         Returns:
             True if KB is bound to at least one group chat where user is a member
         """
-        from app.models.resource_member import MemberStatus, ResourceMember
-        from app.models.share_link import ResourceType
-        from app.models.task import TaskResource
-
         # Query all group chat tasks where this KB is bound and user is a member
         # We need to check task.json->spec->knowledgeBaseRefs for the KB binding
-        # First, get tasks where user is the owner
-        owned_tasks = (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.kind == "Task",
-                TaskResource.is_active == TaskResource.STATE_ACTIVE,
-                TaskResource.user_id == user_id,
-            )
-            .all()
+        tasks_with_kb = task_store.list_accessible_active_tasks_for_user(
+            db,
+            user_id=user_id,
         )
-
-        # Then, get tasks where user is an approved member via ResourceMember
-        member_tasks = (
-            db.query(TaskResource)
-            .join(ResourceMember, ResourceMember.resource_id == TaskResource.id)
-            .filter(
-                TaskResource.kind == "Task",
-                TaskResource.is_active == TaskResource.STATE_ACTIVE,
-                ResourceMember.resource_type == ResourceType.TASK,
-                ResourceMember.entity_type == "user",
-                ResourceMember.entity_id == str(user_id),
-                ResourceMember.status == MemberStatus.APPROVED,
-            )
-            .all()
-        )
-
-        # Combine owned and member tasks
-        tasks_with_kb = list(owned_tasks) + list(member_tasks)
 
         for task in tasks_with_kb:
             task_json = task.json if isinstance(task.json, dict) else {}

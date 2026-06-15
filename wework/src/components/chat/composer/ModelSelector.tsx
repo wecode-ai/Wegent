@@ -50,6 +50,7 @@ interface ModelSelectorProps {
   disabled: boolean
   onSelectModel: (model: UnifiedModel | null) => void
   onSelectModelOption: (optionId: string, value: string) => void
+  openSignal?: number
   menuPlacement?: 'above' | 'below'
   buttonClassName?: string
   menuClassName?: string
@@ -62,6 +63,7 @@ export function ModelSelector({
   disabled,
   onSelectModel,
   onSelectModelOption,
+  openSignal,
   menuPlacement = 'above',
   buttonClassName = '',
   menuClassName = '',
@@ -74,8 +76,8 @@ export function ModelSelector({
   const submenuPanelRef = useRef<HTMLDivElement>(null)
   const mobileMenuRef = useRef<HTMLDivElement>(null)
   const mobileCloseButtonRef = useRef<HTMLButtonElement>(null)
+  const handledOpenSignalRef = useRef<number | undefined>(undefined)
   const familyButtonRefs = useRef(new Map<string, HTMLButtonElement>())
-  const controlButtonRefs = useRef(new Map<string, HTMLButtonElement>())
   const [open, setOpen] = useState(false)
   const [mobileQuery, setMobileQuery] = useState('')
   const [desktopMenuTop, setDesktopMenuTop] = useState(0)
@@ -92,6 +94,15 @@ export function ModelSelector({
     activeFamilyId || selectedFamily || familyGroups[0]?.config.id || ''
   const activeGroup =
     familyGroups.find(group => group.config.id === displayedFamilyId) ?? familyGroups[0]
+
+  useEffect(() => {
+    if (!openSignal || disabled || open) return
+    if (handledOpenSignalRef.current === openSignal) return
+
+    handledOpenSignalRef.current = openSignal
+    buttonRef.current?.click()
+  }, [disabled, open, openSignal])
+
   const closeMenu = useCallback(() => {
     setOpen(false)
     setMobileQuery('')
@@ -243,13 +254,6 @@ export function ModelSelector({
     },
     [updateSubmenuLayout],
   )
-  const activateControl = useCallback(
-    (controlId: string, target?: HTMLElement | null) => {
-      setActiveDesktopSubmenu({ type: 'control', id: controlId })
-      updateSubmenuLayout(target ?? controlButtonRefs.current.get(controlId) ?? null)
-    },
-    [updateSubmenuLayout],
-  )
   const clearDesktopSubmenu = useCallback(() => {
     setActiveDesktopSubmenu({ type: 'none' })
   }, [])
@@ -261,12 +265,6 @@ export function ModelSelector({
 
   useLayoutEffect(() => {
     if (!open) return
-    if (activeDesktopSubmenu?.type === 'control') {
-      updateSubmenuLayout(
-        controlButtonRefs.current.get(activeDesktopSubmenu.id) ?? null,
-      )
-      return
-    }
     updateSubmenuLayout(familyButtonRefs.current.get(displayedFamilyId) ?? null)
   }, [activeDesktopSubmenu, displayedFamilyId, open, updateSubmenuLayout])
 
@@ -301,10 +299,6 @@ export function ModelSelector({
     : []
   const controlsBelowModels =
     selectedModelControls.filter(control => control.placement === 'belowModels')
-  const activeControl =
-    activeDesktopSubmenu?.type === 'control'
-      ? controlsBelowModels.find(control => control.id === activeDesktopSubmenu.id)
-      : undefined
 
   useLayoutEffect(() => {
     if (!open || isMobile) return
@@ -386,91 +380,6 @@ export function ModelSelector({
                   </span>
                   {selected && (
                     <Check className="h-4 w-4 shrink-0 text-text-secondary" />
-                  )}
-                </button>
-              )
-            })}
-        </div>
-      </div>
-    )
-  }
-
-  function renderControlTrigger(control: ModelControlConfig) {
-    const active =
-      activeDesktopSubmenu?.type === 'control' &&
-      activeDesktopSubmenu.id === control.id
-    return (
-      <button
-        ref={node => {
-          if (node) {
-            controlButtonRefs.current.set(control.id, node)
-          } else {
-            controlButtonRefs.current.delete(control.id)
-          }
-        }}
-        key={control.id}
-        type="button"
-        data-testid={`model-control-trigger-${control.id}`}
-        onMouseEnter={event => activateControl(control.id, event.currentTarget)}
-        onPointerEnter={event => activateControl(control.id, event.currentTarget)}
-        onFocus={event => activateControl(control.id, event.currentTarget)}
-        onClick={event => activateControl(control.id, event.currentTarget)}
-        className={[
-          'flex h-9 w-full items-center gap-2 rounded-lg px-3 text-left text-[13px] font-medium leading-[18px]',
-          active
-            ? 'bg-muted text-text-primary'
-            : 'text-text-secondary hover:bg-muted hover:text-text-primary',
-        ].join(' ')}
-      >
-        <span className="min-w-0 flex-1 truncate">
-          {control.labelKey ? t(control.labelKey, control.label) : control.label}
-        </span>
-        <ChevronRight className="h-4 w-4 shrink-0 text-text-muted" />
-      </button>
-    )
-  }
-
-  function renderDesktopControlSubmenu(control: ModelControlConfig) {
-    return (
-      <div
-        ref={submenuPanelRef}
-        data-testid={`model-control-submenu-${control.id}`}
-        style={{ top: submenuOffset, left: submenuLeft, width: submenuWidth }}
-        className="absolute w-72 rounded-2xl border border-border bg-background p-4 shadow-[0_16px_44px_rgba(0,0,0,0.16)]"
-      >
-        <div className="pb-3 text-[13px] font-semibold leading-[18px] text-text-muted">
-          {control.labelKey ? t(control.labelKey, control.label) : control.label}
-        </div>
-        <div className="space-y-1">
-          {control.options
-            .slice()
-            .sort((a, b) => a.order - b.order)
-            .map(option => {
-              const selected =
-                (selectedModelOptions[control.id] ?? control.defaultValue) ===
-                option.value
-              return (
-                <button
-                  key={option.value}
-                  type="button"
-                  data-testid={`model-control-${control.id}-${option.value}`}
-                  onClick={() => handleSelectModelOption(control.id, option.value)}
-                  className="flex min-h-12 w-full items-start gap-3 rounded-lg px-2 py-2 text-left text-[13px] leading-[18px] text-text-primary hover:bg-muted"
-                >
-                  <span className="min-w-0 flex-1">
-                    <span className="block font-semibold">
-                      {option.labelKey ? t(option.labelKey, option.label) : option.label}
-                    </span>
-                    {(option.description || option.descriptionKey) && (
-                      <span className="mt-0.5 block text-xs font-medium text-text-muted">
-                        {option.descriptionKey
-                          ? t(option.descriptionKey, option.description ?? '')
-                          : option.description}
-                      </span>
-                    )}
-                  </span>
-                  {selected && (
-                    <Check className="mt-0.5 h-4 w-4 shrink-0 text-text-secondary" />
                   )}
                 </button>
               )
@@ -848,16 +757,14 @@ export function ModelSelector({
             {controlsBelowModels.length > 0 && (
               <>
                 <div className="mx-3 my-1.5 border-t border-border" />
-                <div className="space-y-0.5">
-                  {controlsBelowModels.map(renderControlTrigger)}
+                <div className="mb-0.5 space-y-1.5">
+                  {controlsBelowModels.map(renderControlSection)}
                 </div>
               </>
             )}
           </div>
 
-          {activeControl ? (
-            renderDesktopControlSubmenu(activeControl)
-          ) : activeGroup ? (
+          {activeGroup ? (
             <div
               ref={submenuPanelRef}
               data-testid="model-selector-submenu"

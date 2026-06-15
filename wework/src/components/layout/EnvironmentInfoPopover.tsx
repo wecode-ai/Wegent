@@ -256,7 +256,7 @@ export function EnvironmentInfoPopover({
                   data-testid="environment-commit-message-input"
                   value={commitMessage}
                   onChange={event => setCommitMessage(event.target.value)}
-                  className="h-8 w-full rounded-md border border-border bg-background px-2 text-[13px] text-text-primary outline-none placeholder:text-text-muted focus:border-primary"
+                  className="h-8 w-full rounded-md border border-border bg-background px-2 text-[13px] text-text-primary outline-none placeholder:text-text-muted focus:border-text-primary"
                   placeholder={t('workbench.environment_commit_message', '提交说明')}
                   autoFocus
                 />
@@ -276,7 +276,7 @@ export function EnvironmentInfoPopover({
                     type="submit"
                     data-testid="environment-confirm-commit-button"
                     disabled={!commitMessage.trim() || commitStatus === 'committing'}
-                    className="h-7 rounded-md bg-primary px-2 text-xs font-medium text-primary-contrast disabled:cursor-not-allowed disabled:opacity-50"
+                    className="h-7 rounded-md bg-text-primary px-2 text-xs font-medium text-background hover:bg-text-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {commitStatus === 'committing'
                       ? t('workbench.environment_committing', '提交中')

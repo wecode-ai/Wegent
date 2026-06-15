@@ -100,6 +100,7 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('model-selector-button')).toBeInTheDocument()
     expect(screen.queryByTestId('skill-selector-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('project-work-button')).toBeInTheDocument()
+    expect(screen.queryByTestId('voice-input-button')).not.toBeInTheDocument()
   })
 
   test('shows desktop pause button while the assistant is streaming', async () => {
@@ -236,10 +237,10 @@ describe('ChatInput', () => {
     expect(onPause).toHaveBeenCalledTimes(1)
   })
 
-  test('hides voice input after typing in the compact composer', async () => {
+  test('does not render voice input in the compact composer', async () => {
     render(<ControlledChatInput />)
 
-    expect(screen.getByTestId('voice-input-button')).toBeInTheDocument()
+    expect(screen.queryByTestId('voice-input-button')).not.toBeInTheDocument()
     await userEvent.type(screen.getByTestId('chat-message-input'), 'hello')
 
     expect(screen.queryByTestId('voice-input-button')).not.toBeInTheDocument()
@@ -272,8 +273,8 @@ describe('ChatInput', () => {
       expect(listLocalSkills).toHaveBeenCalledTimes(1)
     })
     expect(screen.getByTestId('local-skill-autocomplete')).toHaveClass(
-      'bottom-[calc(100%+1rem)]',
-      'z-[80]',
+      'bottom-[calc(100%+0.5rem)]',
+      'z-popover',
       'bg-background',
       'left-[-1rem]',
       'right-[-3.5rem]',
@@ -328,6 +329,253 @@ describe('ChatInput', () => {
       expect(secondOption).toHaveClass('bg-muted')
       expect(secondOption).toHaveAttribute('aria-selected', 'true')
     })
+  })
+
+  test('shows local skill sources at the end of each autocomplete option', async () => {
+    const skills: LocalDeviceSkill[] = [
+      {
+        name: 'claude-skill',
+        description: 'Claude skill',
+        path: '/Users/crystal/.claude/skills/claude-skill/SKILL.md',
+        source: 'claude',
+      },
+      {
+        name: 'claude-plugin-skill',
+        description: 'Claude plugin skill',
+        path: '/Users/crystal/.claude/plugins/cache/market/plugin/skills/skill/SKILL.md',
+        source: 'claude-plugin',
+      },
+      {
+        name: 'codex-skill',
+        description: 'Codex skill',
+        path: '/Users/crystal/.codex/skills/codex-skill/SKILL.md',
+        source: 'codex',
+      },
+      {
+        name: 'codex-plugin-skill',
+        description: 'Codex plugin skill',
+        path: '/Users/crystal/.codex/plugins/cache/market/plugin/skills/skill/SKILL.md',
+        source: 'codex-plugin',
+      },
+    ]
+    const listLocalSkills = vi.fn().mockResolvedValue(skills)
+
+    render(
+      <ControlledChatInput
+        projectChat={projectChatControls({ listLocalSkills })}
+      />,
+    )
+
+    await userEvent.type(screen.getByTestId('chat-message-input'), '$')
+
+    expect(await screen.findByTestId('local-skill-source-claude-skill')).toHaveTextContent('claude')
+    expect(screen.getByTestId('local-skill-source-claude-plugin-skill')).toHaveTextContent(
+      'claude plugins',
+    )
+    expect(screen.getByTestId('local-skill-source-codex-skill')).toHaveTextContent('codex')
+    expect(screen.getByTestId('local-skill-source-codex-plugin-skill')).toHaveTextContent(
+      'codex plugins',
+    )
+  })
+
+  test('only allows Claude sourced skills for Claude models', async () => {
+    const onSubmit = vi.fn()
+    const claudeSkill: LocalDeviceSkill = {
+      name: 'claude-skill',
+      description: 'Claude skill',
+      path: '/Users/crystal/.claude/skills/claude-skill/SKILL.md',
+      source: 'claude',
+    }
+    const codexSkill: LocalDeviceSkill = {
+      name: 'codex-skill',
+      description: 'Codex skill',
+      path: '/Users/crystal/.codex/skills/codex-skill/SKILL.md',
+      source: 'codex',
+    }
+    const selectedModel: UnifiedModel = {
+      name: 'wecode-claude-sonnet-4-5',
+      type: 'public',
+      runtime: { family: 'claude.claude' },
+    }
+
+    render(
+      <ControlledChatInput
+        onSubmit={onSubmit}
+        projectChat={projectChatControls({
+          selectedModel,
+          listLocalSkills: vi.fn().mockResolvedValue([claudeSkill, codexSkill]),
+        })}
+      />,
+    )
+
+    await userEvent.type(screen.getByTestId('chat-message-input'), '$')
+
+    expect(await screen.findByTestId('local-skill-option-claude-skill')).not.toBeDisabled()
+    expect(screen.getByTestId('local-skill-option-codex-skill')).toBeDisabled()
+
+    await userEvent.click(screen.getByTestId('local-skill-option-codex-skill'))
+    expect(screen.getByTestId('chat-message-input')).toHaveValue('$')
+  })
+
+  test('only allows Codex sourced skills for GPT models', async () => {
+    const codexSkill: LocalDeviceSkill = {
+      name: 'codex-skill',
+      description: 'Codex skill',
+      path: '/Users/crystal/.codex/skills/codex-skill/SKILL.md',
+      source: 'codex-plugin',
+    }
+    const claudeSkill: LocalDeviceSkill = {
+      name: 'claude-skill',
+      description: 'Claude skill',
+      path: '/Users/crystal/.claude/skills/claude-skill/SKILL.md',
+      source: 'claude',
+    }
+    const selectedModel: UnifiedModel = {
+      name: 'gpt-5.5',
+      type: 'public',
+      runtime: { family: 'openai.openai-responses' },
+    }
+
+    render(
+      <ControlledChatInput
+        projectChat={projectChatControls({
+          selectedModel,
+          listLocalSkills: vi.fn().mockResolvedValue([codexSkill, claudeSkill]),
+        })}
+      />,
+    )
+
+    await userEvent.type(screen.getByTestId('chat-message-input'), '$')
+
+    const option = await screen.findByTestId('local-skill-option-codex-skill')
+    expect(option).toBeInTheDocument()
+    expect(option).not.toBeDisabled()
+    expect(screen.getByTestId('local-skill-source-codex-skill')).toHaveTextContent(
+      'codex plugins',
+    )
+    expect(screen.getByTestId('local-skill-option-claude-skill')).toBeDisabled()
+
+    await userEvent.click(option)
+    expect(screen.getByTestId('chat-message-input')).toHaveValue(
+      '[$codex-skill](skill:///Users/crystal/.codex/skills/codex-skill/SKILL.md) ',
+    )
+  })
+
+  test('allows Codex sourced skills for non-GPT models running through openai responses', async () => {
+    const codexSkill: LocalDeviceSkill = {
+      name: 'codex-skill',
+      description: 'Codex skill',
+      path: '/Users/crystal/.codex/skills/codex-skill/SKILL.md',
+      source: 'codex-plugin',
+    }
+    const claudeSkill: LocalDeviceSkill = {
+      name: 'claude-skill',
+      description: 'Claude skill',
+      path: '/Users/crystal/.claude/skills/claude-skill/SKILL.md',
+      source: 'claude',
+    }
+    const selectedModel: UnifiedModel = {
+      name: 'sina-glm-4.6',
+      type: 'public',
+      displayName: '内网:sina-glm-4.6',
+      modelId: 'glm-4.6',
+      runtime: { family: 'sina.openai-responses' },
+    }
+
+    render(
+      <ControlledChatInput
+        projectChat={projectChatControls({
+          selectedModel,
+          listLocalSkills: vi.fn().mockResolvedValue([codexSkill, claudeSkill]),
+        })}
+      />,
+    )
+
+    await userEvent.type(screen.getByTestId('chat-message-input'), '$')
+
+    const option = await screen.findByTestId('local-skill-option-codex-skill')
+    expect(option).not.toBeDisabled()
+    expect(screen.getByTestId('local-skill-option-claude-skill')).toBeDisabled()
+
+    await userEvent.click(option)
+    expect(screen.getByTestId('chat-message-input')).toHaveValue(
+      '[$codex-skill](skill:///Users/crystal/.codex/skills/codex-skill/SKILL.md) ',
+    )
+  })
+
+  test('uses modelConfig env model when matching local skills', async () => {
+    const codexSkill: LocalDeviceSkill = {
+      name: 'codex-skill',
+      description: 'Codex skill',
+      path: '/Users/crystal/.codex/skills/codex-skill/SKILL.md',
+      source: 'codex-plugin',
+    }
+    const claudeSkill: LocalDeviceSkill = {
+      name: 'claude-skill',
+      description: 'Claude skill',
+      path: '/Users/crystal/.claude/skills/claude-skill/SKILL.md',
+      source: 'claude',
+    }
+    const selectedModel: UnifiedModel = {
+      name: 'sina-glm-4.6',
+      type: 'public',
+      displayName: '内网:sina-glm-4.6',
+      modelId: 'glm-4.6',
+      config: {
+        env: { model: 'openai' },
+        apiFormat: 'responses',
+      },
+    }
+
+    render(
+      <ControlledChatInput
+        projectChat={projectChatControls({
+          selectedModel,
+          listLocalSkills: vi.fn().mockResolvedValue([codexSkill, claudeSkill]),
+        })}
+      />,
+    )
+
+    await userEvent.type(screen.getByTestId('chat-message-input'), '$')
+
+    expect(await screen.findByTestId('local-skill-option-codex-skill')).not.toBeDisabled()
+    expect(screen.getByTestId('local-skill-option-claude-skill')).toBeDisabled()
+  })
+
+  test('uses runtime provider from modelConfig env model when matching local skills', async () => {
+    const codexSkill: LocalDeviceSkill = {
+      name: 'codex-skill',
+      description: 'Codex skill',
+      path: '/Users/crystal/.codex/skills/codex-skill/SKILL.md',
+      source: 'codex-plugin',
+    }
+    const claudeSkill: LocalDeviceSkill = {
+      name: 'claude-skill',
+      description: 'Claude skill',
+      path: '/Users/crystal/.claude/skills/claude-skill/SKILL.md',
+      source: 'claude',
+    }
+    const selectedModel: UnifiedModel = {
+      name: 'sina-glm-4.6',
+      type: 'public',
+      displayName: '内网:sina-glm-4.6',
+      modelId: 'glm-4.6',
+      runtime: { family: 'openai', provider: 'openai' },
+    }
+
+    render(
+      <ControlledChatInput
+        projectChat={projectChatControls({
+          selectedModel,
+          listLocalSkills: vi.fn().mockResolvedValue([codexSkill, claudeSkill]),
+        })}
+      />,
+    )
+
+    await userEvent.type(screen.getByTestId('chat-message-input'), '$')
+
+    expect(await screen.findByTestId('local-skill-option-codex-skill')).not.toBeDisabled()
+    expect(screen.getByTestId('local-skill-option-claude-skill')).toBeDisabled()
   })
 
   test('keeps the composer editable after selecting a local skill', async () => {
@@ -409,6 +657,8 @@ describe('ChatInput', () => {
     expect(await screen.findByTestId('local-skill-autocomplete')).toHaveClass(
       'left-[-1rem]',
       'right-[-0.5rem]',
+      'rounded-xl',
+      'shadow-[0_12px_34px_rgba(0,0,0,0.12)]',
     )
   })
 
@@ -443,16 +693,13 @@ describe('ChatInput', () => {
       path: '/Users/crystal/.codex/skills/env-context/SKILL.md',
       source: 'codex',
     }
-    let rejectInitialLoad: (error: Error) => void = () => {}
-    const listLocalSkills = vi
-      .fn()
-      .mockImplementationOnce(
-        () =>
-          new Promise<LocalDeviceSkill[]>((_, reject) => {
-            rejectInitialLoad = reject
-          }),
-      )
-      .mockResolvedValueOnce([skill])
+    let retryEnabled = false
+    const listLocalSkills = vi.fn().mockImplementation(() => {
+      if (!retryEnabled) {
+        return Promise.reject(new Error('Device is offline'))
+      }
+      return Promise.resolve([skill])
+    })
 
     render(
       <ControlledChatInput
@@ -461,16 +708,24 @@ describe('ChatInput', () => {
     )
 
     await userEvent.type(screen.getByTestId('chat-message-input'), '$')
-    rejectInitialLoad(new Error('Device is offline'))
 
+    const retryLabel = await screen.findByTestId('local-skill-retry-label')
+    expect(retryLabel).toHaveClass('text-text-secondary')
+    expect(retryLabel).not.toHaveClass('text-primary')
+    expect(screen.getByTestId('local-skill-load-error')).toHaveClass(
+      'hover:bg-muted',
+      'text-text-muted',
+    )
+
+    retryEnabled = true
     await userEvent.click(
-      await screen.findByRole('button', {
+      screen.getByRole('button', {
         name: /workbench.local_skills_error.*workbench.retry_local_skills/,
       }),
     )
 
     expect(await screen.findByTestId('local-skill-option-env-context')).toBeInTheDocument()
-    expect(listLocalSkills).toHaveBeenCalledTimes(2)
+    expect(listLocalSkills).toHaveBeenCalled()
   })
 
   test('does not open local skill autocomplete for a dollar inside a word', async () => {
@@ -778,6 +1033,96 @@ describe('ChatInput', () => {
     await userEvent.click(screen.getByTestId('model-option-overseas-gpt-5.5'))
 
     expect(setSelectedModel).toHaveBeenCalledWith(model)
+  })
+
+  test('opens the desktop model menu when the external open signal changes', async () => {
+    const model: UnifiedModel = {
+      name: 'overseas-gpt-5.5',
+      type: 'user',
+      displayName: '海外:gpt-5.5',
+      config: {
+        ui: {
+          family: 'gpt',
+          region: 'overseas',
+          modelLabel: 'gpt-5.5',
+          sortOrder: 10,
+        },
+      },
+    }
+    const { rerender } = render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({
+          models: [model],
+          selectedModel: model,
+          modelSelectorOpenSignal: 0,
+        })}
+      />,
+    )
+
+    expect(screen.queryByTestId('model-selector-menu')).not.toBeInTheDocument()
+
+    rerender(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({
+          models: [model],
+          selectedModel: model,
+          modelSelectorOpenSignal: 1,
+        })}
+      />,
+    )
+
+    expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
+  })
+
+  test('closes the desktop model menu after selecting a model opened by external signal', async () => {
+    const model: UnifiedModel = {
+      name: 'ali-qwen3-coder-plus',
+      type: 'user',
+      displayName: 'ali-qwen3-coder-plus',
+      config: {
+        ui: {
+          family: 'qwen',
+          region: 'domestic',
+          modelLabel: 'ali-qwen3-coder-plus',
+          sortOrder: 10,
+        },
+      },
+    }
+    const setSelectedModel = vi.fn()
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({
+          models: [model],
+          selectedModel: null,
+          modelSelectorOpenSignal: 1,
+          setSelectedModel,
+        })}
+      />,
+    )
+
+    expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('model-option-ali-qwen3-coder-plus'))
+
+    expect(setSelectedModel).toHaveBeenCalledWith(model)
+    await waitFor(() =>
+      expect(screen.queryByTestId('model-selector-menu')).not.toBeInTheDocument(),
+    )
   })
 
   test('moves the desktop model submenu upward when the active family is near the viewport bottom', async () => {
@@ -1555,7 +1900,7 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('project-work-menu')).not.toHaveTextContent('进入项目工作')
   })
 
-  test('renders online project devices with neutral secondary text', async () => {
+  test('renders only available project devices in the project menu', async () => {
     const projects: ProjectWithTasks[] = [
       {
         id: 7,
@@ -1603,13 +1948,15 @@ describe('ChatInput', () => {
     await userEvent.click(screen.getByTestId('project-work-button'))
 
     const projectDeviceLabel = screen.getAllByText('online-executor')[0]
-    const offlineProjectDeviceLabel = screen.getAllByText('offline-executor')[0]
     expect(projectDeviceLabel).toHaveClass('text-text-secondary')
     expect(projectDeviceLabel).not.toHaveClass('text-primary')
-    expect(offlineProjectDeviceLabel).toHaveClass('text-text-muted')
+    expect(
+      within(screen.getByTestId('project-options-list')).queryByText('offline-executor'),
+    ).not.toBeInTheDocument()
+    expect(screen.queryByTestId('project-option-8')).not.toBeInTheDocument()
   })
 
-  test('marks projects with offline devices as unavailable and prevents selection', async () => {
+  test('hides projects with offline devices from project selection', async () => {
     const onSelectProject = vi.fn()
     const projects: ProjectWithTasks[] = [
       {
@@ -1658,12 +2005,9 @@ describe('ChatInput', () => {
 
     await userEvent.click(screen.getByTestId('project-work-button'))
 
-    const offlineProject = screen.getByTestId('project-option-8')
-    expect(offlineProject).toBeDisabled()
-    expect(offlineProject).toHaveAttribute('aria-disabled', 'true')
-    expect(screen.getByTestId('project-unavailable-icon-8')).toBeInTheDocument()
-
-    await userEvent.click(offlineProject)
+    expect(screen.getByTestId('project-option-7')).toBeInTheDocument()
+    expect(screen.queryByTestId('project-option-8')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('project-unavailable-icon-8')).not.toBeInTheDocument()
 
     expect(onSelectProject).not.toHaveBeenCalledWith(8)
   })

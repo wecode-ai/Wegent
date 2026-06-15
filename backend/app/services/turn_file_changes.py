@@ -15,7 +15,6 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.subtask import Subtask, SubtaskRole
-from app.models.task import TaskResource
 from app.schemas.turn_file_changes import (
     TurnFileChangesDiffResponse,
     TurnFileChangesRevertResponse,
@@ -26,6 +25,7 @@ from app.services.device.command_service import (
     DeviceCommandNotFoundError,
     execute_configured_device_command,
 )
+from app.stores.tasks import subtask_store, task_store
 
 MAX_DIFF_OUTPUT_BYTES = 5 * 1024 * 1024
 
@@ -121,26 +121,28 @@ class TurnFileChangesService:
         user_id: int,
         subtask_id: int,
     ) -> tuple[Subtask, TurnFileChangesSummary]:
-        record = (
-            db.query(Subtask, TaskResource)
-            .join(TaskResource, TaskResource.id == Subtask.task_id)
-            .filter(
-                Subtask.id == subtask_id,
-                Subtask.role == SubtaskRole.ASSISTANT,
-                TaskResource.user_id == user_id,
-                TaskResource.kind == "Task",
-                TaskResource.is_active.in_(TaskResource.is_active_query()),
-            )
-            .first()
+        subtask = subtask_store.get_by_id_and_role(
+            db,
+            subtask_id=subtask_id,
+            role=SubtaskRole.ASSISTANT,
+            owner_user_id=user_id,
         )
-        if record is None:
+        task = (
+            task_store.get_active_task(
+                db,
+                task_id=subtask.task_id,
+                owner_user_id=user_id,
+            )
+            if subtask is not None
+            else None
+        )
+        if subtask is None or task is None:
             raise _error(
                 404,
                 "TURN_FILE_CHANGES_NOT_FOUND",
                 "Assistant message file changes were not found",
             )
 
-        subtask, task = record
         result = subtask.result if isinstance(subtask.result, dict) else {}
         raw_summary = result.get("file_changes")
         try:

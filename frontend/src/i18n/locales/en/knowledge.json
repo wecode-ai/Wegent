@@ -535,9 +535,18 @@
     },
     "advancedSettings": {
       "title": "Advanced Settings",
-      "collapsed": "Click to expand advanced settings",
       "expanded": "Click to collapse",
       "readOnly": "Read-only"
+    },
+    "formSections": {
+      "basic": "Basic Settings",
+      "summary": "Summary Settings",
+      "guidedQuestions": "Guided Questions"
+    },
+    "ragConfigMode": {
+      "title": "RAG Retrieval",
+      "auto": "Use RAG",
+      "disabled": "No RAG"
     },
     "retrieval": {
       "retriever": "Retriever",

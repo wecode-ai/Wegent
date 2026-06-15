@@ -50,5 +50,10 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: './src/test/setup.ts',
     globals: true,
+    coverage: {
+      provider: 'istanbul',
+      reporter: ['text', 'json', 'lcov'],
+      reportsDirectory: './coverage',
+    },
   },
 })

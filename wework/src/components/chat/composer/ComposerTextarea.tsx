@@ -1,4 +1,4 @@
-import { Package, Sparkles } from 'lucide-react'
+import { Package } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   ClipboardEventHandler,
@@ -7,7 +7,8 @@ import type {
   RefObject,
 } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { LocalDeviceSkill } from '@/types/api'
+import { getModelCompatibilityFamily, inferModelFamily } from '@/lib/model-ui'
+import type { LocalDeviceSkill, UnifiedModel } from '@/types/api'
 
 interface ComposerTextareaProps {
   value: string
@@ -22,6 +23,7 @@ interface ComposerTextareaProps {
   skillMenuClassName?: string
   onPasteFiles?: (files: File[]) => void
   onListLocalSkills?: () => Promise<LocalDeviceSkill[]>
+  selectedModel?: UnifiedModel | null
 }
 
 interface SkillTrigger {
@@ -70,6 +72,100 @@ function displaySkillNameFromName(name: string): string {
 
 function displaySkillName(skill: LocalDeviceSkill): string {
   return displaySkillNameFromName(skill.name)
+}
+
+function displaySkillSource(skill: LocalDeviceSkill): string {
+  switch (skill.source) {
+    case 'claude':
+      return 'claude'
+    case 'claude-plugin':
+      return 'claude plugins'
+    case 'codex':
+      return 'codex'
+    case 'codex-plugin':
+      return 'codex plugins'
+    default:
+      return skill.source
+  }
+}
+
+function isClaudeSkill(skill: LocalDeviceSkill): boolean {
+  return skill.source === 'claude' || skill.source === 'claude-plugin'
+}
+
+function isCodexSkill(skill: LocalDeviceSkill): boolean {
+  return skill.source === 'codex' || skill.source === 'codex-plugin'
+}
+
+function normalizeRuntimeSignal(value: unknown): string {
+  return typeof value === 'string' ? value.trim().toLowerCase() : ''
+}
+
+function getObjectRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null
+}
+
+function getModelConfigProvider(model: UnifiedModel): string {
+  const config = getObjectRecord(model.config)
+  const directEnv = getObjectRecord(config?.env)
+  const nestedModelConfig = getObjectRecord(config?.modelConfig)
+  const nestedEnv = getObjectRecord(nestedModelConfig?.env)
+  return (
+    normalizeRuntimeSignal(model.runtime?.provider) ||
+    normalizeRuntimeSignal(directEnv?.model) ||
+    normalizeRuntimeSignal(nestedEnv?.model) ||
+    normalizeRuntimeSignal(model.provider)
+  )
+}
+
+function runtimeProtocolFromFamily(runtimeFamily: string | null): string {
+  if (!runtimeFamily) return ''
+  const parts = runtimeFamily.split('.').filter(Boolean)
+  return parts.at(-1) ?? runtimeFamily
+}
+
+function inferSkillRuntime(model: UnifiedModel): 'claude' | 'codex' | null {
+  const provider = getModelConfigProvider(model)
+  const runtimeFamily = getModelCompatibilityFamily(model)
+  const runtimeProtocol = runtimeProtocolFromFamily(runtimeFamily)
+  const protocol = normalizeRuntimeSignal(model.config?.protocol)
+  const apiFormat = normalizeRuntimeSignal(
+    model.config?.apiFormat ?? model.config?.api_format,
+  )
+
+  if (provider === 'claude') return 'claude'
+  if (provider === 'openai') return 'codex'
+
+  if (runtimeProtocol === 'claude') return 'claude'
+  if (runtimeProtocol === 'openai-responses') {
+    return 'codex'
+  }
+
+  if (protocol === 'claude') return 'claude'
+  if (protocol === 'openai-responses' || apiFormat === 'responses') {
+    return 'codex'
+  }
+
+  const family = inferModelFamily(model)
+  if (family === 'claude') return 'claude'
+  if (family === 'gpt') return 'codex'
+
+  return null
+}
+
+function canSelectSkillForModel(
+  skill: LocalDeviceSkill,
+  selectedModel?: UnifiedModel | null,
+): boolean {
+  if (!selectedModel) return true
+
+  const runtime = inferSkillRuntime(selectedModel)
+  if (runtime === 'claude') return isClaudeSkill(skill)
+  if (runtime === 'codex') return isCodexSkill(skill)
+
+  return !isCodexSkill(skill)
 }
 
 function localSkillTestId(name: string): string {
@@ -234,6 +330,7 @@ export function ComposerTextarea({
   skillMenuClassName = 'left-0 w-[min(28rem,calc(100vw-2rem))]',
   onPasteFiles,
   onListLocalSkills,
+  selectedModel,
 }: ComposerTextareaProps) {
   const { t } = useTranslation('common')
   const menuRef = useRef<HTMLDivElement>(null)
@@ -363,7 +460,7 @@ export function ComposerTextarea({
     }
   }, [])
 
-  const loadLocalSkills = useCallback(() => {
+  const loadLocalSkills = useCallback((options?: { force?: boolean }) => {
     if (!onListLocalSkills) return
 
     if (skillsSourceRef.current !== onListLocalSkills) {
@@ -374,7 +471,13 @@ export function ComposerTextarea({
       setSkills([])
     }
 
-    if (skillsLoadedRef.current || skillsLoadingRef.current) return
+    if (
+      skillsLoadedRef.current ||
+      skillsLoadingRef.current ||
+      (loadError && !options?.force)
+    ) {
+      return
+    }
 
     const requestId = skillsRequestIdRef.current + 1
     skillsRequestIdRef.current = requestId
@@ -398,7 +501,7 @@ export function ComposerTextarea({
         skillsLoadingRef.current = false
         setLoading(false)
       })
-  }, [onListLocalSkills])
+  }, [loadError, onListLocalSkills])
 
   const updateSkillTrigger = useCallback(() => {
     const textarea = textareaRef.current
@@ -577,7 +680,11 @@ export function ComposerTextarea({
         closeSkillMenu()
         return
       }
-      if (event.key === 'Enter' && filteredSkills[selectedIndex]) {
+      if (
+        event.key === 'Enter' &&
+        filteredSkills[selectedIndex] &&
+        canSelectSkillForModel(filteredSkills[selectedIndex], selectedModel)
+      ) {
         event.preventDefault()
         selectSkill(filteredSkills[selectedIndex])
         return
@@ -668,62 +775,85 @@ export function ComposerTextarea({
           data-testid="local-skill-autocomplete"
           role="listbox"
           className={[
-            'absolute bottom-[calc(100%+1rem)] z-[80] max-h-72 overflow-y-auto rounded-2xl border border-border bg-background p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]',
+            'absolute bottom-[calc(100%+0.5rem)] z-popover max-h-64 overflow-y-auto rounded-xl border border-border bg-background px-0 py-1.5 text-text-primary shadow-[0_12px_34px_rgba(0,0,0,0.12)]',
             skillMenuClassName,
           ].join(' ')}
         >
-          <div className="px-3 pb-2 pt-1 text-xs font-medium text-text-muted">
-            {t('workbench.local_skills')}
+          <div className="px-2.5 pb-1 pt-0.5 text-xs font-normal leading-4 text-text-muted">
+            {t('workbench.local_skills', '技能')}
           </div>
           {loading ? (
-            <div className="px-3 py-3 text-sm text-text-muted">
+            <div className="px-2.5 py-2 text-[13px] leading-[18px] text-text-muted">
               {t('workbench.loading_local_skills')}
             </div>
           ) : loadError ? (
             <button
               type="button"
-              className="w-full rounded-xl px-3 py-3 text-left text-sm text-text-muted hover:bg-muted"
-              onClick={loadLocalSkills}
+              data-testid="local-skill-load-error"
+              className="flex h-7 w-full min-w-0 items-center gap-2 px-2.5 text-left text-[13px] leading-5 text-text-muted hover:bg-muted"
+              onClick={() => loadLocalSkills({ force: true })}
             >
-              {t('workbench.local_skills_error')}{' '}
-              <span className="font-medium text-primary">
+              <Package className="h-3.5 w-3.5 shrink-0 text-text-secondary" />
+              <span className="min-w-0 flex-1 truncate">
+                {t('workbench.local_skills_error')}
+              </span>
+              <span
+                data-testid="local-skill-retry-label"
+                className="shrink-0 text-xs font-medium leading-5 text-text-secondary"
+              >
                 {t('workbench.retry_local_skills')}
               </span>
             </button>
           ) : filteredSkills.length === 0 ? (
-            <div className="px-3 py-3 text-sm text-text-muted">
+            <div className="px-2.5 py-2 text-[13px] leading-[18px] text-text-muted">
               {t('workbench.no_local_skills')}
             </div>
           ) : (
-            filteredSkills.map((skill, index) => (
+            filteredSkills.map((skill, index) => {
+              const canSelectSkill = canSelectSkillForModel(skill, selectedModel)
+              return (
               <button
                 key={`${skill.source}:${skill.path}`}
                 type="button"
                 data-testid={`local-skill-option-${skill.name}`}
                 aria-selected={index === selectedIndex}
                 role="option"
-                onMouseEnter={() => setSelectedIndex(index)}
-                onPointerEnter={() => setSelectedIndex(index)}
-                onClick={() => selectSkill(skill)}
+                disabled={!canSelectSkill}
+                aria-disabled={!canSelectSkill}
+                onMouseEnter={() => {
+                  if (canSelectSkill) setSelectedIndex(index)
+                }}
+                onPointerEnter={() => {
+                  if (canSelectSkill) setSelectedIndex(index)
+                }}
+                onClick={() => {
+                  if (canSelectSkill) selectSkill(skill)
+                }}
                 className={[
-                  'flex min-h-11 w-full items-center gap-3 rounded-xl px-3 py-2 text-left',
+                  'flex h-7 w-full min-w-0 items-center gap-2 px-2.5 text-left hover:bg-muted disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent',
                   index === selectedIndex ? 'bg-muted' : '',
                 ].join(' ')}
               >
-                <Sparkles className="h-4 w-4 shrink-0 text-primary" />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-medium text-text-primary">
+                <Package className="h-3.5 w-3.5 shrink-0 text-text-secondary" />
+                <span className="flex min-w-0 flex-1 items-baseline gap-2">
+                  <span className="shrink-0 truncate text-[13px] font-medium leading-5 text-text-primary">
                     {displaySkillName(skill)}
                   </span>
                   {(skill.short_description || skill.description) && (
-                    <span className="line-clamp-1 text-xs text-text-muted">
+                    <span className="min-w-0 truncate text-[13px] font-normal leading-5 text-text-muted">
                       {skill.short_description || skill.description}
                     </span>
                   )}
                 </span>
-                <span className="shrink-0 text-xs text-text-muted">{skill.source}</span>
+                <span
+                  data-testid={`local-skill-source-${skill.name}`}
+                  className="shrink-0 text-xs leading-5 text-text-muted"
+                >
+                  {displaySkillSource(skill)}
+                </span>
               </button>
-            ))
+              )
+            })
           )}
         </div>
       )}

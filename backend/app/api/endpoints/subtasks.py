@@ -6,13 +6,12 @@ import json
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sse_starlette.sse import EventSourceResponse
 
 from app.api.dependencies import get_db
 from app.core import security
-from app.models.subtask import Subtask
 from app.models.user import User
 from app.schemas.subtask import (
     MessageEditRequest,
@@ -30,6 +29,7 @@ from app.schemas.turn_file_changes import (
 from app.services.chat.storage import session_manager
 from app.services.subtask import subtask_service
 from app.services.turn_file_changes import turn_file_changes_service
+from app.stores.tasks import subtask_store, task_access_store
 
 router = APIRouter()
 
@@ -55,8 +55,6 @@ def list_subtasks(
     """
     import logging
 
-    from app.services.task_member_service import task_member_service
-
     logger = logging.getLogger(__name__)
 
     skip = (page - 1) * limit
@@ -80,18 +78,12 @@ def list_subtasks(
                         f"ctx_id={ctx.id}, name={ctx.name}, source_config={ctx.source_config}"
                     )
 
-    # Calculate total based on whether user is a group chat member
-    is_member = task_member_service.is_member(db, task_id, current_user.id)
-    if is_member:
-        # For group chat members, count all subtasks in the task
-        total = db.query(Subtask).filter(Subtask.task_id == task_id).count()
-    else:
-        # For non-members, count only user's own subtasks
-        total = (
-            db.query(Subtask)
-            .filter(Subtask.task_id == task_id, Subtask.user_id == current_user.id)
-            .count()
-        )
+    total = subtask_store.count_by_task_for_user(
+        db,
+        task_id=task_id,
+        user_id=current_user.id,
+        access_store=task_access_store,
+    )
 
     return {"total": total, "items": items}
 
@@ -302,13 +294,17 @@ async def subscribe_group_stream(
     Subscribe to a group chat stream via SSE.
     Allows group members to receive streaming updates from any member's AI interaction.
     """
-    from app.services.task_member_service import task_member_service
-
     # Check if user is authorized
-    is_member = task_member_service.is_member(db, task_id, current_user.id)
-    if not is_member:
-        from fastapi import HTTPException
+    if not task_access_store.is_member(db, task_id=task_id, user_id=current_user.id):
+        raise HTTPException(status_code=403, detail="Not authorized")
 
+    subtask = subtask_store.get_accessible_by_id(
+        db,
+        subtask_id=subtask_id,
+        user_id=current_user.id,
+        access_store=task_access_store,
+    )
+    if subtask is None or subtask.task_id != task_id:
         raise HTTPException(status_code=403, detail="Not authorized")
 
     async def event_generator():

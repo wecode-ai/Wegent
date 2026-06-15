@@ -31,15 +31,17 @@ from executor.tasks import process, process_async, run_task, run_task_async
 from shared.logger import setup_logger
 from shared.status import TaskStatus
 from shared.telemetry.config import get_otel_config
-from shared.telemetry.context import set_task_context, set_user_context
+from shared.telemetry.context import set_task_context
 from shared.telemetry.context.large_data import log_json_body
 from shared.telemetry.core import is_telemetry_enabled
+from shared.utils.sensitive_data_masker import mask_sensitive_data
 
 # Use the shared logger setup function
 logger = setup_logger("task_executor")
 
 # Flag to track if skills have been initialized
 _skills_initialized = False
+_OPENAI_REQUEST_LOG_PREVIEW_LIMIT = 4096
 
 
 # Define lifespan context manager for startup and shutdown events
@@ -600,23 +602,24 @@ async def openai_responses(request: Request):
     task_id = metadata.get("task_id", -1)
     subtask_id = metadata.get("subtask_id", -1)
     background = openai_request.get("background", False)
+    request_preview = json.dumps(
+        mask_sensitive_data(openai_request), ensure_ascii=False, default=str
+    )
+    if len(request_preview) > _OPENAI_REQUEST_LOG_PREVIEW_LIMIT:
+        request_preview = (
+            request_preview[:_OPENAI_REQUEST_LOG_PREVIEW_LIMIT]
+            + f"... [truncated, total size: {len(request_preview)} chars]"
+        )
 
     logger.info(
         f"[v1/responses] Received OpenAI request: task_id={task_id}, "
-        f"subtask_id={subtask_id}, background={background}, request={openai_request}"
+        f"subtask_id={subtask_id}, background={background}, request={request_preview}"
     )
 
-    # Set task and user context for tracing
+    # Set task context for tracing.
     otel_config = get_otel_config()
     if otel_config.enabled and is_telemetry_enabled():
         set_task_context(task_id=task_id, subtask_id=subtask_id)
-        user_id = metadata.get("user_id")
-        user_name = metadata.get("user_name")
-        if user_id or user_name:
-            set_user_context(
-                user_id=str(user_id) if user_id else None,
-                user_name=user_name,
-            )
 
     try:
         # Convert OpenAI request to ExecutionRequest format

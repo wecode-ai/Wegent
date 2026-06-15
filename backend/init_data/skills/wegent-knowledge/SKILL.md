@@ -26,11 +26,12 @@ You now have access to Wegent Knowledge Base management tools.
 ## Available Tools
 
 - **wegent_kb_list_knowledge_bases**: List all knowledge bases accessible to the current user
-  - scope: "personal" (your own), "group" (team), or "all" (default)
+  - scope: "personal" (your own), "group" (team), "organization", or "all" (default)
   - group_name: Specify group name when scope="group"
   - limit: Maximum number of knowledge bases to return per page
   - offset: Start offset for paginated listing
   - returns: items, total, returned_count, limit, offset, has_more
+  - each item includes namespace_level ("personal", "group", or "organization") and namespace_display_name ("personal", group display name, or organization display name)
 
 - **wegent_kb_list_documents**: List all documents in a knowledge base
   - knowledge_base_id: ID of the knowledge base

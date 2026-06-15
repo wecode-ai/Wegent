@@ -1245,6 +1245,7 @@ class DockerExecutor(Executor):
                     "status": "failed",
                     "error_msg": f"Task {task_id} is not currently running",
                 }
+            task_ids = result.get("task_ids", [])
 
             task_ids = result.get("task_ids", [])
 
@@ -1268,7 +1269,6 @@ class DockerExecutor(Executor):
                     or f"Could not find port for container {container_name}",
                 }
 
-            # Call the executor's cancel API
             cancel_url = f"http://{DEFAULT_DOCKER_HOST}:{port}/api/tasks/cancel?task_id={task_id}"
 
             # Call the executor's cancel API

@@ -20,8 +20,9 @@ from enum import Enum
 from typing import Any, Optional, Union
 
 from dacite import Config, from_dict
+from pydantic import StrictBool
 
-from .knowledge import KnowledgeBaseToolAccessMode
+from .knowledge import KnowledgeBaseScope, KnowledgeBaseToolAccessMode
 
 
 class EventType(str, Enum):
@@ -126,6 +127,7 @@ class ExecutionRequest:
     # === Knowledge Base Configuration ===
     knowledge_base_ids: Optional[list] = None
     document_ids: Optional[list] = None
+    knowledge_base_scopes: list[KnowledgeBaseScope] = field(default_factory=list)
     table_contexts: list = field(default_factory=list)
     is_user_selected_kb: bool = True
     kb_tool_access_mode: str = KnowledgeBaseToolAccessMode.FULL
@@ -189,6 +191,7 @@ class ExecutionRequest:
     status: Optional[str] = None
     progress: Optional[int] = None
     type: Optional[str] = None  # Task type: "online" or "offline"
+    task_mode: Optional[str] = None  # Task mode label: "chat", "code", etc.
 
     # === Executor Information (from Task) ===
     executor_name: Optional[str] = None
@@ -209,7 +212,9 @@ class ExecutionRequest:
     )
 
     # === Workspace Recovery ===
-    skip_git_clone: bool = False  # Skip git clone for workspace recovery from archive
+    skip_git_clone: StrictBool = (
+        False  # Skip git clone for workspace recovery from archive
+    )
 
     # === Timestamps (from Task) ===
     created_at: Optional[str] = None  # ISO format datetime

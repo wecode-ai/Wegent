@@ -483,24 +483,17 @@ class LocalDeviceProvider(BaseDeviceProvider):
         db: Session, running_task_ids: Optional[List[int]]
     ) -> Dict[str, Any]:
         """Build slot usage payload from reported task IDs."""
-        from app.models.task import TaskResource
+        from app.stores.tasks import task_store
 
         running_task_ids = running_task_ids or []
 
         running_tasks = []
         if running_task_ids:
-            tasks = (
-                db.query(TaskResource)
-                .filter(
-                    and_(
-                        TaskResource.id.in_(running_task_ids),
-                        TaskResource.kind == "Task",
-                    )
-                )
-                .all()
-            )
+            tasks = task_store.list_by_ids(db, task_ids=running_task_ids)
 
             for task in tasks:
+                if task.kind != "Task":
+                    continue
                 try:
                     from app.schemas.kind import Task as TaskCRD
 

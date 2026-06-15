@@ -72,7 +72,7 @@ def test_delete_task_terminates_sandbox_runtime_before_soft_delete():
 
     with (
         patch.object(service, "_cleanup_task_memories"),
-        patch("app.services.adapters.task_kinds.operations.flag_modified"),
+        patch("app.stores.tasks.sqlalchemy_task_store.flag_modified"),
         patch(
             "app.services.execution.get_executor_runtime_client",
         ) as runtime_client_factory,
@@ -122,7 +122,7 @@ def test_delete_task_falls_back_to_executor_cleanup_when_no_sandbox():
 
     with (
         patch.object(service, "_cleanup_task_memories"),
-        patch("app.services.adapters.task_kinds.operations.flag_modified"),
+        patch("app.stores.tasks.sqlalchemy_task_store.flag_modified"),
         patch(
             "app.services.execution.get_executor_runtime_client"
         ) as runtime_client_factory,

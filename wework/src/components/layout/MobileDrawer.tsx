@@ -30,6 +30,8 @@ import type {
 } from '@/types/api'
 
 const PROJECT_TASK_LIMIT = 4
+const MOBILE_RUNNING_SPINNER_CLASS =
+  'ml-2 h-3.5 w-3.5 shrink-0 animate-spin text-[#6B7280]'
 type ProjectCreateMode = 'scratch' | 'existing' | 'git'
 type ChatActionTarget = {
   id: number
@@ -296,7 +298,7 @@ export function MobileDrawer({
           </button>
           <button
             type="button"
-            data-testid="mobile-avatar-button"
+            data-testid="mobile-settings-button"
             onClick={() => closeAfter(onOpenSettings)}
             className="flex h-10 w-10 items-center justify-center rounded-full bg-[#8E5BBE] text-sm font-semibold text-white"
             aria-label={t('workbench.settings', '设置')}
@@ -592,7 +594,7 @@ export function MobileDrawer({
                               </span>
                             )}
                             {running ? (
-                              <Loader2 className="ml-2 h-3.5 w-3.5 shrink-0 animate-spin text-primary" />
+                              <Loader2 className={MOBILE_RUNNING_SPINNER_CLASS} />
                             ) : (
                               <span className="ml-2 shrink-0 text-sm text-[#6B7280]">
                                 {formatRelativeTime(getProjectTaskTime(task))}

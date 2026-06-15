@@ -17,29 +17,43 @@ def inject_kb_meta_prompt(
     *,
     executor_mode: str,
     is_user_selected_kb: bool,
+    task_type: str | None = None,
 ) -> PromptType:
-    """Prepend KB metadata context for local executor requests only."""
-    if executor_mode != "local" or not kb_meta_prompt:
+    """Prepend KB metadata context for non-code Claude Code requests."""
+    if not kb_meta_prompt:
         return prompt
 
-    kb_priority = ""
+    if (task_type or "").strip().lower() == "code":
+        return prompt
+
+    guidance_lines = [
+        "<knowledge_base_guidance>",
+        "Knowledge base routing:",
+    ]
     if is_user_selected_kb:
-        kb_priority = (
-            "<knowledge_base_priority>\n"
-            "Use the selected knowledge base first for this request.\n"
-            "- Use selected knowledge base tools and skills before web search or external lookup.\n"
-            "- When you need to identify which document matters, call `wegent_kb_list_documents` first.\n"
-            "- When you need the content of a specific knowledge base document, call\n"
-            "  `wegent_kb_read_document_content` with `document_id` and optional `offset`/`limit`.\n"
-            "- Pass `knowledge_base_id` when calling `wegent_kb_list_documents`.\n"
-            "- Do not construct MCP resource URIs manually.\n"
-            "- Use web search only if the user explicitly asks for external or current web information,\n"
-            "  or if knowledge base retrieval cannot answer the request.\n"
-            "</knowledge_base_priority>\n"
+        guidance_lines.append(
+            "- The knowledge base IDs in the context below were selected by the user."
         )
+    else:
+        guidance_lines.append(
+            "- The context below provides knowledge base IDs that may answer the request."
+        )
+    guidance_lines.extend(
+        [
+            "- First answer by querying the provided knowledge base ID(s). When a Wegent knowledge tool accepts `knowledge_base_id` or `knowledge_base_ids`, pass the ID(s) from the context.",
+            "- If the provided knowledge base ID(s) cannot satisfy the request because results are empty, irrelevant, inaccessible, or incomplete, broaden the query to all knowledge bases when the tool supports it.",
+            "- If knowledge base retrieval still cannot answer the request, then use web search or other external tools when available and appropriate.",
+            "- When you need to identify which document matters, call `wegent_kb_list_documents` first.",
+            "- When you need the content of a specific knowledge base document, call",
+            "  `wegent_kb_read_document_content` with `document_id` and optional `offset`/`limit`.",
+            "- Do not construct MCP resource URIs manually.",
+            "</knowledge_base_guidance>",
+        ]
+    )
+    kb_guidance = "\n".join(guidance_lines) + "\n"
 
     kb_context = (
-        f"{kb_priority}<knowledge_base_context>\n"
+        f"{kb_guidance}<knowledge_base_context>\n"
         f"{kb_meta_prompt}\n"
         "</knowledge_base_context>"
     )

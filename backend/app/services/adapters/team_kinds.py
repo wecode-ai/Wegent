@@ -35,6 +35,7 @@ from app.services.adapters.task_kinds.running_tasks import get_running_tasks_for
 from app.services.base import BaseService
 from app.services.readers.kinds import KindType, kindReader
 from app.services.readers.users import userReader
+from app.stores.tasks import task_store
 from shared.utils.crypto import decrypt_sensitive_data, is_data_encrypted
 
 
@@ -1884,18 +1885,8 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         """
         Update all references to this team in tasks when team name/namespace changes
         """
-        from app.models.task import TaskResource
-
         # Find all tasks that reference this team
-        tasks = (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.user_id == user_id,
-                TaskResource.kind == "Task",
-                TaskResource.is_active == TaskResource.STATE_ACTIVE,
-            )
-            .all()
-        )
+        tasks = task_store.list_regular_active_tasks(db, user_id=user_id)
 
         for task in tasks:
             task_crd = Task.model_validate(task.json)

@@ -20,6 +20,7 @@ from app.models.resource_member import ResourceMember
 from app.models.share_link import ResourceType
 from app.models.task import TaskResource
 from app.services.share.base_service import UnifiedShareService
+from app.stores.tasks import task_store
 
 logger = logging.getLogger(__name__)
 
@@ -46,15 +47,7 @@ class TaskShareService(UnifiedShareService):
         """
         from app.services.task_member_service import task_member_service
 
-        task = (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.id == resource_id,
-                TaskResource.kind == "Task",
-                TaskResource.is_active == TaskResource.STATE_ACTIVE,
-            )
-            .first()
-        )
+        task = task_store.get_regular_active_task(db, task_id=resource_id)
 
         if task:
             # Check if user is owner or group chat member
@@ -141,15 +134,11 @@ class TaskShareService(UnifiedShareService):
 
             # Get workspace details if available
             if workspace_ref:
-                workspace = (
-                    db.query(TaskResource)
-                    .filter(
-                        TaskResource.name == workspace_ref,
-                        TaskResource.user_id == task.user_id,
-                        TaskResource.kind == "Workspace",
-                        TaskResource.is_active == TaskResource.STATE_ACTIVE,
-                    )
-                    .first()
+                workspace = task_store.get_workspace_by_ref(
+                    db,
+                    user_id=task.user_id,
+                    name=workspace_ref.name,
+                    namespace=workspace_ref.namespace,
                 )
 
                 if workspace:

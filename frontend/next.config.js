@@ -12,8 +12,9 @@ const isTurbopack = process.env.TURBOPACK === '1'
 const nextConfig = {
   reactStrictMode: false,
   output: 'standalone',
+  outputFileTracingRoot: path.join(__dirname, '..'),
   turbopack: {
-    root: __dirname,
+    root: path.join(__dirname, '..'),
   },
   // Allow cross-origin requests in development mode
   // This prevents "Cross origin request detected" warning
@@ -32,6 +33,7 @@ const nextConfig = {
     '@codemirror/theme-one-dark',
     '@replit/codemirror-vim',
     'katex',
+    '@wegent/chat-core',
   ],
   // Webpack configuration for production builds
   // Note: In development mode with Turbopack, this is not used

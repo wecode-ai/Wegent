@@ -667,7 +667,7 @@ check_mysql_redis() {
     exit 1
 }
 
-# Check if Node.js and npm are installed
+# Check if Node.js and pnpm are installed
 check_node_installed() {
     if ! command -v node &> /dev/null; then
         echo -e "${RED}Error: Node.js is not installed.${NC}"
@@ -678,14 +678,7 @@ check_node_installed() {
         echo -e "  ${BLUE}Or:${NC}       https://nodejs.org/"
         exit 1
     fi
-    if ! command -v npm &> /dev/null; then
-        echo -e "${RED}Error: npm is not installed.${NC}"
-        echo ""
-        echo -e "${YELLOW}Please install npm:${NC}"
-        echo -e "  ${BLUE}macOS:${NC}    brew install npm"
-        echo -e "  ${BLUE}Ubuntu:${NC}   sudo apt install npm"
-        exit 1
-    fi
+
     # Check Node.js version (require >= 20)
     NODE_MAJOR=$(node -v | sed 's/^v//' | cut -d. -f1)
     if [ "$NODE_MAJOR" -lt 20 ]; then
@@ -693,6 +686,24 @@ check_node_installed() {
         echo -e "${YELLOW}Please upgrade Node.js:${NC}"
         echo -e "  ${BLUE}macOS:${NC}    brew install node@20"
         echo -e "  ${BLUE}Ubuntu:${NC}   use NodeSource or nvm to install Node 20"
+        exit 1
+    fi
+
+    if ! command -v pnpm &> /dev/null; then
+        if command -v corepack &> /dev/null; then
+            echo -e "  ${YELLOW}pnpm not found. Activating pnpm with corepack...${NC}"
+            corepack enable
+            corepack prepare pnpm@10.34.3 --activate
+        fi
+    fi
+
+    if ! command -v pnpm &> /dev/null; then
+        echo -e "${RED}Error: pnpm is not installed.${NC}"
+        echo ""
+        echo -e "${YELLOW}This repository uses pnpm workspace dependencies.${NC}"
+        echo -e "${YELLOW}Please install pnpm:${NC}"
+        echo -e "  ${BLUE}Corepack:${NC} corepack enable && corepack prepare pnpm@10.34.3 --activate"
+        echo -e "  ${BLUE}npm:${NC}      npm install -g pnpm@10.34.3"
         exit 1
     fi
 }
@@ -839,49 +850,142 @@ patch_backend_service_urls() {
 }
 
 # Check frontend dependencies
-check_frontend_dependencies() {
-    local frontend_dir="$SCRIPT_DIR/frontend"
+compute_workspace_dependency_fingerprint() {
+    node - "$SCRIPT_DIR" <<'NODE'
+const crypto = require('crypto')
+const fs = require('fs')
+const path = require('path')
 
-    if [ ! -d "$frontend_dir/node_modules" ]; then
-        echo -e "${YELLOW}Frontend dependencies not installed. Installing...${NC}"
-        cd "$frontend_dir"
-        npm install --ignore-scripts
-        cd "$SCRIPT_DIR"
-        echo -e "${GREEN}✓ Frontend dependencies installed${NC}"
-        return
+const root = process.argv[2]
+const manifests = [
+  'package.json',
+  'frontend/package.json',
+  'wework/package.json',
+  'packages/chat-core/package.json',
+]
+const manifestKeys = [
+  'dependencies',
+  'devDependencies',
+  'optionalDependencies',
+  'peerDependencies',
+  'peerDependenciesMeta',
+  'packageManager',
+  'pnpm',
+  'resolutions',
+  'overrides',
+  'engines',
+]
+const files = ['pnpm-lock.yaml', 'pnpm-workspace.yaml']
+
+function sortValue(value) {
+  if (Array.isArray(value)) {
+    return value.map(sortValue)
+  }
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, nested]) => [key, sortValue(nested)]),
+    )
+  }
+  return value
+}
+
+const payload = { files: {}, manifests: {} }
+
+for (const manifest of manifests) {
+  const filePath = path.join(root, manifest)
+  const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8'))
+  payload.manifests[manifest] = {}
+
+  for (const key of manifestKeys) {
+    if (Object.prototype.hasOwnProperty.call(parsed, key)) {
+      payload.manifests[manifest][key] = parsed[key]
+    }
+  }
+}
+
+for (const file of files) {
+  const filePath = path.join(root, file)
+  payload.files[file] = fs.existsSync(filePath)
+    ? crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex')
+    : null
+}
+
+const fingerprint = crypto
+  .createHash('sha256')
+  .update(JSON.stringify(sortValue(payload)))
+  .digest('hex')
+
+console.log(fingerprint)
+NODE
+}
+
+mark_workspace_dependencies_installed() {
+    local fingerprint="$1"
+    local workspace_marker="$SCRIPT_DIR/node_modules/.install-marker"
+    local fingerprint_file="$SCRIPT_DIR/node_modules/.install-fingerprint"
+
+    mkdir -p "$SCRIPT_DIR/node_modules"
+    printf "%s\n" "$fingerprint" > "$fingerprint_file"
+    touch "$workspace_marker"
+
+    if [ -d "$SCRIPT_DIR/frontend/node_modules" ]; then
+        touch "$SCRIPT_DIR/frontend/node_modules/.install-marker"
+    fi
+    if [ -d "$SCRIPT_DIR/wework/node_modules" ]; then
+        touch "$SCRIPT_DIR/wework/node_modules/.install-marker"
+    fi
+}
+
+ensure_workspace_dependencies() {
+    local label="$1"
+    local node_modules_dir="$2"
+    local workspace_marker="$SCRIPT_DIR/node_modules/.install-marker"
+    local fingerprint_file="$SCRIPT_DIR/node_modules/.install-fingerprint"
+    local package_marker="$node_modules_dir/.install-marker"
+    local current_fingerprint=""
+    local installed_fingerprint=""
+    local reason=""
+
+    if [ ! -d "$SCRIPT_DIR/node_modules" ]; then
+        reason="Workspace dependencies not installed"
+    elif [ ! -d "$node_modules_dir" ]; then
+        reason="$label dependencies not installed"
     fi
 
-    # Create a marker file to track last successful install
-    local marker_file="$frontend_dir/node_modules/.install-marker"
-    
-    # Check if package.json is newer than the marker file
-    if [ "$frontend_dir/package.json" -nt "$marker_file" ]; then
-        echo -e "${YELLOW}Frontend dependencies may be outdated (package.json changed). Updating...${NC}"
-        cd "$frontend_dir"
-        npm install --ignore-scripts && touch "$marker_file"
-        cd "$SCRIPT_DIR"
-        echo -e "${GREEN}✓ Frontend dependencies updated${NC}"
-        return
-    fi
+    current_fingerprint=$(compute_workspace_dependency_fingerprint)
 
-    # Check package-lock.json if exists and is newer than marker
-    if [ -f "$frontend_dir/package-lock.json" ]; then
-        if [ "$frontend_dir/package-lock.json" -nt "$marker_file" ]; then
-            echo -e "${YELLOW}Frontend dependencies may be outdated (package-lock.json changed). Updating...${NC}"
-            cd "$frontend_dir"
-            npm install --ignore-scripts && touch "$marker_file"
-            cd "$SCRIPT_DIR"
-            echo -e "${GREEN}✓ Frontend dependencies updated${NC}"
-            return
+    if [ -z "$reason" ]; then
+        if [ ! -f "$workspace_marker" ] || [ ! -f "$fingerprint_file" ]; then
+            if [ -f "$package_marker" ]; then
+                mark_workspace_dependencies_installed "$current_fingerprint"
+            else
+                reason="Workspace dependency install marker missing"
+            fi
+        else
+            installed_fingerprint=$(cat "$fingerprint_file" 2>/dev/null || true)
+            if [ "$installed_fingerprint" != "$current_fingerprint" ]; then
+                reason="Workspace dependency metadata changed"
+            fi
         fi
     fi
 
-    # If marker doesn't exist, create it (first time check after node_modules exists)
-    if [ ! -f "$marker_file" ]; then
-        touch "$marker_file"
+    if [ -n "$reason" ]; then
+        echo -e "${YELLOW}$reason. Updating...${NC}"
+        cd "$SCRIPT_DIR"
+        pnpm install --frozen-lockfile
+        mark_workspace_dependencies_installed "$current_fingerprint"
+        cd "$SCRIPT_DIR"
+        echo -e "${GREEN}✓ $label dependencies updated${NC}"
+        return
     fi
 
-    echo -e "${GREEN}✓ Frontend dependencies are up to date${NC}"
+    echo -e "${GREEN}✓ $label dependencies are up to date${NC}"
+}
+
+check_frontend_dependencies() {
+    ensure_workspace_dependencies "Frontend" "$SCRIPT_DIR/frontend/node_modules"
 }
 
 clean_frontend_cache() {
@@ -2052,6 +2156,10 @@ start_services() {
     local compose_version=$($DOCKER_COMPOSE_CMD version 2>&1 | head -n 1)
     echo -e "  ${GREEN}✓${NC} Docker Compose detected: $compose_version"
 
+    # Docker Compose validates the whole compose file before starting selected
+    # services, so the internal token must exist before any compose command runs.
+    ensure_internal_service_token
+
     # Check and start MySQL and Redis if needed
     check_mysql_redis
 
@@ -2062,8 +2170,8 @@ start_services() {
     # Check Node.js
     check_node_installed
     local node_version=$(node --version 2>&1)
-    local npm_version=$(npm --version 2>&1)
-    echo -e "  ${GREEN}✓${NC} Node.js detected: $node_version (npm $npm_version)"
+    local pnpm_version=$(pnpm --version 2>&1)
+    echo -e "  ${GREEN}✓${NC} Node.js detected: $node_version (pnpm $pnpm_version)"
 
     echo ""
     echo -e "${BLUE}Checking port usage...${NC}"
@@ -2094,10 +2202,6 @@ start_services() {
 
     if [ "$port_resolution_failed" = true ]; then
         exit 1
-    fi
-
-    if [ "$start_backend" = true ] || [ "$start_chat_shell" = true ] || [ "$start_knowledge_runtime" = true ]; then
-        ensure_internal_service_token
     fi
 
     compute_derived_urls "$previous_backend_port" "$previous_executor_manager_port" "$previous_knowledge_runtime_port"
@@ -2168,15 +2272,7 @@ start_services() {
 
     # Check wework dependencies
     if [ "$start_wework" = true ]; then
-        if [ ! -d "$SCRIPT_DIR/wework/node_modules" ]; then
-            echo -e "${YELLOW}WeWork dependencies not installed. Installing...${NC}"
-            cd "$SCRIPT_DIR/wework"
-            npm install --ignore-scripts
-            cd "$SCRIPT_DIR"
-            echo -e "${GREEN}✓ WeWork dependencies installed${NC}"
-        else
-            echo -e "${GREEN}✓ WeWork dependencies are up to date${NC}"
-        fi
+        ensure_workspace_dependencies "WeWork" "$SCRIPT_DIR/wework/node_modules"
         echo ""
     fi
 
@@ -2248,7 +2344,7 @@ start_services() {
         # Build the frontend startup command
         # In WSL, use full path to node to ensure we use the correct nvm-installed version
         # instead of potentially using Windows node or a different version
-        local frontend_cmd="PORT=$WEGENT_FRONTEND_PORT npm run dev"
+        local frontend_cmd="env -u TURBOPACK pnpm run dev --port $WEGENT_FRONTEND_PORT"
 
         if is_wsl; then
             # Get the full path to node from the current shell (which has nvm loaded)
@@ -2286,7 +2382,7 @@ start_services() {
         export VITE_SOCKET_PROXY_TARGET=$WEGENT_SOCKET_URL
         export VITE_SOCKET_BASE_URL=$WEGENT_SOCKET_URL
 
-        local wework_cmd="npm run dev -- --host 0.0.0.0 --port $WEWORK_PORT"
+        local wework_cmd="pnpm run dev -- --host 0.0.0.0 --port $WEWORK_PORT"
 
         if is_wsl; then
             local node_path=$(command -v node)

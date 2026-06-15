@@ -40,6 +40,7 @@ export interface SelectableKnowledgeBase {
 
 export interface SelectableMessage {
   id: string | number
+  messageId?: number
   type: 'user' | 'ai'
   content: string
   timestamp: number
@@ -281,11 +282,8 @@ export default function ExportSelectModal({
   const exportDocx = async (selectedMessages: SelectableMessage[]) => {
     // Extract numeric message IDs for the API call
     const messageIds = selectedMessages
-      .map(msg => {
-        const id = typeof msg.id === 'string' ? parseInt(msg.id, 10) : msg.id
-        return isNaN(id) ? null : id
-      })
-      .filter((id): id is number => id !== null)
+      .map(msg => msg.messageId)
+      .filter((id): id is number => typeof id === 'number')
 
     const blob = await taskApis.exportTaskDocx(taskId, messageIds)
 

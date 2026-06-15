@@ -102,10 +102,18 @@ class SandboxClient:
         """
         # Check if sandbox already exists
         if self._sandbox_id and self._sandbox_status == "running":
-            logger.debug(
-                f"[SandboxClient] Reusing existing sandbox: {self._sandbox_id}"
+            existing = await self._get_sandbox(self._sandbox_id)
+            if existing and existing.get("status") == "running":
+                logger.debug(
+                    f"[SandboxClient] Reusing existing sandbox: {self._sandbox_id}"
+                )
+                return self._sandbox_id, None
+
+            logger.info(
+                "[SandboxClient] Cached sandbox is no longer running, "
+                f"will recreate: {self._sandbox_id}"
             )
-            return self._sandbox_id, None
+            self._clear_cached_sandbox()
 
         # Try to get existing sandbox by task_id
         sandbox_id = str(self.task_id)
@@ -270,6 +278,23 @@ class SandboxClient:
         execution_id, subtask_id, error = await self._start_execution(
             sandbox_id, prompt, timeout, metadata
         )
+        if error and self._is_sandbox_not_found_error(error):
+            logger.info(
+                "[SandboxClient] Sandbox disappeared before execution, "
+                "recreating and retrying once"
+            )
+            self._clear_cached_sandbox()
+            sandbox_id, recreate_error = await self.ensure_sandbox()
+            if recreate_error:
+                return SandboxExecutionResult(
+                    success=False,
+                    error=f"Failed to create sandbox: {recreate_error}",
+                    status="failed",
+                )
+            execution_id, subtask_id, error = await self._start_execution(
+                sandbox_id, prompt, timeout, metadata
+            )
+
         if error:
             return SandboxExecutionResult(
                 success=False,
@@ -342,6 +367,16 @@ class SandboxClient:
             error = f"Error starting execution: {str(e)}"
             logger.error(f"[SandboxClient] {error}")
             return "", 0, error
+
+    def _clear_cached_sandbox(self) -> None:
+        """Clear locally cached sandbox identity and status."""
+        self._sandbox_id = None
+        self._sandbox_status = "unknown"
+
+    def _is_sandbox_not_found_error(self, error: str) -> bool:
+        """Return whether an execution start error means sandbox disappeared."""
+        normalized = error.lower()
+        return "404" in normalized or "not found" in normalized
 
     async def _poll_execution(
         self,

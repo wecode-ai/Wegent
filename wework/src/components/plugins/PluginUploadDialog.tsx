@@ -125,7 +125,7 @@ export function PluginUploadDialog({
             type="submit"
             data-testid="plugin-upload-confirm-button"
             disabled={isUploading}
-            className="h-10 rounded-xl bg-primary px-4 text-sm font-semibold text-white disabled:opacity-50"
+            className="h-10 rounded-xl bg-text-primary px-4 text-sm font-semibold text-background hover:bg-text-primary/90 disabled:opacity-50"
           >
             {isUploading
               ? t('workbench.plugins_plugin_uploading', '上传中')

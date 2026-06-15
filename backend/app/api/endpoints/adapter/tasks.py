@@ -67,6 +67,7 @@ from app.services.adapters.wework_conversation_search import (
 from app.services.chat.storage import session_manager
 from app.services.remote_workspace_service import remote_workspace_service
 from app.services.shared_task import shared_task_service
+from app.stores.tasks import task_store
 from shared.telemetry.decorators import trace_sync
 
 router = APIRouter()
@@ -812,7 +813,6 @@ async def export_task_docx(
     - Formatted markdown content
     - Embedded images and attachment info
     """
-    from app.models.task import TaskResource
     from app.services.task_member_service import task_member_service
 
     # Check if user has access to the task (owner or group chat member)
@@ -820,14 +820,12 @@ async def export_task_docx(
         raise HTTPException(status_code=404, detail="Task not found")
 
     # Query task without user_id filter since we already validated access
-    task = (
-        db.query(TaskResource)
-        .filter(
-            TaskResource.id == task_id,
-            TaskResource.kind == "Task",
-            TaskResource.is_active.in_(TaskResource.is_active_query()),
-        )
-        .first()
+    from app.models.task import TaskResource
+
+    task = task_store.get_task_by_states(
+        db,
+        task_id=task_id,
+        states=TaskResource.is_active_query(),
     )
 
     if not task:
@@ -888,21 +886,18 @@ def get_task_services(
     Returns the app field from the task JSON containing service information
     like name, host, previewUrl, mysql, etc.
     """
-    from app.models.task import TaskResource
     from app.services.task_member_service import task_member_service
 
     # Check if user has access to the task
     if not task_member_service.is_member(db, task_id, current_user.id):
         raise HTTPException(status_code=404, detail="Task not found")
 
-    task = (
-        db.query(TaskResource)
-        .filter(
-            TaskResource.id == task_id,
-            TaskResource.kind == "Task",
-            TaskResource.is_active.in_(TaskResource.is_active_query()),
-        )
-        .first()
+    from app.models.task import TaskResource
+
+    task = task_store.get_task_by_states(
+        db,
+        task_id=task_id,
+        states=TaskResource.is_active_query(),
     )
 
     if not task:
@@ -927,23 +922,18 @@ def update_task_services(
     Merges the provided fields with existing app data.
     Only provided non-None fields will be updated.
     """
-    from sqlalchemy.orm.attributes import flag_modified
-
-    from app.models.task import TaskResource
     from app.services.task_member_service import task_member_service
 
     # Check if user has access to the task
     if not task_member_service.is_member(db, task_id, current_user.id):
         raise HTTPException(status_code=404, detail="Task not found")
 
-    task = (
-        db.query(TaskResource)
-        .filter(
-            TaskResource.id == task_id,
-            TaskResource.kind == "Task",
-            TaskResource.is_active.in_(TaskResource.is_active_query()),
-        )
-        .first()
+    from app.models.task import TaskResource
+
+    task = task_store.get_task_by_states(
+        db,
+        task_id=task_id,
+        states=TaskResource.is_active_query(),
     )
 
     if not task:
@@ -962,9 +952,7 @@ def update_task_services(
     # Update task JSON with new app data under status.app
     status_data["app"] = app_data
     task_json["status"] = status_data
-    task.json = task_json
-    task.updated_at = datetime.now()
-    flag_modified(task, "json")
+    task_store.update_json(db, task=task, payload=task_json)
 
     db.commit()
     db.refresh(task)
@@ -984,23 +972,18 @@ def delete_task_services(
 
     Removes the specified field names from the app object.
     """
-    from sqlalchemy.orm.attributes import flag_modified
-
-    from app.models.task import TaskResource
     from app.services.task_member_service import task_member_service
 
     # Check if user has access to the task
     if not task_member_service.is_member(db, task_id, current_user.id):
         raise HTTPException(status_code=404, detail="Task not found")
 
-    task = (
-        db.query(TaskResource)
-        .filter(
-            TaskResource.id == task_id,
-            TaskResource.kind == "Task",
-            TaskResource.is_active.in_(TaskResource.is_active_query()),
-        )
-        .first()
+    from app.models.task import TaskResource
+
+    task = task_store.get_task_by_states(
+        db,
+        task_id=task_id,
+        states=TaskResource.is_active_query(),
     )
 
     if not task:
@@ -1019,9 +1002,7 @@ def delete_task_services(
     # Update task JSON under status.app
     status_data["app"] = app_data
     task_json["status"] = status_data
-    task.json = task_json
-    task.updated_at = datetime.now()
-    flag_modified(task, "json")
+    task_store.update_json(db, task=task, payload=task_json)
 
     db.commit()
     db.refresh(task)

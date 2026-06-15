@@ -152,13 +152,13 @@ export function useKnowledgeBaseDialogs({
           description: data.description,
           namespace,
           retrieval_config: data.retrieval_config,
+          rag_config_mode: data.rag_config_mode,
           summary_enabled: data.summary_enabled,
           summary_model_ref: data.summary_model_ref,
           kb_type: kbType,
           guided_questions: data.guided_questions,
           max_calls_per_conversation: data.max_calls_per_conversation,
           exempt_calls_before_check: data.exempt_calls_before_check,
-          members: data.members,
         })
 
         if (data.summary_enabled && data.summary_model_ref) {

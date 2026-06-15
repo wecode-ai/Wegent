@@ -21,10 +21,10 @@ import { getKnowledgeBase } from '@/apis/knowledge'
 import type {
   KnowledgeBase,
   KnowledgeBaseUpdate,
+  RetrievalConfigDraft,
   RetrievalConfigUpdate,
   SummaryModelRef,
 } from '@/types/knowledge'
-import type { RetrievalConfig } from './RetrievalSettingsSection'
 
 // Maximum documents allowed for notebook type
 const NOTEBOOK_MAX_DOCUMENTS = 50
@@ -62,7 +62,7 @@ export function EditKnowledgeBaseDialog({
   const [summaryModelError, setSummaryModelError] = useState('')
   const [error, setError] = useState('')
   const [showAdvanced, setShowAdvanced] = useState(false)
-  const [retrievalConfig, setRetrievalConfig] = useState<Partial<RetrievalConfig>>({})
+  const [retrievalConfig, setRetrievalConfig] = useState<RetrievalConfigDraft>({})
   const [guidedQuestions, setGuidedQuestions] = useState<string[]>([])
 
   // Call limit configuration state
@@ -114,7 +114,7 @@ export function EditKnowledgeBaseDialog({
     }
   }, [fullKnowledgeBase, knowledgeBase])
 
-  const handleRetrievalConfigChange = useCallback((config: Partial<RetrievalConfig>) => {
+  const handleRetrievalConfigChange = useCallback((config: RetrievalConfigDraft) => {
     setRetrievalConfig(config)
   }, [])
 
@@ -249,7 +249,6 @@ export function EditKnowledgeBaseDialog({
                 setMaxCalls(nextMax)
                 setExemptCalls(nextExempt)
               }}
-              advancedVariant="collapsible"
               advancedOpen={showAdvanced}
               onAdvancedOpenChange={setShowAdvanced}
               showRetrievalSection={!!kb?.retrieval_config}

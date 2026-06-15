@@ -1,5 +1,5 @@
 import { Bot, Menu } from 'lucide-react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ChatInput } from '@/components/chat/ChatInput'
 import type {
   ProjectChatControls,
@@ -12,6 +12,7 @@ import { stripAppBasePath } from '@/config/runtime'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isSettingsRoute, navigateTo } from '@/lib/navigation'
 import {
+  findProjectForTask,
   findWorkbenchDevice,
   getActiveWorkbenchDeviceId,
   isWorkbenchDeviceOnline,
@@ -38,6 +39,7 @@ import type {
   WorkbenchMessage,
   WorkbenchState,
 } from '@/types/workbench'
+import { ConversationDeviceOfflineBanner } from './ConversationDeviceOfflineBanner'
 import { DeviceStatusPrompt } from './DeviceStatusPrompt'
 import { MobileDrawer } from './MobileDrawer'
 
@@ -102,6 +104,7 @@ interface MobileWorkbenchLayoutProps {
   onUpgradeDevice?: (deviceId: string) => Promise<void>
   onInputChange: (value: string) => void
   onSend: () => void
+  onRetryFailedMessage?: (messageId: string) => void
   isResponseStreaming?: boolean
   onPauseResponse?: () => void
   onCancelQueuedMessage?: (id: string) => void
@@ -151,6 +154,7 @@ export function MobileWorkbenchLayout({
   onUpgradeDevice = async () => {},
   onInputChange,
   onSend,
+  onRetryFailedMessage,
   isResponseStreaming = false,
   onPauseResponse = () => {},
   onCancelQueuedMessage = () => {},
@@ -163,6 +167,7 @@ export function MobileWorkbenchLayout({
 }: MobileWorkbenchLayoutProps) {
   const { t } = useTranslation('common')
   const [drawerOpen, setDrawerOpen] = useState(false)
+  const [modelSelectorOpenSignal, setModelSelectorOpenSignal] = useState(0)
   const [settingsOpen, setSettingsOpen] = useState(() =>
     isSettingsRoute(stripAppBasePath(window.location.pathname))
   )
@@ -172,6 +177,11 @@ export function MobileWorkbenchLayout({
     executionTarget: 'local',
   })
   const hasConversation = messages.length > 0 || state.currentTask
+  const currentTaskProject = useMemo(
+    () => findProjectForTask(state.projects, state.currentTask),
+    [state.currentTask, state.projects],
+  )
+  const activeConversationProject = state.currentProject ?? currentTaskProject
   const effectiveProjectChat = projectChat ?? {
     models: [],
     selectedModel: null,
@@ -180,6 +190,10 @@ export function MobileWorkbenchLayout({
     isOptionsLocked: false,
     setSelectedModel: () => {},
     setSelectedModelOption: () => {},
+  }
+  const projectChatWithModelSelectorSignal: ProjectChatControls = {
+    ...effectiveProjectChat,
+    modelSelectorOpenSignal,
   }
   const emptyTitle = state.currentProject
     ? t('workbench.project_empty_title', {
@@ -240,16 +254,18 @@ export function MobileWorkbenchLayout({
   }
   const activeDeviceId = getActiveWorkbenchDeviceId({
     currentTask: state.currentTask,
-    currentProject: state.currentProject,
+    currentProject: activeConversationProject,
     standaloneDeviceId: effectiveProjectWork.currentStandaloneDeviceId,
   })
   const activeDevice = findWorkbenchDevice(state.devices, activeDeviceId)
   const activeDeviceUnavailable =
     Boolean(activeDeviceId) && !isWorkbenchDeviceOnline(activeDevice)
+  const showConversationDeviceBanner =
+    Boolean(activeDeviceId) && (!activeDevice || activeDevice.status === 'offline')
   const activeDeviceVersionUnsupported =
     Boolean(activeDevice && isDeviceBelowWeWorkVersion(activeDevice))
   const noStandaloneCompatibleDevice =
-    !state.currentProject &&
+    !activeConversationProject &&
     !activeDeviceId &&
     !state.devices.some(device => device.status === 'online' && isWeWorkCompatibleDevice(device))
   const composerDisabled =
@@ -319,6 +335,7 @@ export function MobileWorkbenchLayout({
                     models={effectiveProjectChat.models}
                     selectedModel={effectiveProjectChat.selectedModel}
                     selectedModelOptions={effectiveProjectChat.selectedModelOptions}
+                    openSignal={modelSelectorOpenSignal}
                     disabled={false}
                     onSelectModel={effectiveProjectChat.setSelectedModel}
                     onSelectModelOption={effectiveProjectChat.setSelectedModelOption}
@@ -338,6 +355,10 @@ export function MobileWorkbenchLayout({
               className="h-full"
               scrollerClassName="pb-28 pt-16"
               devices={state.devices}
+              onRetryFailedMessage={message => onRetryFailedMessage?.(message.id)}
+              onSwitchModelForFailedMessage={() =>
+                setModelSelectorOpenSignal(signal => signal + 1)
+              }
               onLoadFileChangesDiff={onLoadFileChangesDiff}
               onRevertFileChanges={onRevertFileChanges}
             />
@@ -346,16 +367,24 @@ export function MobileWorkbenchLayout({
               className="pointer-events-none absolute bottom-0 left-0 right-0 z-chrome px-4 pb-[max(16px,env(safe-area-inset-bottom))] pt-3"
             >
               <div className="pointer-events-auto">
-                <DeviceStatusPrompt
-                  devices={state.devices}
-                  upgradingDevices={upgradingDevices}
-                  onUpgradeDevice={onUpgradeDevice}
-                  onOpenCloudDeviceSettings={() => navigateTo('/settings')}
-                  activeDeviceId={activeDeviceId}
-                  requiresOnlineCompatibleDevice={noStandaloneCompatibleDevice}
-                  compact
-                  className="mb-2"
-                />
+                {showConversationDeviceBanner ? (
+                  <ConversationDeviceOfflineBanner
+                    device={activeDevice}
+                    deviceId={activeDeviceId}
+                    className="mb-2"
+                  />
+                ) : (
+                  <DeviceStatusPrompt
+                    devices={state.devices}
+                    upgradingDevices={upgradingDevices}
+                    onUpgradeDevice={onUpgradeDevice}
+                    onOpenCloudDeviceSettings={() => navigateTo('/settings')}
+                    activeDeviceId={activeDeviceId}
+                    requiresOnlineCompatibleDevice={noStandaloneCompatibleDevice}
+                    compact
+                    className="mb-2"
+                  />
+                )}
                 <ChatInput
                   value={state.input}
                   onChange={onInputChange}
@@ -365,7 +394,7 @@ export function MobileWorkbenchLayout({
                     'workbench.mobile_input_placeholder',
                     '询问 Wework',
                   )}
-                  projectChat={projectChat}
+                  projectChat={projectChatWithModelSelectorSignal}
                   projectWork={projectWork}
                   queuedMessages={queuedMessages}
                   guidanceMessages={guidanceMessages}
@@ -400,6 +429,7 @@ export function MobileWorkbenchLayout({
                     models={effectiveProjectChat.models}
                     selectedModel={effectiveProjectChat.selectedModel}
                     selectedModelOptions={effectiveProjectChat.selectedModelOptions}
+                    openSignal={modelSelectorOpenSignal}
                     disabled={false}
                     onSelectModel={effectiveProjectChat.setSelectedModel}
                     onSelectModelOption={effectiveProjectChat.setSelectedModelOption}
@@ -455,7 +485,7 @@ export function MobileWorkbenchLayout({
                   'workbench.mobile_input_placeholder',
                   '询问 Wework',
                 )}
-                projectChat={projectChat}
+                projectChat={projectChatWithModelSelectorSignal}
                 projectWork={projectWork}
                 queuedMessages={queuedMessages}
                 guidanceMessages={guidanceMessages}

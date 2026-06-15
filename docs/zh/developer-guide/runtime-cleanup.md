@@ -20,7 +20,8 @@ POST /api/admin/runtime-cleanup/stale
 {
   "task_id": 123,
   "inactive_hours": 24,
-  "dry_run": false
+  "dry_run": false,
+  "archive_before_delete": true
 }
 ```
 
@@ -32,7 +33,7 @@ POST /api/admin/runtime-cleanup/stale
 curl "https://<host>/api/admin/runtime-cleanup/stale" \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
-  -d '{"task_id":123,"inactive_hours":24,"dry_run":false}'
+  -d '{"task_id":123,"inactive_hours":24,"dry_run":false,"archive_before_delete":true}'
 ```
 
 字段说明：
@@ -42,6 +43,7 @@ curl "https://<host>/api/admin/runtime-cleanup/stale" \
 | `task_id` | 要清理运行时的 Task ID，必填 | - |
 | `inactive_hours` | 无更新或无活动达到多少小时后才允许删除 | `24` |
 | `dry_run` | 只返回将执行的结果，不实际删除 | `false` |
+| `archive_before_delete` | 删除 sandbox 前是否先归档工作区 | `true` |
 
 ## 清理规则
 
@@ -53,7 +55,7 @@ curl "https://<host>/api/admin/runtime-cleanup/stale" \
 - 设置了 `preserveExecutor=true` 的任务不会删除。
 - device executor 不会通过该接口删除。
 - executor 删除成功后会标记相关 Subtask 的 `executor_deleted_at=true`。
-- sandbox 删除由 Executor Manager 执行。
+- sandbox 删除由 Executor Manager 执行，默认会先归档工作区再删除。
 
 ## 返回示例
 
@@ -62,6 +64,7 @@ curl "https://<host>/api/admin/runtime-cleanup/stale" \
   "task_id": 123,
   "inactive_hours": 24,
   "dry_run": false,
+  "archive_before_delete": true,
   "results": {
     "task_executor": {
       "task_id": 123,

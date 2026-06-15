@@ -38,6 +38,7 @@ from app.services.skill_binding_service import (
 )
 from app.services.skill_resolution import find_skill_by_name, find_skill_by_ref
 from app.services.user_mcp_service import user_mcp_service
+from app.stores.tasks import task_store
 from shared.models import ExecutionRequest
 from shared.models.db import Kind, User
 from shared.utils.url_util import domains_match
@@ -424,6 +425,7 @@ class TaskRequestBuilder:
             new_session=new_session,
             collaboration_model=collaboration_model,
             mode=collaboration_model,
+            task_mode=self._derive_task_mode(task),
             auth_token=auth_token,
             skill_identity_token=skill_identity_token,
             backend_url=settings.BACKEND_INTERNAL_URL,
@@ -2474,16 +2476,11 @@ Response template:
                 return workspace_data
 
             # Query the actual Workspace resource to get repository info
-            workspace = (
-                self.db.query(TaskResource)
-                .filter(
-                    TaskResource.user_id == task.user_id,
-                    TaskResource.kind == "Workspace",
-                    TaskResource.name == workspace_ref.name,
-                    TaskResource.namespace == workspace_ref.namespace,
-                    TaskResource.is_active == TaskResource.STATE_ACTIVE,
-                )
-                .first()
+            workspace = task_store.get_workspace_by_ref(
+                self.db,
+                user_id=task.user_id,
+                name=workspace_ref.name,
+                namespace=workspace_ref.namespace,
             )
 
             if workspace and workspace.json:

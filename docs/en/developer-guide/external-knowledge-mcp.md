@@ -121,7 +121,7 @@ Parameters:
 
 | Name | Type | Default | Description |
 | --- | --- | --- | --- |
-| `scope` | `string` | `all` | Visibility scope, matching the internal knowledge list, for example `all`, `personal`, or `group` |
+| `scope` | `string` | `all` | Visibility scope, matching the internal knowledge list, for example `all`, `personal`, `group`, or `organization` |
 | `group_name` | `string \| null` | `null` | Optional space or group name. Required when `scope=group`; an empty string is treated as missing |
 | `query` | `string \| null` | `null` | Optional keyword filter. It matches knowledge base name and description case-insensitively |
 | `limit` | `int` | `50` | Number of results to return, from `1` to `100` |
@@ -131,6 +131,7 @@ Behavior:
 
 - Results are sorted by `created_at` descending, so callers do not need to sort again for display.
 - `document_count` counts all documents in the knowledge base, including inactive documents, matching the internal knowledge list behavior.
+- Each `items[]` entry returns `namespace_level` and `namespace_display_name`: personal knowledge bases use `personal` / `personal`, group knowledge bases use `group` / the group display name, and organization knowledge bases use `organization` / the organization display name. `namespace_display_name` only represents the space display name and does not encode sharing or creator relation.
 - `document_count` is calculated only for the current page to avoid turning one request into many count queries.
 - `total` is the total number of matching knowledge bases, `total_returned` is the number returned in the current page, and `has_more` indicates whether another page exists. Callers should page with `limit` and `offset`.
 

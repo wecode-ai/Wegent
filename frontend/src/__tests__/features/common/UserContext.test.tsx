@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { render, act, waitFor } from '@testing-library/react'
+import { render, act, waitFor, fireEvent } from '@testing-library/react'
 import { UserProvider, useUser } from '@/features/common/UserContext'
 import { userApis } from '@/apis/user'
 import { useRouter } from 'next/navigation'
@@ -19,6 +19,7 @@ jest.mock('@/apis/user', () => ({
     getCurrentUser: jest.fn(),
     login: jest.fn(),
     logout: jest.fn(),
+    updateUser: jest.fn(),
   },
 }))
 
@@ -50,6 +51,19 @@ function TestComponent({ onUserChange }: { onUserChange?: (user: unknown) => voi
     onUserChange(user)
   }
   return <div>{isLoading ? 'Loading...' : user ? `User: ${user.user_name}` : 'No user'}</div>
+}
+
+function PreferenceUpdateComponent() {
+  const { user, updatePreferences } = useUser()
+
+  return (
+    <button
+      disabled={!user}
+      onClick={() => updatePreferences({ default_execution_target: 'cloud' })}
+    >
+      Update preferences
+    </button>
+  )
 }
 
 describe('UserContext', () => {
@@ -205,6 +219,51 @@ describe('UserContext', () => {
       // Assert
       await waitFor(() => {
         expect(getByText('No user')).toBeInTheDocument()
+      })
+    })
+  })
+
+  describe('Preference updates', () => {
+    it('should not submit null quick access when updating unrelated preferences', async () => {
+      const mockUser = {
+        id: 1,
+        user_name: 'testuser',
+        email: 'test@test.com',
+        preferences: {
+          send_key: 'enter',
+          quick_access: null,
+        },
+      }
+      ;(userApis.getCurrentUser as jest.Mock).mockResolvedValue(mockUser)
+      ;(userApis.isAuthenticated as jest.Mock).mockReturnValue(true)
+      ;(userApis.updateUser as jest.Mock).mockResolvedValue({
+        ...mockUser,
+        preferences: {
+          send_key: 'enter',
+          default_execution_target: 'cloud',
+        },
+      })
+
+      const { getByText } = render(
+        <UserProvider>
+          <PreferenceUpdateComponent />
+        </UserProvider>
+      )
+
+      await waitFor(() => {
+        expect(getByText('Update preferences')).not.toBeDisabled()
+      })
+
+      fireEvent.click(getByText('Update preferences'))
+
+      await waitFor(() => {
+        expect(userApis.updateUser).toHaveBeenCalled()
+      })
+      expect(userApis.updateUser).toHaveBeenCalledWith({
+        preferences: {
+          send_key: 'enter',
+          default_execution_target: 'cloud',
+        },
       })
     })
   })

@@ -26,6 +26,7 @@ from app.services.adapters.pipeline_context import (
 )
 from app.services.readers.kinds import KindType, kindReader
 from app.services.task_member_service import task_member_service
+from app.stores.tasks import subtask_store
 
 logger = logging.getLogger(__name__)
 
@@ -490,7 +491,7 @@ class PipelineStageService:
                 return False
 
             # Get the subtask that just completed
-            subtask = db.get(Subtask, subtask_id)
+            subtask = subtask_store.get_by_id(db, subtask_id=subtask_id)
             if not subtask or subtask.status != SubtaskStatus.COMPLETED:
                 return False
 

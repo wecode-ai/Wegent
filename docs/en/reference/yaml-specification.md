@@ -347,6 +347,22 @@ spec:
 
 KnowledgeBase is used to manage document knowledge bases, retrieval configuration, and summary capabilities.
 
+### Retrieval Configuration
+
+| Field | Type | Required | Description |
+|------|------|----------|-------------|
+| `spec.retrievalConfig` | object | No | RAG retrieval configuration. Missing or `null` means the knowledge base has no RAG configuration |
+| `spec.retrievalConfig.retriever_name` | string | Yes* | Retriever name |
+| `spec.retrievalConfig.retriever_namespace` | string | No | Namespace where the retriever is defined, defaults to `default` |
+| `spec.retrievalConfig.embedding_config.model_name` | string | Yes* | Embedding model name |
+| `spec.retrievalConfig.embedding_config.model_namespace` | string | No | Namespace where the embedding model is defined, defaults to `default` |
+| `spec.retrievalConfig.retrieval_mode` | string | No | Retrieval mode: `vector`, `keyword`, or `hybrid` |
+| `spec.retrievalConfig.top_k` | integer | No | Number of results to return |
+| `spec.retrievalConfig.score_threshold` | number | No | Minimum relevance threshold |
+| `spec.retrievalConfig.hybrid_weights` | object | No | Hybrid retrieval weights |
+
+`retriever_name` and `embedding_config.model_name` are required only when `spec.retrievalConfig` exists. By default, the backend automatically fills in a missing retriever and embedding model during creation; if the create request explicitly uses no-RAG mode, or if no usable defaults are available, it does not write `retrievalConfig`. The create request field `rag_config_mode` expresses creation intent only and is not persisted as a KnowledgeBase YAML field. The persisted stable states are either a complete `retrievalConfig` or no `retrievalConfig`.
+
 ### Summary-Related Configuration
 
 | Field | Type | Required | Description |
@@ -484,6 +500,14 @@ spec:
   workspaceRef:
     name: project-workspace
     namespace: default
+  knowledgeBaseScopes:
+    - id: 101
+      namespace: default
+      name: Product Docs
+      scopeRestricted: true
+      folderIds: [12]
+      explicitDocumentIds: null
+      includeSubfolders: true
 ```
 
 ### Field Description
@@ -496,6 +520,21 @@ spec:
 | `spec.prompt` | string | Yes | Task description |
 | `spec.teamRef` | object | Yes | Team reference |
 | `spec.workspaceRef` | object | Yes | Workspace reference |
+| `spec.knowledgeBaseScopes` | array | No | Knowledge-base access scopes bound by `/api/v1/responses`, used to inherit folder/document scope in follow-up turns |
+
+### Knowledge Base Scopes
+
+`spec.knowledgeBaseScopes` is maintained automatically by the OpenAPI Responses knowledge-base tool. When a folder or document scope is enabled, follow-up requests with `previous_response_id` inherit the scope and re-resolve folder membership for the current turn.
+
+| Field | Type | Required | Description |
+|------|------|----------|-------------|
+| `id` | integer | No | Knowledge base ID, preferred when present |
+| `namespace` | string | No | Knowledge base namespace, defaults to `default` |
+| `name` | string | Yes | Knowledge base name |
+| `scopeRestricted` | boolean | No | Whether access is restricted to the listed folders or documents |
+| `folderIds` | array | No | Allowed folder IDs. `0` means documents directly under the root folder |
+| `explicitDocumentIds` | array | No | Explicitly allowed document IDs |
+| `includeSubfolders` | boolean | No | Whether folder scope includes subfolders, defaults to `true` |
 
 ### Task Status
 

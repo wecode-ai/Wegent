@@ -18,7 +18,7 @@ import { taskApis } from '@/apis/tasks'
 import { isChatShell, teamRequiresWorkspace } from '../../service/messageService'
 import { Button } from '@/components/ui/button'
 import { DEFAULT_MODEL_NAME, unifiedToModel } from '../../hooks/useModelSelection'
-import { generateMessageId } from '../../state'
+import { generateMessageId } from '@wegent/chat-core'
 import {
   useMessageSendQueue,
   type QueuedMessage,
@@ -335,12 +335,6 @@ export function useChatStreamHandlers({
   const runtimeDerived = taskState?.derived
   const activeStreamSubtaskId = taskState?.runtime.activeStreamSubtaskId
 
-  // Keep "stop" state aligned with backend task lifecycle:
-  // a task can stay RUNNING even when no stream chunk is currently arriving.
-  // In that window, UI should still block sending and show stop action.
-  const runtimeTaskStatus = taskState?.runtime.taskStatus
-  const isRunningLifecycle = runtimeTaskStatus === 'RUNNING'
-
   const isStopping = taskState?.isStopping || false
 
   // Check for pending user messages
@@ -351,7 +345,7 @@ export function useChatStreamHandlers({
     }
     return false
   }, [taskState?.messages])
-  const isStreaming = isMachineStreaming || isRunningLifecycle || hasPendingUserMessage
+  const isStreaming = Boolean(runtimeDerived?.isStreaming) || hasPendingUserMessage
 
   // Stop stream wrapper
   // Note: subtasks parameter is no longer passed to contextStopStream
@@ -378,8 +372,6 @@ export function useChatStreamHandlers({
     translate: t,
     notify: notifyStreamingJoinWarning,
   })
-
-  // Runtime consistency checks are owned by TaskStateMachine.checkHealth().
 
   // Helper: create retry button
   const createRetryButton = useCallback(
@@ -739,7 +731,8 @@ export function useChatStreamHandlers({
 
   const activeTaskId = currentTaskId && currentTaskId > 0 ? currentTaskId : null
   const isRuntimeBlockingQueue = runtimeDerived?.blocksQueuedDispatch ?? false
-  const isActiveTaskBlocked = isMachineStreaming || hasPendingUserMessage || isRuntimeBlockingQueue
+  const isActiveTaskBlocked =
+    Boolean(runtimeDerived?.isStreaming) || hasPendingUserMessage || isRuntimeBlockingQueue
   const canQueueMessage = Boolean(
     activeTaskId && (isStreaming || hasPendingUserMessage || runtimeDerived?.canQueueMessage)
   )
