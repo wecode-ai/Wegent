@@ -53,6 +53,7 @@ export function reduceChatStartEvent({
     timestamp: Date.now(),
     subtaskId: event.subtaskId,
     messageId: event.messageId,
+    botName: event.botName,
     result: initialResult,
   })
 
