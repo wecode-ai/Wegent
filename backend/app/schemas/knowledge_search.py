@@ -4,7 +4,11 @@
 
 """Schemas for public knowledge search endpoints."""
 
-from pydantic import BaseModel, Field
+from typing import Optional
+
+from pydantic import BaseModel, Field, model_validator
+
+from app.schemas.scope_validation import validate_document_ids, validate_folder_ids
 
 
 class KnowledgeSearchRequest(BaseModel):
@@ -53,3 +57,25 @@ class KnowledgeSearchRequest(BaseModel):
         le=10000,
         description="Maximum chunks for direct injection",
     )
+    folder_ids: Optional[list[int]] = Field(
+        None,
+        description=(
+            "Folder IDs to restrict search scope. Use [0] for root-level "
+            "documents. Omit for full knowledge-base search."
+        ),
+    )
+    document_ids: Optional[list[int]] = Field(
+        None,
+        description="Document IDs to restrict search scope. Omit for full search.",
+    )
+    include_subfolders: bool = Field(
+        True,
+        description="Whether folder_ids include descendant folders.",
+    )
+
+    @model_validator(mode="after")
+    def validate_scope_fields(self) -> "KnowledgeSearchRequest":
+        """Normalize and validate optional search scope fields."""
+        self.folder_ids = validate_folder_ids(self.folder_ids)
+        self.document_ids = validate_document_ids(self.document_ids)
+        return self

@@ -488,6 +488,44 @@ class KnowledgeFolderUpdate(BaseModel):
         return v.strip() if v is not None else v
 
 
+class KnowledgeFolderCreateOpen(BaseModel):
+    """Schema for creating a knowledge folder through open APIs."""
+
+    knowledge_base_id: int = Field(..., ge=1)
+    name: str = Field(..., min_length=1, max_length=255)
+    parent_id: int = Field(
+        default=0, ge=0, description="Parent folder ID (0 = root level)"
+    )
+
+    @field_validator("name")
+    @classmethod
+    def validate_name_not_whitespace(cls, v: str) -> str:
+        """Reject names that are empty or consist only of whitespace."""
+        if not v.strip():
+            raise ValueError("Folder name must not be empty or whitespace-only")
+        return v.strip()
+
+
+class KnowledgeFolderUpdateOpen(BaseModel):
+    """Schema for updating a knowledge folder through open APIs."""
+
+    knowledge_base_id: int = Field(..., ge=1)
+    name: Optional[str] = Field(None, min_length=1, max_length=255)
+    parent_id: Optional[int] = Field(
+        None,
+        ge=0,
+        description="New parent folder ID (0 = root level, None = no change)",
+    )
+
+    @field_validator("name")
+    @classmethod
+    def validate_name_not_whitespace(cls, v: Optional[str]) -> Optional[str]:
+        """Reject names that are empty or consist only of whitespace."""
+        if v is not None and not v.strip():
+            raise ValueError("Folder name must not be empty or whitespace-only")
+        return v.strip() if v is not None else v
+
+
 class KnowledgeFolderResponse(BaseModel):
     """Schema for knowledge folder response with nested children."""
 

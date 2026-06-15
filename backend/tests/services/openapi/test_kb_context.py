@@ -177,6 +177,67 @@ class TestKnowledgeBaseContextCreator:
             user_name="alice",
         )
 
+    @patch(
+        "app.services.openapi.kb_context.task_knowledge_base_service.sync_subtask_kb_to_task"
+    )
+    def test_create_contexts_scoped_kb_updates_task_scope_only(
+        self,
+        mock_sync,
+        creator,
+        mock_resolver,
+        mock_context_class,
+    ):
+        """Scoped KBs should not be promoted to legacy knowledgeBaseRefs."""
+        resolved_kb = ResolvedKnowledgeBase(
+            kb_id=123,
+            namespace="default",
+            name="my_kb",
+            display_name="My KB",
+            scope_restricted=True,
+            folder_ids=[9],
+            explicit_document_ids=[101],
+            include_subfolders=False,
+            resolved_document_ids=[101, 102],
+        )
+        mock_resolution_result = MagicMock()
+        mock_resolution_result.resolved = [resolved_kb]
+        mock_resolution_result.not_found = []
+        mock_resolution_result.no_access = []
+        mock_resolver.resolve.return_value = mock_resolution_result
+
+        mock_context = MagicMock()
+        mock_context_class.return_value = mock_context
+        mock_task = MagicMock()
+        mock_task.id = 456
+        mock_task.json = {"spec": {"title": "task"}}
+
+        creator.create_contexts(
+            subtask_id=789,
+            kb_names=[
+                {
+                    "namespace": "default",
+                    "name": "my_kb",
+                    "folder_ids": [9],
+                    "document_ids": [101],
+                    "include_subfolders": False,
+                    "scope_specified": True,
+                }
+            ],
+            task=mock_task,
+            user_name="alice",
+        )
+
+        mock_sync.assert_not_called()
+        scope_ref = mock_task.json["spec"]["knowledgeBaseScopes"][0]
+        assert scope_ref["id"] == 123
+        assert scope_ref["scopeRestricted"] is True
+        assert scope_ref["folderIds"] == [9]
+        assert scope_ref["explicitDocumentIds"] == [101]
+        assert scope_ref["includeSubfolders"] is False
+        call_kwargs = mock_context_class.call_args.kwargs
+        assert call_kwargs["type_data"]["scope_restricted"] is True
+        assert call_kwargs["type_data"]["document_ids"] == [101, 102]
+
     def test_create_kb_context_private_method(self, creator, mock_context_class):
         """Test the _create_kb_context private method."""
         # Arrange

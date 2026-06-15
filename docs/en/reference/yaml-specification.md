@@ -482,6 +482,14 @@ spec:
   workspaceRef:
     name: project-workspace
     namespace: default
+  knowledgeBaseScopes:
+    - id: 101
+      namespace: default
+      name: Product Docs
+      scopeRestricted: true
+      folderIds: [12]
+      explicitDocumentIds: null
+      includeSubfolders: true
 ```
 
 ### Field Description
@@ -494,6 +502,21 @@ spec:
 | `spec.prompt` | string | Yes | Task description |
 | `spec.teamRef` | object | Yes | Team reference |
 | `spec.workspaceRef` | object | Yes | Workspace reference |
+| `spec.knowledgeBaseScopes` | array | No | Knowledge-base access scopes bound by `/api/v1/responses`, used to inherit folder/document scope in follow-up turns |
+
+### Knowledge Base Scopes
+
+`spec.knowledgeBaseScopes` is maintained automatically by the OpenAPI Responses knowledge-base tool. When a folder or document scope is enabled, follow-up requests with `previous_response_id` inherit the scope and re-resolve folder membership for the current turn.
+
+| Field | Type | Required | Description |
+|------|------|----------|-------------|
+| `id` | integer | No | Knowledge base ID, preferred when present |
+| `namespace` | string | No | Knowledge base namespace, defaults to `default` |
+| `name` | string | Yes | Knowledge base name |
+| `scopeRestricted` | boolean | No | Whether access is restricted to the listed folders or documents |
+| `folderIds` | array | No | Allowed folder IDs. `0` means documents directly under the root folder |
+| `explicitDocumentIds` | array | No | Explicitly allowed document IDs |
+| `includeSubfolders` | boolean | No | Whether folder scope includes subfolders, defaults to `true` |
 
 ### Task Status
 

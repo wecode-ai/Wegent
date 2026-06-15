@@ -147,6 +147,33 @@ def _latest_assistant_subtask(subtasks: list[Subtask]) -> list[Subtask]:
     return []
 
 
+def _get_current_knowledge_base_refs(tool_settings: Dict[str, Any]) -> list[dict]:
+    """Return explicitly requested normalized KB refs from the current request."""
+    refs = tool_settings.get("knowledge_base_refs") or []
+    return refs if isinstance(refs, list) else []
+
+
+def _get_inherited_knowledge_base_refs(
+    *,
+    task: TaskResource,
+    current_refs: list[dict],
+) -> list[dict]:
+    """Return task-level API KB scopes only when the current request has no KB refs."""
+    if current_refs:
+        return []
+
+    from app.services.openapi.kb_context import get_task_knowledge_base_scope_refs
+
+    return get_task_knowledge_base_scope_refs(task)
+
+
+def _exception_message(exc: HTTPException) -> str:
+    """Convert HTTPException detail to a readable persisted error message."""
+    if isinstance(exc.detail, str):
+        return exc.detail
+    return json.dumps(exc.detail, ensure_ascii=False)
+
+
 async def _persist_terminal_failure(
     *,
     subtask_id: int,
@@ -451,12 +478,15 @@ async def _create_non_streaming_response_unified(
     preload_skills = tool_settings.get("preload_skills", [])
     user_id = user.id
 
-    # Extract knowledge base names from tool settings
-    knowledge_base_names = tool_settings.get("knowledge_base_names", [])
+    current_kb_refs = _get_current_knowledge_base_refs(tool_settings)
+    inherited_kb_refs = _get_inherited_knowledge_base_refs(
+        task=setup.task,
+        current_refs=current_kb_refs,
+    )
 
     # Auto-enable tools when knowledge_base is specified
     # This ensures KB tools and skill tools are actually added to the agent
-    enable_tools = enable_chat_bot or bool(knowledge_base_names)
+    enable_tools = enable_chat_bot or bool(current_kb_refs) or bool(inherited_kb_refs)
 
     # Link attachments to user subtask if provided
     if request_body.attachment_ids:
@@ -490,9 +520,17 @@ async def _create_non_streaming_response_unified(
             enable_deep_thinking=enable_chat_bot,
             enable_web_search=enable_chat_bot and settings.WEB_SEARCH_ENABLED,
             preload_skills=preload_skills,
-            knowledge_base_names=knowledge_base_names,
+            knowledge_base_refs=current_kb_refs,
             reasoning_config=reasoning_config,
         )
+    except HTTPException as e:
+        logger.warning("Failed to build execution request: %s", e.detail)
+        await _persist_terminal_failure(
+            subtask_id=assistant_subtask_id,
+            task_id=task_kind_id,
+            error_message=_exception_message(e),
+        )
+        raise
     except Exception as e:
         logger.error(f"Failed to build execution request: {e}")
         await _persist_terminal_failure(
@@ -752,12 +790,15 @@ async def _create_streaming_response_unified(
     user_id = user.id
     user_name = user.user_name
 
-    # Extract knowledge base names from tool settings
-    knowledge_base_names = tool_settings.get("knowledge_base_names", [])
+    current_kb_refs = _get_current_knowledge_base_refs(tool_settings)
+    inherited_kb_refs = _get_inherited_knowledge_base_refs(
+        task=setup.task,
+        current_refs=current_kb_refs,
+    )
 
     # Auto-enable tools when knowledge_base is specified
     # This ensures KB tools and skill tools are actually added to the agent
-    enable_tools = enable_chat_bot or bool(knowledge_base_names)
+    enable_tools = enable_chat_bot or bool(current_kb_refs) or bool(inherited_kb_refs)
 
     # Link attachments to user subtask if provided
     if request_body.attachment_ids:
@@ -791,9 +832,17 @@ async def _create_streaming_response_unified(
             enable_deep_thinking=enable_chat_bot,
             enable_web_search=enable_chat_bot and settings.WEB_SEARCH_ENABLED,
             preload_skills=preload_skills,
-            knowledge_base_names=knowledge_base_names,
+            knowledge_base_refs=current_kb_refs,
             reasoning_config=reasoning_config,
         )
+    except HTTPException as e:
+        logger.warning("Failed to build execution request: %s", e.detail)
+        await _persist_terminal_failure(
+            subtask_id=assistant_subtask_id,
+            task_id=task_kind_id,
+            error_message=_exception_message(e),
+        )
+        raise
     except Exception as e:
         logger.error(f"Failed to build execution request: {e}")
         await _persist_terminal_failure(
