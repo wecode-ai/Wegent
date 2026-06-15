@@ -8,8 +8,8 @@ import {
   ShieldCheck,
   TerminalSquare,
 } from 'lucide-react'
-import type { ComponentType } from 'react'
-import { useEffect, useMemo, useState } from 'react'
+import type { ComponentType, UIEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createDeviceApi } from '@/api/devices'
 import { createHttpClient } from '@/api/http'
 import { createUserApi } from '@/api/users'
@@ -45,6 +45,16 @@ const initialState: AppsPageState = {
   proxyConfig: null,
   isLoading: true,
   error: null,
+}
+
+const HEADER_COLLAPSE_DISTANCE = 96
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max)
+}
+
+function interpolate(start: number, end: number, progress: number): number {
+  return start + (end - start) * progress
 }
 
 function createAppsPageApis() {
@@ -235,6 +245,75 @@ function HeroSection() {
   )
 }
 
+function AppsPageHeader({ collapseProgress }: { collapseProgress: number }) {
+  const detailOpacity = 1 - collapseProgress
+  const headerPadding = interpolate(20, 8, collapseProgress)
+  const titleFontSize = interpolate(24, 20, collapseProgress)
+  const titleLineHeight = interpolate(32, 28, collapseProgress)
+  const eyebrowHeight = interpolate(18, 0, collapseProgress)
+  const descriptionHeight = interpolate(48, 0, collapseProgress)
+  const titleMarginTop = interpolate(4, 0, collapseProgress)
+  const searchHeight = interpolate(44, 40, collapseProgress)
+
+  return (
+    <div
+      data-testid="apps-page-header"
+      data-collapse-progress={collapseProgress.toFixed(2)}
+      className="sticky top-0 z-10 flex flex-col gap-3 border-b border-border/70 bg-background/90 backdrop-blur-xl lg:flex-row lg:items-center lg:justify-between"
+      style={{
+        padding: `${headerPadding}px`,
+      }}
+    >
+      <div className="min-w-0 flex-1">
+        <div
+          className="overflow-hidden text-xs font-bold uppercase tracking-[0.12em] text-primary"
+          style={{
+            height: `${eyebrowHeight}px`,
+            opacity: detailOpacity,
+          }}
+          aria-hidden={collapseProgress >= 0.98}
+        >
+          App Center
+        </div>
+        <h1
+          className="truncate font-bold text-text-primary"
+          style={{
+            fontSize: `${titleFontSize}px`,
+            lineHeight: `${titleLineHeight}px`,
+            marginTop: `${titleMarginTop}px`,
+          }}
+        >
+          管理你的办公与编码应用
+        </h1>
+        <p
+          className="max-w-2xl overflow-hidden text-sm leading-6 text-text-secondary"
+          style={{
+            height: `${descriptionHeight}px`,
+            marginTop: `${interpolate(8, 0, collapseProgress)}px`,
+            opacity: detailOpacity,
+          }}
+          aria-hidden={collapseProgress >= 0.98}
+        >
+          集中查看 executor 运行状态，配置 Claude / Codex 代理，安装内部应用和第三方小程序。
+        </p>
+      </div>
+      <label className="relative min-w-0 lg:w-80">
+        <Search
+          className="absolute left-3 h-4 w-4 text-text-muted"
+          style={{ top: `${(searchHeight - 16) / 2}px` }}
+        />
+        <input
+          data-testid="apps-search-input"
+          className="w-full rounded-full border border-border bg-background pl-9 pr-4 text-sm text-text-primary outline-none placeholder:text-text-muted"
+          style={{ height: `${searchHeight}px` }}
+          placeholder="搜索应用、运行时或代理..."
+          aria-label="搜索应用"
+        />
+      </label>
+    </div>
+  )
+}
+
 function AppCard({ app }: { app: AppCardData }) {
   const Icon = app.icon
 
@@ -338,6 +417,8 @@ function buildRecommendedApps(state: AppsPageState): AppCardData[] {
 export function AppsPage() {
   const { t } = useTranslation('common')
   const [state, setState] = useState<AppsPageState>(initialState)
+  const [headerCollapseProgress, setHeaderCollapseProgress] = useState(0)
+  const scrollFrameRef = useRef<number | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -366,6 +447,28 @@ export function AppsPage() {
     }
   }, [])
 
+  useEffect(() => {
+    return () => {
+      if (scrollFrameRef.current !== null) {
+        window.cancelAnimationFrame(scrollFrameRef.current)
+      }
+    }
+  }, [])
+
+  const handleScroll = useCallback((event: UIEvent<HTMLElement>) => {
+    const scrollTop = event.currentTarget.scrollTop
+
+    if (scrollFrameRef.current !== null) {
+      window.cancelAnimationFrame(scrollFrameRef.current)
+    }
+
+    scrollFrameRef.current = window.requestAnimationFrame(() => {
+      const nextProgress = clamp(scrollTop / HEADER_COLLAPSE_DISTANCE, 0, 1)
+      setHeaderCollapseProgress(nextProgress)
+      scrollFrameRef.current = null
+    })
+  }, [])
+
   const onlineCount = countOnlineDevices(state.devices)
   const slotUsage = getSlotUsage(state.devices)
   const recommendedApps = useMemo(() => buildRecommendedApps(state), [state])
@@ -377,29 +480,12 @@ export function AppsPage() {
     >
       <SidebarNav />
 
-      <section className="min-w-0 overflow-auto rounded-xl border border-border/60 bg-background shadow-[0_3px_16px_rgba(0,0,0,0.04)]">
-        <div className="sticky top-0 z-10 flex flex-col gap-4 border-b border-border/70 bg-background/85 p-5 backdrop-blur-xl lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <div className="text-xs font-bold uppercase tracking-[0.12em] text-primary">
-              App Center
-            </div>
-            <h1 className="mt-1 text-2xl font-bold tracking-[-0.04em] text-text-primary">
-              管理你的办公与编码应用
-            </h1>
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-text-secondary">
-              集中查看 executor 运行状态，配置 Claude / Codex 代理，安装内部应用和第三方小程序。
-            </p>
-          </div>
-          <label className="relative min-w-0 lg:w-80">
-            <Search className="absolute left-3 top-2.5 h-4 w-4 text-text-muted" />
-            <input
-              data-testid="apps-search-input"
-              className="h-10 w-full rounded-full border border-border bg-background pl-9 pr-4 text-sm text-text-primary outline-none placeholder:text-text-muted"
-              placeholder="搜索应用、运行时或代理..."
-              aria-label="搜索应用"
-            />
-          </label>
-        </div>
+      <section
+        data-testid="apps-scroll-container"
+        className="min-w-0 overflow-auto rounded-xl border border-border/60 bg-background shadow-[0_3px_16px_rgba(0,0,0,0.04)]"
+        onScroll={handleScroll}
+      >
+        <AppsPageHeader collapseProgress={headerCollapseProgress} />
 
         <div className="p-5">
           {state.error && (

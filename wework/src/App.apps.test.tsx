@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import './i18n'
@@ -112,5 +112,24 @@ describe('App center route', () => {
     expect(screen.queryByText('Skills')).not.toBeInTheDocument()
     expect(screen.queryByText('MCP')).not.toBeInTheDocument()
     expect(screen.queryByText('插件包')).not.toBeInTheDocument()
+  })
+
+  test('collapses the apps page header while scrolling the overview', async () => {
+    window.history.pushState({}, '', '/apps')
+
+    render(<App />)
+
+    expect(await screen.findByText('Executor 状态')).toBeInTheDocument()
+
+    const scrollContainer = screen.getByTestId('apps-scroll-container')
+    const header = screen.getByTestId('apps-page-header')
+
+    expect(header).toHaveAttribute('data-collapse-progress', '0.00')
+
+    fireEvent.scroll(scrollContainer, { target: { scrollTop: 120 } })
+
+    await waitFor(() => {
+      expect(header).toHaveAttribute('data-collapse-progress', '1.00')
+    })
   })
 })
