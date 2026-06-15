@@ -14,7 +14,7 @@ _version_cache: Optional[str] = None
 
 # Embedded version for PyInstaller builds (set by build script)
 # This will be replaced during the build process
-_EMBEDDED_VERSION: Optional[str] = "1.8.5"
+_EMBEDDED_VERSION: Optional[str] = None
 
 
 def get_version() -> str:
