@@ -2723,7 +2723,7 @@ wheels = [
 
 [[package]]
 name = "mcp"
-version = "1.22.0"
+version = "1.27.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -2741,9 +2741,9 @@ dependencies = [
     { name = "typing-inspection" },
     { name = "uvicorn", marker = "sys_platform != 'emscripten'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/a3/a2/c5ec0ab38b35ade2ae49a90fada718fbc76811dc5aa1760414c6aaa6b08a/mcp-1.22.0.tar.gz", hash = "sha256:769b9ac90ed42134375b19e777a2858ca300f95f2e800982b3e2be62dfc0ba01", size = 471788, upload-time = "2025-11-20T20:11:28.095Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/27/3c/347cf965d313f5d41764e7d46bea6ffe7d9ef13b983cc429b0340962a082/mcp-1.27.2.tar.gz", hash = "sha256:8e02db104096d1c25b28e64bde29a5c32b31bc241710213e12fd4d84985bdfef", size = 621116, upload-time = "2026-05-29T17:16:04.039Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a9/bb/711099f9c6bb52770f56e56401cdfb10da5b67029f701e0df29362df4c8e/mcp-1.22.0-py3-none-any.whl", hash = "sha256:bed758e24df1ed6846989c909ba4e3df339a27b4f30f1b8b627862a4bade4e98", size = 175489, upload-time = "2025-11-20T20:11:26.542Z" },
+    { url = "https://files.pythonhosted.org/packages/c9/11/252c6f971dc4f16af1d98a1c469d8ba523aab00d1bb76b4d3bc1ff32eacc/mcp-1.27.2-py3-none-any.whl", hash = "sha256:d6ff5160c6ca65d93013626efb3fc249de683c30b2d8570755ceddd490344de5", size = 220498, upload-time = "2026-05-29T17:16:02.442Z" },
 ]
 
 [[package]]
@@ -5978,7 +5978,7 @@ requires-dist = [
     { name = "llama-index-vector-stores-qdrant", specifier = ">=0.9.0" },
     { name = "lxml", specifier = ">=4.9.0" },
     { name = "markdown", specifier = ">=3.5.0" },
-    { name = "mcp", specifier = ">=1.0.0" },
+    { name = "mcp", specifier = "==1.27.2" },
     { name = "minio", specifier = ">=7.2.20" },
     { name = "mysql-connector-python", specifier = ">=8.3.0" },
     { name = "openpyxl", specifier = ">=3.1.2" },
@@ -6127,7 +6127,7 @@ requires-dist = [
     { name = "llama-index-vector-stores-elasticsearch", specifier = ">=0.4.0" },
     { name = "llama-index-vector-stores-qdrant", specifier = ">=0.9.0" },
     { name = "markdown", specifier = ">=3.5.0" },
-    { name = "mcp", specifier = ">=1.0.0" },
+    { name = "mcp", specifier = "==1.27.2" },
     { name = "openpyxl", specifier = ">=3.1.2" },
     { name = "opentelemetry-api", specifier = ">=1.27.0" },
     { name = "opentelemetry-exporter-otlp", specifier = ">=1.27.0" },
