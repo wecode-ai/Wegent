@@ -6,7 +6,7 @@
 
 from datetime import datetime
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -25,6 +25,8 @@ class ExternalKnowledgeSpace(BaseModel):
     knowledge_base_name: str
     description: Optional[str] = None
     namespace: str
+    namespace_level: Literal["personal", "group", "organization"]
+    namespace_display_name: str
     owner_user_id: int
     document_count: int = 0
     created_at: datetime

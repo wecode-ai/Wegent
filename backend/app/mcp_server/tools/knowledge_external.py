@@ -27,6 +27,7 @@ from app.mcp_server.server import (
     external_knowledge_mcp_server,
 )
 from app.models.knowledge import KnowledgeFolder
+from app.models.namespace import Namespace
 from app.schemas.knowledge import ResourceScope
 from app.schemas.knowledge_external import (
     ExternalDocumentContentResponse,
@@ -58,6 +59,11 @@ from app.services.knowledge.external_nodes import (
     list_recursive_nodes,
 )
 from app.services.knowledge.knowledge_service import KnowledgeService
+from app.services.knowledge.namespace_utils import (
+    NamespaceLevel,
+    classify_namespace_level,
+    load_active_namespace_map,
+)
 from app.services.knowledge.orchestrator import MAX_DOCUMENT_READ_LIMIT
 from app.services.rag.document_id_utils import extract_document_id
 from app.services.rag.gateway_factory import get_query_gateway
@@ -171,6 +177,23 @@ def _search_rate_limit_status(user_id: int) -> ExternalMcpRateLimitStatus:
     )
 
 
+def _resolve_external_namespace_fields(
+    *,
+    kb,
+    namespace_map: dict[str, Namespace],
+) -> tuple[NamespaceLevel, str]:
+    namespace = namespace_map.get(kb.namespace)
+    namespace_level = classify_namespace_level(kb.namespace, namespace)
+
+    if namespace_level == "personal":
+        return namespace_level, "personal"
+
+    display_name = (
+        (namespace.display_name or namespace.name) if namespace else kb.namespace
+    )
+    return namespace_level, display_name
+
+
 def _list_knowledge_bases_sync(
     *,
     user_id: int,
@@ -202,15 +225,27 @@ def _list_knowledge_bases_sync(
         total = len(kbs)
         page_kbs = kbs[offset : offset + limit]
         counts = get_document_counts(db, [kb.id for kb in page_kbs])
+        namespace_map = load_active_namespace_map(
+            db,
+            [kb.namespace for kb in page_kbs],
+        )
         items = []
         for kb in page_kbs:
             spec = kb.json.get("spec", {}) or {}
+            namespace_level, namespace_display_name = (
+                _resolve_external_namespace_fields(
+                    kb=kb,
+                    namespace_map=namespace_map,
+                )
+            )
             items.append(
                 ExternalKnowledgeSpace(
                     knowledge_base_id=kb.id,
                     knowledge_base_name=spec.get("name", ""),
                     description=spec.get("description") or None,
                     namespace=kb.namespace,
+                    namespace_level=namespace_level,
+                    namespace_display_name=namespace_display_name,
                     owner_user_id=kb.user_id,
                     document_count=counts.get(kb.id, 0),
                     created_at=kb.created_at,
