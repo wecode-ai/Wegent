@@ -315,7 +315,7 @@
     "create_first_team": "Create Agent",
     "system_recommended": "Recommended",
     "quick_access_title": "Favorite agents",
-    "quick_access_description": "This list shows your favorites and system-recommended agents by default.",
+    "quick_access_description": "This list shows your favorite agents.",
     "quick_access_empty": "No favorite agents yet",
     "quick_access_view_all": "View all agents",
     "quick_access_back": "Back to favorites",
