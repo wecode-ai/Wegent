@@ -264,21 +264,15 @@ class DatabaseHandler:
             last_subtask: The subtask that just completed
             advance_info: Dict from get_auto_advance_info() with next stage details
         """
-        from app.models.subtask import SubtaskRole, SubtaskStatus
-
         next_stage_index = advance_info["next_stage_index"]
         next_bot_id = advance_info["next_bot_id"]
         next_bot_name = advance_info["next_bot_name"]
-
-        # Reuse same executor container (pipeline runs all stages in one container)
-        executor_name = last_subtask.executor_name or ""
-        executor_namespace = last_subtask.executor_namespace or ""
+        context_passing = advance_info.get("context_passing")
 
         # Compute next message_id from highest existing message_id in this task
         latest = subtask_store.get_latest_by_task(
             db,
             task_id=task.id,
-            owner_user_id=task.user_id,
         )
         next_message_id = (latest.message_id + 1) if latest else 1
         parent_id = latest.message_id if latest else 0
@@ -286,23 +280,37 @@ class DatabaseHandler:
         # Advance currentStage in task spec
         task_crd.spec.currentStage = next_stage_index
 
-        subtask_store.create_subtask(
+        from app.services.adapters.pipeline_context import build_pipeline_context_prompt
+
+        handoff_message = build_pipeline_context_prompt(
+            db,
+            task_id=task.id,
+            current_subtask=last_subtask,
+            context_passing=context_passing,
+        )
+
+        subtask_store.create_user_subtask(
+            db,
+            user_id=task.user_id,
+            task_id=task.id,
+            team_id=last_subtask.team_id,
+            title="User message",
+            bot_ids=[next_bot_id],
+            prompt=handoff_message,
+            message_id=next_message_id,
+            parent_id=parent_id,
+            sender_user_id=task.user_id,
+        )
+
+        subtask_store.create_assistant_subtask(
             db,
             user_id=task.user_id,
             task_id=task.id,
             team_id=last_subtask.team_id,
             title=f"{task_crd.spec.title} - {next_bot_name}",
             bot_ids=[next_bot_id],
-            role=SubtaskRole.ASSISTANT,
-            prompt="",
-            status=SubtaskStatus.PENDING,
-            progress=0,
-            message_id=next_message_id,
-            parent_id=parent_id,
-            executor_name=executor_name,
-            executor_namespace=executor_namespace,
-            error_message="",
-            result=None,
+            message_id=next_message_id + 1,
+            parent_id=next_message_id,
         )
         logger.info(
             "[DB] Pipeline auto-advance task %s: stage %s, bot_id=%s",

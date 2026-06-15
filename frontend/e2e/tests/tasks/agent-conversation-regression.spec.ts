@@ -33,6 +33,14 @@ type CreatedTeam = {
   botName: string
 }
 
+type CreatedPipelineTeam = CreatedTeam & {
+  stageOneBotName: string
+  stageTwoBotName: string
+  stageOneMemberPrompt: string
+  stageTwoMemberPrompt: string
+  stageTwoSystemPrompt: string
+}
+
 type RuntimeCheckResponse = {
   task_id: number
   task_status: string
@@ -52,6 +60,8 @@ test.describe('Agent conversation regression', () => {
   let claudeChatTeam: CreatedTeam
   let codeTeam: CreatedTeam
   let deviceTeam: CreatedTeam
+  let manualPipelineTeam: CreatedPipelineTeam
+  let automaticPipelineTeam: CreatedPipelineTeam
   const createdTaskIds = new Set<number>()
   const streamRuleMatchTexts = new Set<string>()
 
@@ -64,7 +74,6 @@ test.describe('Agent conversation regression', () => {
     await expectServiceHealthy(request, `${MOCK_MODEL_SERVER_URL}/health`, 'mock model server')
 
     await createTestResources(request)
-    await waitForLocalDeviceOnline(request)
   })
 
   test.afterEach(async ({ request }) => {
@@ -177,6 +186,7 @@ test.describe('Agent conversation regression', () => {
     const firstPrompt = `Remember this device context token: ${contextToken}`
     const followUpPrompt = 'What context token did I provide in the previous device turn?'
 
+    await waitForLocalDeviceOnline(request)
     await openTaskPage(page, `/devices/chat?deviceId=${DEVICE_ID}`, deviceTeam.id, 'task')
 
     await sendMessage(page, firstPrompt)
@@ -203,6 +213,91 @@ test.describe('Agent conversation regression', () => {
     )
     expect(extractText(secondRequest.body)).toContain(contextToken)
     expect(extractText(secondRequest.body)).toContain(firstPrompt)
+  })
+
+  test('manual pipeline next step sends handoff user message and next bot prompt to the second model', async ({
+    page,
+    request,
+  }) => {
+    const firstPrompt = `MANUAL_PIPELINE_USER_MESSAGE_${makeContextToken('manual_pipeline')}`
+    const stageOneOutput = `MANUAL_PIPELINE_STAGE_ONE_OUTPUT_${makeContextToken('manual_stage')}`
+    const expectedHandoff = `Previous pipeline context:\n\n[AI]\n${stageOneOutput}`
+
+    await configureStreamRule(request, firstPrompt, stageOneOutput)
+    await openTaskPage(page, '/chat', manualPipelineTeam.id, 'chat')
+
+    await sendMessage(page, firstPrompt)
+    const taskId = await waitForTaskId(page)
+    createdTaskIds.add(taskId)
+    await expect(page.getByTestId('messages-container')).toContainText(stageOneOutput, {
+      timeout: RESPONSE_TIMEOUT_MS,
+    })
+
+    const nextStepButton = page.getByTestId('pipeline-next-step-button')
+    await expect(nextStepButton).toBeVisible({ timeout: RESPONSE_TIMEOUT_MS })
+    await expect(nextStepButton).toBeEnabled({ timeout: RESPONSE_TIMEOUT_MS })
+    await nextStepButton.click()
+
+    await expect(page.getByTestId('pipeline-next-step-message')).toBeVisible({
+      timeout: 10_000,
+    })
+    await page.getByTestId('pipeline-next-step-confirm-button').click()
+
+    const secondStageRequest = await waitForCapturedModelRequest(
+      request,
+      capture =>
+        isAnthropicMessagesRequest(capture) &&
+        requestContainsAll(capture, [
+          expectedHandoff,
+          manualPipelineTeam.stageTwoMemberPrompt,
+          manualPipelineTeam.stageTwoSystemPrompt,
+        ]),
+      'manual pipeline second-stage model request with handoff and bot prompt'
+    )
+    const secondStageText = extractText(secondStageRequest.body)
+    expect(secondStageText).toContain(expectedHandoff)
+    expect(secondStageText).toContain(manualPipelineTeam.stageTwoMemberPrompt)
+    expect(secondStageText).toContain(manualPipelineTeam.stageTwoSystemPrompt)
+    await waitForBackendTerminal(request, taskId)
+  })
+
+  test('automatic pipeline next step sends configured user message and next bot prompt to the second model', async ({
+    page,
+    request,
+  }) => {
+    const firstPrompt = `AUTO_PIPELINE_USER_MESSAGE_${makeContextToken('auto_pipeline')}`
+    const stageOneOutput = `AUTO_PIPELINE_STAGE_ONE_OUTPUT_${makeContextToken('auto_stage')}`
+    const expectedHandoff = [
+      'Original user request:',
+      firstPrompt,
+      '',
+      'Previous stage output:',
+      stageOneOutput,
+    ].join('\n')
+
+    await configureStreamRule(request, firstPrompt, stageOneOutput)
+    await openTaskPage(page, '/chat', automaticPipelineTeam.id, 'chat')
+
+    await sendMessage(page, firstPrompt)
+    const taskId = await waitForTaskId(page)
+    createdTaskIds.add(taskId)
+
+    const secondStageRequest = await waitForCapturedModelRequest(
+      request,
+      capture =>
+        isAnthropicMessagesRequest(capture) &&
+        requestContainsAll(capture, [
+          expectedHandoff,
+          automaticPipelineTeam.stageTwoMemberPrompt,
+          automaticPipelineTeam.stageTwoSystemPrompt,
+        ]),
+      'automatic pipeline second-stage model request with configured handoff and bot prompt'
+    )
+    const secondStageText = extractText(secondStageRequest.body)
+    expect(secondStageText).toContain(expectedHandoff)
+    expect(secondStageText).toContain(automaticPipelineTeam.stageTwoMemberPrompt)
+    expect(secondStageText).toContain(automaticPipelineTeam.stageTwoSystemPrompt)
+    await waitForBackendTerminal(request, taskId)
   })
 
   async function createTestResources(request: APIRequestContext): Promise<void> {
@@ -318,6 +413,28 @@ test.describe('Agent conversation regression', () => {
       bindMode: ['task'],
       modelName: DEVICE_CLAUDE_MODEL_NAME,
     })
+    manualPipelineTeam = await createPipelineTeam(request, {
+      teamName: `${TEST_PREFIX}-manual-pipeline-team`,
+      stageOneBotName: `${TEST_PREFIX}-manual-stage-one-bot`,
+      stageTwoBotName: `${TEST_PREFIX}-manual-stage-two-bot`,
+      firstStageRequireConfirmation: true,
+      firstStageContextPassing: 'none',
+      stageOneSystemPrompt: 'MANUAL_PIPELINE_STAGE_ONE_SYSTEM_PROMPT',
+      stageOneMemberPrompt: 'MANUAL_PIPELINE_STAGE_ONE_MEMBER_PROMPT',
+      stageTwoSystemPrompt: 'MANUAL_PIPELINE_STAGE_TWO_SYSTEM_PROMPT',
+      stageTwoMemberPrompt: 'MANUAL_PIPELINE_STAGE_TWO_MEMBER_PROMPT',
+    })
+    automaticPipelineTeam = await createPipelineTeam(request, {
+      teamName: `${TEST_PREFIX}-automatic-pipeline-team`,
+      stageOneBotName: `${TEST_PREFIX}-automatic-stage-one-bot`,
+      stageTwoBotName: `${TEST_PREFIX}-automatic-stage-two-bot`,
+      firstStageRequireConfirmation: false,
+      firstStageContextPassing: 'original_and_previous',
+      stageOneSystemPrompt: 'AUTOMATIC_PIPELINE_STAGE_ONE_SYSTEM_PROMPT',
+      stageOneMemberPrompt: 'AUTOMATIC_PIPELINE_STAGE_ONE_MEMBER_PROMPT',
+      stageTwoSystemPrompt: 'AUTOMATIC_PIPELINE_STAGE_TWO_SYSTEM_PROMPT',
+      stageTwoMemberPrompt: 'AUTOMATIC_PIPELINE_STAGE_TWO_MEMBER_PROMPT',
+    })
   }
 
   async function createClaudeShell(request: APIRequestContext): Promise<void> {
@@ -390,19 +507,134 @@ test.describe('Agent conversation regression', () => {
     }
   }
 
+  async function createPipelineTeam(
+    request: APIRequestContext,
+    options: {
+      teamName: string
+      stageOneBotName: string
+      stageTwoBotName: string
+      firstStageRequireConfirmation: boolean
+      firstStageContextPassing: 'none' | 'previous_bot' | 'original_user' | 'original_and_previous'
+      stageOneSystemPrompt: string
+      stageOneMemberPrompt: string
+      stageTwoSystemPrompt: string
+      stageTwoMemberPrompt: string
+    }
+  ): Promise<CreatedPipelineTeam> {
+    const stageOneBotId = await createBot(request, {
+      botName: options.stageOneBotName,
+      shellName: CLAUDE_SHELL_NAME,
+      modelName: CLAUDE_MODEL_NAME,
+      systemPrompt: options.stageOneSystemPrompt,
+    })
+    const stageTwoBotId = await createBot(request, {
+      botName: options.stageTwoBotName,
+      shellName: CLAUDE_SHELL_NAME,
+      modelName: CLAUDE_MODEL_NAME,
+      systemPrompt: options.stageTwoSystemPrompt,
+    })
+
+    const teamResponse = await request.post(`${API_BASE_URL}/api/teams`, {
+      headers: authHeaders(),
+      data: {
+        name: options.teamName,
+        description: 'E2E team for pipeline handoff request regression tests',
+        bots: [
+          {
+            bot_id: stageOneBotId,
+            bot_prompt: options.stageOneMemberPrompt,
+            role: 'leader',
+            requireConfirmation: options.firstStageRequireConfirmation,
+            contextPassing: options.firstStageContextPassing,
+          },
+          {
+            bot_id: stageTwoBotId,
+            bot_prompt: options.stageTwoMemberPrompt,
+            role: 'worker',
+            requireConfirmation: false,
+            contextPassing: 'none',
+          },
+        ],
+        bind_mode: ['chat'],
+        namespace: 'default',
+        is_active: true,
+        requires_workspace: false,
+        workflow: {
+          mode: 'pipeline',
+          leader_bot_id: stageOneBotId,
+        },
+      },
+    })
+    expect([200, 201]).toContain(teamResponse.status())
+    const teamBody = (await teamResponse.json()) as { id?: number }
+    expect(teamBody.id).toBeTruthy()
+
+    return {
+      name: options.teamName,
+      id: teamBody.id!,
+      botName: options.stageOneBotName,
+      stageOneBotName: options.stageOneBotName,
+      stageTwoBotName: options.stageTwoBotName,
+      stageOneMemberPrompt: options.stageOneMemberPrompt,
+      stageTwoMemberPrompt: options.stageTwoMemberPrompt,
+      stageTwoSystemPrompt: options.stageTwoSystemPrompt,
+    }
+  }
+
+  async function createBot(
+    request: APIRequestContext,
+    options: {
+      botName: string
+      shellName: string
+      modelName: string
+      systemPrompt: string
+    }
+  ): Promise<number> {
+    const response = await request.post(`${API_BASE_URL}/api/bots`, {
+      headers: authHeaders(),
+      data: {
+        name: options.botName,
+        shell_name: options.shellName,
+        agent_config: {
+          bind_model: options.modelName,
+          bind_model_type: 'user',
+        },
+        system_prompt: options.systemPrompt,
+        namespace: 'default',
+        is_active: true,
+      },
+    })
+    expect([200, 201]).toContain(response.status())
+    const body = (await response.json()) as { id?: number }
+    expect(body.id).toBeTruthy()
+    return body.id!
+  }
+
   async function cleanupTestResources(request: APIRequestContext): Promise<void> {
-    for (const team of [deviceTeam, codeTeam, claudeChatTeam, chatShellTeam]) {
+    for (const team of [
+      automaticPipelineTeam,
+      manualPipelineTeam,
+      deviceTeam,
+      codeTeam,
+      claudeChatTeam,
+      chatShellTeam,
+    ]) {
       if (!team) continue
       await request
         .delete(`${API_BASE_URL}/api/v1/namespaces/default/teams/${team.name}`, {
           headers: authHeaders(),
         })
         .catch(() => null)
-      await request
-        .delete(`${API_BASE_URL}/api/v1/namespaces/default/bots/${team.botName}`, {
-          headers: authHeaders(),
-        })
-        .catch(() => null)
+      const botNames = isPipelineTeam(team)
+        ? [team.stageOneBotName, team.stageTwoBotName]
+        : [team.botName]
+      for (const botName of botNames) {
+        await request
+          .delete(`${API_BASE_URL}/api/v1/namespaces/default/bots/${botName}`, {
+            headers: authHeaders(),
+          })
+          .catch(() => null)
+      }
     }
 
     for (const modelName of [DEVICE_CLAUDE_MODEL_NAME, CLAUDE_MODEL_NAME, CHAT_MODEL_NAME]) {
@@ -659,7 +891,7 @@ test.describe('Agent conversation regression', () => {
 
     if (value && typeof value === 'object') {
       const obj = value as Record<string, unknown>
-      return ['body', 'messages', 'input', 'content', 'text', 'prompt']
+      return ['body', 'messages', 'system', 'input', 'content', 'text', 'prompt']
         .map(key => extractText(obj[key]))
         .join(' ')
     }
@@ -669,6 +901,15 @@ test.describe('Agent conversation regression', () => {
 
   function isAnthropicMessagesRequest(capture: CapturedModelRequest): boolean {
     return capture.url.includes('/messages') && !capture.url.includes('/messages/count_tokens')
+  }
+
+  function requestContainsAll(capture: CapturedModelRequest, expectedTexts: string[]): boolean {
+    const text = extractText(capture.body)
+    return expectedTexts.every(expected => text.includes(expected))
+  }
+
+  function isPipelineTeam(team: CreatedTeam): team is CreatedPipelineTeam {
+    return 'stageTwoBotName' in team
   }
 
   function authHeaders(): Record<string, string> {

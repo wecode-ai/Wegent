@@ -95,6 +95,33 @@ def _run_in_new_loop(coro) -> Any:
 _thread_pool: ThreadPoolExecutor | None = None
 
 
+def _resolve_dispatch_message(db: Session, subtask: "Subtask") -> str:
+    """Resolve the user message that triggered a pending assistant subtask."""
+    from app.models.subtask import Subtask, SubtaskRole
+
+    assistant_prompt = extract_display_prompt(subtask.prompt) or ""
+    if assistant_prompt:
+        return assistant_prompt
+
+    if not subtask.parent_id:
+        return ""
+
+    user_subtask = (
+        db.query(Subtask)
+        .filter(
+            Subtask.task_id == subtask.task_id,
+            Subtask.role == SubtaskRole.USER,
+            Subtask.message_id == subtask.parent_id,
+        )
+        .order_by(Subtask.id.desc())
+        .first()
+    )
+    if not user_subtask:
+        return ""
+
+    return extract_display_prompt(user_subtask.prompt) or ""
+
+
 def _get_thread_pool() -> ThreadPoolExecutor:
     """Get or create the shared thread pool."""
     global _thread_pool
@@ -182,7 +209,7 @@ async def _dispatch_task_async(task_id: int) -> None:
             try:
                 # Extract original user text from stored prompt to prevent
                 # double-wrapping of already-formatted content arrays.
-                message = extract_display_prompt(subtask.prompt) or ""
+                message = _resolve_dispatch_message(db, subtask)
 
                 # Build ExecutionRequest
                 request = builder.build(

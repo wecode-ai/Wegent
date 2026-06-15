@@ -17,9 +17,13 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.kind import Kind
-from app.models.subtask import Subtask, SubtaskStatus
+from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.schemas.kind import Task, Team
+from app.services.adapters.pipeline_context import (
+    build_pipeline_context_prompt,
+    normalize_context_passing,
+)
 from app.services.readers.kinds import KindType, kindReader
 from app.services.task_member_service import task_member_service
 from app.stores.tasks import subtask_store
@@ -394,6 +398,27 @@ class PipelineStageService:
         # current_stage_bot_id is used for session management
         # When current_stage_bot_id != next_stage_bot_id, a new session should be created
         current_stage_bot_id = current_bot.id if current_bot else None
+        context_passing = normalize_context_passing(
+            getattr(current_member, "contextPassing", None)
+        )
+        current_subtask = (
+            db.query(Subtask)
+            .filter(
+                Subtask.task_id == task_id,
+                Subtask.role == SubtaskRole.ASSISTANT,
+                Subtask.status == SubtaskStatus.COMPLETED,
+            )
+            .order_by(Subtask.message_id.desc())
+            .first()
+        )
+        handoff_message = ""
+        if current_subtask:
+            handoff_message = build_pipeline_context_prompt(
+                db,
+                task_id=task_id,
+                current_subtask=current_subtask,
+                context_passing=context_passing,
+            )
 
         # Update task status to PENDING (ready for next stage)
         # Also update currentStage to track which stage we're at for follow-up questions
@@ -422,6 +447,8 @@ class PipelineStageService:
             "next_stage_index": next_stage,
             "total_stages": total_stages,
             "next_stage_name": next_bot.name,
+            "context_passing": context_passing,
+            "handoff_message": handoff_message,
             "team": team,
             "team_crd": team_crd,
         }

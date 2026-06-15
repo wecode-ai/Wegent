@@ -564,3 +564,193 @@ async def test_create_task_and_subtasks_allows_pipeline_confirm_to_skip_status_c
     assert status["status"] == "PENDING"
     assert status["progress"] == 0
     assert result.assistant_subtask is not None
+
+
+@pytest.mark.asyncio
+async def test_create_task_and_subtasks_keeps_explicit_pipeline_confirm_message(
+    test_db: Session,
+    test_user: User,
+):
+    task = _build_existing_running_task(task_id=2470, user_id=test_user.id)
+    test_db.add(task)
+    test_db.add(
+        Subtask(
+            user_id=test_user.id,
+            task_id=task.id,
+            team_id=1256,
+            title="User message",
+            bot_ids=[1255],
+            role=SubtaskRole.USER,
+            executor_namespace="",
+            executor_name="",
+            prompt="hello",
+            status=SubtaskStatus.COMPLETED,
+            progress=100,
+            message_id=1,
+            parent_id=0,
+            error_message="",
+            result=None,
+            completed_at=datetime.now(),
+        )
+    )
+    test_db.add(
+        Subtask(
+            user_id=test_user.id,
+            task_id=task.id,
+            team_id=1256,
+            title="Previous assistant response",
+            bot_ids=[1255],
+            role=SubtaskRole.ASSISTANT,
+            executor_namespace="",
+            executor_name="",
+            prompt="",
+            status=SubtaskStatus.COMPLETED,
+            progress=100,
+            message_id=2,
+            parent_id=1,
+            error_message="",
+            result={"value": "Hello from stage one."},
+            completed_at=datetime.now(),
+        )
+    )
+    test_db.commit()
+    test_db.refresh(task)
+
+    team = SimpleNamespace(
+        id=1256,
+        user_id=test_user.id,
+        name="quickstart",
+        namespace="default",
+    )
+    explicit_message = "Previous pipeline context:\n\n[AI]\nHello from stage one."
+    params = TaskCreationParams(
+        message=explicit_message,
+        pipeline_bot_ids=[1257],
+        previous_bot_id=1255,
+        pipeline_context_passing="none",
+        skip_status_check=True,
+    )
+
+    with (
+        patch(
+            "app.services.chat.storage.task_manager.initialize_redis_chat_history",
+            new=AsyncMock(),
+        ),
+        patch(
+            "app.services.memory.is_memory_enabled_for_user",
+            return_value=False,
+        ),
+        patch(
+            "app.services.chat.trigger.group_chat.is_task_group_chat",
+            return_value=False,
+        ),
+    ):
+        result = await create_task_and_subtasks(
+            db=test_db,
+            user=test_user,
+            team=team,
+            message=params.message,
+            params=params,
+            task_id=task.id,
+            should_trigger_ai=True,
+        )
+
+    assert result.user_subtask.prompt == explicit_message
+    assert result.assistant_subtask is not None
+    assert result.assistant_subtask.prompt == ""
+
+
+@pytest.mark.asyncio
+async def test_create_task_and_subtasks_uses_pipeline_context_when_confirm_message_empty(
+    test_db: Session,
+    test_user: User,
+):
+    task = _build_existing_running_task(task_id=2471, user_id=test_user.id)
+    test_db.add(task)
+    test_db.add(
+        Subtask(
+            user_id=test_user.id,
+            task_id=task.id,
+            team_id=1256,
+            title="User message",
+            bot_ids=[1255],
+            role=SubtaskRole.USER,
+            executor_namespace="",
+            executor_name="",
+            prompt="Build a release checklist.",
+            status=SubtaskStatus.COMPLETED,
+            progress=100,
+            message_id=1,
+            parent_id=0,
+            error_message="",
+            result=None,
+            completed_at=datetime.now(),
+        )
+    )
+    test_db.add(
+        Subtask(
+            user_id=test_user.id,
+            task_id=task.id,
+            team_id=1256,
+            title="Previous assistant response",
+            bot_ids=[1255],
+            role=SubtaskRole.ASSISTANT,
+            executor_namespace="",
+            executor_name="",
+            prompt="",
+            status=SubtaskStatus.COMPLETED,
+            progress=100,
+            message_id=2,
+            parent_id=1,
+            error_message="",
+            result={"value": "Stage 1 found three release risks."},
+            completed_at=datetime.now(),
+        )
+    )
+    test_db.commit()
+    test_db.refresh(task)
+
+    team = SimpleNamespace(
+        id=1256,
+        user_id=test_user.id,
+        name="quickstart",
+        namespace="default",
+    )
+    params = TaskCreationParams(
+        message="",
+        pipeline_bot_ids=[1257],
+        previous_bot_id=1255,
+        pipeline_context_passing="original_and_previous",
+        skip_status_check=True,
+    )
+
+    with (
+        patch(
+            "app.services.chat.storage.task_manager.initialize_redis_chat_history",
+            new=AsyncMock(),
+        ),
+        patch(
+            "app.services.memory.is_memory_enabled_for_user",
+            return_value=False,
+        ),
+        patch(
+            "app.services.chat.trigger.group_chat.is_task_group_chat",
+            return_value=False,
+        ),
+    ):
+        result = await create_task_and_subtasks(
+            db=test_db,
+            user=test_user,
+            team=team,
+            message=params.message,
+            params=params,
+            task_id=task.id,
+            should_trigger_ai=True,
+        )
+
+    assert result.assistant_subtask is not None
+    assert result.user_subtask.prompt == (
+        "Original user request:\nBuild a release checklist.\n\n"
+        "Previous stage output:\nStage 1 found three release risks."
+    )
+    assert result.assistant_subtask.prompt == ""
