@@ -136,7 +136,7 @@ When `fallback_enabled=true`:
 
 - `fallback_on_empty=true` allows empty content to trigger fallback.
 - `deep_iframe_extraction=true` allows empty or low-quality content to trigger fallback.
-- A failed primary extraction with a 2xx HTTP status is treated as reachable-but-empty (classified as empty content) and triggers fallback per `fallback_on_empty`. This covers content in nested iframes and SPA shells that the primary strategy misclassifies as anti-bot.
+- A failed primary extraction with a 2xx HTTP status is treated as reachable-but-empty (classified as empty content) and triggers fallback per the empty-content rule, i.e. when `fallback_on_empty=true` or `deep_iframe_extraction=true`. This covers content in nested iframes and SPA shells that the primary strategy misclassifies as anti-bot.
 - Genuine transport failures (no HTTP response, e.g. connection refused or DNS failure) are classified as network failures and do not trigger fallback, since re-rendering cannot help.
 - Auth-required, rate-limited, SSRF-blocked, and other states that rendering cannot fix do not automatically trigger fallback through deep iframe extraction.
 - Whether blocked pages trigger fallback is controlled by `fallback_on_blocked`.

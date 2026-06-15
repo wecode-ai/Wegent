@@ -136,7 +136,7 @@ WEB_SCRAPER_SITE_CONFIG={"example.com":{"wait_until":"networkidle","page_timeout
 
 - `fallback_on_empty=true` 时，空内容可以触发 fallback。
 - `deep_iframe_extraction=true` 时，空内容或低质量内容可以触发 fallback。
-- 主抓取失败但 HTTP 状态码为 2xx 时，按页面可达、仅主策略未提取到内容处理（归类为空内容），按 `fallback_on_empty` 触发 fallback。这样可以覆盖内容位于嵌套 iframe、或主策略误判为反爬的 SPA shell 等情况。
+- 主抓取失败但 HTTP 状态码为 2xx 时，按页面可达、仅主策略未提取到内容处理（归类为空内容），按空内容 fallback 规则触发，即 `fallback_on_empty=true` 或 `deep_iframe_extraction=true` 时触发。这样可以覆盖内容位于嵌套 iframe、或主策略误判为反爬的 SPA shell 等情况。
 - 真正的传输失败（没有 HTTP 响应，如连接被拒绝、DNS 失败）归类为网络失败，不会触发 fallback，因为重新渲染也无法改善。
 - 被认证、限流、SSRF 等明确不可通过渲染改善的状态不会因为 deep iframe extraction 自动 fallback。
 - blocked 页面是否 fallback 由 `fallback_on_blocked` 控制。
