@@ -1,0 +1,916 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WeWork 应用中心 Demo</title>
+    <style>
+      :root {
+        --bg: #f6f7f8;
+        --surface: #ffffff;
+        --surface-soft: #f1f3f4;
+        --surface-hover: #eaeeee;
+        --text: #202124;
+        --text-secondary: #5f6368;
+        --text-muted: #8a9096;
+        --border: #e2e5e8;
+        --primary: #14b8a6;
+        --primary-dark: #0f766e;
+        --blue: #3b82f6;
+        --purple: #8b5cf6;
+        --orange: #f97316;
+        --red: #ef4444;
+        --shadow: 0 16px 48px rgba(15, 23, 42, 0.08);
+        --radius-xl: 24px;
+        --radius-lg: 18px;
+        --radius-md: 12px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background:
+          radial-gradient(circle at 20% -10%, rgba(20, 184, 166, 0.12), transparent 32%),
+          radial-gradient(circle at 85% 0%, rgba(59, 130, 246, 0.1), transparent 28%),
+          var(--bg);
+        color: var(--text);
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          sans-serif;
+      }
+
+      button,
+      input {
+        font: inherit;
+      }
+
+      .app-shell {
+        display: flex;
+        height: 100vh;
+        flex-direction: column;
+        overflow: hidden;
+      }
+
+      .chrome-bar {
+        display: flex;
+        height: 42px;
+        flex-shrink: 0;
+        align-items: center;
+        gap: 8px;
+        border-bottom: 1px solid rgba(226, 229, 232, 0.7);
+        background: rgba(255, 255, 255, 0.76);
+        padding: 0 14px 0 94px;
+        backdrop-filter: blur(18px);
+      }
+
+      .tab-strip {
+        display: flex;
+        min-width: 0;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .chrome-tab {
+        display: inline-flex;
+        height: 30px;
+        min-width: 112px;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        border: 0;
+        border-radius: 10px;
+        background: transparent;
+        color: var(--text-secondary);
+        cursor: pointer;
+        padding: 0 14px;
+        transition: 160ms ease;
+      }
+
+      .chrome-tab.active {
+        background: rgba(32, 33, 36, 0.06);
+        color: var(--text);
+        box-shadow: inset 0 0 0 1px rgba(32, 33, 36, 0.03);
+      }
+
+      .chrome-tab:hover {
+        background: rgba(32, 33, 36, 0.045);
+        color: var(--text);
+      }
+
+      .tab-icon {
+        display: inline-flex;
+        height: 18px;
+        width: 18px;
+        align-items: center;
+        justify-content: center;
+        border-radius: 6px;
+        background: rgba(20, 184, 166, 0.12);
+        color: var(--primary-dark);
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .window-actions {
+        margin-left: auto;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        color: var(--text-muted);
+        font-size: 12px;
+      }
+
+      .content {
+        display: grid;
+        min-height: 0;
+        flex: 1;
+        grid-template-columns: 260px minmax(0, 1fr);
+        gap: 18px;
+        padding: 18px;
+      }
+
+      .sidebar,
+      .main-panel {
+        border: 1px solid rgba(226, 229, 232, 0.8);
+        background: rgba(255, 255, 255, 0.82);
+        box-shadow: var(--shadow);
+        backdrop-filter: blur(18px);
+      }
+
+      .sidebar {
+        display: flex;
+        min-height: 0;
+        flex-direction: column;
+        border-radius: var(--radius-xl);
+        padding: 14px;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 8px 16px;
+      }
+
+      .brand-logo {
+        display: grid;
+        height: 36px;
+        width: 36px;
+        place-items: center;
+        border-radius: 12px;
+        background: linear-gradient(135deg, #14b8a6, #0ea5e9);
+        color: white;
+        font-weight: 800;
+      }
+
+      .brand-title {
+        font-size: 15px;
+        font-weight: 700;
+      }
+
+      .brand-subtitle {
+        margin-top: 2px;
+        color: var(--text-muted);
+        font-size: 12px;
+      }
+
+      .nav-group-label {
+        margin: 12px 8px 8px;
+        color: var(--text-muted);
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .nav-item {
+        display: flex;
+        min-height: 42px;
+        align-items: center;
+        gap: 10px;
+        border: 0;
+        border-radius: 12px;
+        background: transparent;
+        color: var(--text-secondary);
+        cursor: pointer;
+        padding: 0 12px;
+        text-align: left;
+        transition: 160ms ease;
+      }
+
+      .nav-item.active {
+        background: rgba(20, 184, 166, 0.12);
+        color: var(--primary-dark);
+      }
+
+      .nav-item:hover {
+        background: var(--surface-soft);
+        color: var(--text);
+      }
+
+      .nav-dot {
+        height: 9px;
+        width: 9px;
+        border-radius: 999px;
+        background: currentColor;
+        opacity: 0.8;
+      }
+
+      .sidebar-footer {
+        margin-top: auto;
+        border-radius: 16px;
+        background: linear-gradient(135deg, rgba(20, 184, 166, 0.12), rgba(59, 130, 246, 0.1));
+        padding: 14px;
+      }
+
+      .sidebar-footer-title {
+        font-size: 13px;
+        font-weight: 700;
+      }
+
+      .sidebar-footer-text {
+        margin-top: 5px;
+        color: var(--text-secondary);
+        font-size: 12px;
+        line-height: 1.55;
+      }
+
+      .main-panel {
+        min-width: 0;
+        overflow: auto;
+        border-radius: var(--radius-xl);
+      }
+
+      .top-section {
+        position: sticky;
+        top: 0;
+        z-index: 2;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+        border-bottom: 1px solid rgba(226, 229, 232, 0.72);
+        background: rgba(255, 255, 255, 0.84);
+        padding: 22px 26px;
+        backdrop-filter: blur(18px);
+      }
+
+      .eyebrow {
+        color: var(--primary-dark);
+        font-size: 12px;
+        font-weight: 800;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+      }
+
+      h1 {
+        margin: 6px 0 0;
+        font-size: 26px;
+        letter-spacing: -0.04em;
+        line-height: 1.2;
+      }
+
+      .top-description {
+        margin: 8px 0 0;
+        max-width: 650px;
+        color: var(--text-secondary);
+        font-size: 14px;
+        line-height: 1.65;
+      }
+
+      .search {
+        position: relative;
+        min-width: 300px;
+      }
+
+      .search input {
+        height: 42px;
+        width: 100%;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        background: var(--surface);
+        color: var(--text);
+        outline: none;
+        padding: 0 16px 0 42px;
+      }
+
+      .search::before {
+        position: absolute;
+        left: 17px;
+        top: 11px;
+        color: var(--text-muted);
+        content: "⌘";
+        font-size: 15px;
+      }
+
+      .page-body {
+        padding: 24px 26px 32px;
+      }
+
+      .hero-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1.45fr) minmax(280px, 0.75fr);
+        gap: 18px;
+      }
+
+      .hero-card,
+      .status-card,
+      .app-card,
+      .mini-card {
+        border: 1px solid var(--border);
+        background: var(--surface);
+      }
+
+      .hero-card {
+        position: relative;
+        overflow: hidden;
+        border-radius: var(--radius-xl);
+        padding: 24px;
+      }
+
+      .hero-card::after {
+        position: absolute;
+        right: -80px;
+        top: -80px;
+        height: 240px;
+        width: 240px;
+        border-radius: 999px;
+        background: radial-gradient(circle, rgba(20, 184, 166, 0.2), transparent 68%);
+        content: "";
+      }
+
+      .hero-title {
+        max-width: 560px;
+        font-size: 24px;
+        font-weight: 800;
+        letter-spacing: -0.04em;
+        line-height: 1.28;
+      }
+
+      .hero-text {
+        margin-top: 12px;
+        max-width: 620px;
+        color: var(--text-secondary);
+        font-size: 14px;
+        line-height: 1.7;
+      }
+
+      .hero-actions {
+        margin-top: 22px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+
+      .button {
+        display: inline-flex;
+        height: 38px;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        border: 1px solid transparent;
+        border-radius: 999px;
+        cursor: pointer;
+        padding: 0 16px;
+        font-size: 13px;
+        font-weight: 700;
+        transition: 160ms ease;
+      }
+
+      .button.primary {
+        background: var(--text);
+        color: white;
+      }
+
+      .button.secondary {
+        border-color: var(--border);
+        background: var(--surface);
+        color: var(--text);
+      }
+
+      .button:hover {
+        transform: translateY(-1px);
+      }
+
+      .status-card {
+        border-radius: var(--radius-xl);
+        padding: 18px;
+      }
+
+      .status-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+
+      .status-title {
+        font-size: 14px;
+        font-weight: 800;
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        border-radius: 999px;
+        padding: 5px 9px;
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .pill.online {
+        background: rgba(20, 184, 166, 0.12);
+        color: var(--primary-dark);
+      }
+
+      .pill.warning {
+        background: rgba(249, 115, 22, 0.1);
+        color: #c2410c;
+      }
+
+      .pulse {
+        height: 7px;
+        width: 7px;
+        border-radius: 999px;
+        background: currentColor;
+      }
+
+      .metric-list {
+        margin-top: 16px;
+        display: grid;
+        gap: 10px;
+      }
+
+      .metric-row {
+        display: grid;
+        grid-template-columns: 84px minmax(0, 1fr) 38px;
+        align-items: center;
+        gap: 10px;
+        color: var(--text-secondary);
+        font-size: 12px;
+      }
+
+      .bar {
+        height: 7px;
+        overflow: hidden;
+        border-radius: 999px;
+        background: var(--surface-soft);
+      }
+
+      .bar span {
+        display: block;
+        height: 100%;
+        border-radius: inherit;
+        background: linear-gradient(90deg, var(--primary), #38bdf8);
+      }
+
+      .section {
+        margin-top: 24px;
+      }
+
+      .section-header {
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        gap: 20px;
+        margin-bottom: 14px;
+      }
+
+      .section-title {
+        font-size: 17px;
+        font-weight: 800;
+        letter-spacing: -0.02em;
+      }
+
+      .section-subtitle {
+        margin-top: 4px;
+        color: var(--text-muted);
+        font-size: 13px;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 14px;
+      }
+
+      .app-card {
+        display: flex;
+        min-height: 176px;
+        flex-direction: column;
+        border-radius: var(--radius-lg);
+        padding: 16px;
+        transition: 160ms ease;
+      }
+
+      .app-card:hover {
+        border-color: rgba(20, 184, 166, 0.38);
+        box-shadow: 0 12px 28px rgba(15, 23, 42, 0.07);
+        transform: translateY(-2px);
+      }
+
+      .card-top {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .app-icon {
+        display: grid;
+        height: 42px;
+        width: 42px;
+        place-items: center;
+        border-radius: 14px;
+        color: white;
+        font-size: 18px;
+        font-weight: 900;
+      }
+
+      .app-icon.claude {
+        background: linear-gradient(135deg, #fb923c, #ef4444);
+      }
+
+      .app-icon.codex {
+        background: linear-gradient(135deg, #111827, #475569);
+      }
+
+      .app-icon.wegent {
+        background: linear-gradient(135deg, #14b8a6, #0ea5e9);
+      }
+
+      .app-icon.mcp {
+        background: linear-gradient(135deg, #8b5cf6, #6366f1);
+      }
+
+      .app-title {
+        margin-top: 14px;
+        font-size: 15px;
+        font-weight: 800;
+      }
+
+      .app-desc {
+        margin-top: 6px;
+        color: var(--text-secondary);
+        font-size: 13px;
+        line-height: 1.55;
+      }
+
+      .app-footer {
+        margin-top: auto;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        padding-top: 16px;
+      }
+
+      .subtle-link {
+        border: 0;
+        background: transparent;
+        color: var(--primary-dark);
+        cursor: pointer;
+        font-size: 13px;
+        font-weight: 800;
+        padding: 0;
+      }
+
+      .mini-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      .mini-card {
+        border-radius: var(--radius-lg);
+        padding: 14px;
+      }
+
+      .mini-value {
+        font-size: 24px;
+        font-weight: 850;
+        letter-spacing: -0.04em;
+      }
+
+      .mini-label {
+        margin-top: 6px;
+        color: var(--text-muted);
+        font-size: 12px;
+      }
+
+      .activity {
+        display: grid;
+        gap: 10px;
+      }
+
+      .activity-row {
+        display: grid;
+        grid-template-columns: 10px minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 12px;
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        background: var(--surface);
+        padding: 12px 14px;
+      }
+
+      .activity-title {
+        font-size: 13px;
+        font-weight: 750;
+      }
+
+      .activity-meta {
+        margin-top: 3px;
+        color: var(--text-muted);
+        font-size: 12px;
+      }
+
+      .time {
+        color: var(--text-muted);
+        font-size: 12px;
+      }
+
+      @media (max-width: 1120px) {
+        .content {
+          grid-template-columns: 1fr;
+        }
+
+        .sidebar {
+          display: none;
+        }
+
+        .hero-grid,
+        .grid,
+        .mini-grid {
+          grid-template-columns: 1fr 1fr;
+        }
+      }
+
+      @media (max-width: 760px) {
+        .chrome-bar {
+          padding-left: 12px;
+        }
+
+        .content {
+          padding: 10px;
+        }
+
+        .top-section {
+          align-items: stretch;
+          flex-direction: column;
+          padding: 18px;
+        }
+
+        .search {
+          min-width: 0;
+        }
+
+        .page-body {
+          padding: 18px;
+        }
+
+        .hero-grid,
+        .grid,
+        .mini-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="chrome-bar">
+        <nav class="tab-strip" aria-label="应用标签">
+          <button class="chrome-tab">
+            <span class="tab-icon">W</span>
+            <span>WeWork</span>
+          </button>
+          <button class="chrome-tab active">
+            <span class="tab-icon">A</span>
+            <span>应用</span>
+          </button>
+          <button class="chrome-tab">
+            <span class="tab-icon">C</span>
+            <span>Codex</span>
+          </button>
+        </nav>
+        <div class="window-actions">已连接 · microlee@example.com</div>
+      </header>
+
+      <main class="content">
+        <aside class="sidebar">
+          <div class="brand">
+            <div class="brand-logo">A</div>
+            <div>
+              <div class="brand-title">应用中心</div>
+              <div class="brand-subtitle">运行时、代理与小程序</div>
+            </div>
+          </div>
+
+          <div class="nav-group-label">管理</div>
+          <button class="nav-item active"><span class="nav-dot"></span>总览</button>
+          <button class="nav-item"><span class="nav-dot"></span>执行器</button>
+          <button class="nav-item"><span class="nav-dot"></span>AI 编码代理</button>
+          <button class="nav-item"><span class="nav-dot"></span>已安装应用</button>
+
+          <div class="nav-group-label">扩展</div>
+          <button class="nav-item"><span class="nav-dot"></span>Skills</button>
+          <button class="nav-item"><span class="nav-dot"></span>MCP</button>
+          <button class="nav-item"><span class="nav-dot"></span>插件包</button>
+
+          <div class="sidebar-footer">
+            <div class="sidebar-footer-title">建议入口</div>
+            <div class="sidebar-footer-text">
+              顶部固定“应用”tab，其他应用从这里启动后再打开独立 tab。
+            </div>
+          </div>
+        </aside>
+
+        <section class="main-panel">
+          <div class="top-section">
+            <div>
+              <div class="eyebrow">App Center</div>
+              <h1>管理你的办公与编码应用</h1>
+              <p class="top-description">
+                集中查看 executor 运行状态，配置 Claude / Codex 代理，安装内部应用和第三方小程序。
+              </p>
+            </div>
+            <label class="search">
+              <input aria-label="搜索应用" placeholder="搜索应用、运行时或扩展..." />
+            </label>
+          </div>
+
+          <div class="page-body">
+            <div class="hero-grid">
+              <article class="hero-card">
+                <div class="hero-title">让 WeWork 成为所有 AI 工具的统一入口</div>
+                <div class="hero-text">
+                  使用公司的模型服务代理 Claude 和 Codex，执行器负责本地/云端运行时，小程序负责办公流程。
+                  用户不用理解底层差异，只需要打开应用、授权、开始工作。
+                </div>
+                <div class="hero-actions">
+                  <button class="button primary">打开 Codex</button>
+                  <button class="button secondary">配置模型代理</button>
+                  <button class="button secondary">安装新应用</button>
+                </div>
+              </article>
+
+              <article class="status-card">
+                <div class="status-header">
+                  <div class="status-title">Executor 状态</div>
+                  <span class="pill online"><span class="pulse"></span>运行中</span>
+                </div>
+                <div class="metric-list">
+                  <div class="metric-row">
+                    <span>任务槽位</span>
+                    <div class="bar"><span style="width: 42%"></span></div>
+                    <strong>2/5</strong>
+                  </div>
+                  <div class="metric-row">
+                    <span>CPU</span>
+                    <div class="bar"><span style="width: 28%"></span></div>
+                    <strong>28%</strong>
+                  </div>
+                  <div class="metric-row">
+                    <span>内存</span>
+                    <div class="bar"><span style="width: 63%"></span></div>
+                    <strong>63%</strong>
+                  </div>
+                  <div class="metric-row">
+                    <span>版本</span>
+                    <div class="bar"><span style="width: 100%"></span></div>
+                    <strong>1.8.0</strong>
+                  </div>
+                </div>
+              </article>
+            </div>
+
+            <section class="section">
+              <div class="section-header">
+                <div>
+                  <div class="section-title">推荐应用</div>
+                  <div class="section-subtitle">优先展示用户最常用、最需要配置状态感知的应用。</div>
+                </div>
+                <button class="subtle-link">查看全部</button>
+              </div>
+
+              <div class="grid">
+                <article class="app-card">
+                  <div class="card-top">
+                    <div class="app-icon claude">C</div>
+                    <span class="pill online"><span class="pulse"></span>已代理</span>
+                  </div>
+                  <div class="app-title">Claude Code</div>
+                  <div class="app-desc">
+                    使用 WeWork 模型服务代理 Claude Code，自动同步 Skills、MCP 与运行时环境。
+                  </div>
+                  <div class="app-footer">
+                    <button class="subtle-link">打开</button>
+                    <span class="time">Sonnet · 可用</span>
+                  </div>
+                </article>
+
+                <article class="app-card">
+                  <div class="card-top">
+                    <div class="app-icon codex">X</div>
+                    <span class="pill warning"><span class="pulse"></span>需认证</span>
+                  </div>
+                  <div class="app-title">Codex</div>
+                  <div class="app-desc">
+                    管理 Codex auth.json、代理开关与默认 GPT 模型，可从在线执行器导入认证。
+                  </div>
+                  <div class="app-footer">
+                    <button class="subtle-link">去配置</button>
+                    <span class="time">auth.json 缺失</span>
+                  </div>
+                </article>
+
+                <article class="app-card">
+                  <div class="card-top">
+                    <div class="app-icon wegent">W</div>
+                    <span class="pill online"><span class="pulse"></span>内置</span>
+                  </div>
+                  <div class="app-title">Wegent Web</div>
+                  <div class="app-desc">
+                    以 iframe 方式打开主 Web 前端，用于完整 AI 编码、聊天和资源管理场景。
+                  </div>
+                  <div class="app-footer">
+                    <button class="subtle-link">打开新 tab</button>
+                    <span class="time">localhost:3000</span>
+                  </div>
+                </article>
+              </div>
+            </section>
+
+            <section class="section">
+              <div class="section-header">
+                <div>
+                  <div class="section-title">运行概览</div>
+                  <div class="section-subtitle">用少量指标告诉用户当前系统是否可工作。</div>
+                </div>
+              </div>
+
+              <div class="mini-grid">
+                <article class="mini-card">
+                  <div class="mini-value">3</div>
+                  <div class="mini-label">在线执行器</div>
+                </article>
+                <article class="mini-card">
+                  <div class="mini-value">12</div>
+                  <div class="mini-label">已安装应用</div>
+                </article>
+                <article class="mini-card">
+                  <div class="mini-value">8</div>
+                  <div class="mini-label">启用扩展</div>
+                </article>
+                <article class="mini-card">
+                  <div class="mini-value">99%</div>
+                  <div class="mini-label">代理可用率</div>
+                </article>
+              </div>
+            </section>
+
+            <section class="section">
+              <div class="section-header">
+                <div>
+                  <div class="section-title">最近活动</div>
+                  <div class="section-subtitle">把安装、更新、代理切换和执行器事件统一展示。</div>
+                </div>
+              </div>
+
+              <div class="activity">
+                <div class="activity-row">
+                  <span class="pulse" style="color: var(--primary)"></span>
+                  <div>
+                    <div class="activity-title">Codex 代理已切换到公司模型服务</div>
+                    <div class="activity-meta">用户 microlee · 影响当前账号</div>
+                  </div>
+                  <span class="time">2 分钟前</span>
+                </div>
+                <div class="activity-row">
+                  <span class="pulse" style="color: var(--blue)"></span>
+                  <div>
+                    <div class="activity-title">Executor macbook-pro 已升级到 1.8.0</div>
+                    <div class="activity-meta">本地设备 · 任务槽位 5</div>
+                  </div>
+                  <span class="time">18 分钟前</span>
+                </div>
+                <div class="activity-row">
+                  <span class="pulse" style="color: var(--purple)"></span>
+                  <div>
+                    <div class="activity-title">安装了 Jira 办公小程序</div>
+                    <div class="activity-meta">第三方应用 · 需要 OAuth 授权</div>
+                  </div>
+                  <span class="time">昨天</span>
+                </div>
+              </div>
+            </section>
+          </div>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>
