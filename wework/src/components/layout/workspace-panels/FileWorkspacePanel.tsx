@@ -28,33 +28,49 @@ export function FileWorkspacePanel({
 }: FileWorkspacePanelProps) {
   const { t } = useTranslation('common')
   const api = useMemo(() => createWorkspaceDeviceApi(), [])
-  const [currentPath, setCurrentPath] = useState(target?.path ?? '')
-  const [entries, setEntries] = useState<WorkspaceFileEntry[]>([])
+  const rootPath = target?.path ?? ''
+  const [activeDirectoryPath, setActiveDirectoryPath] = useState(target?.path ?? '')
+  const [entriesByPath, setEntriesByPath] = useState<Record<string, WorkspaceFileEntry[]>>({})
+  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set())
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null)
   const [preview, setPreview] = useState<WorkspaceTextFileResponse | null>(null)
-  const [treeLoading, setTreeLoading] = useState(Boolean(target))
+  const [loadingPaths, setLoadingPaths] = useState<Set<string>>(new Set())
   const [treeError, setTreeError] = useState<string | null>(null)
   const [treeRetryPath, setTreeRetryPath] = useState<string | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
   const [previewError, setPreviewError] = useState<string | null>(null)
   const treeRequestSequence = useRef(0)
+  const latestTreeRequestByPath = useRef(new Map<string, number>())
   const fileRequestSequence = useRef(0)
 
   const loadTree = useCallback(async (path: string) => {
     if (!target) return
     const requestId = treeRequestSequence.current + 1
     treeRequestSequence.current = requestId
-    setTreeLoading(true)
+    latestTreeRequestByPath.current.set(path, requestId)
+    setLoadingPaths((previous) => {
+      const next = new Set(previous)
+      next.add(path)
+      return next
+    })
     setTreeError(null)
     setTreeRetryPath(null)
     try {
       const result = await api.listWorkspaceEntries(target.deviceId, path)
-      if (treeRequestSequence.current !== requestId) return
-      setCurrentPath(result.path || path)
-      setEntries(result.entries)
+      if (latestTreeRequestByPath.current.get(path) !== requestId) return
+      const resolvedPath = result.path || path
+      setEntriesByPath(previous => ({
+        ...previous,
+        [resolvedPath]: result.entries,
+      }))
+      setExpandedPaths((previous) => {
+        const next = new Set(previous)
+        next.add(resolvedPath)
+        return next
+      })
       setTreeRetryPath(null)
     } catch (error) {
-      if (treeRequestSequence.current !== requestId) return
+      if (latestTreeRequestByPath.current.get(path) !== requestId) return
       setTreeError(
         error instanceof Error
           ? error.message
@@ -62,11 +78,26 @@ export function FileWorkspacePanel({
       )
       setTreeRetryPath(path)
     } finally {
-      if (treeRequestSequence.current === requestId) {
-        setTreeLoading(false)
+      if (latestTreeRequestByPath.current.get(path) === requestId) {
+        setLoadingPaths((previous) => {
+          const next = new Set(previous)
+          next.delete(path)
+          return next
+        })
       }
     }
   }, [api, target, t])
+
+  const openDirectory = useCallback((entry: WorkspaceFileEntry) => {
+    if (!entry.isDirectory) return
+    setActiveDirectoryPath(entry.path)
+    setTreeError(null)
+    setTreeRetryPath(null)
+
+    if (!entriesByPath[entry.path] && !loadingPaths.has(entry.path)) {
+      void loadTree(entry.path)
+    }
+  }, [entriesByPath, loadTree, loadingPaths])
 
   const openFile = useCallback(async (entry: WorkspaceFileEntry) => {
     if (!target || entry.isDirectory) return
@@ -130,15 +161,25 @@ export function FileWorkspacePanel({
         onAddCodeComment={onAddCodeComment}
       />
       <WorkspaceFileTree
-        rootPath={target.path}
-        currentPath={currentPath}
-        entries={entries}
+        rootPath={rootPath}
+        activeDirectoryPath={activeDirectoryPath}
+        entriesByPath={entriesByPath}
+        expandedPaths={expandedPaths}
         selectedPath={selectedFilePath}
-        loading={treeLoading}
+        loadingPaths={loadingPaths}
         error={treeError}
-        onOpenDirectory={path => void loadTree(path)}
+        onOpenDirectory={openDirectory}
         onOpenFile={entry => void openFile(entry)}
-        onRefresh={() => void loadTree(treeRetryPath ?? currentPath)}
+        onExpandedPathsChange={updaterOrValue => {
+          setExpandedPaths((previous) => {
+            const previousPaths = Array.from(previous)
+            const nextPaths = typeof updaterOrValue === 'function'
+              ? updaterOrValue(previousPaths)
+              : updaterOrValue
+            return new Set(nextPaths)
+          })
+        }}
+        onRefresh={() => void loadTree(treeRetryPath ?? activeDirectoryPath)}
       />
     </div>
   )

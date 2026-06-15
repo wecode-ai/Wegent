@@ -113,6 +113,10 @@ function getProjectMenuFitHeight(
   )
 }
 
+function getProjectDeviceId(project: ProjectWithTasks): string | undefined {
+  return project.config?.execution?.deviceId ?? project.config?.device_id
+}
+
 interface ProjectWorkBarProps {
   projects: ProjectWithTasks[]
   devices: DeviceInfo[]
@@ -317,20 +321,35 @@ export function ProjectWorkBar({
   }, [isMobile, open])
 
   const getDeviceForProject = useCallback((project: ProjectWithTasks): DeviceInfo | undefined => {
-    const deviceId = project.config?.execution?.deviceId ?? project.config?.device_id
+    const deviceId = getProjectDeviceId(project)
     if (!deviceId) return undefined
     return devices.find(d => d.device_id === deviceId)
   }, [devices])
+  const isProjectAvailable = useCallback((project: ProjectWithTasks): boolean => {
+    const deviceId = getProjectDeviceId(project)
+    if (!deviceId) return true
+
+    const device = getDeviceForProject(project)
+    return Boolean(
+      device &&
+      isOnlineDevice(device) &&
+      isWeWorkExecutorVersionCompatible(device.executor_version),
+    )
+  }, [getDeviceForProject])
+  const availableProjects = useMemo(
+    () => projects.filter(isProjectAvailable),
+    [isProjectAvailable, projects],
+  )
 
   const sortedProjects = useMemo(() => {
-    return [...projects].sort((a, b) => {
+    return [...availableProjects].sort((a, b) => {
       const deviceA = getDeviceForProject(a)
       const deviceB = getDeviceForProject(b)
       const onlineA = deviceA?.status === 'online' ? 1 : 0
       const onlineB = deviceB?.status === 'online' ? 1 : 0
       return onlineB - onlineA
     })
-  }, [projects, getDeviceForProject])
+  }, [availableProjects, getDeviceForProject])
   const normalizedProjectQuery = projectQuery.trim().toLowerCase()
   const filteredProjects = useMemo(() => {
     if (!normalizedProjectQuery) return sortedProjects
@@ -380,7 +399,7 @@ export function ProjectWorkBar({
   }
 
   const handleActivateCreateSubmenu = () => {
-    updateSideSubmenuPlacement('create')
+    updateSideSubmenuPlacement()
     setActiveSubmenu('create')
   }
 
@@ -496,7 +515,7 @@ export function ProjectWorkBar({
                 )}
               />
             </label>
-            {projects.length === 0 ? (
+            {availableProjects.length === 0 ? (
               <div className="px-4 py-3 text-[13px] leading-[18px] text-text-muted">
                 {t('workbench.no_projects', '暂无项目')}
               </div>
@@ -519,66 +538,39 @@ export function ProjectWorkBar({
                 {filteredProjects.map(project => {
                   const device = getDeviceForProject(project)
                   const DeviceIcon = device && isCloudDevice(device) ? Cloud : HardDrive
-                  const isUnavailable = Boolean(device && device.status !== 'online')
                   const selected = project.id === currentProjectId
-                  const projectTextClass = isUnavailable
-                    ? 'text-text-muted'
-                    : selected
-                      ? 'text-text-primary'
-                      : 'text-text-secondary'
+                  const projectTextClass = selected ? 'text-text-primary' : 'text-text-secondary'
                   return (
                     <button
                       key={project.id}
                       type="button"
                       data-testid={`project-option-${project.id}`}
-                      disabled={isUnavailable}
-                      aria-disabled={isUnavailable}
-                      onClick={() => {
-                        if (!isUnavailable) handleSelectProject(project.id)
-                      }}
-                      className={`flex h-9 w-full rounded-lg px-4 text-left hover:bg-muted disabled:cursor-not-allowed disabled:hover:bg-transparent ${projectTextClass}`}
+                      onClick={() => handleSelectProject(project.id)}
+                      className={`flex h-9 w-full rounded-lg px-4 text-left hover:bg-muted ${projectTextClass}`}
                     >
                       <div className="flex min-h-0 w-full items-center gap-3">
                         <ProjectFolderIcon
                           project={project}
-                          testId={
-                            isUnavailable
-                              ? `project-unavailable-icon-${project.id}`
-                              : `project-available-icon-${project.id}`
-                          }
-                          className={`h-4 w-4 shrink-0 ${
-                            isUnavailable ? 'text-text-muted' : 'text-text-secondary'
-                          }`}
+                          testId={`project-available-icon-${project.id}`}
+                          className="h-4 w-4 shrink-0 text-text-secondary"
                         />
                         <div className="flex min-w-0 flex-1 items-center gap-2">
                           <span
                             className={cn(
                               'min-w-0 truncate text-[13px] font-semibold leading-[18px]',
                               device ? 'max-w-[9rem] shrink' : 'flex-1',
-                              isUnavailable ? 'text-text-muted' : 'text-text-primary',
+                              'text-text-primary',
                             )}
                           >
                             {project.name}
                           </span>
                           {device && (
-                            <span
-                              className={`flex min-w-0 flex-1 items-center gap-1.5 text-xs leading-4 ${
-                                device.status === 'online' ? 'text-text-secondary' : 'text-text-muted'
-                              }`}
-                            >
+                            <span className="flex min-w-0 flex-1 items-center gap-1.5 text-xs leading-4 text-text-secondary">
                               <DeviceIcon className="h-3.5 w-3.5 shrink-0" />
                               <span
                                 className={`h-1.5 w-1.5 shrink-0 rounded-full ${getDeviceStatusDotClass(device)}`}
                               />
-                              <span
-                                className={`min-w-0 truncate ${
-                                  device.status === 'online'
-                                    ? 'text-text-secondary'
-                                    : 'text-text-muted'
-                                }`}
-                              >
-                                {device.name}
-                              </span>
+                              <span className="min-w-0 truncate text-text-secondary">{device.name}</span>
                               <span className="shrink-0">{getCompactDeviceStatusLabel(device)}</span>
                             </span>
                           )}
@@ -586,9 +578,7 @@ export function ProjectWorkBar({
                         {selected && (
                           <Check
                             data-testid={`project-selected-icon-${project.id}`}
-                            className={`h-3.5 w-3.5 shrink-0 ${
-                              isUnavailable ? 'text-text-muted' : 'text-text-primary'
-                            }`}
+                            className="h-3.5 w-3.5 shrink-0 text-text-primary"
                           />
                         )}
                       </div>

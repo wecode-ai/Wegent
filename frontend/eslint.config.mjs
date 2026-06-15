@@ -28,6 +28,16 @@ export default defineConfig([
           caughtErrorsIgnorePattern: '^_',
         },
       ],
+      // React Compiler rules flag existing legacy patterns across the app.
+      // Keep the classic hooks rules from next/core-web-vitals while the compiler migration is separate.
+      'react-hooks/globals': 'off',
+      'react-hooks/immutability': 'off',
+      'react-hooks/preserve-manual-memoization': 'off',
+      'react-hooks/purity': 'off',
+      'react-hooks/refs': 'off',
+      'react-hooks/set-state-in-effect': 'off',
+      'react-hooks/static-components': 'off',
+      'react-hooks/use-memo': 'off',
     },
   },
   {

@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
+  AlertTriangle,
   ChevronDown,
   ChevronUp,
   Copy,
   CopyCheck,
   FileText,
   Loader2,
+  Package,
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -15,18 +17,22 @@ import type {
   DeviceInfo,
   TurnFileChangesSummary,
 } from '@/types/api'
+import { useTranslation } from '@/hooks/useTranslation'
 import type { WorkbenchMessage } from '@/types/workbench'
 import {
   getAttachmentImageUrl,
   getAttachmentTypeLabel,
   isImageAttachment,
 } from '@/lib/attachments'
+import { parseChatError } from '@/lib/chat-error'
 import { ToolBlocksDisplay } from './blocks/ToolBlocksDisplay'
 import { FileChangesCard } from './FileChangesCard'
 
 interface MessageListProps {
   messages: WorkbenchMessage[]
   devices?: DeviceInfo[]
+  onRetryFailedMessage?: (message: WorkbenchMessage) => void
+  onSwitchModelForFailedMessage?: (message: WorkbenchMessage) => void
   onLoadFileChangesDiff?: (subtaskId: number) => Promise<string>
   onRevertFileChanges?: (
     subtaskId: number,
@@ -39,6 +45,8 @@ const USER_MESSAGE_COLLAPSE_CHARACTERS = 600
 export function MessageList({
   messages,
   devices = [],
+  onRetryFailedMessage,
+  onSwitchModelForFailedMessage,
   onLoadFileChangesDiff,
   onRevertFileChanges,
 }: MessageListProps) {
@@ -63,6 +71,8 @@ export function MessageList({
             <AssistantMessage
               message={message}
               devices={devices}
+              onRetryFailedMessage={onRetryFailedMessage}
+              onSwitchModelForFailedMessage={onSwitchModelForFailedMessage}
               onLoadFileChangesDiff={onLoadFileChangesDiff}
               onRevertFileChanges={onRevertFileChanges}
             />
@@ -325,6 +335,18 @@ function MessageHoverActions({
 
 const LOCAL_SKILL_LINK_PATTERN = /\[\$([^\]]+)]\((skill:\/\/[^)]+SKILL\.md)\)/g
 
+function localSkillTokenTestId(name: string): string {
+  return name.replace(/[^a-zA-Z0-9_-]/g, '-')
+}
+
+function displayLocalSkillName(name: string): string {
+  return name
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ')
+}
+
 function renderUserContent(content: string) {
   const parts: ReactNode[] = []
   let offset = 0
@@ -342,10 +364,15 @@ function renderUserContent(content: string) {
       <a
         key={`skill-${start}`}
         href={href}
-        className="inline-flex items-center rounded-md bg-primary/10 px-1.5 py-0.5 font-medium text-primary underline decoration-primary/40"
+        data-testid={`sent-local-skill-token-${localSkillTokenTestId(skillName)}`}
+        className="inline-flex h-7 max-w-full items-center gap-1 rounded-xl bg-muted px-2 align-baseline text-[13px] font-medium leading-none text-blue-600 no-underline"
         onClick={event => event.preventDefault()}
       >
-        {`$${skillName}`}
+        <Package
+          data-testid={`sent-local-skill-icon-${localSkillTokenTestId(skillName)}`}
+          className="h-3.5 w-3.5 shrink-0 text-blue-600"
+        />
+        <span className="min-w-0 truncate">{displayLocalSkillName(skillName)}</span>
       </a>,
     )
     offset = start + match[0].length
@@ -359,23 +386,50 @@ function renderUserContent(content: string) {
   return parts
 }
 
+const RAW_FAILED_MESSAGE_PATTERNS = [
+  /^api error:/i,
+  /^task failed/i,
+  /^error:/i,
+  /"error"\s*:/i,
+  /"error_(type|code)"\s*:/i,
+  /\b(status|type)\s*:\s*failed\b/i,
+]
+
+function shouldHideFailedAssistantContent(message: WorkbenchMessage) {
+  if (message.status !== 'failed' || !message.error) return false
+
+  const content = message.content.trim()
+  const error = message.error.trim()
+  if (!content) return false
+  if (content === error) return true
+
+  return RAW_FAILED_MESSAGE_PATTERNS.some(pattern => pattern.test(content))
+}
+
 function AssistantMessage({
   message,
   devices,
+  onRetryFailedMessage,
+  onSwitchModelForFailedMessage,
   onLoadFileChangesDiff,
   onRevertFileChanges,
 }: {
   message: WorkbenchMessage
   devices: DeviceInfo[]
+  onRetryFailedMessage?: (message: WorkbenchMessage) => void
+  onSwitchModelForFailedMessage?: (message: WorkbenchMessage) => void
   onLoadFileChangesDiff?: (subtaskId: number) => Promise<string>
   onRevertFileChanges?: (
     subtaskId: number,
   ) => Promise<TurnFileChangesSummary>
 }) {
   const hasBlocks = message.blocks && message.blocks.length > 0
-  const hasContent = Boolean(message.content)
+  const shouldHideContent = shouldHideFailedAssistantContent(message)
+  const visibleContent = shouldHideContent ? '' : message.content
+  const hiddenErrorContent = shouldHideContent ? message.content.trim() : undefined
+  const hasVisibleContent = Boolean(visibleContent.trim())
   const isStreaming = message.status === 'streaming'
-  const isThinking = isStreaming && !hasContent && !hasBlocks
+  const isThinking = isStreaming && !hasVisibleContent && !hasBlocks
 
   return (
     <div className="group min-w-0 overflow-x-hidden text-[13px] leading-6 text-text-primary">
@@ -386,7 +440,7 @@ function AssistantMessage({
           startedAt={getTurnStartMs(message.createdAt)}
         />
       )}
-      {hasContent && (
+      {hasVisibleContent && (
         <div className="assistant-markdown min-w-0 overflow-x-hidden break-words">
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
@@ -400,9 +454,10 @@ function AssistantMessage({
               li: ({ children }) => <li className="min-w-0 break-words leading-6">{children}</li>,
               strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
               code: ({ className, children }) => {
-                const isBlock = className?.includes('language-')
+                const match = /language-(\w*)/.exec(className || '')
+                const isBlock = Boolean(match) || String(children).includes('\n')
                 if (isBlock) {
-                  const lang = className?.replace('language-', '') ?? ''
+                  const lang = match ? (match[1] || '') : ''
                   return <CodeBlock lang={lang}>{children}</CodeBlock>
                 }
                 return (
@@ -433,18 +488,25 @@ function AssistantMessage({
               ),
             }}
           >
-            {message.content}
+            {visibleContent}
           </ReactMarkdown>
         </div>
       )}
       {isThinking && (
         <span className="text-text-muted">正在思考</span>
       )}
-      {isStreaming && hasContent && (
+      {isStreaming && hasVisibleContent && (
         <span className="text-text-muted">正在思考</span>
       )}
       {message.status === 'failed' && message.error && (
-        <p className="mt-2 text-xs text-red-500">{message.error}</p>
+        <AssistantErrorCard
+          error={message.error}
+          errorType={message.errorType}
+          rawError={hiddenErrorContent}
+          message={message}
+          onRetry={onRetryFailedMessage}
+          onSwitchModel={onSwitchModelForFailedMessage}
+        />
       )}
       {message.fileChanges &&
       message.subtaskId &&
@@ -462,9 +524,107 @@ function AssistantMessage({
           onRevert={onRevertFileChanges}
         />
       ) : null}
-      {message.status !== 'streaming' && (hasContent || message.status === 'failed') && (
+      {message.status !== 'streaming' && (hasVisibleContent || message.status === 'failed') && (
         <MessageHoverActions message={message} align="left" />
       )}
+    </div>
+  )
+}
+
+function AssistantErrorCard({
+  error,
+  errorType,
+  rawError,
+  message,
+  onRetry,
+  onSwitchModel,
+}: {
+  error: string
+  errorType?: string
+  rawError?: string
+  message: WorkbenchMessage
+  onRetry?: (message: WorkbenchMessage) => void
+  onSwitchModel?: (message: WorkbenchMessage) => void
+}) {
+  const { t } = useTranslation('chat')
+  const [isDetailExpanded, setIsDetailExpanded] = useState(false)
+  const displayError = rawError || error
+  const parsedError = parseChatError(displayError, errorType)
+  const modelName =
+    displayError.match(/model_id:\s*([^"'}\s]+)/)?.[1] ??
+    displayError.match(/model(?:\s+|_id["':\s]+)([a-z0-9._:-]+)/i)?.[1]
+  const title = t(parsedError.titleKey, {
+    defaultValue: t('assistant_error.types.generic_error.title', '消息生成失败'),
+  })
+  const description =
+    parsedError.type === 'model_protocol_error' && modelName
+      ? t('assistant_error.types.model_protocol_error.description_with_model', {
+          model: modelName,
+          defaultValue: `${modelName} 不支持当前运行协议。请切换兼容模型后重试。`,
+        })
+      : t(parsedError.descriptionKey, {
+          defaultValue: t(
+            'assistant_error.types.generic_error.description',
+            '请求未能完成。你可以稍后重试，或查看错误详情。',
+          ),
+        })
+
+  return (
+    <div
+      data-testid="assistant-error-card"
+      className="mt-2 flex w-[min(546px,100%)] max-w-full items-start gap-2.5 rounded-[14px] border border-border bg-surface px-3.5 py-3 text-text-primary"
+    >
+      <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-base text-red-500 shadow-[inset_0_0_0_1px_rgb(var(--color-border))]">
+        <AlertTriangle className="h-3 w-3" strokeWidth={2} />
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="text-[13px] font-semibold leading-5 text-text-primary">{title}</p>
+        <p className="mt-0.5 text-xs leading-[18px] text-text-secondary">{description}</p>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            data-testid="assistant-error-switch-model-retry"
+            onClick={() => onSwitchModel?.(message)}
+            className="h-8 rounded-lg border border-text-primary bg-text-primary px-3 text-xs font-semibold text-background hover:bg-text-primary/90"
+          >
+            {t('assistant_error.actions.switch_model_retry', '切换模型并重试')}
+          </button>
+          <button
+            type="button"
+            data-testid="assistant-error-retry"
+            onClick={() => onRetry?.(message)}
+            className="h-8 rounded-lg border border-border bg-base px-3 text-xs font-semibold text-text-secondary hover:bg-muted hover:text-text-primary"
+          >
+            {t('assistant_error.actions.retry', '重试')}
+          </button>
+          <button
+            type="button"
+            data-testid="assistant-error-details-toggle"
+            aria-expanded={isDetailExpanded}
+            onClick={() => setIsDetailExpanded(value => !value)}
+            className="inline-flex h-8 items-center gap-1 rounded-lg border border-border bg-base px-3 text-xs font-semibold text-text-secondary hover:bg-muted hover:text-text-primary"
+          >
+            <ChevronDown
+              className={[
+                'h-3.5 w-3.5 transition-transform',
+                isDetailExpanded ? 'rotate-180' : '',
+              ].join(' ')}
+            />
+            {t('assistant_error.details', '错误详情')}
+          </button>
+        </div>
+        <pre
+          data-testid="assistant-error-details"
+          className={[
+            'mt-2 max-w-full rounded-md bg-base px-2.5 py-1.5 font-mono text-[11px] leading-4 text-text-muted',
+            isDetailExpanded
+              ? 'max-h-32 overflow-auto whitespace-pre-wrap break-words'
+              : 'overflow-hidden truncate whitespace-nowrap',
+          ].join(' ')}
+        >
+          {displayError}
+        </pre>
+      </div>
     </div>
   )
 }

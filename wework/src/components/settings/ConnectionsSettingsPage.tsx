@@ -31,11 +31,7 @@ import { getRuntimeConfig, stripAppBasePath } from '@/config/runtime'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
 import { cn } from '@/lib/utils'
-import { isTauriRuntime } from '@/lib/runtime-environment'
-import {
-  DesktopTopBar,
-  MAC_NATIVE_TOP_BAR_ACTION_INSET,
-} from '@/components/layout/DesktopTopBar'
+import { DesktopTopBar } from '@/components/layout/DesktopTopBar'
 import { useResizableSidebar } from '@/components/layout/useResizableSidebar'
 import { buildVncPageUrl } from '@/lib/vnc'
 import {
@@ -959,8 +955,8 @@ function ConnectionsDeviceSettingsPage({
 
             <div className="space-y-5">
               {creating && (
-                <div className="flex items-center gap-2 rounded-lg bg-primary/10 px-3 py-2.5 text-xs text-primary">
-                  <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-primary" />
+                <div className="flex items-center gap-2 rounded-lg bg-surface px-3 py-2.5 text-xs text-text-secondary">
+                  <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-text-secondary" />
                   云设备创建中，初始化约需 2-3 分钟，完成后将自动出现在列表中
                 </div>
               )}
@@ -1167,7 +1163,6 @@ export function ConnectionsSettingsPage({
   onDeleteArchivedTasks = noopArchivedAction,
 }: ConnectionsSettingsPageProps) {
   const { t } = useTranslation('common')
-  const reserveMacWindowControls = isTauriRuntime()
   const { sidebarWidth, handleResizeStart } = useResizableSidebar()
   const [activeNav, setActiveNav] = useState(() =>
     getSettingsNavFromPath(window.location.pathname)
@@ -1194,13 +1189,8 @@ export function ConnectionsSettingsPage({
           testId="settings-sidebar-topbar"
           className={cn(
             '-mx-1.5 mb-2 w-[calc(100%+0.75rem)] bg-transparent pr-2',
-            reserveMacWindowControls ? undefined : 'pl-2',
+            'pl-2',
           )}
-          style={
-            reserveMacWindowControls
-              ? { paddingLeft: MAC_NATIVE_TOP_BAR_ACTION_INSET }
-              : undefined
-          }
           left={
             <button
               type="button"

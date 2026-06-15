@@ -137,7 +137,8 @@ describe('DeviceStatusPrompt', () => {
 
     const action = screen.getByTestId('device-status-sidebar-action-button')
     expect(action).toHaveTextContent('更新')
-    expect(action).toHaveClass('text-primary')
+    expect(action).toHaveClass('bg-blue-50', 'text-blue-600', 'hover:bg-blue-100')
+    expect(action).not.toHaveClass('text-primary', 'bg-primary/10')
     expect(action).not.toHaveAttribute('title')
     const tooltip = screen.getByTestId('device-status-sidebar-tooltip')
     expect(tooltip).toHaveTextContent('1 台设备有更新')

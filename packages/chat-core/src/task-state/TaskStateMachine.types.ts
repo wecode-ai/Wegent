@@ -2,9 +2,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import type { TaskDetail, TaskStatus as ApiTaskStatus } from '@/types/api'
-import type { ContextMetricsSnapshot } from '@/types/socket'
-import type { MessageBlock } from '../components/message/thinking/types'
+import type { TaskDetail, TaskStatus as ApiTaskStatus } from '../api-types'
+import type { ContextMetricsSnapshot } from '../api-types'
+import type { MessageBlock } from '../message-blocks'
 import type { TaskRuntimePhase } from './taskStatusClassifier'
 
 /**

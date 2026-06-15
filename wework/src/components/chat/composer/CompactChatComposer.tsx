@@ -1,8 +1,8 @@
-import { ArrowUp, Camera, Image, Maximize2, Mic, Minimize2, Plus, Square } from 'lucide-react'
+import { ArrowUp, Camera, Image, Maximize2, Minimize2, Plus, Square } from 'lucide-react'
 import type { ChangeEvent, ClipboardEventHandler } from 'react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { Attachment, LocalDeviceSkill } from '@/types/api'
+import type { Attachment, LocalDeviceSkill, UnifiedModel } from '@/types/api'
 import type { CodeCommentContext } from '@/types/workspace-files'
 import { AttachmentBadges } from './AttachmentBadges'
 import { ComposerTextarea } from './ComposerTextarea'
@@ -22,6 +22,7 @@ interface CompactChatComposerProps {
   onRemoveAttachment?: (attachmentId: number) => void
   onClearCodeComments?: () => void
   onListLocalSkills?: () => Promise<LocalDeviceSkill[]>
+  selectedModel?: UnifiedModel | null
   isStreaming?: boolean
   onPause?: () => void
 }
@@ -40,6 +41,7 @@ export function CompactChatComposer({
   onRemoveAttachment = () => {},
   onClearCodeComments,
   onListLocalSkills,
+  selectedModel,
   isStreaming = false,
   onPause,
 }: CompactChatComposerProps) {
@@ -53,7 +55,6 @@ export function CompactChatComposer({
   const canSend =
     (value.trim().length > 0 || attachments.length > 0 || codeComments.length > 0) &&
     !disabled
-  const hasText = value.trim().length > 0
   const explicitLineCount = value.split('\n').length
 
   const handleImageChange = (event: ChangeEvent<HTMLInputElement>) => {
@@ -133,7 +134,7 @@ export function CompactChatComposer({
           className={[
             'relative flex min-h-[52px] min-w-0 flex-1 items-end rounded-[26px] border border-border bg-background pl-4 shadow-[0_12px_40px_rgba(0,0,0,0.08)]',
             'z-chrome',
-            hasText ? 'pr-14' : 'pr-[92px]',
+            'pr-14',
           ].join(' ')}
         >
           <ComposerTextarea
@@ -148,6 +149,7 @@ export function CompactChatComposer({
             className="scrollbar-none max-h-32 min-h-6 min-w-0 flex-1 resize-none overflow-y-auto bg-transparent py-[14px] text-base leading-6 text-text-primary outline-none placeholder:text-text-muted"
             skillMenuClassName="left-[-1rem] right-[-3.5rem]"
             onListLocalSkills={onListLocalSkills}
+            selectedModel={selectedModel}
           />
           {canExpandInput && (
             <button
@@ -158,16 +160,6 @@ export function CompactChatComposer({
               aria-label={t('workbench.expand_input', '展开输入框')}
             >
               <Maximize2 className="h-4 w-4" />
-            </button>
-          )}
-          {!hasText && (
-            <button
-              type="button"
-              data-testid="voice-input-button"
-              className="absolute bottom-1.5 right-12 flex h-10 w-10 items-center justify-center rounded-full p-0 text-text-secondary hover:bg-muted"
-              aria-label={t('workbench.voice_input', '语音输入')}
-            >
-              <Mic className="h-5 w-5" />
             </button>
           )}
           {isStreaming ? (

@@ -59,6 +59,7 @@ export function WorkbenchPage() {
     addCodeCommentContext,
     clearCodeCommentContexts,
     sendCurrentInput,
+    retryFailedMessage,
     pauseCurrentResponse,
     isResponseStreaming,
     cancelQueuedMessage,
@@ -129,6 +130,7 @@ export function WorkbenchPage() {
       onCreateEnvironmentBranch={createEnvironmentBranch}
       onInputChange={setInput}
       onSend={sendCurrentInput}
+      onRetryFailedMessage={retryFailedMessage}
       isResponseStreaming={isResponseStreaming}
       onPauseResponse={pauseCurrentResponse}
       onCancelQueuedMessage={cancelQueuedMessage}

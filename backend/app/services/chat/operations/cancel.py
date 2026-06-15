@@ -10,7 +10,7 @@ subtask status on cancellation.
 
 import logging
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
 from sqlalchemy.orm import Session
 
@@ -75,6 +75,7 @@ def update_subtask_on_cancel(
     db: Session,
     subtask: Subtask,
     partial_content: Optional[str] = None,
+    result: Optional[dict[str, Any]] = None,
 ) -> None:
     """
     Update subtask status and result on cancellation.
@@ -83,8 +84,10 @@ def update_subtask_on_cancel(
         db: Database session
         subtask: Subtask to update
         partial_content: Optional partial content to save
+        result: Optional full result payload collected from streaming state
     """
     now = datetime.now()
+    result_payload = result if result is not None else {"value": partial_content or ""}
     subtask_store.update_fields(
         db,
         subtask=subtask,
@@ -92,7 +95,7 @@ def update_subtask_on_cancel(
         progress=100,
         completed_at=now,
         updated_at=now,
-        result={"value": partial_content or ""},
+        result=result_payload,
     )
 
 

@@ -1,8 +1,8 @@
 import { useState, type PointerEvent } from 'react'
 
-const RIGHT_DEFAULT_WIDTH = 560
-const RIGHT_MIN_WIDTH = 480
-const RIGHT_MAX_WIDTH = 760
+const RIGHT_SPLIT_CHAT_DEFAULT_WIDTH = 420
+const RIGHT_SPLIT_CHAT_MIN_WIDTH = 360
+const RIGHT_SPLIT_CHAT_MAX_WIDTH = 620
 const BOTTOM_DEFAULT_HEIGHT = 320
 const BOTTOM_MIN_HEIGHT = 220
 const BOTTOM_MAX_HEIGHT = 560
@@ -11,8 +11,8 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max)
 }
 
-export function useResizableRightPanel() {
-  const [width, setWidth] = useState(RIGHT_DEFAULT_WIDTH)
+export function useResizableRightSplitChat() {
+  const [width, setWidth] = useState(RIGHT_SPLIT_CHAT_DEFAULT_WIDTH)
 
   const handleResizeStart = (event: PointerEvent<HTMLDivElement>) => {
     event.preventDefault()
@@ -21,7 +21,13 @@ export function useResizableRightPanel() {
     const startWidth = width
 
     const handleMove = (moveEvent: globalThis.PointerEvent) => {
-      setWidth(clamp(startWidth + startX - moveEvent.clientX, RIGHT_MIN_WIDTH, RIGHT_MAX_WIDTH))
+      setWidth(
+        clamp(
+          startWidth + moveEvent.clientX - startX,
+          RIGHT_SPLIT_CHAT_MIN_WIDTH,
+          RIGHT_SPLIT_CHAT_MAX_WIDTH,
+        ),
+      )
     }
 
     const handleUp = () => {

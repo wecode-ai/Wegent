@@ -994,7 +994,7 @@ function ProjectCreateDialogContent({
                         void handleCreateDirectory()
                       }
                     }}
-                    className="h-8 min-w-0 flex-1 rounded-md border border-[#d8d8d8] px-2 text-[13px] outline-none focus:border-[#14b8a6] focus:ring-2 focus:ring-[#14b8a6]/20"
+                    className="h-8 min-w-0 flex-1 rounded-md border border-[#d8d8d8] px-2 text-[13px] outline-none focus:border-text-primary focus:ring-2 focus:ring-text-primary/10"
                     placeholder={t('workbench.project_create_folder_placeholder', '输入文件夹名称')}
                     autoFocus
                   />
@@ -1015,7 +1015,7 @@ function ProjectCreateDialogContent({
                     data-testid="confirm-create-folder-button"
                     disabled={!newFolderName.trim() || creatingDirectory}
                     onClick={() => void handleCreateDirectory()}
-                    className="h-11 min-w-[44px] rounded-md bg-[#14b8a6] px-2 text-xs font-medium text-white hover:bg-[#0f9f93] disabled:opacity-50"
+                    className="h-11 min-w-[44px] rounded-md bg-text-primary px-2 text-xs font-medium text-background hover:bg-text-primary/90 disabled:opacity-50"
                   >
                     {creatingDirectory
                       ? t('workbench.project_creating_folder', '创建中')
@@ -1107,7 +1107,7 @@ function ProjectCreateDialogContent({
           >
             <Loader2
               data-testid="project-submit-progress-spinner"
-              className="h-3.5 w-3.5 animate-spin text-[#14b8a6]"
+              className="h-3.5 w-3.5 animate-spin text-text-secondary"
             />
             <span>{submittingHint}</span>
           </p>
@@ -1182,7 +1182,7 @@ function ProjectCreateDialogContent({
               }
             }}
             aria-busy={submitting}
-            className="inline-flex h-10 items-center gap-2 rounded-md bg-[#14b8a6] px-4 text-[13px] font-medium text-white hover:bg-[#0f9f93] disabled:cursor-not-allowed disabled:opacity-70"
+            className="inline-flex h-10 items-center gap-2 rounded-md bg-text-primary px-4 text-[13px] font-medium text-background hover:bg-text-primary/90 disabled:cursor-not-allowed disabled:opacity-70"
           >
             {submitting && (
               <Loader2

@@ -139,6 +139,37 @@ def sanitize_ld_library_path(env: dict) -> dict:
     return env
 
 
+def sanitize_pyinstaller_environment(env: dict) -> dict:
+    """Remove PyInstaller runtime variables from subprocess environments.
+
+    Onefile PyInstaller builds expose internal variables such as ``_PYI_*`` and
+    extraction paths containing ``_MEI``. Child processes are not PyInstaller
+    children and can misinterpret those variables, especially when launching a
+    system Python from the packaged executor.
+
+    Args:
+        env: Environment variables dict (will be modified in-place).
+
+    Returns:
+        The same env dict, for convenience.
+    """
+    for key, value in list(env.items()):
+        if (
+            key.startswith(("_PYI_", "_MEI_"))
+            or key == "_MEIPASS"
+            or (isinstance(value, str) and "_MEI" in value)
+        ):
+            env.pop(key, None)
+    return env
+
+
+def sanitize_subprocess_environment(env: dict) -> dict:
+    """Sanitize an environment before passing it to a child process."""
+    sanitize_ld_library_path(env)
+    sanitize_pyinstaller_environment(env)
+    return env
+
+
 __all__ = [
     "IS_WINDOWS",
     "IS_MACOS",
@@ -148,6 +179,8 @@ __all__ = [
     "get_signal_handler",
     "get_user_info_provider",
     "sanitize_ld_library_path",
+    "sanitize_pyinstaller_environment",
+    "sanitize_subprocess_environment",
     # Command line utilities
     "prepare_options_for_windows",
     "write_json_config",

@@ -23,6 +23,7 @@ from typing import Any, Dict, Optional
 import socketio
 from sqlalchemy.orm import Session
 
+from app.api.ws.connection_utils import enter_connect_room, save_connect_session
 from app.api.ws.context_decorators import auto_task_context
 from app.api.ws.decorators import trace_websocket_event
 from app.api.ws.events import (
@@ -318,24 +319,36 @@ class ChatNamespace(socketio.AsyncNamespace):
         # Extract token expiry for later validation
         token_exp = get_token_expiry(token)
 
-        # Save user info to session
-        await self.save_session(
+        session_saved = await save_connect_session(
+            self,
             sid,
-            {
+            session_data={
                 "user_id": user.id,
                 "user_name": user.user_name,
                 "request_id": request_id,
-                "token_exp": token_exp,  # Store token expiry for later checks
-                "auth_token": token,  # Store original token for downstream services
+                "token_exp": token_exp,
+                "auth_token": token,
             },
+            logger=logger,
+            log_prefix="[WS]",
         )
+        if not session_saved:
+            return False
 
         # Set user context for trace logging
         set_user_context(user_id=str(user.id), user_name=user.user_name)
 
         # Join user room
         user_room = f"user:{user.id}"
-        await self.enter_room(sid, user_room)
+        room_entered = await enter_connect_room(
+            self,
+            sid,
+            user_room,
+            logger=logger,
+            log_prefix="[WS]",
+        )
+        if not room_entered:
+            return False
 
         logger.info(f"[WS] Connected user={user.id} ({user.user_name}) sid={sid}")
 
@@ -1189,12 +1202,28 @@ class ChatNamespace(socketio.AsyncNamespace):
                 # Even if cancel request failed, we should still return success
                 # The executor may have already completed or the connection may be lost
 
+            from app.services.chat.trigger.lifecycle import collect_completed_result
+
+            cancel_result = await collect_completed_result(
+                payload.subtask_id,
+                status="CANCELLED",
+            )
+            if payload.partial_content:
+                if cancel_result is None:
+                    cancel_result = {"value": payload.partial_content}
+                elif not cancel_result.get("value"):
+                    cancel_result["value"] = payload.partial_content
+
             # Force update database state immediately after sending cancel request.
             # Keep this simple and deterministic even if no event consumer is available.
             await run_sync_in_executor(
                 _mark_subtask_and_task_cancelled,
                 payload.subtask_id,
-                payload.partial_content,
+                cancel_result,
+            )
+            await session_manager.cleanup_streaming_state(
+                payload.subtask_id,
+                task_id=subtask_info["task_id"],
             )
             logger.info(
                 f"[WS] chat:cancel Cancel request sent and status force-updated to CANCELLED "
@@ -1887,7 +1916,7 @@ def _subtask_belongs_to_task(subtask_id: int, task_id: int) -> bool:
 
 
 def _mark_subtask_and_task_cancelled(
-    subtask_id: int, partial_content: Optional[str] = None
+    subtask_id: int, result: Optional[dict] = None
 ) -> None:
     """Force mark subtask and task as CANCELLED."""
     with get_db_session() as db:
@@ -1896,7 +1925,7 @@ def _mark_subtask_and_task_cancelled(
             return
 
         # Force subtask to CANCELLED
-        update_subtask_on_cancel(db, subtask, partial_content)
+        update_subtask_on_cancel(db, subtask, result=result)
 
         # Force task to CANCELLED
         task = task_store.get_regular_active_task(db, task_id=subtask.task_id)

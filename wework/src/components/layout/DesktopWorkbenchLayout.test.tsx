@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { createDeviceApi } from '@/api/devices'
 import { createQuotaApi } from '@/api/quota'
 import '@/i18n'
+import { TITLEBAR_ACTIONS_PORTAL_ID } from '@/components/topnav/TitlebarActionsPortal'
 import { DesktopWorkbenchLayout } from './DesktopWorkbenchLayout'
 import { WorkspaceFilePreview } from './workspace-panels/WorkspaceFilePreview'
 
@@ -114,6 +115,11 @@ describe('DesktopWorkbenchLayout', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    document.getElementById(TITLEBAR_ACTIONS_PORTAL_ID)?.remove()
+    const titlebarActions = document.createElement('div')
+    titlebarActions.id = TITLEBAR_ACTIONS_PORTAL_ID
+    titlebarActions.dataset.testid = 'titlebar-actions'
+    document.body.appendChild(titlebarActions)
     delete (window as typeof window & { __TAURI_INTERNALS__?: unknown })
       .__TAURI_INTERNALS__
     localStorage.clear()
@@ -312,29 +318,35 @@ describe('DesktopWorkbenchLayout', () => {
   test('collapses and expands project and chat sections from the sidebar headers', async () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
-    expect(screen.getByTestId('projects-section-chevron-down')).toHaveClass('opacity-0')
+    expect(screen.getByTestId('projects-section-chevron-right')).toHaveClass('opacity-0')
+    expect(screen.getByTestId('projects-section-chevron-right')).toHaveClass('rotate-90')
     expect(screen.getByText('github_wegent')).toBeInTheDocument()
-    expect(screen.getByTestId('chats-section-chevron-down')).toHaveClass('opacity-0')
+    expect(screen.getByTestId('chats-section-chevron-right')).toHaveClass('opacity-0')
+    expect(screen.getByTestId('chats-section-chevron-right')).toHaveClass('rotate-90')
     expect(screen.getByText('远程连接 Claude Code')).toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('projects-section-toggle'))
 
-    expect(screen.getByTestId('projects-section-chevron-right')).toHaveClass('opacity-0')
+    expect(screen.getByTestId('projects-section-chevron-right')).toHaveClass('opacity-100')
+    expect(screen.getByTestId('projects-section-chevron-right')).toHaveClass('rotate-0')
     expect(screen.queryByText('github_wegent')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('projects-section-toggle'))
 
-    expect(screen.getByTestId('projects-section-chevron-down')).toHaveClass('opacity-0')
+    expect(screen.getByTestId('projects-section-chevron-right')).toHaveClass('opacity-0')
+    expect(screen.getByTestId('projects-section-chevron-right')).toHaveClass('rotate-90')
     expect(screen.getByText('github_wegent')).toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('chats-section-toggle'))
 
-    expect(screen.getByTestId('chats-section-chevron-right')).toHaveClass('opacity-0')
+    expect(screen.getByTestId('chats-section-chevron-right')).toHaveClass('opacity-100')
+    expect(screen.getByTestId('chats-section-chevron-right')).toHaveClass('rotate-0')
     expect(screen.queryByText('远程连接 Claude Code')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('chats-section-toggle'))
 
-    expect(screen.getByTestId('chats-section-chevron-down')).toHaveClass('opacity-0')
+    expect(screen.getByTestId('chats-section-chevron-right')).toHaveClass('opacity-0')
+    expect(screen.getByTestId('chats-section-chevron-right')).toHaveClass('rotate-90')
     expect(screen.getByText('远程连接 Claude Code')).toBeInTheDocument()
   })
 
@@ -551,23 +563,29 @@ describe('DesktopWorkbenchLayout', () => {
       />,
     )
 
-    expect(
-      screen
-        .getAllByTestId('macos-titlebar-drag-region')
-        .every((region) => region.hasAttribute('data-tauri-drag-region')),
-    ).toBe(true)
     expect(screen.getByTestId('desktop-sidebar-topbar')).toHaveClass(
       'h-[52px]',
-      'pl-2',
     )
+    expect(screen.getByTestId('desktop-workbench-main')).toHaveClass(
+      'mt-1.5',
+      'mb-1.5',
+      'mr-1.5',
+    )
+    expect(screen.getByTestId('desktop-workbench-main')).not.toHaveClass('ml-1.5')
     expect(screen.getByTestId('collapse-sidebar-button')).toHaveClass(
       'h-7',
       'w-7',
       'rounded-lg',
     )
     expect(screen.getByTestId('desktop-window-controls')).toHaveClass('gap-3')
-    expect(screen.getByTestId('workbench-topbar-right-actions')).toHaveClass(
-      'gap-2',
+    expect(screen.getByTestId('workbench-topbar-right-actions')).toContainElement(
+      screen.getByTestId('environment-info-button'),
+    )
+    expect(screen.getByTestId('workbench-topbar-right-actions')).toContainElement(
+      screen.getByTestId('toggle-bottom-workspace-panel-button'),
+    )
+    expect(screen.getByTestId('workbench-topbar-right-actions')).toContainElement(
+      screen.getByTestId('toggle-right-workspace-panel-button'),
     )
 
     await userEvent.click(screen.getByTestId('collapse-sidebar-button'))
@@ -575,10 +593,14 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByText('新对话')).not.toBeInTheDocument()
     expect(document.querySelector('aside')).not.toBeInTheDocument()
     expect(screen.getByTestId('expand-sidebar-button')).toBeInTheDocument()
-    expect(screen.getByTestId('workbench-topbar')).toHaveClass('h-[52px]')
-    expect(screen.getByTestId('workbench-topbar')).toHaveClass('pl-2')
     expect(screen.getByTestId('workbench-topbar-left-actions')).toContainElement(
       screen.getByTestId('desktop-window-controls'),
+    )
+    expect(screen.getByTestId('desktop-workbench-main')).toHaveClass(
+      'mt-1.5',
+      'mb-1.5',
+      'mr-1.5',
+      'ml-1.5',
     )
 
     await userEvent.click(screen.getByTestId('expand-sidebar-button'))
@@ -587,7 +609,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(document.querySelector('aside')).toBeInTheDocument()
   })
 
-  test('reserves native macOS traffic light space in the Tauri title bar', async () => {
+  test('keeps window controls in their page-level positions in Tauri', async () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,
       value: {},
@@ -595,22 +617,47 @@ describe('DesktopWorkbenchLayout', () => {
 
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
-    expect(screen.getByTestId('desktop-sidebar-topbar')).toHaveClass(
-      'h-[52px]',
+    expect(screen.getByTestId('desktop-sidebar-topbar')).toContainElement(
+      screen.getByTestId('collapse-sidebar-button'),
     )
-    expect(screen.getByTestId('desktop-sidebar-topbar')).toHaveStyle({
-      paddingLeft: '89px',
-    })
+    expect(screen.getByTestId('titlebar-actions')).toContainElement(
+      screen.getByTestId('environment-info-button'),
+    )
+    expect(screen.queryByTestId('workbench-topbar')).not.toBeInTheDocument()
+    expect(screen.getByTestId('desktop-workbench-content')).not.toHaveClass(
+      'pt-[52px]',
+    )
+    expect(screen.getByTestId('desktop-workbench-main')).toHaveClass(
+      'mb-1.5',
+      'mr-1.5',
+    )
+    expect(screen.getByTestId('desktop-workbench-main')).not.toHaveClass(
+      'mt-1.5',
+    )
 
     await userEvent.click(screen.getByTestId('collapse-sidebar-button'))
 
-    expect(screen.getByTestId('workbench-topbar')).toHaveStyle({
-      paddingLeft: '89px',
-    })
-    expect(screen.getByTestId('expand-sidebar-button')).toHaveClass(
-      'h-7',
-      'w-7',
+    expect(screen.getByTestId('workbench-topbar')).toContainElement(
+      screen.getByTestId('expand-sidebar-button'),
     )
+    expect(screen.getByTestId('titlebar-actions')).toContainElement(
+      screen.getByTestId('toggle-right-workspace-panel-button'),
+    )
+  })
+
+  test('keeps workspace panel actions in the page topbar on web', () => {
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    expect(screen.getByTestId('workbench-topbar-right-actions')).toContainElement(
+      screen.getByTestId('environment-info-button'),
+    )
+    expect(screen.getByTestId('workbench-topbar-right-actions')).toContainElement(
+      screen.getByTestId('toggle-bottom-workspace-panel-button'),
+    )
+    expect(screen.getByTestId('workbench-topbar-right-actions')).toContainElement(
+      screen.getByTestId('toggle-right-workspace-panel-button'),
+    )
+    expect(screen.getByTestId('titlebar-actions')).toBeEmptyDOMElement()
   })
 
   test('opens and filters the desktop search dialog from the sidebar', async () => {
@@ -1440,20 +1487,20 @@ describe('DesktopWorkbenchLayout', () => {
 
     await userEvent.click(screen.getByTestId('project-menu-1'))
     expect(screen.getByTestId('project-menu-1-menu')).toHaveClass(
-      'bg-[#2b2b2b]',
-      'text-white',
-      'border-black/10',
+      'bg-background',
+      'text-text-primary',
+      'border-border',
     )
     expect(screen.getByTestId('rename-project-1')).toHaveTextContent('重命名项目')
     expect(screen.getByTestId('rename-project-1')).toHaveClass(
-      'text-white',
-      'hover:bg-white/10',
+      'text-text-primary',
+      'hover:bg-muted',
     )
     expect(screen.getByTestId('archive-project-chats-1')).toHaveTextContent('归档会话')
     expect(screen.getByTestId('remove-project-1')).toHaveTextContent('移除')
     expect(screen.getByTestId('remove-project-1')).toHaveClass(
-      'text-[#ff7b7b]',
-      'hover:bg-white/10',
+      'text-red-500',
+      'hover:bg-red-50',
     )
 
     await userEvent.click(screen.getByTestId('rename-project-1'))
@@ -1828,9 +1875,239 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(screen.getByTestId('desktop-chat-scroll')).toHaveTextContent('hello')
     expect(screen.queryByTestId('composer-disabled-reason')).not.toBeInTheDocument()
-    expect(screen.getByTestId('device-status-prompt')).toHaveTextContent(
-      'Offline Device 离线，恢复在线后可继续对话',
+    expect(screen.getByTestId('conversation-device-offline-banner')).toHaveTextContent(
+      'Offline Device 已离线，恢复在线后可继续对话',
     )
+    expect(screen.queryByTestId('device-status-prompt')).not.toBeInTheDocument()
+    expect(screen.getByTestId('send-message-button')).toBeDisabled()
+
+    await userEvent.click(screen.getByTestId('send-message-button'))
+    expect(baseProps.onSend).not.toHaveBeenCalled()
+  })
+
+  test('locks composer for project tasks when the owning project device is offline', async () => {
+    const offlineDevice = {
+      id: 1,
+      device_id: 'offline-project-device',
+      name: 'Offline Project Device',
+      status: 'offline' as const,
+      is_default: false,
+      device_type: 'cloud' as const,
+      bind_shell: 'claudecode',
+      executor_version: '1.8.5',
+    }
+    const onlineTaskDevice = {
+      id: 2,
+      device_id: 'online-task-device',
+      name: 'Online Task Device',
+      status: 'online' as const,
+      is_default: false,
+      device_type: 'cloud' as const,
+      bind_shell: 'claudecode',
+      executor_version: '1.8.5',
+    }
+    const project = {
+      id: 7,
+      name: 'hello',
+      config: {
+        execution: {
+          targetType: 'cloud' as const,
+          deviceId: 'offline-project-device',
+        },
+      },
+      tasks: [
+        {
+          id: 71,
+          task_id: 71,
+          task_title: 'Offline project task',
+          device_id: 'online-task-device',
+          updated_at: new Date().toISOString(),
+        },
+      ],
+    }
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          projects: [project],
+          devices: [offlineDevice, onlineTaskDevice],
+          currentProject: null,
+          currentTask: {
+            id: 71,
+            title: 'Offline project task',
+            status: 'COMPLETED',
+            task_type: 'code',
+            project_id: 7,
+            device_id: 'online-task-device',
+            created_at: new Date().toISOString(),
+          },
+          input: 'should not send',
+        }}
+        messages={[
+          {
+            id: 'message-1',
+            role: 'user',
+            content: 'hello',
+            status: 'done',
+            createdAt: new Date().toISOString(),
+          },
+        ]}
+      />,
+    )
+
+    expect(screen.queryByTestId('device-status-prompt')).not.toBeInTheDocument()
+    expect(
+      within(screen.getByTestId('desktop-floating-composer-card')).getByTestId(
+        'conversation-device-offline-banner',
+      ),
+    ).toBeInTheDocument()
+    expect(screen.getByTestId('conversation-device-offline-banner')).toHaveTextContent(
+      'Offline Project Device 已离线，恢复在线后可继续对话',
+    )
+    expect(screen.getByTestId('conversation-device-offline-banner')).toHaveClass(
+      'bg-background/95',
+      'text-text-secondary',
+    )
+    expect(screen.getByTestId('desktop-chat-scroll')).not.toHaveClass('pt-14')
+    expect(screen.getByTestId('send-message-button')).toBeDisabled()
+
+    await userEvent.click(screen.getByTestId('send-message-button'))
+    expect(baseProps.onSend).not.toHaveBeenCalled()
+  })
+
+  test('does not expose raw device ids in the offline conversation notice', () => {
+    const project = {
+      id: 7,
+      name: 'hello',
+      config: {
+        execution: {
+          targetType: 'cloud' as const,
+          deviceId: 'b2f75045-2062-4a94-b5c0-ffb9f3b94a90',
+        },
+      },
+      tasks: [
+        {
+          id: 71,
+          task_id: 71,
+          task_title: 'Unavailable project task',
+          updated_at: new Date().toISOString(),
+        },
+      ],
+    }
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          projects: [project],
+          devices: [],
+          currentProject: null,
+          currentTask: {
+            id: 71,
+            title: 'Unavailable project task',
+            status: 'COMPLETED',
+            task_type: 'code',
+            project_id: 7,
+            created_at: new Date().toISOString(),
+          },
+        }}
+        messages={[
+          {
+            id: 'message-1',
+            role: 'user',
+            content: 'hello',
+            status: 'done',
+            createdAt: new Date().toISOString(),
+          },
+        ]}
+      />,
+    )
+
+    expect(screen.getByTestId('conversation-device-offline-banner')).toHaveTextContent(
+      '当前设备 不可用，恢复在线后可继续对话',
+    )
+    expect(screen.getByTestId('conversation-device-offline-banner')).not.toHaveTextContent(
+      'b2f75045-2062-4a94-b5c0-ffb9f3b94a90',
+    )
+  })
+
+  test('locks composer for nested project tasks even when task detail omits project id', async () => {
+    const offlineDevice = {
+      id: 1,
+      device_id: 'nested-offline-project-device',
+      name: 'Nested Offline Project Device',
+      status: 'offline' as const,
+      is_default: false,
+      device_type: 'cloud' as const,
+      bind_shell: 'claudecode',
+      executor_version: '1.8.5',
+    }
+    const standaloneOnlineDevice = {
+      id: 2,
+      device_id: 'standalone-online-device',
+      name: 'Standalone Online Device',
+      status: 'online' as const,
+      is_default: false,
+      device_type: 'cloud' as const,
+      bind_shell: 'claudecode',
+      executor_version: '1.8.5',
+    }
+    const project = {
+      id: 7,
+      name: 'hello',
+      config: {
+        execution: {
+          targetType: 'cloud' as const,
+          deviceId: 'nested-offline-project-device',
+        },
+      },
+      tasks: [
+        {
+          id: 71,
+          task_id: 71,
+          task_title: 'Nested offline project task',
+          updated_at: new Date().toISOString(),
+        },
+      ],
+    }
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          projects: [project],
+          devices: [offlineDevice, standaloneOnlineDevice],
+          standaloneDeviceId: 'standalone-online-device',
+          currentProject: null,
+          currentTask: {
+            id: 71,
+            title: 'Nested offline project task',
+            status: 'COMPLETED',
+            task_type: 'code',
+            created_at: new Date().toISOString(),
+          },
+          input: 'still should not send',
+        }}
+        messages={[
+          {
+            id: 'message-1',
+            role: 'assistant',
+            content: 'done',
+            status: 'done',
+            createdAt: new Date().toISOString(),
+          },
+        ]}
+      />,
+    )
+
+    expect(screen.getByTestId('conversation-device-offline-banner')).toHaveTextContent(
+      'Nested Offline Project Device 已离线，恢复在线后可继续对话',
+    )
+    expect(screen.queryByTestId('device-status-prompt')).not.toBeInTheDocument()
     expect(screen.getByTestId('send-message-button')).toBeDisabled()
 
     await userEvent.click(screen.getByTestId('send-message-button'))
@@ -1939,8 +2216,12 @@ describe('DesktopWorkbenchLayout', () => {
       />,
     )
 
-    expect(screen.getByTestId('project-spinner-1')).toBeInTheDocument()
-    expect(screen.getByTestId('history-task-spinner-41')).toBeInTheDocument()
+    expect(screen.getByTestId('project-spinner-1')).toHaveClass(
+      'text-[rgb(var(--color-sidebar-text-muted))]',
+    )
+    expect(screen.getByTestId('history-task-spinner-41')).toHaveClass(
+      'text-[rgb(var(--color-sidebar-text-muted))]',
+    )
   })
 
   test('does not show spinners for stale server running statuses on initial lists', () => {
@@ -1991,7 +2272,7 @@ describe('DesktopWorkbenchLayout', () => {
       'overflow-y-auto',
       'scrollbar-none',
     )
-    expect(screen.getByTestId('settings-button')).toHaveClass('shrink-0', 'w-full')
+    expect(screen.getByTestId('settings-button')).toHaveClass('h-9', 'w-full')
   })
 
   test('toggles an empty project chat list without selecting the project chat context', async () => {
@@ -2169,12 +2450,126 @@ describe('DesktopWorkbenchLayout', () => {
     expect(await screen.findByTestId('workspace-file-tree')).toBeInTheDocument()
     expect(screen.queryByTestId('workspace-tool-launcher')).not.toBeInTheDocument()
 
+    const content = screen.getByTestId('desktop-workbench-content')
+    expect(content).toHaveStyle({ width: '420px' })
+    expect(panel).toHaveClass('min-w-0', 'flex-1', 'basis-0')
+    expect(panel).toHaveClass(
+      'transition-[opacity,transform]',
+      'duration-300',
+      'ease-out',
+    )
+    expect(content).toHaveClass(
+      'transition-[width]',
+      'duration-300',
+      'ease-out',
+    )
+
     fireEvent.pointerDown(screen.getByTestId('right-workspace-resize-handle'), { clientX: 700 })
     fireEvent.pointerMove(document, { clientX: 640 })
     fireEvent.pointerUp(document)
 
-    expect(panel).toHaveStyle({ width: '620px' })
+    expect(content).toHaveStyle({ width: '360px' })
     expect(screen.getByTestId('workspace-file-tree')).toHaveClass('w-[240px]')
+  })
+
+  test('right workspace panel pushes the conversation chat into a narrow split column', async () => {
+    const workspacePanelState = createCloudWorkspacePanelState()
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          ...workspacePanelState,
+        }}
+        messages={[
+          {
+            id: 'message-1',
+            role: 'assistant',
+            content: 'Ready',
+            status: 'done',
+            createdAt: '2026-05-29T00:00:00.000Z',
+          },
+        ]}
+        projectWork={{
+          ...baseProps.projectWork,
+          projects: workspacePanelState.projects,
+          devices: workspacePanelState.devices,
+          currentProjectId: workspacePanelState.currentProject.id,
+        }}
+      />,
+    )
+
+    const content = screen.getByTestId('desktop-workbench-content')
+    const topBar = screen.getByTestId('workbench-topbar')
+    const rightPanelShell = screen.getByTestId('right-workspace-panel-shell')
+    expect(topBar).toHaveStyle({ width: '100%' })
+    expect(content).toHaveClass(
+      'flex-none',
+      'transition-[width]',
+      'duration-300',
+      'ease-out',
+    )
+    expect(content).toHaveStyle({ width: '100%' })
+    expect(rightPanelShell).toHaveClass(
+      'overflow-hidden',
+      'opacity-0',
+      'transition-[width,opacity]',
+      'duration-300',
+      'ease-out',
+    )
+    expect(rightPanelShell).toHaveStyle({ width: '0px' })
+    expect(screen.queryByTestId('right-workspace-panel')).not.toBeInTheDocument()
+    expect(screen.getByTestId('desktop-floating-composer-layer')).toHaveClass(
+      'min-w-[32rem]',
+    )
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+
+    expect(content).toHaveClass(
+      'flex-none',
+      'border-r',
+      'transition-[width]',
+      'duration-300',
+      'ease-out',
+    )
+    expect(content).toHaveStyle({ width: '420px' })
+    expect(topBar).toHaveStyle({ width: '420px' })
+    expect(rightPanelShell).toHaveClass('opacity-100')
+    expect(rightPanelShell).toHaveStyle({ width: 'calc(100% - 420px)' })
+    expect(screen.getByTestId('right-workspace-panel')).toHaveClass(
+      'min-w-0',
+      'flex-1',
+      'basis-0',
+      'transition-[opacity,transform]',
+      'duration-300',
+      'ease-out',
+    )
+    expect(screen.getByTestId('desktop-floating-composer-layer')).toHaveClass(
+      'w-[calc(100%_-_1.5rem)]',
+      'min-w-0',
+      'max-w-[calc(100%_-_1.5rem)]',
+    )
+    expect(screen.getByTestId('desktop-floating-composer-layer')).not.toHaveClass(
+      'min-w-[32rem]',
+    )
+  })
+
+  test('right workspace panel renders the file workspace inside a tab strip', async () => {
+    renderWorkspacePanelLayout()
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+
+    const tabbar = screen.getByTestId('right-workspace-tabbar')
+    const fileTab = screen.getByTestId('right-workspace-file-tab')
+    expect(tabbar).toHaveAttribute('role', 'tablist')
+    expect(fileTab).toHaveAttribute('role', 'tab')
+    expect(fileTab).toHaveAttribute('aria-selected', 'true')
+    expect(fileTab).toHaveTextContent('打开文件')
+    const closeButton = within(fileTab).getByTestId('close-right-workspace-panel-button')
+    expect(closeButton).toHaveClass('rounded-full')
+    expect(closeButton).not.toHaveClass('ml-auto')
+    expect(screen.getByTestId('right-workspace-new-tab-button')).toBeInTheDocument()
+    expect(await screen.findByTestId('workspace-file-tree')).toBeInTheDocument()
   })
 
   test('right workspace panel shows file tree and read-only preview', async () => {
@@ -2236,6 +2631,118 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(await screen.findByTestId('workspace-file-preview')).toHaveTextContent('hello world')
     expect(screen.getByText('/workspace/project/README.md')).toBeInTheDocument()
+  })
+
+  test('right workspace panel renders nested directories as an expanded tree', async () => {
+    const user = userEvent.setup()
+    const workspacePanelState = createCloudWorkspacePanelState()
+    const listWorkspaceEntries = vi.fn((_deviceId: string, path: string) => {
+      if (path === '/workspace/project/backend') {
+        return Promise.resolve({
+          path,
+          entries: [
+            {
+              name: 'alembic',
+              path: '/workspace/project/backend/alembic',
+              isDirectory: true,
+              size: 0,
+              modifiedAt: null,
+            },
+            {
+              name: 'app',
+              path: '/workspace/project/backend/app',
+              isDirectory: true,
+              size: 0,
+              modifiedAt: null,
+            },
+          ],
+        })
+      }
+      if (path === '/workspace/project/backend/alembic') {
+        return Promise.resolve({
+          path,
+          entries: [
+            {
+              name: '__pycache__',
+              path: '/workspace/project/backend/alembic/__pycache__',
+              isDirectory: true,
+              size: 0,
+              modifiedAt: null,
+            },
+            {
+              name: 'env.py',
+              path: '/workspace/project/backend/alembic/env.py',
+              isDirectory: false,
+              size: 24,
+              modifiedAt: null,
+            },
+          ],
+        })
+      }
+      return Promise.resolve({
+        path: '/workspace/project',
+        entries: [
+          {
+            name: 'backend',
+            path: '/workspace/project/backend',
+            isDirectory: true,
+            size: 0,
+            modifiedAt: null,
+          },
+          {
+            name: 'frontend',
+            path: '/workspace/project/frontend',
+            isDirectory: true,
+            size: 0,
+            modifiedAt: null,
+          },
+        ],
+      })
+    })
+    createDeviceApiMock.mockReturnValue(createMockDeviceApi({
+      listWorkspaceEntries,
+    }) as never)
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          ...workspacePanelState,
+        }}
+        projectWork={{
+          ...baseProps.projectWork,
+          projects: workspacePanelState.projects,
+          devices: workspacePanelState.devices,
+          currentProjectId: workspacePanelState.currentProject?.id,
+        }}
+      />,
+    )
+
+    await user.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await user.click(await screen.findByText('backend'))
+
+    const backendRow = screen.getByText('backend').closest('[data-testid="workspace-directory-row"]')
+    const alembicRow = await screen.findByText('alembic')
+    expect(backendRow).toHaveAttribute('aria-expanded', 'true')
+    expect(backendRow).toHaveAttribute('data-depth', '0')
+    expect(alembicRow.closest('[data-testid="workspace-directory-row"]')).toHaveAttribute(
+      'data-depth',
+      '1',
+    )
+    expect(screen.getByText('frontend')).toBeInTheDocument()
+
+    await user.click(alembicRow)
+
+    const selectedAlembicRow = screen.getByText('alembic')
+      .closest('[data-testid="workspace-directory-row"]')
+    expect(selectedAlembicRow).toHaveClass('ring-1', 'ring-primary')
+    expect(await screen.findByText('__pycache__')).toBeInTheDocument()
+    expect(screen.getByText('env.py').closest('[data-testid="workspace-file-row"]')).toHaveAttribute(
+      'data-depth',
+      '2',
+    )
+    expect(screen.getAllByTestId('workspace-tree-indent-guide').length).toBeGreaterThan(0)
   })
 
   test('right workspace panel ignores stale file preview responses', async () => {
@@ -2435,9 +2942,12 @@ describe('DesktopWorkbenchLayout', () => {
       })
     })
 
-    expect(screen.getByText('/workspace/project/docs')).toBeInTheDocument()
+    expect(screen.getByText('docs').closest('[data-testid="workspace-directory-row"]')).toHaveClass(
+      'ring-1',
+      'ring-primary',
+    )
     expect(screen.getByText('guide.md')).toBeInTheDocument()
-    expect(screen.queryByText('main.ts')).not.toBeInTheDocument()
+    expect(screen.getByText('main.ts')).toBeInTheDocument()
   })
 
   test('right workspace panel retries the failed directory path', async () => {

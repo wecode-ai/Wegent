@@ -18,7 +18,7 @@ import { taskApis } from '@/apis/tasks'
 import { isChatShell, teamRequiresWorkspace } from '../../service/messageService'
 import { Button } from '@/components/ui/button'
 import { DEFAULT_MODEL_NAME, unifiedToModel } from '../../hooks/useModelSelection'
-import { generateMessageId } from '../../state'
+import { generateMessageId } from '@wegent/chat-core'
 import {
   useMessageSendQueue,
   type QueuedMessage,
