@@ -5,6 +5,8 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+WEWORK_MIN_EXECUTOR_VERSION = "1.8.5"
+
 
 def load_build_local_module():
     script_path = Path(__file__).parents[2] / "scripts" / "build_local.py"
@@ -13,6 +15,77 @@ def load_build_local_module():
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module
+
+
+def is_version_at_least(version: str, minimum_version: str) -> bool:
+    def parse(value: str) -> list[int]:
+        return [
+            int(part) for part in value.removeprefix("v").split("-", 1)[0].split(".")
+        ]
+
+    current = parse(version)
+    minimum = parse(minimum_version)
+    for index in range(max(len(current), len(minimum))):
+        current_part = current[index] if index < len(current) else 0
+        minimum_part = minimum[index] if index < len(minimum) else 0
+        if current_part > minimum_part:
+            return True
+        if current_part < minimum_part:
+            return False
+    return True
+
+
+def test_default_build_version_meets_wework_minimum():
+    build_local = load_build_local_module()
+
+    assert is_version_at_least(
+        build_local.get_version_from_pyproject(),
+        WEWORK_MIN_EXECUTOR_VERSION,
+    )
+
+
+def test_embed_version_in_source_replaces_placeholder_and_restores():
+    build_local = load_build_local_module()
+    version_py = build_local.get_executor_root() / "version.py"
+    original_content = version_py.read_text()
+    replacement_content = None
+
+    try:
+        replacement_content = build_local.embed_version_in_source("9.9.9")
+
+        assert replacement_content == original_content
+        assert '_EMBEDDED_VERSION: Optional[str] = "9.9.9"' in version_py.read_text()
+    finally:
+        if replacement_content is not None:
+            build_local.restore_version_source(replacement_content)
+
+    assert version_py.read_text() == original_content
+
+
+def test_embed_github_repo_in_source_replaces_placeholder_and_restores():
+    build_local = load_build_local_module()
+    github_checker_py = (
+        build_local.get_executor_root()
+        / "services"
+        / "updater"
+        / "github_version_checker.py"
+    )
+    original_content = github_checker_py.read_text()
+    replacement_content = None
+
+    try:
+        replacement_content = build_local.embed_github_repo_in_source("owner/repo")
+
+        assert replacement_content == original_content
+        assert (
+            '_EMBEDDED_GITHUB_REPO: Optional[str] = "owner/repo"'
+            in github_checker_py.read_text()
+        )
+    finally:
+        if replacement_content is not None:
+            build_local.restore_github_repo_source(replacement_content)
+
+    assert github_checker_py.read_text() == original_content
 
 
 def test_append_claude_cli_binary_skips_lookup_when_disabled(monkeypatch):
