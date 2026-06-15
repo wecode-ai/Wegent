@@ -433,6 +433,37 @@ def test_workspace_tree_script_rejects_non_workspace_cwd(tmp_path, monkeypatch, 
     }
 
 
+def test_workspace_tree_script_rejects_external_git_repository(
+    tmp_path, monkeypatch, capsys
+):
+    """workspace_tree should not treat arbitrary Git repositories as workspaces."""
+    import json
+
+    from app.services.device.command_registry import WORKSPACE_TREE_SCRIPT
+
+    repository_dir = tmp_path / "external-repo"
+    repository_dir.mkdir()
+    (repository_dir / ".git").mkdir()
+    (repository_dir / "README.md").write_text("hello", encoding="utf-8")
+    monkeypatch.delenv("WEGENT_WORKSPACE_ROOTS", raising=False)
+    monkeypatch.delenv("WEGENT_EXECUTOR_PROJECTS_DIR", raising=False)
+    monkeypatch.setenv("WECODE_HOME", str(tmp_path / "wecode-home"))
+    monkeypatch.chdir(repository_dir)
+
+    try:
+        exec(WORKSPACE_TREE_SCRIPT, {"__name__": "__main__"})
+    except SystemExit as exc:
+        assert exc.code == 64
+    else:
+        raise AssertionError("workspace_tree should reject external git repositories")
+
+    output = json.loads(capsys.readouterr().out)
+    assert output == {
+        "success": False,
+        "error": "workspace path is outside allowed workspace roots",
+    }
+
+
 def test_workspace_tree_script_keeps_lstat_operations_guarded(
     tmp_path, monkeypatch, capsys
 ):

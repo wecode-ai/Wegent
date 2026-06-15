@@ -80,21 +80,10 @@ def configured_workspace_roots():
     return tuple(dict.fromkeys(root.resolve() for root in roots))
 
 
-def git_workspace_root(path):
-    for candidate in (path, *path.parents):
-        if (candidate / ".git").exists():
-            return candidate.resolve()
-    return None
-
-
 def require_workspace_root(path):
     for allowed_root in configured_workspace_roots():
         if is_relative_to(path, allowed_root):
             return allowed_root
-
-    repository_root = git_workspace_root(path)
-    if repository_root:
-        return repository_root
 
     fail("workspace path is outside allowed workspace roots")
 """.strip()
