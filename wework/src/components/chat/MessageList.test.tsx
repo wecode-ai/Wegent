@@ -2,6 +2,7 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import type { Attachment } from '@/types/api'
+import type { ProcessingBlock } from '@/types/workbench'
 import { MessageList } from './MessageList'
 import '@/i18n'
 
@@ -484,6 +485,35 @@ describe('MessageList', () => {
     expect(screen.queryByTestId('message-hover-time')).not.toBeInTheDocument()
     expect(screen.queryByTestId('copy-message-button')).not.toBeInTheDocument()
     expect(screen.getByText('正在思考')).toBeInTheDocument()
+  })
+
+  test('shows a single thinking indicator for streaming assistant messages with blocks', () => {
+    const runningBlock: ProcessingBlock = {
+      id: 'call-1',
+      subtaskId: 1,
+      type: 'tool',
+      toolName: 'Bash',
+      toolInput: { command: 'rg -n "foo" src' },
+      status: 'streaming',
+      createdAt: 1770000000000,
+    }
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: '2',
+            role: 'assistant',
+            content: 'Let me explore the repo structure for you.',
+            status: 'streaming',
+            createdAt: '2026-05-25T18:46:00.000+08:00',
+            blocks: [runningBlock],
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getAllByText('正在思考')).toHaveLength(1)
   })
 
   test('renders failed assistant messages in the approved error-card layout', () => {
