@@ -295,29 +295,35 @@ describe('DesktopWorkbenchLayout', () => {
   test('collapses and expands project and chat sections from the sidebar headers', async () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
-    expect(screen.getByTestId('projects-section-chevron-down')).toHaveClass('opacity-0')
+    expect(screen.getByTestId('projects-section-chevron-right')).toHaveClass('opacity-0')
+    expect(screen.getByTestId('projects-section-chevron-right')).toHaveClass('rotate-90')
     expect(screen.getByText('github_wegent')).toBeInTheDocument()
-    expect(screen.getByTestId('chats-section-chevron-down')).toHaveClass('opacity-0')
+    expect(screen.getByTestId('chats-section-chevron-right')).toHaveClass('opacity-0')
+    expect(screen.getByTestId('chats-section-chevron-right')).toHaveClass('rotate-90')
     expect(screen.getByText('远程连接 Claude Code')).toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('projects-section-toggle'))
 
-    expect(screen.getByTestId('projects-section-chevron-right')).toHaveClass('opacity-0')
+    expect(screen.getByTestId('projects-section-chevron-right')).toHaveClass('opacity-100')
+    expect(screen.getByTestId('projects-section-chevron-right')).toHaveClass('rotate-0')
     expect(screen.queryByText('github_wegent')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('projects-section-toggle'))
 
-    expect(screen.getByTestId('projects-section-chevron-down')).toHaveClass('opacity-0')
+    expect(screen.getByTestId('projects-section-chevron-right')).toHaveClass('opacity-0')
+    expect(screen.getByTestId('projects-section-chevron-right')).toHaveClass('rotate-90')
     expect(screen.getByText('github_wegent')).toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('chats-section-toggle'))
 
-    expect(screen.getByTestId('chats-section-chevron-right')).toHaveClass('opacity-0')
+    expect(screen.getByTestId('chats-section-chevron-right')).toHaveClass('opacity-100')
+    expect(screen.getByTestId('chats-section-chevron-right')).toHaveClass('rotate-0')
     expect(screen.queryByText('远程连接 Claude Code')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('chats-section-toggle'))
 
-    expect(screen.getByTestId('chats-section-chevron-down')).toHaveClass('opacity-0')
+    expect(screen.getByTestId('chats-section-chevron-right')).toHaveClass('opacity-0')
+    expect(screen.getByTestId('chats-section-chevron-right')).toHaveClass('rotate-90')
     expect(screen.getByText('远程连接 Claude Code')).toBeInTheDocument()
   })
 
@@ -1458,20 +1464,20 @@ describe('DesktopWorkbenchLayout', () => {
 
     await userEvent.click(screen.getByTestId('project-menu-1'))
     expect(screen.getByTestId('project-menu-1-menu')).toHaveClass(
-      'bg-[#2b2b2b]',
-      'text-white',
-      'border-black/10',
+      'bg-background',
+      'text-text-primary',
+      'border-border',
     )
     expect(screen.getByTestId('rename-project-1')).toHaveTextContent('重命名项目')
     expect(screen.getByTestId('rename-project-1')).toHaveClass(
-      'text-white',
-      'hover:bg-white/10',
+      'text-text-primary',
+      'hover:bg-muted',
     )
     expect(screen.getByTestId('archive-project-chats-1')).toHaveTextContent('归档会话')
     expect(screen.getByTestId('remove-project-1')).toHaveTextContent('移除')
     expect(screen.getByTestId('remove-project-1')).toHaveClass(
-      'text-[#ff7b7b]',
-      'hover:bg-white/10',
+      'text-red-500',
+      'hover:bg-red-50',
     )
 
     await userEvent.click(screen.getByTestId('rename-project-1'))
@@ -1846,9 +1852,239 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(screen.getByTestId('desktop-chat-scroll')).toHaveTextContent('hello')
     expect(screen.queryByTestId('composer-disabled-reason')).not.toBeInTheDocument()
-    expect(screen.getByTestId('device-status-prompt')).toHaveTextContent(
-      'Offline Device 离线，恢复在线后可继续对话',
+    expect(screen.getByTestId('conversation-device-offline-banner')).toHaveTextContent(
+      'Offline Device 已离线，恢复在线后可继续对话',
     )
+    expect(screen.queryByTestId('device-status-prompt')).not.toBeInTheDocument()
+    expect(screen.getByTestId('send-message-button')).toBeDisabled()
+
+    await userEvent.click(screen.getByTestId('send-message-button'))
+    expect(baseProps.onSend).not.toHaveBeenCalled()
+  })
+
+  test('locks composer for project tasks when the owning project device is offline', async () => {
+    const offlineDevice = {
+      id: 1,
+      device_id: 'offline-project-device',
+      name: 'Offline Project Device',
+      status: 'offline' as const,
+      is_default: false,
+      device_type: 'cloud' as const,
+      bind_shell: 'claudecode',
+      executor_version: '1.8.5',
+    }
+    const onlineTaskDevice = {
+      id: 2,
+      device_id: 'online-task-device',
+      name: 'Online Task Device',
+      status: 'online' as const,
+      is_default: false,
+      device_type: 'cloud' as const,
+      bind_shell: 'claudecode',
+      executor_version: '1.8.5',
+    }
+    const project = {
+      id: 7,
+      name: 'hello',
+      config: {
+        execution: {
+          targetType: 'cloud' as const,
+          deviceId: 'offline-project-device',
+        },
+      },
+      tasks: [
+        {
+          id: 71,
+          task_id: 71,
+          task_title: 'Offline project task',
+          device_id: 'online-task-device',
+          updated_at: new Date().toISOString(),
+        },
+      ],
+    }
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          projects: [project],
+          devices: [offlineDevice, onlineTaskDevice],
+          currentProject: null,
+          currentTask: {
+            id: 71,
+            title: 'Offline project task',
+            status: 'COMPLETED',
+            task_type: 'code',
+            project_id: 7,
+            device_id: 'online-task-device',
+            created_at: new Date().toISOString(),
+          },
+          input: 'should not send',
+        }}
+        messages={[
+          {
+            id: 'message-1',
+            role: 'user',
+            content: 'hello',
+            status: 'done',
+            createdAt: new Date().toISOString(),
+          },
+        ]}
+      />,
+    )
+
+    expect(screen.queryByTestId('device-status-prompt')).not.toBeInTheDocument()
+    expect(
+      within(screen.getByTestId('desktop-floating-composer-card')).getByTestId(
+        'conversation-device-offline-banner',
+      ),
+    ).toBeInTheDocument()
+    expect(screen.getByTestId('conversation-device-offline-banner')).toHaveTextContent(
+      'Offline Project Device 已离线，恢复在线后可继续对话',
+    )
+    expect(screen.getByTestId('conversation-device-offline-banner')).toHaveClass(
+      'bg-background/95',
+      'text-text-secondary',
+    )
+    expect(screen.getByTestId('desktop-chat-scroll')).not.toHaveClass('pt-14')
+    expect(screen.getByTestId('send-message-button')).toBeDisabled()
+
+    await userEvent.click(screen.getByTestId('send-message-button'))
+    expect(baseProps.onSend).not.toHaveBeenCalled()
+  })
+
+  test('does not expose raw device ids in the offline conversation notice', () => {
+    const project = {
+      id: 7,
+      name: 'hello',
+      config: {
+        execution: {
+          targetType: 'cloud' as const,
+          deviceId: 'b2f75045-2062-4a94-b5c0-ffb9f3b94a90',
+        },
+      },
+      tasks: [
+        {
+          id: 71,
+          task_id: 71,
+          task_title: 'Unavailable project task',
+          updated_at: new Date().toISOString(),
+        },
+      ],
+    }
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          projects: [project],
+          devices: [],
+          currentProject: null,
+          currentTask: {
+            id: 71,
+            title: 'Unavailable project task',
+            status: 'COMPLETED',
+            task_type: 'code',
+            project_id: 7,
+            created_at: new Date().toISOString(),
+          },
+        }}
+        messages={[
+          {
+            id: 'message-1',
+            role: 'user',
+            content: 'hello',
+            status: 'done',
+            createdAt: new Date().toISOString(),
+          },
+        ]}
+      />,
+    )
+
+    expect(screen.getByTestId('conversation-device-offline-banner')).toHaveTextContent(
+      '当前设备 不可用，恢复在线后可继续对话',
+    )
+    expect(screen.getByTestId('conversation-device-offline-banner')).not.toHaveTextContent(
+      'b2f75045-2062-4a94-b5c0-ffb9f3b94a90',
+    )
+  })
+
+  test('locks composer for nested project tasks even when task detail omits project id', async () => {
+    const offlineDevice = {
+      id: 1,
+      device_id: 'nested-offline-project-device',
+      name: 'Nested Offline Project Device',
+      status: 'offline' as const,
+      is_default: false,
+      device_type: 'cloud' as const,
+      bind_shell: 'claudecode',
+      executor_version: '1.8.5',
+    }
+    const standaloneOnlineDevice = {
+      id: 2,
+      device_id: 'standalone-online-device',
+      name: 'Standalone Online Device',
+      status: 'online' as const,
+      is_default: false,
+      device_type: 'cloud' as const,
+      bind_shell: 'claudecode',
+      executor_version: '1.8.5',
+    }
+    const project = {
+      id: 7,
+      name: 'hello',
+      config: {
+        execution: {
+          targetType: 'cloud' as const,
+          deviceId: 'nested-offline-project-device',
+        },
+      },
+      tasks: [
+        {
+          id: 71,
+          task_id: 71,
+          task_title: 'Nested offline project task',
+          updated_at: new Date().toISOString(),
+        },
+      ],
+    }
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          projects: [project],
+          devices: [offlineDevice, standaloneOnlineDevice],
+          standaloneDeviceId: 'standalone-online-device',
+          currentProject: null,
+          currentTask: {
+            id: 71,
+            title: 'Nested offline project task',
+            status: 'COMPLETED',
+            task_type: 'code',
+            created_at: new Date().toISOString(),
+          },
+          input: 'still should not send',
+        }}
+        messages={[
+          {
+            id: 'message-1',
+            role: 'assistant',
+            content: 'done',
+            status: 'done',
+            createdAt: new Date().toISOString(),
+          },
+        ]}
+      />,
+    )
+
+    expect(screen.getByTestId('conversation-device-offline-banner')).toHaveTextContent(
+      'Nested Offline Project Device 已离线，恢复在线后可继续对话',
+    )
+    expect(screen.queryByTestId('device-status-prompt')).not.toBeInTheDocument()
     expect(screen.getByTestId('send-message-button')).toBeDisabled()
 
     await userEvent.click(screen.getByTestId('send-message-button'))
@@ -1957,8 +2193,12 @@ describe('DesktopWorkbenchLayout', () => {
       />,
     )
 
-    expect(screen.getByTestId('project-spinner-1')).toBeInTheDocument()
-    expect(screen.getByTestId('history-task-spinner-41')).toBeInTheDocument()
+    expect(screen.getByTestId('project-spinner-1')).toHaveClass(
+      'text-[rgb(var(--color-sidebar-text-muted))]',
+    )
+    expect(screen.getByTestId('history-task-spinner-41')).toHaveClass(
+      'text-[rgb(var(--color-sidebar-text-muted))]',
+    )
   })
 
   test('does not show spinners for stale server running statuses on initial lists', () => {

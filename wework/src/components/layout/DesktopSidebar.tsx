@@ -1,6 +1,5 @@
 import {
   Archive,
-  ChevronDown,
   ChevronRight,
   Edit3,
   Folder,
@@ -96,6 +95,8 @@ const SIDEBAR_ROW_METADATA_CLASS =
   'flex items-center gap-1 text-xs text-[rgb(var(--color-sidebar-text-muted))] group-hover/task:invisible group-focus-within/task:invisible'
 const SIDEBAR_ROW_ACTIONS_CLASS =
   'absolute inset-0 invisible flex items-center justify-end opacity-0 transition-opacity group-hover/task:visible group-hover/task:opacity-100 group-focus-within/task:visible group-focus-within/task:opacity-100'
+const SIDEBAR_RUNNING_SPINNER_CLASS =
+  'h-3.5 w-3.5 animate-spin text-[rgb(var(--color-sidebar-text-muted))]'
 
 function SidebarButton({
   icon: Icon,
@@ -198,6 +199,7 @@ function handleSidebarRowKeyDown(
 function SidebarSectionHeader({
   title,
   expanded,
+  hasContent,
   toggleTestId,
   iconTestId,
   onToggle,
@@ -205,13 +207,15 @@ function SidebarSectionHeader({
 }: {
   title: string
   expanded: boolean
+  hasContent: boolean
   toggleTestId: string
   iconTestId: string
   onToggle: () => void
   children: ReactNode
 }) {
-  const ToggleIcon = expanded ? ChevronDown : ChevronRight
-  const iconVisibilityClass = 'opacity-0 group-hover/section:opacity-100'
+  const iconVisibilityClass = hasContent && !expanded
+    ? 'opacity-100'
+    : 'opacity-0 group-hover/section:opacity-100'
 
   return (
     <div className="group/section mb-2 flex h-7 items-center justify-between px-2.5">
@@ -225,9 +229,13 @@ function SidebarSectionHeader({
         <span className="truncate text-[13px] font-semibold leading-[18px] text-[rgb(var(--color-sidebar-text-muted))]">
           {title}
         </span>
-        <ToggleIcon
+        <ChevronRight
           data-testid={iconTestId}
-          className={`h-4 w-4 shrink-0 text-[rgb(var(--color-sidebar-text-muted))] transition-opacity ${iconVisibilityClass}`}
+          className={cn(
+            'h-4 w-4 shrink-0 text-[rgb(var(--color-sidebar-text-muted))] transition-[opacity,transform]',
+            expanded ? 'rotate-90' : 'rotate-0',
+            iconVisibilityClass,
+          )}
         />
       </button>
       <div className="flex items-center opacity-0 transition-opacity group-hover/section:opacity-100 focus-within:opacity-100">
@@ -461,7 +469,7 @@ function ProjectTaskRow({
           <span className="flex h-7 w-7 items-center justify-center group-hover/task:invisible group-focus-within/task:invisible">
             <Loader2
               data-testid={`project-chat-spinner-${task.task_id}`}
-              className="h-3.5 w-3.5 animate-spin text-primary"
+              className={SIDEBAR_RUNNING_SPINNER_CLASS}
             />
           </span>
         ) : (
@@ -587,7 +595,7 @@ function ProjectItem({
         {!expanded && projectRunning && (
           <Loader2
             data-testid={`project-spinner-${project.id}`}
-            className="h-3.5 w-3.5 shrink-0 animate-spin text-primary"
+            className={cn(SIDEBAR_RUNNING_SPINNER_CLASS, 'shrink-0')}
           />
         )}
         <div className="absolute right-1 invisible flex shrink-0 items-center opacity-0 transition-opacity group-hover/project:visible group-hover/project:opacity-100 focus-within:visible focus-within:opacity-100">
@@ -725,7 +733,7 @@ function RecentTaskRow({
           <span className="flex h-7 w-7 items-center justify-center group-hover/task:invisible group-focus-within/task:invisible">
             <Loader2
               data-testid={`history-task-spinner-${task.id}`}
-              className="h-3.5 w-3.5 animate-spin text-primary"
+              className={SIDEBAR_RUNNING_SPINNER_CLASS}
             />
           </span>
         ) : (
@@ -1081,10 +1089,9 @@ export function DesktopSidebar({
           <SidebarSectionHeader
             title={t('workbench.projects', '项目')}
             expanded={projectsExpanded}
+            hasContent={projects.length > 0}
             toggleTestId="projects-section-toggle"
-            iconTestId={
-              projectsExpanded ? 'projects-section-chevron-down' : 'projects-section-chevron-right'
-            }
+            iconTestId="projects-section-chevron-right"
             onToggle={() => setProjectsExpanded(expanded => !expanded)}
           >
             <ActionMenu
@@ -1157,10 +1164,9 @@ export function DesktopSidebar({
           <SidebarSectionHeader
             title={t('workbench.history', '对话')}
             expanded={chatsExpanded}
+            hasContent={sortedRecentTasks.length > 0}
             toggleTestId="chats-section-toggle"
-            iconTestId={
-              chatsExpanded ? 'chats-section-chevron-down' : 'chats-section-chevron-right'
-            }
+            iconTestId="chats-section-chevron-right"
             onToggle={() => setChatsExpanded(expanded => !expanded)}
           >
             <ActionMenu

@@ -226,14 +226,18 @@ describe('ConnectionsSettingsPage', () => {
     const createDialog = screen.getByTestId('add-cloud-device-dialog')
     expect(createDialog.querySelector('.text-\\[\\#0d9488\\]')).toBeNull()
     expect(createDialog).toHaveClass('bg-popover')
-    expect(screen.getByTestId('add-cloud-device-confirm')).toHaveClass('bg-primary')
+    expect(screen.getByTestId('add-cloud-device-confirm')).toHaveClass(
+      'bg-text-primary',
+      'text-background',
+    )
     await userEvent.click(screen.getByTestId('add-cloud-device-confirm'))
 
     await waitFor(() => expect(api.createCloudDevice).toHaveBeenCalledTimes(1))
     const creatingNotice = screen.getByText(
       '云设备创建中，初始化约需 2-3 分钟，完成后将自动出现在列表中',
     )
-    expect(creatingNotice).toHaveClass('text-primary')
+    expect(creatingNotice).toHaveClass('text-text-secondary')
+    expect(creatingNotice).not.toHaveClass('text-primary')
   })
 
   test('opens appearance settings from desktop settings navigation', async () => {

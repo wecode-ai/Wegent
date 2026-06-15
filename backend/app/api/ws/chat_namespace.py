@@ -23,6 +23,7 @@ from typing import Any, Dict, Optional
 import socketio
 from sqlalchemy.orm import Session
 
+from app.api.ws.connection_utils import enter_connect_room, save_connect_session
 from app.api.ws.context_decorators import auto_task_context
 from app.api.ws.decorators import trace_websocket_event
 from app.api.ws.events import (
@@ -318,24 +319,36 @@ class ChatNamespace(socketio.AsyncNamespace):
         # Extract token expiry for later validation
         token_exp = get_token_expiry(token)
 
-        # Save user info to session
-        await self.save_session(
+        session_saved = await save_connect_session(
+            self,
             sid,
-            {
+            session_data={
                 "user_id": user.id,
                 "user_name": user.user_name,
                 "request_id": request_id,
-                "token_exp": token_exp,  # Store token expiry for later checks
-                "auth_token": token,  # Store original token for downstream services
+                "token_exp": token_exp,
+                "auth_token": token,
             },
+            logger=logger,
+            log_prefix="[WS]",
         )
+        if not session_saved:
+            return False
 
         # Set user context for trace logging
         set_user_context(user_id=str(user.id), user_name=user.user_name)
 
         # Join user room
         user_room = f"user:{user.id}"
-        await self.enter_room(sid, user_room)
+        room_entered = await enter_connect_room(
+            self,
+            sid,
+            user_room,
+            logger=logger,
+            log_prefix="[WS]",
+        )
+        if not room_entered:
+            return False
 
         logger.info(f"[WS] Connected user={user.id} ({user.user_name}) sid={sid}")
 

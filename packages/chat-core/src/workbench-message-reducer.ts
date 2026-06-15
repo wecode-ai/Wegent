@@ -41,6 +41,7 @@ export interface WorkbenchMessage<TAttachment = unknown, TFileChanges = unknown>
   content: string
   status: WorkbenchMessageStatus
   error?: string
+  errorType?: string
   attachments?: TAttachment[]
   blocks?: WorkbenchProcessingBlock[]
   fileChanges?: TFileChanges
@@ -78,7 +79,7 @@ export type WorkbenchMessageAction<TAttachment = unknown, TFileChanges = unknown
       subtaskId: number
       fileChanges: TFileChanges
     }
-  | { type: 'assistant_error'; subtaskId: number; error: string }
+  | { type: 'assistant_error'; subtaskId: number; error: string; errorType?: string }
   | { type: 'block_created'; subtaskId: number; block: WorkbenchProcessingBlock }
   | { type: 'block_updated'; subtaskId: number; blockId: string; updates: ProcessingBlockUpdate }
 
@@ -176,7 +177,12 @@ export function reduceWorkbenchMessages<TAttachment = unknown, TFileChanges = un
     case 'assistant_error':
       return state.map(message =>
         message.subtaskId === action.subtaskId
-          ? { ...message, status: 'failed' as const, error: action.error }
+          ? {
+              ...message,
+              status: 'failed' as const,
+              error: action.error,
+              errorType: action.errorType,
+            }
           : message
       )
     case 'block_created':

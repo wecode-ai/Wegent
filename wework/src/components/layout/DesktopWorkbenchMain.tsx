@@ -32,6 +32,7 @@ import { cn } from '@/lib/utils'
 import { BottomWorkspacePanel } from './workspace-panels/BottomWorkspacePanel'
 import { RightWorkspacePanel } from './workspace-panels/RightWorkspacePanel'
 import { WorkspacePanelActions } from './workspace-panels/WorkspacePanelActions'
+import { ConversationDeviceOfflineBanner } from './ConversationDeviceOfflineBanner'
 import { DeviceStatusPrompt } from './DeviceStatusPrompt'
 import { TitlebarActionsPortal } from '@/components/topnav/TitlebarActionsPortal'
 import { DesktopTopBar } from './DesktopTopBar'
@@ -72,6 +73,7 @@ interface DesktopWorkbenchMainProps {
   onUpgradeDevice: (deviceId: string) => Promise<void>
   onInputChange: (value: string) => void
   onSend: () => void
+  onRetryFailedMessage?: (messageId: string) => void
   isResponseStreaming: boolean
   onPauseResponse: () => void
   onCancelQueuedMessage: (id: string) => void
@@ -109,6 +111,7 @@ export function DesktopWorkbenchMain({
   onUpgradeDevice,
   onInputChange,
   onSend,
+  onRetryFailedMessage,
   isResponseStreaming,
   onPauseResponse,
   onCancelQueuedMessage,
@@ -123,6 +126,7 @@ export function DesktopWorkbenchMain({
   const [rightPanelOpen, setRightPanelOpen] = useState(false)
   const [bottomPanelOpen, setBottomPanelOpen] = useState(false)
   const isTauri = isTauriRuntime()
+  const [modelSelectorOpenSignal, setModelSelectorOpenSignal] = useState(0)
   const hasConversation = messages.length > 0 || currentTask
   const hasQueuedComposerRows = queuedMessages.length > 0 || guidanceMessages.length > 0
   const activeDeviceId = getActiveWorkbenchDeviceId({
@@ -133,6 +137,8 @@ export function DesktopWorkbenchMain({
   const activeDevice = findWorkbenchDevice(devices, activeDeviceId)
   const activeDeviceUnavailable =
     Boolean(activeDeviceId) && !isWorkbenchDeviceOnline(activeDevice)
+  const showConversationDeviceBanner =
+    Boolean(activeDeviceId) && (!activeDevice || activeDevice.status === 'offline')
   const activeDeviceVersionUnsupported =
     Boolean(activeDevice && isDeviceBelowWeWorkVersion(activeDevice))
   const noStandaloneCompatibleDevice =
@@ -144,6 +150,10 @@ export function DesktopWorkbenchMain({
     activeDeviceUnavailable ||
     activeDeviceVersionUnsupported ||
     noStandaloneCompatibleDevice
+  const projectChatWithModelSelectorSignal: ProjectChatControls = {
+    ...projectChat,
+    modelSelectorOpenSignal,
+  }
   const emptyTitle = currentProject
     ? t('workbench.project_empty_title', {
         defaultValue: `我们应该在 ${currentProject.name} 中构建什么？`,
@@ -213,6 +223,10 @@ export function DesktopWorkbenchMain({
                   : DESKTOP_SCROLL_TO_BOTTOM_BUTTON_CLASS
               }
               devices={devices}
+              onRetryFailedMessage={message => onRetryFailedMessage?.(message.id)}
+              onSwitchModelForFailedMessage={() =>
+                setModelSelectorOpenSignal(signal => signal + 1)
+              }
               onLoadFileChangesDiff={onLoadFileChangesDiff}
               onRevertFileChanges={onRevertFileChanges}
             />
@@ -228,16 +242,24 @@ export function DesktopWorkbenchMain({
                 className="pointer-events-auto"
                 data-testid="desktop-floating-composer-card"
               >
-                <DeviceStatusPrompt
-                  devices={devices}
-                  upgradingDevices={upgradingDevices}
-                  onUpgradeDevice={onUpgradeDevice}
-                  onOpenCloudDeviceSettings={onOpenCloudDeviceSettings}
-                  activeDeviceId={activeDeviceId}
-                  requiresOnlineCompatibleDevice={noStandaloneCompatibleDevice}
-                  hideAvailableUpdates
-                  className="mb-2"
-                />
+                {showConversationDeviceBanner ? (
+                  <ConversationDeviceOfflineBanner
+                    device={activeDevice}
+                    deviceId={activeDeviceId}
+                    className="mb-2"
+                  />
+                ) : (
+                  <DeviceStatusPrompt
+                    devices={devices}
+                    upgradingDevices={upgradingDevices}
+                    onUpgradeDevice={onUpgradeDevice}
+                    onOpenCloudDeviceSettings={onOpenCloudDeviceSettings}
+                    activeDeviceId={activeDeviceId}
+                    requiresOnlineCompatibleDevice={noStandaloneCompatibleDevice}
+                    hideAvailableUpdates
+                    className="mb-2"
+                  />
+                )}
                 <ChatInput
                   value={input}
                   onChange={onInputChange}
@@ -245,7 +267,7 @@ export function DesktopWorkbenchMain({
                   disabled={composerDisabled}
                   placeholder={t('workbench.input_placeholder', '尽管问')}
                   variant="desktop"
-                  projectChat={projectChat}
+                  projectChat={projectChatWithModelSelectorSignal}
                   projectWork={projectWork}
                   showProjectWorkBar={false}
                   queuedMessages={queuedMessages}
@@ -286,7 +308,7 @@ export function DesktopWorkbenchMain({
                 disabled={composerDisabled}
                 placeholder={t('workbench.input_placeholder', '尽管问')}
                 variant="desktop"
-                projectChat={projectChat}
+                projectChat={projectChatWithModelSelectorSignal}
                 projectWork={projectWork}
                 queuedMessages={queuedMessages}
                 guidanceMessages={guidanceMessages}
