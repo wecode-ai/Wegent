@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { createDeviceApi } from '@/api/devices'
@@ -6,6 +6,7 @@ import { createQuotaApi } from '@/api/quota'
 import '@/i18n'
 import { TITLEBAR_ACTIONS_PORTAL_ID } from '@/components/topnav/TitlebarActionsPortal'
 import { DesktopWorkbenchLayout } from './DesktopWorkbenchLayout'
+import { WorkspaceFilePreview } from './workspace-panels/WorkspaceFilePreview'
 
 function createRect({
   left,
@@ -53,38 +54,28 @@ const createQuotaApiMock = vi.mocked(createQuotaApi)
 const fetchQuotaMock = vi.fn()
 
 describe('DesktopWorkbenchLayout', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-    document.getElementById(TITLEBAR_ACTIONS_PORTAL_ID)?.remove()
-    const titlebarActions = document.createElement('div')
-    titlebarActions.id = TITLEBAR_ACTIONS_PORTAL_ID
-    titlebarActions.dataset.testid = 'titlebar-actions'
-    document.body.appendChild(titlebarActions)
-    delete (window as typeof window & { __TAURI_INTERNALS__?: unknown })
-      .__TAURI_INTERNALS__
-    localStorage.clear()
-    window.history.pushState({}, '', '/')
-    Object.defineProperty(navigator, 'clipboard', {
-      configurable: true,
-      value: {
-        writeText: vi.fn().mockResolvedValue(undefined),
-      },
+  function createDeferred<T>() {
+    let resolve!: (value: T) => void
+    let reject!: (error: unknown) => void
+    const promise = new Promise<T>((promiseResolve, promiseReject) => {
+      resolve = promiseResolve
+      reject = promiseReject
     })
-    Element.prototype.scrollIntoView = vi.fn()
-    fetchQuotaMock.mockResolvedValue({
-      quota: 748,
-      usage: 747.74,
-      remaining: 0.26,
-      usage_rate: 0.9997,
-      user: 'yunpeng7',
-    })
-    createQuotaApiMock.mockReturnValue({
-      fetchQuota: fetchQuotaMock,
-    })
-    createDeviceApiMock.mockReturnValue({
+    return { promise, resolve, reject }
+  }
+
+  function createMockDeviceApi(
+    overrides: Record<string, unknown> = {},
+  ) {
+    return {
       getHomeDirectory: vi.fn().mockResolvedValue('/home/ubuntu'),
       getProjectWorkspaceRoot: vi.fn().mockResolvedValue('/workspace/projects'),
       listDirectories: vi.fn().mockResolvedValue([]),
+      listWorkspaceEntries: vi.fn().mockResolvedValue({
+        path: '/workspace/project',
+        entries: [],
+      }),
+      readWorkspaceTextFile: vi.fn(),
       executeCommand: vi.fn(),
       getAllDevices: vi.fn().mockResolvedValue([
         {
@@ -118,7 +109,39 @@ describe('DesktopWorkbenchLayout', () => {
         disk: [],
       }),
       getVncConfig: vi.fn(),
+      ...overrides,
+    }
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    document.getElementById(TITLEBAR_ACTIONS_PORTAL_ID)?.remove()
+    const titlebarActions = document.createElement('div')
+    titlebarActions.id = TITLEBAR_ACTIONS_PORTAL_ID
+    titlebarActions.dataset.testid = 'titlebar-actions'
+    document.body.appendChild(titlebarActions)
+    delete (window as typeof window & { __TAURI_INTERNALS__?: unknown })
+      .__TAURI_INTERNALS__
+    localStorage.clear()
+    window.history.pushState({}, '', '/')
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText: vi.fn().mockResolvedValue(undefined),
+      },
     })
+    Element.prototype.scrollIntoView = vi.fn()
+    fetchQuotaMock.mockResolvedValue({
+      quota: 748,
+      usage: 747.74,
+      remaining: 0.26,
+      usage_rate: 0.9997,
+      user: 'yunpeng7',
+    })
+    createQuotaApiMock.mockReturnValue({
+      fetchQuota: fetchQuotaMock,
+    })
+    createDeviceApiMock.mockReturnValue(createMockDeviceApi() as never)
   })
 
   const baseProps = {
@@ -2424,16 +2447,715 @@ describe('DesktopWorkbenchLayout', () => {
     expect(panel).toBeInTheDocument()
     expect(screen.getByTestId('toggle-right-workspace-panel-button')).toBeInTheDocument()
     expect(screen.getByTestId('toggle-bottom-workspace-panel-button')).toBeInTheDocument()
-    expect(screen.getByTestId('workspace-tool-launcher')).toBeInTheDocument()
-    expect(screen.getByTestId('workspace-terminal-card')).toBeInTheDocument()
-    expect(screen.getByTestId('workspace-ide-card')).toBeInTheDocument()
-    expect(screen.getByTestId('workspace-desktop-card')).toBeInTheDocument()
+    expect(await screen.findByTestId('workspace-file-tree')).toBeInTheDocument()
+    expect(screen.queryByTestId('workspace-tool-launcher')).not.toBeInTheDocument()
+
+    const content = screen.getByTestId('desktop-workbench-content')
+    expect(content).toHaveStyle({ width: '420px' })
+    expect(panel).toHaveClass('min-w-0', 'flex-1', 'basis-0')
+    expect(panel).toHaveClass(
+      'transition-[opacity,transform]',
+      'duration-300',
+      'ease-out',
+    )
+    expect(content).toHaveClass(
+      'transition-[width]',
+      'duration-300',
+      'ease-out',
+    )
 
     fireEvent.pointerDown(screen.getByTestId('right-workspace-resize-handle'), { clientX: 700 })
     fireEvent.pointerMove(document, { clientX: 640 })
     fireEvent.pointerUp(document)
 
-    expect(panel).toHaveStyle({ width: '480px' })
+    expect(content).toHaveStyle({ width: '360px' })
+    expect(screen.getByTestId('workspace-file-tree')).toHaveClass('w-[240px]')
+  })
+
+  test('right workspace panel pushes the conversation chat into a narrow split column', async () => {
+    const workspacePanelState = createCloudWorkspacePanelState()
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          ...workspacePanelState,
+        }}
+        messages={[
+          {
+            id: 'message-1',
+            role: 'assistant',
+            content: 'Ready',
+            status: 'done',
+            createdAt: '2026-05-29T00:00:00.000Z',
+          },
+        ]}
+        projectWork={{
+          ...baseProps.projectWork,
+          projects: workspacePanelState.projects,
+          devices: workspacePanelState.devices,
+          currentProjectId: workspacePanelState.currentProject.id,
+        }}
+      />,
+    )
+
+    const content = screen.getByTestId('desktop-workbench-content')
+    const topBar = screen.getByTestId('workbench-topbar')
+    const rightPanelShell = screen.getByTestId('right-workspace-panel-shell')
+    expect(topBar).toHaveStyle({ width: '100%' })
+    expect(content).toHaveClass(
+      'flex-none',
+      'transition-[width]',
+      'duration-300',
+      'ease-out',
+    )
+    expect(content).toHaveStyle({ width: '100%' })
+    expect(rightPanelShell).toHaveClass(
+      'overflow-hidden',
+      'opacity-0',
+      'transition-[width,opacity]',
+      'duration-300',
+      'ease-out',
+    )
+    expect(rightPanelShell).toHaveStyle({ width: '0px' })
+    expect(screen.queryByTestId('right-workspace-panel')).not.toBeInTheDocument()
+    expect(screen.getByTestId('desktop-floating-composer-layer')).toHaveClass(
+      'min-w-[32rem]',
+    )
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+
+    expect(content).toHaveClass(
+      'flex-none',
+      'border-r',
+      'transition-[width]',
+      'duration-300',
+      'ease-out',
+    )
+    expect(content).toHaveStyle({ width: '420px' })
+    expect(topBar).toHaveStyle({ width: '420px' })
+    expect(rightPanelShell).toHaveClass('opacity-100')
+    expect(rightPanelShell).toHaveStyle({ width: 'calc(100% - 420px)' })
+    expect(screen.getByTestId('right-workspace-panel')).toHaveClass(
+      'min-w-0',
+      'flex-1',
+      'basis-0',
+      'transition-[opacity,transform]',
+      'duration-300',
+      'ease-out',
+    )
+    expect(screen.getByTestId('desktop-floating-composer-layer')).toHaveClass(
+      'w-[calc(100%_-_1.5rem)]',
+      'min-w-0',
+      'max-w-[calc(100%_-_1.5rem)]',
+    )
+    expect(screen.getByTestId('desktop-floating-composer-layer')).not.toHaveClass(
+      'min-w-[32rem]',
+    )
+  })
+
+  test('right workspace panel renders the file workspace inside a tab strip', async () => {
+    renderWorkspacePanelLayout()
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+
+    const tabbar = screen.getByTestId('right-workspace-tabbar')
+    const fileTab = screen.getByTestId('right-workspace-file-tab')
+    expect(tabbar).toHaveAttribute('role', 'tablist')
+    expect(fileTab).toHaveAttribute('role', 'tab')
+    expect(fileTab).toHaveAttribute('aria-selected', 'true')
+    expect(fileTab).toHaveTextContent('打开文件')
+    const closeButton = within(fileTab).getByTestId('close-right-workspace-panel-button')
+    expect(closeButton).toHaveClass('rounded-full')
+    expect(closeButton).not.toHaveClass('ml-auto')
+    expect(screen.getByTestId('right-workspace-new-tab-button')).toBeInTheDocument()
+    expect(await screen.findByTestId('workspace-file-tree')).toBeInTheDocument()
+  })
+
+  test('right workspace panel shows file tree and read-only preview', async () => {
+    const user = userEvent.setup()
+    const workspacePanelState = createCloudWorkspacePanelState()
+    const listWorkspaceEntries = vi.fn()
+      .mockResolvedValueOnce({
+        path: '/workspace/project',
+        entries: [
+          {
+            name: 'src',
+            path: '/workspace/project/src',
+            isDirectory: true,
+            size: 0,
+            modifiedAt: null,
+          },
+          {
+            name: 'README.md',
+            path: '/workspace/project/README.md',
+            isDirectory: false,
+            size: 11,
+            modifiedAt: null,
+          },
+        ],
+      })
+    const readWorkspaceTextFile = vi.fn().mockResolvedValue({
+      path: '/workspace/project/README.md',
+      name: 'README.md',
+      content: 'hello world',
+      truncated: false,
+      size: 11,
+      modifiedAt: null,
+    })
+    createDeviceApiMock.mockReturnValue(createMockDeviceApi({
+      listWorkspaceEntries,
+      readWorkspaceTextFile,
+    }) as never)
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          ...workspacePanelState,
+        }}
+        projectWork={{
+          ...baseProps.projectWork,
+          projects: workspacePanelState.projects,
+          devices: workspacePanelState.devices,
+          currentProjectId: workspacePanelState.currentProject?.id,
+        }}
+      />,
+    )
+
+    await user.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+
+    expect(await screen.findByTestId('workspace-file-tree')).toBeInTheDocument()
+    await user.click(await screen.findByText('README.md'))
+
+    expect(await screen.findByTestId('workspace-file-preview')).toHaveTextContent('hello world')
+    expect(screen.getByText('/workspace/project/README.md')).toBeInTheDocument()
+  })
+
+  test('right workspace panel renders nested directories as an expanded tree', async () => {
+    const user = userEvent.setup()
+    const workspacePanelState = createCloudWorkspacePanelState()
+    const listWorkspaceEntries = vi.fn((_deviceId: string, path: string) => {
+      if (path === '/workspace/project/backend') {
+        return Promise.resolve({
+          path,
+          entries: [
+            {
+              name: 'alembic',
+              path: '/workspace/project/backend/alembic',
+              isDirectory: true,
+              size: 0,
+              modifiedAt: null,
+            },
+            {
+              name: 'app',
+              path: '/workspace/project/backend/app',
+              isDirectory: true,
+              size: 0,
+              modifiedAt: null,
+            },
+          ],
+        })
+      }
+      if (path === '/workspace/project/backend/alembic') {
+        return Promise.resolve({
+          path,
+          entries: [
+            {
+              name: '__pycache__',
+              path: '/workspace/project/backend/alembic/__pycache__',
+              isDirectory: true,
+              size: 0,
+              modifiedAt: null,
+            },
+            {
+              name: 'env.py',
+              path: '/workspace/project/backend/alembic/env.py',
+              isDirectory: false,
+              size: 24,
+              modifiedAt: null,
+            },
+          ],
+        })
+      }
+      return Promise.resolve({
+        path: '/workspace/project',
+        entries: [
+          {
+            name: 'backend',
+            path: '/workspace/project/backend',
+            isDirectory: true,
+            size: 0,
+            modifiedAt: null,
+          },
+          {
+            name: 'frontend',
+            path: '/workspace/project/frontend',
+            isDirectory: true,
+            size: 0,
+            modifiedAt: null,
+          },
+        ],
+      })
+    })
+    createDeviceApiMock.mockReturnValue(createMockDeviceApi({
+      listWorkspaceEntries,
+    }) as never)
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          ...workspacePanelState,
+        }}
+        projectWork={{
+          ...baseProps.projectWork,
+          projects: workspacePanelState.projects,
+          devices: workspacePanelState.devices,
+          currentProjectId: workspacePanelState.currentProject?.id,
+        }}
+      />,
+    )
+
+    await user.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await user.click(await screen.findByText('backend'))
+
+    const backendRow = screen.getByText('backend').closest('[data-testid="workspace-directory-row"]')
+    const alembicRow = await screen.findByText('alembic')
+    expect(backendRow).toHaveAttribute('aria-expanded', 'true')
+    expect(backendRow).toHaveAttribute('data-depth', '0')
+    expect(alembicRow.closest('[data-testid="workspace-directory-row"]')).toHaveAttribute(
+      'data-depth',
+      '1',
+    )
+    expect(screen.getByText('frontend')).toBeInTheDocument()
+
+    await user.click(alembicRow)
+
+    const selectedAlembicRow = screen.getByText('alembic')
+      .closest('[data-testid="workspace-directory-row"]')
+    expect(selectedAlembicRow).toHaveClass('ring-1', 'ring-primary')
+    expect(await screen.findByText('__pycache__')).toBeInTheDocument()
+    expect(screen.getByText('env.py').closest('[data-testid="workspace-file-row"]')).toHaveAttribute(
+      'data-depth',
+      '2',
+    )
+    expect(screen.getAllByTestId('workspace-tree-indent-guide').length).toBeGreaterThan(0)
+  })
+
+  test('right workspace panel ignores stale file preview responses', async () => {
+    const user = userEvent.setup()
+    const workspacePanelState = createCloudWorkspacePanelState()
+    const readmeFile = createDeferred<{
+      path: string
+      name: string
+      content: string
+      truncated: boolean
+      size: number
+      modifiedAt: null
+    }>()
+    const notesFile = createDeferred<{
+      path: string
+      name: string
+      content: string
+      truncated: boolean
+      size: number
+      modifiedAt: null
+    }>()
+    const listWorkspaceEntries = vi.fn().mockResolvedValue({
+      path: '/workspace/project',
+      entries: [
+        {
+          name: 'README.md',
+          path: '/workspace/project/README.md',
+          isDirectory: false,
+          size: 12,
+          modifiedAt: null,
+        },
+        {
+          name: 'NOTES.md',
+          path: '/workspace/project/NOTES.md',
+          isDirectory: false,
+          size: 11,
+          modifiedAt: null,
+        },
+      ],
+    })
+    const readWorkspaceTextFile = vi.fn((_deviceId: string, path: string) =>
+      path.endsWith('README.md') ? readmeFile.promise : notesFile.promise,
+    )
+    createDeviceApiMock.mockReturnValue(createMockDeviceApi({
+      listWorkspaceEntries,
+      readWorkspaceTextFile,
+    }) as never)
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          ...workspacePanelState,
+        }}
+        projectWork={{
+          ...baseProps.projectWork,
+          projects: workspacePanelState.projects,
+          devices: workspacePanelState.devices,
+          currentProjectId: workspacePanelState.currentProject?.id,
+        }}
+      />,
+    )
+
+    await user.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await user.click(await screen.findByText('README.md'))
+    await user.click(screen.getByText('NOTES.md'))
+
+    await act(async () => {
+      notesFile.resolve({
+        path: '/workspace/project/NOTES.md',
+        name: 'NOTES.md',
+        content: 'notes first',
+        truncated: false,
+        size: 11,
+        modifiedAt: null,
+      })
+    })
+    expect(await screen.findByTestId('workspace-file-preview')).toHaveTextContent('notes first')
+
+    await act(async () => {
+      readmeFile.resolve({
+        path: '/workspace/project/README.md',
+        name: 'README.md',
+        content: 'readme stale',
+        truncated: false,
+        size: 12,
+        modifiedAt: null,
+      })
+    })
+
+    expect(screen.getByTestId('workspace-file-preview')).toHaveTextContent('notes first')
+    expect(screen.getByTestId('workspace-file-preview')).not.toHaveTextContent('readme stale')
+  })
+
+  test('right workspace panel ignores stale directory responses', async () => {
+    const workspacePanelState = createCloudWorkspacePanelState()
+    const srcTree = createDeferred<{
+      path: string
+      entries: Array<{
+        name: string
+        path: string
+        isDirectory: boolean
+        size: number
+        modifiedAt: null
+      }>
+    }>()
+    const docsTree = createDeferred<{
+      path: string
+      entries: Array<{
+        name: string
+        path: string
+        isDirectory: boolean
+        size: number
+        modifiedAt: null
+      }>
+    }>()
+    const listWorkspaceEntries = vi.fn((_deviceId: string, path: string) => {
+      if (path === '/workspace/project/src') return srcTree.promise
+      if (path === '/workspace/project/docs') return docsTree.promise
+      return Promise.resolve({
+        path: '/workspace/project',
+        entries: [
+          {
+            name: 'src',
+            path: '/workspace/project/src',
+            isDirectory: true,
+            size: 0,
+            modifiedAt: null,
+          },
+          {
+            name: 'docs',
+            path: '/workspace/project/docs',
+            isDirectory: true,
+            size: 0,
+            modifiedAt: null,
+          },
+        ],
+      })
+    })
+    createDeviceApiMock.mockReturnValue(createMockDeviceApi({
+      listWorkspaceEntries,
+    }) as never)
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          ...workspacePanelState,
+        }}
+        projectWork={{
+          ...baseProps.projectWork,
+          projects: workspacePanelState.projects,
+          devices: workspacePanelState.devices,
+          currentProjectId: workspacePanelState.currentProject?.id,
+        }}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    const srcButton = (await screen.findByText('src')).closest('button')
+    const docsButton = screen.getByText('docs').closest('button')
+    expect(srcButton).not.toBeNull()
+    expect(docsButton).not.toBeNull()
+    fireEvent.click(srcButton as HTMLButtonElement)
+    fireEvent.click(docsButton as HTMLButtonElement)
+
+    await act(async () => {
+      docsTree.resolve({
+        path: '/workspace/project/docs',
+        entries: [
+          {
+            name: 'guide.md',
+            path: '/workspace/project/docs/guide.md',
+            isDirectory: false,
+            size: 10,
+            modifiedAt: null,
+          },
+        ],
+      })
+    })
+    expect(await screen.findByText('guide.md')).toBeInTheDocument()
+
+    await act(async () => {
+      srcTree.resolve({
+        path: '/workspace/project/src',
+        entries: [
+          {
+            name: 'main.ts',
+            path: '/workspace/project/src/main.ts',
+            isDirectory: false,
+            size: 10,
+            modifiedAt: null,
+          },
+        ],
+      })
+    })
+
+    expect(screen.getByText('docs').closest('[data-testid="workspace-directory-row"]')).toHaveClass(
+      'ring-1',
+      'ring-primary',
+    )
+    expect(screen.getByText('guide.md')).toBeInTheDocument()
+    expect(screen.getByText('main.ts')).toBeInTheDocument()
+  })
+
+  test('right workspace panel retries the failed directory path', async () => {
+    const user = userEvent.setup()
+    const workspacePanelState = createCloudWorkspacePanelState()
+    let srcAttempts = 0
+    const listWorkspaceEntries = vi.fn((_deviceId: string, path: string) => {
+      if (path === '/workspace/project/src') {
+        srcAttempts += 1
+        if (srcAttempts === 1) {
+          return Promise.reject(new Error('src failed'))
+        }
+        return Promise.resolve({
+          path: '/workspace/project/src',
+          entries: [
+            {
+              name: 'main.ts',
+              path: '/workspace/project/src/main.ts',
+              isDirectory: false,
+              size: 12,
+              modifiedAt: null,
+            },
+          ],
+        })
+      }
+      return Promise.resolve({
+        path: '/workspace/project',
+        entries: [
+          {
+            name: 'src',
+            path: '/workspace/project/src',
+            isDirectory: true,
+            size: 0,
+            modifiedAt: null,
+          },
+        ],
+      })
+    })
+    createDeviceApiMock.mockReturnValue(createMockDeviceApi({
+      listWorkspaceEntries,
+    }) as never)
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          ...workspacePanelState,
+        }}
+        projectWork={{
+          ...baseProps.projectWork,
+          projects: workspacePanelState.projects,
+          devices: workspacePanelState.devices,
+          currentProjectId: workspacePanelState.currentProject?.id,
+        }}
+      />,
+    )
+
+    await user.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await user.click(await screen.findByText('src'))
+    expect(await screen.findByText('src failed')).toBeInTheDocument()
+
+    await user.click(screen.getByTestId('workspace-file-tree-retry-button'))
+
+    expect(await screen.findByText('main.ts')).toBeInTheDocument()
+    expect(listWorkspaceEntries).toHaveBeenLastCalledWith(
+      'workspace-cloud-device',
+      '/workspace/project/src',
+    )
+  })
+
+  test('right workspace panel keeps the same tree for unrelated message updates', async () => {
+    const workspacePanelState = createCloudWorkspacePanelState()
+    const listWorkspaceEntries = vi.fn().mockResolvedValue({
+      path: '/workspace/project',
+      entries: [],
+    })
+    createDeviceApiMock.mockReturnValue(createMockDeviceApi({
+      listWorkspaceEntries,
+    }) as never)
+    const layoutProps = {
+      ...baseProps,
+      state: {
+        ...baseProps.state,
+        ...workspacePanelState,
+      },
+      projectWork: {
+        ...baseProps.projectWork,
+        projects: workspacePanelState.projects,
+        devices: workspacePanelState.devices,
+        currentProjectId: workspacePanelState.currentProject?.id,
+      },
+    }
+
+    const { rerender } = render(<DesktopWorkbenchLayout {...layoutProps} />)
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    expect(await screen.findByTestId('workspace-file-tree')).toBeInTheDocument()
+    await waitFor(() => expect(listWorkspaceEntries).toHaveBeenCalledTimes(1))
+
+    rerender(
+      <DesktopWorkbenchLayout
+        {...layoutProps}
+        messages={[
+          {
+            id: 'message-update',
+            role: 'assistant',
+            content: 'streaming content changed',
+            status: 'streaming',
+            createdAt: '2026-06-12T00:00:00.000Z',
+          },
+        ]}
+      />,
+    )
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(listWorkspaceEntries).toHaveBeenCalledTimes(1)
+  })
+
+  test('workspace file preview comments use the selected duplicate DOM line', async () => {
+    const user = userEvent.setup()
+    const onAddCodeComment = vi.fn()
+    render(
+      <WorkspaceFilePreview
+        file={{
+          path: '/workspace/project/repeat.txt',
+          name: 'repeat.txt',
+          content: 'repeat\nmiddle\nrepeat',
+          truncated: false,
+          size: 20,
+          modifiedAt: null,
+        }}
+        loading={false}
+        onRetry={vi.fn()}
+        onAddCodeComment={onAddCodeComment}
+      />,
+    )
+    const secondRepeat = screen.getAllByText('repeat')[1]
+    const range = document.createRange()
+    range.selectNodeContents(secondRepeat)
+    const selection = window.getSelection()
+    selection?.removeAllRanges()
+    selection?.addRange(range)
+
+    fireEvent.mouseUp(secondRepeat)
+    await user.type(screen.getByTestId('workspace-file-comment-input'), 'check second repeat')
+    await user.click(screen.getByTestId('workspace-file-add-comment-button'))
+
+    expect(onAddCodeComment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        filePath: '/workspace/project/repeat.txt',
+        startLine: 3,
+        endLine: 3,
+        selectedText: 'repeat',
+        comment: 'check second repeat',
+      }),
+    )
+  })
+
+  test('workspace file preview clears local comment state when file changes', async () => {
+    const firstFile = {
+      path: '/workspace/project/first.txt',
+      name: 'first.txt',
+      content: 'first file',
+      truncated: false,
+      size: 10,
+      modifiedAt: null,
+    }
+    const secondFile = {
+      path: '/workspace/project/second.txt',
+      name: 'second.txt',
+      content: 'second file',
+      truncated: false,
+      size: 11,
+      modifiedAt: null,
+    }
+    const { rerender } = render(
+      <WorkspaceFilePreview
+        file={firstFile}
+        loading={false}
+        onRetry={vi.fn()}
+        onAddCodeComment={vi.fn()}
+      />,
+    )
+    const firstText = screen.getByText('first file')
+    const range = document.createRange()
+    range.selectNodeContents(firstText)
+    const selection = window.getSelection()
+    selection?.removeAllRanges()
+    selection?.addRange(range)
+
+    fireEvent.mouseUp(firstText)
+    expect(screen.getByTestId('workspace-file-comment-input')).toBeInTheDocument()
+
+    rerender(
+      <WorkspaceFilePreview
+        file={secondFile}
+        loading={false}
+        onRetry={vi.fn()}
+        onAddCodeComment={vi.fn()}
+      />,
+    )
+
+    expect(screen.queryByTestId('workspace-file-comment-input')).not.toBeInTheDocument()
   })
 
   test('opens the environment info popover and closes it from outside click', async () => {

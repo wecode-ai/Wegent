@@ -324,6 +324,277 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     assert read_runtime_auth_file_definition.post_processor == "json"
 
 
+def test_local_device_command_registry_default_includes_workspace_file_commands():
+    """Workspace file commands should be narrow JSON-producing commands."""
+    from app.services.device.command_registry import resolve_local_device_command
+
+    tree_definition = resolve_local_device_command("workspace_tree", {})
+    read_definition = resolve_local_device_command("workspace_read_text_file", {})
+
+    assert tree_definition is not None
+    assert tree_definition.post_processor == "json"
+    assert "json.dumps" in tree_definition.command
+
+    assert read_definition is not None
+    assert read_definition.post_processor == "json"
+    assert "MAX_BYTES = 262144" in read_definition.command
+
+
+def test_workspace_tree_script_lists_files_and_directories(
+    tmp_path, monkeypatch, capsys
+):
+    """workspace_tree should emit stable JSON metadata for direct children."""
+    import json
+
+    from app.services.device.command_registry import WORKSPACE_TREE_SCRIPT
+
+    (tmp_path / "backend").mkdir()
+    (tmp_path / "README.md").write_text("hello", encoding="utf-8")
+    monkeypatch.setenv("WEGENT_WORKSPACE_ROOTS", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+
+    exec(WORKSPACE_TREE_SCRIPT, {"__name__": "__main__"})
+    output = json.loads(capsys.readouterr().out)
+
+    assert output["path"] == str(tmp_path.resolve())
+    assert output["entries"][0]["name"] == "backend"
+    assert output["entries"][0]["is_directory"] is True
+    assert output["entries"][1]["name"] == "README.md"
+    assert output["entries"][1]["is_directory"] is False
+    assert output["entries"][1]["size"] == 5
+
+
+def test_workspace_tree_script_allows_configured_executor_projects_dir(
+    tmp_path, monkeypatch, capsys
+):
+    """workspace_tree should allow the same custom projects root as project_workspace_root."""
+    import json
+
+    from app.services.device.command_registry import WORKSPACE_TREE_SCRIPT
+
+    projects_root = tmp_path / "custom-projects"
+    project_dir = projects_root / "Wegent"
+    project_dir.mkdir(parents=True)
+    (project_dir / "README.md").write_text("hello", encoding="utf-8")
+    monkeypatch.delenv("WEGENT_WORKSPACE_ROOTS", raising=False)
+    monkeypatch.setenv("WEGENT_EXECUTOR_PROJECTS_DIR", str(projects_root))
+    monkeypatch.chdir(project_dir)
+
+    exec(WORKSPACE_TREE_SCRIPT, {"__name__": "__main__"})
+    output = json.loads(capsys.readouterr().out)
+
+    assert output["path"] == str(project_dir.resolve())
+    assert [entry["name"] for entry in output["entries"]] == ["README.md"]
+
+
+def test_workspace_tree_script_does_not_classify_symlinked_directory_as_directory(
+    tmp_path, monkeypatch, capsys
+):
+    """workspace_tree should not expose symlinked directories as traversable."""
+    import json
+
+    from app.services.device.command_registry import WORKSPACE_TREE_SCRIPT
+
+    external_dir = tmp_path.parent / "external"
+    external_dir.mkdir()
+    (tmp_path / "linked-dir").symlink_to(external_dir, target_is_directory=True)
+    monkeypatch.setenv("WEGENT_WORKSPACE_ROOTS", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+
+    exec(WORKSPACE_TREE_SCRIPT, {"__name__": "__main__"})
+    output = json.loads(capsys.readouterr().out)
+
+    linked_entry = next(
+        entry for entry in output["entries"] if entry["name"] == "linked-dir"
+    )
+    assert linked_entry["is_directory"] is False
+
+
+def test_workspace_tree_script_rejects_non_workspace_cwd(tmp_path, monkeypatch, capsys):
+    """workspace_tree should reject arbitrary directories outside workspace roots."""
+    import json
+
+    from app.services.device.command_registry import WORKSPACE_TREE_SCRIPT
+
+    monkeypatch.delenv("WEGENT_WORKSPACE_ROOTS", raising=False)
+    monkeypatch.chdir(tmp_path)
+
+    try:
+        exec(WORKSPACE_TREE_SCRIPT, {"__name__": "__main__"})
+    except SystemExit as exc:
+        assert exc.code == 64
+    else:
+        raise AssertionError("workspace_tree should reject non-workspace cwd")
+
+    output = json.loads(capsys.readouterr().out)
+    assert output == {
+        "success": False,
+        "error": "workspace path is outside allowed workspace roots",
+    }
+
+
+def test_workspace_tree_script_keeps_lstat_operations_guarded(
+    tmp_path, monkeypatch, capsys
+):
+    """workspace_tree should skip lstat failures without unguarded stat calls."""
+    import json
+    from pathlib import Path
+
+    from app.services.device.command_registry import WORKSPACE_TREE_SCRIPT
+
+    (tmp_path / "backend").mkdir()
+    (tmp_path / "README.md").write_text("hello", encoding="utf-8")
+    (tmp_path / "blocked.txt").write_text("skip", encoding="utf-8")
+    monkeypatch.setenv("WEGENT_WORKSPACE_ROOTS", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+
+    workspace_root = tmp_path.resolve()
+    original_is_dir = Path.is_dir
+    original_lstat = Path.lstat
+    tracked_names = {"backend", "README.md"}
+    lstat_calls = {name: 0 for name in tracked_names}
+
+    def fail_for_workspace_children(self):
+        if self.parent == workspace_root and self.name in {
+            *tracked_names,
+            "blocked.txt",
+        }:
+            raise AssertionError("workspace_tree should not call Path.is_dir")
+        return original_is_dir(self)
+
+    def guarded_lstat(self):
+        if self.parent != workspace_root:
+            return original_lstat(self)
+        if self.name == "blocked.txt":
+            raise OSError("lstat is unavailable")
+        if self.name in lstat_calls:
+            lstat_calls[self.name] += 1
+            if lstat_calls[self.name] > 1:
+                raise OSError("workspace_tree should not lstat children twice")
+        return original_lstat(self)
+
+    monkeypatch.setattr(Path, "is_dir", fail_for_workspace_children)
+    monkeypatch.setattr(Path, "lstat", guarded_lstat)
+
+    exec(WORKSPACE_TREE_SCRIPT, {"__name__": "__main__"})
+    output = json.loads(capsys.readouterr().out)
+
+    assert [entry["name"] for entry in output["entries"]] == ["backend", "README.md"]
+    assert output["entries"][0]["is_directory"] is True
+    assert output["entries"][1]["is_directory"] is False
+    assert lstat_calls == {"backend": 1, "README.md": 1}
+
+
+def test_workspace_read_text_file_script_reads_text_and_reports_truncation(
+    tmp_path, monkeypatch, capsys
+):
+    """workspace_read_text_file should read only the first 256 KiB."""
+    import json
+    import sys
+
+    from app.services.device.command_registry import WORKSPACE_READ_TEXT_FILE_SCRIPT
+
+    content = "a" * (262144 + 8)
+    (tmp_path / "large.py").write_text(content, encoding="utf-8")
+    monkeypatch.setenv("WEGENT_WORKSPACE_ROOTS", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["workspace_read_text_file", "large.py"])
+
+    exec(WORKSPACE_READ_TEXT_FILE_SCRIPT, {"__name__": "__main__"})
+    output = json.loads(capsys.readouterr().out)
+
+    assert output["path"] == str((tmp_path / "large.py").resolve())
+    assert output["content"] == "a" * 262144
+    assert output["truncated"] is True
+    assert output["size"] == 262152
+
+
+def test_workspace_read_text_file_script_reads_at_most_limit_plus_one(
+    tmp_path, monkeypatch, capsys
+):
+    """workspace_read_text_file should cap file I/O before decoding content."""
+    import json
+    import sys
+    from pathlib import Path
+
+    from app.services.device.command_registry import WORKSPACE_READ_TEXT_FILE_SCRIPT
+
+    file_path = tmp_path / "large.py"
+    file_path.write_text("a" * (262144 + 8), encoding="utf-8")
+    resolved_file_path = file_path.resolve()
+    monkeypatch.setenv("WEGENT_WORKSPACE_ROOTS", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["workspace_read_text_file", "large.py"])
+
+    original_open = Path.open
+    original_read_bytes = Path.read_bytes
+    read_sizes = []
+
+    class RecordingFile:
+        def __init__(self, handle):
+            self.handle = handle
+
+        def __enter__(self):
+            self.handle.__enter__()
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return self.handle.__exit__(exc_type, exc, traceback)
+
+        def read(self, size=-1):
+            read_sizes.append(size)
+            return self.handle.read(size)
+
+    def fail_read_bytes(self):
+        if self == resolved_file_path:
+            raise AssertionError("workspace_read_text_file should not read all bytes")
+        return original_read_bytes(self)
+
+    def recording_open(self, *args, **kwargs):
+        handle = original_open(self, *args, **kwargs)
+        if self == resolved_file_path and args and args[0] == "rb":
+            return RecordingFile(handle)
+        return handle
+
+    monkeypatch.setattr(Path, "read_bytes", fail_read_bytes)
+    monkeypatch.setattr(Path, "open", recording_open)
+
+    exec(WORKSPACE_READ_TEXT_FILE_SCRIPT, {"__name__": "__main__"})
+    output = json.loads(capsys.readouterr().out)
+
+    assert read_sizes == [262145]
+    assert output["content"] == "a" * 262144
+    assert output["truncated"] is True
+
+
+def test_workspace_read_text_file_script_rejects_non_workspace_cwd(
+    tmp_path, monkeypatch, capsys
+):
+    """workspace_read_text_file should reject arbitrary directories."""
+    import json
+    import sys
+
+    from app.services.device.command_registry import WORKSPACE_READ_TEXT_FILE_SCRIPT
+
+    (tmp_path / "README.md").write_text("hello", encoding="utf-8")
+    monkeypatch.delenv("WEGENT_WORKSPACE_ROOTS", raising=False)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["workspace_read_text_file", "README.md"])
+
+    try:
+        exec(WORKSPACE_READ_TEXT_FILE_SCRIPT, {"__name__": "__main__"})
+    except SystemExit as exc:
+        assert exc.code == 64
+    else:
+        raise AssertionError("workspace_read_text_file should reject non-workspace cwd")
+
+    output = json.loads(capsys.readouterr().out)
+    assert output == {
+        "success": False,
+        "error": "workspace path is outside allowed workspace roots",
+    }
+
+
 def test_local_device_command_registry_supports_inline_post_processor():
     """One command config object should contain command and post processor."""
     from app.services.device.command_registry import resolve_local_device_command
@@ -492,6 +763,28 @@ def test_json_post_processor_reports_parse_failure():
 
     assert processed["success"] is False
     assert "Failed to parse command JSON output" in processed["error"]
+
+
+def test_json_post_processor_promotes_failed_json_error():
+    """json post processor should expose JSON error payloads from failed commands."""
+    from app.services.device.command_post_processor import apply_command_post_processor
+
+    result = {
+        "success": False,
+        "exit_code": 64,
+        "stdout": '{"success": false, "error": "workspace path is outside allowed workspace roots"}',
+        "stderr": "",
+        "duration": 0.01,
+    }
+
+    processed = apply_command_post_processor(result, "json")
+
+    assert processed["success"] is False
+    assert processed["stdout"] == {
+        "success": False,
+        "error": "workspace path is outside allowed workspace roots",
+    }
+    assert processed["error"] == "workspace path is outside allowed workspace roots"
 
 
 def test_json_post_processor_reports_truncated_output():
@@ -1075,6 +1368,36 @@ async def test_execute_device_command_endpoint_returns_structured_stdout(monkeyp
 
     assert response.success is True
     assert response.stdout == skills
+
+
+@pytest.mark.asyncio
+async def test_execute_device_command_endpoint_returns_dict_stdout(monkeypatch):
+    """Endpoint should allow JSON processors to return object stdout."""
+    from app.api.endpoints import devices
+    from app.schemas.device import DeviceCommandRequest
+
+    workspace_tree = {"path": "/workspace/project", "entries": []}
+    service_mock = AsyncMock(
+        return_value={
+            "success": True,
+            "exit_code": 0,
+            "stdout": workspace_tree,
+            "stderr": "",
+            "duration": 0.02,
+            "timed_out": False,
+        }
+    )
+    monkeypatch.setattr(devices, "execute_configured_device_command", service_mock)
+
+    response = await devices.execute_device_command(
+        device_id="device-abc",
+        request=DeviceCommandRequest(command_key="workspace_tree"),
+        db=object(),
+        current_user=SimpleNamespace(id=7),
+    )
+
+    assert response.success is True
+    assert response.stdout == workspace_tree
 
 
 @pytest.mark.asyncio

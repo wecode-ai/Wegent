@@ -37,6 +37,162 @@ GIT_BRANCH_DIFF_SHORTSTAT_COMMAND = (
     'git diff --shortstat "$merge_base" --\''
 )
 
+WORKSPACE_ROOT_GUARD_SCRIPT = """
+def fail(message, code=64):
+    print(json.dumps({"success": False, "error": message}, ensure_ascii=False))
+    raise SystemExit(code)
+
+
+def is_relative_to(path, root):
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
+def configured_workspace_roots():
+    roots = []
+    for raw_root in os.environ.get("WEGENT_WORKSPACE_ROOTS", "").split(os.pathsep):
+        raw_root = raw_root.strip()
+        if raw_root:
+            roots.append(Path(raw_root).expanduser().resolve())
+
+    raw_projects_root = os.environ.get("WEGENT_EXECUTOR_PROJECTS_DIR", "").strip()
+    if raw_projects_root:
+        projects_root = Path(raw_projects_root).expanduser().resolve()
+        roots.append(projects_root)
+        if projects_root.name == "projects":
+            roots.append(projects_root.parent / "worktrees")
+        else:
+            roots.append(projects_root / "worktrees")
+
+    wecode_home = Path(os.environ.get("WECODE_HOME", Path.home() / ".wecode"))
+    executor_workspace = wecode_home.expanduser() / "wegent-executor" / "workspace"
+    roots.extend(
+        [
+            executor_workspace / "projects",
+            executor_workspace / "worktrees",
+            Path("/workspace/projects"),
+            Path("/workspace/worktrees"),
+        ]
+    )
+    return tuple(dict.fromkeys(root.resolve() for root in roots))
+
+
+def git_workspace_root(path):
+    for candidate in (path, *path.parents):
+        if (candidate / ".git").exists():
+            return candidate.resolve()
+    return None
+
+
+def require_workspace_root(path):
+    for allowed_root in configured_workspace_roots():
+        if is_relative_to(path, allowed_root):
+            return allowed_root
+
+    repository_root = git_workspace_root(path)
+    if repository_root:
+        return repository_root
+
+    fail("workspace path is outside allowed workspace roots")
+""".strip()
+
+WORKSPACE_TREE_SCRIPT = """
+import json
+import os
+import stat as stat_module
+from datetime import datetime, timezone
+from pathlib import Path
+
+
+__WORKSPACE_ROOT_GUARD_SCRIPT__
+
+
+def iso_mtime(path_stat):
+    return datetime.fromtimestamp(path_stat.st_mtime, timezone.utc).isoformat()
+
+
+root = Path.cwd().resolve()
+workspace_root = require_workspace_root(root)
+if not is_relative_to(root, workspace_root):
+    fail("workspace path is outside allowed workspace root")
+
+entries = []
+for child in sorted(root.iterdir(), key=lambda item: item.name.lower()):
+    if child.name in {'.', '..'}:
+        continue
+    try:
+        child_stat = child.lstat()
+    except OSError:
+        continue
+    is_directory = stat_module.S_ISDIR(child_stat.st_mode)
+    entries.append(
+        {
+            "name": child.name,
+            "path": str(child),
+            "is_directory": is_directory,
+            "size": 0 if is_directory else child_stat.st_size,
+            "modified_at": iso_mtime(child_stat),
+        }
+    )
+
+entries.sort(key=lambda item: (not item["is_directory"], item["name"].lower()))
+print(json.dumps({"path": str(root), "entries": entries}, ensure_ascii=False))
+""".replace(
+    "__WORKSPACE_ROOT_GUARD_SCRIPT__", WORKSPACE_ROOT_GUARD_SCRIPT
+).strip()
+
+WORKSPACE_READ_TEXT_FILE_SCRIPT = """
+import json
+import os
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+MAX_BYTES = 262144
+
+
+__WORKSPACE_ROOT_GUARD_SCRIPT__
+
+
+if len(sys.argv) != 2:
+    fail("file name is required")
+
+root = Path.cwd().resolve()
+workspace_root = require_workspace_root(root)
+target = (root / sys.argv[1]).resolve()
+if not is_relative_to(target, workspace_root):
+    fail("file path is outside workspace root")
+if not is_relative_to(target, root):
+    fail("file path is outside workspace")
+if not target.is_file():
+    fail("file does not exist")
+
+with target.open("rb") as target_file:
+    data = target_file.read(MAX_BYTES + 1)
+truncated = len(data) > MAX_BYTES
+content = data[:MAX_BYTES].decode("utf-8", errors="replace")
+stat = target.stat()
+print(
+    json.dumps(
+        {
+            "success": True,
+            "path": str(target),
+            "name": target.name,
+            "content": content,
+            "truncated": truncated,
+            "size": stat.st_size,
+            "modified_at": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
+        },
+        ensure_ascii=False,
+    )
+)
+""".replace(
+    "__WORKSPACE_ROOT_GUARD_SCRIPT__", WORKSPACE_ROOT_GUARD_SCRIPT
+).strip()
+
 LS_SKILLS_SCRIPT = """
 import json
 import re
@@ -521,6 +677,14 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
     "ls_dirs": LocalDeviceCommandDefinition(
         command="ls -a -p",
         post_processor="directory_list",
+    ),
+    "workspace_tree": LocalDeviceCommandDefinition(
+        command=f"python3 -c {shlex.quote(WORKSPACE_TREE_SCRIPT)}",
+        post_processor="json",
+    ),
+    "workspace_read_text_file": LocalDeviceCommandDefinition(
+        command=f"python3 -c {shlex.quote(WORKSPACE_READ_TEXT_FILE_SCRIPT)}",
+        post_processor="json",
     ),
     "mkdir_p": LocalDeviceCommandDefinition(command="mkdir -p"),
     "path_exists": LocalDeviceCommandDefinition(command="test -e"),

@@ -20,6 +20,8 @@
     "prepare": "cd .. && husky wework/.husky"
   },
   "dependencies": {
+    "@headless-tree/core": "^1.7.0",
+    "@headless-tree/react": "^1.7.0",
     "@radix-ui/react-slot": "^1.2.4",
     "@tailwindcss/typography": "^0.5.19",
     "@tauri-apps/api": "^2.11.0",
