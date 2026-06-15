@@ -1,4 +1,10 @@
 {
+  "thinking": {
+    "running": "Thinking",
+    "updating": "Organizing thoughts...",
+    "completed": "Thought process",
+    "chars": "chars"
+  },
   "file_changes": {
     "edited_files": "Edited {{count}} files",
     "show_more": "Show {{count}} more files",

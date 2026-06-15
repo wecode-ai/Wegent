@@ -49,12 +49,10 @@ describe('MessageList', () => {
             },
           },
         ]}
-      />,
+      />
     )
 
-    expect(screen.getByTestId('file-changes-card')).toHaveTextContent(
-      'src/main.ts',
-    )
+    expect(screen.getByTestId('file-changes-card')).toHaveTextContent('src/main.ts')
   })
 
   test('uses compact spacing between messages and hover actions', () => {
@@ -76,13 +74,11 @@ describe('MessageList', () => {
             createdAt: '2026-06-10T08:01:00Z',
           },
         ]}
-      />,
+      />
     )
 
     expect(screen.getByTestId('message-user').parentElement).toHaveClass('gap-4')
-    expect(screen.getAllByTestId('message-hover-time')[0].parentElement).toHaveClass(
-      'min-h-5',
-    )
+    expect(screen.getAllByTestId('message-hover-time')[0].parentElement).toHaveClass('min-h-5')
   })
 
   const originalCreateObjectUrl = URL.createObjectURL
@@ -120,10 +116,7 @@ describe('MessageList', () => {
 
     expect(screen.getByText('你好')).toBeInTheDocument()
     expect(screen.getByText('你好，我在。')).toBeInTheDocument()
-    expect(container.firstElementChild).toHaveClass(
-      'min-w-0',
-      'overflow-x-hidden',
-    )
+    expect(container.firstElementChild).toHaveClass('min-w-0', 'overflow-x-hidden')
   })
 
   test('renders sent local skill mentions as polished inline tokens', () => {
@@ -139,7 +132,7 @@ describe('MessageList', () => {
             createdAt: '2026-05-25T00:00:00.000Z',
           },
         ]}
-      />,
+      />
     )
 
     const token = screen.getByTestId('sent-local-skill-token-browser')
@@ -151,14 +144,14 @@ describe('MessageList', () => {
       'rounded-xl',
       'bg-muted',
       'text-blue-600',
-      'no-underline',
+      'no-underline'
     )
     expect(screen.getByTestId('sent-local-skill-icon-browser')).toHaveClass('text-blue-600')
     expect(token).not.toHaveClass(
       'border',
       'bg-background',
       'text-text-secondary',
-      'shadow-[0_1px_2px_rgba(15,23,42,0.05)]',
+      'shadow-[0_1px_2px_rgba(15,23,42,0.05)]'
     )
     expect(token).not.toHaveClass('bg-primary/10', 'text-primary')
   })
@@ -204,10 +197,7 @@ describe('MessageList', () => {
       'src',
       'blob:message-image-preview'
     )
-    expect(screen.getByTestId('message-image-preview')).toHaveAttribute(
-      'alt',
-      'diagram.png'
-    )
+    expect(screen.getByTestId('message-image-preview')).toHaveAttribute('alt', 'diagram.png')
     expect(fetch).toHaveBeenCalledWith(
       expect.stringContaining('/attachments/43/download'),
       expect.objectContaining({
@@ -216,7 +206,7 @@ describe('MessageList', () => {
     )
   })
 
-  test('lays out multiple image attachments horizontally in user messages', async () => {
+  test('keeps image attachments compact and allows extras to wrap', async () => {
     URL.createObjectURL = vi.fn(() => 'blob:message-image-preview')
     URL.revokeObjectURL = vi.fn()
     vi.stubGlobal(
@@ -246,6 +236,24 @@ describe('MessageList', () => {
         file_extension: '.png',
         created_at: '2026-05-25T15:08:00.000+08:00',
       },
+      {
+        id: 45,
+        filename: 'third.png',
+        file_size: 1024,
+        mime_type: 'image/png',
+        status: 'ready',
+        file_extension: '.png',
+        created_at: '2026-05-25T15:08:00.000+08:00',
+      },
+      {
+        id: 46,
+        filename: 'fourth.png',
+        file_size: 1024,
+        mime_type: 'image/png',
+        status: 'ready',
+        file_extension: '.png',
+        created_at: '2026-05-25T15:08:00.000+08:00',
+      },
     ]
 
     render(
@@ -263,12 +271,16 @@ describe('MessageList', () => {
       />
     )
 
-    expect(await screen.findAllByTestId('message-image-preview')).toHaveLength(2)
+    const previews = await screen.findAllByTestId('message-image-preview')
+
+    expect(previews).toHaveLength(4)
     expect(screen.getByTestId('message-image-attachments')).toHaveClass(
       'flex-row',
       'flex-wrap',
-      'justify-end',
+      'justify-end'
     )
+    expect(screen.getByTestId('message-image-attachments')).not.toHaveClass('overflow-x-auto')
+    expect(previews[0]).toHaveClass('max-h-36', 'max-w-[180px]', 'shrink-0', 'rounded-xl')
   })
 
   test('renders document attachments in user messages', () => {
@@ -297,12 +309,8 @@ describe('MessageList', () => {
       />
     )
 
-    expect(screen.getByTestId('message-document-attachment')).toHaveTextContent(
-      'requirements.pdf'
-    )
-    expect(screen.getByTestId('message-document-attachment')).toHaveTextContent(
-      'PDF'
-    )
+    expect(screen.getByTestId('message-document-attachment')).toHaveTextContent('requirements.pdf')
+    expect(screen.getByTestId('message-document-attachment')).toHaveTextContent('PDF')
   })
 
   test('shows user message hover actions with time and copy', async () => {
@@ -320,7 +328,7 @@ describe('MessageList', () => {
             createdAt: '2026-05-25T15:08:00.000+08:00',
           },
         ]}
-      />,
+      />
     )
 
     expect(screen.getByTestId('message-hover-time')).toHaveTextContent('15:08')
@@ -345,10 +353,7 @@ describe('MessageList', () => {
     Object.assign(navigator, {
       clipboard: { writeText },
     })
-    const content = Array.from(
-      { length: 12 },
-      (_, index) => `第 ${index + 1} 行内容`,
-    ).join('\n')
+    const content = Array.from({ length: 12 }, (_, index) => `第 ${index + 1} 行内容`).join('\n')
 
     render(
       <MessageList
@@ -361,7 +366,7 @@ describe('MessageList', () => {
             createdAt: '2026-05-25T15:08:00.000+08:00',
           },
         ]}
-      />,
+      />
     )
 
     const messageContent = screen.getByTestId('user-message-content')
@@ -393,7 +398,7 @@ describe('MessageList', () => {
             createdAt: '2026-05-25T15:08:00.000+08:00',
           },
         ]}
-      />,
+      />
     )
 
     expect(screen.queryByTestId('toggle-user-message-button')).not.toBeInTheDocument()
@@ -416,7 +421,7 @@ describe('MessageList', () => {
               createdAt: '2026-05-25T18:49:00.000+08:00',
             },
           ]}
-        />,
+        />
       )
 
       expect(screen.getByTestId('message-hover-time')).toHaveTextContent('18:49')
@@ -441,7 +446,7 @@ describe('MessageList', () => {
             createdAt: '2026-05-25T18:38:00.000+08:00',
           },
         ]}
-      />,
+      />
     )
 
     expect(screen.getByTestId('message-hover-time')).toHaveTextContent('18:38')
@@ -473,7 +478,7 @@ describe('MessageList', () => {
             createdAt: '2026-05-25T18:46:00.000+08:00',
           },
         ]}
-      />,
+      />
     )
 
     expect(screen.queryByTestId('message-hover-time')).not.toBeInTheDocument()
@@ -497,7 +502,7 @@ describe('MessageList', () => {
             createdAt: '2026-05-25T18:46:00.000+08:00',
           },
         ]}
-      />,
+      />
     )
 
     const errorCard = screen.getByTestId('assistant-error-card')
@@ -507,16 +512,16 @@ describe('MessageList', () => {
     expect(screen.getByText('切换模型并重试')).toBeInTheDocument()
     expect(screen.getByTestId('assistant-error-switch-model-retry')).toHaveClass(
       'bg-text-primary',
-      'text-background',
+      'text-background'
     )
     expect(screen.getByTestId('assistant-error-switch-model-retry')).not.toHaveClass(
       'bg-primary',
-      'text-bg-base',
+      'text-bg-base'
     )
     expect(screen.getByText('重试')).toBeInTheDocument()
     expect(screen.getByTestId('assistant-error-details-toggle')).toHaveAttribute(
       'aria-expanded',
-      'false',
+      'false'
     )
     expect(screen.getByTestId('assistant-error-details')).toHaveTextContent(rawError)
     expect(screen.getByTestId('assistant-error-details')).toHaveClass('truncate')
@@ -540,14 +545,14 @@ describe('MessageList', () => {
             createdAt: '2026-05-25T18:46:00.000+08:00',
           },
         ]}
-      />,
+      />
     )
 
     expect(container.querySelector('.assistant-markdown')).not.toBeInTheDocument()
-    expect(screen.getByTestId('assistant-error-card')).toHaveTextContent(
-      '模型与当前运行协议不匹配',
-    )
-    expect(screen.getByText('ali-deepseek-v3.1 不支持当前运行协议。请切换兼容模型后重试。')).toBeInTheDocument()
+    expect(screen.getByTestId('assistant-error-card')).toHaveTextContent('模型与当前运行协议不匹配')
+    expect(
+      screen.getByText('ali-deepseek-v3.1 不支持当前运行协议。请切换兼容模型后重试。')
+    ).toBeInTheDocument()
     expect(screen.getByTestId('assistant-error-details')).toHaveTextContent(rawError)
   })
 
@@ -567,18 +572,16 @@ describe('MessageList', () => {
             createdAt: '2026-05-25T18:46:00.000+08:00',
           },
         ]}
-      />,
+      />
     )
 
     await user.click(screen.getByTestId('assistant-error-details-toggle'))
 
     expect(screen.getByTestId('assistant-error-details-toggle')).toHaveAttribute(
       'aria-expanded',
-      'true',
+      'true'
     )
-    expect(screen.getByTestId('assistant-error-details')).toHaveClass(
-      'whitespace-pre-wrap',
-    )
+    expect(screen.getByTestId('assistant-error-details')).toHaveClass('whitespace-pre-wrap')
   })
 
   test('calls retry and switch-model handlers from failed assistant actions', async () => {
@@ -600,18 +603,14 @@ describe('MessageList', () => {
         ]}
         onRetryFailedMessage={onRetryFailedMessage}
         onSwitchModelForFailedMessage={onSwitchModelForFailedMessage}
-      />,
+      />
     )
 
     await user.click(screen.getByTestId('assistant-error-retry'))
     await user.click(screen.getByTestId('assistant-error-switch-model-retry'))
 
-    expect(onRetryFailedMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ id: '2' }),
-    )
-    expect(onSwitchModelForFailedMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ id: '2' }),
-    )
+    expect(onRetryFailedMessage).toHaveBeenCalledWith(expect.objectContaining({ id: '2' }))
+    expect(onSwitchModelForFailedMessage).toHaveBeenCalledWith(expect.objectContaining({ id: '2' }))
   })
 
   test('uses backend error type before raw error text when rendering failed messages', () => {
@@ -628,7 +627,7 @@ describe('MessageList', () => {
             createdAt: '2026-05-25T18:46:00.000+08:00',
           },
         ]}
-      />,
+      />
     )
 
     expect(screen.getByText('请求过于频繁，请稍后再试')).toBeInTheDocument()
@@ -665,27 +664,20 @@ describe('MessageList', () => {
             createdAt: '2026-05-25T00:00:01.000Z',
           },
         ]}
-      />,
+      />
     )
 
-    expect(screen.getByTestId('message-user')).toHaveClass(
-      'overflow-x-hidden',
-    )
-    expect(screen.getByTestId('message-assistant')).toHaveClass(
-      'overflow-x-hidden',
-    )
+    expect(screen.getByTestId('message-user')).toHaveClass('overflow-x-hidden')
+    expect(screen.getByTestId('message-assistant')).toHaveClass('overflow-x-hidden')
     expect(container.querySelector('.assistant-markdown')).toHaveClass(
       'break-words',
-      'overflow-x-hidden',
+      'overflow-x-hidden'
     )
     expect(container.querySelector('table')?.parentElement).toHaveClass(
       'overflow-x-auto',
-      'max-w-full',
+      'max-w-full'
     )
-    expect(container.querySelector('pre')).toHaveClass(
-      'max-w-full',
-      'overflow-hidden',
-    )
+    expect(container.querySelector('pre')).toHaveClass('max-w-full', 'overflow-hidden')
   })
 
   test('renders local skill markdown links in user messages', () => {
@@ -695,22 +687,21 @@ describe('MessageList', () => {
           {
             id: '1',
             role: 'user',
-            content: 'hello [$env-context](skill:///Users/crystal/.codex/skills/env-context/SKILL.md) context',
+            content:
+              'hello [$env-context](skill:///Users/crystal/.codex/skills/env-context/SKILL.md) context',
             status: 'done',
             createdAt: '2026-05-25T00:00:00.000Z',
           },
         ]}
-      />,
+      />
     )
 
     const skillLink = screen.getByTestId('sent-local-skill-token-env-context')
 
     expect(skillLink).toHaveAttribute(
       'href',
-      'skill:///Users/crystal/.codex/skills/env-context/SKILL.md',
+      'skill:///Users/crystal/.codex/skills/env-context/SKILL.md'
     )
-    expect(screen.getByTestId('message-user')).toHaveTextContent(
-      'hello Env Context context',
-    )
+    expect(screen.getByTestId('message-user')).toHaveTextContent('hello Env Context context')
   })
 })

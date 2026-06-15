@@ -1,7 +1,10 @@
 import { useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { useTranslation } from '@/hooks/useTranslation'
 import type { ProcessingBlock, ToolBlock } from '@/types/workbench'
+
+const THINKING_PREVIEW_MAX_LENGTH = 96
 
 interface ToolBlockItemProps {
   block: ProcessingBlock
@@ -37,11 +40,7 @@ export function ToolBlockItem({ block }: ToolBlockItemProps) {
           <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
         </svg>
       </button>
-      {expanded && (
-        <div className="mt-2 min-w-0 overflow-x-hidden">
-          {renderBlockDetail(block)}
-        </div>
-      )}
+      {expanded && <div className="mt-2 min-w-0 overflow-x-hidden">{renderBlockDetail(block)}</div>}
     </div>
   )
 }
@@ -53,80 +52,119 @@ function ThinkingBlockItem({
   block: Extract<ProcessingBlock, { type: 'thinking' }>
   isRunning: boolean
 }) {
+  const { t } = useTranslation('chat')
+  const [expanded, setExpanded] = useState(false)
+
   if (!block.content) return null
+
+  if (isRunning) {
+    const preview = buildThinkingPreview(block.content)
+
+    return (
+      <div className="min-w-0 overflow-x-hidden text-[13px]">
+        <div
+          className="flex max-w-full items-center gap-1.5 text-text-secondary"
+          role="status"
+          aria-live="polite"
+          data-testid="thinking-live-preview"
+        >
+          <CommentaryIcon className="h-4 w-4 shrink-0 text-text-muted" />
+          <span className="shrink-0">{t('thinking.running')}</span>
+          <span className="shrink-0 text-text-muted">·</span>
+          <span className="min-w-0 truncate text-text-muted">
+            {preview || t('thinking.updating')}
+          </span>
+        </div>
+      </div>
+    )
+  }
+
+  const charCount = block.content.length
 
   return (
     <div className="min-w-0 overflow-x-hidden text-[13px]">
-      <div className="flex max-w-full items-start gap-1.5 text-text-secondary">
-        <CommentaryIcon />
-        <div className="thinking-markdown min-w-0 break-words leading-6">
-          <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
-            components={{
-              p: ({ children }) => (
-                <p className="mb-1.5 min-w-0 break-words leading-6">{children}</p>
-              ),
-              ul: ({ children }) => (
-                <ul className="mb-1.5 list-disc space-y-0.5 pl-5">{children}</ul>
-              ),
-              ol: ({ children }) => (
-                <ol className="mb-1.5 list-decimal space-y-0.5 pl-5">{children}</ol>
-              ),
-              li: ({ children }) => (
-                <li className="min-w-0 break-words leading-6">{children}</li>
-              ),
-              strong: ({ children }) => (
-                <strong className="font-semibold">{children}</strong>
-              ),
-              code: ({ className, children }) => {
-                const match = /language-(\w*)/.exec(className || '')
-                const isBlock = Boolean(match) || String(children).includes('\n')
-                if (isBlock) {
-                  const lang = match ? match[1] || '' : ''
-                  return (
-                    <code className="mb-1.5 block max-w-full overflow-hidden rounded border border-border">
-                      <span className="block border-b border-border bg-surface px-3 py-1 text-xs text-text-muted">
-                        {lang || 'text'}
-                      </span>
-                      <span className="block max-w-full overflow-x-auto px-4 py-2 font-mono text-xs leading-5 text-text-primary">
-                        {String(children).replace(/\n$/, '')}
-                      </span>
-                    </code>
-                  )
-                }
-                return (
-                  <code className="break-words rounded bg-muted px-1.5 py-0.5 text-xs font-medium text-text-primary">
-                    {children}
-                  </code>
-                )
-              },
-              pre: ({ children }) => (
-                <pre className="mb-1.5 max-w-full overflow-hidden">{children}</pre>
-              ),
-              blockquote: ({ children }) => (
-                <blockquote className="mb-1.5 border-l-3 border-border pl-3 opacity-80">
-                  {children}
-                </blockquote>
-              ),
-              a: ({ href, children }) => (
-                <a
-                  href={href}
-                  className="break-words text-primary underline"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  {children}
-                </a>
-              ),
-            }}
-          >
-            {block.content}
-          </ReactMarkdown>
-          {isRunning && (
-            <span className="inline-flex animate-pulse text-xs">...</span>
-          )}
+      <button
+        type="button"
+        data-testid="thinking-toggle-button"
+        aria-expanded={expanded}
+        onClick={() => setExpanded(value => !value)}
+        className="flex max-w-full items-center gap-1.5 text-text-muted hover:text-text-secondary"
+      >
+        <CommentaryIcon className="h-4 w-4 shrink-0" />
+        <span className="min-w-0 truncate">
+          {t('thinking.completed')} · {charCount} {t('thinking.chars')}
+        </span>
+        <DisclosureChevron expanded={expanded} />
+      </button>
+      {expanded && (
+        <div
+          className="mt-2 min-w-0 overflow-x-hidden border-l border-border pl-4"
+          data-testid="thinking-detail"
+        >
+          <ThinkingMarkdown content={block.content} />
         </div>
-      </div>
+      )}
+    </div>
+  )
+}
+
+function ThinkingMarkdown({ content }: { content: string }) {
+  return (
+    <div className="thinking-markdown min-w-0 break-words leading-6 text-text-secondary">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          p: ({ children }) => <p className="mb-1.5 min-w-0 break-words leading-6">{children}</p>,
+          ul: ({ children }) => <ul className="mb-1.5 list-disc space-y-0.5 pl-5">{children}</ul>,
+          ol: ({ children }) => (
+            <ol className="mb-1.5 list-decimal space-y-0.5 pl-5">{children}</ol>
+          ),
+          li: ({ children }) => <li className="min-w-0 break-words leading-6">{children}</li>,
+          strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
+          code: ({ className, children }) => {
+            const match = /language-(\w*)/.exec(className || '')
+            const isBlock = Boolean(match) || String(children).includes('\n')
+            if (isBlock) {
+              const lang = match ? match[1] || '' : ''
+              return (
+                <code className="mb-1.5 block max-w-full overflow-hidden rounded border border-border">
+                  <span className="block border-b border-border bg-surface px-3 py-1 text-xs text-text-muted">
+                    {lang || 'text'}
+                  </span>
+                  <span className="block max-w-full overflow-x-auto px-4 py-2 font-mono text-xs leading-5 text-text-primary">
+                    {String(children).replace(/\n$/, '')}
+                  </span>
+                </code>
+              )
+            }
+            return (
+              <code className="break-words rounded bg-muted px-1.5 py-0.5 text-xs font-medium text-text-primary">
+                {children}
+              </code>
+            )
+          },
+          pre: ({ children }) => (
+            <pre className="mb-1.5 max-w-full overflow-hidden">{children}</pre>
+          ),
+          blockquote: ({ children }) => (
+            <blockquote className="mb-1.5 border-l-3 border-border pl-3 opacity-80">
+              {children}
+            </blockquote>
+          ),
+          a: ({ href, children }) => (
+            <a
+              href={href}
+              className="break-words text-primary underline"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              {children}
+            </a>
+          ),
+        }}
+      >
+        {content}
+      </ReactMarkdown>
     </div>
   )
 }
@@ -190,40 +228,104 @@ function getToolStatusPrefix(block: ToolBlock) {
 
 function TerminalIcon() {
   return (
-    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 7.5l3 2.25-3 2.25m4.5 0h3M4.5 19.5h15a1.5 1.5 0 001.5-1.5V6a1.5 1.5 0 00-1.5-1.5h-15A1.5 1.5 0 003 6v12a1.5 1.5 0 001.5 1.5z" />
+    <svg
+      className="h-4 w-4"
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+      strokeWidth={1.5}
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M6.75 7.5l3 2.25-3 2.25m4.5 0h3M4.5 19.5h15a1.5 1.5 0 001.5-1.5V6a1.5 1.5 0 00-1.5-1.5h-15A1.5 1.5 0 003 6v12a1.5 1.5 0 001.5 1.5z"
+      />
     </svg>
   )
 }
 
 function FileIcon() {
   return (
-    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+    <svg
+      className="h-4 w-4"
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+      strokeWidth={1.5}
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z"
+      />
     </svg>
   )
 }
 
 function EditIcon() {
   return (
-    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" />
+    <svg
+      className="h-4 w-4"
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+      strokeWidth={1.5}
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z"
+      />
     </svg>
   )
 }
 
 function ToolIcon() {
   return (
-    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M11.42 15.17l-5.1 5.1a2.121 2.121 0 11-3-3l5.1-5.1m0 0L15.17 4.83a2.121 2.121 0 113 3l-7.75 7.34z" />
+    <svg
+      className="h-4 w-4"
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+      strokeWidth={1.5}
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M11.42 15.17l-5.1 5.1a2.121 2.121 0 11-3-3l5.1-5.1m0 0L15.17 4.83a2.121 2.121 0 113 3l-7.75 7.34z"
+      />
     </svg>
   )
 }
 
-function CommentaryIcon() {
+function CommentaryIcon({ className = 'mt-1 h-4 w-4 shrink-0' }: { className?: string }) {
   return (
-    <svg className="mt-1 h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 8.25h9m-9 3h5.25M5.25 19.5l2.25-2.25h9A2.25 2.25 0 0018.75 15V6.75A2.25 2.25 0 0016.5 4.5h-9a2.25 2.25 0 00-2.25 2.25V19.5z" />
+    <svg
+      className={className}
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+      strokeWidth={1.5}
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M7.5 8.25h9m-9 3h5.25M5.25 19.5l2.25-2.25h9A2.25 2.25 0 0018.75 15V6.75A2.25 2.25 0 0016.5 4.5h-9a2.25 2.25 0 00-2.25 2.25V19.5z"
+      />
+    </svg>
+  )
+}
+
+function DisclosureChevron({ expanded }: { expanded: boolean }) {
+  return (
+    <svg
+      className={`h-3 w-3 shrink-0 transition-transform ${expanded ? '' : '-rotate-90'}`}
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+      strokeWidth={2}
+    >
+      <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
     </svg>
   )
 }
@@ -253,7 +355,8 @@ function renderBlockDetail(block: ToolBlock) {
 function BashBlockDetail({ block }: { block: ToolBlock }) {
   const command = getInputField(block, 'command', 'cmd')
   const output = block.toolOutput
-  const outputText = typeof output === 'string' ? output : output ? JSON.stringify(output, null, 2) : ''
+  const outputText =
+    typeof output === 'string' ? output : output ? JSON.stringify(output, null, 2) : ''
   const isDone = block.status === 'done'
   const isError = block.status === 'error'
   const [copied, setCopied] = useState(false)
@@ -268,21 +371,42 @@ function BashBlockDetail({ block }: { block: ToolBlock }) {
     <div className="min-w-0 overflow-x-hidden rounded-lg bg-code-bg px-4 py-3">
       <div className="mb-2 flex items-center justify-between">
         <span className="text-xs text-text-muted">Shell</span>
-        <button type="button" onClick={handleCopy} className="p-0.5 text-text-muted hover:text-text-secondary">
+        <button
+          type="button"
+          onClick={handleCopy}
+          className="p-0.5 text-text-muted hover:text-text-secondary"
+        >
           {copied ? (
-            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <svg
+              className="h-3.5 w-3.5"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={2}
+            >
               <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
             </svg>
           ) : (
-            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+            <svg
+              className="h-3.5 w-3.5"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={2}
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+              />
             </svg>
           )}
         </button>
       </div>
       {command && (
         <div className="overflow-x-auto font-mono text-xs leading-5 text-text-primary">
-          <span className="text-text-muted">$ </span>{command}
+          <span className="text-text-muted">$ </span>
+          {command}
         </div>
       )}
       {outputText && (
@@ -294,15 +418,19 @@ function BashBlockDetail({ block }: { block: ToolBlock }) {
         <div className="mt-2 flex justify-end">
           {isDone && (
             <span className="flex items-center gap-1 text-xs text-text-muted">
-              <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <svg
+                className="h-3 w-3"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={2}
+              >
                 <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
               </svg>
               成功
             </span>
           )}
-          {isError && (
-            <span className="text-xs text-red-500">失败</span>
-          )}
+          {isError && <span className="text-xs text-red-500">失败</span>}
         </div>
       )}
     </div>
@@ -357,4 +485,23 @@ function getInputField(block: ToolBlock, ...keys: string[]): string | undefined 
 function truncate(str: string, maxLen: number): string {
   if (str.length <= maxLen) return str
   return str.substring(0, maxLen) + '...'
+}
+
+function buildThinkingPreview(content: string): string {
+  const normalized = content
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/`([^`]*)`/g, '$1')
+    .replace(/[#>*_[\]()-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  if (!normalized) return ''
+
+  const segments = normalized
+    .split(/[。！？!?]+|\.(?=\s|$)/)
+    .map(segment => segment.trim())
+    .filter(Boolean)
+  const preview = segments[segments.length - 1] ?? normalized
+
+  return truncate(preview, THINKING_PREVIEW_MAX_LENGTH)
 }
