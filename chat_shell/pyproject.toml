@@ -50,7 +50,7 @@ dependencies = [
     # SSE support
     "sse-starlette>=1.6.5",
     # MCP support
-    "mcp>=1.0.0",
+    "mcp==1.27.2",
     # OpenTelemetry
     "opentelemetry-api>=1.27.0",
     "opentelemetry-sdk>=1.27.0",
