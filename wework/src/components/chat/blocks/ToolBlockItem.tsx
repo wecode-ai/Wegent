@@ -119,57 +119,21 @@ function ProcessTextBlockItem({
   isRunning: boolean
 }) {
   const { t } = useTranslation('chat')
-  const [expanded, setExpanded] = useState(false)
 
   if (!block.content) return null
 
-  if (isRunning) {
-    const preview = buildBlockPreview(block.content)
-
-    return (
-      <div className="min-w-0 overflow-x-hidden text-[13px]">
-        <div
-          className="flex max-w-full items-center gap-1.5 text-text-secondary"
-          role="status"
-          aria-live="polite"
-          data-testid="process-text-live-preview"
-        >
-          <CommentaryIcon className="h-4 w-4 shrink-0 text-text-muted" />
-          <span className="shrink-0">{t('process_text.running')}</span>
-          <span className="shrink-0 text-text-muted">·</span>
-          <span className="min-w-0 truncate text-text-muted">
-            {preview || t('process_text.updating')}
-          </span>
-        </div>
-      </div>
-    )
-  }
-
-  const charCount = block.content.length
-
   return (
-    <div className="min-w-0 overflow-x-hidden text-[13px]">
-      <button
-        type="button"
-        data-testid="process-text-toggle-button"
-        aria-expanded={expanded}
-        onClick={() => setExpanded(value => !value)}
-        className="flex max-w-full items-center gap-1.5 text-text-muted hover:text-text-secondary"
-      >
-        <CommentaryIcon className="h-4 w-4 shrink-0" />
-        <span className="min-w-0 truncate">
-          {t('process_text.completed')} · {charCount} {t('thinking.chars')}
-        </span>
-        <DisclosureChevron expanded={expanded} />
-      </button>
-      {expanded && (
-        <div
-          className="mt-2 min-w-0 overflow-x-hidden border-l border-border pl-4"
-          data-testid="process-text-detail"
-        >
-          <ProcessMarkdown content={block.content} />
-        </div>
-      )}
+    <div
+      className="flex min-w-0 gap-1.5 overflow-x-hidden text-[13px] text-text-secondary"
+      role={isRunning ? 'status' : undefined}
+      aria-live={isRunning ? 'polite' : undefined}
+      aria-label={isRunning ? t('process_text.running') : undefined}
+      data-testid="process-text-block"
+    >
+      <CommentaryIcon className="mt-1 h-4 w-4 shrink-0 text-text-muted" />
+      <div className="min-w-0 flex-1">
+        <ProcessMarkdown content={block.content} />
+      </div>
     </div>
   )
 }

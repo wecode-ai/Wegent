@@ -550,12 +550,10 @@ describe('MessageList', () => {
       />
     )
 
-    const processToggle = screen.getByTestId('process-text-toggle-button')
+    const processText = screen.getByTestId('process-text-block')
     const runningTool = screen.getByText(/正在运行 ls/)
 
-    expect(processToggle.compareDocumentPosition(runningTool)).toBe(
-      Node.DOCUMENT_POSITION_FOLLOWING
-    )
+    expect(processText.compareDocumentPosition(runningTool)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
   })
 
   test('does not duplicate a text block that matches the final assistant content', () => {
@@ -583,7 +581,7 @@ describe('MessageList', () => {
       />
     )
 
-    expect(screen.queryByTestId('process-text-toggle-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('process-text-block')).not.toBeInTheDocument()
     expect(screen.getByText('这是最终回答。')).toBeInTheDocument()
   })
 

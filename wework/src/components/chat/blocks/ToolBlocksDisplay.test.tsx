@@ -162,7 +162,7 @@ describe('ToolBlocksDisplay', () => {
 
     render(<ToolBlocksDisplay blocks={[textBlock]} isStreaming={true} />)
 
-    expect(screen.getByTestId('process-text-live-preview')).toBeInTheDocument()
+    expect(screen.getByTestId('process-text-block')).toBeInTheDocument()
     expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
   })
 })

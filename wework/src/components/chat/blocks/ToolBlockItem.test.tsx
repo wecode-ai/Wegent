@@ -61,28 +61,21 @@ describe('ToolBlockItem', () => {
     )
   })
 
-  test('renders streaming process text as a single live preview row', () => {
+  test('renders streaming process text directly in the timeline', () => {
     render(<ToolBlockItem block={streamingTextBlock} />)
 
-    const preview = screen.getByTestId('process-text-live-preview')
+    const block = screen.getByTestId('process-text-block')
 
-    expect(preview).toHaveTextContent('正在处理')
-    expect(preview).toHaveTextContent('Let me explore the repository structure')
+    expect(block).toHaveAccessibleName('正在处理')
+    expect(block).toHaveTextContent('Let me explore the repository structure.')
     expect(screen.queryByTestId('process-text-toggle-button')).not.toBeInTheDocument()
   })
 
-  test('collapses completed process text until the user expands it', () => {
+  test('renders completed process text without folding it', () => {
     render(<ToolBlockItem block={{ ...streamingTextBlock, status: 'done' }} />)
 
-    const toggle = screen.getByTestId('process-text-toggle-button')
-
-    expect(toggle).toHaveAttribute('aria-expanded', 'false')
-    expect(screen.queryByTestId('process-text-detail')).not.toBeInTheDocument()
-
-    fireEvent.click(toggle)
-
-    expect(toggle).toHaveAttribute('aria-expanded', 'true')
-    expect(screen.getByTestId('process-text-detail')).toHaveTextContent(
+    expect(screen.queryByTestId('process-text-toggle-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('process-text-block')).toHaveTextContent(
       'Let me explore the repository structure.'
     )
   })
