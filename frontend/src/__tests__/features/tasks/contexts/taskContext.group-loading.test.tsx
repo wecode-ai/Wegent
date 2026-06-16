@@ -6,6 +6,7 @@ import '@testing-library/jest-dom'
 import { act, render, screen, waitFor } from '@testing-library/react'
 
 import { taskApis } from '@/apis/tasks'
+import { PROJECT_DELETED_EVENT } from '@/features/projects/events'
 import { TaskSessionProvider, useTaskSession } from '@/features/tasks/session/TaskSession'
 import type { Task } from '@/types/api'
 
@@ -179,6 +180,40 @@ describe('TaskSessionContext group task loading', () => {
       team_display_name: personalTask.team_display_name,
     })
     expect(contextProbe.current?.hasMorePersonalTasks).toBe(false)
+  })
+
+  it('refreshes personal history when a project is deleted', async () => {
+    const beforeDeleteTask = createPersonalTask(1, 1)
+    const afterDeleteTask = createPersonalTask(2, 1)
+    mockedTaskApis.getPersonalTasksLite
+      .mockResolvedValueOnce(taskListResponse([beforeDeleteTask]))
+      .mockResolvedValueOnce(taskListResponse([afterDeleteTask]))
+
+    render(
+      <TaskSessionProvider>
+        <ContextProbe />
+      </TaskSessionProvider>
+    )
+
+    await waitFor(() => {
+      expect(contextProbe.current?.personalTasks.map(task => task.id)).toEqual([1])
+    })
+
+    await act(async () => {
+      window.dispatchEvent(
+        new CustomEvent(PROJECT_DELETED_EVENT, {
+          detail: { projectId: 700 },
+        })
+      )
+    })
+
+    await waitFor(() => {
+      expect(contextProbe.current?.personalTasks.map(task => task.id)).toEqual([2])
+    })
+    expect(mockedTaskApis.getPersonalTasksLite).toHaveBeenNthCalledWith(2, {
+      page: 1,
+      limit: 50,
+    })
   })
 
   it('appends the next personal history page when load more is requested', async () => {

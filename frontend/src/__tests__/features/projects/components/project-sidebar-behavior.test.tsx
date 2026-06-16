@@ -3,8 +3,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 
+import { ProjectDeleteDialog } from '@/features/projects/components/ProjectDeleteDialog'
 import { ProjectSection } from '@/features/projects/components/ProjectSection'
 import TaskMenu from '@/features/tasks/components/sidebar/TaskMenu'
 import type { ProjectWithTasks } from '@/types/api'
@@ -14,6 +15,8 @@ const replaceMock = jest.fn()
 const addTaskToProjectMock = jest.fn()
 const removeTaskFromProjectMock = jest.fn()
 const refreshProjectsMock = jest.fn()
+const refreshTasksMock = jest.fn()
+const deleteProjectMock = jest.fn()
 const toggleProjectExpandedMock = jest.fn()
 const setSelectedProjectTaskIdMock = jest.fn()
 const setSelectedTaskMock = jest.fn()
@@ -125,7 +128,7 @@ jest.mock('@/components/ui/dropdown', () => ({
 jest.mock('@/features/tasks/session/TaskSession', () => ({
   useTaskSession: () => ({
     selectTask: setSelectedTaskMock,
-    refreshTasks: jest.fn(),
+    refreshTasks: refreshTasksMock,
   }),
 }))
 
@@ -140,7 +143,7 @@ jest.mock('@/features/projects/contexts/projectContext', () => ({
     refreshProjects: refreshProjectsMock,
     createProject: jest.fn(),
     updateProject: jest.fn(),
-    deleteProject: jest.fn(),
+    deleteProject: deleteProjectMock,
     addTaskToProject: addTaskToProjectMock,
     removeTaskFromProject: removeTaskFromProjectMock,
     projectTaskIds: new Set([101, 202]),
@@ -163,6 +166,7 @@ jest.mock('@/components/common/TaskInlineRename', () => ({
 describe('project sidebar behavior', () => {
   beforeEach(() => {
     jest.clearAllMocks()
+    deleteProjectMock.mockResolvedValue(true)
     isWorkspaceEnabledMock = true
   })
 
@@ -225,5 +229,20 @@ describe('project sidebar behavior', () => {
 
     expect(screen.getByText('pathless-project')).toBeInTheDocument()
     expect(screen.queryByText('workspace-project')).not.toBeInTheDocument()
+  })
+
+  test('closes the delete dialog after deleting a project', async () => {
+    const handleOpenChange = jest.fn()
+
+    render(
+      <ProjectDeleteDialog open={true} onOpenChange={handleOpenChange} project={pathlessProject} />
+    )
+
+    fireEvent.click(screen.getByText('delete.confirm'))
+
+    await waitFor(() => {
+      expect(deleteProjectMock).toHaveBeenCalledWith(pathlessProject.id)
+      expect(handleOpenChange).toHaveBeenCalledWith(false)
+    })
   })
 })
