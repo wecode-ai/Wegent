@@ -444,9 +444,19 @@ def _build_user_message_content(
             )
 
             if not supports_video:
-                raise ValueError(
-                    f"Video attachment {attachment.id} requires a video-capable model"
+                metadata_text = context_service.build_video_attachment_header(
+                    attachment
                 )
+                fid = (attachment.type_data or {}).get("fid")
+                if fid:
+                    metadata_text += "\n" + json.dumps({"fid": fid})
+                attachment_text_parts.append(f"{metadata_text}\n")
+                total_attachment_text_length += len(metadata_text) + 1
+                logger.info(
+                    "[history][VIDEO DEBUG] Added metadata-only video attachment: id=%s",
+                    attachment.id,
+                )
+                continue
 
             payload = context_service.build_video_content_from_attachment(
                 db, attachment
