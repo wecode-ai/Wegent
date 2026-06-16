@@ -6,7 +6,7 @@
 
 import React from 'react'
 import { Label } from '@/components/ui/label'
-import { Bot, Team } from '@/types/api'
+import { Bot, Team, type PipelineContextPassing } from '@/types/api'
 import { UnifiedShell } from '@/apis/shells'
 import { TeamMode, AgentType } from '../team-modes'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -40,6 +40,11 @@ interface TeamModeEditorProps {
   /** Pipeline mode: requireConfirmation settings for each bot */
   requireConfirmationMap?: Record<number, boolean>
   setRequireConfirmationMap?: React.Dispatch<React.SetStateAction<Record<number, boolean>>>
+  /** Pipeline mode: context passing settings for each bot */
+  contextPassingMap?: Record<number, PipelineContextPassing>
+  setContextPassingMap?: React.Dispatch<
+    React.SetStateAction<Record<number, PipelineContextPassing>>
+  >
   onEditBot: (botId: number) => void
   onCreateBot: () => void
   onCloneBot: (botId: number) => void
@@ -69,6 +74,8 @@ export default function TeamModeEditor({
   groupName,
   requireConfirmationMap,
   setRequireConfirmationMap,
+  contextPassingMap,
+  setContextPassingMap,
   onEditBot,
   onCreateBot,
   onCloneBot,
@@ -114,6 +121,8 @@ export default function TeamModeEditor({
             isDifyLeader={isDifyLeader}
             requireConfirmationMap={requireConfirmationMap}
             setRequireConfirmationMap={setRequireConfirmationMap}
+            contextPassingMap={contextPassingMap}
+            setContextPassingMap={setContextPassingMap}
             toast={toast}
             onEditBot={onEditBot}
             onCreateBot={onCreateBot}

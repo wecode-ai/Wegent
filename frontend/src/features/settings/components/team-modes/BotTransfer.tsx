@@ -10,9 +10,16 @@ import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Tag } from '@/components/ui/tag'
 import { Switch } from '@/components/ui/switch'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { RiMagicLine } from 'react-icons/ri'
 import { Edit, Plus, Copy } from 'lucide-react'
-import { Bot } from '@/types/api'
+import { Bot, type PipelineContextPassing } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getPromptBadgeStyle, type PromptBadgeVariant } from '@/utils/styles'
 
@@ -35,6 +42,11 @@ export interface BotTransferProps {
   /** Pipeline mode: requireConfirmation settings for each bot */
   requireConfirmationMap?: Record<number, boolean>
   setRequireConfirmationMap?: React.Dispatch<React.SetStateAction<Record<number, boolean>>>
+  /** Pipeline mode: context passing settings for each bot */
+  contextPassingMap?: Record<number, PipelineContextPassing>
+  setContextPassingMap?: React.Dispatch<
+    React.SetStateAction<Record<number, PipelineContextPassing>>
+  >
   onEditBot: (botId: number) => void
   onCreateBot: () => void
   onCloneBot: (botId: number) => void
@@ -56,6 +68,8 @@ export default function BotTransfer({
   sortable = false,
   requireConfirmationMap,
   setRequireConfirmationMap,
+  contextPassingMap,
+  setContextPassingMap,
   onEditBot,
   onCreateBot,
   onCloneBot,
@@ -177,9 +191,24 @@ export default function BotTransfer({
     [setRequireConfirmationMap]
   )
 
+  const handleContextPassingChange = useCallback(
+    (botId: number, value: PipelineContextPassing) => {
+      if (setContextPassingMap) {
+        setContextPassingMap(prev => ({
+          ...prev,
+          [botId]: value,
+        }))
+      }
+    },
+    [setContextPassingMap]
+  )
+
   // Check if pipeline mode features should be shown (when requireConfirmationMap is provided)
   const showPipelineFeatures =
     requireConfirmationMap !== undefined && setRequireConfirmationMap !== undefined
+  const showContextPassing = contextPassingMap !== undefined && setContextPassingMap !== undefined
+
+  const selectedBotKeyStrings = selectedBotKeys.map(String)
 
   return (
     <div className="flex flex-col min-h-0 mt-1 flex-1">
@@ -264,8 +293,52 @@ export default function BotTransfer({
                   </Tooltip>
                 )}
 
-                {/* Pipeline mode: requireConfirmation switch (only show for selected bots) */}
-                {showPipelineFeatures && selectedBotKeys.includes(item.key) && (
+                {/* Pipeline mode: context passing select (only show for non-final selected bots) */}
+                {showContextPassing &&
+                  selectedBotKeyStrings.includes(item.key) &&
+                  selectedBotKeyStrings[selectedBotKeyStrings.length - 1] !== item.key && (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <div className="mr-2 w-[128px]" onClick={e => e.stopPropagation()}>
+                          <Select
+                            value={contextPassingMap?.[Number(item.key)] ?? 'none'}
+                            onValueChange={value =>
+                              handleContextPassingChange(
+                                Number(item.key),
+                                value as PipelineContextPassing
+                              )
+                            }
+                          >
+                            <SelectTrigger
+                              className="h-7 rounded-md px-2 text-xs"
+                              data-testid={`context-passing-select-${item.key}`}
+                            >
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="none">
+                                {t('common:team.context_passing_none')}
+                              </SelectItem>
+                              <SelectItem value="original_user">
+                                {t('common:team.context_passing_original_user')}
+                              </SelectItem>
+                              <SelectItem value="previous_bot">
+                                {t('common:team.context_passing_previous_bot')}
+                              </SelectItem>
+                              <SelectItem value="original_and_previous">
+                                {t('common:team.context_passing_original_and_previous')}
+                              </SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>{t('common:team.context_passing_tooltip')}</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  )}
+
+                {showPipelineFeatures && selectedBotKeyStrings.includes(item.key) && (
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <div className="flex items-center mr-2" onClick={e => e.stopPropagation()}>

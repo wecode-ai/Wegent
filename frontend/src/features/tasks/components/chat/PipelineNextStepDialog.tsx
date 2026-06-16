@@ -27,10 +27,12 @@ import {
   type PipelineNextStepStructuredItem,
   type PipelineNextStepTextItem,
 } from './pipelineNextStep'
+import type { PipelineContextPassing } from '@/types/api'
 
 interface PipelineNextStepDialogProps {
   open: boolean
   messages: PipelineNextStepMessage[]
+  contextPassing?: PipelineContextPassing
   isConfirming: boolean
   onOpenChange: (open: boolean) => void
   onConfirm: (payload: PipelineNextStepPayload) => void | Promise<void>
@@ -125,12 +127,16 @@ function StructuredContextRow({
 function PipelineNextStepDialog({
   open,
   messages,
+  contextPassing = 'none',
   isConfirming,
   onOpenChange,
   onConfirm,
 }: PipelineNextStepDialogProps) {
   const { t } = useTranslation()
-  const draft = useMemo(() => buildPipelineNextStepDraft(messages), [messages])
+  const draft = useMemo(
+    () => buildPipelineNextStepDraft(messages, contextPassing),
+    [contextPassing, messages]
+  )
   const [editedMessage, setEditedMessage] = useState('')
   const [selectedTextItemIds, setSelectedTextItemIds] = useState<string[]>([])
   const [selectedStructuredItemIds, setSelectedStructuredItemIds] = useState<string[]>([])

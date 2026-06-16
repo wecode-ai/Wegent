@@ -17,9 +17,13 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.kind import Kind
-from app.models.subtask import Subtask, SubtaskStatus
+from app.models.subtask import SubtaskStatus
 from app.models.task import TaskResource
 from app.schemas.kind import Task, Team
+from app.services.adapters.pipeline_context import (
+    build_pipeline_context_prompt,
+    normalize_context_passing,
+)
 from app.services.readers.kinds import KindType, kindReader
 from app.services.task_member_service import task_member_service
 from app.stores.tasks import subtask_store
@@ -267,11 +271,8 @@ class PipelineStageService:
         Prepare for pipeline stage confirmation.
 
         This method validates the task state and returns information needed
-        to proceed with the next stage. It does NOT dispatch the task - that
-        is handled by the normal on_chat_send flow.
-
-        This is called from chat:send with action='pipeline:confirm' before
-        the normal message processing flow.
+        by the shared pipeline advance sender to proceed with the next stage.
+        It does not create subtasks or dispatch executors directly.
 
         Args:
             db: Database session
@@ -394,6 +395,22 @@ class PipelineStageService:
         # current_stage_bot_id is used for session management
         # When current_stage_bot_id != next_stage_bot_id, a new session should be created
         current_stage_bot_id = current_bot.id if current_bot else None
+        context_passing = normalize_context_passing(
+            getattr(current_member, "contextPassing", None)
+        )
+        current_subtask = subtask_store.get_latest_assistant_by_statuses(
+            db,
+            task_id=task_id,
+            statuses=[SubtaskStatus.COMPLETED],
+        )
+        handoff_message = ""
+        if current_subtask:
+            handoff_message = build_pipeline_context_prompt(
+                db,
+                task_id=task_id,
+                current_subtask=current_subtask,
+                context_passing=context_passing,
+            )
 
         # Update task status to PENDING (ready for next stage)
         # Also update currentStage to track which stage we're at for follow-up questions
@@ -422,6 +439,135 @@ class PipelineStageService:
             "next_stage_index": next_stage,
             "total_stages": total_stages,
             "next_stage_name": next_bot.name,
+            "context_passing": context_passing,
+            "handoff_message": handoff_message,
+            "team": team,
+            "team_crd": team_crd,
+        }
+
+    def pipeline_auto_advance(
+        self,
+        db: Session,
+        task_id: int,
+        user_id: int,
+        completed_subtask_id: int,
+        advance_info: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Prepare an automatic pipeline advance using the same result shape as confirmation."""
+        task = self._get_task(db, task_id)
+        if not task:
+            logger.error("[Pipeline] auto_advance: Task not found id=%s", task_id)
+            return {"success": False, "error": "Task not found"}
+
+        if not task_member_service.is_member(db, task_id, user_id):
+            logger.error(
+                "[Pipeline] auto_advance: Access denied user=%s task=%s",
+                user_id,
+                task_id,
+            )
+            return {"success": False, "error": "Task not found"}
+
+        task_crd = self._get_task_crd(task)
+        team = self.get_team_for_task(db, task, task_crd)
+        if not team:
+            logger.error("[Pipeline] auto_advance: Team not found")
+            return {"success": False, "error": "Team not found"}
+
+        team_crd = Team.model_validate(team.json)
+        if team_crd.spec.collaborationModel != "pipeline":
+            logger.error(
+                "[Pipeline] auto_advance: Not a pipeline team, collaborationModel=%s",
+                team_crd.spec.collaborationModel,
+            )
+            return {
+                "success": False,
+                "error": "Stage auto-advance is only available for pipeline teams",
+            }
+
+        next_stage = advance_info.get("next_stage_index")
+        total_stages = len(team_crd.spec.members)
+        if (
+            not isinstance(next_stage, int)
+            or next_stage <= 0
+            or next_stage >= total_stages
+        ):
+            logger.error(
+                "[Pipeline] auto_advance: Invalid next stage task=%s next_stage=%s total=%s",
+                task_id,
+                next_stage,
+                total_stages,
+            )
+            return {"success": False, "error": "Invalid next stage"}
+
+        current_stage = next_stage - 1
+        current_member = team_crd.spec.members[current_stage]
+        next_member = team_crd.spec.members[next_stage]
+        current_bot = self._get_bot_by_ref(
+            db,
+            team.user_id,
+            current_member.botRef.namespace,
+            current_member.botRef.name,
+        )
+        next_bot = self._get_bot_by_ref(
+            db,
+            team.user_id,
+            next_member.botRef.namespace,
+            next_member.botRef.name,
+        )
+        if not next_bot:
+            logger.error(
+                "[Pipeline] auto_advance: Bot not found for next stage: %s/%s",
+                next_member.botRef.namespace,
+                next_member.botRef.name,
+            )
+            return {"success": False, "error": "Bot not found for next stage"}
+
+        current_subtask = subtask_store.get_by_id(db, subtask_id=completed_subtask_id)
+        if not current_subtask or current_subtask.status != SubtaskStatus.COMPLETED:
+            logger.error(
+                "[Pipeline] auto_advance: Completed subtask not found task=%s subtask=%s",
+                task_id,
+                completed_subtask_id,
+            )
+            return {"success": False, "error": "Completed stage not found"}
+
+        context_passing = normalize_context_passing(
+            advance_info.get("context_passing")
+            or getattr(current_member, "contextPassing", None)
+        )
+        handoff_message = build_pipeline_context_prompt(
+            db,
+            task_id=task_id,
+            current_subtask=current_subtask,
+            context_passing=context_passing,
+        )
+
+        task_crd.status.status = "PENDING"
+        task_crd.status.updatedAt = datetime.now()
+        task_crd.spec.currentStage = next_stage
+        task.json = task_crd.model_dump(mode="json", exclude_none=True)
+        task.updated_at = datetime.now()
+        flag_modified(task, "json")
+        db.commit()
+
+        logger.info(
+            "[Pipeline] auto_advance: Ready for next stage %s (bot=%s, bot_id=%s) for task %s",
+            next_stage,
+            next_bot.name,
+            next_bot.id,
+            task_id,
+        )
+
+        return {
+            "success": True,
+            "is_pipeline_complete": False,
+            "current_stage_bot_id": current_bot.id if current_bot else None,
+            "next_stage_bot_id": next_bot.id,
+            "next_stage_index": next_stage,
+            "total_stages": total_stages,
+            "next_stage_name": next_bot.name,
+            "context_passing": context_passing,
+            "handoff_message": handoff_message,
             "team": team,
             "team_crd": team_crd,
         }
@@ -526,7 +672,8 @@ class PipelineStageService:
         - New task (task_id=None): use first stage bot_id (stage 0)
         - Existing task: read currentStage from task.spec and get corresponding bot_id
 
-        The currentStage is updated by pipeline_confirm() when user confirms to proceed.
+        The currentStage is updated by pipeline_confirm() or pipeline_auto_advance()
+        before the next-stage handoff is sent.
 
         Args:
             db: Database session

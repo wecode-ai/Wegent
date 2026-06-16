@@ -18,6 +18,20 @@ const mockSelectedTeam = {
   name: 'Pipeline Team',
   agent_type: 'chat',
   workflow: { mode: 'pipeline' },
+  bots: [
+    {
+      bot_id: 10,
+      bot_prompt: 'Stage one',
+      requireConfirmation: true,
+      contextPassing: 'previous_bot',
+    },
+    {
+      bot_id: 20,
+      bot_prompt: 'Stage two',
+      requireConfirmation: false,
+      contextPassing: 'none',
+    },
+  ],
 } as unknown as Team
 
 const mockSelectedTaskDetail = {
@@ -353,6 +367,7 @@ function setCompletedPipelineMessages() {
 describe('ChatArea pipeline next-step dialog', () => {
   beforeEach(() => {
     jest.clearAllMocks()
+    ;(mockSelectedTeam.bots[0] as { contextPassing: string }).contextPassing = 'previous_bot'
     mockSendMessage.mockResolvedValue(42)
     setCompletedPipelineMessages()
   })
@@ -387,11 +402,10 @@ describe('ChatArea pipeline next-step dialog', () => {
         },
       ],
     })
-    expect(request.message).toContain('Previous pipeline context:')
-    expect(request.message).toContain('[AI]\nBuild this feature')
+    expect(request.message).toBe('Previous stage output:\nBuild this feature')
     expect(request.message).not.toContain('[User]\nOriginal request')
     expect(options).toMatchObject({
-      pendingUserMessage: expect.stringContaining('[AI]\nBuild this feature'),
+      pendingUserMessage: 'Previous stage output:\nBuild this feature',
       immediateTaskId: 42,
       pendingContexts: [
         expect.objectContaining({ id: 10, context_type: 'attachment' }),
@@ -403,6 +417,51 @@ describe('ChatArea pipeline next-step dialog', () => {
       ],
     })
     expect(mockToast).toHaveBeenCalledWith({ title: 'Stage Confirmed' })
+  })
+
+  it('opens the picker without default selections and sends manually checked context', async () => {
+    ;(mockSelectedTeam.bots[0] as { contextPassing: string }).contextPassing = 'none'
+    mockTaskMessages = new Map([
+      [
+        'user-1',
+        {
+          id: 'user-1',
+          type: 'user',
+          status: 'completed',
+          content: 'Original request',
+          timestamp: 1,
+          contexts: [],
+        },
+      ],
+      [
+        'ai-1',
+        {
+          id: 'ai-1',
+          type: 'ai',
+          status: 'completed',
+          content: ['## Final Requirement Prompt', 'Build this feature'].join('\n'),
+          timestamp: 2,
+          contexts: [],
+        },
+      ],
+    ])
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
+
+    render(<ChatArea teams={[mockSelectedTeam]} isTeamsLoading={false} taskType="chat" />)
+
+    await user.click(await screen.findByTestId('pipeline-next-step-button'))
+
+    const confirmButton = screen.getByTestId('pipeline-next-step-confirm-button')
+    expect(confirmButton).toBeDisabled()
+
+    await user.click(screen.getByTestId('pipeline-next-step-text-checkbox-ai_response:ai-1'))
+    expect(confirmButton).toBeEnabled()
+    await user.click(confirmButton)
+
+    await waitFor(() => expect(mockSendMessage).toHaveBeenCalledTimes(1))
+
+    const [request] = mockSendMessage.mock.calls[0]
+    expect(request.message).toBe('Previous stage output:\nBuild this feature')
   })
 
   it('disables the indicator action when there is no completed AI handoff', async () => {

@@ -992,6 +992,34 @@ class ExecutionDispatcher:
         return "Chat"
 
     @staticmethod
+    def _get_bot_name(request: ExecutionRequest) -> Optional[str]:
+        """Extract the current bot name from an execution request."""
+        request_bot_name = getattr(request, "bot_name", "")
+        if isinstance(request_bot_name, str) and request_bot_name.strip():
+            return request_bot_name
+
+        bots = getattr(request, "bot", None)
+        if isinstance(bots, list) and bots:
+            first_bot = bots[0]
+            if isinstance(first_bot, dict):
+                bot_name = first_bot.get("name")
+                if isinstance(bot_name, str) and bot_name.strip():
+                    return bot_name
+
+        return None
+
+    @classmethod
+    def _build_start_event_data(
+        cls, request: ExecutionRequest, shell_type: Optional[str] = None
+    ) -> dict[str, str]:
+        """Build common data for chat:start events."""
+        data = {"shell_type": shell_type or cls._get_shell_type(request)}
+        bot_name = cls._get_bot_name(request)
+        if bot_name:
+            data["bot_name"] = bot_name
+        return data
+
+    @staticmethod
     def _get_model_type(request: ExecutionRequest) -> str:
         """Get model type from request's model_config.
 
@@ -1113,7 +1141,7 @@ class ExecutionDispatcher:
             task_id=request.task_id,
             subtask_id=request.subtask_id,
             message_id=request.message_id,
-            data={"shell_type": self._get_shell_type(request)},
+            data=self._build_start_event_data(request),
         )
 
         # Lazy import OpenAI SDK for memory optimization
@@ -1458,7 +1486,7 @@ class ExecutionDispatcher:
             task_id=request.task_id,
             subtask_id=request.subtask_id,
             message_id=request.message_id,
-            data={"shell_type": self._get_shell_type(request)},
+            data=self._build_start_event_data(request),
         )
 
         # Send task to specified room
@@ -1525,7 +1553,7 @@ class ExecutionDispatcher:
             task_id=request.task_id,
             subtask_id=request.subtask_id,
             message_id=request.message_id,
-            data={"shell_type": shell_type},
+            data=self._build_start_event_data(request, shell_type),
         )
 
         if shell_type == "Chat":
@@ -1686,7 +1714,7 @@ class ExecutionDispatcher:
             task_id=request.task_id,
             subtask_id=request.subtask_id,
             message_id=request.message_id,
-            data={"shell_type": self._get_shell_type(request)},
+            data=self._build_start_event_data(request),
         )
 
     def parse_callback_event(

@@ -19,12 +19,16 @@ def _make_db():
 
 
 def _make_member(
-    bot_name: str, bot_namespace: str = "default", require_confirmation: bool = False
+    bot_name: str,
+    bot_namespace: str = "default",
+    require_confirmation: bool = False,
+    context_passing: str = "none",
 ):
     member = MagicMock()
     member.botRef.name = bot_name
     member.botRef.namespace = bot_namespace
     member.requireConfirmation = require_confirmation
+    member.contextPassing = context_passing
     return member
 
 
@@ -185,7 +189,51 @@ class TestPipelineAutoAdvance:
             "next_stage_index": 1,
             "next_bot_id": 20,
             "next_bot_name": "bot-1",
+            "context_passing": "none",
         }
+
+    def test_auto_advance_includes_current_stage_context_passing(self):
+        """Current stage contextPassing controls what is sent to the next stage."""
+        strategy = self._make_strategy()
+        db = _make_db()
+
+        bot_0 = _make_bot(10, "bot-0")
+        bot_1 = _make_bot(20, "bot-1")
+        members = [
+            _make_member("bot-0", context_passing="previous_bot"),
+            _make_member("bot-1"),
+        ]
+
+        subtask = _make_subtask(bot_id=10)
+        db.get.return_value = subtask
+
+        task_resource = MagicMock()
+        task_crd = _make_task_crd()
+        team_crd = _make_team_crd(members)
+        team_resource = MagicMock()
+        team_resource.user_id = 1
+        team_resource.json = {}
+
+        query_results = [task_resource, team_resource]
+
+        def query_first_side_effect():
+            return query_results.pop(0)
+
+        db.query.return_value.filter.return_value.first.side_effect = (
+            query_first_side_effect
+        )
+
+        with patch.object(strategy, "_should_require_confirmation", return_value=False):
+            with patch("app.schemas.kind.Task") as mock_task_schema:
+                with patch("app.schemas.kind.Team") as mock_team_schema:
+                    mock_task_schema.model_validate.return_value = task_crd
+                    mock_team_schema.model_validate.return_value = team_crd
+                    with patch("app.services.readers.kinds.kindReader") as mock_reader:
+                        mock_reader.get_by_id.return_value = bot_0
+                        mock_reader.get_by_name_and_namespace.return_value = bot_1
+                        result = strategy.get_auto_advance_info(db, 1, 1, "COMPLETED")
+
+        assert result["context_passing"] == "previous_bot"
 
     def test_auto_advance_via_patched_imports(self):
         """Stage 0 completes, requireConfirmation=False, stage 1 exists -> advance."""

@@ -24,7 +24,7 @@ from app.models.subtask import Subtask
 from app.models.task import TaskResource
 from app.schemas.kind import Bot, Ghost, Shell
 from app.schemas.kind import Skill as SkillCRD
-from app.schemas.kind import Team
+from app.schemas.kind import Team, TeamMember
 from app.schemas.project import ProjectConfig
 from app.services.auth import create_skill_identity_token
 from app.services.mcp_provider_registry import (
@@ -374,6 +374,10 @@ class TaskRequestBuilder:
         request_project_id = _first_present_project_id(
             project_workspace.get("project_id"), task.project_id
         )
+        resolved_bot_name = getattr(bot, "name", "") or (
+            bot_config[0].get("name", "") if bot_config else ""
+        )
+        resolved_bot_namespace = getattr(bot, "namespace", None) or "default"
 
         return ExecutionRequest(
             task_id=task.id,
@@ -385,6 +389,8 @@ class TaskRequestBuilder:
             user_id=user.id,
             user_name=user.user_name,
             bot=bot_config,
+            bot_name=resolved_bot_name,
+            bot_namespace=resolved_bot_namespace,
             model_config=model_config,
             system_prompt=system_prompt,
             prompt=message,
@@ -977,38 +983,43 @@ class TaskRequestBuilder:
         """
         from app.services.chat.config.model_resolver import get_bot_system_prompt
 
-        # Get team member prompt from matching member if not provided
-        # In pipeline mode, each bot has its own member with a specific prompt
-        if team_member_prompt is None and team_crd.spec.members:
-            # Find the member that matches the current bot
-            for member in team_crd.spec.members:
-                if (
-                    member.botRef.name == bot.name
-                    and member.botRef.namespace == bot.namespace
-                ):
-                    team_member_prompt = member.prompt
-                    logger.debug(
-                        "[TaskRequestBuilder] Found matching member prompt for bot=%s: %s",
-                        bot.name,
-                        team_member_prompt[:50] if team_member_prompt else None,
-                    )
-                    break
-            # Fallback to first member if no match found (for backward compatibility)
-            if team_member_prompt is None:
-                team_member_prompt = team_crd.spec.members[0].prompt
+        if team_member_prompt is None:
+            team_member = self._find_team_member_for_bot(team_crd, bot)
+            if team_member:
+                team_member_prompt = team_member.prompt
                 logger.debug(
-                    "[TaskRequestBuilder] No matching member found for bot=%s, "
-                    "using first member prompt",
+                    "[TaskRequestBuilder] Found matching member prompt for bot=%s: %s",
                     bot.name,
+                    team_member_prompt[:50] if team_member_prompt else None,
+                )
+            else:
+                logger.warning(
+                    "[TaskRequestBuilder] No team member matched bot=%s in team=%s",
+                    bot.name,
+                    team.name,
                 )
 
-        # Get base system prompt (no enhancements applied here)
-        return get_bot_system_prompt(
-            self.db,
-            bot,
-            team.user_id,
-            team_member_prompt,
+        return get_bot_system_prompt(self.db, bot, team.user_id, team_member_prompt)
+
+    @staticmethod
+    def _team_member_matches_bot(member: TeamMember, bot: Kind) -> bool:
+        return (
+            member.botRef.name == bot.name and member.botRef.namespace == bot.namespace
         )
+
+    @classmethod
+    def _find_team_member_for_bot(cls, team_crd: Team, bot: Kind) -> TeamMember | None:
+        for member in team_crd.spec.members or []:
+            if cls._team_member_matches_bot(member, bot):
+                return member
+        return None
+
+    def _build_runtime_system_prompt(
+        self, bot: Kind, user_id: int, team_member_prompt: str | None
+    ) -> str:
+        from app.services.chat.config.model_resolver import get_bot_system_prompt
+
+        return get_bot_system_prompt(self.db, bot, user_id, team_member_prompt)
 
     # =========================================================================
     # Shell Type Resolution (from ChatConfigBuilder)
@@ -1653,24 +1664,31 @@ Response template:
         )
 
         members = team_crd.spec.members or []
+        collaboration_model = team_crd.spec.collaborationModel or "solo"
+
+        bot_members: list[tuple[Kind, TeamMember | None]] = []
+        if collaboration_model == "pipeline":
+            bot_members.append(
+                (first_bot, self._find_team_member_for_bot(team_crd, first_bot))
+            )
+        else:
+            for member in members:
+                if self._team_member_matches_bot(member, first_bot):
+                    bot = first_bot
+                else:
+                    bot = kindReader.get_by_name_and_namespace(
+                        self.db,
+                        team.user_id,
+                        KindType.BOT,
+                        member.botRef.namespace,
+                        member.botRef.name,
+                    )
+
+                if bot:
+                    bot_members.append((bot, member))
 
         bot_configs = []
-        for i, member in enumerate(members):
-            # For the first bot, use the already resolved one
-            if i == 0:
-                bot = first_bot
-            else:
-                # Query additional bots
-                bot = kindReader.get_by_name_and_namespace(
-                    self.db,
-                    team.user_id,
-                    KindType.BOT,
-                    member.botRef.namespace,
-                    member.botRef.name,
-                )
-
-            if not bot:
-                continue
+        for bot, member in bot_members:
 
             bot_crd = Bot.model_validate(bot.json)
             bot_spec = bot_crd.spec
@@ -1684,8 +1702,7 @@ Response template:
             shell_type = shell_info["shell_type"]
             base_image = shell_info["base_image"]
 
-            # Get ghost info for system_prompt and skills
-            ghost_system_prompt = ""
+            # Get ghost info for MCP servers and skills.
             ghost_mcp_servers = []
             ghost_skills = []
             ghost_skill_refs = {}
@@ -1700,7 +1717,6 @@ Response template:
                 )
                 if ghost and ghost.json:
                     ghost_crd = Ghost.model_validate(ghost.json)
-                    ghost_system_prompt = ghost_crd.spec.systemPrompt or ""
                     # Convert dict format to list format with name field
                     mcp_servers_dict = ghost_crd.spec.mcpServers or {}
                     ghost_mcp_servers = [
@@ -1727,11 +1743,15 @@ Response template:
                 "name": bot.name,
                 "shell_type": shell_type,
                 "agent_config": agent_config,
-                "system_prompt": ghost_system_prompt,
+                "system_prompt": self._build_runtime_system_prompt(
+                    bot,
+                    team.user_id,
+                    member.prompt if member else None,
+                ),
                 "mcp_servers": ghost_mcp_servers,
                 "skills": ghost_skills,
                 "skill_refs": ghost_skill_refs,
-                "role": member.role or "worker",
+                "role": member.role if member and member.role else "worker",
                 "base_image": base_image,
             }
             bot_configs.append(bot_config)

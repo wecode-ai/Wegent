@@ -77,6 +77,17 @@ describe('TaskStateMachine', () => {
     })
   })
 
+  it('stores the bot name from chat start events on streaming AI messages', () => {
+    const machine = new TaskStateMachine(100, {
+      joinTask: vi.fn(),
+      isConnected: () => true,
+    })
+
+    machine.handleChatStart(42, 'Chat', 7, 'Planner Bot')
+
+    expect(machine.getState().messages.get('ai-42')?.botName).toBe('Planner Bot')
+  })
+
   it('preserves new done text blocks when inline thinking blocks exist', () => {
     const machine = new TaskStateMachine(100, {
       joinTask: vi.fn(),
