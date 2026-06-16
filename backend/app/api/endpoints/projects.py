@@ -258,7 +258,8 @@ def delete_project_endpoint(
 ):
     """
     Delete a project (soft delete).
-    Tasks are not deleted, only their project_id is set to 0 (no project).
+    Tasks are not deleted. Frontend deletion moves tasks to history by clearing
+    project_id; Wework deletion preserves project task links for later restore.
     """
     try:
         project_service.delete_project(

@@ -19,7 +19,6 @@ from app.core import security
 from app.core.config import settings
 from app.core.constants import (
     CLIENT_ORIGIN_FRONTEND,
-    CLIENT_ORIGIN_WEWORK,
     SUPPORTED_CLIENT_ORIGINS,
 )
 from app.db.session import get_async_db
