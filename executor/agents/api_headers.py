@@ -64,6 +64,19 @@ def merge_anthropic_header_map(
     return headers_to_anthropic_custom_headers(merged)
 
 
+def merge_anthropic_custom_headers(*header_sets: str | None) -> str:
+    """Merge multiple ANTHROPIC_CUSTOM_HEADERS strings."""
+    merged: dict[str, str] = {}
+    for headers in header_sets:
+        if not headers:
+            continue
+        merged = merge_header_map(
+            merged,
+            _parse_anthropic_custom_headers(headers),
+        )
+    return headers_to_anthropic_custom_headers(merged)
+
+
 def extract_default_headers(env: Mapping[str, Any]) -> dict[str, str]:
     """Extract DEFAULT_HEADERS/default_headers from an environment mapping."""
     for key in DEFAULT_HEADERS_ENV_KEYS:

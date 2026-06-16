@@ -70,6 +70,11 @@ class TestLocalModeStrategy:
         """Create LocalModeStrategy instance."""
         return LocalModeStrategy()
 
+    @pytest.fixture(autouse=True)
+    def clear_process_custom_headers(self, monkeypatch):
+        """Keep process-level custom headers isolated per test."""
+        monkeypatch.delenv("ANTHROPIC_CUSTOM_HEADERS", raising=False)
+
     @pytest.fixture
     def temp_workspace(self):
         """Create temporary workspace directory."""
@@ -467,6 +472,31 @@ class TestLocalModeStrategy:
             "wecode-action: wegent\n"
             "wecode-executor: claudecode\n"
             "wecode-user: yunpeng7\n"
+            "wecode-project: 42"
+        )
+
+    def test_configure_client_options_appends_project_to_process_headers(
+        self, strategy, tmp_path, monkeypatch
+    ):
+        """Project tasks should merge project ID with process startup headers."""
+        strategy.use_global_capabilities(True, project_id=42)
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv(
+            "ANTHROPIC_CUSTOM_HEADERS",
+            "wecode-source: wegent-local\n"
+            "wecode-action: wegent\n"
+            "wecode-executor: claudecode",
+        )
+        options = {"cwd": "/workspace"}
+        config_dir = "/workspace/12345/.claude"
+
+        with patch("executor.config.config.ANTHROPIC_CUSTOM_HEADERS", ""):
+            result = strategy.configure_client_options(options, config_dir, {}, {})
+
+        assert result["env"]["ANTHROPIC_CUSTOM_HEADERS"] == (
+            "wecode-source: wegent-local\n"
+            "wecode-action: wegent\n"
+            "wecode-executor: claudecode\n"
             "wecode-project: 42"
         )
 

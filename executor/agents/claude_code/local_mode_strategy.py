@@ -29,6 +29,7 @@ from typing import Any, Dict, Tuple
 from executor.agents.api_headers import (
     DEFAULT_HEADERS_ENV_KEYS,
     extract_default_headers,
+    merge_anthropic_custom_headers,
     merge_anthropic_header_map,
     merge_project_header,
 )
@@ -215,9 +216,25 @@ class LocalModeStrategy(ExecutionModeStrategy):
         env["CLAUDE_CONFIG_DIR"] = config_dir
         env["SKILLS_DIR"] = self.get_skills_directory(config_dir)
 
-        custom_headers = config.ANTHROPIC_CUSTOM_HEADERS or env.get(
-            "ANTHROPIC_CUSTOM_HEADERS", ""
+        process_custom_headers = os.environ.get("ANTHROPIC_CUSTOM_HEADERS", "")
+        runtime_custom_headers = env.get("ANTHROPIC_CUSTOM_HEADERS", "")
+        custom_headers = merge_anthropic_custom_headers(
+            config.ANTHROPIC_CUSTOM_HEADERS,
+            process_custom_headers,
+            runtime_custom_headers,
         )
+        if (
+            config.ANTHROPIC_CUSTOM_HEADERS
+            or process_custom_headers
+            or runtime_custom_headers
+        ):
+            logger.info(
+                "Local mode: ANTHROPIC_CUSTOM_HEADERS source keys "
+                "config=%s process=%s runtime=%s",
+                _header_line_keys(config.ANTHROPIC_CUSTOM_HEADERS),
+                _header_line_keys(process_custom_headers),
+                _header_line_keys(runtime_custom_headers),
+            )
         default_headers = extract_default_headers(merged_env)
         original_default_header_keys = sorted(default_headers)
         if self._use_global_capabilities:
