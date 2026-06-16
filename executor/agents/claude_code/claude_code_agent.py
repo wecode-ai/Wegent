@@ -207,9 +207,22 @@ class ClaudeCodeAgent(Agent):
                 is_project_task,
             )
 
+            project_task = is_project_task(task_data)
+            project_id = get_project_id(task_data)
+            logger.info(
+                "Claude Code project header context: task_id=%s "
+                "project_task=%s project_id=%s workspace_source=%s "
+                "project_workspace_path_set=%s standalone_chat_workspace=%s",
+                getattr(task_data, "task_id", None),
+                project_task,
+                project_id or "<empty>",
+                getattr(task_data, "workspace_source", None),
+                bool(getattr(task_data, "project_workspace_path", None)),
+                bool(getattr(task_data, "standalone_chat_workspace", False)),
+            )
             self._mode_strategy.use_global_capabilities(
-                is_project_task(task_data),
-                project_id=get_project_id(task_data),
+                project_task,
+                project_id=project_id,
             )
 
         # Note: emitter is created in base class Agent.__init__()

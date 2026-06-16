@@ -40,6 +40,18 @@ from shared.logger import setup_logger
 logger = setup_logger("local_mode_strategy")
 
 
+def _header_line_keys(headers: str) -> list[str]:
+    """Return header keys from Claude custom header lines for diagnostics."""
+    keys: list[str] = []
+    for line in headers.splitlines():
+        if ":" not in line:
+            continue
+        key = line.split(":", 1)[0].strip()
+        if key:
+            keys.append(key)
+    return sorted(keys)
+
+
 class LocalModeStrategy(ExecutionModeStrategy):
     """Strategy for local (non-Docker) execution mode.
 
@@ -59,6 +71,11 @@ class LocalModeStrategy(ExecutionModeStrategy):
         """Enable global Claude capability reuse for project task execution."""
         self._use_global_capabilities = enabled
         self._project_id = project_id if enabled else None
+        logger.info(
+            "Local mode: global capabilities configured enabled=%s project_id=%s",
+            self._use_global_capabilities,
+            self._project_id or "<empty>",
+        )
 
     def get_config_directory(self, task_id: int) -> str:
         """Get the Claude configuration directory.
@@ -202,6 +219,7 @@ class LocalModeStrategy(ExecutionModeStrategy):
             "ANTHROPIC_CUSTOM_HEADERS", ""
         )
         default_headers = extract_default_headers(merged_env)
+        original_default_header_keys = sorted(default_headers)
         if self._use_global_capabilities:
             default_headers = merge_project_header(default_headers, self._project_id)
         if default_headers:
@@ -217,15 +235,34 @@ class LocalModeStrategy(ExecutionModeStrategy):
                 default_headers,
             )
             logger.info(
-                "Local mode: API default headers configured keys=%s",
+                "Local mode: API default headers configured "
+                "original_keys=%s final_keys=%s project_id=%s",
+                original_default_header_keys,
                 sorted(default_headers),
+                self._project_id or "<empty>",
             )
 
         # Add ANTHROPIC_CUSTOM_HEADERS if configured via environment variable or
         # project execution source metadata.
         if custom_headers:
             env["ANTHROPIC_CUSTOM_HEADERS"] = custom_headers
-            logger.info("Local mode: ANTHROPIC_CUSTOM_HEADERS configured")
+            logger.info(
+                "Local mode: ANTHROPIC_CUSTOM_HEADERS configured keys=%s",
+                _header_line_keys(custom_headers),
+            )
+
+        logger.info(
+            "Local mode: Claude runtime env header summary "
+            "global_capabilities=%s project_id=%s has_default_headers=%s "
+            "has_anthropic_custom_headers=%s anthropic_base_url=%s "
+            "claude_config_dir=%s",
+            self._use_global_capabilities,
+            self._project_id or "<empty>",
+            bool(default_headers),
+            bool(env.get("ANTHROPIC_CUSTOM_HEADERS")),
+            env.get("ANTHROPIC_BASE_URL") or "<empty>",
+            env.get("CLAUDE_CONFIG_DIR"),
+        )
 
         updated_options["env"] = env
 

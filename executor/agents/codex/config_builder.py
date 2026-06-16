@@ -111,6 +111,15 @@ def build_codex_config(
             if model_provider
             else ()
         )
+        logger.info(
+            "Codex runtime header context: local_config=%s model_provider=%s "
+            "project_id=%s header_override_count=%s proxy_enabled=%s",
+            local_config,
+            model_provider or "<empty>",
+            str(project_id).strip() if project_id is not None else "<empty>",
+            len(header_overrides),
+            bool(proxy_env),
+        )
         overrides = [f"model={model}", *header_overrides, *mcp_overrides]
         return CodeXConfig(
             codex_bin=_resolve_codex_binary(config.CODEX_BINARY_PATH),
@@ -139,6 +148,15 @@ def build_codex_config(
         model_provider,
         model_config.get("default_headers"),
         project_id,
+    )
+    logger.info(
+        "Codex runtime header context: local_config=%s model_provider=%s "
+        "project_id=%s header_override_count=%s base_url=%s",
+        local_config,
+        model_provider,
+        str(project_id).strip() if project_id is not None else "<empty>",
+        len(header_overrides),
+        base_url.rstrip("/"),
     )
 
     overrides = [
