@@ -4,7 +4,7 @@
 
 'use client'
 
-import React, { useMemo, useState } from 'react'
+import React, { useMemo, useState, useCallback, useEffect, useRef } from 'react'
 import { CircleStop, Hand, Plus } from 'lucide-react'
 import MobileModelSelector from '../selector/MobileModelSelector'
 import type { Model } from '../selector/ModelSelector'
@@ -38,6 +38,12 @@ import { supportsAttachments } from '../../service/attachmentService'
 import SkillSelectorPopover from '../selector/SkillSelectorPopover'
 import { getChatSendState } from './chatSendState'
 import { useTranslation } from '@/hooks/useTranslation'
+
+const MOBILE_ACTION_MENU_WIDTH = 224
+const MOBILE_ACTION_MENU_MARGIN = 12
+const MOBILE_ACTION_MENU_GAP = 8
+const MOBILE_ACTION_MENU_MAX_HEIGHT = 288
+const MOBILE_ACTION_MENU_MIN_HEIGHT = 44
 
 export interface MobileChatInputControlsProps {
   taskType?: TaskType
@@ -174,6 +180,8 @@ export function MobileChatInputControls({
 }: MobileChatInputControlsProps) {
   const { t } = useTranslation('chat')
   const [moreMenuOpen, setMoreMenuOpen] = useState(false)
+  const moreMenuButtonRef = useRef<HTMLButtonElement>(null)
+  const [moreMenuStyle, setMoreMenuStyle] = useState<React.CSSProperties>({})
   const showChatContexts = canUseChatContexts(taskType, selectedTeam)
   const showAttachmentAction = supportsAttachments(selectedTeam)
   const showSkillAction = availableSkills.length > 0 && Boolean(onToggleSkill)
@@ -203,6 +211,51 @@ export function MobileChatInputControls({
     effectiveRequiresWorkspace !== false
   const showBranchAction = showRepositoryAction && Boolean(selectedRepo)
   const hasSecondaryActions = showAttachmentAction || showChatContexts || showSkillAction
+
+  const updateMoreMenuPosition = useCallback(() => {
+    const button = moreMenuButtonRef.current
+    if (!button) return
+
+    const rect = button.getBoundingClientRect()
+    const viewport = window.visualViewport
+    const viewportTop = viewport?.offsetTop ?? 0
+    const viewportWidth = viewport?.width ?? window.innerWidth
+    const topBoundary = viewportTop + MOBILE_ACTION_MENU_MARGIN
+    const menuBottom = Math.max(
+      topBoundary + MOBILE_ACTION_MENU_MIN_HEIGHT,
+      rect.top - MOBILE_ACTION_MENU_GAP
+    )
+    const availableHeight = Math.max(MOBILE_ACTION_MENU_MIN_HEIGHT, menuBottom - topBoundary)
+    const menuHeight = Math.min(MOBILE_ACTION_MENU_MAX_HEIGHT, availableHeight)
+    const maxLeft = Math.max(
+      MOBILE_ACTION_MENU_MARGIN,
+      viewportWidth - MOBILE_ACTION_MENU_WIDTH - MOBILE_ACTION_MENU_MARGIN
+    )
+
+    setMoreMenuStyle({
+      left: Math.min(Math.max(rect.left, MOBILE_ACTION_MENU_MARGIN), maxLeft),
+      top: menuBottom - menuHeight,
+      maxHeight: menuHeight,
+    })
+  }, [])
+
+  useEffect(() => {
+    if (!moreMenuOpen) return
+
+    updateMoreMenuPosition()
+    const viewport = window.visualViewport
+    window.addEventListener('resize', updateMoreMenuPosition)
+    window.addEventListener('scroll', updateMoreMenuPosition, true)
+    viewport?.addEventListener('resize', updateMoreMenuPosition)
+    viewport?.addEventListener('scroll', updateMoreMenuPosition)
+
+    return () => {
+      window.removeEventListener('resize', updateMoreMenuPosition)
+      window.removeEventListener('scroll', updateMoreMenuPosition, true)
+      viewport?.removeEventListener('resize', updateMoreMenuPosition)
+      viewport?.removeEventListener('scroll', updateMoreMenuPosition)
+    }
+  }, [moreMenuOpen, updateMoreMenuPosition])
 
   // Render send button based on state
   const renderSendButton = () => {
@@ -309,6 +362,7 @@ export function MobileChatInputControls({
       >
         {/* Secondary actions menu */}
         <Button
+          ref={moreMenuButtonRef}
           type="button"
           variant="ghost"
           size="sm"
@@ -325,7 +379,8 @@ export function MobileChatInputControls({
         {moreMenuOpen && (
           <div
             data-testid="mobile-input-more-actions-menu"
-            className="absolute bottom-full left-0 z-50 mb-2 max-h-[min(52dvh,18rem)] w-56 overflow-y-auto overscroll-contain rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-md"
+            className="fixed z-50 w-56 overflow-y-auto overscroll-contain rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-md"
+            style={moreMenuStyle}
           >
             {hasSecondaryActions && (
               <div className="flex flex-col">
