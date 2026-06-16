@@ -25,12 +25,26 @@ down_revision = "c3d4e5f6a708"
 branch_labels = None
 depends_on = None
 
+OLD_UNIQUE_COLUMNS = ["resource_type", "resource_id", "user_id"]
+NEW_UNIQUE_COLUMNS = ["resource_type", "resource_id", "entity_type", "entity_id"]
+
 
 def _index_exists(table_name: str, index_name: str) -> bool:
     conn = op.get_bind()
     inspector = sa.inspect(conn)
     indexes = [idx["name"] for idx in inspector.get_indexes(table_name)]
     return index_name in indexes
+
+
+def _unique_constraint_name_for_columns(
+    table_name: str, column_names: list[str]
+) -> str | None:
+    conn = op.get_bind()
+    inspector = sa.inspect(conn)
+    for constraint in inspector.get_unique_constraints(table_name):
+        if constraint.get("column_names") == column_names:
+            return constraint.get("name")
+    return None
 
 
 def upgrade() -> None:
@@ -96,33 +110,33 @@ def upgrade() -> None:
         )
 
     # Step 5: Drop old unique constraint and create new one
-    if dialect == "mysql":
-        # Dynamically find the actual unique constraint/index name from MySQL
-        old_uc_name_result = conn.execute(
-            sa.text(
-                "SELECT CONSTRAINT_NAME FROM information_schema.TABLE_CONSTRAINTS "
-                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'resource_members' "
-                "AND CONSTRAINT_TYPE = 'UNIQUE'"
-            )
-        ).fetchone()
-        old_uc_name = (
-            old_uc_name_result[0] if old_uc_name_result else "uniq_resource_members"
-        )
+    old_uc_name = _unique_constraint_name_for_columns(
+        "resource_members", OLD_UNIQUE_COLUMNS
+    )
+    new_uc_name = _unique_constraint_name_for_columns(
+        "resource_members", NEW_UNIQUE_COLUMNS
+    )
 
-        op.drop_constraint(old_uc_name, "resource_members", type_="unique")
-        op.create_unique_constraint(
-            "uniq_resource_members_entity",
-            "resource_members",
-            ["resource_type", "resource_id", "entity_type", "entity_id"],
-        )
+    if dialect == "mysql":
+        if old_uc_name:
+            op.drop_constraint(old_uc_name, "resource_members", type_="unique")
+        if not new_uc_name:
+            op.create_unique_constraint(
+                "uniq_resource_members_entity",
+                "resource_members",
+                NEW_UNIQUE_COLUMNS,
+            )
     else:
         # SQLite: use batch operations
-        with op.batch_alter_table("resource_members") as batch_op:
-            batch_op.drop_constraint("uniq_resource_members", type_="unique")
-            batch_op.create_unique_constraint(
-                "uniq_resource_members_entity",
-                ["resource_type", "resource_id", "entity_type", "entity_id"],
-            )
+        if old_uc_name or not new_uc_name:
+            with op.batch_alter_table("resource_members") as batch_op:
+                if old_uc_name:
+                    batch_op.drop_constraint(old_uc_name, type_="unique")
+                if not new_uc_name:
+                    batch_op.create_unique_constraint(
+                        "uniq_resource_members_entity",
+                        NEW_UNIQUE_COLUMNS,
+                    )
 
     # Step 6: Add index for entity-type queries
     if not _index_exists("resource_members", "idx_resource_members_entity"):
@@ -142,34 +156,32 @@ def downgrade() -> None:
         op.drop_index("idx_resource_members_entity", table_name="resource_members")
 
     # Drop new unique constraint, restore old one
-    if dialect == "mysql":
-        # Dynamically find the current unique constraint name
-        new_uc_name_result = conn.execute(
-            sa.text(
-                "SELECT CONSTRAINT_NAME FROM information_schema.TABLE_CONSTRAINTS "
-                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'resource_members' "
-                "AND CONSTRAINT_TYPE = 'UNIQUE'"
-            )
-        ).fetchone()
-        new_uc_name = (
-            new_uc_name_result[0]
-            if new_uc_name_result
-            else "uniq_resource_members_entity"
-        )
+    old_uc_name = _unique_constraint_name_for_columns(
+        "resource_members", OLD_UNIQUE_COLUMNS
+    )
+    new_uc_name = _unique_constraint_name_for_columns(
+        "resource_members", NEW_UNIQUE_COLUMNS
+    )
 
-        op.drop_constraint(new_uc_name, "resource_members", type_="unique")
-        op.create_unique_constraint(
-            "uniq_resource_members",
-            "resource_members",
-            ["resource_type", "resource_id", "user_id"],
-        )
-    else:
-        with op.batch_alter_table("resource_members") as batch_op:
-            batch_op.drop_constraint("uniq_resource_members_entity", type_="unique")
-            batch_op.create_unique_constraint(
+    if dialect == "mysql":
+        if new_uc_name:
+            op.drop_constraint(new_uc_name, "resource_members", type_="unique")
+        if not old_uc_name:
+            op.create_unique_constraint(
                 "uniq_resource_members",
-                ["resource_type", "resource_id", "user_id"],
+                "resource_members",
+                OLD_UNIQUE_COLUMNS,
             )
+    else:
+        if new_uc_name or not old_uc_name:
+            with op.batch_alter_table("resource_members") as batch_op:
+                if new_uc_name:
+                    batch_op.drop_constraint(new_uc_name, type_="unique")
+                if not old_uc_name:
+                    batch_op.create_unique_constraint(
+                        "uniq_resource_members",
+                        OLD_UNIQUE_COLUMNS,
+                    )
 
     # Drop added columns (check existence to tolerate partial rollback states)
     inspector = sa.inspect(conn)
