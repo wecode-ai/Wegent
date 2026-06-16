@@ -3,6 +3,13 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { createDeviceApi } from '@/api/devices'
 import { createProjectApi } from '@/api/projects'
+import {
+  closeLocalTerminal,
+  getLocalExecutorDeviceId,
+  isLocalTerminalAvailable,
+  localPathExists,
+  startLocalTerminal,
+} from '@/lib/local-terminal'
 import { WorkspacePanelCards } from './WorkspacePanelCards'
 import type { DeviceInfo } from '@/types/api'
 
@@ -30,8 +37,27 @@ vi.mock('@/api/devices', () => ({
   createDeviceApi: vi.fn(),
 }))
 
+vi.mock('@/lib/local-terminal', () => ({
+  closeLocalTerminal: vi.fn(),
+  getLocalExecutorDeviceId: vi.fn(),
+  isLocalTerminalAvailable: vi.fn(),
+  localPathExists: vi.fn(),
+  startLocalTerminal: vi.fn(),
+}))
+
+vi.mock('./EmbeddedLocalTerminal', () => ({
+  EmbeddedLocalTerminal: ({ active, sessionId }: { active: boolean; sessionId: string }) => (
+    <div data-testid="embedded-local-terminal" data-session-id={sessionId} hidden={!active} />
+  ),
+}))
+
 const createDeviceApiMock = vi.mocked(createDeviceApi)
 const createProjectApiMock = vi.mocked(createProjectApi)
+const closeLocalTerminalMock = vi.mocked(closeLocalTerminal)
+const getLocalExecutorDeviceIdMock = vi.mocked(getLocalExecutorDeviceId)
+const isLocalTerminalAvailableMock = vi.mocked(isLocalTerminalAvailable)
+const localPathExistsMock = vi.mocked(localPathExists)
+const startLocalTerminalMock = vi.mocked(startLocalTerminal)
 const getVncConfigMock = vi.fn()
 const fetchMock = vi.fn()
 
@@ -94,6 +120,11 @@ describe('WorkspacePanelCards', () => {
     fetchMock.mockResolvedValue(new Response(null, { status: 204 }))
     vi.spyOn(window, 'open').mockImplementation(() => null)
     window.localStorage.setItem('auth_token', 'token-1')
+    isLocalTerminalAvailableMock.mockReturnValue(true)
+    getLocalExecutorDeviceIdMock.mockResolvedValue('device-1')
+    localPathExistsMock.mockResolvedValue(true)
+    startLocalTerminalMock.mockResolvedValue('local-terminal-1')
+    closeLocalTerminalMock.mockResolvedValue(undefined)
     let terminalSessionCount = 0
     createProjectApiMock.mockReturnValue({
       startTerminalSession: vi.fn().mockImplementation(async () => {
@@ -133,7 +164,7 @@ describe('WorkspacePanelCards', () => {
     const api = createProjectApiMock()
     render(<WorkspacePanelCards currentProject={project} devices={cloudDevices} />)
 
-    await userEvent.click(screen.getByTestId('workspace-terminal-card'))
+    await userEvent.click(await screen.findByTestId('workspace-terminal-card'))
 
     await waitFor(() => expect(api.startTerminalSession).toHaveBeenCalledWith(7))
     expect(screen.getByTestId('workspace-terminal-frame')).toHaveAttribute(
@@ -151,7 +182,7 @@ describe('WorkspacePanelCards', () => {
     const api = createProjectApiMock()
     render(<WorkspacePanelCards currentProject={project} devices={cloudDevices} />)
 
-    await userEvent.click(screen.getByTestId('workspace-terminal-card'))
+    await userEvent.click(await screen.findByTestId('workspace-terminal-card'))
     await waitFor(() =>
       expect(screen.getByTestId('workspace-terminal-frame')).toHaveAttribute(
         'src',
@@ -172,7 +203,7 @@ describe('WorkspacePanelCards', () => {
     expect(screen.getByTestId('workspace-desktop-card')).toBeInTheDocument()
     expect(api.startTerminalSession).toHaveBeenCalledTimes(1)
 
-    await userEvent.click(screen.getByTestId('workspace-terminal-card'))
+    await userEvent.click(await screen.findByTestId('workspace-terminal-card'))
 
     await waitFor(() => expect(api.startTerminalSession).toHaveBeenCalledTimes(2))
     expect(screen.getAllByTestId('workspace-terminal-tab')).toHaveLength(2)
@@ -243,7 +274,32 @@ describe('WorkspacePanelCards', () => {
     expect(onRequestClose).toHaveBeenCalledTimes(1)
   })
 
-  test('does not show cloud-only project tools for local devices', () => {
+  test('launches the native terminal for local project devices without cloud-only tools', async () => {
+    const api = createProjectApiMock()
+    render(<WorkspacePanelCards currentProject={project} devices={localDevices} />)
+
+    await userEvent.click(await screen.findByTestId('workspace-terminal-card'))
+
+    await waitFor(() =>
+      expect(startLocalTerminalMock).toHaveBeenCalledWith({
+        cwd: '/workspace/projects/project38',
+      })
+    )
+    expect(getLocalExecutorDeviceIdMock).toHaveBeenCalledWith('/api')
+    expect(screen.getByTestId('embedded-local-terminal')).toHaveAttribute(
+      'data-session-id',
+      'local-terminal-1'
+    )
+    expect(api.startTerminalSession).not.toHaveBeenCalled()
+    expect(window.open).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('workspace-ide-card')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('workspace-desktop-card')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('workspace-local-device-limited-tools')).not.toBeInTheDocument()
+  })
+
+  test('keeps local project tools hidden outside the WeWork macOS app', () => {
+    isLocalTerminalAvailableMock.mockReturnValue(false)
+
     render(<WorkspacePanelCards currentProject={project} devices={localDevices} />)
 
     expect(screen.queryByTestId('workspace-terminal-card')).not.toBeInTheDocument()
@@ -252,6 +308,36 @@ describe('WorkspacePanelCards', () => {
     expect(screen.getByTestId('workspace-local-device-limited-tools')).toHaveTextContent(
       'workbench.local_device_limited_tools_title'
     )
+  })
+
+  test('launches the native terminal when the executor id differs but the local path exists', async () => {
+    getLocalExecutorDeviceIdMock.mockResolvedValue('another-device')
+
+    render(<WorkspacePanelCards currentProject={project} devices={localDevices} />)
+
+    await userEvent.click(await screen.findByTestId('workspace-terminal-card'))
+
+    await waitFor(() =>
+      expect(startLocalTerminalMock).toHaveBeenCalledWith({
+        cwd: '/workspace/projects/project38',
+      })
+    )
+    expect(screen.getByTestId('embedded-local-terminal')).toHaveAttribute(
+      'data-session-id',
+      'local-terminal-1'
+    )
+    expect(screen.queryByTestId('workspace-local-device-limited-tools')).not.toBeInTheDocument()
+  })
+
+  test('keeps local project tools hidden when neither executor id nor local path matches', async () => {
+    getLocalExecutorDeviceIdMock.mockResolvedValue('another-device')
+    localPathExistsMock.mockResolvedValue(false)
+
+    render(<WorkspacePanelCards currentProject={project} devices={localDevices} />)
+
+    expect(await screen.findByTestId('workspace-local-device-limited-tools')).toBeInTheDocument()
+    expect(screen.queryByTestId('workspace-terminal-card')).not.toBeInTheDocument()
+    expect(startLocalTerminalMock).not.toHaveBeenCalled()
   })
 
   test('does not show ClaudeCode-only project tools for OpenClaw devices', () => {

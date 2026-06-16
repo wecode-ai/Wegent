@@ -42,7 +42,9 @@ import {
   supportsCloudLifecycleActions,
   supportsCloudSessions,
   supportsDeviceMetrics,
+  supportsLocalTerminalLaunch,
 } from '@/lib/device-capabilities'
+import { getLocalExecutorDeviceId, isLocalTerminalAvailable } from '@/lib/local-terminal'
 import type { ArchivedTask } from '@/types/api'
 import type { CloudDeviceMetricsResponse, DeviceInfo } from '@/types/devices'
 import { AppearanceSettingsPage } from '@/features/appearance/AppearanceSettingsPage'
@@ -513,13 +515,58 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
   const [saving, setSaving] = useState(false)
   const [restarting, setRestarting] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [localExecutorDeviceId, setLocalExecutorDeviceId] = useState<string | null>(null)
   const [actionMenuOpen, setActionMenuOpen] = useState(false)
   const [confirmAction, setConfirmAction] = useState<ConfirmDeviceAction | null>(null)
   const [connectionInfoOpen, setConnectionInfoOpen] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const actionMenuRef = useRef<HTMLDivElement>(null)
 
-  const handleStartSession = useCallback(
+  const handleStartTerminal = useCallback(async () => {
+    if (device.status !== 'online') return
+    setSessionLoading('terminal')
+    try {
+      if (supportsLocalTerminalLaunch(device)) {
+        await createSettingsDeviceApi().openLocalTerminal(device.device_id)
+        return
+      }
+
+      const result = await createSettingsDeviceApi().startTerminal(device.device_id)
+      if (result.url) {
+        window.open(result.url, '_blank', 'noopener')
+      }
+    } catch (e) {
+      console.error('Failed to start terminal:', e)
+    } finally {
+      setSessionLoading(null)
+    }
+  }, [device])
+
+  useEffect(() => {
+    if (!supportsLocalTerminalLaunch(device) || !isLocalTerminalAvailable()) {
+      return
+    }
+
+    let cancelled = false
+    const { apiBaseUrl } = getRuntimeConfig()
+    getLocalExecutorDeviceId(apiBaseUrl)
+      .then(deviceId => {
+        if (!cancelled) {
+          setLocalExecutorDeviceId(deviceId)
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setLocalExecutorDeviceId(null)
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [device])
+
+  const handleStartCloudSession = useCallback(
     async (type: 'terminal' | 'code-server') => {
       if (device.status !== 'online') return
       setSessionLoading(type)
@@ -636,7 +683,12 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
 
   const isOnline = device.status === 'online'
   const isCloud = isCloudDevice(device)
+  const canLaunchLocalTerminal =
+    supportsLocalTerminalLaunch(device) &&
+    isLocalTerminalAvailable() &&
+    localExecutorDeviceId === device.device_id
   const canUseCloudSessions = supportsCloudSessions(device)
+  const canUseTerminal = canUseCloudSessions || canLaunchLocalTerminal
   const canUseCloudLifecycleActions = supportsCloudLifecycleActions(device)
   const canDeleteOfflineLocalDevice = !isCloud && device.status === 'offline'
 
@@ -703,20 +755,22 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
           </div>
 
           <div className="flex shrink-0 gap-2">
+            {canUseTerminal && (
+              <DeviceActionButton
+                testId={`connection-terminal-button-${device.device_id}`}
+                icon={Terminal}
+                label="终端"
+                onClick={handleStartTerminal}
+                disabled={!isOnline || sessionLoading === 'terminal'}
+              />
+            )}
             {canUseCloudSessions && (
               <>
-                <DeviceActionButton
-                  testId={`connection-terminal-button-${device.device_id}`}
-                  icon={Terminal}
-                  label="终端"
-                  onClick={() => handleStartSession('terminal')}
-                  disabled={!isOnline || sessionLoading === 'terminal'}
-                />
                 <DeviceActionButton
                   testId={`connection-code-server-button-${device.device_id}`}
                   icon={Code2}
                   label="IDE"
-                  onClick={() => handleStartSession('code-server')}
+                  onClick={() => handleStartCloudSession('code-server')}
                   disabled={!isOnline || sessionLoading === 'code-server'}
                 />
                 <VncDesktopButton deviceId={device.device_id} />

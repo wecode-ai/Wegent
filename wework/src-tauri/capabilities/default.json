@@ -7,6 +7,8 @@
     "core:default",
     "core:window:allow-start-dragging",
     "opener:allow-open-url",
-    "opener:allow-default-urls"
+    "opener:allow-default-urls",
+    "updater:default",
+    "process:allow-restart"
   ]
 }

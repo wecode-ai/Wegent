@@ -281,13 +281,7 @@ function ConfirmRevertDialog({
           </button>
         </div>
         <div className="mt-6 flex justify-end gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            className="text-primary-contrast hover:text-primary-contrast"
-            onClick={onClose}
-            disabled={submitting}
-          >
+          <Button type="button" variant="primary" onClick={onClose} disabled={submitting}>
             {t('file_changes.cancel')}
           </Button>
           <Button
