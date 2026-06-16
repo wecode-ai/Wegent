@@ -258,9 +258,17 @@ async def process_response(
                                 from executor.agents.claude_code.session_manager import (
                                     SessionManager,
                                 )
+                                from executor.modes.local.capabilities import (
+                                    get_project_capability_revision,
+                                )
 
                                 SessionManager.save_session_id(
-                                    task_id, msg.session_id, bot_id
+                                    task_id,
+                                    msg.session_id,
+                                    bot_id,
+                                    capability_revision=get_project_capability_revision(
+                                        state_manager.task_data
+                                    ),
                                 )
                             except Exception as save_error:
                                 logger.warning(
@@ -390,9 +398,19 @@ def _handle_system_message(msg: SystemMessage, state_manager, thinking_manager=N
         if task_id:
             try:
                 from executor.agents.claude_code.session_manager import SessionManager
+                from executor.modes.local.capabilities import (
+                    get_project_capability_revision,
+                )
 
                 claude_session_id = msg.data["session_id"]
-                SessionManager.save_session_id(task_id, claude_session_id, bot_id)
+                SessionManager.save_session_id(
+                    task_id,
+                    claude_session_id,
+                    bot_id,
+                    capability_revision=get_project_capability_revision(
+                        state_manager.task_data
+                    ),
+                )
                 logger.info(
                     f"Saved Claude session_id {claude_session_id} from init message for task {task_id} (bot_id={bot_id})"
                 )

@@ -165,10 +165,90 @@ class TestExtractClaudeOptionsWithMcp:
             "http://10.185.16.187:8121/mcp"
         )
 
-    def test_global_streamable_http_mcp_is_normalized_for_claude_sdk(
+    def test_project_task_omits_bot_and_subscription_mcp_servers(self):
+        """Wework project tasks rely on global config, not task-level MCP."""
+        task_data = ExecutionRequest(
+            task_id=1,
+            project_id=123,
+            is_subscription=True,
+            bot=[
+                {
+                    "mcp_servers": [
+                        {
+                            "name": "skill-server",
+                            "type": "http",
+                            "url": "http://skill.example.com/mcp",
+                        }
+                    ],
+                }
+            ],
+        )
+
+        options = extract_claude_options(task_data)
+
+        assert "mcp_servers" not in options
+
+    def test_project_coordinate_task_omits_member_bot_mcp_servers(self):
+        """Project tasks should not preserve member bot MCP servers either."""
+        task_data = ExecutionRequest(
+            task_id=1,
+            project_id=123,
+            mode="coordinate",
+            bot=[
+                {
+                    "name": "leader",
+                    "mcp_servers": [
+                        {
+                            "name": "leader-server",
+                            "type": "http",
+                            "url": "http://leader.example.com/mcp",
+                        }
+                    ],
+                },
+                {
+                    "name": "member",
+                    "mcp_servers": [
+                        {
+                            "name": "member-server",
+                            "type": "http",
+                            "url": "http://member.example.com/mcp",
+                        }
+                    ],
+                },
+            ],
+        )
+
+        options = extract_claude_options(task_data)
+
+        assert "mcp_servers" not in options
+
+    def test_standalone_chat_workspace_omits_bot_mcp_servers(self):
+        """Standalone workspace tasks use global config, not task-level MCP."""
+        task_data = ExecutionRequest(
+            task_id=1,
+            project_id=0,
+            standalone_chat_workspace=True,
+            bot=[
+                {
+                    "mcp_servers": [
+                        {
+                            "name": "bot-server",
+                            "type": "http",
+                            "url": "http://bot.example.com/mcp",
+                        }
+                    ],
+                }
+            ],
+        )
+
+        options = extract_claude_options(task_data)
+
+        assert "mcp_servers" not in options
+
+    def test_global_manifest_mcp_is_not_injected_for_claude_sdk(
         self, tmp_path, monkeypatch
     ):
-        """Installed MCPs use provider type names but Claude SDK expects http."""
+        """Synced MCPs are read from Claude Code global config, not task options."""
         monkeypatch.setenv("HOME", str(tmp_path))
         manifest_path = tmp_path / ".wegent-executor" / "capabilities" / "manifest.json"
         manifest_path.parent.mkdir(parents=True)
@@ -199,8 +279,4 @@ class TestExtractClaudeOptionsWithMcp:
 
         options = extract_claude_options(task_data)
 
-        assert options["mcp_servers"]["docs"] == {
-            "type": "http",
-            "url": "https://mcp.example.com/docs",
-            "headers": {"Authorization": "Bearer test"},
-        }
+        assert "mcp_servers" not in options

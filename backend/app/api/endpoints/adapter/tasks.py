@@ -63,6 +63,7 @@ from app.services.adapters.task_kinds import task_kinds_service
 from app.services.adapters.wework_conversation_search import (
     search_wework_conversation_tasks,
 )
+from app.services.chat.access import get_active_streaming
 from app.services.chat.storage import session_manager
 from app.services.remote_workspace_service import remote_workspace_service
 from app.services.shared_task import shared_task_service
@@ -353,18 +354,19 @@ async def get_task_runtime_check(
     )
 
     active_stream = None
-    streaming_status = await session_manager.get_task_streaming_status(task_id)
+    streaming_status = await get_active_streaming(task_id)
     if streaming_status:
         raw_subtask_id = streaming_status.get("subtask_id")
         subtask_id = int(raw_subtask_id) if raw_subtask_id is not None else None
         if subtask_id is not None:
             cached_content = await session_manager.get_streaming_content(subtask_id)
+            raw_last_activity_at = streaming_status.get("last_activity_at")
             active_stream = TaskRuntimeActiveStream(
                 subtask_id=subtask_id,
                 cursor=len(cached_content or ""),
                 last_activity_at=(
-                    datetime.fromisoformat(streaming_status["last_activity_at"])
-                    if streaming_status.get("last_activity_at")
+                    datetime.fromisoformat(raw_last_activity_at)
+                    if raw_last_activity_at
                     else None
                 ),
             )

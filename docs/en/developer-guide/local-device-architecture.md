@@ -196,11 +196,13 @@ Backend can send desired global capability state to an online local device throu
 
 - `skills`: backend-resolved `InstalledSkill` / `Skill` entries, downloaded by the executor into `~/.claude/skills`
 - `plugins`: backend-resolved `InstalledPlugin` entries, written by the executor into `~/.claude/plugins/installed_plugins.json`
-- `mcps`: backend-resolved `InstalledMCP` entries, written into the Wegent-managed manifest
+- `mcps`: backend-resolved `InstalledMCP` entries, written into the Wegent-managed manifest and synced into Claude Code `~/.claude.json` and Codex `~/.codex/config.toml`
 
 In `replace` mode, the executor only removes capabilities marked as `managed` in the Wegent manifest and missing from the desired state. Plugins installed directly by the user on the local machine are not removed by a Wegent sync.
 
-When a project task runs through the local executor, its task-level `CLAUDE_CONFIG_DIR` exposes both global `skills` and `plugins` directories and inherits non-sensitive plugin settings such as `enabledPlugins` and `extraKnownMarketplaces` from the local `~/.claude/settings.json`. This lets Claude Code load global Skills and Skills provided by Plugins. Sensitive model and token configuration is still injected through runtime environment variables and is not copied from global settings into the task directory.
+When a project task runs through the local executor, including a new conversation workspace task with `standalone_chat_workspace=true`, its task-level `CLAUDE_CONFIG_DIR` exposes both global `skills` and `plugins` directories and inherits non-sensitive plugin settings such as `enabledPlugins` and `extraKnownMarketplaces` from the local `~/.claude/settings.json`. This lets Claude Code load global Skills and Skills provided by Plugins. Claude Code and Codex read MCP servers from their respective global config files instead of receiving bot/skill MCP definitions through per-task parameters. Sensitive model and token configuration is still injected through runtime environment variables and is not copied from global settings into the task directory.
+
+Project tasks persist the current `capabilities.revision` alongside Claude session IDs and Codex thread IDs. If global capability sync changes the revision, the next execution discards the old session/thread and starts a new one so Claude Code and Codex reload the latest global MCP configuration at startup.
 
 ---
 

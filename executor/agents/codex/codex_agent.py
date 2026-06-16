@@ -273,10 +273,14 @@ class CodeXAgent(Agent):
 
     async def _open_thread(self) -> None:
         assert self.codex_config is not None
+        from executor.modes.local.capabilities import get_project_capability_revision
+
+        capability_revision = get_project_capability_revision(self.task_data)
         thread_id = self._session_store.load(
             self.task_id,
             self._bot_id,
             self.new_session,
+            capability_revision=capability_revision,
         )
         developer_instructions = self._build_developer_instructions()
         thread_kwargs = self._build_thread_kwargs(developer_instructions)
@@ -301,7 +305,12 @@ class CodeXAgent(Agent):
                 **thread_kwargs,
                 service_name="wegent",
             )
-        self._session_store.save(self.task_id, self._bot_id, self._thread.id)
+        self._session_store.save(
+            self.task_id,
+            self._bot_id,
+            self._thread.id,
+            capability_revision=capability_revision,
+        )
 
     def _build_thread_kwargs(self, developer_instructions: str) -> dict[str, Any]:
         from openai_codex import ApprovalMode
