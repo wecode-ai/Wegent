@@ -3,6 +3,13 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { createDeviceApi } from '@/api/devices'
 import { createProjectApi } from '@/api/projects'
+import {
+  closeLocalTerminal,
+  getLocalExecutorDeviceId,
+  isLocalTerminalAvailable,
+  localPathExists,
+  startLocalTerminal,
+} from '@/lib/local-terminal'
 import { WorkspacePanelCards } from './WorkspacePanelCards'
 import type { DeviceInfo } from '@/types/api'
 
@@ -30,8 +37,27 @@ vi.mock('@/api/devices', () => ({
   createDeviceApi: vi.fn(),
 }))
 
+vi.mock('@/lib/local-terminal', () => ({
+  closeLocalTerminal: vi.fn(),
+  getLocalExecutorDeviceId: vi.fn(),
+  isLocalTerminalAvailable: vi.fn(),
+  localPathExists: vi.fn(),
+  startLocalTerminal: vi.fn(),
+}))
+
+vi.mock('./EmbeddedLocalTerminal', () => ({
+  EmbeddedLocalTerminal: ({ active, sessionId }: { active: boolean; sessionId: string }) => (
+    <div data-testid="embedded-local-terminal" data-session-id={sessionId} hidden={!active} />
+  ),
+}))
+
 const createDeviceApiMock = vi.mocked(createDeviceApi)
 const createProjectApiMock = vi.mocked(createProjectApi)
+const closeLocalTerminalMock = vi.mocked(closeLocalTerminal)
+const getLocalExecutorDeviceIdMock = vi.mocked(getLocalExecutorDeviceId)
+const isLocalTerminalAvailableMock = vi.mocked(isLocalTerminalAvailable)
+const localPathExistsMock = vi.mocked(localPathExists)
+const startLocalTerminalMock = vi.mocked(startLocalTerminal)
 const getVncConfigMock = vi.fn()
 const fetchMock = vi.fn()
 
@@ -94,6 +120,11 @@ describe('WorkspacePanelCards', () => {
     fetchMock.mockResolvedValue(new Response(null, { status: 204 }))
     vi.spyOn(window, 'open').mockImplementation(() => null)
     window.localStorage.setItem('auth_token', 'token-1')
+    isLocalTerminalAvailableMock.mockReturnValue(true)
+    getLocalExecutorDeviceIdMock.mockResolvedValue('device-1')
+    localPathExistsMock.mockResolvedValue(true)
+    startLocalTerminalMock.mockResolvedValue('local-terminal-1')
+    closeLocalTerminalMock.mockResolvedValue(undefined)
     let terminalSessionCount = 0
     createProjectApiMock.mockReturnValue({
       startTerminalSession: vi.fn().mockImplementation(async () => {
@@ -133,21 +164,15 @@ describe('WorkspacePanelCards', () => {
     const api = createProjectApiMock()
     render(<WorkspacePanelCards currentProject={project} devices={cloudDevices} />)
 
-    await userEvent.click(screen.getByTestId('workspace-terminal-card'))
+    await userEvent.click(await screen.findByTestId('workspace-terminal-card'))
 
-    await waitFor(() =>
-      expect(api.startTerminalSession).toHaveBeenCalledWith(7),
-    )
+    await waitFor(() => expect(api.startTerminalSession).toHaveBeenCalledWith(7))
     expect(screen.getByTestId('workspace-terminal-frame')).toHaveAttribute(
       'src',
-      'http://localhost/terminal-1',
+      'http://localhost/terminal-1'
     )
-    expect(screen.getByTestId('workspace-terminal-window')).toHaveClass(
-      'bg-white',
-    )
-    expect(screen.getByTestId('workspace-terminal-tab')).toHaveTextContent(
-      'project38',
-    )
+    expect(screen.getByTestId('workspace-terminal-window')).toHaveClass('bg-white')
+    expect(screen.getByTestId('workspace-terminal-tab')).toHaveTextContent('project38')
     expect(screen.getByTestId('workspace-terminal-new-tab-button')).toBeInTheDocument()
     expect(screen.getByTestId('workspace-terminal-close-button')).toBeInTheDocument()
     expect(screen.queryByText('/workspace/projects/project38')).not.toBeInTheDocument()
@@ -157,12 +182,12 @@ describe('WorkspacePanelCards', () => {
     const api = createProjectApiMock()
     render(<WorkspacePanelCards currentProject={project} devices={cloudDevices} />)
 
-    await userEvent.click(screen.getByTestId('workspace-terminal-card'))
+    await userEvent.click(await screen.findByTestId('workspace-terminal-card'))
     await waitFor(() =>
       expect(screen.getByTestId('workspace-terminal-frame')).toHaveAttribute(
         'src',
-        'http://localhost/terminal-1',
-      ),
+        'http://localhost/terminal-1'
+      )
     )
 
     await userEvent.click(screen.getByTestId('workspace-terminal-new-tab-button'))
@@ -170,7 +195,7 @@ describe('WorkspacePanelCards', () => {
     expect(screen.getByTestId('workspace-terminal-window')).not.toHaveAttribute('hidden')
     expect(screen.getByTestId('workspace-terminal-frame')).toHaveAttribute(
       'src',
-      'http://localhost/terminal-1',
+      'http://localhost/terminal-1'
     )
     expect(screen.getByTestId('workspace-tool-launcher')).toBeInTheDocument()
     expect(screen.getByTestId('workspace-terminal-card')).toBeInTheDocument()
@@ -178,24 +203,16 @@ describe('WorkspacePanelCards', () => {
     expect(screen.getByTestId('workspace-desktop-card')).toBeInTheDocument()
     expect(api.startTerminalSession).toHaveBeenCalledTimes(1)
 
-    await userEvent.click(screen.getByTestId('workspace-terminal-card'))
+    await userEvent.click(await screen.findByTestId('workspace-terminal-card'))
 
-    await waitFor(() =>
-      expect(api.startTerminalSession).toHaveBeenCalledTimes(2),
-    )
+    await waitFor(() => expect(api.startTerminalSession).toHaveBeenCalledTimes(2))
     expect(screen.getAllByTestId('workspace-terminal-tab')).toHaveLength(2)
     expect(screen.getAllByTestId('workspace-terminal-close-button')).toHaveLength(2)
     const frames = screen.getAllByTestId('workspace-terminal-frame')
     expect(frames).toHaveLength(2)
-    expect(frames[0]).toHaveAttribute(
-      'src',
-      'http://localhost/terminal-1',
-    )
+    expect(frames[0]).toHaveAttribute('src', 'http://localhost/terminal-1')
     expect(frames[0]).toHaveAttribute('hidden')
-    expect(frames[1]).toHaveAttribute(
-      'src',
-      'http://localhost/terminal-2',
-    )
+    expect(frames[1]).toHaveAttribute('src', 'http://localhost/terminal-2')
     expect(frames[1]).not.toHaveAttribute('hidden')
 
     await userEvent.click(screen.getAllByTestId('workspace-terminal-close-button')[1])
@@ -203,7 +220,7 @@ describe('WorkspacePanelCards', () => {
     expect(screen.getAllByTestId('workspace-terminal-tab')).toHaveLength(1)
     expect(screen.getByTestId('workspace-terminal-frame')).toHaveAttribute(
       'src',
-      'http://localhost/terminal-1',
+      'http://localhost/terminal-1'
     )
     expect(screen.getByTestId('workspace-terminal-frame')).not.toHaveAttribute('hidden')
   })
@@ -216,20 +233,14 @@ describe('WorkspacePanelCards', () => {
         currentProject={project}
         devices={cloudDevices}
         onRequestClose={onRequestClose}
-      />,
+      />
     )
 
     await userEvent.click(screen.getByTestId('workspace-ide-card'))
 
-    await waitFor(() =>
-      expect(api.startCodeServerSession).toHaveBeenCalledWith(7),
-    )
+    await waitFor(() => expect(api.startCodeServerSession).toHaveBeenCalledWith(7))
     expect(fetchMock).not.toHaveBeenCalled()
-    expect(window.open).toHaveBeenCalledWith(
-      'http://localhost/ide',
-      '_blank',
-      'noopener',
-    )
+    expect(window.open).toHaveBeenCalledWith('http://localhost/ide', '_blank', 'noopener')
     expect(onRequestClose).toHaveBeenCalledTimes(1)
   })
 
@@ -240,36 +251,87 @@ describe('WorkspacePanelCards', () => {
         currentProject={project}
         devices={cloudDevices}
         onRequestClose={onRequestClose}
-      />,
+      />
     )
 
     await userEvent.click(screen.getByTestId('workspace-desktop-card'))
 
-    await waitFor(() =>
-      expect(getVncConfigMock).toHaveBeenCalledWith('device-1'),
-    )
+    await waitFor(() => expect(getVncConfigMock).toHaveBeenCalledWith('device-1'))
     expect(window.open).toHaveBeenCalledWith(
       expect.stringContaining('/vnc.html?wsUrl='),
       '_blank',
-      'noopener',
+      'noopener'
     )
     expect(window.open).toHaveBeenCalledWith(
       expect.stringContaining('sandboxId=sandbox-1'),
       '_blank',
-      'noopener',
+      'noopener'
     )
     expect(onRequestClose).toHaveBeenCalledTimes(1)
   })
 
-  test('does not show cloud-only project tools for local devices', () => {
+  test('launches the native terminal for local project devices without cloud-only tools', async () => {
+    const api = createProjectApiMock()
+    render(<WorkspacePanelCards currentProject={project} devices={localDevices} />)
+
+    await userEvent.click(await screen.findByTestId('workspace-terminal-card'))
+
+    await waitFor(() =>
+      expect(startLocalTerminalMock).toHaveBeenCalledWith({
+        cwd: '/workspace/projects/project38',
+      })
+    )
+    expect(getLocalExecutorDeviceIdMock).toHaveBeenCalledWith('/api')
+    expect(screen.getByTestId('embedded-local-terminal')).toHaveAttribute(
+      'data-session-id',
+      'local-terminal-1'
+    )
+    expect(api.startTerminalSession).not.toHaveBeenCalled()
+    expect(window.open).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('workspace-ide-card')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('workspace-desktop-card')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('workspace-local-device-limited-tools')).not.toBeInTheDocument()
+  })
+
+  test('keeps local project tools hidden outside the WeWork macOS app', () => {
+    isLocalTerminalAvailableMock.mockReturnValue(false)
+
     render(<WorkspacePanelCards currentProject={project} devices={localDevices} />)
 
     expect(screen.queryByTestId('workspace-terminal-card')).not.toBeInTheDocument()
     expect(screen.queryByTestId('workspace-ide-card')).not.toBeInTheDocument()
     expect(screen.queryByTestId('workspace-desktop-card')).not.toBeInTheDocument()
-    expect(screen.getByTestId('workspace-local-device-limited-tools')).toHaveTextContent(
-      'workbench.local_device_limited_tools_title',
+    expect(screen.getByTestId('workspace-local-device-limited-tools')).toBeInTheDocument()
+  })
+
+  test('launches the native terminal when the executor id differs but the local path exists', async () => {
+    getLocalExecutorDeviceIdMock.mockResolvedValue('another-device')
+
+    render(<WorkspacePanelCards currentProject={project} devices={localDevices} />)
+
+    await userEvent.click(await screen.findByTestId('workspace-terminal-card'))
+
+    await waitFor(() =>
+      expect(startLocalTerminalMock).toHaveBeenCalledWith({
+        cwd: '/workspace/projects/project38',
+      })
     )
+    expect(screen.getByTestId('embedded-local-terminal')).toHaveAttribute(
+      'data-session-id',
+      'local-terminal-1'
+    )
+    expect(screen.queryByTestId('workspace-local-device-limited-tools')).not.toBeInTheDocument()
+  })
+
+  test('keeps local project tools hidden when neither executor id nor local path matches', async () => {
+    getLocalExecutorDeviceIdMock.mockResolvedValue('another-device')
+    localPathExistsMock.mockResolvedValue(false)
+
+    render(<WorkspacePanelCards currentProject={project} devices={localDevices} />)
+
+    expect(await screen.findByTestId('workspace-local-device-limited-tools')).toBeInTheDocument()
+    expect(screen.queryByTestId('workspace-terminal-card')).not.toBeInTheDocument()
+    expect(startLocalTerminalMock).not.toHaveBeenCalled()
   })
 
   test('does not show ClaudeCode-only project tools for OpenClaw devices', () => {
@@ -292,16 +354,12 @@ describe('WorkspacePanelCards', () => {
 
   test('marks terminal as unavailable when session probing fails', async () => {
     const api = createProjectApiMock()
-    vi.mocked(api.startTerminalSession).mockRejectedValueOnce(
-      new Error('terminal unavailable'),
-    )
+    vi.mocked(api.startTerminalSession).mockRejectedValueOnce(new Error('terminal unavailable'))
     render(<WorkspacePanelCards currentProject={project} devices={cloudDevices} />)
 
     await userEvent.click(screen.getByTestId('workspace-terminal-card'))
 
-    await waitFor(() =>
-      expect(screen.getByTestId('workspace-terminal-card')).toBeDisabled(),
-    )
+    await waitFor(() => expect(screen.getByTestId('workspace-terminal-card')).toBeDisabled())
     expect(screen.getByTestId('workspace-terminal-card')).toHaveTextContent('暂不可用')
 
     await userEvent.click(screen.getByTestId('workspace-terminal-card'))
@@ -318,16 +376,10 @@ describe('WorkspacePanelCards', () => {
 
     await userEvent.click(screen.getByTestId('workspace-ide-card'))
 
-    await waitFor(() =>
-      expect(api.startCodeServerSession).toHaveBeenCalledWith(7),
-    )
+    await waitFor(() => expect(api.startCodeServerSession).toHaveBeenCalledWith(7))
     expect(fetchMock).not.toHaveBeenCalled()
     expect(api.startCodeServerSession).toHaveBeenCalledTimes(1)
-    expect(window.open).toHaveBeenCalledWith(
-      'http://localhost/ide',
-      '_blank',
-      'noopener',
-    )
+    expect(window.open).toHaveBeenCalledWith('http://localhost/ide', '_blank', 'noopener')
   })
 
   test('marks IDE as unavailable when the returned session URL is missing', async () => {
@@ -344,9 +396,7 @@ describe('WorkspacePanelCards', () => {
 
     await userEvent.click(screen.getByTestId('workspace-ide-card'))
 
-    await waitFor(() =>
-      expect(screen.getByTestId('workspace-ide-card')).toBeDisabled(),
-    )
+    await waitFor(() => expect(screen.getByTestId('workspace-ide-card')).toBeDisabled())
     expect(window.open).not.toHaveBeenCalled()
     expect(api.startCodeServerSession).toHaveBeenCalledTimes(1)
     expect(screen.getByRole('alert')).toHaveTextContent('启动失败')
@@ -358,9 +408,7 @@ describe('WorkspacePanelCards', () => {
 
     await userEvent.click(screen.getByTestId('workspace-desktop-card'))
 
-    await waitFor(() =>
-      expect(screen.getByTestId('workspace-desktop-card')).toBeDisabled(),
-    )
+    await waitFor(() => expect(screen.getByTestId('workspace-desktop-card')).toBeDisabled())
     expect(screen.getByTestId('workspace-desktop-card')).toHaveTextContent('暂不可用')
     expect(window.open).not.toHaveBeenCalled()
 
@@ -373,29 +421,23 @@ describe('WorkspacePanelCards', () => {
 
   test('resets unavailable tools when the project changes', async () => {
     const api = createProjectApiMock()
-    vi.mocked(api.startTerminalSession).mockRejectedValueOnce(
-      new Error('terminal unavailable'),
-    )
+    vi.mocked(api.startTerminalSession).mockRejectedValueOnce(new Error('terminal unavailable'))
     const nextProject = {
       ...project,
       id: 8,
       name: 'project39',
     }
     const { rerender } = render(
-      <WorkspacePanelCards currentProject={project} devices={cloudDevices} />,
+      <WorkspacePanelCards currentProject={project} devices={cloudDevices} />
     )
 
     await userEvent.click(screen.getByTestId('workspace-terminal-card'))
 
-    await waitFor(() =>
-      expect(screen.getByTestId('workspace-terminal-card')).toBeDisabled(),
-    )
+    await waitFor(() => expect(screen.getByTestId('workspace-terminal-card')).toBeDisabled())
 
     rerender(<WorkspacePanelCards currentProject={nextProject} devices={cloudDevices} />)
 
     expect(screen.getByTestId('workspace-terminal-card')).not.toBeDisabled()
-    expect(screen.getByTestId('workspace-terminal-card')).not.toHaveTextContent(
-      '暂不可用',
-    )
+    expect(screen.getByTestId('workspace-terminal-card')).not.toHaveTextContent('暂不可用')
   })
 })
