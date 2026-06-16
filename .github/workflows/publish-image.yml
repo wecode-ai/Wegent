@@ -460,18 +460,29 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push standalone image (amd64)
+      - name: Build standalone image for verification (amd64)
         uses: docker/build-push-action@v5
         with:
           context: .
           file: docker/standalone/Dockerfile
-          push: true
+          load: true
           platforms: linux/amd64
           tags: ${{ env.IMAGE_PREFIX }}/wegent-standalone:${{ needs.prepare-release.outputs.new_version }}-amd64
           cache-from: type=gha,scope=standalone-amd64
           cache-to: type=gha,mode=max,scope=standalone-amd64
           build-args: |
             APP_VERSION=${{ needs.prepare-release.outputs.new_version }}
+
+      - name: Verify standalone image startup (amd64)
+        env:
+          IMAGE: ${{ env.IMAGE_PREFIX }}/wegent-standalone:${{ needs.prepare-release.outputs.new_version }}-amd64
+          CONTAINER_NAME: wegent-standalone-verify-amd64
+        run: bash scripts/verify-standalone-image.sh "$IMAGE"
+
+      - name: Push verified standalone image (amd64)
+        env:
+          IMAGE: ${{ env.IMAGE_PREFIX }}/wegent-standalone:${{ needs.prepare-release.outputs.new_version }}-amd64
+        run: docker push "$IMAGE"
 
   build-standalone-arm64:
     needs: prepare-release
@@ -494,18 +505,29 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push standalone image (arm64)
+      - name: Build standalone image for verification (arm64)
         uses: docker/build-push-action@v5
         with:
           context: .
           file: docker/standalone/Dockerfile
-          push: true
+          load: true
           platforms: linux/arm64
           tags: ${{ env.IMAGE_PREFIX }}/wegent-standalone:${{ needs.prepare-release.outputs.new_version }}-arm64
           cache-from: type=gha,scope=standalone-arm64
           cache-to: type=gha,mode=max,scope=standalone-arm64
           build-args: |
             APP_VERSION=${{ needs.prepare-release.outputs.new_version }}
+
+      - name: Verify standalone image startup (arm64)
+        env:
+          IMAGE: ${{ env.IMAGE_PREFIX }}/wegent-standalone:${{ needs.prepare-release.outputs.new_version }}-arm64
+          CONTAINER_NAME: wegent-standalone-verify-arm64
+        run: bash scripts/verify-standalone-image.sh "$IMAGE"
+
+      - name: Push verified standalone image (arm64)
+        env:
+          IMAGE: ${{ env.IMAGE_PREFIX }}/wegent-standalone:${{ needs.prepare-release.outputs.new_version }}-arm64
+        run: docker push "$IMAGE"
 
   # ============================================================================
   # Executor Local Binary Build (macOS)
