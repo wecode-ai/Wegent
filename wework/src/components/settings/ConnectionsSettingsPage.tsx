@@ -30,6 +30,7 @@ import { createDeviceApi } from '@/api/devices'
 import { createHttpClient } from '@/api/http'
 import { getRuntimeConfig, stripAppBasePath } from '@/config/runtime'
 import { useTranslation } from '@/hooks/useTranslation'
+import { openExternalUrl } from '@/lib/external-links'
 import { navigateTo } from '@/lib/navigation'
 import { cn } from '@/lib/utils'
 import { DesktopTopBar } from '@/components/layout/DesktopTopBar'
@@ -281,7 +282,7 @@ function VncDesktopButton({ deviceId }: { deviceId: string }) {
     setLoading(true)
     try {
       const config = await createSettingsDeviceApi().getVncConfig(deviceId)
-      window.open(buildVncPageUrl(deviceId, config.sandbox_id), '_blank', 'noopener')
+      await openExternalUrl(buildVncPageUrl(deviceId, config.sandbox_id))
     } catch (e) {
       console.error('Failed to open device desktop:', e)
     } finally {
@@ -531,7 +532,7 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
             ? await deviceApi.startTerminal(device.device_id)
             : await deviceApi.startCodeServer(device.device_id)
         if (result.url) {
-          window.open(result.url, '_blank', 'noopener')
+          await openExternalUrl(result.url)
         }
       } catch (e) {
         console.error(`Failed to start ${type}:`, e)

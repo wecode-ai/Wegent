@@ -413,6 +413,52 @@ class TestCreateAndConnectClientEnvPassing:
                 assert "ANTHROPIC_AUTH_TOKEN" in captured_options["env"]
                 assert "CLAUDE_CONFIG_DIR" in captured_options["env"]
 
+    def test_create_client_installs_turn_file_change_hooks(
+        self, task_data, temp_workspace
+    ):
+        """Claude SDK options should include file edit tracking hooks."""
+        from executor.agents.claude_code.claude_code_agent import ClaudeCodeAgent
+
+        task_data.device_id = "device-1"
+        with (
+            patch("executor.config.config.EXECUTOR_MODE", "local"),
+            patch(
+                "executor.config.config.get_workspace_root", return_value=temp_workspace
+            ),
+        ):
+            agent = ClaudeCodeAgent(task_data, create_mock_emitter())
+            agent._claude_config_dir = os.path.join(
+                temp_workspace, str(task_data.task_id), ".claude"
+            )
+            agent._claude_env_config = {}
+            agent.options = {"cwd": temp_workspace}
+            captured_options = {}
+
+            def capture_options(**kwargs):
+                captured_options.update(kwargs)
+                return MagicMock()
+
+            with (
+                patch(
+                    "executor.agents.claude_code.claude_code_agent.ClaudeAgentOptions",
+                    side_effect=capture_options,
+                ),
+                patch(
+                    "executor.agents.claude_code.claude_code_agent.ClaudeSDKClient"
+                ) as mock_sdk,
+            ):
+                mock_sdk.return_value.connect = AsyncMock()
+
+                import asyncio
+
+                asyncio.get_event_loop().run_until_complete(
+                    agent._create_and_connect_client()
+                )
+
+        hooks = captured_options["hooks"]
+        assert hooks["PreToolUse"][-1].matcher == "Write|Edit|MultiEdit|NotebookEdit"
+        assert hooks["PostToolUse"][-1].matcher == "Write|Edit|MultiEdit|NotebookEdit"
+
 
 class TestResumeSessionProcessCleanup:
     """Tests for stale process cleanup when resuming Claude sessions."""

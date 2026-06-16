@@ -14,7 +14,10 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 from executor.config import config
-from executor.services.turn_file_changes import TurnFileChangeTracker
+from executor.services.turn_file_changes import (
+    TurnFileChangeTracker,
+    WorkspaceBusyError,
+)
 from shared.logger import setup_logger
 from shared.models import EmitterBuilder, ResponsesAPIEmitter, TransportFactory
 from shared.models.execution import ExecutionRequest
@@ -82,7 +85,7 @@ class Agent:
 
         # Emitter is required and must be provided by caller
         self.emitter: ResponsesAPIEmitter = emitter
-        self.turn_file_change_tracker: Optional[TurnFileChangeTracker] = None
+        self.turn_file_change_tracker: Optional[Any] = None
         self._progress_task_lock = threading.Lock()
         self._inflight_progress_task: Optional[asyncio.Task] = None
 
@@ -151,7 +154,17 @@ class Agent:
             executor_home=Path(config.WEGENT_EXECUTOR_HOME),
             device_id=device_id,
         )
-        if await tracker.start():
+        try:
+            started = await tracker.start()
+        except WorkspaceBusyError:
+            logger.warning(
+                "Turn file change tracking skipped for task %s, subtask %s: workspace is already tracked, workspace=%s",
+                self.task_id,
+                self.subtask_id,
+                self.project_path,
+            )
+            return
+        if started:
             self.turn_file_change_tracker = tracker
             self.emitter.set_completion_fields_provider(tracker.finalize)
             logger.info(

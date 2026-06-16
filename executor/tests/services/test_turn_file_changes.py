@@ -12,6 +12,8 @@ from pathlib import Path
 import pytest
 
 from executor.services.turn_file_changes import (
+    ClaudeToolFileChangeTracker,
+    NativeTurnFileChangeTracker,
     TurnFileChangeTracker,
     WorkspaceBusyError,
 )
@@ -289,3 +291,80 @@ async def test_tracker_removes_stale_same_host_lock(tmp_path):
 
     await tracker.abort()
     assert not lock_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_native_tracker_persists_agent_provided_diff(tmp_path):
+    repo = init_repo(tmp_path)
+    write(repo / "native.txt", "before\n")
+    commit_all(repo, "native fixture")
+    write(repo / "native.txt", "native\n")
+    patch = run_git(repo, "diff", "--binary", "HEAD")
+    tracker = NativeTurnFileChangeTracker(
+        workspace=repo,
+        task_id=7,
+        subtask_id=8,
+        executor_home=tmp_path / "home",
+        device_id="device-1",
+    )
+
+    tracker.record_diff(patch)
+    changes = file_changes(await tracker.finalize())
+
+    artifact_dir = tmp_path / "home/artifacts/turn-file-changes/7/8"
+    assert changes["artifact_id"] == "turn-file-changes/7/8"
+    assert changes["device_id"] == "device-1"
+    assert changes["files"][0]["path"] == "native.txt"
+    assert gzip.decompress((artifact_dir / "changes.patch.gz").read_bytes()) == patch
+
+
+@pytest.mark.asyncio
+async def test_claude_tool_tracker_captures_edit_tool_boundary_patch(tmp_path):
+    repo = init_repo(tmp_path)
+    write(repo / "tool.txt", "before\n")
+    commit_all(repo, "tool fixture")
+    tracker = ClaudeToolFileChangeTracker(
+        workspace=repo,
+        task_id=3,
+        subtask_id=4,
+        executor_home=tmp_path / "home",
+        device_id="device-1",
+    )
+
+    await tracker.pre_tool_use({}, "tool-1", None)
+    write(repo / "tool.txt", "after\n")
+    await tracker.post_tool_use({}, "tool-1", None)
+    changes = file_changes(await tracker.finalize())
+
+    assert changes["file_count"] == 1
+    assert changes["files"][0]["path"] == "tool.txt"
+    assert changes["files"][0]["change_type"] == "modified"
+    patch = gzip.decompress(
+        (
+            tmp_path / "home/artifacts/turn-file-changes/3/4/changes.patch.gz"
+        ).read_bytes()
+    )
+    assert b"-before" in patch
+    assert b"+after" in patch
+
+
+@pytest.mark.asyncio
+async def test_claude_tool_tracker_reads_tool_use_id_from_hook_input(tmp_path):
+    repo = init_repo(tmp_path)
+    write(repo / "hook.txt", "before\n")
+    commit_all(repo, "hook fixture")
+    tracker = ClaudeToolFileChangeTracker(
+        workspace=repo,
+        task_id=5,
+        subtask_id=6,
+        executor_home=tmp_path / "home",
+        device_id="device-1",
+    )
+    hook_input = {"tool_use_id": "tool-from-input"}
+
+    await tracker.pre_tool_use(hook_input, None, None)
+    write(repo / "hook.txt", "after\n")
+    await tracker.post_tool_use(hook_input, None, None)
+
+    changes = file_changes(await tracker.finalize())
+    assert changes["files"][0]["path"] == "hook.txt"

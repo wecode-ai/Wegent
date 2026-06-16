@@ -1,14 +1,8 @@
-import {
-  CircleDot,
-  GitCommit,
-  GitPullRequest,
-  Info,
-  Laptop,
-  Settings,
-} from 'lucide-react'
+import { CircleDot, GitCommit, GitPullRequest, Info, Laptop, Settings } from 'lucide-react'
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { BranchSelector } from '@/components/common/BranchSelector'
 import { useTranslation } from '@/hooks/useTranslation'
+import { openExternalUrl } from '@/lib/external-links'
 import { cn } from '@/lib/utils'
 import type { EnvironmentInfo } from '@/types/environment'
 import { DESKTOP_TOP_BAR_BUTTON_CLASS } from './DesktopTopBar'
@@ -84,7 +78,7 @@ export function EnvironmentInfoPopover({
     if (!info.createPullRequestUrl) {
       return
     }
-    window.open(info.createPullRequestUrl, '_blank', 'noopener,noreferrer')
+    void openExternalUrl(info.createPullRequestUrl)
   }
 
   async function handleCopyDeviceId() {
@@ -114,7 +108,11 @@ export function EnvironmentInfoPopover({
       window.setTimeout(() => setCommitStatus('idle'), 1600)
     } catch (error) {
       setCommitStatus('idle')
-      setCommitError(error instanceof Error ? error.message : t('workbench.environment_commit_failed', '提交失败'))
+      setCommitError(
+        error instanceof Error
+          ? error.message
+          : t('workbench.environment_commit_failed', '提交失败')
+      )
     }
   }
 
@@ -148,10 +146,7 @@ export function EnvironmentInfoPopover({
         type="button"
         data-testid="environment-info-button"
         onClick={handleToggleOpen}
-        className={cn(
-          DESKTOP_TOP_BAR_BUTTON_CLASS,
-          open && 'bg-muted text-text-primary',
-        )}
+        className={cn(DESKTOP_TOP_BAR_BUTTON_CLASS, open && 'bg-muted text-text-primary')}
         aria-expanded={open}
         aria-label={t('workbench.environment_info', '环境信息')}
       >
@@ -199,9 +194,7 @@ export function EnvironmentInfoPopover({
               <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
                 <Laptop className="h-[18px] w-[18px]" />
               </span>
-              <span className="shrink-0">
-                {executionLabel}
-              </span>
+              <span className="shrink-0">{executionLabel}</span>
               <span
                 data-testid="environment-device-id"
                 className="ml-auto min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-right font-mono text-xs text-text-secondary"
@@ -248,10 +241,7 @@ export function EnvironmentInfoPopover({
               )}
             </button>
             {commitFormOpen && (
-              <form
-                className="mb-2 ml-[30px] mt-1 space-y-2"
-                onSubmit={handleSubmitCommit}
-              >
+              <form className="mb-2 ml-[30px] mt-1 space-y-2" onSubmit={handleSubmitCommit}>
                 <input
                   data-testid="environment-commit-message-input"
                   value={commitMessage}
@@ -302,9 +292,7 @@ export function EnvironmentInfoPopover({
           </div>
 
           {info.error && (
-            <p className="mt-2 rounded-md bg-red-50 px-3 py-2 text-xs text-red-600">
-              {info.error}
-            </p>
+            <p className="mt-2 rounded-md bg-red-50 px-3 py-2 text-xs text-red-600">{info.error}</p>
           )}
           {commitError && (
             <p className="mt-2 rounded-md bg-red-50 px-3 py-2 text-xs text-red-600">
