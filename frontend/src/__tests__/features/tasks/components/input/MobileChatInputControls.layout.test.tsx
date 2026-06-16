@@ -171,5 +171,6 @@ describe('MobileChatInputControls layout', () => {
     const menu = screen.getByTestId('mobile-input-more-actions-menu')
     expect(menu).toHaveClass('max-h-[min(52dvh,18rem)]')
     expect(menu).toHaveClass('overflow-y-auto')
+    expect(menu).toHaveClass('overscroll-contain')
   })
 })
