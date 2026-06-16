@@ -327,6 +327,7 @@ class TaskStore(Protocol):
         limit: int,
         extra_limit: int,
         client_origin: Optional[str] = None,
+        project_scope: Literal["all", "standalone", "standalone_unlabeled"] = "all",
     ) -> tuple[list[int], int]: ...
 
     def list_group_task_ids_for_accessible_user(
@@ -424,6 +425,15 @@ class TaskStore(Protocol):
         project_id: int,
         user_id: int,
         client_origin: Optional[str] = None,
+    ) -> int: ...
+
+    def restore_stale_project_links_from_label(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        client_origin: str,
+        project_id: int,
     ) -> int: ...
 
     def set_archive_state(

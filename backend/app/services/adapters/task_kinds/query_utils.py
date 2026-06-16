@@ -7,7 +7,7 @@
 TaskResource SQL lives in app.stores.tasks.SqlAlchemyTaskStore.
 """
 
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Literal, Optional, Set, Tuple
 
 from sqlalchemy.orm import Session
 
@@ -39,6 +39,7 @@ def get_personal_task_ids_and_total(
     limit: int,
     extra_limit: int,
     client_origin: Optional[str] = None,
+    project_scope: Literal["all", "standalone", "standalone_unlabeled"] = "all",
 ) -> Tuple[List[int], int]:
     return task_store.list_personal_task_ids(
         db,
@@ -47,6 +48,7 @@ def get_personal_task_ids_and_total(
         limit=limit,
         extra_limit=extra_limit,
         client_origin=client_origin,
+        project_scope=project_scope,
     )
 
 

@@ -103,6 +103,62 @@ _PERSONAL_COUNT_BY_ORIGIN_SQL = text(
 """
 )
 
+_PERSONAL_STANDALONE_COUNT_SQL = text(
+    """
+    SELECT COUNT(*)
+    FROM tasks k
+    WHERE k.kind = 'Task'
+    AND k.is_active = :is_active
+    AND k.namespace != 'system'
+    AND k.user_id = :user_id
+    AND k.is_group_chat = 0
+    AND k.project_id = 0
+"""
+)
+
+_PERSONAL_STANDALONE_COUNT_BY_ORIGIN_SQL = text(
+    """
+    SELECT COUNT(*)
+    FROM tasks k
+    WHERE k.kind = 'Task'
+    AND k.is_active = :is_active
+    AND k.namespace != 'system'
+    AND k.user_id = :user_id
+    AND k.is_group_chat = 0
+    AND k.client_origin = :client_origin
+    AND k.project_id = 0
+"""
+)
+
+_PERSONAL_STANDALONE_UNLABELED_COUNT_SQL = text(
+    """
+    SELECT COUNT(*)
+    FROM tasks k
+    WHERE k.kind = 'Task'
+    AND k.is_active = :is_active
+    AND k.namespace != 'system'
+    AND k.user_id = :user_id
+    AND k.is_group_chat = 0
+    AND k.project_id = 0
+    AND JSON_EXTRACT(k.json, '$.metadata.labels.projectId') IS NULL
+"""
+)
+
+_PERSONAL_STANDALONE_UNLABELED_COUNT_BY_ORIGIN_SQL = text(
+    """
+    SELECT COUNT(*)
+    FROM tasks k
+    WHERE k.kind = 'Task'
+    AND k.is_active = :is_active
+    AND k.namespace != 'system'
+    AND k.user_id = :user_id
+    AND k.is_group_chat = 0
+    AND k.client_origin = :client_origin
+    AND k.project_id = 0
+    AND JSON_EXTRACT(k.json, '$.metadata.labels.projectId') IS NULL
+"""
+)
+
 _PERSONAL_IDS_SQL = text(
     """
     SELECT k.id, k.created_at
@@ -127,6 +183,70 @@ _PERSONAL_IDS_BY_ORIGIN_SQL = text(
     AND k.user_id = :user_id
     AND k.is_group_chat = 0
     AND k.client_origin = :client_origin
+    ORDER BY k.created_at DESC
+    LIMIT :limit OFFSET :skip
+"""
+)
+
+_PERSONAL_STANDALONE_IDS_SQL = text(
+    """
+    SELECT k.id, k.created_at
+    FROM tasks k
+    WHERE k.kind = 'Task'
+    AND k.is_active = :is_active
+    AND k.namespace != 'system'
+    AND k.user_id = :user_id
+    AND k.is_group_chat = 0
+    AND k.project_id = 0
+    ORDER BY k.created_at DESC
+    LIMIT :limit OFFSET :skip
+"""
+)
+
+_PERSONAL_STANDALONE_IDS_BY_ORIGIN_SQL = text(
+    """
+    SELECT k.id, k.created_at
+    FROM tasks k
+    WHERE k.kind = 'Task'
+    AND k.is_active = :is_active
+    AND k.namespace != 'system'
+    AND k.user_id = :user_id
+    AND k.is_group_chat = 0
+    AND k.client_origin = :client_origin
+    AND k.project_id = 0
+    ORDER BY k.created_at DESC
+    LIMIT :limit OFFSET :skip
+"""
+)
+
+_PERSONAL_STANDALONE_UNLABELED_IDS_SQL = text(
+    """
+    SELECT k.id, k.created_at
+    FROM tasks k
+    WHERE k.kind = 'Task'
+    AND k.is_active = :is_active
+    AND k.namespace != 'system'
+    AND k.user_id = :user_id
+    AND k.is_group_chat = 0
+    AND k.project_id = 0
+    AND JSON_EXTRACT(k.json, '$.metadata.labels.projectId') IS NULL
+    ORDER BY k.created_at DESC
+    LIMIT :limit OFFSET :skip
+"""
+)
+
+_PERSONAL_STANDALONE_UNLABELED_IDS_BY_ORIGIN_SQL = text(
+    """
+    SELECT k.id, k.created_at
+    FROM tasks k
+    WHERE k.kind = 'Task'
+    AND k.is_active = :is_active
+    AND k.namespace != 'system'
+    AND k.user_id = :user_id
+    AND k.is_group_chat = 0
+    AND k.client_origin = :client_origin
+    AND k.project_id = 0
+    AND JSON_EXTRACT(k.json, '$.metadata.labels.projectId') IS NULL
     ORDER BY k.created_at DESC
     LIMIT :limit OFFSET :skip
 """
@@ -920,11 +1040,37 @@ class SqlAlchemyTaskStore:
         limit: int,
         extra_limit: int,
         client_origin: Optional[str] = None,
+        project_scope: Literal["all", "standalone", "standalone_unlabeled"] = "all",
     ) -> tuple[list[int], int]:
-        count_sql = (
-            _PERSONAL_COUNT_BY_ORIGIN_SQL if client_origin else _PERSONAL_COUNT_SQL
-        )
-        ids_sql = _PERSONAL_IDS_BY_ORIGIN_SQL if client_origin else _PERSONAL_IDS_SQL
+        if project_scope == "standalone_unlabeled":
+            count_sql = (
+                _PERSONAL_STANDALONE_UNLABELED_COUNT_BY_ORIGIN_SQL
+                if client_origin
+                else _PERSONAL_STANDALONE_UNLABELED_COUNT_SQL
+            )
+            ids_sql = (
+                _PERSONAL_STANDALONE_UNLABELED_IDS_BY_ORIGIN_SQL
+                if client_origin
+                else _PERSONAL_STANDALONE_UNLABELED_IDS_SQL
+            )
+        elif project_scope == "standalone":
+            count_sql = (
+                _PERSONAL_STANDALONE_COUNT_BY_ORIGIN_SQL
+                if client_origin
+                else _PERSONAL_STANDALONE_COUNT_SQL
+            )
+            ids_sql = (
+                _PERSONAL_STANDALONE_IDS_BY_ORIGIN_SQL
+                if client_origin
+                else _PERSONAL_STANDALONE_IDS_SQL
+            )
+        else:
+            count_sql = (
+                _PERSONAL_COUNT_BY_ORIGIN_SQL if client_origin else _PERSONAL_COUNT_SQL
+            )
+            ids_sql = (
+                _PERSONAL_IDS_BY_ORIGIN_SQL if client_origin else _PERSONAL_IDS_SQL
+            )
         params: dict[str, object] = {
             "user_id": user_id,
             "is_active": TaskResource.STATE_ACTIVE,
@@ -1182,6 +1328,33 @@ class SqlAlchemyTaskStore:
             query = query.filter(TaskResource.client_origin == client_origin)
         return query.update({TaskResource.project_id: 0}, synchronize_session=False)
 
+    def restore_stale_project_links_from_label(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        client_origin: str,
+        project_id: int,
+    ) -> int:
+        stale_tasks = (
+            db.query(TaskResource)
+            .filter(
+                TaskResource.user_id == user_id,
+                TaskResource.client_origin == client_origin,
+                TaskResource.kind == "Task",
+                TaskResource.project_id == 0,
+                TaskResource.is_active != TaskResource.STATE_DELETED,
+            )
+            .all()
+        )
+        restored_count = 0
+        for task in stale_tasks:
+            if self._task_project_label(task) != str(project_id):
+                continue
+            task.project_id = project_id
+            restored_count += 1
+        return restored_count
+
     def set_archive_state(
         self, db: Session, *, task: TaskResource, state: int, commit: bool = True
     ) -> None:
@@ -1216,3 +1389,19 @@ class SqlAlchemyTaskStore:
             return True
         payload = task.json if isinstance(task.json, dict) else {}
         return payload.get("spec", {}).get("is_group_chat") is True
+
+    @staticmethod
+    def _task_project_label(task: TaskResource) -> Optional[str]:
+        task_json = task.json or {}
+        if not isinstance(task_json, dict):
+            return None
+        metadata = task_json.get("metadata")
+        if not isinstance(metadata, dict):
+            return None
+        labels = metadata.get("labels")
+        if not isinstance(labels, dict):
+            return None
+        value = labels.get("projectId")
+        if value is None:
+            return None
+        return str(value)

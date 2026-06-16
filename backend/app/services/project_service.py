@@ -17,6 +17,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
+from app.core.constants import CLIENT_ORIGIN_WEWORK
 from app.models.project import Project
 from app.models.task import TaskResource
 from app.schemas.project import (
@@ -55,6 +56,153 @@ WORKTREE_ROOT_DIR = "worktrees"
 WORKTREE_ID_PATTERN = re.compile(r"^[1-9][0-9]*$")
 
 
+def _normalize_project_config(
+    config: Optional[ProjectConfig],
+) -> Optional[ProjectConfig]:
+    """Return a copy of project config with comparable local paths normalized."""
+
+    if config is None:
+        return None
+    normalized = config.model_copy(deep=True)
+    if (
+        normalized.workspace
+        and normalized.workspace.source == "local_path"
+        and normalized.workspace.localPath
+    ):
+        normalized.workspace.localPath = _normalize_local_workspace_path(
+            normalized.workspace.localPath
+        )
+    return normalized
+
+
+def _normalize_local_workspace_path(path: str) -> str:
+    """Normalize user-selected local workspace paths for matching."""
+
+    normalized = path.strip()
+    if not normalized:
+        return ""
+    if normalized == "/":
+        return "/"
+    return normalized.rstrip("/") or "/"
+
+
+def _find_reusable_wework_local_path_project(
+    *,
+    db: Session,
+    project_data: ProjectCreate,
+    config: Optional[ProjectConfig],
+    user_id: int,
+) -> Optional[Project]:
+    """Return an existing Wework local-path project, restoring it if needed."""
+
+    if project_data.client_origin != CLIENT_ORIGIN_WEWORK:
+        return None
+    if not config or not _is_reusable_local_path_config(config):
+        return None
+
+    assert config.execution is not None
+    assert config.workspace is not None
+    device_id = config.execution.deviceId
+    local_path = _normalize_local_workspace_path(config.workspace.localPath or "")
+    if not device_id or not local_path:
+        return None
+
+    candidates = [
+        project
+        for project in _list_wework_projects_for_reuse(
+            db=db, user_id=user_id, client_origin=project_data.client_origin
+        )
+        if _project_matches_local_path(project, device_id, local_path)
+    ]
+    if not candidates:
+        return None
+
+    project = sorted(candidates, key=lambda item: (not item.is_active, item.id))[0]
+    was_inactive = not project.is_active
+    restored_task_count = task_store.restore_stale_project_links_from_label(
+        db,
+        user_id=project.user_id,
+        client_origin=project.client_origin,
+        project_id=project.id,
+    )
+    if was_inactive:
+        project.is_active = True
+        project.is_expanded = True
+    if restored_task_count or was_inactive:
+        db.commit()
+        db.refresh(project)
+    return project
+
+
+def _is_reusable_local_path_config(config: ProjectConfig) -> bool:
+    return bool(
+        config.is_workspace
+        and config.execution
+        and config.execution.targetType == "local"
+        and config.execution.deviceId
+        and config.workspace
+        and config.workspace.source == "local_path"
+        and config.workspace.localPath
+    )
+
+
+def _list_wework_projects_for_reuse(
+    *, db: Session, user_id: int, client_origin: str
+) -> list[Project]:
+    return (
+        db.query(Project)
+        .filter(
+            Project.user_id == user_id,
+            Project.client_origin == client_origin,
+        )
+        .order_by(Project.id.asc())
+        .all()
+    )
+
+
+def _project_matches_local_path(
+    project: Project, device_id: str, local_path: str
+) -> bool:
+    try:
+        config = ProjectConfig.model_validate(project.config or {})
+    except Exception:
+        return False
+    if not _is_reusable_local_path_config(config):
+        return False
+    assert config.execution is not None
+    assert config.workspace is not None
+    return (
+        config.execution.deviceId == device_id
+        and _normalize_local_workspace_path(config.workspace.localPath or "")
+        == local_path
+    )
+
+
+def _project_response(
+    *, db: Session, project: Project, client_origin: Optional[str]
+) -> ProjectResponse:
+    task_count = task_store.count_active_project_tasks(
+        db=db,
+        project_id=project.id,
+        owner_user_id=project.user_id,
+        client_origin=client_origin,
+    )
+    return ProjectResponse(
+        id=project.id,
+        user_id=project.user_id,
+        name=project.name,
+        description=project.description or "",
+        color=project.color,
+        client_origin=project.client_origin,
+        config=project.config,
+        sort_order=project.sort_order,
+        is_expanded=project.is_expanded,
+        task_count=task_count,
+        created_at=project.created_at,
+        updated_at=project.updated_at,
+    )
+
+
 def create_project(
     db: Session, project_data: ProjectCreate, user_id: int
 ) -> ProjectResponse:
@@ -69,6 +217,24 @@ def create_project(
     Returns:
         Created project response
     """
+    normalized_config = (
+        _normalize_project_config(project_data.config)
+        if project_data.client_origin == CLIENT_ORIGIN_WEWORK
+        else project_data.config
+    )
+    reusable_project = _find_reusable_wework_local_path_project(
+        db=db,
+        project_data=project_data,
+        config=normalized_config,
+        user_id=user_id,
+    )
+    if reusable_project:
+        return _project_response(
+            db=db,
+            project=reusable_project,
+            client_origin=project_data.client_origin,
+        )
+
     # Get the max sort_order for this user's projects
     max_sort_order = (
         db.query(func.max(Project.sort_order))
@@ -81,7 +247,7 @@ def create_project(
     )
     next_sort_order = (max_sort_order or 0) + 1
 
-    config = _dump_config(project_data.config)
+    config = _dump_config(normalized_config)
 
     new_project = Project(
         user_id=user_id,
@@ -1231,7 +1397,8 @@ def delete_project(
     """
     Delete a project (soft delete).
 
-    Tasks are not deleted, only their project_id is set to NULL.
+    Tasks are not deleted. Frontend deletion moves tasks to history by clearing
+    project_id; Wework deletion preserves project task links for later restore.
 
     Args:
         db: Database session
@@ -1253,13 +1420,14 @@ def delete_project(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    # Clear project_id for all tasks in this project (set to 0, not NULL)
-    task_store.clear_project_for_owned_tasks(
-        db,
-        project_id=project_id,
-        user_id=user_id,
-        client_origin=client_origin,
-    )
+    if client_origin != CLIENT_ORIGIN_WEWORK:
+        # Frontend project deletion intentionally moves project tasks to history.
+        task_store.clear_project_for_owned_tasks(
+            db,
+            project_id=project_id,
+            user_id=user_id,
+            client_origin=client_origin,
+        )
 
     # Soft delete the project
     project.is_active = False
