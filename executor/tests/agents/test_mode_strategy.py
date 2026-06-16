@@ -444,6 +444,32 @@ class TestLocalModeStrategy:
             "x-custom-user: test\nwecode-project: 42"
         )
 
+    def test_configure_client_options_appends_project_to_startup_headers(
+        self, strategy, tmp_path, monkeypatch
+    ):
+        """Project tasks should append project ID to executor startup headers."""
+        strategy.use_global_capabilities(True, project_id=42)
+        monkeypatch.setenv("HOME", str(tmp_path))
+        options = {"cwd": "/workspace"}
+        config_dir = "/workspace/12345/.claude"
+        custom_headers = (
+            "wecode-source: wegent-local\n"
+            "wecode-action: wegent\n"
+            "wecode-executor: claudecode\n"
+            "wecode-user: yunpeng7"
+        )
+
+        with patch("executor.config.config.ANTHROPIC_CUSTOM_HEADERS", custom_headers):
+            result = strategy.configure_client_options(options, config_dir, {}, {})
+
+        assert result["env"]["ANTHROPIC_CUSTOM_HEADERS"] == (
+            "wecode-source: wegent-local\n"
+            "wecode-action: wegent\n"
+            "wecode-executor: claudecode\n"
+            "wecode-user: yunpeng7\n"
+            "wecode-project: 42"
+        )
+
     def test_configure_client_options_preserves_default_source_header_for_project_tasks(
         self, strategy, tmp_path, monkeypatch
     ):

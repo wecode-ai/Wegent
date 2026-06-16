@@ -95,6 +95,29 @@ def test_round_trip_preserves_skip_git_clone_for_archive_recovery():
     assert converted.skip_git_clone is True
 
 
+def test_round_trip_preserves_project_workspace_metadata():
+    request = ExecutionRequest(
+        workspace={"project": {"project_id": 42}},
+        project_id=42,
+        standalone_chat_workspace=True,
+        workspace_source="local_path",
+        project_workspace_path="/Users/test/project",
+        execution_target_type="local",
+        device_id="device-1",
+    )
+
+    openai_request = OpenAIRequestConverter.from_execution_request(request)
+    converted = OpenAIRequestConverter.to_execution_request(openai_request)
+
+    assert openai_request["metadata"]["project_id"] == 42
+    assert converted.project_id == 42
+    assert converted.standalone_chat_workspace is True
+    assert converted.workspace_source == "local_path"
+    assert converted.project_workspace_path == "/Users/test/project"
+    assert converted.execution_target_type == "local"
+    assert converted.device_id == "device-1"
+
+
 def test_to_execution_request_preserves_message_history_and_stateless_flag():
     openai_request = {
         "model": "test-model",

@@ -98,10 +98,20 @@ def get_project_id(task_data: ExecutionRequest) -> str:
 
     workspace = getattr(task_data, "workspace", None)
     if isinstance(workspace, dict):
-        metadata = workspace.get("metadata") or {}
-        project = metadata.get("project") if isinstance(metadata, dict) else None
+        project = workspace.get("project")
         if isinstance(project, dict):
             normalized_project_id = _normalize_project_id(project.get("project_id"))
+            if normalized_project_id:
+                return normalized_project_id
+
+        metadata = workspace.get("metadata") or {}
+        metadata_project = (
+            metadata.get("project") if isinstance(metadata, dict) else None
+        )
+        if isinstance(metadata_project, dict):
+            normalized_project_id = _normalize_project_id(
+                metadata_project.get("project_id")
+            )
             if normalized_project_id:
                 return normalized_project_id
 
