@@ -19,7 +19,6 @@ from app.core import security
 from app.core.config import settings
 from app.core.constants import (
     CLIENT_ORIGIN_FRONTEND,
-    CLIENT_ORIGIN_WEWORK,
     SUPPORTED_CLIENT_ORIGINS,
 )
 from app.db.session import get_async_db
@@ -80,14 +79,6 @@ ClientOriginQuery = Annotated[
         description="Client surface to scope task lists and chat operations",
     ),
 ]
-
-
-def _personal_history_project_scope(
-    client_origin: str,
-) -> Literal["standalone", "standalone_unlabeled"]:
-    if client_origin == CLIENT_ORIGIN_WEWORK:
-        return "standalone_unlabeled"
-    return "standalone"
 
 
 @router.post("", response_model=dict)
@@ -232,7 +223,6 @@ def get_personal_tasks_lite(
     """
     skip = (page - 1) * limit
     type_list = [t.strip() for t in types.split(",") if t.strip()]
-    project_scope = _personal_history_project_scope(client_origin)
     items, total = task_kinds_service.get_user_personal_tasks_lite(
         db=db,
         user_id=current_user.id,
@@ -240,7 +230,7 @@ def get_personal_tasks_lite(
         limit=limit,
         types=type_list,
         client_origin=client_origin,
-        project_scope=project_scope,
+        project_scope="standalone",
     )
     return {"total": total, "items": items}
 
@@ -265,7 +255,6 @@ def get_personal_task_groups_lite(
     """
     skip = (page - 1) * limit
     type_list = [t.strip() for t in types.split(",") if t.strip()]
-    project_scope = _personal_history_project_scope(client_origin)
     items, total = task_kinds_service.get_user_personal_task_groups_lite(
         db=db,
         user_id=current_user.id,
@@ -273,7 +262,7 @@ def get_personal_task_groups_lite(
         limit=limit,
         types=type_list,
         client_origin=client_origin,
-        project_scope=project_scope,
+        project_scope="standalone",
     )
     return {"total": total, "items": items}
 

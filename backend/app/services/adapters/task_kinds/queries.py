@@ -137,7 +137,7 @@ class TaskQueryMixin:
         limit: int = 50,
         types: List[str] = None,
         client_origin: Optional[str] = None,
-        project_scope: Literal["all", "standalone", "standalone_unlabeled"] = "all",
+        project_scope: Literal["all", "standalone"] = "all",
     ) -> Tuple[List[Dict[str, Any]], int]:
         """
         Get user's personal (non-group-chat) task list with pagination.
@@ -181,7 +181,7 @@ class TaskQueryMixin:
         limit: int = 50,
         types: List[str] = None,
         client_origin: Optional[str] = None,
-        project_scope: Literal["all", "standalone", "standalone_unlabeled"] = "all",
+        project_scope: Literal["all", "standalone"] = "all",
     ) -> Tuple[List[Dict[str, Any]], int]:
         """
         Get user's personal task page grouped by device or team.

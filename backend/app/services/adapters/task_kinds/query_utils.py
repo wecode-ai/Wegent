@@ -39,7 +39,7 @@ def get_personal_task_ids_and_total(
     limit: int,
     extra_limit: int,
     client_origin: Optional[str] = None,
-    project_scope: Literal["all", "standalone", "standalone_unlabeled"] = "all",
+    project_scope: Literal["all", "standalone"] = "all",
 ) -> Tuple[List[int], int]:
     return task_store.list_personal_task_ids(
         db,

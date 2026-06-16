@@ -59,7 +59,7 @@ def _task(
     )
 
 
-def test_wework_personal_lite_returns_only_standalone_conversations(
+def test_wework_personal_lite_returns_projectless_conversations_without_label_filter(
     test_db: Session,
     test_user: User,
 ) -> None:
@@ -93,8 +93,11 @@ def test_wework_personal_lite_returns_only_standalone_conversations(
         db=test_db,
     )
 
-    assert result["total"] == 1
-    assert [item["id"] for item in result["items"]] == [standalone.id]
+    assert result["total"] == 2
+    assert [item["id"] for item in result["items"]] == [
+        stale_project_task.id,
+        standalone.id,
+    ]
 
 
 def test_frontend_personal_lite_returns_history_without_active_project_tasks(

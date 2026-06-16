@@ -370,7 +370,7 @@ def test_list_personal_task_ids_standalone_scope_returns_projectless_tasks(
     assert total == 2
 
 
-def test_list_personal_task_ids_standalone_unlabeled_scope_excludes_project_labels(
+def test_list_personal_task_ids_standalone_scope_does_not_filter_project_labels(
     test_db: Session,
 ) -> None:
     store = SqlAlchemyTaskStore()
@@ -395,11 +395,11 @@ def test_list_personal_task_ids_standalone_unlabeled_scope_excludes_project_labe
         limit=10,
         extra_limit=0,
         client_origin=CLIENT_ORIGIN_WEWORK,
-        project_scope="standalone_unlabeled",
+        project_scope="standalone",
     )
 
-    assert task_ids == [standalone_task.id]
-    assert total == 1
+    assert set(task_ids) == {standalone_task.id, stale_project_task.id}
+    assert total == 2
 
 
 def test_restore_stale_project_links_from_label_updates_matching_tasks(

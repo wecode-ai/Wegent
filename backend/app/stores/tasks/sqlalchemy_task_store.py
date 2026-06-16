@@ -130,35 +130,6 @@ _PERSONAL_STANDALONE_COUNT_BY_ORIGIN_SQL = text(
 """
 )
 
-_PERSONAL_STANDALONE_UNLABELED_COUNT_SQL = text(
-    """
-    SELECT COUNT(*)
-    FROM tasks k
-    WHERE k.kind = 'Task'
-    AND k.is_active = :is_active
-    AND k.namespace != 'system'
-    AND k.user_id = :user_id
-    AND k.is_group_chat = 0
-    AND k.project_id = 0
-    AND JSON_EXTRACT(k.json, '$.metadata.labels.projectId') IS NULL
-"""
-)
-
-_PERSONAL_STANDALONE_UNLABELED_COUNT_BY_ORIGIN_SQL = text(
-    """
-    SELECT COUNT(*)
-    FROM tasks k
-    WHERE k.kind = 'Task'
-    AND k.is_active = :is_active
-    AND k.namespace != 'system'
-    AND k.user_id = :user_id
-    AND k.is_group_chat = 0
-    AND k.client_origin = :client_origin
-    AND k.project_id = 0
-    AND JSON_EXTRACT(k.json, '$.metadata.labels.projectId') IS NULL
-"""
-)
-
 _PERSONAL_IDS_SQL = text(
     """
     SELECT k.id, k.created_at
@@ -214,39 +185,6 @@ _PERSONAL_STANDALONE_IDS_BY_ORIGIN_SQL = text(
     AND k.is_group_chat = 0
     AND k.client_origin = :client_origin
     AND k.project_id = 0
-    ORDER BY k.created_at DESC
-    LIMIT :limit OFFSET :skip
-"""
-)
-
-_PERSONAL_STANDALONE_UNLABELED_IDS_SQL = text(
-    """
-    SELECT k.id, k.created_at
-    FROM tasks k
-    WHERE k.kind = 'Task'
-    AND k.is_active = :is_active
-    AND k.namespace != 'system'
-    AND k.user_id = :user_id
-    AND k.is_group_chat = 0
-    AND k.project_id = 0
-    AND JSON_EXTRACT(k.json, '$.metadata.labels.projectId') IS NULL
-    ORDER BY k.created_at DESC
-    LIMIT :limit OFFSET :skip
-"""
-)
-
-_PERSONAL_STANDALONE_UNLABELED_IDS_BY_ORIGIN_SQL = text(
-    """
-    SELECT k.id, k.created_at
-    FROM tasks k
-    WHERE k.kind = 'Task'
-    AND k.is_active = :is_active
-    AND k.namespace != 'system'
-    AND k.user_id = :user_id
-    AND k.is_group_chat = 0
-    AND k.client_origin = :client_origin
-    AND k.project_id = 0
-    AND JSON_EXTRACT(k.json, '$.metadata.labels.projectId') IS NULL
     ORDER BY k.created_at DESC
     LIMIT :limit OFFSET :skip
 """
@@ -1040,20 +978,9 @@ class SqlAlchemyTaskStore:
         limit: int,
         extra_limit: int,
         client_origin: Optional[str] = None,
-        project_scope: Literal["all", "standalone", "standalone_unlabeled"] = "all",
+        project_scope: Literal["all", "standalone"] = "all",
     ) -> tuple[list[int], int]:
-        if project_scope == "standalone_unlabeled":
-            count_sql = (
-                _PERSONAL_STANDALONE_UNLABELED_COUNT_BY_ORIGIN_SQL
-                if client_origin
-                else _PERSONAL_STANDALONE_UNLABELED_COUNT_SQL
-            )
-            ids_sql = (
-                _PERSONAL_STANDALONE_UNLABELED_IDS_BY_ORIGIN_SQL
-                if client_origin
-                else _PERSONAL_STANDALONE_UNLABELED_IDS_SQL
-            )
-        elif project_scope == "standalone":
+        if project_scope == "standalone":
             count_sql = (
                 _PERSONAL_STANDALONE_COUNT_BY_ORIGIN_SQL
                 if client_origin
