@@ -179,14 +179,16 @@ pip install -e .
 Run the executor in local device mode:
 
 ```bash
-# Start with default settings
-wegent-executor --mode local --token YOUR_JWT_TOKEN
+# Start with settings from environment variables or ~/.wegent-executor/device-config.json
+wegent-executor
 
-# Or with environment variables
+# Or temporarily override the connection settings with environment variables
 export WEGENT_AUTH_TOKEN=your_jwt_token
 export WEGENT_BACKEND_URL=https://your-wegent-instance.com
-EXECUTOR_MODE=local wegent-executor
+wegent-executor
 ```
+
+The installer and first startup create `~/.wegent-executor/device-config.json`. Configuration priority is environment variables, device config, then defaults. On later startups, if `EXECUTOR_MODE`, `WEGENT_BACKEND_URL`, or `WEGENT_AUTH_TOKEN` is not set, the executor reads `mode`, `connection.backend_url`, and `connection.auth_token` from that file.
 
 ### Getting JWT Token
 
@@ -347,7 +349,7 @@ When a device goes offline:
 **Solutions:**
 1. Generate a new JWT token from Wegent UI
 2. Check network connectivity to Wegent backend
-3. Verify `WEGENT_BACKEND_URL` environment variable
+3. Verify `~/.wegent-executor/device-config.json` or the `WEGENT_BACKEND_URL` environment variable
 
 #### Device shows offline immediately after connecting
 

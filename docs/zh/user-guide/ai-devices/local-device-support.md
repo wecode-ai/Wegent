@@ -181,14 +181,16 @@ pip install -e .
 以本地设备模式运行 executor：
 
 ```bash
-# 使用默认设置启动
-wegent-executor --mode local --token YOUR_JWT_TOKEN
+# 使用环境变量或 ~/.wegent-executor/device-config.json 中的配置启动
+wegent-executor
 
-# 或使用环境变量
+# 或用环境变量临时覆盖配置文件中的连接信息
 export WEGENT_AUTH_TOKEN=your_jwt_token
 export WEGENT_BACKEND_URL=https://your-wegent-instance.com
-EXECUTOR_MODE=local wegent-executor
+wegent-executor
 ```
+
+安装脚本和首次启动会创建 `~/.wegent-executor/device-config.json`。配置优先级是环境变量、device config、默认值；如果没有传 `EXECUTOR_MODE`、`WEGENT_BACKEND_URL` 或 `WEGENT_AUTH_TOKEN`，executor 会读取该文件中的 `mode`、`connection.backend_url` 和 `connection.auth_token`。
 
 ### 获取 JWT Token
 
@@ -349,7 +351,7 @@ EXECUTOR_MODE=local wegent-executor
 **解决方案：**
 1. 从 Wegent UI 生成新的 JWT token
 2. 检查到 Wegent 后端的网络连接
-3. 验证 `WEGENT_BACKEND_URL` 环境变量
+3. 验证 `~/.wegent-executor/device-config.json` 或 `WEGENT_BACKEND_URL` 环境变量
 
 #### 设备连接后立即显示离线
 

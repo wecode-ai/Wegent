@@ -98,7 +98,19 @@ class LocalHeartbeatService:
                             f"Heartbeat failed (attempt {self._consecutive_failures})"
                         )
                 else:
-                    logger.warning("Heartbeat skipped: not connected")
+                    logger.warning(
+                        "Heartbeat skipped: not connected; attempting reconnect"
+                    )
+                    reconnected = await self.client.connect()
+                    if reconnected:
+                        self._consecutive_failures = 0
+                        logger.info("Heartbeat reconnect succeeded")
+                    else:
+                        self._consecutive_failures += 1
+                        logger.warning(
+                            f"Heartbeat reconnect failed "
+                            f"(attempt {self._consecutive_failures})"
+                        )
 
                 if self._consecutive_failures >= self._max_failures:
                     logger.error(
