@@ -18,7 +18,7 @@ The communication path is:
 6. The executor returns the completed result as the Socket.IO ack.
 7. Backend optionally post-processes the result according to the command definition's `post_processor`.
 
-This RPC is decoupled from `task:execute`, so it is suitable for short commands and one-shot diagnostics. Long-running interactive terminals and streaming stdout/stderr are outside the first version.
+This RPC is decoupled from `task:execute`, so it is suitable for short commands and one-shot diagnostics. Long-running interactive terminals and streaming stdout/stderr are not carried by this RPC. The macOS WeWork App embeds local project terminals through a Tauri local PTY, as described in "macOS App Local Terminal" below.
 
 ## API
 
@@ -64,7 +64,7 @@ When command startup fails, the command exits non-zero, or the command times out
 
 ## Security And Limits
 
-This feature follows a trusted Backend and restricted API model. The HTTP API does not accept raw commands; it accepts only configured keys. The real command must be configured by the Backend through the command registry or `LOCAL_DEVICE_COMMANDS`. The `pwd`, `ls_a`, `ls_dirs`, `git_clone`, `git_branch`, `git_diff_shortstat`, `git_remote_url`, `git_add_all`, and `git_commit` command keys are built in by default. `ls_a` uses the `file_list` post processor to filter `.` and `..` and return a file name array in `stdout`; `ls_dirs` uses the `directory_list` post processor to return only subdirectory names in the current directory. To add a built-in command, add one entry to `DEFAULT_LOCAL_DEVICE_COMMANDS` in `backend/app/services/device/command_registry.py`.
+This feature follows a trusted Backend and restricted API model. The HTTP API does not accept raw commands; it accepts only configured keys. The real command must be configured by the Backend through the command registry or `LOCAL_DEVICE_COMMANDS`. The `pwd`, `ls_a`, `ls_dirs`, `git_clone`, `git_branch`, `git_diff_shortstat`, `git_remote_url`, `git_add_all`, `git_commit`, and `open_terminal` command keys are built in by default. `ls_a` uses the `file_list` post processor to filter `.` and `..` and return a file name array in `stdout`; `ls_dirs` uses the `directory_list` post processor to return only subdirectory names in the current directory. `open_terminal` starts the system terminal window on local devices with a graphical session; it is a one-shot launch command and does not provide streaming terminal interaction. To add a built-in command, add one entry to `DEFAULT_LOCAL_DEVICE_COMMANDS` in `backend/app/services/device/command_registry.py`.
 
 At runtime, add or override command definitions with a single environment variable. Simple commands can use string values; commands that need post processing can use object values:
 
@@ -96,3 +96,17 @@ Because commands run on the user's machine, callers must treat this API as high 
 ## Executor Behavior
 
 The local executor prefers Backend-provided `argv`; it falls back to the system shell only when `argv` is missing. If `path`/`cwd` is empty, the executor uses its current working directory. `env` is merged into the current process environment. On timeout, the executor terminates the command process group and returns a timeout result.
+
+## macOS App Local Terminal
+
+When the WeWork macOS App opens a project that is bound to a local executor on the same Mac, it can embed a local terminal in the workspace panel. This terminal does not depend on `ttyd` and does not use the `/devices/{device_id}/commands` RPC. The App creates a local PTY through Tauri commands and renders the input/output stream with the frontend `xterm` component.
+
+Enablement rules:
+
+- The runtime must be the macOS Tauri App. Regular browsers and the iOS App do not enable this path.
+- The project device must be a local Claude Code device.
+- The App and executor must correspond to the same backend. The frontend passes the current `apiBaseUrl` to the native layer; the native layer first scans running `wegent-executor` processes and matches their `WEGENT_BACKEND_URL`.
+- If no matching process is found, the native layer falls back to local configuration files such as `WEGENT_EXECUTOR_HOME`, `~/.wecode/wegent-executor/device-config.json`, and `~/.wegent-executor/device-config.json`.
+- For project terminals, an existing project `localPath` on the current Mac is also accepted as a same-machine signal. This handles cases where multiple executor config files are temporarily out of sync.
+
+This check intentionally does not use IP or MAC addresses. IPs can be duplicated or distorted by proxies, VPNs, container networks, and loopback routing. MAC addresses can also be unstable because of permissions, virtual interfaces, and privacy behavior. Matching a running executor process to the backend URL is closer to the executor connection that the App is actually using.

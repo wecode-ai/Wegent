@@ -14,7 +14,8 @@ import { ChromeTitlebar } from '@/components/topnav/ChromeTitlebar'
 import { AppIframe } from '@/components/topnav/AppIframe'
 import { useChromeTabs } from '@/components/topnav/useChromeTabs'
 import { isTauriRuntime } from '@/lib/runtime-environment'
-import { DeviceOnboardingGate } from '@wecode/features/local-executor/DeviceOnboardingGate'
+import { AppUpdateProvider } from '@/features/app-update/AppUpdateProvider'
+import { AppUpdateTitlebarButton } from '@/components/topnav/AppUpdateTitlebarButton'
 
 function useCurrentPath() {
   const [path, setPath] = useState(stripAppBasePath(window.location.pathname))
@@ -69,9 +70,11 @@ function AppRoutes() {
 export default function App() {
   return (
     <AppearanceProvider>
-      <AuthProvider>
-        <AppShell />
-      </AuthProvider>
+      <AppUpdateProvider>
+        <AuthProvider>
+          <AppShell />
+        </AuthProvider>
+      </AppUpdateProvider>
     </AppearanceProvider>
   )
 }
@@ -79,7 +82,7 @@ export default function App() {
 function AppShell() {
   const path = useCurrentPath()
   const { user } = useAuth()
-  const { activeAppKey, tabs, navigateToApp, activeTab, isNativeApp } = useChromeTabs(path)
+  const { activeAppKey, tabs, navigateToApp } = useChromeTabs(path)
   const isTauri = isTauriRuntime()
 
   // No chrome on login/setup pages
@@ -87,29 +90,19 @@ function AppShell() {
     return <AppRoutes />
   }
 
-  const shell = (
+  return (
     <div className="flex h-screen flex-col overflow-hidden bg-surface">
       {isTauri && (
-        <ChromeTitlebar tabs={tabs} activeKey={activeAppKey} onNavigate={navigateToApp} />
+        <ChromeTitlebar
+          tabs={tabs}
+          activeKey={activeAppKey}
+          onNavigate={navigateToApp}
+          afterTabs={<AppUpdateTitlebarButton />}
+        />
       )}
       <div className="min-h-0 flex-1 overflow-hidden">
         <AppRoutes />
       </div>
     </div>
   )
-
-  // Device onboarding gates entry to the main workbench only. While onboarding,
-  // the gate renders a standalone full-screen page without the chrome titlebar.
-  const isIframeApp = !isNativeApp && activeTab?.mode === 'iframe' && Boolean(activeTab.url)
-  const isMainWorkbenchRoute =
-    !isIframeApp &&
-    path !== '/plugins' &&
-    path !== '/plugins/manage' &&
-    path !== '/apps'
-
-  if (isMainWorkbenchRoute) {
-    return <DeviceOnboardingGate>{shell}</DeviceOnboardingGate>
-  }
-
-  return shell
 }

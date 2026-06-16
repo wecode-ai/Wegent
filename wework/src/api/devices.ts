@@ -212,6 +212,22 @@ export function createDeviceApi(client: HttpClient) {
       )
     },
 
+    async openLocalTerminal(deviceId: string, cwd?: string): Promise<void> {
+      const args = cwd?.trim() ? [cwd.trim()] : []
+      const response = await client.post<DeviceCommandResponse>(
+        `/devices/${encodeURIComponent(deviceId)}/commands`,
+        {
+          command_key: 'open_terminal',
+          args,
+          timeout_seconds: 10,
+          max_output_bytes: 4096,
+        }
+      )
+      if (!response.success) {
+        throw new Error(response.error || response.stderr || 'Failed to open terminal')
+      }
+    },
+
     async createCloudDevice(): Promise<CloudDeviceResponse> {
       return client.post<CloudDeviceResponse>('/cloud-devices')
     },

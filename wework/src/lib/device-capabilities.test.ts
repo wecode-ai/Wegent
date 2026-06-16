@@ -6,6 +6,7 @@ import {
   isDeviceBelowWeWorkVersion,
   isDeviceRunningTask,
   isVersionAtLeast,
+  supportsLocalTerminalLaunch,
 } from './device-capabilities'
 
 describe('device-capabilities', () => {
@@ -46,21 +47,38 @@ describe('device-capabilities', () => {
         status: 'online',
         bind_shell: 'claudecode',
         slot_used: 0,
-      }),
+      })
     ).toBe(true)
     expect(
       canRequestDeviceUpgrade({
         status: 'online',
         bind_shell: 'claudecode',
         slot_used: 1,
-      }),
+      })
     ).toBe(false)
     expect(
       canRequestDeviceUpgrade({
         status: 'offline',
         bind_shell: 'claudecode',
         slot_used: 0,
-      }),
+      })
+    ).toBe(false)
+  })
+
+  test('supports native terminal launch only on local Claude Code devices', () => {
+    const claudeDevice = {
+      bind_shell: 'claudecode',
+      status: 'online',
+    }
+
+    expect(supportsLocalTerminalLaunch({ ...claudeDevice, device_type: 'local' })).toBe(true)
+    expect(supportsLocalTerminalLaunch({ ...claudeDevice, device_type: 'cloud' })).toBe(false)
+    expect(
+      supportsLocalTerminalLaunch({
+        ...claudeDevice,
+        device_type: 'local',
+        bind_shell: 'openclaw',
+      })
     ).toBe(false)
   })
 })

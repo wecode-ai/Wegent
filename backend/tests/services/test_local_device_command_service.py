@@ -234,6 +234,9 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     setup_shared_skills_definition = resolve_local_device_command(
         "setup_shared_skills", settings.LOCAL_DEVICE_COMMANDS
     )
+    open_terminal_definition = resolve_local_device_command(
+        "open_terminal", settings.LOCAL_DEVICE_COMMANDS
+    )
     sync_runtime_auth_file_definition = resolve_local_device_command(
         "sync_runtime_auth_file", settings.LOCAL_DEVICE_COMMANDS
     )
@@ -324,6 +327,10 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     assert ".codex" in setup_shared_skills_definition.command
     assert ".claude" in setup_shared_skills_definition.command
     assert setup_shared_skills_definition.post_processor == "json"
+    assert open_terminal_definition is not None
+    assert "open -a Terminal" in open_terminal_definition.command
+    assert "x-terminal-emulator" in open_terminal_definition.command
+    assert open_terminal_definition.post_processor is None
     assert sync_runtime_auth_file_definition is not None
     assert "WEGENT_RUNTIME_CONFIG_CONTENT" in sync_runtime_auth_file_definition.command
     assert sync_runtime_auth_file_definition.post_processor == "json"
