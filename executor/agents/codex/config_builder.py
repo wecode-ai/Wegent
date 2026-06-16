@@ -13,7 +13,7 @@ import shutil
 from dataclasses import dataclass
 from typing import Any, Optional
 
-from executor.agents.api_headers import WECODE_SOURCE_HEADER
+from executor.agents.api_headers import merge_source_header
 from executor.agents.env_value import resolve_env_value
 from executor.config import config
 from shared.logger import setup_logger
@@ -125,7 +125,11 @@ def build_codex_config(
 
     model_provider = _resolve_model_provider(model_config)
     wire_api = _resolve_wire_api(model_config)
-    source_header_overrides = _build_source_header_overrides(model_provider, source)
+    header_overrides = _build_header_overrides(
+        model_provider,
+        model_config.get("default_headers"),
+        source,
+    )
 
     overrides = [
         "forced_login_method=api",
@@ -135,7 +139,7 @@ def build_codex_config(
         f"model_providers.{model_provider}.base_url={base_url.rstrip('/')}",
         f"model_providers.{model_provider}.wire_api={wire_api}",
         f"model_providers.{model_provider}.experimental_bearer_token={api_key}",
-        *source_header_overrides,
+        *header_overrides,
         *mcp_overrides,
     ]
 
@@ -251,19 +255,19 @@ def _resolve_wire_api(model_config: dict[str, Any]) -> str:
     return wire_api or RESPONSES_WIRE_API
 
 
-def _build_source_header_overrides(
+def _build_header_overrides(
     model_provider: str,
+    default_headers: Any,
     source: Optional[str],
 ) -> tuple[str, ...]:
-    if not source:
+    headers = merge_source_header(default_headers, source)
+    if not headers:
         return ()
-    key = _toml_key_path(
-        "model_providers",
-        model_provider,
-        "http_headers",
-        WECODE_SOURCE_HEADER,
+    return tuple(
+        f"{_toml_key_path('model_providers', model_provider, 'http_headers', key)}="
+        f"{_toml_value(value)}"
+        for key, value in headers.items()
     )
-    return (f"{key}={_toml_value(source)}",)
 
 
 def _read_api_format(model_config: dict[str, Any]) -> str:

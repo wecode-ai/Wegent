@@ -82,6 +82,41 @@ def test_build_codex_config_adds_wework_source_header_when_requested():
     )
 
 
+def test_build_codex_config_overrides_default_source_header_when_requested():
+    config = build_codex_config(
+        {
+            "model": "openai",
+            "model_id": "gpt-5.5",
+            "base_url": "http://127.0.0.1:3456/v1",
+            "api_key": "wecode-proxy-placeholder",
+            "api_format": "responses",
+            "default_headers": {
+                "wecode-action": "wecode-cli",
+                "wecode-source": "wecode-cli",
+                "x-weibo-downstream": "shanghai-intranet",
+            },
+        },
+        source="wework",
+    )
+
+    assert (
+        'model_providers.wecode-openai.http_headers.wecode-action="wecode-cli"'
+        in config.config_overrides
+    )
+    assert (
+        'model_providers.wecode-openai.http_headers.x-weibo-downstream="shanghai-intranet"'
+        in config.config_overrides
+    )
+    assert (
+        'model_providers.wecode-openai.http_headers.wecode-source="wework"'
+        in config.config_overrides
+    )
+    assert not any(
+        item == 'model_providers.wecode-openai.http_headers.wecode-source="wecode-cli"'
+        for item in config.config_overrides
+    )
+
+
 def test_build_codex_config_omits_source_header_by_default():
     config = build_codex_config(
         {

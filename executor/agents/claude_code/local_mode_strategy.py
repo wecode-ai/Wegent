@@ -26,7 +26,13 @@ import os
 from pathlib import Path
 from typing import Any, Dict, Tuple
 
-from executor.agents.api_headers import WEWORK_SOURCE, merge_anthropic_custom_headers
+from executor.agents.api_headers import (
+    WEWORK_SOURCE,
+    extract_default_headers,
+    merge_anthropic_custom_headers,
+    merge_anthropic_header_map,
+    merge_source_header,
+)
 from executor.agents.claude_code.mode_strategy import ExecutionModeStrategy
 from executor.config import config
 from executor.platform_compat import get_permissions_manager, sanitize_ld_library_path
@@ -179,12 +185,11 @@ class LocalModeStrategy(ExecutionModeStrategy):
         updated_options = options.copy()
         existing_env = dict(updated_options.get("env", {}))
         merged_env = {**existing_env, **env_config, **task_identity_env}
-        # Ensure all values are strings (required by SDK)
-        updated_options["env"] = {k: str(v) for k, v in merged_env.items()}
 
         # Fix PyInstaller LD_LIBRARY_PATH issue for child processes.
         # See: https://pyinstaller.org/en/stable/common-issues-and-pitfalls.html
-        env = dict(updated_options.get("env", {}))
+        # Ensure all values are strings (required by SDK).
+        env = {k: str(v) for k, v in merged_env.items()}
         sanitize_ld_library_path(env)
 
         # Project tasks use global Claude capability symlinks; non-project tasks
@@ -195,10 +200,17 @@ class LocalModeStrategy(ExecutionModeStrategy):
         custom_headers = config.ANTHROPIC_CUSTOM_HEADERS or env.get(
             "ANTHROPIC_CUSTOM_HEADERS", ""
         )
+        default_headers = extract_default_headers(merged_env)
         if self._use_global_capabilities:
+            default_headers = merge_source_header(default_headers, WEWORK_SOURCE)
             custom_headers = merge_anthropic_custom_headers(
                 custom_headers,
                 WEWORK_SOURCE,
+            )
+        if default_headers:
+            custom_headers = merge_anthropic_header_map(
+                custom_headers,
+                default_headers,
             )
 
         # Add ANTHROPIC_CUSTOM_HEADERS if configured via environment variable or

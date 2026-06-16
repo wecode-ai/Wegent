@@ -444,6 +444,36 @@ class TestLocalModeStrategy:
             "x-custom-user: test\nwecode-source: wework"
         )
 
+    def test_configure_client_options_overrides_default_source_header_for_project_tasks(
+        self, strategy, tmp_path, monkeypatch
+    ):
+        """Project tasks should override Wecode CLI default source headers."""
+        strategy.use_global_capabilities(True)
+        monkeypatch.setenv("HOME", str(tmp_path))
+        options = {"cwd": "/workspace"}
+        config_dir = "/workspace/12345/.claude"
+        env_config = {
+            "DEFAULT_HEADERS": {
+                "wecode-action": "wecode-cli",
+                "wecode-source": "wecode-cli",
+                "x-weibo-downstream": "shanghai-intranet",
+            }
+        }
+
+        with patch("executor.config.config.ANTHROPIC_CUSTOM_HEADERS", ""):
+            result = strategy.configure_client_options(
+                options,
+                config_dir,
+                env_config,
+                {},
+            )
+
+        assert result["env"]["ANTHROPIC_CUSTOM_HEADERS"] == (
+            "wecode-action: wecode-cli\n"
+            "x-weibo-downstream: shanghai-intranet\n"
+            "wecode-source: wework"
+        )
+
     def test_configure_client_options_adds_anthropic_custom_headers(self, strategy):
         """Test that ANTHROPIC_CUSTOM_HEADERS is added when configured."""
         options = {"cwd": "/workspace"}
