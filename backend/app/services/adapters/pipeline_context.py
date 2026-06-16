@@ -81,10 +81,6 @@ def _extract_previous_stage_output(result: Any) -> str:
     if isinstance(value, str) and value.strip():
         return value.strip()
 
-    blocks_output = _extract_text_blocks_output(result.get("blocks"))
-    if blocks_output:
-        return blocks_output
-
     messages_chain = result.get("messages_chain")
     if not isinstance(messages_chain, list):
         return ""
@@ -96,24 +92,6 @@ def _extract_previous_stage_output(result: Any) -> str:
         if content:
             return content
     return ""
-
-
-def _extract_text_blocks_output(blocks: Any) -> str:
-    if not isinstance(blocks, list):
-        return ""
-
-    text_parts: list[str] = []
-    for block in blocks:
-        if not isinstance(block, dict):
-            continue
-        if block.get("type") != "text":
-            continue
-        content = block.get("content")
-        if not isinstance(content, str) or not content.strip():
-            content = block.get("text")
-        if isinstance(content, str) and content.strip():
-            text_parts.append(content.strip())
-    return "\n".join(text_parts)
 
 
 def _content_to_text(content: Any) -> str:
