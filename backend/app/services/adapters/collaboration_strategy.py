@@ -16,6 +16,8 @@ from typing import Any, Dict, Optional, Tuple
 
 from sqlalchemy.orm import Session
 
+import app.stores.tasks as task_stores
+
 logger = logging.getLogger(__name__)
 
 
@@ -203,13 +205,12 @@ class PipelineCollaborationStrategy(CollaborationStrategy):
             from app.models.kind import Kind
             from app.schemas.kind import Task, Team
             from app.services.readers.kinds import KindType, kindReader
-            from app.stores.tasks import subtask_store, task_store
 
-            subtask = subtask_store.get_by_id(db, subtask_id=subtask_id)
+            subtask = task_stores.subtask_store.get_by_id(db, subtask_id=subtask_id)
             if not subtask or not subtask.bot_ids:
                 return None
 
-            task = task_store.get_regular_active_task(db, task_id=task_id)
+            task = task_stores.task_store.get_regular_active_task(db, task_id=task_id)
             if not task:
                 return None
 
@@ -249,6 +250,21 @@ class PipelineCollaborationStrategy(CollaborationStrategy):
                     break
 
             if current_stage_index is None:
+                return None
+
+            active_stage_index = (
+                task_crd.spec.currentStage
+                if task_crd.spec.currentStage is not None
+                else 0
+            )
+            if current_stage_index != active_stage_index:
+                logger.info(
+                    "[PipelineStrategy] Skip stale auto-advance for task %s: "
+                    "subtask_stage=%s, currentStage=%s",
+                    task_id,
+                    current_stage_index,
+                    active_stage_index,
+                )
                 return None
 
             # Check requireConfirmation on current stage
@@ -340,11 +356,10 @@ class CollaborationStrategyFactory:
         """
         from app.models.kind import Kind
         from app.schemas.kind import Task, Team
-        from app.stores.tasks import task_store
 
         try:
             # Get the task
-            task = task_store.get_regular_active_task(db, task_id=task_id)
+            task = task_stores.task_store.get_regular_active_task(db, task_id=task_id)
             if not task:
                 return DefaultCollaborationStrategy()
 

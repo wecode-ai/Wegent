@@ -187,6 +187,50 @@ class TestPipelineAutoAdvance:
             "next_bot_name": "bot-1",
         }
 
+    def test_returns_none_when_subtask_stage_is_not_current_stage(self):
+        """A stale completed callback must not advance the pipeline again."""
+        strategy = self._make_strategy()
+        db = _make_db()
+
+        bot_0 = _make_bot(10, "bot-0")
+        bot_1 = _make_bot(20, "bot-1")
+        members = [
+            _make_member("bot-0", require_confirmation=False),
+            _make_member("bot-1", require_confirmation=False),
+        ]
+
+        subtask = _make_subtask(bot_id=10)
+        task_resource = MagicMock()
+        task_resource.user_id = 1
+        task_resource.json = {}
+        task_crd = _make_task_crd(current_stage=1)
+        team_crd = _make_team_crd(members)
+        team_resource = MagicMock()
+        team_resource.user_id = 1
+        team_resource.json = {}
+        db.query.return_value.filter.return_value.first.return_value = team_resource
+
+        with (
+            patch.object(strategy, "_should_require_confirmation", return_value=False),
+            patch("app.schemas.kind.Task") as mock_task_schema,
+            patch("app.schemas.kind.Team") as mock_team_schema,
+            patch("app.stores.tasks.subtask_store.get_by_id", return_value=subtask),
+            patch(
+                "app.stores.tasks.task_store.get_regular_active_task",
+                return_value=task_resource,
+            ),
+            patch("app.services.readers.kinds.kindReader") as mock_reader,
+        ):
+            mock_task_schema.model_validate.return_value = task_crd
+            mock_team_schema.model_validate.return_value = team_crd
+            mock_reader.get_by_id.return_value = bot_0
+            mock_reader.get_by_name_and_namespace.return_value = bot_1
+
+            result = strategy.get_auto_advance_info(db, 1, 1, "COMPLETED")
+
+        assert result is None
+        mock_reader.get_by_name_and_namespace.assert_not_called()
+
     def test_auto_advance_via_patched_imports(self):
         """Stage 0 completes, requireConfirmation=False, stage 1 exists -> advance."""
         strategy = self._make_strategy()

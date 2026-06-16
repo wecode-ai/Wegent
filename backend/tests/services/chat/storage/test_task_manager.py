@@ -49,11 +49,11 @@ def test_database_handler_updates_subtask_status_through_store():
             return_value=_mock_db_session(db),
         ),
         patch(
-            "app.services.chat.storage.db.subtask_store.get_by_id",
+            "app.services.chat.storage.db.task_stores.subtask_store.get_by_id",
             return_value=subtask,
         ) as get_subtask_mock,
         patch(
-            "app.services.chat.storage.db.subtask_store.update_fields"
+            "app.services.chat.storage.db.task_stores.subtask_store.update_fields"
         ) as update_mock,
         patch.object(handler, "_update_task_status_sync") as update_task_mock,
     ):
@@ -64,7 +64,7 @@ def test_database_handler_updates_subtask_status_through_store():
         )
 
     get_subtask_mock.assert_called_once_with(db, subtask_id=1861)
-    update_task_mock.assert_called_once_with(1385)
+    update_task_mock.assert_called_once_with(1385, changed_subtask_id=1861)
     update_kwargs = update_mock.call_args.kwargs
     assert update_kwargs["subtask"] is subtask
     assert update_kwargs["status"] == SubtaskStatus.COMPLETED
@@ -96,11 +96,11 @@ def test_database_handler_recomputes_task_status_from_subtask_store():
             return_value=_mock_db_session(db),
         ),
         patch(
-            "app.services.chat.storage.db.task_store.get_task_by_states",
+            "app.services.chat.storage.db.task_stores.task_store.get_task_by_states",
             return_value=task,
         ) as get_task_mock,
         patch(
-            "app.services.chat.storage.db.subtask_store.list_assistant_by_task",
+            "app.services.chat.storage.db.task_stores.subtask_store.list_assistant_by_task",
             return_value=[last_subtask],
         ) as list_subtasks_mock,
         patch(
@@ -109,7 +109,7 @@ def test_database_handler_recomputes_task_status_from_subtask_store():
             return_value=strategy,
         ),
         patch(
-            "app.services.chat.storage.db.task_store.update_json"
+            "app.services.chat.storage.db.task_stores.task_store.update_json"
         ) as update_task_mock,
     ):
         DatabaseHandler()._update_task_status_sync(task_id=1385)
@@ -125,6 +125,112 @@ def test_database_handler_recomputes_task_status_from_subtask_store():
     assert update_payload["status"]["progress"] == 100
     assert update_payload["status"]["result"] == {"value": "done"}
     db.query.assert_not_called()
+
+
+def test_database_handler_auto_advance_uses_changed_subtask_status():
+    """Pipeline auto-advance should be based on the subtask that just changed."""
+    from app.services.chat.storage.db import DatabaseHandler
+
+    db = MagicMock()
+    task = _build_existing_task(task_id=1385, user_id=7)
+    last_subtask = SimpleNamespace(
+        id=1861,
+        task_id=1385,
+        status=SubtaskStatus.COMPLETED,
+        result={"value": "done"},
+        error_message="",
+    )
+    changed_subtask = SimpleNamespace(
+        id=2002,
+        task_id=1385,
+        status=SubtaskStatus.RUNNING,
+        result=None,
+        error_message="",
+    )
+    strategy = MagicMock()
+    strategy.get_task_status_on_subtask_complete.return_value = ("COMPLETED", 100)
+    strategy.get_auto_advance_info.return_value = None
+
+    with (
+        patch(
+            "app.services.chat.storage.db._db_session",
+            return_value=_mock_db_session(db),
+        ),
+        patch(
+            "app.services.chat.storage.db.task_stores.task_store.get_task_by_states",
+            return_value=task,
+        ),
+        patch(
+            "app.services.chat.storage.db.task_stores.subtask_store.list_assistant_by_task",
+            return_value=[last_subtask],
+        ),
+        patch(
+            "app.services.chat.storage.db.task_stores.subtask_store.get_by_id",
+            return_value=changed_subtask,
+        ),
+        patch(
+            "app.services.adapters.collaboration_strategy."
+            "CollaborationStrategyFactory.get_strategy_for_task",
+            return_value=strategy,
+        ),
+        patch("app.services.chat.storage.db.task_stores.task_store.update_json"),
+    ):
+        DatabaseHandler()._update_task_status_sync(
+            task_id=1385, changed_subtask_id=2002
+        )
+
+    strategy.get_auto_advance_info.assert_called_once_with(
+        db, 1385, 2002, SubtaskStatus.RUNNING.value
+    )
+
+
+def test_pipeline_auto_advance_reuses_existing_next_stage_subtask():
+    """Duplicate terminal callbacks must not create duplicate pipeline stages."""
+    from app.services.chat.storage.db import DatabaseHandler
+
+    db = MagicMock()
+    task = SimpleNamespace(id=1385, user_id=7)
+    task_crd = SimpleNamespace(
+        spec=SimpleNamespace(title="Pipeline task", currentStage=0)
+    )
+    last_subtask = SimpleNamespace(
+        message_id=2,
+        team_id=1256,
+        executor_name="wegent-task-admin-pipeline",
+        executor_namespace="",
+    )
+    existing_next_subtask = SimpleNamespace(id=2002)
+    advance_info = {
+        "next_stage_index": 1,
+        "next_bot_id": 42,
+        "next_bot_name": "reviewer",
+    }
+
+    with (
+        patch(
+            "app.services.chat.storage.db.task_stores.subtask_store.get_by_task_parent_id_and_role",
+            return_value=existing_next_subtask,
+        ) as get_existing_mock,
+        patch(
+            "app.services.chat.storage.db.task_stores.subtask_store.create_subtask"
+        ) as create_mock,
+        patch(
+            "app.services.chat.storage.db.task_stores.subtask_store.get_latest_by_task"
+        ),
+    ):
+        DatabaseHandler()._auto_advance_pipeline(
+            db, task, task_crd, last_subtask, advance_info
+        )
+
+    get_existing_mock.assert_called_once_with(
+        db,
+        task_id=1385,
+        parent_id=2,
+        role=SubtaskRole.ASSISTANT,
+        owner_user_id=7,
+    )
+    create_mock.assert_not_called()
+    assert task_crd.spec.currentStage == 1
 
 
 def test_create_assistant_subtask_inherits_deleted_executor_state_for_recovery(

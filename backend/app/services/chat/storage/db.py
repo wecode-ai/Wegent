@@ -25,11 +25,11 @@ from typing import Any, Callable, Dict, Generator, Optional, TypeVar
 
 from sqlalchemy.orm import Session
 
+import app.stores.tasks as task_stores
 from app.models.subtask import Subtask
 from app.models.task import TaskResource
 from app.schemas.kind import TaskStatus
 from app.services.adapters.collaboration_strategy import CollaborationStrategy
-from app.stores.tasks import subtask_store, task_store
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +101,7 @@ class DatabaseHandler:
 
         try:
             with _db_session() as db:
-                subtask = subtask_store.get_by_id(db, subtask_id=subtask_id)
+                subtask = task_stores.subtask_store.get_by_id(db, subtask_id=subtask_id)
                 if not subtask:
                     return
 
@@ -170,14 +170,16 @@ class DatabaseHandler:
                         executor_namespace,
                     )
 
-                subtask_store.update_fields(db, subtask=subtask, **fields)
+                task_stores.subtask_store.update_fields(db, subtask=subtask, **fields)
                 task_id = subtask.task_id
             # Context manager commits here, then update task status
-            self._update_task_status_sync(task_id)
+            self._update_task_status_sync(task_id, changed_subtask_id=subtask_id)
         except Exception:
             logger.exception("Error updating subtask %s status", subtask_id)
 
-    def _update_task_status_sync(self, task_id: int) -> None:
+    def _update_task_status_sync(
+        self, task_id: int, changed_subtask_id: int | None = None
+    ) -> None:
         """Update task status based on subtask status using collaboration strategy."""
         from app.schemas.kind import Task
         from app.services.adapters.collaboration_strategy import (
@@ -188,7 +190,7 @@ class DatabaseHandler:
         should_schedule_dispatch = False
         try:
             with _db_session() as db:
-                task = task_store.get_task_by_states(
+                task = task_stores.task_store.get_task_by_states(
                     db,
                     task_id=task_id,
                     states=TaskResource.is_active_query(),
@@ -196,7 +198,7 @@ class DatabaseHandler:
                 if not task:
                     return
 
-                subtasks = subtask_store.list_assistant_by_task(
+                subtasks = task_stores.subtask_store.list_assistant_by_task(
                     db,
                     task_id=task_id,
                     owner_user_id=task.user_id,
@@ -206,6 +208,20 @@ class DatabaseHandler:
 
                 task_crd = Task.model_validate(task.json)
                 last_subtask = subtasks[-1]
+                changed_subtask = None
+                if changed_subtask_id is not None:
+                    changed_subtask = next(
+                        (
+                            subtask
+                            for subtask in subtasks
+                            if subtask.id == changed_subtask_id
+                        ),
+                        None,
+                    )
+                    if changed_subtask is None:
+                        changed_subtask = task_stores.subtask_store.get_by_id(
+                            db, subtask_id=changed_subtask_id
+                        )
 
                 if task_crd.status:
                     # Use collaboration strategy to determine task status
@@ -218,19 +234,23 @@ class DatabaseHandler:
                     task_crd.status.updatedAt = datetime.now()
 
                     # Check if pipeline should auto-advance to next stage
+                    advance_subtask = changed_subtask or last_subtask
                     advance_info = strategy.get_auto_advance_info(
-                        db, task_id, last_subtask.id, last_subtask.status.value
+                        db,
+                        task_id,
+                        advance_subtask.id,
+                        advance_subtask.status.value,
                     )
                     if advance_info:
                         self._auto_advance_pipeline(
-                            db, task, task_crd, last_subtask, advance_info
+                            db, task, task_crd, advance_subtask, advance_info
                         )
                         # Keep task RUNNING while next stage executes
                         task_crd.status.status = "PENDING"
                         task_crd.status.updatedAt = datetime.now()
                         should_schedule_dispatch = True
 
-                task_store.update_json(
+                task_stores.task_store.update_json(
                     db, task=task, payload=task_crd.model_dump(mode="json")
                 )
 
@@ -270,23 +290,41 @@ class DatabaseHandler:
         next_bot_id = advance_info["next_bot_id"]
         next_bot_name = advance_info["next_bot_name"]
 
+        task_crd.spec.currentStage = next_stage_index
+
+        existing_next_subtask = (
+            task_stores.subtask_store.get_by_task_parent_id_and_role(
+                db,
+                task_id=task.id,
+                parent_id=last_subtask.message_id,
+                role=SubtaskRole.ASSISTANT,
+                owner_user_id=task.user_id,
+            )
+        )
+        if existing_next_subtask:
+            logger.info(
+                "[DB] Pipeline auto-advance skipped for task %s: "
+                "next stage already exists, subtask_id=%s",
+                task.id,
+                existing_next_subtask.id,
+            )
+            return
+
         # Reuse same executor container (pipeline runs all stages in one container)
         executor_name = last_subtask.executor_name or ""
         executor_namespace = last_subtask.executor_namespace or ""
 
-        # Compute next message_id from highest existing message_id in this task
-        latest = subtask_store.get_latest_by_task(
+        # Compute next message_id from highest existing message_id in this task.
+        # The parent is always the completed stage that triggered this advance.
+        latest = task_stores.subtask_store.get_latest_by_task(
             db,
             task_id=task.id,
             owner_user_id=task.user_id,
         )
         next_message_id = (latest.message_id + 1) if latest else 1
-        parent_id = latest.message_id if latest else 0
+        parent_id = last_subtask.message_id
 
-        # Advance currentStage in task spec
-        task_crd.spec.currentStage = next_stage_index
-
-        subtask_store.create_subtask(
+        task_stores.subtask_store.create_subtask(
             db,
             user_id=task.user_id,
             task_id=task.id,
@@ -365,8 +403,10 @@ class DatabaseHandler:
         """Synchronous partial response save."""
         try:
             with _db_session() as db:
-                if subtask := subtask_store.get_by_id(db, subtask_id=subtask_id):
-                    subtask_store.update_result(
+                if subtask := task_stores.subtask_store.get_by_id(
+                    db, subtask_id=subtask_id
+                ):
+                    task_stores.subtask_store.update_result(
                         db,
                         subtask=subtask,
                         result={"value": content, "streaming": is_streaming},
@@ -391,7 +431,9 @@ class DatabaseHandler:
         """Synchronous get subtask message_id."""
         try:
             with _db_session() as db:
-                if subtask := subtask_store.get_by_id(db, subtask_id=subtask_id):
+                if subtask := task_stores.subtask_store.get_by_id(
+                    db, subtask_id=subtask_id
+                ):
                     return subtask.message_id
         except Exception:
             logger.exception("Error getting message_id for subtask %s", subtask_id)

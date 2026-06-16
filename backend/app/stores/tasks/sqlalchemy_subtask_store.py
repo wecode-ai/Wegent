@@ -133,6 +133,51 @@ class SqlAlchemySubtaskStore:
         db.add(subtask)
         return subtask
 
+    def create_user_and_assistant_subtasks(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        task_id: int,
+        team_id: int,
+        title: str,
+        assistant_title: str,
+        bot_ids: list[int],
+        prompt: str,
+        user_message_id: int,
+        user_parent_id: int,
+        assistant_message_id: int,
+        assistant_parent_id: int,
+        sender_user_id: int = 0,
+        result: Optional[dict[str, Any]] = None,
+        progress: int = 100,
+    ) -> tuple[Subtask, Subtask]:
+        user_subtask = self.create_user_subtask(
+            db,
+            user_id=user_id,
+            task_id=task_id,
+            team_id=team_id,
+            title=title,
+            bot_ids=bot_ids,
+            prompt=prompt,
+            message_id=user_message_id,
+            parent_id=user_parent_id,
+            sender_user_id=sender_user_id,
+            result=result,
+            progress=progress,
+        )
+        assistant_subtask = self.create_assistant_subtask(
+            db,
+            user_id=user_id,
+            task_id=task_id,
+            team_id=team_id,
+            title=assistant_title,
+            bot_ids=bot_ids,
+            message_id=assistant_message_id,
+            parent_id=assistant_parent_id,
+        )
+        return user_subtask, assistant_subtask
+
     def create_subtask(
         self,
         db: Session,
@@ -416,6 +461,21 @@ class SqlAlchemySubtaskStore:
         query = db.query(Subtask).filter(Subtask.task_id == task_id)
         query = self._filter_owner_user_id(query, owner_user_id=owner_user_id)
         return query.all()
+
+    def list_ids_by_task(
+        self,
+        db: Session,
+        *,
+        task_id: int,
+        user_id: Optional[int] = None,
+        owner_user_id: Optional[int] = None,
+    ) -> list[int]:
+        query = db.query(Subtask.id).filter(Subtask.task_id == task_id)
+        query = self._filter_owner_user_id(query, owner_user_id=owner_user_id)
+        if user_id is not None:
+            query = query.filter(Subtask.user_id == user_id)
+        rows = query.all()
+        return [int(row[0]) for row in rows]
 
     def list_by_task_desc(
         self, db: Session, *, task_id: int, owner_user_id: Optional[int] = None
@@ -764,6 +824,87 @@ class SqlAlchemySubtaskStore:
         )
         return [row[0] for row in rows]
 
+    def get_cleanup_cursor_recent_start_reference(
+        self, db: Session, *, recent_threshold: datetime
+    ) -> Optional[Subtask]:
+        return (
+            db.query(Subtask)
+            .filter(Subtask.created_at >= recent_threshold)
+            .order_by(Subtask.created_at.asc(), Subtask.id.asc())
+            .first()
+        )
+
+    def get_cleanup_cursor_latest_reference(self, db: Session) -> Optional[Subtask]:
+        return db.query(Subtask).order_by(Subtask.id.desc()).first()
+
+    def list_runtime_cleanup_subtasks(self, db: Session) -> list[Subtask]:
+        return (
+            db.query(Subtask)
+            .filter(
+                Subtask.executor_name.isnot(None),
+                Subtask.executor_name != "",
+                Subtask.executor_deleted_at == False,
+            )
+            .order_by(Subtask.updated_at.asc(), Subtask.id.asc())
+            .all()
+        )
+
+    def scan_cleanup_candidate_subtasks(
+        self, db: Session, *, last_id: int, cutoff: datetime, limit: int
+    ) -> list[Subtask]:
+        return (
+            db.query(Subtask)
+            .filter(
+                Subtask.id > last_id,
+                Subtask.created_at <= cutoff,
+            )
+            .order_by(Subtask.id.asc())
+            .limit(limit)
+            .all()
+        )
+
+    def scan_cleanup_lookback_subtasks(
+        self,
+        db: Session,
+        *,
+        lookback_start: datetime,
+        cutoff: datetime,
+        limit: int,
+    ) -> list[Subtask]:
+        return (
+            db.query(Subtask)
+            .filter(
+                Subtask.status.in_(
+                    [
+                        SubtaskStatus.PENDING,
+                        SubtaskStatus.COMPLETED,
+                        SubtaskStatus.FAILED,
+                        SubtaskStatus.CANCELLED,
+                    ]
+                ),
+                Subtask.created_at > lookback_start,
+                Subtask.created_at <= cutoff,
+                Subtask.executor_name.isnot(None),
+                Subtask.executor_name != "",
+                Subtask.executor_deleted_at == False,
+            )
+            .order_by(Subtask.created_at.asc(), Subtask.id.asc())
+            .limit(limit)
+            .all()
+        )
+
+    def list_cleanup_subtasks_for_task(
+        self, db: Session, *, task_id: int, owner_user_id: Optional[int] = None
+    ) -> list[Subtask]:
+        query = db.query(Subtask).filter(
+            Subtask.task_id == task_id,
+            Subtask.executor_name.isnot(None),
+            Subtask.executor_name != "",
+            Subtask.executor_deleted_at == False,
+        )
+        query = self._filter_owner_user_id(query, owner_user_id=owner_user_id)
+        return query.all()
+
     def update_status(
         self,
         db: Session,
@@ -838,6 +979,26 @@ class SqlAlchemySubtaskStore:
             .filter(
                 Subtask.executor_namespace == executor_namespace,
                 Subtask.executor_name == executor_name,
+            )
+            .update(
+                {
+                    Subtask.executor_deleted_at: True,
+                    Subtask.updated_at: datetime.now(),
+                },
+                synchronize_session=False,
+            )
+        )
+
+    def mark_executor_deleted_by_ids(
+        self, db: Session, *, subtask_ids: Sequence[int]
+    ) -> int:
+        if not subtask_ids:
+            return 0
+        return (
+            db.query(Subtask)
+            .filter(
+                Subtask.id.in_(subtask_ids),
+                Subtask.executor_deleted_at == False,
             )
             .update(
                 {

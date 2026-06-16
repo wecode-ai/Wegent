@@ -4,7 +4,7 @@
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Literal, Optional, Protocol, Sequence
+from typing import Any, Callable, Literal, Optional, Protocol, Sequence
 
 from sqlalchemy.orm import Session
 
@@ -19,6 +19,10 @@ class WorkspaceRefLookup:
     user_id: int
     namespace: str
     name: str
+
+
+class TaskIdAllocationError(RuntimeError):
+    """Raised when a task ID reservation cannot be allocated."""
 
 
 class TaskStore(Protocol):
@@ -50,6 +54,17 @@ class TaskStore(Protocol):
         payload: dict[str, Any],
         client_origin: str,
     ) -> TaskResource: ...
+
+    def create_pending_task_shell_with_workspace(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        client_origin: str,
+        workspace_factory: Callable[[int], tuple[str, str, dict[str, Any]]],
+        is_group_chat: bool = False,
+        project_id: int = 0,
+    ) -> tuple[TaskResource, TaskResource]: ...
 
     def create_task(
         self,
@@ -215,6 +230,13 @@ class TaskStore(Protocol):
         *,
         task_ids: Sequence[int],
         owner_user_id: Optional[int] = None,
+    ) -> list[TaskResource]: ...
+
+    def list_recent_group_chat_tasks(
+        self,
+        db: Session,
+        *,
+        since: datetime,
     ) -> list[TaskResource]: ...
 
     def list_regular_active_tasks(
@@ -448,6 +470,26 @@ class SubtaskStore(Protocol):
         parent_id: int,
     ) -> Subtask: ...
 
+    def create_user_and_assistant_subtasks(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        task_id: int,
+        team_id: int,
+        title: str,
+        assistant_title: str,
+        bot_ids: list[int],
+        prompt: str,
+        user_message_id: int,
+        user_parent_id: int,
+        assistant_message_id: int,
+        assistant_parent_id: int,
+        sender_user_id: int = 0,
+        result: Optional[dict[str, Any]] = None,
+        progress: int = 100,
+    ) -> tuple[Subtask, Subtask]: ...
+
     def create_subtask(
         self,
         db: Session,
@@ -567,6 +609,15 @@ class SubtaskStore(Protocol):
     def list_by_task_unfiltered(
         self, db: Session, *, task_id: int, owner_user_id: Optional[int] = None
     ) -> list[Subtask]: ...
+
+    def list_ids_by_task(
+        self,
+        db: Session,
+        *,
+        task_id: int,
+        user_id: Optional[int] = None,
+        owner_user_id: Optional[int] = None,
+    ) -> list[int]: ...
 
     def list_by_task_desc(
         self, db: Session, *, task_id: int, owner_user_id: Optional[int] = None
@@ -731,6 +782,31 @@ class SubtaskStore(Protocol):
         self, db: Session, *, skip: int, limit: int
     ) -> list[int]: ...
 
+    def get_cleanup_cursor_recent_start_reference(
+        self, db: Session, *, recent_threshold: datetime
+    ) -> Optional[Subtask]: ...
+
+    def get_cleanup_cursor_latest_reference(self, db: Session) -> Optional[Subtask]: ...
+
+    def list_runtime_cleanup_subtasks(self, db: Session) -> list[Subtask]: ...
+
+    def scan_cleanup_candidate_subtasks(
+        self, db: Session, *, last_id: int, cutoff: datetime, limit: int
+    ) -> list[Subtask]: ...
+
+    def scan_cleanup_lookback_subtasks(
+        self,
+        db: Session,
+        *,
+        lookback_start: datetime,
+        cutoff: datetime,
+        limit: int,
+    ) -> list[Subtask]: ...
+
+    def list_cleanup_subtasks_for_task(
+        self, db: Session, *, task_id: int, owner_user_id: Optional[int] = None
+    ) -> list[Subtask]: ...
+
     def update_status(
         self,
         db: Session,
@@ -771,6 +847,10 @@ class SubtaskStore(Protocol):
 
     def mark_executor_deleted(
         self, db: Session, *, executor_namespace: str, executor_name: str
+    ) -> int: ...
+
+    def mark_executor_deleted_by_ids(
+        self, db: Session, *, subtask_ids: Sequence[int]
     ) -> int: ...
 
     def mark_task_subtasks_deleted(

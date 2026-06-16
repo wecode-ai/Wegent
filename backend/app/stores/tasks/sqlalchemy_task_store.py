@@ -7,7 +7,7 @@ import logging
 import uuid
 from datetime import datetime
 from time import perf_counter
-from typing import Any, Literal, Optional, Sequence
+from typing import Any, Callable, Literal, Optional, Sequence
 
 from sqlalchemy import func, text, tuple_
 from sqlalchemy.orm import Session
@@ -285,6 +285,36 @@ class SqlAlchemyTaskStore:
         )
         db.add(workspace)
         return workspace
+
+    def create_pending_task_shell_with_workspace(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        client_origin: str,
+        workspace_factory: Callable[[int], tuple[str, str, dict[str, Any]]],
+        is_group_chat: bool = False,
+        project_id: int = 0,
+    ) -> tuple[TaskResource, TaskResource]:
+        task = self.create_pending_task_shell(
+            db,
+            user_id=user_id,
+            client_origin=client_origin,
+            is_group_chat=is_group_chat,
+            project_id=project_id,
+        )
+        workspace_name, workspace_namespace, workspace_payload = workspace_factory(
+            task.id
+        )
+        workspace = self.create_workspace(
+            db,
+            user_id=user_id,
+            name=workspace_name,
+            namespace=workspace_namespace,
+            payload=workspace_payload,
+            client_origin=client_origin,
+        )
+        return task, workspace
 
     def create_task(
         self,
@@ -645,6 +675,23 @@ class SqlAlchemyTaskStore:
         query = db.query(TaskResource).filter(TaskResource.id.in_(task_ids))
         query = self._filter_owner_user_id(query, owner_user_id=owner_user_id)
         return query.all()
+
+    def list_recent_group_chat_tasks(
+        self,
+        db: Session,
+        *,
+        since: datetime,
+    ) -> list[TaskResource]:
+        tasks = (
+            db.query(TaskResource)
+            .filter(
+                TaskResource.kind == "Task",
+                TaskResource.updated_at >= since,
+                TaskResource.is_active == TaskResource.STATE_ACTIVE,
+            )
+            .all()
+        )
+        return [task for task in tasks if self._is_group_chat_task(task)]
 
     def list_regular_active_tasks(
         self,
@@ -1163,3 +1210,9 @@ class SqlAlchemyTaskStore:
 
     def _flag_json_modified(self, task: TaskResource) -> None:
         flag_modified(task, "json")
+
+    def _is_group_chat_task(self, task: TaskResource) -> bool:
+        if task.is_group_chat is True:
+            return True
+        payload = task.json if isinstance(task.json, dict) else {}
+        return payload.get("spec", {}).get("is_group_chat") is True
