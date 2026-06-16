@@ -12,6 +12,7 @@ export interface StartupCheckStep {
   title: string
   detail: string
   tone: StartupStepTone
+  logs?: string
 }
 
 export interface LocalExecutorStartupState {
@@ -48,6 +49,15 @@ function appendStep(step: StartupCheckStep) {
 function updateStep(id: string, patch: Partial<StartupCheckStep>) {
   updateState({
     steps: state.steps.map(step => (step.id === id ? { ...step, ...patch } : step)),
+  })
+}
+
+function appendStepLog(id: string, content: string) {
+  if (!content) return
+  updateState({
+    steps: state.steps.map(step =>
+      step.id === id ? { ...step, logs: (step.logs ?? '') + content } : step
+    ),
   })
 }
 
@@ -154,7 +164,9 @@ async function runStartupCheck() {
     )
 
     try {
-      const installCliResult = await runLocalExecutorAction('install-cli', () => undefined)
+      const installCliResult = await runLocalExecutorAction('install-cli', output =>
+        appendStepLog('install-cli', output.content)
+      )
       if (!installCliResult.success) {
         updateStep('install-cli', {
           detail: commandError(installCliResult, 'WeCode CLI 安装失败'),
@@ -228,7 +240,9 @@ async function runStartupCheck() {
     )
 
     try {
-      const installExecutorResult = await runLocalExecutorAction('install', () => undefined)
+      const installExecutorResult = await runLocalExecutorAction('install', output =>
+        appendStepLog('install-executor', output.content)
+      )
       if (!installExecutorResult.success) {
         updateStep('install-executor', {
           detail: commandError(installExecutorResult, 'Executor 安装失败'),
@@ -305,7 +319,9 @@ async function runStartupCheck() {
   )
 
   try {
-    const result = await runLocalExecutorAction('start', () => undefined)
+    const result = await runLocalExecutorAction('start', output =>
+      appendStepLog('start', output.content)
+    )
     if (!result.success) {
       updateStep('start', {
         detail: commandError(result, 'Executor 启动失败'),

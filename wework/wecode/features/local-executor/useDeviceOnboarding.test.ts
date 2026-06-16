@@ -36,6 +36,7 @@ describe('useDeviceOnboarding', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.useFakeTimers()
+    deviceApiMocks.createCloudDevice.mockResolvedValue({})
   })
 
   afterEach(() => {
@@ -46,6 +47,18 @@ describe('useDeviceOnboarding', () => {
     deviceApiMocks.listDevices.mockResolvedValue([])
     renderHook(() => useDeviceOnboarding({ onReady: vi.fn() }))
     expect(startupMocks.startLocalExecutorStartupCheck).toHaveBeenCalledTimes(1)
+  })
+
+  test('auto-creates a cloud device on mount', async () => {
+    deviceApiMocks.listDevices.mockResolvedValue([makeDevice('offline')])
+
+    const { result } = renderHook(() => useDeviceOnboarding({ onReady: vi.fn() }))
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(deviceApiMocks.createCloudDevice).toHaveBeenCalledTimes(1)
+    expect(result.current.cloudCreated).toBe(true)
   })
 
   test('calls onReady once an online device appears', async () => {
@@ -69,8 +82,9 @@ describe('useDeviceOnboarding', () => {
     expect(onReady).toHaveBeenCalledTimes(1)
   })
 
-  test('flags timeout after the limit with no online device', async () => {
+  test('flags timeout after the limit when cloud creation also fails', async () => {
     deviceApiMocks.listDevices.mockResolvedValue([makeDevice('offline')])
+    deviceApiMocks.createCloudDevice.mockRejectedValue(new Error('cloud down'))
 
     const { result } = renderHook(() => useDeviceOnboarding({ onReady: vi.fn() }))
 
@@ -81,14 +95,12 @@ describe('useDeviceOnboarding', () => {
     expect(result.current.timedOut).toBe(true)
   })
 
-  test('creating a cloud device suppresses the timeout and keeps polling', async () => {
+  test('auto cloud creation suppresses the timeout and keeps polling', async () => {
     deviceApiMocks.listDevices.mockResolvedValue([makeDevice('offline')])
-    deviceApiMocks.createCloudDevice.mockResolvedValue({})
 
     const { result } = renderHook(() => useDeviceOnboarding({ onReady: vi.fn() }))
 
     await act(async () => {
-      result.current.createCloudDevice()
       await Promise.resolve()
     })
     expect(deviceApiMocks.createCloudDevice).toHaveBeenCalledTimes(1)
@@ -101,6 +113,7 @@ describe('useDeviceOnboarding', () => {
 
   test('retry re-runs startup check and clears timeout', async () => {
     deviceApiMocks.listDevices.mockResolvedValue([makeDevice('offline')])
+    deviceApiMocks.createCloudDevice.mockRejectedValue(new Error('cloud down'))
 
     const { result } = renderHook(() => useDeviceOnboarding({ onReady: vi.fn() }))
 

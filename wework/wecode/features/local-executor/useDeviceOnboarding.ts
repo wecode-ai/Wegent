@@ -22,6 +22,7 @@ interface UseDeviceOnboardingOptions {
 export interface DeviceOnboardingState {
   timedOut: boolean
   creatingCloud: boolean
+  cloudCreated: boolean
   cloudError: string | null
   createCloudDevice: () => void
   retry: () => void
@@ -38,6 +39,7 @@ export function useDeviceOnboarding({
   const [pollEpoch, setPollEpoch] = useState(0)
   const [timedOut, setTimedOut] = useState(false)
   const [creatingCloud, setCreatingCloud] = useState(false)
+  const [cloudCreated, setCloudCreated] = useState(false)
   const [cloudError, setCloudError] = useState<string | null>(null)
 
   const onReadyRef = useRef(onReady)
@@ -45,9 +47,10 @@ export function useDeviceOnboarding({
     onReadyRef.current = onReady
   }, [onReady])
   const readyRef = useRef(false)
-  // When the user creates a cloud device, the hard timeout no longer applies:
-  // cloud provisioning can exceed 5 minutes, so we keep polling.
+  // When a cloud device is created, the hard timeout no longer applies: cloud
+  // provisioning can exceed 5 minutes, so we keep polling.
   const cloudRequestedRef = useRef(false)
+  const timedOutRef = useRef(false)
 
   // Trigger local device creation (install + start executor) once on mount.
   useEffect(() => {
@@ -84,6 +87,7 @@ export function useDeviceOnboarding({
 
       if (!cloudRequestedRef.current && Date.now() - startedAt >= ONBOARDING_TIMEOUT_MS) {
         stop()
+        timedOutRef.current = true
         setTimedOut(true)
       }
     }
@@ -95,6 +99,7 @@ export function useDeviceOnboarding({
   }, [deviceApi, pollEpoch])
 
   const restartPolling = useCallback(() => {
+    timedOutRef.current = false
     setTimedOut(false)
     setPollEpoch(epoch => epoch + 1)
   }, [])
@@ -114,8 +119,10 @@ export function useDeviceOnboarding({
       .createCloudDevice()
       .then(() => {
         cloudRequestedRef.current = true
-        // Resume polling in case the timeout already fired before the click.
-        restartPolling()
+        setCloudCreated(true)
+        // Only resume polling if the hard timeout already stopped it; live
+        // polling should keep running undisturbed.
+        if (timedOutRef.current) restartPolling()
       })
       .catch((error: unknown) => {
         setCloudError(error instanceof Error ? error.message : 'Failed to create cloud device')
@@ -125,5 +132,14 @@ export function useDeviceOnboarding({
       })
   }, [creatingCloud, deviceApi, restartPolling])
 
-  return { timedOut, creatingCloud, cloudError, createCloudDevice, retry }
+  // Cloud provisioning runs in the background as soon as onboarding opens, so
+  // the user never has to leave this page to start it.
+  const cloudStartedRef = useRef(false)
+  useEffect(() => {
+    if (cloudStartedRef.current) return
+    cloudStartedRef.current = true
+    createCloudDevice()
+  }, [createCloudDevice])
+
+  return { timedOut, creatingCloud, cloudCreated, cloudError, createCloudDevice, retry }
 }
