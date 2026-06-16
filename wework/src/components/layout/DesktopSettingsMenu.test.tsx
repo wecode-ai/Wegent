@@ -14,7 +14,7 @@ let mockUpdateState = {
 }
 
 vi.mock('@/features/app-update/app-update-context', () => ({
-  useAppUpdate: () => mockUpdateState,
+  useOptionalAppUpdate: () => mockUpdateState,
 }))
 
 vi.mock('@/api/quota', () => ({

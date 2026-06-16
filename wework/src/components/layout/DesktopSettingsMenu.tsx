@@ -14,7 +14,7 @@ import { createHttpClient } from '@/api/http'
 import { createQuotaApi } from '@/api/quota'
 import type { QuotaData } from '@/api/quota'
 import { getRuntimeConfig } from '@/config/runtime'
-import { useAppUpdate } from '@/features/app-update/app-update-context'
+import { useOptionalAppUpdate } from '@/features/app-update/app-update-context'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { User as UserProfile } from '@/types/api'
 
@@ -46,13 +46,12 @@ export function DesktopSettingsMenu({ user, onOpenSettings, onLogout }: DesktopS
   const [quota, setQuota] = useState<QuotaData | null>(null)
   const [isQuotaLoading, setIsQuotaLoading] = useState(false)
   const [quotaError, setQuotaError] = useState<string | null>(null)
-  const {
-    availableUpdate,
-    status: updateStatus,
-    error: updateError,
-    checkNow,
-    installUpdate,
-  } = useAppUpdate()
+  const appUpdate = useOptionalAppUpdate()
+  const availableUpdate = appUpdate?.availableUpdate ?? null
+  const updateStatus = appUpdate?.status ?? 'idle'
+  const updateError = appUpdate?.error ?? null
+  const checkNow = appUpdate?.checkNow
+  const installUpdate = appUpdate?.installUpdate
   const accountLabel = user?.email || user?.user_name || t('workbench.account_fallback', '当前账号')
   const quotaUsageText = quota
     ? `${quota.usage.toFixed(2)} / ${quota.quota.toLocaleString()} ${t('workbench.quota_unit_yuan', '元')}`
@@ -91,12 +90,12 @@ export function DesktopSettingsMenu({ user, onOpenSettings, onLogout }: DesktopS
   }
 
   const handleUpdateClick = async () => {
-    if (availableUpdate) {
+    if (availableUpdate && installUpdate) {
       await installUpdate()
       return
     }
 
-    await checkNow()
+    await checkNow?.()
   }
 
   const updateButtonLabel = availableUpdate

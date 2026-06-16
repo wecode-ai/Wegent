@@ -32,3 +32,7 @@ export function useAppUpdate() {
   }
   return context
 }
+
+export function useOptionalAppUpdate() {
+  return useContext(AppUpdateContext)
+}
