@@ -167,5 +167,9 @@ describe('MobileChatInputControls layout', () => {
     expect(modelSlot).toHaveClass('overflow-hidden')
     expect(sendSlot).toHaveClass('flex-shrink-0')
     expect(screen.getByText('Attach')).toBeInTheDocument()
+
+    const menu = screen.getByTestId('mobile-input-more-actions-menu')
+    expect(menu).toHaveClass('max-h-[min(52dvh,18rem)]')
+    expect(menu).toHaveClass('overflow-y-auto')
   })
 })

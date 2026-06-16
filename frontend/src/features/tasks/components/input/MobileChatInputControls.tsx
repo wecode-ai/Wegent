@@ -325,7 +325,7 @@ export function MobileChatInputControls({
         {moreMenuOpen && (
           <div
             data-testid="mobile-input-more-actions-menu"
-            className="absolute bottom-full left-0 z-50 mb-2 w-56 rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-md"
+            className="absolute bottom-full left-0 z-50 mb-2 max-h-[min(52dvh,18rem)] w-56 overflow-y-auto overscroll-contain rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-md"
           >
             {hasSecondaryActions && (
               <div className="flex flex-col">
