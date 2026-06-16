@@ -385,6 +385,8 @@ class TaskRequestBuilder:
             user_id=user.id,
             user_name=user.user_name,
             bot=bot_config,
+            bot_name=bot.name,
+            bot_namespace=bot.namespace or "default",
             model_config=model_config,
             system_prompt=system_prompt,
             prompt=message,
