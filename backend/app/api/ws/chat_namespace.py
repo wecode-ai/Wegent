@@ -558,6 +558,7 @@ class ChatNamespace(socketio.AsyncNamespace):
         )
 
         session = await self.get_session(sid)
+        effective_message = payload.message
         user_id = session.get("user_id")
         user_name = session.get("user_name")
         auth_token = session.get("auth_token", "")  # Get original JWT token
@@ -569,6 +570,7 @@ class ChatNamespace(socketio.AsyncNamespace):
 
         db = SessionLocal()
         pipeline_info = None
+        pipeline_context_passing = None
         try:
             # Get user
             user = db.query(User).filter(User.id == user_id).first()
@@ -600,38 +602,21 @@ class ChatNamespace(socketio.AsyncNamespace):
             if team_crd.spec.collaborationModel == "pipeline":
                 from app.services.adapters.pipeline_stage import pipeline_stage_service
 
-                # pipeline:confirm only updates currentStage (+1)
+                # pipeline:confirm uses the same stage-advance and send path as auto advance.
                 if payload.action == "pipeline:confirm":
-                    confirm_result = pipeline_stage_service.pipeline_confirm(
+                    from app.services.chat.pipeline_advance import (
+                        advance_pipeline_stage_and_send,
+                    )
+
+                    return await advance_pipeline_stage_and_send(
                         db=db,
+                        user=user,
+                        team=team,
                         task_id=payload.task_id,
-                        user_id=user_id,
-                    )
-
-                    if not confirm_result.get("success"):
-                        logger.error(
-                            f"[WS] pipeline:confirm failed: {confirm_result.get('error')}"
-                        )
-                        return {
-                            "error": confirm_result.get(
-                                "error", "Pipeline confirm failed"
-                            )
-                        }
-
-                    # Emit task:status event to notify frontend that task status changed
-                    # This triggers PipelineStageIndicator to re-fetch pipeline stage info
-                    task_room = f"task:{payload.task_id}"
-                    await self.emit(
-                        ServerEvents.TASK_STATUS,
-                        {
-                            "task_id": payload.task_id,
-                            "status": "RUNNING",
-                            "progress": 0,
-                        },
-                        room=task_room,
-                    )
-                    logger.info(
-                        f"[WS] pipeline:confirm emitted task:status PENDING for task {payload.task_id}"
+                        message=effective_message,
+                        payload=payload,
+                        skip_sid=sid,
+                        auth_token=auth_token,
                     )
 
                 # Get pipeline info (unified logic for all pipeline operations)
@@ -716,7 +701,7 @@ class ChatNamespace(socketio.AsyncNamespace):
             team_name = team.name
             should_trigger_ai = should_trigger_ai_response(
                 task_json,
-                payload.message,
+                effective_message,
                 team_name,
                 request_is_group_chat=payload.is_group_chat,
             )
@@ -730,7 +715,7 @@ class ChatNamespace(socketio.AsyncNamespace):
             # Process context metadata and RAG based on chat version
             # Uses service module for RAG processing
             _, rag_prompt = await process_context_and_rag(
-                message=payload.message,
+                message=effective_message,
                 contexts=payload.contexts,
                 should_trigger_ai=should_trigger_ai,
                 user_id=user_id,
@@ -785,7 +770,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                 previous_bot_id = pipeline_info.get("current_stage_bot_id")
 
             params = TaskCreationParams(
-                message=payload.message,
+                message=effective_message,
                 title=payload.title,
                 model_id=payload.force_override_bot_model,
                 force_override_bot_model=payload.force_override_bot_model is not None,
@@ -805,6 +790,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                 # TaskRequestBuilder will compare this with current bot_id to determine
                 # if a new session is needed (different bot = new session)
                 previous_bot_id=previous_bot_id,
+                pipeline_context_passing=pipeline_context_passing,
                 skip_status_check=payload.action == "pipeline:confirm",
                 device_id=payload.device_id,
                 project_id=payload.project_id,
@@ -817,7 +803,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                 db=db,
                 user=user,
                 team=team,
-                message=payload.message,
+                message=effective_message,
                 params=params,
                 task_id=payload.task_id,
                 should_trigger_ai=should_trigger_ai,
@@ -901,7 +887,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                     db=db,
                     user_subtask=user_subtask,
                     task_id=task.id,
-                    message=payload.message,
+                    message=effective_message,
                     user_id=user_id,
                     user_name=user_name,
                     attachment_id=(
@@ -964,7 +950,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                             assistant_subtask=assistant_subtask,
                             team=team,
                             user=user,
-                            message=payload.message,  # Original message
+                            message=effective_message,
                             payload=payload,
                             task_room=task_room,
                             device_id=device_id,

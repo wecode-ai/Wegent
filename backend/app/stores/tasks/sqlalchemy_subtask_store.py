@@ -399,6 +399,24 @@ class SqlAlchemySubtaskStore:
             .first()
         )
 
+    def get_latest_assistant_by_statuses(
+        self,
+        db: Session,
+        *,
+        task_id: int,
+        statuses: Sequence[SubtaskStatus],
+        owner_user_id: Optional[int] = None,
+    ) -> Optional[Subtask]:
+        if not statuses:
+            return None
+        query = db.query(Subtask).filter(
+            Subtask.task_id == task_id,
+            Subtask.role == SubtaskRole.ASSISTANT,
+            Subtask.status.in_(statuses),
+        )
+        query = self._filter_owner_user_id(query, owner_user_id=owner_user_id)
+        return query.order_by(Subtask.message_id.desc(), Subtask.id.desc()).first()
+
     def get_latest_running_assistant_by_task(
         self, db: Session, *, task_id: int, owner_user_id: Optional[int] = None
     ) -> Optional[Subtask]:
@@ -475,6 +493,22 @@ class SqlAlchemySubtaskStore:
         )
         query = self._filter_owner_user_id(query, owner_user_id=owner_user_id)
         return query.first()
+
+    def get_first_user_before_message_id(
+        self,
+        db: Session,
+        *,
+        task_id: int,
+        before_message_id: int,
+        owner_user_id: Optional[int] = None,
+    ) -> Optional[Subtask]:
+        query = db.query(Subtask).filter(
+            Subtask.task_id == task_id,
+            Subtask.role == SubtaskRole.USER,
+            Subtask.message_id < before_message_id,
+        )
+        query = self._filter_owner_user_id(query, owner_user_id=owner_user_id)
+        return query.order_by(Subtask.message_id.asc(), Subtask.id.asc()).first()
 
     def get_by_task_message_id_and_role(
         self,

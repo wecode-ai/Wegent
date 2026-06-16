@@ -29,6 +29,9 @@ class BotInfo(BaseModel):
     requireConfirmation: Optional[bool] = (
         False  # Pipeline mode: pause after this stage for user confirmation
     )
+    contextPassing: Optional[str] = (
+        "none"  # Pipeline mode: message passed from this stage to the next stage
+    )
     bot: Optional[BotSummary] = None
 
 

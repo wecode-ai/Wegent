@@ -74,6 +74,7 @@ const renderDialog = (props: Partial<React.ComponentProps<typeof PipelineNextSte
   const defaultProps: React.ComponentProps<typeof PipelineNextStepDialog> = {
     open: true,
     messages,
+    contextPassing: 'previous_bot',
     isConfirming: false,
     onOpenChange: jest.fn(),
     onConfirm: jest.fn(),
@@ -121,7 +122,7 @@ describe('PipelineNextStepDialog', () => {
     expect(onConfirm).toHaveBeenCalledTimes(1)
     expect(onConfirm).toHaveBeenCalledWith(
       expect.objectContaining({
-        message: expect.stringContaining('[AI]\nBuild this feature'),
+        message: 'Previous stage output:\nBuild this feature',
         attachmentIds: [10],
         pendingContexts: [
           expect.objectContaining({
@@ -132,6 +133,7 @@ describe('PipelineNextStepDialog', () => {
         ],
       })
     )
+    expect(onConfirm.mock.calls[0][0].message).not.toContain('[AI]')
     expect(onConfirm.mock.calls[0][0].message).not.toContain('[User]\nOriginal request')
   })
 
