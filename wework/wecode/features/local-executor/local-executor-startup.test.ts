@@ -5,7 +5,7 @@ const apiMocks = vi.hoisted(() => ({
   runLocalExecutorAction: vi.fn(),
 }))
 
-vi.mock('@/api/local-executor', () => apiMocks)
+vi.mock('@wecode/api/local-executor', () => apiMocks)
 
 describe('local executor startup check', () => {
   beforeEach(() => {
@@ -81,11 +81,7 @@ describe('local executor startup check', () => {
   })
 
   test('installs a missing CLI and executor before starting', async () => {
-    const status = (
-      cliAvailable: boolean,
-      installed: boolean,
-      running: boolean,
-    ) => ({
+    const status = (cliAvailable: boolean, installed: boolean, running: boolean) => ({
       node: {
         available: true,
         version: 'v22.12.0',
@@ -97,9 +93,7 @@ describe('local executor startup check', () => {
       cli: {
         available: cliAvailable,
         version: cliAvailable ? '3.0.28' : null,
-        path: cliAvailable
-          ? '/Users/alice/.wecode/wecode-cli/bin/wecode'
-          : null,
+        path: cliAvailable ? '/Users/alice/.wecode/wecode-cli/bin/wecode' : null,
         error: cliAvailable ? null : 'wecode not found',
       },
       installed,
@@ -124,17 +118,17 @@ describe('local executor startup check', () => {
     const startup = await import('./local-executor-startup')
     await startup.startLocalExecutorStartupCheck()
 
-    expect(
-      apiMocks.runLocalExecutorAction.mock.calls.map(([action]) => action),
-    ).toEqual(['install-cli', 'install', 'start'])
+    expect(apiMocks.runLocalExecutorAction.mock.calls.map(([action]) => action)).toEqual([
+      'install-cli',
+      'install',
+      'start',
+    ])
     expect(startup.getLocalExecutorStartupSnapshot()).toMatchObject({
       tone: 'success',
       label: '本机环境已就绪',
       progress: 100,
     })
-    expect(
-      startup.getLocalExecutorStartupSnapshot().steps.map((step) => step.title),
-    ).toEqual([
+    expect(startup.getLocalExecutorStartupSnapshot().steps.map(step => step.title)).toEqual([
       '检测 Node.js',
       '检测 WeCode CLI',
       '自动安装 WeCode CLI',

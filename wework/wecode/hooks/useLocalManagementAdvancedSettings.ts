@@ -9,11 +9,7 @@ const UNLOCK_TOAST_DURATION_MS = 2_500
 
 function readAdvancedSettingsEnabled(): boolean {
   try {
-    return (
-      window.localStorage.getItem(
-        LOCAL_MANAGEMENT_ADVANCED_SETTINGS_STORAGE_KEY,
-      ) === 'true'
-    )
+    return window.localStorage.getItem(LOCAL_MANAGEMENT_ADVANCED_SETTINGS_STORAGE_KEY) === 'true'
   } catch {
     return false
   }
@@ -21,10 +17,9 @@ function readAdvancedSettingsEnabled(): boolean {
 
 export function useLocalManagementAdvancedSettings() {
   const [advancedSettingsEnabled, setAdvancedSettingsEnabled] = useState(
-    readAdvancedSettingsEnabled,
+    readAdvancedSettingsEnabled
   )
-  const [showAdvancedSettingsToast, setShowAdvancedSettingsToast] =
-    useState(false)
+  const [showAdvancedSettingsToast, setShowAdvancedSettingsToast] = useState(false)
   const clickCountRef = useRef(0)
   const clickWindowStartedAtRef = useRef<number | null>(null)
   const toastTimerRef = useRef<number | null>(null)
@@ -34,10 +29,7 @@ export function useLocalManagementAdvancedSettings() {
 
     const now = Date.now()
     const clickWindowStartedAt = clickWindowStartedAtRef.current
-    if (
-      clickWindowStartedAt === null ||
-      now - clickWindowStartedAt > UNLOCK_CLICK_WINDOW_MS
-    ) {
+    if (clickWindowStartedAt === null || now - clickWindowStartedAt > UNLOCK_CLICK_WINDOW_MS) {
       clickWindowStartedAtRef.current = now
       clickCountRef.current = 1
       return
@@ -52,10 +44,7 @@ export function useLocalManagementAdvancedSettings() {
     setShowAdvancedSettingsToast(true)
 
     try {
-      window.localStorage.setItem(
-        LOCAL_MANAGEMENT_ADVANCED_SETTINGS_STORAGE_KEY,
-        'true',
-      )
+      window.localStorage.setItem(LOCAL_MANAGEMENT_ADVANCED_SETTINGS_STORAGE_KEY, 'true')
     } catch {
       // Keep advanced settings enabled for the current app session.
     }

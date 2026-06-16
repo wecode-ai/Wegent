@@ -59,6 +59,26 @@ export interface ExecutorStatus {
   error: string | null
 }
 
+export interface LocalProcessInfo {
+  pid: number
+  parent_pid: number | null
+  command: string
+  is_executor_like: boolean
+}
+
+export interface PortOccupantInfo {
+  port: number
+  pid: number
+  command: string
+  is_executor_like: boolean
+}
+
+export interface ExecutorProcessDiagnostics {
+  processes: LocalProcessInfo[]
+  port_occupants: PortOccupantInfo[]
+  error: string | null
+}
+
 export type LocalExecutorReadiness =
   | 'desktop_only'
   | 'node_missing'
@@ -67,12 +87,9 @@ export type LocalExecutorReadiness =
   | 'executor_stopped'
   | 'executor_running'
 
-export function getExecutorReadiness(
-  status: ExecutorStatus | null,
-): LocalExecutorReadiness {
+export function getExecutorReadiness(status: ExecutorStatus | null): LocalExecutorReadiness {
   if (!isTauriRuntime()) return 'desktop_only'
-  if (!status?.node.available || !status.node.meets_minimum)
-    return 'node_missing'
+  if (!status?.node.available || !status.node.meets_minimum) return 'node_missing'
   if (!status?.cli.available) return 'cli_missing'
   if (!status.installed) return 'executor_missing'
   return status.running ? 'executor_running' : 'executor_stopped'
@@ -94,35 +111,43 @@ export async function getLocalExecutorStatus(): Promise<ExecutorStatus | null> {
   return invoke<ExecutorStatus>('get_executor_status')
 }
 
+export async function getExecutorProcessDiagnostics(): Promise<ExecutorProcessDiagnostics | null> {
+  if (!isTauriRuntime()) return null
+  return invoke<ExecutorProcessDiagnostics>('get_executor_process_diagnostics')
+}
+
+export async function killExecutorProcesses(pids: number[]): Promise<WecodeCommandResult> {
+  if (!isTauriRuntime()) {
+    throw new Error('Executor process cleanup is only available in the desktop app')
+  }
+
+  return invoke<WecodeCommandResult>('kill_executor_processes', { pids })
+}
+
 export async function getStartupEnv(): Promise<StartupEnvVar[]> {
   if (!isTauriRuntime()) return []
   return invoke<StartupEnvVar[]>('get_startup_env')
 }
 
-export async function saveStartupEnv(
-  envVars: StartupEnvVar[],
-): Promise<StartupEnvVar[]> {
+export async function saveStartupEnv(envVars: StartupEnvVar[]): Promise<StartupEnvVar[]> {
   if (!isTauriRuntime()) return envVars
   return invoke<StartupEnvVar[]>('save_startup_env', { envVars })
 }
 
 export async function runLocalExecutorAction(
   action: ExecutorAction,
-  onOutput: (output: ExecutorCommandOutput) => void,
+  onOutput: (output: ExecutorCommandOutput) => void
 ): Promise<WecodeCommandResult> {
   if (!isTauriRuntime()) {
     throw new Error('Executor management is only available in the desktop app')
   }
 
   const executionId = crypto.randomUUID()
-  const unlisten = await listen<ExecutorCommandOutput>(
-    'executor-command-output',
-    ({ payload }) => {
-      if (payload.execution_id === executionId) {
-        onOutput(payload)
-      }
-    },
-  )
+  const unlisten = await listen<ExecutorCommandOutput>('executor-command-output', ({ payload }) => {
+    if (payload.execution_id === executionId) {
+      onOutput(payload)
+    }
+  })
 
   try {
     return await invoke<WecodeCommandResult>('run_executor_command', {

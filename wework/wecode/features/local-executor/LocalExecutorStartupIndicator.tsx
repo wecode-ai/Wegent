@@ -20,7 +20,7 @@ export function LocalExecutorStartupIndicator() {
   const startup = useSyncExternalStore(
     subscribeLocalExecutorStartup,
     getLocalExecutorStartupSnapshot,
-    getLocalExecutorStartupSnapshot,
+    getLocalExecutorStartupSnapshot
   )
   const [open, setOpen] = useState(false)
   const stepsRef = useRef<HTMLDivElement>(null)
@@ -65,11 +65,7 @@ export function LocalExecutorStartupIndicator() {
   }
 
   return (
-    <div
-      ref={indicatorRef}
-      className="relative"
-      data-testid="local-startup-indicator"
-    >
+    <div ref={indicatorRef} className="relative" data-testid="local-startup-indicator">
       <div
         className={`relative flex h-7 w-fit max-w-[168px] items-center rounded-md text-[11px] font-medium transition ${
           open
@@ -95,12 +91,10 @@ export function LocalExecutorStartupIndicator() {
           data-testid="local-startup-details-button"
           aria-label="查看本机初始化详情"
           aria-expanded={open}
-          onClick={() => setOpen((value) => !value)}
+          onClick={() => setOpen(value => !value)}
           className="grid h-7 w-5 shrink-0 place-items-center rounded-md hover:bg-black/[0.035]"
         >
-          <ChevronDown
-            className={`h-3 w-3 transition-transform ${open ? 'rotate-180' : ''}`}
-          />
+          <ChevronDown className={`h-3 w-3 transition-transform ${open ? 'rotate-180' : ''}`} />
         </button>
         {startup.tone === 'checking' && (
           <span className="absolute bottom-0 left-2 right-5 h-px overflow-hidden bg-black/[0.04]">
@@ -118,23 +112,14 @@ export function LocalExecutorStartupIndicator() {
           className="absolute right-0 top-8 z-popover w-[344px] overflow-hidden rounded-lg border border-border/80 bg-background/95 shadow-[0_12px_32px_rgba(0,0,0,0.12)] backdrop-blur-xl"
         >
           <header className="flex items-center justify-between border-b border-border/70 px-3 py-2.5">
-            <strong className="text-xs font-semibold text-text-primary">
-              本机初始化
-            </strong>
-            <span className="text-[10px] text-text-muted">
-              App 启动时检测一次
-            </span>
+            <strong className="text-xs font-semibold text-text-primary">本机初始化</strong>
+            <span className="text-[10px] text-text-muted">App 启动时检测一次</span>
           </header>
-          <div
-            ref={stepsRef}
-            className="h-48 overflow-y-auto py-1 scroll-smooth"
-          >
+          <div ref={stepsRef} className="h-48 overflow-y-auto py-1 scroll-smooth">
             {startup.steps.length === 0 ? (
-              <div className="px-3 py-4 text-[11px] text-text-muted">
-                正在准备检测...
-              </div>
+              <div className="px-3 py-4 text-[11px] text-text-muted">正在准备检测...</div>
             ) : (
-              startup.steps.map((step) => {
+              startup.steps.map(step => {
                 const Icon = stepIconByTone[step.tone]
                 return (
                   <div
@@ -151,9 +136,7 @@ export function LocalExecutorStartupIndicator() {
                       }`}
                     >
                       <Icon
-                        className={`h-2.5 w-2.5 ${
-                          step.tone === 'running' ? 'animate-pulse' : ''
-                        }`}
+                        className={`h-2.5 w-2.5 ${step.tone === 'running' ? 'animate-pulse' : ''}`}
                       />
                     </span>
                     <div className="min-w-0">

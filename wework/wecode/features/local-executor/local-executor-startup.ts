@@ -2,15 +2,10 @@ import {
   getLocalExecutorStatus,
   runLocalExecutorAction,
   type ExecutorStatus,
-} from '@/api/local-executor'
+} from '@wecode/api/local-executor'
 
 export type StartupCheckTone = 'checking' | 'success' | 'warning' | 'error'
-export type StartupStepTone =
-  | 'pending'
-  | 'running'
-  | 'success'
-  | 'warning'
-  | 'error'
+export type StartupStepTone = 'pending' | 'running' | 'success' | 'warning' | 'error'
 
 export interface StartupCheckStep {
   id: string
@@ -39,7 +34,7 @@ const listeners = new Set<() => void>()
 
 function emit(nextState: LocalExecutorStartupState) {
   state = nextState
-  listeners.forEach((listener) => listener())
+  listeners.forEach(listener => listener())
 }
 
 function updateState(patch: Partial<LocalExecutorStartupState>) {
@@ -52,9 +47,7 @@ function appendStep(step: StartupCheckStep) {
 
 function updateStep(id: string, patch: Partial<StartupCheckStep>) {
   updateState({
-    steps: state.steps.map((step) =>
-      step.id === id ? { ...step, ...patch } : step,
-    ),
+    steps: state.steps.map(step => (step.id === id ? { ...step, ...patch } : step)),
   })
 }
 
@@ -66,23 +59,16 @@ function executorStatusDetail(status: ExecutorStatus): string {
   return '已安装，当前未运行'
 }
 
-async function revealStep(
-  step: StartupCheckStep,
-  progress: number,
-  label = step.title,
-) {
+async function revealStep(step: StartupCheckStep, progress: number, label = step.title) {
   appendStep(step)
   updateState({
     label,
     progress,
   })
-  await new Promise((resolve) => window.setTimeout(resolve, 120))
+  await new Promise(resolve => window.setTimeout(resolve, 120))
 }
 
-function commandError(
-  result: { stdout: string; stderr: string },
-  fallback: string,
-) {
+function commandError(result: { stdout: string; stderr: string }, fallback: string) {
   return result.stderr || result.stdout || fallback
 }
 
@@ -124,15 +110,13 @@ async function runStartupCheck() {
       title: '检测 Node.js',
       detail: status.node.available
         ? `${status.node.version || '版本未知'}${
-            status.node.meets_minimum
-              ? '，满足 Node >= 20'
-              : '，需要 Node >= 20'
+            status.node.meets_minimum ? '，满足 Node >= 20' : '，需要 Node >= 20'
           }`
         : status.node.error || '未检测到 Node.js',
       tone: status.node.meets_minimum ? 'success' : 'error',
     },
     25,
-    '正在检测 Node.js',
+    '正在检测 Node.js'
   )
 
   if (!status.node.meets_minimum) {
@@ -154,7 +138,7 @@ async function runStartupCheck() {
       tone: status.cli.available ? 'success' : 'error',
     },
     40,
-    '正在检测 WeCode CLI',
+    '正在检测 WeCode CLI'
   )
 
   if (!status.cli.available) {
@@ -166,14 +150,11 @@ async function runStartupCheck() {
         tone: 'running',
       },
       50,
-      '正在安装 WeCode CLI',
+      '正在安装 WeCode CLI'
     )
 
     try {
-      const installCliResult = await runLocalExecutorAction(
-        'install-cli',
-        () => undefined,
-      )
+      const installCliResult = await runLocalExecutorAction('install-cli', () => undefined)
       if (!installCliResult.success) {
         updateStep('install-cli', {
           detail: commandError(installCliResult, 'WeCode CLI 安装失败'),
@@ -231,7 +212,7 @@ async function runStartupCheck() {
       tone: status.installed ? 'success' : 'warning',
     },
     65,
-    '正在检测 Executor',
+    '正在检测 Executor'
   )
 
   if (!status.installed) {
@@ -243,14 +224,11 @@ async function runStartupCheck() {
         tone: 'running',
       },
       75,
-      '正在安装 Executor',
+      '正在安装 Executor'
     )
 
     try {
-      const installExecutorResult = await runLocalExecutorAction(
-        'install',
-        () => undefined,
-      )
+      const installExecutorResult = await runLocalExecutorAction('install', () => undefined)
       if (!installExecutorResult.success) {
         updateStep('install-executor', {
           detail: commandError(installExecutorResult, 'Executor 安装失败'),
@@ -309,7 +287,7 @@ async function runStartupCheck() {
         tone: 'success',
       },
       100,
-      '正在确认 Executor 状态',
+      '正在确认 Executor 状态'
     )
     updateState({ tone: 'success', label: '本机环境已就绪' })
     return
@@ -323,7 +301,7 @@ async function runStartupCheck() {
       tone: 'running',
     },
     90,
-    '正在启动 Executor',
+    '正在启动 Executor'
   )
 
   try {
@@ -356,9 +334,7 @@ async function runStartupCheck() {
     }
 
     updateStep('start', {
-      detail: refreshedStatus.pid
-        ? `启动成功，PID ${refreshedStatus.pid}`
-        : '启动成功',
+      detail: refreshedStatus.pid ? `启动成功，PID ${refreshedStatus.pid}` : '启动成功',
       tone: 'success',
     })
     updateState({

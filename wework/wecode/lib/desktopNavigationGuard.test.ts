@@ -6,8 +6,7 @@ let cleanup: (() => void) | undefined
 afterEach(() => {
   cleanup?.()
   cleanup = undefined
-  delete (window as Window & { __TAURI_INTERNALS__?: object })
-    .__TAURI_INTERNALS__
+  delete (window as Window & { __TAURI_INTERNALS__?: object }).__TAURI_INTERNALS__
   document.body.replaceChildren()
 })
 

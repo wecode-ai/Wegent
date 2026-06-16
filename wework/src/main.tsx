@@ -3,14 +3,14 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './styles/globals.css'
 import App from './App.tsx'
-import { installDesktopNavigationGuard } from './lib/desktopNavigationGuard'
 import { installPageZoomGuard } from './lib/pageZoomGuard'
+import { installDesktopExtensions } from '@extensions/desktop'
 
-installDesktopNavigationGuard()
+installDesktopExtensions()
 installPageZoomGuard()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <App />
-  </StrictMode>,
+  </StrictMode>
 )

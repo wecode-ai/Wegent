@@ -1,18 +1,14 @@
-import { isTauriRuntime } from './runtime-environment'
+import { isTauriRuntime } from '@/lib/runtime-environment'
 
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) return false
 
   return Boolean(
-    target.closest(
-      'input, textarea, [contenteditable]:not([contenteditable="false"])',
-    ),
+    target.closest('input, textarea, [contenteditable]:not([contenteditable="false"])')
   )
 }
 
-export function installDesktopNavigationGuard(
-  target: Document = document,
-): () => void {
+export function installDesktopNavigationGuard(target: Document = document): () => void {
   if (!isTauriRuntime()) return () => undefined
 
   const preventBackspaceNavigation = (event: KeyboardEvent) => {
