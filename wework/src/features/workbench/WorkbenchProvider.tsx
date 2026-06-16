@@ -168,7 +168,17 @@ export interface WorkbenchServices {
     getTurnFileChangesDiff?: ReturnType<typeof createTaskApi>['getTurnFileChangesDiff']
     revertTurnFileChanges?: ReturnType<typeof createTaskApi>['revertTurnFileChanges']
   }
-  deviceApi: ReturnType<typeof createDeviceApi>
+  deviceApi: Pick<
+    ReturnType<typeof createDeviceApi>,
+    | 'listDevices'
+    | 'getHomeDirectory'
+    | 'getProjectWorkspaceRoot'
+    | 'listDirectories'
+    | 'createDirectory'
+    | 'executeCommand'
+    | 'upgradeDevice'
+    | 'listSkills'
+  >
   userApi?: ReturnType<typeof createUserApi>
   chatStream: ReturnType<typeof createChatStream>
 }

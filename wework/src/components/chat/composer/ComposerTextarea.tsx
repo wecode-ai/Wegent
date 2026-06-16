@@ -1,11 +1,6 @@
 import { Package } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type {
-  ClipboardEventHandler,
-  KeyboardEventHandler,
-  ReactNode,
-  RefObject,
-} from 'react'
+import type { ClipboardEventHandler, KeyboardEventHandler, ReactNode, RefObject } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getModelCompatibilityFamily, inferModelFamily } from '@/lib/model-ui'
 import type { LocalDeviceSkill, UnifiedModel } from '@/types/api'
@@ -76,6 +71,8 @@ function displaySkillName(skill: LocalDeviceSkill): string {
 
 function displaySkillSource(skill: LocalDeviceSkill): string {
   switch (skill.source) {
+    case 'agents':
+      return 'agents'
     case 'claude':
       return 'claude'
     case 'claude-plugin':
@@ -90,11 +87,15 @@ function displaySkillSource(skill: LocalDeviceSkill): string {
 }
 
 function isClaudeSkill(skill: LocalDeviceSkill): boolean {
-  return skill.source === 'claude' || skill.source === 'claude-plugin'
+  return skill.source === 'agents' || skill.source === 'claude' || skill.source === 'claude-plugin'
 }
 
 function isCodexSkill(skill: LocalDeviceSkill): boolean {
-  return skill.source === 'codex' || skill.source === 'codex-plugin'
+  return skill.source === 'agents' || skill.source === 'codex' || skill.source === 'codex-plugin'
+}
+
+function isSharedSkill(skill: LocalDeviceSkill): boolean {
+  return skill.source === 'agents'
 }
 
 function normalizeRuntimeSignal(value: unknown): string {
@@ -131,9 +132,7 @@ function inferSkillRuntime(model: UnifiedModel): 'claude' | 'codex' | null {
   const runtimeFamily = getModelCompatibilityFamily(model)
   const runtimeProtocol = runtimeProtocolFromFamily(runtimeFamily)
   const protocol = normalizeRuntimeSignal(model.config?.protocol)
-  const apiFormat = normalizeRuntimeSignal(
-    model.config?.apiFormat ?? model.config?.api_format,
-  )
+  const apiFormat = normalizeRuntimeSignal(model.config?.apiFormat ?? model.config?.api_format)
 
   if (provider === 'claude') return 'claude'
   if (provider === 'openai') return 'codex'
@@ -157,7 +156,7 @@ function inferSkillRuntime(model: UnifiedModel): 'claude' | 'codex' | null {
 
 function canSelectSkillForModel(
   skill: LocalDeviceSkill,
-  selectedModel?: UnifiedModel | null,
+  selectedModel?: UnifiedModel | null
 ): boolean {
   if (!selectedModel) return true
 
@@ -165,7 +164,7 @@ function canSelectSkillForModel(
   if (runtime === 'claude') return isClaudeSkill(skill)
   if (runtime === 'codex') return isCodexSkill(skill)
 
-  return !isCodexSkill(skill)
+  return isSharedSkill(skill) || !isCodexSkill(skill)
 }
 
 function localSkillTestId(name: string): string {
@@ -201,7 +200,7 @@ interface SkillMentionDeletionRange {
 function findExpandedSelectionDeletionRange(
   selectionStart: number,
   selectionEnd: number,
-  mentions: SkillMention[],
+  mentions: SkillMention[]
 ): SkillMentionDeletionRange | null {
   if (selectionStart === selectionEnd) return null
 
@@ -222,7 +221,7 @@ function findExpandedSelectionDeletionRange(
 function findBackspaceSkillMentionDeletionRange(
   value: string,
   cursor: number,
-  mentions: SkillMention[],
+  mentions: SkillMention[]
 ): SkillMentionDeletionRange | null {
   for (const mention of mentions) {
     if (cursor > mention.start && cursor <= mention.end) {
@@ -239,14 +238,11 @@ function findBackspaceSkillMentionDeletionRange(
 function findDeleteSkillMentionDeletionRange(
   value: string,
   cursor: number,
-  mentions: SkillMention[],
+  mentions: SkillMention[]
 ): SkillMentionDeletionRange | null {
   const mention = mentions.find(item => cursor >= item.start && cursor < item.end)
-  const end =
-    mention && /\s/.test(value[mention.end] ?? '') ? mention.end + 1 : mention?.end
-  return mention
-    ? { start: mention.start, end: end ?? mention.end, cursor: mention.start }
-    : null
+  const end = mention && /\s/.test(value[mention.end] ?? '') ? mention.end + 1 : mention?.end
+  return mention ? { start: mention.start, end: end ?? mention.end, cursor: mention.start } : null
 }
 
 function renderCaret(key: string) {
@@ -260,12 +256,7 @@ function renderCaret(key: string) {
   )
 }
 
-function renderTextSegment(
-  text: string,
-  start: number,
-  key: string,
-  caretIndex: number | null,
-) {
+function renderTextSegment(text: string, start: number, key: string, caretIndex: number | null) {
   if (caretIndex === null || caretIndex < start || caretIndex > start + text.length) {
     return text ? [<span key={key}>{text}</span>] : []
   }
@@ -281,7 +272,7 @@ function renderTextSegment(
 function renderTextWithSkillMentions(
   value: string,
   mentions: SkillMention[],
-  caretIndex: number | null,
+  caretIndex: number | null
 ) {
   const parts: ReactNode[] = []
   let offset = 0
@@ -304,7 +295,7 @@ function renderTextWithSkillMentions(
       >
         <Package className="h-3.5 w-3.5 shrink-0" />
         <span className="truncate">{mention.label}</span>
-      </span>,
+      </span>
     )
     if (caretIndex !== null && caretIndex > mention.start && caretIndex <= mention.end) {
       parts.push(renderCaret(`caret-after-${mention.id}`))
@@ -349,28 +340,23 @@ export function ComposerTextarea({
   })
   const [isComposing, setIsComposing] = useState(false)
   const compositionJustEndedRef = useRef(false)
-  const compositionResetTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(
-    null,
-  )
+  const compositionResetTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null)
   const [trigger, setTrigger] = useState<SkillTrigger | null>(null)
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState(false)
 
-  const validSkillMentions = useMemo(
-    () => {
-      const mentions = new Map<string, SkillMention>()
-      for (const mention of parseSkillMentions(value)) {
-        mentions.set(`${mention.start}:${mention.end}`, mention)
-      }
-      for (const mention of selectedSkillMentions) {
-        if (value.slice(mention.start, mention.end) !== mention.reference) continue
-        mentions.set(`${mention.start}:${mention.end}`, mention)
-      }
-      return Array.from(mentions.values()).sort((left, right) => left.start - right.start)
-    },
-    [selectedSkillMentions, value],
-  )
+  const validSkillMentions = useMemo(() => {
+    const mentions = new Map<string, SkillMention>()
+    for (const mention of parseSkillMentions(value)) {
+      mentions.set(`${mention.start}:${mention.end}`, mention)
+    }
+    for (const mention of selectedSkillMentions) {
+      if (value.slice(mention.start, mention.end) !== mention.reference) continue
+      mentions.set(`${mention.start}:${mention.end}`, mention)
+    }
+    return Array.from(mentions.values()).sort((left, right) => left.start - right.start)
+  }, [selectedSkillMentions, value])
 
   const filteredSkills = useMemo(() => {
     const query = trigger?.query.trim().toLowerCase() ?? ''
@@ -445,12 +431,12 @@ export function ComposerTextarea({
             return null
           })
           .filter((mention): mention is SkillMention =>
-            Boolean(mention && nextValue.slice(mention.start, mention.end) === mention.label),
-          ),
+            Boolean(mention && nextValue.slice(mention.start, mention.end) === mention.label)
+          )
       )
       onChange(nextValue)
     },
-    [onChange, value],
+    [onChange, value]
   )
 
   useEffect(() => {
@@ -460,48 +446,47 @@ export function ComposerTextarea({
     }
   }, [])
 
-  const loadLocalSkills = useCallback((options?: { force?: boolean }) => {
-    if (!onListLocalSkills) return
+  const loadLocalSkills = useCallback(
+    (options?: { force?: boolean }) => {
+      if (!onListLocalSkills) return
 
-    if (skillsSourceRef.current !== onListLocalSkills) {
-      skillsSourceRef.current = onListLocalSkills
-      skillsLoadedRef.current = false
-      skillsLoadingRef.current = false
-      skillsRequestIdRef.current += 1
-      setSkills([])
-    }
-
-    if (
-      skillsLoadedRef.current ||
-      skillsLoadingRef.current ||
-      (loadError && !options?.force)
-    ) {
-      return
-    }
-
-    const requestId = skillsRequestIdRef.current + 1
-    skillsRequestIdRef.current = requestId
-    skillsLoadingRef.current = true
-    setLoading(true)
-    setLoadError(false)
-    onListLocalSkills()
-      .then(nextSkills => {
-        if (!mountedRef.current || requestId !== skillsRequestIdRef.current) return
-        skillsLoadedRef.current = true
-        setLoadError(false)
-        setSkills(nextSkills)
-      })
-      .catch(() => {
-        if (!mountedRef.current || requestId !== skillsRequestIdRef.current) return
+      if (skillsSourceRef.current !== onListLocalSkills) {
+        skillsSourceRef.current = onListLocalSkills
         skillsLoadedRef.current = false
-        setLoadError(true)
-      })
-      .finally(() => {
-        if (!mountedRef.current || requestId !== skillsRequestIdRef.current) return
         skillsLoadingRef.current = false
-        setLoading(false)
-      })
-  }, [loadError, onListLocalSkills])
+        skillsRequestIdRef.current += 1
+        setSkills([])
+      }
+
+      if (skillsLoadedRef.current || skillsLoadingRef.current || (loadError && !options?.force)) {
+        return
+      }
+
+      const requestId = skillsRequestIdRef.current + 1
+      skillsRequestIdRef.current = requestId
+      skillsLoadingRef.current = true
+      setLoading(true)
+      setLoadError(false)
+      onListLocalSkills()
+        .then(nextSkills => {
+          if (!mountedRef.current || requestId !== skillsRequestIdRef.current) return
+          skillsLoadedRef.current = true
+          setLoadError(false)
+          setSkills(nextSkills)
+        })
+        .catch(() => {
+          if (!mountedRef.current || requestId !== skillsRequestIdRef.current) return
+          skillsLoadedRef.current = false
+          setLoadError(true)
+        })
+        .finally(() => {
+          if (!mountedRef.current || requestId !== skillsRequestIdRef.current) return
+          skillsLoadingRef.current = false
+          setLoading(false)
+        })
+    },
+    [loadError, onListLocalSkills]
+  )
 
   const updateSkillTrigger = useCallback(() => {
     const textarea = textareaRef.current
@@ -575,8 +560,7 @@ export function ComposerTextarea({
       const label = displaySkillName(skill)
       const reference = skillReference(skill)
       const replacement = `${reference} `
-      const nextValue =
-        value.slice(0, trigger.start) + replacement + value.slice(cursor)
+      const nextValue = value.slice(0, trigger.start) + replacement + value.slice(cursor)
       const nextCursor = trigger.start + replacement.length
       const mentionEnd = trigger.start + reference.length
       const delta = replacement.length - (cursor - trigger.start)
@@ -610,15 +594,11 @@ export function ComposerTextarea({
         setSelection({ start: nextCursor, end: nextCursor, focused: true })
       })
     },
-    [closeSkillMenu, onChange, textareaRef, trigger, value],
+    [closeSkillMenu, onChange, textareaRef, trigger, value]
   )
 
   const handleKeyDown: KeyboardEventHandler<HTMLTextAreaElement> = event => {
-    if (
-      isComposing ||
-      event.nativeEvent.isComposing ||
-      compositionJustEndedRef.current
-    ) {
+    if (isComposing || event.nativeEvent.isComposing || compositionJustEndedRef.current) {
       return
     }
 
@@ -626,30 +606,17 @@ export function ComposerTextarea({
       const selectionStart = event.currentTarget.selectionStart
       const selectionEnd = event.currentTarget.selectionEnd
       const deletionRange =
-        findExpandedSelectionDeletionRange(
-          selectionStart,
-          selectionEnd,
-          validSkillMentions,
-        ) ??
+        findExpandedSelectionDeletionRange(selectionStart, selectionEnd, validSkillMentions) ??
         (selectionStart === selectionEnd && event.key === 'Backspace'
-          ? findBackspaceSkillMentionDeletionRange(
-              value,
-              selectionStart,
-              validSkillMentions,
-            )
+          ? findBackspaceSkillMentionDeletionRange(value, selectionStart, validSkillMentions)
           : null) ??
         (selectionStart === selectionEnd && event.key === 'Delete'
-          ? findDeleteSkillMentionDeletionRange(
-              value,
-              selectionStart,
-              validSkillMentions,
-            )
+          ? findDeleteSkillMentionDeletionRange(value, selectionStart, validSkillMentions)
           : null)
 
       if (deletionRange) {
         event.preventDefault()
-        const nextValue =
-          value.slice(0, deletionRange.start) + value.slice(deletionRange.end)
+        const nextValue = value.slice(0, deletionRange.start) + value.slice(deletionRange.end)
         handleValueChange(nextValue)
         window.requestAnimationFrame(() => {
           const textarea = textareaRef.current
@@ -764,9 +731,7 @@ export function ComposerTextarea({
           hasSkillMentionOverlay ? 'text-transparent caret-transparent' : '',
         ].join(' ')}
         style={
-          hasSkillMentionOverlay
-            ? { color: 'transparent', caretColor: 'transparent' }
-            : undefined
+          hasSkillMentionOverlay ? { color: 'transparent', caretColor: 'transparent' } : undefined
         }
       />
       {showSkillMenu && (
@@ -794,9 +759,7 @@ export function ComposerTextarea({
               onClick={() => loadLocalSkills({ force: true })}
             >
               <Package className="h-3.5 w-3.5 shrink-0 text-text-secondary" />
-              <span className="min-w-0 flex-1 truncate">
-                {t('workbench.local_skills_error')}
-              </span>
+              <span className="min-w-0 flex-1 truncate">{t('workbench.local_skills_error')}</span>
               <span
                 data-testid="local-skill-retry-label"
                 className="shrink-0 text-xs font-medium leading-5 text-text-secondary"
@@ -812,46 +775,46 @@ export function ComposerTextarea({
             filteredSkills.map((skill, index) => {
               const canSelectSkill = canSelectSkillForModel(skill, selectedModel)
               return (
-              <button
-                key={`${skill.source}:${skill.path}`}
-                type="button"
-                data-testid={`local-skill-option-${skill.name}`}
-                aria-selected={index === selectedIndex}
-                role="option"
-                disabled={!canSelectSkill}
-                aria-disabled={!canSelectSkill}
-                onMouseEnter={() => {
-                  if (canSelectSkill) setSelectedIndex(index)
-                }}
-                onPointerEnter={() => {
-                  if (canSelectSkill) setSelectedIndex(index)
-                }}
-                onClick={() => {
-                  if (canSelectSkill) selectSkill(skill)
-                }}
-                className={[
-                  'flex h-7 w-full min-w-0 items-center gap-2 px-2.5 text-left hover:bg-muted disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent',
-                  index === selectedIndex ? 'bg-muted' : '',
-                ].join(' ')}
-              >
-                <Package className="h-3.5 w-3.5 shrink-0 text-text-secondary" />
-                <span className="flex min-w-0 flex-1 items-baseline gap-2">
-                  <span className="shrink-0 truncate text-[13px] font-medium leading-5 text-text-primary">
-                    {displaySkillName(skill)}
-                  </span>
-                  {(skill.short_description || skill.description) && (
-                    <span className="min-w-0 truncate text-[13px] font-normal leading-5 text-text-muted">
-                      {skill.short_description || skill.description}
-                    </span>
-                  )}
-                </span>
-                <span
-                  data-testid={`local-skill-source-${skill.name}`}
-                  className="shrink-0 text-xs leading-5 text-text-muted"
+                <button
+                  key={`${skill.source}:${skill.path}`}
+                  type="button"
+                  data-testid={`local-skill-option-${skill.name}`}
+                  aria-selected={index === selectedIndex}
+                  role="option"
+                  disabled={!canSelectSkill}
+                  aria-disabled={!canSelectSkill}
+                  onMouseEnter={() => {
+                    if (canSelectSkill) setSelectedIndex(index)
+                  }}
+                  onPointerEnter={() => {
+                    if (canSelectSkill) setSelectedIndex(index)
+                  }}
+                  onClick={() => {
+                    if (canSelectSkill) selectSkill(skill)
+                  }}
+                  className={[
+                    'flex h-7 w-full min-w-0 items-center gap-2 px-2.5 text-left hover:bg-muted disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent',
+                    index === selectedIndex ? 'bg-muted' : '',
+                  ].join(' ')}
                 >
-                  {displaySkillSource(skill)}
-                </span>
-              </button>
+                  <Package className="h-3.5 w-3.5 shrink-0 text-text-secondary" />
+                  <span className="flex min-w-0 flex-1 items-baseline gap-2">
+                    <span className="shrink-0 truncate text-[13px] font-medium leading-5 text-text-primary">
+                      {displaySkillName(skill)}
+                    </span>
+                    {(skill.short_description || skill.description) && (
+                      <span className="min-w-0 truncate text-[13px] font-normal leading-5 text-text-muted">
+                        {skill.short_description || skill.description}
+                      </span>
+                    )}
+                  </span>
+                  <span
+                    data-testid={`local-skill-source-${skill.name}`}
+                    className="shrink-0 text-xs leading-5 text-text-muted"
+                  >
+                    {displaySkillSource(skill)}
+                  </span>
+                </button>
               )
             })
           )}
