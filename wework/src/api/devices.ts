@@ -1,4 +1,8 @@
-import type { DeviceCommandResponse, LocalDeviceSkill } from '@/types/api'
+import type {
+  DeviceCommandResponse,
+  LocalDeviceSkill,
+  SkillDirectorySetupResult,
+} from '@/types/api'
 import type {
   CloudDeviceResponse,
   CloudDeviceMetricsResponse,
@@ -13,7 +17,12 @@ import type {
 import type { HttpClient } from './http'
 
 function getCommandText(response: DeviceCommandResponse): string {
-  const output = Array.isArray(response.stdout) ? response.stdout.join('\n') : response.stdout
+  const output =
+    typeof response.stdout === 'string'
+      ? response.stdout
+      : Array.isArray(response.stdout)
+        ? response.stdout.join('\n')
+        : JSON.stringify(response.stdout)
   return output.trim()
 }
 
@@ -24,18 +33,20 @@ function getStringArrayOutput(response: DeviceCommandResponse): string[] {
 
 function getSkillArrayOutput(response: DeviceCommandResponse): LocalDeviceSkill[] {
   const stdout =
-    typeof response.stdout === 'string'
-      ? parseJsonOutput(response.stdout)
-      : response.stdout
+    typeof response.stdout === 'string' ? parseJsonOutput(response.stdout) : response.stdout
   if (!Array.isArray(stdout)) return []
   const skills = stdout.filter(
     (item): item is LocalDeviceSkill =>
-      typeof item === 'object' &&
-      item !== null &&
-      'name' in item &&
-      'path' in item,
+      typeof item === 'object' && item !== null && 'name' in item && 'path' in item
   )
   return sortSkillsByName(dedupeSkillsByName(skills))
+}
+
+function getObjectOutput<T extends object>(response: DeviceCommandResponse): T | null {
+  const stdout =
+    typeof response.stdout === 'string' ? parseJsonOutput(response.stdout) : response.stdout
+  if (!stdout || typeof stdout !== 'object' || Array.isArray(stdout)) return null
+  return stdout as T
 }
 
 function parseJsonOutput(output: string): unknown {
@@ -58,7 +69,7 @@ function dedupeSkillsByName(skills: LocalDeviceSkill[]): LocalDeviceSkill[] {
 
 function sortSkillsByName(skills: LocalDeviceSkill[]): LocalDeviceSkill[] {
   return [...skills].sort((left, right) =>
-    left.name.localeCompare(right.name, undefined, { sensitivity: 'base' }),
+    left.name.localeCompare(right.name, undefined, { sensitivity: 'base' })
   )
 }
 
@@ -80,7 +91,7 @@ export function createDeviceApi(client: HttpClient) {
           command_key: 'home_dir',
           timeout_seconds: 10,
           max_output_bytes: 4096,
-        },
+        }
       )
       if (!response.success) {
         throw new Error(response.error || response.stderr || 'Failed to resolve home directory')
@@ -94,7 +105,7 @@ export function createDeviceApi(client: HttpClient) {
           command_key: 'project_workspace_root',
           timeout_seconds: 10,
           max_output_bytes: 4096,
-        },
+        }
       )
       if (!response.success) {
         throw new Error(response.error || response.stderr || 'Failed to resolve project directory')
@@ -110,7 +121,7 @@ export function createDeviceApi(client: HttpClient) {
           path,
           timeout_seconds: 15,
           max_output_bytes: 1024 * 64,
-        },
+        }
       )
       if (!response.success) {
         throw new Error(response.error || response.stderr || 'Failed to list directories')
@@ -125,12 +136,32 @@ export function createDeviceApi(client: HttpClient) {
           command_key: 'ls_skills',
           timeout_seconds: 15,
           max_output_bytes: 1024 * 256,
-        },
+        }
       )
       if (!response.success) {
         throw new Error(response.error || response.stderr || 'Failed to list skills')
       }
       return getSkillArrayOutput(response)
+    },
+
+    async setupSharedSkills(deviceId: string): Promise<SkillDirectorySetupResult> {
+      const response = await client.post<DeviceCommandResponse>(
+        `/devices/${encodeURIComponent(deviceId)}/commands`,
+        {
+          command_key: 'setup_shared_skills',
+          timeout_seconds: 60,
+          max_output_bytes: 1024 * 256,
+        }
+      )
+      if (!response.success) {
+        throw new Error(response.error || response.stderr || 'Failed to configure shared skills')
+      }
+
+      const output = getObjectOutput<SkillDirectorySetupResult>(response)
+      if (!output || output.success !== true) {
+        throw new Error(output?.error || 'Failed to read shared skills setup result')
+      }
+      return output
     },
 
     async createDirectory(deviceId: string, path: string): Promise<void> {
@@ -146,7 +177,7 @@ export function createDeviceApi(client: HttpClient) {
           args: [normalizedPath],
           timeout_seconds: 15,
           max_output_bytes: 4096,
-        },
+        }
       )
       if (!response.success) {
         throw new Error(response.error || response.stderr || 'Failed to create directory')
@@ -163,23 +194,21 @@ export function createDeviceApi(client: HttpClient) {
         env?: Record<string, unknown>
         timeout_seconds?: number
         max_output_bytes?: number
-      },
+      }
     ): Promise<DeviceCommandResponse> {
       return client.post<DeviceCommandResponse>(
         `/devices/${encodeURIComponent(deviceId)}/commands`,
-        data,
+        data
       )
     },
 
     async startTerminal(deviceId: string): Promise<DeviceSessionResponse> {
-      return client.post<DeviceSessionResponse>(
-        `/devices/${encodeURIComponent(deviceId)}/terminal`,
-      )
+      return client.post<DeviceSessionResponse>(`/devices/${encodeURIComponent(deviceId)}/terminal`)
     },
 
     async startCodeServer(deviceId: string): Promise<DeviceSessionResponse> {
       return client.post<DeviceSessionResponse>(
-        `/devices/${encodeURIComponent(deviceId)}/code-server`,
+        `/devices/${encodeURIComponent(deviceId)}/code-server`
       )
     },
 
@@ -189,55 +218,50 @@ export function createDeviceApi(client: HttpClient) {
 
     async restartCloudDevice(deviceId: string): Promise<{ message: string }> {
       return client.post<{ message: string }>(
-        `/cloud-devices/${encodeURIComponent(deviceId)}/restart`,
+        `/cloud-devices/${encodeURIComponent(deviceId)}/restart`
       )
     },
 
     async deleteCloudDevice(deviceId: string): Promise<{ message: string }> {
-      return client.delete<{ message: string }>(
-        `/cloud-devices/${encodeURIComponent(deviceId)}`,
-      )
+      return client.delete<{ message: string }>(`/cloud-devices/${encodeURIComponent(deviceId)}`)
     },
 
     async deleteDevice(deviceId: string): Promise<{ message: string }> {
-      return client.delete<{ message: string }>(
-        `/devices/${encodeURIComponent(deviceId)}`,
-      )
+      return client.delete<{ message: string }>(`/devices/${encodeURIComponent(deviceId)}`)
     },
 
     upgradeDevice(
       deviceId: string,
-      options?: UpgradeDeviceOptions,
+      options?: UpgradeDeviceOptions
     ): Promise<UpgradeDeviceResponse> {
       return client.post<UpgradeDeviceResponse>(
         `/devices/${encodeURIComponent(deviceId)}/upgrade`,
-        options || {},
+        options || {}
       )
     },
 
     getMetrics(deviceId: string): Promise<CloudDeviceMetricsResponse> {
       return client.post<CloudDeviceMetricsResponse>(
-        `/cloud-devices/${encodeURIComponent(deviceId)}/metrics`,
+        `/cloud-devices/${encodeURIComponent(deviceId)}/metrics`
       )
     },
 
     getMetricsHistory(deviceId: string): Promise<MetricsHistoryResponse> {
       return client.post<MetricsHistoryResponse>(
-        `/cloud-devices/${encodeURIComponent(deviceId)}/metrics/history`,
+        `/cloud-devices/${encodeURIComponent(deviceId)}/metrics/history`
       )
     },
 
     getVncConfig(deviceId: string): Promise<VncConfigResponse> {
       return client.get<VncConfigResponse>(
-        `/cloud-devices/${encodeURIComponent(deviceId)}/vnc-config`,
+        `/cloud-devices/${encodeURIComponent(deviceId)}/vnc-config`
       )
     },
 
     async renameDevice(deviceId: string, alias: string): Promise<void> {
-      await client.put<{ message: string }>(
-        `/devices/${encodeURIComponent(deviceId)}/alias`,
-        { alias },
-      )
+      await client.put<{ message: string }>(`/devices/${encodeURIComponent(deviceId)}/alias`, {
+        alias,
+      })
     },
   }
 }

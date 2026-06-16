@@ -1,3 +1,5 @@
+import '@/i18n'
+
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { ToolBlocksDisplay } from './ToolBlocksDisplay'
@@ -36,28 +38,21 @@ describe('ToolBlocksDisplay', () => {
       status: 'streaming',
       createdAt: Date.now(),
     }
-    const { rerender } = render(
-      <ToolBlocksDisplay blocks={[runningBlock]} isStreaming={true} />
-    )
+    const { rerender } = render(<ToolBlocksDisplay blocks={[runningBlock]} isStreaming={true} />)
 
     act(() => {
       vi.advanceTimersByTime(3000)
     })
 
     rerender(
-      <ToolBlocksDisplay
-        blocks={[{ ...runningBlock, status: 'done' }]}
-        isStreaming={false}
-      />
+      <ToolBlocksDisplay blocks={[{ ...runningBlock, status: 'done' }]} isStreaming={false} />
     )
 
     act(() => {
       vi.advanceTimersByTime(0)
     })
 
-    expect(
-      screen.getByRole('button', { name: /用时 3 秒/ })
-    ).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /用时 3 秒/ })).toBeInTheDocument()
   })
 
   test('formats live duration with natural Chinese units', () => {
@@ -76,9 +71,7 @@ describe('ToolBlocksDisplay', () => {
       vi.advanceTimersByTime(62000)
     })
 
-    expect(
-      screen.getByText(/已处理 1 分 2 秒/)
-    ).toBeInTheDocument()
+    expect(screen.getByText(/已处理 1 分 2 秒/)).toBeInTheDocument()
   })
 
   test('keeps ticking while streaming even when all tool blocks are done', () => {
@@ -118,11 +111,7 @@ describe('ToolBlocksDisplay', () => {
     const turnStart = new Date('2026-06-05T00:00:00.000Z').getTime()
 
     render(
-      <ToolBlocksDisplay
-        blocks={[restreamedBlock]}
-        isStreaming={true}
-        startedAt={turnStart}
-      />
+      <ToolBlocksDisplay blocks={[restreamedBlock]} isStreaming={true} startedAt={turnStart} />
     )
 
     act(() => {
@@ -141,9 +130,39 @@ describe('ToolBlocksDisplay', () => {
     render(<ToolBlocksDisplay blocks={[runningBlock]} isStreaming={true} />)
 
     // While running the summary is informational only and must not be clickable.
-    expect(
-      screen.queryByRole('button', { name: /已处理/ })
-    ).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /已处理/ })).not.toBeInTheDocument()
     expect(screen.getByText(/已处理 .* 秒/)).toBeInTheDocument()
+  })
+
+  test('does not duplicate the generic thinking indicator when live thinking is visible', () => {
+    const thinkingBlock: ProcessingBlock = {
+      id: 'thinking-1',
+      subtaskId: 1,
+      type: 'thinking',
+      content: 'Reading files',
+      status: 'streaming',
+      createdAt: 1770000000000,
+    }
+
+    render(<ToolBlocksDisplay blocks={[thinkingBlock]} isStreaming={true} />)
+
+    expect(screen.getByTestId('thinking-live-preview')).toBeInTheDocument()
+    expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
+  })
+
+  test('does not duplicate the generic thinking indicator when live process text is visible', () => {
+    const textBlock: ProcessingBlock = {
+      id: 'text-1',
+      subtaskId: 1,
+      type: 'text',
+      content: 'Let me explore the repository structure.',
+      status: 'streaming',
+      createdAt: 1770000000000,
+    }
+
+    render(<ToolBlocksDisplay blocks={[textBlock]} isStreaming={true} />)
+
+    expect(screen.getByTestId('process-text-block')).toBeInTheDocument()
+    expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
   })
 })

@@ -2,10 +2,7 @@ import { useEffect, useState } from 'react'
 import { ChevronDown, Search, SquareTerminal } from 'lucide-react'
 import type { ProcessingBlock, ToolBlock } from '@/types/workbench'
 import { ToolBlockItem } from './ToolBlockItem'
-import {
-  buildProcessingDisplayRows,
-  type ProcessingDisplayRow,
-} from './toolBlockActivity'
+import { buildProcessingDisplayRows, type ProcessingDisplayRow } from './toolBlockActivity'
 
 interface ToolBlocksDisplayProps {
   blocks: ProcessingBlock[]
@@ -18,11 +15,7 @@ interface ToolBlocksDisplayProps {
   startedAt?: number
 }
 
-export function ToolBlocksDisplay({
-  blocks,
-  isStreaming,
-  startedAt,
-}: ToolBlocksDisplayProps) {
+export function ToolBlocksDisplay({ blocks, isStreaming, startedAt }: ToolBlocksDisplayProps) {
   const isRunning = isStreaming || blocks.some(b => b.status !== 'done' && b.status !== 'error')
   const [userExpanded, setUserExpanded] = useState(false)
   const [mountedAt] = useState(() => Date.now())
@@ -58,6 +51,14 @@ export function ToolBlocksDisplay({
   const duration = getDurationText(blocks, turnStartedAt, now, completedAt, isRunning)
   const rows = buildProcessingDisplayRows(blocks)
   const expanded = isRunning || userExpanded
+  const hasLiveNarrativeBlock = rows.some(
+    row =>
+      row.type === 'block' &&
+      (row.block.type === 'thinking' || row.block.type === 'text') &&
+      row.block.status !== 'done' &&
+      row.block.status !== 'error' &&
+      Boolean(row.block.content)
+  )
 
   return (
     <div className="mb-3 min-w-0">
@@ -94,7 +95,7 @@ export function ToolBlocksDisplay({
               <ToolBlockItem key={row.id} block={row.block} />
             )
           )}
-          {isRunning && <ThinkingIndicator />}
+          {isRunning && !hasLiveNarrativeBlock && <ThinkingIndicator />}
         </div>
       )}
     </div>
@@ -121,9 +122,7 @@ function ToolActivityGroup({
         <Icon className="h-4 w-4 shrink-0" strokeWidth={1.7} />
         <span className="min-w-0 truncate">{row.label}</span>
         <ChevronDown
-          className={`h-3.5 w-3.5 shrink-0 transition-transform ${
-            expanded ? '' : '-rotate-90'
-          }`}
+          className={`h-3.5 w-3.5 shrink-0 transition-transform ${expanded ? '' : '-rotate-90'}`}
           strokeWidth={2}
         />
       </button>
@@ -140,15 +139,16 @@ function ToolActivityGroup({
 
 function hasCommandBlocks(blocks: ToolBlock[]): boolean {
   return blocks.some(block =>
-    ['bash', 'execute_command', 'run_terminal_command'].includes(
-      block.toolName.toLowerCase()
-    )
+    ['bash', 'execute_command', 'run_terminal_command'].includes(block.toolName.toLowerCase())
   )
 }
 
 function ThinkingIndicator() {
   return (
-    <div className="flex items-center gap-1.5 text-[13px] text-text-muted">
+    <div
+      className="flex items-center gap-1.5 text-[13px] text-text-muted"
+      data-testid="thinking-indicator"
+    >
       <span>正在思考</span>
       <span className="flex items-center gap-0.5" aria-hidden="true">
         <span className="h-1 w-1 animate-pulse rounded-full bg-current" />
@@ -191,9 +191,7 @@ function formatDuration(durationMs: number): string {
   const minutes = Math.floor(seconds / 60)
   const remainingSeconds = seconds % 60
   if (minutes < 60) {
-    return remainingSeconds > 0
-      ? `${minutes} 分 ${remainingSeconds} 秒`
-      : `${minutes} 分钟`
+    return remainingSeconds > 0 ? `${minutes} 分 ${remainingSeconds} 秒` : `${minutes} 分钟`
   }
 
   const hours = Math.floor(minutes / 60)

@@ -94,6 +94,12 @@ If Codex access requires a proxy, first save the personal proxy URL in Wework **
 
 Wegent now marks whether Codex should use personal configuration explicitly on the execution request. It no longer uses the `WEGENT_LOCAL_CLI_CONFIG_RUNTIMES` environment variable for this decision.
 
+#### Shared Local Skills
+
+If one local device uses both Claude Code and Codex, open Wework **Settings** -> **Code** -> **Skills** and enable shared skill management. Wegent creates `~/.agents/skills` on the selected online Claude Code device, moves existing skills from `~/.codex/skills` and `~/.claude/skills` into that directory, and replaces the two legacy directories with symlinks to `~/.agents/skills`.
+
+The operation is repeatable. Skills with the same directory name are not overwritten; the later migrated directory receives a source suffix, and the page reports the migration count. After enabling this option, local Skill autocomplete treats skills under `~/.agents/skills` as usable by both Claude and Codex.
+
 ### Building a Device Image
 
 The repository provides `docker/device/Dockerfile` for cloud device or local device base images. The image installs `code-server`, the `weiboplat.wecoder-agent` extension, Claude Code CLI, `ttyd`, Node.js 22, Python, Git, and copies `executor/dist/wegent-executor` to `/app/executor` and `~/.wegent-executor/bin/wegent-executor`.

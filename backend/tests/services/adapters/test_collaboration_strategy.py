@@ -280,6 +280,55 @@ class TestPipelineAutoAdvance:
 
         assert result["context_passing"] == "previous_bot"
 
+    def test_auto_advance_uses_task_current_stage_as_source_of_truth(self):
+        """Auto advance should not infer stage from completed subtask bot metadata."""
+        strategy = self._make_strategy()
+        db = _make_db()
+
+        bot_2 = _make_bot(30, "bot-2")
+        members = [
+            _make_member("bot-0"),
+            _make_member("bot-1", context_passing="previous_bot"),
+            _make_member("bot-2"),
+        ]
+
+        subtask = _make_subtask(bot_id=10)
+
+        task_resource = MagicMock()
+        task_resource.user_id = 1
+        task_resource.json = {}
+        task_crd = _make_task_crd(current_stage=1)
+        team_crd = _make_team_crd(members)
+        team_resource = MagicMock()
+        team_resource.user_id = 1
+        team_resource.json = {}
+
+        db.query.return_value.filter.return_value.first.return_value = team_resource
+
+        with (
+            patch.object(strategy, "_should_require_confirmation", return_value=False),
+            patch("app.schemas.kind.Task") as mock_task_schema,
+            patch("app.schemas.kind.Team") as mock_team_schema,
+            patch("app.stores.tasks.subtask_store.get_by_id", return_value=subtask),
+            patch(
+                "app.stores.tasks.task_store.get_regular_active_task",
+                return_value=task_resource,
+            ),
+            patch("app.services.readers.kinds.kindReader") as mock_reader,
+        ):
+            mock_task_schema.model_validate.return_value = task_crd
+            mock_team_schema.model_validate.return_value = team_crd
+            mock_reader.get_by_id.return_value = _make_bot(10, "stale-bot-ref")
+            mock_reader.get_by_name_and_namespace.return_value = bot_2
+            result = strategy.get_auto_advance_info(db, 1, 1, "COMPLETED")
+
+        assert result == {
+            "next_stage_index": 2,
+            "next_bot_id": 30,
+            "next_bot_name": "bot-2",
+            "context_passing": "previous_bot",
+        }
+
     def test_auto_advance_via_patched_imports(self):
         """Stage 0 completes, requireConfirmation=False, stage 1 exists -> advance."""
         strategy = self._make_strategy()

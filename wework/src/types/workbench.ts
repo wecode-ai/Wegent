@@ -14,6 +14,7 @@ import type {
   WorkbenchMessageStatus,
   WorkbenchProcessingBlock,
   WorkbenchThinkingBlock,
+  WorkbenchTextBlock,
   WorkbenchToolBlock,
   WorkbenchToolBlockStatus,
 } from '@wegent/chat-core'
@@ -28,6 +29,8 @@ export type BaseProcessingBlock = BaseWorkbenchProcessingBlock
 export type ToolBlock = WorkbenchToolBlock
 
 export type ThinkingBlock = WorkbenchThinkingBlock
+
+export type TextBlock = WorkbenchTextBlock
 
 export type ProcessingBlock = WorkbenchProcessingBlock
 
