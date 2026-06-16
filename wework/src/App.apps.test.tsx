@@ -1,13 +1,10 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import './i18n'
 import App from './App'
 
 vi.mock('@/features/auth/AuthProvider', () => ({
-  AuthProvider: ({ children }: { children: React.ReactNode }) => (
-    <>{children}</>
-  ),
+  AuthProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }))
 
 vi.mock('@/features/auth/useAuth', () => ({
@@ -22,26 +19,16 @@ vi.mock('@/features/auth/useAuth', () => ({
 }))
 
 vi.mock('@/features/workbench/WorkbenchProvider', () => ({
-  WorkbenchProvider: ({ children }: { children: React.ReactNode }) => (
-    <>{children}</>
-  ),
+  WorkbenchProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }))
 
 vi.mock('@/pages/WorkbenchPage', () => ({
   WorkbenchPage: () => <div data-testid="workbench-page">WeWork 工作台</div>,
 }))
 
-function enableTauri() {
-  Object.defineProperty(window, '__TAURI_INTERNALS__', {
-    configurable: true,
-    value: {},
-  })
-}
-
 describe('App center route', () => {
   beforeEach(() => {
     localStorage.clear()
-    enableTauri()
     vi.stubGlobal(
       'fetch',
       vi.fn((url: string) => {
@@ -92,26 +79,22 @@ describe('App center route', () => {
           status: 200,
           json: () => Promise.resolve(payload),
         })
-      }),
+      })
     )
   })
 
-  test('opens the app center from the fixed titlebar tab', async () => {
-    window.history.pushState({}, '', '/')
+  test('renders the app center route', async () => {
+    window.history.pushState({}, '', '/apps')
 
     render(<App />)
 
-    await userEvent.click(screen.getByTestId('chrome-tab-apps'))
-
-    await waitFor(() => expect(window.location.pathname).toBe('/apps'))
     expect(screen.getByTestId('apps-page')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: '管理你的办公与编码应用' })).toBeInTheDocument()
     expect(await screen.findByText('Executor 状态')).toBeInTheDocument()
+    expect(screen.getByTestId('apps-nav-local-management')).toBeInTheDocument()
     expect(screen.getByText('Claude Code')).toBeInTheDocument()
     expect(screen.getByText('Codex')).toBeInTheDocument()
-    expect(screen.queryByText('Skills')).not.toBeInTheDocument()
-    expect(screen.queryByText('MCP')).not.toBeInTheDocument()
-    expect(screen.queryByText('插件包')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('local-management-page')).not.toBeInTheDocument()
   })
 
   test('collapses the apps page header while scrolling the overview', async () => {

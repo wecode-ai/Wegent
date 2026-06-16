@@ -6,6 +6,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WEWORK_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 PROJECT_DIR="$(cd "$WEWORK_DIR/.." && pwd)"
 ENV_FILE="$PROJECT_DIR/.env"
+EXPLICIT_VITE_API_BASE_URL="${VITE_API_BASE_URL+x}"
+EXPLICIT_VITE_API_BASE_URL_VALUE="${VITE_API_BASE_URL:-}"
+EXPLICIT_VITE_SOCKET_BASE_URL="${VITE_SOCKET_BASE_URL+x}"
+EXPLICIT_VITE_SOCKET_BASE_URL_VALUE="${VITE_SOCKET_BASE_URL:-}"
 
 if [ -f "$ENV_FILE" ]; then
   set -a
@@ -21,6 +25,14 @@ if [ -f "$PROD_ENV_FILE" ]; then
   # shellcheck disable=SC1090
   source "$PROD_ENV_FILE"
   set +a
+fi
+
+if [ -n "$EXPLICIT_VITE_API_BASE_URL" ]; then
+  export VITE_API_BASE_URL="$EXPLICIT_VITE_API_BASE_URL_VALUE"
+fi
+
+if [ -n "$EXPLICIT_VITE_SOCKET_BASE_URL" ]; then
+  export VITE_SOCKET_BASE_URL="$EXPLICIT_VITE_SOCKET_BASE_URL_VALUE"
 fi
 
 get_local_ip() {
@@ -56,13 +68,25 @@ export VITE_API_BASE_URL="${VITE_API_BASE_URL:-$BACKEND_BASE_URL/api}"
 export VITE_SOCKET_BASE_URL="${VITE_SOCKET_BASE_URL:-$DEFAULT_SOCKET_BASE_URL}"
 
 echo "Building WeWork mac app"
-echo "  BACKEND_PORT=$BACKEND_PORT"
+echo "  BACKEND_PORT=$BACKEND_PORT (default URL only)"
 echo "  VITE_API_BASE_URL=$VITE_API_BASE_URL"
 echo "  VITE_SOCKET_BASE_URL=$VITE_SOCKET_BASE_URL"
+if [ "${WEWORK_ENABLE_DEVTOOLS:-}" = "1" ]; then
+  echo "  WEWORK_ENABLE_DEVTOOLS=1"
+fi
 
 if [ "${WEWORK_DRY_RUN:-}" = "1" ]; then
+  if [ "${WEWORK_ENABLE_DEVTOOLS:-}" = "1" ]; then
+    echo "  DRY RUN: pnpm exec tauri build --features devtools"
+  else
+    echo "  DRY RUN: pnpm run tauri:build"
+  fi
   exit 0
 fi
 
 cd "$WEWORK_DIR"
+if [ "${WEWORK_ENABLE_DEVTOOLS:-}" = "1" ]; then
+  exec pnpm exec tauri build --features devtools
+fi
+
 exec pnpm run tauri:build
