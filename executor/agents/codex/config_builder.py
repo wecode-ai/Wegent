@@ -13,7 +13,7 @@ import shutil
 from dataclasses import dataclass
 from typing import Any, Optional
 
-from executor.agents.api_headers import merge_source_header
+from executor.agents.api_headers import merge_project_header
 from executor.agents.env_value import resolve_env_value
 from executor.config import config
 from shared.logger import setup_logger
@@ -88,7 +88,7 @@ def is_codex_compatible_model(model_config: dict[str, Any]) -> bool:
 def build_codex_config(
     model_config: dict[str, Any],
     *,
-    source: Optional[str] = None,
+    project_id: Any = None,
 ) -> CodeXConfig:
     """Build Codex SDK launch and thread parameters from Wegent model config."""
     model = str(model_config.get("model_id") or "").strip()
@@ -128,7 +128,7 @@ def build_codex_config(
     header_overrides = _build_header_overrides(
         model_provider,
         model_config.get("default_headers"),
-        source,
+        project_id,
     )
 
     overrides = [
@@ -258,9 +258,9 @@ def _resolve_wire_api(model_config: dict[str, Any]) -> str:
 def _build_header_overrides(
     model_provider: str,
     default_headers: Any,
-    source: Optional[str],
+    project_id: Any,
 ) -> tuple[str, ...]:
-    headers = merge_source_header(default_headers, source)
+    headers = merge_project_header(default_headers, project_id)
     if not headers:
         return ()
     return tuple(

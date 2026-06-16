@@ -83,21 +83,51 @@ def is_project_task(task_data: ExecutionRequest) -> bool:
     if getattr(task_data, "standalone_chat_workspace", False):
         return True
 
-    project_id = getattr(task_data, "project_id", None)
-    if project_id and int(project_id) > 0:
+    if get_project_id(task_data):
         return True
+
+    return False
+
+
+def get_project_id(task_data: ExecutionRequest) -> str:
+    """Return the project ID for a project-backed execution request."""
+    project_id = getattr(task_data, "project_id", None)
+    normalized_project_id = _normalize_project_id(project_id)
+    if normalized_project_id:
+        return normalized_project_id
 
     workspace = getattr(task_data, "workspace", None)
     if isinstance(workspace, dict):
         metadata = workspace.get("metadata") or {}
         project = metadata.get("project") if isinstance(metadata, dict) else None
-        if isinstance(project, dict) and project.get("project_id"):
-            return True
+        if isinstance(project, dict):
+            normalized_project_id = _normalize_project_id(project.get("project_id"))
+            if normalized_project_id:
+                return normalized_project_id
 
     task_data_payload = getattr(task_data, "task_data", None)
-    return bool(
-        isinstance(task_data_payload, dict) and task_data_payload.get("project_id")
-    )
+    if isinstance(task_data_payload, dict):
+        normalized_project_id = _normalize_project_id(
+            task_data_payload.get("project_id")
+        )
+        if normalized_project_id:
+            return normalized_project_id
+
+    return ""
+
+
+def _normalize_project_id(project_id: Any) -> str:
+    if project_id is None:
+        return ""
+    value = str(project_id).strip()
+    if not value:
+        return ""
+    try:
+        if int(value) <= 0:
+            return ""
+    except ValueError:
+        return value
+    return value
 
 
 def _read_json_file(path: Path, default: dict[str, Any]) -> dict[str, Any]:

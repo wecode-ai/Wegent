@@ -202,9 +202,15 @@ class ClaudeCodeAgent(Agent):
         # Initialize execution mode strategy
         self._mode_strategy: ExecutionModeStrategy = ModeStrategyFactory.create()
         if hasattr(self._mode_strategy, "use_global_capabilities"):
-            from executor.modes.local.capabilities import is_project_task
+            from executor.modes.local.capabilities import (
+                get_project_id,
+                is_project_task,
+            )
 
-            self._mode_strategy.use_global_capabilities(is_project_task(task_data))
+            self._mode_strategy.use_global_capabilities(
+                is_project_task(task_data),
+                project_id=get_project_id(task_data),
+            )
 
         # Note: emitter is created in base class Agent.__init__()
         # using EmitterBuilder with CallbackTransport

@@ -413,11 +413,11 @@ class TestLocalModeStrategy:
         assert result["env"]["CLAUDE_CONFIG_DIR"] == str(tmp_path / ".claude")
         assert result["env"]["SKILLS_DIR"] == str(tmp_path / ".claude" / "skills")
 
-    def test_configure_client_options_adds_wework_source_header_for_project_tasks(
+    def test_configure_client_options_adds_project_header_for_project_tasks(
         self, strategy, tmp_path, monkeypatch
     ):
-        """Project tasks should mark Claude API requests as coming from Wework."""
-        strategy.use_global_capabilities(True)
+        """Project tasks should mark Claude API requests with the project ID."""
+        strategy.use_global_capabilities(True, project_id=42)
         monkeypatch.setenv("HOME", str(tmp_path))
         options = {"cwd": "/workspace"}
         config_dir = "/workspace/12345/.claude"
@@ -425,13 +425,13 @@ class TestLocalModeStrategy:
         with patch("executor.config.config.ANTHROPIC_CUSTOM_HEADERS", ""):
             result = strategy.configure_client_options(options, config_dir, {}, {})
 
-        assert result["env"]["ANTHROPIC_CUSTOM_HEADERS"] == "wecode-source: wework"
+        assert result["env"]["ANTHROPIC_CUSTOM_HEADERS"] == "wecode-project: 42"
 
     def test_configure_client_options_preserves_custom_headers_for_project_tasks(
         self, strategy, tmp_path, monkeypatch
     ):
-        """Project source header should be merged with existing Claude headers."""
-        strategy.use_global_capabilities(True)
+        """Project header should be merged with existing Claude headers."""
+        strategy.use_global_capabilities(True, project_id=42)
         monkeypatch.setenv("HOME", str(tmp_path))
         options = {"cwd": "/workspace"}
         config_dir = "/workspace/12345/.claude"
@@ -441,14 +441,14 @@ class TestLocalModeStrategy:
             result = strategy.configure_client_options(options, config_dir, {}, {})
 
         assert result["env"]["ANTHROPIC_CUSTOM_HEADERS"] == (
-            "x-custom-user: test\nwecode-source: wework"
+            "x-custom-user: test\nwecode-project: 42"
         )
 
-    def test_configure_client_options_overrides_default_source_header_for_project_tasks(
+    def test_configure_client_options_preserves_default_source_header_for_project_tasks(
         self, strategy, tmp_path, monkeypatch
     ):
-        """Project tasks should override Wecode CLI default source headers."""
-        strategy.use_global_capabilities(True)
+        """Project tasks should preserve Wecode CLI source and add project ID."""
+        strategy.use_global_capabilities(True, project_id=42)
         monkeypatch.setenv("HOME", str(tmp_path))
         options = {"cwd": "/workspace"}
         config_dir = "/workspace/12345/.claude"
@@ -470,8 +470,9 @@ class TestLocalModeStrategy:
 
         assert result["env"]["ANTHROPIC_CUSTOM_HEADERS"] == (
             "wecode-action: wecode-cli\n"
+            "wecode-source: wecode-cli\n"
             "x-weibo-downstream: shanghai-intranet\n"
-            "wecode-source: wework"
+            "wecode-project: 42"
         )
 
     def test_configure_client_options_adds_anthropic_custom_headers(self, strategy):

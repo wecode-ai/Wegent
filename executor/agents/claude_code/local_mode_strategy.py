@@ -27,11 +27,9 @@ from pathlib import Path
 from typing import Any, Dict, Tuple
 
 from executor.agents.api_headers import (
-    WEWORK_SOURCE,
     extract_default_headers,
-    merge_anthropic_custom_headers,
     merge_anthropic_header_map,
-    merge_source_header,
+    merge_project_header,
 )
 from executor.agents.claude_code.mode_strategy import ExecutionModeStrategy
 from executor.config import config
@@ -54,10 +52,12 @@ class LocalModeStrategy(ExecutionModeStrategy):
 
     def __init__(self) -> None:
         self._use_global_capabilities = False
+        self._project_id: Any = None
 
-    def use_global_capabilities(self, enabled: bool) -> None:
+    def use_global_capabilities(self, enabled: bool, project_id: Any = None) -> None:
         """Enable global Claude capability reuse for project task execution."""
         self._use_global_capabilities = enabled
+        self._project_id = project_id if enabled else None
 
     def get_config_directory(self, task_id: int) -> str:
         """Get the Claude configuration directory.
@@ -202,11 +202,7 @@ class LocalModeStrategy(ExecutionModeStrategy):
         )
         default_headers = extract_default_headers(merged_env)
         if self._use_global_capabilities:
-            default_headers = merge_source_header(default_headers, WEWORK_SOURCE)
-            custom_headers = merge_anthropic_custom_headers(
-                custom_headers,
-                WEWORK_SOURCE,
-            )
+            default_headers = merge_project_header(default_headers, self._project_id)
         if default_headers:
             custom_headers = merge_anthropic_header_map(
                 custom_headers,

@@ -64,7 +64,7 @@ def test_build_codex_config_maps_provider_and_reasoning():
     assert config.summary == "concise"
 
 
-def test_build_codex_config_adds_wework_source_header_when_requested():
+def test_build_codex_config_adds_project_header_when_requested():
     config = build_codex_config(
         {
             "model": "openai",
@@ -73,16 +73,16 @@ def test_build_codex_config_adds_wework_source_header_when_requested():
             "api_key": "wecode-proxy-placeholder",
             "api_format": "responses",
         },
-        source="wework",
+        project_id=42,
     )
 
     assert (
-        'model_providers.wecode-openai.http_headers.wecode-source="wework"'
+        'model_providers.wecode-openai.http_headers.wecode-project="42"'
         in config.config_overrides
     )
 
 
-def test_build_codex_config_overrides_default_source_header_when_requested():
+def test_build_codex_config_preserves_default_source_header_when_project_requested():
     config = build_codex_config(
         {
             "model": "openai",
@@ -96,7 +96,7 @@ def test_build_codex_config_overrides_default_source_header_when_requested():
                 "x-weibo-downstream": "shanghai-intranet",
             },
         },
-        source="wework",
+        project_id=42,
     )
 
     assert (
@@ -108,16 +108,16 @@ def test_build_codex_config_overrides_default_source_header_when_requested():
         in config.config_overrides
     )
     assert (
-        'model_providers.wecode-openai.http_headers.wecode-source="wework"'
+        'model_providers.wecode-openai.http_headers.wecode-source="wecode-cli"'
         in config.config_overrides
     )
-    assert not any(
-        item == 'model_providers.wecode-openai.http_headers.wecode-source="wecode-cli"'
-        for item in config.config_overrides
+    assert (
+        'model_providers.wecode-openai.http_headers.wecode-project="42"'
+        in config.config_overrides
     )
 
 
-def test_build_codex_config_omits_source_header_by_default():
+def test_build_codex_config_omits_project_header_by_default():
     config = build_codex_config(
         {
             "model": "openai",
@@ -128,7 +128,7 @@ def test_build_codex_config_omits_source_header_by_default():
         }
     )
 
-    assert not any("wecode-source" in item for item in config.config_overrides)
+    assert not any("wecode-project" in item for item in config.config_overrides)
 
 
 def test_build_codex_config_uses_user_runtime_config(monkeypatch):

@@ -4,27 +4,29 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Utilities for model API source headers."""
+"""Utilities for model API request headers."""
 
 import json
 from collections.abc import Mapping
-from typing import Any, Optional
+from typing import Any
 
-WECODE_SOURCE_HEADER = "wecode-source"
-WEWORK_SOURCE = "wework"
+WECODE_PROJECT_HEADER = "wecode-project"
 DEFAULT_HEADERS_ENV_KEYS = ("DEFAULT_HEADERS", "default_headers")
 
 
-def merge_source_header(
+def merge_project_header(
     headers: Mapping[str, Any] | str | None,
-    source: Optional[str],
+    project_id: Any,
 ) -> dict[str, str]:
-    """Return headers with the Wegent source header merged."""
+    """Return headers with the Wegent project header merged."""
     parsed_headers = _parse_header_map(headers)
-    if not source:
+    normalized_project_id = _normalize_project_id(project_id)
+    if not normalized_project_id:
         return parsed_headers
 
-    return merge_header_map(parsed_headers, {WECODE_SOURCE_HEADER: source})
+    return merge_header_map(
+        parsed_headers, {WECODE_PROJECT_HEADER: normalized_project_id}
+    )
 
 
 def merge_header_map(
@@ -49,20 +51,6 @@ def merge_header_map(
 def headers_to_anthropic_custom_headers(headers: Mapping[str, Any]) -> str:
     """Format a header map for Claude Code's ANTHROPIC_CUSTOM_HEADERS env var."""
     return "\n".join(f"{key}: {value}" for key, value in headers.items())
-
-
-def merge_anthropic_custom_headers(
-    existing_headers: str,
-    source: Optional[str],
-) -> str:
-    """Return Anthropic custom headers with the Wegent source header merged."""
-    if not source:
-        return existing_headers
-
-    headers = _parse_anthropic_custom_headers(existing_headers)
-    return headers_to_anthropic_custom_headers(
-        merge_header_map(headers, {WECODE_SOURCE_HEADER: source})
-    )
 
 
 def merge_anthropic_header_map(
@@ -128,3 +116,12 @@ def _parse_header_lines(headers: str) -> dict[str, str]:
             continue
         parsed[key] = value.strip()
     return parsed
+
+
+def _normalize_project_id(project_id: Any) -> str:
+    if project_id is None:
+        return ""
+    value = str(project_id).strip()
+    if not value or value == "0":
+        return ""
+    return value
