@@ -116,7 +116,7 @@ export function useDocuments(options: UseDocumentsOptions) {
           setPageSize(targetPageSize)
         }
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to fetch documents')
+        setError(err instanceof Error ? err.message : t('document.document.fetchFailed'))
       } finally {
         setLoading(false)
       }

@@ -377,7 +377,8 @@
         "splitterType": "Splitter Type",
         "splitterSubtype": "Splitter Subtype"
       },
-      "downloadFailed": "Failed to download file"
+      "downloadFailed": "Failed to download file",
+      "fetchFailed": "Failed to fetch documents"
     },
     "upload": {
       "dropzoneHint": "Select up to {{max}} files at once",
