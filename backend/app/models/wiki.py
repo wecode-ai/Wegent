@@ -21,6 +21,7 @@ from sqlalchemy import (
 from sqlalchemy.sql import func
 
 from app.db.session import WikiBase
+from shared.models.db.types import big_integer_id_type
 
 
 class WikiProject(WikiBase):
@@ -82,7 +83,7 @@ class WikiGeneration(WikiBase):
         index=True,
     )
     user_id = Column(Integer, nullable=False, index=True)
-    task_id = Column(Integer, nullable=False, default=0, index=True)
+    task_id = Column(big_integer_id_type(), nullable=False, default=0, index=True)
     team_id = Column(Integer, nullable=False)
     generation_type = Column(
         SQLEnum(WikiGenerationType), nullable=False, default=WikiGenerationType.FULL

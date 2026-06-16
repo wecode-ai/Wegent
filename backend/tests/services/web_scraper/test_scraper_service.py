@@ -319,3 +319,31 @@ async def test_low_quality_primary_uses_playwright_fallback(
     assert playwright.called is True
     assert result.success is True
     assert result.content == "This fallback content is long enough to be accepted."
+
+
+async def test_reachable_empty_2xx_primary_uses_playwright_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = prepare_service(monkeypatch)
+    service._crawl4ai_strategy = FakeCrawlStrategy(
+        InternalScrapeResult(
+            url="https://example.com",
+            success=False,
+            status_code=200,
+            error_message="Blocked by anti-bot protection: minimal_text",
+        )
+    )
+    playwright = FakePlaywrightStrategy(
+        InternalScrapeResult(
+            url="https://example.com",
+            final_url="https://example.com",
+            markdown="This fallback content is long enough to be accepted.",
+        )
+    )
+    service._playwright_strategy = playwright
+
+    result = await service.scrape_url("https://example.com")
+
+    assert playwright.called is True
+    assert result.success is True
+    assert result.content == "This fallback content is long enough to be accepted."

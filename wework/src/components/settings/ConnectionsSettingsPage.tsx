@@ -15,6 +15,7 @@ import {
   Monitor,
   MoreHorizontal,
   Network,
+  Package,
   Pencil,
   Plus,
   RotateCcw,
@@ -47,6 +48,7 @@ import { AppearanceSettingsPage } from '@/features/appearance/AppearanceSettings
 import { AddCloudDeviceDialog } from './AddCloudDeviceDialog'
 import { ProxySettingsPage } from './ProxySettingsPage'
 import { RuntimeConfigSettingsPage } from './RuntimeConfigSettingsPage'
+import { SkillSettingsPage } from './SkillSettingsPage'
 import { WorktreesSettingsPage } from './WorktreesSettingsPage'
 
 interface ConnectionsSettingsPageProps {
@@ -96,6 +98,13 @@ const settingsNavItems: SettingsNavItem[] = [
     category: 'personal',
   },
   {
+    key: 'skills',
+    icon: Package,
+    label: 'settings_nav_skills',
+    fallback: '技能',
+    category: 'coding',
+  },
+  {
     key: 'worktrees',
     icon: GitBranch,
     label: 'settings_nav_worktrees',
@@ -126,9 +135,7 @@ const settingsCategoryLabels: Record<SettingsCategory, { label: string; fallback
 function getSettingsNavFromPath(path: string): string {
   const normalizedPath = stripAppBasePath(path)
   if (normalizedPath === '/settings/personal') return 'codex-auth'
-  const matchedItem = settingsNavItems.find(
-    item => getSettingsNavPath(item.key) === normalizedPath,
-  )
+  const matchedItem = settingsNavItems.find(item => getSettingsNavPath(item.key) === normalizedPath)
   if (matchedItem) return matchedItem.key
   const match = normalizedPath.match(/^\/settings\/([^/]+)$/)
   if (!match) return 'connections'
@@ -318,15 +325,9 @@ function ConfirmDeviceActionDialog({
       : `将删除 ${device.name} 的本地设备注册记录。设备重新连接后会自动重新注册。`
     : `将重启 ${device.name}，设备会短暂离线，进行中的连接可能中断。`
   const confirmLabel = isDelete ? '确认删除' : '确认重启'
-  const dialogTestId = isDelete
-    ? 'confirm-delete-device-dialog'
-    : 'confirm-restart-device-dialog'
-  const confirmTestId = isDelete
-    ? 'confirm-delete-device-button'
-    : 'confirm-restart-device-button'
-  const iconClassName = isDelete
-    ? 'bg-red-500/10 text-red-500'
-    : 'bg-muted text-text-secondary'
+  const dialogTestId = isDelete ? 'confirm-delete-device-dialog' : 'confirm-restart-device-dialog'
+  const confirmTestId = isDelete ? 'confirm-delete-device-button' : 'confirm-restart-device-button'
+  const iconClassName = isDelete ? 'bg-red-500/10 text-red-500' : 'bg-muted text-text-secondary'
   const confirmClassName = isDelete
     ? 'bg-red-600 text-white hover:bg-red-700'
     : 'bg-text-primary text-background hover:opacity-90'
@@ -351,9 +352,7 @@ function ConfirmDeviceActionDialog({
           </div>
           <div className="min-w-0 flex-1">
             <h2 className="text-sm font-semibold text-text-primary">{title}</h2>
-            <p className="mt-1.5 text-xs leading-5 text-text-secondary">
-              {description}
-            </p>
+            <p className="mt-1.5 text-xs leading-5 text-text-secondary">{description}</p>
           </div>
         </div>
         <div className="mt-5 flex justify-end gap-2">
@@ -466,9 +465,7 @@ function CloudDeviceConnectionInfoDialog({
               key={row.key}
               className="flex items-center gap-3 rounded-md border border-border bg-surface px-3 py-2"
             >
-              <div className="w-20 shrink-0 text-xs text-text-secondary">
-                {row.label}
-              </div>
+              <div className="w-20 shrink-0 text-xs text-text-secondary">{row.label}</div>
               <div className="min-w-0 flex-1 truncate font-mono text-xs text-text-primary">
                 {row.value}
               </div>
@@ -496,9 +493,7 @@ function CloudDeviceConnectionInfoDialog({
           <button
             type="button"
             data-testid="copy-connection-info-all"
-            onClick={() =>
-              copyValue('all', formatCloudDeviceConnectionInfo(info))
-            }
+            onClick={() => copyValue('all', formatCloudDeviceConnectionInfo(info))}
             className="inline-flex h-8 items-center gap-1.5 rounded-md bg-text-primary px-3 text-sm font-medium text-background hover:opacity-90"
           >
             <Copy className="h-3.5 w-3.5" />
@@ -544,7 +539,7 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
         setSessionLoading(null)
       }
     },
-    [device.device_id, device.status],
+    [device.device_id, device.status]
   )
 
   const handleStartEdit = () => {
@@ -848,7 +843,7 @@ function DeviceSection({
                 <p className="mt-1 text-xs leading-5 text-text-secondary">
                   {t(
                     'workbench.connection_scale_wiki_desc',
-                    '当 CPU、MEM 或磁盘持续超过 80% 时，建议扩容云设备规格或清理工作区缓存。',
+                    '当 CPU、MEM 或磁盘持续超过 80% 时，建议扩容云设备规格或清理工作区缓存。'
                   )}
                   {scaleWikiUrl && (
                     <a
@@ -1021,9 +1016,7 @@ function ArchivedChatsSettingsPage({
   onUnarchiveTask,
   onDeleteTask,
   onDeleteArchivedTasks,
-}: Required<
-  Omit<ConnectionsSettingsPageProps, 'onBack' | 'autoOpenAddCloudDeviceDialog'>
->) {
+}: Required<Omit<ConnectionsSettingsPageProps, 'onBack' | 'autoOpenAddCloudDeviceDialog'>>) {
   const { t } = useTranslation('common')
   const [items, setItems] = useState<ArchivedTask[]>([])
   const [loading, setLoading] = useState(true)
@@ -1091,9 +1084,7 @@ function ArchivedChatsSettingsPage({
 
       <div className="mt-8 overflow-hidden rounded-lg border border-border bg-surface">
         {loading && (
-          <p className="px-5 py-8 text-sm text-text-muted">
-            {t('common.loading', '加载中...')}
-          </p>
+          <p className="px-5 py-8 text-sm text-text-muted">{t('common.loading', '加载中...')}</p>
         )}
         {!loading && error && <p className="px-5 py-6 text-sm text-red-500">{error}</p>}
         {!loading && !error && items.length === 0 && (
@@ -1103,7 +1094,10 @@ function ArchivedChatsSettingsPage({
               {t('workbench.archived_chats_empty_title', '暂无已归档会话')}
             </h2>
             <p className="mt-2 max-w-sm text-sm leading-6 text-text-secondary">
-              {t('workbench.archived_chats_empty_desc', '归档后的会话会显示在这里，方便之后恢复或清理。')}
+              {t(
+                'workbench.archived_chats_empty_desc',
+                '归档后的会话会显示在这里，方便之后恢复或清理。'
+              )}
             </p>
           </div>
         )}
@@ -1116,9 +1110,7 @@ function ArchivedChatsSettingsPage({
               className="flex min-h-[74px] items-center gap-4 border-b border-border bg-background px-5 py-3 last:border-b-0 hover:bg-muted"
             >
               <div className="min-w-0 flex-1">
-                <h2 className="truncate text-sm font-semibold text-text-primary">
-                  {item.title}
-                </h2>
+                <h2 className="truncate text-sm font-semibold text-text-primary">{item.title}</h2>
                 <p className="mt-1 truncate text-sm text-text-secondary">
                   {formatArchivedDate(item.updated_at)}
                   {item.project_name ? ` · ${item.project_name}` : ''}
@@ -1164,9 +1156,7 @@ export function ConnectionsSettingsPage({
 }: ConnectionsSettingsPageProps) {
   const { t } = useTranslation('common')
   const { sidebarWidth, handleResizeStart } = useResizableSidebar()
-  const [activeNav, setActiveNav] = useState(() =>
-    getSettingsNavFromPath(window.location.pathname)
-  )
+  const [activeNav, setActiveNav] = useState(() => getSettingsNavFromPath(window.location.pathname))
 
   useEffect(() => {
     const handlePopState = () => {
@@ -1187,10 +1177,7 @@ export function ConnectionsSettingsPage({
       >
         <DesktopTopBar
           testId="settings-sidebar-topbar"
-          className={cn(
-            '-mx-1.5 mb-2 w-[calc(100%+0.75rem)] bg-transparent pr-2',
-            'pl-2',
-          )}
+          className={cn('-mx-1.5 mb-2 w-[calc(100%+0.75rem)] bg-transparent pr-2', 'pl-2')}
           left={
             <button
               type="button"
@@ -1234,9 +1221,7 @@ export function ConnectionsSettingsPage({
                   ].join(' ')}
                 >
                   <item.icon className="h-4 w-4 shrink-0" />
-                  <span className="truncate">
-                    {t(`workbench.${item.label}`, item.fallback)}
-                  </span>
+                  <span className="truncate">{t(`workbench.${item.label}`, item.fallback)}</span>
                 </button>
               </div>
             )
@@ -1266,6 +1251,8 @@ export function ConnectionsSettingsPage({
           <RuntimeConfigSettingsPage runtime="codex" />
         ) : activeNav === 'proxy' ? (
           <ProxySettingsPage />
+        ) : activeNav === 'skills' ? (
+          <SkillSettingsPage />
         ) : activeNav === 'worktrees' ? (
           <WorktreesSettingsPage />
         ) : (

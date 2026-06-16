@@ -33,6 +33,7 @@ from datetime import datetime
 from typing import Any, Dict, Generator, Optional
 
 import socketio
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.api.ws.connection_utils import enter_connect_room, save_connect_session
@@ -738,7 +739,16 @@ class DeviceNamespace(socketio.AsyncNamespace):
         if is_api_key(token):
             # API Key authentication - run in executor to avoid blocking event loop
             auth_type = "api_key"
-            user_info = await run_sync_in_executor(_verify_api_key_sync, token)
+            try:
+                user_info = await run_sync_in_executor(_verify_api_key_sync, token)
+            except SQLAlchemyError as exc:
+                logger.error(
+                    f"[Device WS] API key authentication storage unavailable sid={sid}: "
+                    f"{exc.__class__.__name__}"
+                )
+                raise ConnectionRefusedError(
+                    "Authentication service unavailable"
+                ) from exc
             if not user_info:
                 key_preview = token[:10] + "..." if len(token) > 10 else token
                 logger.warning(

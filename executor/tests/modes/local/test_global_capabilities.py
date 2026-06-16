@@ -5,6 +5,7 @@
 import json
 
 from executor.modes.local.capabilities import (
+    CapabilitySyncHandler,
     GlobalCapabilityReporter,
     GlobalCapabilityStore,
     ManagedCapabilityManifest,
@@ -104,6 +105,21 @@ def test_default_manifest_path_lives_with_device_config(tmp_path, monkeypatch):
     assert default_manifest_path() == (
         tmp_path / ".wegent-executor" / "capabilities" / "manifest.json"
     )
+
+
+def test_capability_sync_handler_uses_synced_device_config_token(monkeypatch):
+    monkeypatch.delenv("WEGENT_AUTH_TOKEN", raising=False)
+
+    from executor.config import config
+
+    previous_token = config.WEGENT_AUTH_TOKEN
+    try:
+        config.WEGENT_AUTH_TOKEN = "device-config-token"
+        handler = CapabilitySyncHandler()
+    finally:
+        config.WEGENT_AUTH_TOKEN = previous_token
+
+    assert handler.auth_token == "device-config-token"
 
 
 def test_manifest_store_records_skills_and_preserves_mcp_section(tmp_path):

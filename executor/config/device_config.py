@@ -304,6 +304,18 @@ def _apply_env_overrides(config: DeviceConfig) -> tuple[DeviceConfig, bool]:
     """
     should_save = False
 
+    # Mode override
+    if os.environ.get("EXECUTOR_MODE"):
+        env_value = os.environ["EXECUTOR_MODE"].lower()
+        valid_modes = {mode.value for mode in ExecutorMode}
+        if env_value in valid_modes:
+            config.mode = env_value
+        else:
+            logger.warning(
+                f"Invalid EXECUTOR_MODE '{env_value}', must be one of {valid_modes}. "
+                "Keeping current value."
+            )
+
     # Connection overrides
     if os.environ.get("WEGENT_BACKEND_URL"):
         env_value = os.environ["WEGENT_BACKEND_URL"]
@@ -487,8 +499,8 @@ def should_use_local_mode(config_path: Optional[str] = None) -> bool:
     """Check if executor should run in local mode.
 
     This function determines the executor mode by checking:
-    1. Config file (if exists)
-    2. EXECUTOR_MODE environment variable (for backward compatibility)
+    1. EXECUTOR_MODE environment variable
+    2. Config file (if exists)
 
     Args:
         config_path: Optional path to config file
@@ -496,7 +508,12 @@ def should_use_local_mode(config_path: Optional[str] = None) -> bool:
     Returns:
         True if local mode should be used
     """
-    # Check config file first
+    # Environment variables have the highest priority.
+    executor_mode_env = os.environ.get("EXECUTOR_MODE")
+    if executor_mode_env:
+        return executor_mode_env.lower() == "local"
+
+    # Check config file next
     if config_path:
         path = Path(config_path)
     else:
@@ -510,8 +527,7 @@ def should_use_local_mode(config_path: Optional[str] = None) -> bool:
         except (json.JSONDecodeError, IOError) as e:
             logger.warning(f"Failed to read config file {path}: {e}")
 
-    # Fall back to environment variable
-    return os.environ.get("EXECUTOR_MODE", "") == "local"
+    return False
 
 
 def get_config_path_from_args() -> Optional[str]:

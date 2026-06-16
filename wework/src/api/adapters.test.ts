@@ -25,9 +25,7 @@ describe('REST adapters', () => {
 
     await createProjectApi(client).listProjects()
 
-    expect(client.get).toHaveBeenCalledWith(
-      '/projects?include_tasks=true&client_origin=wework',
-    )
+    expect(client.get).toHaveBeenCalledWith('/projects?include_tasks=true&client_origin=wework')
   })
 
   test('creates Git workspace projects from the wework client origin', async () => {
@@ -88,7 +86,7 @@ describe('REST adapters', () => {
     })
 
     expect(client.delete).toHaveBeenCalledWith(
-      '/projects/worktrees/device-1/1386?project_id=7&client_origin=wework',
+      '/projects/worktrees/device-1/1386?project_id=7&client_origin=wework'
     )
   })
 
@@ -99,7 +97,7 @@ describe('REST adapters', () => {
     await createTaskApi(client).listRecentTasks({ limit: 20 })
 
     expect(client.get).toHaveBeenCalledWith(
-      '/tasks/lite/personal?limit=20&page=1&types=online%2Coffline&client_origin=wework',
+      '/tasks/lite/personal?limit=20&page=1&types=online%2Coffline&client_origin=wework'
     )
   })
 
@@ -119,7 +117,7 @@ describe('REST adapters', () => {
     await createTaskApi(client).searchTasks('胡云鹏', { limit: 30 })
 
     expect(client.get).toHaveBeenCalledWith(
-      '/tasks/wework/conversation-search?keyword=%E8%83%A1%E4%BA%91%E9%B9%8F&page=1&limit=30',
+      '/tasks/wework/conversation-search?keyword=%E8%83%A1%E4%BA%91%E9%B9%8F&page=1&limit=30'
     )
   })
 
@@ -158,7 +156,7 @@ describe('REST adapters', () => {
     })
 
     expect(client.get).toHaveBeenCalledWith(
-      '/system-skills?category=system&page=1&pageSize=20&providerKey=builtin&keyword=image&tags=system%2Cimage',
+      '/system-skills?category=system&page=1&pageSize=20&providerKey=builtin&keyword=image&tags=system%2Cimage'
     )
   })
 
@@ -253,29 +251,15 @@ describe('REST adapters', () => {
     await createTaskApi(client).unarchiveTask(8)
     await createTaskApi(client).deleteArchivedTasks()
 
-    expect(client.post).toHaveBeenNthCalledWith(
-      1,
-      '/projects/7/archive-chats?client_origin=wework',
-    )
-    expect(client.post).toHaveBeenNthCalledWith(
-      2,
-      '/projects/archive-chats?client_origin=wework',
-    )
+    expect(client.post).toHaveBeenNthCalledWith(1, '/projects/7/archive-chats?client_origin=wework')
+    expect(client.post).toHaveBeenNthCalledWith(2, '/projects/archive-chats?client_origin=wework')
     expect(client.post).toHaveBeenNthCalledWith(
       3,
-      '/tasks/archive?scope=standalone&client_origin=wework',
+      '/tasks/archive?scope=standalone&client_origin=wework'
     )
-    expect(client.post).toHaveBeenNthCalledWith(
-      4,
-      '/tasks/8/archive?client_origin=wework',
-    )
-    expect(client.get).toHaveBeenCalledWith(
-      '/tasks/archived?limit=200&page=1&client_origin=wework',
-    )
-    expect(client.post).toHaveBeenNthCalledWith(
-      5,
-      '/tasks/8/unarchive?client_origin=wework',
-    )
+    expect(client.post).toHaveBeenNthCalledWith(4, '/tasks/8/archive?client_origin=wework')
+    expect(client.get).toHaveBeenCalledWith('/tasks/archived?limit=200&page=1&client_origin=wework')
+    expect(client.post).toHaveBeenNthCalledWith(5, '/tasks/8/unarchive?client_origin=wework')
     expect(client.delete).toHaveBeenCalledWith('/tasks/archived?client_origin=wework')
   })
 
@@ -288,14 +272,8 @@ describe('REST adapters', () => {
     await api.startTerminalSession(7)
     await api.startCodeServerSession(7)
 
-    expect(client.post).toHaveBeenNthCalledWith(
-      1,
-      '/projects/7/terminal?client_origin=wework',
-    )
-    expect(client.post).toHaveBeenNthCalledWith(
-      2,
-      '/projects/7/code-server?client_origin=wework',
-    )
+    expect(client.post).toHaveBeenNthCalledWith(1, '/projects/7/terminal?client_origin=wework')
+    expect(client.post).toHaveBeenNthCalledWith(2, '/projects/7/code-server?client_origin=wework')
   })
 
   test('resolves device home and project workspace root', async () => {
@@ -320,12 +298,12 @@ describe('REST adapters', () => {
     expect(client.post).toHaveBeenNthCalledWith(
       1,
       '/devices/device-1/commands',
-      expect.objectContaining({ command_key: 'home_dir' }),
+      expect.objectContaining({ command_key: 'home_dir' })
     )
     expect(client.post).toHaveBeenNthCalledWith(
       2,
       '/devices/device-1/commands',
-      expect.objectContaining({ command_key: 'project_workspace_root' }),
+      expect.objectContaining({ command_key: 'project_workspace_root' })
     )
   })
 
@@ -339,14 +317,16 @@ describe('REST adapters', () => {
 
     const api = createDeviceApi(client)
 
-    await expect(api.createDirectory('device-1', '  /home/ubuntu/new-app  ')).resolves.toBeUndefined()
+    await expect(
+      api.createDirectory('device-1', '  /home/ubuntu/new-app  ')
+    ).resolves.toBeUndefined()
 
     expect(client.post).toHaveBeenCalledWith(
       '/devices/device-1/commands',
       expect.objectContaining({
         command_key: 'mkdir_p',
         args: ['/home/ubuntu/new-app'],
-      }),
+      })
     )
   })
 
@@ -355,7 +335,7 @@ describe('REST adapters', () => {
     const api = createDeviceApi(client)
 
     await expect(api.createDirectory('device-1', '   ')).rejects.toThrow(
-      'Directory path is required',
+      'Directory path is required'
     )
     expect(client.post).not.toHaveBeenCalled()
   })
@@ -371,7 +351,7 @@ describe('REST adapters', () => {
     const api = createDeviceApi(client)
 
     await expect(api.createDirectory('device-1', '/home/ubuntu/new-app')).rejects.toThrow(
-      'mkdir failed',
+      'mkdir failed'
     )
   })
 
@@ -419,7 +399,7 @@ describe('REST adapters', () => {
       '/devices/device-1/commands',
       expect.objectContaining({
         command_key: 'ls_skills',
-      }),
+      })
     )
   })
 
@@ -440,5 +420,33 @@ describe('REST adapters', () => {
     })
 
     await expect(createDeviceApi(client).listSkills('device-1')).resolves.toEqual(skills)
+  })
+
+  test('configures shared local skill directories through the device command API', async () => {
+    const client = mockClient()
+    const result = {
+      success: true,
+      status: 'configured',
+      shared_path: '/Users/crystal/.agents/skills',
+      shared_created: true,
+      legacy_paths: ['/Users/crystal/.codex/skills', '/Users/crystal/.claude/skills'],
+      moved_count: 2,
+      moved: [],
+      links: [],
+    }
+    vi.mocked(client.post).mockResolvedValueOnce({
+      success: true,
+      stdout: result,
+      stderr: '',
+    })
+
+    await expect(createDeviceApi(client).setupSharedSkills('device-1')).resolves.toEqual(result)
+
+    expect(client.post).toHaveBeenCalledWith(
+      '/devices/device-1/commands',
+      expect.objectContaining({
+        command_key: 'setup_shared_skills',
+      })
+    )
   })
 })

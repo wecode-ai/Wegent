@@ -278,6 +278,12 @@ flowchart LR
 | **用户隔离** | 设备只能执行其所有者的任务 |
 | **硬件绑定** | 设备 ID 基于硬件标识生成 |
 
+### 本地执行器连接配置
+
+本地执行器启动时按“环境变量、`~/.wegent-executor/device-config.json`、默认值”的顺序解析配置。其中 `mode` 决定启动模式，`connection.backend_url` 和 `connection.auth_token` 分别用于连接 Backend 和完成设备认证。
+
+`EXECUTOR_MODE` 覆盖 `mode`，`WEGENT_BACKEND_URL` 覆盖 `connection.backend_url`，`WEGENT_AUTH_TOKEN` 覆盖 `connection.auth_token`。因此常规启动脚本不需要强制传入这些环境变量；只要设备配置文件中已有有效模式和连接信息，executor 就可以直接启动。
+
 ### 云设备启动身份变量
 
 云设备通过 user data 启动脚本自动安装并运行 executor。启动脚本会注入以下身份相关环境变量：

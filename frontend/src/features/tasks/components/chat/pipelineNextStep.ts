@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import type { SubtaskContextBrief } from '@/types/api'
+import type { PipelineContextPassing, SubtaskContextBrief } from '@/types/api'
 import { parseMarkdownFinalPrompt } from '../message/finalPromptParser'
 
 export type PipelineNextStepDefaultSource = 'final_prompt' | 'last_ai_response' | 'none'
@@ -34,6 +34,7 @@ export interface PipelineNextStepStructuredItem {
 export interface PipelineNextStepDraft {
   defaultMessage: string
   defaultSource: PipelineNextStepDefaultSource
+  hasSelectableContext: boolean
   canSubmit: boolean
   textItems: PipelineNextStepTextItem[]
   structuredItems: PipelineNextStepStructuredItem[]
@@ -169,7 +170,8 @@ function buildTextItems(
   messages: PipelineNextStepMessage[],
   selectedAiMessage: PipelineNextStepMessage,
   precedingUserMessage: PipelineNextStepMessage | undefined,
-  selectedAiContent: string
+  selectedAiContent: string,
+  contextPassing: PipelineContextPassing
 ): PipelineNextStepTextItem[] {
   const items: PipelineNextStepTextItem[] = []
 
@@ -182,7 +184,8 @@ function buildTextItems(
         kind: 'ai_response',
         role: 'ai',
         content: selectedAiContent,
-        selectedByDefault: true,
+        selectedByDefault:
+          contextPassing === 'previous_bot' || contextPassing === 'original_and_previous',
       })
       continue
     }
@@ -194,7 +197,9 @@ function buildTextItems(
       kind,
       role: message.type,
       content: message.content.trim(),
-      selectedByDefault: false,
+      selectedByDefault:
+        kind === 'user_message' &&
+        (contextPassing === 'original_user' || contextPassing === 'original_and_previous'),
     })
   }
 
@@ -202,7 +207,8 @@ function buildTextItems(
 }
 
 export function buildPipelineNextStepDraft(
-  messages: PipelineNextStepMessage[]
+  messages: PipelineNextStepMessage[],
+  contextPassing: PipelineContextPassing = 'none'
 ): PipelineNextStepDraft {
   const sortedMessages = sortMessages(messages)
   const selectedAiMessage = findSelectedAiMessage(sortedMessages)
@@ -211,6 +217,7 @@ export function buildPipelineNextStepDraft(
     return {
       defaultMessage: '',
       defaultSource: 'none',
+      hasSelectableContext: false,
       canSubmit: false,
       textItems: [],
       structuredItems: [],
@@ -223,13 +230,15 @@ export function buildPipelineNextStepDraft(
     sortedMessages,
     selectedAiMessage,
     precedingUserMessage,
-    defaultResult.message
+    defaultResult.message,
+    contextPassing
   )
   const structuredItems = collectStructuredItems([precedingUserMessage, selectedAiMessage])
 
   return {
     defaultMessage: '',
     defaultSource: defaultResult.source,
+    hasSelectableContext: textItems.length > 0 || structuredItems.length > 0,
     canSubmit:
       textItems.some(item => item.selectedByDefault) ||
       structuredItems.some(item => item.selectedByDefault),
@@ -244,7 +253,15 @@ function appendSelectedText(message: string, selectedItems: PipelineNextStepText
       const content = item.content.trim()
       if (!content) return ''
 
-      return `[${item.role === 'user' ? 'User' : 'AI'}]\n${content}`
+      if (item.kind === 'user_message') {
+        return `Original user request:\n${content}`
+      }
+
+      if (item.kind === 'ai_response') {
+        return `Previous stage output:\n${content}`
+      }
+
+      return `${item.role === 'user' ? 'User message' : 'AI response'}:\n${content}`
     })
     .filter(Boolean)
 
@@ -252,9 +269,7 @@ function appendSelectedText(message: string, selectedItems: PipelineNextStepText
     return message.trim()
   }
 
-  return [message.trim(), ['Previous pipeline context:', ...contextText].join('\n\n')]
-    .filter(Boolean)
-    .join('\n\n')
+  return [message.trim(), contextText.join('\n\n')].filter(Boolean).join('\n\n')
 }
 
 function toBackendContext(

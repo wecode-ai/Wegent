@@ -12,18 +12,10 @@ import {
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import type {
-  Attachment,
-  DeviceInfo,
-  TurnFileChangesSummary,
-} from '@/types/api'
+import type { Attachment, DeviceInfo, TurnFileChangesSummary } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { WorkbenchMessage } from '@/types/workbench'
-import {
-  getAttachmentImageUrl,
-  getAttachmentTypeLabel,
-  isImageAttachment,
-} from '@/lib/attachments'
+import type { ProcessingBlock, WorkbenchMessage } from '@/types/workbench'
+import { getAttachmentImageUrl, getAttachmentTypeLabel, isImageAttachment } from '@/lib/attachments'
 import { parseChatError } from '@/lib/chat-error'
 import { ToolBlocksDisplay } from './blocks/ToolBlocksDisplay'
 import { FileChangesCard } from './FileChangesCard'
@@ -34,9 +26,7 @@ interface MessageListProps {
   onRetryFailedMessage?: (message: WorkbenchMessage) => void
   onSwitchModelForFailedMessage?: (message: WorkbenchMessage) => void
   onLoadFileChangesDiff?: (subtaskId: number) => Promise<string>
-  onRevertFileChanges?: (
-    subtaskId: number,
-  ) => Promise<TurnFileChangesSummary>
+  onRevertFileChanges?: (subtaskId: number) => Promise<TurnFileChangesSummary>
 }
 
 const USER_MESSAGE_COLLAPSE_LINES = 10
@@ -141,18 +131,12 @@ function UserMessage({ message }: { message: WorkbenchMessage }) {
               className="flex max-w-full flex-row flex-wrap justify-end gap-2"
             >
               {imageAttachments.map(attachment => (
-                <MessageImageAttachmentPreview
-                  key={attachment.id}
-                  attachment={attachment}
-                />
+                <MessageImageAttachmentPreview key={attachment.id} attachment={attachment} />
               ))}
             </div>
           )}
           {documentAttachments.map(attachment => (
-            <MessageDocumentAttachment
-              key={attachment.id}
-              attachment={attachment}
-            />
+            <MessageDocumentAttachment key={attachment.id} attachment={attachment} />
           ))}
         </div>
       )}
@@ -206,9 +190,7 @@ function MessageDocumentAttachment({ attachment }: { attachment: Attachment }) {
         {typeLabel}
       </span>
       <span className="flex min-w-0 flex-1 flex-col">
-        <span className="truncate font-medium text-text-primary">
-          {attachment.filename}
-        </span>
+        <span className="truncate font-medium text-text-primary">{attachment.filename}</span>
         <span className="truncate text-text-muted">{typeLabel}</span>
       </span>
     </div>
@@ -271,7 +253,7 @@ function MessageImageAttachmentPreview({ attachment }: { attachment: Attachment 
         data-testid="message-image-preview"
         src={previewUrl}
         alt={attachment.filename}
-        className="block max-h-60 max-w-[240px] rounded-2xl border border-border bg-base object-contain"
+        className="block max-h-36 max-w-[180px] shrink-0 rounded-xl border border-border bg-base object-contain"
       />
     )
   }
@@ -279,7 +261,7 @@ function MessageImageAttachmentPreview({ attachment }: { attachment: Attachment 
   return (
     <div
       data-testid={hasError ? 'message-image-preview-error' : 'message-image-preview-loading'}
-      className="flex h-24 w-32 items-center justify-center rounded-2xl border border-border bg-surface text-text-muted"
+      className="flex h-20 w-28 shrink-0 items-center justify-center rounded-xl border border-border bg-surface text-text-muted"
       aria-label={attachment.filename}
     >
       {hasError ? <FileText className="h-5 w-5" /> : <Loader2 className="h-5 w-5 animate-spin" />}
@@ -323,11 +305,7 @@ function MessageHoverActions({
         className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted opacity-0 transition-colors hover:bg-muted hover:text-text-secondary group-hover:opacity-100 group-focus:opacity-100 group-focus-within:opacity-100"
         aria-label={copied ? '已复制' : '复制消息'}
       >
-        {copied ? (
-          <CopyCheck className="h-3.5 w-3.5" />
-        ) : (
-          <Copy className="h-3.5 w-3.5" />
-        )}
+        {copied ? <CopyCheck className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
       </button>
     </div>
   )
@@ -373,7 +351,7 @@ function renderUserContent(content: string) {
           className="h-3.5 w-3.5 shrink-0 text-blue-600"
         />
         <span className="min-w-0 truncate">{displayLocalSkillName(skillName)}</span>
-      </a>,
+      </a>
     )
     offset = start + match[0].length
   }
@@ -406,6 +384,28 @@ function shouldHideFailedAssistantContent(message: WorkbenchMessage) {
   return RAW_FAILED_MESSAGE_PATTERNS.some(pattern => pattern.test(content))
 }
 
+function normalizeTextForComparison(value: string): string {
+  return value.replace(/\s+/g, ' ').trim()
+}
+
+function getDisplayProcessingBlocks(
+  blocks: ProcessingBlock[] | undefined,
+  visibleContent: string
+): ProcessingBlock[] {
+  if (!blocks?.length) return []
+
+  const normalizedVisibleContent = normalizeTextForComparison(visibleContent)
+
+  return blocks.filter(block => {
+    if (block.type !== 'text') return true
+
+    const normalizedBlockContent = normalizeTextForComparison(block.content)
+    if (!normalizedBlockContent) return false
+
+    return normalizedBlockContent !== normalizedVisibleContent
+  })
+}
+
 function AssistantMessage({
   message,
   devices,
@@ -419,14 +419,13 @@ function AssistantMessage({
   onRetryFailedMessage?: (message: WorkbenchMessage) => void
   onSwitchModelForFailedMessage?: (message: WorkbenchMessage) => void
   onLoadFileChangesDiff?: (subtaskId: number) => Promise<string>
-  onRevertFileChanges?: (
-    subtaskId: number,
-  ) => Promise<TurnFileChangesSummary>
+  onRevertFileChanges?: (subtaskId: number) => Promise<TurnFileChangesSummary>
 }) {
-  const hasBlocks = message.blocks && message.blocks.length > 0
   const shouldHideContent = shouldHideFailedAssistantContent(message)
   const visibleContent = shouldHideContent ? '' : message.content
   const hiddenErrorContent = shouldHideContent ? message.content.trim() : undefined
+  const displayBlocks = getDisplayProcessingBlocks(message.blocks, visibleContent)
+  const hasBlocks = displayBlocks.length > 0
   const hasVisibleContent = Boolean(visibleContent.trim())
   const isStreaming = message.status === 'streaming'
   const isThinking = isStreaming && !hasVisibleContent && !hasBlocks
@@ -435,7 +434,7 @@ function AssistantMessage({
     <div className="group min-w-0 overflow-x-hidden text-[13px] leading-6 text-text-primary">
       {hasBlocks && (
         <ToolBlocksDisplay
-          blocks={message.blocks!}
+          blocks={displayBlocks}
           isStreaming={isStreaming}
           startedAt={getTurnStartMs(message.createdAt)}
         />
@@ -446,18 +445,22 @@ function AssistantMessage({
             remarkPlugins={[remarkGfm]}
             components={{
               h1: ({ children }) => <h1 className="mb-4 mt-6 text-lg font-semibold">{children}</h1>,
-              h2: ({ children }) => <h2 className="mb-3 mt-5 text-base font-semibold">{children}</h2>,
+              h2: ({ children }) => (
+                <h2 className="mb-3 mt-5 text-base font-semibold">{children}</h2>
+              ),
               h3: ({ children }) => <h3 className="mb-2 mt-4 text-sm font-semibold">{children}</h3>,
               p: ({ children }) => <p className="mb-3 min-w-0 break-words leading-6">{children}</p>,
               ul: ({ children }) => <ul className="mb-3 list-disc space-y-1.5 pl-5">{children}</ul>,
-              ol: ({ children }) => <ol className="mb-3 list-decimal space-y-1.5 pl-5">{children}</ol>,
+              ol: ({ children }) => (
+                <ol className="mb-3 list-decimal space-y-1.5 pl-5">{children}</ol>
+              ),
               li: ({ children }) => <li className="min-w-0 break-words leading-6">{children}</li>,
               strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
               code: ({ className, children }) => {
                 const match = /language-(\w*)/.exec(className || '')
                 const isBlock = Boolean(match) || String(children).includes('\n')
                 if (isBlock) {
-                  const lang = match ? (match[1] || '') : ''
+                  const lang = match ? match[1] || '' : ''
                   return <CodeBlock lang={lang}>{children}</CodeBlock>
                 }
                 return (
@@ -466,7 +469,9 @@ function AssistantMessage({
                   </code>
                 )
               },
-              pre: ({ children }) => <pre className="mb-3 mt-2 max-w-full overflow-hidden">{children}</pre>,
+              pre: ({ children }) => (
+                <pre className="mb-3 mt-2 max-w-full overflow-hidden">{children}</pre>
+              ),
               blockquote: ({ children }) => (
                 <blockquote className="mb-3 border-l-3 border-border pl-4 text-text-secondary">
                   {children}
@@ -478,13 +483,22 @@ function AssistantMessage({
                 </div>
               ),
               th: ({ children }) => (
-                <th className="border-b border-border px-3 py-2 text-left font-semibold">{children}</th>
+                <th className="border-b border-border px-3 py-2 text-left font-semibold">
+                  {children}
+                </th>
               ),
               td: ({ children }) => (
                 <td className="border-b border-border px-3 py-2">{children}</td>
               ),
               a: ({ href, children }) => (
-                <a href={href} className="break-words text-primary underline" target="_blank" rel="noopener noreferrer">{children}</a>
+                <a
+                  href={href}
+                  className="break-words text-primary underline"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  {children}
+                </a>
               ),
             }}
           >
@@ -492,10 +506,8 @@ function AssistantMessage({
           </ReactMarkdown>
         </div>
       )}
-      {isThinking && (
-        <span className="text-text-muted">正在思考</span>
-      )}
-      {isStreaming && hasVisibleContent && (
+      {isThinking && <span className="text-text-muted">正在思考</span>}
+      {isStreaming && hasVisibleContent && !hasBlocks && (
         <span className="text-text-muted">正在思考</span>
       )}
       {message.status === 'failed' && message.error && (
@@ -508,17 +520,13 @@ function AssistantMessage({
           onSwitchModel={onSwitchModelForFailedMessage}
         />
       )}
-      {message.fileChanges &&
-      message.subtaskId &&
-      onLoadFileChangesDiff &&
-      onRevertFileChanges ? (
+      {message.fileChanges && message.subtaskId && onLoadFileChangesDiff && onRevertFileChanges ? (
         <FileChangesCard
           subtaskId={message.subtaskId}
           summary={message.fileChanges}
           deviceOnline={devices.some(
             device =>
-              device.device_id === message.fileChanges?.device_id &&
-              device.status === 'online',
+              device.device_id === message.fileChanges?.device_id && device.status === 'online'
           )}
           onLoadDiff={onLoadFileChangesDiff}
           onRevert={onRevertFileChanges}
@@ -565,7 +573,7 @@ function AssistantErrorCard({
       : t(parsedError.descriptionKey, {
           defaultValue: t(
             'assistant_error.types.generic_error.description',
-            '请求未能完成。你可以稍后重试，或查看错误详情。',
+            '请求未能完成。你可以稍后重试，或查看错误详情。'
           ),
         })
 
@@ -650,12 +658,28 @@ function CodeBlock({ lang, children }: { lang: string; children: React.ReactNode
             className="p-0.5 text-text-muted hover:text-text-secondary"
           >
             {copied ? (
-              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <svg
+                className="h-3.5 w-3.5"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={2}
+              >
                 <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
               </svg>
             ) : (
-              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+              <svg
+                className="h-3.5 w-3.5"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={2}
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+                />
               </svg>
             )}
           </button>
