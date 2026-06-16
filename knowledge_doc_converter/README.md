@@ -56,7 +56,13 @@ celery -A knowledge_doc_converter.celery_app:celery_app worker \
 
 ## Docker Deployment
 
-The service is configured in `docker-compose.yml` under the `knowledge_doc_converter` service. Set `KNOWLEDGE_CONVERSION_ENABLED=true` in Backend to enable conversion dispatch.
+The service is configured in `docker-compose.yml` under the `knowledge_doc_converter` service and starts with the RAG profile:
+
+```bash
+docker compose --profile rag up -d
+```
+
+Set `KNOWLEDGE_CONVERSION_ENABLED=true` in Backend to enable conversion dispatch.
 
 ## Prometheus Metrics
 

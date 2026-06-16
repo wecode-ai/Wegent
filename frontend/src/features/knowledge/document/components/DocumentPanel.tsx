@@ -303,6 +303,7 @@ export function DocumentPanel({
               canUpload={canUpload}
               canManageAllDocuments={canManageAllDocuments}
               compact={true}
+              paginationEnabled={false}
               onRefreshKnowledgeBase={onRefreshKnowledgeBase}
               onSelectionChange={onDocumentSelectionChange}
               groupInfo={groupInfo}
@@ -360,6 +361,7 @@ export function DocumentPanel({
               canUpload={canUpload}
               canManageAllDocuments={canManageAllDocuments}
               compact={true}
+              paginationEnabled={false}
               onRefreshKnowledgeBase={onRefreshKnowledgeBase}
               onSelectionChange={onDocumentSelectionChange}
               groupInfo={groupInfo}

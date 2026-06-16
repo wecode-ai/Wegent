@@ -36,8 +36,10 @@ Wegent is a self-hostable AI workspace for managing chat, coding tasks, knowledg
 Prerequisite: Docker and Docker Compose.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash -s -- --standalone
 ```
+
+This starts the default Standalone mode: one container with SQLite for local trials and lightweight deployments.
 
 Then open http://localhost:3000 in your browser.
 
@@ -50,6 +52,9 @@ Then open http://localhost:3000 in your browser.
 | **Development** | Source startup + hot reload, best for development and extensions |
 
 ```bash
+# Standalone mode (default)
+curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash -s -- --standalone
+
 # Standard mode
 curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash -s -- --standard
 

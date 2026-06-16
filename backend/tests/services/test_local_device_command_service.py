@@ -231,6 +231,9 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     ls_skills_definition = resolve_local_device_command(
         "ls_skills", settings.LOCAL_DEVICE_COMMANDS
     )
+    setup_shared_skills_definition = resolve_local_device_command(
+        "setup_shared_skills", settings.LOCAL_DEVICE_COMMANDS
+    )
     sync_runtime_auth_file_definition = resolve_local_device_command(
         "sync_runtime_auth_file", settings.LOCAL_DEVICE_COMMANDS
     )
@@ -312,8 +315,15 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     assert "python3 -c" in ls_skills_definition.command
     assert ".claude" in ls_skills_definition.command
     assert ".codex" in ls_skills_definition.command
+    assert ".agents" in ls_skills_definition.command
     assert "plugins" in ls_skills_definition.command
     assert ls_skills_definition.post_processor == "json"
+    assert setup_shared_skills_definition is not None
+    assert "python3 -c" in setup_shared_skills_definition.command
+    assert ".agents" in setup_shared_skills_definition.command
+    assert ".codex" in setup_shared_skills_definition.command
+    assert ".claude" in setup_shared_skills_definition.command
+    assert setup_shared_skills_definition.post_processor == "json"
     assert sync_runtime_auth_file_definition is not None
     assert "WEGENT_RUNTIME_CONFIG_CONTENT" in sync_runtime_auth_file_definition.command
     assert sync_runtime_auth_file_definition.post_processor == "json"
@@ -886,6 +896,122 @@ metadata:
         }
     ]
     assert "|" not in skills[0]["description"]
+
+
+def test_ls_skills_command_prefers_shared_agents_source(tmp_path):
+    """ls_skills should expose unified shared skills as agents skills."""
+    from app.services.device.command_registry import LS_SKILLS_SCRIPT
+
+    skill_dir = tmp_path / ".agents" / "skills" / "shared-context"
+    skill_dir.mkdir(parents=True)
+    (tmp_path / ".codex").mkdir()
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".codex" / "skills").symlink_to(
+        tmp_path / ".agents" / "skills",
+        target_is_directory=True,
+    )
+    (tmp_path / ".claude" / "skills").symlink_to(
+        tmp_path / ".agents" / "skills",
+        target_is_directory=True,
+    )
+    (skill_dir / "SKILL.md").write_text(
+        """---
+name: shared-context
+description: Shared local context.
+---
+
+# Shared Context
+""",
+        encoding="utf-8",
+    )
+
+    env = {**os.environ, "HOME": str(tmp_path)}
+    result = subprocess.run(
+        ["python3", "-c", LS_SKILLS_SCRIPT],
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    skills = json.loads(result.stdout)
+
+    assert len(skills) == 1
+    assert skills[0]["name"] == "shared-context"
+    assert skills[0]["source"] == "agents"
+    assert skills[0]["path"] == str(skill_dir / "SKILL.md")
+
+
+def test_setup_shared_skills_command_migrates_legacy_skill_dirs(tmp_path):
+    """setup_shared_skills should move existing skills and link legacy dirs."""
+    from app.services.device.command_registry import SETUP_SHARED_SKILLS_SCRIPT
+
+    codex_skill_dir = tmp_path / ".codex" / "skills" / "shared"
+    claude_skill_dir = tmp_path / ".claude" / "skills" / "shared"
+    codex_skill_dir.mkdir(parents=True)
+    claude_skill_dir.mkdir(parents=True)
+    (codex_skill_dir / "SKILL.md").write_text("# Codex\n", encoding="utf-8")
+    (claude_skill_dir / "SKILL.md").write_text("# Claude\n", encoding="utf-8")
+
+    env = {**os.environ, "HOME": str(tmp_path)}
+    result = subprocess.run(
+        ["python3", "-c", SETUP_SHARED_SKILLS_SCRIPT],
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(result.stdout)
+    shared_dir = tmp_path / ".agents" / "skills"
+
+    assert payload["success"] is True
+    assert payload["status"] == "configured"
+    assert payload["shared_path"] == str(shared_dir)
+    assert payload["moved_count"] == 2
+    assert (shared_dir / "shared" / "SKILL.md").read_text(
+        encoding="utf-8"
+    ) == "# Codex\n"
+    assert (shared_dir / "shared-claude" / "SKILL.md").read_text(
+        encoding="utf-8"
+    ) == "# Claude\n"
+    assert (tmp_path / ".codex" / "skills").is_symlink()
+    assert (tmp_path / ".claude" / "skills").is_symlink()
+    assert (tmp_path / ".codex" / "skills").resolve() == shared_dir
+    assert (tmp_path / ".claude" / "skills").resolve() == shared_dir
+
+
+def test_setup_shared_skills_command_is_idempotent(tmp_path):
+    """setup_shared_skills should be safe to run after links already exist."""
+    from app.services.device.command_registry import SETUP_SHARED_SKILLS_SCRIPT
+
+    shared_dir = tmp_path / ".agents" / "skills"
+    shared_dir.mkdir(parents=True)
+    (tmp_path / ".codex").mkdir()
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".codex" / "skills").symlink_to(
+        shared_dir,
+        target_is_directory=True,
+    )
+    (tmp_path / ".claude" / "skills").symlink_to(
+        shared_dir,
+        target_is_directory=True,
+    )
+
+    env = {**os.environ, "HOME": str(tmp_path)}
+    result = subprocess.run(
+        ["python3", "-c", SETUP_SHARED_SKILLS_SCRIPT],
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(result.stdout)
+
+    assert payload["success"] is True
+    assert payload["moved_count"] == 0
+    assert {link["status"] for link in payload["links"]} == {"already_configured"}
 
 
 def test_sync_runtime_auth_file_command_writes_json_object(tmp_path):

@@ -63,10 +63,13 @@ const payloadInput = (
 
 describe('pipeline next-step helpers', () => {
   it('uses final_prompt as the default AI context when available', () => {
-    const draft = buildPipelineNextStepDraft([
-      userMessage(),
-      aiMessage(['## Final Requirement Prompt', 'Ship the next-step dialog.'].join('\n')),
-    ])
+    const draft = buildPipelineNextStepDraft(
+      [
+        userMessage(),
+        aiMessage(['## Final Requirement Prompt', 'Ship the next-step dialog.'].join('\n')),
+      ],
+      'previous_bot'
+    )
 
     expect(draft.defaultMessage).toBe('')
     expect(draft.defaultSource).toBe('final_prompt')
@@ -88,7 +91,10 @@ describe('pipeline next-step helpers', () => {
   })
 
   it('falls back to the last completed AI response as selected context', () => {
-    const draft = buildPipelineNextStepDraft([userMessage(), aiMessage('Plain AI summary')])
+    const draft = buildPipelineNextStepDraft(
+      [userMessage(), aiMessage('Plain AI summary')],
+      'previous_bot'
+    )
 
     expect(draft.defaultMessage).toBe('')
     expect(draft.defaultSource).toBe('last_ai_response')
@@ -107,10 +113,12 @@ describe('pipeline next-step helpers', () => {
         timestamp: 1,
         contexts: [],
       }),
-      userMessage({ timestamp: 2 }),
-      aiMessage('Plain AI summary'),
+      userMessage({ timestamp: 2, contexts: [] }),
+      aiMessage('Plain AI summary', { contexts: [] }),
     ])
 
+    expect(draft.hasSelectableContext).toBe(true)
+    expect(draft.canSubmit).toBe(false)
     expect(draft.textItems.map(item => item.kind)).toEqual([
       'history_message',
       'user_message',
@@ -153,16 +161,19 @@ describe('pipeline next-step helpers', () => {
   })
 
   it('uses timestamp as a tie-breaker for user and AI messages with the same messageId', () => {
-    const draft = buildPipelineNextStepDraft([
-      aiMessage('Plain AI summary', {
-        messageId: 100,
-        timestamp: 2,
-      }),
-      userMessage({
-        messageId: 100,
-        timestamp: 1,
-      }),
-    ])
+    const draft = buildPipelineNextStepDraft(
+      [
+        aiMessage('Plain AI summary', {
+          messageId: 100,
+          timestamp: 2,
+        }),
+        userMessage({
+          messageId: 100,
+          timestamp: 1,
+        }),
+      ],
+      'previous_bot'
+    )
 
     expect(draft.textItems.find(item => item.kind === 'user_message')).toMatchObject({
       content: 'Original request',
@@ -192,34 +203,38 @@ describe('pipeline next-step helpers', () => {
 
     expect(draft.defaultMessage).toBe('')
     expect(draft.defaultSource).toBe('none')
+    expect(draft.hasSelectableContext).toBe(false)
     expect(draft.canSubmit).toBe(false)
     expect(draft.textItems).toEqual([])
     expect(draft.structuredItems).toEqual([])
   })
 
   it('ignores non-completed AI messages in favor of the last completed AI message', () => {
-    const draft = buildPipelineNextStepDraft([
-      userMessage(),
-      aiMessage('Completed answer', {
-        id: 'completed-ai',
-        timestamp: 2,
-      }),
-      aiMessage('Pending answer', {
-        id: 'pending-ai',
-        status: 'pending',
-        timestamp: 3,
-      }),
-      aiMessage('Streaming answer', {
-        id: 'streaming-ai',
-        status: 'streaming',
-        timestamp: 4,
-      }),
-      aiMessage('Error answer', {
-        id: 'error-ai',
-        status: 'error',
-        timestamp: 5,
-      }),
-    ])
+    const draft = buildPipelineNextStepDraft(
+      [
+        userMessage(),
+        aiMessage('Completed answer', {
+          id: 'completed-ai',
+          timestamp: 2,
+        }),
+        aiMessage('Pending answer', {
+          id: 'pending-ai',
+          status: 'pending',
+          timestamp: 3,
+        }),
+        aiMessage('Streaming answer', {
+          id: 'streaming-ai',
+          status: 'streaming',
+          timestamp: 4,
+        }),
+        aiMessage('Error answer', {
+          id: 'error-ai',
+          status: 'error',
+          timestamp: 5,
+        }),
+      ],
+      'previous_bot'
+    )
 
     expect(draft.defaultMessage).toBe('')
     expect(draft.defaultSource).toBe('last_ai_response')
@@ -230,21 +245,23 @@ describe('pipeline next-step helpers', () => {
     })
   })
 
-  it('builds backend payload from selected text and structured contexts with role labels', () => {
-    const draft = buildPipelineNextStepDraft([userMessage(), aiMessage('Plain AI summary')])
+  it('builds backend payload from selected text and structured contexts using the shared handoff format', () => {
+    const draft = buildPipelineNextStepDraft(
+      [userMessage(), aiMessage('Plain AI summary')],
+      'original_and_previous'
+    )
     const payload = buildPipelineNextStepPayload(
       payloadInput({
         draft,
-        editedMessage: 'Edited handoff',
+        editedMessage: '',
         selectedTextItemIds: draft.textItems.map(item => item.id),
         selectedStructuredItemIds: draft.structuredItems.map(item => item.id),
       })
     )
 
-    expect(payload.message).toContain('Edited handoff')
-    expect(payload.message).toContain('Previous pipeline context:')
-    expect(payload.message).toContain('[User]\nOriginal request')
-    expect(payload.message).toContain('[AI]\nPlain AI summary')
+    expect(payload.message).toBe(
+      'Original user request:\nOriginal request\n\nPrevious stage output:\nPlain AI summary'
+    )
     expect(payload.attachmentIds).toEqual([10])
     expect(payload.contexts).toEqual([
       {
@@ -265,6 +282,35 @@ describe('pipeline next-step helpers', () => {
       },
     ])
     expect(payload.pendingContexts).toHaveLength(3)
+  })
+
+  it('defaults selected text items from contextPassing mode', () => {
+    const noneDraft = buildPipelineNextStepDraft(
+      [userMessage(), aiMessage('Plain AI summary')],
+      'none'
+    )
+    expect(noneDraft.textItems.map(item => [item.kind, item.selectedByDefault])).toEqual([
+      ['user_message', false],
+      ['ai_response', false],
+    ])
+
+    const originalDraft = buildPipelineNextStepDraft(
+      [userMessage(), aiMessage('Plain AI summary')],
+      'original_user'
+    )
+    expect(originalDraft.textItems.map(item => [item.kind, item.selectedByDefault])).toEqual([
+      ['user_message', true],
+      ['ai_response', false],
+    ])
+
+    const previousDraft = buildPipelineNextStepDraft(
+      [userMessage(), aiMessage('Plain AI summary')],
+      'previous_bot'
+    )
+    expect(previousDraft.textItems.map(item => [item.kind, item.selectedByDefault])).toEqual([
+      ['user_message', false],
+      ['ai_response', true],
+    ])
   })
 
   it('does not expose knowledge base or table contexts without domain IDs', () => {

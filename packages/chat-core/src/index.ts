@@ -21,6 +21,7 @@ export type {
   WorkbenchMessageStatus,
   WorkbenchProcessingBlock,
   WorkbenchThinkingBlock,
+  WorkbenchTextBlock,
   WorkbenchToolBlock,
   WorkbenchToolBlockStatus,
 } from './workbench-message-reducer'

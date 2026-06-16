@@ -15,6 +15,7 @@ import { createHttpClient } from '@/api/http'
 import { createUserApi } from '@/api/users'
 import type { UserRuntimeConfig, UserProxyConfig } from '@/api/users'
 import { getRuntimeConfig } from '@/config/runtime'
+import { appsPageSectionExtensions } from '@extensions/apps'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
 import type { DeviceInfo } from '@/types/devices'
@@ -45,6 +46,22 @@ const initialState: AppsPageState = {
   proxyConfig: null,
   isLoading: true,
   error: null,
+}
+
+type AppsSection = 'overview' | 'coding-agent' | 'installed-apps' | string
+
+function getAppsSectionFromLocation(): AppsSection {
+  const section = new URLSearchParams(window.location.search).get('section')
+  if (!section) return 'overview'
+
+  if (
+    section === 'coding-agent' ||
+    section === 'installed-apps' ||
+    appsPageSectionExtensions.some(extension => extension.key === section)
+  ) {
+    return section
+  }
+  return 'overview'
 }
 
 const HEADER_COLLAPSE_DISTANCE = 96
@@ -132,9 +149,23 @@ function MetricRow({
   )
 }
 
-function SidebarNav() {
-  const navItems = ['总览', '执行器', 'AI 编码代理', '已安装应用']
+const navItems: Array<{ key: AppsSection; label: string }> = [
+  { key: 'overview', label: '总览' },
+  ...appsPageSectionExtensions.map(extension => ({
+    key: extension.key,
+    label: extension.label,
+  })),
+  { key: 'coding-agent', label: 'AI 编码代理' },
+  { key: 'installed-apps', label: '已安装应用' },
+]
 
+function SidebarNav({
+  activeSection,
+  onSelect,
+}: {
+  activeSection: AppsSection
+  onSelect: (section: AppsSection) => void
+}) {
   return (
     <aside className="hidden min-h-0 flex-col rounded-xl border border-border/60 bg-background p-3 shadow-[0_3px_16px_rgba(0,0,0,0.04)] xl:flex">
       <div className="flex items-center gap-3 px-2 pb-4 pt-2">
@@ -151,24 +182,56 @@ function SidebarNav() {
         管理
       </div>
       <div className="mt-2 space-y-1">
-        {navItems.map((item, index) => (
+        {navItems.map(item => (
           <button
-            key={item}
+            key={item.key}
             type="button"
+            data-testid={`apps-nav-${item.key}`}
+            onClick={() => onSelect(item.key)}
             className={`flex h-10 w-full items-center gap-2 rounded-xl px-3 text-left text-sm font-medium ${
-              index === 0
+              activeSection === item.key
                 ? 'bg-primary/10 text-primary'
                 : 'text-text-secondary hover:bg-muted hover:text-text-primary'
             }`}
           >
             <span className="h-2 w-2 rounded-full bg-current" />
-            {item}
+            {item.label}
           </button>
         ))}
       </div>
 
       <div className="mt-auto" />
     </aside>
+  )
+}
+
+function SectionTabs({
+  activeSection,
+  onSelect,
+}: {
+  activeSection: AppsSection
+  onSelect: (section: AppsSection) => void
+}) {
+  return (
+    <div className="border-b border-border/70 bg-background px-4 py-3 xl:hidden">
+      <div className="flex gap-2 overflow-x-auto">
+        {navItems.map(item => (
+          <button
+            key={item.key}
+            type="button"
+            data-testid={`apps-mobile-nav-${item.key}`}
+            onClick={() => onSelect(item.key)}
+            className={`h-10 shrink-0 rounded-full px-4 text-sm font-semibold ${
+              activeSection === item.key
+                ? 'bg-primary text-white'
+                : 'border border-border bg-background text-text-secondary'
+            }`}
+          >
+            {item.label}
+          </button>
+        ))}
+      </div>
+    </div>
   )
 }
 
@@ -250,7 +313,7 @@ function AppsPageHeader({ collapseProgress }: { collapseProgress: number }) {
   const titleFontSize = interpolate(24, 20, collapseProgress)
   const titleLineHeight = interpolate(32, 28, collapseProgress)
   const eyebrowHeight = interpolate(18, 0, collapseProgress)
-  const descriptionHeight = interpolate(48, 0, collapseProgress)
+  const descriptionHeight = interpolate(24, 0, collapseProgress)
   const titleMarginTop = interpolate(4, 0, collapseProgress)
   const searchHeight = interpolate(44, 40, collapseProgress)
 
@@ -416,6 +479,9 @@ function buildRecommendedApps(state: AppsPageState): AppCardData[] {
 export function AppsPage() {
   const { t } = useTranslation('common')
   const [state, setState] = useState<AppsPageState>(initialState)
+  const [activeSection, setActiveSection] = useState<AppsSection>(() =>
+    getAppsSectionFromLocation()
+  )
   const [headerCollapseProgress, setHeaderCollapseProgress] = useState(0)
   const scrollFrameRef = useRef<number | null>(null)
 
@@ -447,6 +513,14 @@ export function AppsPage() {
   }, [])
 
   useEffect(() => {
+    const syncSectionFromLocation = () => {
+      setActiveSection(getAppsSectionFromLocation())
+    }
+    window.addEventListener('popstate', syncSectionFromLocation)
+    return () => window.removeEventListener('popstate', syncSectionFromLocation)
+  }, [])
+
+  useEffect(() => {
     return () => {
       if (scrollFrameRef.current !== null) {
         window.cancelAnimationFrame(scrollFrameRef.current)
@@ -471,13 +545,16 @@ export function AppsPage() {
   const onlineCount = countOnlineDevices(state.devices)
   const slotUsage = getSlotUsage(state.devices)
   const recommendedApps = useMemo(() => buildRecommendedApps(state), [state])
+  const extensionSection = appsPageSectionExtensions.find(
+    extension => extension.key === activeSection
+  )
 
   return (
     <div
       data-testid="apps-page"
       className="grid h-full min-h-0 grid-cols-1 gap-1.5 overflow-hidden bg-transparent p-1.5 xl:grid-cols-[220px_minmax(0,1fr)]"
     >
-      <SidebarNav />
+      <SidebarNav activeSection={activeSection} onSelect={setActiveSection} />
 
       <section
         data-testid="apps-scroll-container"
@@ -485,6 +562,7 @@ export function AppsPage() {
         onScroll={handleScroll}
       >
         <AppsPageHeader collapseProgress={headerCollapseProgress} />
+        <SectionTabs activeSection={activeSection} onSelect={setActiveSection} />
 
         <div className="p-5">
           {state.error && (
@@ -498,6 +576,18 @@ export function AppsPage() {
               <Loader2 className="h-5 w-5 animate-spin" />
               {t('common.loading', '加载中...')}
             </div>
+          ) : extensionSection ? (
+            extensionSection.render({ devices: state.devices })
+          ) : activeSection === 'coding-agent' ? (
+            <PlaceholderSection
+              title="AI 编码代理"
+              detail="这里会集中展示 Claude Code、Codex 和模型代理等编码类应用。"
+            />
+          ) : activeSection === 'installed-apps' ? (
+            <PlaceholderSection
+              title="已安装应用"
+              detail="这里会展示用户已经安装的小程序、插件和办公工作流入口。"
+            />
           ) : (
             <>
               <div className="grid gap-4 lg:grid-cols-[minmax(0,1.45fr)_minmax(280px,0.75fr)]">
@@ -582,6 +672,17 @@ export function AppsPage() {
         </div>
       </section>
     </div>
+  )
+}
+
+function PlaceholderSection({ title, detail }: { title: string; detail: string }) {
+  return (
+    <section className="rounded-2xl border border-border bg-background p-8">
+      <div className="max-w-xl">
+        <h2 className="text-xl font-bold text-text-primary">{title}</h2>
+        <p className="mt-2 text-sm leading-6 text-text-secondary">{detail}</p>
+      </div>
+    </section>
   )
 }
 

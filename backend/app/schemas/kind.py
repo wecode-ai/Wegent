@@ -415,6 +415,13 @@ class TeamMember(BaseModel):
     requireConfirmation: Optional[bool] = (
         False  # Whether this stage requires user confirmation before proceeding to next stage (Pipeline mode only)
     )
+    contextPassing: Optional[str] = Field(
+        default="none",
+        description=(
+            "Pipeline mode only. Controls which message from this stage is passed "
+            "to the next stage: none, original_user, previous_bot, original_and_previous."
+        ),
+    )
 
 
 class TeamSpec(QuickPhraseMixin):

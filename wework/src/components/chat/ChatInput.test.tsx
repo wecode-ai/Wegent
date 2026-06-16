@@ -77,14 +77,15 @@ function projectChatControls(overrides: Partial<ProjectChatControls> = {}): Proj
 }
 
 function projectWorkControls(overrides: Partial<ProjectWorkControls> = {}): ProjectWorkControls {
-  const devices = overrides.devices?.map(device => ({
-    ...device,
-    bind_shell: device.bind_shell ?? 'claudecode',
-    executor_version:
-      device.bind_shell === 'openclaw'
-        ? device.executor_version
-        : device.executor_version ?? '1.8.5',
-  })) ?? []
+  const devices =
+    overrides.devices?.map(device => ({
+      ...device,
+      bind_shell: device.bind_shell ?? 'claudecode',
+      executor_version:
+        device.bind_shell === 'openclaw'
+          ? device.executor_version
+          : (device.executor_version ?? '1.8.5'),
+    })) ?? []
 
   return {
     projects: [],
@@ -111,7 +112,13 @@ describe('ChatInput', () => {
 
   test('renders the desktop composer sections', () => {
     render(
-      <ChatInput value="" onChange={vi.fn()} onSubmit={vi.fn()} disabled={false} variant="desktop" />,
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+      />
     )
 
     expect(screen.getByTestId('chat-message-input')).toHaveAttribute('rows', '2')
@@ -134,7 +141,7 @@ describe('ChatInput', () => {
         variant="desktop"
         isStreaming
         onPause={onPause}
-      />,
+      />
     )
 
     expect(screen.getByTestId('pause-response-button')).toBeInTheDocument()
@@ -178,7 +185,7 @@ describe('ChatInput', () => {
         onSendQueuedAsGuidance={onSendQueuedAsGuidance}
         onCancelQueuedMessage={onCancelQueuedMessage}
         onEditQueuedMessage={onEditQueuedMessage}
-      />,
+      />
     )
 
     expect(screen.getByTestId('conversation-queue-panel')).toBeInTheDocument()
@@ -196,14 +203,7 @@ describe('ChatInput', () => {
   })
 
   test('keeps the compact mobile composer close to one-line input height', () => {
-    render(
-      <ChatInput
-        value=""
-        onChange={vi.fn()}
-        onSubmit={vi.fn()}
-        disabled={false}
-      />,
-    )
+    render(<ChatInput value="" onChange={vi.fn()} onSubmit={vi.fn()} disabled={false} />)
 
     const form = screen.getByTestId('chat-message-input').closest('form')
 
@@ -211,20 +211,17 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('add-context-button')).toHaveClass(
       'h-[52px]',
       'w-[52px]',
-      'rounded-[26px]',
+      'rounded-[26px]'
     )
     expect(screen.getByTestId('compact-input-pill')).toHaveClass('min-h-[52px]')
-    expect(screen.getByTestId('chat-message-input')).toHaveClass(
-      'py-[14px]',
-      'scrollbar-none',
-    )
+    expect(screen.getByTestId('chat-message-input')).toHaveClass('py-[14px]', 'scrollbar-none')
     expect(screen.getByTestId('send-message-button')).toHaveClass(
       'absolute',
       'bottom-1',
       'right-1',
       'h-11',
       'w-11',
-      'rounded-[22px]',
+      'rounded-[22px]'
     )
   })
 
@@ -239,7 +236,7 @@ describe('ChatInput', () => {
         disabled={false}
         isStreaming
         onPause={onPause}
-      />,
+      />
     )
 
     expect(screen.getByTestId('pause-response-button')).toHaveClass(
@@ -247,7 +244,7 @@ describe('ChatInput', () => {
       'bottom-1',
       'right-1',
       'h-11',
-      'w-11',
+      'w-11'
     )
     expect(screen.queryByTestId('send-message-button')).not.toBeInTheDocument()
 
@@ -264,10 +261,7 @@ describe('ChatInput', () => {
 
     expect(screen.queryByTestId('voice-input-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('compact-input-pill')).toHaveClass('pr-14')
-    expect(screen.getByTestId('send-message-button')).toHaveClass(
-      'bottom-1',
-      'right-1',
-    )
+    expect(screen.getByTestId('send-message-button')).toHaveClass('bottom-1', 'right-1')
   })
 
   test('opens local skill autocomplete after a standalone dollar trigger', async () => {
@@ -280,11 +274,7 @@ describe('ChatInput', () => {
     }
     const listLocalSkills = vi.fn().mockResolvedValue([skill])
 
-    render(
-      <ControlledChatInput
-        projectChat={projectChatControls({ listLocalSkills })}
-      />,
-    )
+    render(<ControlledChatInput projectChat={projectChatControls({ listLocalSkills })} />)
 
     await userEvent.type(screen.getByTestId('chat-message-input'), '$')
 
@@ -296,12 +286,12 @@ describe('ChatInput', () => {
       'z-popover',
       'bg-background',
       'left-[-1rem]',
-      'right-[-3.5rem]',
+      'right-[-3.5rem]'
     )
     await userEvent.click(await screen.findByTestId('local-skill-option-env-context'))
 
     expect(screen.getByTestId('chat-message-input')).toHaveValue(
-      '[$env-context](skill:///Users/crystal/.codex/skills/env-context/SKILL.md) ',
+      '[$env-context](skill:///Users/crystal/.codex/skills/env-context/SKILL.md) '
     )
     expect(screen.getByTestId('local-skill-chip-env-context')).toHaveTextContent('Env Context')
     expect(await screen.findByTestId('local-skill-caret')).toHaveClass('local-skill-caret')
@@ -324,11 +314,7 @@ describe('ChatInput', () => {
     }
     const listLocalSkills = vi.fn().mockResolvedValue([chronicleSkill, dingtalkSkill])
 
-    render(
-      <ControlledChatInput
-        projectChat={projectChatControls({ listLocalSkills })}
-      />,
-    )
+    render(<ControlledChatInput projectChat={projectChatControls({ listLocalSkills })} />)
 
     await userEvent.type(screen.getByTestId('chat-message-input'), '$')
 
@@ -352,6 +338,12 @@ describe('ChatInput', () => {
 
   test('shows local skill sources at the end of each autocomplete option', async () => {
     const skills: LocalDeviceSkill[] = [
+      {
+        name: 'agents-skill',
+        description: 'Shared agents skill',
+        path: '/Users/crystal/.agents/skills/agents-skill/SKILL.md',
+        source: 'agents',
+      },
       {
         name: 'claude-skill',
         description: 'Claude skill',
@@ -379,21 +371,18 @@ describe('ChatInput', () => {
     ]
     const listLocalSkills = vi.fn().mockResolvedValue(skills)
 
-    render(
-      <ControlledChatInput
-        projectChat={projectChatControls({ listLocalSkills })}
-      />,
-    )
+    render(<ControlledChatInput projectChat={projectChatControls({ listLocalSkills })} />)
 
     await userEvent.type(screen.getByTestId('chat-message-input'), '$')
 
-    expect(await screen.findByTestId('local-skill-source-claude-skill')).toHaveTextContent('claude')
+    expect(await screen.findByTestId('local-skill-source-agents-skill')).toHaveTextContent('agents')
+    expect(screen.getByTestId('local-skill-source-claude-skill')).toHaveTextContent('claude')
     expect(screen.getByTestId('local-skill-source-claude-plugin-skill')).toHaveTextContent(
-      'claude plugins',
+      'claude plugins'
     )
     expect(screen.getByTestId('local-skill-source-codex-skill')).toHaveTextContent('codex')
     expect(screen.getByTestId('local-skill-source-codex-plugin-skill')).toHaveTextContent(
-      'codex plugins',
+      'codex plugins'
     )
   })
 
@@ -404,6 +393,12 @@ describe('ChatInput', () => {
       description: 'Claude skill',
       path: '/Users/crystal/.claude/skills/claude-skill/SKILL.md',
       source: 'claude',
+    }
+    const agentsSkill: LocalDeviceSkill = {
+      name: 'agents-skill',
+      description: 'Shared agents skill',
+      path: '/Users/crystal/.agents/skills/agents-skill/SKILL.md',
+      source: 'agents',
     }
     const codexSkill: LocalDeviceSkill = {
       name: 'codex-skill',
@@ -422,14 +417,15 @@ describe('ChatInput', () => {
         onSubmit={onSubmit}
         projectChat={projectChatControls({
           selectedModel,
-          listLocalSkills: vi.fn().mockResolvedValue([claudeSkill, codexSkill]),
+          listLocalSkills: vi.fn().mockResolvedValue([claudeSkill, agentsSkill, codexSkill]),
         })}
-      />,
+      />
     )
 
     await userEvent.type(screen.getByTestId('chat-message-input'), '$')
 
     expect(await screen.findByTestId('local-skill-option-claude-skill')).not.toBeDisabled()
+    expect(screen.getByTestId('local-skill-option-agents-skill')).not.toBeDisabled()
     expect(screen.getByTestId('local-skill-option-codex-skill')).toBeDisabled()
 
     await userEvent.click(screen.getByTestId('local-skill-option-codex-skill'))
@@ -442,6 +438,12 @@ describe('ChatInput', () => {
       description: 'Codex skill',
       path: '/Users/crystal/.codex/skills/codex-skill/SKILL.md',
       source: 'codex-plugin',
+    }
+    const agentsSkill: LocalDeviceSkill = {
+      name: 'agents-skill',
+      description: 'Shared agents skill',
+      path: '/Users/crystal/.agents/skills/agents-skill/SKILL.md',
+      source: 'agents',
     }
     const claudeSkill: LocalDeviceSkill = {
       name: 'claude-skill',
@@ -459,9 +461,9 @@ describe('ChatInput', () => {
       <ControlledChatInput
         projectChat={projectChatControls({
           selectedModel,
-          listLocalSkills: vi.fn().mockResolvedValue([codexSkill, claudeSkill]),
+          listLocalSkills: vi.fn().mockResolvedValue([codexSkill, agentsSkill, claudeSkill]),
         })}
-      />,
+      />
     )
 
     await userEvent.type(screen.getByTestId('chat-message-input'), '$')
@@ -469,14 +471,13 @@ describe('ChatInput', () => {
     const option = await screen.findByTestId('local-skill-option-codex-skill')
     expect(option).toBeInTheDocument()
     expect(option).not.toBeDisabled()
-    expect(screen.getByTestId('local-skill-source-codex-skill')).toHaveTextContent(
-      'codex plugins',
-    )
+    expect(screen.getByTestId('local-skill-option-agents-skill')).not.toBeDisabled()
+    expect(screen.getByTestId('local-skill-source-codex-skill')).toHaveTextContent('codex plugins')
     expect(screen.getByTestId('local-skill-option-claude-skill')).toBeDisabled()
 
     await userEvent.click(option)
     expect(screen.getByTestId('chat-message-input')).toHaveValue(
-      '[$codex-skill](skill:///Users/crystal/.codex/skills/codex-skill/SKILL.md) ',
+      '[$codex-skill](skill:///Users/crystal/.codex/skills/codex-skill/SKILL.md) '
     )
   })
 
@@ -507,7 +508,7 @@ describe('ChatInput', () => {
           selectedModel,
           listLocalSkills: vi.fn().mockResolvedValue([codexSkill, claudeSkill]),
         })}
-      />,
+      />
     )
 
     await userEvent.type(screen.getByTestId('chat-message-input'), '$')
@@ -518,7 +519,7 @@ describe('ChatInput', () => {
 
     await userEvent.click(option)
     expect(screen.getByTestId('chat-message-input')).toHaveValue(
-      '[$codex-skill](skill:///Users/crystal/.codex/skills/codex-skill/SKILL.md) ',
+      '[$codex-skill](skill:///Users/crystal/.codex/skills/codex-skill/SKILL.md) '
     )
   })
 
@@ -552,7 +553,7 @@ describe('ChatInput', () => {
           selectedModel,
           listLocalSkills: vi.fn().mockResolvedValue([codexSkill, claudeSkill]),
         })}
-      />,
+      />
     )
 
     await userEvent.type(screen.getByTestId('chat-message-input'), '$')
@@ -588,7 +589,7 @@ describe('ChatInput', () => {
           selectedModel,
           listLocalSkills: vi.fn().mockResolvedValue([codexSkill, claudeSkill]),
         })}
-      />,
+      />
     )
 
     await userEvent.type(screen.getByTestId('chat-message-input'), '$')
@@ -607,11 +608,7 @@ describe('ChatInput', () => {
     }
     const listLocalSkills = vi.fn().mockResolvedValue([skill])
 
-    render(
-      <ControlledChatInput
-        projectChat={projectChatControls({ listLocalSkills })}
-      />,
-    )
+    render(<ControlledChatInput projectChat={projectChatControls({ listLocalSkills })} />)
 
     const input = screen.getByTestId('chat-message-input')
     await userEvent.type(input, '$')
@@ -622,7 +619,7 @@ describe('ChatInput', () => {
     await userEvent.type(input, 'hello')
 
     expect(input).toHaveValue(
-      '[$env-context](skill:///Users/crystal/.codex/skills/env-context/SKILL.md) hello',
+      '[$env-context](skill:///Users/crystal/.codex/skills/env-context/SKILL.md) hello'
     )
     expect(screen.getByTestId('local-skill-chip-env-context')).toHaveTextContent('Env Context')
   })
@@ -637,11 +634,7 @@ describe('ChatInput', () => {
     }
     const listLocalSkills = vi.fn().mockResolvedValue([skill])
 
-    render(
-      <ControlledChatInput
-        projectChat={projectChatControls({ listLocalSkills })}
-      />,
-    )
+    render(<ControlledChatInput projectChat={projectChatControls({ listLocalSkills })} />)
 
     await userEvent.type(screen.getByTestId('chat-message-input'), '$')
     await userEvent.click(await screen.findByTestId('local-skill-option-env-context'))
@@ -668,7 +661,7 @@ describe('ChatInput', () => {
       <ControlledChatInput
         variant="desktop"
         projectChat={projectChatControls({ listLocalSkills })}
-      />,
+      />
     )
 
     await userEvent.type(screen.getByTestId('chat-message-input'), '$')
@@ -677,7 +670,7 @@ describe('ChatInput', () => {
       'left-[-1rem]',
       'right-[-0.5rem]',
       'rounded-xl',
-      'shadow-[0_12px_34px_rgba(0,0,0,0.12)]',
+      'shadow-[0_12px_34px_rgba(0,0,0,0.12)]'
     )
   })
 
@@ -693,10 +686,8 @@ describe('ChatInput', () => {
 
     render(
       <StrictMode>
-        <ControlledChatInput
-          projectChat={projectChatControls({ listLocalSkills })}
-        />
-      </StrictMode>,
+        <ControlledChatInput projectChat={projectChatControls({ listLocalSkills })} />
+      </StrictMode>
     )
 
     await userEvent.type(screen.getByTestId('chat-message-input'), '$')
@@ -720,11 +711,7 @@ describe('ChatInput', () => {
       return Promise.resolve([skill])
     })
 
-    render(
-      <ControlledChatInput
-        projectChat={projectChatControls({ listLocalSkills })}
-      />,
-    )
+    render(<ControlledChatInput projectChat={projectChatControls({ listLocalSkills })} />)
 
     await userEvent.type(screen.getByTestId('chat-message-input'), '$')
 
@@ -733,14 +720,14 @@ describe('ChatInput', () => {
     expect(retryLabel).not.toHaveClass('text-primary')
     expect(screen.getByTestId('local-skill-load-error')).toHaveClass(
       'hover:bg-muted',
-      'text-text-muted',
+      'text-text-muted'
     )
 
     retryEnabled = true
     await userEvent.click(
       screen.getByRole('button', {
         name: /workbench.local_skills_error.*workbench.retry_local_skills/,
-      }),
+      })
     )
 
     expect(await screen.findByTestId('local-skill-option-env-context')).toBeInTheDocument()
@@ -750,11 +737,7 @@ describe('ChatInput', () => {
   test('does not open local skill autocomplete for a dollar inside a word', async () => {
     const listLocalSkills = vi.fn().mockResolvedValue([])
 
-    render(
-      <ControlledChatInput
-        projectChat={projectChatControls({ listLocalSkills })}
-      />,
-    )
+    render(<ControlledChatInput projectChat={projectChatControls({ listLocalSkills })} />)
 
     await userEvent.type(screen.getByTestId('chat-message-input'), 'hello$')
 
@@ -775,7 +758,7 @@ describe('ChatInput', () => {
         onSubmit={vi.fn()}
         disabled={false}
         projectChat={projectChatControls({ handleFileSelect })}
-      />,
+      />
     )
 
     await userEvent.click(screen.getByTestId('add-context-button'))
@@ -784,14 +767,8 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('mobile-take-photo-button')).toHaveTextContent('拍照')
     expect(screen.getByTestId('mobile-upload-image-button')).toHaveTextContent('上传文件')
     expect(screen.queryByText('添加照片和文件')).not.toBeInTheDocument()
-    expect(screen.getByTestId('mobile-camera-file-input')).toHaveAttribute(
-      'accept',
-      'image/*',
-    )
-    expect(screen.getByTestId('mobile-camera-file-input')).toHaveAttribute(
-      'capture',
-      'environment',
-    )
+    expect(screen.getByTestId('mobile-camera-file-input')).toHaveAttribute('accept', 'image/*')
+    expect(screen.getByTestId('mobile-camera-file-input')).toHaveAttribute('capture', 'environment')
     expect(screen.getByTestId('mobile-image-file-input')).not.toHaveAttribute('accept')
 
     await userEvent.upload(screen.getByTestId('mobile-image-file-input'), script)
@@ -808,7 +785,7 @@ describe('ChatInput', () => {
         onSubmit={vi.fn()}
         disabled={false}
         variant="desktop"
-      />,
+      />
     )
 
     await userEvent.click(screen.getByTestId('add-context-button'))
@@ -828,7 +805,7 @@ describe('ChatInput', () => {
         disabled={false}
         variant="desktop"
         projectChat={projectChatControls({ handleFileSelect })}
-      />,
+      />
     )
 
     fireEvent.paste(screen.getByTestId('chat-message-input'), {
@@ -854,7 +831,7 @@ describe('ChatInput', () => {
         disabled={false}
         variant="desktop"
         projectChat={projectChatControls({ handleFileSelect })}
-      />,
+      />
     )
 
     fireEvent.paste(screen.getByTestId('chat-message-input'), {
@@ -877,7 +854,7 @@ describe('ChatInput', () => {
         onSubmit={vi.fn()}
         disabled={false}
         projectChat={projectChatControls({ handleFileSelect })}
-      />,
+      />
     )
 
     await userEvent.click(screen.getByTestId('expand-input-button'))
@@ -903,7 +880,7 @@ describe('ChatInput', () => {
         onSubmit={vi.fn()}
         disabled={false}
         projectChat={projectChatControls({ handleFileSelect })}
-      />,
+      />
     )
 
     await userEvent.click(screen.getByTestId('expand-input-button'))
@@ -935,7 +912,7 @@ describe('ChatInput', () => {
         onSubmit={onSubmit}
         disabled={false}
         projectChat={projectChatControls({ attachments: [attachment] })}
-      />,
+      />
     )
 
     expect(screen.getByTestId('attachment-badge')).toBeInTheDocument()
@@ -949,35 +926,28 @@ describe('ChatInput', () => {
 
     await userEvent.type(
       screen.getByTestId('chat-message-input'),
-      ['one', 'two', 'three', 'four', 'five'].join('{shift>}{enter}{/shift}'),
+      ['one', 'two', 'three', 'four', 'five'].join('{shift>}{enter}{/shift}')
     )
 
     await userEvent.click(screen.getByTestId('expand-input-button'))
 
     expect(screen.getByTestId('fullscreen-input-sheet')).toBeInTheDocument()
     expect(screen.queryByText('编辑消息')).not.toBeInTheDocument()
-    expect(screen.getByTestId('collapse-input-button')).toHaveClass(
-      'absolute',
-      'right-3',
-      'top-3',
-    )
-    expect(screen.getByTestId('fullscreen-message-input')).toHaveClass(
-      'h-full',
-      'pt-14',
-    )
+    expect(screen.getByTestId('collapse-input-button')).toHaveClass('absolute', 'right-3', 'top-3')
+    expect(screen.getByTestId('fullscreen-message-input')).toHaveClass('h-full', 'pt-14')
     expect(screen.getByTestId('fullscreen-message-input')).toHaveValue(
-      ['one', 'two', 'three', 'four', 'five'].join('\n'),
+      ['one', 'two', 'three', 'four', 'five'].join('\n')
     )
 
     await userEvent.type(screen.getByTestId('fullscreen-message-input'), '!')
     expect(screen.getByTestId('fullscreen-message-input')).toHaveValue(
-      `${['one', 'two', 'three', 'four', 'five'].join('\n')}!`,
+      `${['one', 'two', 'three', 'four', 'five'].join('\n')}!`
     )
 
     await userEvent.click(screen.getByTestId('collapse-input-button'))
     expect(screen.queryByTestId('fullscreen-input-sheet')).not.toBeInTheDocument()
     expect(screen.getByTestId('chat-message-input')).toHaveValue(
-      `${['one', 'two', 'three', 'four', 'five'].join('\n')}!`,
+      `${['one', 'two', 'three', 'four', 'five'].join('\n')}!`
     )
   })
 
@@ -990,7 +960,7 @@ describe('ChatInput', () => {
         disabled={false}
         variant="desktop"
         showProjectWorkBar={false}
-      />,
+      />
     )
 
     expect(screen.getByTestId('chat-message-input')).toBeInTheDocument()
@@ -1026,7 +996,7 @@ describe('ChatInput', () => {
           selectedModelOptions: { reasoning: 'high', speed: 'standard' },
           setSelectedModel,
         })}
-      />,
+      />
     )
 
     await userEvent.click(screen.getByTestId('model-selector-button'))
@@ -1046,7 +1016,7 @@ describe('ChatInput', () => {
       screen
         .getByTestId('model-control-reasoning-high')
         .compareDocumentPosition(screen.getByTestId('model-family-gpt')) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
+        Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy()
 
     await userEvent.click(screen.getByTestId('model-option-overseas-gpt-5.5'))
@@ -1080,7 +1050,7 @@ describe('ChatInput', () => {
           selectedModel: model,
           modelSelectorOpenSignal: 0,
         })}
-      />,
+      />
     )
 
     expect(screen.queryByTestId('model-selector-menu')).not.toBeInTheDocument()
@@ -1097,7 +1067,7 @@ describe('ChatInput', () => {
           selectedModel: model,
           modelSelectorOpenSignal: 1,
         })}
-      />,
+      />
     )
 
     expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
@@ -1131,7 +1101,7 @@ describe('ChatInput', () => {
           modelSelectorOpenSignal: 1,
           setSelectedModel,
         })}
-      />,
+      />
     )
 
     expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
@@ -1139,9 +1109,7 @@ describe('ChatInput', () => {
     await userEvent.click(screen.getByTestId('model-option-ali-qwen3-coder-plus'))
 
     expect(setSelectedModel).toHaveBeenCalledWith(model)
-    await waitFor(() =>
-      expect(screen.queryByTestId('model-selector-menu')).not.toBeInTheDocument(),
-    )
+    await waitFor(() => expect(screen.queryByTestId('model-selector-menu')).not.toBeInTheDocument())
   })
 
   test('moves the desktop model submenu upward when the active family is near the viewport bottom', async () => {
@@ -1163,7 +1131,7 @@ describe('ChatInput', () => {
           return { top: 0, left: 0, width: 288, height: 192 } as DOMRect
         }
         return { top: 0, left: 0, width: 0, height: 0 } as DOMRect
-      },
+      }
     )
 
     const minimaxModel: UnifiedModel = {
@@ -1193,7 +1161,7 @@ describe('ChatInput', () => {
             selectedModel: minimaxModel,
             selectedModelOptions: {},
           })}
-        />,
+        />
       )
 
       await userEvent.click(screen.getByTestId('model-selector-button'))
@@ -1254,7 +1222,7 @@ describe('ChatInput', () => {
           selectedModelOptions: {},
           setSelectedModel,
         })}
-      />,
+      />
     )
 
     await userEvent.click(screen.getByTestId('model-selector-button'))
@@ -1262,13 +1230,8 @@ describe('ChatInput', () => {
     const disabledOption = screen.getByTestId('model-option-overseas-gpt-5.4')
     expect(disabledOption).toBeDisabled()
     expect(disabledOption).toHaveAttribute('aria-disabled', 'true')
-    expect(disabledOption).toHaveAttribute(
-      'title',
-      'Incompatible with the current model protocol',
-    )
-    expect(disabledOption).toHaveTextContent(
-      'Incompatible with the current model protocol',
-    )
+    expect(disabledOption).toHaveAttribute('title', 'Incompatible with the current model protocol')
+    expect(disabledOption).toHaveTextContent('Incompatible with the current model protocol')
 
     await userEvent.click(disabledOption)
 
@@ -1303,7 +1266,7 @@ describe('ChatInput', () => {
           selectedModelOptions: { reasoning: 'high' },
           setSelectedModelOption,
         })}
-      />,
+      />
     )
 
     await userEvent.click(screen.getByTestId('model-selector-button'))
@@ -1354,7 +1317,7 @@ describe('ChatInput', () => {
           selectedModel: gptModel,
           selectedModelOptions: { reasoning: 'high' },
         })}
-      />,
+      />
     )
 
     await userEvent.click(screen.getByTestId('model-selector-button'))
@@ -1406,7 +1369,7 @@ describe('ChatInput', () => {
           selectedModel,
           selectedModelOptions: { reasoning: 'high' },
         })}
-      />,
+      />
     )
 
     await userEvent.click(screen.getByTestId('model-selector-button'))
@@ -1436,7 +1399,7 @@ describe('ChatInput', () => {
             },
           ],
         })}
-      />,
+      />
     )
 
     expect(screen.queryByTestId('skill-selector-button')).not.toBeInTheDocument()
@@ -1445,7 +1408,13 @@ describe('ChatInput', () => {
 
   test('opens the desktop add context menu with only file upload', async () => {
     render(
-      <ChatInput value="" onChange={vi.fn()} onSubmit={vi.fn()} disabled={false} variant="desktop" />,
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+      />
     )
 
     await userEvent.click(screen.getByTestId('add-context-button'))
@@ -1481,7 +1450,7 @@ describe('ChatInput', () => {
           attachments: [attachment],
           removeAttachment,
         })}
-      />,
+      />
     )
 
     expect(screen.getByTestId('attachment-badge')).toHaveTextContent('brief.pdf')
@@ -1510,7 +1479,7 @@ describe('ChatInput', () => {
         disabled={false}
         variant="desktop"
         projectChat={projectChatControls({ attachments: [attachment] })}
-      />,
+      />
     )
 
     expect(screen.getByTestId('attachment-badge')).toHaveClass('h-14', 'w-[220px]', 'rounded-xl')
@@ -1546,7 +1515,7 @@ describe('ChatInput', () => {
         disabled={false}
         variant="desktop"
         projectChat={projectChatControls({ attachments: [attachment] })}
-      />,
+      />
     )
 
     await waitFor(() => {
@@ -1629,7 +1598,7 @@ describe('ChatInput', () => {
         disabled={false}
         variant="desktop"
         projectChat={projectChatControls({ attachments })}
-      />,
+      />
     )
 
     const removeButtons = screen.getAllByTestId('remove-attachment-button')
@@ -1661,7 +1630,7 @@ describe('ChatInput', () => {
         disabled={false}
         variant="desktop"
         projectChat={projectChatControls({ attachments: [attachment] })}
-      />,
+      />
     )
 
     expect(screen.getByTestId('send-message-button')).toBeEnabled()
@@ -1688,7 +1657,7 @@ describe('ChatInput', () => {
           currentProjectId: 7,
           onSelectProject,
         })}
-      />,
+      />
     )
 
     await userEvent.click(screen.getByTestId('project-work-button'))
@@ -1718,7 +1687,7 @@ describe('ChatInput', () => {
           currentProjectId: 7,
           onSelectStandaloneDevice,
         })}
-      />,
+      />
     )
 
     await userEvent.click(screen.getByTestId('project-work-button'))
@@ -1742,7 +1711,7 @@ describe('ChatInput', () => {
           currentProjectId: undefined,
           onSelectStandaloneDevice,
         })}
-      />,
+      />
     )
 
     await userEvent.click(screen.getByTestId('project-work-button'))
@@ -1796,7 +1765,7 @@ describe('ChatInput', () => {
           currentProjectId: 7,
           onSelectStandaloneDevice,
         })}
-      />,
+      />
     )
 
     await userEvent.click(screen.getByTestId('project-work-button'))
@@ -1839,7 +1808,7 @@ describe('ChatInput', () => {
           currentProjectId: 7,
           currentStandaloneDeviceId: 'cloud-online',
         })}
-      />,
+      />
     )
 
     await userEvent.click(screen.getByTestId('project-work-button'))
@@ -1883,14 +1852,12 @@ describe('ChatInput', () => {
           currentProjectId: undefined,
           currentStandaloneDeviceId: 'local-online',
         })}
-      />,
+      />
     )
 
     await userEvent.click(screen.getByTestId('project-work-button'))
 
-    expect(
-      screen.getByTestId('standalone-device-selected-icon-local-online')
-    ).toBeInTheDocument()
+    expect(screen.getByTestId('standalone-device-selected-icon-local-online')).toBeInTheDocument()
     expect(
       screen.queryByTestId('standalone-device-selected-icon-cloud-online')
     ).not.toBeInTheDocument()
@@ -1908,7 +1875,7 @@ describe('ChatInput', () => {
           projects: [{ id: 7, name: 'Wegent', tasks: [] }],
           currentProjectId: undefined,
         })}
-      />,
+      />
     )
 
     expect(screen.getByTestId('project-work-button')).toHaveTextContent('进入项目工作')
@@ -1961,7 +1928,7 @@ describe('ChatInput', () => {
             },
           ],
         })}
-      />,
+      />
     )
 
     await userEvent.click(screen.getByTestId('project-work-button'))
@@ -1970,7 +1937,7 @@ describe('ChatInput', () => {
     expect(projectDeviceLabel).toHaveClass('text-text-secondary')
     expect(projectDeviceLabel).not.toHaveClass('text-primary')
     expect(
-      within(screen.getByTestId('project-options-list')).queryByText('offline-executor'),
+      within(screen.getByTestId('project-options-list')).queryByText('offline-executor')
     ).not.toBeInTheDocument()
     expect(screen.queryByTestId('project-option-8')).not.toBeInTheDocument()
   })
@@ -2019,7 +1986,7 @@ describe('ChatInput', () => {
             },
           ],
         })}
-      />,
+      />
     )
 
     await userEvent.click(screen.getByTestId('project-work-button'))
@@ -2049,7 +2016,7 @@ describe('ChatInput', () => {
           ],
           isOptionsLocked: true,
         })}
-      />,
+      />
     )
 
     expect(screen.getByTestId('model-selector-button')).not.toBeDisabled()
@@ -2060,27 +2027,30 @@ describe('ChatInput', () => {
     ['model selector', 'model-selector-button', 'model-selector-menu'],
     ['add context menu', 'add-context-button', 'add-context-menu'],
     ['project work menu', 'project-work-button', 'project-work-menu'],
-  ])('closes the desktop %s when clicking outside the dropdown', async (_, buttonTestId, menuTestId) => {
-    render(
-      <ChatInput
-        value=""
-        onChange={vi.fn()}
-        onSubmit={vi.fn()}
-        disabled={false}
-        variant="desktop"
-        projectWork={projectWorkControls({
-          projects: [{ id: 7, name: 'Wegent', tasks: [] }],
-        })}
-      />,
-    )
+  ])(
+    'closes the desktop %s when clicking outside the dropdown',
+    async (_, buttonTestId, menuTestId) => {
+      render(
+        <ChatInput
+          value=""
+          onChange={vi.fn()}
+          onSubmit={vi.fn()}
+          disabled={false}
+          variant="desktop"
+          projectWork={projectWorkControls({
+            projects: [{ id: 7, name: 'Wegent', tasks: [] }],
+          })}
+        />
+      )
 
-    await userEvent.click(screen.getByTestId(buttonTestId))
-    expect(screen.getByTestId(menuTestId)).toBeInTheDocument()
+      await userEvent.click(screen.getByTestId(buttonTestId))
+      expect(screen.getByTestId(menuTestId)).toBeInTheDocument()
 
-    await userEvent.click(screen.getByTestId('chat-message-input'))
+      await userEvent.click(screen.getByTestId('chat-message-input'))
 
-    expect(screen.queryByTestId(menuTestId)).not.toBeInTheDocument()
-  })
+      expect(screen.queryByTestId(menuTestId)).not.toBeInTheDocument()
+    }
+  )
 
   test('submits typed content', async () => {
     const onChange = vi.fn()

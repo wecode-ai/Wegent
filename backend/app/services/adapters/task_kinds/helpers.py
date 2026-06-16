@@ -16,6 +16,7 @@ from fastapi import HTTPException
 from sqlalchemy import and_, exists, func, or_, tuple_
 from sqlalchemy.orm import Session
 
+import app.stores.tasks as task_stores
 from app.models.kind import Kind
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
@@ -26,7 +27,7 @@ from app.services.adapters.pipeline_stage import pipeline_stage_service
 from app.services.device.display_name import resolve_device_display_name
 from app.services.readers.kinds import KindType, kindReader
 from app.services.readers.users import userReader
-from app.stores.tasks import WorkspaceRefLookup, subtask_store, task_store
+from app.stores.tasks import WorkspaceRefLookup
 
 from .converters import get_task_execution_workspace_source
 
@@ -77,7 +78,7 @@ def create_subtasks(
         )
 
     # For followup tasks: query existing subtasks and add one more
-    existing_subtasks = subtask_store.list_latest_by_task(
+    existing_subtasks = task_stores.subtask_store.list_latest_by_task(
         db, task_id=task.id, user_id=user_id
     )
 
@@ -89,67 +90,48 @@ def create_subtasks(
         next_message_id = latest_subtask.message_id + 1
         parent_id = latest_subtask.message_id
 
-    subtask_store.create_user_subtask(
-        db,
-        user_id=user_id,
-        task_id=task.id,
-        team_id=team.id,
-        title=f"{task_crd.spec.title} - User",
-        bot_ids=bot_ids,
-        prompt=user_prompt,
-        message_id=next_message_id,
-        parent_id=parent_id,
-        progress=0,
-    )
-
-    # Update id of next message and parent
-    if parent_id == 0:
-        parent_id = 1
-    next_message_id = next_message_id + 1
-
-    # Create ASSISTANT role subtask based on team workflow
     collaboration_model = team_crd.spec.collaborationModel
-
     if collaboration_model == "pipeline":
-        _create_pipeline_subtask(
+        assistant_title, assistant_bot_ids = _build_pipeline_assistant_subtask_plan(
             db,
             task,
             team,
             team_crd,
             task_crd,
-            user_id,
             existing_subtasks,
-            bot_ids,
-            next_message_id,
-            parent_id,
         )
     else:
-        _create_standard_subtask(
-            db,
-            task,
-            team,
+        assistant_title, assistant_bot_ids = _build_standard_assistant_subtask_plan(
             task_crd,
-            user_id,
-            existing_subtasks,
             bot_ids,
-            next_message_id,
-            parent_id,
         )
 
+    task_stores.subtask_store.create_user_and_assistant_subtasks(
+        db,
+        user_id=user_id,
+        task_id=task.id,
+        team_id=team.id,
+        title=f"{task_crd.spec.title} - User",
+        assistant_title=assistant_title,
+        bot_ids=assistant_bot_ids,
+        prompt=user_prompt,
+        user_message_id=next_message_id,
+        user_parent_id=parent_id,
+        assistant_message_id=next_message_id + 1,
+        assistant_parent_id=next_message_id,
+        progress=0,
+    )
 
-def _create_pipeline_subtask(
+
+def _build_pipeline_assistant_subtask_plan(
     db: Session,
     task: Kind,
     team: Kind,
     team_crd: Team,
     task_crd: Task,
-    user_id: int,
     existing_subtasks: List[Subtask],
-    bot_ids: List[int],
-    next_message_id: int,
-    parent_id: int,
-) -> None:
-    """Create subtask for pipeline collaboration model."""
+) -> tuple[str, List[int]]:
+    """Build assistant subtask title and bot IDs for pipeline collaboration."""
     # Pipeline mode: determine which bot to create subtask for
     # Use pipeline_stage_service to get current stage from task.spec.currentStage
     should_stay, current_stage_index = (
@@ -187,42 +169,15 @@ def _create_pipeline_subtask(
     if bot is None:
         raise Exception(f"Bot {target_member.botRef.name} not found in kinds table")
 
-    # Pipeline mode: all bots run in the same executor
-    # Get executor info from any existing assistant subtask
-    subtask_store.create_assistant_subtask(
-        db,
-        user_id=user_id,
-        task_id=task.id,
-        team_id=team.id,
-        title=f"{task_crd.spec.title} - {bot.name}",
-        bot_ids=[bot.id],
-        message_id=next_message_id,
-        parent_id=parent_id,
-    )
+    return f"{task_crd.spec.title} - {bot.name}", [bot.id]
 
 
-def _create_standard_subtask(
-    db: Session,
-    task: Kind,
-    team: Kind,
+def _build_standard_assistant_subtask_plan(
     task_crd: Task,
-    user_id: int,
-    existing_subtasks: List[Subtask],
     bot_ids: List[int],
-    next_message_id: int,
-    parent_id: int,
-) -> None:
-    """Create subtask for standard (non-pipeline) collaboration models."""
-    subtask_store.create_assistant_subtask(
-        db,
-        user_id=user_id,
-        task_id=task.id,
-        team_id=team.id,
-        title=f"{task_crd.spec.title} - Assistant",
-        bot_ids=bot_ids,
-        message_id=next_message_id,
-        parent_id=parent_id,
-    )
+) -> tuple[str, List[int]]:
+    """Build assistant subtask title and bot IDs for standard collaboration."""
+    return f"{task_crd.spec.title} - Assistant", bot_ids
 
 
 def get_tasks_related_data_batch(
@@ -383,7 +338,7 @@ def _batch_query_workspaces(
     if not workspace_refs:
         return workspace_data
 
-    workspaces = task_store.list_workspaces_by_refs(
+    workspaces = task_stores.task_store.list_workspaces_by_refs(
         db,
         refs=[
             WorkspaceRefLookup(user_id=user_id, name=name, namespace=namespace)
@@ -529,11 +484,12 @@ def _add_group_chat_info(
     # Add is_group_chat to result
     for task_id_str, data in result.items():
         task_id = int(task_id_str)
-        # First check task JSON, fallback to member count.
-        # Use in-memory task map to avoid N+1 database lookups.
+        # Use the access store so sharded and legacy task metadata stay consistent.
         task = task_map.get(task_id)
-        task_json = task.json if task and task.json else {}
-        is_group_chat = task_json.get("spec", {}).get("is_group_chat", False)
+        is_group_chat = task_stores.task_access_store.is_group_chat(db, task_id=task_id)
+        if task and not is_group_chat:
+            task_json = task.json if task.json else {}
+            is_group_chat = task_json.get("spec", {}).get("is_group_chat", False)
         if not is_group_chat:
             is_group_chat = member_counts.get(task_id, 0) > 0
         data["is_group_chat"] = is_group_chat

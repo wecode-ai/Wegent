@@ -12,6 +12,7 @@ PID_FILE="$PID_DIR/wegent-executor.pid"
 RUN_LOG="$PID_DIR/wegent-executor.log"
 BUILD_LOG="$PID_DIR/wegent-executor-build.log"
 BINARY_PATH="${WEGENT_EXECUTOR_BINARY:-$ROOT_DIR/dist/wegent-executor}"
+DEVICE_CONFIG_PATH="${WEGENT_EXECUTOR_HOME:-$HOME/.wegent-executor}/device-config.json"
 
 DEFAULT_FILE_EDIT_HOOK_COMMAND='tee -a /tmp/hook-debug.log | curl -sS -X POST http://127.0.0.1:3456/api/file-edit-log -H "Content-Type: application/json" -H "wecode-source: wegent-device" --data-binary @-'
 
@@ -32,14 +33,14 @@ If [version] is provided for 'build' or 'all', it overrides the version from
 pyproject.toml (passed as --version to the build script).
 
 Environment:
-  WEGENT_AUTH_TOKEN              Required by the local executor
-  WEGENT_BACKEND_URL             Default: http://localhost:8000
+  WEGENT_AUTH_TOKEN              Optional; overrides device-config.json
+  WEGENT_BACKEND_URL             Optional; overrides device-config.json
   WEGENT_FILE_EDIT_HOOK_COMMAND  Default: local file edit hook collector
   WEGENT_EXECUTOR_BINARY         Default: dist/wegent-executor
 
 Examples:
-  WEGENT_AUTH_TOKEN=wg-xxx ./local.sh all
-  WEGENT_AUTH_TOKEN=wg-xxx ./local.sh restart
+  ./local.sh all
+  ./local.sh restart
   ./local.sh build 1.2.3
   ./local.sh all 1.2.3
 EOF
@@ -90,19 +91,14 @@ start_executor() {
         exit 1
     fi
 
-    if [[ -z "${WEGENT_AUTH_TOKEN:-}" ]]; then
-        echo "WEGENT_AUTH_TOKEN is required."
-        echo "Example: WEGENT_AUTH_TOKEN=wg-xxx ./local.sh start"
-        exit 1
-    fi
-
     : > "$RUN_LOG"
 
     echo "Starting local executor. Log: $RUN_LOG"
     (
         cd "$ROOT_DIR"
-        export EXECUTOR_MODE="${EXECUTOR_MODE:-local}"
-        export WEGENT_BACKEND_URL="${WEGENT_BACKEND_URL:-http://localhost:8000}"
+        if [[ ! -f "$DEVICE_CONFIG_PATH" && -z "${EXECUTOR_MODE:-}" ]]; then
+            export EXECUTOR_MODE=local
+        fi
         export WEGENT_FILE_EDIT_HOOK_COMMAND="${WEGENT_FILE_EDIT_HOOK_COMMAND:-$DEFAULT_FILE_EDIT_HOOK_COMMAND}"
         nohup "$BINARY_PATH" >> "$RUN_LOG" 2>&1 &
         echo $! > "$PID_FILE"

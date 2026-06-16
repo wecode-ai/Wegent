@@ -37,6 +37,46 @@ class _SessionManager:
         ]
 
 
+class _TextBlockSessionManager:
+    async def get_accumulated_content(self, _subtask_id: int) -> str:
+        return ""
+
+    async def finalize_and_get_blocks(self, _subtask_id: int) -> list[dict]:
+        return [
+            {
+                "id": "text-1",
+                "type": "text",
+                "content": "Stage 1 found three release risks.",
+                "status": "done",
+            }
+        ]
+
+
+class _OutputTextBlockSessionManager:
+    async def get_accumulated_content(self, _subtask_id: int) -> str:
+        return ""
+
+    async def finalize_and_get_blocks(self, _subtask_id: int) -> list[dict]:
+        return [
+            {
+                "id": "reasoning-1",
+                "type": "reasoning",
+                "text": "Private reasoning should not be handed off.",
+            },
+            {
+                "id": "output-1",
+                "type": "output_text",
+                "text": "Visible assistant answer.",
+            },
+            {
+                "id": "tool-1",
+                "type": "tool",
+                "tool_name": "Example",
+                "tool_output": "Tool output should not be handed off.",
+            },
+        ]
+
+
 @pytest.mark.asyncio
 async def test_collect_completed_result_merges_duplicate_block_fields(monkeypatch):
     async def _empty_existing_result(_subtask_id: int) -> dict:
@@ -134,3 +174,59 @@ async def test_collect_completed_result_preserves_file_changes_with_blocks(monke
     assert result["value"] == "done"
     assert result["blocks"]
     assert result["file_changes"]["file_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_collect_completed_result_normalizes_empty_value_from_text_blocks(
+    monkeypatch,
+):
+    async def _empty_existing_result(_subtask_id: int) -> dict:
+        return {}
+
+    monkeypatch.setattr(
+        lifecycle,
+        "_get_existing_subtask_result",
+        _empty_existing_result,
+    )
+
+    import app.services.chat.storage as chat_storage
+
+    monkeypatch.setattr(chat_storage, "session_manager", _TextBlockSessionManager())
+
+    result = await lifecycle.collect_completed_result(
+        1234,
+        status="COMPLETED",
+        result={"value": ""},
+    )
+
+    assert result is not None
+    assert result["value"] == "Stage 1 found three release risks."
+
+
+@pytest.mark.asyncio
+async def test_collect_completed_result_normalizes_empty_value_from_output_text_blocks(
+    monkeypatch,
+):
+    async def _empty_existing_result(_subtask_id: int) -> dict:
+        return {}
+
+    monkeypatch.setattr(
+        lifecycle,
+        "_get_existing_subtask_result",
+        _empty_existing_result,
+    )
+
+    import app.services.chat.storage as chat_storage
+
+    monkeypatch.setattr(
+        chat_storage, "session_manager", _OutputTextBlockSessionManager()
+    )
+
+    result = await lifecycle.collect_completed_result(
+        1234,
+        status="COMPLETED",
+        result={"value": ""},
+    )
+
+    assert result is not None
+    assert result["value"] == "Visible assistant answer."

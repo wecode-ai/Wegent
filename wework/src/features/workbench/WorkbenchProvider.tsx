@@ -172,7 +172,17 @@ export interface WorkbenchServices {
     getTurnFileChangesDiff?: ReturnType<typeof createTaskApi>['getTurnFileChangesDiff']
     revertTurnFileChanges?: ReturnType<typeof createTaskApi>['revertTurnFileChanges']
   }
-  deviceApi: ReturnType<typeof createDeviceApi>
+  deviceApi: Pick<
+    ReturnType<typeof createDeviceApi>,
+    | 'listDevices'
+    | 'getHomeDirectory'
+    | 'getProjectWorkspaceRoot'
+    | 'listDirectories'
+    | 'createDirectory'
+    | 'executeCommand'
+    | 'upgradeDevice'
+    | 'listSkills'
+  >
   userApi?: ReturnType<typeof createUserApi>
   chatStream: ReturnType<typeof createChatStream>
 }
@@ -375,6 +385,24 @@ function normalizeProcessingBlock(
       subtaskId,
       type: 'thinking',
       content: typeof block.content === 'string' ? block.content : '',
+      status,
+      createdAt: timestamp,
+    }
+  }
+
+  if (block.type === 'text') {
+    const id = typeof block.id === 'string' ? block.id : `text-${subtaskId}-${index}`
+    const content =
+      typeof block.content === 'string'
+        ? block.content
+        : typeof block.text === 'string'
+          ? block.text
+          : ''
+    return {
+      id,
+      subtaskId,
+      type: 'text',
+      content,
       status,
       createdAt: timestamp,
     }
@@ -1292,11 +1320,16 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         joinResponse?.streaming &&
         shouldRestoreCachedStreaming(detailTask, detail.subtasks, joinResponse.streaming.subtask_id)
       ) {
+        const cachedBlocks = normalizeProcessingBlocks(
+          joinResponse.streaming.subtask_id,
+          joinResponse.streaming.blocks
+        )
         dispatchMessages({
           type: 'assistant_cached',
           taskId,
           subtaskId: joinResponse.streaming.subtask_id,
           content: joinResponse.streaming.cached_content,
+          blocks: cachedBlocks.length > 0 ? cachedBlocks : undefined,
         })
       }
       const routeProjectId = resolvedProjectId === undefined ? undefined : resolvedProjectId

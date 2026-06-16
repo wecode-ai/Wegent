@@ -7,7 +7,7 @@ import logging
 import uuid
 from datetime import datetime
 from time import perf_counter
-from typing import Any, Literal, Optional, Sequence
+from typing import Any, Callable, Literal, Optional, Sequence
 
 from sqlalchemy import func, text, tuple_
 from sqlalchemy.orm import Session
@@ -78,7 +78,7 @@ _OWNED_IDS_SQL = text(
 """
 )
 
-_PERSONAL_COUNT_SQL = text(
+_PERSONAL_STANDALONE_COUNT_SQL = text(
     """
     SELECT COUNT(*)
     FROM tasks k
@@ -87,10 +87,11 @@ _PERSONAL_COUNT_SQL = text(
     AND k.namespace != 'system'
     AND k.user_id = :user_id
     AND k.is_group_chat = 0
+    AND k.project_id = 0
 """
 )
 
-_PERSONAL_COUNT_BY_ORIGIN_SQL = text(
+_PERSONAL_STANDALONE_COUNT_BY_ORIGIN_SQL = text(
     """
     SELECT COUNT(*)
     FROM tasks k
@@ -100,10 +101,11 @@ _PERSONAL_COUNT_BY_ORIGIN_SQL = text(
     AND k.user_id = :user_id
     AND k.is_group_chat = 0
     AND k.client_origin = :client_origin
+    AND k.project_id = 0
 """
 )
 
-_PERSONAL_IDS_SQL = text(
+_PERSONAL_STANDALONE_IDS_SQL = text(
     """
     SELECT k.id, k.created_at
     FROM tasks k
@@ -112,12 +114,13 @@ _PERSONAL_IDS_SQL = text(
     AND k.namespace != 'system'
     AND k.user_id = :user_id
     AND k.is_group_chat = 0
+    AND k.project_id = 0
     ORDER BY k.created_at DESC
     LIMIT :limit OFFSET :skip
 """
 )
 
-_PERSONAL_IDS_BY_ORIGIN_SQL = text(
+_PERSONAL_STANDALONE_IDS_BY_ORIGIN_SQL = text(
     """
     SELECT k.id, k.created_at
     FROM tasks k
@@ -127,6 +130,7 @@ _PERSONAL_IDS_BY_ORIGIN_SQL = text(
     AND k.user_id = :user_id
     AND k.is_group_chat = 0
     AND k.client_origin = :client_origin
+    AND k.project_id = 0
     ORDER BY k.created_at DESC
     LIMIT :limit OFFSET :skip
 """
@@ -285,6 +289,36 @@ class SqlAlchemyTaskStore:
         )
         db.add(workspace)
         return workspace
+
+    def create_pending_task_shell_with_workspace(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        client_origin: str,
+        workspace_factory: Callable[[int], tuple[str, str, dict[str, Any]]],
+        is_group_chat: bool = False,
+        project_id: int = 0,
+    ) -> tuple[TaskResource, TaskResource]:
+        task = self.create_pending_task_shell(
+            db,
+            user_id=user_id,
+            client_origin=client_origin,
+            is_group_chat=is_group_chat,
+            project_id=project_id,
+        )
+        workspace_name, workspace_namespace, workspace_payload = workspace_factory(
+            task.id
+        )
+        workspace = self.create_workspace(
+            db,
+            user_id=user_id,
+            name=workspace_name,
+            namespace=workspace_namespace,
+            payload=workspace_payload,
+            client_origin=client_origin,
+        )
+        return task, workspace
 
     def create_task(
         self,
@@ -646,6 +680,23 @@ class SqlAlchemyTaskStore:
         query = self._filter_owner_user_id(query, owner_user_id=owner_user_id)
         return query.all()
 
+    def list_recent_group_chat_tasks(
+        self,
+        db: Session,
+        *,
+        since: datetime,
+    ) -> list[TaskResource]:
+        tasks = (
+            db.query(TaskResource)
+            .filter(
+                TaskResource.kind == "Task",
+                TaskResource.updated_at >= since,
+                TaskResource.is_active == TaskResource.STATE_ACTIVE,
+            )
+            .all()
+        )
+        return [task for task in tasks if self._is_group_chat_task(task)]
+
     def list_regular_active_tasks(
         self,
         db: Session,
@@ -875,9 +926,15 @@ class SqlAlchemyTaskStore:
         client_origin: Optional[str] = None,
     ) -> tuple[list[int], int]:
         count_sql = (
-            _PERSONAL_COUNT_BY_ORIGIN_SQL if client_origin else _PERSONAL_COUNT_SQL
+            _PERSONAL_STANDALONE_COUNT_BY_ORIGIN_SQL
+            if client_origin
+            else _PERSONAL_STANDALONE_COUNT_SQL
         )
-        ids_sql = _PERSONAL_IDS_BY_ORIGIN_SQL if client_origin else _PERSONAL_IDS_SQL
+        ids_sql = (
+            _PERSONAL_STANDALONE_IDS_BY_ORIGIN_SQL
+            if client_origin
+            else _PERSONAL_STANDALONE_IDS_SQL
+        )
         params: dict[str, object] = {
             "user_id": user_id,
             "is_active": TaskResource.STATE_ACTIVE,
@@ -1135,6 +1192,33 @@ class SqlAlchemyTaskStore:
             query = query.filter(TaskResource.client_origin == client_origin)
         return query.update({TaskResource.project_id: 0}, synchronize_session=False)
 
+    def restore_stale_project_links_from_label(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        client_origin: str,
+        project_id: int,
+    ) -> int:
+        stale_tasks = (
+            db.query(TaskResource)
+            .filter(
+                TaskResource.user_id == user_id,
+                TaskResource.client_origin == client_origin,
+                TaskResource.kind == "Task",
+                TaskResource.project_id == 0,
+                TaskResource.is_active != TaskResource.STATE_DELETED,
+            )
+            .all()
+        )
+        restored_count = 0
+        for task in stale_tasks:
+            if self._task_project_label(task) != str(project_id):
+                continue
+            task.project_id = project_id
+            restored_count += 1
+        return restored_count
+
     def set_archive_state(
         self, db: Session, *, task: TaskResource, state: int, commit: bool = True
     ) -> None:
@@ -1163,3 +1247,25 @@ class SqlAlchemyTaskStore:
 
     def _flag_json_modified(self, task: TaskResource) -> None:
         flag_modified(task, "json")
+
+    def _is_group_chat_task(self, task: TaskResource) -> bool:
+        if task.is_group_chat is True:
+            return True
+        payload = task.json if isinstance(task.json, dict) else {}
+        return payload.get("spec", {}).get("is_group_chat") is True
+
+    @staticmethod
+    def _task_project_label(task: TaskResource) -> Optional[str]:
+        task_json = task.json or {}
+        if not isinstance(task_json, dict):
+            return None
+        metadata = task_json.get("metadata")
+        if not isinstance(metadata, dict):
+            return None
+        labels = metadata.get("labels")
+        if not isinstance(labels, dict):
+            return None
+        value = labels.get("projectId")
+        if value is None:
+            return None
+        return str(value)

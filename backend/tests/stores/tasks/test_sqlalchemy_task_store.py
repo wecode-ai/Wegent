@@ -332,6 +332,121 @@ def test_list_personal_task_ids_filters_client_origin(test_db: Session) -> None:
     assert total == 1
 
 
+def test_list_personal_task_ids_returns_projectless_tasks(
+    test_db: Session,
+) -> None:
+    store = SqlAlchemyTaskStore()
+    standalone_task = _task(
+        task_id=21,
+        user_id=20,
+        client_origin=CLIENT_ORIGIN_WEWORK,
+    )
+    project_task = _task(
+        task_id=22,
+        user_id=20,
+        client_origin=CLIENT_ORIGIN_WEWORK,
+    )
+    project_task.project_id = 700
+    stale_project_task = _task(
+        task_id=23,
+        user_id=20,
+        client_origin=CLIENT_ORIGIN_WEWORK,
+    )
+    stale_project_task.json["metadata"]["labels"] = {"projectId": "700"}
+    test_db.add_all([standalone_task, project_task, stale_project_task])
+    test_db.commit()
+
+    task_ids, total = store.list_personal_task_ids(
+        test_db,
+        user_id=20,
+        skip=0,
+        limit=10,
+        extra_limit=0,
+        client_origin=CLIENT_ORIGIN_WEWORK,
+    )
+
+    assert set(task_ids) == {standalone_task.id, stale_project_task.id}
+    assert total == 2
+
+
+def test_list_personal_task_ids_does_not_filter_project_labels(
+    test_db: Session,
+) -> None:
+    store = SqlAlchemyTaskStore()
+    standalone_task = _task(
+        task_id=28,
+        user_id=20,
+        client_origin=CLIENT_ORIGIN_WEWORK,
+    )
+    stale_project_task = _task(
+        task_id=29,
+        user_id=20,
+        client_origin=CLIENT_ORIGIN_WEWORK,
+    )
+    stale_project_task.json["metadata"]["labels"] = {"projectId": "700"}
+    test_db.add_all([standalone_task, stale_project_task])
+    test_db.commit()
+
+    task_ids, total = store.list_personal_task_ids(
+        test_db,
+        user_id=20,
+        skip=0,
+        limit=10,
+        extra_limit=0,
+        client_origin=CLIENT_ORIGIN_WEWORK,
+    )
+
+    assert set(task_ids) == {standalone_task.id, stale_project_task.id}
+    assert total == 2
+
+
+def test_restore_stale_project_links_from_label_updates_matching_tasks(
+    test_db: Session,
+) -> None:
+    store = SqlAlchemyTaskStore()
+    matching_task = _task(
+        task_id=24,
+        user_id=20,
+        client_origin=CLIENT_ORIGIN_WEWORK,
+    )
+    matching_task.json["metadata"]["labels"] = {"projectId": "700"}
+    other_project_task = _task(
+        task_id=25,
+        user_id=20,
+        client_origin=CLIENT_ORIGIN_WEWORK,
+    )
+    other_project_task.json["metadata"]["labels"] = {"projectId": "701"}
+    frontend_task = _task(task_id=26, user_id=20, client_origin=CLIENT_ORIGIN_FRONTEND)
+    frontend_task.json["metadata"]["labels"] = {"projectId": "700"}
+    deleted_task = _task(
+        task_id=27,
+        user_id=20,
+        client_origin=CLIENT_ORIGIN_WEWORK,
+        is_active=TaskResource.STATE_DELETED,
+    )
+    deleted_task.json["metadata"]["labels"] = {"projectId": "700"}
+    test_db.add_all([matching_task, other_project_task, frontend_task, deleted_task])
+    test_db.commit()
+
+    restored_count = store.restore_stale_project_links_from_label(
+        test_db,
+        user_id=20,
+        client_origin=CLIENT_ORIGIN_WEWORK,
+        project_id=700,
+    )
+    test_db.commit()
+
+    test_db.refresh(matching_task)
+    test_db.refresh(other_project_task)
+    test_db.refresh(frontend_task)
+    test_db.refresh(deleted_task)
+    assert restored_count == 1
+    assert matching_task.project_id == 700
+    assert other_project_task.project_id == 0
+    assert frontend_task.project_id == 0
+    assert deleted_task.project_id == 0
+
+
 def test_group_task_ids_include_owned_and_joined_tasks(test_db: Session) -> None:
     store = SqlAlchemyTaskStore()
     owned_group = _task(task_id=31, user_id=20)

@@ -278,6 +278,12 @@ flowchart LR
 | **User Isolation** | Devices can only execute tasks from their owner |
 | **Hardware Binding** | Device ID generated from hardware identifiers |
 
+### Local Executor Connection Configuration
+
+On startup, the local executor resolves configuration in this order: environment variables, `~/.wegent-executor/device-config.json`, then defaults. The `mode` field selects the startup mode, while `connection.backend_url` and `connection.auth_token` are used to connect to the Backend and authenticate the device.
+
+`EXECUTOR_MODE` overrides `mode`, `WEGENT_BACKEND_URL` overrides `connection.backend_url`, and `WEGENT_AUTH_TOKEN` overrides `connection.auth_token`. This means normal startup scripts do not need to require those environment variables; if the device config already contains valid mode and connection settings, the executor can start directly.
+
 ### Cloud Device Bootstrap Identity Variables
 
 Cloud devices use a user data startup script to install and run the executor automatically. The startup script injects these identity-related environment variables:

@@ -23,6 +23,7 @@ import {
   TaskStatusPayload,
   TaskAppUpdatePayload,
 } from '@/types/socket'
+import { PROJECT_DELETED_EVENT } from '@/features/projects/events'
 
 export type TaskPuller = {
   tasks: Task[]
@@ -89,6 +90,7 @@ export function useTaskPuller(): TaskPuller {
   const taskStatusMapRef = useRef<Map<number, TaskStatus>>(new Map())
   const selectedTaskRef = useRef<Task | null>(null)
   const selectionEpochRef = useRef(0)
+  const refreshTasksRef = useRef<(() => void) | null>(null)
 
   const isCurrentSelection = useCallback((taskId: number, epoch: number): boolean => {
     return selectionEpochRef.current === epoch && selectedTaskRef.current?.id === taskId
@@ -397,6 +399,18 @@ export function useTaskPuller(): TaskPuller {
       }
     }
   }
+
+  refreshTasksRef.current = refreshTasks
+
+  useEffect(() => {
+    const handleProjectDeleted = () => {
+      refreshTasksRef.current?.()
+    }
+
+    window.addEventListener(PROJECT_DELETED_EVENT, handleProjectDeleted)
+    return () => window.removeEventListener(PROJECT_DELETED_EVENT, handleProjectDeleted)
+  }, [])
+
   // Monitor task status changes and send notifications
   useEffect(() => {
     tasks.forEach(task => {

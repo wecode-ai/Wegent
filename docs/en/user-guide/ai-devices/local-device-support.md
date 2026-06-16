@@ -94,6 +94,12 @@ If Codex access requires a proxy, first save the personal proxy URL in Wework **
 
 Wegent now marks whether Codex should use personal configuration explicitly on the execution request. It no longer uses the `WEGENT_LOCAL_CLI_CONFIG_RUNTIMES` environment variable for this decision.
 
+#### Shared Local Skills
+
+If one local device uses both Claude Code and Codex, open Wework **Settings** -> **Code** -> **Skills** and enable shared skill management. Wegent creates `~/.agents/skills` on the selected online Claude Code device, moves existing skills from `~/.codex/skills` and `~/.claude/skills` into that directory, and replaces the two legacy directories with symlinks to `~/.agents/skills`.
+
+The operation is repeatable. Skills with the same directory name are not overwritten; the later migrated directory receives a source suffix, and the page reports the migration count. After enabling this option, local Skill autocomplete treats skills under `~/.agents/skills` as usable by both Claude and Codex.
+
 ### Building a Device Image
 
 The repository provides `docker/device/Dockerfile` for cloud device or local device base images. The image installs `code-server`, the `weiboplat.wecoder-agent` extension, Claude Code CLI, `ttyd`, Node.js 22, Python, Git, and copies `executor/dist/wegent-executor` to `/app/executor` and `~/.wegent-executor/bin/wegent-executor`.
@@ -173,14 +179,16 @@ pip install -e .
 Run the executor in local device mode:
 
 ```bash
-# Start with default settings
-wegent-executor --mode local --token YOUR_JWT_TOKEN
+# Start with settings from environment variables or ~/.wegent-executor/device-config.json
+wegent-executor
 
-# Or with environment variables
+# Or temporarily override the connection settings with environment variables
 export WEGENT_AUTH_TOKEN=your_jwt_token
 export WEGENT_BACKEND_URL=https://your-wegent-instance.com
-EXECUTOR_MODE=local wegent-executor
+wegent-executor
 ```
+
+The installer and first startup create `~/.wegent-executor/device-config.json`. Configuration priority is environment variables, device config, then defaults. On later startups, if `EXECUTOR_MODE`, `WEGENT_BACKEND_URL`, or `WEGENT_AUTH_TOKEN` is not set, the executor reads `mode`, `connection.backend_url`, and `connection.auth_token` from that file.
 
 ### Getting JWT Token
 
@@ -341,7 +349,7 @@ When a device goes offline:
 **Solutions:**
 1. Generate a new JWT token from Wegent UI
 2. Check network connectivity to Wegent backend
-3. Verify `WEGENT_BACKEND_URL` environment variable
+3. Verify `~/.wegent-executor/device-config.json` or the `WEGENT_BACKEND_URL` environment variable
 
 #### Device shows offline immediately after connecting
 

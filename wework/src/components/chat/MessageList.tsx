@@ -14,7 +14,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { Attachment, DeviceInfo, TurnFileChangesSummary } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { WorkbenchMessage } from '@/types/workbench'
+import type { ProcessingBlock, WorkbenchMessage } from '@/types/workbench'
 import { getAttachmentImageUrl, getAttachmentTypeLabel, isImageAttachment } from '@/lib/attachments'
 import { parseChatError } from '@/lib/chat-error'
 import { ToolBlocksDisplay } from './blocks/ToolBlocksDisplay'
@@ -253,7 +253,7 @@ function MessageImageAttachmentPreview({ attachment }: { attachment: Attachment 
         data-testid="message-image-preview"
         src={previewUrl}
         alt={attachment.filename}
-        className="block max-h-60 max-w-[240px] rounded-2xl border border-border bg-base object-contain"
+        className="block max-h-36 max-w-[180px] shrink-0 rounded-xl border border-border bg-base object-contain"
       />
     )
   }
@@ -261,7 +261,7 @@ function MessageImageAttachmentPreview({ attachment }: { attachment: Attachment 
   return (
     <div
       data-testid={hasError ? 'message-image-preview-error' : 'message-image-preview-loading'}
-      className="flex h-24 w-32 items-center justify-center rounded-2xl border border-border bg-surface text-text-muted"
+      className="flex h-20 w-28 shrink-0 items-center justify-center rounded-xl border border-border bg-surface text-text-muted"
       aria-label={attachment.filename}
     >
       {hasError ? <FileText className="h-5 w-5" /> : <Loader2 className="h-5 w-5 animate-spin" />}
@@ -384,6 +384,28 @@ function shouldHideFailedAssistantContent(message: WorkbenchMessage) {
   return RAW_FAILED_MESSAGE_PATTERNS.some(pattern => pattern.test(content))
 }
 
+function normalizeTextForComparison(value: string): string {
+  return value.replace(/\s+/g, ' ').trim()
+}
+
+function getDisplayProcessingBlocks(
+  blocks: ProcessingBlock[] | undefined,
+  visibleContent: string
+): ProcessingBlock[] {
+  if (!blocks?.length) return []
+
+  const normalizedVisibleContent = normalizeTextForComparison(visibleContent)
+
+  return blocks.filter(block => {
+    if (block.type !== 'text') return true
+
+    const normalizedBlockContent = normalizeTextForComparison(block.content)
+    if (!normalizedBlockContent) return false
+
+    return normalizedBlockContent !== normalizedVisibleContent
+  })
+}
+
 function AssistantMessage({
   message,
   devices,
@@ -399,10 +421,11 @@ function AssistantMessage({
   onLoadFileChangesDiff?: (subtaskId: number) => Promise<string>
   onRevertFileChanges?: (subtaskId: number) => Promise<TurnFileChangesSummary>
 }) {
-  const hasBlocks = message.blocks && message.blocks.length > 0
   const shouldHideContent = shouldHideFailedAssistantContent(message)
   const visibleContent = shouldHideContent ? '' : message.content
   const hiddenErrorContent = shouldHideContent ? message.content.trim() : undefined
+  const displayBlocks = getDisplayProcessingBlocks(message.blocks, visibleContent)
+  const hasBlocks = displayBlocks.length > 0
   const hasVisibleContent = Boolean(visibleContent.trim())
   const isStreaming = message.status === 'streaming'
   const isThinking = isStreaming && !hasVisibleContent && !hasBlocks
@@ -411,7 +434,7 @@ function AssistantMessage({
     <div className="group min-w-0 overflow-x-hidden text-[13px] leading-6 text-text-primary">
       {hasBlocks && (
         <ToolBlocksDisplay
-          blocks={message.blocks!}
+          blocks={displayBlocks}
           isStreaming={isStreaming}
           startedAt={getTurnStartMs(message.createdAt)}
         />
@@ -484,7 +507,9 @@ function AssistantMessage({
         </div>
       )}
       {isThinking && <span className="text-text-muted">正在思考</span>}
-      {isStreaming && hasVisibleContent && <span className="text-text-muted">正在思考</span>}
+      {isStreaming && hasVisibleContent && !hasBlocks && (
+        <span className="text-text-muted">正在思考</span>
+      )}
       {message.status === 'failed' && message.error && (
         <AssistantErrorCard
           error={message.error}

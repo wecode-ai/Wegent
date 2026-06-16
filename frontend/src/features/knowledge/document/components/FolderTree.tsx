@@ -163,18 +163,25 @@ function convertFolderToNode(
 ): FolderNode {
   const folderDocs = docsByFolderId.get(folder.id) || []
 
+  // Build child folder nodes first so we can use their documentCount
+  const childFolderNodes = folder.children.map(child => convertFolderToNode(child, docsByFolderId))
+
   const children: TreeNode[] = [
     ...folderDocs.map(doc => ({
       type: 'document' as const,
       displayName: doc.name,
       document: doc,
     })),
-    ...folder.children.map(child => convertFolderToNode(child, docsByFolderId)),
+    ...childFolderNodes,
   ]
 
-  // Count total documents recursively
+  // Count total documents recursively.
+  // Use folder.document_count (server-computed accurate count) for the current
+  // folder's direct documents instead of folderDocs.length, which only reflects
+  // current-page documents when server-side pagination is active.
+  // Use childFolderNodes' documentCount for recursive accuracy.
   const totalDocs =
-    folderDocs.length + folder.children.reduce((sum, c) => sum + c.document_count, 0)
+    folder.document_count + childFolderNodes.reduce((sum, c) => sum + c.documentCount, 0)
 
   return {
     type: 'api-folder',

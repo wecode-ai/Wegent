@@ -96,6 +96,12 @@ chmod +x wegent-executor
 
 Wegent 会根据用户设置在执行请求中显式标记 Codex 是否使用个人配置，不再通过 `WEGENT_LOCAL_CLI_CONFIG_RUNTIMES` 环境变量判断。
 
+#### 统一管理本地 Skills
+
+如果同一台本地设备同时使用 Claude Code 和 Codex，可以在 Wework 的【设置】->【编码】->【技能】中启用统一管理。Wegent 会在所选在线 Claude Code 设备上创建 `~/.agents/skills`，把 `~/.codex/skills` 和 `~/.claude/skills` 中已有的技能移动到该目录，并把两个旧目录改成指向 `~/.agents/skills` 的软链接。
+
+该操作可以重复执行。重名技能不会被覆盖；系统会为后迁移的目录追加来源后缀，并在页面展示迁移数量。启用后，输入框里的本地 Skill 自动补全会把 `~/.agents/skills` 中的技能视为 Claude 和 Codex 都可用。
+
 ### 构建设备镜像
 
 仓库提供 `docker/device/Dockerfile` 用于构建云设备或本地设备基础镜像。该镜像会安装 `code-server`、`weiboplat.wecoder-agent` 扩展、Claude Code CLI、`ttyd`、Node.js 22、Python、Git，并把 `executor/dist/wegent-executor` 放到 `/app/executor` 和 `~/.wegent-executor/bin/wegent-executor`。
@@ -175,14 +181,16 @@ pip install -e .
 以本地设备模式运行 executor：
 
 ```bash
-# 使用默认设置启动
-wegent-executor --mode local --token YOUR_JWT_TOKEN
+# 使用环境变量或 ~/.wegent-executor/device-config.json 中的配置启动
+wegent-executor
 
-# 或使用环境变量
+# 或用环境变量临时覆盖配置文件中的连接信息
 export WEGENT_AUTH_TOKEN=your_jwt_token
 export WEGENT_BACKEND_URL=https://your-wegent-instance.com
-EXECUTOR_MODE=local wegent-executor
+wegent-executor
 ```
+
+安装脚本和首次启动会创建 `~/.wegent-executor/device-config.json`。配置优先级是环境变量、device config、默认值；如果没有传 `EXECUTOR_MODE`、`WEGENT_BACKEND_URL` 或 `WEGENT_AUTH_TOKEN`，executor 会读取该文件中的 `mode`、`connection.backend_url` 和 `connection.auth_token`。
 
 ### 获取 JWT Token
 
@@ -343,7 +351,7 @@ EXECUTOR_MODE=local wegent-executor
 **解决方案：**
 1. 从 Wegent UI 生成新的 JWT token
 2. 检查到 Wegent 后端的网络连接
-3. 验证 `WEGENT_BACKEND_URL` 环境变量
+3. 验证 `~/.wegent-executor/device-config.json` 或 `WEGENT_BACKEND_URL` 环境变量
 
 #### 设备连接后立即显示离线
 

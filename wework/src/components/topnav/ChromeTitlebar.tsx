@@ -3,6 +3,7 @@ import { isTauriRuntime } from '@/lib/runtime-environment'
 import type { AppTab } from '@/config/apps'
 import { Grid3X3, Globe2 } from 'lucide-react'
 import { TITLEBAR_ACTIONS_PORTAL_ID } from './TitlebarActionsPortal'
+import { TitlebarExtensionSlot } from '@extensions/titlebar'
 
 function getPlatform(): 'mac' | 'win' | 'linux' {
   if (typeof navigator === 'undefined') return 'mac'
@@ -65,6 +66,7 @@ export function ChromeTitlebar({ tabs, activeKey, onNavigate }: ChromeTitlebarPr
       </div>
 
       <div className="min-w-6 flex-1" {...(isTauri ? { 'data-tauri-drag-region': '' } : {})} />
+      {isTauri && <TitlebarExtensionSlot />}
       <div
         id={TITLEBAR_ACTIONS_PORTAL_ID}
         data-testid="titlebar-actions"

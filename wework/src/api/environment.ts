@@ -28,7 +28,10 @@ type EnvironmentInfoCacheEntry = {
   promise: Promise<EnvironmentInfo>
 }
 
-const environmentInfoCaches = new WeakMap<DeviceCommandApi, Map<string, EnvironmentInfoCacheEntry>>()
+const environmentInfoCaches = new WeakMap<
+  DeviceCommandApi,
+  Map<string, EnvironmentInfoCacheEntry>
+>()
 
 function outputAsString(output: DeviceCommandResponse['stdout']): string {
   if (typeof output === 'string') {
@@ -72,7 +75,7 @@ function getEnvironmentInfoCache(api: DeviceCommandApi): Map<string, Environment
 
 async function resolveProjectWorkspaceRoot(
   api: DeviceCommandApi,
-  deviceId: string,
+  deviceId: string
 ): Promise<string> {
   const response = await api.executeCommand(deviceId, {
     command_key: 'project_workspace_root',
@@ -92,7 +95,7 @@ async function resolveProjectWorkspaceRoot(
 async function workspacePath(
   api: DeviceCommandApi,
   deviceId: string,
-  project: ProjectWithTasks,
+  project: ProjectWithTasks
 ): Promise<string | undefined> {
   return resolveProjectWorkspacePath(project, deviceId, {
     getProjectWorkspaceRoot: targetDeviceId =>
@@ -103,7 +106,7 @@ async function workspacePath(
 function validateBranchName(branchName: string): void {
   const components = branchName.split('/')
   const invalidComponent = components.some(
-    component => !component || component.startsWith('.') || component.endsWith('.lock'),
+    component => !component || component.startsWith('.') || component.endsWith('.lock')
   )
   const invalidCharacter = Array.from(branchName).some(character => {
     const code = character.charCodeAt(0)
@@ -198,7 +201,7 @@ async function runGitCommand(
     args?: string[]
     timeoutSeconds?: number
     maxOutputBytes?: number
-  } = {},
+  } = {}
 ): Promise<string> {
   const request: DeviceCommandRequest = {
     command_key: commandKey,
@@ -222,7 +225,7 @@ async function runGitCommand(
 async function loadBranchDiffShortStat(
   api: DeviceCommandApi,
   deviceId: string,
-  path: string,
+  path: string
 ): Promise<string> {
   // Use diff against HEAD for tracked uncommitted line changes.
   // This captures staged + unstaged modifications to tracked files.
@@ -238,7 +241,7 @@ async function loadBranchDiffShortStat(
 
 async function commandContext(
   api: DeviceCommandApi,
-  project: ProjectWithTasks,
+  project: ProjectWithTasks
 ): Promise<{ deviceId: string; path: string }> {
   const deviceId = executionDeviceId(project)
 
@@ -255,7 +258,7 @@ async function commandContext(
 
 async function loadProjectEnvironmentUncached(
   api: DeviceCommandApi,
-  project: ProjectWithTasks | null,
+  project: ProjectWithTasks | null
 ): Promise<EnvironmentInfo> {
   if (!project) {
     return EMPTY_ENVIRONMENT_INFO
@@ -281,31 +284,22 @@ async function loadProjectEnvironmentUncached(
     const [branchName, shortStat, porcelain] = await Promise.all([
       runGitCommand(api, deviceId, 'git_branch', path),
       loadBranchDiffShortStat(api, deviceId, path),
-      runGitCommand(api, deviceId, 'git_status_porcelain', path).catch(
-        () => '',
-      ),
+      runGitCommand(api, deviceId, 'git_status_porcelain', path).catch(() => ''),
     ])
-    const remoteUrl = await runGitCommand(api, deviceId, 'git_remote_url', path).catch(
-      () => '',
-    )
+    const remoteUrl = await runGitCommand(api, deviceId, 'git_remote_url', path).catch(() => '')
     const diff = parseGitShortStat(shortStat)
 
     // Count pending files from porcelain (untracked, staged, modified).
     // git diff --shortstat only covers tracked files, so we merge
     // porcelain data to include untracked and no-commit scenarios.
-    const porcelainLines = porcelain
-      .split('\n')
-      .filter(line => line.trim().length > 0)
+    const porcelainLines = porcelain.split('\n').filter(line => line.trim().length > 0)
 
     if (shortStat) {
       // Repo has commits — diff stat covers tracked changes.
       // Add untracked file count on top.
-      const untrackedCount = porcelainLines.filter(line =>
-        line.startsWith('??'),
-      ).length
+      const untrackedCount = porcelainLines.filter(line => line.startsWith('??')).length
       if (untrackedCount > 0) {
-        const trackedAdditions =
-          parseInt(diff.additions.replace(/^\+/, ''), 10) || 0
+        const trackedAdditions = parseInt(diff.additions.replace(/^\+/, ''), 10) || 0
         diff.additions = `+${trackedAdditions + untrackedCount}`
       }
     } else if (porcelainLines.length > 0) {
@@ -329,7 +323,7 @@ async function loadProjectEnvironmentUncached(
 
 export async function loadProjectEnvironment(
   api: DeviceCommandApi,
-  project: ProjectWithTasks | null,
+  project: ProjectWithTasks | null
 ): Promise<EnvironmentInfo> {
   if (!project) {
     return cloneEnvironmentInfo(EMPTY_ENVIRONMENT_INFO)
@@ -364,7 +358,7 @@ export async function loadProjectEnvironment(
 export async function commitProjectChanges(
   api: DeviceCommandApi,
   project: ProjectWithTasks | null,
-  message: string,
+  message: string
 ): Promise<void> {
   const trimmedMessage = message.trim()
 
@@ -391,7 +385,7 @@ export async function commitProjectChanges(
 
 export async function listProjectBranches(
   api: DeviceCommandApi,
-  project: ProjectWithTasks | null,
+  project: ProjectWithTasks | null
 ): Promise<string[]> {
   if (!project) {
     throw new Error('Project is required')
@@ -413,7 +407,7 @@ export async function listProjectBranches(
 export async function checkoutProjectBranch(
   api: DeviceCommandApi,
   project: ProjectWithTasks | null,
-  branchName: string,
+  branchName: string
 ): Promise<void> {
   const trimmedBranch = branchName.trim()
   if (!trimmedBranch) {
@@ -435,7 +429,7 @@ export async function checkoutProjectBranch(
 export async function createAndCheckoutProjectBranch(
   api: DeviceCommandApi,
   project: ProjectWithTasks | null,
-  branchName: string,
+  branchName: string
 ): Promise<void> {
   const trimmedBranch = branchName.trim()
   if (!trimmedBranch) {

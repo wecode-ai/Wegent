@@ -14,16 +14,16 @@ from typing import Any, Dict, List, Optional
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
+import app.stores.tasks as task_stores
 from app.db.session import SessionLocal
 from app.models.kind import Kind
-from app.models.subtask import Subtask
+from app.models.subtask import Subtask, SubtaskRole
 from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.kind import Team
 from app.services.chat.storage.task_manager import (
     TaskCreationParams,
     check_task_status,
-    create_assistant_subtask,
     create_new_task,
     create_user_subtask,
     get_bot_ids_from_team,
@@ -31,7 +31,7 @@ from app.services.chat.storage.task_manager import (
 )
 from app.services.readers.kinds import KindType, kindReader
 from app.services.task_status import mark_task_pending_payload
-from app.stores.tasks import subtask_store, task_store
+from app.stores.tasks import subtask_store
 
 logger = logging.getLogger(__name__)
 
@@ -80,12 +80,70 @@ def _merge_blocks(
     return merged
 
 
+def _is_blank_text_value(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return not value.strip()
+    return False
+
+
+def _extract_text_value_from_blocks(blocks: Any) -> str:
+    if not isinstance(blocks, list):
+        return ""
+
+    text_parts: list[str] = []
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") not in {"text", "output_text"}:
+            continue
+        content = block.get("content")
+        if not isinstance(content, str) or not content.strip():
+            content = block.get("text")
+        if isinstance(content, str) and content.strip():
+            text_parts.append(content.strip())
+    return "\n".join(text_parts)
+
+
 def _load_team_crd(team: Kind) -> Optional[Team]:
     """Best-effort load of Team CRD from ORM or lightweight test doubles."""
     team_json = getattr(team, "json", None)
     if team_json is None:
         return None
     return Team.model_validate(team_json)
+
+
+def _build_pipeline_handoff_message(
+    db: Session,
+    *,
+    task_id: int,
+    existing_subtasks: List[Subtask],
+    context_passing: Optional[str],
+) -> str:
+    """Build the user-visible handoff message for a pipeline stage."""
+    if context_passing is None:
+        return ""
+
+    previous_stage = next(
+        (
+            subtask
+            for subtask in existing_subtasks
+            if subtask.role == SubtaskRole.ASSISTANT
+        ),
+        None,
+    )
+    if previous_stage is None:
+        return ""
+
+    from app.services.adapters.pipeline_context import build_pipeline_context_prompt
+
+    return build_pipeline_context_prompt(
+        db,
+        task_id=task_id,
+        current_subtask=previous_stage,
+        context_passing=context_passing,
+    )
 
 
 def prepare_execution_session(
@@ -178,7 +236,7 @@ def prepare_execution_session(
         if not resolved_task_params.skip_status_check:
             check_task_status(db, task)
         if should_trigger_ai:
-            task_store.update_json(
+            task_stores.task_store.update_json(
                 db,
                 task=task,
                 payload=mark_task_pending_payload(task.json),
@@ -209,7 +267,7 @@ def prepare_execution_session(
                 task_crd.metadata.labels["autoDeleteExecutor"] = (
                     resolved_task_params.auto_delete_executor
                 )
-            task_store.update_json(
+            task_stores.task_store.update_json(
                 db, task=task, payload=task_crd.model_dump(mode="json")
             )
             logger.info(
@@ -227,7 +285,7 @@ def prepare_execution_session(
         task = create_new_task(db, user, team, resolved_task_params)
         subtask_user_id = user.id
 
-    existing_subtasks = subtask_store.list_latest_by_task(
+    existing_subtasks = task_stores.subtask_store.list_latest_by_task(
         db,
         task_id=task.id,
         user_id=subtask_user_id,
@@ -240,28 +298,50 @@ def prepare_execution_session(
         next_message_id = latest_subtask.message_id + 1
         parent_id = latest_subtask.message_id
 
-    user_subtask = create_user_subtask(
-        db=db,
-        subtask_user_id=subtask_user_id,
-        sender_user_id=user.id,
-        task_id=task.id,
-        team_id=team.id,
-        bot_ids=bot_ids,
-        message=input_text,
-        next_message_id=next_message_id,
-        parent_id=parent_id,
-        video_config=video_config,
-    )
+    handoff_message = input_text
+    if (
+        resolved_task_params.pipeline_context_passing is not None
+        and not input_text.strip()
+    ):
+        handoff_message = _build_pipeline_handoff_message(
+            db,
+            task_id=task.id,
+            existing_subtasks=existing_subtasks,
+            context_passing=resolved_task_params.pipeline_context_passing,
+        )
+
     assistant_subtask = None
     if should_trigger_ai:
-        assistant_subtask = create_assistant_subtask(
+        user_subtask, assistant_subtask = (
+            task_stores.subtask_store.create_user_and_assistant_subtasks(
+                db,
+                user_id=subtask_user_id,
+                task_id=task.id,
+                team_id=team.id,
+                title="User message",
+                assistant_title="Assistant response",
+                bot_ids=bot_ids,
+                prompt=handoff_message,
+                user_message_id=next_message_id,
+                user_parent_id=parent_id,
+                assistant_message_id=next_message_id + 1,
+                assistant_parent_id=next_message_id,
+                sender_user_id=user.id,
+                result={"video_config": video_config} if video_config else None,
+            )
+        )
+    else:
+        user_subtask = create_user_subtask(
             db=db,
             subtask_user_id=subtask_user_id,
+            sender_user_id=user.id,
             task_id=task.id,
             team_id=team.id,
             bot_ids=bot_ids,
-            next_message_id=next_message_id + 1,
-            parent_id=next_message_id,
+            message=handoff_message,
+            next_message_id=next_message_id,
+            parent_id=parent_id,
+            video_config=video_config,
         )
 
     db.commit()
@@ -357,11 +437,6 @@ async def collect_completed_result(
         ):
             final_result[key] = value
 
-    if final_result.get("value") is None and (
-        normalized_status == "COMPLETED" or accumulated_content
-    ):
-        final_result["value"] = accumulated_content
-
     if blocks:
         merged_blocks = _merge_blocks(final_result.get("blocks"), blocks)
         if merged_blocks:
@@ -372,6 +447,16 @@ async def collect_completed_result(
             normalized_status.lower(),
             subtask_id,
         )
+
+    if _is_blank_text_value(final_result.get("value")) and (
+        normalized_status == "COMPLETED" or accumulated_content.strip()
+    ):
+        text_value = (
+            accumulated_content
+            if accumulated_content.strip()
+            else _extract_text_value_from_blocks(final_result.get("blocks"))
+        )
+        final_result["value"] = text_value
 
     if normalized_status == "FAILED" and error_code:
         final_result["error_type"] = error_code
