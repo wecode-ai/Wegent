@@ -834,17 +834,28 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       })
     }
 
+    const finalPipelineBotId = mode === 'pipeline' ? allBotIds[allBotIds.length - 1] : null
+
     const botsData = allBotIds.map(id => {
       const existingBot = formTeam?.bots.find(b => b.bot_id === id)
       const unsavedPrompt = unsavedPrompts[`prompt-${id}`]
+      const isFinalPipelineBot = id === finalPipelineBotId
 
       return {
         bot_id: id,
         bot_prompt: unsavedPrompt || existingBot?.bot_prompt || '',
         role: id === leaderBotId ? 'leader' : undefined,
         // Include requireConfirmation for pipeline mode
-        requireConfirmation: mode === 'pipeline' ? requireConfirmationMap[id] || false : undefined,
-        contextPassing: mode === 'pipeline' ? contextPassingMap[id] || 'none' : undefined,
+        requireConfirmation:
+          mode === 'pipeline'
+            ? !isFinalPipelineBot && (requireConfirmationMap[id] || false)
+            : undefined,
+        contextPassing:
+          mode === 'pipeline'
+            ? isFinalPipelineBot
+              ? 'none'
+              : contextPassingMap[id] || 'none'
+            : undefined,
       }
     })
 
