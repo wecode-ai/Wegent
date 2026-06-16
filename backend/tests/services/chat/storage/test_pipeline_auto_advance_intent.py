@@ -10,7 +10,9 @@ from unittest.mock import MagicMock, patch
 from app.services.chat.storage.db import DatabaseHandler
 
 
-def test_task_status_update_returns_auto_advance_intent_without_creating_subtasks():
+def test_task_status_update_returns_auto_advance_intent_without_creating_subtasks() -> (
+    None
+):
     handler = DatabaseHandler()
     task = SimpleNamespace(id=123, user_id=5, json={})
     completed_subtask = SimpleNamespace(
@@ -34,9 +36,11 @@ def test_task_status_update_returns_auto_advance_intent_without_creating_subtask
 
     with patch("app.services.chat.storage.db._db_session") as db_session:
         db = db_session.return_value.__enter__.return_value
-        with patch("app.services.chat.storage.db.task_store") as task_store:
+        with patch("app.services.chat.storage.db.task_stores.task_store") as task_store:
             task_store.get_task_by_states.return_value = task
-            with patch("app.services.chat.storage.db.subtask_store") as subtask_store:
+            with patch(
+                "app.services.chat.storage.db.task_stores.subtask_store"
+            ) as subtask_store:
                 subtask_store.list_assistant_by_task.return_value = [completed_subtask]
                 with patch(
                     "app.schemas.kind.Task.model_validate", return_value=task_crd

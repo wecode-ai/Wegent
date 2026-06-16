@@ -23,6 +23,7 @@ from sqlalchemy import (
 
 from app.core.constants import CLIENT_ORIGIN_FRONTEND
 from app.db.base import Base
+from shared.models.db.types import big_integer_id_type
 
 
 class TaskResource(Base):
@@ -47,7 +48,13 @@ class TaskResource(Base):
     STATE_SUBSCRIPTION = 2
     STATE_ARCHIVED = 3
 
-    id = Column(Integer, primary_key=True, index=True, comment="Primary key")
+    id = Column(
+        big_integer_id_type(),
+        primary_key=True,
+        autoincrement=True,
+        index=True,
+        comment="Primary key",
+    )
     user_id = Column(
         Integer,
         nullable=False,

@@ -21,6 +21,7 @@ from sqlalchemy import (
 )
 
 from app.db.base import Base
+from shared.models.db.types import big_integer_id_type
 
 
 class BackgroundExecution(Base):
@@ -48,7 +49,7 @@ class BackgroundExecution(Base):
 
     # Task reference (the actual task created for this execution)
     task_id = Column(
-        Integer, nullable=False, default=0, index=True
+        big_integer_id_type(), nullable=False, default=0, index=True
     )  # 0 means no task yet
 
     # Inbox auto-processing link (0 = none, >0 = QueueMessage ID)

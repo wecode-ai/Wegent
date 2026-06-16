@@ -15,6 +15,7 @@ from sqlalchemy import Boolean, Column, DateTime, Enum, Index, Integer, String
 from sqlalchemy.sql import func
 
 from app.db.base import Base
+from shared.models.db.types import big_integer_id_type
 
 
 class ResourceType(str, PyEnum):
@@ -59,7 +60,7 @@ class ShareLink(Base):
         comment="Resource type: Team, Task, KnowledgeBase",
     )
     resource_id = Column(
-        Integer,
+        big_integer_id_type(),
         nullable=False,
         comment="Resource ID (kinds.id or tasks.id)",
     )

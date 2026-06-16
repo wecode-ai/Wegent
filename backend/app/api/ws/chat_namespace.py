@@ -23,6 +23,7 @@ from typing import Any, Dict, Optional
 import socketio
 from sqlalchemy.orm import Session
 
+import app.stores.tasks as task_stores
 from app.api.ws.connection_utils import enter_connect_room, save_connect_session
 from app.api.ws.context_decorators import auto_task_context
 from app.api.ws.decorators import trace_websocket_event
@@ -70,7 +71,6 @@ from app.services.chat.rag import process_context_and_rag
 from app.services.chat.storage import session_manager
 from app.services.chat.storage.db import get_db_session, run_sync_in_executor
 from app.services.chat.trigger import trigger_ai_response_unified
-from app.stores.tasks import subtask_store, task_access_store, task_store
 from app.utils.prompt_utils import extract_display_prompt
 from shared.telemetry.context import (
     set_request_context,
@@ -198,7 +198,9 @@ class ChatNamespace(socketio.AsyncNamespace):
                     error="Guidance is only supported for Chat Shell tasks"
                 ).model_dump()
 
-            subtask = subtask_store.get_by_id(db, subtask_id=payload.subtask_id)
+            subtask = task_stores.subtask_store.get_by_id(
+                db, subtask_id=payload.subtask_id
+            )
             if subtask and (
                 subtask.task_id != payload.task_id or subtask.team_id != payload.team_id
             ):
@@ -688,7 +690,7 @@ class ChatNamespace(socketio.AsyncNamespace):
             # Get task JSON for group chat check
             task_json = {}
             if payload.task_id:
-                existing_task = task_store.get_regular_active_task(
+                existing_task = task_stores.task_store.get_regular_active_task(
                     db,
                     task_id=payload.task_id,
                 )
@@ -831,7 +833,7 @@ class ChatNamespace(socketio.AsyncNamespace):
             ):
                 if task_crd.metadata.labels.get("userInteracted") != "true":
                     task_crd.metadata.labels["userInteracted"] = "true"
-                    task_store.update_json(
+                    task_stores.task_store.update_json(
                         db, task=task, payload=task_crd.model_dump(mode="json")
                     )
                     db.commit()
@@ -1697,7 +1699,7 @@ def _prepare_chat_retry_dispatch(
             labels["forceOverrideBotModelType"] = model_type
         else:
             labels.pop("forceOverrideBotModelType", None)
-        task_store.update_json(db, task=task, payload=task_json)
+        task_stores.task_store.update_json(db, task=task, payload=task_json)
         db.commit()
         db.refresh(task)
         logger.info(
@@ -1718,7 +1720,7 @@ def _prepare_chat_retry_dispatch(
                 del labels[key]
                 changed = True
         if changed:
-            task_store.update_json(db, task=task, payload=task_json)
+            task_stores.task_store.update_json(db, task=task, payload=task_json)
             db.commit()
             db.refresh(task)
             logger.info("[WS] chat:retry cleared stale model override labels")
@@ -1813,7 +1815,7 @@ def _fetch_subtasks_for_task_join(
             # Incremental sync: only fetch messages after the cursor
             from app.services.context import context_service
 
-            subtasks = subtask_store.list_after_message_id(
+            subtasks = task_stores.subtask_store.list_after_message_id(
                 db,
                 task_id=task_id,
                 after_message_id=after_message_id,
@@ -1881,7 +1883,7 @@ def _get_subtask_for_cancel(subtask_id: int) -> Optional[dict]:
         Dict with subtask info or None if not found
     """
     with get_db_session() as db:
-        subtask = subtask_store.get_by_id(db, subtask_id=subtask_id)
+        subtask = task_stores.subtask_store.get_by_id(db, subtask_id=subtask_id)
 
         if not subtask:
             return None
@@ -1897,7 +1899,7 @@ def _get_subtask_for_cancel(subtask_id: int) -> Optional[dict]:
 def _subtask_belongs_to_task(subtask_id: int, task_id: int) -> bool:
     """Return True when *subtask_id* belongs to *task_id*."""
     with get_db_session() as db:
-        subtask = subtask_store.get_basic_by_id(db, subtask_id=subtask_id)
+        subtask = task_stores.subtask_store.get_basic_by_id(db, subtask_id=subtask_id)
         return subtask is not None and subtask.task_id == task_id
 
 
@@ -1906,7 +1908,7 @@ def _mark_subtask_and_task_cancelled(
 ) -> None:
     """Force mark subtask and task as CANCELLED."""
     with get_db_session() as db:
-        subtask = subtask_store.get_by_id(db, subtask_id=subtask_id)
+        subtask = task_stores.subtask_store.get_by_id(db, subtask_id=subtask_id)
         if not subtask:
             return
 
@@ -1914,7 +1916,9 @@ def _mark_subtask_and_task_cancelled(
         update_subtask_on_cancel(db, subtask, result=result)
 
         # Force task to CANCELLED
-        task = task_store.get_regular_active_task(db, task_id=subtask.task_id)
+        task = task_stores.task_store.get_regular_active_task(
+            db, task_id=subtask.task_id
+        )
         if not task or not task.json:
             return
 
@@ -1925,7 +1929,9 @@ def _mark_subtask_and_task_cancelled(
             task_crd.status.updatedAt = datetime.now()
             task_crd.status.completedAt = datetime.now()
 
-        task_store.update_json(db, task=task, payload=task_crd.model_dump(mode="json"))
+        task_stores.task_store.update_json(
+            db, task=task, payload=task_crd.model_dump(mode="json")
+        )
 
 
 def _get_device_info_for_close_session(task_id: int, user_id: int) -> Optional[dict]:
@@ -1941,18 +1947,20 @@ def _get_device_info_for_close_session(task_id: int, user_id: int) -> Optional[d
     """
     with get_db_session() as db:
         # Get the task to verify it exists
-        task = task_store.get_regular_active_task(
+        task = task_stores.task_store.get_regular_active_task(
             db,
             task_id=task_id,
         )
 
         if not task:
             return {"error": "Task not found"}
-        if not task_access_store.is_member(db, task_id=task_id, user_id=user_id):
+        if not task_stores.task_access_store.is_member(
+            db, task_id=task_id, user_id=user_id
+        ):
             return {"error": "Access denied"}
 
         # Get the latest subtask with device executor
-        subtask = subtask_store.get_latest_device_executor_for_task(
+        subtask = task_stores.subtask_store.get_latest_device_executor_for_task(
             db,
             task_id=task_id,
             owner_user_id=task.user_id,
@@ -1979,7 +1987,7 @@ def _fetch_history_messages(task_id: int, after_message_id: int) -> list:
         List of message dicts
     """
     with get_db_session() as db:
-        subtasks = subtask_store.list_after_message_id(
+        subtasks = task_stores.subtask_store.list_after_message_id(
             db,
             task_id=task_id,
             after_message_id=after_message_id,

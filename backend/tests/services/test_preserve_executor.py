@@ -416,21 +416,32 @@ class TestCleanupStaleExecutorsWithPreserveFlag(CleanupExecutorTestHelpers):
 
         mark_deleted_mock.assert_not_called()
 
-    async def test_executor_deleted_flag_uses_async_session(self, job_service, mock_db):
-        """Test executor_deleted_at is updated in a separate short-lived async session."""
-        mock_async_session = AsyncMock()
-        mock_async_session.__aenter__ = AsyncMock(return_value=mock_async_session)
-        mock_async_session.__aexit__ = AsyncMock(return_value=False)
+    async def test_executor_deleted_flag_uses_store_boundary(
+        self, job_service, mock_db
+    ):
+        """Test executor_deleted_at is updated through a short-lived Store boundary."""
+        mock_sync_session = MagicMock()
+        mock_subtask_store = MagicMock()
+        mock_subtask_store.mark_executor_deleted_by_ids.return_value = 2
 
-        with patch(
-            "app.services.adapters.executor_job.AsyncSessionLocal"
-        ) as mock_session_local:
-            mock_session_local.return_value = mock_async_session
-
+        with (
+            patch(
+                "app.services.adapters.executor_job.SessionLocal",
+                return_value=mock_sync_session,
+            ),
+            patch(
+                "app.services.adapters.executor_job.task_stores.subtask_store",
+                mock_subtask_store,
+            ),
+        ):
             await job_service._mark_executor_deleted([1, 2])
 
-        mock_async_session.execute.assert_called_once()
-        mock_async_session.commit.assert_called_once()
+        mock_subtask_store.mark_executor_deleted_by_ids.assert_called_once_with(
+            mock_sync_session,
+            subtask_ids=[1, 2],
+        )
+        mock_sync_session.commit.assert_called_once()
+        mock_sync_session.close.assert_called_once()
 
     async def test_code_task_is_not_cleaned_up_before_code_threshold(
         self, job_service, mock_db
