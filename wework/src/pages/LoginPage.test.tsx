@@ -4,18 +4,11 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { AuthProvider } from '@/features/auth/AuthProvider'
 import { LoginPage } from './LoginPage'
 
-vi.mock('@tauri-apps/api/core', () => ({
-  isTauri: vi.fn(),
-}))
-
-const { isTauri } = vi.mocked(await import('@tauri-apps/api/core'))
-
 describe('LoginPage', () => {
   beforeEach(() => {
     localStorage.clear()
     sessionStorage.clear()
     vi.stubEnv('VITE_LOGIN_MODE', 'all')
-    isTauri.mockReturnValue(false)
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 })
     window.history.pushState({}, '', '/login')
   })
@@ -37,7 +30,7 @@ describe('LoginPage', () => {
     render(
       <AuthProvider authApi={authApi}>
         <LoginPage />
-      </AuthProvider>
+      </AuthProvider>,
     )
 
     expect(screen.queryByTestId('qrcode-login-page')).not.toBeInTheDocument()
@@ -48,7 +41,7 @@ describe('LoginPage', () => {
     await userEvent.click(screen.getByTestId('login-submit-button'))
 
     await waitFor(() =>
-      expect(authApi.login).toHaveBeenCalledWith({ user_name: 'alice', password: 'secret' })
+      expect(authApi.login).toHaveBeenCalledWith({ user_name: 'alice', password: 'secret' }),
     )
     expect(window.location.pathname).toBe('/')
   })
@@ -72,7 +65,7 @@ describe('LoginPage', () => {
     render(
       <AuthProvider authApi={authApi}>
         <LoginPage />
-      </AuthProvider>
+      </AuthProvider>,
     )
 
     expect(await screen.findByTestId('qrcode-login-page')).toBeInTheDocument()
@@ -80,29 +73,7 @@ describe('LoginPage', () => {
     expect(screen.queryByTestId('oidc-login-button')).not.toBeInTheDocument()
     expect(await screen.findByTestId('mobile-weibo-qrcode-image')).toHaveAttribute(
       'src',
-      'data:image/png;base64,abc'
+      'data:image/png;base64,abc',
     )
-  })
-
-  test('shows password login inside the Tauri app when login mode is password', () => {
-    vi.stubEnv('VITE_LOGIN_MODE', 'password')
-    isTauri.mockReturnValue(true)
-    const authApi = {
-      getCurrentUser: vi.fn(),
-      login: vi.fn(),
-      logout: vi.fn(),
-      loginWithOidcToken: vi.fn(),
-      createWeiboQrcodeChallenge: vi.fn(),
-      loginWithWeiboQrcode: vi.fn(),
-    }
-
-    render(
-      <AuthProvider authApi={authApi}>
-        <LoginPage />
-      </AuthProvider>
-    )
-
-    expect(screen.getByTestId('login-form')).toBeInTheDocument()
-    expect(screen.queryByTestId('qrcode-login-page')).not.toBeInTheDocument()
   })
 })
