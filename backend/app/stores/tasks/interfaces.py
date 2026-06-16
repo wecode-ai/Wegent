@@ -602,6 +602,15 @@ class SubtaskStore(Protocol):
         statuses: Sequence[SubtaskStatus],
     ) -> Optional[Subtask]: ...
 
+    def get_latest_assistant_by_statuses(
+        self,
+        db: Session,
+        *,
+        task_id: int,
+        statuses: Sequence[SubtaskStatus],
+        owner_user_id: Optional[int] = None,
+    ) -> Optional[Subtask]: ...
+
     def get_latest_running_assistant_by_task(
         self, db: Session, *, task_id: int, owner_user_id: Optional[int] = None
     ) -> Optional[Subtask]: ...
@@ -647,6 +656,15 @@ class SubtaskStore(Protocol):
         *,
         task_id: int,
         message_id: int,
+        owner_user_id: Optional[int] = None,
+    ) -> Optional[Subtask]: ...
+
+    def get_first_user_before_message_id(
+        self,
+        db: Session,
+        *,
+        task_id: int,
+        before_message_id: int,
         owner_user_id: Optional[int] = None,
     ) -> Optional[Subtask]: ...
 

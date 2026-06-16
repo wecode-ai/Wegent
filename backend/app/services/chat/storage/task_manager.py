@@ -78,6 +78,8 @@ class TaskCreationParams:
     # When set and different from current bot_id, a new session will be created
     # This ensures each pipeline stage has independent context
     previous_bot_id: Optional[int] = None
+    # Pipeline mode: context to pass from the previous stage to the new stage
+    pipeline_context_passing: Optional[str] = None
     # Skip the normal running/pending status guard for controlled transitions
     # such as pipeline stage confirmation. The caller must guarantee the task
     # state has already been validated.
@@ -497,6 +499,7 @@ def create_assistant_subtask(
     bot_ids: List[int],
     next_message_id: int,
     parent_id: int,
+    prompt: str = "",
 ) -> Subtask:
     """
     Create an ASSISTANT subtask for the AI response.
@@ -793,7 +796,7 @@ async def create_task_and_subtasks(
             context_messages = build_context_messages(
                 db=db,
                 existing_subtasks=existing_subtasks,
-                current_message=message,
+                current_message=user_subtask.prompt,
                 current_user=user,
                 is_group_chat=is_group_chat,
                 context_limit=settings.MEMORY_CONTEXT_MESSAGES,

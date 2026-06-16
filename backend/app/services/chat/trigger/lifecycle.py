@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 import app.stores.tasks as task_stores
 from app.db.session import SessionLocal
 from app.models.kind import Kind
-from app.models.subtask import Subtask
+from app.models.subtask import Subtask, SubtaskRole
 from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.kind import Team
@@ -86,6 +86,38 @@ def _load_team_crd(team: Kind) -> Optional[Team]:
     if team_json is None:
         return None
     return Team.model_validate(team_json)
+
+
+def _build_pipeline_handoff_message(
+    db: Session,
+    *,
+    task_id: int,
+    existing_subtasks: List[Subtask],
+    context_passing: Optional[str],
+) -> str:
+    """Build the user-visible handoff message for a pipeline stage."""
+    if context_passing is None:
+        return ""
+
+    previous_stage = next(
+        (
+            subtask
+            for subtask in existing_subtasks
+            if subtask.role == SubtaskRole.ASSISTANT
+        ),
+        None,
+    )
+    if previous_stage is None:
+        return ""
+
+    from app.services.adapters.pipeline_context import build_pipeline_context_prompt
+
+    return build_pipeline_context_prompt(
+        db,
+        task_id=task_id,
+        current_subtask=previous_stage,
+        context_passing=context_passing,
+    )
 
 
 def prepare_execution_session(
@@ -240,6 +272,18 @@ def prepare_execution_session(
         next_message_id = latest_subtask.message_id + 1
         parent_id = latest_subtask.message_id
 
+    handoff_message = input_text
+    if (
+        resolved_task_params.pipeline_context_passing is not None
+        and not input_text.strip()
+    ):
+        handoff_message = _build_pipeline_handoff_message(
+            db,
+            task_id=task.id,
+            existing_subtasks=existing_subtasks,
+            context_passing=resolved_task_params.pipeline_context_passing,
+        )
+
     assistant_subtask = None
     if should_trigger_ai:
         user_subtask, assistant_subtask = (
@@ -251,7 +295,7 @@ def prepare_execution_session(
                 title="User message",
                 assistant_title="Assistant response",
                 bot_ids=bot_ids,
-                prompt=input_text,
+                prompt=handoff_message,
                 user_message_id=next_message_id,
                 user_parent_id=parent_id,
                 assistant_message_id=next_message_id + 1,
@@ -268,7 +312,7 @@ def prepare_execution_session(
             task_id=task.id,
             team_id=team.id,
             bot_ids=bot_ids,
-            message=input_text,
+            message=handoff_message,
             next_message_id=next_message_id,
             parent_id=parent_id,
             video_config=video_config,

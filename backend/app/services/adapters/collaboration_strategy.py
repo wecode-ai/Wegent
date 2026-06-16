@@ -17,6 +17,7 @@ from typing import Any, Dict, Optional, Tuple
 from sqlalchemy.orm import Session
 
 import app.stores.tasks as task_stores
+from app.services.adapters.pipeline_context import normalize_context_passing
 
 logger = logging.getLogger(__name__)
 
@@ -306,6 +307,9 @@ class PipelineCollaborationStrategy(CollaborationStrategy):
                 "next_stage_index": next_stage_index,
                 "next_bot_id": next_bot.id,
                 "next_bot_name": next_bot.name,
+                "context_passing": normalize_context_passing(
+                    getattr(current_member, "contextPassing", None)
+                ),
             }
 
         except Exception as e:
