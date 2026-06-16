@@ -222,6 +222,7 @@ class OpenAIRequestConverter:
             "is_subscription": request.is_subscription,
             "request_id": request.request_id,
             "executor_name": request.executor_name,
+            "skip_git_clone": request.skip_git_clone,
             # Fields needed by executor-manager for container management
             "executor_image": request.executor_image,
             "executor_type": request.executor_type,
@@ -383,6 +384,7 @@ class OpenAIRequestConverter:
             is_subscription=metadata.get("is_subscription", False),
             request_id=metadata.get("request_id", ""),
             executor_name=metadata.get("executor_name"),
+            skip_git_clone=metadata.get("skip_git_clone", False),
             # Fields for executor-manager container management
             executor_image=metadata.get("executor_image"),
             executor_type=metadata.get("executor_type"),
