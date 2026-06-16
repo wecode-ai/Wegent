@@ -29,6 +29,7 @@ export interface TransferProps {
   operations?: [string, string]
   leftFooter?: React.ReactNode
   rightFooter?: React.ReactNode
+  rightListHeader?: React.ReactNode
   disabled?: boolean
   sortable?: boolean
 }
@@ -47,6 +48,7 @@ export function Transfer({
   operations = ['>', '<'],
   leftFooter,
   rightFooter,
+  rightListHeader,
   disabled = false,
   sortable = false,
 }: TransferProps) {
@@ -180,7 +182,8 @@ export function Transfer({
     setSearch: React.Dispatch<React.SetStateAction<string>>,
     title: string,
     footer?: React.ReactNode,
-    isRightList?: boolean
+    isRightList?: boolean,
+    listHeader?: React.ReactNode
   ) => {
     const allKeys = data.filter(item => !item.disabled).map(item => item.key)
     const checkedAll = allKeys.length > 0 && allKeys.every(key => checked.includes(key))
@@ -233,6 +236,17 @@ export function Transfer({
                 className="pl-8 h-9"
               />
             </div>
+          </div>
+        )}
+
+        {listHeader && data.length > 0 && (
+          <div
+            className={cn(
+              'border-b border-border bg-surface py-1.5 pr-2 text-xs font-medium text-text-muted',
+              isRightList && sortable ? 'pl-14' : 'pl-8'
+            )}
+          >
+            {listHeader}
           </div>
         )}
 
@@ -336,7 +350,8 @@ export function Transfer({
           setRightSearch,
           titles[1],
           rightFooter,
-          true
+          true,
+          rightListHeader
         )}
       </div>
     </div>
