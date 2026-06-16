@@ -19,9 +19,23 @@ describe('createDeviceApi', () => {
     expect(client.post).toHaveBeenCalledWith('/cloud-devices/device%2F1/restart')
     expect(client.delete).toHaveBeenCalledWith('/cloud-devices/device%2F1')
     expect(client.delete).toHaveBeenCalledWith('/devices/device%2F1')
-    expect(client.post).toHaveBeenCalledWith(
-      '/devices/device%2F1/upgrade',
-      { auto_confirm: true },
-    )
+    expect(client.post).toHaveBeenCalledWith('/devices/device%2F1/upgrade', { auto_confirm: true })
+  })
+
+  test('opens a local terminal through the configured device command', async () => {
+    const client = {
+      post: vi.fn().mockResolvedValue({ success: true }),
+    } as unknown as HttpClient
+
+    const api = createDeviceApi(client)
+
+    await api.openLocalTerminal('device/1', ' /workspace/project ')
+
+    expect(client.post).toHaveBeenCalledWith('/devices/device%2F1/commands', {
+      command_key: 'open_terminal',
+      args: ['/workspace/project'],
+      timeout_seconds: 10,
+      max_output_bytes: 4096,
+    })
   })
 })

@@ -6,11 +6,7 @@ type DeviceLike = Pick<DeviceInfo, 'device_type' | 'bind_shell' | 'status'> &
   Partial<
     Pick<
       DeviceInfo,
-      | 'executor_version'
-      | 'update_available'
-      | 'slot_used'
-      | 'running_tasks'
-      | 'running_task_ids'
+      'executor_version' | 'update_available' | 'slot_used' | 'running_tasks' | 'running_task_ids'
     >
   >
 
@@ -60,9 +56,7 @@ export function isDeviceRunningTask(device: DeviceLike): boolean {
   )
 }
 
-export function isWeWorkExecutorVersionCompatible(
-  version?: string | null,
-): boolean {
+export function isWeWorkExecutorVersionCompatible(version?: string | null): boolean {
   if (!version) return false
   return isVersionAtLeast(version, WEWORK_MIN_EXECUTOR_VERSION)
 }
@@ -72,8 +66,7 @@ export function isDeviceBelowWeWorkVersion(device: DeviceLike): boolean {
 }
 
 export function isWeWorkCompatibleDevice(device: DeviceLike): boolean {
-  return isClaudeCodeDevice(device) &&
-    isWeWorkExecutorVersionCompatible(device.executor_version)
+  return isClaudeCodeDevice(device) && isWeWorkExecutorVersionCompatible(device.executor_version)
 }
 
 export function hasWeWorkUpdateAvailable(device: DeviceLike): boolean {
@@ -85,13 +78,19 @@ export function canRequestDeviceUpgrade(device: DeviceLike): boolean {
 }
 
 export function canUseForProjectCreation(device: DeviceLike): boolean {
-  return isClaudeCodeDevice(device) &&
+  return (
+    isClaudeCodeDevice(device) &&
     isUsableDevice(device) &&
     isWeWorkExecutorVersionCompatible(device.executor_version)
+  )
 }
 
 export function supportsCloudSessions(device: DeviceLike): boolean {
   return isCloudDevice(device) && isClaudeCodeDevice(device)
+}
+
+export function supportsLocalTerminalLaunch(device: DeviceLike): boolean {
+  return !isCloudDevice(device) && isClaudeCodeDevice(device)
 }
 
 export function supportsDeviceMetrics(device: Pick<DeviceInfo, 'device_type'>): boolean {
