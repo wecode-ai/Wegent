@@ -80,6 +80,32 @@ def _merge_blocks(
     return merged
 
 
+def _is_blank_text_value(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return not value.strip()
+    return False
+
+
+def _extract_text_value_from_blocks(blocks: Any) -> str:
+    if not isinstance(blocks, list):
+        return ""
+
+    text_parts: list[str] = []
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") != "text":
+            continue
+        content = block.get("content")
+        if not isinstance(content, str) or not content.strip():
+            content = block.get("text")
+        if isinstance(content, str) and content.strip():
+            text_parts.append(content.strip())
+    return "\n".join(text_parts)
+
+
 def _load_team_crd(team: Kind) -> Optional[Team]:
     """Best-effort load of Team CRD from ORM or lightweight test doubles."""
     team_json = getattr(team, "json", None)
@@ -411,11 +437,6 @@ async def collect_completed_result(
         ):
             final_result[key] = value
 
-    if final_result.get("value") is None and (
-        normalized_status == "COMPLETED" or accumulated_content
-    ):
-        final_result["value"] = accumulated_content
-
     if blocks:
         merged_blocks = _merge_blocks(final_result.get("blocks"), blocks)
         if merged_blocks:
@@ -426,6 +447,16 @@ async def collect_completed_result(
             normalized_status.lower(),
             subtask_id,
         )
+
+    if _is_blank_text_value(final_result.get("value")) and (
+        normalized_status == "COMPLETED" or accumulated_content.strip()
+    ):
+        text_value = (
+            accumulated_content
+            if accumulated_content.strip()
+            else _extract_text_value_from_blocks(final_result.get("blocks"))
+        )
+        final_result["value"] = text_value
 
     if normalized_status == "FAILED" and error_code:
         final_result["error_type"] = error_code
