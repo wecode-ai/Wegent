@@ -305,11 +305,12 @@ services:
       start_period: 10s
 
   knowledge_doc_converter:
-    build:
-      context: .
-      dockerfile: docker/knowledge_doc_converter/Dockerfile
+    image: ghcr.io/wecode-ai/wegent-knowledge-doc-converter:latest
+    pull_policy: ${DOCKER_PULL_POLICY:-always}
     container_name: wegent-knowledge-doc-converter
     restart: always
+    profiles:
+      - rag
     depends_on:
       redis:
         condition: service_healthy
