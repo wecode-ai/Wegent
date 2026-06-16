@@ -97,7 +97,6 @@ def test_get_user_personal_task_groups_lite_uses_personal_query_without_group_id
         skip=50,
         limit=25,
         extra_limit=200,
-        project_scope="all",
     )
     mock_filter.assert_called_once_with(paged_tasks, set(), ["online"])
     mock_build.assert_called_once_with(db, paged_tasks, 7)

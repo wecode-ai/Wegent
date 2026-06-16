@@ -230,7 +230,6 @@ def get_personal_tasks_lite(
         limit=limit,
         types=type_list,
         client_origin=client_origin,
-        project_scope="standalone",
     )
     return {"total": total, "items": items}
 
@@ -262,7 +261,6 @@ def get_personal_task_groups_lite(
         limit=limit,
         types=type_list,
         client_origin=client_origin,
-        project_scope="standalone",
     )
     return {"total": total, "items": items}
 

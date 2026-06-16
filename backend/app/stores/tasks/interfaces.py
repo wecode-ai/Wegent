@@ -327,7 +327,6 @@ class TaskStore(Protocol):
         limit: int,
         extra_limit: int,
         client_origin: Optional[str] = None,
-        project_scope: Literal["all", "standalone"] = "all",
     ) -> tuple[list[int], int]: ...
 
     def list_group_task_ids_for_accessible_user(

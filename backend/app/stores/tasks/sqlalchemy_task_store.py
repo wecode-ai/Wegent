@@ -78,31 +78,6 @@ _OWNED_IDS_SQL = text(
 """
 )
 
-_PERSONAL_COUNT_SQL = text(
-    """
-    SELECT COUNT(*)
-    FROM tasks k
-    WHERE k.kind = 'Task'
-    AND k.is_active = :is_active
-    AND k.namespace != 'system'
-    AND k.user_id = :user_id
-    AND k.is_group_chat = 0
-"""
-)
-
-_PERSONAL_COUNT_BY_ORIGIN_SQL = text(
-    """
-    SELECT COUNT(*)
-    FROM tasks k
-    WHERE k.kind = 'Task'
-    AND k.is_active = :is_active
-    AND k.namespace != 'system'
-    AND k.user_id = :user_id
-    AND k.is_group_chat = 0
-    AND k.client_origin = :client_origin
-"""
-)
-
 _PERSONAL_STANDALONE_COUNT_SQL = text(
     """
     SELECT COUNT(*)
@@ -127,35 +102,6 @@ _PERSONAL_STANDALONE_COUNT_BY_ORIGIN_SQL = text(
     AND k.is_group_chat = 0
     AND k.client_origin = :client_origin
     AND k.project_id = 0
-"""
-)
-
-_PERSONAL_IDS_SQL = text(
-    """
-    SELECT k.id, k.created_at
-    FROM tasks k
-    WHERE k.kind = 'Task'
-    AND k.is_active = :is_active
-    AND k.namespace != 'system'
-    AND k.user_id = :user_id
-    AND k.is_group_chat = 0
-    ORDER BY k.created_at DESC
-    LIMIT :limit OFFSET :skip
-"""
-)
-
-_PERSONAL_IDS_BY_ORIGIN_SQL = text(
-    """
-    SELECT k.id, k.created_at
-    FROM tasks k
-    WHERE k.kind = 'Task'
-    AND k.is_active = :is_active
-    AND k.namespace != 'system'
-    AND k.user_id = :user_id
-    AND k.is_group_chat = 0
-    AND k.client_origin = :client_origin
-    ORDER BY k.created_at DESC
-    LIMIT :limit OFFSET :skip
 """
 )
 
@@ -978,26 +924,17 @@ class SqlAlchemyTaskStore:
         limit: int,
         extra_limit: int,
         client_origin: Optional[str] = None,
-        project_scope: Literal["all", "standalone"] = "all",
     ) -> tuple[list[int], int]:
-        if project_scope == "standalone":
-            count_sql = (
-                _PERSONAL_STANDALONE_COUNT_BY_ORIGIN_SQL
-                if client_origin
-                else _PERSONAL_STANDALONE_COUNT_SQL
-            )
-            ids_sql = (
-                _PERSONAL_STANDALONE_IDS_BY_ORIGIN_SQL
-                if client_origin
-                else _PERSONAL_STANDALONE_IDS_SQL
-            )
-        else:
-            count_sql = (
-                _PERSONAL_COUNT_BY_ORIGIN_SQL if client_origin else _PERSONAL_COUNT_SQL
-            )
-            ids_sql = (
-                _PERSONAL_IDS_BY_ORIGIN_SQL if client_origin else _PERSONAL_IDS_SQL
-            )
+        count_sql = (
+            _PERSONAL_STANDALONE_COUNT_BY_ORIGIN_SQL
+            if client_origin
+            else _PERSONAL_STANDALONE_COUNT_SQL
+        )
+        ids_sql = (
+            _PERSONAL_STANDALONE_IDS_BY_ORIGIN_SQL
+            if client_origin
+            else _PERSONAL_STANDALONE_IDS_SQL
+        )
         params: dict[str, object] = {
             "user_id": user_id,
             "is_active": TaskResource.STATE_ACTIVE,

@@ -5,7 +5,7 @@
 """Task query methods."""
 
 import logging
-from typing import Any, Dict, List, Literal, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -137,7 +137,6 @@ class TaskQueryMixin:
         limit: int = 50,
         types: List[str] = None,
         client_origin: Optional[str] = None,
-        project_scope: Literal["all", "standalone"] = "all",
     ) -> Tuple[List[Dict[str, Any]], int]:
         """
         Get user's personal (non-group-chat) task list with pagination.
@@ -157,9 +156,7 @@ class TaskQueryMixin:
         }
         if client_origin:
             query_kwargs["client_origin"] = client_origin
-        task_ids, total_personal = get_personal_task_ids_and_total(
-            db, project_scope=project_scope, **query_kwargs
-        )
+        task_ids, total_personal = get_personal_task_ids_and_total(db, **query_kwargs)
 
         if not task_ids:
             return [], total_personal
@@ -181,7 +178,6 @@ class TaskQueryMixin:
         limit: int = 50,
         types: List[str] = None,
         client_origin: Optional[str] = None,
-        project_scope: Literal["all", "standalone"] = "all",
     ) -> Tuple[List[Dict[str, Any]], int]:
         """
         Get user's personal task page grouped by device or team.
@@ -200,9 +196,7 @@ class TaskQueryMixin:
         }
         if client_origin:
             query_kwargs["client_origin"] = client_origin
-        task_ids, total_personal = get_personal_task_ids_and_total(
-            db, project_scope=project_scope, **query_kwargs
-        )
+        task_ids, total_personal = get_personal_task_ids_and_total(db, **query_kwargs)
 
         if not task_ids:
             return [], total_personal

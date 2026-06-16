@@ -332,7 +332,7 @@ def test_list_personal_task_ids_filters_client_origin(test_db: Session) -> None:
     assert total == 1
 
 
-def test_list_personal_task_ids_standalone_scope_returns_projectless_tasks(
+def test_list_personal_task_ids_returns_projectless_tasks(
     test_db: Session,
 ) -> None:
     store = SqlAlchemyTaskStore()
@@ -363,14 +363,13 @@ def test_list_personal_task_ids_standalone_scope_returns_projectless_tasks(
         limit=10,
         extra_limit=0,
         client_origin=CLIENT_ORIGIN_WEWORK,
-        project_scope="standalone",
     )
 
     assert set(task_ids) == {standalone_task.id, stale_project_task.id}
     assert total == 2
 
 
-def test_list_personal_task_ids_standalone_scope_does_not_filter_project_labels(
+def test_list_personal_task_ids_does_not_filter_project_labels(
     test_db: Session,
 ) -> None:
     store = SqlAlchemyTaskStore()
@@ -395,7 +394,6 @@ def test_list_personal_task_ids_standalone_scope_does_not_filter_project_labels(
         limit=10,
         extra_limit=0,
         client_origin=CLIENT_ORIGIN_WEWORK,
-        project_scope="standalone",
     )
 
     assert set(task_ids) == {standalone_task.id, stale_project_task.id}
