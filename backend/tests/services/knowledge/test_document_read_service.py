@@ -192,3 +192,70 @@ class TestDocumentReadService:
 
         assert results[0]["id"] == 11
         mock_persist.assert_not_called()
+
+    def test_read_documents_prefers_converted_attachment_content(self) -> None:
+        """Converted Markdown is preferred over the original attachment's text."""
+        db = MagicMock()
+        documents = {
+            11: SimpleNamespace(
+                id=11,
+                name="doc-11",
+                attachment_id=101,
+                kind_id=1,
+                converted_attachment_id=201,
+            ),
+        }
+        attachments = {
+            101: SimpleNamespace(id=101, extracted_text="ORIGINAL_PDF_TEXT"),
+            201: SimpleNamespace(id=201, extracted_text="# Converted Markdown"),
+        }
+
+        with (
+            patch.object(self.service, "_load_documents", return_value=documents),
+            patch.object(
+                self.service,
+                "_load_attachment_contexts",
+                return_value=attachments,
+            ),
+        ):
+            results = self.service.read_documents(
+                db=db,
+                document_ids=[11],
+                knowledge_base_ids=[1],
+            )
+
+        assert results[0]["id"] == 11
+        assert results[0]["content"] == "# Converted Markdown"
+        assert results[0]["total_length"] == len("# Converted Markdown")
+
+    def test_read_documents_falls_back_to_original_when_no_converted(self) -> None:
+        """Without a converted attachment, the original extracted_text is used."""
+        db = MagicMock()
+        documents = {
+            11: SimpleNamespace(
+                id=11,
+                name="doc-11",
+                attachment_id=101,
+                kind_id=1,
+                converted_attachment_id=None,
+            ),
+        }
+        attachments = {
+            101: SimpleNamespace(id=101, extracted_text="ORIGINAL_TEXT"),
+        }
+
+        with (
+            patch.object(self.service, "_load_documents", return_value=documents),
+            patch.object(
+                self.service,
+                "_load_attachment_contexts",
+                return_value=attachments,
+            ),
+        ):
+            results = self.service.read_documents(
+                db=db,
+                document_ids=[11],
+                knowledge_base_ids=[1],
+            )
+
+        assert results[0]["content"] == "ORIGINAL_TEXT"

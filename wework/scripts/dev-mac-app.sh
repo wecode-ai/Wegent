@@ -52,6 +52,12 @@ printf '{
   "build": {
     "devUrl": "http://localhost:%s",
     "beforeDevCommand": "pnpm exec vite --host 0.0.0.0 --port %s"
+  },
+  "bundle": {
+    "icon": [
+      "icons/icon-dev.icns",
+      "icons/icon.png"
+    ]
   }
 }
 ' "$WEWORK_PORT" "$WEWORK_PORT" > "$TAURI_DEV_CONFIG"

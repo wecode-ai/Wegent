@@ -590,22 +590,19 @@ def mark_document_conversion_succeeded(
 ) -> bool:
     """Transition CONVERTING -> QUEUED after successful conversion.
 
-    When conversion metadata is provided, also updates the document's
-    file_extension, name, and file_size to reflect the converted format.
-    This ensures subsequent re-index or stale-recovery routes the document
-    directly to index_document_task instead of convert_document_task.
+    NOTE: converted_extension, converted_name, converted_file_size parameters
+    are kept for backward compatibility but should no longer be passed by callers.
+    Document metadata (name, file_extension, file_size) now preserves original
+    values to ensure source file downloadability. The converted content is stored
+    in a separate attachment referenced by source_config["converted_attachment_id"].
     """
     update_payload = {
         KnowledgeDocument.index_status: DocumentIndexStatus.QUEUED,
         KnowledgeDocument.updated_at: _utcnow(),
     }
-
-    if converted_extension is not None:
-        update_payload[KnowledgeDocument.file_extension] = converted_extension
-    if converted_name is not None:
-        update_payload[KnowledgeDocument.name] = converted_name
-    if converted_file_size is not None:
-        update_payload[KnowledgeDocument.file_size] = converted_file_size
+    # No longer update file_extension / name / file_size.
+    # These fields keep their original file values so users can download the source document.
+    # Converted content is referenced via source_config["converted_attachment_id"].
 
     updated = (
         db.query(KnowledgeDocument)

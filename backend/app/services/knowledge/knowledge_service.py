@@ -8,7 +8,7 @@ Knowledge base and document service using kinds table.
 
 import asyncio
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Any, Optional
 
 from sqlalchemy import and_, case, func
 from sqlalchemy.orm import Session
@@ -71,6 +71,15 @@ def _build_attachment_filename(name: str, file_extension: str) -> str:
     if name.lower().endswith(suffix.lower()):
         return name
     return f"{name}{suffix}"
+
+
+def _to_json_dict(value: Any) -> Optional[dict[str, Any]]:
+    """Convert model-like values to plain JSON dictionaries for CRD persistence."""
+    if value is None:
+        return None
+    if hasattr(value, "model_dump"):
+        return value.model_dump(mode="json")
+    return dict(value)
 
 
 def _get_delete_gateway():
@@ -238,7 +247,7 @@ class KnowledgeService:
             "description": data.description or "",
             "kbType": data.kb_type
             or "notebook",  # Default to 'notebook' if not provided
-            "retrievalConfig": data.retrieval_config,
+            "retrievalConfig": _to_json_dict(data.retrieval_config),
             "summaryEnabled": data.summary_enabled,
         }
         # Add summaryModelRef if provided
@@ -1355,6 +1364,12 @@ class KnowledgeService:
         doc_ref = str(doc.id)  # document_id is used as doc_ref in RAG indexing
         kind_id = doc.kind_id
         attachment_id = doc.attachment_id
+        # Capture converted attachment ID before deleting the document row
+        converted_attachment_id = getattr(doc, "converted_attachment_id", None)
+        # Use document owner's user_id for context deletion, since delete_context
+        # enforces ownership filtering. A non-owner requester (e.g., admin/group
+        # manager) would cause the deletion to silently fail and leave orphaned records.
+        context_owner_user_id = doc.user_id
 
         # Physically delete document from database
         db.delete(doc)
@@ -1429,7 +1444,7 @@ class KnowledgeService:
                 deleted = context_service.delete_context(
                     db=db,
                     context_id=attachment_id,
-                    user_id=user_id,
+                    user_id=context_owner_user_id,
                 )
                 if deleted:
                     logger.info(
@@ -1443,6 +1458,29 @@ class KnowledgeService:
                 # Log error but don't fail the document deletion
                 logger.error(
                     f"Failed to delete attachment context {attachment_id}: {str(e)}",
+                    exc_info=True,
+                )
+
+        # Delete converted attachment if exists
+        if converted_attachment_id:
+            try:
+                deleted = context_service.delete_context(
+                    db=db,
+                    context_id=converted_attachment_id,
+                    user_id=context_owner_user_id,
+                )
+                if deleted:
+                    logger.info(
+                        f"Deleted converted attachment context {converted_attachment_id} for document {document_id}"
+                    )
+                else:
+                    logger.warning(
+                        f"Failed to delete converted attachment context {converted_attachment_id} for document {document_id}"
+                    )
+            except Exception as e:
+                # Log error but don't fail the document deletion
+                logger.error(
+                    f"Failed to delete converted attachment context {converted_attachment_id}: {str(e)}",
                     exc_info=True,
                 )
 
