@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from sqlalchemy.exc import OperationalError
 
 from app.api.ws import device_namespace
 from app.core.shutdown import shutdown_manager
@@ -104,3 +105,40 @@ async def test_connect_logs_resolved_client_ip_and_forwarding_context(
         "x_forwarded_for=203.0.113.9, 10.0.0.2 x_real_ip=198.51.100.10, "
         "awaiting registration"
     ) in caplog.messages
+
+
+@pytest.mark.asyncio
+async def test_connect_rejects_api_key_when_auth_storage_unavailable(
+    monkeypatch,
+    caplog,
+):
+    namespace = device_namespace.DeviceNamespace()
+    auth_error = OperationalError(
+        "SELECT * FROM api_keys",
+        {},
+        RuntimeError("connection refused"),
+    )
+    monkeypatch.setattr(device_namespace, "is_api_key", lambda token: True)
+    monkeypatch.setattr(
+        device_namespace,
+        "run_sync_in_executor",
+        AsyncMock(side_effect=auth_error),
+    )
+    monkeypatch.setattr(namespace, "save_session", AsyncMock())
+    monkeypatch.setattr(namespace, "enter_room", AsyncMock())
+
+    with caplog.at_level(logging.ERROR, logger=device_namespace.logger.name):
+        with pytest.raises(ConnectionRefusedError) as exc_info:
+            await namespace.on_connect(
+                "sid-1",
+                {"REMOTE_ADDR": "127.0.0.1"},
+                {"token": "wg-api-key"},
+            )
+
+    assert str(exc_info.value) == "Authentication service unavailable"
+    assert (
+        "[Device WS] API key authentication storage unavailable sid=sid-1: "
+        "OperationalError"
+    ) in caplog.messages
+    namespace.save_session.assert_not_awaited()
+    namespace.enter_room.assert_not_awaited()

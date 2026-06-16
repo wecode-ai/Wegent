@@ -91,3 +91,9 @@ docker buildx build --network=host ${PUSH_FLAG} --platform linux/amd64,linux/arm
 
 # Build chat shell image
 docker buildx build --network=host ${PUSH_FLAG} --platform linux/amd64,linux/arm64 -t ghcr.io/wecode-ai/wegent-chat-shell:${VERSION} -f docker/chat_shell/Dockerfile .
+
+# Build knowledge runtime image
+docker buildx build --network=host ${PUSH_FLAG} --platform linux/amd64,linux/arm64 -t ghcr.io/wecode-ai/wegent-knowledge-runtime:${VERSION} -f docker/knowledge_runtime/Dockerfile .
+
+# Build knowledge document converter image
+docker buildx build --network=host ${PUSH_FLAG} --platform linux/amd64,linux/arm64 -t ghcr.io/wecode-ai/wegent-knowledge-doc-converter:${VERSION} -f docker/knowledge_doc_converter/Dockerfile .

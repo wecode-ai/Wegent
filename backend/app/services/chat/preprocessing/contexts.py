@@ -21,11 +21,11 @@ from typing import Any, List, Optional
 
 from fastapi import HTTPException, status
 from langchain_core.tools import BaseTool
-from sqlalchemy import or_, select, update
+from sqlalchemy import or_, update
 from sqlalchemy.orm import Session
 
+import app.stores.tasks as task_stores
 from app.models.knowledge import KnowledgeDocument
-from app.models.subtask import Subtask
 from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
 from app.services.context import context_service
 from app.services.context.context_service import VideoAttachmentResolutionError
@@ -584,10 +584,10 @@ def _validate_attachment_ownership(
 
     # Add cross-subtask validation if task_id is provided
     if task_id:
-        task_subtask_ids = (
-            select(Subtask.id)
-            .filter(Subtask.task_id == task_id, Subtask.user_id == user_id)
-            .scalar_subquery()
+        task_subtask_ids = task_stores.subtask_store.list_ids_by_task(
+            db,
+            task_id=task_id,
+            user_id=user_id,
         )
         filters.append(
             or_(
@@ -1073,8 +1073,9 @@ def _batch_update_and_insert_contexts(
 
         # Add task-level validation if task_id is provided
         if task_id:
-            task_subtask_ids = (
-                select(Subtask.id).filter(Subtask.task_id == task_id).scalar_subquery()
+            task_subtask_ids = task_stores.subtask_store.list_ids_by_task(
+                db,
+                task_id=task_id,
             )
             update_filters.append(
                 or_(

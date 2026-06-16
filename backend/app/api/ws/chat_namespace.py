@@ -23,6 +23,7 @@ from typing import Any, Dict, Optional
 import socketio
 from sqlalchemy.orm import Session
 
+import app.stores.tasks as task_stores
 from app.api.ws.connection_utils import enter_connect_room, save_connect_session
 from app.api.ws.context_decorators import auto_task_context
 from app.api.ws.decorators import trace_websocket_event
@@ -70,7 +71,6 @@ from app.services.chat.rag import process_context_and_rag
 from app.services.chat.storage import session_manager
 from app.services.chat.storage.db import get_db_session, run_sync_in_executor
 from app.services.chat.trigger import trigger_ai_response_unified
-from app.stores.tasks import subtask_store, task_access_store, task_store
 from app.utils.prompt_utils import extract_display_prompt
 from shared.telemetry.context import (
     set_request_context,
@@ -198,7 +198,9 @@ class ChatNamespace(socketio.AsyncNamespace):
                     error="Guidance is only supported for Chat Shell tasks"
                 ).model_dump()
 
-            subtask = subtask_store.get_by_id(db, subtask_id=payload.subtask_id)
+            subtask = task_stores.subtask_store.get_by_id(
+                db, subtask_id=payload.subtask_id
+            )
             if subtask and (
                 subtask.task_id != payload.task_id or subtask.team_id != payload.team_id
             ):
@@ -558,6 +560,7 @@ class ChatNamespace(socketio.AsyncNamespace):
         )
 
         session = await self.get_session(sid)
+        effective_message = payload.message
         user_id = session.get("user_id")
         user_name = session.get("user_name")
         auth_token = session.get("auth_token", "")  # Get original JWT token
@@ -569,6 +572,7 @@ class ChatNamespace(socketio.AsyncNamespace):
 
         db = SessionLocal()
         pipeline_info = None
+        pipeline_context_passing = None
         try:
             # Get user
             user = db.query(User).filter(User.id == user_id).first()
@@ -600,38 +604,21 @@ class ChatNamespace(socketio.AsyncNamespace):
             if team_crd.spec.collaborationModel == "pipeline":
                 from app.services.adapters.pipeline_stage import pipeline_stage_service
 
-                # pipeline:confirm only updates currentStage (+1)
+                # pipeline:confirm uses the same stage-advance and send path as auto advance.
                 if payload.action == "pipeline:confirm":
-                    confirm_result = pipeline_stage_service.pipeline_confirm(
+                    from app.services.chat.pipeline_advance import (
+                        advance_pipeline_stage_and_send,
+                    )
+
+                    return await advance_pipeline_stage_and_send(
                         db=db,
+                        user=user,
+                        team=team,
                         task_id=payload.task_id,
-                        user_id=user_id,
-                    )
-
-                    if not confirm_result.get("success"):
-                        logger.error(
-                            f"[WS] pipeline:confirm failed: {confirm_result.get('error')}"
-                        )
-                        return {
-                            "error": confirm_result.get(
-                                "error", "Pipeline confirm failed"
-                            )
-                        }
-
-                    # Emit task:status event to notify frontend that task status changed
-                    # This triggers PipelineStageIndicator to re-fetch pipeline stage info
-                    task_room = f"task:{payload.task_id}"
-                    await self.emit(
-                        ServerEvents.TASK_STATUS,
-                        {
-                            "task_id": payload.task_id,
-                            "status": "RUNNING",
-                            "progress": 0,
-                        },
-                        room=task_room,
-                    )
-                    logger.info(
-                        f"[WS] pipeline:confirm emitted task:status PENDING for task {payload.task_id}"
+                        message=effective_message,
+                        payload=payload,
+                        skip_sid=sid,
+                        auth_token=auth_token,
                     )
 
                 # Get pipeline info (unified logic for all pipeline operations)
@@ -703,7 +690,7 @@ class ChatNamespace(socketio.AsyncNamespace):
             # Get task JSON for group chat check
             task_json = {}
             if payload.task_id:
-                existing_task = task_store.get_regular_active_task(
+                existing_task = task_stores.task_store.get_regular_active_task(
                     db,
                     task_id=payload.task_id,
                 )
@@ -716,7 +703,7 @@ class ChatNamespace(socketio.AsyncNamespace):
             team_name = team.name
             should_trigger_ai = should_trigger_ai_response(
                 task_json,
-                payload.message,
+                effective_message,
                 team_name,
                 request_is_group_chat=payload.is_group_chat,
             )
@@ -730,7 +717,7 @@ class ChatNamespace(socketio.AsyncNamespace):
             # Process context metadata and RAG based on chat version
             # Uses service module for RAG processing
             _, rag_prompt = await process_context_and_rag(
-                message=payload.message,
+                message=effective_message,
                 contexts=payload.contexts,
                 should_trigger_ai=should_trigger_ai,
                 user_id=user_id,
@@ -785,7 +772,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                 previous_bot_id = pipeline_info.get("current_stage_bot_id")
 
             params = TaskCreationParams(
-                message=payload.message,
+                message=effective_message,
                 title=payload.title,
                 model_id=payload.force_override_bot_model,
                 force_override_bot_model=payload.force_override_bot_model is not None,
@@ -805,6 +792,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                 # TaskRequestBuilder will compare this with current bot_id to determine
                 # if a new session is needed (different bot = new session)
                 previous_bot_id=previous_bot_id,
+                pipeline_context_passing=pipeline_context_passing,
                 skip_status_check=payload.action == "pipeline:confirm",
                 device_id=payload.device_id,
                 project_id=payload.project_id,
@@ -817,7 +805,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                 db=db,
                 user=user,
                 team=team,
-                message=payload.message,
+                message=effective_message,
                 params=params,
                 task_id=payload.task_id,
                 should_trigger_ai=should_trigger_ai,
@@ -845,7 +833,7 @@ class ChatNamespace(socketio.AsyncNamespace):
             ):
                 if task_crd.metadata.labels.get("userInteracted") != "true":
                     task_crd.metadata.labels["userInteracted"] = "true"
-                    task_store.update_json(
+                    task_stores.task_store.update_json(
                         db, task=task, payload=task_crd.model_dump(mode="json")
                     )
                     db.commit()
@@ -901,7 +889,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                     db=db,
                     user_subtask=user_subtask,
                     task_id=task.id,
-                    message=payload.message,
+                    message=effective_message,
                     user_id=user_id,
                     user_name=user_name,
                     attachment_id=(
@@ -964,7 +952,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                             assistant_subtask=assistant_subtask,
                             team=team,
                             user=user,
-                            message=payload.message,  # Original message
+                            message=effective_message,
                             payload=payload,
                             task_room=task_room,
                             device_id=device_id,
@@ -1711,7 +1699,7 @@ def _prepare_chat_retry_dispatch(
             labels["forceOverrideBotModelType"] = model_type
         else:
             labels.pop("forceOverrideBotModelType", None)
-        task_store.update_json(db, task=task, payload=task_json)
+        task_stores.task_store.update_json(db, task=task, payload=task_json)
         db.commit()
         db.refresh(task)
         logger.info(
@@ -1732,7 +1720,7 @@ def _prepare_chat_retry_dispatch(
                 del labels[key]
                 changed = True
         if changed:
-            task_store.update_json(db, task=task, payload=task_json)
+            task_stores.task_store.update_json(db, task=task, payload=task_json)
             db.commit()
             db.refresh(task)
             logger.info("[WS] chat:retry cleared stale model override labels")
@@ -1827,7 +1815,7 @@ def _fetch_subtasks_for_task_join(
             # Incremental sync: only fetch messages after the cursor
             from app.services.context import context_service
 
-            subtasks = subtask_store.list_after_message_id(
+            subtasks = task_stores.subtask_store.list_after_message_id(
                 db,
                 task_id=task_id,
                 after_message_id=after_message_id,
@@ -1895,7 +1883,7 @@ def _get_subtask_for_cancel(subtask_id: int) -> Optional[dict]:
         Dict with subtask info or None if not found
     """
     with get_db_session() as db:
-        subtask = subtask_store.get_by_id(db, subtask_id=subtask_id)
+        subtask = task_stores.subtask_store.get_by_id(db, subtask_id=subtask_id)
 
         if not subtask:
             return None
@@ -1911,7 +1899,7 @@ def _get_subtask_for_cancel(subtask_id: int) -> Optional[dict]:
 def _subtask_belongs_to_task(subtask_id: int, task_id: int) -> bool:
     """Return True when *subtask_id* belongs to *task_id*."""
     with get_db_session() as db:
-        subtask = subtask_store.get_basic_by_id(db, subtask_id=subtask_id)
+        subtask = task_stores.subtask_store.get_basic_by_id(db, subtask_id=subtask_id)
         return subtask is not None and subtask.task_id == task_id
 
 
@@ -1920,7 +1908,7 @@ def _mark_subtask_and_task_cancelled(
 ) -> None:
     """Force mark subtask and task as CANCELLED."""
     with get_db_session() as db:
-        subtask = subtask_store.get_by_id(db, subtask_id=subtask_id)
+        subtask = task_stores.subtask_store.get_by_id(db, subtask_id=subtask_id)
         if not subtask:
             return
 
@@ -1928,7 +1916,9 @@ def _mark_subtask_and_task_cancelled(
         update_subtask_on_cancel(db, subtask, result=result)
 
         # Force task to CANCELLED
-        task = task_store.get_regular_active_task(db, task_id=subtask.task_id)
+        task = task_stores.task_store.get_regular_active_task(
+            db, task_id=subtask.task_id
+        )
         if not task or not task.json:
             return
 
@@ -1939,7 +1929,9 @@ def _mark_subtask_and_task_cancelled(
             task_crd.status.updatedAt = datetime.now()
             task_crd.status.completedAt = datetime.now()
 
-        task_store.update_json(db, task=task, payload=task_crd.model_dump(mode="json"))
+        task_stores.task_store.update_json(
+            db, task=task, payload=task_crd.model_dump(mode="json")
+        )
 
 
 def _get_device_info_for_close_session(task_id: int, user_id: int) -> Optional[dict]:
@@ -1955,18 +1947,20 @@ def _get_device_info_for_close_session(task_id: int, user_id: int) -> Optional[d
     """
     with get_db_session() as db:
         # Get the task to verify it exists
-        task = task_store.get_regular_active_task(
+        task = task_stores.task_store.get_regular_active_task(
             db,
             task_id=task_id,
         )
 
         if not task:
             return {"error": "Task not found"}
-        if not task_access_store.is_member(db, task_id=task_id, user_id=user_id):
+        if not task_stores.task_access_store.is_member(
+            db, task_id=task_id, user_id=user_id
+        ):
             return {"error": "Access denied"}
 
         # Get the latest subtask with device executor
-        subtask = subtask_store.get_latest_device_executor_for_task(
+        subtask = task_stores.subtask_store.get_latest_device_executor_for_task(
             db,
             task_id=task_id,
             owner_user_id=task.user_id,
@@ -1993,7 +1987,7 @@ def _fetch_history_messages(task_id: int, after_message_id: int) -> list:
         List of message dicts
     """
     with get_db_session() as db:
-        subtasks = subtask_store.list_after_message_id(
+        subtasks = task_stores.subtask_store.list_after_message_id(
             db,
             task_id=task_id,
             after_message_id=after_message_id,

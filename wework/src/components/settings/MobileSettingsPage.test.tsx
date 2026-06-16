@@ -12,32 +12,20 @@ describe('MobileSettingsPage', () => {
 
     render(
       <AppearanceProvider>
-        <MobileSettingsPage
-          onBack={onBack}
-          onOpenPlugins={onOpenPlugins}
-        />
-      </AppearanceProvider>,
+        <MobileSettingsPage onBack={onBack} onOpenPlugins={onOpenPlugins} />
+      </AppearanceProvider>
     )
 
     expect(screen.getByTestId('mobile-settings-page')).toBeInTheDocument()
-    expect(screen.getByTestId('mobile-settings-appearance-button')).toHaveTextContent(
-      '外观',
-    )
-    expect(screen.getByTestId('mobile-settings-plugins-button')).toHaveTextContent(
-      '插件',
-    )
-    expect(screen.getByTestId('mobile-settings-personal-button')).toHaveTextContent(
-      '个人',
-    )
-    expect(screen.getByTestId('mobile-settings-worktrees-button')).toHaveTextContent(
-      '工作树',
-    )
+    expect(screen.getByTestId('mobile-settings-appearance-button')).toHaveTextContent('外观')
+    expect(screen.getByTestId('mobile-settings-plugins-button')).toHaveTextContent('插件')
+    expect(screen.getByTestId('mobile-settings-personal-button')).toHaveTextContent('个人')
+    expect(screen.getByTestId('mobile-settings-worktrees-button')).toHaveTextContent('工作树')
+    expect(screen.getByTestId('mobile-settings-skills-button')).toHaveTextContent('技能')
 
     await userEvent.click(screen.getByTestId('mobile-settings-personal-button'))
     expect(screen.getByTestId('mobile-personal-settings-page')).toBeInTheDocument()
-    expect(screen.getByTestId('mobile-settings-codex-auth-button')).toHaveTextContent(
-      'Codex 认证',
-    )
+    expect(screen.getByTestId('mobile-settings-codex-auth-button')).toHaveTextContent('Codex 认证')
 
     await userEvent.click(screen.getByTestId('mobile-personal-back-button'))
     expect(screen.getByTestId('mobile-settings-page')).toBeInTheDocument()
@@ -53,7 +41,7 @@ describe('MobileSettingsPage', () => {
     render(
       <AppearanceProvider>
         <MobileSettingsPage onBack={vi.fn()} />
-      </AppearanceProvider>,
+      </AppearanceProvider>
     )
 
     await userEvent.click(screen.getByTestId('mobile-settings-appearance-button'))

@@ -310,6 +310,7 @@ spec:
         name: developer-bot
         namespace: default
       prompt: ""
+      contextPassing: "previous_bot"
   collaborationModel: "pipeline"
 ```
 
@@ -329,6 +330,7 @@ spec:
 | `role` | string | 否 | 成员角色，如 `leader` |
 | `botRef` | object | 是 | Bot 引用 |
 | `prompt` | string | 否 | 成员特定的提示词 |
+| `contextPassing` | string | 否 | Pipeline 阶段完成后传给下一阶段的消息：`none`、`original_user`、`previous_bot`、`original_and_previous` |
 
 ### 协作模式
 

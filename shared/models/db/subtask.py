@@ -14,6 +14,7 @@ from sqlalchemy.sql import func
 
 from .base import Base
 from .enums import SubtaskRole, SubtaskStatus
+from .types import big_integer_id_type
 
 
 class Subtask(Base):
@@ -21,9 +22,9 @@ class Subtask(Base):
 
     __tablename__ = "subtasks"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(big_integer_id_type(), primary_key=True, autoincrement=True, index=True)
     user_id = Column(Integer, nullable=False)
-    task_id = Column(Integer, nullable=False)
+    task_id = Column(big_integer_id_type(), nullable=False)
     team_id = Column(Integer, nullable=False)
     title = Column(String(256), nullable=False)
     bot_ids = Column(JSON, nullable=False)
@@ -33,7 +34,7 @@ class Subtask(Base):
     executor_deleted_at = Column(Boolean, nullable=False, default=False)
     prompt = Column(Text)
     message_id = Column(Integer, nullable=False, default=1)
-    parent_id = Column(Integer, nullable=True)
+    parent_id = Column(big_integer_id_type(), nullable=True)
     status = Column(
         SQLEnum(SubtaskStatus), nullable=False, default=SubtaskStatus.PENDING
     )
@@ -55,7 +56,9 @@ class Subtask(Base):
     sender_user_id = Column(
         Integer, nullable=False, default=0
     )  # 0 for non-user senders
-    reply_to_subtask_id = Column(Integer, nullable=False, default=0)  # 0 for no reply
+    reply_to_subtask_id = Column(
+        big_integer_id_type(), nullable=False, default=0
+    )  # 0 for no reply
 
     # Relationship to SubtaskContext (no foreign key constraint, use primaryjoin)
     contexts = relationship(

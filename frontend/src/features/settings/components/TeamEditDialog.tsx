@@ -21,7 +21,13 @@ import type { SkillRefMeta } from '@/apis/bots'
 import { botApis } from '@/apis/bots'
 import { modelApis, type ModelTypeEnum, type UnifiedModel } from '@/apis/models'
 import { fetchUnifiedSkillsList, type UnifiedSkill } from '@/apis/skills'
-import { Bot, Team, TaskType, type KnowledgeBaseDefaultRef } from '@/types/api'
+import {
+  Bot,
+  Team,
+  TaskType,
+  type KnowledgeBaseDefaultRef,
+  type PipelineContextPassing,
+} from '@/types/api'
 import {
   TeamMode,
   getAllowedAgentsForTeamMode,
@@ -178,6 +184,9 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
 
   // Store requireConfirmation settings for pipeline mode (botId -> boolean)
   const [requireConfirmationMap, setRequireConfirmationMap] = useState<Record<number, boolean>>({})
+  const [contextPassingMap, setContextPassingMap] = useState<
+    Record<number, PipelineContextPassing>
+  >({})
 
   // Mode change confirmation dialog state
   const [modeChangeDialogVisible, setModeChangeDialogVisible] = useState(false)
@@ -323,12 +332,17 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       )
       // Initialize requireConfirmationMap from existing team data
       const confirmMap: Record<number, boolean> = {}
+      const passingMap: Record<number, PipelineContextPassing> = {}
       formTeam.bots.forEach(b => {
         if (b.requireConfirmation) {
           confirmMap[b.bot_id] = true
         }
+        if (b.contextPassing && b.contextPassing !== 'none') {
+          passingMap[b.bot_id] = b.contextPassing
+        }
       })
       setRequireConfirmationMap(confirmMap)
+      setContextPassingMap(passingMap)
       // Initialize requiresWorkspace from existing team data
       // Default to true for legacy data that doesn't have this field
       setRequiresWorkspace(formTeam.requires_workspace ?? true)
@@ -344,6 +358,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       setSelectedBotKeys([])
       setLeaderBotId(null)
       setRequireConfirmationMap({})
+      setContextPassingMap({})
       setSimpleExecutorMode('simple')
       setSimpleCustomShellName('')
       setSimpleBotName('')
@@ -468,6 +483,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     setLeaderBotId(null)
     setUnsavedPrompts({})
     setRequireConfirmationMap({})
+    setContextPassingMap({})
   }, [])
 
   // Change Mode with confirmation
@@ -828,6 +844,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
         role: id === leaderBotId ? 'leader' : undefined,
         // Include requireConfirmation for pipeline mode
         requireConfirmation: mode === 'pipeline' ? requireConfirmationMap[id] || false : undefined,
+        contextPassing: mode === 'pipeline' ? contextPassingMap[id] || 'none' : undefined,
       }
     })
 
@@ -1027,6 +1044,8 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                   groupName={groupName}
                   requireConfirmationMap={requireConfirmationMap}
                   setRequireConfirmationMap={setRequireConfirmationMap}
+                  contextPassingMap={contextPassingMap}
+                  setContextPassingMap={setContextPassingMap}
                   onEditBot={handleEditBot}
                   onCreateBot={handleCreateBot}
                   onCloneBot={handleCloneBot}

@@ -117,6 +117,45 @@ def test_get_basic_by_id_returns_subtask(test_db: Session) -> None:
     assert subtask.id == 11
 
 
+def test_get_cleanup_cursor_recent_start_reference_prefers_recent_created_at(
+    test_db: Session,
+) -> None:
+    store = SqlAlchemySubtaskStore()
+    threshold = datetime.now() - timedelta(days=7)
+    test_db.add(_task(14, owner_id=10))
+    old = _subtask(subtask_id=141, task_id=14, user_id=10, message_id=1)
+    old.created_at = threshold - timedelta(seconds=1)
+    later_recent = _subtask(subtask_id=143, task_id=14, user_id=10, message_id=3)
+    later_recent.created_at = threshold + timedelta(minutes=2)
+    first_recent = _subtask(subtask_id=142, task_id=14, user_id=10, message_id=2)
+    first_recent.created_at = threshold + timedelta(minutes=1)
+    test_db.add_all([old, later_recent, first_recent])
+    test_db.commit()
+
+    subtask = store.get_cleanup_cursor_recent_start_reference(
+        test_db,
+        recent_threshold=threshold,
+    )
+
+    assert subtask == first_recent
+
+
+def test_get_cleanup_cursor_latest_reference_uses_latest_subtask_id(
+    test_db: Session,
+) -> None:
+    store = SqlAlchemySubtaskStore()
+    test_db.add(_task(15, owner_id=10))
+    older = _subtask(subtask_id=151, task_id=15, user_id=10, message_id=1)
+    latest = _subtask(subtask_id=153, task_id=15, user_id=10, message_id=2)
+    middle = _subtask(subtask_id=152, task_id=15, user_id=10, message_id=3)
+    test_db.add_all([older, latest, middle])
+    test_db.commit()
+
+    subtask = store.get_cleanup_cursor_latest_reference(test_db)
+
+    assert subtask == latest
+
+
 def test_subtask_lookup_methods_filter_optional_owner_user_id(
     test_db: Session,
 ) -> None:

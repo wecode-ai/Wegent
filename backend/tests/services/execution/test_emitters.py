@@ -42,6 +42,28 @@ class TestWebSocketResultEmitter:
             assert call_kwargs["shell_type"] == "Chat"
 
     @pytest.mark.asyncio
+    async def test_emit_start_forwards_bot_name(self):
+        """START events should expose the current bot name to the frontend."""
+        from app.services.execution.emitters import WebSocketResultEmitter
+
+        with patch(
+            "app.services.chat.webpage_ws_chat_emitter.get_webpage_ws_emitter"
+        ) as mock_get:
+            mock_ws = AsyncMock()
+            mock_get.return_value = mock_ws
+
+            emitter = WebSocketResultEmitter(task_id=1, subtask_id=1)
+            await emitter.emit_start(
+                task_id=1,
+                subtask_id=1,
+                message_id=100,
+                data={"shell_type": "ClaudeCode", "bot_name": "pipeline-bot"},
+            )
+
+            call_kwargs = mock_ws.emit_chat_start.call_args[1]
+            assert call_kwargs["bot_name"] == "pipeline-bot"
+
+    @pytest.mark.asyncio
     async def test_emit_chunk(self):
         """Test emitting chunk event."""
         from app.services.execution.emitters import WebSocketResultEmitter

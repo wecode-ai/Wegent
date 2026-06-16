@@ -4,6 +4,7 @@
 
 """Tests for device config update settings."""
 
+import json
 import os
 from unittest.mock import patch
 
@@ -11,9 +12,11 @@ import pytest
 
 from executor.config.device_config import (
     DeviceConfig,
+    ExecutorMode,
     UpdateConfig,
     _apply_env_overrides,
     _create_default_config,
+    should_use_local_mode,
 )
 
 
@@ -205,6 +208,85 @@ class TestDeviceConfigWithUpdate:
 
         assert config.update.registry == "https://example.com/registry"
         assert config.update.registry_token == "my_token"
+
+
+class TestLocalModeDetection:
+    """Test cases for device config mode detection."""
+
+    def test_should_use_local_mode_reads_device_config_without_env(
+        self, tmp_path, monkeypatch
+    ):
+        """Device config should select local mode when EXECUTOR_MODE is unset."""
+        monkeypatch.delenv("EXECUTOR_MODE", raising=False)
+        config_path = tmp_path / "device-config.json"
+        config_path.write_text(
+            json.dumps(
+                {
+                    "mode": "local",
+                    "connection": {
+                        "backend_url": "https://wegent.example.com",
+                        "auth_token": "wg-token",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        assert should_use_local_mode(str(config_path)) is True
+
+    def test_should_use_local_mode_honors_docker_device_config_without_env(
+        self, tmp_path, monkeypatch
+    ):
+        """Device config should select docker mode when EXECUTOR_MODE is unset."""
+        monkeypatch.delenv("EXECUTOR_MODE", raising=False)
+        config_path = tmp_path / "device-config.json"
+        config_path.write_text(json.dumps({"mode": "docker"}), encoding="utf-8")
+
+        assert should_use_local_mode(str(config_path)) is False
+
+    def test_should_use_local_mode_env_overrides_device_config(
+        self, tmp_path, monkeypatch
+    ):
+        """EXECUTOR_MODE should take precedence over device config mode."""
+        monkeypatch.setenv("EXECUTOR_MODE", "local")
+        config_path = tmp_path / "device-config.json"
+        config_path.write_text(json.dumps({"mode": "docker"}), encoding="utf-8")
+
+        assert should_use_local_mode(str(config_path)) is True
+
+    def test_should_use_local_mode_env_docker_overrides_local_device_config(
+        self, tmp_path, monkeypatch
+    ):
+        """Non-local EXECUTOR_MODE should override a local device config mode."""
+        monkeypatch.setenv("EXECUTOR_MODE", "docker")
+        config_path = tmp_path / "device-config.json"
+        config_path.write_text(json.dumps({"mode": "local"}), encoding="utf-8")
+
+        assert should_use_local_mode(str(config_path)) is False
+
+
+class TestEnvOverridesForMode:
+    """Test cases for environment variable overrides for executor mode."""
+
+    def test_executor_mode_env_overrides_config_mode(self):
+        """EXECUTOR_MODE should override device config mode during load."""
+        config = DeviceConfig(mode=ExecutorMode.DOCKER.value)
+
+        with patch.dict(os.environ, {"EXECUTOR_MODE": "local"}):
+            updated_config, should_save = _apply_env_overrides(config)
+
+            assert updated_config.mode == ExecutorMode.LOCAL.value
+            assert should_save is False
+
+    def test_invalid_executor_mode_env_keeps_config_mode(self):
+        """Invalid EXECUTOR_MODE values should not overwrite config mode."""
+        config = DeviceConfig(mode=ExecutorMode.LOCAL.value)
+
+        with patch.dict(os.environ, {"EXECUTOR_MODE": "invalid"}):
+            updated_config, should_save = _apply_env_overrides(config)
+
+            assert updated_config.mode == ExecutorMode.LOCAL.value
+            assert should_save is False
 
 
 class TestEnvOverridesForUpdate:

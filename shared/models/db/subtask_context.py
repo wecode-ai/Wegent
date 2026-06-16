@@ -16,6 +16,7 @@ from sqlalchemy.sql import func
 
 from .base import Base
 from .enums import ContextStatus
+from .types import big_integer_id_type
 
 # Type adapters for cross-database compatibility (MySQL/SQLite)
 # Uses LONGBLOB for MySQL, LargeBinary for others (e.g., SQLite in tests)
@@ -39,7 +40,7 @@ class SubtaskContext(Base):
 
     # Reference to subtasks table (no foreign key constraint for flexibility)
     # 0 means unlinked, > 0 means linked to a subtask
-    subtask_id = Column(Integer, nullable=False, default=0, index=True)
+    subtask_id = Column(big_integer_id_type(), nullable=False, default=0, index=True)
 
     # User who created this context
     user_id = Column(Integer, nullable=False, index=True)
