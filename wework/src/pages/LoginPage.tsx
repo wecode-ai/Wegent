@@ -12,10 +12,10 @@ import { QrcodeLoginPage } from './QrcodeLoginPage'
 function getRedirectTarget(): string {
   const search = new URLSearchParams(window.location.search)
   const queryRedirect = sanitizeRedirectPath(search.get('redirect'), ['/login', '/login/oidc'])
-  const storedRedirect = sanitizeRedirectPath(
-    sessionStorage.getItem(POST_LOGIN_REDIRECT_KEY),
-    ['/login', '/login/oidc'],
-  )
+  const storedRedirect = sanitizeRedirectPath(sessionStorage.getItem(POST_LOGIN_REDIRECT_KEY), [
+    '/login',
+    '/login/oidc',
+  ])
   return queryRedirect || storedRedirect || '/'
 }
 
@@ -44,7 +44,7 @@ export function LoginPage() {
   const redirectTarget = getRedirectTarget()
   const showPasswordLogin = config.loginMode === 'password' || config.loginMode === 'all'
   const showOidcLogin = config.loginMode === 'oidc' || config.loginMode === 'all'
-  const showQrcodeOnlyLogin = isMobile || isTauri()
+  const showQrcodeOnlyLogin = config.loginMode !== 'password' && (isMobile || isTauri())
 
   useEffect(() => {
     if (!authLoading && user) {
@@ -59,7 +59,7 @@ export function LoginPage() {
       window.location.href = buildOidcLoginUrl(
         config.apiBaseUrl,
         redirectTarget,
-        config.appBasePath,
+        config.appBasePath
       )
     }
   }, [config.apiBaseUrl, config.appBasePath, config.loginMode, redirectTarget])
@@ -81,11 +81,7 @@ export function LoginPage() {
 
   function handleOidcLogin() {
     const redirect = sessionStorage.getItem(POST_LOGIN_REDIRECT_KEY) || redirectTarget
-    window.location.href = buildOidcLoginUrl(
-      config.apiBaseUrl,
-      redirect,
-      config.appBasePath,
-    )
+    window.location.href = buildOidcLoginUrl(config.apiBaseUrl, redirect, config.appBasePath)
   }
 
   if (showQrcodeOnlyLogin) {

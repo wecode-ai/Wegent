@@ -628,6 +628,21 @@ TURN_FILE_CHANGES_REVERT_COMMAND = (
     f"python3 -c {shlex.quote(TURN_FILE_CHANGES_SCRIPT)} revert"
 )
 
+OPEN_TERMINAL_COMMAND = (
+    "sh -c "
+    "'target=${1:-$PWD}; "
+    'case "$(uname -s)" in '
+    'Darwin) open -a Terminal "$target" ;; '
+    "Linux) "
+    "if command -v x-terminal-emulator >/dev/null 2>&1; then "
+    'x-terminal-emulator --working-directory="$target" >/dev/null 2>&1 & '
+    "elif command -v gnome-terminal >/dev/null 2>&1; then "
+    'gnome-terminal --working-directory="$target" >/dev/null 2>&1 & '
+    'else echo "No supported graphical terminal found" >&2; exit 69; fi ;; '
+    '*) echo "Opening a graphical terminal is unsupported on this device" >&2; exit 69 ;; '
+    "esac' --"
+)
+
 
 DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
     "pwd": LocalDeviceCommandDefinition(command="pwd"),
@@ -709,6 +724,7 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
         command=SETUP_SHARED_SKILLS_COMMAND,
         post_processor="json",
     ),
+    "open_terminal": LocalDeviceCommandDefinition(command=OPEN_TERMINAL_COMMAND),
     "sync_runtime_auth_file": LocalDeviceCommandDefinition(
         command=SYNC_RUNTIME_AUTH_FILE_COMMAND,
         post_processor="json",
