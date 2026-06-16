@@ -46,6 +46,7 @@ import { MoveDocumentDialog } from './MoveDocumentDialog'
 import { TransferToKbDialog } from './transfer-to-kb-dialog'
 import { useColumnResize } from '../hooks/useColumnResize'
 import { Pagination } from '@/components/ui/pagination'
+import { listDocuments } from '@/apis/knowledge'
 import { toast } from '@/hooks/use-toast'
 import type {
   KnowledgeBase,
@@ -70,15 +71,21 @@ import {
 /**
  * Inner component that uses useSearchParams (must be inside Suspense boundary).
  * Reads the ?doc= URL parameter and auto-opens the matching document.
+ * In paginated mode, falls back to an unpaginated API call to find documents
+ * that may not be on the current page.
  */
 function DocAutoOpener({
   documents,
   loading,
   onOpen,
+  knowledgeBaseId,
+  paginationEnabled,
 }: {
   documents: KnowledgeDocument[]
   loading: boolean
   onOpen: (doc: KnowledgeDocument) => void
+  knowledgeBaseId: number
+  paginationEnabled: boolean
 }) {
   const searchParams = useSearchParams()
   const router = useRouter()
@@ -86,13 +93,13 @@ function DocAutoOpener({
   const [done, setDone] = useState(false)
 
   useEffect(() => {
-    if (done || loading || documents.length === 0) return
+    if (done || loading) return
     const docParam = searchParams.get('doc')
     if (!docParam) {
       setDone(true)
       return
     }
-    // Find document by name (exact match)
+    // Try to find document in current page
     const targetDoc = documents.find(doc => doc.name === docParam)
     if (targetDoc) {
       onOpen(targetDoc)
@@ -101,9 +108,50 @@ function DocAutoOpener({
       params.delete('doc')
       const newSearch = params.toString()
       router.replace(pathname + (newSearch ? `?${newSearch}` : ''), { scroll: false })
+      setDone(true)
+      return
     }
+
+    // In paginated mode, the document might be on a different page.
+    // Search across all documents via an unpaginated API call.
+    if (paginationEnabled && documents.length > 0) {
+      let cancelled = false
+      ;(async () => {
+        try {
+          // Fetch all documents without pagination to find the target
+          const response = await listDocuments(knowledgeBaseId, { limit: 200, offset: 0 })
+          if (cancelled) return
+          const found = response.items.find(doc => doc.name === docParam)
+          if (found) {
+            onOpen(found)
+            const params = new URLSearchParams(searchParams.toString())
+            params.delete('doc')
+            const newSearch = params.toString()
+            router.replace(pathname + (newSearch ? `?${newSearch}` : ''), { scroll: false })
+          }
+        } catch {
+          // Silently ignore - auto-open is best-effort
+        } finally {
+          if (!cancelled) setDone(true)
+        }
+      })()
+      return () => {
+        cancelled = true
+      }
+    }
+
     setDone(true)
-  }, [done, loading, documents, searchParams, onOpen, router, pathname])
+  }, [
+    done,
+    loading,
+    documents,
+    searchParams,
+    onOpen,
+    router,
+    pathname,
+    paginationEnabled,
+    knowledgeBaseId,
+  ])
 
   return null
 }
@@ -333,9 +381,42 @@ export function DocumentList({
     const targetDoc = documents.find(doc => doc.name === initialDocPath)
     if (targetDoc) {
       setViewingDoc(targetDoc)
+      setInitialDocPathHandled(true)
+      return
     }
+
+    // In paginated mode, the document might be on a different page.
+    // Search across all documents via an unpaginated API call.
+    if (paginationEnabled) {
+      let cancelled = false
+      ;(async () => {
+        try {
+          const response = await listDocuments(knowledgeBase.id, { limit: 200, offset: 0 })
+          if (cancelled) return
+          const found = response.items.find(doc => doc.name === initialDocPath)
+          if (found) {
+            setViewingDoc(found)
+          }
+        } catch {
+          // Silently ignore - auto-open is best-effort
+        } finally {
+          if (!cancelled) setInitialDocPathHandled(true)
+        }
+      })()
+      return () => {
+        cancelled = true
+      }
+    }
+
     setInitialDocPathHandled(true)
-  }, [initialDocPath, initialDocPathHandled, loading, documents])
+  }, [
+    initialDocPath,
+    initialDocPathHandled,
+    loading,
+    documents,
+    paginationEnabled,
+    knowledgeBase.id,
+  ])
 
   // Default select all documents when documents load (for notebook mode)
   useEffect(() => {
@@ -1294,7 +1375,13 @@ export function DocumentList({
 
       {/* Auto-open document from ?doc= URL parameter (wrapped in Suspense for useSearchParams) */}
       <Suspense fallback={null}>
-        <DocAutoOpener documents={documents} loading={loading} onOpen={setViewingDoc} />
+        <DocAutoOpener
+          documents={documents}
+          loading={loading}
+          onOpen={setViewingDoc}
+          knowledgeBaseId={knowledgeBase.id}
+          paginationEnabled={paginationEnabled}
+        />
       </Suspense>
 
       {/* Dialogs */}
