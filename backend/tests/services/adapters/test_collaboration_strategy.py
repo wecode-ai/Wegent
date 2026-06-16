@@ -12,6 +12,7 @@ from app.services.adapters.collaboration_strategy import (
     DefaultCollaborationStrategy,
     PipelineCollaborationStrategy,
 )
+from app.services.adapters.pipeline_stage import PipelineStageService
 
 
 def _make_db():
@@ -328,3 +329,64 @@ class TestPipelineAutoAdvance:
         with patch.object(strategy, "_should_require_confirmation", return_value=True):
             result = strategy.get_auto_advance_info(db, 1, 1, "COMPLETED")
         assert result is None
+
+
+class TestPipelineConfirm:
+    def test_pipeline_confirm_uses_task_store_for_previous_stage_output(self):
+        service = PipelineStageService()
+        db = _make_db()
+
+        task = MagicMock()
+        task.id = 42
+        task.json = {}
+        task_crd = _make_task_crd(current_stage=0)
+        task_crd.status.status = "PENDING_CONFIRMATION"
+
+        current_member = _make_member("stage-one", require_confirmation=True)
+        next_member = _make_member("stage-two")
+        team_crd = _make_team_crd([current_member, next_member])
+        team_crd.spec.collaborationModel = "pipeline"
+
+        team = MagicMock()
+        team.user_id = 7
+        current_bot = _make_bot(10, "stage-one")
+        next_bot = _make_bot(20, "stage-two")
+        current_subtask = _make_subtask(bot_id=10)
+
+        with (
+            patch.object(service, "_get_task", return_value=task),
+            patch.object(service, "_get_task_crd", return_value=task_crd),
+            patch.object(service, "get_team_for_task", return_value=team),
+            patch.object(
+                service,
+                "get_stage_info",
+                return_value={"current_stage": 0, "total_stages": 2},
+            ),
+            patch.object(
+                service, "_get_bot_by_ref", side_effect=[current_bot, next_bot]
+            ),
+            patch(
+                "app.services.adapters.pipeline_stage.task_member_service.is_member",
+                return_value=True,
+            ),
+            patch(
+                "app.services.adapters.pipeline_stage.Team.model_validate",
+                return_value=team_crd,
+            ),
+            patch(
+                "app.services.adapters.pipeline_stage.task_stores.subtask_store.get_latest_assistant_by_statuses",
+                return_value=current_subtask,
+            ) as get_latest_assistant,
+            patch(
+                "app.services.adapters.pipeline_stage.build_pipeline_context_prompt",
+                return_value="Previous stage output:\nDone",
+            ),
+            patch("app.services.adapters.pipeline_stage.flag_modified"),
+        ):
+            result = service.pipeline_confirm(db, task_id=42, user_id=7)
+
+        assert result["success"] is True
+        assert result["next_stage_bot_id"] == 20
+        assert result["handoff_message"] == "Previous stage output:\nDone"
+        assert task_crd.spec.currentStage == 1
+        get_latest_assistant.assert_called_once()

@@ -398,7 +398,7 @@ class PipelineStageService:
         context_passing = normalize_context_passing(
             getattr(current_member, "contextPassing", None)
         )
-        current_subtask = subtask_store.get_latest_assistant_by_statuses(
+        current_subtask = task_stores.subtask_store.get_latest_assistant_by_statuses(
             db,
             task_id=task_id,
             statuses=[SubtaskStatus.COMPLETED],
@@ -522,7 +522,9 @@ class PipelineStageService:
             )
             return {"success": False, "error": "Bot not found for next stage"}
 
-        current_subtask = subtask_store.get_by_id(db, subtask_id=completed_subtask_id)
+        current_subtask = task_stores.subtask_store.get_by_id(
+            db, subtask_id=completed_subtask_id
+        )
         if not current_subtask or current_subtask.status != SubtaskStatus.COMPLETED:
             logger.error(
                 "[Pipeline] auto_advance: Completed subtask not found task=%s subtask=%s",
