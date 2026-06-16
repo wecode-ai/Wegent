@@ -96,7 +96,7 @@ def _extract_text_value_from_blocks(blocks: Any) -> str:
     for block in blocks:
         if not isinstance(block, dict):
             continue
-        if block.get("type") != "text":
+        if block.get("type") not in {"text", "output_text"}:
             continue
         content = block.get("content")
         if not isinstance(content, str) or not content.strip():
