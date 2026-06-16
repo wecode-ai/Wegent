@@ -9,7 +9,10 @@ const tauriState = vi.hoisted(() => ({
   cliAvailable: true,
   actionPending: false,
   envSaveCalls: 0,
+  cachedAuthToken: null as string | null,
+  savedAuthToken: null as string | null,
   invokeCommands: [] as string[],
+  invokeArgs: [] as Array<{ command: string; args?: Record<string, unknown> }>,
   commandOutputListener: null as
     | ((event: {
         payload: {
@@ -25,6 +28,7 @@ vi.mock('@tauri-apps/api/core', () => ({
   isTauri: () => true,
   invoke: vi.fn((command: string, args?: Record<string, unknown>) => {
     tauriState.invokeCommands.push(command)
+    tauriState.invokeArgs.push({ command, args })
     if (command === 'get_executor_status') {
       return Promise.resolve({
         node: {
@@ -81,6 +85,17 @@ vi.mock('@tauri-apps/api/core', () => ({
         port_occupants: [],
         error: null,
       })
+    }
+
+    if (command === 'get_local_executor_auth_token') {
+      return Promise.resolve(tauriState.cachedAuthToken)
+    }
+
+    if (command === 'save_local_executor_auth_token') {
+      const apiKey = args?.apiKey as { key?: string } | undefined
+      tauriState.savedAuthToken = apiKey?.key || null
+      tauriState.cachedAuthToken = tauriState.savedAuthToken
+      return Promise.resolve(null)
     }
 
     if (command === 'kill_executor_processes') {
@@ -181,7 +196,10 @@ describe('local executor management page', () => {
     tauriState.cliAvailable = true
     tauriState.actionPending = false
     tauriState.envSaveCalls = 0
+    tauriState.cachedAuthToken = null
+    tauriState.savedAuthToken = null
     tauriState.invokeCommands = []
+    tauriState.invokeArgs = []
     tauriState.commandOutputListener = null
     enableTauri()
     vi.stubGlobal(
@@ -226,6 +244,12 @@ describe('local executor management page', () => {
           payload = {
             configured: true,
             proxy_url_masked: 'http://127.0.0.1:7890',
+          }
+        } else if (url.includes('/api-keys')) {
+          payload = {
+            key: 'executor-api-key-1',
+            name: 'wework-local-executor-test',
+            created_at: '2026-06-16T00:00:00Z',
           }
         }
 
@@ -366,6 +390,12 @@ describe('local executor management page', () => {
     expect(tauriState.invokeCommands.indexOf('save_startup_env')).toBeLessThan(
       tauriState.invokeCommands.indexOf('run_executor_command')
     )
+    expect(tauriState.savedAuthToken).toBe('executor-api-key-1')
+    expect(
+      tauriState.invokeArgs.find(item => item.command === 'run_executor_command')?.args
+    ).toMatchObject({
+      authToken: 'executor-api-key-1',
+    })
   })
 
   test('streams executor command output in the quick actions terminal', async () => {
@@ -396,6 +426,23 @@ describe('local executor management page', () => {
 
     await waitFor(() => expect(tauriState.invokeCommands).toContain('run_executor_command'))
     expect(screen.getByTestId('executor-command-output')).toHaveTextContent('$ 安装 WeCode CLI')
+  })
+
+  test('reuses cached local executor auth token when starting', async () => {
+    tauriState.cachedAuthToken = 'cached-executor-api-key'
+    window.history.pushState({}, '', '/apps')
+
+    render(<App />)
+    await openLocalManagement()
+    await userEvent.click(await screen.findByTestId('executor-primary-action-button'))
+
+    await waitFor(() => expect(tauriState.invokeCommands).toContain('run_executor_command'))
+    expect(tauriState.savedAuthToken).toBeNull()
+    expect(
+      tauriState.invokeArgs.find(item => item.command === 'run_executor_command')?.args
+    ).toMatchObject({
+      authToken: 'cached-executor-api-key',
+    })
   })
 
   test('opens local management from the startup indicator', async () => {

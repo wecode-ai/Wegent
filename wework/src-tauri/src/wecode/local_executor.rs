@@ -100,6 +100,13 @@ pub(crate) struct LocalExecutorRuntimeConfig {
     gateway_port: u16,
 }
 
+#[derive(Deserialize, Serialize)]
+pub(crate) struct LocalExecutorAuthToken {
+    key: String,
+    name: String,
+    created_at: String,
+}
+
 fn home_dir() -> Option<PathBuf> {
     env::var_os("HOME")
         .or_else(|| env::var_os("USERPROFILE"))
@@ -956,10 +963,68 @@ fn runtime_config_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir.join("local-executor-runtime.json"))
 }
 
+fn wecode_home_dir() -> Result<PathBuf, String> {
+    env::var_os("WECODE_HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| home_dir().map(|home| home.join(".wecode")))
+        .ok_or_else(|| "Failed to resolve the user home directory".to_string())
+}
+
+fn toolbox_home_dir() -> Result<PathBuf, String> {
+    env::var_os("WEIBO_AI_TOOLBOX_HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .map(Ok)
+        .unwrap_or_else(|| Ok(wecode_home_dir()?.join("toolbox")))
+}
+
+fn executor_api_key_path() -> Result<PathBuf, String> {
+    Ok(toolbox_home_dir()?.join("apikey.json"))
+}
+
 fn executor_logs_dir() -> Result<PathBuf, String> {
     home_dir()
         .map(|home| home.join(".wecode").join("wecode-cli").join("logs"))
         .ok_or_else(|| "Failed to resolve the user home directory".to_string())
+}
+
+fn read_executor_auth_token() -> Result<Option<String>, String> {
+    let path = executor_api_key_path()?;
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let content = fs::read_to_string(&path)
+        .map_err(|error| format!("Failed to read executor API key: {error}"))?;
+    let api_key = serde_json::from_str::<LocalExecutorAuthToken>(&content)
+        .map_err(|error| format!("Failed to parse executor API key: {error}"))?;
+    let key = api_key.key.trim();
+    if key.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(key.to_string()))
+    }
+}
+
+fn save_executor_auth_token(api_key: LocalExecutorAuthToken) -> Result<(), String> {
+    let key = api_key.key.trim();
+    if key.is_empty() {
+        return Err("Executor API key is empty".to_string());
+    }
+
+    let path = executor_api_key_path()?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("Failed to create toolbox directory: {error}"))?;
+    }
+    let content = serde_json::to_string_pretty(&LocalExecutorAuthToken {
+        key: key.to_string(),
+        name: api_key.name,
+        created_at: api_key.created_at,
+    })
+    .map_err(|error| format!("Failed to serialize executor API key: {error}"))?;
+    fs::write(path, content).map_err(|error| format!("Failed to save executor API key: {error}"))
 }
 
 fn load_runtime_gateway_port(app: &AppHandle) -> u16 {
@@ -1166,6 +1231,7 @@ fn run_executor_action(
     app: &AppHandle,
     action: &str,
     execution_id: &str,
+    auth_token: Option<String>,
 ) -> Result<WecodeCommandResult, String> {
     if action == "install-cli" {
         return install_wecode_cli(app, execution_id);
@@ -1178,6 +1244,7 @@ fn run_executor_action(
     })?;
 
     if action == "restart" {
+        let auth_token = require_executor_auth_token(auth_token.as_deref())?;
         let stop_result = run_wecode_args_with_env_streaming(
             app,
             execution_id,
@@ -1191,6 +1258,8 @@ fn run_executor_action(
 
         let env_vars = prepare_executor_startup_env(app, execution_id)?;
         let gateway_port = executor_gateway_port_from_env(&env_vars);
+        let start_args = executor_start_args(Some(auth_token.as_str()));
+        let start_arg_refs = start_args.iter().map(String::as_str).collect::<Vec<_>>();
         let start_result = verify_executor_start_result(
             app,
             execution_id,
@@ -1199,7 +1268,7 @@ fn run_executor_action(
                 app,
                 execution_id,
                 &path,
-                &["executor", "start"],
+                &start_arg_refs,
                 &env_vars,
             )?,
             &env_vars,
@@ -1208,13 +1277,24 @@ fn run_executor_action(
         return Ok(merge_command_results(stop_result, start_result));
     }
 
-    let args: Vec<&str> = match action {
-        "install" => vec!["executor", "install"],
-        "start" => vec!["executor", "start"],
-        "stop" => vec!["executor", "stop"],
-        "upgrade" => vec!["executor", "upgrade"],
-        "install-browser" => vec!["executor", "install", "browser"],
-        "install-mail" => vec!["executor", "install", "mail"],
+    let args: Vec<String> = match action {
+        "install" => vec!["executor".to_string(), "install".to_string()],
+        "start" => {
+            let auth_token = require_executor_auth_token(auth_token.as_deref())?;
+            executor_start_args(Some(auth_token.as_str()))
+        }
+        "stop" => vec!["executor".to_string(), "stop".to_string()],
+        "upgrade" => vec!["executor".to_string(), "upgrade".to_string()],
+        "install-browser" => vec![
+            "executor".to_string(),
+            "install".to_string(),
+            "browser".to_string(),
+        ],
+        "install-mail" => vec![
+            "executor".to_string(),
+            "install".to_string(),
+            "mail".to_string(),
+        ],
         _ => return Err("Unsupported executor action".to_string()),
     };
 
@@ -1224,13 +1304,32 @@ fn run_executor_action(
         Vec::new()
     };
     let gateway_port = executor_gateway_port_from_env(&env_vars);
+    let arg_refs = args.iter().map(String::as_str).collect::<Vec<_>>();
 
-    let result = run_wecode_args_with_env_streaming(app, execution_id, &path, &args, &env_vars)?;
+    let result =
+        run_wecode_args_with_env_streaming(app, execution_id, &path, &arg_refs, &env_vars)?;
     Ok(if action == "start" || action == "upgrade" {
         verify_executor_start_result(app, execution_id, &path, result, &env_vars, gateway_port)?
     } else {
         result
     })
+}
+
+fn executor_start_args(auth_token: Option<&str>) -> Vec<String> {
+    let mut args = vec!["executor".to_string(), "start".to_string()];
+    if let Some(token) = auth_token.filter(|token| !token.trim().is_empty()) {
+        args.push("--auth".to_string());
+        args.push(token.to_string());
+    }
+    args
+}
+
+fn require_executor_auth_token(auth_token: Option<&str>) -> Result<String, String> {
+    auth_token
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| "未找到 Executor 启动认证，请先登录或重新生成本机 API Key".to_string())
 }
 
 fn wecode_cli_download_token() -> Option<String> {
@@ -1596,6 +1695,16 @@ fn verify_executor_status_health(mut status: ExecutorStatus, gateway_port: u16) 
 }
 
 #[tauri::command]
+pub fn get_local_executor_auth_token() -> Result<Option<String>, String> {
+    read_executor_auth_token()
+}
+
+#[tauri::command]
+pub fn save_local_executor_auth_token(api_key: LocalExecutorAuthToken) -> Result<(), String> {
+    save_executor_auth_token(api_key)
+}
+
+#[tauri::command]
 pub fn get_startup_env(app: AppHandle) -> Result<Vec<StartupEnvVar>, String> {
     load_startup_env(&app)
 }
@@ -1614,10 +1723,13 @@ pub async fn run_executor_command(
     app: AppHandle,
     action: String,
     execution_id: String,
+    auth_token: Option<String>,
 ) -> Result<WecodeCommandResult, String> {
-    tauri::async_runtime::spawn_blocking(move || run_executor_action(&app, &action, &execution_id))
-        .await
-        .map_err(|error| format!("Executor command task failed: {error}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        run_executor_action(&app, &action, &execution_id, auth_token)
+    })
+    .await
+    .map_err(|error| format!("Executor command task failed: {error}"))?
 }
 
 #[tauri::command]

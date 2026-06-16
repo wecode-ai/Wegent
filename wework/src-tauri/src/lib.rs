@@ -18,6 +18,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             local_executor::detect_wecode_cli,
             local_executor::get_executor_status,
+            local_executor::get_local_executor_auth_token,
+            local_executor::save_local_executor_auth_token,
             local_executor::get_startup_env,
             local_executor::save_startup_env,
             local_executor::run_executor_command,

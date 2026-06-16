@@ -92,7 +92,11 @@ def test_get_user_personal_task_groups_lite_uses_personal_query_without_group_id
     mock_group_ids.assert_not_called()
     mock_owned_query.assert_not_called()
     mock_personal_query.assert_called_once_with(
-        db, user_id=7, skip=50, limit=25, extra_limit=200
+        db,
+        user_id=7,
+        skip=50,
+        limit=25,
+        extra_limit=200,
     )
     mock_filter.assert_called_once_with(paged_tasks, set(), ["online"])
     mock_build.assert_called_once_with(db, paged_tasks, 7)

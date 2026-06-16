@@ -290,6 +290,7 @@ export function KnowledgeDetailPanel({
               knowledgeBase={selectedKb}
               canUpload={canUploadDocuments}
               canManageAllDocuments={canManageKb}
+              paginationEnabled={true}
               onRefreshKnowledgeBase={handleRefreshKnowledgeBase}
               headerActions={headerActions}
               groupInfo={groupInfo}

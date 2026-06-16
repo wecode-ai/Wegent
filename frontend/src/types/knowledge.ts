@@ -427,6 +427,10 @@ export interface KnowledgeDocumentUpdate {
 
 export interface KnowledgeDocumentListResponse {
   total: number
+  returned_count: number
+  limit: number | null
+  offset: number
+  has_more: boolean
   items: KnowledgeDocument[]
 }
 
