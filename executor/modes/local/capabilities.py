@@ -94,12 +94,6 @@ def get_project_id(task_data: ExecutionRequest) -> str:
     project_id = getattr(task_data, "project_id", None)
     normalized_project_id = _normalize_project_id(project_id)
     if normalized_project_id:
-        logger.info(
-            "Resolved project id for local execution: source=task_data.project_id "
-            "task_id=%s project_id=%s",
-            getattr(task_data, "task_id", None),
-            normalized_project_id,
-        )
         return normalized_project_id
 
     workspace = getattr(task_data, "workspace", None)
@@ -108,12 +102,6 @@ def get_project_id(task_data: ExecutionRequest) -> str:
         if isinstance(project, dict):
             normalized_project_id = _normalize_project_id(project.get("project_id"))
             if normalized_project_id:
-                logger.info(
-                    "Resolved project id for local execution: "
-                    "source=workspace.project.project_id task_id=%s project_id=%s",
-                    getattr(task_data, "task_id", None),
-                    normalized_project_id,
-                )
                 return normalized_project_id
 
         metadata = workspace.get("metadata") or {}
@@ -125,13 +113,6 @@ def get_project_id(task_data: ExecutionRequest) -> str:
                 metadata_project.get("project_id")
             )
             if normalized_project_id:
-                logger.info(
-                    "Resolved project id for local execution: "
-                    "source=workspace.metadata.project.project_id "
-                    "task_id=%s project_id=%s",
-                    getattr(task_data, "task_id", None),
-                    normalized_project_id,
-                )
                 return normalized_project_id
 
     task_data_payload = getattr(task_data, "task_data", None)
@@ -140,26 +121,8 @@ def get_project_id(task_data: ExecutionRequest) -> str:
             task_data_payload.get("project_id")
         )
         if normalized_project_id:
-            logger.info(
-                "Resolved project id for local execution: "
-                "source=task_data.task_data.project_id task_id=%s project_id=%s",
-                getattr(task_data, "task_id", None),
-                normalized_project_id,
-            )
             return normalized_project_id
 
-    logger.info(
-        "Project id not found for local execution: task_id=%s "
-        "top_level_project_id=%s workspace_has_project=%s "
-        "workspace_has_metadata_project=%s task_data_payload_has_project_id=%s",
-        getattr(task_data, "task_id", None),
-        project_id if project_id is not None else "<empty>",
-        isinstance(workspace, dict) and isinstance(workspace.get("project"), dict),
-        isinstance(workspace, dict)
-        and isinstance(workspace.get("metadata"), dict)
-        and isinstance(workspace["metadata"].get("project"), dict),
-        isinstance(task_data_payload, dict) and "project_id" in task_data_payload,
-    )
     return ""
 
 
