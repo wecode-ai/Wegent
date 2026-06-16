@@ -184,53 +184,65 @@ def test_database_handler_auto_advance_uses_changed_subtask_status():
     )
 
 
-def test_pipeline_auto_advance_reuses_existing_next_stage_subtask():
-    """Duplicate terminal callbacks must not create duplicate pipeline stages."""
+def test_pipeline_auto_advance_does_not_create_next_stage_subtask_in_db() -> None:
+    """DB status updates should route pipeline continuation through an intent."""
     from app.services.chat.storage.db import DatabaseHandler
 
     db = MagicMock()
-    task = SimpleNamespace(id=1385, user_id=7)
-    task_crd = SimpleNamespace(
-        spec=SimpleNamespace(title="Pipeline task", currentStage=0)
+    task = SimpleNamespace(id=1385, user_id=7, json={})
+    completed_subtask = SimpleNamespace(
+        id=2001,
+        status=SubtaskStatus.COMPLETED,
+        result={"value": "done"},
     )
-    last_subtask = SimpleNamespace(
-        message_id=2,
-        team_id=1256,
-        executor_name="wegent-task-admin-pipeline",
-        executor_namespace="",
-    )
-    existing_next_subtask = SimpleNamespace(id=2002)
+    task_status = SimpleNamespace(status="PENDING", progress=0, updatedAt=None)
+    task_crd = MagicMock()
+    task_crd.status = task_status
+    task_crd.model_dump.return_value = {"status": {"status": "PENDING"}}
     advance_info = {
         "next_stage_index": 1,
         "next_bot_id": 42,
         "next_bot_name": "reviewer",
     }
+    strategy = MagicMock()
+    strategy.get_task_status_on_subtask_complete.return_value = ("COMPLETED", 100)
+    strategy.get_auto_advance_info.return_value = advance_info
 
     with (
         patch(
-            "app.services.chat.storage.db.task_stores.subtask_store.get_by_task_parent_id_and_role",
-            return_value=existing_next_subtask,
-        ) as get_existing_mock,
+            "app.services.chat.storage.db._db_session",
+            return_value=_mock_db_session(db),
+        ),
         patch(
-            "app.services.chat.storage.db.task_stores.subtask_store.create_subtask"
+            "app.services.chat.storage.db.task_stores.task_store.get_task_by_states",
+            return_value=task,
+        ),
+        patch(
+            "app.services.chat.storage.db.task_stores.subtask_store.list_assistant_by_task",
+            return_value=[completed_subtask],
+        ),
+        patch(
+            "app.services.chat.storage.db.task_stores.subtask_store.create_subtask",
         ) as create_mock,
         patch(
-            "app.services.chat.storage.db.task_stores.subtask_store.get_latest_by_task"
+            "app.services.chat.storage.db.task_stores.task_store.update_json",
+        ),
+        patch("app.schemas.kind.Task.model_validate", return_value=task_crd),
+        patch(
+            "app.services.adapters.collaboration_strategy."
+            "CollaborationStrategyFactory.get_strategy_for_task",
+            return_value=strategy,
         ),
     ):
-        DatabaseHandler()._auto_advance_pipeline(
-            db, task, task_crd, last_subtask, advance_info
-        )
+        handler = DatabaseHandler()
+        result = handler._update_task_status_sync(task_id=1385, changed_subtask_id=2001)
 
-    get_existing_mock.assert_called_once_with(
-        db,
-        task_id=1385,
-        parent_id=2,
-        role=SubtaskRole.ASSISTANT,
-        owner_user_id=7,
-    )
+    assert not hasattr(handler, "_auto_advance_pipeline")
     create_mock.assert_not_called()
-    assert task_crd.spec.currentStage == 1
+    assert result.auto_advance is not None
+    assert result.auto_advance.task_id == 1385
+    assert result.auto_advance.completed_subtask_id == 2001
+    assert result.auto_advance.advance_info == advance_info
 
 
 def test_create_assistant_subtask_inherits_deleted_executor_state_for_recovery(
