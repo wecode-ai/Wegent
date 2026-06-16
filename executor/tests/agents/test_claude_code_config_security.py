@@ -455,6 +455,59 @@ class TestCreateAndConnectClientEnvPassing:
         assert hooks["PreToolUse"][-1].matcher == "Write|Edit|MultiEdit|NotebookEdit"
         assert hooks["PostToolUse"][-1].matcher == "Write|Edit|MultiEdit|NotebookEdit"
 
+    def test_turn_file_change_hooks_are_idempotent(self, task_data, temp_workspace):
+        """Repeated hook installation should not stack tracker callbacks."""
+        from claude_agent_sdk import HookMatcher
+
+        from executor.agents.claude_code.claude_code_agent import ClaudeCodeAgent
+        from executor.services.turn_file_changes import ClaudeToolFileChangeTracker
+
+        async def existing_hook(input_data, tool_use_id, context):
+            return {}
+
+        task_data.device_id = "device-1"
+        with (
+            patch("executor.config.config.EXECUTOR_MODE", "local"),
+            patch(
+                "executor.config.config.get_workspace_root", return_value=temp_workspace
+            ),
+        ):
+            agent = ClaudeCodeAgent(task_data, create_mock_emitter())
+            agent.options = {
+                "cwd": temp_workspace,
+                "hooks": {
+                    "PreToolUse": [
+                        HookMatcher(
+                            matcher=ClaudeToolFileChangeTracker.EDIT_TOOL_MATCHER,
+                            hooks=[existing_hook],
+                        )
+                    ],
+                    "PostToolUse": [
+                        HookMatcher(
+                            matcher=ClaudeToolFileChangeTracker.EDIT_TOOL_MATCHER,
+                            hooks=[existing_hook],
+                        )
+                    ],
+                },
+            }
+
+            agent._install_turn_file_change_hooks()
+            agent._install_turn_file_change_hooks()
+
+        for event_name in ("PreToolUse", "PostToolUse"):
+            event_hooks = agent.options["hooks"][event_name]
+            tracker_hook_count = sum(
+                1
+                for event_hook in event_hooks
+                for hook_fn in event_hook.hooks
+                if isinstance(
+                    getattr(hook_fn, "__self__", None), ClaudeToolFileChangeTracker
+                )
+            )
+
+            assert tracker_hook_count == 1
+            assert any(existing_hook in event_hook.hooks for event_hook in event_hooks)
+
 
 class TestResumeSessionProcessCleanup:
     """Tests for stale process cleanup when resuming Claude sessions."""

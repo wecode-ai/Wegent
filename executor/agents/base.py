@@ -14,10 +14,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 from executor.config import config
-from executor.services.turn_file_changes import (
-    TurnFileChangeTracker,
-    WorkspaceBusyError,
-)
+from executor.services.turn_file_changes import TurnFileChangeTracker
 from shared.logger import setup_logger
 from shared.models import EmitterBuilder, ResponsesAPIEmitter, TransportFactory
 from shared.models.execution import ExecutionRequest
@@ -154,16 +151,7 @@ class Agent:
             executor_home=Path(config.WEGENT_EXECUTOR_HOME),
             device_id=device_id,
         )
-        try:
-            started = await tracker.start()
-        except WorkspaceBusyError:
-            logger.warning(
-                "Turn file change tracking skipped for task %s, subtask %s: workspace is already tracked, workspace=%s",
-                self.task_id,
-                self.subtask_id,
-                self.project_path,
-            )
-            return
+        started = await tracker.start()
         if started:
             self.turn_file_change_tracker = tracker
             self.emitter.set_completion_fields_provider(tracker.finalize)
@@ -181,7 +169,7 @@ class Agent:
             )
 
     async def abort_turn_file_change_tracking(self) -> None:
-        """Discard the current turn tracker and release its workspace lock."""
+        """Discard the current turn tracker."""
         tracker = self.turn_file_change_tracker
         self.turn_file_change_tracker = None
         self.emitter.set_completion_fields_provider(None)

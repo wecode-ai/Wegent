@@ -922,6 +922,7 @@ class ClaudeCodeAgent(Agent):
                 completion_fields_provider=(
                     self.collect_turn_file_change_completion_fields
                 ),
+                tool_file_change_tracker=self.turn_file_change_tracker,
             )
 
             # Task completed or failed
@@ -1075,6 +1076,14 @@ class ClaudeCodeAgent(Agent):
             self.options, self._get_claude_config_dir()
         )
         self.options = install_deferred_mcp_proxy_hook(self.options)
+        logger.info(
+            "Preparing Claude turn file change tracking: task_id=%s subtask_id=%s device_id_present=%s cwd=%s option_keys=%s",
+            self.task_id,
+            self.subtask_id,
+            bool(getattr(self.task_data, "device_id", None)),
+            self.options.get("cwd"),
+            sorted(self.options.keys()),
+        )
         self._install_turn_file_change_hooks()
 
         # Add stderr callback to capture CLI stderr output
@@ -1220,7 +1229,9 @@ class ClaudeCodeAgent(Agent):
             ("PreToolUse", tracker.pre_tool_use),
             ("PostToolUse", tracker.post_tool_use),
         ):
-            event_hooks = list(hooks.get(event_name) or [])
+            event_hooks = self._without_turn_file_change_hooks(
+                list(hooks.get(event_name) or [])
+            )
             event_hooks.append(
                 HookMatcher(
                     matcher=ClaudeToolFileChangeTracker.EDIT_TOOL_MATCHER,
@@ -1237,6 +1248,35 @@ class ClaudeCodeAgent(Agent):
             ClaudeToolFileChangeTracker.EDIT_TOOL_MATCHER,
             sorted(hooks.keys()),
         )
+
+    def _without_turn_file_change_hooks(self, event_hooks: list[Any]) -> list[Any]:
+        """Return hooks without previously installed turn file change trackers."""
+        filtered_hooks: list[Any] = []
+        for event_hook in event_hooks:
+            if (
+                getattr(event_hook, "matcher", None)
+                != ClaudeToolFileChangeTracker.EDIT_TOOL_MATCHER
+            ):
+                filtered_hooks.append(event_hook)
+                continue
+
+            remaining_hook_fns = [
+                hook_fn
+                for hook_fn in (getattr(event_hook, "hooks", None) or [])
+                if not isinstance(
+                    getattr(hook_fn, "__self__", None), ClaudeToolFileChangeTracker
+                )
+            ]
+            if remaining_hook_fns:
+                filtered_hooks.append(
+                    HookMatcher(
+                        matcher=event_hook.matcher,
+                        hooks=remaining_hook_fns,
+                        timeout=getattr(event_hook, "timeout", None),
+                    )
+                )
+
+        return filtered_hooks
 
     async def _close_client_for_retry(self) -> None:
         """

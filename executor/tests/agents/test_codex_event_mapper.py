@@ -11,7 +11,6 @@ import pytest
 
 from executor.agents.base import Agent
 from executor.agents.codex.event_mapper import CodeXEventMapper
-from executor.services.turn_file_changes import WorkspaceBusyError
 from shared.models import EmitterBuilder, GeneratorTransport
 from shared.models.execution import ExecutionRequest
 from shared.status import TaskStatus
@@ -52,26 +51,6 @@ async def test_agent_installs_turn_file_change_completion_provider():
     tracker.start.assert_awaited_once()
     emitter.set_completion_fields_provider.assert_called_once_with(tracker.finalize)
     assert agent.turn_file_change_tracker is tracker
-
-
-@pytest.mark.asyncio
-async def test_agent_skips_turn_file_tracking_when_workspace_lock_is_busy():
-    emitter = MagicMock()
-    tracker = MagicMock()
-    tracker.start = AsyncMock(side_effect=WorkspaceBusyError("busy"))
-    task_data = ExecutionRequest(task_id=1, subtask_id=2, device_id="device-1")
-    agent = Agent(task_data, emitter)
-    agent.project_path = "/tmp/project"
-
-    with patch(
-        "executor.agents.base.TurnFileChangeTracker",
-        return_value=tracker,
-    ):
-        await agent.start_turn_file_change_tracking()
-
-    tracker.start.assert_awaited_once()
-    emitter.set_completion_fields_provider.assert_not_called()
-    assert agent.turn_file_change_tracker is None
 
 
 @pytest.mark.asyncio

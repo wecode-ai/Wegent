@@ -5,7 +5,6 @@
 import gzip
 import hashlib
 import json
-import os
 import subprocess
 from pathlib import Path
 
@@ -15,7 +14,6 @@ from executor.services.turn_file_changes import (
     ClaudeToolFileChangeTracker,
     NativeTurnFileChangeTracker,
     TurnFileChangeTracker,
-    WorkspaceBusyError,
 )
 
 
@@ -244,7 +242,7 @@ async def test_tracker_does_not_change_real_git_index(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_tracker_rejects_concurrent_turns_in_same_workspace(tmp_path):
+async def test_tracker_allows_concurrent_turns_in_same_workspace(tmp_path):
     repo = init_repo(tmp_path)
     first = TurnFileChangeTracker(
         workspace=repo,
@@ -259,38 +257,18 @@ async def test_tracker_rejects_concurrent_turns_in_same_workspace(tmp_path):
         executor_home=tmp_path / "home",
     )
     await first.start()
+    await second.start()
 
-    with pytest.raises(WorkspaceBusyError):
-        await second.start()
+    write(repo / "first.txt", "first\n")
+    first_changes = file_changes(await first.finalize())
+    write(repo / "second.txt", "second\n")
+    second_changes = file_changes(await second.finalize())
 
-    await first.abort()
-
-
-@pytest.mark.asyncio
-async def test_tracker_removes_stale_same_host_lock(tmp_path):
-    repo = init_repo(tmp_path)
-    lock_path = repo / ".git" / "wegent-turn-file-changes.lock"
-    lock_path.write_text(
-        json.dumps(
-            {
-                "pid": 99999999,
-                "hostname": os.uname().nodename,
-                "task_id": 9,
-                "subtask_id": 9,
-            }
-        )
-    )
-    tracker = TurnFileChangeTracker(
-        workspace=repo,
-        task_id=1,
-        subtask_id=2,
-        executor_home=tmp_path / "home",
-    )
-
-    assert await tracker.start() is True
-
-    await tracker.abort()
-    assert not lock_path.exists()
+    assert [item["path"] for item in first_changes["files"]] == ["first.txt"]
+    assert [item["path"] for item in second_changes["files"]] == [
+        "first.txt",
+        "second.txt",
+    ]
 
 
 @pytest.mark.asyncio
@@ -368,3 +346,36 @@ async def test_claude_tool_tracker_reads_tool_use_id_from_hook_input(tmp_path):
 
     changes = file_changes(await tracker.finalize())
     assert changes["files"][0]["path"] == "hook.txt"
+
+
+@pytest.mark.asyncio
+async def test_claude_tool_tracker_captures_file_patch_without_git(tmp_path):
+    workspace = tmp_path / "plain-workspace"
+    workspace.mkdir()
+    tracker = ClaudeToolFileChangeTracker(
+        workspace=workspace,
+        task_id=9,
+        subtask_id=10,
+        executor_home=tmp_path / "home",
+        device_id="device-1",
+    )
+
+    await tracker.record_tool_use_start(
+        "Write",
+        "tool-plain",
+        {"file_path": "notes/result.txt", "content": "created\n"},
+    )
+    write(workspace / "notes" / "result.txt", "created\n")
+    await tracker.record_tool_result("tool-plain", False)
+    changes = file_changes(await tracker.finalize())
+
+    assert changes["file_count"] == 1
+    assert changes["files"][0]["path"] == "notes/result.txt"
+    assert changes["files"][0]["change_type"] == "created"
+    patch = gzip.decompress(
+        (
+            tmp_path / "home/artifacts/turn-file-changes/9/10/changes.patch.gz"
+        ).read_bytes()
+    )
+    assert patch.startswith(b"diff --git a/notes/result.txt b/notes/result.txt")
+    assert b"+created" in patch
