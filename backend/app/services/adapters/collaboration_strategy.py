@@ -208,11 +208,21 @@ class PipelineCollaborationStrategy(CollaborationStrategy):
             from app.stores.tasks import subtask_store, task_store
 
             subtask = subtask_store.get_by_id(db, subtask_id=subtask_id)
-            if not subtask or not subtask.bot_ids:
+            if not subtask:
+                logger.info(
+                    "[PipelineStrategy] Auto-advance skipped: subtask not found "
+                    "task=%s subtask=%s",
+                    task_id,
+                    subtask_id,
+                )
                 return None
 
             task = task_store.get_regular_active_task(db, task_id=task_id)
             if not task:
+                logger.info(
+                    "[PipelineStrategy] Auto-advance skipped: task not found task=%s",
+                    task_id,
+                )
                 return None
 
             task_crd = Task.model_validate(task.json)
@@ -228,39 +238,60 @@ class PipelineCollaborationStrategy(CollaborationStrategy):
                 .first()
             )
             if not team:
+                logger.info(
+                    "[PipelineStrategy] Auto-advance skipped: team not found "
+                    "task=%s team=%s/%s",
+                    task_id,
+                    team_ref.namespace,
+                    team_ref.name,
+                )
                 return None
 
             team_crd = Team.model_validate(team.json)
             members = team_crd.spec.members
             if not members:
+                logger.info(
+                    "[PipelineStrategy] Auto-advance skipped: no team members task=%s",
+                    task_id,
+                )
                 return None
 
-            # Find which stage this subtask belongs to by matching bot_id
-            bot_id = subtask.bot_ids[0]
-            bot = kindReader.get_by_id(db, KindType.BOT, bot_id)
-            if not bot:
-                return None
-
-            current_stage_index = None
-            for i, member in enumerate(members):
-                if (
-                    member.botRef.name == bot.name
-                    and member.botRef.namespace == bot.namespace
-                ):
-                    current_stage_index = i
-                    break
-
-            if current_stage_index is None:
+            current_stage_index = task_crd.spec.currentStage or 0
+            if (
+                not isinstance(current_stage_index, int)
+                or current_stage_index < 0
+                or current_stage_index >= len(members)
+            ):
+                logger.info(
+                    "[PipelineStrategy] Auto-advance skipped: invalid currentStage "
+                    "task=%s currentStage=%s total=%s",
+                    task_id,
+                    current_stage_index,
+                    len(members),
+                )
                 return None
 
             # Check requireConfirmation on current stage
             current_member = members[current_stage_index]
             if current_member.requireConfirmation:
+                logger.info(
+                    "[PipelineStrategy] Auto-advance skipped: confirmation required "
+                    "task=%s stage=%s",
+                    task_id,
+                    current_stage_index,
+                )
                 return None
 
             # Check if a next stage exists
             next_stage_index = current_stage_index + 1
             if next_stage_index >= len(members):
+                logger.info(
+                    "[PipelineStrategy] Auto-advance skipped: pipeline complete "
+                    "task=%s stage=%s total=%s",
+                    task_id,
+                    current_stage_index,
+                    len(members),
+                )
                 return None
 
             # Fetch next stage bot
