@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
+from executor.config import config
 from executor.platform_compat import get_permissions_manager
 from executor.services.api_client import ApiClient, SkillDownloader
 from shared.logger import setup_logger
@@ -863,7 +864,9 @@ class CapabilitySyncHandler:
         codex_skills_dir: Path | None = None,
         codex_plugins_dir: Path | None = None,
     ):
-        self.auth_token = auth_token or os.getenv("WEGENT_AUTH_TOKEN", "")
+        self.auth_token = (
+            auth_token or config.WEGENT_AUTH_TOKEN or os.getenv("WEGENT_AUTH_TOKEN", "")
+        )
         self.skills_dir = skills_dir or default_global_skills_dir()
         self.plugins_dir = plugins_dir or default_global_plugins_dir()
         self.store = store or GlobalCapabilityStore(
