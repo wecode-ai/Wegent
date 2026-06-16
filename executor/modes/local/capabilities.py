@@ -68,6 +68,16 @@ def default_codex_plugins_dir() -> Path:
     return Path.home() / ".codex" / "plugins"
 
 
+def default_claude_mcp_config_path() -> Path:
+    """Return the Claude Code user-scoped MCP config file."""
+    return Path.home() / ".claude.json"
+
+
+def default_codex_config_path() -> Path:
+    """Return the Codex global config file."""
+    return Path.home() / ".codex" / "config.toml"
+
+
 def _peer_codex_capability_dir(source_dir: Path, directory_name: str) -> Path:
     root = (
         source_dir.parent.parent
@@ -150,6 +160,97 @@ def _atomic_write_json(
         temp_path.unlink(missing_ok=True)
 
 
+def _atomic_write_text(path: Path, content: str, *, backup: bool = True) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _set_owner_only(path.parent, is_directory=True)
+    if backup and path.exists():
+        backup_path = path.with_suffix(
+            path.suffix + f".bak.{int(datetime.now().timestamp())}"
+        )
+        shutil.copy2(path, backup_path)
+        _set_owner_only(backup_path, is_directory=False)
+
+    fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
+    temp_path = Path(temp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as file:
+            file.write(content)
+        _set_owner_only(temp_path, is_directory=False)
+        os.replace(temp_path, path)
+        _set_owner_only(path, is_directory=False)
+    finally:
+        temp_path.unlink(missing_ok=True)
+
+
+def _read_toml_file(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        try:
+            import tomllib
+        except ModuleNotFoundError:
+            import tomli as tomllib  # type: ignore[no-redef]
+
+        with path.open("rb") as file:
+            value = tomllib.load(file)
+        return value if isinstance(value, dict) else {}
+    except Exception as exc:
+        logger.warning("Failed to read TOML file %s: %s", path, exc)
+        return {}
+
+
+def _toml_key_segment(segment: str) -> str:
+    if re.fullmatch(r"[A-Za-z0-9_-]+", segment):
+        return segment
+    return json.dumps(segment)
+
+
+def _toml_scalar(value: Any) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int) and not isinstance(value, bool):
+        return str(value)
+    if isinstance(value, float):
+        return repr(value)
+    if isinstance(value, list):
+        return "[" + ", ".join(_toml_scalar(item) for item in value) + "]"
+    return json.dumps(str(value))
+
+
+def _toml_sort_key(item: tuple[str, Any]) -> tuple[int, str]:
+    return (1 if isinstance(item[1], dict) else 0, item[0])
+
+
+def _dump_toml(data: dict[str, Any]) -> str:
+    lines: list[str] = []
+
+    def write_table(table: dict[str, Any], path: list[str]) -> None:
+        scalar_items = [
+            (key, value)
+            for key, value in sorted(table.items(), key=_toml_sort_key)
+            if not isinstance(value, dict)
+        ]
+        nested_items = [
+            (key, value)
+            for key, value in sorted(table.items(), key=_toml_sort_key)
+            if isinstance(value, dict)
+        ]
+        if path:
+            if lines and lines[-1] != "":
+                lines.append("")
+            lines.append("[" + ".".join(_toml_key_segment(part) for part in path) + "]")
+        for key, value in scalar_items:
+            if value is None:
+                continue
+            lines.append(f"{_toml_key_segment(key)} = {_toml_scalar(value)}")
+        for key, value in nested_items:
+            if value:
+                write_table(value, [*path, key])
+
+    write_table(data, [])
+    return "\n".join(lines).rstrip() + "\n"
+
+
 @contextmanager
 def _file_lock(path: Path) -> Iterator[None]:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -221,6 +322,8 @@ class GlobalCapabilityStore:
         plugins_dir: Path | None = None,
         codex_skills_dir: Path | None = None,
         codex_plugins_dir: Path | None = None,
+        claude_mcp_config_path: Path | None = None,
+        codex_config_path: Path | None = None,
         store_dir: Path | None = None,
     ):
         self.manifest = manifest or ManagedCapabilityManifest(
@@ -238,6 +341,10 @@ class GlobalCapabilityStore:
             if plugins_dir is None
             else _peer_codex_capability_dir(self.plugins_dir, "plugins")
         )
+        self.claude_mcp_config_path = (
+            claude_mcp_config_path or default_claude_mcp_config_path()
+        )
+        self.codex_config_path = codex_config_path or default_codex_config_path()
         self.store_dir = store_dir or default_store_dir()
         self.skill_store_dir = self.store_dir / "skills"
         self.plugin_store_dir = self.store_dir / "plugins"
@@ -282,6 +389,137 @@ class GlobalCapabilityStore:
                 manifest.setdefault("plugins", {}).update(plugins)
             manifest.setdefault("mcps", {}).update(mcps)
             self.manifest.save(self.manifest.bump_revision(manifest))
+
+    def sync_global_mcp_configs(
+        self,
+        *,
+        mcps: dict[str, dict[str, Any]],
+        remove_managed_names: set[str] | None = None,
+    ) -> None:
+        """Write synced MCP servers into Claude Code and Codex global configs."""
+        remove_names = remove_managed_names or set()
+        if not mcps and not remove_names:
+            return
+        self._sync_claude_mcp_config(mcps=mcps, remove_names=remove_names)
+        self._sync_codex_mcp_config(mcps=mcps, remove_names=remove_names)
+
+    def _sync_claude_mcp_config(
+        self,
+        *,
+        mcps: dict[str, dict[str, Any]],
+        remove_names: set[str],
+    ) -> None:
+        config = _read_json_file(self.claude_mcp_config_path, {})
+        servers = config.get("mcpServers")
+        if not isinstance(servers, dict):
+            servers = {}
+
+        for name in remove_names:
+            servers.pop(name, None)
+        for name, record in sorted(mcps.items()):
+            server = record.get("server") if isinstance(record, dict) else None
+            if not isinstance(server, dict):
+                continue
+            normalized = self._normalize_claude_mcp_server(server)
+            if normalized:
+                servers[name] = normalized
+
+        if servers:
+            config["mcpServers"] = servers
+        else:
+            config.pop("mcpServers", None)
+        _atomic_write_json(self.claude_mcp_config_path, config)
+
+    def _sync_codex_mcp_config(
+        self,
+        *,
+        mcps: dict[str, dict[str, Any]],
+        remove_names: set[str],
+    ) -> None:
+        config = _read_toml_file(self.codex_config_path)
+        servers = config.get("mcp_servers")
+        if not isinstance(servers, dict):
+            servers = {}
+
+        for name in remove_names:
+            servers.pop(name, None)
+        for name, record in sorted(mcps.items()):
+            server = record.get("server") if isinstance(record, dict) else None
+            if not isinstance(server, dict):
+                continue
+            normalized = self._normalize_codex_mcp_server(server)
+            if normalized:
+                servers[name] = normalized
+
+        if servers:
+            config["mcp_servers"] = servers
+        else:
+            config.pop("mcp_servers", None)
+        _atomic_write_text(self.codex_config_path, _dump_toml(config))
+
+    def _normalize_claude_mcp_server(self, server: dict[str, Any]) -> dict[str, Any]:
+        config = dict(server)
+        server_type = str(config.get("type") or "").strip()
+        if server_type == "streamable-http":
+            server_type = "http"
+            config["type"] = "http"
+
+        if server_type in {"http", "sse"}:
+            url = config.get("url") or config.get("base_url")
+            normalized: dict[str, Any] = {"type": server_type}
+            if url:
+                normalized["url"] = url
+            headers = config.get("headers")
+            if isinstance(headers, dict) and headers:
+                normalized["headers"] = headers
+            return normalized
+
+        if server_type == "stdio" or config.get("command"):
+            normalized = {"type": "stdio"}
+            for key in ("command", "args", "env"):
+                if config.get(key) is not None:
+                    normalized[key] = config[key]
+            return normalized
+
+        return config
+
+    def _normalize_codex_mcp_server(self, server: dict[str, Any]) -> dict[str, Any]:
+        server_type = str(server.get("type") or "").strip()
+        if server_type == "stdio" or server.get("command"):
+            command = str(server.get("command") or "").strip()
+            if not command:
+                logger.warning("Skipping Codex stdio MCP without command")
+                return {}
+            normalized: dict[str, Any] = {"command": command}
+            args = server.get("args")
+            if isinstance(args, list):
+                normalized["args"] = [str(arg) for arg in args]
+            env = server.get("env")
+            if isinstance(env, dict):
+                normalized["env"] = {
+                    str(key): str(value)
+                    for key, value in sorted(env.items())
+                    if value is not None
+                }
+            return normalized
+
+        url = str(server.get("url") or server.get("base_url") or "").strip()
+        if not url:
+            logger.warning("Skipping Codex URL MCP without URL")
+            return {}
+        normalized = {"url": url}
+        optional_fields = {
+            "bearer_token_env_var": server.get("bearer_token_env_var")
+            or server.get("bearerTokenEnvVar"),
+            "oauth_client_id": server.get("oauth_client_id")
+            or server.get("oauthClientId"),
+            "oauth_resource": server.get("oauth_resource")
+            or server.get("oauthResource"),
+        }
+        for key, value in optional_fields.items():
+            if value:
+                normalized[key] = str(value)
+        return normalized
 
     def remove_stale_managed_skills(self, desired_names: set[str]) -> list[str]:
         with _file_lock(self._lock_path):
@@ -925,6 +1163,11 @@ class CapabilitySyncHandler:
         mcp_results, mcp_records = self._sync_mcps(mcps)
 
         before_manifest = self.store.manifest.load()
+        old_managed_mcp_names = {
+            name
+            for name, record in (before_manifest.get("mcps") or {}).items()
+            if isinstance(record, dict) and record.get("managed", True)
+        }
         logger.info(
             "Persisting capability manifest: mode=%s old_skills=%s new_skills=%s old_plugins=%s new_plugins=%s old_mcps=%s new_mcps=%s",
             mode,
@@ -948,6 +1191,27 @@ class CapabilitySyncHandler:
                 mcps=mcp_records,
             )
 
+        mcp_config_errors: list[dict[str, Any]] = []
+        try:
+            stale_mcp_names = (
+                old_managed_mcp_names - set(mcp_records.keys())
+                if mode == "replace"
+                else set()
+            )
+            self.store.sync_global_mcp_configs(
+                mcps=mcp_records,
+                remove_managed_names=stale_mcp_names,
+            )
+        except Exception as exc:
+            logger.exception("Failed to sync MCP global config files")
+            mcp_config_errors.append(
+                {
+                    "name": "global-mcp-config",
+                    "status": "failed",
+                    "error": str(exc),
+                }
+            )
+
         manifest = self.store.manifest.load()
         manifest["last_sync_at"] = utc_now_iso()
         self.store.manifest.save(self.store.manifest.bump_revision(manifest))
@@ -956,7 +1220,7 @@ class CapabilitySyncHandler:
         if self.reporter:
             self.reporter.force_next_full_report()
 
-        results = skill_results + plugin_results + mcp_results
+        results = skill_results + plugin_results + mcp_results + mcp_config_errors
         errors = [item for item in results if item.get("status") == "failed"]
         logger.info(
             "Capability sync applied: success=%s mode=%s installed_skills=%s installed_plugins=%s configured_mcps=%s removed_skills=%s removed_plugins=%s errors=%s",

@@ -344,37 +344,36 @@ def _collect_mcp_servers_for_claude(
                 continue
             mcp_servers = bot.get("mcp_servers") or bot.get("mcpServers")
             _append_mcp_servers(collected, mcp_servers, f"bot[{index}]")
-        _append_global_mcp_servers(collected)
         return collected
 
     mcp_servers = primary_bot_config.get("mcp_servers") or primary_bot_config.get(
         "mcpServers"
     )
     _append_mcp_servers(collected, mcp_servers, "bot[0]")
-    _append_global_mcp_servers(collected)
     return collected
 
 
-def _append_global_mcp_servers(target: list[dict[str, Any]]) -> None:
-    """Append MCP servers synced to this local device."""
-    try:
-        from executor.modes.local.capabilities import GlobalCapabilityStore
+def _remove_task_level_mcp_config(bot_config: dict[str, Any]) -> None:
+    for key in ("mcp_servers", "mcpServers", "mcp_tools"):
+        bot_config.pop(key, None)
 
-        manifest = GlobalCapabilityStore().load()
-    except Exception as exc:
-        logger.warning("[MCP] Failed to load global MCP manifest: %s", exc)
-        return
 
-    appended: list[str] = []
-    for name, record in manifest.get("mcps", {}).items():
-        if not isinstance(record, dict):
-            continue
-        server = record.get("server") or {}
-        if not isinstance(server, dict):
-            continue
-        target.append({"name": name, **server})
-        appended.append(name)
-    logger.info("[MCP] Appended global MCP servers: names=%s", appended)
+def _is_wework_project_task(task_data: ExecutionRequest) -> bool:
+    project_id = getattr(task_data, "project_id", None)
+    if project_id and int(project_id) > 0:
+        return True
+
+    workspace = getattr(task_data, "workspace", None)
+    if isinstance(workspace, dict):
+        metadata = workspace.get("metadata") or {}
+        project = metadata.get("project") if isinstance(metadata, dict) else None
+        if isinstance(project, dict) and project.get("project_id"):
+            return True
+
+    task_data_payload = getattr(task_data, "task_data", None)
+    return bool(
+        isinstance(task_data_payload, dict) and task_data_payload.get("project_id")
+    )
 
 
 def extract_claude_options(task_data: ExecutionRequest) -> Dict[str, Any]:
@@ -427,51 +426,60 @@ def extract_claude_options(task_data: ExecutionRequest) -> Dict[str, Any]:
     if bot_config:
         # Create a shallow copy of bot_config to avoid modifying the original
         bot_config = bot_config.copy()
+        project_task = _is_wework_project_task(task_data)
 
         # Extract MCP servers. Claude Code subagents share the parent SDK
         # session, so coordinate mode must register member bot MCP servers on
         # that same session.
-        logger.info("[MCP] Extracting MCP servers for Claude Code session...")
-        mcp_servers = _collect_mcp_servers_for_claude(task_data, bot_config)
-        if mcp_servers:
-            logger.info(
-                "[MCP] Raw MCP servers for Claude Code: %s",
-                (
-                    list(mcp_servers.keys())
-                    if isinstance(mcp_servers, dict)
-                    else type(mcp_servers).__name__
-                ),
-            )
-            # Replace placeholders in MCP servers config with actual values
-            # NOTE: backend_url override for local mode is handled centrally
-            # in LocalRunner.enqueue_task() before any agent processes the task.
-            logger.info(
-                "[MCP] Variable substitution context: backend_url=%s, task_token=%s",
-                task_data.backend_url,
-                f"{task_data.task_token[:20]}..." if task_data.task_token else "EMPTY",
-            )
-            mcp_servers = replace_mcp_server_variables(mcp_servers, task_data)
-            # Convert list format to dict format for Claude Code SDK
-            mcp_servers = _convert_mcp_servers_list_to_dict(mcp_servers)
-            bot_config["mcp_servers"] = mcp_servers
-            # Log detailed MCP server configs for debugging
-            for name, cfg in mcp_servers.items():
-                logger.info(
-                    "[MCP] Server '%s': type=%s, url=%s, headers=%s",
-                    name,
-                    cfg.get("type", "?"),
-                    _redact_mcp_url_for_log(cfg),
-                    list(cfg.get("headers", {}).keys()),
-                )
-            logger.info(
-                "[MCP] MCP servers after processing: %s",
-                list(mcp_servers.keys()),
-            )
+        if project_task:
+            _remove_task_level_mcp_config(bot_config)
+            logger.info("[MCP] Skipping task-level MCP servers for project task")
         else:
-            logger.info("[MCP] No MCP servers configured")
+            logger.info("[MCP] Extracting MCP servers for Claude Code session...")
+            mcp_servers = _collect_mcp_servers_for_claude(task_data, bot_config)
+            if mcp_servers:
+                logger.info(
+                    "[MCP] Raw MCP servers for Claude Code: %s",
+                    (
+                        list(mcp_servers.keys())
+                        if isinstance(mcp_servers, dict)
+                        else type(mcp_servers).__name__
+                    ),
+                )
+                # Replace placeholders in MCP servers config with actual values
+                # NOTE: backend_url override for local mode is handled centrally
+                # in LocalRunner.enqueue_task() before any agent processes the task.
+                logger.info(
+                    "[MCP] Variable substitution context: backend_url=%s, task_token=%s",
+                    task_data.backend_url,
+                    (
+                        f"{task_data.task_token[:20]}..."
+                        if task_data.task_token
+                        else "EMPTY"
+                    ),
+                )
+                mcp_servers = replace_mcp_server_variables(mcp_servers, task_data)
+                # Convert list format to dict format for Claude Code SDK
+                mcp_servers = _convert_mcp_servers_list_to_dict(mcp_servers)
+                bot_config["mcp_servers"] = mcp_servers
+                # Log detailed MCP server configs for debugging
+                for name, cfg in mcp_servers.items():
+                    logger.info(
+                        "[MCP] Server '%s': type=%s, url=%s, headers=%s",
+                        name,
+                        cfg.get("type", "?"),
+                        _redact_mcp_url_for_log(cfg),
+                        list(cfg.get("headers", {}).keys()),
+                    )
+                logger.info(
+                    "[MCP] MCP servers after processing: %s",
+                    list(mcp_servers.keys()),
+                )
+            else:
+                logger.info("[MCP] No MCP servers configured")
 
         # Add wegent MCP server for subscription tasks
-        if task_data.is_subscription:
+        if task_data.is_subscription and not project_task:
             wegent_mcp_url = get_wegent_mcp_url()
             wegent_mcp = {
                 "wegent": {

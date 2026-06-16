@@ -130,7 +130,7 @@ def test_build_codex_config_uses_existing_no_proxy(monkeypatch):
     assert config.env["no_proxy"] == "localhost,.internal"
 
 
-def test_build_codex_config_injects_global_mcp_overrides(tmp_path, monkeypatch):
+def test_build_codex_config_does_not_inject_global_mcp_overrides(tmp_path, monkeypatch):
     monkeypatch.setenv("WEGENT_EXECUTOR_HOME", str(tmp_path / ".wegent-executor"))
     manifest_path = tmp_path / ".wegent-executor" / "capabilities" / "manifest.json"
     manifest_path.parent.mkdir(parents=True)
@@ -173,15 +173,9 @@ def test_build_codex_config_injects_global_mcp_overrides(tmp_path, monkeypatch):
         }
     )
 
-    assert 'mcp_servers.docs.url="https://mcp.example.com/docs"' in (
-        config.config_overrides
+    assert not any(
+        override.startswith("mcp_servers.") for override in config.config_overrides
     )
-    assert 'mcp_servers.docs.bearer_token_env_var="DOCS_TOKEN"' in (
-        config.config_overrides
-    )
-    assert 'mcp_servers.shell.command="uvx"' in config.config_overrides
-    assert 'mcp_servers.shell.args=["tool","--flag"]' in config.config_overrides
-    assert 'mcp_servers.shell.env.FOO="bar"' in config.config_overrides
 
 
 def test_build_codex_config_ignores_legacy_local_cli_env(monkeypatch):

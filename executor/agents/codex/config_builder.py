@@ -94,9 +94,8 @@ def build_codex_config(model_config: dict[str, Any]) -> CodeXConfig:
     proxy_env = _build_runtime_proxy_env(model_config, "codex")
     reasoning = _normalize_reasoning(model_config.get("reasoning"))
     service_tier = _normalize_service_tier(model_config.get("service_tier"))
-    mcp_overrides = _build_global_mcp_config_overrides()
     if local_config:
-        overrides = [f"model={model}", *mcp_overrides]
+        overrides = [f"model={model}"]
         return CodeXConfig(
             codex_bin=_resolve_codex_binary(config.CODEX_BINARY_PATH),
             model=model,
@@ -129,7 +128,6 @@ def build_codex_config(model_config: dict[str, Any]) -> CodeXConfig:
         f"model_providers.{model_provider}.base_url={base_url.rstrip('/')}",
         f"model_providers.{model_provider}.wire_api={wire_api}",
         f"model_providers.{model_provider}.experimental_bearer_token={api_key}",
-        *mcp_overrides,
     ]
 
     return CodeXConfig(
@@ -259,91 +257,6 @@ def _resolve_codex_binary(value: str) -> str:
     if "/" in value or "\\" in value:
         return value
     return shutil.which(value) or value
-
-
-def _build_global_mcp_config_overrides() -> tuple[str, ...]:
-    """Build Codex CLI config overrides from synced global MCP records."""
-    try:
-        from executor.modes.local.capabilities import GlobalCapabilityStore
-
-        manifest = GlobalCapabilityStore().load()
-    except Exception as exc:
-        logger.warning("Failed to load global MCP manifest for Codex: %s", exc)
-        return ()
-
-    overrides: list[str] = []
-    for name, record in sorted((manifest.get("mcps") or {}).items()):
-        if not isinstance(record, dict):
-            continue
-        server = record.get("server") or {}
-        if not isinstance(server, dict):
-            continue
-        overrides.extend(_codex_mcp_server_overrides(str(name), server))
-    if overrides:
-        logger.info("Injected Codex global MCP servers: count=%s", len(overrides))
-    return tuple(overrides)
-
-
-def _codex_mcp_server_overrides(name: str, server: dict[str, Any]) -> list[str]:
-    key = _toml_key_path("mcp_servers", name)
-    server_type = str(server.get("type") or "").strip()
-
-    if server_type == "stdio" or server.get("command"):
-        command = str(server.get("command") or "").strip()
-        if not command:
-            logger.warning("Skipping Codex stdio MCP without command: %s", name)
-            return []
-        overrides = [f"{key}.command={_toml_value(command)}"]
-        args = server.get("args")
-        if isinstance(args, list):
-            overrides.append(f"{key}.args={_toml_value([str(arg) for arg in args])}")
-        env = server.get("env")
-        if isinstance(env, dict):
-            for env_key, env_value in sorted(env.items()):
-                if env_value is None:
-                    continue
-                overrides.append(
-                    f"{key}.env.{_toml_key_segment(str(env_key))}="
-                    f"{_toml_value(str(env_value))}"
-                )
-        return overrides
-
-    url = str(server.get("url") or server.get("base_url") or "").strip()
-    if not url:
-        logger.warning("Skipping Codex URL MCP without URL: %s", name)
-        return []
-
-    overrides = [f"{key}.url={_toml_value(url)}"]
-    bearer_env = server.get("bearer_token_env_var") or server.get("bearerTokenEnvVar")
-    if bearer_env:
-        overrides.append(f"{key}.bearer_token_env_var={_toml_value(str(bearer_env))}")
-    oauth_client_id = server.get("oauth_client_id") or server.get("oauthClientId")
-    if oauth_client_id:
-        overrides.append(f"{key}.oauth_client_id={_toml_value(str(oauth_client_id))}")
-    oauth_resource = server.get("oauth_resource") or server.get("oauthResource")
-    if oauth_resource:
-        overrides.append(f"{key}.oauth_resource={_toml_value(str(oauth_resource))}")
-    return overrides
-
-
-def _toml_key_path(*segments: str) -> str:
-    return ".".join(_toml_key_segment(segment) for segment in segments)
-
-
-def _toml_key_segment(segment: str) -> str:
-    if re.fullmatch(r"[A-Za-z0-9_-]+", segment):
-        return segment
-    return json.dumps(segment)
-
-
-def _toml_value(value: Any) -> str:
-    if isinstance(value, list):
-        return "[" + ",".join(_toml_value(item) for item in value) + "]"
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, (int, float)):
-        return str(value)
-    return json.dumps(str(value))
 
 
 def _normalize_reasoning(value: Any) -> dict[str, str]:

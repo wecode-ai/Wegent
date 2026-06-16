@@ -5,6 +5,7 @@
 import hashlib
 import io
 import json
+import tomllib
 import zipfile
 from pathlib import Path
 
@@ -171,6 +172,157 @@ def test_apply_sync_records_downloaded_skill_and_mcp(tmp_path, monkeypatch):
     )
     assert manifest["skills"]["image-gen"]["runtime"]["codex_link"] == str(codex_link)
     assert manifest["mcps"]["docs"]["installed_mcp_id"] == 7
+
+
+def test_apply_sync_writes_mcps_to_claude_and_codex_global_configs(tmp_path):
+    skills_dir = tmp_path / ".claude" / "skills"
+    plugins_dir = tmp_path / ".claude" / "plugins"
+    store_dir = tmp_path / ".wegent-executor" / "capabilities" / "store"
+    manifest_path = tmp_path / ".wegent-executor" / "capabilities" / "manifest.json"
+    claude_config_path = tmp_path / ".claude.json"
+    codex_config_path = tmp_path / ".codex" / "config.toml"
+    claude_config_path.write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "local": {"type": "stdio", "command": "local-tool"},
+                }
+            }
+        )
+    )
+    codex_config_path.parent.mkdir(parents=True)
+    codex_config_path.write_text(
+        'model = "gpt-5"\n\n' "[mcp_servers.local]\n" 'command = "local-tool"\n'
+    )
+    store = GlobalCapabilityStore(
+        manifest_path=manifest_path,
+        skills_dir=skills_dir,
+        plugins_dir=plugins_dir,
+        store_dir=store_dir,
+        claude_mcp_config_path=claude_config_path,
+        codex_config_path=codex_config_path,
+    )
+    handler = CapabilitySyncHandler(
+        auth_token="token",
+        store=store,
+        skills_dir=skills_dir,
+        plugins_dir=plugins_dir,
+    )
+
+    result = handler.apply_sync(
+        {
+            "mode": "replace",
+            "skills": [],
+            "plugins": [],
+            "mcps": [
+                {
+                    "name": "docs",
+                    "installed_mcp_id": 7,
+                    "server": {
+                        "type": "streamable-http",
+                        "url": "https://mcp.example.com/docs",
+                        "headers": {"Authorization": "Bearer test"},
+                    },
+                },
+                {
+                    "name": "shell",
+                    "installed_mcp_id": 8,
+                    "server": {
+                        "type": "stdio",
+                        "command": "uvx",
+                        "args": ["tool", "--flag"],
+                        "env": {"FOO": "bar"},
+                    },
+                },
+            ],
+        }
+    )
+
+    assert result["success"] is True
+    claude_config = json.loads(claude_config_path.read_text())
+    assert claude_config["mcpServers"]["local"]["command"] == "local-tool"
+    assert claude_config["mcpServers"]["docs"] == {
+        "type": "http",
+        "url": "https://mcp.example.com/docs",
+        "headers": {"Authorization": "Bearer test"},
+    }
+    assert claude_config["mcpServers"]["shell"] == {
+        "type": "stdio",
+        "command": "uvx",
+        "args": ["tool", "--flag"],
+        "env": {"FOO": "bar"},
+    }
+    codex_config = tomllib.loads(codex_config_path.read_text())
+    assert codex_config["model"] == "gpt-5"
+    assert codex_config["mcp_servers"]["local"]["command"] == "local-tool"
+    assert codex_config["mcp_servers"]["docs"]["url"] == "https://mcp.example.com/docs"
+    assert codex_config["mcp_servers"]["shell"]["command"] == "uvx"
+    assert codex_config["mcp_servers"]["shell"]["args"] == ["tool", "--flag"]
+    assert codex_config["mcp_servers"]["shell"]["env"] == {"FOO": "bar"}
+
+
+def test_replace_sync_removes_stale_managed_mcps_from_global_configs(tmp_path):
+    skills_dir = tmp_path / ".claude" / "skills"
+    plugins_dir = tmp_path / ".claude" / "plugins"
+    store_dir = tmp_path / ".wegent-executor" / "capabilities" / "store"
+    manifest_path = tmp_path / ".wegent-executor" / "capabilities" / "manifest.json"
+    claude_config_path = tmp_path / ".claude.json"
+    codex_config_path = tmp_path / ".codex" / "config.toml"
+    manifest_path.parent.mkdir(parents=True)
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "revision": 1,
+                "skills": {},
+                "plugins": {},
+                "mcps": {"old": {"managed": True, "server": {"command": "old-tool"}}},
+            }
+        )
+    )
+    claude_config_path.write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "old": {"type": "stdio", "command": "old-tool"},
+                    "local": {"type": "stdio", "command": "local-tool"},
+                }
+            }
+        )
+    )
+    codex_config_path.parent.mkdir(parents=True)
+    codex_config_path.write_text(
+        "[mcp_servers.old]\n"
+        'command = "old-tool"\n\n'
+        "[mcp_servers.local]\n"
+        'command = "local-tool"\n'
+    )
+    store = GlobalCapabilityStore(
+        manifest_path=manifest_path,
+        skills_dir=skills_dir,
+        plugins_dir=plugins_dir,
+        store_dir=store_dir,
+        claude_mcp_config_path=claude_config_path,
+        codex_config_path=codex_config_path,
+    )
+    handler = CapabilitySyncHandler(
+        auth_token="token",
+        store=store,
+        skills_dir=skills_dir,
+        plugins_dir=plugins_dir,
+    )
+
+    result = handler.apply_sync(
+        {"mode": "replace", "skills": [], "plugins": [], "mcps": []}
+    )
+
+    assert result["success"] is True
+    claude_config = json.loads(claude_config_path.read_text())
+    assert "old" not in claude_config["mcpServers"]
+    assert claude_config["mcpServers"]["local"]["command"] == "local-tool"
+    codex_config = tomllib.loads(codex_config_path.read_text())
+    assert "old" not in codex_config["mcp_servers"]
+    assert codex_config["mcp_servers"]["local"]["command"] == "local-tool"
 
 
 def test_apply_sync_redownloads_managed_skill_when_runtime_link_is_broken(
