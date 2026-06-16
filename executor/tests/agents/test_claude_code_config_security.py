@@ -400,11 +400,9 @@ class TestCreateAndConnectClientEnvPassing:
 
                 import asyncio
 
-                # Run the async method
+                # Run the async method with an isolated event loop.
                 try:
-                    asyncio.get_event_loop().run_until_complete(
-                        agent._create_and_connect_client()
-                    )
+                    asyncio.run(agent._create_and_connect_client())
                 except Exception:
                     pass  # We just want to capture the options
 
@@ -451,9 +449,7 @@ class TestCreateAndConnectClientEnvPassing:
 
                 import asyncio
 
-                asyncio.get_event_loop().run_until_complete(
-                    agent._create_and_connect_client()
-                )
+                asyncio.run(agent._create_and_connect_client())
 
         hooks = captured_options["hooks"]
         assert hooks["PreToolUse"][-1].matcher == "Write|Edit|MultiEdit|NotebookEdit"
