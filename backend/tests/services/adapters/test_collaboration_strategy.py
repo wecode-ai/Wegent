@@ -4,11 +4,18 @@
 
 """Tests for CollaborationStrategy auto-advance logic."""
 
+from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
+from sqlalchemy.orm import Session
 
+from app.models.kind import Kind
+from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
+from app.models.task import TaskResource
+from app.models.user import User
 from app.services.adapters.collaboration_strategy import (
+    CollaborationStrategyFactory,
     DefaultCollaborationStrategy,
     PipelineCollaborationStrategy,
 )
@@ -48,11 +55,15 @@ def _make_bot(bot_id: int, name: str, namespace: str = "default"):
 
 
 def _make_task_crd(
-    team_name: str = "my-team", team_namespace: str = "default", current_stage: int = 0
+    team_name: str = "my-team",
+    team_namespace: str = "default",
+    current_stage: int = 0,
+    team_user_id: int = 1,
 ):
     task_crd = MagicMock()
     task_crd.spec.teamRef.name = team_name
     task_crd.spec.teamRef.namespace = team_namespace
+    task_crd.spec.teamRef.user_id = team_user_id
     task_crd.spec.currentStage = current_stage
     return task_crd
 
@@ -61,6 +72,60 @@ def _make_team_crd(members):
     team_crd = MagicMock()
     team_crd.spec.members = members
     return team_crd
+
+
+def _pipeline_team_json(
+    *,
+    team_name: str,
+    first_bot_name: str,
+    second_bot_name: str,
+    first_context_passing: str,
+) -> dict:
+    return {
+        "apiVersion": "agent.wecode.io/v1",
+        "kind": "Team",
+        "metadata": {"name": team_name, "namespace": "default"},
+        "spec": {
+            "collaborationModel": "pipeline",
+            "members": [
+                {
+                    "botRef": {"name": first_bot_name, "namespace": "default"},
+                    "prompt": "",
+                    "role": "leader",
+                    "requireConfirmation": False,
+                    "contextPassing": first_context_passing,
+                },
+                {
+                    "botRef": {"name": second_bot_name, "namespace": "default"},
+                    "prompt": "",
+                    "role": "",
+                    "requireConfirmation": False,
+                    "contextPassing": "none",
+                },
+            ],
+        },
+    }
+
+
+def _task_json(*, task_id: int, team_name: str, user_id: int) -> dict:
+    return {
+        "apiVersion": "agent.wecode.io/v1",
+        "kind": "Task",
+        "metadata": {"name": f"task-{task_id}", "namespace": "default"},
+        "spec": {
+            "title": "Pipeline task",
+            "prompt": "hello",
+            "teamRef": {
+                "name": team_name,
+                "namespace": "default",
+                "user_id": user_id,
+            },
+            "workspaceRef": {"name": f"workspace-{task_id}", "namespace": "default"},
+            "is_group_chat": False,
+            "currentStage": 0,
+        },
+        "status": {"state": "Available", "status": "COMPLETED", "progress": 100},
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -328,6 +393,215 @@ class TestPipelineAutoAdvance:
             "next_bot_name": "bot-2",
             "context_passing": "previous_bot",
         }
+
+    def test_auto_advance_uses_team_ref_owner_for_shared_team(
+        self,
+        test_db: Session,
+        test_user: User,
+    ):
+        """Auto advance should use task.teamRef.user_id, not a same-name team."""
+        strategy = self._make_strategy()
+        team_name = "dup-pipeline-team"
+
+        wrong_owner = User(
+            user_name="wrong-owner",
+            password_hash="hash",
+            email="wrong-owner@example.com",
+            is_active=True,
+        )
+        team_owner = User(
+            user_name="team-owner",
+            password_hash="hash",
+            email="team-owner@example.com",
+            is_active=True,
+        )
+        test_db.add_all([wrong_owner, team_owner])
+        test_db.flush()
+
+        wrong_spec_bot = Kind(
+            user_id=wrong_owner.id,
+            kind="Bot",
+            name="wrong-spec",
+            namespace="default",
+            json={"kind": "Bot", "metadata": {"name": "wrong-spec"}},
+            is_active=True,
+        )
+        wrong_dev_bot = Kind(
+            user_id=wrong_owner.id,
+            kind="Bot",
+            name="MIS_Bright_Data",
+            namespace="default",
+            json={"kind": "Bot", "metadata": {"name": "MIS_Bright_Data"}},
+            is_active=True,
+        )
+        owner_spec_bot = Kind(
+            user_id=team_owner.id,
+            kind="Bot",
+            name="spec",
+            namespace="default",
+            json={"kind": "Bot", "metadata": {"name": "spec"}},
+            is_active=True,
+        )
+        owner_dev_bot = Kind(
+            user_id=team_owner.id,
+            kind="Bot",
+            name="dev",
+            namespace="default",
+            json={"kind": "Bot", "metadata": {"name": "dev"}},
+            is_active=True,
+        )
+        test_db.add_all([wrong_spec_bot, wrong_dev_bot, owner_spec_bot, owner_dev_bot])
+        test_db.flush()
+
+        wrong_team = Kind(
+            user_id=wrong_owner.id,
+            kind="Team",
+            name=team_name,
+            namespace="default",
+            json=_pipeline_team_json(
+                team_name=team_name,
+                first_bot_name="wrong-spec",
+                second_bot_name="MIS_Bright_Data",
+                first_context_passing="none",
+            ),
+            is_active=True,
+        )
+        owner_team = Kind(
+            user_id=team_owner.id,
+            kind="Team",
+            name=team_name,
+            namespace="default",
+            json=_pipeline_team_json(
+                team_name=team_name,
+                first_bot_name="spec",
+                second_bot_name="dev",
+                first_context_passing="original_user",
+            ),
+            is_active=True,
+        )
+        test_db.add_all([wrong_team, owner_team])
+        test_db.flush()
+
+        task = TaskResource(
+            user_id=test_user.id,
+            kind="Task",
+            name="shared-team-task",
+            namespace="default",
+            json=_task_json(
+                task_id=7401,
+                team_name=team_name,
+                user_id=team_owner.id,
+            ),
+            is_active=True,
+            is_group_chat=False,
+        )
+        test_db.add(task)
+        test_db.flush()
+
+        subtask = Subtask(
+            user_id=test_user.id,
+            task_id=task.id,
+            team_id=owner_team.id,
+            title="Assistant response",
+            bot_ids=[owner_spec_bot.id],
+            role=SubtaskRole.ASSISTANT,
+            prompt="",
+            status=SubtaskStatus.COMPLETED,
+            progress=100,
+            message_id=2,
+            parent_id=1,
+            executor_namespace="",
+            executor_name="",
+            error_message="",
+            result={"value": "done"},
+            completed_at=datetime.now(),
+        )
+        test_db.add(subtask)
+        test_db.commit()
+
+        with patch.object(strategy, "_should_require_confirmation", return_value=False):
+            result = strategy.get_auto_advance_info(
+                test_db, task.id, subtask.id, "COMPLETED"
+            )
+
+        assert result == {
+            "next_stage_index": 1,
+            "next_bot_id": owner_dev_bot.id,
+            "next_bot_name": "dev",
+            "context_passing": "original_user",
+        }
+
+    def test_strategy_factory_uses_team_ref_owner_for_shared_team(
+        self,
+        test_db: Session,
+        test_user: User,
+    ):
+        """Strategy selection should use the exact team owner stored on the task."""
+        team_name = "dup-strategy-team"
+
+        wrong_owner = User(
+            user_name="wrong-strategy-owner",
+            password_hash="hash",
+            email="wrong-strategy-owner@example.com",
+            is_active=True,
+        )
+        team_owner = User(
+            user_name="strategy-team-owner",
+            password_hash="hash",
+            email="strategy-team-owner@example.com",
+            is_active=True,
+        )
+        test_db.add_all([wrong_owner, team_owner])
+        test_db.flush()
+
+        wrong_team = Kind(
+            user_id=wrong_owner.id,
+            kind="Team",
+            name=team_name,
+            namespace="default",
+            json={
+                "apiVersion": "agent.wecode.io/v1",
+                "kind": "Team",
+                "metadata": {"name": team_name, "namespace": "default"},
+                "spec": {"collaborationModel": "solo", "members": []},
+            },
+            is_active=True,
+        )
+        owner_team = Kind(
+            user_id=team_owner.id,
+            kind="Team",
+            name=team_name,
+            namespace="default",
+            json=_pipeline_team_json(
+                team_name=team_name,
+                first_bot_name="spec",
+                second_bot_name="dev",
+                first_context_passing="original_user",
+            ),
+            is_active=True,
+        )
+        test_db.add_all([wrong_team, owner_team])
+        test_db.flush()
+
+        task = TaskResource(
+            user_id=test_user.id,
+            kind="Task",
+            name="shared-team-strategy-task",
+            namespace="default",
+            json=_task_json(
+                task_id=7402,
+                team_name=team_name,
+                user_id=team_owner.id,
+            ),
+            is_active=True,
+            is_group_chat=False,
+        )
+        test_db.add(task)
+        test_db.commit()
+
+        strategy = CollaborationStrategyFactory.get_strategy_for_task(test_db, task.id)
+
+        assert isinstance(strategy, PipelineCollaborationStrategy)
 
     def test_auto_advance_via_patched_imports(self):
         """Stage 0 completes, requireConfirmation=False, stage 1 exists -> advance."""

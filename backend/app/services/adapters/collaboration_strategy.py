@@ -22,6 +22,27 @@ from app.services.adapters.pipeline_context import normalize_context_passing
 logger = logging.getLogger(__name__)
 
 
+def _get_team_from_task_ref(db: Session, team_ref: Any):
+    """Resolve the exact Team referenced by a Task CRD."""
+    from app.models.kind import Kind
+
+    team_owner_id = getattr(team_ref, "user_id", None)
+    if not team_owner_id:
+        return None
+
+    return (
+        db.query(Kind)
+        .filter(
+            Kind.user_id == team_owner_id,
+            Kind.kind == "Team",
+            Kind.name == team_ref.name,
+            Kind.namespace == team_ref.namespace,
+            Kind.is_active.is_(True),
+        )
+        .first()
+    )
+
+
 class CollaborationStrategy(ABC):
     """Abstract base class for collaboration mode strategies.
 
@@ -203,7 +224,6 @@ class PipelineCollaborationStrategy(CollaborationStrategy):
             return None
 
         try:
-            from app.models.kind import Kind
             from app.schemas.kind import Task, Team
             from app.services.readers.kinds import KindType, kindReader
 
@@ -227,23 +247,15 @@ class PipelineCollaborationStrategy(CollaborationStrategy):
 
             task_crd = Task.model_validate(task.json)
             team_ref = task_crd.spec.teamRef
-            team = (
-                db.query(Kind)
-                .filter(
-                    Kind.kind == "Team",
-                    Kind.name == team_ref.name,
-                    Kind.namespace == team_ref.namespace,
-                    Kind.is_active.is_(True),
-                )
-                .first()
-            )
+            team = _get_team_from_task_ref(db, team_ref)
             if not team:
                 logger.info(
                     "[PipelineStrategy] Auto-advance skipped: team not found "
-                    "task=%s team=%s/%s",
+                    "task=%s team=%s/%s owner=%s",
                     task_id,
                     team_ref.namespace,
                     team_ref.name,
+                    getattr(team_ref, "user_id", None),
                 )
                 return None
 
@@ -399,7 +411,6 @@ class CollaborationStrategyFactory:
         Returns:
             CollaborationStrategy instance for the task's team
         """
-        from app.models.kind import Kind
         from app.schemas.kind import Task, Team
 
         try:
@@ -412,16 +423,7 @@ class CollaborationStrategyFactory:
 
             # Get the team
             team_ref = task_crd.spec.teamRef
-            team = (
-                db.query(Kind)
-                .filter(
-                    Kind.kind == "Team",
-                    Kind.name == team_ref.name,
-                    Kind.namespace == team_ref.namespace,
-                    Kind.is_active.is_(True),
-                )
-                .first()
-            )
+            team = _get_team_from_task_ref(db, team_ref)
             if not team:
                 return DefaultCollaborationStrategy()
 
