@@ -10,7 +10,7 @@
  * are loaded at once without pagination.
  */
 
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { ApiError } from '@/apis/client'
 import {
   listDocuments,
@@ -55,33 +55,56 @@ export function useDocuments(options: UseDocumentsOptions) {
   const [totalCount, setTotalCount] = useState(0)
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize))
 
+  // Use refs for pagination state to avoid stale closures and duplicate fetches.
+  // This prevents fetchDocuments from depending on page/pageSize, which would
+  // cause the auto-load effect to re-fire on every page change.
+  const pageRef = useRef(page)
+  const pageSizeRef = useRef(pageSize)
+  const paginationEnabledRef = useRef(paginationEnabled)
+  const knowledgeBaseIdRef = useRef(knowledgeBaseId)
+
+  // Keep refs in sync with state
+  useEffect(() => {
+    pageRef.current = page
+  }, [page])
+  useEffect(() => {
+    pageSizeRef.current = pageSize
+  }, [pageSize])
+  useEffect(() => {
+    paginationEnabledRef.current = paginationEnabled
+  }, [paginationEnabled])
+  useEffect(() => {
+    knowledgeBaseIdRef.current = knowledgeBaseId
+  }, [knowledgeBaseId])
+
   const fetchDocuments = useCallback(
     async (targetPage?: number, targetPageSize?: number) => {
-      if (!knowledgeBaseId) {
+      const currentKbId = knowledgeBaseIdRef.current
+      if (!currentKbId) {
         setDocuments([])
         setTotalCount(0)
         setPage(1)
         return
       }
 
-      const effectivePage = targetPage ?? page
-      const effectivePageSize = targetPageSize ?? pageSize
+      const effectivePage = targetPage ?? pageRef.current
+      const effectivePageSize = targetPageSize ?? pageSizeRef.current
 
       setLoading(true)
       setError(null)
       try {
         let response
 
-        if (paginationEnabled) {
+        if (paginationEnabledRef.current) {
           // Classic mode: server-side pagination
           const offset = (effectivePage - 1) * effectivePageSize
-          response = await listDocuments(knowledgeBaseId, {
+          response = await listDocuments(currentKbId, {
             limit: effectivePageSize,
             offset,
           })
         } else {
           // Notebook mode: load all documents at once
-          response = await listDocuments(knowledgeBaseId)
+          response = await listDocuments(currentKbId)
         }
 
         setDocuments(response.items)
@@ -98,7 +121,9 @@ export function useDocuments(options: UseDocumentsOptions) {
         setLoading(false)
       }
     },
-    [knowledgeBaseId, page, pageSize, paginationEnabled]
+    // No page/pageSize dependencies — reads from refs instead to avoid
+    // recreating on every state change which would trigger the auto-load effect.
+    []
   )
 
   // Page navigation methods
@@ -120,16 +145,17 @@ export function useDocuments(options: UseDocumentsOptions) {
 
   const create = useCallback(
     async (data: KnowledgeDocumentCreate) => {
-      if (!knowledgeBaseId) {
+      const currentKbId = knowledgeBaseIdRef.current
+      if (!currentKbId) {
         throw new Error('Knowledge base ID is required')
       }
 
       setLoading(true)
       setError(null)
       try {
-        const created = await createDocument(knowledgeBaseId, data)
+        const created = await createDocument(currentKbId, data)
 
-        if (paginationEnabled) {
+        if (paginationEnabledRef.current) {
           // In paginated mode, refresh current page to get correct server state
           await fetchDocuments()
         } else {
@@ -146,7 +172,7 @@ export function useDocuments(options: UseDocumentsOptions) {
         setLoading(false)
       }
     },
-    [knowledgeBaseId, t, paginationEnabled, fetchDocuments]
+    [t, fetchDocuments]
   )
 
   const update = useCallback(
@@ -174,9 +200,9 @@ export function useDocuments(options: UseDocumentsOptions) {
       setError(null)
       try {
         await deleteDocument(id)
-        if (paginationEnabled) {
+        if (paginationEnabledRef.current) {
           // In paginated mode, refresh to handle empty page redirect
-          const currentPage = page
+          const currentPage = pageRef.current
           await fetchDocuments()
           // If the current page is now empty and we're not on page 1, go to previous page
           setDocuments(prev => {
@@ -198,7 +224,7 @@ export function useDocuments(options: UseDocumentsOptions) {
         setLoading(false)
       }
     },
-    [t, paginationEnabled, fetchDocuments, page, goToPage]
+    [t, fetchDocuments, goToPage]
   )
 
   // Batch operations
@@ -208,7 +234,7 @@ export function useDocuments(options: UseDocumentsOptions) {
       setError(null)
       try {
         const result = await batchDeleteDocuments(ids)
-        if (paginationEnabled) {
+        if (paginationEnabledRef.current) {
           await fetchDocuments()
         } else {
           // Remove successfully deleted documents from state
@@ -230,17 +256,18 @@ export function useDocuments(options: UseDocumentsOptions) {
         setLoading(false)
       }
     },
-    [t, paginationEnabled, fetchDocuments]
+    [t, fetchDocuments]
   )
 
   // Transfer documents to another KB
   const transfer = useCallback(
     async (data: TransferDocumentsRequest): Promise<TransferDocumentsResponse | null> => {
-      if (!knowledgeBaseId) return null
+      const currentKbId = knowledgeBaseIdRef.current
+      if (!currentKbId) return null
       setLoading(true)
       setError(null)
       try {
-        const result = await transferDocuments(knowledgeBaseId, data)
+        const result = await transferDocuments(currentKbId, data)
         toast({
           description: t('document.document.batch.transferSuccess', {
             docCount: result.transferred_document_count,
@@ -263,16 +290,16 @@ export function useDocuments(options: UseDocumentsOptions) {
         setLoading(false)
       }
     },
-    [knowledgeBaseId, fetchDocuments, t]
+    [fetchDocuments, t]
   )
 
-  // Reset page when knowledge base changes
+  // Reset page and reload when knowledge base changes.
+  // Combined into a single effect to avoid stale-page fetches:
+  // resetting page state and fetching in one pass prevents the
+  // auto-load effect from firing with the old page number.
   useEffect(() => {
     setPage(1)
     setTotalCount(0)
-  }, [knowledgeBaseId])
-
-  useEffect(() => {
     if (autoLoad && knowledgeBaseId) {
       fetchDocuments()
     }
