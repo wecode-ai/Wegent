@@ -14,10 +14,20 @@ from executor.modes.local.capabilities import (
 from shared.models.execution import ExecutionRequest
 
 
-def test_wework_standalone_chat_uses_global_capabilities():
+def test_standalone_chat_workspace_uses_global_capabilities():
     request = ExecutionRequest(
         task_id=1901,
         project_id=0,
+        standalone_chat_workspace=True,
+    )
+
+    assert is_project_task(request) is True
+
+
+def test_wework_project_chat_uses_global_capabilities():
+    request = ExecutionRequest(
+        task_id=1901,
+        project_id=123,
         standalone_chat_workspace=True,
     )
 

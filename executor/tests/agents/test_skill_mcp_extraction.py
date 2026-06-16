@@ -222,8 +222,8 @@ class TestExtractClaudeOptionsWithMcp:
 
         assert "mcp_servers" not in options
 
-    def test_standalone_chat_workspace_without_project_keeps_bot_mcp_servers(self):
-        """Only wework project tasks strip task-level MCP servers."""
+    def test_standalone_chat_workspace_omits_bot_mcp_servers(self):
+        """Standalone workspace tasks use global config, not task-level MCP."""
         task_data = ExecutionRequest(
             task_id=1,
             project_id=0,
@@ -243,9 +243,7 @@ class TestExtractClaudeOptionsWithMcp:
 
         options = extract_claude_options(task_data)
 
-        assert options["mcp_servers"]["bot-server"]["url"] == (
-            "http://bot.example.com/mcp"
-        )
+        assert "mcp_servers" not in options
 
     def test_global_manifest_mcp_is_not_injected_for_claude_sdk(
         self, tmp_path, monkeypatch

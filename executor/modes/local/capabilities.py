@@ -109,6 +109,19 @@ def is_project_task(task_data: ExecutionRequest) -> bool:
     )
 
 
+def get_project_capability_revision(task_data: ExecutionRequest) -> int | None:
+    """Return current global capability revision for project tasks only."""
+    if not is_project_task(task_data):
+        return None
+
+    try:
+        revision = ManagedCapabilityManifest().load().get("revision")
+        return int(revision) if revision is not None else 0
+    except Exception as exc:
+        logger.warning("Failed to read global capability revision: %s", exc)
+        return None
+
+
 def _read_json_file(path: Path, default: dict[str, Any]) -> dict[str, Any]:
     if not path.exists():
         return default.copy()

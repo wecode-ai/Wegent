@@ -90,13 +90,17 @@ class SessionManager:
 
     @classmethod
     def load_saved_session_id(
-        cls, task_id: int, bot_id: Optional[int] = None
+        cls,
+        task_id: int,
+        bot_id: Optional[int] = None,
+        capability_revision: Optional[int] = None,
     ) -> str | None:
         """Load saved Claude session ID for a task and bot.
 
         Args:
             task_id: Task ID
             bot_id: Bot ID (optional, for pipeline mode)
+            capability_revision: Expected global capability revision for project tasks
 
         Returns:
             Saved session ID or None if not found
@@ -105,7 +109,18 @@ class SessionManager:
         try:
             if os.path.exists(session_file):
                 with open(session_file, "r", encoding="utf-8") as f:
-                    session_id = f.read().strip()
+                    raw_value = f.read().strip()
+                    session_id, saved_revision = cls._parse_session_file(raw_value)
+                    if not cls._capability_revision_matches(
+                        saved_revision, capability_revision
+                    ):
+                        logger.info(
+                            f"Ignoring Claude session for task {task_id} "
+                            f"(bot_id={bot_id}) because capability revision changed: "
+                            f"saved={saved_revision}, current={capability_revision}"
+                        )
+                        cls.delete_saved_session_id(task_id, bot_id)
+                        return None
                     if session_id:
                         logger.info(
                             f"Loaded saved Claude session ID for task {task_id} "
@@ -121,7 +136,11 @@ class SessionManager:
 
     @classmethod
     def save_session_id(
-        cls, task_id: int, claude_session_id: str, bot_id: Optional[int] = None
+        cls,
+        task_id: int,
+        claude_session_id: str,
+        bot_id: Optional[int] = None,
+        capability_revision: Optional[int] = None,
     ) -> None:
         """Save Claude session ID for a task and bot.
 
@@ -129,12 +148,22 @@ class SessionManager:
             task_id: Task ID
             claude_session_id: Claude's actual session ID
             bot_id: Bot ID (optional, for pipeline mode)
+            capability_revision: Global capability revision for project tasks
         """
         session_file = cls.get_session_id_file_path(task_id, bot_id)
         try:
             os.makedirs(os.path.dirname(session_file), exist_ok=True)
             with open(session_file, "w", encoding="utf-8") as f:
-                f.write(claude_session_id)
+                if capability_revision is None:
+                    f.write(claude_session_id)
+                else:
+                    json.dump(
+                        {
+                            "session_id": claude_session_id,
+                            "capability_revision": capability_revision,
+                        },
+                        f,
+                    )
             logger.info(
                 f"Saved Claude session ID for task {task_id} "
                 f"(bot_id={bot_id}): {claude_session_id}"
@@ -143,6 +172,33 @@ class SessionManager:
             logger.warning(
                 f"Failed to save session ID for task {task_id} (bot_id={bot_id}): {e}"
             )
+
+    @staticmethod
+    def _parse_session_file(raw_value: str) -> tuple[str, Optional[int]]:
+        """Parse legacy plain session IDs and revision-aware JSON session files."""
+        if not raw_value:
+            return "", None
+        try:
+            data = json.loads(raw_value)
+        except ValueError:
+            return raw_value, None
+        if not isinstance(data, dict):
+            return raw_value, None
+
+        session_id = str(data.get("session_id") or "")
+        revision = data.get("capability_revision")
+        try:
+            return session_id, int(revision) if revision is not None else None
+        except (TypeError, ValueError):
+            return session_id, None
+
+    @staticmethod
+    def _capability_revision_matches(
+        saved_revision: Optional[int], expected_revision: Optional[int]
+    ) -> bool:
+        if expected_revision is None:
+            return True
+        return saved_revision == expected_revision
 
     @classmethod
     def delete_saved_session_id(

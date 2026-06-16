@@ -1053,9 +1053,21 @@ class ClaudeCodeAgent(Agent):
             )
         elif "resume" not in self.options:
             # Load session ID for this specific bot (pipeline mode: each bot has its own session file)
-            saved_session_id = SessionManager.load_saved_session_id(
-                self.task_id, self._bot_id
+            from executor.modes.local.capabilities import (
+                get_project_capability_revision,
             )
+
+            capability_revision = get_project_capability_revision(self.task_data)
+            if capability_revision is None:
+                saved_session_id = SessionManager.load_saved_session_id(
+                    self.task_id, self._bot_id
+                )
+            else:
+                saved_session_id = SessionManager.load_saved_session_id(
+                    self.task_id,
+                    self._bot_id,
+                    capability_revision=capability_revision,
+                )
             if saved_session_id:
                 logger.info(
                     f"Resuming Claude session for task {self.task_id} "

@@ -359,6 +359,9 @@ def _remove_task_level_mcp_config(bot_config: dict[str, Any]) -> None:
 
 
 def _is_wework_project_task(task_data: ExecutionRequest) -> bool:
+    if getattr(task_data, "standalone_chat_workspace", False):
+        return True
+
     project_id = getattr(task_data, "project_id", None)
     if project_id and int(project_id) > 0:
         return True

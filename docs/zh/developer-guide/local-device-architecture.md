@@ -196,11 +196,13 @@ Plugin 上报必须包含其内部 Skill 列表。Executor 会扫描每个 Plugi
 
 - `skills`：通过 backend 解析后的 `InstalledSkill` / `Skill`，由 executor 下载到 `~/.claude/skills`
 - `plugins`：通过 backend 解析后的 `InstalledPlugin`，由 executor 写入 `~/.claude/plugins/installed_plugins.json`
-- `mcps`：通过 backend 解析后的 `InstalledMCP`，由 executor 写入 Wegent 管理清单
+- `mcps`：通过 backend 解析后的 `InstalledMCP`，由 executor 写入 Wegent 管理清单，并同步到 Claude Code 的 `~/.claude.json` 与 Codex 的 `~/.codex/config.toml`
 
 `replace` 模式只会清理由 Wegent manifest 标记为 `managed` 且不在期望状态中的能力。用户直接在本机安装的 plugin 不会因为一次 Wegent 同步被删除。
 
-项目任务使用本地 executor 执行时，任务级 `CLAUDE_CONFIG_DIR` 会同时暴露全局 `skills` 和 `plugins` 目录，并从本机 `~/.claude/settings.json` 继承 `enabledPlugins`、`extraKnownMarketplaces` 等非敏感插件配置，使 Claude Code 能加载全局 Skill 以及 Plugin 内部提供的 Skill。模型、Token 等敏感配置仍通过运行时环境变量注入，不会从全局 settings 写入任务目录。
+项目任务使用本地 executor 执行时，包括带 `standalone_chat_workspace=true` 的新对话工作区任务。任务级 `CLAUDE_CONFIG_DIR` 会同时暴露全局 `skills` 和 `plugins` 目录，并从本机 `~/.claude/settings.json` 继承 `enabledPlugins`、`extraKnownMarketplaces` 等非敏感插件配置，使 Claude Code 能加载全局 Skill 以及 Plugin 内部提供的 Skill。Claude Code 和 Codex 的 MCP 均从各自全局配置读取，不再把 bot/skill MCP 注入到单次任务参数。模型、Token 等敏感配置仍通过运行时环境变量注入，不会从全局 settings 写入任务目录。
+
+项目任务保存 Claude session ID 和 Codex thread ID 时会记录当前 `capabilities.revision`。如果全局能力同步导致 revision 变化，下一次执行会丢弃旧 session/thread 并新建会话，确保 Claude Code 和 Codex 在启动时重新读取最新全局 MCP 配置。
 
 ---
 
