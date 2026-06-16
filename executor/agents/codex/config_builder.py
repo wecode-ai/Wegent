@@ -13,6 +13,7 @@ import shutil
 from dataclasses import dataclass
 from typing import Any, Optional
 
+from executor.agents.api_headers import WECODE_SOURCE_HEADER
 from executor.agents.env_value import resolve_env_value
 from executor.config import config
 from shared.logger import setup_logger
@@ -84,7 +85,11 @@ def is_codex_compatible_model(model_config: dict[str, Any]) -> bool:
     )
 
 
-def build_codex_config(model_config: dict[str, Any]) -> CodeXConfig:
+def build_codex_config(
+    model_config: dict[str, Any],
+    *,
+    source: Optional[str] = None,
+) -> CodeXConfig:
     """Build Codex SDK launch and thread parameters from Wegent model config."""
     model = str(model_config.get("model_id") or "").strip()
     if not model:
@@ -120,6 +125,7 @@ def build_codex_config(model_config: dict[str, Any]) -> CodeXConfig:
 
     model_provider = _resolve_model_provider(model_config)
     wire_api = _resolve_wire_api(model_config)
+    source_header_overrides = _build_source_header_overrides(model_provider, source)
 
     overrides = [
         "forced_login_method=api",
@@ -129,6 +135,7 @@ def build_codex_config(model_config: dict[str, Any]) -> CodeXConfig:
         f"model_providers.{model_provider}.base_url={base_url.rstrip('/')}",
         f"model_providers.{model_provider}.wire_api={wire_api}",
         f"model_providers.{model_provider}.experimental_bearer_token={api_key}",
+        *source_header_overrides,
         *mcp_overrides,
     ]
 
@@ -242,6 +249,21 @@ def _resolve_wire_api(model_config: dict[str, Any]) -> str:
     if api_format == RESPONSES_WIRE_API or protocol == OPENAI_RESPONSES_PROTOCOL:
         return RESPONSES_WIRE_API
     return wire_api or RESPONSES_WIRE_API
+
+
+def _build_source_header_overrides(
+    model_provider: str,
+    source: Optional[str],
+) -> tuple[str, ...]:
+    if not source:
+        return ()
+    key = _toml_key_path(
+        "model_providers",
+        model_provider,
+        "http_headers",
+        WECODE_SOURCE_HEADER,
+    )
+    return (f"{key}={_toml_value(source)}",)
 
 
 def _read_api_format(model_config: dict[str, Any]) -> str:

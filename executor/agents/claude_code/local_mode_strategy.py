@@ -26,6 +26,7 @@ import os
 from pathlib import Path
 from typing import Any, Dict, Tuple
 
+from executor.agents.api_headers import WEWORK_SOURCE, merge_anthropic_custom_headers
 from executor.agents.claude_code.mode_strategy import ExecutionModeStrategy
 from executor.config import config
 from executor.platform_compat import get_permissions_manager, sanitize_ld_library_path
@@ -191,12 +192,20 @@ class LocalModeStrategy(ExecutionModeStrategy):
         env["CLAUDE_CONFIG_DIR"] = config_dir
         env["SKILLS_DIR"] = self.get_skills_directory(config_dir)
 
-        # Add ANTHROPIC_CUSTOM_HEADERS if configured via environment variable
-        if config.ANTHROPIC_CUSTOM_HEADERS:
-            env["ANTHROPIC_CUSTOM_HEADERS"] = config.ANTHROPIC_CUSTOM_HEADERS
-            logger.info(
-                f"Local mode: ANTHROPIC_CUSTOM_HEADERS={config.ANTHROPIC_CUSTOM_HEADERS}"
+        custom_headers = config.ANTHROPIC_CUSTOM_HEADERS or env.get(
+            "ANTHROPIC_CUSTOM_HEADERS", ""
+        )
+        if self._use_global_capabilities:
+            custom_headers = merge_anthropic_custom_headers(
+                custom_headers,
+                WEWORK_SOURCE,
             )
+
+        # Add ANTHROPIC_CUSTOM_HEADERS if configured via environment variable or
+        # project execution source metadata.
+        if custom_headers:
+            env["ANTHROPIC_CUSTOM_HEADERS"] = custom_headers
+            logger.info("Local mode: ANTHROPIC_CUSTOM_HEADERS configured")
 
         updated_options["env"] = env
 

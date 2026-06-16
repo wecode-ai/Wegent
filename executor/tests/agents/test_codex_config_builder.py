@@ -64,6 +64,38 @@ def test_build_codex_config_maps_provider_and_reasoning():
     assert config.summary == "concise"
 
 
+def test_build_codex_config_adds_wework_source_header_when_requested():
+    config = build_codex_config(
+        {
+            "model": "openai",
+            "model_id": "gpt-5.5",
+            "base_url": "http://127.0.0.1:3456/v1",
+            "api_key": "wecode-proxy-placeholder",
+            "api_format": "responses",
+        },
+        source="wework",
+    )
+
+    assert (
+        'model_providers.wecode-openai.http_headers.wecode-source="wework"'
+        in config.config_overrides
+    )
+
+
+def test_build_codex_config_omits_source_header_by_default():
+    config = build_codex_config(
+        {
+            "model": "openai",
+            "model_id": "gpt-5.5",
+            "base_url": "http://127.0.0.1:3456/v1",
+            "api_key": "wecode-proxy-placeholder",
+            "api_format": "responses",
+        }
+    )
+
+    assert not any("wecode-source" in item for item in config.config_overrides)
+
+
 def test_build_codex_config_uses_user_runtime_config(monkeypatch):
     monkeypatch.delenv("NO_PROXY", raising=False)
     monkeypatch.delenv("no_proxy", raising=False)

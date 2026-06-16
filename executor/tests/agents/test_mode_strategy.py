@@ -413,6 +413,37 @@ class TestLocalModeStrategy:
         assert result["env"]["CLAUDE_CONFIG_DIR"] == str(tmp_path / ".claude")
         assert result["env"]["SKILLS_DIR"] == str(tmp_path / ".claude" / "skills")
 
+    def test_configure_client_options_adds_wework_source_header_for_project_tasks(
+        self, strategy, tmp_path, monkeypatch
+    ):
+        """Project tasks should mark Claude API requests as coming from Wework."""
+        strategy.use_global_capabilities(True)
+        monkeypatch.setenv("HOME", str(tmp_path))
+        options = {"cwd": "/workspace"}
+        config_dir = "/workspace/12345/.claude"
+
+        with patch("executor.config.config.ANTHROPIC_CUSTOM_HEADERS", ""):
+            result = strategy.configure_client_options(options, config_dir, {}, {})
+
+        assert result["env"]["ANTHROPIC_CUSTOM_HEADERS"] == "wecode-source: wework"
+
+    def test_configure_client_options_preserves_custom_headers_for_project_tasks(
+        self, strategy, tmp_path, monkeypatch
+    ):
+        """Project source header should be merged with existing Claude headers."""
+        strategy.use_global_capabilities(True)
+        monkeypatch.setenv("HOME", str(tmp_path))
+        options = {"cwd": "/workspace"}
+        config_dir = "/workspace/12345/.claude"
+        custom_headers = "x-custom-user: test"
+
+        with patch("executor.config.config.ANTHROPIC_CUSTOM_HEADERS", custom_headers):
+            result = strategy.configure_client_options(options, config_dir, {}, {})
+
+        assert result["env"]["ANTHROPIC_CUSTOM_HEADERS"] == (
+            "x-custom-user: test\nwecode-source: wework"
+        )
+
     def test_configure_client_options_adds_anthropic_custom_headers(self, strategy):
         """Test that ANTHROPIC_CUSTOM_HEADERS is added when configured."""
         options = {"cwd": "/workspace"}

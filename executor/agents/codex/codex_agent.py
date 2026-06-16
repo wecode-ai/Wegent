@@ -12,6 +12,7 @@ import threading
 from pathlib import Path
 from typing import Any, Callable, Optional, Tuple
 
+from executor.agents.api_headers import WEWORK_SOURCE
 from executor.agents.base import Agent
 from executor.agents.claude_code.standalone_chat_workspace import (
     finalize_standalone_chat_workspace,
@@ -81,7 +82,13 @@ class CodeXAgent(Agent):
 
     def initialize(self) -> TaskStatus:
         try:
-            self.codex_config = build_codex_config(self.task_data.model_config)
+            from executor.modes.local.capabilities import is_project_task
+
+            source = WEWORK_SOURCE if is_project_task(self.task_data) else None
+            self.codex_config = build_codex_config(
+                self.task_data.model_config,
+                source=source,
+            )
             return TaskStatus.SUCCESS
         except Exception as exc:
             logger.exception("Failed to initialize CodeXAgent: %s", exc)
