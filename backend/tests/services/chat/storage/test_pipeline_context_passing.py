@@ -130,6 +130,54 @@ def test_pipeline_context_prompt_passes_previous_bot_output(
     )
 
 
+def test_pipeline_context_prompt_uses_text_blocks_when_result_value_is_empty(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    task_id = 9211
+    team_id = 12
+
+    _add_user_subtask(
+        test_db,
+        test_user,
+        task_id=task_id,
+        team_id=team_id,
+        message_id=1,
+        prompt="Build a release checklist.",
+    )
+    last_subtask = _add_completed_stage(
+        test_db,
+        test_user,
+        task_id=task_id,
+        team_id=team_id,
+        message_id=2,
+        result_value="",
+    )
+    last_subtask.result = {
+        "value": "",
+        "blocks": [
+            {
+                "id": "text-1",
+                "type": "text",
+                "content": "Stage 1 found three release risks.",
+                "status": "done",
+            }
+        ],
+    }
+    test_db.commit()
+
+    handoff_prompt = build_pipeline_context_prompt(
+        test_db,
+        task_id=task_id,
+        current_subtask=last_subtask,
+        context_passing="previous_bot",
+    )
+
+    assert (
+        handoff_prompt == "Previous stage output:\nStage 1 found three release risks."
+    )
+
+
 def test_pipeline_context_prompt_passes_original_user_message(
     test_db: Session,
     test_user: User,
