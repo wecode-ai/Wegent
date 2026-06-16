@@ -23,6 +23,7 @@
     "@radix-ui/react-slot": "^1.2.4",
     "@tailwindcss/typography": "^0.5.19",
     "@tauri-apps/api": "^2.11.0",
+    "@tauri-apps/plugin-http": "^2.5.0",
     "@tauri-apps/plugin-process": "^2.3.1",
     "@tauri-apps/plugin-updater": "^2.10.1",
     "@wegent/chat-core": "workspace:*",

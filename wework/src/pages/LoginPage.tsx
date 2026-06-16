@@ -6,6 +6,9 @@ import { useAuth } from '@/features/auth/useAuth'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
 
+const OUTLINED_LOGIN_BUTTON_CLASS =
+  'h-11 w-full rounded-lg border border-border bg-background text-sm font-semibold text-text-primary hover:bg-muted'
+
 function getRedirectTarget(): string {
   const search = new URLSearchParams(window.location.search)
   const queryRedirect = sanitizeRedirectPath(search.get('redirect'), ['/login', '/login/oidc'])
@@ -149,7 +152,7 @@ export function LoginPage() {
               <button
                 type="submit"
                 data-testid="login-submit-button"
-                className="h-11 w-full rounded-lg bg-text-primary text-sm font-semibold text-white shadow-sm disabled:opacity-60"
+                className={`${OUTLINED_LOGIN_BUTTON_CLASS} disabled:opacity-60`}
                 disabled={isSubmitting}
               >
                 {isSubmitting
@@ -171,7 +174,7 @@ export function LoginPage() {
             <button
               type="button"
               data-testid="oidc-login-button"
-              className="h-11 w-full rounded-lg border border-border bg-background text-sm font-semibold text-text-primary hover:bg-muted"
+              className={OUTLINED_LOGIN_BUTTON_CLASS}
               onClick={handleOidcLogin}
             >
               {config.oidcLoginText || t('workbench.oidc_login', '使用 OpenID Connect 登录')}
