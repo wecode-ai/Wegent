@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any, Dict, Tuple
 
 from executor.agents.api_headers import (
+    DEFAULT_HEADERS_ENV_KEYS,
     extract_default_headers,
     merge_anthropic_header_map,
     merge_project_header,
@@ -204,9 +205,20 @@ class LocalModeStrategy(ExecutionModeStrategy):
         if self._use_global_capabilities:
             default_headers = merge_project_header(default_headers, self._project_id)
         if default_headers:
+            serialized_default_headers = json.dumps(
+                default_headers,
+                ensure_ascii=True,
+                separators=(",", ":"),
+            )
+            for default_headers_key in DEFAULT_HEADERS_ENV_KEYS:
+                env[default_headers_key] = serialized_default_headers
             custom_headers = merge_anthropic_header_map(
                 custom_headers,
                 default_headers,
+            )
+            logger.info(
+                "Local mode: API default headers configured keys=%s",
+                sorted(default_headers),
             )
 
         # Add ANTHROPIC_CUSTOM_HEADERS if configured via environment variable or

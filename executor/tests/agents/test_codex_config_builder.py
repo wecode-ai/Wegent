@@ -172,6 +172,31 @@ def test_build_codex_config_uses_user_runtime_config(monkeypatch):
     }
 
 
+def test_build_codex_config_adds_project_header_to_user_runtime_provider():
+    config = build_codex_config(
+        {
+            "model": "openai",
+            "model_id": "gpt-5.5",
+            "api_format": "responses",
+            "model_provider": "openai",
+            "runtime_config": {
+                "codex": {
+                    "use_user_config": True,
+                    "configured": True,
+                    "target_path": "~/.codex/auth.json",
+                }
+            },
+        },
+        project_id=42,
+    )
+
+    assert config.model_provider == "openai"
+    assert (
+        'model_providers.openai.http_headers.wecode-project="42"'
+        in config.config_overrides
+    )
+
+
 def test_build_codex_config_uses_existing_no_proxy(monkeypatch):
     monkeypatch.setenv("NO_PROXY", "localhost,.internal")
 

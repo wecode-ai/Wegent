@@ -500,6 +500,13 @@ class TestLocalModeStrategy:
             "x-weibo-downstream: shanghai-intranet\n"
             "wecode-project: 42"
         )
+        assert json.loads(result["env"]["DEFAULT_HEADERS"]) == {
+            "wecode-action": "wecode-cli",
+            "wecode-source": "wecode-cli",
+            "x-weibo-downstream": "shanghai-intranet",
+            "wecode-project": "42",
+        }
+        assert result["env"]["default_headers"] == result["env"]["DEFAULT_HEADERS"]
 
     def test_configure_client_options_adds_anthropic_custom_headers(self, strategy):
         """Test that ANTHROPIC_CUSTOM_HEADERS is added when configured."""

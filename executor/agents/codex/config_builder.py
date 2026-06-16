@@ -101,11 +101,21 @@ def build_codex_config(
     service_tier = _normalize_service_tier(model_config.get("service_tier"))
     mcp_overrides = _build_global_mcp_config_overrides()
     if local_config:
-        overrides = [f"model={model}", *mcp_overrides]
+        model_provider = _resolve_explicit_model_provider(model_config)
+        header_overrides = (
+            _build_header_overrides(
+                model_provider,
+                model_config.get("default_headers"),
+                project_id,
+            )
+            if model_provider
+            else ()
+        )
+        overrides = [f"model={model}", *header_overrides, *mcp_overrides]
         return CodeXConfig(
             codex_bin=_resolve_codex_binary(config.CODEX_BINARY_PATH),
             model=model,
-            model_provider=None,
+            model_provider=model_provider,
             config_overrides=tuple(overrides),
             thread_config=_build_thread_config(reasoning, service_tier),
             effort=reasoning.get("effort"),
@@ -236,6 +246,17 @@ def _resolve_model_provider(model_config: dict[str, Any]) -> str:
         or config.CODEX_MODEL_PROVIDER
     )
     return _sanitize_provider_id(str(provider or config.CODEX_MODEL_PROVIDER))
+
+
+def _resolve_explicit_model_provider(model_config: dict[str, Any]) -> Optional[str]:
+    provider = (
+        model_config.get("codex_model_provider")
+        or model_config.get("model_provider")
+        or model_config.get("provider")
+    )
+    if not provider:
+        return None
+    return _sanitize_provider_id(str(provider))
 
 
 def _resolve_provider_name(model_config: dict[str, Any]) -> str:
