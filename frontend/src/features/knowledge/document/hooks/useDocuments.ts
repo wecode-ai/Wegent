@@ -294,14 +294,14 @@ export function useDocuments(options: UseDocumentsOptions) {
   )
 
   // Reset page and reload when knowledge base changes.
-  // Combined into a single effect to avoid stale-page fetches:
-  // resetting page state and fetching in one pass prevents the
-  // auto-load effect from firing with the old page number.
+  // Combined into a single effect to avoid stale-page fetches.
+  // Explicitly pass page=1 to fetchDocuments because setPage(1) is async
+  // and pageRef.current still holds the old page value at this point.
   useEffect(() => {
     setPage(1)
     setTotalCount(0)
     if (autoLoad && knowledgeBaseId) {
-      fetchDocuments()
+      fetchDocuments(1, pageSizeRef.current)
     }
   }, [autoLoad, knowledgeBaseId, fetchDocuments])
 

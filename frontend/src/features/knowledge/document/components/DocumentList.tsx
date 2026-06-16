@@ -69,6 +69,28 @@ import {
 } from '../utils/summarySelectors'
 
 /**
+ * Find a document by name across all pages of a knowledge base.
+ * Uses iterative pagination (while has_more) to scan beyond the first 200 items.
+ * Returns undefined if not found or if the signal is aborted.
+ */
+async function findDocumentByName(
+  knowledgeBaseId: number,
+  documentName: string,
+  signal?: AbortSignal
+): Promise<KnowledgeDocument | undefined> {
+  let offset = 0
+  const batchSize = 200
+  while (!signal?.aborted) {
+    const response = await listDocuments(knowledgeBaseId, { limit: batchSize, offset })
+    if (signal?.aborted) return undefined
+    const found = response.items.find(doc => doc.name === documentName)
+    if (found || !response.has_more) return found
+    offset += response.items.length
+  }
+  return undefined
+}
+
+/**
  * Inner component that uses useSearchParams (must be inside Suspense boundary).
  * Reads the ?doc= URL parameter and auto-opens the matching document.
  * In paginated mode, falls back to an unpaginated API call to find documents
@@ -115,24 +137,11 @@ function DocAutoOpener({
     // In paginated mode, the document might be on a different page.
     // Search across all documents via iterative pagination.
     if (paginationEnabled) {
-      let cancelled = false
+      const controller = new AbortController()
       ;(async () => {
         try {
-          let offset = 0
-          const batchSize = 200
-          let found: KnowledgeDocument | undefined
-          // Iterate through all pages until found or exhausted
-          while (!cancelled) {
-            const response = await listDocuments(knowledgeBaseId, {
-              limit: batchSize,
-              offset,
-            })
-            if (cancelled) return
-            found = response.items.find(doc => doc.name === docParam)
-            if (found || !response.has_more) break
-            offset += response.items.length
-          }
-          if (!cancelled && found) {
+          const found = await findDocumentByName(knowledgeBaseId, docParam, controller.signal)
+          if (!controller.signal.aborted && found) {
             onOpen(found)
             const params = new URLSearchParams(searchParams.toString())
             params.delete('doc')
@@ -142,11 +151,11 @@ function DocAutoOpener({
         } catch {
           // Silently ignore - auto-open is best-effort
         } finally {
-          if (!cancelled) setDone(true)
+          if (!controller.signal.aborted) setDone(true)
         }
       })()
       return () => {
-        cancelled = true
+        controller.abort()
       }
     }
 
@@ -398,33 +407,25 @@ export function DocumentList({
     // In paginated mode, the document might be on a different page.
     // Search across all documents via iterative pagination.
     if (paginationEnabled) {
-      let cancelled = false
+      const controller = new AbortController()
       ;(async () => {
         try {
-          let offset = 0
-          const batchSize = 200
-          let found: KnowledgeDocument | undefined
-          while (!cancelled) {
-            const response = await listDocuments(knowledgeBase.id, {
-              limit: batchSize,
-              offset,
-            })
-            if (cancelled) return
-            found = response.items.find(doc => doc.name === initialDocPath)
-            if (found || !response.has_more) break
-            offset += response.items.length
-          }
-          if (!cancelled && found) {
+          const found = await findDocumentByName(
+            knowledgeBase.id,
+            initialDocPath,
+            controller.signal
+          )
+          if (!controller.signal.aborted && found) {
             setViewingDoc(found)
           }
         } catch {
           // Silently ignore - auto-open is best-effort
         } finally {
-          if (!cancelled) setInitialDocPathHandled(true)
+          if (!controller.signal.aborted) setInitialDocPathHandled(true)
         }
       })()
       return () => {
-        cancelled = true
+        controller.abort()
       }
     }
 
