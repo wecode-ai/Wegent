@@ -1,4 +1,5 @@
 mod local_terminal;
+mod wecode;
 
 fn normalized_non_empty(value: String) -> Option<String> {
     let trimmed = value.trim();
@@ -241,10 +242,20 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            wecode::local_executor::detect_wecode_cli,
+            wecode::local_executor::get_executor_process_diagnostics,
+            wecode::local_executor::get_executor_status,
+            wecode::local_executor::get_local_executor_auth_token,
+            wecode::local_executor::get_startup_env,
+            wecode::local_executor::kill_executor_processes,
             local_terminal::close_local_terminal,
             get_local_executor_device_id,
             local_path_exists,
+            wecode::local_executor::open_executor_logs_directory,
             local_terminal::resize_local_terminal,
+            wecode::local_executor::run_executor_command,
+            wecode::local_executor::save_local_executor_auth_token,
+            wecode::local_executor::save_startup_env,
             local_terminal::start_local_terminal,
             local_terminal::write_local_terminal
         ])
