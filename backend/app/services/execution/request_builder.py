@@ -374,6 +374,10 @@ class TaskRequestBuilder:
         request_project_id = _first_present_project_id(
             project_workspace.get("project_id"), task.project_id
         )
+        resolved_bot_name = getattr(bot, "name", "") or (
+            bot_config[0].get("name", "") if bot_config else ""
+        )
+        resolved_bot_namespace = getattr(bot, "namespace", None) or "default"
 
         return ExecutionRequest(
             task_id=task.id,
@@ -385,8 +389,8 @@ class TaskRequestBuilder:
             user_id=user.id,
             user_name=user.user_name,
             bot=bot_config,
-            bot_name=bot.name,
-            bot_namespace=bot.namespace or "default",
+            bot_name=resolved_bot_name,
+            bot_namespace=resolved_bot_namespace,
             model_config=model_config,
             system_prompt=system_prompt,
             prompt=message,
