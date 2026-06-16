@@ -10,6 +10,37 @@ from shared.models import EventType, ExecutionEvent
 
 
 @pytest.mark.asyncio
+async def test_emit_start_initializes_task_streaming_status():
+    """emit_start should match START events for refresh recovery."""
+    from app.services.execution.emitters import StatusUpdatingEmitter
+
+    wrapped = AsyncMock()
+    emitter = StatusUpdatingEmitter(wrapped=wrapped, task_id=101, subtask_id=202)
+    mock_session_manager = AsyncMock()
+
+    with patch("app.services.chat.storage.session_manager", mock_session_manager):
+        await emitter.emit_start(
+            task_id=101,
+            subtask_id=202,
+            message_id=303,
+            data={"shell_type": "ClaudeCode"},
+        )
+
+    mock_session_manager.set_task_streaming_status.assert_awaited_once_with(
+        task_id=101,
+        subtask_id=202,
+        user_id=0,
+        username="",
+    )
+    wrapped.emit_start.assert_awaited_once_with(
+        101,
+        202,
+        303,
+        data={"shell_type": "ClaudeCode"},
+    )
+
+
+@pytest.mark.asyncio
 async def test_emit_error_persists_partial_result_and_blocks():
     """FAILED subtasks should keep partial output generated before the error."""
     from app.services.execution.emitters import StatusUpdatingEmitter

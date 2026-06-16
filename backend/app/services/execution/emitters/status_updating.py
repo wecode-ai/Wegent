@@ -72,6 +72,21 @@ class StatusUpdatingEmitter(ResultEmitter):
         self._executor_namespace = executor_namespace
         self._status_updated = False
 
+    async def _mark_streaming_started(self) -> None:
+        """Initialize task-level streaming status for refresh recovery."""
+        from app.services.chat.storage import session_manager
+
+        await session_manager.set_task_streaming_status(
+            task_id=self._task_id,
+            subtask_id=self._subtask_id,
+            user_id=0,
+            username="",
+        )
+        logger.info(
+            f"[StatusUpdatingEmitter] Set task streaming status: "
+            f"task_id={self._task_id}, subtask_id={self._subtask_id}"
+        )
+
     def _resolve_owner_user_id(self) -> Optional[int]:
         from app.db.session import SessionLocal
         from app.models.task import TaskResource
@@ -102,16 +117,7 @@ class StatusUpdatingEmitter(ResultEmitter):
         # Handle START event - set task streaming status for page refresh recovery
         if event.type == EventType.START.value:
             # Set task-level streaming status so get_active_streaming can find it
-            await session_manager.set_task_streaming_status(
-                task_id=self._task_id,
-                subtask_id=self._subtask_id,
-                user_id=0,  # Will be updated if needed
-                username="",
-            )
-            logger.info(
-                f"[StatusUpdatingEmitter] Set task streaming status: "
-                f"task_id={self._task_id}, subtask_id={self._subtask_id}"
-            )
+            await self._mark_streaming_started()
         elif event.type in (
             EventType.CHUNK.value,
             EventType.TOOL_START.value,
@@ -217,7 +223,8 @@ class StatusUpdatingEmitter(ResultEmitter):
         message_id: Optional[int] = None,
         **kwargs,
     ) -> None:
-        """Forward start event to wrapped emitter."""
+        """Forward start event and initialize refresh recovery state."""
+        await self._mark_streaming_started()
         await self._wrapped.emit_start(task_id, subtask_id, message_id, **kwargs)
 
     async def emit_chunk(
