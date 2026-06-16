@@ -12,6 +12,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { ApiError } from '@/apis/client'
 import { getRuntimeConfigSync } from '@/lib/runtime-config'
 import { useUser } from '@/features/common/UserContext'
+import { dispatchProjectDeletedEvent } from '../events'
 
 interface ProjectContextValue {
   // Data
@@ -173,6 +174,7 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
         await projectApis.deleteProject(id)
         // Remove from local state
         setProjects(prev => prev.filter(p => p.id !== id))
+        dispatchProjectDeletedEvent(id)
         toast({
           title: t('toast.deleteSuccess'),
         })

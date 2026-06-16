@@ -494,6 +494,21 @@ export default function PublicTeamEditDialog({
   const syncBasicToAdvanced = useCallback(() => {
     // Build members array from selected bots
     const members = []
+    const orderedMemberIds = [
+      ...(leaderBotId !== null ? [leaderBotId] : []),
+      ...selectedBotKeys.map(key => Number(key)).filter(botId => botId !== leaderBotId),
+    ]
+    const finalPipelineBotId =
+      mode === 'pipeline' ? orderedMemberIds[orderedMemberIds.length - 1] : null
+    const getRequireConfirmation = (botId: number) =>
+      mode === 'pipeline' && botId !== finalPipelineBotId
+        ? requireConfirmationMap[botId] || undefined
+        : undefined
+    const getContextPassing = (botId: number): PipelineContextPassing =>
+      mode === 'pipeline' && botId !== finalPipelineBotId
+        ? contextPassingMap[botId] || 'none'
+        : 'none'
+
     if (leaderBotId !== null) {
       const leaderBot = bots.find(b => b.id === leaderBotId)
       if (leaderBot) {
@@ -501,8 +516,8 @@ export default function PublicTeamEditDialog({
           botName: leaderBot.name,
           botPrompt: unsavedPrompts[`prompt-${leaderBotId}`] || '',
           role: 'leader',
-          requireConfirmation: requireConfirmationMap[leaderBotId] || undefined,
-          contextPassing: contextPassingMap[leaderBotId] || 'none',
+          requireConfirmation: getRequireConfirmation(leaderBotId),
+          contextPassing: getContextPassing(leaderBotId),
         })
       }
     }
@@ -515,8 +530,8 @@ export default function PublicTeamEditDialog({
         members.push({
           botName: bot.name,
           botPrompt: unsavedPrompts[`prompt-${botId}`] || '',
-          requireConfirmation: requireConfirmationMap[botId] || undefined,
-          contextPassing: contextPassingMap[botId] || 'none',
+          requireConfirmation: getRequireConfirmation(botId),
+          contextPassing: getContextPassing(botId),
         })
       }
     })
@@ -719,14 +734,30 @@ export default function PublicTeamEditDialog({
 
           // Build members array
           const members = []
+          const orderedMemberIds = [
+            leaderBotId,
+            ...(!isDifyLeader
+              ? selectedBotKeys.map(key => Number(key)).filter(botId => botId !== leaderBotId)
+              : []),
+          ]
+          const finalPipelineBotId =
+            mode === 'pipeline' ? orderedMemberIds[orderedMemberIds.length - 1] : null
+          const getRequireConfirmation = (botId: number) =>
+            mode === 'pipeline' && botId !== finalPipelineBotId
+              ? requireConfirmationMap[botId] || undefined
+              : undefined
+          const getContextPassing = (botId: number): PipelineContextPassing =>
+            mode === 'pipeline' && botId !== finalPipelineBotId
+              ? contextPassingMap[botId] || 'none'
+              : 'none'
           const leaderBot = bots.find(b => b.id === leaderBotId)
           if (leaderBot) {
             members.push({
               botName: leaderBot.name,
               botPrompt: unsavedPrompts[`prompt-${leaderBotId}`] || '',
               role: 'leader',
-              requireConfirmation: requireConfirmationMap[leaderBotId] || undefined,
-              contextPassing: contextPassingMap[leaderBotId] || 'none',
+              requireConfirmation: getRequireConfirmation(leaderBotId),
+              contextPassing: getContextPassing(leaderBotId),
             })
           }
 
@@ -739,8 +770,8 @@ export default function PublicTeamEditDialog({
                 members.push({
                   botName: bot.name,
                   botPrompt: unsavedPrompts[`prompt-${botId}`] || '',
-                  requireConfirmation: requireConfirmationMap[botId] || undefined,
-                  contextPassing: contextPassingMap[botId] || 'none',
+                  requireConfirmation: getRequireConfirmation(botId),
+                  contextPassing: getContextPassing(botId),
                 })
               }
             })

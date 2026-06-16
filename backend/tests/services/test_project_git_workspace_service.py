@@ -9,7 +9,32 @@ from fastapi import HTTPException
 
 from app.models.project import Project
 from app.models.task import TaskResource
+from app.schemas.project import ProjectCreate
 from app.services import project_service
+
+
+def _local_path_project_config(device_id: str, local_path: str) -> dict:
+    return {
+        "mode": "workspace",
+        "execution": {"targetType": "local", "deviceId": device_id},
+        "workspace": {"source": "local_path", "localPath": local_path},
+    }
+
+
+def _project_task_json(task_id: int, title: str, project_id: int | None = None) -> dict:
+    labels = {"taskType": "code", "type": "offline"}
+    if project_id is not None:
+        labels["projectId"] = str(project_id)
+    return {
+        "kind": "Task",
+        "metadata": {
+            "name": f"task-{task_id}",
+            "namespace": "default",
+            "labels": labels,
+        },
+        "spec": {"title": title, "prompt": title},
+        "status": {"status": "COMPLETED"},
+    }
 
 
 def test_build_git_clone_args_includes_branch_and_single_branch():
@@ -119,6 +144,191 @@ def test_project_task_list_includes_device_and_execution_workspace_source(
     assert len(items) == 1
     assert items[0].device_id == "device-1"
     assert items[0].execution_workspace_source == "git_worktree"
+
+
+def test_delete_project_keeps_wework_task_project_id(test_db, test_user):
+    project = Project(
+        user_id=test_user.id,
+        name="Wegent",
+        client_origin="wework",
+        config=_local_path_project_config("device-1", "/workspace/Wegent"),
+        is_active=True,
+    )
+    test_db.add(project)
+    test_db.commit()
+    test_db.refresh(project)
+    task = TaskResource(
+        id=1401,
+        user_id=test_user.id,
+        kind="Task",
+        name="task-1401",
+        namespace="default",
+        project_id=project.id,
+        client_origin="wework",
+        is_active=TaskResource.STATE_ACTIVE,
+        json=_project_task_json(1401, "Project chat", project.id),
+    )
+    test_db.add(task)
+    test_db.commit()
+
+    project_service.delete_project(
+        test_db,
+        project_id=project.id,
+        user_id=test_user.id,
+        client_origin="wework",
+    )
+
+    test_db.refresh(project)
+    test_db.refresh(task)
+    assert project.is_active is False
+    assert task.project_id == project.id
+
+
+def test_delete_project_keeps_frontend_history_behavior(test_db, test_user):
+    project = Project(
+        user_id=test_user.id,
+        name="Frontend project",
+        client_origin="frontend",
+        config=None,
+        is_active=True,
+    )
+    test_db.add(project)
+    test_db.commit()
+    test_db.refresh(project)
+    task = TaskResource(
+        id=1402,
+        user_id=test_user.id,
+        kind="Task",
+        name="task-1402",
+        namespace="default",
+        project_id=project.id,
+        client_origin="frontend",
+        is_active=TaskResource.STATE_ACTIVE,
+        json=_project_task_json(1402, "Frontend project chat", project.id),
+    )
+    test_db.add(task)
+    test_db.commit()
+
+    project_service.delete_project(
+        test_db,
+        project_id=project.id,
+        user_id=test_user.id,
+        client_origin="frontend",
+    )
+
+    test_db.refresh(project)
+    test_db.refresh(task)
+    assert project.is_active is False
+    assert task.project_id == 0
+
+
+def test_create_project_reuses_active_wework_local_path_project(test_db, test_user):
+    project = Project(
+        user_id=test_user.id,
+        name="Existing Wegent",
+        client_origin="wework",
+        config=_local_path_project_config("device-1", "/workspace/Wegent"),
+        is_active=True,
+    )
+    test_db.add(project)
+    test_db.commit()
+    test_db.refresh(project)
+
+    response = project_service.create_project(
+        test_db,
+        ProjectCreate(
+            name="Duplicate Wegent",
+            client_origin="wework",
+            config=_local_path_project_config("device-1", "/workspace/Wegent/"),
+        ),
+        user_id=test_user.id,
+    )
+
+    assert response.id == project.id
+    assert (
+        test_db.query(Project)
+        .filter(Project.user_id == test_user.id, Project.client_origin == "wework")
+        .count()
+        == 1
+    )
+
+
+def test_create_project_restores_deleted_wework_project_and_stale_tasks(
+    test_db, test_user
+):
+    project = Project(
+        user_id=test_user.id,
+        name="Deleted Wegent",
+        client_origin="wework",
+        config=_local_path_project_config("device-1", "/workspace/Wegent"),
+        is_active=False,
+    )
+    test_db.add(project)
+    test_db.commit()
+    test_db.refresh(project)
+    stale_task = TaskResource(
+        id=1403,
+        user_id=test_user.id,
+        kind="Task",
+        name="task-1403",
+        namespace="default",
+        project_id=0,
+        client_origin="wework",
+        is_active=TaskResource.STATE_ACTIVE,
+        json=_project_task_json(1403, "Stale project chat", project.id),
+    )
+    test_db.add(stale_task)
+    test_db.commit()
+
+    response = project_service.create_project(
+        test_db,
+        ProjectCreate(
+            name="Restored Wegent",
+            client_origin="wework",
+            config=_local_path_project_config("device-1", "/workspace/Wegent"),
+        ),
+        user_id=test_user.id,
+    )
+
+    test_db.refresh(project)
+    test_db.refresh(stale_task)
+    assert response.id == project.id
+    assert project.is_active is True
+    assert project.is_expanded is True
+    assert stale_task.project_id == project.id
+
+
+def test_create_project_does_not_reuse_same_local_path_on_different_device(
+    test_db, test_user
+):
+    project = Project(
+        user_id=test_user.id,
+        name="Device 1 Wegent",
+        client_origin="wework",
+        config=_local_path_project_config("device-1", "/workspace/Wegent"),
+        is_active=True,
+    )
+    test_db.add(project)
+    test_db.commit()
+    test_db.refresh(project)
+
+    response = project_service.create_project(
+        test_db,
+        ProjectCreate(
+            name="Device 2 Wegent",
+            client_origin="wework",
+            config=_local_path_project_config("device-2", "/workspace/Wegent"),
+        ),
+        user_id=test_user.id,
+    )
+
+    assert response.id != project.id
+    assert (
+        test_db.query(Project)
+        .filter(Project.user_id == test_user.id, Project.client_origin == "wework")
+        .count()
+        == 2
+    )
 
 
 @pytest.mark.asyncio
