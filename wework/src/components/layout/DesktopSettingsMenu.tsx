@@ -1,7 +1,9 @@
 import {
   ChevronDown,
   Clock,
+  Download,
   ExternalLink,
+  Loader2,
   LogOut,
   Settings,
   User,
@@ -12,6 +14,7 @@ import { createHttpClient } from '@/api/http'
 import { createQuotaApi } from '@/api/quota'
 import type { QuotaData } from '@/api/quota'
 import { getRuntimeConfig } from '@/config/runtime'
+import { useAppUpdate } from '@/features/app-update/app-update-context'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { User as UserProfile } from '@/types/api'
 
@@ -23,17 +26,17 @@ function getQuotaUsagePercent(quota: QuotaData): number {
   return Math.min(100, Math.max(0, rawPercent))
 }
 
+function formatVersionTemplate(template: string, version: string): string {
+  return template.replace('{{version}}', version)
+}
+
 interface DesktopSettingsMenuProps {
   user: UserProfile | null
   onOpenSettings: () => void
   onLogout: () => void
 }
 
-export function DesktopSettingsMenu({
-  user,
-  onOpenSettings,
-  onLogout,
-}: DesktopSettingsMenuProps) {
+export function DesktopSettingsMenu({ user, onOpenSettings, onLogout }: DesktopSettingsMenuProps) {
   const { t } = useTranslation('common')
   const quotaApi = useMemo(() => {
     const { apiBaseUrl } = getRuntimeConfig()
@@ -43,10 +46,14 @@ export function DesktopSettingsMenu({
   const [quota, setQuota] = useState<QuotaData | null>(null)
   const [isQuotaLoading, setIsQuotaLoading] = useState(false)
   const [quotaError, setQuotaError] = useState<string | null>(null)
-  const accountLabel =
-    user?.email ||
-    user?.user_name ||
-    t('workbench.account_fallback', '当前账号')
+  const {
+    availableUpdate,
+    status: updateStatus,
+    error: updateError,
+    checkNow,
+    installUpdate,
+  } = useAppUpdate()
+  const accountLabel = user?.email || user?.user_name || t('workbench.account_fallback', '当前账号')
   const quotaUsageText = quota
     ? `${quota.usage.toFixed(2)} / ${quota.quota.toLocaleString()} ${t('workbench.quota_unit_yuan', '元')}`
     : ''
@@ -68,7 +75,7 @@ export function DesktopSettingsMenu({
     setQuotaError(null)
     quotaApi
       .fetchQuota()
-      .then((data) => {
+      .then(data => {
         if (data) {
           setQuota(data)
         } else {
@@ -82,6 +89,39 @@ export function DesktopSettingsMenu({
         setIsQuotaLoading(false)
       })
   }
+
+  const handleUpdateClick = async () => {
+    if (availableUpdate) {
+      await installUpdate()
+      return
+    }
+
+    await checkNow()
+  }
+
+  const updateButtonLabel = availableUpdate
+    ? formatVersionTemplate(
+        t('workbench.app_update_install', {
+          defaultValue: '更新到 {{version}}',
+          version: availableUpdate.version,
+        }),
+        availableUpdate.version
+      )
+    : t('workbench.app_update_check', { defaultValue: '检查更新' })
+  const isUpdateBusy = updateStatus === 'checking' || updateStatus === 'installing'
+  const updateMessage = availableUpdate
+    ? formatVersionTemplate(
+        t('workbench.app_update_available', {
+          defaultValue: '发现新版本 {{version}}',
+          version: availableUpdate.version,
+        }),
+        availableUpdate.version
+      )
+    : updateStatus === 'upToDate'
+      ? t('workbench.app_update_up_to_date', {
+          defaultValue: '已是最新版本',
+        })
+      : null
 
   return (
     <div
@@ -110,6 +150,30 @@ export function DesktopSettingsMenu({
         <Settings className="h-4 w-4 shrink-0 text-text-secondary" />
         <span>{t('workbench.settings', '设置')}</span>
       </button>
+      <button
+        type="button"
+        data-testid="check-app-update-button"
+        onClick={handleUpdateClick}
+        disabled={isUpdateBusy}
+        className="flex min-h-10 w-full items-center gap-3 px-4 text-left text-[13px] font-medium leading-[18px] text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
+      >
+        {isUpdateBusy ? (
+          <Loader2 className="h-4 w-4 shrink-0 animate-spin text-text-secondary" />
+        ) : (
+          <Download className="h-4 w-4 shrink-0 text-text-secondary" />
+        )}
+        <span className="flex-1">{updateButtonLabel}</span>
+      </button>
+      {updateMessage || updateError ? (
+        <div
+          data-testid="app-update-status"
+          className="px-4 pb-2 pl-11 text-xs leading-5 text-text-secondary"
+        >
+          <span className={updateError ? 'text-red-600' : undefined}>
+            {updateError ?? updateMessage}
+          </span>
+        </div>
+      ) : null}
       <div className="mx-4 border-t border-border" />
       <button
         type="button"
@@ -120,9 +184,7 @@ export function DesktopSettingsMenu({
         className="flex h-10 w-full items-center gap-3 px-4 text-left text-[13px] font-medium leading-[18px] text-text-primary hover:bg-muted"
       >
         <Clock className="h-4 w-4 shrink-0 text-text-secondary" />
-        <span className="flex-1">
-          {t('workbench.remaining_usage', '剩余用量')}
-        </span>
+        <span className="flex-1">{t('workbench.remaining_usage', '剩余用量')}</span>
         <ChevronDown
           className={`h-4 w-4 shrink-0 text-text-muted transition-transform ${
             isUsageExpanded ? 'rotate-180' : ''
@@ -130,11 +192,7 @@ export function DesktopSettingsMenu({
         />
       </button>
       {isUsageExpanded ? (
-        <div
-          id="remaining-usage-panel"
-          data-testid="usage-detail-panel"
-          className="px-4 pb-3 pt-1"
-        >
+        <div id="remaining-usage-panel" data-testid="usage-detail-panel" className="px-4 pb-3 pt-1">
           {isQuotaLoading ? (
             <div className="py-1 text-[13px] leading-[18px] text-text-secondary">
               {t('common.loading', '加载中...')}
@@ -148,9 +206,7 @@ export function DesktopSettingsMenu({
               <div className="whitespace-nowrap font-semibold text-text-primary">
                 {quotaUsageText}
               </div>
-              <div className="whitespace-nowrap text-text-secondary">
-                {quotaRemainingText}
-              </div>
+              <div className="whitespace-nowrap text-text-secondary">{quotaRemainingText}</div>
               <div
                 role="progressbar"
                 aria-valuemin={0}
