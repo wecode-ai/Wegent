@@ -14,6 +14,7 @@ import { ChromeTitlebar } from '@/components/topnav/ChromeTitlebar'
 import { AppIframe } from '@/components/topnav/AppIframe'
 import { useChromeTabs } from '@/components/topnav/useChromeTabs'
 import { isTauriRuntime } from '@/lib/runtime-environment'
+import { DeviceOnboardingGate } from '@wecode/features/local-executor/DeviceOnboardingGate'
 
 function useCurrentPath() {
   const [path, setPath] = useState(stripAppBasePath(window.location.pathname))
@@ -59,7 +60,9 @@ function AppRoutes() {
       ) : path === '/apps' ? (
         <AppsPage />
       ) : (
-        <WorkbenchPage />
+        <DeviceOnboardingGate>
+          <WorkbenchPage />
+        </DeviceOnboardingGate>
       )}
     </WorkbenchProvider>
   )
@@ -89,11 +92,7 @@ function AppShell() {
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-surface">
       {isTauri && (
-        <ChromeTitlebar
-          tabs={tabs}
-          activeKey={activeAppKey}
-          onNavigate={navigateToApp}
-        />
+        <ChromeTitlebar tabs={tabs} activeKey={activeAppKey} onNavigate={navigateToApp} />
       )}
       <div className="min-h-0 flex-1 overflow-hidden">
         <AppRoutes />

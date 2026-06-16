@@ -360,6 +360,11 @@ export function startLocalExecutorStartupCheck(): Promise<void> {
   return startupPromise
 }
 
+export function resetLocalExecutorStartupCheck(): Promise<void> {
+  startupPromise = runStartupCheck()
+  return startupPromise
+}
+
 export function subscribeLocalExecutorStartup(listener: () => void) {
   listeners.add(listener)
   return () => listeners.delete(listener)
