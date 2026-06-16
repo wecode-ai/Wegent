@@ -30,7 +30,12 @@ export interface WorkbenchThinkingBlock extends BaseWorkbenchProcessingBlock {
   content: string
 }
 
-export type WorkbenchProcessingBlock = WorkbenchToolBlock | WorkbenchThinkingBlock
+export interface WorkbenchTextBlock extends BaseWorkbenchProcessingBlock {
+  type: 'text'
+  content: string
+}
+
+export type WorkbenchProcessingBlock = WorkbenchToolBlock | WorkbenchThinkingBlock | WorkbenchTextBlock
 
 export interface WorkbenchMessage<TAttachment = unknown, TFileChanges = unknown> {
   id: string
@@ -59,7 +64,13 @@ export type WorkbenchMessageAction<TAttachment = unknown, TFileChanges = unknown
   | { type: 'reset'; messages: WorkbenchMessage<TAttachment, TFileChanges>[] }
   | { type: 'user_added'; message: WorkbenchMessage<TAttachment, TFileChanges> }
   | { type: 'assistant_started'; taskId?: number; subtaskId: number; shellType?: string }
-  | { type: 'assistant_cached'; taskId?: number; subtaskId: number; content: string }
+  | {
+      type: 'assistant_cached'
+      taskId?: number
+      subtaskId: number
+      content: string
+      blocks?: WorkbenchProcessingBlock[]
+    }
   | {
       type: 'assistant_chunk'
       subtaskId: number
@@ -128,6 +139,7 @@ export function reduceWorkbenchMessages<TAttachment = unknown, TFileChanges = un
                 taskId: action.taskId ?? message.taskId,
                 content: action.content,
                 status: 'streaming' as const,
+                blocks: action.blocks ?? message.blocks,
               }
             : message
         )
@@ -141,7 +153,7 @@ export function reduceWorkbenchMessages<TAttachment = unknown, TFileChanges = un
           role: 'assistant',
           content: action.content,
           status: 'streaming',
-          blocks: [],
+          blocks: action.blocks ?? [],
           createdAt: new Date().toISOString(),
         },
       ]
@@ -191,7 +203,13 @@ export function reduceWorkbenchMessages<TAttachment = unknown, TFileChanges = un
         message.subtaskId === action.subtaskId
           ? {
               ...message,
-              blocks: mergeProcessingBlock(finalizeThinkingBlocks(message.blocks), action.block),
+              content: shouldMovePendingContentBeforeBlock(message, action.block)
+                ? ''
+                : message.content,
+              blocks: mergeProcessingBlock(
+                getBlocksBeforeIncomingBlock(message, action.subtaskId, action.block),
+                action.block
+              ),
             }
           : message
       )
@@ -284,10 +302,51 @@ function appendThinkingChunk(
   ]
 }
 
-function finalizeThinkingBlocks(
+function getBlocksBeforeIncomingBlock<TAttachment, TFileChanges>(
+  message: WorkbenchMessage<TAttachment, TFileChanges>,
+  subtaskId: number,
+  incomingBlock: WorkbenchProcessingBlock
+): WorkbenchProcessingBlock[] {
+  const finalizedBlocks = finalizeOpenNarrativeBlocks(message.blocks)
+  if (!shouldMovePendingContentBeforeBlock(message, incomingBlock)) return finalizedBlocks
+
+  return [
+    ...finalizedBlocks,
+    {
+      id: `text-${subtaskId}-${getTextBlockCount(finalizedBlocks) + 1}`,
+      subtaskId,
+      type: 'text',
+      content: message.content,
+      status: 'done',
+      createdAt: Date.now(),
+    },
+  ]
+}
+
+function shouldMovePendingContentBeforeBlock<TAttachment, TFileChanges>(
+  message: WorkbenchMessage<TAttachment, TFileChanges>,
+  incomingBlock: WorkbenchProcessingBlock
+): boolean {
+  return incomingBlock.type !== 'text' && message.content.trim().length > 0
+}
+
+function getTextBlockCount(blocks: WorkbenchProcessingBlock[]): number {
+  return blocks.filter(block => block.type === 'text').length
+}
+
+function finalizeOpenNarrativeBlocks(
   blocks: WorkbenchProcessingBlock[] | undefined
 ): WorkbenchProcessingBlock[] {
-  return finalizeBlocks(blocks)
+  return (blocks ?? []).map(block => {
+    if (
+      (block.type === 'thinking' || block.type === 'text') &&
+      block.status === 'streaming'
+    ) {
+      return { ...block, status: 'done' as const }
+    }
+
+    return block
+  })
 }
 
 function finalizeBlocks(

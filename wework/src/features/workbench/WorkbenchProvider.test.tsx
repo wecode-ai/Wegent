@@ -2897,11 +2897,17 @@ describe('WorkbenchProvider', () => {
                         {String(block.toolOutput)}:{block.status}
                       </li>,
                     ]
-                  : [
-                      <li key={block.id}>
-                        thinking:{block.content}:{block.status}
-                      </li>,
-                    ]
+                  : block.type === 'thinking'
+                    ? [
+                        <li key={block.id}>
+                          thinking:{block.content}:{block.status}
+                        </li>,
+                      ]
+                    : [
+                        <li key={block.id}>
+                          text:{block.content}:{block.status}
+                        </li>,
+                      ]
               )
             )}
           </ol>
@@ -2967,6 +2973,13 @@ describe('WorkbenchProvider', () => {
                         status: 'streaming',
                         timestamp: 1770000000100,
                       },
+                      {
+                        id: 'text_1',
+                        type: 'text',
+                        content: 'Let me check the workspace.',
+                        status: 'done',
+                        timestamp: 1770000000200,
+                      },
                     ],
                   },
                   status: 'COMPLETED',
@@ -3011,6 +3024,9 @@ describe('WorkbenchProvider', () => {
     )
     expect(screen.getByTestId('tool-blocks')).toHaveTextContent(
       'thinking:I will inspect the workspace:done'
+    )
+    expect(screen.getByTestId('tool-blocks')).toHaveTextContent(
+      'text:Let me check the workspace.:done'
     )
   })
 

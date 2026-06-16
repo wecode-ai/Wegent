@@ -382,6 +382,24 @@ function normalizeProcessingBlock(
     }
   }
 
+  if (block.type === 'text') {
+    const id = typeof block.id === 'string' ? block.id : `text-${subtaskId}-${index}`
+    const content =
+      typeof block.content === 'string'
+        ? block.content
+        : typeof block.text === 'string'
+          ? block.text
+          : ''
+    return {
+      id,
+      subtaskId,
+      type: 'text',
+      content,
+      status,
+      createdAt: timestamp,
+    }
+  }
+
   return null
 }
 
@@ -1278,11 +1296,16 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         joinResponse?.streaming &&
         shouldRestoreCachedStreaming(detailTask, detail.subtasks, joinResponse.streaming.subtask_id)
       ) {
+        const cachedBlocks = normalizeProcessingBlocks(
+          joinResponse.streaming.subtask_id,
+          joinResponse.streaming.blocks
+        )
         dispatchMessages({
           type: 'assistant_cached',
           taskId,
           subtaskId: joinResponse.streaming.subtask_id,
           content: joinResponse.streaming.cached_content,
+          blocks: cachedBlocks.length > 0 ? cachedBlocks : undefined,
         })
       }
       const routeProjectId = resolvedProjectId === undefined ? undefined : resolvedProjectId

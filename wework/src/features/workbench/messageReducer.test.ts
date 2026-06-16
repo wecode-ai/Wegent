@@ -161,6 +161,45 @@ describe('messageReducer', () => {
     ])
   })
 
+  test('places streamed process text before the following tool block', () => {
+    const state = messageReducer(
+      messageReducer([], {
+        type: 'assistant_started',
+        taskId: 1,
+        subtaskId: 9,
+      }),
+      {
+        type: 'assistant_chunk',
+        subtaskId: 9,
+        content: 'Let me explore the repository structure.',
+      }
+    )
+
+    const withTool = messageReducer(state, {
+      type: 'block_created',
+      subtaskId: 9,
+      block: {
+        id: 'call_1',
+        subtaskId: 9,
+        type: 'tool',
+        toolName: 'bash',
+        toolInput: { command: 'ls' },
+        status: 'pending',
+        createdAt: 1770000000000,
+      },
+    })
+
+    expect(withTool[0].content).toBe('')
+    expect(withTool[0].blocks).toMatchObject([
+      {
+        type: 'text',
+        content: 'Let me explore the repository structure.',
+        status: 'done',
+      },
+      { type: 'tool', toolName: 'bash', status: 'pending' },
+    ])
+  })
+
   test('replaces temporary processing blocks with persisted blocks on done', () => {
     const state = messageReducer(
       messageReducer([], {
@@ -229,7 +268,7 @@ describe('messageReducer', () => {
         type: 'assistant_done',
         subtaskId: 9,
         fileChanges: activeFileChanges,
-      },
+      }
     )
     const reverted = messageReducer(state, {
       type: 'file_changes_updated',
