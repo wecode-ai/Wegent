@@ -86,6 +86,7 @@ describe('ConnectionsSettingsPage', () => {
     getMetrics: vi.fn(),
     getMetricsHistory: vi.fn(),
     getVncConfig: vi.fn(),
+    setupSharedSkills: vi.fn(),
   }
   const projectApi = {
     listWorktrees: vi.fn(),
@@ -129,6 +130,16 @@ describe('ConnectionsSettingsPage', () => {
       wss_url: 'wss://example.com/vnc',
       signature: 'signature',
       sandbox_id: 'sandbox-1',
+    })
+    api.setupSharedSkills.mockResolvedValue({
+      success: true,
+      status: 'configured',
+      shared_path: '/Users/crystal/.agents/skills',
+      shared_created: true,
+      legacy_paths: ['/Users/crystal/.codex/skills', '/Users/crystal/.claude/skills'],
+      moved_count: 2,
+      moved: [],
+      links: [],
     })
     createDeviceApiMock.mockReturnValue(api)
     projectApi.listWorktrees.mockResolvedValue({ total: 0, devices: [] })
@@ -228,13 +239,13 @@ describe('ConnectionsSettingsPage', () => {
     expect(createDialog).toHaveClass('bg-popover')
     expect(screen.getByTestId('add-cloud-device-confirm')).toHaveClass(
       'bg-text-primary',
-      'text-background',
+      'text-background'
     )
     await userEvent.click(screen.getByTestId('add-cloud-device-confirm'))
 
     await waitFor(() => expect(api.createCloudDevice).toHaveBeenCalledTimes(1))
     const creatingNotice = screen.getByText(
-      '云设备创建中，初始化约需 2-3 分钟，完成后将自动出现在列表中',
+      '云设备创建中，初始化约需 2-3 分钟，完成后将自动出现在列表中'
     )
     expect(creatingNotice).toHaveClass('text-text-secondary')
     expect(creatingNotice).not.toHaveClass('text-primary')
@@ -246,7 +257,7 @@ describe('ConnectionsSettingsPage', () => {
     render(
       <AppearanceProvider>
         <ConnectionsSettingsPage onBack={vi.fn()} />
-      </AppearanceProvider>,
+      </AppearanceProvider>
     )
 
     await userEvent.click(screen.getByTestId('settings-nav-appearance'))
@@ -268,31 +279,26 @@ describe('ConnectionsSettingsPage', () => {
     expect(await screen.findByTestId('runtime-config-status')).toHaveTextContent('已配置')
     expect(
       screen.getByText(
-        '从设备导入或上传 Codex auth.json。启用后，使用 Codex 的 GPT 模型会通过该认证账户访问 Codex。',
-      ),
+        '从设备导入或上传 Codex auth.json。启用后，使用 Codex 的 GPT 模型会通过该认证账户访问 Codex。'
+      )
     ).toBeInTheDocument()
     expect(screen.getByText('~/.codex/auth.json')).toBeInTheDocument()
     const runtimeConfigButtons = Array.from(
-      screen.getByTestId('runtime-config-settings-page').querySelectorAll('button'),
+      screen.getByTestId('runtime-config-settings-page').querySelectorAll('button')
     )
     expect(
-      runtimeConfigButtons.indexOf(screen.getByTestId('runtime-config-import-button')),
-    ).toBeLessThan(
-      runtimeConfigButtons.indexOf(screen.getByTestId('runtime-config-upload-button')),
-    )
+      runtimeConfigButtons.indexOf(screen.getByTestId('runtime-config-import-button'))
+    ).toBeLessThan(runtimeConfigButtons.indexOf(screen.getByTestId('runtime-config-upload-button')))
 
     await userEvent.click(screen.getByTestId('runtime-config-toggle'))
 
     await waitFor(() =>
       expect(userApi.updateRuntimeConfig).toHaveBeenCalledWith('codex', {
         use_user_config: true,
-      }),
+      })
     )
     await waitFor(() =>
-      expect(screen.getByTestId('runtime-config-toggle')).toHaveAttribute(
-        'aria-checked',
-        'true',
-      ),
+      expect(screen.getByTestId('runtime-config-toggle')).toHaveAttribute('aria-checked', 'true')
     )
 
     expect(screen.queryByTestId('runtime-config-sync-button')).not.toBeInTheDocument()
@@ -340,7 +346,7 @@ describe('ConnectionsSettingsPage', () => {
     await userEvent.click(screen.getByTestId('proxy-config-save-button'))
 
     await waitFor(() =>
-      expect(userApi.updateProxyConfig).toHaveBeenCalledWith('http://127.0.0.1:7890'),
+      expect(userApi.updateProxyConfig).toHaveBeenCalledWith('http://127.0.0.1:7890')
     )
     expect(await screen.findByText('http://127.0.0.1:7890')).toBeInTheDocument()
 
@@ -352,13 +358,13 @@ describe('ConnectionsSettingsPage', () => {
       expect(userApi.updateRuntimeConfig).toHaveBeenCalledWith('codex', {
         use_user_config: false,
         use_proxy: true,
-      }),
+      })
     )
     await waitFor(() =>
       expect(screen.getByTestId('runtime-config-proxy-toggle')).toHaveAttribute(
         'aria-checked',
-        'true',
-      ),
+        'true'
+      )
     )
   })
 
@@ -430,17 +436,17 @@ describe('ConnectionsSettingsPage', () => {
     expect(await screen.findByText('/workspace/worktrees/1386/Wegent')).toBeInTheDocument()
     expect(screen.getByText('/workspace/worktrees/1387/Wegent')).toBeInTheDocument()
     expect(screen.getByTestId('worktree-task-link-1386')).toHaveTextContent(
-      'Fix sidebar persistence',
+      'Fix sidebar persistence'
     )
-    expect(screen.getByTestId('worktree-task-missing-1387')).toHaveTextContent(
-      '未关联会话',
-    )
+    expect(screen.getByTestId('worktree-task-missing-1387')).toHaveTextContent('未关联会话')
     expect(screen.getByText('Crystal Mac')).toHaveClass('text-text-muted')
     expect(screen.getByText('Linux Builder')).toHaveClass('text-text-muted')
-    within(projectGroup).getAllByTestId('worktree-row').forEach(row => {
-      expect(row).not.toHaveTextContent('Crystal Mac')
-      expect(row).not.toHaveTextContent('Linux Builder')
-    })
+    within(projectGroup)
+      .getAllByTestId('worktree-row')
+      .forEach(row => {
+        expect(row).not.toHaveTextContent('Crystal Mac')
+        expect(row).not.toHaveTextContent('Linux Builder')
+      })
     expect(screen.queryByText('device-1')).not.toBeInTheDocument()
     expect(screen.queryByText('1386')).not.toBeInTheDocument()
     expect(screen.queryByTestId('worktree-device-device-1')).not.toBeInTheDocument()
@@ -449,6 +455,26 @@ describe('ConnectionsSettingsPage', () => {
     await userEvent.click(screen.getByTestId('worktree-task-link-1386'))
 
     expect(window.location.pathname).toBe('/projects/7/tasks/1386')
+  })
+
+  test('configures shared skills from the coding settings navigation', async () => {
+    api.getAllDevices.mockResolvedValue([localDevice()])
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    await userEvent.click(screen.getByTestId('settings-nav-skills'))
+
+    expect(await screen.findByTestId('skill-settings-page')).toBeInTheDocument()
+    expect(screen.getByTestId('skill-management-device-select')).toHaveValue('local-device')
+
+    await userEvent.click(screen.getByTestId('skill-management-enable-button'))
+
+    await waitFor(() => {
+      expect(api.setupSharedSkills).toHaveBeenCalledWith('local-device')
+    })
+    expect(await screen.findByTestId('skill-management-result')).toHaveTextContent(
+      '/Users/crystal/.agents/skills'
+    )
   })
 
   test('shows a single empty worktree state without device groups', async () => {
@@ -510,7 +536,7 @@ describe('ConnectionsSettingsPage', () => {
     await userEvent.click(await screen.findByTestId('delete-worktree-button-1386'))
 
     expect(screen.getByTestId('confirm-delete-worktree-dialog')).toHaveTextContent(
-      '将删除这个工作树目录，并一并删除使用该工作树的任务。',
+      '将删除这个工作树目录，并一并删除使用该工作树的任务。'
     )
 
     await userEvent.click(screen.getByTestId('confirm-delete-worktree-button'))
@@ -520,7 +546,7 @@ describe('ConnectionsSettingsPage', () => {
         device_id: 'device-1',
         worktree_id: '1386',
         project_id: 7,
-      }),
+      })
     )
     expect(projectApi.listWorktrees).toHaveBeenCalledTimes(2)
   })
@@ -532,12 +558,12 @@ describe('ConnectionsSettingsPage', () => {
     render(
       <AppearanceProvider>
         <ConnectionsSettingsPage onBack={vi.fn()} />
-      </AppearanceProvider>,
+      </AppearanceProvider>
     )
 
     expect(screen.getByTestId('appearance-settings-page')).toBeInTheDocument()
     expect(screen.getByTestId('settings-nav-appearance')).toHaveClass(
-      'bg-[rgb(var(--color-sidebar-active))]',
+      'bg-[rgb(var(--color-sidebar-active))]'
     )
   })
 
@@ -606,7 +632,7 @@ describe('ConnectionsSettingsPage', () => {
         'Device ID: cloud-runtime-device-1',
         'Username: ubuntu',
         'Password: initial-password-1',
-      ].join('\n'),
+      ].join('\n')
     )
   })
 
@@ -627,9 +653,7 @@ describe('ConnectionsSettingsPage', () => {
     await userEvent.click(screen.getByTestId('connection-more-button-device-1'))
     await userEvent.click(screen.getByTestId('connection-info-menu-item-device-1'))
 
-    expect(screen.getByTestId('connection-info-dialog')).toHaveTextContent(
-      'legacy-password',
-    )
+    expect(screen.getByTestId('connection-info-dialog')).toHaveTextContent('legacy-password')
   })
 
   test.each([
@@ -648,25 +672,22 @@ describe('ConnectionsSettingsPage', () => {
         ubuntuInitialPassword: '',
       },
     },
-  ])(
-    'falls back to ubuntu when the initial password is $name',
-    async ({ cloudConfig }) => {
-      api.getAllDevices.mockResolvedValue([
-        cloudDevice({
-          cloud_config: cloudConfig,
-        }),
-      ])
+  ])('falls back to ubuntu when the initial password is $name', async ({ cloudConfig }) => {
+    api.getAllDevices.mockResolvedValue([
+      cloudDevice({
+        cloud_config: cloudConfig,
+      }),
+    ])
 
-      render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
 
-      await screen.findByTestId('connection-device-device-1')
-      await userEvent.click(screen.getByTestId('connection-more-button-device-1'))
-      await userEvent.click(screen.getByTestId('connection-info-menu-item-device-1'))
-      await userEvent.click(screen.getByTestId('copy-connection-info-password'))
+    await screen.findByTestId('connection-device-device-1')
+    await userEvent.click(screen.getByTestId('connection-more-button-device-1'))
+    await userEvent.click(screen.getByTestId('connection-info-menu-item-device-1'))
+    await userEvent.click(screen.getByTestId('copy-connection-info-password'))
 
-      expect(navigator.clipboard.writeText).toHaveBeenCalledWith('ubuntu')
-    },
-  )
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith('ubuntu')
+  })
 
   test('lists local and cloud Claude Code devices while excluding unsupported shells', async () => {
     api.getAllDevices.mockResolvedValue([
@@ -723,7 +744,9 @@ describe('ConnectionsSettingsPage', () => {
     expect(await screen.findByTestId('connection-device-local-claude')).toBeInTheDocument()
     expect(screen.getByText('Local Claude Device')).toBeInTheDocument()
     expect(screen.queryByTestId('connection-terminal-button-local-claude')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('connection-code-server-button-local-claude')).not.toBeInTheDocument()
+    expect(
+      screen.queryByTestId('connection-code-server-button-local-claude')
+    ).not.toBeInTheDocument()
     expect(screen.queryByTestId('connection-vnc-button-local-claude')).not.toBeInTheDocument()
     expect(screen.queryByTestId('connection-more-button-local-claude')).not.toBeInTheDocument()
     expect(screen.queryByTestId('connection-delete-button-local-claude')).not.toBeInTheDocument()
@@ -769,9 +792,7 @@ describe('ConnectionsSettingsPage', () => {
 
     await userEvent.click(screen.getByTestId('connection-delete-button-offline-local'))
     expect(screen.getByTestId('confirm-delete-device-dialog')).toHaveTextContent('删除本地设备')
-    expect(screen.getByTestId('confirm-delete-device-dialog')).toHaveTextContent(
-      '本地设备注册记录',
-    )
+    expect(screen.getByTestId('confirm-delete-device-dialog')).toHaveTextContent('本地设备注册记录')
     await userEvent.click(screen.getByTestId('confirm-delete-device-button'))
 
     await waitFor(() => expect(api.deleteDevice).toHaveBeenCalledWith('offline-local'))

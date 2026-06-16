@@ -7,11 +7,10 @@
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.cache import cache_manager
-from app.models.subtask import Subtask
+from app.stores import tasks as task_stores
 
 EXECUTOR_CLEANUP_CURSOR_KEY = "executor_cleanup_cursor"
 INITIAL_CURSOR_LOOKBACK_DAYS = 7
@@ -40,21 +39,25 @@ class ExecutorCleanupCursorService:
     async def _build_default_cursor(self, db: AsyncSession) -> ExecutorCleanupCursor:
         """Build the first cleanup cursor from the recent one-week subtask window."""
         recent_threshold = datetime.now() - timedelta(days=INITIAL_CURSOR_LOOKBACK_DAYS)
-        result = await db.execute(
-            select(Subtask)
-            .filter(Subtask.created_at >= recent_threshold)
-            .order_by(Subtask.created_at.asc(), Subtask.id.asc())
-            .limit(1)
+        recent_subtask = await db.run_sync(
+            lambda sync_db: (
+                task_stores.subtask_store.get_cleanup_cursor_recent_start_reference(
+                    sync_db,
+                    recent_threshold=recent_threshold,
+                )
+            )
         )
-        recent_subtask = result.scalars().first()
         recent_subtask_id = getattr(recent_subtask, "id", None)
         if isinstance(recent_subtask_id, int):
             return ExecutorCleanupCursor(
                 last_scanned_subtask_id=max(recent_subtask_id - 1, 0),
             )
 
-        result = await db.execute(select(Subtask).order_by(Subtask.id.desc()).limit(1))
-        latest_subtask = result.scalars().first()
+        latest_subtask = await db.run_sync(
+            lambda sync_db: (
+                task_stores.subtask_store.get_cleanup_cursor_latest_reference(sync_db)
+            )
+        )
         latest_subtask_id = getattr(latest_subtask, "id", None)
         if isinstance(latest_subtask_id, int):
             return ExecutorCleanupCursor(

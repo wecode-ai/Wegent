@@ -75,6 +75,45 @@ describe('reduceWorkbenchMessages', () => {
     ])
   })
 
+  test('moves streamed content into a text block before a tool block', () => {
+    const state = reduceWorkbenchMessages(
+      reduceWorkbenchMessages([], {
+        type: 'assistant_started',
+        taskId: 1,
+        subtaskId: 9,
+      }),
+      {
+        type: 'assistant_chunk',
+        subtaskId: 9,
+        content: 'Let me inspect the repository first.',
+      }
+    )
+
+    const withTool = reduceWorkbenchMessages(state, {
+      type: 'block_created',
+      subtaskId: 9,
+      block: {
+        id: 'call_1',
+        subtaskId: 9,
+        type: 'tool',
+        toolName: 'bash',
+        toolInput: { command: 'ls' },
+        status: 'pending',
+        createdAt: 1770000000000,
+      },
+    })
+
+    expect(withTool[0].content).toBe('')
+    expect(withTool[0].blocks).toMatchObject([
+      {
+        type: 'text',
+        content: 'Let me inspect the repository first.',
+        status: 'done',
+      },
+      { type: 'tool', toolName: 'bash', status: 'pending' },
+    ])
+  })
+
   test('finalizes incoming processing blocks on done', () => {
     const state = reduceWorkbenchMessages([], {
       type: 'assistant_started',
@@ -103,12 +142,21 @@ describe('reduceWorkbenchMessages', () => {
           status: 'pending',
           createdAt: 1770000001000,
         },
+        {
+          id: 'text-real',
+          subtaskId: 9,
+          type: 'text',
+          content: 'Final text',
+          status: 'streaming',
+          createdAt: 1770000002000,
+        },
       ],
     })
 
     expect(done[0].blocks).toMatchObject([
       { id: 'thinking-real', type: 'thinking', status: 'done' },
       { id: 'call_1', type: 'tool', status: 'done' },
+      { id: 'text-real', type: 'text', status: 'done' },
     ])
   })
 

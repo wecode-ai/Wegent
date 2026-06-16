@@ -36,6 +36,8 @@ spec:
         You are a senior software developer.
         Your task is to implement the feature based on the requirements.
         Write clean, well-documented code following best practices.
+      # 完成后把开发输出传给下一阶段
+      contextPassing: "previous_bot"
 
     # 第二步：代码审查者
     - name: "reviewer"
@@ -50,6 +52,8 @@ spec:
         - Potential bugs and security issues
         - Performance optimization opportunities
         Provide constructive feedback.
+      # 同时传递用户原始需求和审查输出
+      contextPassing: "original_and_previous"
 
     # 第三步：测试工程师
     - name: "tester"
@@ -119,27 +123,41 @@ spec:
       prompt: "Format the content for publication and create a publishing checklist."
 ```
 
+### 阶段间上下文传递
+
+Pipeline 成员可以通过 `contextPassing` 配置当前阶段完成后传递给下一阶段的消息。默认值是 `none`，即不传递上下文。
+
+| 值                      | 说明                               |
+| ----------------------- | ---------------------------------- |
+| `none`                  | 不传递任何消息                     |
+| `original_user`         | 传递用户的原始需求                 |
+| `previous_bot`          | 传递当前阶段 Bot 的最终输出        |
+| `original_and_previous` | 同时传递用户原始需求和当前阶段输出 |
+
 ### Pipeline 最佳实践
 
 #### ✅ 推荐做法
+
 - 每个阶段职责单一明确
 - 控制流水线长度（建议不超过 6 个步骤）
 - 每个 Bot 的 prompt 清晰定义输入输出期望
 - 添加错误处理和验证步骤
 
 #### ❌ 避免做法
+
 - 过长的流水线（超过 8 个步骤）
 - 步骤之间职责重叠
 - 缺少中间验证环节
 - Bot 顺序不合理
 
 #### 优化的流水线设计示例
+
 ```yaml
 members:
-  - name: "validator"        # 首先验证输入
-  - name: "processor"        # 然后处理
-  - name: "quality-check"    # 质量检查
-  - name: "finalizer"        # 最后完成
+  - name: "validator" # 首先验证输入
+  - name: "processor" # 然后处理
+  - name: "quality-check" # 质量检查
+  - name: "finalizer" # 最后完成
 ```
 
 ---
@@ -292,18 +310,21 @@ spec:
 ### Route 最佳实践
 
 #### ✅ 推荐做法
+
 - Leader Bot 的路由逻辑清晰准确
 - 专家 Bot 领域划分明确，避免重叠
 - 为 Leader 提供详细的路由规则
 - 包含默认路由处理未知情况
 
 #### ❌ 避免做法
+
 - 路由规则模糊不清
 - 专家领域重叠导致选择困难
 - 缺少默认处理路径
 - 路由决策过于复杂
 
 #### 清晰的路由规则示例
+
 ```yaml
 - name: "router"
   prompt: |
@@ -477,18 +498,21 @@ spec:
 ### Coordinate 最佳实践
 
 #### ✅ 推荐做法
+
 - Leader 明确任务分解策略
 - 专家 Bot 职责不重叠
 - Leader 需要强大的汇总能力
 - 控制并行 Bot 数量（3-5 个最佳）
 
 #### ❌ 避免做法
+
 - 任务分解不均衡
 - 过多并行 Bot（超过 7 个）
 - Leader 缺少汇总指导
 - 专家输出格式不统一
 
 #### 结构化的协调示例
+
 ```yaml
 - name: "coordinator"
   prompt: |
@@ -695,18 +719,21 @@ spec:
 ### Collaborate 最佳实践
 
 #### ✅ 推荐做法
+
 - 定义清晰的协作目标
 - 每个 Bot 有明确的视角/角色
 - 设置讨论轮次或停止条件
 - 鼓励 Bot 相互引用和回应
 
 #### ❌ 避免做法
+
 - 缺少明确目标导致发散
 - 角色定义模糊
 - 没有讨论终止条件
 - Bot 各说各话不互动
 
 #### 有效的协作设置示例
+
 ```yaml
 members:
   - name: "architect"
@@ -734,14 +761,14 @@ members:
 
 ## 性能对比
 
-| 模式 | 平均耗时 | 并行度 | 资源消耗 | 可预测性 |
-|------|----------|--------|----------|----------|
-| **Pipeline** | N × T | 低（串行） | 低 | 高 |
-| **Route** | T + 路由时间 | 低（单路径） | 低 | 高 |
-| **Coordinate** | T + 汇总时间 | 高（并行） | 高 | 中 |
-| **Collaborate** | 不确定 | 高（并发） | 高 | 低 |
+| 模式            | 平均耗时     | 并行度       | 资源消耗 | 可预测性 |
+| --------------- | ------------ | ------------ | -------- | -------- |
+| **Pipeline**    | N × T        | 低（串行）   | 低       | 高       |
+| **Route**       | T + 路由时间 | 低（单路径） | 低       | 高       |
+| **Coordinate**  | T + 汇总时间 | 高（并行）   | 高       | 中       |
+| **Collaborate** | 不确定       | 高（并发）   | 高       | 低       |
 
-*注: N = Bot 数量, T = 单个 Bot 平均处理时间*
+_注: N = Bot 数量, T = 单个 Bot 平均处理时间_
 
 ---
 
@@ -783,22 +810,22 @@ spec:
   members:
     - name: "coordinator"
       role: "leader"
-      botRef: {name: coordinator-bot, namespace: default}
+      botRef: { name: coordinator-bot, namespace: default }
       prompt: "Coordinate news analysis: assign data collection, sentiment analysis, and trend identification. Synthesize comprehensive news report."
 
     - name: "news-collector"
       role: "member"
-      botRef: {name: collector-bot, namespace: default}
+      botRef: { name: collector-bot, namespace: default }
       prompt: "Collect news from multiple sources on the given topic. Provide summaries with sources and timestamps."
 
     - name: "sentiment-analyzer"
       role: "member"
-      botRef: {name: sentiment-bot, namespace: default}
+      botRef: { name: sentiment-bot, namespace: default }
       prompt: "Analyze sentiment and tone of news articles. Identify positive, negative, and neutral coverage."
 
     - name: "trend-identifier"
       role: "member"
-      botRef: {name: trend-bot, namespace: default}
+      botRef: { name: trend-bot, namespace: default }
       prompt: "Identify emerging trends and patterns in news coverage. Highlight key themes and developments."
 ```
 
@@ -815,22 +842,22 @@ spec:
   members:
     - name: "requirements-analyst"
       role: "leader"
-      botRef: {name: analyst-bot, namespace: default}
+      botRef: { name: analyst-bot, namespace: default }
       prompt: "Analyze requirements and create detailed technical specifications."
 
     - name: "backend-developer"
       role: "member"
-      botRef: {name: backend-bot, namespace: default}
+      botRef: { name: backend-bot, namespace: default }
       prompt: "Implement backend API based on specifications. Use Python FastAPI."
 
     - name: "frontend-developer"
       role: "member"
-      botRef: {name: frontend-bot, namespace: default}
+      botRef: { name: frontend-bot, namespace: default }
       prompt: "Build frontend interface using React. Integrate with backend API."
 
     - name: "integration-tester"
       role: "member"
-      botRef: {name: tester-bot, namespace: default}
+      botRef: { name: tester-bot, namespace: default }
       prompt: "Test full-stack integration. Report any issues or bugs."
 ```
 

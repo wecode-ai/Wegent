@@ -207,10 +207,10 @@ export function useMessageSyncer({
    */
   const handleChatStart = useCallback(
     (data: ChatStartPayload) => {
-      const { task_id, subtask_id, shell_type, message_id } = data
+      const { task_id, subtask_id, bot_name, shell_type, message_id } = data
 
       const machine = getMachineForTask(task_id)
-      machine?.handleChatStart(subtask_id, shell_type, message_id)
+      machine?.handleChatStart(subtask_id, shell_type, message_id, bot_name)
     },
     [getMachineForTask]
   )

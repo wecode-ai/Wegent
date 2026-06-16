@@ -19,6 +19,7 @@ chat_config_module = ModuleType("app.services.chat.config")
 chat_config_module.get_team_first_bot_shell_type = Mock()
 sys.modules.setdefault("app.services.chat.config", chat_config_module)
 
+import app.stores.tasks as task_stores
 from app.api.ws import chat_namespace
 from app.api.ws.chat_namespace import ChatNamespace
 
@@ -53,10 +54,10 @@ def test_get_device_info_for_close_session_uses_task_owner_for_member(monkeypatc
         yield db
 
     monkeypatch.setattr(chat_namespace, "get_db_session", fake_db_session)
-    monkeypatch.setattr(chat_namespace.task_store, "get_regular_active_task", get_task)
-    monkeypatch.setattr(chat_namespace.task_access_store, "is_member", is_member)
+    monkeypatch.setattr(task_stores.task_store, "get_regular_active_task", get_task)
+    monkeypatch.setattr(task_stores.task_access_store, "is_member", is_member)
     monkeypatch.setattr(
-        chat_namespace.subtask_store,
+        task_stores.subtask_store,
         "get_latest_device_executor_for_task",
         get_subtask,
     )
@@ -122,7 +123,7 @@ async def test_chat_retry_default_model_clears_stale_override_labels_without_nam
             "app.api.ws.chat_namespace.trigger_ai_response_unified",
             AsyncMock(),
         ) as mock_trigger,
-        patch("app.api.ws.chat_namespace.task_store") as mock_task_store,
+        patch("app.stores.tasks.task_store") as mock_task_store,
     ):
         result = await namespace.on_chat_retry(
             "sid-123",
@@ -250,7 +251,7 @@ async def test_chat_retry_new_model_without_type_clears_stale_override_model_typ
             "app.api.ws.chat_namespace.trigger_ai_response_unified",
             AsyncMock(),
         ) as mock_trigger,
-        patch("app.api.ws.chat_namespace.task_store") as mock_task_store,
+        patch("app.stores.tasks.task_store") as mock_task_store,
     ):
         result = await namespace.on_chat_retry(
             "sid-123",

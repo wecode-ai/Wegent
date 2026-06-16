@@ -12,6 +12,15 @@ import type { Task, TaskDetail } from '@/types/api'
 
 let mockVisibleHandler: ((wasHiddenFor: number) => void) | null = null
 let mockIsConnected = true
+let mockChatHandlers: {
+  onChatStart?: (payload: {
+    task_id: number
+    subtask_id: number
+    bot_name?: string
+    shell_type?: string
+    message_id?: number
+  }) => void
+} | null = null
 
 const mockJoinTask = jest.fn()
 const mockLeaveTask = jest.fn()
@@ -24,7 +33,10 @@ const mockSocketContext = {
   leaveTask: mockLeaveTask,
   sendChatMessage: jest.fn(),
   cancelChatStream: jest.fn(),
-  registerChatHandlers: jest.fn(() => jest.fn()),
+  registerChatHandlers: jest.fn(handlers => {
+    mockChatHandlers = handlers
+    return jest.fn()
+  }),
   registerSkillHandlers: jest.fn(() => jest.fn()),
   registerTaskHandlers: jest.fn(() => jest.fn()),
   sendSkillResponse: jest.fn(),
@@ -144,6 +156,7 @@ describe('TaskSessionProvider', () => {
     jest.clearAllMocks()
     sessionProbe.current = null
     mockVisibleHandler = null
+    mockChatHandlers = null
     mockIsConnected = true
 
     mockJoinTask.mockResolvedValue({ subtasks: [] })
@@ -188,6 +201,38 @@ describe('TaskSessionProvider', () => {
 
     expect(mockedTaskApis.getTaskDetail).toHaveBeenCalledWith(713)
     expect(mockedTaskApis.getTaskRuntimeCheck).not.toHaveBeenCalled()
+  })
+
+  it('stores bot_name from chat start events in the current streaming message', async () => {
+    mockJoinTask.mockImplementation(() => new Promise(() => {}))
+    mockedTaskApis.getTaskDetail.mockImplementation(() => new Promise(() => {}))
+
+    render(
+      <TaskSessionProvider>
+        <SessionProbe />
+      </TaskSessionProvider>
+    )
+
+    await waitFor(() => {
+      expect(sessionProbe.current).not.toBeNull()
+      expect(mockChatHandlers?.onChatStart).toBeDefined()
+    })
+
+    act(() => {
+      sessionProbe.current?.selectTask(createTask())
+    })
+
+    act(() => {
+      mockChatHandlers?.onChatStart?.({
+        task_id: 713,
+        subtask_id: 714,
+        bot_name: 'Planner Bot',
+        shell_type: 'Chat',
+        message_id: 2,
+      })
+    })
+
+    expect(sessionProbe.current?.messages.get('ai-714')?.botName).toBe('Planner Bot')
   })
 
   it('loads task detail after a new chat message resolves to a real task id', async () => {

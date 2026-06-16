@@ -36,8 +36,10 @@ Wegent 是一个可自部署的 AI 工作台，用来统一管理对话、代码
 前置要求：已安装 Docker 和 Docker Compose。
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash -s -- --standalone
 ```
+
+这会启动默认的 Standalone 模式：单容器 + SQLite，适合本地试用和轻量部署。
 
 启动后访问 http://localhost:3000。
 
@@ -50,6 +52,9 @@ curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | 
 | **Development** | 源码启动 + 热重载，适合开发和二次扩展 |
 
 ```bash
+# Standalone 模式（默认）
+curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash -s -- --standalone
+
 # Standard 模式
 curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash -s -- --standard
 

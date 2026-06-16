@@ -316,8 +316,13 @@ export class TaskStateMachine {
   /**
    * Handle chat:start event
    */
-  handleChatStart(subtaskId: number, shellType?: string, messageId?: number): void {
-    this.dispatch({ type: 'CHAT_START', subtaskId, shellType, messageId })
+  handleChatStart(
+    subtaskId: number,
+    shellType?: string,
+    messageId?: number,
+    botName?: string
+  ): void {
+    this.dispatch({ type: 'CHAT_START', subtaskId, shellType, messageId, botName })
   }
 
   /**

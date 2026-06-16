@@ -44,6 +44,7 @@ from pathlib import Path
 
 FRONTMATTER_PATTERN = re.compile(r"^---\\n(.*?)\\n---", re.S)
 SKILL_SOURCES = (
+    (Path.home() / ".agents" / "skills", "agents", "**/SKILL.md", "skill"),
     (Path.home() / ".claude" / "skills", "claude", "**/SKILL.md", "skill"),
     (Path.home() / ".codex" / "skills", "codex", "**/SKILL.md", "skill"),
     (
@@ -214,6 +215,130 @@ print(json.dumps(skills, ensure_ascii=False))
 """.strip()
 
 LS_SKILLS_COMMAND = f"python3 -c {shlex.quote(LS_SKILLS_SCRIPT)}"
+
+SETUP_SHARED_SKILLS_SCRIPT = """
+import json
+import shutil
+import sys
+from pathlib import Path
+
+
+def finish(payload, code=0):
+    print(json.dumps(payload, ensure_ascii=False))
+    sys.exit(code)
+
+
+def fail(message, code=64):
+    print(message, file=sys.stderr)
+    finish({"success": False, "status": "failed", "error": message}, code)
+
+
+def same_path(left, right):
+    try:
+        return left.resolve(strict=False) == right.resolve(strict=False)
+    except OSError:
+        return False
+
+
+def unique_target(path, source_name):
+    if not path.exists() and not path.is_symlink():
+        return path
+
+    base_name = f"{path.name}-{source_name}"
+    candidate = path.with_name(base_name)
+    if not candidate.exists() and not candidate.is_symlink():
+        return candidate
+
+    for index in range(2, 1000):
+        candidate = path.with_name(f"{base_name}-{index}")
+        if not candidate.exists() and not candidate.is_symlink():
+            return candidate
+    fail(f"could not find a free target name for {path.name}")
+
+
+def migrate_entries(source_dir, source_name, shared_dir):
+    if source_dir.is_symlink():
+        if same_path(source_dir, shared_dir):
+            return []
+        fail(f"{source_dir} is already a symlink to another location")
+
+    if not source_dir.exists():
+        return []
+    if not source_dir.is_dir():
+        fail(f"{source_dir} exists but is not a directory")
+
+    moved = []
+    for entry in sorted(source_dir.iterdir(), key=lambda item: item.name.lower()):
+        target = unique_target(shared_dir / entry.name, source_name)
+        shutil.move(str(entry), str(target))
+        moved.append(
+            {
+                "source": source_name,
+                "from": str(entry),
+                "to": str(target),
+                "renamed": target.name != entry.name,
+            }
+        )
+
+    try:
+        source_dir.rmdir()
+    except OSError as exc:
+        fail(f"failed to remove migrated directory {source_dir}: {exc}", code=74)
+    return moved
+
+
+def ensure_link(path, shared_dir):
+    if path.is_symlink():
+        if same_path(path, shared_dir):
+            return {
+                "path": str(path),
+                "target": str(shared_dir),
+                "status": "already_configured",
+            }
+        fail(f"{path} is already a symlink to another location")
+
+    if path.exists():
+        fail(f"{path} still exists after migration")
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.symlink_to(shared_dir, target_is_directory=True)
+    return {"path": str(path), "target": str(shared_dir), "status": "created"}
+
+
+home = Path.home().resolve()
+shared_dir = home / ".agents" / "skills"
+legacy_dirs = (
+    (home / ".codex" / "skills", "codex"),
+    (home / ".claude" / "skills", "claude"),
+)
+
+if shared_dir.exists() and not shared_dir.is_dir():
+    fail(f"{shared_dir} exists but is not a directory")
+
+shared_created = not shared_dir.exists()
+shared_dir.mkdir(parents=True, exist_ok=True)
+
+moved = []
+for legacy_dir, source_name in legacy_dirs:
+    moved.extend(migrate_entries(legacy_dir, source_name, shared_dir))
+
+links = [ensure_link(legacy_dir, shared_dir) for legacy_dir, _ in legacy_dirs]
+
+finish(
+    {
+        "success": True,
+        "status": "configured",
+        "shared_path": str(shared_dir),
+        "shared_created": shared_created,
+        "legacy_paths": [str(path) for path, _ in legacy_dirs],
+        "moved_count": len(moved),
+        "moved": moved,
+        "links": links,
+    }
+)
+""".strip()
+
+SETUP_SHARED_SKILLS_COMMAND = f"python3 -c {shlex.quote(SETUP_SHARED_SKILLS_SCRIPT)}"
 
 SYNC_RUNTIME_AUTH_FILE_SCRIPT = """
 import json
@@ -578,6 +703,10 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
     "git_commit": LocalDeviceCommandDefinition(command="git commit"),
     "ls_skills": LocalDeviceCommandDefinition(
         command=LS_SKILLS_COMMAND,
+        post_processor="json",
+    ),
+    "setup_shared_skills": LocalDeviceCommandDefinition(
+        command=SETUP_SHARED_SKILLS_COMMAND,
         post_processor="json",
     ),
     "sync_runtime_auth_file": LocalDeviceCommandDefinition(

@@ -15,12 +15,12 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
+import app.stores.tasks as task_stores
 from app.core.config import settings
 from app.models.resource_member import ResourceMember
 from app.models.share_link import ResourceType
 from app.models.task import TaskResource
 from app.services.share.base_service import UnifiedShareService
-from app.stores.tasks import task_store
 
 logger = logging.getLogger(__name__)
 
@@ -45,16 +45,12 @@ class TaskShareService(UnifiedShareService):
         For Tasks, we check if the resource exists and user has access
         (owner or group chat member).
         """
-        from app.services.task_member_service import task_member_service
+        task = task_stores.task_store.get_regular_active_task(db, task_id=resource_id)
 
-        task = task_store.get_regular_active_task(db, task_id=resource_id)
-
-        if task:
-            # Check if user is owner or group chat member
-            if task.user_id == user_id or task_member_service.is_member(
-                db, resource_id, user_id
-            ):
-                return task
+        if task and task_stores.task_access_store.is_member(
+            db, task_id=resource_id, user_id=user_id
+        ):
+            return task
 
         return None  # Return None if not accessible to prevent unauthorized access
 
@@ -134,7 +130,7 @@ class TaskShareService(UnifiedShareService):
 
             # Get workspace details if available
             if workspace_ref:
-                workspace = task_store.get_workspace_by_ref(
+                workspace = task_stores.task_store.get_workspace_by_ref(
                     db,
                     user_id=task.user_id,
                     name=workspace_ref.name,
