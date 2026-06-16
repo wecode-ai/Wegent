@@ -5,13 +5,12 @@
 """Tests for pipeline context passing between bot stages."""
 
 from datetime import datetime
-from types import SimpleNamespace
 
 from sqlalchemy.orm import Session
 
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.user import User
-from app.services.chat.storage.db import DatabaseHandler
+from app.services.adapters.pipeline_context import build_pipeline_context_prompt
 from app.services.execution.schedule_helper import _resolve_dispatch_message
 
 
@@ -77,18 +76,14 @@ def _add_completed_stage(
     return subtask
 
 
-def _auto_advance(
+def _build_handoff_prompt(
     db: Session,
     user: User,
     *,
     context_passing: str,
-) -> tuple[Subtask, Subtask]:
+) -> str:
     task_id = 9201
     team_id = 12
-    task = SimpleNamespace(id=task_id, user_id=user.id)
-    task_crd = SimpleNamespace(
-        spec=SimpleNamespace(title="Pipeline task", currentStage=0)
-    )
 
     _add_user_subtask(
         db,
@@ -107,97 +102,59 @@ def _auto_advance(
         result_value="Stage 1 found three release risks.",
     )
 
-    DatabaseHandler()._auto_advance_pipeline(
+    return build_pipeline_context_prompt(
         db,
-        task,
-        task_crd,
-        last_subtask,
-        {
-            "next_stage_index": 1,
-            "next_bot_id": 20,
-            "next_bot_name": "reviewer-bot",
-            "context_passing": context_passing,
-        },
+        task_id=task_id,
+        current_subtask=last_subtask,
+        context_passing=context_passing,
     )
-    db.flush()
-
-    handoff_user = (
-        db.query(Subtask)
-        .filter(
-            Subtask.task_id == task_id,
-            Subtask.role == SubtaskRole.USER,
-            Subtask.message_id == 3,
-        )
-        .one()
-    )
-    next_stage = (
-        db.query(Subtask)
-        .filter(
-            Subtask.task_id == task_id,
-            Subtask.role == SubtaskRole.ASSISTANT,
-            Subtask.message_id == 4,
-        )
-        .one()
-    )
-    return handoff_user, next_stage
 
 
-def test_pipeline_auto_advance_keeps_empty_prompt_when_context_passing_none(
+def test_pipeline_context_prompt_keeps_empty_prompt_when_context_passing_none(
     test_db: Session,
     test_user: User,
 ) -> None:
-    handoff_user, next_stage = _auto_advance(test_db, test_user, context_passing="none")
-
-    assert handoff_user.prompt == ""
-    assert next_stage.prompt == ""
-    assert next_stage.parent_id == handoff_user.message_id
+    assert _build_handoff_prompt(test_db, test_user, context_passing="none") == ""
 
 
-def test_pipeline_auto_advance_passes_previous_bot_output(
+def test_pipeline_context_prompt_passes_previous_bot_output(
     test_db: Session,
     test_user: User,
 ) -> None:
-    handoff_user, next_stage = _auto_advance(
+    handoff_prompt = _build_handoff_prompt(
         test_db, test_user, context_passing="previous_bot"
     )
 
     assert (
-        handoff_user.prompt
-        == "Previous stage output:\nStage 1 found three release risks."
+        handoff_prompt == "Previous stage output:\nStage 1 found three release risks."
     )
-    assert next_stage.prompt == ""
-    assert next_stage.parent_id == handoff_user.message_id
 
 
-def test_pipeline_auto_advance_passes_original_user_message(
+def test_pipeline_context_prompt_passes_original_user_message(
     test_db: Session,
     test_user: User,
 ) -> None:
-    handoff_user, next_stage = _auto_advance(
+    handoff_prompt = _build_handoff_prompt(
         test_db, test_user, context_passing="original_user"
     )
 
-    assert handoff_user.prompt == "Original user request:\nBuild a release checklist."
-    assert next_stage.prompt == ""
-    assert next_stage.parent_id == handoff_user.message_id
+    assert handoff_prompt == "Original user request:\nBuild a release checklist."
 
 
-def test_pipeline_auto_advance_passes_original_user_and_previous_bot_output(
+def test_pipeline_context_prompt_passes_original_user_and_previous_bot_output(
     test_db: Session,
     test_user: User,
 ) -> None:
-    handoff_user, next_stage = _auto_advance(
+    handoff_prompt = _build_handoff_prompt(
         test_db,
         test_user,
         context_passing="original_and_previous",
     )
 
-    assert handoff_user.prompt == (
+    assert handoff_prompt == (
         "Original user request:\nBuild a release checklist.\n\n"
         "Previous stage output:\nStage 1 found three release risks."
     )
-    assert next_stage.prompt == ""
-    assert next_stage.parent_id == handoff_user.message_id
 
 
 def test_pipeline_dispatch_uses_parent_user_message_when_assistant_prompt_is_empty(

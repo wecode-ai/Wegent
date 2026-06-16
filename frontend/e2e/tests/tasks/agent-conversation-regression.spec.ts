@@ -221,7 +221,7 @@ test.describe('Agent conversation regression', () => {
   }) => {
     const firstPrompt = `MANUAL_PIPELINE_USER_MESSAGE_${makeContextToken('manual_pipeline')}`
     const stageOneOutput = `MANUAL_PIPELINE_STAGE_ONE_OUTPUT_${makeContextToken('manual_stage')}`
-    const expectedHandoff = `Previous pipeline context:\n\n[AI]\n${stageOneOutput}`
+    const expectedHandoff = `Previous stage output:\n${stageOneOutput}`
 
     await configureStreamRule(request, firstPrompt, stageOneOutput)
     await openTaskPage(page, '/chat', manualPipelineTeam.id, 'chat')
@@ -241,6 +241,9 @@ test.describe('Agent conversation regression', () => {
     await expect(page.getByTestId('pipeline-next-step-message')).toBeVisible({
       timeout: 10_000,
     })
+    await expect(page.getByTestId('pipeline-next-step-confirm-button')).toBeDisabled()
+    await page.locator('[data-testid^="pipeline-next-step-text-checkbox-ai_response:"]').click()
+    await expect(page.getByTestId('pipeline-next-step-confirm-button')).toBeEnabled()
     await page.getByTestId('pipeline-next-step-confirm-button').click()
 
     const secondStageRequest = await waitForCapturedModelRequest(
@@ -256,6 +259,7 @@ test.describe('Agent conversation regression', () => {
     )
     const secondStageText = extractText(secondStageRequest.body)
     expect(secondStageText).toContain(expectedHandoff)
+    expect(secondStageText).not.toContain('Previous pipeline context')
     expect(secondStageText).toContain(manualPipelineTeam.stageTwoMemberPrompt)
     expect(secondStageText).toContain(manualPipelineTeam.stageTwoSystemPrompt)
     await waitForBackendTerminal(request, taskId)

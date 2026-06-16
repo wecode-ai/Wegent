@@ -20,6 +20,7 @@ import asyncio
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Callable, Dict, Generator, Optional, TypeVar
 
@@ -41,6 +42,23 @@ _db_executor = ThreadPoolExecutor(max_workers=20)
 _TERMINAL_STATUSES = frozenset(["COMPLETED", "FAILED", "CANCELLED"])
 
 T = TypeVar("T")
+
+
+@dataclass
+class PipelineAutoAdvanceIntent:
+    """Intent to continue a pipeline through the shared chat send path."""
+
+    task_id: int
+    user_id: int
+    completed_subtask_id: int
+    advance_info: dict[str, Any]
+
+
+@dataclass
+class TaskStatusUpdateResult:
+    """Post-commit work discovered while updating task status."""
+
+    auto_advance: Optional[PipelineAutoAdvanceIntent] = None
 
 
 @contextmanager
@@ -76,7 +94,7 @@ class DatabaseHandler:
         executor_namespace: str | None = None,
     ) -> None:
         """Update subtask status asynchronously."""
-        await self._run_in_executor(
+        update_result = await self._run_in_executor(
             self._update_subtask_sync,
             subtask_id,
             status,
@@ -85,6 +103,14 @@ class DatabaseHandler:
             executor_name,
             executor_namespace,
         )
+        if update_result and update_result.auto_advance:
+            from app.services.chat.pipeline_advance import (
+                advance_pipeline_stage_from_auto_completion,
+            )
+
+            await advance_pipeline_stage_from_auto_completion(
+                update_result.auto_advance
+            )
 
     def _update_subtask_sync(
         self,
@@ -94,7 +120,7 @@ class DatabaseHandler:
         error: str | None = None,
         executor_name: str | None = None,
         executor_namespace: str | None = None,
-    ) -> None:
+    ) -> Optional[TaskStatusUpdateResult]:
         """Synchronous subtask update (runs in thread pool)."""
         from app.models.subtask import SubtaskStatus
         from app.utils.thinking_sanitizer import sanitize_result_for_storage
@@ -103,7 +129,7 @@ class DatabaseHandler:
             with _db_session() as db:
                 subtask = subtask_store.get_by_id(db, subtask_id=subtask_id)
                 if not subtask:
-                    return
+                    return None
 
                 fields: dict[str, Any] = {"status": SubtaskStatus(status)}
 
@@ -173,11 +199,12 @@ class DatabaseHandler:
                 subtask_store.update_fields(db, subtask=subtask, **fields)
                 task_id = subtask.task_id
             # Context manager commits here, then update task status
-            self._update_task_status_sync(task_id)
+            return self._update_task_status_sync(task_id)
         except Exception:
             logger.exception("Error updating subtask %s status", subtask_id)
+            return None
 
-    def _update_task_status_sync(self, task_id: int) -> None:
+    def _update_task_status_sync(self, task_id: int) -> TaskStatusUpdateResult:
         """Update task status based on subtask status using collaboration strategy."""
         from app.schemas.kind import Task
         from app.services.adapters.collaboration_strategy import (
@@ -185,7 +212,7 @@ class DatabaseHandler:
             CollaborationStrategyFactory,
         )
 
-        should_schedule_dispatch = False
+        update_result = TaskStatusUpdateResult()
         try:
             with _db_session() as db:
                 task = task_store.get_task_by_states(
@@ -194,7 +221,7 @@ class DatabaseHandler:
                     states=TaskResource.is_active_query(),
                 )
                 if not task:
-                    return
+                    return update_result
 
                 subtasks = subtask_store.list_assistant_by_task(
                     db,
@@ -202,7 +229,7 @@ class DatabaseHandler:
                     owner_user_id=task.user_id,
                 )
                 if not subtasks:
-                    return
+                    return update_result
 
                 task_crd = Task.model_validate(task.json)
                 last_subtask = subtasks[-1]
@@ -222,13 +249,14 @@ class DatabaseHandler:
                         db, task_id, last_subtask.id, last_subtask.status.value
                     )
                     if advance_info:
-                        self._auto_advance_pipeline(
-                            db, task, task_crd, last_subtask, advance_info
-                        )
-                        # Keep task RUNNING while next stage executes
                         task_crd.status.status = "PENDING"
-                        task_crd.status.updatedAt = datetime.now()
-                        should_schedule_dispatch = True
+                        task_crd.status.progress = 0
+                        update_result.auto_advance = PipelineAutoAdvanceIntent(
+                            task_id=task.id,
+                            user_id=task.user_id,
+                            completed_subtask_id=last_subtask.id,
+                            advance_info=advance_info,
+                        )
 
                 task_store.update_json(
                     db, task=task, payload=task_crd.model_dump(mode="json")
@@ -236,88 +264,9 @@ class DatabaseHandler:
 
         except Exception:
             logger.exception("Error updating task %s status", task_id)
-            return
+            return TaskStatusUpdateResult()
 
-        if should_schedule_dispatch:
-            from app.services.execution.schedule_helper import schedule_dispatch
-
-            schedule_dispatch(task_id)
-
-    def _auto_advance_pipeline(
-        self,
-        db: Session,
-        task: Any,
-        task_crd: Any,
-        last_subtask: Subtask,
-        advance_info: dict,
-    ) -> None:
-        """Create next pipeline stage subtask and advance currentStage in task spec.
-
-        Called when a pipeline stage completes with requireConfirmation=False
-        and more stages exist. The new subtask is added to the session; the
-        caller is responsible for committing.
-
-        Args:
-            db: Database session (open, not yet committed)
-            task: TaskResource ORM object
-            task_crd: Parsed Task CRD (mutated in place)
-            last_subtask: The subtask that just completed
-            advance_info: Dict from get_auto_advance_info() with next stage details
-        """
-        next_stage_index = advance_info["next_stage_index"]
-        next_bot_id = advance_info["next_bot_id"]
-        next_bot_name = advance_info["next_bot_name"]
-        context_passing = advance_info.get("context_passing")
-
-        # Compute next message_id from highest existing message_id in this task
-        latest = subtask_store.get_latest_by_task(
-            db,
-            task_id=task.id,
-        )
-        next_message_id = (latest.message_id + 1) if latest else 1
-        parent_id = latest.message_id if latest else 0
-
-        # Advance currentStage in task spec
-        task_crd.spec.currentStage = next_stage_index
-
-        from app.services.adapters.pipeline_context import build_pipeline_context_prompt
-
-        handoff_message = build_pipeline_context_prompt(
-            db,
-            task_id=task.id,
-            current_subtask=last_subtask,
-            context_passing=context_passing,
-        )
-
-        subtask_store.create_user_subtask(
-            db,
-            user_id=task.user_id,
-            task_id=task.id,
-            team_id=last_subtask.team_id,
-            title="User message",
-            bot_ids=[next_bot_id],
-            prompt=handoff_message,
-            message_id=next_message_id,
-            parent_id=parent_id,
-            sender_user_id=task.user_id,
-        )
-
-        subtask_store.create_assistant_subtask(
-            db,
-            user_id=task.user_id,
-            task_id=task.id,
-            team_id=last_subtask.team_id,
-            title=f"{task_crd.spec.title} - {next_bot_name}",
-            bot_ids=[next_bot_id],
-            message_id=next_message_id + 1,
-            parent_id=next_message_id,
-        )
-        logger.info(
-            "[DB] Pipeline auto-advance task %s: stage %s, bot_id=%s",
-            task.id,
-            next_stage_index,
-            next_bot_id,
-        )
+        return update_result
 
     def _apply_status_update(
         self,

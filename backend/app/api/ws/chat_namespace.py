@@ -602,44 +602,21 @@ class ChatNamespace(socketio.AsyncNamespace):
             if team_crd.spec.collaborationModel == "pipeline":
                 from app.services.adapters.pipeline_stage import pipeline_stage_service
 
-                # pipeline:confirm only updates currentStage (+1)
+                # pipeline:confirm uses the same stage-advance and send path as auto advance.
                 if payload.action == "pipeline:confirm":
-                    confirm_result = pipeline_stage_service.pipeline_confirm(
+                    from app.services.chat.pipeline_advance import (
+                        advance_pipeline_stage_and_send,
+                    )
+
+                    return await advance_pipeline_stage_and_send(
                         db=db,
+                        user=user,
+                        team=team,
                         task_id=payload.task_id,
-                        user_id=user_id,
-                    )
-
-                    if not confirm_result.get("success"):
-                        logger.error(
-                            f"[WS] pipeline:confirm failed: {confirm_result.get('error')}"
-                        )
-                        return {
-                            "error": confirm_result.get(
-                                "error", "Pipeline confirm failed"
-                            )
-                        }
-                    pipeline_context_passing = confirm_result.get("context_passing")
-                    if (
-                        "handoff_message" in confirm_result
-                        and not (effective_message or "").strip()
-                    ):
-                        effective_message = confirm_result["handoff_message"]
-
-                    # Emit task:status event to notify frontend that task status changed
-                    # This triggers PipelineStageIndicator to re-fetch pipeline stage info
-                    task_room = f"task:{payload.task_id}"
-                    await self.emit(
-                        ServerEvents.TASK_STATUS,
-                        {
-                            "task_id": payload.task_id,
-                            "status": "RUNNING",
-                            "progress": 0,
-                        },
-                        room=task_room,
-                    )
-                    logger.info(
-                        f"[WS] pipeline:confirm emitted task:status PENDING for task {payload.task_id}"
+                        message=effective_message,
+                        payload=payload,
+                        skip_sid=sid,
+                        auth_token=auth_token,
                     )
 
                 # Get pipeline info (unified logic for all pipeline operations)

@@ -622,7 +622,7 @@ async def test_create_task_and_subtasks_keeps_explicit_pipeline_confirm_message(
         name="quickstart",
         namespace="default",
     )
-    explicit_message = "Previous pipeline context:\n\n[AI]\nHello from stage one."
+    explicit_message = "Manual pipeline handoff:\n\nHello from stage one."
     params = TaskCreationParams(
         message=explicit_message,
         pipeline_bot_ids=[1257],
