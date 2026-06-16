@@ -96,6 +96,12 @@ chmod +x wegent-executor
 
 Wegent 会根据用户设置在执行请求中显式标记 Codex 是否使用个人配置，不再通过 `WEGENT_LOCAL_CLI_CONFIG_RUNTIMES` 环境变量判断。
 
+#### 统一管理本地 Skills
+
+如果同一台本地设备同时使用 Claude Code 和 Codex，可以在 Wework 的【设置】->【编码】->【技能】中启用统一管理。Wegent 会在所选在线 Claude Code 设备上创建 `~/.agents/skills`，把 `~/.codex/skills` 和 `~/.claude/skills` 中已有的技能移动到该目录，并把两个旧目录改成指向 `~/.agents/skills` 的软链接。
+
+该操作可以重复执行。重名技能不会被覆盖；系统会为后迁移的目录追加来源后缀，并在页面展示迁移数量。启用后，输入框里的本地 Skill 自动补全会把 `~/.agents/skills` 中的技能视为 Claude 和 Codex 都可用。
+
 ### 构建设备镜像
 
 仓库提供 `docker/device/Dockerfile` 用于构建云设备或本地设备基础镜像。该镜像会安装 `code-server`、`weiboplat.wecoder-agent` 扩展、Claude Code CLI、`ttyd`、Node.js 22、Python、Git，并把 `executor/dist/wegent-executor` 放到 `/app/executor` 和 `~/.wegent-executor/bin/wegent-executor`。

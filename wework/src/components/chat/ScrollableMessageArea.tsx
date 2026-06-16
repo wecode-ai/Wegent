@@ -1,18 +1,8 @@
 import { ArrowDown } from 'lucide-react'
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
-import type {
-  DeviceInfo,
-  TurnFileChangesSummary,
-} from '@/types/api'
+import type { DeviceInfo, TurnFileChangesSummary } from '@/types/api'
 import type { WorkbenchMessage } from '@/types/workbench'
 import { MessageList } from './MessageList'
 
@@ -30,9 +20,7 @@ interface ScrollableMessageAreaProps {
   onRetryFailedMessage?: (message: WorkbenchMessage) => void
   onSwitchModelForFailedMessage?: (message: WorkbenchMessage) => void
   onLoadFileChangesDiff?: (subtaskId: number) => Promise<string>
-  onRevertFileChanges?: (
-    subtaskId: number,
-  ) => Promise<TurnFileChangesSummary>
+  onRevertFileChanges?: (subtaskId: number) => Promise<TurnFileChangesSummary>
 }
 
 export function ScrollableMessageArea({
@@ -52,9 +40,7 @@ export function ScrollableMessageArea({
   const scrollRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
   const isAtBottomRef = useRef(true)
-  const previousConversationKeyRef = useRef<string | number | null | undefined>(
-    undefined,
-  )
+  const previousConversationKeyRef = useRef<string | number | null | undefined>(undefined)
   const previousLastMessageIdRef = useRef<string | null>(null)
   const previousMessageCountRef = useRef(0)
   const scrollTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([])
@@ -66,7 +52,7 @@ export function ScrollableMessageArea({
 
     const blockSignature = (lastMessage.blocks ?? [])
       .map(block => {
-        if (block.type === 'thinking') {
+        if (block.type === 'thinking' || block.type === 'text') {
           return `${block.id}:${block.status}:${block.content.length}`
         }
         return `${block.id}:${block.status}:${String(block.toolOutput ?? '').length}`
@@ -84,7 +70,7 @@ export function ScrollableMessageArea({
   }, [lastMessage, messages.length])
 
   const clearScheduledScrolls = useCallback(() => {
-    scrollTimersRef.current.forEach((timer) => clearTimeout(timer))
+    scrollTimersRef.current.forEach(timer => clearTimeout(timer))
     scrollTimersRef.current = []
 
     if (scrollFrameRef.current !== null) {
@@ -98,8 +84,7 @@ export function ScrollableMessageArea({
     if (!element) return
 
     const overflow = element.scrollHeight > element.clientHeight + 8
-    const distanceToBottom =
-      element.scrollHeight - element.clientHeight - element.scrollTop
+    const distanceToBottom = element.scrollHeight - element.clientHeight - element.scrollTop
     const isAtBottom = distanceToBottom <= BOTTOM_THRESHOLD
     isAtBottomRef.current = isAtBottom
     if (!isAtBottom) {
@@ -138,34 +123,29 @@ export function ScrollableMessageArea({
         setScrollToBottom(behavior)
       })
     },
-    [setScrollToBottom],
+    [setScrollToBottom]
   )
 
   const scheduleStableScrollToBottom = useCallback(
     (behavior: ScrollBehavior = 'auto') => {
       clearScheduledScrolls()
 
-      STABLE_SCROLL_DELAYS.forEach((delay) => {
+      STABLE_SCROLL_DELAYS.forEach(delay => {
         const timer = setTimeout(() => {
           scrollToBottom(behavior)
         }, delay)
         scrollTimersRef.current.push(timer)
       })
     },
-    [clearScheduledScrolls, scrollToBottom],
+    [clearScheduledScrolls, scrollToBottom]
   )
 
   useLayoutEffect(() => {
-    const conversationChanged =
-      previousConversationKeyRef.current !== conversationKey
-    const messagesLoaded =
-      previousMessageCountRef.current === 0 && messages.length > 0
-    const lastMessageChanged =
-      previousLastMessageIdRef.current !== (lastMessage?.id ?? null)
+    const conversationChanged = previousConversationKeyRef.current !== conversationKey
+    const messagesLoaded = previousMessageCountRef.current === 0 && messages.length > 0
+    const lastMessageChanged = previousLastMessageIdRef.current !== (lastMessage?.id ?? null)
     const shouldForceBottom =
-      conversationChanged ||
-      messagesLoaded ||
-      (lastMessageChanged && lastMessage?.role === 'user')
+      conversationChanged || messagesLoaded || (lastMessageChanged && lastMessage?.role === 'user')
 
     previousConversationKeyRef.current = conversationKey
     previousLastMessageIdRef.current = lastMessage?.id ?? null
@@ -230,7 +210,7 @@ export function ScrollableMessageArea({
               <p className="mt-2 max-w-sm text-xs leading-5 text-text-muted">
                 {t(
                   'workbench.empty_conversation_description',
-                  '在下方输入问题、粘贴上下文或添加附件，Codex 会在这里展示回复。',
+                  '在下方输入问题、粘贴上下文或添加附件，Codex 会在这里展示回复。'
                 )}
               </p>
             </div>
@@ -253,7 +233,7 @@ export function ScrollableMessageArea({
           onClick={handleScrollToBottom}
           className={cn(
             'absolute bottom-4 left-1/2 z-10 flex h-9 w-9 -translate-x-1/2 items-center justify-center rounded-full border border-border bg-surface text-text-primary shadow-sm hover:bg-muted',
-            scrollButtonClassName,
+            scrollButtonClassName
           )}
           aria-label={t('workbench.scroll_to_bottom', '下拉到底')}
         >
