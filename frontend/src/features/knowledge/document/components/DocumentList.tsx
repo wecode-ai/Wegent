@@ -113,16 +113,26 @@ function DocAutoOpener({
     }
 
     // In paginated mode, the document might be on a different page.
-    // Search across all documents via an unpaginated API call.
-    if (paginationEnabled && documents.length > 0) {
+    // Search across all documents via iterative pagination.
+    if (paginationEnabled) {
       let cancelled = false
       ;(async () => {
         try {
-          // Fetch all documents without pagination to find the target
-          const response = await listDocuments(knowledgeBaseId, { limit: 200, offset: 0 })
-          if (cancelled) return
-          const found = response.items.find(doc => doc.name === docParam)
-          if (found) {
+          let offset = 0
+          const batchSize = 200
+          let found: KnowledgeDocument | undefined
+          // Iterate through all pages until found or exhausted
+          while (!cancelled) {
+            const response = await listDocuments(knowledgeBaseId, {
+              limit: batchSize,
+              offset,
+            })
+            if (cancelled) return
+            found = response.items.find(doc => doc.name === docParam)
+            if (found || !response.has_more) break
+            offset += response.items.length
+          }
+          if (!cancelled && found) {
             onOpen(found)
             const params = new URLSearchParams(searchParams.toString())
             params.delete('doc')
@@ -386,15 +396,25 @@ export function DocumentList({
     }
 
     // In paginated mode, the document might be on a different page.
-    // Search across all documents via an unpaginated API call.
+    // Search across all documents via iterative pagination.
     if (paginationEnabled) {
       let cancelled = false
       ;(async () => {
         try {
-          const response = await listDocuments(knowledgeBase.id, { limit: 200, offset: 0 })
-          if (cancelled) return
-          const found = response.items.find(doc => doc.name === initialDocPath)
-          if (found) {
+          let offset = 0
+          const batchSize = 200
+          let found: KnowledgeDocument | undefined
+          while (!cancelled) {
+            const response = await listDocuments(knowledgeBase.id, {
+              limit: batchSize,
+              offset,
+            })
+            if (cancelled) return
+            found = response.items.find(doc => doc.name === initialDocPath)
+            if (found || !response.has_more) break
+            offset += response.items.length
+          }
+          if (!cancelled && found) {
             setViewingDoc(found)
           }
         } catch {
