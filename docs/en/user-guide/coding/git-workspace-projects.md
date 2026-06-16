@@ -57,6 +57,16 @@ The worktree ID is the task ID. The task stores only `git_worktree` as the execu
 
 “New worktree” is available only for new conversations in projects bound to a local execution device and local directory. Existing tasks lock the execution directory so a task cannot switch workspaces midway. If the directory is not currently a Git repository, sending the task shows an error; after the user manually turns that directory into a Git repository, no project configuration change is needed before selecting a new worktree again.
 
+## Using an Existing Folder
+
+When creating a Wework project with “Using existing folder”, Wegent looks for an existing project by current user, Wework origin, execution device, and normalized local folder path:
+
+- If an active project already matches that folder, Wegent selects and reuses it instead of creating a duplicate project.
+- If a matching project was previously deleted, Wegent restores the project and restores historical conversations that still record that project identifier.
+- Deleting a Wework project only hides the project from the project list. Conversations under that project keep their project ownership and do not move into the sidebar “Chats” list; creating a project from the same folder again restores those conversations with the project.
+
+The Wework sidebar “Chats” list shows only standalone conversations that do not belong to any project. Project conversations should be viewed under their project.
+
 ## Existing Target Directory
 
 If the target directory already exists, Wegent does not create a new directory and does not try to reuse or overwrite the existing one. The UI displays a project-directory-exists message.

@@ -426,6 +426,15 @@ class TaskStore(Protocol):
         client_origin: Optional[str] = None,
     ) -> int: ...
 
+    def restore_stale_project_links_from_label(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        client_origin: str,
+        project_id: int,
+    ) -> int: ...
+
     def set_archive_state(
         self, db: Session, *, task: TaskResource, state: int, commit: bool = True
     ) -> None: ...

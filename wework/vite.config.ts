@@ -1,6 +1,7 @@
 /// <reference types="vitest/config" />
 
 import path from 'path'
+import fs from 'fs'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
@@ -10,6 +11,10 @@ const configuredAppBasePath = process.env.VITE_APP_BASE_PATH || '/'
 const appBasePath = configuredAppBasePath.endsWith('/')
   ? configuredAppBasePath
   : `${configuredAppBasePath}/`
+const internalExtensionsDir = path.resolve(__dirname, './wecode/extensions')
+const extensionsDir = fs.existsSync(path.join(internalExtensionsDir, 'apps.tsx'))
+  ? internalExtensionsDir
+  : path.resolve(__dirname, './src/extensions')
 
 export default defineConfig({
   base: appBasePath,
@@ -44,6 +49,7 @@ export default defineConfig({
     alias: {
       '@': path.resolve(__dirname, './src'),
       '@wecode': path.resolve(__dirname, './wecode'),
+      '@extensions': extensionsDir,
     },
   },
   test: {
