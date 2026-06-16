@@ -45,6 +45,7 @@ import { DeleteFolderDialog } from './DeleteFolderDialog'
 import { MoveDocumentDialog } from './MoveDocumentDialog'
 import { TransferToKbDialog } from './transfer-to-kb-dialog'
 import { useColumnResize } from '../hooks/useColumnResize'
+import { Pagination } from '@/components/ui/pagination'
 import { toast } from '@/hooks/use-toast'
 import type {
   KnowledgeBase,
@@ -131,6 +132,8 @@ interface DocumentListProps {
   initialDocPath?: string
   /** Whether this KB belongs to an organization-level namespace (affects URL format in DocumentDetailDialog) */
   isOrganization?: boolean
+  /** Whether server-side pagination is enabled (classic mode: true, notebook mode: false) */
+  paginationEnabled?: boolean
 }
 
 /** Flatten folder tree into a flat list for select dropdowns */
@@ -194,13 +197,30 @@ export function DocumentList({
   onGroupClick,
   initialDocPath,
   isOrganization = false,
+  paginationEnabled = false,
 }: DocumentListProps) {
   const { t } = useTranslation('knowledge')
   const { user } = useUser()
-  const { documents, loading, error, create, remove, refresh, batchDelete, transfer } =
-    useDocuments({
-      knowledgeBaseId: knowledgeBase.id,
-    })
+  const {
+    documents,
+    loading,
+    error,
+    create,
+    remove,
+    refresh,
+    batchDelete,
+    transfer,
+    // Pagination fields
+    page,
+    pageSize,
+    totalCount,
+    totalPages,
+    goToPage,
+    changePageSize,
+  } = useDocuments({
+    knowledgeBaseId: knowledgeBase.id,
+    paginationEnabled,
+  })
 
   // Folder state
   const {
@@ -955,7 +975,7 @@ export function DocumentList({
         <TooltipProvider>
           <Tooltip delayDuration={200}>
             <TooltipTrigger asChild>
-              <Button variant="outline" size="sm" onClick={refresh} disabled={loading}>
+              <Button variant="outline" size="sm" onClick={() => refresh()} disabled={loading}>
                 <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
               </Button>
             </TooltipTrigger>
@@ -1008,7 +1028,7 @@ export function DocumentList({
       ) : showLoadError ? (
         <div className="flex flex-col items-center justify-center py-12 text-text-secondary">
           <p>{error}</p>
-          <Button variant="outline" className="mt-4" onClick={refresh}>
+          <Button variant="outline" className="mt-4" onClick={() => refresh()}>
             {t('common:actions.retry')}
           </Button>
         </div>
@@ -1230,6 +1250,20 @@ export function DocumentList({
                   selectedFolderIds={selectedFolderIds}
                   onSelectFolder={handleSelectFolder}
                 />
+                {/* Pagination bar for classic mode */}
+                {paginationEnabled && (
+                  <div className="min-w-[880px]">
+                    <Pagination
+                      page={page}
+                      totalPages={totalPages}
+                      totalCount={totalCount}
+                      pageSize={pageSize}
+                      onGoToPage={goToPage}
+                      onPageSizeChange={changePageSize}
+                      disabled={loading}
+                    />
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -1242,6 +1276,9 @@ export function DocumentList({
         <div className="flex flex-col items-center justify-center py-12 text-text-secondary">
           <FileText className="w-12 h-12 mb-4 opacity-50" />
           <p>{t('document.document.noResults')}</p>
+          {paginationEnabled && (
+            <p className="text-xs text-text-muted mt-2">{t('document.pagination.searchHint')}</p>
+          )}
         </div>
       ) : canUpload ? (
         <div className="flex flex-col items-center justify-center py-16 text-text-secondary">

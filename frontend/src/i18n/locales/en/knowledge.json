@@ -697,6 +697,11 @@
         "KB_DUPLICATE_NAME_IN_GROUP": "A knowledge base with the same name already exists in the target group",
         "KB_MIGRATE_CONFLICT": "A knowledge base with the same name already exists in the target group"
       }
+    },
+    "pagination": {
+      "totalCount": "{{count}} items",
+      "pageSize": "Per page",
+      "searchHint": "Search applies to current page only"
     }
   },
   "add_repository": "Add Repository",

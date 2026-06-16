@@ -697,6 +697,11 @@
         "KB_DUPLICATE_NAME_IN_GROUP": "目标群组中已存在同名知识库",
         "KB_MIGRATE_CONFLICT": "目标群组中已存在同名知识库"
       }
+    },
+    "pagination": {
+      "totalCount": "共 {{count}} 条",
+      "pageSize": "每页",
+      "searchHint": "搜索范围仅限当前页文档"
     }
   },
   "add_repository": "添加仓库",
