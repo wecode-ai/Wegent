@@ -45,6 +45,8 @@ import { DeleteFolderDialog } from './DeleteFolderDialog'
 import { MoveDocumentDialog } from './MoveDocumentDialog'
 import { TransferToKbDialog } from './transfer-to-kb-dialog'
 import { useColumnResize } from '../hooks/useColumnResize'
+import { Pagination } from '@/components/ui/pagination'
+import { listDocuments } from '@/apis/knowledge'
 import { toast } from '@/hooks/use-toast'
 import type {
   KnowledgeBase,
@@ -67,17 +69,45 @@ import {
 } from '../utils/summarySelectors'
 
 /**
+ * Find a document by name across all pages of a knowledge base.
+ * Uses iterative pagination (while has_more) to scan beyond the first 200 items.
+ * Returns undefined if not found or if the signal is aborted.
+ */
+async function findDocumentByName(
+  knowledgeBaseId: number,
+  documentName: string,
+  signal?: AbortSignal
+): Promise<KnowledgeDocument | undefined> {
+  let offset = 0
+  const batchSize = 200
+  while (!signal?.aborted) {
+    const response = await listDocuments(knowledgeBaseId, { limit: batchSize, offset })
+    if (signal?.aborted) return undefined
+    const found = response.items.find(doc => doc.name === documentName)
+    if (found || !response.has_more) return found
+    offset += response.items.length
+  }
+  return undefined
+}
+
+/**
  * Inner component that uses useSearchParams (must be inside Suspense boundary).
  * Reads the ?doc= URL parameter and auto-opens the matching document.
+ * In paginated mode, falls back to an unpaginated API call to find documents
+ * that may not be on the current page.
  */
 function DocAutoOpener({
   documents,
   loading,
   onOpen,
+  knowledgeBaseId,
+  paginationEnabled,
 }: {
   documents: KnowledgeDocument[]
   loading: boolean
   onOpen: (doc: KnowledgeDocument) => void
+  knowledgeBaseId: number
+  paginationEnabled: boolean
 }) {
   const searchParams = useSearchParams()
   const router = useRouter()
@@ -85,13 +115,13 @@ function DocAutoOpener({
   const [done, setDone] = useState(false)
 
   useEffect(() => {
-    if (done || loading || documents.length === 0) return
+    if (done || loading) return
     const docParam = searchParams.get('doc')
     if (!docParam) {
       setDone(true)
       return
     }
-    // Find document by name (exact match)
+    // Try to find document in current page
     const targetDoc = documents.find(doc => doc.name === docParam)
     if (targetDoc) {
       onOpen(targetDoc)
@@ -100,9 +130,47 @@ function DocAutoOpener({
       params.delete('doc')
       const newSearch = params.toString()
       router.replace(pathname + (newSearch ? `?${newSearch}` : ''), { scroll: false })
+      setDone(true)
+      return
     }
+
+    // In paginated mode, the document might be on a different page.
+    // Search across all documents via iterative pagination.
+    if (paginationEnabled) {
+      const controller = new AbortController()
+      ;(async () => {
+        try {
+          const found = await findDocumentByName(knowledgeBaseId, docParam, controller.signal)
+          if (!controller.signal.aborted && found) {
+            onOpen(found)
+            const params = new URLSearchParams(searchParams.toString())
+            params.delete('doc')
+            const newSearch = params.toString()
+            router.replace(pathname + (newSearch ? `?${newSearch}` : ''), { scroll: false })
+          }
+        } catch {
+          // Silently ignore - auto-open is best-effort
+        } finally {
+          if (!controller.signal.aborted) setDone(true)
+        }
+      })()
+      return () => {
+        controller.abort()
+      }
+    }
+
     setDone(true)
-  }, [done, loading, documents, searchParams, onOpen, router, pathname])
+  }, [
+    done,
+    loading,
+    documents,
+    searchParams,
+    onOpen,
+    router,
+    pathname,
+    paginationEnabled,
+    knowledgeBaseId,
+  ])
 
   return null
 }
@@ -131,6 +199,8 @@ interface DocumentListProps {
   initialDocPath?: string
   /** Whether this KB belongs to an organization-level namespace (affects URL format in DocumentDetailDialog) */
   isOrganization?: boolean
+  /** Whether server-side pagination is enabled (classic mode: true, notebook mode: false) */
+  paginationEnabled?: boolean
 }
 
 /** Flatten folder tree into a flat list for select dropdowns */
@@ -194,13 +264,30 @@ export function DocumentList({
   onGroupClick,
   initialDocPath,
   isOrganization = false,
+  paginationEnabled = false,
 }: DocumentListProps) {
   const { t } = useTranslation('knowledge')
   const { user } = useUser()
-  const { documents, loading, error, create, remove, refresh, batchDelete, transfer } =
-    useDocuments({
-      knowledgeBaseId: knowledgeBase.id,
-    })
+  const {
+    documents,
+    loading,
+    error,
+    create,
+    remove,
+    refresh,
+    batchDelete,
+    transfer,
+    // Pagination fields
+    page,
+    pageSize,
+    totalCount,
+    totalPages,
+    goToPage,
+    changePageSize,
+  } = useDocuments({
+    knowledgeBaseId: knowledgeBase.id,
+    paginationEnabled,
+  })
 
   // Folder state
   const {
@@ -313,9 +400,44 @@ export function DocumentList({
     const targetDoc = documents.find(doc => doc.name === initialDocPath)
     if (targetDoc) {
       setViewingDoc(targetDoc)
+      setInitialDocPathHandled(true)
+      return
     }
+
+    // In paginated mode, the document might be on a different page.
+    // Search across all documents via iterative pagination.
+    if (paginationEnabled) {
+      const controller = new AbortController()
+      ;(async () => {
+        try {
+          const found = await findDocumentByName(
+            knowledgeBase.id,
+            initialDocPath,
+            controller.signal
+          )
+          if (!controller.signal.aborted && found) {
+            setViewingDoc(found)
+          }
+        } catch {
+          // Silently ignore - auto-open is best-effort
+        } finally {
+          if (!controller.signal.aborted) setInitialDocPathHandled(true)
+        }
+      })()
+      return () => {
+        controller.abort()
+      }
+    }
+
     setInitialDocPathHandled(true)
-  }, [initialDocPath, initialDocPathHandled, loading, documents])
+  }, [
+    initialDocPath,
+    initialDocPathHandled,
+    loading,
+    documents,
+    paginationEnabled,
+    knowledgeBase.id,
+  ])
 
   // Default select all documents when documents load (for notebook mode)
   useEffect(() => {
@@ -955,7 +1077,7 @@ export function DocumentList({
         <TooltipProvider>
           <Tooltip delayDuration={200}>
             <TooltipTrigger asChild>
-              <Button variant="outline" size="sm" onClick={refresh} disabled={loading}>
+              <Button variant="outline" size="sm" onClick={() => refresh()} disabled={loading}>
                 <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
               </Button>
             </TooltipTrigger>
@@ -1008,7 +1130,7 @@ export function DocumentList({
       ) : showLoadError ? (
         <div className="flex flex-col items-center justify-center py-12 text-text-secondary">
           <p>{error}</p>
-          <Button variant="outline" className="mt-4" onClick={refresh}>
+          <Button variant="outline" className="mt-4" onClick={() => refresh()}>
             {t('common:actions.retry')}
           </Button>
         </div>
@@ -1230,6 +1352,20 @@ export function DocumentList({
                   selectedFolderIds={selectedFolderIds}
                   onSelectFolder={handleSelectFolder}
                 />
+                {/* Pagination bar for classic mode */}
+                {paginationEnabled && (
+                  <div className="min-w-[880px]">
+                    <Pagination
+                      page={page}
+                      totalPages={totalPages}
+                      totalCount={totalCount}
+                      pageSize={pageSize}
+                      onGoToPage={goToPage}
+                      onPageSizeChange={changePageSize}
+                      disabled={loading}
+                    />
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -1242,6 +1378,9 @@ export function DocumentList({
         <div className="flex flex-col items-center justify-center py-12 text-text-secondary">
           <FileText className="w-12 h-12 mb-4 opacity-50" />
           <p>{t('document.document.noResults')}</p>
+          {paginationEnabled && (
+            <p className="text-xs text-text-muted mt-2">{t('document.pagination.searchHint')}</p>
+          )}
         </div>
       ) : canUpload ? (
         <div className="flex flex-col items-center justify-center py-16 text-text-secondary">
@@ -1257,7 +1396,13 @@ export function DocumentList({
 
       {/* Auto-open document from ?doc= URL parameter (wrapped in Suspense for useSearchParams) */}
       <Suspense fallback={null}>
-        <DocAutoOpener documents={documents} loading={loading} onOpen={setViewingDoc} />
+        <DocAutoOpener
+          documents={documents}
+          loading={loading}
+          onOpen={setViewingDoc}
+          knowledgeBaseId={knowledgeBase.id}
+          paginationEnabled={paginationEnabled}
+        />
       </Suspense>
 
       {/* Dialogs */}

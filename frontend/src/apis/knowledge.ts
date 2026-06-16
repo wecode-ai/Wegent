@@ -91,14 +91,33 @@ export async function updateKnowledgeBaseType(
 
 // ============== Knowledge Document APIs ==============
 
+/** Parameters for listing documents in a knowledge base */
+export interface ListDocumentsParams {
+  limit?: number
+  offset?: number
+  folder_id?: number
+}
+
 /**
  * List documents in a knowledge base
  */
 export async function listDocuments(
-  knowledgeBaseId: number
+  knowledgeBaseId: number,
+  params?: ListDocumentsParams
 ): Promise<KnowledgeDocumentListResponse> {
+  const searchParams = new URLSearchParams()
+  if (params?.limit !== undefined) {
+    searchParams.set('limit', String(params.limit))
+  }
+  if (params?.offset !== undefined) {
+    searchParams.set('offset', String(params.offset))
+  }
+  if (params?.folder_id !== undefined) {
+    searchParams.set('folder_id', String(params.folder_id))
+  }
+  const query = searchParams.toString()
   return apiClient.get<KnowledgeDocumentListResponse>(
-    `/knowledge-bases/${knowledgeBaseId}/documents`
+    `/knowledge-bases/${knowledgeBaseId}/documents${query ? `?${query}` : ''}`
   )
 }
 
