@@ -16,6 +16,7 @@ from typing import Any, Dict, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
+import app.stores.tasks as task_stores
 from app.models.kind import Kind
 from app.models.subtask import SubtaskStatus
 from app.models.task import TaskResource
@@ -26,7 +27,6 @@ from app.services.adapters.pipeline_context import (
 )
 from app.services.readers.kinds import KindType, kindReader
 from app.services.task_member_service import task_member_service
-from app.stores.tasks import subtask_store
 
 logger = logging.getLogger(__name__)
 
@@ -398,7 +398,7 @@ class PipelineStageService:
         context_passing = normalize_context_passing(
             getattr(current_member, "contextPassing", None)
         )
-        current_subtask = subtask_store.get_latest_assistant_by_statuses(
+        current_subtask = task_stores.subtask_store.get_latest_assistant_by_statuses(
             db,
             task_id=task_id,
             statuses=[SubtaskStatus.COMPLETED],
@@ -522,7 +522,9 @@ class PipelineStageService:
             )
             return {"success": False, "error": "Bot not found for next stage"}
 
-        current_subtask = subtask_store.get_by_id(db, subtask_id=completed_subtask_id)
+        current_subtask = task_stores.subtask_store.get_by_id(
+            db, subtask_id=completed_subtask_id
+        )
         if not current_subtask or current_subtask.status != SubtaskStatus.COMPLETED:
             logger.error(
                 "[Pipeline] auto_advance: Completed subtask not found task=%s subtask=%s",
@@ -610,7 +612,7 @@ class PipelineStageService:
                 return False
 
             # Get the subtask that just completed
-            subtask = subtask_store.get_by_id(db, subtask_id=subtask_id)
+            subtask = task_stores.subtask_store.get_by_id(db, subtask_id=subtask_id)
             if not subtask or subtask.status != SubtaskStatus.COMPLETED:
                 return False
 
@@ -634,6 +636,21 @@ class PipelineStageService:
                     break
 
             if current_stage_index is None:
+                return False
+
+            active_stage_index = (
+                task_crd.spec.currentStage
+                if task_crd.spec.currentStage is not None
+                else 0
+            )
+            if current_stage_index != active_stage_index:
+                logger.info(
+                    "Pipeline: skip stale confirmation check for task %s: "
+                    "subtask_stage=%s, currentStage=%s",
+                    task_id,
+                    current_stage_index,
+                    active_stage_index,
+                )
                 return False
 
             # Check if this stage has requireConfirmation

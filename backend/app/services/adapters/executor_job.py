@@ -8,11 +8,11 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List, Tuple
 
 from fastapi import HTTPException
-from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import app.stores.tasks as task_stores
 from app.core.config import settings
-from app.db.session import AsyncSessionLocal, SessionLocal
+from app.db.session import SessionLocal
 from app.models.kind import Kind
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
@@ -382,16 +382,11 @@ class JobService(BaseService[Kind, None, None]):
 
     async def _list_runtime_cleanup_subtasks(self, db: AsyncSession) -> List[Subtask]:
         """List executor-backed subtasks that have not already been cleaned up."""
-        result = await db.execute(
-            select(Subtask)
-            .filter(
-                Subtask.executor_name.isnot(None),
-                Subtask.executor_name != "",
-                Subtask.executor_deleted_at == False,
+        return await db.run_sync(
+            lambda sync_db: task_stores.subtask_store.list_runtime_cleanup_subtasks(
+                sync_db
             )
-            .order_by(Subtask.updated_at.asc(), Subtask.id.asc())
         )
-        return list(result.scalars().all())
 
     def _get_runtime_cleanup_skip_reason(
         self,
@@ -478,16 +473,14 @@ class JobService(BaseService[Kind, None, None]):
         Only scans subtasks created before cutoff to avoid advancing the cursor
         past subtasks that are too recent to be eligible for cleanup.
         """
-        result = await db.execute(
-            select(Subtask)
-            .filter(
-                Subtask.id > last_id,
-                Subtask.created_at <= cutoff,
+        return await db.run_sync(
+            lambda sync_db: task_stores.subtask_store.scan_cleanup_candidate_subtasks(
+                sync_db,
+                last_id=last_id,
+                cutoff=cutoff,
+                limit=batch_size,
             )
-            .order_by(Subtask.id.asc())
-            .limit(batch_size)
         )
-        return list(result.scalars().all())
 
     async def _scan_lookback_subtasks_batch(
         self,
@@ -498,27 +491,14 @@ class JobService(BaseService[Kind, None, None]):
         limit: int,
     ) -> List[Subtask]:
         """Load a bounded created_at window for rows that may have become eligible."""
-        result = await db.execute(
-            select(Subtask)
-            .filter(
-                Subtask.status.in_(
-                    [
-                        SubtaskStatus.PENDING,
-                        SubtaskStatus.COMPLETED,
-                        SubtaskStatus.FAILED,
-                        SubtaskStatus.CANCELLED,
-                    ]
-                ),
-                Subtask.created_at > lookback_start,
-                Subtask.created_at <= cutoff,
-                Subtask.executor_name.isnot(None),
-                Subtask.executor_name != "",
-                Subtask.executor_deleted_at == False,
+        return await db.run_sync(
+            lambda sync_db: task_stores.subtask_store.scan_cleanup_lookback_subtasks(
+                sync_db,
+                lookback_start=lookback_start,
+                cutoff=cutoff,
+                limit=limit,
             )
-            .order_by(Subtask.created_at.asc(), Subtask.id.asc())
-            .limit(limit)
         )
-        return list(result.scalars().all())
 
     def _filter_scanned_subtasks(
         self, scanned_subtasks: List[Subtask], *, chat_cutoff: datetime
@@ -548,15 +528,18 @@ class JobService(BaseService[Kind, None, None]):
         if not task_ids:
             return {}
 
-        result = await db.execute(
-            select(TaskResource).filter(
-                TaskResource.id.in_(task_ids),
-                TaskResource.kind == "Task",
-                TaskResource.is_active.in_(TaskResource.is_active_query()),
+        tasks = await db.run_sync(
+            lambda sync_db: task_stores.task_store.list_by_ids(
+                sync_db,
+                task_ids=task_ids,
             )
         )
-        tasks = result.scalars().all()
-        return {task.id: task for task in tasks}
+        active_states = set(TaskResource.is_active_query())
+        return {
+            task.id: task
+            for task in tasks
+            if task.kind == "Task" and task.is_active in active_states
+        }
 
     def _filter_cleanup_candidates(
         self,
@@ -768,14 +751,12 @@ class JobService(BaseService[Kind, None, None]):
         self, db: AsyncSession, task_id: int, *, raise_not_found: bool = True
     ) -> TaskResource | None:
         """Load an active task resource by id."""
-        result = await db.execute(
-            select(TaskResource).filter(
-                TaskResource.id == task_id,
-                TaskResource.kind == "Task",
-                TaskResource.is_active.in_(TaskResource.is_active_query()),
+        task = await db.run_sync(
+            lambda sync_db: task_stores.task_store.get_active_task(
+                sync_db,
+                task_id=task_id,
             )
         )
-        task = result.scalars().first()
 
         if task or not raise_not_found:
             return task
@@ -786,14 +767,13 @@ class JobService(BaseService[Kind, None, None]):
         self, db: AsyncSession, task_id: int
     ) -> TaskResource:
         """Load a task resource by id regardless of its is_active state."""
-        result = await db.execute(
-            select(TaskResource).filter(
-                TaskResource.id == task_id,
-                TaskResource.kind == "Task",
+        task = await db.run_sync(
+            lambda sync_db: task_stores.task_store.get_by_id(
+                sync_db,
+                task_id=task_id,
             )
         )
-        task = result.scalars().first()
-        if not task:
+        if not task or task.kind != "Task":
             raise HTTPException(status_code=404, detail="Task not found")
         return task
 
@@ -801,15 +781,12 @@ class JobService(BaseService[Kind, None, None]):
         self, db: AsyncSession, task_id: int
     ) -> List[Subtask]:
         """Load undeleted executor subtasks for a specific task."""
-        result = await db.execute(
-            select(Subtask).filter(
-                Subtask.task_id == task_id,
-                Subtask.executor_name.isnot(None),
-                Subtask.executor_name != "",
-                Subtask.executor_deleted_at == False,
+        return await db.run_sync(
+            lambda sync_db: task_stores.subtask_store.list_cleanup_subtasks_for_task(
+                sync_db,
+                task_id=task_id,
             )
         )
-        return list(result.scalars().all())
 
     async def _cleanup_executor_entries(
         self,
@@ -975,24 +952,22 @@ class JobService(BaseService[Kind, None, None]):
             sync_db.close()
 
     async def _mark_executor_deleted(self, subtask_ids: List[int]) -> None:
-        """Mark selected subtasks as deleted in a short-lived async transaction."""
+        """Mark selected subtasks as deleted in a short-lived sync Store boundary."""
         if not subtask_ids:
             return
 
-        async with AsyncSessionLocal() as short_db:
-            try:
-                await short_db.execute(
-                    update(Subtask)
-                    .where(
-                        Subtask.id.in_(subtask_ids),
-                        Subtask.executor_deleted_at == False,
-                    )
-                    .values(executor_deleted_at=True)
-                )
-                await short_db.commit()
-            except Exception:
-                await short_db.rollback()
-                raise
+        sync_db = SessionLocal()
+        try:
+            task_stores.subtask_store.mark_executor_deleted_by_ids(
+                sync_db,
+                subtask_ids=subtask_ids,
+            )
+            sync_db.commit()
+        except Exception:
+            sync_db.rollback()
+            raise
+        finally:
+            sync_db.close()
 
 
 job_service = JobService(Kind)

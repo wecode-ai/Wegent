@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
+import app.stores.tasks as task_stores
 from app.db.session import SessionLocal
 from app.models.kind import Kind
 from app.models.subtask import Subtask, SubtaskRole
@@ -23,7 +24,6 @@ from app.schemas.kind import Team
 from app.services.chat.storage.task_manager import (
     TaskCreationParams,
     check_task_status,
-    create_assistant_subtask,
     create_new_task,
     create_user_subtask,
     get_bot_ids_from_team,
@@ -31,7 +31,7 @@ from app.services.chat.storage.task_manager import (
 )
 from app.services.readers.kinds import KindType, kindReader
 from app.services.task_status import mark_task_pending_payload
-from app.stores.tasks import subtask_store, task_store
+from app.stores.tasks import subtask_store
 
 logger = logging.getLogger(__name__)
 
@@ -210,7 +210,7 @@ def prepare_execution_session(
         if not resolved_task_params.skip_status_check:
             check_task_status(db, task)
         if should_trigger_ai:
-            task_store.update_json(
+            task_stores.task_store.update_json(
                 db,
                 task=task,
                 payload=mark_task_pending_payload(task.json),
@@ -241,7 +241,7 @@ def prepare_execution_session(
                 task_crd.metadata.labels["autoDeleteExecutor"] = (
                     resolved_task_params.auto_delete_executor
                 )
-            task_store.update_json(
+            task_stores.task_store.update_json(
                 db, task=task, payload=task_crd.model_dump(mode="json")
             )
             logger.info(
@@ -259,7 +259,7 @@ def prepare_execution_session(
         task = create_new_task(db, user, team, resolved_task_params)
         subtask_user_id = user.id
 
-    existing_subtasks = subtask_store.list_latest_by_task(
+    existing_subtasks = task_stores.subtask_store.list_latest_by_task(
         db,
         task_id=task.id,
         user_id=subtask_user_id,
@@ -284,28 +284,38 @@ def prepare_execution_session(
             context_passing=resolved_task_params.pipeline_context_passing,
         )
 
-    user_subtask = create_user_subtask(
-        db=db,
-        subtask_user_id=subtask_user_id,
-        sender_user_id=user.id,
-        task_id=task.id,
-        team_id=team.id,
-        bot_ids=bot_ids,
-        message=handoff_message,
-        next_message_id=next_message_id,
-        parent_id=parent_id,
-        video_config=video_config,
-    )
     assistant_subtask = None
     if should_trigger_ai:
-        assistant_subtask = create_assistant_subtask(
+        user_subtask, assistant_subtask = (
+            task_stores.subtask_store.create_user_and_assistant_subtasks(
+                db,
+                user_id=subtask_user_id,
+                task_id=task.id,
+                team_id=team.id,
+                title="User message",
+                assistant_title="Assistant response",
+                bot_ids=bot_ids,
+                prompt=handoff_message,
+                user_message_id=next_message_id,
+                user_parent_id=parent_id,
+                assistant_message_id=next_message_id + 1,
+                assistant_parent_id=next_message_id,
+                sender_user_id=user.id,
+                result={"video_config": video_config} if video_config else None,
+            )
+        )
+    else:
+        user_subtask = create_user_subtask(
             db=db,
             subtask_user_id=subtask_user_id,
+            sender_user_id=user.id,
             task_id=task.id,
             team_id=team.id,
             bot_ids=bot_ids,
-            next_message_id=next_message_id + 1,
-            parent_id=next_message_id,
+            message=handoff_message,
+            next_message_id=next_message_id,
+            parent_id=parent_id,
+            video_config=video_config,
         )
 
     db.commit()

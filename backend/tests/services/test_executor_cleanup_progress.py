@@ -20,6 +20,15 @@ from app.services.executor_cleanup_cursor_service import (
 )
 
 
+class _RunSyncOnlyDb:
+    def __init__(self):
+        self.calls = []
+
+    async def run_sync(self, fn):
+        self.calls.append(fn)
+        return fn("sync-db")
+
+
 @contextmanager
 def _patched_cleanup_settings():
     with patch("app.services.adapters.executor_job.settings") as mock_settings:
@@ -174,6 +183,55 @@ class TestExecutorCleanupProgress:
 
         assert cursor.last_scanned_subtask_id == recent_subtask.id - 1
         assert mock_cache.set.call_args.args[0] == "executor_cleanup_cursor"
+
+    async def test_cursor_default_uses_subtask_store_boundary(self):
+        """Test an uninitialized cursor resolves default state through SubtaskStore."""
+        db = _RunSyncOnlyDb()
+        store = Mock()
+        store.get_cleanup_cursor_recent_start_reference.return_value = Mock(id=44)
+
+        with (
+            patch(
+                "app.services.executor_cleanup_cursor_service.cache_manager"
+            ) as mock_cache,
+            patch(
+                "app.services.executor_cleanup_cursor_service.task_stores.subtask_store",
+                store,
+            ),
+        ):
+            mock_cache.get = AsyncMock(return_value=None)
+            mock_cache.set = AsyncMock(return_value=True)
+
+            cursor = await executor_cleanup_cursor_service.get_cursor(db)
+
+        assert cursor.last_scanned_subtask_id == 43
+        store.get_cleanup_cursor_recent_start_reference.assert_called_once()
+        store.get_cleanup_cursor_latest_reference.assert_not_called()
+
+    async def test_cursor_default_falls_back_to_latest_subtask_reference(self):
+        """Test an uninitialized cursor falls back to the latest available subtask."""
+        db = _RunSyncOnlyDb()
+        store = Mock()
+        store.get_cleanup_cursor_recent_start_reference.return_value = None
+        store.get_cleanup_cursor_latest_reference.return_value = Mock(id=55)
+
+        with (
+            patch(
+                "app.services.executor_cleanup_cursor_service.cache_manager"
+            ) as mock_cache,
+            patch(
+                "app.services.executor_cleanup_cursor_service.task_stores.subtask_store",
+                store,
+            ),
+        ):
+            mock_cache.get = AsyncMock(return_value=None)
+            mock_cache.set = AsyncMock(return_value=True)
+
+            cursor = await executor_cleanup_cursor_service.get_cursor(db)
+
+        assert cursor.last_scanned_subtask_id == 55
+        store.get_cleanup_cursor_recent_start_reference.assert_called_once()
+        store.get_cleanup_cursor_latest_reference.assert_called_once()
 
     async def test_advance_cursor_writes_value_to_redis(self, test_db):
         """Test advancing the cursor stores the latest value in Redis."""

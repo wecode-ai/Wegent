@@ -29,6 +29,7 @@ from sqlalchemy.sql import func
 from app.db.base import Base
 from app.models.share_link import ResourceType
 from app.schemas.base_role import BaseRole
+from shared.models.db.types import big_integer_id_type
 
 # Define epoch time for default datetime values
 EPOCH_TIME = datetime(1970, 1, 1, 0, 0, 0)
@@ -74,7 +75,7 @@ class ResourceMember(Base):
         comment="Resource type: Team, Task, KnowledgeBase, Namespace",
     )
     resource_id = Column(
-        Integer,
+        big_integer_id_type(),
         nullable=False,
         comment="Resource ID",
     )
@@ -167,7 +168,7 @@ class ResourceMember(Base):
 
     # Task-specific field (only for Task type) - 0 means no copy made
     copied_resource_id = Column(
-        Integer,
+        big_integer_id_type(),
         nullable=False,
         default=0,
         server_default="0",
