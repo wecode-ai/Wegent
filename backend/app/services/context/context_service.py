@@ -40,6 +40,10 @@ from app.services.media.weibo_media_service import weibo_media_service
 from app.stores.tasks import subtask_store
 from shared.telemetry.decorators import trace_sync
 from shared.utils.crypto import decrypt_attachment, encrypt_attachment
+from shared.utils.video_metadata import (
+    build_video_attachment_header,
+    build_video_history_metadata_text,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -998,18 +1002,13 @@ class ContextService:
         metadata_text += json.dumps({"fid": fid})
         return metadata_header, metadata_text, fid
 
+    def build_video_history_metadata_text(self, context: SubtaskContext) -> str:
+        """Build video history metadata without requiring model-readable video input."""
+        return build_video_history_metadata_text(context)
+
     def build_video_attachment_header(self, context: SubtaskContext) -> str:
         """Build a video attachment header without exposing analysis identifiers."""
-        filename = context.original_filename or "video"
-        attachment_id = context.id
-        mime_type = context.mime_type or "video/mp4"
-        file_size = context.file_size or 0
-        formatted_size = self.format_file_size(file_size)
-
-        return (
-            f"[Video Attachment: {filename} | ID: {attachment_id} | "
-            f"Type: {mime_type} | Size: {formatted_size}]"
-        )
+        return build_video_attachment_header(context)
 
     def build_vision_content_block(
         self,
