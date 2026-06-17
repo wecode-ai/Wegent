@@ -64,6 +64,114 @@ def test_build_codex_config_maps_provider_and_reasoning():
     assert config.summary == "concise"
 
 
+def test_build_codex_config_adds_project_header_when_requested():
+    config = build_codex_config(
+        {
+            "model": "openai",
+            "model_id": "gpt-5.5",
+            "base_url": "http://127.0.0.1:3456/v1",
+            "api_key": "wecode-proxy-placeholder",
+            "api_format": "responses",
+        },
+        project_id=42,
+    )
+
+    assert (
+        'model_providers.wecode-openai.http_headers.wecode-project="42"'
+        in config.config_overrides
+    )
+    assert (
+        'model_providers.wecode-openai.http_headers.wecode-action="wegent"'
+        in config.config_overrides
+    )
+    assert (
+        'model_providers.wecode-openai.http_headers.wecode-source="wegent-local"'
+        in config.config_overrides
+    )
+    assert (
+        'model_providers.wecode-openai.http_headers.wecode-executor="codex"'
+        in config.config_overrides
+    )
+
+
+def test_build_codex_config_treats_project_zero_as_project():
+    config = build_codex_config(
+        {
+            "model": "openai",
+            "model_id": "gpt-5.5",
+            "base_url": "http://127.0.0.1:3456/v1",
+            "api_key": "wecode-proxy-placeholder",
+            "api_format": "responses",
+        },
+        project_id=0,
+    )
+
+    assert (
+        'model_providers.wecode-openai.http_headers.wecode-project="0"'
+        in config.config_overrides
+    )
+    assert (
+        'model_providers.wecode-openai.http_headers.wecode-executor="codex"'
+        in config.config_overrides
+    )
+
+
+def test_build_codex_config_preserves_default_source_header_when_project_requested():
+    config = build_codex_config(
+        {
+            "model": "openai",
+            "model_id": "gpt-5.5",
+            "base_url": "http://127.0.0.1:3456/v1",
+            "api_key": "wecode-proxy-placeholder",
+            "api_format": "responses",
+            "default_headers": {
+                "wecode-action": "wecode-cli",
+                "wecode-source": "wecode-cli",
+                "x-weibo-downstream": "shanghai-intranet",
+            },
+        },
+        project_id=42,
+    )
+
+    assert (
+        'model_providers.wecode-openai.http_headers.wecode-action="wecode-cli"'
+        in config.config_overrides
+    )
+    assert (
+        'model_providers.wecode-openai.http_headers.x-weibo-downstream="shanghai-intranet"'
+        in config.config_overrides
+    )
+    assert (
+        'model_providers.wecode-openai.http_headers.wecode-source="wecode-cli"'
+        in config.config_overrides
+    )
+    assert (
+        'model_providers.wecode-openai.http_headers.wecode-project="42"'
+        in config.config_overrides
+    )
+    assert (
+        'model_providers.wecode-openai.http_headers.wecode-executor="codex"'
+        in config.config_overrides
+    )
+
+
+def test_build_codex_config_omits_project_header_by_default():
+    config = build_codex_config(
+        {
+            "model": "openai",
+            "model_id": "gpt-5.5",
+            "base_url": "http://127.0.0.1:3456/v1",
+            "api_key": "wecode-proxy-placeholder",
+            "api_format": "responses",
+        }
+    )
+
+    assert not any("wecode-project" in item for item in config.config_overrides)
+    assert not any("wecode-executor" in item for item in config.config_overrides)
+    assert not any("wecode-source" in item for item in config.config_overrides)
+    assert not any("wecode-action" in item for item in config.config_overrides)
+
+
 def test_build_codex_config_uses_user_runtime_config(monkeypatch):
     monkeypatch.delenv("NO_PROXY", raising=False)
     monkeypatch.delenv("no_proxy", raising=False)
@@ -103,6 +211,35 @@ def test_build_codex_config_uses_user_runtime_config(monkeypatch):
         "NO_PROXY": "localhost,127.0.0.1,::1,host.docker.internal",
         "no_proxy": "localhost,127.0.0.1,::1,host.docker.internal",
     }
+
+
+def test_build_codex_config_adds_project_header_to_user_runtime_provider():
+    config = build_codex_config(
+        {
+            "model": "openai",
+            "model_id": "gpt-5.5",
+            "api_format": "responses",
+            "model_provider": "openai",
+            "runtime_config": {
+                "codex": {
+                    "use_user_config": True,
+                    "configured": True,
+                    "target_path": "~/.codex/auth.json",
+                }
+            },
+        },
+        project_id=42,
+    )
+
+    assert config.model_provider == "openai"
+    assert (
+        'model_providers.openai.http_headers.wecode-project="42"'
+        in config.config_overrides
+    )
+    assert (
+        'model_providers.openai.http_headers.wecode-executor="codex"'
+        in config.config_overrides
+    )
 
 
 def test_build_codex_config_uses_existing_no_proxy(monkeypatch):

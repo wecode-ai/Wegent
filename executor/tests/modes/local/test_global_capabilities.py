@@ -10,6 +10,7 @@ from executor.modes.local.capabilities import (
     GlobalCapabilityStore,
     ManagedCapabilityManifest,
     default_manifest_path,
+    get_project_id,
     is_project_task,
 )
 from shared.models.execution import ExecutionRequest
@@ -25,13 +26,24 @@ def test_wework_standalone_chat_uses_global_capabilities():
     assert is_project_task(request) is True
 
 
-def test_frontend_project_zero_chat_keeps_task_local_capabilities():
+def test_frontend_project_zero_chat_uses_project_capabilities():
     request = ExecutionRequest(
         task_id=1902,
         project_id=0,
     )
 
-    assert is_project_task(request) is False
+    assert get_project_id(request) == "0"
+    assert is_project_task(request) is True
+
+
+def test_project_id_can_be_read_from_execution_workspace_project():
+    request = ExecutionRequest(
+        task_id=1903,
+        workspace={"project": {"project_id": 42}},
+    )
+
+    assert get_project_id(request) == "42"
+    assert is_project_task(request) is True
 
 
 def test_project_runtime_uses_global_claude_capability_dirs_without_merging_global_mcp(

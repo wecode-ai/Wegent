@@ -13,6 +13,10 @@ import shutil
 from dataclasses import dataclass
 from typing import Any, Optional
 
+from executor.agents.api_headers import (
+    merge_project_header,
+    merge_wegent_runtime_headers,
+)
 from executor.agents.env_value import resolve_env_value
 from executor.config import config
 from shared.logger import setup_logger
@@ -84,7 +88,11 @@ def is_codex_compatible_model(model_config: dict[str, Any]) -> bool:
     )
 
 
-def build_codex_config(model_config: dict[str, Any]) -> CodeXConfig:
+def build_codex_config(
+    model_config: dict[str, Any],
+    *,
+    project_id: Any = None,
+) -> CodeXConfig:
     """Build Codex SDK launch and thread parameters from Wegent model config."""
     model = str(model_config.get("model_id") or "").strip()
     if not model:
@@ -96,11 +104,21 @@ def build_codex_config(model_config: dict[str, Any]) -> CodeXConfig:
     service_tier = _normalize_service_tier(model_config.get("service_tier"))
     mcp_overrides = _build_global_mcp_config_overrides()
     if local_config:
-        overrides = [f"model={model}", *mcp_overrides]
+        model_provider = _resolve_explicit_model_provider(model_config)
+        header_overrides = (
+            _build_header_overrides(
+                model_provider,
+                model_config.get("default_headers"),
+                project_id,
+            )
+            if model_provider
+            else ()
+        )
+        overrides = [f"model={model}", *header_overrides, *mcp_overrides]
         return CodeXConfig(
             codex_bin=_resolve_codex_binary(config.CODEX_BINARY_PATH),
             model=model,
-            model_provider=None,
+            model_provider=model_provider,
             config_overrides=tuple(overrides),
             thread_config=_build_thread_config(reasoning, service_tier),
             effort=reasoning.get("effort"),
@@ -120,6 +138,11 @@ def build_codex_config(model_config: dict[str, Any]) -> CodeXConfig:
 
     model_provider = _resolve_model_provider(model_config)
     wire_api = _resolve_wire_api(model_config)
+    header_overrides = _build_header_overrides(
+        model_provider,
+        model_config.get("default_headers"),
+        project_id,
+    )
 
     overrides = [
         "forced_login_method=api",
@@ -129,6 +152,7 @@ def build_codex_config(model_config: dict[str, Any]) -> CodeXConfig:
         f"model_providers.{model_provider}.base_url={base_url.rstrip('/')}",
         f"model_providers.{model_provider}.wire_api={wire_api}",
         f"model_providers.{model_provider}.experimental_bearer_token={api_key}",
+        *header_overrides,
         *mcp_overrides,
     ]
 
@@ -227,6 +251,17 @@ def _resolve_model_provider(model_config: dict[str, Any]) -> str:
     return _sanitize_provider_id(str(provider or config.CODEX_MODEL_PROVIDER))
 
 
+def _resolve_explicit_model_provider(model_config: dict[str, Any]) -> Optional[str]:
+    provider = (
+        model_config.get("codex_model_provider")
+        or model_config.get("model_provider")
+        or model_config.get("provider")
+    )
+    if not provider:
+        return None
+    return _sanitize_provider_id(str(provider))
+
+
 def _resolve_provider_name(model_config: dict[str, Any]) -> str:
     return str(
         model_config.get("provider_name")
@@ -242,6 +277,27 @@ def _resolve_wire_api(model_config: dict[str, Any]) -> str:
     if api_format == RESPONSES_WIRE_API or protocol == OPENAI_RESPONSES_PROTOCOL:
         return RESPONSES_WIRE_API
     return wire_api or RESPONSES_WIRE_API
+
+
+def _build_header_overrides(
+    model_provider: str,
+    default_headers: Any,
+    project_id: Any,
+) -> tuple[str, ...]:
+    project_headers = merge_project_header({}, project_id)
+    headers = (
+        merge_wegent_runtime_headers(default_headers, executor="codex")
+        if project_headers
+        else default_headers
+    )
+    headers = merge_project_header(headers, project_id)
+    if not headers:
+        return ()
+    return tuple(
+        f"{_toml_key_path('model_providers', model_provider, 'http_headers', key)}="
+        f"{_toml_value(value)}"
+        for key, value in headers.items()
+    )
 
 
 def _read_api_format(model_config: dict[str, Any]) -> str:
