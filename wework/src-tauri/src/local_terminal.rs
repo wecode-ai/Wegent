@@ -60,6 +60,44 @@ fn normalized_cwd(cwd: Option<String>) -> Result<Option<String>, String> {
     Ok(Some(cwd.to_string()))
 }
 
+fn decode_pty_output_chunk(pending: &mut Vec<u8>, chunk: &[u8]) -> String {
+    let mut bytes = std::mem::take(pending);
+    bytes.extend_from_slice(chunk);
+
+    let mut output = String::new();
+    let mut cursor = 0;
+    while cursor < bytes.len() {
+        match std::str::from_utf8(&bytes[cursor..]) {
+            Ok(text) => {
+                output.push_str(text);
+                return output;
+            }
+            Err(error) => {
+                let valid_end = cursor + error.valid_up_to();
+                if valid_end > cursor {
+                    output.push_str(
+                        std::str::from_utf8(&bytes[cursor..valid_end])
+                            .expect("valid_up_to marks a valid UTF-8 prefix"),
+                    );
+                }
+
+                match error.error_len() {
+                    Some(error_len) => {
+                        output.push('\u{FFFD}');
+                        cursor = valid_end + error_len;
+                    }
+                    None => {
+                        pending.extend_from_slice(&bytes[valid_end..]);
+                        return output;
+                    }
+                }
+            }
+        }
+    }
+
+    output
+}
+
 #[tauri::command]
 pub fn start_local_terminal(
     app: tauri::AppHandle,
@@ -119,11 +157,15 @@ pub fn start_local_terminal(
         std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_millis(80));
             let mut buffer = [0_u8; 8192];
+            let mut pending_utf8 = Vec::new();
             loop {
                 match reader.read(&mut buffer) {
                     Ok(0) => break,
                     Ok(size) => {
-                        let data = String::from_utf8_lossy(&buffer[..size]).to_string();
+                        let data = decode_pty_output_chunk(&mut pending_utf8, &buffer[..size]);
+                        if data.is_empty() {
+                            continue;
+                        }
                         let _ = app.emit(
                             TERMINAL_OUTPUT_EVENT,
                             LocalTerminalOutput {
@@ -221,4 +263,22 @@ pub fn close_local_terminal(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decodes_utf8_output_across_read_boundaries() {
+        let mut pending = Vec::new();
+        let mut output = String::new();
+        let bytes = "修复".as_bytes();
+
+        output.push_str(&decode_pty_output_chunk(&mut pending, &bytes[..2]));
+        output.push_str(&decode_pty_output_chunk(&mut pending, &bytes[2..]));
+
+        assert_eq!(output, "修复");
+        assert!(pending.is_empty());
+    }
 }
