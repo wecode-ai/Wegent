@@ -31,7 +31,13 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import { modelApis, ModelCRD, UnifiedModel, ModelCategoryType } from '@/apis/models'
+import {
+  modelApis,
+  ModelCRD,
+  UnifiedModel,
+  ModelCategoryType,
+  type TestConnectionRequest,
+} from '@/apis/models'
 import type { BaseRole } from '@/types/base-role'
 import type { Group } from '@/types/group'
 import type { ManagedResourceSourceFilter } from '@/features/resource-library/types'
@@ -97,6 +103,50 @@ interface ModelListProps {
   sourceFilter?: ManagedResourceSourceFilter
   groups?: Group[]
   sortMode?: ResourceLibrarySortMode
+}
+
+type ModelProviderType = TestConnectionRequest['provider_type']
+
+function getTestConnectionProviderType(
+  modelProvider: string | undefined,
+  protocol?: string
+): ModelProviderType {
+  if (protocol === 'openai-responses' || protocol === 'gemini-deep-research') {
+    return protocol
+  }
+
+  if (modelProvider === 'claude') {
+    return 'anthropic'
+  }
+
+  if (
+    modelProvider === 'openai' ||
+    modelProvider === 'anthropic' ||
+    modelProvider === 'gemini' ||
+    modelProvider === 'custom'
+  ) {
+    return modelProvider
+  }
+
+  return 'openai'
+}
+
+function buildTestConnectionRequest(
+  model: ModelCRD,
+  fallbackCategoryType: ModelCategoryType
+): TestConnectionRequest {
+  const env = model.spec.modelConfig.env
+  const customHeaders = env.custom_headers
+
+  return {
+    provider_type: getTestConnectionProviderType(env.model, model.spec.protocol),
+    model_id: env.model_id,
+    api_key: env.api_key,
+    base_url: env.base_url || undefined,
+    custom_headers:
+      customHeaders && Object.keys(customHeaders).length > 0 ? customHeaders : undefined,
+    model_category_type: model.spec.modelType || fallbackCategoryType,
+  }
 }
 
 /**
@@ -262,28 +312,10 @@ const ModelList: React.FC<ModelListProps> = ({
 
     setTestingModelName(displayModel.name)
     try {
-      const env = (displayModel.config?.env as Record<string, unknown>) || {}
-      const apiKey = (env.api_key as string) || ''
-      const customHeaders = (env.custom_headers as Record<string, string>) || undefined
-
-      // Determine provider type
-      let providerType: 'openai' | 'anthropic' | 'gemini' = 'anthropic'
-      if (displayModel.modelType === 'openai') {
-        providerType = 'openai'
-      } else if (displayModel.modelType === 'gemini') {
-        providerType = 'gemini'
-      }
-
-      // Test connection requires api_key
-      // Pass model_category_type to use appropriate test method (e.g., embeddings for embedding models)
-      const result = await modelApis.testConnection({
-        provider_type: providerType,
-        model_id: displayModel.modelId,
-        api_key: apiKey,
-        base_url: env.base_url as string | undefined,
-        custom_headers: customHeaders,
-        model_category_type: displayModel.modelCategoryType,
-      })
+      const modelCRD = await modelApis.getModel(displayModel.name, displayModel.namespace)
+      const result = await modelApis.testConnection(
+        buildTestConnectionRequest(modelCRD, displayModel.modelCategoryType)
+      )
 
       if (result.success) {
         toast({
