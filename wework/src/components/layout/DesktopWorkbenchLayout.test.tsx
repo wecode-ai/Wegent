@@ -692,7 +692,6 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('titlebar-actions')).toContainElement(
       screen.getByTestId('open-code-server-titlebar-button')
     )
-    expect(screen.getByTestId('environment-info-button')).toHaveAttribute('title', '环境信息')
     expect(screen.getByTestId('open-code-server-titlebar-button')).toHaveAttribute(
       'title',
       '打开项目 IDE'
@@ -3949,7 +3948,12 @@ describe('DesktopWorkbenchLayout', () => {
     await waitFor(() =>
       expect(onCommitEnvironmentChanges).toHaveBeenCalledWith(
         expect.objectContaining({ id: 1, name: 'github_wegent' }),
-        'feat: ship'
+        'feat: ship',
+        {
+          deviceId: 'device-1',
+          path: '/workspace/github_wegent',
+          source: 'project',
+        }
       )
     )
     expect(screen.getByText('已提交')).toBeInTheDocument()
@@ -4006,7 +4010,12 @@ describe('DesktopWorkbenchLayout', () => {
     await waitFor(() =>
       expect(onCheckoutEnvironmentBranch).toHaveBeenCalledWith(
         expect.anything(),
-        'human/alpaca-20260603-050330'
+        'human/alpaca-20260603-050330',
+        {
+          deviceId: 'device-1',
+          path: '/workspace/github_wegent',
+          source: 'project',
+        }
       )
     )
 
@@ -4016,7 +4025,11 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('environment-confirm-new-branch-button'))
 
     await waitFor(() =>
-      expect(onCreateEnvironmentBranch).toHaveBeenCalledWith(expect.anything(), 'human/new-branch')
+      expect(onCreateEnvironmentBranch).toHaveBeenCalledWith(expect.anything(), 'human/new-branch', {
+        deviceId: 'device-1',
+        path: '/workspace/github_wegent',
+        source: 'project',
+      })
     )
   })
 
@@ -4121,7 +4134,12 @@ describe('DesktopWorkbenchLayout', () => {
 
     await waitFor(() =>
       expect(onLoadEnvironmentInfo).toHaveBeenCalledWith(
-        expect.objectContaining({ id: 2, name: 'workspace' })
+        expect.objectContaining({ id: 2, name: 'workspace' }),
+        {
+          deviceId: 'device-from-fallback',
+          path: '/repo',
+          source: 'project',
+        }
       )
     )
   })
@@ -4191,7 +4209,13 @@ describe('DesktopWorkbenchLayout', () => {
 
     await userEvent.click(screen.getByTestId('environment-info-button'))
 
-    await waitFor(() => expect(onLoadEnvironmentInfo).toHaveBeenCalledWith(sinaProject))
+    await waitFor(() =>
+      expect(onLoadEnvironmentInfo).toHaveBeenCalledWith(sinaProject, {
+        deviceId: 'device-sina',
+        path: '/Users/hongyu9/Downloads/sina-sso',
+        source: 'project',
+      })
+    )
   })
 
   test('refreshes environment info when an assistant message completes', async () => {
@@ -4239,7 +4263,11 @@ describe('DesktopWorkbenchLayout', () => {
 
     await waitFor(() => {
       expect(onLoadEnvironmentInfo).toHaveBeenCalledTimes(1)
-      expect(onLoadEnvironmentInfo).toHaveBeenCalledWith(workspaceProject)
+      expect(onLoadEnvironmentInfo).toHaveBeenCalledWith(workspaceProject, {
+        deviceId: 'device-1',
+        path: '/repo',
+        source: 'project',
+      })
     })
 
     rerender(

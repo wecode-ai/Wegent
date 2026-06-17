@@ -1,20 +1,14 @@
 import {
   useCallback,
-  useEffect,
   useLayoutEffect,
-  useMemo,
   useRef,
   useState,
   type ReactNode,
 } from 'react'
-import { createDeviceApi } from '@/api/devices'
-import { createHttpClient } from '@/api/http'
 import { ChatInput } from '@/components/chat/ChatInput'
 import type { ProjectChatControls, ProjectWorkControls } from '@/components/chat/ChatInput'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
-import { getRuntimeConfig } from '@/config/runtime'
 import { useTranslation } from '@/hooks/useTranslation'
-import { resolveWorkspaceTarget } from '@/lib/workspace-target'
 import {
   findWorkbenchDevice,
   getActiveWorkbenchDeviceId,
@@ -62,10 +56,6 @@ const DESKTOP_FLOATING_COMPOSER_BACKDROP_CLASS =
 const DESKTOP_SCROLL_TO_BOTTOM_BUTTON_CLASS = 'bottom-36 z-popover bg-background/95 shadow-md'
 const DESKTOP_QUEUED_SCROLL_TO_BOTTOM_BUTTON_CLASS =
   'bottom-52 z-popover bg-background/95 shadow-md'
-
-function workspaceTargetKey(target: WorkspaceTarget | null): string {
-  return target ? `${target.deviceId}:${target.path}:${target.source}:${target.taskId ?? ''}` : ''
-}
 
 function workbenchSessionKey({
   currentTask,
@@ -122,7 +112,8 @@ interface DesktopWorkbenchMainProps {
   isBootstrapping: boolean
   currentTask: Task | null
   currentProject: ProjectWithTasks | null
-  workspaceProject?: ProjectWithTasks | null
+  workspaceTarget: WorkspaceTarget | null
+  workspaceTargetError?: string | null
   devices: DeviceInfo[]
   upgradingDevices: Record<string, DeviceUpgradeState>
   messages: WorkbenchMessage[]
@@ -163,7 +154,8 @@ export function DesktopWorkbenchMain({
   isBootstrapping,
   currentTask,
   currentProject,
-  workspaceProject,
+  workspaceTarget,
+  workspaceTargetError,
   devices,
   upgradingDevices,
   messages,
@@ -203,9 +195,7 @@ export function DesktopWorkbenchMain({
   const [rightPanelView, setRightPanelView] = useState<RightWorkspacePanelView>('launcher')
   const [rightPanelTabs, setRightPanelTabs] = useState<RightWorkspacePanelTab[]>([])
   const [bottomPanelOpen, setBottomPanelOpen] = useState(false)
-  const [workspaceTarget, setWorkspaceTarget] = useState<WorkspaceTarget | null>(null)
   const [openFileRequest, setOpenFileRequest] = useState<WorkspaceFileOpenRequest | null>(null)
-  const [workspaceTargetError, setWorkspaceTargetError] = useState<string | null>(null)
   const [reviewState, setReviewState] = useState({
     loading: false,
     diff: '',
@@ -215,19 +205,7 @@ export function DesktopWorkbenchMain({
     useResizableRightSplitChat()
   const chatColumnWidth = rightPanelOpen ? rightSplitChatWidth : '100%'
   const rightPanelShellWidth = rightPanelOpen ? `calc(100% - ${rightSplitChatWidth}px)` : '0px'
-  const workspaceDeviceApi = useMemo(() => {
-    const { apiBaseUrl } = getRuntimeConfig()
-    return createDeviceApi(createHttpClient({ baseUrl: apiBaseUrl }))
-  }, [])
-  const currentTaskWorkspaceKey = currentTask
-    ? [
-        currentTask.id,
-        currentTask.device_id ?? '',
-        currentTask.execution_workspace_path ?? '',
-      ].join(':')
-    : ''
   const reviewRequestSequence = useRef(0)
-  const panelWorkspaceProject = workspaceProject === undefined ? currentProject : workspaceProject
   const rightPanelSessionKey = workbenchSessionKey({ currentTask, currentProject })
   const previousRightPanelSessionKey = useRef(rightPanelSessionKey)
   const isTauri = isTauriRuntime()
@@ -411,33 +389,6 @@ export function DesktopWorkbenchMain({
       error: undefined,
     })
   }, [rightPanelSessionKey])
-
-  useEffect(() => {
-    let cancelled = false
-    resolveWorkspaceTarget({
-      currentTask,
-      currentProject: panelWorkspaceProject,
-      api: workspaceDeviceApi,
-    })
-      .then(target => {
-        if (!cancelled) {
-          setWorkspaceTarget(current =>
-            workspaceTargetKey(current) === workspaceTargetKey(target) ? current : target
-          )
-          setWorkspaceTargetError(null)
-        }
-      })
-      .catch(error => {
-        if (!cancelled) {
-          setWorkspaceTargetError(
-            error instanceof Error ? error.message : 'Failed to resolve workspace'
-          )
-        }
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [currentTask, panelWorkspaceProject, workspaceDeviceApi, currentTaskWorkspaceKey])
 
   return (
     <main

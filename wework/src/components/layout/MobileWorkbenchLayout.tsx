@@ -8,6 +8,7 @@ import { MobileSettingsPage } from '@/components/settings/MobileSettingsPage'
 import { stripAppBasePath } from '@/config/runtime'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isSettingsRoute, navigateTo } from '@/lib/navigation'
+import { resolveWorkspaceTarget, workspaceTargetKey } from '@/lib/workspace-target'
 import {
   findProjectForTask,
   findWorkbenchDevice,
@@ -76,20 +77,32 @@ interface MobileWorkbenchLayoutProps {
   onGetProjectWorkspaceRoot?: (deviceId: string) => Promise<string>
   onListDeviceDirectories?: (deviceId: string, path: string) => Promise<string[]>
   onCreateDeviceDirectory?: (deviceId: string, path: string) => Promise<void>
-  onLoadEnvironmentInfo?: (project: ProjectWithTasks | null) => Promise<EnvironmentInfo>
+  onLoadEnvironmentInfo?: (
+    project: ProjectWithTasks | null,
+    workspaceTarget?: WorkspaceTarget | null
+  ) => Promise<EnvironmentInfo>
   onLoadEnvironmentDiff?: (
     project: ProjectWithTasks | null,
     workspaceTarget?: WorkspaceTarget | null
   ) => Promise<string>
-  onCommitEnvironmentChanges?: (project: ProjectWithTasks | null, message: string) => Promise<void>
-  onListEnvironmentBranches?: (project: ProjectWithTasks | null) => Promise<string[]>
+  onCommitEnvironmentChanges?: (
+    project: ProjectWithTasks | null,
+    message: string,
+    workspaceTarget?: WorkspaceTarget | null
+  ) => Promise<void>
+  onListEnvironmentBranches?: (
+    project: ProjectWithTasks | null,
+    workspaceTarget?: WorkspaceTarget | null
+  ) => Promise<string[]>
   onCheckoutEnvironmentBranch?: (
     project: ProjectWithTasks | null,
-    branchName: string
+    branchName: string,
+    workspaceTarget?: WorkspaceTarget | null
   ) => Promise<void>
   onCreateEnvironmentBranch?: (
     project: ProjectWithTasks | null,
-    branchName: string
+    branchName: string,
+    workspaceTarget?: WorkspaceTarget | null
   ) => Promise<void>
   onUpgradeDevice?: (deviceId: string) => Promise<void>
   onInputChange: (value: string) => void
@@ -168,12 +181,33 @@ export function MobileWorkbenchLayout({
     deletions: '-0',
     executionTarget: 'local',
   })
+  const [workspaceTarget, setWorkspaceTarget] = useState<WorkspaceTarget | null>(null)
+  const [workspaceTargetError, setWorkspaceTargetError] = useState<string | null>(null)
+  const [workspaceTargetResolving, setWorkspaceTargetResolving] = useState(true)
   const hasConversation = messages.length > 0 || state.currentTask
   const currentTaskProject = useMemo(
     () => findProjectForTask(state.projects, state.currentTask),
     [state.currentTask, state.projects]
   )
   const activeConversationProject = state.currentProject ?? currentTaskProject
+  const currentTaskWorkspaceKey = state.currentTask
+    ? [
+        state.currentTask.id,
+        state.currentTask.device_id ?? '',
+        state.currentTask.execution_workspace_path ?? '',
+      ].join(':')
+    : ''
+  const workspaceTargetResolverApi = useMemo(
+    () => ({
+      getProjectWorkspaceRoot: (deviceId: string) => {
+        if (!onGetProjectWorkspaceRoot) {
+          return Promise.reject(new Error('Project workspace root loader is not available'))
+        }
+        return onGetProjectWorkspaceRoot(deviceId)
+      },
+    }),
+    [onGetProjectWorkspaceRoot]
+  )
   const effectiveProjectChat = projectChat ?? {
     models: [],
     selectedModel: null,
@@ -194,11 +228,25 @@ export function MobileWorkbenchLayout({
       })
     : t('workbench.empty_title', '我们该做什么？')
   const refreshEnvironmentInfo = useCallback(async () => {
-    if (!onLoadEnvironmentInfo || !state.currentProject) return
+    if (!onLoadEnvironmentInfo || !activeConversationProject) return
+
+    if (workspaceTargetResolving) {
+      setEnvironmentInfo(info => ({ ...info, loading: true }))
+      return
+    }
+
+    if (!workspaceTarget) {
+      setEnvironmentInfo(info => ({
+        ...info,
+        loading: false,
+        error: workspaceTargetError ?? 'Workspace is not ready',
+      }))
+      return
+    }
 
     setEnvironmentInfo(info => ({ ...info, loading: true }))
     try {
-      const info = await onLoadEnvironmentInfo(state.currentProject)
+      const info = await onLoadEnvironmentInfo(activeConversationProject, workspaceTarget)
       setEnvironmentInfo({ ...info, loading: false })
     } catch (error) {
       setEnvironmentInfo(info => ({
@@ -207,7 +255,13 @@ export function MobileWorkbenchLayout({
         error: error instanceof Error ? error.message : 'Failed to load environment info',
       }))
     }
-  }, [onLoadEnvironmentInfo, state.currentProject])
+  }, [
+    activeConversationProject,
+    onLoadEnvironmentInfo,
+    workspaceTarget,
+    workspaceTargetError,
+    workspaceTargetResolving,
+  ])
 
   const baseProjectWork = projectWork ?? {
     projects: state.projects,
@@ -226,20 +280,20 @@ export function MobileWorkbenchLayout({
     branchLoading: environmentInfo.loading,
     onRefreshBranch: refreshEnvironmentInfo,
     onListBranches:
-      state.currentProject && onListEnvironmentBranches
-        ? () => onListEnvironmentBranches(state.currentProject)
+      activeConversationProject && onListEnvironmentBranches && workspaceTarget
+        ? () => onListEnvironmentBranches(activeConversationProject, workspaceTarget)
         : undefined,
     onCheckoutBranch:
-      state.currentProject && onCheckoutEnvironmentBranch
+      activeConversationProject && onCheckoutEnvironmentBranch && workspaceTarget
         ? async branchName => {
-            await onCheckoutEnvironmentBranch(state.currentProject, branchName)
+            await onCheckoutEnvironmentBranch(activeConversationProject, branchName, workspaceTarget)
             await refreshEnvironmentInfo()
           }
         : undefined,
     onCreateBranch:
-      state.currentProject && onCreateEnvironmentBranch
+      activeConversationProject && onCreateEnvironmentBranch && workspaceTarget
         ? async branchName => {
-            await onCreateEnvironmentBranch(state.currentProject, branchName)
+            await onCreateEnvironmentBranch(activeConversationProject, branchName, workspaceTarget)
             await refreshEnvironmentInfo()
           }
         : undefined,
@@ -275,10 +329,48 @@ export function MobileWorkbenchLayout({
   }, [])
 
   useEffect(() => {
-    if (state.currentProject && !state.currentTask) {
+    if (activeConversationProject && !state.currentTask) {
       void refreshEnvironmentInfo()
     }
-  }, [refreshEnvironmentInfo, state.currentProject, state.currentTask])
+  }, [activeConversationProject, refreshEnvironmentInfo, state.currentTask])
+
+  useEffect(() => {
+    let cancelled = false
+    setWorkspaceTargetResolving(true)
+    setWorkspaceTarget(null)
+    setWorkspaceTargetError(null)
+    resolveWorkspaceTarget({
+      currentTask: state.currentTask,
+      currentProject: activeConversationProject,
+      api: workspaceTargetResolverApi,
+    })
+      .then(target => {
+        if (!cancelled) {
+          setWorkspaceTarget(current =>
+            workspaceTargetKey(current) === workspaceTargetKey(target) ? current : target
+          )
+          setWorkspaceTargetError(null)
+          setWorkspaceTargetResolving(false)
+        }
+      })
+      .catch(error => {
+        if (!cancelled) {
+          setWorkspaceTarget(null)
+          setWorkspaceTargetError(
+            error instanceof Error ? error.message : 'Failed to resolve workspace'
+          )
+          setWorkspaceTargetResolving(false)
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [
+    activeConversationProject,
+    currentTaskWorkspaceKey,
+    state.currentTask,
+    workspaceTargetResolverApi,
+  ])
 
   if (settingsOpen) {
     return (

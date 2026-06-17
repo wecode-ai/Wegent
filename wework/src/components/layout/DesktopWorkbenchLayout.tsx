@@ -26,6 +26,7 @@ import type { DeviceUpgradeState } from '@/types/device-events'
 import type { CodeCommentContext, WorkspaceTarget } from '@/types/workspace-files'
 import { stripAppBasePath } from '@/config/runtime'
 import { isSettingsRoute, navigateTo } from '@/lib/navigation'
+import { resolveWorkspaceTarget, workspaceTargetKey } from '@/lib/workspace-target'
 import { findProjectForTask } from '@/lib/workbench-device'
 import { DesktopSidebar } from './DesktopSidebar'
 import { ProjectCreateDialog } from '@/components/projects/ProjectCreateDialog'
@@ -75,18 +76,33 @@ interface DesktopWorkbenchLayoutProps {
   onGetProjectWorkspaceRoot: (deviceId: string) => Promise<string>
   onListDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
   onCreateDeviceDirectory: (deviceId: string, path: string) => Promise<void>
-  onLoadEnvironmentInfo: (project: ProjectWithTasks | null) => Promise<EnvironmentInfo>
-  onCommitEnvironmentChanges: (project: ProjectWithTasks | null, message: string) => Promise<void>
+  onLoadEnvironmentInfo: (
+    project: ProjectWithTasks | null,
+    workspaceTarget?: WorkspaceTarget | null
+  ) => Promise<EnvironmentInfo>
+  onCommitEnvironmentChanges: (
+    project: ProjectWithTasks | null,
+    message: string,
+    workspaceTarget?: WorkspaceTarget | null
+  ) => Promise<void>
   onLoadEnvironmentDiff?: (
     project: ProjectWithTasks | null,
     workspaceTarget: WorkspaceTarget
   ) => Promise<string>
-  onListEnvironmentBranches: (project: ProjectWithTasks | null) => Promise<string[]>
+  onListEnvironmentBranches: (
+    project: ProjectWithTasks | null,
+    workspaceTarget?: WorkspaceTarget | null
+  ) => Promise<string[]>
   onCheckoutEnvironmentBranch: (
     project: ProjectWithTasks | null,
-    branchName: string
+    branchName: string,
+    workspaceTarget?: WorkspaceTarget | null
   ) => Promise<void>
-  onCreateEnvironmentBranch: (project: ProjectWithTasks | null, branchName: string) => Promise<void>
+  onCreateEnvironmentBranch: (
+    project: ProjectWithTasks | null,
+    branchName: string,
+    workspaceTarget?: WorkspaceTarget | null
+  ) => Promise<void>
   onInputChange: (value: string) => void
   onSend: () => void
   onRetryFailedMessage?: (messageId: string) => void
@@ -178,6 +194,9 @@ export function DesktopWorkbenchLayout({
     deletions: '-0',
     executionTarget: 'local',
   })
+  const [workspaceTarget, setWorkspaceTarget] = useState<WorkspaceTarget | null>(null)
+  const [workspaceTargetError, setWorkspaceTargetError] = useState<string | null>(null)
+  const [workspaceTargetResolving, setWorkspaceTargetResolving] = useState(false)
   const currentTaskProject = useMemo(
     () => findProjectForTask(state.projects, state.currentTask),
     [state.currentTask, state.projects]
@@ -192,11 +211,77 @@ export function DesktopWorkbenchLayout({
   )
   const completedAssistantMessageIds = useRef<Set<string>>(new Set())
   const completedAssistantMessagesInitialized = useRef(false)
+  const currentTaskWorkspaceKey = state.currentTask
+    ? [
+        state.currentTask.id,
+        state.currentTask.device_id ?? '',
+        state.currentTask.execution_workspace_path ?? '',
+      ].join(':')
+    : ''
+  const workspaceTargetResolverApi = useMemo(
+    () => ({ getProjectWorkspaceRoot: onGetProjectWorkspaceRoot }),
+    [onGetProjectWorkspaceRoot]
+  )
+  const hasEnvironmentProject = Boolean(environmentProject)
+  const environmentWorkspaceReady = !hasEnvironmentProject || Boolean(workspaceTarget)
+  const workspaceTargetProject = environmentProject
+
+  useEffect(() => {
+    let cancelled = false
+    setWorkspaceTargetResolving(true)
+    setWorkspaceTarget(null)
+    setWorkspaceTargetError(null)
+    resolveWorkspaceTarget({
+      currentTask: state.currentTask,
+      currentProject: workspaceTargetProject,
+      api: workspaceTargetResolverApi,
+    })
+      .then(target => {
+        if (!cancelled) {
+          setWorkspaceTarget(current =>
+            workspaceTargetKey(current) === workspaceTargetKey(target) ? current : target
+          )
+          setWorkspaceTargetError(null)
+          setWorkspaceTargetResolving(false)
+        }
+      })
+      .catch(error => {
+        if (!cancelled) {
+          setWorkspaceTarget(null)
+          setWorkspaceTargetError(
+            error instanceof Error ? error.message : 'Failed to resolve workspace'
+          )
+          setWorkspaceTargetResolving(false)
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [
+    currentTaskWorkspaceKey,
+    state.currentTask,
+    workspaceTargetProject,
+    workspaceTargetResolverApi,
+  ])
 
   const refreshEnvironmentInfo = useCallback(async () => {
+    if (workspaceTargetResolving) {
+      setEnvironmentInfo(info => ({ ...info, loading: true }))
+      return
+    }
+
+    if (!environmentWorkspaceReady) {
+      setEnvironmentInfo(info => ({
+        ...info,
+        loading: false,
+        error: workspaceTargetError ?? 'Workspace is not ready',
+      }))
+      return
+    }
+
     setEnvironmentInfo(info => ({ ...info, loading: true }))
     try {
-      const info = await onLoadEnvironmentInfo(environmentProject)
+      const info = await onLoadEnvironmentInfo(environmentProject, workspaceTarget)
       setEnvironmentInfo({ ...info, loading: false })
     } catch (error) {
       setEnvironmentInfo(info => ({
@@ -205,7 +290,14 @@ export function DesktopWorkbenchLayout({
         error: error instanceof Error ? error.message : 'Failed to load environment info',
       }))
     }
-  }, [environmentProject, onLoadEnvironmentInfo])
+  }, [
+    environmentProject,
+    environmentWorkspaceReady,
+    onLoadEnvironmentInfo,
+    workspaceTarget,
+    workspaceTargetError,
+    workspaceTargetResolving,
+  ])
 
   useEffect(() => {
     const handlePopState = () => {
@@ -243,17 +335,26 @@ export function DesktopWorkbenchLayout({
   }, [messages, refreshEnvironmentInfo])
 
   async function handleCommitEnvironmentChanges(message: string) {
-    await onCommitEnvironmentChanges(environmentProject, message)
+    if (!workspaceTarget) {
+      throw new Error(workspaceTargetError ?? 'Workspace is not ready')
+    }
+    await onCommitEnvironmentChanges(environmentProject, message, workspaceTarget)
     await refreshEnvironmentInfo()
   }
 
   async function handleCheckoutEnvironmentBranch(branchName: string) {
-    await onCheckoutEnvironmentBranch(environmentProject, branchName)
+    if (!workspaceTarget) {
+      throw new Error(workspaceTargetError ?? 'Workspace is not ready')
+    }
+    await onCheckoutEnvironmentBranch(environmentProject, branchName, workspaceTarget)
     await refreshEnvironmentInfo()
   }
 
   async function handleCreateEnvironmentBranch(branchName: string) {
-    await onCreateEnvironmentBranch(environmentProject, branchName)
+    if (!workspaceTarget) {
+      throw new Error(workspaceTargetError ?? 'Workspace is not ready')
+    }
+    await onCreateEnvironmentBranch(environmentProject, branchName, workspaceTarget)
     await refreshEnvironmentInfo()
   }
 
@@ -271,7 +372,9 @@ export function DesktopWorkbenchLayout({
     branchName: environmentInfo.branchName,
     branchLoading: environmentInfo.loading,
     onRefreshBranch: refreshEnvironmentInfo,
-    onListBranches: () => onListEnvironmentBranches(environmentProject),
+    onListBranches: workspaceTarget
+      ? () => onListEnvironmentBranches(environmentProject, workspaceTarget)
+      : undefined,
     onCheckoutBranch: handleCheckoutEnvironmentBranch,
     onCreateBranch: handleCreateEnvironmentBranch,
   }
@@ -353,7 +456,8 @@ export function DesktopWorkbenchLayout({
           isBootstrapping={state.isBootstrapping}
           currentTask={state.currentTask}
           currentProject={activeConversationProject}
-          workspaceProject={state.currentProject}
+          workspaceTarget={workspaceTarget}
+          workspaceTargetError={workspaceTargetError}
           devices={state.devices}
           upgradingDevices={upgradingDevices}
           messages={messages}
@@ -372,7 +476,12 @@ export function DesktopWorkbenchLayout({
               ? workspaceTarget => onLoadEnvironmentDiff(environmentProject, workspaceTarget)
               : undefined
           }
-          onListEnvironmentBranches={() => onListEnvironmentBranches(environmentProject)}
+          onListEnvironmentBranches={() => {
+            if (!workspaceTarget) {
+              return Promise.reject(new Error(workspaceTargetError ?? 'Workspace is not ready'))
+            }
+            return onListEnvironmentBranches(environmentProject, workspaceTarget)
+          }}
           onCheckoutEnvironmentBranch={handleCheckoutEnvironmentBranch}
           onCreateEnvironmentBranch={handleCreateEnvironmentBranch}
           onOpenCloudDeviceSettings={() => {

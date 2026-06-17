@@ -49,3 +49,7 @@ export async function resolveWorkspaceTarget({
 
   return null
 }
+
+export function workspaceTargetKey(target: WorkspaceTarget | null): string {
+  return target ? `${target.deviceId}:${target.path}:${target.source}:${target.taskId ?? ''}` : ''
+}
