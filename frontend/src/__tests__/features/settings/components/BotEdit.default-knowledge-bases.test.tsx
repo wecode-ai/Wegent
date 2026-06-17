@@ -18,6 +18,8 @@ import type { ContextItem } from '@/types/context'
 
 const mockTranslate = (key: string, options?: { count?: number }) => {
   const translations: Record<string, string> = {
+    'actions.delete': 'Delete',
+    'bot.default_knowledge_bases': 'Default Knowledge Bases',
     'bot.default_knowledge_bases_search_placeholder': 'Search knowledge bases',
     'bot.default_knowledge_bases_used_for_new_chats':
       'Used to initialize knowledge bases for new chats.',
@@ -32,6 +34,7 @@ const mockTranslate = (key: string, options?: { count?: number }) => {
     'bot.default_knowledge_bases_load_failed': 'Failed to load knowledge bases',
     'bot.default_knowledge_bases_updated_at': 'Updated',
     'bot.default_knowledge_bases_selected_badge': 'Selected',
+    'bot.default_knowledge_bases_select_to_add': 'Select a knowledge base to add...',
     'bot.default_knowledge_bases_selected_count': `${options?.count ?? 0} selected`,
     'bot.default_knowledge_bases_group_personal': 'Personal knowledge bases',
     'bot.default_knowledge_bases_group_group': 'Group knowledge bases',
@@ -40,10 +43,6 @@ const mockTranslate = (key: string, options?: { count?: number }) => {
     'bot.default_knowledge_bases_source_group': 'Group',
     'bot.default_knowledge_bases_source_organization': 'Organization',
     'bot.default_knowledge_bases_source_shared': 'Shared',
-    'bot.default_contexts': 'Default contexts',
-    'bot.default_contexts_add': 'Add context',
-    'bot.default_contexts_empty': 'No default contexts selected',
-    'bot.default_contexts_remove': 'Remove context',
     'knowledge:document_count': `${options?.count ?? 0} document`,
     'knowledge:documents_count': `${options?.count ?? 0} documents`,
     'skills.preload_hint': 'Check skills to preload them.',
@@ -560,8 +559,10 @@ describe('BotEdit default knowledge bases', () => {
   test('renders the default context selector', async () => {
     renderBotEdit()
 
-    expect(await screen.findByText('Default contexts')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Add context' })).toBeInTheDocument()
+    expect(await screen.findByText('Default Knowledge Bases')).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Select a knowledge base to add...' })
+    ).toBeInTheDocument()
   })
 
   test('allows adding and removing multiple default contexts', async () => {
@@ -575,7 +576,7 @@ describe('BotEdit default knowledge bases', () => {
       expect(screen.getByText('Runbooks')).toBeInTheDocument()
     })
 
-    fireEvent.click(screen.getAllByLabelText('Remove context')[0])
+    fireEvent.click(screen.getAllByLabelText('Delete')[0])
 
     await waitFor(() => {
       expect(screen.queryByText('Product Docs')).not.toBeInTheDocument()

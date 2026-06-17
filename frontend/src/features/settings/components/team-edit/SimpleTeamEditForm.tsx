@@ -532,14 +532,14 @@ export default function SimpleTeamEditForm({
           </SimpleConfigRow>
 
           <SimpleConfigRow
-            label={t('common:bot.default_contexts')}
+            label={t('common:bot.default_knowledge_bases')}
             description={t('settings:team.simple.core.knowledge_description')}
           >
             <div className="space-y-2">
               <div className="flex flex-wrap gap-2">
                 {defaultContextItems.length === 0 ? (
                   <span className="text-sm text-text-muted">
-                    {t('common:bot.default_contexts_empty')}
+                    {t('common:bot.default_knowledge_bases_empty_selection')}
                   </span>
                 ) : (
                   defaultContextItems.map(context => (
@@ -560,7 +560,7 @@ export default function SimpleTeamEditForm({
                             )
                           )
                         }
-                        aria-label={t('common:bot.default_contexts_remove')}
+                        aria-label={t('common:actions.delete')}
                       >
                         <XIcon className="h-3 w-3" />
                       </button>
@@ -616,7 +616,7 @@ export default function SimpleTeamEditForm({
                   size="sm"
                   data-testid="simple-default-context-add-button"
                 >
-                  {t('common:bot.default_contexts_add')}
+                  {t('common:bot.default_knowledge_bases_select_to_add')}
                 </Button>
               </ContextSelector>
             </div>

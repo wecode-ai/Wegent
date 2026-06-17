@@ -22,15 +22,14 @@ jest.mock('@/hooks/useTranslation', () => ({
     t: (key: string) =>
       ({
         'common:actions.cancel': 'Cancel',
+        'common:actions.delete': 'Delete',
         'common:actions.remove': 'Remove',
         'common:actions.save': 'Save',
         'common:actions.saving': 'Saving',
         'common:bot.agent_config': 'Model',
         'common:bot.default_knowledge_bases': 'Knowledge bases',
-        'common:bot.default_contexts': 'Default contexts',
-        'common:bot.default_contexts_add': 'Add context',
-        'common:bot.default_contexts_empty': 'No default contexts selected',
-        'common:bot.default_contexts_remove': 'Remove context',
+        'common:bot.default_knowledge_bases_empty_selection': 'No default knowledge bases selected',
+        'common:bot.default_knowledge_bases_select_to_add': 'Select a knowledge base to add...',
         'common:bot.fine_tune_prompt': 'Optimize',
         'common:bot.mcp_config': 'MCP',
         'common:bot.model_select': 'Select model',
