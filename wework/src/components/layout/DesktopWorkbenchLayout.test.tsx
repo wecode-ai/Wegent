@@ -153,9 +153,9 @@ describe('DesktopWorkbenchLayout', () => {
     })
     startTerminalSessionMock.mockResolvedValue({
       session_id: 'terminal-1',
-      url: 'http://localhost/terminal',
+      url: 'http://localhost/terminal-1',
       device_id: 'workspace-cloud-device',
-      path: '/workspace/projects/github_wegent',
+      path: '/workspace/project',
     })
     createProjectApiMock.mockReturnValue({
       startTerminalSession: startTerminalSessionMock,
@@ -4326,10 +4326,6 @@ describe('DesktopWorkbenchLayout', () => {
     expect(panel).toHaveAttribute('aria-hidden', 'false')
     expect(screen.getByTestId('toggle-bottom-workspace-panel-button')).toBeInTheDocument()
     expect(screen.getByTestId('toggle-right-workspace-panel-button')).toBeInTheDocument()
-    expect(screen.getByTestId('workspace-tool-launcher')).toBeInTheDocument()
-    expect(screen.getByTestId('workspace-terminal-card')).toBeInTheDocument()
-    expect(screen.getByTestId('workspace-ide-card')).toBeInTheDocument()
-    expect(screen.getByTestId('workspace-desktop-card')).toBeInTheDocument()
 
     fireEvent.pointerDown(screen.getByTestId('bottom-workspace-resize-handle'), { clientY: 700 })
     fireEvent.pointerMove(document, { clientY: 620 })
@@ -4365,13 +4361,22 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await userEvent.click(screen.getByTestId('toggle-bottom-workspace-panel-button'))
-    await act(async () => {
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-    await userEvent.click(await screen.findByTestId('workspace-terminal-card'))
 
     await waitFor(() => expect(startTerminalSessionMock).toHaveBeenCalledWith(12, { taskId: 8 }))
+  })
+
+  test('opens the terminal by default when the bottom workspace panel opens', async () => {
+    renderWorkspacePanelLayout()
+
+    await userEvent.click(screen.getByTestId('toggle-bottom-workspace-panel-button'))
+
+    await waitFor(() => expect(startTerminalSessionMock).toHaveBeenCalledWith(12))
+    expect(screen.getByTestId('workspace-terminal-frame')).toHaveAttribute(
+      'src',
+      'http://localhost/terminal-1'
+    )
+    expect(screen.getByTestId('workspace-terminal-window')).toBeInTheDocument()
+    expect(screen.queryByTestId('workspace-tool-launcher')).not.toBeInTheDocument()
   })
 
   test('closes the bottom workspace panel from the panel edge', async () => {

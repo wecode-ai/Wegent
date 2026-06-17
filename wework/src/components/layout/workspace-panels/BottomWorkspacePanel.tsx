@@ -58,6 +58,7 @@ export function BottomWorkspacePanel({
               currentProject={currentProject}
               devices={devices}
               workspaceTarget={workspaceTarget}
+              defaultOpenTool="terminal"
               onRequestClose={onRequestClose}
             />
           </div>
