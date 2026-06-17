@@ -1,5 +1,5 @@
 import { Code2, Loader2, Monitor, Plus, SquareTerminal, X } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { createDeviceApi } from '@/api/devices'
 import { createHttpClient } from '@/api/http'
 import { createProjectApi } from '@/api/projects'
@@ -21,6 +21,7 @@ import { EmbeddedLocalTerminal } from './EmbeddedLocalTerminal'
 interface WorkspacePanelCardsProps {
   currentProject: ProjectWithTasks | null
   devices?: DeviceInfo[]
+  defaultOpenTool?: WorkspaceTool
   onRequestClose?: () => void
 }
 
@@ -78,6 +79,7 @@ function createDeviceSessionApi() {
 export function WorkspacePanelCards({
   currentProject,
   devices = [],
+  defaultOpenTool,
   onRequestClose,
 }: WorkspacePanelCardsProps) {
   const { t } = useTranslation('common')
@@ -85,6 +87,7 @@ export function WorkspacePanelCards({
   const [activeTerminalSessionId, setActiveTerminalSessionId] = useState<string | null>(null)
   const [showToolLauncher, setShowToolLauncher] = useState(false)
   const [loadingTool, setLoadingTool] = useState<WorkspaceTool | null>(null)
+  const defaultOpenedProjectKeyRef = useRef<string | null>(null)
   const [toolAvailability, setToolAvailability] = useState<WorkspaceToolAvailabilityState>(() => ({
     projectKey: '',
     tools: createAvailableTools(),
@@ -180,7 +183,7 @@ export function WorkspacePanelCards({
     projectLocalPath,
   ])
 
-  const markToolUnavailable = (tool: WorkspaceTool) => {
+  const markToolUnavailable = useCallback((tool: WorkspaceTool) => {
     setToolAvailability(state => {
       const tools = state.projectKey === projectKey ? state.tools : createAvailableTools()
       if (!tools[tool]) {
@@ -191,15 +194,18 @@ export function WorkspacePanelCards({
         tools: { ...tools, [tool]: false },
       }
     })
-  }
+  }, [projectKey])
 
-  const setProjectError = (message: string | null) => {
+  const setProjectError = useCallback((message: string | null) => {
     setToolError({ projectKey, message })
-  }
+  }, [projectKey])
 
-  const getSessionStartErrorMessage = () => t('workbench.project_tool_start_failed', '启动失败')
+  const getSessionStartErrorMessage = useCallback(
+    () => t('workbench.project_tool_start_failed', '启动失败'),
+    [t]
+  )
 
-  const startTerminalSession = async () => {
+  const startTerminalSession = useCallback(async () => {
     if (!currentProject || loadingTool || !availableTools.terminal) return
     setLoadingTool('terminal')
     setProjectError(null)
@@ -238,7 +244,43 @@ export function WorkspacePanelCards({
     } finally {
       setLoadingTool(null)
     }
-  }
+  }, [
+    availableTools.terminal,
+    currentProject,
+    getSessionStartErrorMessage,
+    loadingTool,
+    localTerminalAvailable,
+    markToolUnavailable,
+    projectDeviceId,
+    projectLocalPath,
+    setProjectError,
+  ])
+
+  useEffect(() => {
+    if (
+      defaultOpenTool !== 'terminal' ||
+      defaultOpenedProjectKeyRef.current === projectKey ||
+      terminalSessions.length > 0 ||
+      !currentProject ||
+      loadingTool ||
+      !projectTerminalAvailable ||
+      !availableTools.terminal
+    ) {
+      return
+    }
+
+    defaultOpenedProjectKeyRef.current = projectKey
+    void startTerminalSession()
+  }, [
+    availableTools.terminal,
+    currentProject,
+    defaultOpenTool,
+    loadingTool,
+    projectKey,
+    projectTerminalAvailable,
+    startTerminalSession,
+    terminalSessions.length,
+  ])
 
   const handleTerminalClick = () => {
     void startTerminalSession()
