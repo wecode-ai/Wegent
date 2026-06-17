@@ -429,7 +429,12 @@ class TestLocalModeStrategy:
 
         result = strategy.configure_client_options(options, config_dir, {}, {})
 
-        assert result["env"]["ANTHROPIC_CUSTOM_HEADERS"] == "wecode-project: 42"
+        assert result["env"]["ANTHROPIC_CUSTOM_HEADERS"] == (
+            "wecode-action: wegent\n"
+            "wecode-source: wegent-local\n"
+            "wecode-executor: claudecode\n"
+            "wecode-project: 42"
+        )
 
     def test_configure_client_options_preserves_custom_headers_for_project_tasks(
         self, strategy, tmp_path, monkeypatch
@@ -444,7 +449,11 @@ class TestLocalModeStrategy:
         result = strategy.configure_client_options(options, config_dir, env_config, {})
 
         assert result["env"]["ANTHROPIC_CUSTOM_HEADERS"] == (
-            "x-custom-user: test\nwecode-project: 42"
+            "x-custom-user: test\n"
+            "wecode-action: wegent\n"
+            "wecode-source: wegent-local\n"
+            "wecode-executor: claudecode\n"
+            "wecode-project: 42"
         )
 
     def test_configure_client_options_appends_project_to_process_headers(
@@ -498,12 +507,14 @@ class TestLocalModeStrategy:
             "wecode-action: wecode-cli\n"
             "wecode-source: wecode-cli\n"
             "x-weibo-downstream: shanghai-intranet\n"
+            "wecode-executor: claudecode\n"
             "wecode-project: 42"
         )
         assert json.loads(result["env"]["DEFAULT_HEADERS"]) == {
             "wecode-action": "wecode-cli",
             "wecode-source": "wecode-cli",
             "x-weibo-downstream": "shanghai-intranet",
+            "wecode-executor": "claudecode",
             "wecode-project": "42",
         }
         assert result["env"]["default_headers"] == result["env"]["DEFAULT_HEADERS"]

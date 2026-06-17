@@ -30,8 +30,9 @@ from executor.agents.api_headers import (
     DEFAULT_HEADERS_ENV_KEYS,
     extract_default_headers,
     merge_anthropic_custom_headers,
-    merge_anthropic_header_map,
+    merge_anthropic_header_defaults,
     merge_project_header,
+    merge_wegent_runtime_headers,
 )
 from executor.agents.claude_code.mode_strategy import ExecutionModeStrategy
 from executor.config import config
@@ -207,6 +208,10 @@ class LocalModeStrategy(ExecutionModeStrategy):
         )
         default_headers = extract_default_headers(merged_env)
         if self._use_global_capabilities:
+            default_headers = merge_wegent_runtime_headers(
+                default_headers,
+                executor="claudecode",
+            )
             default_headers = merge_project_header(default_headers, self._project_id)
         if default_headers:
             serialized_default_headers = json.dumps(
@@ -216,7 +221,7 @@ class LocalModeStrategy(ExecutionModeStrategy):
             )
             for default_headers_key in DEFAULT_HEADERS_ENV_KEYS:
                 env[default_headers_key] = serialized_default_headers
-            custom_headers = merge_anthropic_header_map(
+            custom_headers = merge_anthropic_header_defaults(
                 custom_headers,
                 default_headers,
             )

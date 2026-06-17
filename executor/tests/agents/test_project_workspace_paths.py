@@ -229,6 +229,10 @@ def test_codex_project_task_marks_api_project_id():
         'model_providers.wecode-openai.http_headers.wecode-project="42"'
         in agent.codex_config.config_overrides
     )
+    assert (
+        'model_providers.wecode-openai.http_headers.wecode-executor="codex"'
+        in agent.codex_config.config_overrides
+    )
     assert not any(
         item == 'model_providers.wecode-openai.http_headers.wecode-source="wework"'
         for item in agent.codex_config.config_overrides

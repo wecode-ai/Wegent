@@ -13,7 +13,10 @@ import shutil
 from dataclasses import dataclass
 from typing import Any, Optional
 
-from executor.agents.api_headers import merge_project_header
+from executor.agents.api_headers import (
+    merge_project_header,
+    merge_wegent_runtime_headers,
+)
 from executor.agents.env_value import resolve_env_value
 from executor.config import config
 from shared.logger import setup_logger
@@ -281,7 +284,13 @@ def _build_header_overrides(
     default_headers: Any,
     project_id: Any,
 ) -> tuple[str, ...]:
-    headers = merge_project_header(default_headers, project_id)
+    project_headers = merge_project_header({}, project_id)
+    headers = (
+        merge_wegent_runtime_headers(default_headers, executor="codex")
+        if project_headers
+        else default_headers
+    )
+    headers = merge_project_header(headers, project_id)
     if not headers:
         return ()
     return tuple(

@@ -80,6 +80,18 @@ def test_build_codex_config_adds_project_header_when_requested():
         'model_providers.wecode-openai.http_headers.wecode-project="42"'
         in config.config_overrides
     )
+    assert (
+        'model_providers.wecode-openai.http_headers.wecode-action="wegent"'
+        in config.config_overrides
+    )
+    assert (
+        'model_providers.wecode-openai.http_headers.wecode-source="wegent-local"'
+        in config.config_overrides
+    )
+    assert (
+        'model_providers.wecode-openai.http_headers.wecode-executor="codex"'
+        in config.config_overrides
+    )
 
 
 def test_build_codex_config_preserves_default_source_header_when_project_requested():
@@ -115,6 +127,10 @@ def test_build_codex_config_preserves_default_source_header_when_project_request
         'model_providers.wecode-openai.http_headers.wecode-project="42"'
         in config.config_overrides
     )
+    assert (
+        'model_providers.wecode-openai.http_headers.wecode-executor="codex"'
+        in config.config_overrides
+    )
 
 
 def test_build_codex_config_omits_project_header_by_default():
@@ -129,6 +145,9 @@ def test_build_codex_config_omits_project_header_by_default():
     )
 
     assert not any("wecode-project" in item for item in config.config_overrides)
+    assert not any("wecode-executor" in item for item in config.config_overrides)
+    assert not any("wecode-source" in item for item in config.config_overrides)
+    assert not any("wecode-action" in item for item in config.config_overrides)
 
 
 def test_build_codex_config_uses_user_runtime_config(monkeypatch):
@@ -193,6 +212,10 @@ def test_build_codex_config_adds_project_header_to_user_runtime_provider():
     assert config.model_provider == "openai"
     assert (
         'model_providers.openai.http_headers.wecode-project="42"'
+        in config.config_overrides
+    )
+    assert (
+        'model_providers.openai.http_headers.wecode-executor="codex"'
         in config.config_overrides
     )
 

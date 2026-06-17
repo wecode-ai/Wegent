@@ -11,6 +11,11 @@ from collections.abc import Mapping
 from typing import Any
 
 WECODE_PROJECT_HEADER = "wecode-project"
+WECODE_ACTION_HEADER = "wecode-action"
+WECODE_SOURCE_HEADER = "wecode-source"
+WECODE_EXECUTOR_HEADER = "wecode-executor"
+WECODE_ACTION_VALUE = "wegent"
+WECODE_SOURCE_VALUE = "wegent-local"
 DEFAULT_HEADERS_ENV_KEYS = ("DEFAULT_HEADERS", "default_headers")
 
 
@@ -27,6 +32,36 @@ def merge_project_header(
     return merge_header_map(
         parsed_headers, {WECODE_PROJECT_HEADER: normalized_project_id}
     )
+
+
+def merge_wegent_runtime_headers(
+    headers: Mapping[str, Any] | str | None,
+    executor: str,
+) -> dict[str, str]:
+    """Return headers with Wegent runtime source headers filled in."""
+    return merge_missing_header_map(
+        _parse_header_map(headers),
+        {
+            WECODE_ACTION_HEADER: WECODE_ACTION_VALUE,
+            WECODE_SOURCE_HEADER: WECODE_SOURCE_VALUE,
+            WECODE_EXECUTOR_HEADER: executor,
+        },
+    )
+
+
+def merge_missing_header_map(
+    existing_headers: Mapping[str, Any] | str | None,
+    default_headers: Mapping[str, Any],
+) -> dict[str, str]:
+    """Merge only headers whose keys are missing from the existing header map."""
+    result = _parse_header_map(existing_headers)
+    existing_keys = {key.lower() for key in result}
+    for key, value in default_headers.items():
+        if value is None or str(key).lower() in existing_keys:
+            continue
+        result[str(key)] = str(value)
+        existing_keys.add(str(key).lower())
+    return result
 
 
 def merge_header_map(
@@ -60,6 +95,17 @@ def merge_anthropic_header_map(
     """Return Anthropic custom headers with a header map merged."""
     merged = merge_header_map(
         _parse_anthropic_custom_headers(existing_headers), headers
+    )
+    return headers_to_anthropic_custom_headers(merged)
+
+
+def merge_anthropic_header_defaults(
+    existing_headers: str,
+    default_headers: Mapping[str, Any],
+) -> str:
+    """Return Anthropic custom headers with missing defaults filled in."""
+    merged = merge_missing_header_map(
+        _parse_anthropic_custom_headers(existing_headers), default_headers
     )
     return headers_to_anthropic_custom_headers(merged)
 
