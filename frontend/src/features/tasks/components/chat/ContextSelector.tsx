@@ -473,6 +473,20 @@ export default function ContextSelector({
     }
   }
 
+  const handleScrollableWheel = useCallback((event: React.WheelEvent<HTMLElement>) => {
+    const list = event.currentTarget
+    const isScrollingUp = event.deltaY < 0
+    const isScrollingDown = event.deltaY > 0
+    const isAtTop = list.scrollTop <= 0
+    const isAtBottom = list.scrollTop + list.clientHeight >= list.scrollHeight
+
+    if ((isScrollingUp && isAtTop) || (isScrollingDown && isAtBottom)) {
+      return
+    }
+
+    event.stopPropagation()
+  }, [])
+
   // Compute the set of selected DingTalk node IDs, bridging ContextItem[] to Set<string>
   // for the DingTalkDocContextSelector component.
   const selectedDingTalkIds = useMemo(
@@ -565,7 +579,10 @@ export default function ContextSelector({
                     'placeholder:text-text-muted text-sm'
                   )}
                 />
-                <CommandList className="max-h-[300px] overflow-y-auto">
+                <CommandList
+                  className="max-h-[300px] overflow-y-auto"
+                  onWheel={handleScrollableWheel}
+                >
                   {loading || organizationNamespaceLoading ? (
                     <div className="py-4 px-3 text-center text-sm text-text-muted">
                       {t('common:actions.loading')}
@@ -790,7 +807,10 @@ export default function ContextSelector({
                     'placeholder:text-text-muted text-sm'
                   )}
                 />
-                <CommandList className="max-h-[300px] overflow-y-auto">
+                <CommandList
+                  className="max-h-[300px] overflow-y-auto"
+                  onWheel={handleScrollableWheel}
+                >
                   {tableLoading ? (
                     <div className="py-4 px-3 text-center text-sm text-text-muted">
                       {t('common:actions.loading')}
@@ -892,6 +912,7 @@ export default function ContextSelector({
                   onDeselectMultiple={ids => {
                     if (onDeselectMultiple) onDeselectMultiple(ids)
                   }}
+                  onScrollableWheel={handleScrollableWheel}
                 />
               )}
             </TabsContent>

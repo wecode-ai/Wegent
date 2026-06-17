@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import ContextSelector from '@/features/tasks/components/chat/ContextSelector'
 
 const mockListKnowledgeBases = jest.fn()
@@ -73,7 +73,17 @@ jest.mock('@/components/ui/command', () => ({
   CommandItem: ({ children, onSelect }: { children: React.ReactNode; onSelect?: () => void }) => (
     <button onClick={onSelect}>{children}</button>
   ),
-  CommandList: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  CommandList: ({
+    children,
+    onWheel,
+  }: {
+    children: React.ReactNode
+    onWheel?: React.WheelEventHandler<HTMLDivElement>
+  }) => (
+    <div data-testid="command-list" onWheel={onWheel}>
+      {children}
+    </div>
+  ),
   CommandSeparator: () => <hr />,
 }))
 
@@ -261,5 +271,37 @@ describe('ContextSelector organization grouping', () => {
     })
     expect(screen.queryByText('Personal KB')).not.toBeInTheDocument()
     expect(screen.queryByText('Growth KB')).not.toBeInTheDocument()
+  })
+
+  it('keeps wheel events inside scrollable context lists while they can scroll', async () => {
+    const parentWheel = jest.fn()
+
+    render(
+      <div onWheel={parentWheel}>
+        <ContextSelector
+          open={true}
+          onOpenChange={jest.fn()}
+          selectedContexts={[]}
+          onSelect={jest.fn()}
+          onDeselect={jest.fn()}
+          allowedContextTypes={['knowledge_base']}
+        >
+          <button>trigger</button>
+        </ContextSelector>
+      </div>
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('Org KB')).toBeInTheDocument()
+    })
+
+    const list = screen.getByTestId('command-list')
+    Object.defineProperty(list, 'scrollTop', { value: 50, configurable: true })
+    Object.defineProperty(list, 'clientHeight', { value: 100, configurable: true })
+    Object.defineProperty(list, 'scrollHeight', { value: 300, configurable: true })
+
+    fireEvent.wheel(list, { deltaY: 20 })
+
+    expect(parentWheel).not.toHaveBeenCalled()
   })
 })

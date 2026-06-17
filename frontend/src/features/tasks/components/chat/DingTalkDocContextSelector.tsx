@@ -236,6 +236,7 @@ interface DingTalkDocContextSelectorProps {
   onDeselect: (id: string) => void
   onSelectMultiple: (contexts: DingTalkDocContext[]) => void
   onDeselectMultiple: (ids: string[]) => void
+  onScrollableWheel?: (event: React.WheelEvent<HTMLElement>) => void
 }
 
 /**
@@ -249,6 +250,7 @@ export function DingTalkDocContextSelector({
   onDeselect,
   onSelectMultiple,
   onDeselectMultiple,
+  onScrollableWheel,
 }: DingTalkDocContextSelectorProps) {
   const { t } = useTranslation('chat')
 
@@ -590,7 +592,9 @@ export function DingTalkDocContextSelector({
       </div>
 
       {/* Tree content area */}
-      <div className="overflow-y-auto flex-1 max-h-[260px] py-1 px-1">{renderContent()}</div>
+      <div className="overflow-y-auto flex-1 max-h-[260px] py-1 px-1" onWheel={onScrollableWheel}>
+        {renderContent()}
+      </div>
     </div>
   )
 }
