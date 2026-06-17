@@ -6,6 +6,10 @@ import type { TurnFileChangesSummary } from '@/types/api'
 import { FileChangesCard } from './FileChangesCard'
 import { parseUnifiedDiff } from './parseUnifiedDiff'
 
+type OpenReviewRequest = Parameters<
+  NonNullable<Parameters<typeof FileChangesCard>[0]['onOpenReview']>
+>[0]
+
 const summary: TurnFileChangesSummary = {
   version: 1,
   status: 'active',
@@ -30,16 +34,19 @@ function renderCard(
     deviceOnline: boolean
     onLoadDiff: (subtaskId: number) => Promise<string>
     onRevert: (subtaskId: number) => Promise<TurnFileChangesSummary>
-  }> = {},
+    onOpenReview: (request: OpenReviewRequest) => void
+  }> = {}
 ) {
   const onLoadDiff =
     overrides.onLoadDiff ??
-    vi.fn().mockResolvedValue(
-      'diff --git a/src/file-1.ts b/src/file-1.ts\n--- a/src/file-1.ts\n+++ b/src/file-1.ts\n@@ -1 +1 @@\n-old\n+new\n',
-    )
+    vi
+      .fn()
+      .mockResolvedValue(
+        'diff --git a/src/file-1.ts b/src/file-1.ts\n--- a/src/file-1.ts\n+++ b/src/file-1.ts\n@@ -1 +1 @@\n-old\n+new\n'
+      )
   const onRevert =
-    overrides.onRevert ??
-    vi.fn().mockResolvedValue({ ...summary, status: 'reverted' })
+    overrides.onRevert ?? vi.fn().mockResolvedValue({ ...summary, status: 'reverted' })
+  const onOpenReview = overrides.onOpenReview ?? vi.fn()
 
   render(
     <FileChangesCard
@@ -48,9 +55,10 @@ function renderCard(
       deviceOnline={overrides.deviceOnline ?? true}
       onLoadDiff={onLoadDiff}
       onRevert={onRevert}
-    />,
+      onOpenReview={onOpenReview}
+    />
   )
-  return { onLoadDiff, onRevert }
+  return { onLoadDiff, onRevert, onOpenReview }
 }
 
 describe('FileChangesCard', () => {
@@ -67,14 +75,53 @@ describe('FileChangesCard', () => {
     expect(screen.getAllByTestId('file-change-row')).toHaveLength(6)
   })
 
-  test('loads diff only when review opens', async () => {
-    const { onLoadDiff } = renderCard()
+  test('requests the right review panel without loading diff immediately', async () => {
+    const { onLoadDiff, onOpenReview } = renderCard()
 
     expect(onLoadDiff).not.toHaveBeenCalled()
     await userEvent.click(screen.getByTestId('review-file-changes-button'))
 
+    expect(onOpenReview).toHaveBeenCalledTimes(1)
+    const request = vi.mocked(onOpenReview).mock.calls[0][0]
+    expect(request.subtaskId).toBe(21)
+    expect(request.loadDiff).toEqual(expect.any(Function))
+    expect(onLoadDiff).not.toHaveBeenCalled()
+
+    await request.loadDiff()
     await waitFor(() => expect(onLoadDiff).toHaveBeenCalledWith(21))
-    expect(await screen.findAllByText('src/file-1.ts')).toHaveLength(2)
+  })
+
+  test('opens the shared review panel when a file row is clicked', async () => {
+    const { onLoadDiff, onOpenReview } = renderCard({
+      onLoadDiff: vi
+        .fn()
+        .mockResolvedValue(
+          [
+            'diff --git a/src/file-1.ts b/src/file-1.ts',
+            '--- a/src/file-1.ts',
+            '+++ b/src/file-1.ts',
+            '@@ -1 +1 @@',
+            '-old one',
+            '+new one',
+            'diff --git a/src/file-2.ts b/src/file-2.ts',
+            '--- a/src/file-2.ts',
+            '+++ b/src/file-2.ts',
+            '@@ -1 +1 @@',
+            '-old two',
+            '+new two',
+          ].join('\n')
+        ),
+    })
+
+    await userEvent.click(screen.getAllByTestId('file-change-row')[1])
+
+    expect(onOpenReview).toHaveBeenCalledTimes(1)
+    const request = vi.mocked(onOpenReview).mock.calls[0][0]
+    expect(request.subtaskId).toBe(21)
+    expect(onLoadDiff).not.toHaveBeenCalled()
+
+    await request.loadDiff()
+    await waitFor(() => expect(onLoadDiff).toHaveBeenCalledWith(21))
   })
 
   test('disables review and revert while the owning device is offline', () => {
@@ -82,9 +129,7 @@ describe('FileChangesCard', () => {
 
     expect(screen.getByTestId('review-file-changes-button')).toBeDisabled()
     expect(screen.getByTestId('revert-file-changes-button')).toBeDisabled()
-    expect(
-      screen.getByText('设备离线，无法审核或撤销'),
-    ).toBeInTheDocument()
+    expect(screen.getByText('设备离线，无法审核或撤销')).toBeInTheDocument()
   })
 
   test('confirms before reverting', async () => {
@@ -93,9 +138,7 @@ describe('FileChangesCard', () => {
     await userEvent.click(screen.getByTestId('revert-file-changes-button'))
     expect(onRevert).not.toHaveBeenCalled()
 
-    await userEvent.click(
-      screen.getByTestId('confirm-revert-file-changes-button'),
-    )
+    await userEvent.click(screen.getByTestId('confirm-revert-file-changes-button'))
     await waitFor(() => expect(onRevert).toHaveBeenCalledWith(21))
   })
 
@@ -103,22 +146,16 @@ describe('FileChangesCard', () => {
     renderCard({ summary: { ...summary, status: 'reverted' } })
 
     expect(screen.getByText('已撤销')).toBeInTheDocument()
-    expect(
-      screen.queryByTestId('revert-file-changes-button'),
-    ).not.toBeInTheDocument()
+    expect(screen.queryByTestId('revert-file-changes-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('review-file-changes-button')).toBeEnabled()
   })
 
   test('keeps review available after a revert conflict', () => {
     renderCard({ summary: { ...summary, status: 'conflicted' } })
 
-    expect(
-      screen.getByText('存在后续冲突，未修改工作区'),
-    ).toBeInTheDocument()
+    expect(screen.getByText('存在后续冲突，未修改工作区')).toBeInTheDocument()
     expect(screen.getByTestId('review-file-changes-button')).toBeEnabled()
-    expect(
-      screen.queryByTestId('revert-file-changes-button'),
-    ).not.toBeInTheDocument()
+    expect(screen.queryByTestId('revert-file-changes-button')).not.toBeInTheDocument()
   })
 
   test('labels binary files without line counts', () => {
@@ -147,9 +184,7 @@ describe('FileChangesCard', () => {
 describe('parseUnifiedDiff', () => {
   test('groups unified diff by file', () => {
     expect(
-      parseUnifiedDiff(
-        'diff --git a/a.ts b/a.ts\n+one\ndiff --git a/b.ts b/b.ts\n-two',
-      ),
+      parseUnifiedDiff('diff --git a/a.ts b/a.ts\n+one\ndiff --git a/b.ts b/b.ts\n-two')
     ).toEqual([
       {
         oldPath: 'a.ts',
@@ -166,9 +201,7 @@ describe('parseUnifiedDiff', () => {
 
   test('supports quoted file paths with spaces', () => {
     expect(
-      parseUnifiedDiff(
-        'diff --git "a/src/file one.ts" "b/src/file one.ts"\n+one',
-      )[0],
+      parseUnifiedDiff('diff --git "a/src/file one.ts" "b/src/file one.ts"\n+one')[0]
     ).toMatchObject({
       oldPath: 'src/file one.ts',
       path: 'src/file one.ts',

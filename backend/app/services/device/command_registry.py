@@ -39,14 +39,14 @@ GIT_BRANCH_DIFF_SHORTSTAT_COMMAND = (
 
 GIT_WORKSPACE_DIFF_COMMAND = (
     "bash -lc "
-    '\'if git rev-parse --verify --quiet HEAD >/dev/null; then '
+    "'if git rev-parse --verify --quiet HEAD >/dev/null; then "
     "git diff --binary HEAD --; "
     "else "
     "git diff --binary --; "
     "fi; "
     "git ls-files --others --exclude-standard -z | "
-    "while IFS= read -r -d \"\" file; do "
-    "git diff --binary --no-index -- /dev/null \"$file\" || true; "
+    'while IFS= read -r -d "" file; do '
+    'git diff --binary --no-index -- /dev/null "$file" || true; '
     "done'"
 )
 
@@ -846,7 +846,13 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
         command="sh -c 'git -C \"$1\" rev-parse --is-inside-work-tree' --"
     ),
     "git_worktree_add": LocalDeviceCommandDefinition(
-        command='sh -c \'git -C "$1" worktree add --detach "$2"\' --'
+        command=(
+            "sh -c '"
+            'if [ -n "$3" ]; then '
+            'git -C "$1" worktree add --detach "$2" "$3"; '
+            'else git -C "$1" worktree add --detach "$2"; fi'
+            "' --"
+        )
     ),
     "git_worktree_remove": LocalDeviceCommandDefinition(
         command='sh -c \'git -C "$1" worktree remove --force "$2"\' --'

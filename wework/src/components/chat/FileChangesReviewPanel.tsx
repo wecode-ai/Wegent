@@ -1,18 +1,8 @@
-import { ChevronDown, ChevronRight, X } from 'lucide-react'
+import { ChevronDown, ChevronRight } from 'lucide-react'
 import { useState } from 'react'
-import { createPortal } from 'react-dom'
-import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import { parseUnifiedDiff } from './parseUnifiedDiff'
-
-interface FileChangesReviewDialogProps {
-  open: boolean
-  loading: boolean
-  diff: string
-  error?: string
-  onClose: () => void
-}
 
 interface FileChangesReviewPanelProps {
   loading: boolean
@@ -31,7 +21,7 @@ export function FileChangesReviewPanel({
   const [collapsed, setCollapsed] = useState<Set<number>>(new Set())
 
   const toggleSection = (index: number) => {
-    setCollapsed((prev) => {
+    setCollapsed(prev => {
       const next = new Set(prev)
       if (next.has(index)) {
         next.delete(index)
@@ -54,9 +44,7 @@ export function FileChangesReviewPanel({
           {t('file_changes.loading_diff')}
         </p>
       ) : error ? (
-        <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
-          {error}
-        </p>
+        <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
       ) : sections.length === 0 ? (
         <p className="py-8 text-center text-sm text-text-muted">
           {t('file_changes.empty_diff')}
@@ -65,10 +53,10 @@ export function FileChangesReviewPanel({
         <div className="space-y-3">
           {sections.map((section, index) => {
             const additions = section.lines.filter(
-              (line) => line.startsWith('+') && !line.startsWith('+++'),
+              line => line.startsWith('+') && !line.startsWith('+++')
             ).length
             const deletions = section.lines.filter(
-              (line) => line.startsWith('-') && !line.startsWith('---'),
+              line => line.startsWith('-') && !line.startsWith('---')
             ).length
 
             return (
@@ -108,7 +96,7 @@ export function FileChangesReviewPanel({
                           (line.startsWith('@@') ||
                             line.startsWith('diff --git') ||
                             line.startsWith('index ')) &&
-                            'bg-surface text-text-secondary',
+                            'bg-surface text-text-secondary'
                         )}
                       >
                         {line || ' '}
@@ -122,53 +110,5 @@ export function FileChangesReviewPanel({
         </div>
       )}
     </div>
-  )
-}
-
-export function FileChangesReviewDialog({
-  open,
-  loading,
-  diff,
-  error,
-  onClose,
-}: FileChangesReviewDialogProps) {
-  const { t } = useTranslation('chat')
-  useEscapeKey(onClose, open)
-
-  if (!open) return null
-
-  return createPortal(
-    <div
-      className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4 py-6"
-      onClick={onClose}
-    >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="file-changes-review-title"
-        className="flex max-h-[88vh] w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-border bg-background shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-2">
-          <h2
-            id="file-changes-review-title"
-            className="text-base font-semibold text-text-primary"
-          >
-            {t('file_changes.review_title')}
-          </h2>
-          <button
-            type="button"
-            data-testid="close-file-changes-review-button"
-            onClick={onClose}
-            className="flex h-8 min-w-[36px] items-center justify-center rounded text-text-muted hover:bg-muted hover:text-text-primary"
-            aria-label={t('file_changes.close')}
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-        <FileChangesReviewPanel loading={loading} diff={diff} error={error} />
-      </div>
-    </div>,
-    document.body,
   )
 }

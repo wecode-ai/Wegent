@@ -388,6 +388,8 @@ export function DesktopWorkbenchMain({
   ) => (
     <WorkspacePanelActions
       mode={mode}
+      currentProject={currentProject}
+      devices={devices}
       environmentInfo={environmentInfo}
       onRefreshEnvironmentInfo={onRefreshEnvironmentInfo}
       onCommitEnvironmentChanges={onCommitEnvironmentChanges}

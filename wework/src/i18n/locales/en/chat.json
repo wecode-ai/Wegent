@@ -14,6 +14,7 @@
     "show_less": "Show less",
     "review": "Review",
     "review_title": "Changes from this turn",
+    "preview_file_label": "Preview file changes for {{path}}",
     "revert": "Revert",
     "confirm_revert_title": "Revert this turn's file changes?",
     "confirm_revert_description": "The workspace changes only when the reverse patch applies safely. Later changes are never overwritten.",

@@ -1,22 +1,11 @@
-import {
-  Check,
-  ChevronDown,
-  ChevronUp,
-  FileDiff,
-  RotateCcw,
-  X,
-} from 'lucide-react'
+import { Check, ChevronDown, ChevronUp, FileDiff, RotateCcw, X } from 'lucide-react'
 import { useState } from 'react'
 import { createPortal } from 'react-dom'
 import { ApiError } from '@/api/http'
 import { Button } from '@/components/ui/button'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
-import type {
-  TurnFileChangeItem,
-  TurnFileChangesSummary,
-} from '@/types/api'
-import { FileChangesReviewDialog } from './FileChangesReviewDialog'
+import type { TurnFileChangeItem, TurnFileChangesSummary } from '@/types/api'
 
 const DEFAULT_VISIBLE_FILE_COUNT = 3
 
@@ -37,30 +26,38 @@ function getErrorMessage(error: unknown, fallback: string) {
   return fallback
 }
 
-function FileChangeRow({ file }: { file: TurnFileChangeItem }) {
+function FileChangeRow({
+  file,
+  disabled,
+  onPreview,
+}: {
+  file: TurnFileChangeItem
+  disabled: boolean
+  onPreview: () => void
+}) {
   const { t } = useTranslation('chat')
+  const displayPath =
+    file.change_type === 'renamed' && file.old_path ? `${file.old_path} → ${file.path}` : file.path
 
   return (
-    <div
+    <button
+      type="button"
       data-testid="file-change-row"
-      className="flex min-w-0 items-center gap-2 px-3 py-1.5 text-xs"
+      disabled={disabled}
+      onClick={onPreview}
+      className="flex w-full min-w-0 items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-muted disabled:cursor-not-allowed disabled:hover:bg-transparent"
+      aria-label={t('file_changes.preview_file_label', { path: displayPath })}
     >
-      <span className="min-w-0 flex-1 truncate font-mono text-text-primary">
-        {file.change_type === 'renamed' && file.old_path
-          ? `${file.old_path} → ${file.path}`
-          : file.path}
-      </span>
+      <span className="min-w-0 flex-1 truncate font-mono text-text-primary">{displayPath}</span>
       {file.binary ? (
-        <span className="shrink-0 text-text-muted">
-          {t('file_changes.binary_file')}
-        </span>
+        <span className="shrink-0 text-text-muted">{t('file_changes.binary_file')}</span>
       ) : (
         <span className="flex shrink-0 items-center gap-2 font-medium">
           <span className="text-green-600">+{file.additions}</span>
           <span className="text-red-500">-{file.deletions}</span>
         </span>
       )}
-    </div>
+    </button>
   )
 }
 
@@ -74,46 +71,20 @@ export function FileChangesCard({
 }: FileChangesCardProps) {
   const { t } = useTranslation('chat')
   const [expanded, setExpanded] = useState(false)
-  const [reviewOpen, setReviewOpen] = useState(false)
-  const [reviewLoading, setReviewLoading] = useState(false)
-  const [diff, setDiff] = useState('')
-  const [reviewError, setReviewError] = useState<string>()
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [reverting, setReverting] = useState(false)
   const [actionError, setActionError] = useState<string>()
-  const hiddenCount = Math.max(
-    0,
-    summary.files.length - DEFAULT_VISIBLE_FILE_COUNT,
-  )
-  const visibleFiles = expanded
-    ? summary.files
-    : summary.files.slice(0, DEFAULT_VISIBLE_FILE_COUNT)
-  const actionsDisabled =
-    !deviceOnline || summary.status === 'artifact_missing'
+  const hiddenCount = Math.max(0, summary.files.length - DEFAULT_VISIBLE_FILE_COUNT)
+  const visibleFiles = expanded ? summary.files : summary.files.slice(0, DEFAULT_VISIBLE_FILE_COUNT)
+  const actionsDisabled = !deviceOnline || summary.status === 'artifact_missing'
+  const reviewDisabled = actionsDisabled || !onOpenReview
   const canRevert = summary.status === 'active'
 
-  const openReview = async () => {
-    if (onOpenReview) {
-      onOpenReview({
-        subtaskId,
-        loadDiff: () => onLoadDiff(subtaskId),
-      })
-      return
-    }
-
-    setReviewOpen(true)
-    if (diff || reviewLoading) return
-    setReviewLoading(true)
-    setReviewError(undefined)
-    try {
-      setDiff(await onLoadDiff(subtaskId))
-    } catch (error) {
-      setReviewError(
-        getErrorMessage(error, t('file_changes.review_failed')),
-      )
-    } finally {
-      setReviewLoading(false)
-    }
+  const openReview = () => {
+    onOpenReview?.({
+      subtaskId,
+      loadDiff: () => onLoadDiff(subtaskId),
+    })
   }
 
   const revert = async () => {
@@ -123,9 +94,7 @@ export function FileChangesCard({
       await onRevert(subtaskId)
       setConfirmOpen(false)
     } catch (error) {
-      setActionError(
-        getErrorMessage(error, t('file_changes.revert_failed')),
-      )
+      setActionError(getErrorMessage(error, t('file_changes.revert_failed')))
       setConfirmOpen(false)
     } finally {
       setReverting(false)
@@ -163,7 +132,7 @@ export function FileChangesCard({
             <button
               type="button"
               data-testid="review-file-changes-button"
-              disabled={actionsDisabled}
+              disabled={reviewDisabled}
               onClick={() => void openReview()}
               className="h-7 rounded border border-border px-2 text-xs font-medium text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
             >
@@ -208,6 +177,8 @@ export function FileChangesCard({
             <FileChangeRow
               key={`${file.old_path ?? ''}:${file.path}`}
               file={file}
+              disabled={reviewDisabled}
+              onPreview={() => openReview()}
             />
           ))}
         </div>
@@ -230,13 +201,6 @@ export function FileChangesCard({
           </button>
         ) : null}
       </section>
-      <FileChangesReviewDialog
-        open={reviewOpen}
-        loading={reviewLoading}
-        diff={diff}
-        error={reviewError}
-        onClose={() => setReviewOpen(false)}
-      />
       <ConfirmRevertDialog
         open={confirmOpen}
         submitting={reverting}
@@ -269,7 +233,7 @@ function ConfirmRevertDialog({
         role="dialog"
         aria-modal="true"
         aria-labelledby="confirm-revert-file-changes-title"
-        className="w-full max-w-md rounded-xl border border-border bg-base p-5 shadow-2xl"
+        className="w-full max-w-md rounded-xl border border-border bg-background p-5 shadow-2xl"
       >
         <div className="flex items-start justify-between gap-4">
           <div>
@@ -294,12 +258,7 @@ function ConfirmRevertDialog({
           </button>
         </div>
         <div className="mt-6 flex justify-end gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={onClose}
-            disabled={submitting}
-          >
+          <Button type="button" variant="primary" onClick={onClose} disabled={submitting}>
             {t('file_changes.cancel')}
           </Button>
           <Button
@@ -309,13 +268,11 @@ function ConfirmRevertDialog({
             onClick={onConfirm}
             disabled={submitting}
           >
-            {submitting
-              ? t('file_changes.reverting')
-              : t('file_changes.confirm_revert')}
+            {submitting ? t('file_changes.reverting') : t('file_changes.confirm_revert')}
           </Button>
         </div>
       </div>
     </div>,
-    document.body,
+    document.body
   )
 }

@@ -22,6 +22,7 @@ from executor.agents.codex.config_builder import CodeXConfig, build_codex_config
 from executor.agents.codex.event_mapper import CodeXEventMapper
 from executor.agents.codex.session_store import CodeXSessionStore
 from executor.config import config
+from executor.services.turn_file_changes import NativeTurnFileChangeTracker
 from shared.logger import setup_logger
 from shared.models.execution import ExecutionRequest
 from shared.models.responses_api_emitter import ResponsesAPIEmitter
@@ -165,7 +166,24 @@ class CodeXAgent(Agent):
 
         self.__class__._active_task_ids.add(self.task_id)
         self.__class__._active_agents[self.task_id] = self
-        mapper = CodeXEventMapper(self.emitter)
+        turn_file_change_tracker = None
+        device_id = getattr(self.task_data, "device_id", None)
+        if device_id:
+            turn_file_change_tracker = NativeTurnFileChangeTracker(
+                workspace=Path(self.project_path),
+                task_id=self.task_id,
+                subtask_id=self.subtask_id,
+                executor_home=Path(config.WEGENT_EXECUTOR_HOME),
+                device_id=device_id,
+            )
+            self.turn_file_change_tracker = turn_file_change_tracker
+            self.emitter.set_completion_fields_provider(
+                turn_file_change_tracker.finalize
+            )
+        mapper = CodeXEventMapper(
+            self.emitter,
+            turn_file_change_tracker=turn_file_change_tracker,
+        )
 
         try:
             await self._start_codex_client()
@@ -178,7 +196,6 @@ class CodeXAgent(Agent):
             if self._cancel_requested:
                 await self.emitter.incomplete(reason="cancelled")
                 return TaskStatus.CANCELLED
-            await self.start_turn_file_change_tracking()
             self._turn = await self._thread.turn(
                 turn_input,
                 cwd=self.project_path,

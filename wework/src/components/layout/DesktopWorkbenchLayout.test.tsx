@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { createDeviceApi } from '@/api/devices'
+import { createProjectApi } from '@/api/projects'
 import { createQuotaApi } from '@/api/quota'
 import '@/i18n'
 import { TITLEBAR_ACTIONS_PORTAL_ID } from '@/components/topnav/TitlebarActionsPortal'
@@ -45,13 +46,19 @@ vi.mock('@/api/devices', () => ({
   createDeviceApi: vi.fn(),
 }))
 
+vi.mock('@/api/projects', () => ({
+  createProjectApi: vi.fn(),
+}))
+
 vi.mock('@/api/quota', () => ({
   createQuotaApi: vi.fn(),
 }))
 
 const createDeviceApiMock = vi.mocked(createDeviceApi)
+const createProjectApiMock = vi.mocked(createProjectApi)
 const createQuotaApiMock = vi.mocked(createQuotaApi)
 const fetchQuotaMock = vi.fn()
+const startCodeServerSessionMock = vi.fn()
 
 describe('DesktopWorkbenchLayout', () => {
   function createDeferred<T>() {
@@ -139,6 +146,13 @@ describe('DesktopWorkbenchLayout', () => {
       fetchQuota: fetchQuotaMock,
     })
     createDeviceApiMock.mockReturnValue(createMockDeviceApi() as never)
+    startCodeServerSessionMock.mockResolvedValue({
+      url: 'http://localhost/ide',
+      path: '/workspace/projects/github_wegent',
+    })
+    createProjectApiMock.mockReturnValue({
+      startCodeServerSession: startCodeServerSessionMock,
+    } as unknown as ReturnType<typeof createProjectApi>)
   })
 
   const baseProps = {
@@ -618,6 +632,198 @@ describe('DesktopWorkbenchLayout', () => {
     )
     expect(screen.getByTestId('titlebar-actions')).toContainElement(
       screen.getByTestId('toggle-right-workspace-panel-button')
+    )
+  })
+
+  test('opens project code-server from the Tauri titlebar', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null)
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          currentProject: {
+            id: 1,
+            name: 'github_wegent',
+            config: {
+              mode: 'workspace',
+              execution: {
+                targetType: 'local',
+                deviceId: '24a59054-4638-4744-983d-372706c30fcd',
+              },
+            },
+            tasks: [],
+          },
+          devices: [
+            {
+              id: 1,
+              device_id: '24a59054-4638-4744-983d-372706c30fcd',
+              name: 'cloud executor',
+              status: 'online',
+              is_default: false,
+              device_type: 'cloud',
+              bind_shell: 'claudecode',
+              executor_version: '1.8.5',
+            },
+          ],
+        }}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('open-code-server-titlebar-button'))
+
+    await waitFor(() => expect(startCodeServerSessionMock).toHaveBeenCalledWith(1))
+    expect(openSpy).toHaveBeenCalledWith('http://localhost/ide', '_blank', 'noopener')
+    expect(screen.getByTestId('titlebar-actions')).toContainElement(
+      screen.getByTestId('open-code-server-titlebar-button')
+    )
+    expect(screen.getByTestId('environment-info-button')).toHaveAttribute('title', '环境信息')
+    expect(screen.getByTestId('open-code-server-titlebar-button')).toHaveAttribute(
+      'title',
+      '打开项目 IDE'
+    )
+    expect(screen.getByTestId('toggle-bottom-workspace-panel-button')).toHaveAttribute(
+      'title',
+      '打开底部栏'
+    )
+    expect(screen.getByTestId('toggle-right-workspace-panel-button')).toHaveAttribute(
+      'title',
+      '打开右侧栏'
+    )
+  })
+
+  test('shows project code-server in the Tauri titlebar before devices hydrate', () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          currentProject: {
+            id: 1,
+            name: 'github_wegent',
+            config: {
+              mode: 'workspace',
+              execution: {
+                targetType: 'local',
+                deviceId: '24a59054-4638-4744-983d-372706c30fcd',
+              },
+            },
+            tasks: [],
+          },
+          devices: [],
+        }}
+      />
+    )
+
+    expect(screen.getByTestId('titlebar-actions')).toContainElement(
+      screen.getByTestId('open-code-server-titlebar-button')
+    )
+  })
+
+  test('keeps project code-server disabled for local devices', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          currentProject: {
+            id: 1,
+            name: 'github_wegent',
+            config: {
+              mode: 'workspace',
+              execution: {
+                targetType: 'local',
+                deviceId: 'local-claude',
+              },
+            },
+            tasks: [],
+          },
+          devices: [
+            {
+              id: 1,
+              device_id: 'local-claude',
+              name: 'local claude',
+              status: 'online',
+              is_default: false,
+              device_type: 'local',
+              bind_shell: 'claudecode',
+              executor_version: '1.8.5',
+            },
+          ],
+        }}
+      />
+    )
+
+    const button = screen.getByTestId('open-code-server-titlebar-button')
+    expect(button).toBeDisabled()
+    expect(button).toHaveAttribute('title', '项目 IDE 仅支持云设备')
+
+    await userEvent.click(button)
+
+    expect(startCodeServerSessionMock).not.toHaveBeenCalled()
+  })
+
+  test('shows a dialog when project code-server fails to start', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    startCodeServerSessionMock.mockRejectedValueOnce(
+      new Error('Local devices do not support terminal or code-server sessions')
+    )
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          currentProject: {
+            id: 1,
+            name: 'github_wegent',
+            config: {
+              mode: 'workspace',
+              execution: {
+                targetType: 'local',
+                deviceId: '24a59054-4638-4744-983d-372706c30fcd',
+              },
+            },
+            tasks: [],
+          },
+          devices: [
+            {
+              id: 1,
+              device_id: '24a59054-4638-4744-983d-372706c30fcd',
+              name: 'cloud executor',
+              status: 'online',
+              is_default: false,
+              device_type: 'cloud',
+              bind_shell: 'claudecode',
+              executor_version: '1.8.5',
+            },
+          ],
+        }}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('open-code-server-titlebar-button'))
+
+    expect(await screen.findByTestId('code-server-error-dialog')).toHaveTextContent(
+      'Local devices do not support terminal or code-server sessions'
     )
   })
 
@@ -2513,7 +2719,11 @@ describe('DesktopWorkbenchLayout', () => {
     expect(fileTab).toHaveClass('group')
     const closeButton = within(fileTab).getByTestId('close-right-workspace-panel-button')
     expect(closeButton).toHaveClass(
+      'h-5',
+      'w-5',
       'rounded-full',
+      'border',
+      'bg-muted',
       'opacity-0',
       'group-hover:opacity-100',
       'focus-visible:opacity-100'
@@ -2726,7 +2936,11 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('right-workspace-file-tab')).not.toBeInTheDocument()
     const closeButton = within(reviewTab).getByTestId('close-right-workspace-panel-button')
     expect(closeButton).toHaveClass(
+      'h-5',
+      'w-5',
       'rounded-full',
+      'border',
+      'bg-muted',
       'opacity-0',
       'group-hover:opacity-100',
       'focus-visible:opacity-100'

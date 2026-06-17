@@ -14,14 +14,7 @@ import {
   Search,
   X,
 } from 'lucide-react'
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ProjectFolderIcon } from '@/components/projects/ProjectFolderIcon'
 import { BranchSelector } from '@/components/common/BranchSelector'
 import { useIsMobile } from '@/hooks/useIsMobile'
@@ -38,6 +31,7 @@ import { cn } from '@/lib/utils'
 import type { DeviceInfo, ProjectExecutionMode, ProjectWithTasks } from '@/types/api'
 import type { ProjectCreateMode } from '../ChatInput'
 import { useOutsideClick } from './useOutsideClick'
+import { WorktreeBranchSelector } from './WorktreeBranchSelector'
 
 const PROJECT_MENU_VIEWPORT_MARGIN = 16
 const PROJECT_MENU_MAX_HEIGHT = 480
@@ -66,8 +60,7 @@ function getMenuVisibleBounds(element: HTMLElement | null) {
   while (current && current !== document.body) {
     const style = window.getComputedStyle(current)
     const clipsVertically =
-      CLIPPING_OVERFLOW_RE.test(style.overflowY) ||
-      CLIPPING_OVERFLOW_RE.test(style.overflow)
+      CLIPPING_OVERFLOW_RE.test(style.overflowY) || CLIPPING_OVERFLOW_RE.test(style.overflow)
 
     if (clipsVertically) {
       const rect = current.getBoundingClientRect()
@@ -88,10 +81,7 @@ function getStackHeight(itemCount: number, itemHeight: number, gap: number) {
   return itemCount * itemHeight + (itemCount - 1) * gap
 }
 
-function getProjectMenuFitHeight(
-  projectCount: number,
-  hasCreateProjectOption: boolean,
-) {
+function getProjectMenuFitHeight(projectCount: number, hasCreateProjectOption: boolean) {
   const visibleProjectCount = Math.min(projectCount, PROJECT_MENU_VISIBLE_PROJECT_ROWS)
   const projectListHeight =
     visibleProjectCount > 0
@@ -101,7 +91,7 @@ function getProjectMenuFitHeight(
   const actionHeight = getStackHeight(
     actionCount,
     PROJECT_MENU_ACTION_HEIGHT,
-    PROJECT_MENU_ACTION_GAP,
+    PROJECT_MENU_ACTION_GAP
   )
 
   return (
@@ -134,6 +124,8 @@ interface ProjectWorkBarProps {
   onListBranches?: () => Promise<string[]>
   onCheckoutBranch?: (branchName: string) => Promise<void>
   onCreateBranch?: (branchName: string) => Promise<void>
+  worktreeBaseBranch?: string | null
+  onWorktreeBaseBranchChange?: (branchName: string) => void
   className?: string
   buttonClassName?: string
   menuClassName?: string
@@ -157,6 +149,8 @@ export function ProjectWorkBar({
   onListBranches,
   onCheckoutBranch,
   onCreateBranch,
+  worktreeBaseBranch,
+  onWorktreeBaseBranchChange,
   className,
   buttonClassName,
   menuClassName,
@@ -172,17 +166,14 @@ export function ProjectWorkBar({
 
   const searchInputRef = useRef<HTMLInputElement>(null)
   const [open, setOpen] = useState(false)
-  const [executionModeOpenProjectId, setExecutionModeOpenProjectId] =
-    useState<number | null>(null)
+  const [executionModeOpenProjectId, setExecutionModeOpenProjectId] = useState<number | null>(null)
   const [activeSubmenu, setActiveSubmenu] = useState<'create' | null>(null)
   const [projectQuery, setProjectQuery] = useState('')
   const [menuLayout, setMenuLayout] = useState<{
     placement: 'below' | 'above'
     maxHeight: number
   }>({ placement: 'below', maxHeight: PROJECT_MENU_MAX_HEIGHT })
-  const [executionModePlacement, setExecutionModePlacement] = useState<
-    'below' | 'above'
-  >('below')
+  const [executionModePlacement, setExecutionModePlacement] = useState<'below' | 'above'>('below')
   const [sideSubmenuPlacement, setSideSubmenuPlacement] = useState<
     Record<'create', 'below' | 'above'>
   >({
@@ -202,12 +193,24 @@ export function ProjectWorkBar({
     () => projects.find(p => p.id === currentProjectId),
     [projects, currentProjectId]
   )
+  const hasGitBranch = Boolean(branchName?.trim())
+  const hasLoadedBranchState = branchLoading === false
   const supportsGitWorktree = Boolean(
-    currentProject && supportsGitWorktreeExecution(currentProject),
+    currentProject && hasGitBranch && supportsGitWorktreeExecution(currentProject)
   )
-  const canShowBranchSelector = Boolean(branchName?.trim())
-  const executionModeOpen =
-    supportsGitWorktree && executionModeOpenProjectId === currentProjectId
+  const canShowExecutionModeControl = Boolean(currentProject)
+  const canShowBranchSelector = hasGitBranch
+  const canShowWorktreeBranchSelector = Boolean(
+    currentProject &&
+    executionMode === 'git_worktree' &&
+    !executionModeLocked &&
+    hasGitBranch &&
+    onListBranches &&
+    onWorktreeBaseBranchChange
+  )
+  const executionModeOpen = supportsGitWorktree && executionModeOpenProjectId === currentProjectId
+  const displayedExecutionMode =
+    supportsGitWorktree && executionMode === 'git_worktree' ? 'git_worktree' : 'current_workspace'
 
   useOutsideClick(containerRef, open, closeMenu)
   useOutsideClick(executionModeContainerRef, executionModeOpen, closeExecutionModeMenu)
@@ -221,14 +224,8 @@ export function ProjectWorkBar({
     const visibleBounds = getMenuVisibleBounds(containerRef.current)
     const spaceBelow = visibleBounds.bottom - triggerRect.bottom
     const spaceAbove = triggerRect.top - visibleBounds.top
-    const targetHeight = getProjectMenuFitHeight(
-      projects.length,
-      Boolean(onCreateProjectMode),
-    )
-    const placement =
-      spaceBelow >= targetHeight || spaceBelow >= spaceAbove
-        ? 'below'
-        : 'above'
+    const targetHeight = getProjectMenuFitHeight(projects.length, Boolean(onCreateProjectMode))
+    const placement = spaceBelow >= targetHeight || spaceBelow >= spaceAbove ? 'below' : 'above'
     const availableSpace = Math.max(placement === 'below' ? spaceBelow : spaceAbove, 0)
     const maxHeight = Math.min(PROJECT_MENU_MAX_HEIGHT, availableSpace)
 
@@ -250,9 +247,7 @@ export function ProjectWorkBar({
     const spaceBelow = visibleBounds.bottom - triggerRect.bottom
     const spaceAbove = triggerRect.top - visibleBounds.top
     const placement =
-      spaceBelow >= EXECUTION_MODE_MENU_HEIGHT || spaceBelow >= spaceAbove
-        ? 'below'
-        : 'above'
+      spaceBelow >= EXECUTION_MODE_MENU_HEIGHT || spaceBelow >= spaceAbove ? 'below' : 'above'
 
     setExecutionModePlacement(current => {
       if (current === placement) return current
@@ -261,22 +256,22 @@ export function ProjectWorkBar({
   }, [executionModeOpen])
 
   const updateSideSubmenuPlacement = useCallback(() => {
-      if (typeof window === 'undefined') return
+    if (typeof window === 'undefined') return
 
-      const trigger = createOptionButtonRef.current
-      if (!trigger) return
+    const trigger = createOptionButtonRef.current
+    if (!trigger) return
 
-      const triggerRect = trigger.getBoundingClientRect()
-      const submenuHeight = CREATE_PROJECT_SUBMENU_HEIGHT
-      const visibleBounds = getMenuVisibleBounds(containerRef.current)
-      const spaceBelow = visibleBounds.bottom - triggerRect.top
-      const placement = spaceBelow >= submenuHeight ? 'below' : 'above'
+    const triggerRect = trigger.getBoundingClientRect()
+    const submenuHeight = CREATE_PROJECT_SUBMENU_HEIGHT
+    const visibleBounds = getMenuVisibleBounds(containerRef.current)
+    const spaceBelow = visibleBounds.bottom - triggerRect.top
+    const placement = spaceBelow >= submenuHeight ? 'below' : 'above'
 
-      setSideSubmenuPlacement(current => {
-        if (current.create === placement) return current
-        return { create: placement }
-      })
-    }, [])
+    setSideSubmenuPlacement(current => {
+      if (current.create === placement) return current
+      return { create: placement }
+    })
+  }, [])
 
   useLayoutEffect(() => {
     updateMenuLayout()
@@ -320,25 +315,58 @@ export function ProjectWorkBar({
     searchInputRef.current?.focus()
   }, [isMobile, open])
 
-  const getDeviceForProject = useCallback((project: ProjectWithTasks): DeviceInfo | undefined => {
-    const deviceId = getProjectDeviceId(project)
-    if (!deviceId) return undefined
-    return devices.find(d => d.device_id === deviceId)
-  }, [devices])
-  const isProjectAvailable = useCallback((project: ProjectWithTasks): boolean => {
-    const deviceId = getProjectDeviceId(project)
-    if (!deviceId) return true
+  useEffect(() => {
+    if (!canShowWorktreeBranchSelector || worktreeBaseBranch?.trim() || !branchName?.trim()) {
+      return
+    }
+    onWorktreeBaseBranchChange?.(branchName.trim())
+  }, [branchName, canShowWorktreeBranchSelector, onWorktreeBaseBranchChange, worktreeBaseBranch])
 
-    const device = getDeviceForProject(project)
-    return Boolean(
-      device &&
-      isOnlineDevice(device) &&
-      isWeWorkExecutorVersionCompatible(device.executor_version),
-    )
-  }, [getDeviceForProject])
+  useEffect(() => {
+    if (
+      executionMode !== 'git_worktree' ||
+      executionModeLocked ||
+      !currentProject ||
+      !hasLoadedBranchState ||
+      hasGitBranch
+    ) {
+      return
+    }
+    onExecutionModeChange('current_workspace')
+  }, [
+    currentProject,
+    executionMode,
+    executionModeLocked,
+    hasGitBranch,
+    hasLoadedBranchState,
+    onExecutionModeChange,
+  ])
+
+  const getDeviceForProject = useCallback(
+    (project: ProjectWithTasks): DeviceInfo | undefined => {
+      const deviceId = getProjectDeviceId(project)
+      if (!deviceId) return undefined
+      return devices.find(d => d.device_id === deviceId)
+    },
+    [devices]
+  )
+  const isProjectAvailable = useCallback(
+    (project: ProjectWithTasks): boolean => {
+      const deviceId = getProjectDeviceId(project)
+      if (!deviceId) return true
+
+      const device = getDeviceForProject(project)
+      return Boolean(
+        device &&
+        isOnlineDevice(device) &&
+        isWeWorkExecutorVersionCompatible(device.executor_version)
+      )
+    },
+    [getDeviceForProject]
+  )
   const availableProjects = useMemo(
     () => projects.filter(isProjectAvailable),
-    [isProjectAvailable, projects],
+    [isProjectAvailable, projects]
   )
 
   const sortedProjects = useMemo(() => {
@@ -414,6 +442,10 @@ export function ProjectWorkBar({
   }
 
   const handleToggleExecutionModeMenu = () => {
+    if (!supportsGitWorktree) {
+      closeExecutionModeMenu()
+      return
+    }
     if (executionModeOpen) {
       closeExecutionModeMenu()
       return
@@ -423,11 +455,10 @@ export function ProjectWorkBar({
   }
 
   const executionModeTriggerLabel =
-    executionMode === 'git_worktree'
+    displayedExecutionMode === 'git_worktree'
       ? t('workbench.execution_mode_git_worktree', '新工作树')
       : t('workbench.execution_mode_current_workspace_trigger', '本地模式')
-  const ExecutionModeTriggerIcon =
-    executionMode === 'git_worktree' ? GitBranch : Laptop
+  const ExecutionModeTriggerIcon = displayedExecutionMode === 'git_worktree' ? GitBranch : Laptop
 
   const renderMobileSheetHeader = (title: string, subtitle: string, onClose: () => void) => (
     <>
@@ -450,8 +481,9 @@ export function ProjectWorkBar({
     </>
   )
 
-  const renderMobileBackdrop = (onClose: () => void) =>
+  const renderMobileBackdrop = (onClose: () => void) => (
     <div className="fixed inset-0 z-modal bg-black/25" onClick={onClose} />
+  )
 
   const getCompactDeviceStatusLabel = (device: DeviceInfo) => {
     if (!isWeWorkExecutorVersionCompatible(device.executor_version)) {
@@ -485,231 +517,239 @@ export function ProjectWorkBar({
                 ? 'fixed inset-x-0 bottom-0 z-modal flex max-h-[45dvh] flex-col rounded-t-[28px] border border-border bg-background shadow-[0_-18px_48px_rgba(0,0,0,0.18)]'
                 : 'absolute left-0 z-popover flex w-80 flex-col rounded-2xl border border-border bg-background p-1.5 shadow-[0_16px_44px_rgba(0,0,0,0.16)]',
               !isMobile && (menuLayout.placement === 'below' ? 'top-11' : 'bottom-11'),
-              !isMobile && menuClassName,
+              !isMobile && menuClassName
             )}
             style={isMobile ? undefined : { maxHeight: menuLayout.maxHeight }}
           >
             {isMobile &&
               renderMobileSheetHeader(
                 t('workbench.project_sheet_title', '选择项目'),
-                currentProject?.name ?? emptyLabel ?? t('workbench.enter_project_work', '进入项目工作'),
-                closeMenu,
+                currentProject?.name ??
+                  emptyLabel ??
+                  t('workbench.enter_project_work', '进入项目工作'),
+                closeMenu
               )}
             <div className={cn(isMobile && 'flex min-h-0 flex-col px-5 pb-5')}>
-            <label className={cn(
-              'mb-1.5 flex h-9 shrink-0 items-center gap-2 rounded-xl border border-border bg-surface px-3 text-text-secondary',
-              isMobile && 'h-11 rounded-2xl text-base',
-            )}>
-              <Search className="h-4 w-4 shrink-0" />
-              <input
-                ref={searchInputRef}
-                data-testid="project-search-input"
-                type="search"
-                value={projectQuery}
-                onChange={event => setProjectQuery(event.target.value)}
-                onFocus={() => setActiveSubmenu(null)}
-                placeholder={t('workbench.search_projects', '搜索项目')}
+              <label
                 className={cn(
-                  'min-w-0 flex-1 bg-transparent text-[13px] leading-[18px] text-text-primary outline-none placeholder:text-text-muted',
-                  isMobile && 'text-base leading-5',
+                  'mb-1.5 flex h-9 shrink-0 items-center gap-2 rounded-xl border border-border bg-surface px-3 text-text-secondary',
+                  isMobile && 'h-11 rounded-2xl text-base'
                 )}
-              />
-            </label>
-            {availableProjects.length === 0 ? (
-              <div className="px-4 py-3 text-[13px] leading-[18px] text-text-muted">
-                {t('workbench.no_projects', '暂无项目')}
-              </div>
-            ) : filteredProjects.length === 0 ? (
-              <div
-                data-testid="project-search-empty"
-                className="px-4 py-3 text-[13px] leading-[18px] text-text-muted"
               >
-                {t('workbench.project_search_no_results', '没有匹配的项目')}
-              </div>
-            ) : (
-              <div
-                data-testid="project-options-list"
-                className={cn(
-                  'min-h-0 flex-1 space-y-0.5 overflow-y-auto pr-1',
-                  isMobile && 'scrollbar-none max-h-[calc(45dvh-168px)] space-y-2 py-2',
-                )}
-                style={{ maxHeight: isMobile ? undefined : PROJECT_MENU_LIST_MAX_HEIGHT }}
-              >
-                {filteredProjects.map(project => {
-                  const device = getDeviceForProject(project)
-                  const DeviceIcon = device && isCloudDevice(device) ? Cloud : HardDrive
-                  const selected = project.id === currentProjectId
-                  const projectTextClass = selected ? 'text-text-primary' : 'text-text-secondary'
-                  return (
-                    <button
-                      key={project.id}
-                      type="button"
-                      data-testid={`project-option-${project.id}`}
-                      onClick={() => handleSelectProject(project.id)}
-                      className={`flex h-9 w-full rounded-lg px-4 text-left hover:bg-muted ${projectTextClass}`}
-                    >
-                      <div className="flex min-h-0 w-full items-center gap-3">
-                        <ProjectFolderIcon
-                          project={project}
-                          testId={`project-available-icon-${project.id}`}
-                          className="h-4 w-4 shrink-0 text-text-secondary"
-                        />
-                        <div className="flex min-w-0 flex-1 items-center gap-2">
-                          <span
-                            className={cn(
-                              'min-w-0 truncate text-[13px] font-semibold leading-[18px]',
-                              device ? 'max-w-[9rem] shrink' : 'flex-1',
-                              'text-text-primary',
-                            )}
-                          >
-                            {project.name}
-                          </span>
-                          {device && (
-                            <span className="flex min-w-0 flex-1 items-center gap-1.5 text-xs leading-4 text-text-secondary">
-                              <DeviceIcon className="h-3.5 w-3.5 shrink-0" />
-                              <span
-                                className={`h-1.5 w-1.5 shrink-0 rounded-full ${getDeviceStatusDotClass(device)}`}
-                              />
-                              <span className="min-w-0 truncate text-text-secondary">{device.name}</span>
-                              <span className="shrink-0">{getCompactDeviceStatusLabel(device)}</span>
-                            </span>
-                          )}
-                        </div>
-                        {selected && (
-                          <Check
-                            data-testid={`project-selected-icon-${project.id}`}
-                            className="h-3.5 w-3.5 shrink-0 text-text-primary"
-                          />
-                        )}
-                      </div>
-                    </button>
-                  )
-                })}
-              </div>
-            )}
-            <div className="my-1.5 shrink-0 border-t border-border" />
-            <div className={cn('shrink-0 space-y-0.5', isMobile && 'space-y-2')}>
-              {onCreateProjectMode && (
-                <div
-                  className="relative"
-                  onMouseEnter={() => handleActivateCreateSubmenu()}
-                  onFocus={() => handleActivateCreateSubmenu()}
-                >
-                  <button
-                    ref={createOptionButtonRef}
-                    type="button"
-                    data-testid="add-project-option"
-                    onClick={() => handleActivateCreateSubmenu()}
-                    className={cn(
-                      'flex h-8 w-full items-center gap-3 rounded-lg px-4 text-left text-[13px] font-medium leading-[18px] text-text-secondary hover:bg-muted',
-                      activeSubmenu === 'create' && 'bg-muted text-text-primary',
-                    )}
-                  >
-                    <FolderPlus className="h-4 w-4 shrink-0" />
-                    <span className="min-w-0 flex-1">{t('workbench.add_new_project', '添加新项目')}</span>
-                    <ChevronRight className="h-4 w-4 shrink-0" />
-                  </button>
-                  {activeSubmenu === 'create' && (
-                    <div
-                      className={cn(
-                        'absolute left-full z-popover pl-2',
-                        sideSubmenuPlacement.create === 'below' ? 'top-0' : 'bottom-0',
-                      )}
-                    >
-                      <div
-                        data-testid="create-project-submenu"
-                        className="w-56 rounded-2xl border border-border bg-background p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]"
-                      >
-                        <button
-                          type="button"
-                          data-testid="project-start-from-scratch-option"
-                          onClick={() => handleCreateProjectMode('scratch')}
-                          className="flex min-h-9 w-full items-center gap-3 rounded-xl px-4 py-2 text-left text-[13px] font-medium leading-[18px] text-text-secondary hover:bg-muted"
-                        >
-                          <Plus className="h-4 w-4 shrink-0" />
-                          <span>{t('workbench.start_from_scratch', '新建空白项目')}</span>
-                        </button>
-                        <button
-                          type="button"
-                          data-testid="project-existing-folder-option"
-                          onClick={() => handleCreateProjectMode('existing')}
-                          className="flex min-h-9 w-full items-center gap-3 rounded-xl px-4 py-2 text-left text-[13px] font-medium leading-[18px] text-text-secondary hover:bg-muted"
-                        >
-                          <Folder className="h-4 w-4 shrink-0" />
-                          <span>{t('workbench.using_existing_folder', '使用现有目录')}</span>
-                        </button>
-                        <button
-                          type="button"
-                          data-testid="project-clone-from-git-option"
-                          onClick={() => handleCreateProjectMode('git')}
-                          className="flex min-h-9 w-full items-center gap-3 rounded-xl px-4 py-2 text-left text-[13px] font-medium leading-[18px] text-text-secondary hover:bg-muted"
-                        >
-                          <FolderGit2 className="h-4 w-4 shrink-0" />
-                          <span>{t('workbench.clone_from_git', '从 Git 克隆')}</span>
-                        </button>
-                      </div>
-                    </div>
+                <Search className="h-4 w-4 shrink-0" />
+                <input
+                  ref={searchInputRef}
+                  data-testid="project-search-input"
+                  type="search"
+                  value={projectQuery}
+                  onChange={event => setProjectQuery(event.target.value)}
+                  onFocus={() => setActiveSubmenu(null)}
+                  placeholder={t('workbench.search_projects', '搜索项目')}
+                  className={cn(
+                    'min-w-0 flex-1 bg-transparent text-[13px] leading-[18px] text-text-primary outline-none placeholder:text-text-muted',
+                    isMobile && 'text-base leading-5'
                   )}
+                />
+              </label>
+              {availableProjects.length === 0 ? (
+                <div className="px-4 py-3 text-[13px] leading-[18px] text-text-muted">
+                  {t('workbench.no_projects', '暂无项目')}
                 </div>
-              )}
-              <div>
-                <button
-                  type="button"
-                  data-testid="no-project-option"
-                  onClick={() => handleSelectStandaloneDevice(selectedStandaloneDeviceId ?? null)}
-                  className="flex h-8 w-full items-center gap-3 rounded-lg px-4 text-left text-[13px] font-medium leading-[18px] text-text-secondary hover:bg-muted"
-                >
-                  <FolderX className="h-4 w-4 shrink-0" />
-                  <span className="min-w-0 flex-1">{t('workbench.no_project', '不使用项目')}</span>
-                </button>
-              </div>
-            </div>
-            {standaloneDevices.length > 0 && (
-              <>
-                <div className="my-1.5 shrink-0 border-t border-border" />
+              ) : filteredProjects.length === 0 ? (
                 <div
-                  data-testid="standalone-device-list"
-                  className="shrink-0 space-y-0.5"
+                  data-testid="project-search-empty"
+                  className="px-4 py-3 text-[13px] leading-[18px] text-text-muted"
                 >
-                  {standaloneDevices.map(device => {
-                    const online = isOnlineDevice(device)
-                    const compatible = isWeWorkExecutorVersionCompatible(
-                      device.executor_version,
-                    )
-                    const selected = isStandaloneMode && device.device_id === selectedStandaloneDeviceId
-                    const DeviceIcon = isCloudDevice(device) ? Cloud : HardDrive
-                    const selectable = online && compatible
+                  {t('workbench.project_search_no_results', '没有匹配的项目')}
+                </div>
+              ) : (
+                <div
+                  data-testid="project-options-list"
+                  className={cn(
+                    'min-h-0 flex-1 space-y-0.5 overflow-y-auto pr-1',
+                    isMobile && 'scrollbar-none max-h-[calc(45dvh-168px)] space-y-2 py-2'
+                  )}
+                  style={{ maxHeight: isMobile ? undefined : PROJECT_MENU_LIST_MAX_HEIGHT }}
+                >
+                  {filteredProjects.map(project => {
+                    const device = getDeviceForProject(project)
+                    const DeviceIcon = device && isCloudDevice(device) ? Cloud : HardDrive
+                    const selected = project.id === currentProjectId
+                    const projectTextClass = selected ? 'text-text-primary' : 'text-text-secondary'
                     return (
                       <button
-                        key={device.device_id}
+                        key={project.id}
                         type="button"
-                        data-testid={`standalone-device-option-${device.device_id}`}
-                        disabled={!selectable}
-                        onClick={() => handleSelectStandaloneDevice(device.device_id)}
-                        className="flex h-9 w-full items-center gap-2 rounded-lg px-4 text-left text-[13px] leading-[18px] text-text-secondary hover:bg-muted disabled:cursor-not-allowed disabled:text-text-muted disabled:opacity-60 disabled:hover:bg-transparent"
+                        data-testid={`project-option-${project.id}`}
+                        onClick={() => handleSelectProject(project.id)}
+                        className={`flex h-9 w-full rounded-lg px-4 text-left hover:bg-muted ${projectTextClass}`}
                       >
-                        <DeviceIcon className="h-4 w-4 shrink-0" />
-                        <span
-                          className={`h-1.5 w-1.5 shrink-0 rounded-full ${getDeviceStatusDotClass(device)}`}
-                        />
-                        <span className="min-w-0 flex-1 truncate">
-                          {device.name || device.device_id}
-                        </span>
-                        <span className={selectable ? 'text-text-secondary' : 'text-text-muted'}>
-                          {getCompactDeviceStatusLabel(device)}
-                        </span>
-                        {selected && selectable && (
-                          <Check
-                            data-testid={`standalone-device-selected-icon-${device.device_id}`}
-                            className="h-3.5 w-3.5 shrink-0"
+                        <div className="flex min-h-0 w-full items-center gap-3">
+                          <ProjectFolderIcon
+                            project={project}
+                            testId={`project-available-icon-${project.id}`}
+                            className="h-4 w-4 shrink-0 text-text-secondary"
                           />
-                        )}
+                          <div className="flex min-w-0 flex-1 items-center gap-2">
+                            <span
+                              className={cn(
+                                'min-w-0 truncate text-[13px] font-semibold leading-[18px]',
+                                device ? 'max-w-[9rem] shrink' : 'flex-1',
+                                'text-text-primary'
+                              )}
+                            >
+                              {project.name}
+                            </span>
+                            {device && (
+                              <span className="flex min-w-0 flex-1 items-center gap-1.5 text-xs leading-4 text-text-secondary">
+                                <DeviceIcon className="h-3.5 w-3.5 shrink-0" />
+                                <span
+                                  className={`h-1.5 w-1.5 shrink-0 rounded-full ${getDeviceStatusDotClass(device)}`}
+                                />
+                                <span className="min-w-0 truncate text-text-secondary">
+                                  {device.name}
+                                </span>
+                                <span className="shrink-0">
+                                  {getCompactDeviceStatusLabel(device)}
+                                </span>
+                              </span>
+                            )}
+                          </div>
+                          {selected && (
+                            <Check
+                              data-testid={`project-selected-icon-${project.id}`}
+                              className="h-3.5 w-3.5 shrink-0 text-text-primary"
+                            />
+                          )}
+                        </div>
                       </button>
                     )
                   })}
                 </div>
-              </>
-            )}
+              )}
+              <div className="my-1.5 shrink-0 border-t border-border" />
+              <div className={cn('shrink-0 space-y-0.5', isMobile && 'space-y-2')}>
+                {onCreateProjectMode && (
+                  <div
+                    className="relative"
+                    onMouseEnter={() => handleActivateCreateSubmenu()}
+                    onFocus={() => handleActivateCreateSubmenu()}
+                  >
+                    <button
+                      ref={createOptionButtonRef}
+                      type="button"
+                      data-testid="add-project-option"
+                      onClick={() => handleActivateCreateSubmenu()}
+                      className={cn(
+                        'flex h-8 w-full items-center gap-3 rounded-lg px-4 text-left text-[13px] font-medium leading-[18px] text-text-secondary hover:bg-muted',
+                        activeSubmenu === 'create' && 'bg-muted text-text-primary'
+                      )}
+                    >
+                      <FolderPlus className="h-4 w-4 shrink-0" />
+                      <span className="min-w-0 flex-1">
+                        {t('workbench.add_new_project', '添加新项目')}
+                      </span>
+                      <ChevronRight className="h-4 w-4 shrink-0" />
+                    </button>
+                    {activeSubmenu === 'create' && (
+                      <div
+                        className={cn(
+                          'absolute left-full z-popover pl-2',
+                          sideSubmenuPlacement.create === 'below' ? 'top-0' : 'bottom-0'
+                        )}
+                      >
+                        <div
+                          data-testid="create-project-submenu"
+                          className="w-56 rounded-2xl border border-border bg-background p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]"
+                        >
+                          <button
+                            type="button"
+                            data-testid="project-start-from-scratch-option"
+                            onClick={() => handleCreateProjectMode('scratch')}
+                            className="flex min-h-9 w-full items-center gap-3 rounded-xl px-4 py-2 text-left text-[13px] font-medium leading-[18px] text-text-secondary hover:bg-muted"
+                          >
+                            <Plus className="h-4 w-4 shrink-0" />
+                            <span>{t('workbench.start_from_scratch', '新建空白项目')}</span>
+                          </button>
+                          <button
+                            type="button"
+                            data-testid="project-existing-folder-option"
+                            onClick={() => handleCreateProjectMode('existing')}
+                            className="flex min-h-9 w-full items-center gap-3 rounded-xl px-4 py-2 text-left text-[13px] font-medium leading-[18px] text-text-secondary hover:bg-muted"
+                          >
+                            <Folder className="h-4 w-4 shrink-0" />
+                            <span>{t('workbench.using_existing_folder', '使用现有目录')}</span>
+                          </button>
+                          <button
+                            type="button"
+                            data-testid="project-clone-from-git-option"
+                            onClick={() => handleCreateProjectMode('git')}
+                            className="flex min-h-9 w-full items-center gap-3 rounded-xl px-4 py-2 text-left text-[13px] font-medium leading-[18px] text-text-secondary hover:bg-muted"
+                          >
+                            <FolderGit2 className="h-4 w-4 shrink-0" />
+                            <span>{t('workbench.clone_from_git', '从 Git 克隆')}</span>
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+                <div>
+                  <button
+                    type="button"
+                    data-testid="no-project-option"
+                    onClick={() => handleSelectStandaloneDevice(selectedStandaloneDeviceId ?? null)}
+                    className="flex h-8 w-full items-center gap-3 rounded-lg px-4 text-left text-[13px] font-medium leading-[18px] text-text-secondary hover:bg-muted"
+                  >
+                    <FolderX className="h-4 w-4 shrink-0" />
+                    <span className="min-w-0 flex-1">
+                      {t('workbench.no_project', '不使用项目')}
+                    </span>
+                  </button>
+                </div>
+              </div>
+              {standaloneDevices.length > 0 && (
+                <>
+                  <div className="my-1.5 shrink-0 border-t border-border" />
+                  <div data-testid="standalone-device-list" className="shrink-0 space-y-0.5">
+                    {standaloneDevices.map(device => {
+                      const online = isOnlineDevice(device)
+                      const compatible = isWeWorkExecutorVersionCompatible(device.executor_version)
+                      const selected =
+                        isStandaloneMode && device.device_id === selectedStandaloneDeviceId
+                      const DeviceIcon = isCloudDevice(device) ? Cloud : HardDrive
+                      const selectable = online && compatible
+                      return (
+                        <button
+                          key={device.device_id}
+                          type="button"
+                          data-testid={`standalone-device-option-${device.device_id}`}
+                          disabled={!selectable}
+                          onClick={() => handleSelectStandaloneDevice(device.device_id)}
+                          className="flex h-9 w-full items-center gap-2 rounded-lg px-4 text-left text-[13px] leading-[18px] text-text-secondary hover:bg-muted disabled:cursor-not-allowed disabled:text-text-muted disabled:opacity-60 disabled:hover:bg-transparent"
+                        >
+                          <DeviceIcon className="h-4 w-4 shrink-0" />
+                          <span
+                            className={`h-1.5 w-1.5 shrink-0 rounded-full ${getDeviceStatusDotClass(device)}`}
+                          />
+                          <span className="min-w-0 flex-1 truncate">
+                            {device.name || device.device_id}
+                          </span>
+                          <span className={selectable ? 'text-text-secondary' : 'text-text-muted'}>
+                            {getCompactDeviceStatusLabel(device)}
+                          </span>
+                          {selected && selectable && (
+                            <Check
+                              data-testid={`standalone-device-selected-icon-${device.device_id}`}
+                              className="h-3.5 w-3.5 shrink-0"
+                            />
+                          )}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </>
+              )}
             </div>
           </div>
         )}
@@ -721,7 +761,7 @@ export function ProjectWorkBar({
           className={cn(
             'flex h-9 min-w-[44px] items-center gap-2 rounded-full px-2 text-[13px] font-medium leading-[18px] text-text-secondary transition-[background-color,color,box-shadow] hover:bg-background hover:text-text-primary hover:shadow-[0_10px_28px_rgba(0,0,0,0.14)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
             open && 'bg-background text-text-primary shadow-[0_10px_28px_rgba(0,0,0,0.14)]',
-            buttonClassName,
+            buttonClassName
           )}
           aria-expanded={open}
           aria-label={t('workbench.enter_project_work', '进入项目工作')}
@@ -740,7 +780,7 @@ export function ProjectWorkBar({
           <ChevronDown className="h-4 w-4" />
         </button>
       </div>
-      {supportsGitWorktree && (
+      {canShowExecutionModeControl && (
         <div ref={executionModeContainerRef} className="relative">
           {executionModeOpen && isMobile && renderMobileBackdrop(closeExecutionModeMenu)}
           {executionModeOpen && (
@@ -751,14 +791,14 @@ export function ProjectWorkBar({
                 isMobile
                   ? 'fixed inset-x-0 bottom-0 z-modal flex max-h-[45dvh] flex-col rounded-t-[28px] border border-border bg-background shadow-[0_-18px_48px_rgba(0,0,0,0.18)]'
                   : 'absolute left-0 z-popover w-56 rounded-2xl border border-border bg-background p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]',
-                !isMobile && (executionModePlacement === 'below' ? 'top-11' : 'bottom-11'),
+                !isMobile && (executionModePlacement === 'below' ? 'top-11' : 'bottom-11')
               )}
             >
               {isMobile &&
                 renderMobileSheetHeader(
                   t('workbench.execution_mode_label', '启动模式'),
                   executionModeTriggerLabel,
-                  closeExecutionModeMenu,
+                  closeExecutionModeMenu
                 )}
               <div
                 data-testid="project-execution-mode-menu-section"
@@ -777,16 +817,14 @@ export function ProjectWorkBar({
                     isMobile && 'h-14 rounded-2xl bg-surface px-4 text-base leading-5',
                     executionMode === 'current_workspace'
                       ? 'text-text-primary'
-                      : 'text-text-secondary hover:bg-muted',
+                      : 'text-text-secondary hover:bg-muted'
                   )}
                 >
                   <Laptop className="h-4 w-4 shrink-0" />
                   <span className="min-w-0 flex-1">
                     {t('workbench.execution_mode_current_workspace', '在本地处理')}
                   </span>
-                  {executionMode === 'current_workspace' && (
-                    <Check className="h-4 w-4 shrink-0" />
-                  )}
+                  {executionMode === 'current_workspace' && <Check className="h-4 w-4 shrink-0" />}
                 </button>
                 <button
                   type="button"
@@ -798,16 +836,14 @@ export function ProjectWorkBar({
                     isMobile && 'h-14 rounded-2xl bg-surface px-4 text-base leading-5',
                     executionMode === 'git_worktree'
                       ? 'text-text-primary'
-                      : 'text-text-secondary hover:bg-muted',
+                      : 'text-text-secondary hover:bg-muted'
                   )}
                 >
                   <GitBranch className="h-4 w-4 shrink-0" />
                   <span className="min-w-0 flex-1">
                     {t('workbench.execution_mode_git_worktree', '新工作树')}
                   </span>
-                  {executionMode === 'git_worktree' && (
-                    <Check className="h-4 w-4 shrink-0" />
-                  )}
+                  {executionMode === 'git_worktree' && <Check className="h-4 w-4 shrink-0" />}
                 </button>
               </div>
             </div>
@@ -820,7 +856,7 @@ export function ProjectWorkBar({
             className={cn(
               'flex h-9 min-w-[44px] items-center gap-2 rounded-full px-2 text-[13px] font-medium leading-[18px] text-text-secondary transition-[background-color,color,box-shadow] hover:bg-background hover:text-text-primary hover:shadow-[0_10px_28px_rgba(0,0,0,0.14)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
               executionModeOpen &&
-                'bg-background text-text-primary shadow-[0_10px_28px_rgba(0,0,0,0.14)]',
+                'bg-background text-text-primary shadow-[0_10px_28px_rgba(0,0,0,0.14)]'
             )}
             aria-expanded={executionModeOpen}
             aria-label={t('workbench.execution_mode_label', '启动模式')}
@@ -848,6 +884,15 @@ export function ProjectWorkBar({
             onCreateBranch={onCreateBranch}
           />
         )}
+      {canShowWorktreeBranchSelector && onListBranches && onWorktreeBaseBranchChange && (
+        <WorktreeBranchSelector
+          currentBranch={branchName}
+          selectedBranch={worktreeBaseBranch}
+          loading={branchLoading}
+          onListBranches={onListBranches}
+          onSelectBranch={onWorktreeBaseBranchChange}
+        />
+      )}
     </div>
   )
 }

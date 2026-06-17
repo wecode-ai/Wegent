@@ -433,6 +433,7 @@ async def _create_task_and_prepare_git_worktree(
             project_id=params.project_id,
             client_origin=params.client_origin,
             task_id=task.id,
+            base_branch=(params.execution_workspace or {}).get("branch"),
         )
     except Exception:
         db.rollback()

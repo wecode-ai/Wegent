@@ -721,10 +721,38 @@ def test_local_device_command_registry_builds_git_worktree_add_argv():
     ) == [
         "sh",
         "-c",
-        'git -C "$1" worktree add --detach "$2"',
+        'if [ -n "$3" ]; then git -C "$1" worktree add --detach "$2" "$3"; else git -C "$1" worktree add --detach "$2"; fi',
         "--",
         "/workspace/projects/d837/Wegent",
         "/workspace/worktrees/1386/Wegent",
+    ]
+
+
+def test_local_device_command_registry_builds_git_worktree_add_argv_with_branch():
+    """git_worktree_add should accept an optional source branch ref."""
+    from app.services.device.command_registry import (
+        build_local_device_command_argv,
+        resolve_local_device_command,
+    )
+
+    definition = resolve_local_device_command("git_worktree_add")
+
+    assert definition is not None
+    assert build_local_device_command_argv(
+        definition.command,
+        [
+            "/workspace/projects/d837/Wegent",
+            "/workspace/worktrees/1386/Wegent",
+            "develop",
+        ],
+    ) == [
+        "sh",
+        "-c",
+        'if [ -n "$3" ]; then git -C "$1" worktree add --detach "$2" "$3"; else git -C "$1" worktree add --detach "$2"; fi',
+        "--",
+        "/workspace/projects/d837/Wegent",
+        "/workspace/worktrees/1386/Wegent",
+        "develop",
     ]
 
 

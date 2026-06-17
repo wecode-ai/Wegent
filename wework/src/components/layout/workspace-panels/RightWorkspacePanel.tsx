@@ -1,6 +1,6 @@
 import { File, FileDiff, Plus, X } from 'lucide-react'
 import type { KeyboardEvent, PointerEvent } from 'react'
-import { FileChangesReviewPanel } from '@/components/chat/FileChangesReviewDialog'
+import { FileChangesReviewPanel } from '@/components/chat/FileChangesReviewPanel'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { CodeCommentContext, WorkspaceTarget } from '@/types/workspace-files'
 import { cn } from '@/lib/utils'
@@ -165,7 +165,7 @@ function RightWorkspaceTitleTab({
           : 'text-text-secondary hover:bg-muted hover:text-text-primary'
       )}
     >
-      <span className="relative h-6 w-6 shrink-0">
+      <span className="relative h-5 w-5 shrink-0">
         <Icon
           data-testid={`${tab === 'review' ? 'right-workspace-review' : 'right-workspace-file'}-tab-icon`}
           className="absolute inset-0 m-auto h-4 w-4 text-text-secondary opacity-100 transition-opacity group-hover:opacity-0 group-focus-within:opacity-0"
@@ -177,10 +177,10 @@ function RightWorkspaceTitleTab({
             event.stopPropagation()
             onClose()
           }}
-          className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-full bg-text-muted text-background opacity-0 transition-colors hover:bg-text-secondary focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 group-hover:pointer-events-auto group-hover:opacity-100"
+          className="pointer-events-none absolute inset-0 m-auto flex h-5 w-5 items-center justify-center rounded-full border border-border bg-muted text-text-secondary opacity-0 transition-colors hover:border-text-muted hover:bg-hover hover:text-text-primary focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 group-hover:pointer-events-auto group-hover:opacity-100"
           aria-label={t('workbench.close_right_workspace_panel')}
         >
-          <X className="h-3.5 w-3.5" />
+          <X className="h-3 w-3" />
         </button>
       </span>
       <span className="truncate">{label}</span>

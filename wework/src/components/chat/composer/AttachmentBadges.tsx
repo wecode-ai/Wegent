@@ -1,13 +1,9 @@
-import { useEffect, useState } from 'react'
 import { FileText, Loader2, MessageSquare, X } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { Attachment } from '@/types/api'
 import type { CodeCommentContext } from '@/types/workspace-files'
-import {
-  getAttachmentImageUrl,
-  getAttachmentTypeLabel,
-  isImageAttachment,
-} from '@/lib/attachments'
+import { getAttachmentTypeLabel, isImageAttachment } from '@/lib/attachments'
+import { AttachmentImagePreview } from '../AttachmentImagePreview'
 
 interface AttachmentBadgesProps {
   attachments: Attachment[]
@@ -16,78 +12,6 @@ interface AttachmentBadgesProps {
   codeComments?: CodeCommentContext[]
   onRemoveAttachment: (attachmentId: number) => void
   onClearCodeComments?: () => void
-}
-
-function ImageAttachmentPreview({ attachment }: { attachment: Attachment }) {
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
-  const [hasError, setHasError] = useState(false)
-
-  useEffect(() => {
-    let isMounted = true
-    let objectUrl: string | null = null
-
-    async function loadPreview() {
-      setPreviewUrl(null)
-      setHasError(false)
-
-      try {
-        const token = localStorage.getItem('auth_token')
-        const response = await fetch(getAttachmentImageUrl(attachment.id), {
-          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-        })
-
-        if (!response.ok) {
-          throw new Error(`Failed to load attachment preview: ${response.status}`)
-        }
-
-        const blob = await response.blob()
-        if (!blob.type.startsWith('image/')) {
-          throw new Error(`Attachment preview is not an image: ${blob.type || 'unknown'}`)
-        }
-
-        objectUrl = URL.createObjectURL(blob)
-        if (isMounted) {
-          setPreviewUrl(objectUrl)
-        } else {
-          URL.revokeObjectURL(objectUrl)
-        }
-      } catch {
-        if (isMounted) {
-          setHasError(true)
-        }
-      }
-    }
-
-    void loadPreview()
-
-    return () => {
-      isMounted = false
-      if (objectUrl) {
-        URL.revokeObjectURL(objectUrl)
-      }
-    }
-  }, [attachment.id])
-
-  if (previewUrl) {
-    return (
-      <img
-        data-testid="attachment-image-preview"
-        src={previewUrl}
-        alt={attachment.filename}
-        className="h-full w-full rounded-xl object-cover"
-      />
-    )
-  }
-
-  return (
-    <div
-      data-testid={hasError ? 'attachment-image-preview-error' : 'attachment-image-preview-loading'}
-      className="flex h-full w-full items-center justify-center rounded-xl border border-border bg-surface text-text-muted"
-      aria-label={attachment.filename}
-    >
-      {hasError ? <FileText className="h-5 w-5" /> : <Loader2 className="h-5 w-5 animate-spin" />}
-    </div>
-  )
 }
 
 function RemoveAttachmentButton({
@@ -142,13 +66,7 @@ function DocumentAttachmentCard({
   )
 }
 
-function CodeCommentBadge({
-  count,
-  onRemove,
-}: {
-  count: number
-  onRemove?: () => void
-}) {
+function CodeCommentBadge({ count, onRemove }: { count: number; onRemove?: () => void }) {
   const { t } = useTranslation('common')
 
   return (
@@ -194,10 +112,7 @@ export function AttachmentBadges({
   return (
     <div className="mb-3 flex flex-wrap gap-2" data-testid="attachment-badge-list">
       {codeCommentCount > 0 && (
-        <CodeCommentBadge
-          count={codeCommentCount}
-          onRemove={onClearCodeComments}
-        />
+        <CodeCommentBadge count={codeCommentCount} onRemove={onClearCodeComments} />
       )}
       {attachments.map(attachment =>
         isImageAttachment(attachment) ? (
@@ -206,7 +121,16 @@ export function AttachmentBadges({
             data-testid="attachment-badge"
             className="relative h-20 w-20 shrink-0"
           >
-            <ImageAttachmentPreview attachment={attachment} />
+            <AttachmentImagePreview
+              attachment={attachment}
+              buttonTestId="attachment-image-preview-button"
+              imageTestId="attachment-image-preview"
+              loadingTestId="attachment-image-preview-loading"
+              errorTestId="attachment-image-preview-error"
+              imageClassName="h-full w-full rounded-xl object-cover"
+              placeholderClassName="flex h-full w-full items-center justify-center rounded-xl border border-border bg-surface text-text-muted"
+              buttonClassName="block h-full w-full cursor-zoom-in p-0 text-left"
+            />
             <RemoveAttachmentButton
               attachmentId={attachment.id}
               onRemoveAttachment={onRemoveAttachment}
