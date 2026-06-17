@@ -1498,8 +1498,9 @@ class TaskRequestBuilder:
     @staticmethod
     def _is_tool_output_guard_enabled(user: User | None) -> bool:
         """Return whether source-level tool output truncation is enabled."""
+        default_enabled = settings.TOOL_OUTPUT_GUARD_ENABLED
         if not user or not getattr(user, "preferences", None):
-            return False
+            return default_enabled
 
         raw_preferences = user.preferences
         if isinstance(raw_preferences, str):
@@ -1509,18 +1510,20 @@ class TaskRequestBuilder:
                 logger.warning(
                     "[TaskRequestBuilder] Failed to parse user preferences for tool output guard toggle"
                 )
-                return False
+                return default_enabled
             if not isinstance(preferences, dict):
                 logger.warning(
                     "[TaskRequestBuilder] Ignoring non-object user preferences for tool output guard toggle"
                 )
-                return False
+                return default_enabled
         elif isinstance(raw_preferences, dict):
             preferences = raw_preferences
         else:
-            return False
+            return default_enabled
 
-        return bool(preferences.get("tool_output_guard_enabled", False))
+        if "tool_output_guard_enabled" in preferences:
+            return bool(preferences["tool_output_guard_enabled"])
+        return default_enabled
 
     def _build_skill_data(self, skill: Kind, *, user: User | None = None) -> dict:
         """Build skill data dictionary from a Skill Kind object.
