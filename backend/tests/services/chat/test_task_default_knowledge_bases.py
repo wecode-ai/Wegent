@@ -260,7 +260,7 @@ def test_build_initial_task_context_refs_merges_defaults_and_explicit_contexts()
     assert [ref["id"] for ref in result["knowledge_base_refs"]] == [11, 33]
 
 
-def test_build_initial_task_context_refs_skips_invalid_explicit_contexts():
+def test_build_initial_task_context_refs_skips_invalid_explicit_contexts() -> None:
     from app.services.chat.task_default_knowledge_bases import (
         build_initial_task_context_refs,
     )

@@ -79,7 +79,7 @@ def test_web_runtime_guidance_is_idempotent():
     assert first == second
 
 
-def test_external_document_context_guidance_serializes_untrusted_metadata():
+def test_external_document_context_guidance_serializes_untrusted_metadata() -> None:
     task = SimpleNamespace(
         json={
             "spec": {
