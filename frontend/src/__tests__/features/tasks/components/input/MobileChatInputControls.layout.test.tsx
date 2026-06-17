@@ -3,7 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen } from '@testing-library/react'
+import React from 'react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { MobileChatInputControlsProps } from '@/features/tasks/components/input/MobileChatInputControls'
 import { MobileChatInputControls } from '@/features/tasks/components/input/MobileChatInputControls'
 import type { Team } from '@/types/api'
@@ -67,23 +68,19 @@ jest.mock('@/components/ui/action-button', () => ({
   ),
 }))
 
-jest.mock('@/components/ui/button', () => ({
-  Button: ({
-    children,
-    className,
-    disabled,
-    ...props
-  }: {
-    children: React.ReactNode
-    className?: string
-    disabled?: boolean
-    [key: string]: unknown
-  }) => (
-    <button type="button" className={className} disabled={disabled} {...props}>
+jest.mock('@/components/ui/button', () => {
+  const MockButton = React.forwardRef<
+    HTMLButtonElement,
+    React.ButtonHTMLAttributes<HTMLButtonElement>
+  >(({ children, className, disabled, ...props }, ref) => (
+    <button ref={ref} type="button" className={className} disabled={disabled} {...props}>
       {children}
     </button>
-  ),
-}))
+  ))
+  MockButton.displayName = 'MockButton'
+
+  return { Button: MockButton }
+})
 
 jest.mock('@/components/ui/dropdown', () => ({
   DropdownMenu: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
@@ -146,10 +143,26 @@ const buildProps = (): MobileChatInputControlsProps => ({
 })
 
 describe('MobileChatInputControls layout', () => {
-  it('keeps long selector labels clipped without clipping the overflow menu', () => {
+  it('keeps long selector labels clipped without clipping the overflow menu', async () => {
     render(<MobileChatInputControls {...buildProps()} />)
 
-    fireEvent.click(screen.getByRole('button', { name: 'More actions' }))
+    const moreActionsButton = screen.getByRole('button', { name: 'More actions' })
+    moreActionsButton.getBoundingClientRect = jest.fn(
+      () =>
+        ({
+          left: 32,
+          top: 420,
+          right: 64,
+          bottom: 452,
+          width: 32,
+          height: 32,
+          x: 32,
+          y: 420,
+          toJSON: () => {},
+        }) as DOMRect
+    )
+
+    fireEvent.click(moreActionsButton)
 
     const sendSlot = screen.getByTestId('send-button').parentElement
     const rightControls = sendSlot?.parentElement
@@ -167,5 +180,17 @@ describe('MobileChatInputControls layout', () => {
     expect(modelSlot).toHaveClass('overflow-hidden')
     expect(sendSlot).toHaveClass('flex-shrink-0')
     expect(screen.getByText('Attach')).toBeInTheDocument()
+
+    const menu = screen.getByTestId('mobile-input-more-actions-menu')
+    await waitFor(() => {
+      expect(menu).toHaveStyle({
+        left: '32px',
+        top: '124px',
+        maxHeight: '288px',
+      })
+    })
+    expect(menu).toHaveClass('fixed')
+    expect(menu).toHaveClass('overflow-y-auto')
+    expect(menu).toHaveClass('overscroll-contain')
   })
 })

@@ -326,7 +326,7 @@ export interface SkillDirectorySetupResult {
 export interface DeviceCommandResponse {
   success: boolean
   exit_code?: number | null
-  stdout: string | string[] | LocalDeviceSkill[] | SkillDirectorySetupResult
+  stdout: string | string[] | LocalDeviceSkill[] | SkillDirectorySetupResult | Record<string, unknown>
   stderr: string
   error?: string
   duration?: number

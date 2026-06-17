@@ -1,6 +1,6 @@
 import '@/i18n'
 
-import { fireEvent, render, screen } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import { describe, expect, test } from 'vitest'
 import { ToolBlockItem } from './ToolBlockItem'
 import type { ProcessingBlock } from '@/types/workbench'
@@ -35,7 +35,7 @@ describe('ToolBlockItem', () => {
     expect(screen.queryByTestId('thinking-toggle-button')).not.toBeInTheDocument()
   })
 
-  test('collapses completed thinking until the user expands it', () => {
+  test('renders completed thinking without per-block folding', () => {
     render(
       <ToolBlockItem
         block={{
@@ -46,16 +46,7 @@ describe('ToolBlockItem', () => {
       />
     )
 
-    const toggle = screen.getByTestId('thinking-toggle-button')
-
-    expect(toggle).toHaveAttribute('aria-expanded', 'false')
-    expect(
-      screen.queryByText('I will inspect the repository before answering.')
-    ).not.toBeInTheDocument()
-
-    fireEvent.click(toggle)
-
-    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.queryByTestId('thinking-toggle-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('thinking-detail')).toHaveTextContent(
       'I will inspect the repository before answering.'
     )

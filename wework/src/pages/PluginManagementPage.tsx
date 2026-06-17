@@ -48,8 +48,7 @@ export function PluginManagementPage() {
   } = useWorkbench()
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
-  const { sidebarCollapsed, setSidebarCollapsed } =
-    useDesktopSidebarCollapsed()
+  const { sidebarCollapsed, setSidebarCollapsed } = useDesktopSidebarCollapsed()
 
   const handleSelectProject = (projectId: number) => {
     navigateTo('/')

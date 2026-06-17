@@ -224,13 +224,22 @@ fn get_local_executor_device_id(expected_backend_url: Option<String>) -> Option<
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
         .manage(local_terminal::LocalTerminalState::default())
         .setup(|app| {
             #[cfg(desktop)]
-            app.handle()
-                .plugin(tauri_plugin_updater::Builder::new().build())?;
+            if app
+                .config()
+                .plugins
+                .0
+                .get("updater")
+                .is_some_and(|config| config.is_object())
+            {
+                app.handle()
+                    .plugin(tauri_plugin_updater::Builder::new().build())?;
+            }
 
             if cfg!(debug_assertions) {
                 app.handle().plugin(

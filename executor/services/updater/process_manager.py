@@ -18,7 +18,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from executor.platform_compat import IS_WINDOWS, get_signal_handler
+from executor.platform_compat import (
+    IS_WINDOWS,
+    get_signal_handler,
+    sanitize_pyinstaller_environment,
+)
 
 # Use 'updater' logger to write to upgrade.log
 logger = logging.getLogger("updater")
@@ -275,7 +279,6 @@ class ProcessManager:
 
         Removes all _PYI_* and _MEI_* variables (PyInstaller internal vars)
         and any variables with values containing _MEI temp paths.
-        Also logs all environment variables being passed to child process.
 
         Returns:
             Dict of environment variables
@@ -283,19 +286,7 @@ class ProcessManager:
         # Start with current environment
         env = dict(os.environ)
 
-        # Remove all _PYI_ and _MEI_ prefixed variables (PyInstaller internal vars)
-        pyi_vars = [k for k in env.keys() if k.startswith(("_PYI_", "_MEI_"))]
-        for var in pyi_vars:
-            del env[var]
-
-        # Find and remove variables with values containing _MEI temp paths.
-        # These are PyInstaller temporary directories that won't exist after restart.
-        # Match both macOS and Linux onefile extraction paths.
-        mei_path_vars = []
-        for key, value in list(env.items()):
-            if "_MEI" in value:
-                mei_path_vars.append(key)
-                del env[key]
+        sanitize_pyinstaller_environment(env)
 
         # SSL-related path variables should not keep stale onefile extraction
         # paths, and they should only be inherited when the target path exists.
