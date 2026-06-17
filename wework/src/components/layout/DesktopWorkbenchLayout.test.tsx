@@ -692,7 +692,6 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('titlebar-actions')).toContainElement(
       screen.getByTestId('open-code-server-titlebar-button')
     )
-    expect(screen.getByTestId('environment-info-button')).toHaveAttribute('title', '环境信息')
     expect(screen.getByTestId('open-code-server-titlebar-button')).toHaveAttribute(
       'title',
       '打开项目 IDE'
@@ -705,6 +704,44 @@ describe('DesktopWorkbenchLayout', () => {
       'title',
       '打开右侧栏'
     )
+  })
+
+  test('opens project code-server from the current task execution workspace in the Tauri titlebar', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null)
+    const workspacePanelState = createCloudWorkspacePanelState()
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          ...workspacePanelState,
+          currentTask: {
+            id: 8,
+            title: 'Task',
+            status: 'RUNNING',
+            created_at: '2026-06-12T00:00:00.000Z',
+            device_id: 'workspace-cloud-device',
+            execution_workspace_path: '/workspace/worktrees/8/workspace-project',
+          },
+        }}
+        projectWork={{
+          ...baseProps.projectWork,
+          projects: workspacePanelState.projects,
+          devices: workspacePanelState.devices,
+          currentProjectId: workspacePanelState.currentProject.id,
+        }}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('open-code-server-titlebar-button'))
+
+    await waitFor(() => expect(startCodeServerSessionMock).toHaveBeenCalledWith(12, { taskId: 8 }))
+    expect(openSpy).toHaveBeenCalledWith('http://localhost/ide', '_blank', 'noopener')
   })
 
   test('shows project code-server in the Tauri titlebar before devices hydrate', () => {
@@ -3069,6 +3106,52 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByText('/workspace/project/README.md')).toBeInTheDocument()
   })
 
+  test('right workspace panel uses the current task execution workspace path', async () => {
+    const workspacePanelState = createCloudWorkspacePanelState()
+    const listWorkspaceEntries = vi.fn().mockResolvedValue({
+      path: '/workspace/worktrees/8/workspace-project',
+      entries: [],
+    })
+    createDeviceApiMock.mockReturnValue(
+      createMockDeviceApi({
+        listWorkspaceEntries,
+      }) as never
+    )
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          ...workspacePanelState,
+          currentTask: {
+            id: 8,
+            title: 'Task',
+            status: 'RUNNING',
+            created_at: '2026-06-12T00:00:00.000Z',
+            device_id: 'workspace-cloud-device',
+            execution_workspace_path: '/workspace/worktrees/8/workspace-project',
+          },
+        }}
+        projectWork={{
+          ...baseProps.projectWork,
+          projects: workspacePanelState.projects,
+          devices: workspacePanelState.devices,
+          currentProjectId: workspacePanelState.currentProject?.id,
+        }}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(screen.getByTestId('right-workspace-file-option'))
+
+    expect(await screen.findByTestId('workspace-file-tree')).toBeInTheDocument()
+    expect(listWorkspaceEntries).toHaveBeenCalledWith(
+      'workspace-cloud-device',
+      '/workspace/worktrees/8/workspace-project'
+    )
+  })
+
   test('opens an edited file from the conversation tool block in the workspace panel', async () => {
     const user = userEvent.setup()
     const workspacePanelState = createCloudWorkspacePanelState()
@@ -3814,7 +3897,12 @@ describe('DesktopWorkbenchLayout', () => {
 
     await waitFor(() =>
       expect(onLoadEnvironmentDiff).toHaveBeenCalledWith(
-        expect.objectContaining({ id: 1, name: 'github_wegent' })
+        expect.objectContaining({ id: 1, name: 'github_wegent' }),
+        {
+          deviceId: 'device-1',
+          path: '/workspace/github_wegent',
+          source: 'project',
+        }
       )
     )
     expect(screen.queryByRole('dialog', { name: '本轮文件变更' })).not.toBeInTheDocument()
@@ -3825,6 +3913,57 @@ describe('DesktopWorkbenchLayout', () => {
     )
     expect(await screen.findByTestId('file-changes-review-panel')).toHaveTextContent('src/env.ts')
     expect(screen.getByTestId('file-changes-review-panel')).toHaveTextContent('+new')
+  })
+
+  test('opens environment changes review from the current task execution workspace', async () => {
+    const workspacePanelState = createCloudWorkspacePanelState()
+    const onLoadEnvironmentDiff = vi
+      .fn()
+      .mockResolvedValue(
+        'diff --git a/src/env.ts b/src/env.ts\n--- a/src/env.ts\n+++ b/src/env.ts\n@@ -1 +1 @@\n-old\n+new\n'
+      )
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onLoadEnvironmentDiff={onLoadEnvironmentDiff}
+        state={{
+          ...baseProps.state,
+          ...workspacePanelState,
+          currentTask: {
+            id: 8,
+            title: 'Task',
+            status: 'RUNNING',
+            created_at: '2026-06-12T00:00:00.000Z',
+            device_id: 'workspace-cloud-device',
+            execution_workspace_path: '/workspace/worktrees/8/workspace-project',
+          },
+        }}
+        projectWork={{
+          ...baseProps.projectWork,
+          projects: workspacePanelState.projects,
+          devices: workspacePanelState.devices,
+          currentProjectId: workspacePanelState.currentProject.id,
+        }}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await waitFor(() => expect(screen.getByTestId('right-workspace-review-option')).toBeEnabled())
+    await userEvent.click(screen.getByTestId('right-workspace-review-option'))
+
+    await waitFor(() =>
+      expect(onLoadEnvironmentDiff).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 12, name: 'workspace-project' }),
+        {
+          deviceId: 'workspace-cloud-device',
+          path: '/workspace/worktrees/8/workspace-project',
+          source: 'task',
+          taskId: 8,
+        }
+      )
+    )
+    expect(await screen.findByTestId('file-changes-review-panel')).toHaveTextContent('src/env.ts')
   })
 
   test('submits environment commits from the popover', async () => {
@@ -3863,7 +4002,12 @@ describe('DesktopWorkbenchLayout', () => {
     await waitFor(() =>
       expect(onCommitEnvironmentChanges).toHaveBeenCalledWith(
         expect.objectContaining({ id: 1, name: 'github_wegent' }),
-        'feat: ship'
+        'feat: ship',
+        {
+          deviceId: 'device-1',
+          path: '/workspace/github_wegent',
+          source: 'project',
+        }
       )
     )
     expect(screen.getByText('已提交')).toBeInTheDocument()
@@ -3920,7 +4064,12 @@ describe('DesktopWorkbenchLayout', () => {
     await waitFor(() =>
       expect(onCheckoutEnvironmentBranch).toHaveBeenCalledWith(
         expect.anything(),
-        'human/alpaca-20260603-050330'
+        'human/alpaca-20260603-050330',
+        {
+          deviceId: 'device-1',
+          path: '/workspace/github_wegent',
+          source: 'project',
+        }
       )
     )
 
@@ -3930,7 +4079,11 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('environment-confirm-new-branch-button'))
 
     await waitFor(() =>
-      expect(onCreateEnvironmentBranch).toHaveBeenCalledWith(expect.anything(), 'human/new-branch')
+      expect(onCreateEnvironmentBranch).toHaveBeenCalledWith(expect.anything(), 'human/new-branch', {
+        deviceId: 'device-1',
+        path: '/workspace/github_wegent',
+        source: 'project',
+      })
     )
   })
 
@@ -4039,7 +4192,12 @@ describe('DesktopWorkbenchLayout', () => {
 
     await waitFor(() =>
       expect(onLoadEnvironmentInfo).toHaveBeenCalledWith(
-        expect.objectContaining({ id: 2, name: 'workspace' })
+        expect.objectContaining({ id: 2, name: 'workspace' }),
+        {
+          deviceId: 'device-from-fallback',
+          path: '/repo',
+          source: 'project',
+        }
       )
     )
   })
@@ -4109,7 +4267,13 @@ describe('DesktopWorkbenchLayout', () => {
 
     await userEvent.click(screen.getByTestId('environment-info-button'))
 
-    await waitFor(() => expect(onLoadEnvironmentInfo).toHaveBeenCalledWith(sinaProject))
+    await waitFor(() =>
+      expect(onLoadEnvironmentInfo).toHaveBeenCalledWith(sinaProject, {
+        deviceId: 'device-sina',
+        path: '/Users/hongyu9/Downloads/sina-sso',
+        source: 'project',
+      })
+    )
   })
 
   test('refreshes environment info when an assistant message completes', async () => {
@@ -4157,7 +4321,11 @@ describe('DesktopWorkbenchLayout', () => {
 
     await waitFor(() => {
       expect(onLoadEnvironmentInfo).toHaveBeenCalledTimes(1)
-      expect(onLoadEnvironmentInfo).toHaveBeenCalledWith(workspaceProject)
+      expect(onLoadEnvironmentInfo).toHaveBeenCalledWith(workspaceProject, {
+        deviceId: 'device-1',
+        path: '/repo',
+        source: 'project',
+      })
     })
 
     rerender(
@@ -4222,6 +4390,37 @@ describe('DesktopWorkbenchLayout', () => {
     fireEvent.pointerUp(document)
 
     expect(panel).toHaveStyle({ height: '400px' })
+  })
+
+  test('bottom workspace terminal uses the current task execution workspace session', async () => {
+    const workspacePanelState = createCloudWorkspacePanelState()
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          ...workspacePanelState,
+          currentTask: {
+            id: 8,
+            title: 'Task',
+            status: 'RUNNING',
+            created_at: '2026-06-12T00:00:00.000Z',
+            device_id: 'workspace-cloud-device',
+            execution_workspace_path: '/workspace/worktrees/8/workspace-project',
+          },
+        }}
+        projectWork={{
+          ...baseProps.projectWork,
+          projects: workspacePanelState.projects,
+          devices: workspacePanelState.devices,
+          currentProjectId: workspacePanelState.currentProject?.id,
+        }}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('toggle-bottom-workspace-panel-button'))
+
+    await waitFor(() => expect(startTerminalSessionMock).toHaveBeenCalledWith(12, { taskId: 8 }))
   })
 
   test('opens the terminal by default when the bottom workspace panel opens', async () => {

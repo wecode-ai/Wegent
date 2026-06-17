@@ -15,10 +15,7 @@ interface FileChangesCardProps {
   deviceOnline: boolean
   onLoadDiff: (subtaskId: number) => Promise<string>
   onRevert: (subtaskId: number) => Promise<TurnFileChangesSummary>
-  onOpenReview?: (request: {
-    subtaskId: number
-    loadDiff: () => Promise<string>
-  }) => void
+  onOpenReview?: (request: { subtaskId: number; loadDiff: () => Promise<string> }) => void
 }
 
 function getErrorMessage(error: unknown, fallback: string) {

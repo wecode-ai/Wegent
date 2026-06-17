@@ -153,6 +153,7 @@ class TaskInDB(TaskBase):
         False  # Whether to preserve executor pod after task completion
     )
     execution_workspace_source: Optional[str] = None
+    execution_workspace_path: Optional[str] = None
 
     class Config:
         """Pydantic config."""
@@ -195,6 +196,7 @@ class TaskDetail(BaseModel):
     )
     device_id: Optional[str] = None  # Device ID used for execution (for task history)
     execution_workspace_source: Optional[str] = None
+    execution_workspace_path: Optional[str] = None
     preserve_executor: bool = (
         False  # Whether to preserve executor pod after task completion
     )
@@ -257,6 +259,7 @@ class TaskLite(BaseModel):
     device_id: Optional[str] = None
     device_name: Optional[str] = None
     execution_workspace_source: Optional[str] = None
+    execution_workspace_path: Optional[str] = None
     git_repo: Optional[str] = None
     is_group_chat: bool = False  # Whether this is a group chat task
     knowledge_base_id: Optional[int] = (

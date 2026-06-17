@@ -23,7 +23,7 @@ function asStringRecord(value: unknown): Record<string, string> | null {
   return Object.fromEntries(
     Object.entries(value)
       .filter((entry): entry is [string, string] => typeof entry[1] === 'string')
-      .map(([key, item]) => [key, item]),
+      .map(([key, item]) => [key, item])
   )
 }
 
@@ -35,19 +35,14 @@ function normalizeType(value: unknown): InstalledMCPServerConfig['type'] {
   return 'streamable-http'
 }
 
-function pickImportedServer(
-  value: unknown,
-): { name: string; server: Record<string, unknown> } {
+function pickImportedServer(value: unknown): { name: string; server: Record<string, unknown> } {
   if (!isRecord(value)) {
     throw new Error('JSON must be an object')
   }
 
-  const mcpServers = isRecord(value.mcpServers)
-    ? value.mcpServers
-    : value.mcp_servers
+  const mcpServers = isRecord(value.mcpServers) ? value.mcpServers : value.mcp_servers
   if (isRecord(mcpServers)) {
-    const [name, server] =
-      Object.entries(mcpServers).find(([, item]) => isRecord(item)) ?? []
+    const [name, server] = Object.entries(mcpServers).find(([, item]) => isRecord(item)) ?? []
     if (!name || !isRecord(server)) {
       throw new Error('mcpServers is empty')
     }
@@ -80,9 +75,7 @@ export function parseCustomMcpJson(input: string): CustomMcpFormState {
   const parsed = JSON.parse(input) as unknown
   const { name, server } = pickImportedServer(parsed)
   const serverType =
-    asString(server.command) || server.type === 'stdio'
-      ? 'stdio'
-      : normalizeType(server.type)
+    asString(server.command) || server.type === 'stdio' ? 'stdio' : normalizeType(server.type)
   const url =
     asString(server.url) ||
     asString(server.base_url) ||
@@ -91,10 +84,7 @@ export function parseCustomMcpJson(input: string): CustomMcpFormState {
   const env = asStringRecord(server.env)
   const headers = asStringRecord(server.headers)
   const displayName =
-    asString(server.displayName) ||
-    asString(server.display_name) ||
-    asString(server.name) ||
-    name
+    asString(server.displayName) || asString(server.display_name) || asString(server.name) || name
 
   return {
     name,
@@ -109,9 +99,7 @@ export function parseCustomMcpJson(input: string): CustomMcpFormState {
   }
 }
 
-export function parseOptionalStringRecordJson(
-  value: string,
-): Record<string, string> | null {
+export function parseOptionalStringRecordJson(value: string): Record<string, string> | null {
   const trimmed = value.trim()
   if (!trimmed) return null
 
@@ -120,7 +108,5 @@ export function parseOptionalStringRecordJson(
     throw new Error('Expected a JSON object')
   }
 
-  return Object.fromEntries(
-    Object.entries(parsed).map(([key, item]) => [key, String(item)]),
-  )
+  return Object.fromEntries(Object.entries(parsed).map(([key, item]) => [key, String(item)]))
 }

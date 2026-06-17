@@ -65,7 +65,7 @@ import type {
 } from '@/types/api'
 import type { DeviceUpgradeState, DeviceUpgradeStatusPayload } from '@/types/device-events'
 import type { EnvironmentInfo } from '@/types/environment'
-import type { CodeCommentContext } from '@/types/workspace-files'
+import type { CodeCommentContext, WorkspaceTarget } from '@/types/workspace-files'
 import type {
   GuidanceWorkbenchMessage,
   ProcessingBlock,
@@ -253,12 +253,33 @@ export interface WorkbenchContextValue {
   getProjectWorkspaceRoot: (deviceId: string) => Promise<string>
   listDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
   createDeviceDirectory: (deviceId: string, path: string) => Promise<void>
-  loadEnvironmentInfo: (project: ProjectWithTasks | null) => Promise<EnvironmentInfo>
-  loadEnvironmentDiff: (project: ProjectWithTasks | null) => Promise<string>
-  commitEnvironmentChanges: (project: ProjectWithTasks | null, message: string) => Promise<void>
-  listEnvironmentBranches: (project: ProjectWithTasks | null) => Promise<string[]>
-  checkoutEnvironmentBranch: (project: ProjectWithTasks | null, branchName: string) => Promise<void>
-  createEnvironmentBranch: (project: ProjectWithTasks | null, branchName: string) => Promise<void>
+  loadEnvironmentInfo: (
+    project: ProjectWithTasks | null,
+    workspaceTarget?: WorkspaceTarget | null
+  ) => Promise<EnvironmentInfo>
+  loadEnvironmentDiff: (
+    project: ProjectWithTasks | null,
+    workspaceTarget?: WorkspaceTarget | null
+  ) => Promise<string>
+  commitEnvironmentChanges: (
+    project: ProjectWithTasks | null,
+    message: string,
+    workspaceTarget?: WorkspaceTarget | null
+  ) => Promise<void>
+  listEnvironmentBranches: (
+    project: ProjectWithTasks | null,
+    workspaceTarget?: WorkspaceTarget | null
+  ) => Promise<string[]>
+  checkoutEnvironmentBranch: (
+    project: ProjectWithTasks | null,
+    branchName: string,
+    workspaceTarget?: WorkspaceTarget | null
+  ) => Promise<void>
+  createEnvironmentBranch: (
+    project: ProjectWithTasks | null,
+    branchName: string,
+    workspaceTarget?: WorkspaceTarget | null
+  ) => Promise<void>
   setInput: (input: string) => void
   addCodeCommentContext: (context: CodeCommentContext) => void
   removeCodeCommentContext: (contextId: string) => void
@@ -1604,37 +1625,53 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
   )
 
   const loadEnvironmentInfo = useCallback(
-    (project: ProjectWithTasks | null) =>
-      loadProjectEnvironment(resolvedServices.deviceApi, project),
+    (project: ProjectWithTasks | null, workspaceTarget?: WorkspaceTarget | null) =>
+      loadProjectEnvironment(resolvedServices.deviceApi, project, workspaceTarget),
     [resolvedServices]
   )
 
   const loadEnvironmentDiff = useCallback(
-    (project: ProjectWithTasks | null) =>
-      loadProjectEnvironmentDiff(resolvedServices.deviceApi, project),
+    (project: ProjectWithTasks | null, workspaceTarget?: WorkspaceTarget | null) =>
+      loadProjectEnvironmentDiff(resolvedServices.deviceApi, project, workspaceTarget),
     [resolvedServices]
   )
 
   const commitEnvironmentChanges = useCallback(
-    (project: ProjectWithTasks | null, message: string) =>
-      commitProjectChanges(resolvedServices.deviceApi, project, message),
+    (
+      project: ProjectWithTasks | null,
+      message: string,
+      workspaceTarget?: WorkspaceTarget | null
+    ) => commitProjectChanges(resolvedServices.deviceApi, project, message, workspaceTarget),
     [resolvedServices]
   )
 
   const listEnvironmentBranches = useCallback(
-    (project: ProjectWithTasks | null) => listProjectBranches(resolvedServices.deviceApi, project),
+    (project: ProjectWithTasks | null, workspaceTarget?: WorkspaceTarget | null) =>
+      listProjectBranches(resolvedServices.deviceApi, project, workspaceTarget),
     [resolvedServices]
   )
 
   const checkoutEnvironmentBranch = useCallback(
-    (project: ProjectWithTasks | null, branchName: string) =>
-      checkoutProjectBranch(resolvedServices.deviceApi, project, branchName),
+    (
+      project: ProjectWithTasks | null,
+      branchName: string,
+      workspaceTarget?: WorkspaceTarget | null
+    ) => checkoutProjectBranch(resolvedServices.deviceApi, project, branchName, workspaceTarget),
     [resolvedServices]
   )
 
   const createEnvironmentBranch = useCallback(
-    (project: ProjectWithTasks | null, branchName: string) =>
-      createAndCheckoutProjectBranch(resolvedServices.deviceApi, project, branchName),
+    (
+      project: ProjectWithTasks | null,
+      branchName: string,
+      workspaceTarget?: WorkspaceTarget | null
+    ) =>
+      createAndCheckoutProjectBranch(
+        resolvedServices.deviceApi,
+        project,
+        branchName,
+        workspaceTarget
+      ),
     [resolvedServices]
   )
 

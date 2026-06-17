@@ -11,6 +11,7 @@ from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from app.models.project import Project
+from app.models.task import TaskResource
 from app.schemas.device import DeviceType
 from app.schemas.project import (
     ProjectConfig,
@@ -23,6 +24,8 @@ from app.services.device.session_service import (
     local_device_session_service,
 )
 from app.services.device_service import device_service
+from app.services.task_execution_workspace import task_execution_workspace_path
+from app.stores.tasks import task_store
 
 ProjectSessionType = Literal["terminal", "code_server"]
 
@@ -34,6 +37,7 @@ async def start_project_device_session(
     project_id: int,
     session_type: ProjectSessionType,
     client_origin: Optional[str] = None,
+    task_id: Optional[int] = None,
 ) -> ProjectDeviceSessionResponse:
     """Start an interactive local device session for a workspace project."""
     query = db.query(Project).filter(
@@ -53,9 +57,19 @@ async def start_project_device_session(
     project_config = _parse_project_config(project.config)
     device_id = _get_bound_device_id(project_config)
     _ensure_device_supports_project_sessions(db, user_id, device_id)
-    path, create_if_missing = _get_project_path(
-        project_config, project.config, project_id
-    )
+    if task_id is not None:
+        path = _get_task_session_path(
+            db=db,
+            user_id=user_id,
+            project_id=project_id,
+            task_id=task_id,
+            client_origin=client_origin,
+        )
+        create_if_missing = False
+    else:
+        path, create_if_missing = _get_project_path(
+            project_config, project.config, project_id
+        )
 
     try:
         result = await local_device_session_service.start_session(
@@ -83,6 +97,37 @@ async def start_project_device_session(
     result.setdefault("type", session_type)
     result.setdefault("path", path)
     return ProjectDeviceSessionResponse.model_validate(result)
+
+
+def _get_task_session_path(
+    *,
+    db: Session,
+    user_id: int,
+    project_id: int,
+    task_id: int,
+    client_origin: Optional[str],
+) -> str:
+    task = task_store.get_project_task_by_states(
+        db,
+        task_id=task_id,
+        project_id=project_id,
+        owner_user_id=user_id,
+        client_origin=client_origin,
+        states=TaskResource.is_active_query(),
+    )
+    if not task:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found",
+        )
+
+    path = task_execution_workspace_path(task)
+    if not path:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Task execution workspace path is required",
+        )
+    return path
 
 
 def _parse_project_config(config_data: object) -> ProjectConfig:

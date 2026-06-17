@@ -89,9 +89,13 @@ async def test_prepare_git_checkout_sets_repo_git_identity_after_clone():
         "git_config",
         "git_config",
     ]
-    assert command_mock.await_args_list[4].kwargs["path"] == "/workspace/projects/Wegent"
+    assert (
+        command_mock.await_args_list[4].kwargs["path"] == "/workspace/projects/Wegent"
+    )
     assert command_mock.await_args_list[4].kwargs["args"] == ["user.name", "alice"]
-    assert command_mock.await_args_list[5].kwargs["path"] == "/workspace/projects/Wegent"
+    assert (
+        command_mock.await_args_list[5].kwargs["path"] == "/workspace/projects/Wegent"
+    )
     assert command_mock.await_args_list[5].kwargs["args"] == [
         "user.email",
         "alice@example.com",
@@ -189,6 +193,7 @@ def test_project_task_list_includes_device_and_execution_workspace_source(
     assert len(items) == 1
     assert items[0].device_id == "device-1"
     assert items[0].execution_workspace_source == "git_worktree"
+    assert items[0].execution_workspace_path == "/workspace/worktrees/1386/Wegent"
 
 
 def test_delete_project_keeps_wework_task_project_id(test_db, test_user):

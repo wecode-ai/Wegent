@@ -181,6 +181,78 @@ describe('loadProjectEnvironment', () => {
     })
   })
 
+  test('loads git info from the active workspace target', async () => {
+    const executeCommand = vi
+      .fn()
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: 'human/worktree-branch\n',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: ' 1 file changed, 4 insertions(+)',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: '',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: 'https://github.com/wecode-ai/Wegent.git\n',
+        stderr: '',
+      })
+
+    const info = await loadProjectEnvironment(
+      { executeCommand },
+      {
+        id: 1,
+        name: 'Wegent',
+        config: {
+          mode: 'workspace',
+          execution: {
+            targetType: 'cloud',
+            deviceId: 'project-device',
+          },
+          workspace: {
+            source: 'local_path',
+            localPath: '/workspace/Wegent',
+          },
+        },
+      },
+      {
+        deviceId: 'task-device',
+        path: '/workspace/worktrees/1029/Wegent',
+        source: 'task',
+        taskId: 1029,
+      }
+    )
+
+    expect(info).toMatchObject({
+      executionTarget: 'cloud',
+      deviceId: 'task-device',
+      branchName: 'human/worktree-branch',
+      additions: '+4',
+      deletions: '-0',
+    })
+    for (const commandKey of [
+      'git_branch',
+      'git_diff_shortstat',
+      'git_status_porcelain',
+      'git_remote_url',
+    ]) {
+      expect(executeCommand).toHaveBeenCalledWith(
+        'task-device',
+        expect.objectContaining({
+          command_key: commandKey,
+          path: '/workspace/worktrees/1029/Wegent',
+        })
+      )
+    }
+  })
+
   test('surfaces structured stdout from text device commands as an environment error', async () => {
     const executeCommand = vi
       .fn()
@@ -623,6 +695,46 @@ describe('commitProjectChanges', () => {
     })
   })
 
+  test('loads the full environment diff from the active workspace target', async () => {
+    const executeCommand = vi.fn().mockResolvedValue({
+      success: true,
+      stdout: '',
+      stderr: '',
+    })
+
+    await expect(
+      loadProjectEnvironmentDiff(
+        { executeCommand },
+        {
+          id: 1,
+          name: 'Wegent',
+          config: {
+            mode: 'workspace',
+            execution: {
+              targetType: 'local',
+              deviceId: 'device-123',
+            },
+            workspace: {
+              source: 'local_path',
+              localPath: '/workspace/Wegent',
+            },
+          },
+        },
+        {
+          deviceId: 'device-123',
+          path: '/workspace/worktrees/1029/Wegent',
+        }
+      )
+    ).resolves.toBe('')
+
+    expect(executeCommand).toHaveBeenCalledWith('device-123', {
+      command_key: 'git_diff',
+      path: '/workspace/worktrees/1029/Wegent',
+      timeout_seconds: 30,
+      max_output_bytes: 5 * 1024 * 1024,
+    })
+  })
+
   test('stages all changes and commits with the provided message', async () => {
     const executeCommand = vi
       .fn()
@@ -658,6 +770,53 @@ describe('commitProjectChanges', () => {
     expect(executeCommand).toHaveBeenNthCalledWith(2, 'device-123', {
       command_key: 'git_commit',
       path: '/workspace/Wegent',
+      args: ['-m', 'feat: update environment info'],
+      timeout_seconds: 30,
+      max_output_bytes: 8192,
+    })
+  })
+
+  test('stages and commits changes in the active workspace target', async () => {
+    const executeCommand = vi
+      .fn()
+      .mockResolvedValueOnce({ success: true, stdout: '', stderr: '' })
+      .mockResolvedValueOnce({ success: true, stdout: '[main abc123] update\n', stderr: '' })
+
+    await commitProjectChanges(
+      { executeCommand },
+      {
+        id: 1,
+        name: 'Wegent',
+        config: {
+          mode: 'workspace',
+          execution: {
+            targetType: 'local',
+            deviceId: 'project-device',
+          },
+          workspace: {
+            source: 'local_path',
+            localPath: '/workspace/Wegent',
+          },
+        },
+      },
+      'feat: update environment info',
+      {
+        deviceId: 'task-device',
+        path: '/workspace/worktrees/1029/Wegent',
+        source: 'task',
+        taskId: 1029,
+      }
+    )
+
+    expect(executeCommand).toHaveBeenNthCalledWith(1, 'task-device', {
+      command_key: 'git_add_all',
+      path: '/workspace/worktrees/1029/Wegent',
+      timeout_seconds: 30,
+      max_output_bytes: 4096,
+    })
+    expect(executeCommand).toHaveBeenNthCalledWith(2, 'task-device', {
+      command_key: 'git_commit',
+      path: '/workspace/worktrees/1029/Wegent',
       args: ['-m', 'feat: update environment info'],
       timeout_seconds: 30,
       max_output_bytes: 8192,
@@ -715,6 +874,47 @@ describe('branch environment commands', () => {
       path: '/workspace/Wegent',
       timeout_seconds: 15,
       max_output_bytes: 1024 * 64,
+    })
+  })
+
+  test('runs branch commands in the active workspace target', async () => {
+    const executeCommand = vi.fn().mockResolvedValue({
+      success: true,
+      stdout: 'main\n',
+      stderr: '',
+    })
+    const target = {
+      deviceId: 'task-device',
+      path: '/workspace/worktrees/1029/Wegent',
+      source: 'task' as const,
+      taskId: 1029,
+    }
+
+    await expect(listProjectBranches({ executeCommand }, project, target)).resolves.toEqual([
+      'main',
+    ])
+    await checkoutProjectBranch({ executeCommand }, project, 'human/alpaca', target)
+    await createAndCheckoutProjectBranch({ executeCommand }, project, 'human/new-branch', target)
+
+    expect(executeCommand).toHaveBeenNthCalledWith(1, 'task-device', {
+      command_key: 'git_branch_list',
+      path: '/workspace/worktrees/1029/Wegent',
+      timeout_seconds: 15,
+      max_output_bytes: 1024 * 64,
+    })
+    expect(executeCommand).toHaveBeenNthCalledWith(2, 'task-device', {
+      command_key: 'git_checkout',
+      path: '/workspace/worktrees/1029/Wegent',
+      args: ['human/alpaca'],
+      timeout_seconds: 30,
+      max_output_bytes: 8192,
+    })
+    expect(executeCommand).toHaveBeenNthCalledWith(3, 'task-device', {
+      command_key: 'git_checkout_new',
+      path: '/workspace/worktrees/1029/Wegent',
+      args: ['human/new-branch'],
+      timeout_seconds: 30,
+      max_output_bytes: 8192,
     })
   })
 

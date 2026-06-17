@@ -71,6 +71,90 @@ async def test_start_project_device_session_uses_project_bound_device_and_path(
 
 
 @pytest.mark.asyncio
+async def test_start_project_device_session_uses_task_execution_workspace_path(
+    monkeypatch,
+):
+    """Task-scoped project sessions should use the prepared worktree path."""
+    from app.models.project import Project
+    from app.models.task import TaskResource
+    from app.services import project_device_session_service as service
+
+    project = SimpleNamespace(
+        id=123,
+        user_id=7,
+        is_active=True,
+        config=_project_config(path="/workspace/project", device_id="device-bound"),
+    )
+    task = SimpleNamespace(
+        id=456,
+        user_id=7,
+        project_id=123,
+        kind="Task",
+        is_active=TaskResource.STATE_ACTIVE,
+        client_origin="wework",
+        json={
+            "spec": {
+                "execution": {
+                    "workspace": {
+                        "source": "git_worktree",
+                        "path": "/workspace/worktrees/456/project",
+                    }
+                }
+            }
+        },
+    )
+
+    def fake_query(result):
+        query = SimpleNamespace()
+        query.filter = lambda *args: query
+        query.first = lambda: result
+        return query
+
+    def query(model):
+        if model is Project:
+            return fake_query(project)
+        if model is TaskResource:
+            return fake_query(task)
+        raise AssertionError(f"Unexpected model: {model}")
+
+    db = SimpleNamespace(query=query)
+    execute_mock = AsyncMock(
+        return_value={
+            "success": True,
+            "session_id": "session-456",
+            "url": "http://localhost:17888/?session_id=session-456&token=short",
+            "path": "/workspace/worktrees/456/project",
+            "device_id": "device-bound",
+        }
+    )
+    monkeypatch.setattr(
+        service.local_device_session_service,
+        "start_session",
+        execute_mock,
+    )
+    monkeypatch.setattr(
+        service,
+        "device_service",
+        SimpleNamespace(get_device_by_device_id=lambda db, user_id, device_id: None),
+        raising=False,
+    )
+
+    result = await service.start_project_device_session(
+        db=db,
+        user_id=7,
+        project_id=123,
+        session_type="terminal",
+        client_origin="wework",
+        task_id=456,
+    )
+
+    assert result.path == "/workspace/worktrees/456/project"
+    kwargs = execute_mock.await_args.kwargs
+    assert kwargs["path"] == "/workspace/worktrees/456/project"
+    assert kwargs["create_if_missing"] is False
+
+
+@pytest.mark.asyncio
 async def test_start_project_device_session_creates_configured_workspace_path(
     monkeypatch,
 ):

@@ -123,7 +123,11 @@ export function RightWorkspacePanel({
           </section>
         ) : (
           <FileWorkspacePanel
-            key={workspaceTarget ? `${workspaceTarget.deviceId}:${workspaceTarget.path}` : 'empty'}
+            key={
+              workspaceTarget
+                ? `${workspaceTarget.deviceId}:${workspaceTarget.path}:${workspaceTarget.taskId ?? ''}`
+                : 'empty'
+            }
             target={workspaceTarget}
             openFileRequest={openFileRequest}
             onAddCodeComment={onAddCodeComment}
