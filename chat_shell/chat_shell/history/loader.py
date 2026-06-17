@@ -18,7 +18,6 @@ For HTTP Mode (CHAT_SHELL_MODE=http):
 """
 
 import asyncio
-import json
 import logging
 from typing import Any, Optional
 
@@ -632,7 +631,7 @@ def _build_history_messages(
                         attachment.id,
                     )
                     continue
-                payload = _build_video_attachment_payload(attachment)
+                payload = _build_video_attachment_payload(db, attachment)
                 if payload is None:
                     continue
                 video_parts.append(
@@ -863,32 +862,18 @@ def _is_video_context(context) -> bool:
     return file_extension in {".mp4", ".avi", ".mkv", ".mov", ".flv", ".wmv"}
 
 
-def _build_video_attachment_payload(context):
+def _build_video_attachment_payload(db, context):
     """Build video payload through backend's context service in package mode."""
     from app.services.context import context_service
 
-    return context_service.build_video_content_from_attachment(context)
+    return context_service.build_video_content_from_attachment(db, context)
 
 
 def _build_video_attachment_metadata_text(context) -> str:
     """Build video attachment metadata without resolving a video URL."""
-    filename = getattr(context, "original_filename", None) or getattr(
-        context, "name", None
-    )
-    filename = filename or "video"
-    attachment_id = getattr(context, "id", "unknown")
-    mime_type = getattr(context, "mime_type", None) or "video/mp4"
-    file_size = getattr(context, "file_size", None) or 0
-    formatted_size = _format_file_size(file_size)
-    metadata_text = (
-        f"[Video Attachment: {filename} | ID: {attachment_id} | "
-        f"Type: {mime_type} | Size: {formatted_size}]"
-    )
-    type_data = getattr(context, "type_data", None) or {}
-    fid = type_data.get("fid")
-    if fid:
-        metadata_text += "\n" + json.dumps({"fid": fid})
-    return f"{metadata_text}\n"
+    from shared.utils.video_metadata import build_video_history_metadata_text
+
+    return build_video_history_metadata_text(context)
 
 
 def _format_file_size(size_bytes: int) -> str:
