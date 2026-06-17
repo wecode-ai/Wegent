@@ -56,7 +56,3 @@ export function useIsTablet(): boolean {
 export function useIsDesktop(): boolean {
   return useMediaQuery('(min-width: 1024px)')
 }
-
-export function useIsDesktopLayout(): boolean {
-  return useMediaQuery('(min-width: 768px)')
-}

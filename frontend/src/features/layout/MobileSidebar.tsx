@@ -28,7 +28,7 @@ export function MobileSidebar({
 
   return (
     <Transition.Root show={isOpen} as={Fragment}>
-      <Dialog as="div" className="relative z-50 md:hidden" onClose={onClose}>
+      <Dialog as="div" className="relative z-50 lg:hidden" onClose={onClose}>
         {/* 背景遮罩层 - 增强视觉效果 */}
         <Transition.Child
           as={Fragment}

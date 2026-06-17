@@ -320,7 +320,7 @@ export default function TaskSidebar({
               variant="ghost"
               onClick={() => handleNavigationClick(btn.path, btn.isActive, btn.buttonPageType)}
               data-testid={btn.testId ?? `task-sidebar-nav-${btn.buttonPageType}-button`}
-              className={`w-full justify-start px-3 h-11 min-w-[44px] text-sm rounded-md transition-all duration-200 md:h-8 ${
+              className={`w-full justify-start px-3 h-11 min-w-[44px] text-sm rounded-md transition-all duration-200 lg:h-8 ${
                 btn.isActive
                   ? 'bg-primary/10 text-primary font-medium hover:bg-primary/15'
                   : 'text-text-primary hover:bg-[rgb(238,238,238)] dark:hover:bg-white/10'
@@ -357,7 +357,7 @@ export default function TaskSidebar({
                           e.stopPropagation()
                           handleNavigationClick(btn.path, btn.isActive, btn.buttonPageType)
                         }}
-                        className="flex h-11 min-w-[44px] items-center gap-1 px-2 text-xs bg-primary text-white rounded-md hover:bg-primary/90 transition-colors md:h-8"
+                        className="flex h-11 min-w-[44px] items-center gap-1 px-2 text-xs bg-primary text-white rounded-md hover:bg-primary/90 transition-colors lg:h-8"
                       >
                         <Plus className="h-3 w-3" />
                         <span>{t('common:tasks.new_task')}</span>
@@ -400,7 +400,7 @@ export default function TaskSidebar({
               variant="ghost"
               data-testid="task-sidebar-more-button"
               onFocus={() => openMoreNavigation(menuId)}
-              className={`w-full justify-start px-3 h-11 min-w-[44px] text-sm rounded-md transition-all duration-200 md:h-8 ${
+              className={`w-full justify-start px-3 h-11 min-w-[44px] text-sm rounded-md transition-all duration-200 lg:h-8 ${
                 hasActiveItem
                   ? 'bg-primary/10 text-primary font-medium hover:bg-primary/15'
                   : 'text-text-primary hover:bg-[rgb(238,238,238)] dark:hover:bg-white/10'
@@ -447,7 +447,7 @@ export default function TaskSidebar({
             <DropdownMenuItem
               key={btn.path}
               data-testid={`task-sidebar-more-${btn.buttonPageType}-button`}
-              className={`h-11 min-w-[44px] gap-2 px-2 text-sm md:h-8 ${
+              className={`h-11 min-w-[44px] gap-2 px-2 text-sm lg:h-8 ${
                 btn.isActive
                   ? 'bg-primary/10 text-primary font-medium focus:bg-primary/15'
                   : 'text-text-primary focus:bg-[rgb(238,238,238)] dark:focus:bg-white/10'
@@ -519,7 +519,7 @@ export default function TaskSidebar({
                             e.stopPropagation()
                             handleNewAgentClick()
                           }}
-                          className="flex h-11 min-w-[44px] flex-shrink-0 items-center justify-center md:h-8"
+                          className="flex h-11 min-w-[44px] flex-shrink-0 items-center justify-center lg:h-8"
                           aria-label={t('common:tasks.new_conversation')}
                         >
                           <Plus className="h-4 w-4 text-text-primary" />
@@ -553,7 +553,7 @@ export default function TaskSidebar({
                             size="icon"
                             onClick={onToggleCollapsed}
                             data-testid="collapse-sidebar-button"
-                            className="h-11 min-w-[44px] w-11 p-0 text-text-muted hover:text-text-primary hover:bg-hover rounded-lg md:h-10 md:w-10 md:min-w-10"
+                            className="h-11 min-w-[44px] w-11 p-0 text-text-muted hover:text-text-primary hover:bg-hover rounded-lg lg:h-10 lg:w-10 lg:min-w-10"
                             aria-label={t('common:sidebar.collapse')}
                           >
                             <PanelLeftClose className="h-4 w-4" />
@@ -577,7 +577,7 @@ export default function TaskSidebar({
                     variant="ghost"
                     onClick={handleNewAgentClick}
                     data-testid="new-agent-button"
-                    className="w-full justify-start px-3 h-11 min-w-[44px] text-sm text-text-primary hover:bg-[rgb(238,238,238)] dark:hover:bg-white/10 rounded-md group transition-all duration-200 md:h-8"
+                    className="w-full justify-start px-3 h-11 min-w-[44px] text-sm text-text-primary hover:bg-[rgb(238,238,238)] dark:hover:bg-white/10 rounded-md group transition-all duration-200 lg:h-8"
                     size="sm"
                   >
                     <span className="flex min-w-0 flex-1 items-center justify-start gap-2.5 text-left">
@@ -780,7 +780,7 @@ export default function TaskSidebar({
     <>
       {/* Desktop Sidebar - Hidden on mobile, width controlled by parent ResizableSidebar */}
       <div
-        className="hidden md:flex md:flex-col w-full h-full bg-base rounded-3xl shadow-sidebar my-2"
+        className="hidden lg:flex lg:flex-col w-full h-full bg-base rounded-3xl shadow-sidebar my-2"
         style={{ height: 'calc(100% - 24px)' }}
         data-tour="task-sidebar"
       >
