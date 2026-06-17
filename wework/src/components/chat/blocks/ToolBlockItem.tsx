@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { ChevronDown } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -56,6 +57,7 @@ function ThinkingBlockItem({
   isRunning: boolean
 }) {
   const { t } = useTranslation('chat')
+  const [expanded, setExpanded] = useState(false)
 
   if (!block.content) return null
 
@@ -82,21 +84,36 @@ function ThinkingBlockItem({
   }
 
   const charCount = block.content.length
+  const detailId = `${block.id}-thinking-detail`
 
   return (
     <div className="min-w-0 overflow-x-hidden text-[13px]">
-      <div className="flex max-w-full items-center gap-1.5 text-text-muted">
+      <button
+        type="button"
+        data-testid="thinking-toggle-button"
+        aria-expanded={expanded}
+        aria-controls={detailId}
+        onClick={() => setExpanded(value => !value)}
+        className="flex max-w-full items-center gap-1.5 text-text-muted hover:text-text-secondary"
+      >
         <CommentaryIcon className="h-4 w-4 shrink-0" />
         <span className="min-w-0 truncate">
           {t('thinking.completed')} · {charCount} {t('thinking.chars')}
         </span>
-      </div>
-      <div
-        className="mt-2 min-w-0 overflow-x-hidden border-l border-border pl-4"
-        data-testid="thinking-detail"
-      >
-        <ProcessMarkdown content={block.content} />
-      </div>
+        <ChevronDown
+          className={`h-3.5 w-3.5 shrink-0 transition-transform ${expanded ? '' : '-rotate-90'}`}
+          strokeWidth={2}
+        />
+      </button>
+      {expanded && (
+        <div
+          id={detailId}
+          className="mt-2 min-w-0 overflow-x-hidden border-l border-border pl-4"
+          data-testid="thinking-detail"
+        >
+          <ProcessMarkdown content={block.content} />
+        </div>
+      )}
     </div>
   )
 }
