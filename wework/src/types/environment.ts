@@ -3,6 +3,7 @@ export interface EnvironmentInfo {
   deletions: string
   executionTarget: 'local' | 'cloud'
   deviceId?: string
+  workspacePath?: string
   branchName?: string
   createPullRequestUrl?: string
   error?: string
