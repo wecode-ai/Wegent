@@ -8,6 +8,8 @@ use tauri::{Emitter, State};
 
 const TERMINAL_OUTPUT_EVENT: &str = "local-terminal-output";
 const TERMINAL_EXIT_EVENT: &str = "local-terminal-exit";
+const DEFAULT_UTF8_LANG: &str = "en_US.UTF-8";
+const DEFAULT_UTF8_LC_CTYPE: &str = "UTF-8";
 
 pub struct LocalTerminalState {
     sessions: Mutex<HashMap<String, LocalTerminalSession>>,
@@ -98,6 +100,33 @@ fn decode_pty_output_chunk(pending: &mut Vec<u8>, chunk: &[u8]) -> String {
     output
 }
 
+fn is_utf8_locale_value(value: &str) -> bool {
+    let value = value.to_ascii_uppercase();
+    value.contains("UTF-8") || value.contains("UTF8")
+}
+
+fn resolve_utf8_locale_value(value: Option<&str>, default: &str) -> String {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && is_utf8_locale_value(value))
+        .unwrap_or(default)
+        .to_string()
+}
+
+fn process_utf8_locale_value(name: &str, default: &str) -> String {
+    resolve_utf8_locale_value(std::env::var(name).ok().as_deref(), default)
+}
+
+fn configure_terminal_environment(command: &mut CommandBuilder) {
+    command.env("TERM", "xterm-256color");
+    command.env("COLORTERM", "truecolor");
+    command.env("LANG", process_utf8_locale_value("LANG", DEFAULT_UTF8_LANG));
+    command.env(
+        "LC_CTYPE",
+        process_utf8_locale_value("LC_CTYPE", DEFAULT_UTF8_LC_CTYPE),
+    );
+}
+
 #[tauri::command]
 pub fn start_local_terminal(
     app: tauri::AppHandle,
@@ -129,8 +158,7 @@ pub fn start_local_terminal(
             .map_err(|error| format!("Failed to create PTY writer: {error}"))?;
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
         let mut command = CommandBuilder::new(shell);
-        command.env("TERM", "xterm-256color");
-        command.env("COLORTERM", "truecolor");
+        configure_terminal_environment(&mut command);
         if let Some(cwd) = cwd {
             command.cwd(cwd);
         }
@@ -280,5 +308,21 @@ mod tests {
 
         assert_eq!(output, "修复");
         assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn resolves_utf8_locale_for_terminal_processes() {
+        assert_eq!(
+            resolve_utf8_locale_value(None, "en_US.UTF-8"),
+            "en_US.UTF-8"
+        );
+        assert_eq!(
+            resolve_utf8_locale_value(Some("C"), "en_US.UTF-8"),
+            "en_US.UTF-8"
+        );
+        assert_eq!(
+            resolve_utf8_locale_value(Some("zh_CN.UTF-8"), "en_US.UTF-8"),
+            "zh_CN.UTF-8"
+        );
     }
 }
