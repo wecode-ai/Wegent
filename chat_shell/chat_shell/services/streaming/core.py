@@ -128,6 +128,7 @@ class StreamingState:
 
     # Latest context metrics snapshot for observability and refresh recovery
     context_metrics: Optional[dict[str, Any]] = None
+    context_compactions: list[dict[str, Any]] = field(default_factory=list)
 
     def append_content(self, token: str) -> None:
         """Append token to accumulated response."""
@@ -222,6 +223,8 @@ class StreamingState:
             result["messages_chain"] = self.messages_chain
         if self.context_metrics:
             result["context_metrics"] = self.context_metrics
+        if include_value and self.context_compactions:
+            result["context_compactions"] = self.context_compactions
         return result
 
 

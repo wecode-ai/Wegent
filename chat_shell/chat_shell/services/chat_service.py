@@ -293,6 +293,11 @@ class ChatService(ChatInterface):
             # both pre-turn (turn start) and mid-turn (after every tool). The
             # guidance consumer's hook is chained AFTER the guard so guidance
             # injection observes already-budgeted state.
+            from chat_shell.compression.config import get_model_context_config
+            from chat_shell.compression.summary_compactor import (
+                DEFAULT_RECENT_USER_TOKEN_LIMIT,
+                SummaryCompactor,
+            )
             from chat_shell.compression.token_counter import TokenCounter
             from chat_shell.guard import (
                 ToolOutputGuardAdapter,
@@ -300,6 +305,7 @@ class ChatService(ChatInterface):
                 UnifiedContextGuard,
                 chain_pre_model_hooks,
             )
+            from chat_shell.models.factory import LangChainModelFactory
 
             guard_model_id = (
                 request.model_config.get("model_id") if request.model_config else None
@@ -320,12 +326,35 @@ class ChatService(ChatInterface):
                     emergency_ratio=settings.EMERGENCY_TOOL_OUTPUT_RATIO,
                 )
                 guard_sources = [tool_output_adapter]
+            summary_compactor = None
+            if settings.MESSAGE_COMPRESSION_ENABLED:
+                summary_llm = LangChainModelFactory.create_from_config(
+                    request.model_config
+                    or {
+                        "model_id": guard_model_id,
+                        "model": guard_model_type or "openai",
+                    },
+                    streaming=False,
+                )
+                context_config = get_model_context_config(
+                    guard_model_id,
+                    model_config=request.model_config,
+                )
+                summary_compactor = SummaryCompactor(
+                    llm=summary_llm,
+                    token_counter=guard_counter,
+                    recent_user_token_limit=min(
+                        DEFAULT_RECENT_USER_TOKEN_LIMIT,
+                        max(1, int(context_config.target_limit * 0.5)),
+                    ),
+                )
             context_guard = UnifiedContextGuard(
                 model_id=guard_model_id,
                 model_type=guard_model_type,
                 model_config=request.model_config,
                 sources=guard_sources,
                 compression_enabled=settings.MESSAGE_COMPRESSION_ENABLED,
+                summary_compactor=summary_compactor,
             )
             chained_pre_model_hook = chain_pre_model_hooks(
                 context_guard,
@@ -478,6 +507,8 @@ class ChatService(ChatInterface):
             messages_chain = getattr(agent_builder, "_last_messages_chain", None)
             if messages_chain:
                 state.messages_chain = messages_chain
+            if context_guard.context_compactions:
+                state.context_compactions = context_guard.context_compactions
 
             # Finalize if not cancelled
             await guidance_consumer.expire_pending()
