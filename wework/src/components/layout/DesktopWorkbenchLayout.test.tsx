@@ -266,9 +266,11 @@ describe('DesktopWorkbenchLayout', () => {
       ]),
     onCheckoutEnvironmentBranch: vi.fn().mockResolvedValue(undefined),
     onCreateEnvironmentBranch: vi.fn().mockResolvedValue(undefined),
-    onLoadEnvironmentDiff: vi.fn().mockResolvedValue(
-      'diff --git a/src/env.ts b/src/env.ts\n--- a/src/env.ts\n+++ b/src/env.ts\n@@ -1 +1 @@\n-old\n+new\n'
-    ),
+    onLoadEnvironmentDiff: vi
+      .fn()
+      .mockResolvedValue(
+        'diff --git a/src/env.ts b/src/env.ts\n--- a/src/env.ts\n+++ b/src/env.ts\n@@ -1 +1 @@\n-old\n+new\n'
+      ),
     onInputChange: vi.fn(),
     onSend: vi.fn(),
     onLogout: vi.fn(),
@@ -2747,10 +2749,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
     await userEvent.click(screen.getByTestId('right-workspace-file-option'))
     expect(await screen.findByTestId('workspace-file-tree')).toBeInTheDocument()
-    expect(screen.getByTestId('right-workspace-file-tab')).toHaveAttribute(
-      'aria-selected',
-      'true'
-    )
+    expect(screen.getByTestId('right-workspace-file-tab')).toHaveAttribute('aria-selected', 'true')
 
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
     expect(screen.queryByTestId('right-workspace-panel')).not.toBeInTheDocument()
@@ -2758,10 +2757,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
 
     expect(screen.queryByTestId('right-workspace-launcher')).not.toBeInTheDocument()
-    expect(screen.getByTestId('right-workspace-file-tab')).toHaveAttribute(
-      'aria-selected',
-      'true'
-    )
+    expect(screen.getByTestId('right-workspace-file-tab')).toHaveAttribute('aria-selected', 'true')
     expect(await screen.findByTestId('workspace-file-tree')).toBeInTheDocument()
   })
 
@@ -2800,10 +2796,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
     await userEvent.click(screen.getByTestId('right-workspace-file-option'))
     expect(await screen.findByTestId('workspace-file-tree')).toBeInTheDocument()
-    expect(screen.getByTestId('right-workspace-file-tab')).toHaveAttribute(
-      'aria-selected',
-      'true'
-    )
+    expect(screen.getByTestId('right-workspace-file-tab')).toHaveAttribute('aria-selected', 'true')
 
     rerender(
       <DesktopWorkbenchLayout
@@ -2956,15 +2949,18 @@ describe('DesktopWorkbenchLayout', () => {
     expect(closeButton).not.toHaveClass('ml-auto')
     expect(screen.getByTestId('right-workspace-new-tab-button')).toBeInTheDocument()
     expect(await screen.findByTestId('file-changes-review-panel')).toHaveTextContent('src/env.ts')
+    expect(baseProps.onLoadEnvironmentDiff).toHaveBeenCalledTimes(1)
+
+    await userEvent.click(screen.getByTestId('refresh-review-diff-button'))
+
+    await waitFor(() => expect(baseProps.onLoadEnvironmentDiff).toHaveBeenCalledTimes(2))
   })
 
   test('right workspace panel retries review loading after a stale device offline error', async () => {
     const workspacePanelState = createCloudWorkspacePanelState()
     const onLoadEnvironmentDiff = vi
       .fn()
-      .mockRejectedValueOnce(
-        new Error("Device 'aa1f5585-8ef4-4cf3-a3c0-d8c89d22831a' is offline")
-      )
+      .mockRejectedValueOnce(new Error("Device 'aa1f5585-8ef4-4cf3-a3c0-d8c89d22831a' is offline"))
       .mockResolvedValueOnce(
         'diff --git a/src/env.ts b/src/env.ts\n--- a/src/env.ts\n+++ b/src/env.ts\n@@ -1 +1 @@\n-old\n+new\n'
       )
@@ -3735,9 +3731,11 @@ describe('DesktopWorkbenchLayout', () => {
   })
 
   test('opens environment changes review in the right workspace panel', async () => {
-    const onLoadEnvironmentDiff = vi.fn().mockResolvedValue(
-      'diff --git a/src/env.ts b/src/env.ts\n--- a/src/env.ts\n+++ b/src/env.ts\n@@ -1 +1 @@\n-old\n+new\n'
-    )
+    const onLoadEnvironmentDiff = vi
+      .fn()
+      .mockResolvedValue(
+        'diff --git a/src/env.ts b/src/env.ts\n--- a/src/env.ts\n+++ b/src/env.ts\n@@ -1 +1 @@\n-old\n+new\n'
+      )
 
     render(
       <DesktopWorkbenchLayout
