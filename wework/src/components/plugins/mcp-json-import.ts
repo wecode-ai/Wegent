@@ -42,7 +42,9 @@ function pickImportedServer(
     throw new Error('JSON must be an object')
   }
 
-  const mcpServers = value.mcpServers
+  const mcpServers = isRecord(value.mcpServers)
+    ? value.mcpServers
+    : value.mcp_servers
   if (isRecord(mcpServers)) {
     const [name, server] =
       Object.entries(mcpServers).find(([, item]) => isRecord(item)) ?? []
