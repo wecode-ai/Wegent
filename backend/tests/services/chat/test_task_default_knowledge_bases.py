@@ -209,6 +209,115 @@ def test_build_initial_task_knowledge_base_refs_skips_inaccessible_refs():
     assert [ref["id"] for ref in refs] == [11]
 
 
+def test_build_initial_task_context_refs_merges_defaults_and_explicit_contexts():
+    from app.services.chat.task_default_knowledge_bases import (
+        build_initial_task_context_refs,
+    )
+
+    db = Mock()
+    team = _make_team()
+    user = _make_user()
+    kb_map = {
+        11: _make_kb(11, "Product Docs"),
+        33: _make_kb(33, "Release Notes"),
+    }
+
+    def _kind_lookup(_, __, kind_type, ___, name):
+        if kind_type.value == "Bot":
+            return {
+                "bot-one": _make_bot("bot-one", "ghost-one"),
+                "bot-two": _make_bot("bot-two", "ghost-two"),
+            }.get(name)
+        return {
+            "ghost-one": _make_ghost("ghost-one", [{"id": 11, "name": "Product Docs"}]),
+            "ghost-two": _make_ghost("ghost-two", []),
+        }.get(name)
+
+    explicit_contexts = [
+        {
+            "type": "knowledge_base",
+            "data": {"id": 33, "name": "Release Notes"},
+        }
+    ]
+
+    with patch(
+        "app.services.chat.task_default_knowledge_bases.kindReader.get_by_name_and_namespace",
+        side_effect=_kind_lookup,
+    ):
+        with patch(
+            "app.services.chat.task_default_knowledge_bases._get_accessible_knowledge_base",
+            side_effect=lambda _db, _user_id, kb_id: kb_map.get(kb_id),
+        ):
+            result = build_initial_task_context_refs(
+                db=db,
+                user=user,
+                team=team,
+                explicit_contexts=explicit_contexts,
+                default_context_mode="use_defaults",
+            )
+
+    assert [ref["data"]["id"] for ref in result["context_refs"]] == [11, 33]
+    assert [ref["id"] for ref in result["knowledge_base_refs"]] == [11, 33]
+
+
+def test_build_initial_task_context_refs_warns_when_dingtalk_mcp_not_configured():
+    from app.services.chat.task_default_knowledge_bases import (
+        build_initial_task_context_refs,
+    )
+
+    db = Mock()
+    team = _make_team()
+    user = _make_user()
+
+    ghost = _make_ghost("ghost-one", [])
+    ghost.json["spec"]["defaultContextRefs"] = [
+        {
+            "type": "dingtalk_doc",
+            "source": "docs",
+            "id": "docs:node-1",
+            "dingtalk_node_id": "node-1",
+            "name": "Roadmap",
+            "doc_url": "https://example.com/doc",
+            "node_type": "doc",
+        }
+    ]
+
+    def _kind_lookup(_, __, kind_type, ___, name):
+        if kind_type.value == "Bot":
+            return {
+                "bot-one": _make_bot("bot-one", "ghost-one"),
+                "bot-two": _make_bot("bot-two", "ghost-two"),
+            }.get(name)
+        return {
+            "ghost-one": ghost,
+            "ghost-two": _make_ghost("ghost-two", []),
+        }.get(name)
+
+    with patch(
+        "app.services.chat.task_default_knowledge_bases.kindReader.get_by_name_and_namespace",
+        side_effect=_kind_lookup,
+    ):
+        with patch(
+            "app.services.chat.task_default_knowledge_bases.DingTalkDocService.is_configured",
+            return_value=False,
+        ):
+            result = build_initial_task_context_refs(db=db, user=user, team=team)
+
+    assert result["context_refs"] == []
+    assert result["knowledge_base_refs"] == []
+    assert result["context_warnings"] == [
+        {
+            "type": "external_document",
+            "reason": "mcp_not_configured",
+            "message": "未开启钉钉 MCP，无法读取钉钉知识",
+            "name": "Roadmap",
+            "provider": "dingtalk",
+            "source": "docs",
+            "dingtalk_node_id": "node-1",
+        }
+    ]
+
+
 def test_create_new_task_writes_initial_knowledge_base_refs_for_chat_tasks(
     test_db, test_user
 ):

@@ -28,6 +28,7 @@ from app.schemas.kind import Team, TeamMember
 from app.schemas.project import ProjectConfig
 from app.services.auth import create_skill_identity_token
 from app.services.mcp_provider_registry import (
+    get_mcp_provider_service,
     get_mcp_service_by_skill_name,
     list_mcp_providers,
 )
@@ -239,6 +240,10 @@ class TaskRequestBuilder:
             message=message,
             preload_skills=effective_preload_skills,
         )
+        effective_preload_skills = self._inject_default_context_provider_skills(
+            task=task,
+            preload_skills=effective_preload_skills,
+        )
 
         # Get subscription-manager skill as available (non-preloaded) skill
         # This provides preview_subscription and create_subscription MCP tools
@@ -370,6 +375,11 @@ class TaskRequestBuilder:
                 workspace_source=project_workspace.get("workspace_source"),
                 workspace_path=project_workspace.get("project_workspace_path"),
             )
+
+        system_prompt = self._append_external_document_context_guidance(
+            system_prompt,
+            task=task,
+        )
 
         request_project_id = _first_present_project_id(
             project_workspace.get("project_id"), task.project_id
@@ -2087,6 +2097,99 @@ Response template:
                     existing_names.add(runtime_skill)
 
         return merged_preload_skills
+
+    def _inject_default_context_provider_skills(
+        self,
+        *,
+        task: TaskResource,
+        preload_skills: list,
+    ) -> list:
+        """Preload MCP provider skills required by task-level external contexts."""
+        merged_preload_skills = list(preload_skills)
+        existing_names = {
+            skill if isinstance(skill, str) else skill.get("name")
+            for skill in merged_preload_skills
+            if isinstance(skill, (str, dict))
+        }
+
+        for context in self._get_external_document_contexts(task):
+            data = context.get("data") or {}
+            if data.get("provider") != "dingtalk":
+                continue
+            service = get_mcp_provider_service("dingtalk", str(data.get("source")))
+            if not service or not service.get("skill_name"):
+                continue
+            skill_name = service["skill_name"]
+            if skill_name in existing_names:
+                continue
+            merged_preload_skills.append(
+                {
+                    "name": skill_name,
+                    "namespace": "default",
+                    "is_public": True,
+                }
+            )
+            existing_names.add(skill_name)
+
+        return merged_preload_skills
+
+    @staticmethod
+    def _get_external_document_contexts(task: TaskResource) -> list[dict[str, Any]]:
+        task_json = task.json if isinstance(task.json, dict) else {}
+        spec = task_json.get("spec", {}) if isinstance(task_json, dict) else {}
+        context_refs = spec.get("contextRefs", []) if isinstance(spec, dict) else []
+        if not isinstance(context_refs, list):
+            return []
+        return [
+            context
+            for context in context_refs
+            if isinstance(context, dict) and context.get("type") == "external_document"
+        ]
+
+    @classmethod
+    def _append_external_document_context_guidance(
+        cls,
+        system_prompt: str,
+        *,
+        task: TaskResource,
+    ) -> str:
+        """Append concise MCP usage guidance for task-level external documents."""
+        contexts = cls._get_external_document_contexts(task)
+        if not contexts:
+            return system_prompt
+
+        rows = []
+        for index, context in enumerate(contexts, start=1):
+            data = context.get("data") or {}
+            if data.get("provider") != "dingtalk":
+                continue
+            name = data.get("name") or data.get("dingtalk_node_id") or f"node-{index}"
+            source = data.get("source") or "docs"
+            node_id = data.get("dingtalk_node_id") or ""
+            node_type = data.get("node_type") or "doc"
+            doc_url = data.get("doc_url") or ""
+            rows.append(
+                f"{index}. {name} | source={source} | node_type={node_type} | "
+                f"dingtalk_node_id={node_id} | url={doc_url}"
+            )
+
+        if not rows:
+            return system_prompt
+
+        guidance = "\n".join(
+            [
+                "<external_document_context>",
+                "The user or agent default context selected these DingTalk knowledge nodes.",
+                "Use the corresponding DingTalk MCP tools to read document content or query the indexed knowledge when the user's request needs them.",
+                "Do not claim that you have read a DingTalk node until the MCP tool has returned its content or search result.",
+                *rows,
+                "</external_document_context>",
+            ]
+        )
+        base_prompt = (system_prompt or "").rstrip()
+        if not base_prompt:
+            return guidance
+        return f"{base_prompt}\n\n{guidance}"
 
     # =========================================================================
     # Claude Code MCP Processing

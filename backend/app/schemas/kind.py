@@ -8,7 +8,7 @@ Kubernetes-style API schemas for cloud-native agent management
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 
 from pydantic import (
     AliasChoices,
@@ -150,6 +150,33 @@ class KnowledgeBaseDefaultRef(BaseModel):
     name: str
 
 
+class DefaultKnowledgeBaseContextRef(BaseModel):
+    """Knowledge base binding used for Ghost-level default contexts."""
+
+    type: Literal["knowledge_base"]
+    id: int
+    name: str
+    document_count: Optional[int] = None
+
+
+class DefaultDingTalkDocContextRef(BaseModel):
+    """DingTalk document or wikispace node used for Ghost-level defaults."""
+
+    type: Literal["dingtalk_doc"]
+    source: Literal["docs", "wikispace"]
+    id: str
+    dingtalk_node_id: str
+    name: str
+    doc_url: str
+    node_type: Literal["folder", "doc", "file"]
+
+
+DefaultContextRef = Annotated[
+    Union[DefaultKnowledgeBaseContextRef, DefaultDingTalkDocContextRef],
+    Field(discriminator="type"),
+]
+
+
 # Ghost CRD schemas
 class GhostSpec(BaseModel):
     """Ghost specification"""
@@ -157,6 +184,7 @@ class GhostSpec(BaseModel):
     systemPrompt: str
     mcpServers: Optional[Dict[str, Any]] = None
     defaultKnowledgeBaseRefs: Optional[List[KnowledgeBaseDefaultRef]] = None
+    defaultContextRefs: Optional[List[DefaultContextRef]] = None
     skills: Optional[List[str]] = None  # Skill names list
     preload_skills: Optional[List[str]] = Field(
         None,
@@ -575,6 +603,25 @@ class TaskExecutionSpec(BaseModel):
     workspace: Optional[TaskExecutionWorkspace] = None
 
 
+class TaskContextRef(BaseModel):
+    """Task-level context snapshot."""
+
+    type: str
+    data: Dict[str, Any]
+
+
+class TaskContextWarning(BaseModel):
+    """Task-level default context warning for UI display."""
+
+    type: str
+    reason: str
+    message: str
+    provider: Optional[str] = None
+    source: Optional[str] = None
+    dingtalk_node_id: Optional[str] = None
+    name: Optional[str] = None
+
+
 class TaskSpec(BaseModel):
     """Task specification"""
 
@@ -586,6 +633,8 @@ class TaskSpec(BaseModel):
     knowledgeBaseRefs: Optional[List[KnowledgeBaseTaskRef]] = (
         None  # Bound knowledge bases for group chat
     )
+    contextRefs: Optional[List[TaskContextRef]] = None
+    contextWarnings: Optional[List[TaskContextWarning]] = None
     knowledgeBaseScopes: Optional[List[KnowledgeBaseTaskScopeRef]] = (
         None  # Per-KB scope refs for OpenAPI follow-up inheritance
     )

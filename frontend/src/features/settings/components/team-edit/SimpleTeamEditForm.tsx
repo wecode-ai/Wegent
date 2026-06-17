@@ -5,7 +5,7 @@
 'use client'
 
 import { type ReactNode, useId, useMemo, useState } from 'react'
-import { ChevronDown, SettingsIcon, Wand2, XIcon } from 'lucide-react'
+import { ChevronDown, Database, SettingsIcon, Wand2, XIcon } from 'lucide-react'
 
 import type { SkillRefMeta } from '@/apis/bots'
 import type { ModelTypeEnum, UnifiedModel } from '@/apis/models'
@@ -23,13 +23,19 @@ import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import PromptFineTuneDialog from '@/features/prompt-tune/components/PromptFineTuneDialog'
 import McpConfigSection from '@/features/settings/components/McpConfigSection'
-import { KnowledgeBaseMultiSelector } from '@/features/settings/components/knowledge/KnowledgeBaseMultiSelector'
 import SkillManagementModal from '@/features/settings/components/skills/SkillManagementModal'
 import { RichSkillSelector } from '@/features/settings/components/skills/RichSkillSelector'
 import type { AgentType as McpAgentType } from '@/features/settings/utils/mcpTypeAdapter'
+import ContextSelector from '@/features/tasks/components/chat/ContextSelector'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
+import type { ContextItem } from '@/types/context'
+import type { DefaultContextRef } from '@/types/default-context'
 import type { KnowledgeBaseDefaultRef, TaskType } from '@/types/api'
+import {
+  contextItemsToDefaultContextRefs,
+  defaultContextRefsToContextItems,
+} from '@/features/context-selector/adapters/defaultContextAdapters'
 
 import { TeamIconPicker } from '../teams/TeamIconPicker'
 import ExecutorModeSelector from './ExecutorModeSelector'
@@ -77,6 +83,8 @@ interface SimpleTeamEditFormProps {
   loadingSkills: boolean
   onSkillsChange: (skills: string[], refs: Record<string, SkillRefMeta>) => void
   onReloadSkills: () => void
+  defaultContextRefs: DefaultContextRef[]
+  onDefaultContextRefsChange: (value: DefaultContextRef[]) => void
   defaultKnowledgeBaseRefs: KnowledgeBaseDefaultRef[]
   onDefaultKnowledgeBaseRefsChange: (value: KnowledgeBaseDefaultRef[]) => void
   mcpConfig: string
@@ -167,8 +175,8 @@ export default function SimpleTeamEditForm({
   loadingSkills,
   onSkillsChange,
   onReloadSkills,
-  defaultKnowledgeBaseRefs,
-  onDefaultKnowledgeBaseRefsChange,
+  defaultContextRefs,
+  onDefaultContextRefsChange,
   mcpConfig,
   onMcpConfigChange,
   mcpAgentType,
@@ -181,6 +189,14 @@ export default function SimpleTeamEditForm({
   const { t } = useTranslation()
   const [skillManagementModalOpen, setSkillManagementModalOpen] = useState(false)
   const [promptFineTuneOpen, setPromptFineTuneOpen] = useState(false)
+  const [defaultContextsOpen, setDefaultContextsOpen] = useState(false)
+  const defaultContextItems = useMemo(
+    () => defaultContextRefsToContextItems(defaultContextRefs),
+    [defaultContextRefs]
+  )
+  const updateDefaultContextItems = (items: ContextItem[]) => {
+    onDefaultContextRefsChange(contextItemsToDefaultContextRefs(items))
+  }
   const showRequiresWorkspace = bindMode.includes('code')
   const modelSelectValue = toModelSelectValue(modelName, modelType, modelNamespace)
   const selectedModel = useMemo(
@@ -493,22 +509,71 @@ export default function SimpleTeamEditForm({
           </SimpleConfigRow>
 
           <SimpleConfigRow
-            label={t('common:bot.default_knowledge_bases')}
+            label={t('common:bot.default_contexts')}
             description={t('settings:team.simple.core.knowledge_description')}
           >
-            <KnowledgeBaseMultiSelector
-              value={defaultKnowledgeBaseRefs}
-              onChange={onDefaultKnowledgeBaseRefsChange}
-              helperText={null}
-              allowedSources={
-                scope === 'group'
-                  ? groupName
-                    ? ['group', 'organization']
-                    : ['organization']
-                  : ['personal', 'group', 'organization']
-              }
-              allowedGroupNamespaces={scope === 'group' && groupName ? [groupName] : undefined}
-            />
+            <div className="space-y-2">
+              <div className="flex flex-wrap gap-2">
+                {defaultContextItems.length === 0 ? (
+                  <span className="text-sm text-text-muted">
+                    {t('common:bot.default_contexts_empty')}
+                  </span>
+                ) : (
+                  defaultContextItems.map(context => (
+                    <span
+                      key={`${context.type}:${context.id}`}
+                      className="inline-flex items-center gap-1 rounded-md border border-border bg-surface px-2 py-1 text-sm text-text-primary"
+                    >
+                      <Database className="h-3.5 w-3.5 text-text-muted" />
+                      <span className="max-w-[180px] truncate">{context.name}</span>
+                      <button
+                        type="button"
+                        className="text-text-muted hover:text-text-primary"
+                        onClick={() =>
+                          updateDefaultContextItems(
+                            defaultContextItems.filter(item => item.id !== context.id)
+                          )
+                        }
+                        aria-label={t('common:bot.default_contexts_remove')}
+                      >
+                        <XIcon className="h-3 w-3" />
+                      </button>
+                    </span>
+                  ))
+                )}
+              </div>
+              <ContextSelector
+                open={defaultContextsOpen}
+                onOpenChange={setDefaultContextsOpen}
+                selectedContexts={defaultContextItems}
+                onSelect={context =>
+                  updateDefaultContextItems(
+                    defaultContextItems.some(item => item.id === context.id)
+                      ? defaultContextItems
+                      : [...defaultContextItems, context]
+                  )
+                }
+                onDeselect={id =>
+                  updateDefaultContextItems(defaultContextItems.filter(item => item.id !== id))
+                }
+                onSelectMultiple={contexts => {
+                  const existingIds = new Set(defaultContextItems.map(item => item.id))
+                  updateDefaultContextItems([
+                    ...defaultContextItems,
+                    ...contexts.filter(context => !existingIds.has(context.id)),
+                  ])
+                }}
+                onDeselectMultiple={ids =>
+                  updateDefaultContextItems(
+                    defaultContextItems.filter(item => !ids.includes(item.id))
+                  )
+                }
+              >
+                <Button type="button" variant="outline" size="sm">
+                  {t('common:bot.default_contexts_add')}
+                </Button>
+              </ContextSelector>
+            </div>
           </SimpleConfigRow>
 
           <SimpleConfigRow

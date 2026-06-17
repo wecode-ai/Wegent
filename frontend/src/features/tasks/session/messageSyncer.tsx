@@ -28,6 +28,7 @@ import {
   SkillResponsePayload,
 } from '@/types/socket'
 import type { InteractiveFormAnswerPayload, TaskDetailSubtask, Team, TaskType } from '@/types/api'
+import type { DefaultContextMode } from '@/types/default-context'
 import type { MessageBlock } from '../components/message/thinking/types'
 import { generateMessageId, TaskStateMachine } from '@wegent/chat-core'
 import type { TaskStateMachineDeps, UnifiedMessage } from '@wegent/chat-core'
@@ -70,6 +71,7 @@ export interface ChatMessageRequest {
     type: string
     data: Record<string, unknown>
   }>
+  default_context_mode?: DefaultContextMode
   // Repository info for code tasks
   git_url?: string
   git_repo?: string
@@ -710,6 +712,7 @@ export function useMessageSyncer({
         force_override_bot_model_type: request.force_override_bot_model_type,
         is_group_chat: request.is_group_chat,
         contexts: request.contexts,
+        default_context_mode: request.default_context_mode,
         git_url: request.git_url,
         git_repo: request.git_repo,
         git_repo_id: request.git_repo_id,

@@ -1605,6 +1605,7 @@ function ChatAreaContent({
 
   const shouldMountQueueMessageHandler =
     taskType === 'chat' || taskType === 'task' || taskType === 'code'
+  const contextWarnings = selectedTaskDetail?.context_warnings || []
 
   return (
     <div
@@ -1640,6 +1641,24 @@ function ChatAreaContent({
           canContinueToNextStage={pipelineNextStepDraft.hasSelectableContext}
           onNextStepClick={handlePipelineNextStepClick}
         />
+      )}
+
+      {contextWarnings.length > 0 && (
+        <div className="mx-auto w-full max-w-3xl px-4 pt-3">
+          <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            <div className="flex items-start gap-2">
+              <ShieldX className="mt-0.5 h-4 w-4 flex-shrink-0" />
+              <div className="space-y-1">
+                {contextWarnings.map((warning, index) => (
+                  <div key={`${warning.reason}:${warning.dingtalk_node_id || index}`}>
+                    {warning.message}
+                    {warning.name ? `：${warning.name}` : ''}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Messages Area: always mounted to keep scroll container stable */}

@@ -203,6 +203,7 @@ class TaskDetail(BaseModel):
     requested_skills: Optional[List[SkillRef]] = (
         None  # User-selected skills for this task
     )
+    context_warnings: Optional[List[dict[str, Any]]] = None
 
     class Config:
         """Pydantic config."""

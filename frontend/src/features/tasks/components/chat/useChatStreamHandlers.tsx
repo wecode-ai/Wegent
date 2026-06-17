@@ -41,6 +41,7 @@ import type {
   InteractiveFormAnswerPayload,
 } from '@/types/api'
 import type { ContextItem } from '@/types/context'
+import type { DefaultContextMode } from '@/types/default-context'
 import type { SkillRef } from '../../hooks/useSkillSelector'
 
 function isVirtualKnowledgeBasePath(path: string): boolean {
@@ -600,6 +601,7 @@ export function useChatStreamHandlers({
         task_type: taskType,
         knowledge_base_id: taskType === 'knowledge' ? knowledgeBaseId : undefined,
         contexts: contextItems.length > 0 ? contextItems : undefined,
+        default_context_mode: 'use_defaults' satisfies DefaultContextMode,
         device_id: effectiveDeviceId,
         // Project association for workspace project conversations
         project_id: currentTaskId ? undefined : projectId,
@@ -1310,6 +1312,7 @@ export function useChatStreamHandlers({
             task_type: taskType,
             knowledge_base_id: taskType === 'knowledge' ? knowledgeBaseId : undefined,
             contexts: contextItems.length > 0 ? contextItems : undefined,
+            default_context_mode: 'use_defaults',
           },
           {
             pendingUserMessage: message,

@@ -12,6 +12,7 @@
  */
 
 import type { Bot, SkillRefMeta } from '@/types/api'
+import type { DefaultContextRef } from '@/types/default-context'
 import { UnifiedShell } from './shells'
 import { UnifiedModel } from './models'
 import { adminApis, AdminPublicBot, AdminPublicShell, AdminPublicModel } from './admin'
@@ -33,6 +34,7 @@ export function transformPublicBotToBot(publicBot: AdminPublicBot): Bot {
     agent_config: publicBot.agent_config || {},
     system_prompt: publicBot.system_prompt || '',
     mcp_servers: publicBot.mcp_servers || {},
+    default_context_refs: publicBot.default_context_refs || [],
     default_knowledge_base_refs: publicBot.default_knowledge_base_refs || [],
     skills: publicBot.skills || [],
     skill_refs: publicBot.skill_refs || {},
@@ -108,6 +110,7 @@ export interface PublicBotFormData {
   preload_skills?: string[] // Skills to preload into the system prompt
   preload_skill_refs?: Record<string, SkillRefMeta> // Precise refs for preloaded skills
   agent_config?: Record<string, unknown> // Agent config for Model
+  default_context_refs?: DefaultContextRef[] // Unified default context refs for Ghost
   default_knowledge_base_refs?: { id: number; name: string }[] // Default knowledge base refs for Ghost
 }
 /**
@@ -140,6 +143,7 @@ export const publicResourceApis = {
       preload_skills: formData.preload_skills,
       preload_skill_refs: formData.preload_skill_refs,
       agent_config: formData.agent_config,
+      default_context_refs: formData.default_context_refs,
       default_knowledge_base_refs: formData.default_knowledge_base_refs,
     })
     return transformPublicBotToBot(created)
@@ -161,6 +165,7 @@ export const publicResourceApis = {
       preload_skills: formData.preload_skills,
       preload_skill_refs: formData.preload_skill_refs,
       agent_config: formData.agent_config,
+      default_context_refs: formData.default_context_refs,
       default_knowledge_base_refs: formData.default_knowledge_base_refs,
     })
     return transformPublicBotToBot(updated)

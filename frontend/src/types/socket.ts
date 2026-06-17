@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { InteractiveFormAnswerPayload, TaskType } from './api'
+import type { DefaultContextMode } from './default-context'
 
 /**
  * Socket.IO event types and payload definitions
@@ -117,6 +118,7 @@ export interface ChatSendPayload {
     type: string
     data: Record<string, unknown>
   }>
+  default_context_mode?: DefaultContextMode
   // Repository info for code tasks
   git_url?: string
   git_repo?: string

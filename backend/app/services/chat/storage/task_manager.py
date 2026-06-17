@@ -27,6 +27,7 @@ from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.kind import Bot, Task, Team
 from app.services.chat.task_default_knowledge_bases import (
+    build_initial_task_context_refs,
     build_initial_task_knowledge_base_refs,
 )
 from app.services.readers import KindType, kindReader
@@ -99,6 +100,10 @@ class TaskCreationParams:
     is_api_call: bool = False
     # Optional API key name for tracing/audit
     api_key_name: Optional[str] = None
+    # Default context behavior for new task creation.
+    default_context_mode: str = "use_defaults"
+    # Explicit contexts used when default_context_mode is "override".
+    contexts: Optional[List[Any]] = None
     # Whether executor runtime should be deleted immediately after completion
     auto_delete_executor: Optional[str] = None
     # Video generation parameters (user-selected at generation time)
@@ -288,12 +293,29 @@ def create_new_task(
         f"[create_new_task] Creating task_json with is_group_chat={params.is_group_chat}"
     )
 
-    knowledge_base_refs = build_initial_task_knowledge_base_refs(
-        db=db,
-        user=user,
-        team=team,
-        knowledge_base_id=params.knowledge_base_id,
-    )
+    if not getattr(team, "json", None) and not params.contexts:
+        knowledge_base_refs = build_initial_task_knowledge_base_refs(
+            db=db,
+            user=user,
+            team=team,
+            knowledge_base_id=params.knowledge_base_id,
+        )
+        context_refs = [
+            {"type": "knowledge_base", "data": ref} for ref in knowledge_base_refs
+        ]
+        context_warnings = []
+    else:
+        initial_contexts = build_initial_task_context_refs(
+            db=db,
+            user=user,
+            team=team,
+            explicit_contexts=params.contexts,
+            default_context_mode=params.default_context_mode,
+            knowledge_base_id=params.knowledge_base_id,
+        )
+        knowledge_base_refs = initial_contexts["knowledge_base_refs"]
+        context_refs = initial_contexts["context_refs"]
+        context_warnings = initial_contexts["context_warnings"]
     task_execution = _build_task_execution(params.execution_workspace)
 
     task_json = {
@@ -314,6 +336,8 @@ def create_new_task(
                 if knowledge_base_refs
                 else {}
             ),
+            **({"contextRefs": context_refs} if context_refs else {}),
+            **({"contextWarnings": context_warnings} if context_warnings else {}),
             **({"execution": task_execution} if task_execution else {}),
         },
         "status": {

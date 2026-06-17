@@ -15,10 +15,21 @@ from sqlalchemy.orm.attributes import flag_modified
 
 logger = logging.getLogger(__name__)
 
+from app.models.dingtalk_doc import DingTalkNodeSource, DingtalkSyncedNode
 from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.bot import BotCreate, BotDetail, BotInDB, BotUpdate
-from app.schemas.kind import Bot, Ghost, Model, Shell, SkillRefMeta, Team
+from app.schemas.kind import (
+    Bot,
+    DefaultContextRef,
+    DefaultKnowledgeBaseContextRef,
+    Ghost,
+    KnowledgeBaseDefaultRef,
+    Model,
+    Shell,
+    SkillRefMeta,
+    Team,
+)
 from app.services.adapters.shell_utils import (
     get_shell_by_name,
     get_shell_info_by_name,
@@ -27,6 +38,8 @@ from app.services.adapters.shell_utils import (
 )
 from app.services.adapters.task_kinds.running_tasks import get_running_tasks_for_team
 from app.services.base import BaseService
+from app.services.dingtalk_doc_service import DingTalkDocService
+from app.services.dingtalk_wikispace_service import DingTalkWikiSpaceService
 from app.services.knowledge.knowledge_service import KnowledgeService
 from shared.utils.crypto import encrypt_sensitive_data, is_data_encrypted
 
@@ -59,6 +72,115 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         "DIFY_API_KEY",
         # Add more sensitive keys here as needed
     ]
+
+    def _knowledge_refs_to_default_context_refs(
+        self, refs: Optional[List[KnowledgeBaseDefaultRef]]
+    ) -> list[DefaultContextRef]:
+        """Convert legacy default KB refs into default context refs."""
+        if not refs:
+            return []
+        return [
+            DefaultKnowledgeBaseContextRef(
+                type="knowledge_base",
+                id=ref.id,
+                name=ref.name,
+            )
+            for ref in refs
+        ]
+
+    def _extract_default_knowledge_base_refs(
+        self, refs: Optional[List[DefaultContextRef]]
+    ) -> list[KnowledgeBaseDefaultRef]:
+        """Extract legacy KB refs from the new default context collection."""
+        result: list[KnowledgeBaseDefaultRef] = []
+        for ref in refs or []:
+            if ref.type != "knowledge_base":
+                continue
+            result.append(KnowledgeBaseDefaultRef(id=ref.id, name=ref.name))
+        return result
+
+    def _merge_legacy_knowledge_refs(
+        self,
+        existing_refs: Optional[List[DefaultContextRef]],
+        legacy_refs: Optional[List[KnowledgeBaseDefaultRef]],
+    ) -> list[DefaultContextRef]:
+        """Replace only the KB subset when legacy clients update default KB refs."""
+        non_kb_refs = [
+            ref for ref in existing_refs or [] if ref.type != "knowledge_base"
+        ]
+        return [
+            *non_kb_refs,
+            *self._knowledge_refs_to_default_context_refs(legacy_refs),
+        ]
+
+    def _validate_default_dingtalk_ref(
+        self,
+        db: Session,
+        ref: DefaultContextRef,
+        user_id: int,
+        user: User | None = None,
+    ) -> None:
+        """Validate a DingTalk default context ref against current local cache."""
+        if ref.type != "dingtalk_doc":
+            return
+
+        if user is None:
+            user = db.query(User).filter(User.id == user_id).first()
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        if ref.source == DingTalkNodeSource.DOCS.value:
+            if not DingTalkDocService.is_configured(user):
+                raise HTTPException(
+                    status_code=400,
+                    detail="DingTalk Docs MCP is not configured",
+                )
+            expected_source = DingTalkNodeSource.DOCS.value
+        elif ref.source == DingTalkNodeSource.WIKISPACE.value:
+            if not DingTalkWikiSpaceService.is_configured(user):
+                raise HTTPException(
+                    status_code=400,
+                    detail="DingTalk WikiSpace MCP is not configured",
+                )
+            expected_source = DingTalkNodeSource.WIKISPACE.value
+        else:
+            raise HTTPException(status_code=400, detail="Unsupported DingTalk source")
+
+        node = (
+            db.query(DingtalkSyncedNode)
+            .filter(
+                DingtalkSyncedNode.user_id == user_id,
+                DingtalkSyncedNode.dingtalk_node_id == ref.dingtalk_node_id,
+                DingtalkSyncedNode.source == expected_source,
+                DingtalkSyncedNode.is_active.is_(True),
+            )
+            .first()
+        )
+        if not node:
+            raise HTTPException(
+                status_code=400,
+                detail=f"DingTalk node is not synced or inactive: {ref.name}",
+            )
+
+    def _validate_default_context_refs(
+        self,
+        db: Session,
+        refs: Optional[List[DefaultContextRef]],
+        user_id: int,
+        namespace: str,
+    ) -> None:
+        """Validate all default context refs."""
+        if not refs:
+            return
+        self._validate_default_knowledge_bases(
+            db,
+            self._extract_default_knowledge_base_refs(refs),
+            user_id,
+            namespace,
+        )
+        user = db.query(User).filter(User.id == user_id).first()
+        for ref in refs:
+            self._validate_default_dingtalk_ref(db, ref, user_id, user)
 
     def _validate_default_knowledge_bases(
         self,
@@ -348,11 +470,14 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             self._validate_skills(db, obj_in.skills, user_id, namespace)
         if obj_in.preload_skills:
             self._validate_skills(db, obj_in.preload_skills, user_id, namespace)
-        self._validate_default_knowledge_bases(
-            db,
-            obj_in.default_knowledge_base_refs,
-            user_id,
-            namespace,
+        if obj_in.default_context_refs is not None:
+            default_context_refs = obj_in.default_context_refs
+        else:
+            default_context_refs = self._knowledge_refs_to_default_context_refs(
+                obj_in.default_knowledge_base_refs
+            )
+        self._validate_default_context_refs(
+            db, default_context_refs, user_id, namespace
         )
 
         # Encrypt sensitive data in agent_config before storing
@@ -363,7 +488,20 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             "systemPrompt": obj_in.system_prompt or "",
             "mcpServers": obj_in.mcp_servers or {},
         }
-        if obj_in.default_knowledge_base_refs is not None:
+        if obj_in.default_context_refs is not None:
+            ghost_spec["defaultContextRefs"] = [
+                ref.model_dump() for ref in default_context_refs
+            ]
+            ghost_spec["defaultKnowledgeBaseRefs"] = [
+                ref.model_dump()
+                for ref in self._extract_default_knowledge_base_refs(
+                    default_context_refs
+                )
+            ]
+        elif obj_in.default_knowledge_base_refs is not None:
+            ghost_spec["defaultContextRefs"] = [
+                ref.model_dump() for ref in default_context_refs
+            ]
             ghost_spec["defaultKnowledgeBaseRefs"] = [
                 ref.model_dump() for ref in obj_in.default_knowledge_base_refs
             ]
@@ -804,7 +942,14 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
 
         # Get related components
         ghost, shell, model = self._get_bot_components(db, bot, user_id)
-        if "default_knowledge_base_refs" in update_data:
+        if "default_context_refs" in update_data:
+            self._validate_default_context_refs(
+                db,
+                obj_in.default_context_refs,
+                user_id,
+                bot.namespace or "default",
+            )
+        elif "default_knowledge_base_refs" in update_data:
             self._validate_default_knowledge_bases(
                 db,
                 obj_in.default_knowledge_base_refs,
@@ -1050,8 +1195,24 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             flag_modified(ghost, "json")  # Mark JSON field as modified
             db.add(ghost)  # Add to session
 
-        if "default_knowledge_base_refs" in update_data and ghost:
+        if "default_context_refs" in update_data and ghost:
             ghost_crd = Ghost.model_validate(ghost.json)
+            ghost_crd.spec.defaultContextRefs = obj_in.default_context_refs or []
+            ghost_crd.spec.defaultKnowledgeBaseRefs = (
+                self._extract_default_knowledge_base_refs(
+                    obj_in.default_context_refs or []
+                )
+            )
+            ghost.json = ghost_crd.model_dump()
+            flag_modified(ghost, "json")
+            db.add(ghost)
+        elif "default_knowledge_base_refs" in update_data and ghost:
+            ghost_crd = Ghost.model_validate(ghost.json)
+            merged_refs = self._merge_legacy_knowledge_refs(
+                ghost_crd.spec.defaultContextRefs,
+                obj_in.default_knowledge_base_refs,
+            )
+            ghost_crd.spec.defaultContextRefs = merged_refs
             ghost_crd.spec.defaultKnowledgeBaseRefs = (
                 obj_in.default_knowledge_base_refs or []
             )
@@ -1733,6 +1894,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         preload_skills = []
         skill_refs = {}
         preload_skill_refs = {}
+        default_context_refs = []
         default_knowledge_base_refs = []
         if ghost:
             ghost_crd = Ghost.model_validate(ghost.json)
@@ -1742,6 +1904,12 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                 ref.model_dump()
                 for ref in (ghost_crd.spec.defaultKnowledgeBaseRefs or [])
             ]
+            context_refs = ghost_crd.spec.defaultContextRefs
+            if context_refs is None and ghost_crd.spec.defaultKnowledgeBaseRefs:
+                context_refs = self._knowledge_refs_to_default_context_refs(
+                    ghost_crd.spec.defaultKnowledgeBaseRefs
+                )
+            default_context_refs = [ref.model_dump() for ref in (context_refs or [])]
             skill_refs = (
                 {
                     name: ref.model_dump()
@@ -1769,6 +1937,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             "agent_config": agent_config,
             "system_prompt": system_prompt,
             "mcp_servers": mcp_servers,
+            "default_context_refs": default_context_refs,
             "default_knowledge_base_refs": default_knowledge_base_refs,
             "skills": skills,
             "skill_refs": skill_refs,
