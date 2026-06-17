@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 import app.stores.tasks as task_stores
 from app.models.kind import Kind
+from app.models.namespace import Namespace
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.subtask import Subtask
@@ -383,13 +384,43 @@ def _batch_query_teams(db: Session, team_refs: set, user_id: int) -> Dict[str, K
     if not team_refs:
         return {}
 
+    team_resource_type_variants = [ResourceType.TEAM.value, ResourceType.TEAM.name]
+    approved_status_variants = [MemberStatus.APPROVED.value, "APPROVED"]
     shared_team_exists = exists().where(
         and_(
-            ResourceMember.resource_type == ResourceType.TEAM,
+            ResourceMember.resource_type.in_(team_resource_type_variants),
             ResourceMember.resource_id == Kind.id,
             ResourceMember.entity_type == "user",
             ResourceMember.entity_id == str(user_id),
-            ResourceMember.status == MemberStatus.APPROVED,
+            ResourceMember.status.in_(approved_status_variants),
+        )
+    )
+    user_group_names = []
+    try:
+        from app.services.group_permission import get_user_groups
+
+        user_group_names = get_user_groups(db, user_id)
+    except Exception:
+        logger.exception("Failed to resolve user groups for team batch query")
+
+    namespace_ids = []
+    if user_group_names:
+        namespace_ids = [
+            str(row.id)
+            for row in db.query(Namespace.id)
+            .filter(
+                Namespace.name.in_(user_group_names),
+                Namespace.is_active.is_(True),
+            )
+            .all()
+        ]
+    namespace_team_exists = exists().where(
+        and_(
+            ResourceMember.resource_type.in_(team_resource_type_variants),
+            ResourceMember.resource_id == Kind.id,
+            ResourceMember.entity_type == "namespace",
+            ResourceMember.entity_id.in_(namespace_ids or [""]),
+            ResourceMember.status.in_(approved_status_variants),
         )
     )
     accessible_teams = (
@@ -402,6 +433,7 @@ def _batch_query_teams(db: Session, team_refs: set, user_id: int) -> Dict[str, K
                 Kind.user_id == user_id,
                 Kind.user_id == 0,
                 shared_team_exists,
+                namespace_team_exists,
             ),
         )
         .all()

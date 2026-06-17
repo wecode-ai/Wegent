@@ -143,6 +143,8 @@ export interface SkillList {
   items: Skill[]
 }
 
+export type TeamAccessSource = 'native' | 'user_share' | 'namespace_authorization'
+
 // Shell Types
 export interface Shell {
   id: number
@@ -168,6 +170,7 @@ export interface Team {
   created_at: string
   updated_at: string
   share_status?: number // 0: 个人团队, 1: 分享中, 2: 共享团队
+  access_source?: TeamAccessSource
   agent_type?: string // agno, claude, dify, etc.
   is_mix_team?: boolean // true if team has multiple different agent types (e.g., ClaudeCode + Agno)
   recommended_mode?: 'chat' | 'code' | 'both' // Recommended usage mode (for QuickAccess)
