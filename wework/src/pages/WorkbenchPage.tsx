@@ -53,6 +53,7 @@ export function WorkbenchPage() {
     listDeviceDirectories,
     createDeviceDirectory,
     loadEnvironmentInfo,
+    loadEnvironmentDiff,
     commitEnvironmentChanges,
     listEnvironmentBranches,
     checkoutEnvironmentBranch,
@@ -128,6 +129,7 @@ export function WorkbenchPage() {
       onListDeviceDirectories={listDeviceDirectories}
       onCreateDeviceDirectory={createDeviceDirectory}
       onLoadEnvironmentInfo={loadEnvironmentInfo}
+      onLoadEnvironmentDiff={loadEnvironmentDiff}
       onCommitEnvironmentChanges={commitEnvironmentChanges}
       onListEnvironmentBranches={listEnvironmentBranches}
       onCheckoutEnvironmentBranch={checkoutEnvironmentBranch}
