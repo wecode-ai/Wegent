@@ -16,7 +16,7 @@ from shared.models.execution import ExecutionRequest
 from shared.status import TaskStatus
 
 
-def assert_commentary_block(
+def assert_commentary_text_block(
     emitter: SimpleNamespace,
     content: str,
     status: str = "done",
@@ -24,7 +24,7 @@ def assert_commentary_block(
     emitter.block_created.assert_awaited_once()
     block = emitter.block_created.await_args.args[0]
     assert block["id"].startswith("codex-commentary-")
-    assert block["type"] == "thinking"
+    assert block["type"] == "text"
     assert block["content"] == content
     assert block["status"] == status
     assert isinstance(block["timestamp"], int)
@@ -210,7 +210,7 @@ async def test_codex_event_mapper_routes_commentary_to_processing_block():
     )
 
     assert status == TaskStatus.COMPLETED
-    assert_commentary_block(emitter, "Working on it")
+    assert_commentary_text_block(emitter, "Working on it")
     emitter.block_updated.assert_not_awaited()
     emitter.reasoning.assert_not_awaited()
     emitter.text_delta.assert_not_awaited()
@@ -253,7 +253,7 @@ async def test_codex_event_mapper_routes_commentary_delta_without_duplicate_done
             payload=SimpleNamespace(delta="Working", item_id="msg_1"),
         )
     )
-    block = assert_commentary_block(emitter, "", status="streaming")
+    block = assert_commentary_text_block(emitter, "", status="streaming")
     emitter.block_updated.assert_awaited_once_with(
         block["id"],
         {
@@ -333,7 +333,7 @@ async def test_codex_event_mapper_buffers_unphased_delta_until_commentary_done()
     )
 
     assert status == TaskStatus.COMPLETED
-    assert_commentary_block(emitter, "Working")
+    assert_commentary_text_block(emitter, "Working")
     emitter.reasoning.assert_not_awaited()
     emitter.text_delta.assert_not_awaited()
     emitter.done.assert_awaited_once_with(content="", usage=None)

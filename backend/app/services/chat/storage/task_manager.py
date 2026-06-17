@@ -10,6 +10,7 @@ for the chat functionality.
 
 import json as json_lib
 import logging
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -427,7 +428,7 @@ async def _create_task_and_prepare_git_worktree(
     try:
         from app.services import project_service
 
-        await project_service.prepare_git_worktree_for_task(
+        execution_workspace = await project_service.prepare_git_worktree_for_task(
             db=db,
             user_id=user.id,
             project_id=params.project_id,
@@ -435,10 +436,28 @@ async def _create_task_and_prepare_git_worktree(
             task_id=task.id,
             base_branch=(params.execution_workspace or {}).get("branch"),
         )
+        _update_task_execution_workspace(task, execution_workspace)
+        task_stores.task_store.update_json(db, task=task, payload=task.json)
     except Exception:
         db.rollback()
         raise
     return task
+
+
+def _update_task_execution_workspace(
+    task: TaskResource,
+    execution_workspace: dict[str, str],
+) -> None:
+    """Persist the prepared task execution workspace in the Task CRD."""
+
+    task_json = deepcopy(task.json) if isinstance(task.json, dict) else {}
+    spec = task_json.setdefault("spec", {})
+    execution = spec.setdefault("execution", {})
+    execution["workspace"] = {
+        "source": execution_workspace["source"],
+        "path": execution_workspace["path"],
+    }
+    task.json = task_json
 
 
 def create_user_subtask(

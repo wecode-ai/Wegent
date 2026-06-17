@@ -503,6 +503,11 @@ describe('MobileWorkbenchLayout', () => {
     expect(onCheckoutEnvironmentBranch).toHaveBeenCalledWith(
       currentProject,
       'feature/mobile',
+      {
+        deviceId: 'device-1',
+        path: '/workspace/github_wegent',
+        source: 'project',
+      },
     )
   })
 

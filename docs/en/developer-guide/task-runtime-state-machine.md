@@ -47,6 +47,8 @@ The public runtime-check entry point is `TaskStateMachine.requestRuntimeCheck(re
 3. If message content must be recovered, use socket join/resume only.
 4. `TaskContext` may refresh task detail/list after page-visible and websocket-reconnect, but it does not own recovery policy.
 
+WebSocket recovery follows the same order inside the state machine. External triggers such as page-visible or network-online first enter `requestRuntimeCheck(reason)`, and the state machine calls `runtime-check` before touching the socket. Only when the runtime checkpoint shows that socket join/resume is required and the local socket is disconnected does the state machine invoke the connection capability and enter `waiting_socket`; once WebSocket reconnects, the same `websocket-reconnect` check continues convergence.
+
 Supported health-check reasons include:
 
 - `page-visible`

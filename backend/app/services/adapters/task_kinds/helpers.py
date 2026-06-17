@@ -29,7 +29,10 @@ from app.services.readers.kinds import KindType, kindReader
 from app.services.readers.users import userReader
 from app.stores.tasks import WorkspaceRefLookup
 
-from .converters import get_task_execution_workspace_source
+from .converters import (
+    get_task_execution_workspace_path,
+    get_task_execution_workspace_source,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -548,6 +551,7 @@ def build_lite_task_list(
         device_id = task_related_data.get("device_id")
         device_name = task_related_data.get("device_name")
         execution_workspace_source = get_task_execution_workspace_source(task_crd)
+        execution_workspace_path = get_task_execution_workspace_path(task_crd)
         git_repo = workspace_data.get("git_repo")
         is_group_chat = task_related_data.get(
             "is_group_chat",
@@ -581,6 +585,7 @@ def build_lite_task_list(
                 "device_id": device_id,
                 "device_name": device_name,
                 "execution_workspace_source": execution_workspace_source,
+                "execution_workspace_path": execution_workspace_path,
                 "git_repo": git_repo,
                 "is_group_chat": is_group_chat,
                 "knowledge_base_id": knowledge_base_id,

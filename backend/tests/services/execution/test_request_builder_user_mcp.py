@@ -6,6 +6,7 @@
 
 from types import SimpleNamespace
 
+from app.core.config import settings
 from app.services.execution.request_builder import TaskRequestBuilder
 from app.services.user_mcp_service import user_mcp_service
 
@@ -13,15 +14,53 @@ from app.services.user_mcp_service import user_mcp_service
 class TestUserScopedMcpInjection:
     """Tests for DingTalk Docs MCP injection."""
 
-    def test_tool_output_guard_defaults_to_disabled(self):
+    def test_tool_output_guard_defaults_to_disabled(self, monkeypatch):
+        monkeypatch.setattr(settings, "TOOL_OUTPUT_GUARD_ENABLED", False)
         user = SimpleNamespace(preferences="{}")
 
         enabled = TaskRequestBuilder._is_tool_output_guard_enabled(user)
 
         assert enabled is False
 
-    def test_tool_output_guard_reads_user_preference(self):
+    def test_tool_output_guard_reads_user_preference(self, monkeypatch):
+        monkeypatch.setattr(settings, "TOOL_OUTPUT_GUARD_ENABLED", False)
         user = SimpleNamespace(preferences='{"tool_output_guard_enabled": true}')
+
+        enabled = TaskRequestBuilder._is_tool_output_guard_enabled(user)
+
+        assert enabled is True
+
+    def test_tool_output_guard_uses_env_default_when_user_not_configured(
+        self, monkeypatch
+    ):
+        monkeypatch.setattr(settings, "TOOL_OUTPUT_GUARD_ENABLED", True)
+        user = SimpleNamespace(preferences="{}")
+
+        enabled = TaskRequestBuilder._is_tool_output_guard_enabled(user)
+
+        assert enabled is True
+
+    def test_tool_output_guard_user_false_overrides_env_true(self, monkeypatch):
+        monkeypatch.setattr(settings, "TOOL_OUTPUT_GUARD_ENABLED", True)
+        user = SimpleNamespace(preferences='{"tool_output_guard_enabled": false}')
+
+        enabled = TaskRequestBuilder._is_tool_output_guard_enabled(user)
+
+        assert enabled is False
+
+    def test_tool_output_guard_invalid_preferences_fall_back_to_env(self, monkeypatch):
+        monkeypatch.setattr(settings, "TOOL_OUTPUT_GUARD_ENABLED", True)
+        user = SimpleNamespace(preferences="{invalid json")
+
+        enabled = TaskRequestBuilder._is_tool_output_guard_enabled(user)
+
+        assert enabled is True
+
+    def test_tool_output_guard_non_object_preferences_fall_back_to_env(
+        self, monkeypatch
+    ):
+        monkeypatch.setattr(settings, "TOOL_OUTPUT_GUARD_ENABLED", True)
+        user = SimpleNamespace(preferences='["not-an-object"]')
 
         enabled = TaskRequestBuilder._is_tool_output_guard_enabled(user)
 

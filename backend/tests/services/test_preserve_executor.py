@@ -168,7 +168,7 @@ class TestCleanupStaleExecutorsWithPreserveFlag(CleanupExecutorTestHelpers):
     @pytest.fixture
     def mock_db(self):
         """Create a mock database session"""
-        return Mock(spec=Session)
+        return AsyncMock(spec=AsyncSession)
 
     async def test_skips_task_with_preserve_executor_true(self, job_service, mock_db):
         """Test that tasks with preserveExecutor=true are skipped during cleanup"""
@@ -524,6 +524,7 @@ class TestCleanupStaleExecutorsWithPreserveFlag(CleanupExecutorTestHelpers):
         )
         async_test_db.add(subtask)
         await async_test_db.commit()
+        subtask_id = subtask.id
 
         with (
             patch.object(
@@ -545,7 +546,7 @@ class TestCleanupStaleExecutorsWithPreserveFlag(CleanupExecutorTestHelpers):
         executor_service.delete_executor_task_async.assert_called_once_with(
             "executor-subscription-1", "default"
         )
-        mark_deleted.assert_called_once_with([subtask.id])
+        mark_deleted.assert_called_once_with([subtask_id])
 
     async def test_cleanup_stale_executors_includes_pending_subtasks(
         self, job_service, async_test_db
@@ -601,6 +602,7 @@ class TestCleanupStaleExecutorsWithPreserveFlag(CleanupExecutorTestHelpers):
         )
         async_test_db.add(subtask)
         await async_test_db.commit()
+        subtask_id = subtask.id
 
         with (
             patch.object(
@@ -623,7 +625,7 @@ class TestCleanupStaleExecutorsWithPreserveFlag(CleanupExecutorTestHelpers):
         executor_service.delete_executor_task_async.assert_called_once_with(
             "executor-pending-1", "default"
         )
-        mark_deleted.assert_called_once_with([subtask.id])
+        mark_deleted.assert_called_once_with([subtask_id])
 
     async def test_cleanup_skips_invalid_task_json_and_continues(
         self, job_service, mock_db
@@ -671,6 +673,13 @@ class TestCleanupStaleExecutorsWithPreserveFlag(CleanupExecutorTestHelpers):
         ):
             mock_settings.CHAT_TASK_EXECUTOR_DELETE_AFTER_HOURS = 24
             mock_settings.CODE_TASK_EXECUTOR_DELETE_AFTER_HOURS = 48
+            cleanup_entries.return_value = {
+                "task_id": 200,
+                "deleted": False,
+                "skipped": True,
+                "reason": "executor_not_found",
+                "executors": [],
+            }
 
             await job_service.cleanup_stale_executors(mock_db)
 
@@ -719,6 +728,13 @@ class TestCleanupStaleExecutorsWithPreserveFlag(CleanupExecutorTestHelpers):
         ):
             mock_settings.CHAT_TASK_EXECUTOR_DELETE_AFTER_HOURS = 24
             mock_settings.CODE_TASK_EXECUTOR_DELETE_AFTER_HOURS = 48
+            cleanup_entries.return_value = {
+                "task_id": 100,
+                "deleted": False,
+                "skipped": True,
+                "reason": "executor_not_found",
+                "executors": [],
+            }
 
             await job_service.cleanup_stale_executors(mock_db)
 
@@ -1203,6 +1219,7 @@ class TestCleanupTaskExecutorAPI(CleanupExecutorTestHelpers):
         # We need to mock the async path instead
         mock_async_db = AsyncMock()
         mock_async_db.run_sync = AsyncMock(return_value=True)
+        mock_async_db.sync_session = Mock()
 
         with (
             patch("app.services.task_member_service.task_member_service") as members,

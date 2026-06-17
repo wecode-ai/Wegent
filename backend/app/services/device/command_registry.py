@@ -831,6 +831,7 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
     "mkdir_p": LocalDeviceCommandDefinition(command="mkdir -p"),
     "path_exists": LocalDeviceCommandDefinition(command="test -e"),
     "git_clone": LocalDeviceCommandDefinition(command="git clone"),
+    "git_config": LocalDeviceCommandDefinition(command="git config"),
     "git_worktree_list": LocalDeviceCommandDefinition(
         command="sh -c 'git -C \"$1\" worktree list --porcelain' --"
     ),

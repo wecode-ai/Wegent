@@ -562,6 +562,30 @@ class SqlAlchemyTaskStore:
             query = query.filter(TaskResource.client_origin == client_origin)
         return query.first()
 
+    def get_project_task_by_states(
+        self,
+        db: Session,
+        *,
+        task_id: int,
+        project_id: int,
+        states: Sequence[int],
+        kind: str = "Task",
+        owner_user_id: Optional[int] = None,
+        client_origin: Optional[str] = None,
+    ) -> Optional[TaskResource]:
+        if not states:
+            return None
+        query = db.query(TaskResource).filter(
+            TaskResource.id == task_id,
+            TaskResource.project_id == project_id,
+            TaskResource.kind == kind,
+            TaskResource.is_active.in_(states),
+        )
+        query = self._filter_owner_user_id(query, owner_user_id=owner_user_id)
+        if client_origin:
+            query = query.filter(TaskResource.client_origin == client_origin)
+        return query.first()
+
     def get_task_by_workspace_ref(
         self,
         db: Session,

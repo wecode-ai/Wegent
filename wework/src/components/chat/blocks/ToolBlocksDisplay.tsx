@@ -13,9 +13,15 @@ interface ToolBlocksDisplayProps {
   // fresh client timestamps, so anchoring to the first block would restart the
   // timer from the refresh moment.
   startedAt?: number
+  onOpenWorkspaceFile?: (path: string) => void
 }
 
-export function ToolBlocksDisplay({ blocks, isStreaming, startedAt }: ToolBlocksDisplayProps) {
+export function ToolBlocksDisplay({
+  blocks,
+  isStreaming,
+  startedAt,
+  onOpenWorkspaceFile,
+}: ToolBlocksDisplayProps) {
   const isRunning = isStreaming || blocks.some(b => b.status !== 'done' && b.status !== 'error')
   const [userExpanded, setUserExpanded] = useState(false)
   const [mountedAt] = useState(() => Date.now())
@@ -90,9 +96,13 @@ export function ToolBlocksDisplay({ blocks, isStreaming, startedAt }: ToolBlocks
         <div className="flex min-w-0 flex-col gap-3">
           {rows.map(row =>
             row.type === 'activity_group' ? (
-              <ToolActivityGroup key={row.id} row={row} />
+              <ToolActivityGroup key={row.id} row={row} onOpenWorkspaceFile={onOpenWorkspaceFile} />
             ) : (
-              <ToolBlockItem key={row.id} block={row.block} />
+              <ToolBlockItem
+                key={row.id}
+                block={row.block}
+                onOpenWorkspaceFile={onOpenWorkspaceFile}
+              />
             )
           )}
           {isRunning && !hasLiveNarrativeBlock && <ThinkingIndicator />}
@@ -104,8 +114,10 @@ export function ToolBlocksDisplay({ blocks, isStreaming, startedAt }: ToolBlocks
 
 function ToolActivityGroup({
   row,
+  onOpenWorkspaceFile,
 }: {
   row: Extract<ProcessingDisplayRow, { type: 'activity_group' }>
+  onOpenWorkspaceFile?: (path: string) => void
 }) {
   const [expanded, setExpanded] = useState(false)
   const Icon = hasCommandBlocks(row.blocks) ? SquareTerminal : Search
@@ -129,7 +141,7 @@ function ToolActivityGroup({
       {expanded && (
         <div className="mt-2 flex min-w-0 flex-col gap-3 border-l border-border pl-4">
           {row.blocks.map(block => (
-            <ToolBlockItem key={block.id} block={block} />
+            <ToolBlockItem key={block.id} block={block} onOpenWorkspaceFile={onOpenWorkspaceFile} />
           ))}
         </div>
       )}

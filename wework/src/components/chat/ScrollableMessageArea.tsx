@@ -25,6 +25,7 @@ interface ScrollableMessageAreaProps {
     subtaskId: number
     loadDiff: () => Promise<string>
   }) => void
+  onOpenWorkspaceFile?: (path: string) => void
 }
 
 export function ScrollableMessageArea({
@@ -40,6 +41,7 @@ export function ScrollableMessageArea({
   onLoadFileChangesDiff,
   onRevertFileChanges,
   onOpenFileChangesReview,
+  onOpenWorkspaceFile,
 }: ScrollableMessageAreaProps) {
   const { t } = useTranslation('common')
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -228,6 +230,7 @@ export function ScrollableMessageArea({
               onLoadFileChangesDiff={onLoadFileChangesDiff}
               onRevertFileChanges={onRevertFileChanges}
               onOpenFileChangesReview={onOpenFileChangesReview}
+              onOpenWorkspaceFile={onOpenWorkspaceFile}
             />
           )}
         </div>

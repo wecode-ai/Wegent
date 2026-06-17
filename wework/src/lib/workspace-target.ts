@@ -4,56 +4,26 @@ import {
   resolveProjectWorkspacePath,
   type ProjectWorkspaceRootApi,
 } from '@/lib/project-workspace'
-import type { WorkbenchMessage } from '@/types/workbench'
 import type { WorkspaceTarget } from '@/types/workspace-files'
 
 interface ResolveWorkspaceTargetOptions {
   currentTask: Task | null
   currentProject: ProjectWithTasks | null
-  messages: WorkbenchMessage[]
   api: ProjectWorkspaceRootApi
 }
 
-function workspaceTargetFromMessage(message: WorkbenchMessage): WorkspaceTarget | null {
-  const fileChanges = message.fileChanges
-  if (
-    fileChanges?.status !== 'active' ||
-    !fileChanges.device_id ||
-    !fileChanges.workspace_path
-  ) {
+function workspaceTargetFromTask(task: Task): WorkspaceTarget | null {
+  const path = task.execution_workspace_path?.trim()
+  const deviceId = task.device_id?.trim()
+  if (!path || !deviceId) {
     return null
   }
-  return {
-    deviceId: fileChanges.device_id,
-    path: fileChanges.workspace_path,
-    source: 'task',
-  }
-}
-
-function latestTaskWorkspace(
-  currentTask: Task,
-  messages: WorkbenchMessage[],
-): WorkspaceTarget | null {
-  let latestUnscopedTarget: WorkspaceTarget | null = null
-
-  for (const message of [...messages].reverse()) {
-    const target = workspaceTargetFromMessage(message)
-    if (!target) continue
-
-    if (message.taskId === currentTask.id) {
-      return target
-    }
-    if (message.taskId == null && !latestUnscopedTarget) {
-      latestUnscopedTarget = target
-    }
-  }
-
-  return latestUnscopedTarget
+  return { deviceId, path, source: 'task', taskId: task.id }
 }
 
 async function projectWorkspaceTarget(
   project: ProjectWithTasks,
-  api: ProjectWorkspaceRootApi,
+  api: ProjectWorkspaceRootApi
 ): Promise<WorkspaceTarget | null> {
   const deviceId = executionDeviceId(project)
   const workspacePath = deviceId
@@ -66,15 +36,20 @@ async function projectWorkspaceTarget(
 export async function resolveWorkspaceTarget({
   currentTask,
   currentProject,
-  messages,
   api,
 }: ResolveWorkspaceTargetOptions): Promise<WorkspaceTarget | null> {
+  if (currentTask) {
+    const currentTaskWorkspace = workspaceTargetFromTask(currentTask)
+    if (currentTaskWorkspace) return currentTaskWorkspace
+  }
+
   if (currentProject) {
     return projectWorkspaceTarget(currentProject, api)
   }
-  if (currentTask) {
-    const taskWorkspace = latestTaskWorkspace(currentTask, messages)
-    if (taskWorkspace) return taskWorkspace
-  }
+
   return null
+}
+
+export function workspaceTargetKey(target: WorkspaceTarget | null): string {
+  return target ? `${target.deviceId}:${target.path}:${target.source}:${target.taskId ?? ''}` : ''
 }

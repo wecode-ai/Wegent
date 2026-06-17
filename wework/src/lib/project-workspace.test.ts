@@ -40,7 +40,7 @@ describe('project workspace helpers', () => {
     }
 
     await expect(resolveProjectWorkspacePath(project, 'device-b', api)).resolves.toBe(
-      '/workspace/projects/abc/Wegent',
+      '/workspace/projects/abc/Wegent'
     )
   })
 
@@ -65,7 +65,7 @@ describe('project workspace helpers', () => {
 
     expect(configuredWorkspacePath(project)).toBe('projects/abc/Wegent')
     await expect(resolveProjectWorkspacePath(project, 'device-b', api)).resolves.toBe(
-      '/workspace/projects/abc/Wegent',
+      '/workspace/projects/abc/Wegent'
     )
   })
 
@@ -85,7 +85,7 @@ describe('project workspace helpers', () => {
     }
 
     await expect(resolveProjectWorkspacePath(project, 'device-b', api)).rejects.toThrow(
-      'Workspace path cannot contain parent traversal',
+      'Workspace path cannot contain parent traversal'
     )
   })
 })

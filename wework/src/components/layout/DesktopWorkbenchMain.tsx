@@ -1,20 +1,14 @@
 import {
   useCallback,
-  useEffect,
   useLayoutEffect,
-  useMemo,
   useRef,
   useState,
   type ReactNode,
 } from 'react'
-import { createDeviceApi } from '@/api/devices'
-import { createHttpClient } from '@/api/http'
 import { ChatInput } from '@/components/chat/ChatInput'
 import type { ProjectChatControls, ProjectWorkControls } from '@/components/chat/ChatInput'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
-import { getRuntimeConfig } from '@/config/runtime'
 import { useTranslation } from '@/hooks/useTranslation'
-import { resolveWorkspaceTarget } from '@/lib/workspace-target'
 import {
   findWorkbenchDevice,
   getActiveWorkbenchDeviceId,
@@ -29,7 +23,11 @@ import type {
   QueuedWorkbenchMessage,
   WorkbenchMessage,
 } from '@/types/workbench'
-import type { CodeCommentContext, WorkspaceTarget } from '@/types/workspace-files'
+import type {
+  CodeCommentContext,
+  WorkspaceFileOpenRequest,
+  WorkspaceTarget,
+} from '@/types/workspace-files'
 import { cn } from '@/lib/utils'
 import { BottomWorkspacePanel } from './workspace-panels/BottomWorkspacePanel'
 import {
@@ -59,31 +57,6 @@ const DESKTOP_SCROLL_TO_BOTTOM_BUTTON_CLASS = 'bottom-36 z-popover bg-background
 const DESKTOP_QUEUED_SCROLL_TO_BOTTOM_BUTTON_CLASS =
   'bottom-52 z-popover bg-background/95 shadow-md'
 
-function workspaceTargetKey(target: WorkspaceTarget | null): string {
-  return target ? `${target.deviceId}:${target.path}:${target.source}` : ''
-}
-
-function messageWorkspaceTargetKey(currentTask: Task | null, messages: WorkbenchMessage[]): string {
-  let latestUnscopedKey = ''
-
-  for (const message of [...messages].reverse()) {
-    const fileChanges = message.fileChanges
-    if (fileChanges?.status !== 'active' || !fileChanges.device_id || !fileChanges.workspace_path) {
-      continue
-    }
-
-    const key = `${message.taskId ?? ''}:${fileChanges.device_id}:${fileChanges.workspace_path}`
-    if (currentTask && message.taskId === currentTask.id) {
-      return key
-    }
-    if (message.taskId == null && !latestUnscopedKey) {
-      latestUnscopedKey = key
-    }
-  }
-
-  return latestUnscopedKey
-}
-
 function workbenchSessionKey({
   currentTask,
   currentProject,
@@ -106,8 +79,7 @@ function isEnvironmentReviewDeviceConnectionError(message: string): boolean {
   return (
     /device\s+'[^']+'\s+is\s+offline/i.test(message) ||
     (normalizedMessage.includes('device') && normalizedMessage.includes('offline')) ||
-    (normalizedMessage.includes('command rpc timed out') &&
-      normalizedMessage.includes('device')) ||
+    (normalizedMessage.includes('command rpc timed out') && normalizedMessage.includes('device')) ||
     (normalizedMessage.includes('device:execute_command') &&
       normalizedMessage.includes('timed out'))
   )
@@ -135,12 +107,20 @@ function formatEnvironmentReviewErrorMessage({
   return message
 }
 
+interface DesktopReviewState {
+  loading: boolean
+  diff: string
+  error?: string
+  reloadDiff?: () => Promise<string>
+}
+
 interface DesktopWorkbenchMainProps {
   sidebarCollapsed: boolean
   isBootstrapping: boolean
   currentTask: Task | null
   currentProject: ProjectWithTasks | null
-  workspaceProject?: ProjectWithTasks | null
+  workspaceTarget: WorkspaceTarget | null
+  workspaceTargetError?: string | null
   devices: DeviceInfo[]
   upgradingDevices: Record<string, DeviceUpgradeState>
   messages: WorkbenchMessage[]
@@ -154,7 +134,7 @@ interface DesktopWorkbenchMainProps {
   environmentInfo: EnvironmentInfo
   onRefreshEnvironmentInfo: () => Promise<void>
   onCommitEnvironmentChanges: (message: string) => Promise<void>
-  onLoadEnvironmentDiff?: () => Promise<string>
+  onLoadEnvironmentDiff?: (workspaceTarget: WorkspaceTarget) => Promise<string>
   onListEnvironmentBranches: () => Promise<string[]>
   onCheckoutEnvironmentBranch: (branchName: string) => Promise<void>
   onCreateEnvironmentBranch: (branchName: string) => Promise<void>
@@ -181,7 +161,8 @@ export function DesktopWorkbenchMain({
   isBootstrapping,
   currentTask,
   currentProject,
-  workspaceProject,
+  workspaceTarget,
+  workspaceTargetError,
   devices,
   upgradingDevices,
   messages,
@@ -218,33 +199,21 @@ export function DesktopWorkbenchMain({
 }: DesktopWorkbenchMainProps) {
   const { t } = useTranslation('common')
   const [rightPanelOpen, setRightPanelOpen] = useState(false)
-  const [rightPanelView, setRightPanelView] =
-    useState<RightWorkspacePanelView>('launcher')
+  const [rightPanelView, setRightPanelView] = useState<RightWorkspacePanelView>('launcher')
   const [rightPanelTabs, setRightPanelTabs] = useState<RightWorkspacePanelTab[]>([])
   const [bottomPanelOpen, setBottomPanelOpen] = useState(false)
-  const [workspaceTarget, setWorkspaceTarget] = useState<WorkspaceTarget | null>(null)
-  const [workspaceTargetError, setWorkspaceTargetError] = useState<string | null>(null)
-  const [reviewState, setReviewState] = useState({
+  const [openFileRequest, setOpenFileRequest] = useState<WorkspaceFileOpenRequest | null>(null)
+  const [reviewState, setReviewState] = useState<DesktopReviewState>({
     loading: false,
     diff: '',
-    error: undefined as string | undefined,
+    error: undefined,
+    reloadDiff: undefined,
   })
   const { width: rightSplitChatWidth, handleResizeStart: handleRightSplitResizeStart } =
     useResizableRightSplitChat()
   const chatColumnWidth = rightPanelOpen ? rightSplitChatWidth : '100%'
   const rightPanelShellWidth = rightPanelOpen ? `calc(100% - ${rightSplitChatWidth}px)` : '0px'
-  const workspaceDeviceApi = useMemo(() => {
-    const { apiBaseUrl } = getRuntimeConfig()
-    return createDeviceApi(createHttpClient({ baseUrl: apiBaseUrl }))
-  }, [])
-  const messagesRef = useRef(messages)
   const reviewRequestSequence = useRef(0)
-  const panelWorkspaceProject =
-    workspaceProject === undefined ? currentProject : workspaceProject
-  const workspaceMessageTargetKey = messageWorkspaceTargetKey(
-    panelWorkspaceProject ? null : currentTask,
-    messages
-  )
   const rightPanelSessionKey = workbenchSessionKey({ currentTask, currentProject })
   const previousRightPanelSessionKey = useRef(rightPanelSessionKey)
   const isTauri = isTauriRuntime()
@@ -315,6 +284,7 @@ export function DesktopWorkbenchMain({
         loading: true,
         diff: '',
         error: undefined,
+        reloadDiff: loadDiff,
       })
       try {
         const diff = await loadDiff()
@@ -323,6 +293,7 @@ export function DesktopWorkbenchMain({
             loading: false,
             diff,
             error: undefined,
+            reloadDiff: loadDiff,
           })
         }
       } catch (error) {
@@ -335,6 +306,7 @@ export function DesktopWorkbenchMain({
               fallbackMessage: t('workbench.environment_review_failed'),
               deviceUnavailableMessage: t('workbench.environment_review_device_unavailable'),
             }),
+            reloadDiff: loadDiff,
           })
         }
       }
@@ -344,12 +316,12 @@ export function DesktopWorkbenchMain({
 
   const openEnvironmentChangesReview = useCallback(async () => {
     await openReviewFromDiffLoader(async () => {
-      if (!onLoadEnvironmentDiff) {
+      if (!onLoadEnvironmentDiff || !workspaceTarget) {
         throw new Error(t('workbench.environment_review_unavailable'))
       }
-      return onLoadEnvironmentDiff()
+      return onLoadEnvironmentDiff(workspaceTarget)
     })
-  }, [onLoadEnvironmentDiff, openReviewFromDiffLoader, t])
+  }, [onLoadEnvironmentDiff, openReviewFromDiffLoader, t, workspaceTarget])
 
   const selectReviewView = useCallback(() => {
     if (reviewState.diff || reviewState.loading) {
@@ -358,38 +330,51 @@ export function DesktopWorkbenchMain({
     }
 
     void openEnvironmentChangesReview()
-  }, [
-    openEnvironmentChangesReview,
-    openRightPanelTab,
-    reviewState.diff,
-    reviewState.loading,
-  ])
+  }, [openEnvironmentChangesReview, openRightPanelTab, reviewState.diff, reviewState.loading])
 
   const selectFilesView = useCallback(() => {
     openRightPanelTab('files')
   }, [openRightPanelTab])
 
+  const openWorkspaceFileFromMessage = useCallback(
+    (path: string) => {
+      const trimmedPath = path.trim()
+      if (!trimmedPath) return
+      setOpenFileRequest(current => ({
+        id: (current?.id ?? 0) + 1,
+        path: trimmedPath,
+      }))
+      openRightPanelTab('files')
+    },
+    [openRightPanelTab]
+  )
+
+  const refreshReview = useCallback(() => {
+    if (!reviewState.reloadDiff) {
+      return
+    }
+
+    void openReviewFromDiffLoader(reviewState.reloadDiff)
+  }, [openReviewFromDiffLoader, reviewState.reloadDiff])
+
   const toggleRightPanel = useCallback(() => {
     setRightPanelOpen(open => {
       const nextOpen = !open
       if (nextOpen) {
-        setRightPanelView(current => (
-          rightPanelTabs.includes(current as RightWorkspacePanelTab)
-            ? current
-            : 'launcher'
-        ))
+        setRightPanelView(current =>
+          rightPanelTabs.includes(current as RightWorkspacePanelTab) ? current : 'launcher'
+        )
       }
       return nextOpen
     })
   }, [rightPanelTabs])
   const toggleBottomPanel = useCallback(() => setBottomPanelOpen(open => !open), [])
-  const renderWorkspacePanelActions = (
-    mode: 'all' | 'environment' | 'panel-toggles'
-  ) => (
+  const renderWorkspacePanelActions = (mode: 'all' | 'environment' | 'panel-toggles') => (
     <WorkspacePanelActions
       mode={mode}
       currentProject={currentProject}
       devices={devices}
+      workspaceTarget={workspaceTarget}
       environmentInfo={environmentInfo}
       onRefreshEnvironmentInfo={onRefreshEnvironmentInfo}
       onCommitEnvironmentChanges={onCommitEnvironmentChanges}
@@ -408,10 +393,6 @@ export function DesktopWorkbenchMain({
   const workspacePanelActions = renderWorkspacePanelActions('all')
   const showPageTopBar = !isTauri || Boolean(topBarLeftActions)
 
-  useEffect(() => {
-    messagesRef.current = messages
-  }, [messages])
-
   useLayoutEffect(() => {
     if (previousRightPanelSessionKey.current === rightPanelSessionKey) {
       return
@@ -425,36 +406,9 @@ export function DesktopWorkbenchMain({
       loading: false,
       diff: '',
       error: undefined,
+      reloadDiff: undefined,
     })
   }, [rightPanelSessionKey])
-
-  useEffect(() => {
-    let cancelled = false
-    resolveWorkspaceTarget({
-      currentTask,
-      currentProject: panelWorkspaceProject,
-      messages: messagesRef.current,
-      api: workspaceDeviceApi,
-    })
-      .then(target => {
-        if (!cancelled) {
-          setWorkspaceTarget(current =>
-            workspaceTargetKey(current) === workspaceTargetKey(target) ? current : target
-          )
-          setWorkspaceTargetError(null)
-        }
-      })
-      .catch(error => {
-        if (!cancelled) {
-          setWorkspaceTargetError(
-            error instanceof Error ? error.message : 'Failed to resolve workspace'
-          )
-        }
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [currentTask, panelWorkspaceProject, workspaceDeviceApi, workspaceMessageTargetKey])
 
   return (
     <main
@@ -516,6 +470,7 @@ export function DesktopWorkbenchMain({
               onOpenFileChangesReview={({ loadDiff }) => {
                 void openReviewFromDiffLoader(loadDiff)
               }}
+              onOpenWorkspaceFile={openWorkspaceFileFromMessage}
             />
             <div
               className={DESKTOP_FLOATING_COMPOSER_BACKDROP_CLASS}
@@ -620,6 +575,7 @@ export function DesktopWorkbenchMain({
           open={bottomPanelOpen}
           currentProject={currentProject}
           devices={devices}
+          workspaceTarget={workspaceTarget}
           onRequestClose={() => setBottomPanelOpen(false)}
         />
       </div>
@@ -637,15 +593,17 @@ export function DesktopWorkbenchMain({
             activeView={rightPanelView}
             openTabs={rightPanelTabs}
             workspaceTarget={workspaceTarget}
+            openFileRequest={openFileRequest}
             workspaceTargetError={workspaceTargetError}
             review={reviewState}
-            canOpenReview={Boolean(onLoadEnvironmentDiff)}
+            canOpenReview={Boolean(onLoadEnvironmentDiff && workspaceTarget)}
             onAddCodeComment={onAddCodeComment}
             onResizeStart={handleRightSplitResizeStart}
             onSelectReview={selectReviewView}
             onSelectFiles={selectFilesView}
             onSelectLauncher={() => setRightPanelView('launcher')}
             onCloseTab={closeRightPanelTab}
+            onRefreshReview={reviewState.reloadDiff ? refreshReview : undefined}
           />
         )}
       </div>

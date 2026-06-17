@@ -3,7 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { render, screen, within } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
 
 import { modelApis } from '@/apis/models'
@@ -54,6 +55,9 @@ const translations: Record<string, string> = {
   'common:models.title': 'Models',
   'common:models.description': 'Manage models.',
   'common:models.create': 'New Model',
+  'common:models.test_connection': 'Test Connection',
+  'common:models.test_success': 'Connection successful',
+  'common:models.test_failed': 'Connection failed',
   'common:models.all_category_types': 'All',
   'models.all_category_types': 'All',
   'models.model_category_type_llm': 'LLM',
@@ -249,6 +253,71 @@ describe('resource list layout consistency', () => {
     expect(screen.queryByText('My Models (1)')).not.toBeInTheDocument()
     expect(screen.queryByText('Group Models (1)')).not.toBeInTheDocument()
     expect(screen.queryByText('System Models (1)')).not.toBeInTheDocument()
+  })
+
+  it('tests a personal model from the full CRD instead of sanitized list config', async () => {
+    const user = userEvent.setup()
+    ;(modelApis.getUnifiedModels as jest.Mock).mockResolvedValue({
+      data: [
+        {
+          name: 'personal-model',
+          displayName: 'Personal Model',
+          type: 'user',
+          namespace: 'default',
+          modelCategoryType: 'llm',
+          config: {},
+        },
+      ],
+    })
+    ;(modelApis.getModel as jest.Mock).mockResolvedValue({
+      apiVersion: 'agent.wecode.io/v1',
+      kind: 'Model',
+      metadata: {
+        name: 'personal-model',
+        namespace: 'default',
+        displayName: 'Personal Model',
+      },
+      spec: {
+        modelType: 'llm',
+        modelConfig: {
+          env: {
+            model: 'claude',
+            model_id: 'deepseek-v4-flash',
+            api_key: 'sk-secret',
+            base_url: 'https://api.sensenova.cn/compatible-mode/v1',
+            custom_headers: { 'x-test': 'enabled' },
+          },
+        },
+      },
+    })
+    ;(modelApis.testConnection as jest.Mock).mockResolvedValue({
+      success: true,
+      message: 'ok',
+    })
+
+    render(
+      <ModelList
+        scope="all"
+        sourceFilter="personal"
+        sourceControls={sourceControls()}
+        groups={writableGroups}
+      />
+    )
+
+    await screen.findByText('Personal Model')
+    await user.click(screen.getByTitle('Test Connection'))
+
+    await waitFor(() => {
+      expect(modelApis.getModel).toHaveBeenCalledWith('personal-model', 'default')
+      expect(modelApis.testConnection).toHaveBeenCalledWith({
+        provider_type: 'anthropic',
+        model_id: 'deepseek-v4-flash',
+        api_key: 'sk-secret',
+        base_url: 'https://api.sensenova.cn/compatible-mode/v1',
+        custom_headers: { 'x-test': 'enabled' },
+        model_category_type: 'llm',
+      })
+    })
   })
 
   it('uses the same header action placement for executor and retriever lists', async () => {

@@ -108,7 +108,7 @@ export function reduceWorkbenchMessages<TAttachment = unknown, TFileChanges = un
         return state.map(message =>
           message.subtaskId === action.subtaskId
             ? {
-                ...message,
+                ...clearMessageError(message),
                 taskId: action.taskId ?? message.taskId,
                 shellType: action.shellType ?? message.shellType,
                 status: 'streaming' as const,
@@ -135,7 +135,7 @@ export function reduceWorkbenchMessages<TAttachment = unknown, TFileChanges = un
         return state.map(message =>
           message.subtaskId === action.subtaskId
             ? {
-                ...message,
+                ...clearMessageError(message),
                 taskId: action.taskId ?? message.taskId,
                 content: action.content,
                 status: 'streaming' as const,
@@ -161,7 +161,7 @@ export function reduceWorkbenchMessages<TAttachment = unknown, TFileChanges = un
       return state.map(message =>
         message.subtaskId === action.subtaskId
           ? {
-              ...message,
+              ...clearMessageError(message),
               content: message.content + action.content,
               status: 'streaming' as const,
               blocks: getChunkBlocks(message, action),
@@ -172,7 +172,7 @@ export function reduceWorkbenchMessages<TAttachment = unknown, TFileChanges = un
       return state.map(message =>
         message.subtaskId === action.subtaskId
           ? {
-              ...message,
+              ...clearMessageError(message),
               content: action.content ?? message.content,
               status: 'done' as const,
               blocks: finalizeProcessingBlocks(action.blocks ?? message.blocks, 'done'),
@@ -201,23 +201,14 @@ export function reduceWorkbenchMessages<TAttachment = unknown, TFileChanges = un
     case 'block_created':
       return state.map(message =>
         message.subtaskId === action.subtaskId
-          ? {
-              ...message,
-              content: shouldMovePendingContentBeforeBlock(message, action.block)
-                ? ''
-                : message.content,
-              blocks: mergeProcessingBlock(
-                getBlocksBeforeIncomingBlock(message, action.subtaskId, action.block),
-                action.block
-              ),
-            }
+          ? createBlockCreatedMessage(message, action)
           : message
       )
     case 'block_updated':
       return state.map(message =>
         message.subtaskId === action.subtaskId
           ? {
-              ...message,
+              ...withActiveStreamState(message, isActiveBlockStatus(action.updates.status)),
               blocks: (message.blocks ?? []).map(block =>
                 block.id === action.blockId
                   ? ({ ...block, ...action.updates } as WorkbenchProcessingBlock)
@@ -228,6 +219,52 @@ export function reduceWorkbenchMessages<TAttachment = unknown, TFileChanges = un
       )
     default:
       return state
+  }
+}
+
+function clearMessageError<TAttachment, TFileChanges>(
+  message: WorkbenchMessage<TAttachment, TFileChanges>
+): WorkbenchMessage<TAttachment, TFileChanges> {
+  if (!message.error && !message.errorType) return message
+
+  const { error: _error, errorType: _errorType, ...messageWithoutError } = message
+  return messageWithoutError
+}
+
+function withActiveStreamState<TAttachment, TFileChanges>(
+  message: WorkbenchMessage<TAttachment, TFileChanges>,
+  isActive: boolean
+): WorkbenchMessage<TAttachment, TFileChanges> {
+  if (!isActive) return message
+
+  return {
+    ...clearMessageError(message),
+    status: 'streaming',
+  }
+}
+
+function isActiveBlockStatus(status?: WorkbenchToolBlockStatus): boolean {
+  return (
+    status === 'generating_arguments' ||
+    status === 'pending' ||
+    status === 'streaming'
+  )
+}
+
+function createBlockCreatedMessage<TAttachment, TFileChanges>(
+  message: WorkbenchMessage<TAttachment, TFileChanges>,
+  action: Extract<WorkbenchMessageAction<TAttachment, TFileChanges>, { type: 'block_created' }>
+): WorkbenchMessage<TAttachment, TFileChanges> {
+  const activeMessage = withActiveStreamState(message, isActiveBlockStatus(action.block.status))
+  return {
+    ...activeMessage,
+    content: shouldMovePendingContentBeforeBlock(message, action.block)
+      ? ''
+      : message.content,
+    blocks: mergeProcessingBlock(
+      getBlocksBeforeIncomingBlock(message, action.subtaskId, action.block),
+      action.block
+    ),
   }
 }
 

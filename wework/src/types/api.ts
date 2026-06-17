@@ -125,6 +125,7 @@ export interface ProjectTask {
   status?: string
   device_id?: string | null
   execution_workspace_source?: string | null
+  execution_workspace_path?: string | null
   created_at?: string
   updated_at?: string
   task_type?: string
@@ -234,6 +235,7 @@ export interface Task {
   client_origin?: string
   device_id?: string | null
   execution_workspace_source?: string | null
+  execution_workspace_path?: string | null
   created_at: string
   updated_at?: string
   is_group_chat?: boolean

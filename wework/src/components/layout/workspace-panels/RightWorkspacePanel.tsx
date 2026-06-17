@@ -2,7 +2,11 @@ import { File, FileDiff, Plus, X } from 'lucide-react'
 import type { KeyboardEvent, PointerEvent } from 'react'
 import { FileChangesReviewPanel } from '@/components/chat/FileChangesReviewPanel'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { CodeCommentContext, WorkspaceTarget } from '@/types/workspace-files'
+import type {
+  CodeCommentContext,
+  WorkspaceFileOpenRequest,
+  WorkspaceTarget,
+} from '@/types/workspace-files'
 import { cn } from '@/lib/utils'
 import { FileWorkspacePanel } from './FileWorkspacePanel'
 
@@ -19,6 +23,7 @@ interface RightWorkspacePanelProps {
   activeView: RightWorkspacePanelView
   openTabs: RightWorkspacePanelTab[]
   workspaceTarget: WorkspaceTarget | null
+  openFileRequest?: WorkspaceFileOpenRequest | null
   workspaceTargetError?: string | null
   review: RightWorkspaceReviewState
   canOpenReview: boolean
@@ -28,12 +33,14 @@ interface RightWorkspacePanelProps {
   onSelectFiles: () => void
   onSelectLauncher: () => void
   onCloseTab: (tab: RightWorkspacePanelTab) => void
+  onRefreshReview?: () => void
 }
 
 export function RightWorkspacePanel({
   activeView,
   openTabs,
   workspaceTarget,
+  openFileRequest,
   workspaceTargetError,
   review,
   canOpenReview,
@@ -43,6 +50,7 @@ export function RightWorkspacePanel({
   onSelectFiles,
   onSelectLauncher,
   onCloseTab,
+  onRefreshReview,
 }: RightWorkspacePanelProps) {
   const { t } = useTranslation('common')
   const showTabs = openTabs.length > 0
@@ -104,6 +112,7 @@ export function RightWorkspacePanel({
             loading={review.loading}
             diff={review.diff}
             error={review.error}
+            onRefresh={onRefreshReview}
           />
         ) : workspaceTargetError ? (
           <section
@@ -114,8 +123,13 @@ export function RightWorkspacePanel({
           </section>
         ) : (
           <FileWorkspacePanel
-            key={workspaceTarget ? `${workspaceTarget.deviceId}:${workspaceTarget.path}` : 'empty'}
+            key={
+              workspaceTarget
+                ? `${workspaceTarget.deviceId}:${workspaceTarget.path}:${workspaceTarget.taskId ?? ''}`
+                : 'empty'
+            }
             target={workspaceTarget}
+            openFileRequest={openFileRequest}
             onAddCodeComment={onAddCodeComment}
           />
         )}
@@ -150,9 +164,7 @@ function RightWorkspaceTitleTab({
 
   return (
     <div
-      data-testid={
-        tab === 'review' ? 'right-workspace-review-tab' : 'right-workspace-file-tab'
-      }
+      data-testid={tab === 'review' ? 'right-workspace-review-tab' : 'right-workspace-file-tab'}
       role="tab"
       aria-selected={active}
       tabIndex={0}

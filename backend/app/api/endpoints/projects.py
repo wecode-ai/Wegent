@@ -24,6 +24,7 @@ from app.schemas.project import (
     ProjectConversationCreate,
     ProjectConversationResponse,
     ProjectCreate,
+    ProjectDeviceSessionCreate,
     ProjectDeviceSessionResponse,
     ProjectListResponse,
     ProjectResponse,
@@ -346,6 +347,7 @@ def archive_project_chats_endpoint(
 )
 async def start_project_terminal_session_endpoint(
     project_id: int = Path(..., description="Project ID"),
+    payload: ProjectDeviceSessionCreate | None = Body(default=None),
     client_origin: ClientOriginQuery = CLIENT_ORIGIN_FRONTEND,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -357,6 +359,7 @@ async def start_project_terminal_session_endpoint(
         project_id=project_id,
         session_type="terminal",
         client_origin=client_origin,
+        task_id=payload.task_id if payload else None,
     )
 
 
@@ -366,6 +369,7 @@ async def start_project_terminal_session_endpoint(
 )
 async def start_project_code_server_session_endpoint(
     project_id: int = Path(..., description="Project ID"),
+    payload: ProjectDeviceSessionCreate | None = Body(default=None),
     client_origin: ClientOriginQuery = CLIENT_ORIGIN_FRONTEND,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -377,6 +381,7 @@ async def start_project_code_server_session_endpoint(
         project_id=project_id,
         session_type="code_server",
         client_origin=client_origin,
+        task_id=payload.task_id if payload else None,
     )
 
 
