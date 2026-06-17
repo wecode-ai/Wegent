@@ -132,7 +132,7 @@ interface DesktopWorkbenchMainProps {
   environmentInfo: EnvironmentInfo
   onRefreshEnvironmentInfo: () => Promise<void>
   onCommitEnvironmentChanges: (message: string) => Promise<void>
-  onLoadEnvironmentDiff?: () => Promise<string>
+  onLoadEnvironmentDiff?: (workspaceTarget: WorkspaceTarget) => Promise<string>
   onListEnvironmentBranches: () => Promise<string[]>
   onCheckoutEnvironmentBranch: (branchName: string) => Promise<void>
   onCreateEnvironmentBranch: (branchName: string) => Promise<void>
@@ -322,12 +322,12 @@ export function DesktopWorkbenchMain({
 
   const openEnvironmentChangesReview = useCallback(async () => {
     await openReviewFromDiffLoader(async () => {
-      if (!onLoadEnvironmentDiff) {
+      if (!onLoadEnvironmentDiff || !workspaceTarget) {
         throw new Error(t('workbench.environment_review_unavailable'))
       }
-      return onLoadEnvironmentDiff()
+      return onLoadEnvironmentDiff(workspaceTarget)
     })
-  }, [onLoadEnvironmentDiff, openReviewFromDiffLoader, t])
+  }, [onLoadEnvironmentDiff, openReviewFromDiffLoader, t, workspaceTarget])
 
   const selectReviewView = useCallback(() => {
     if (reviewState.diff || reviewState.loading) {
@@ -359,6 +359,7 @@ export function DesktopWorkbenchMain({
       mode={mode}
       currentProject={currentProject}
       devices={devices}
+      workspaceTarget={workspaceTarget}
       environmentInfo={environmentInfo}
       onRefreshEnvironmentInfo={onRefreshEnvironmentInfo}
       onCommitEnvironmentChanges={onCommitEnvironmentChanges}
@@ -604,7 +605,7 @@ export function DesktopWorkbenchMain({
             workspaceTarget={workspaceTarget}
             workspaceTargetError={workspaceTargetError}
             review={reviewState}
-            canOpenReview={Boolean(onLoadEnvironmentDiff)}
+            canOpenReview={Boolean(onLoadEnvironmentDiff && workspaceTarget)}
             onAddCodeComment={onAddCodeComment}
             onResizeStart={handleRightSplitResizeStart}
             onSelectReview={selectReviewView}

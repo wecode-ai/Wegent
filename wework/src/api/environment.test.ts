@@ -620,6 +620,46 @@ describe('commitProjectChanges', () => {
     })
   })
 
+  test('loads the full environment diff from the active workspace target', async () => {
+    const executeCommand = vi.fn().mockResolvedValue({
+      success: true,
+      stdout: '',
+      stderr: '',
+    })
+
+    await expect(
+      loadProjectEnvironmentDiff(
+        { executeCommand },
+        {
+          id: 1,
+          name: 'Wegent',
+          config: {
+            mode: 'workspace',
+            execution: {
+              targetType: 'local',
+              deviceId: 'device-123',
+            },
+            workspace: {
+              source: 'local_path',
+              localPath: '/workspace/Wegent',
+            },
+          },
+        },
+        {
+          deviceId: 'device-123',
+          path: '/workspace/worktrees/1029/Wegent',
+        }
+      )
+    ).resolves.toBe('')
+
+    expect(executeCommand).toHaveBeenCalledWith('device-123', {
+      command_key: 'git_diff',
+      path: '/workspace/worktrees/1029/Wegent',
+      timeout_seconds: 30,
+      max_output_bytes: 5 * 1024 * 1024,
+    })
+  })
+
   test('stages all changes and commits with the provided message', async () => {
     const executeCommand = vi
       .fn()

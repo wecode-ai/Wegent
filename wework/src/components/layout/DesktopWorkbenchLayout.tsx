@@ -23,7 +23,7 @@ import type {
 } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
 import type { DeviceUpgradeState } from '@/types/device-events'
-import type { CodeCommentContext } from '@/types/workspace-files'
+import type { CodeCommentContext, WorkspaceTarget } from '@/types/workspace-files'
 import { stripAppBasePath } from '@/config/runtime'
 import { isSettingsRoute, navigateTo } from '@/lib/navigation'
 import { findProjectForTask } from '@/lib/workbench-device'
@@ -77,7 +77,10 @@ interface DesktopWorkbenchLayoutProps {
   onCreateDeviceDirectory: (deviceId: string, path: string) => Promise<void>
   onLoadEnvironmentInfo: (project: ProjectWithTasks | null) => Promise<EnvironmentInfo>
   onCommitEnvironmentChanges: (project: ProjectWithTasks | null, message: string) => Promise<void>
-  onLoadEnvironmentDiff?: (project: ProjectWithTasks | null) => Promise<string>
+  onLoadEnvironmentDiff?: (
+    project: ProjectWithTasks | null,
+    workspaceTarget: WorkspaceTarget
+  ) => Promise<string>
   onListEnvironmentBranches: (project: ProjectWithTasks | null) => Promise<string[]>
   onCheckoutEnvironmentBranch: (
     project: ProjectWithTasks | null,
@@ -365,7 +368,9 @@ export function DesktopWorkbenchLayout({
           onRefreshEnvironmentInfo={refreshEnvironmentInfo}
           onCommitEnvironmentChanges={handleCommitEnvironmentChanges}
           onLoadEnvironmentDiff={
-            onLoadEnvironmentDiff ? () => onLoadEnvironmentDiff(environmentProject) : undefined
+            onLoadEnvironmentDiff
+              ? workspaceTarget => onLoadEnvironmentDiff(environmentProject, workspaceTarget)
+              : undefined
           }
           onListEnvironmentBranches={() => onListEnvironmentBranches(environmentProject)}
           onCheckoutEnvironmentBranch={handleCheckoutEnvironmentBranch}

@@ -65,7 +65,7 @@ import type {
 } from '@/types/api'
 import type { DeviceUpgradeState, DeviceUpgradeStatusPayload } from '@/types/device-events'
 import type { EnvironmentInfo } from '@/types/environment'
-import type { CodeCommentContext } from '@/types/workspace-files'
+import type { CodeCommentContext, WorkspaceTarget } from '@/types/workspace-files'
 import type {
   GuidanceWorkbenchMessage,
   ProcessingBlock,
@@ -254,7 +254,10 @@ export interface WorkbenchContextValue {
   listDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
   createDeviceDirectory: (deviceId: string, path: string) => Promise<void>
   loadEnvironmentInfo: (project: ProjectWithTasks | null) => Promise<EnvironmentInfo>
-  loadEnvironmentDiff: (project: ProjectWithTasks | null) => Promise<string>
+  loadEnvironmentDiff: (
+    project: ProjectWithTasks | null,
+    workspaceTarget?: WorkspaceTarget | null
+  ) => Promise<string>
   commitEnvironmentChanges: (project: ProjectWithTasks | null, message: string) => Promise<void>
   listEnvironmentBranches: (project: ProjectWithTasks | null) => Promise<string[]>
   checkoutEnvironmentBranch: (project: ProjectWithTasks | null, branchName: string) => Promise<void>
@@ -1610,8 +1613,8 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
   )
 
   const loadEnvironmentDiff = useCallback(
-    (project: ProjectWithTasks | null) =>
-      loadProjectEnvironmentDiff(resolvedServices.deviceApi, project),
+    (project: ProjectWithTasks | null, workspaceTarget?: WorkspaceTarget | null) =>
+      loadProjectEnvironmentDiff(resolvedServices.deviceApi, project, workspaceTarget),
     [resolvedServices]
   )
 

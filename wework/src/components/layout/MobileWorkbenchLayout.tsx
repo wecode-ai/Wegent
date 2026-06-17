@@ -27,7 +27,7 @@ import type {
 } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
 import type { DeviceUpgradeState } from '@/types/device-events'
-import type { CodeCommentContext } from '@/types/workspace-files'
+import type { CodeCommentContext, WorkspaceTarget } from '@/types/workspace-files'
 import type {
   GuidanceWorkbenchMessage,
   QueuedWorkbenchMessage,
@@ -77,7 +77,10 @@ interface MobileWorkbenchLayoutProps {
   onListDeviceDirectories?: (deviceId: string, path: string) => Promise<string[]>
   onCreateDeviceDirectory?: (deviceId: string, path: string) => Promise<void>
   onLoadEnvironmentInfo?: (project: ProjectWithTasks | null) => Promise<EnvironmentInfo>
-  onLoadEnvironmentDiff?: (project: ProjectWithTasks | null) => Promise<string>
+  onLoadEnvironmentDiff?: (
+    project: ProjectWithTasks | null,
+    workspaceTarget?: WorkspaceTarget | null
+  ) => Promise<string>
   onCommitEnvironmentChanges?: (project: ProjectWithTasks | null, message: string) => Promise<void>
   onListEnvironmentBranches?: (project: ProjectWithTasks | null) => Promise<string[]>
   onCheckoutEnvironmentBranch?: (

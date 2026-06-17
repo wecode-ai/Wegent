@@ -1,5 +1,6 @@
 import type { DeviceCommandRequest, DeviceCommandResponse, ProjectWithTasks } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
+import type { WorkspaceTarget } from '@/types/workspace-files'
 import {
   configuredWorkspacePath,
   executionDeviceId,
@@ -9,6 +10,8 @@ import {
 interface DeviceCommandApi {
   executeCommand(deviceId: string, data: DeviceCommandRequest): Promise<DeviceCommandResponse>
 }
+
+type EnvironmentWorkspaceTarget = Pick<WorkspaceTarget, 'deviceId' | 'path'>
 
 interface GitRemoteParts {
   host: string
@@ -240,8 +243,22 @@ async function loadBranchDiffShortStat(
 
 async function commandContext(
   api: DeviceCommandApi,
-  project: ProjectWithTasks
+  project: ProjectWithTasks | null,
+  target?: EnvironmentWorkspaceTarget | null
 ): Promise<{ deviceId: string; path: string }> {
+  if (target) {
+    const deviceId = target.deviceId.trim()
+    const path = target.path.trim()
+    if (!deviceId || !path) {
+      throw new Error('Workspace target device and path are required')
+    }
+    return { deviceId, path }
+  }
+
+  if (!project) {
+    throw new Error('Project is required')
+  }
+
   const deviceId = executionDeviceId(project)
 
   if (!deviceId) {
@@ -356,13 +373,10 @@ export async function loadProjectEnvironment(
 
 export async function loadProjectEnvironmentDiff(
   api: DeviceCommandApi,
-  project: ProjectWithTasks | null
+  project: ProjectWithTasks | null,
+  target?: EnvironmentWorkspaceTarget | null
 ): Promise<string> {
-  if (!project) {
-    throw new Error('Project is required')
-  }
-
-  const { deviceId, path } = await commandContext(api, project)
+  const { deviceId, path } = await commandContext(api, project, target)
   return runGitCommand(api, deviceId, 'git_diff', path, {
     timeoutSeconds: 30,
     maxOutputBytes: 5 * 1024 * 1024,

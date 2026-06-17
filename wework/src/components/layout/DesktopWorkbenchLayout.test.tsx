@@ -707,6 +707,44 @@ describe('DesktopWorkbenchLayout', () => {
     )
   })
 
+  test('opens project code-server from the current task execution workspace in the Tauri titlebar', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null)
+    const workspacePanelState = createCloudWorkspacePanelState()
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          ...workspacePanelState,
+          currentTask: {
+            id: 8,
+            title: 'Task',
+            status: 'RUNNING',
+            created_at: '2026-06-12T00:00:00.000Z',
+            device_id: 'workspace-cloud-device',
+            execution_workspace_path: '/workspace/worktrees/8/workspace-project',
+          },
+        }}
+        projectWork={{
+          ...baseProps.projectWork,
+          projects: workspacePanelState.projects,
+          devices: workspacePanelState.devices,
+          currentProjectId: workspacePanelState.currentProject.id,
+        }}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('open-code-server-titlebar-button'))
+
+    await waitFor(() => expect(startCodeServerSessionMock).toHaveBeenCalledWith(12, { taskId: 8 }))
+    expect(openSpy).toHaveBeenCalledWith('http://localhost/ide', '_blank', 'noopener')
+  })
+
   test('shows project code-server in the Tauri titlebar before devices hydrate', () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,
@@ -3732,7 +3770,12 @@ describe('DesktopWorkbenchLayout', () => {
 
     await waitFor(() =>
       expect(onLoadEnvironmentDiff).toHaveBeenCalledWith(
-        expect.objectContaining({ id: 1, name: 'github_wegent' })
+        expect.objectContaining({ id: 1, name: 'github_wegent' }),
+        {
+          deviceId: 'device-1',
+          path: '/workspace/github_wegent',
+          source: 'project',
+        }
       )
     )
     expect(screen.queryByRole('dialog', { name: '本轮文件变更' })).not.toBeInTheDocument()
@@ -3743,6 +3786,57 @@ describe('DesktopWorkbenchLayout', () => {
     )
     expect(await screen.findByTestId('file-changes-review-panel')).toHaveTextContent('src/env.ts')
     expect(screen.getByTestId('file-changes-review-panel')).toHaveTextContent('+new')
+  })
+
+  test('opens environment changes review from the current task execution workspace', async () => {
+    const workspacePanelState = createCloudWorkspacePanelState()
+    const onLoadEnvironmentDiff = vi
+      .fn()
+      .mockResolvedValue(
+        'diff --git a/src/env.ts b/src/env.ts\n--- a/src/env.ts\n+++ b/src/env.ts\n@@ -1 +1 @@\n-old\n+new\n'
+      )
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onLoadEnvironmentDiff={onLoadEnvironmentDiff}
+        state={{
+          ...baseProps.state,
+          ...workspacePanelState,
+          currentTask: {
+            id: 8,
+            title: 'Task',
+            status: 'RUNNING',
+            created_at: '2026-06-12T00:00:00.000Z',
+            device_id: 'workspace-cloud-device',
+            execution_workspace_path: '/workspace/worktrees/8/workspace-project',
+          },
+        }}
+        projectWork={{
+          ...baseProps.projectWork,
+          projects: workspacePanelState.projects,
+          devices: workspacePanelState.devices,
+          currentProjectId: workspacePanelState.currentProject.id,
+        }}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await waitFor(() => expect(screen.getByTestId('right-workspace-review-option')).toBeEnabled())
+    await userEvent.click(screen.getByTestId('right-workspace-review-option'))
+
+    await waitFor(() =>
+      expect(onLoadEnvironmentDiff).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 12, name: 'workspace-project' }),
+        {
+          deviceId: 'workspace-cloud-device',
+          path: '/workspace/worktrees/8/workspace-project',
+          source: 'task',
+          taskId: 8,
+        }
+      )
+    )
+    expect(await screen.findByTestId('file-changes-review-panel')).toHaveTextContent('src/env.ts')
   })
 
   test('submits environment commits from the popover', async () => {
