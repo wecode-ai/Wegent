@@ -26,6 +26,11 @@ export interface WorkspaceTarget {
   source: 'task' | 'project'
 }
 
+export interface WorkspaceFileOpenRequest {
+  id: number
+  path: string
+}
+
 export interface CodeCommentContext {
   id: string
   filePath: string

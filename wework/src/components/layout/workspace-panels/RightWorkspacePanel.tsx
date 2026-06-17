@@ -2,7 +2,11 @@ import { File, FileDiff, Plus, X } from 'lucide-react'
 import type { KeyboardEvent, PointerEvent } from 'react'
 import { FileChangesReviewPanel } from '@/components/chat/FileChangesReviewPanel'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { CodeCommentContext, WorkspaceTarget } from '@/types/workspace-files'
+import type {
+  CodeCommentContext,
+  WorkspaceFileOpenRequest,
+  WorkspaceTarget,
+} from '@/types/workspace-files'
 import { cn } from '@/lib/utils'
 import { FileWorkspacePanel } from './FileWorkspacePanel'
 
@@ -19,6 +23,7 @@ interface RightWorkspacePanelProps {
   activeView: RightWorkspacePanelView
   openTabs: RightWorkspacePanelTab[]
   workspaceTarget: WorkspaceTarget | null
+  openFileRequest?: WorkspaceFileOpenRequest | null
   workspaceTargetError?: string | null
   review: RightWorkspaceReviewState
   canOpenReview: boolean
@@ -34,6 +39,7 @@ export function RightWorkspacePanel({
   activeView,
   openTabs,
   workspaceTarget,
+  openFileRequest,
   workspaceTargetError,
   review,
   canOpenReview,
@@ -116,6 +122,7 @@ export function RightWorkspacePanel({
           <FileWorkspacePanel
             key={workspaceTarget ? `${workspaceTarget.deviceId}:${workspaceTarget.path}` : 'empty'}
             target={workspaceTarget}
+            openFileRequest={openFileRequest}
             onAddCodeComment={onAddCodeComment}
           />
         )}

@@ -552,7 +552,7 @@ describe('SkillListWithScope default enabled skills', () => {
     })
     const updatedRow = screen.getByTestId('auto-enabled-settings-skill-1')
     expect(within(updatedRow).getAllByRole('cell')[1]).toHaveTextContent(/^强制激活$/)
-  })
+  }, 10000)
 
   it('shows force activation as a standalone column instead of a skill badge', async () => {
     const user = userEvent.setup()

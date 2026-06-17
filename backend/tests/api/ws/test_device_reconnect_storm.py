@@ -166,3 +166,45 @@ async def test_stale_disconnect_does_not_clear_newer_device_socket(monkeypatch):
     set_offline.assert_not_awaited()
     device_namespace.run_sync_in_executor.assert_not_awaited()
     namespace._broadcast_device_offline.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_transient_disconnect_rechecks_device_before_failing_tasks(monkeypatch):
+    namespace = DeviceNamespace()
+
+    async def fake_get_session(sid):
+        return {
+            "user_id": 7,
+            "device_id": "device-1",
+            "request_id": "req-1",
+        }
+
+    monkeypatch.setattr(namespace, "get_session", fake_get_session)
+    monkeypatch.setattr(
+        device_namespace.device_service,
+        "get_device_online_info",
+        AsyncMock(
+            side_effect=[
+                {"socket_id": "sid-old"},
+                {"socket_id": "sid-new"},
+            ]
+        ),
+    )
+    monkeypatch.setattr(device_namespace.asyncio, "sleep", AsyncMock())
+    set_offline = AsyncMock()
+    monkeypatch.setattr(
+        device_namespace.device_service, "set_device_offline", set_offline
+    )
+    monkeypatch.setattr(
+        device_namespace,
+        "run_sync_in_executor",
+        AsyncMock(return_value=[]),
+    )
+    monkeypatch.setattr(namespace, "_broadcast_device_offline", AsyncMock())
+
+    await namespace.on_disconnect("sid-old")
+
+    device_namespace.asyncio.sleep.assert_awaited_once()
+    set_offline.assert_not_awaited()
+    device_namespace.run_sync_in_executor.assert_not_awaited()
+    namespace._broadcast_device_offline.assert_not_awaited()
