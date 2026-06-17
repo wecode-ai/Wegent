@@ -1604,6 +1604,18 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                         onOpenChange={setDefaultContextsOpen}
                         selectedContexts={defaultContextItems}
                         allowedContextTypes={DEFAULT_CONTEXT_ALLOWED_TYPES}
+                        allowedKnowledgeBaseSources={
+                          scope === 'public'
+                            ? ['organization']
+                            : scope === 'group'
+                              ? groupName
+                                ? ['group', 'organization']
+                                : ['organization']
+                              : ['personal', 'group', 'organization']
+                        }
+                        allowedGroupNamespaces={
+                          scope === 'group' && groupName ? [groupName] : undefined
+                        }
                         onSelect={context =>
                           setDefaultContextItems(prev =>
                             filterDefaultContextItems(

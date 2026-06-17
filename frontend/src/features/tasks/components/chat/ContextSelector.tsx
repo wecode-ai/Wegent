@@ -47,6 +47,7 @@ interface GroupedKnowledgeBases {
 }
 
 const DEFAULT_ALLOWED_CONTEXT_TYPES: ContextType[] = ['knowledge_base', 'table', 'dingtalk_doc']
+type KnowledgeBaseContextSource = 'personal' | 'group' | 'organization'
 
 interface ContextSelectorProps {
   open: boolean
@@ -67,6 +68,10 @@ interface ContextSelectorProps {
   excludeKnowledgeBaseId?: number
   /** Restrict selectable context types. Defaults to all chat context types. */
   allowedContextTypes?: ContextType[]
+  /** Restrict selectable knowledge base sources. Defaults to all sources. */
+  allowedKnowledgeBaseSources?: KnowledgeBaseContextSource[]
+  /** Restrict selectable group knowledge bases to these namespaces. */
+  allowedGroupNamespaces?: string[]
 }
 
 interface KnowledgeBaseItemProps {
@@ -142,6 +147,8 @@ export default function ContextSelector({
   isGroupChat,
   excludeKnowledgeBaseId,
   allowedContextTypes,
+  allowedKnowledgeBaseSources,
+  allowedGroupNamespaces,
 }: ContextSelectorProps) {
   const { t } = useTranslation()
   const tRef = useRef(t)
@@ -278,6 +285,25 @@ export default function ContextSelector({
     const filtered = knowledgeBases
       .filter(kb => !boundIds.has(kb.id))
       .filter(kb => excludeKnowledgeBaseId === undefined || kb.id !== excludeKnowledgeBaseId)
+      .filter(kb => {
+        const source = getKnowledgeBaseGroup(kb.namespace, organizationNamespace)
+        if (
+          allowedKnowledgeBaseSources &&
+          allowedKnowledgeBaseSources.length > 0 &&
+          !allowedKnowledgeBaseSources.includes(source)
+        ) {
+          return false
+        }
+        if (
+          source === 'group' &&
+          allowedGroupNamespaces &&
+          allowedGroupNamespaces.length > 0 &&
+          !allowedGroupNamespaces.includes(kb.namespace)
+        ) {
+          return false
+        }
+        return true
+      })
 
     const groups: GroupedKnowledgeBases = {
       personal: [],
@@ -313,7 +339,14 @@ export default function ContextSelector({
     groups.group = new Map(sortedGroupEntries)
 
     return groups
-  }, [knowledgeBases, boundKnowledgeBases, excludeKnowledgeBaseId, organizationNamespace])
+  }, [
+    allowedGroupNamespaces,
+    allowedKnowledgeBaseSources,
+    knowledgeBases,
+    boundKnowledgeBases,
+    excludeKnowledgeBaseId,
+    organizationNamespace,
+  ])
 
   // Check if there are any knowledge bases to show
   const hasKnowledgeBases =

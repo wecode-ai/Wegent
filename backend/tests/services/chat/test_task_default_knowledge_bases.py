@@ -260,6 +260,61 @@ def test_build_initial_task_context_refs_merges_defaults_and_explicit_contexts()
     assert [ref["id"] for ref in result["knowledge_base_refs"]] == [11, 33]
 
 
+def test_build_initial_task_context_refs_skips_invalid_explicit_contexts():
+    from app.services.chat.task_default_knowledge_bases import (
+        build_initial_task_context_refs,
+    )
+
+    db = Mock()
+    team = _make_team()
+    user = _make_user()
+    kb_map = {33: _make_kb(33, "Release Notes")}
+
+    def _kind_lookup(_, __, kind_type, ___, name):
+        if kind_type.value == "Bot":
+            return {
+                "bot-one": _make_bot("bot-one", "ghost-one"),
+                "bot-two": _make_bot("bot-two", "ghost-two"),
+            }.get(name)
+        return {
+            "ghost-one": _make_ghost("ghost-one", []),
+            "ghost-two": _make_ghost("ghost-two", []),
+        }.get(name)
+
+    explicit_contexts = [
+        {"type": "knowledge_base", "data": {"id": "not-a-number", "name": "Bad KB"}},
+        {
+            "type": "dingtalk_doc",
+            "data": {
+                "source": "docs",
+                "dingtalk_node_id": "node-1",
+                "name": "Bad DingTalk",
+                "node_type": "unsupported",
+            },
+        },
+        {"type": "knowledge_base", "data": {"id": 33, "name": "Release Notes"}},
+    ]
+
+    with patch(
+        "app.services.chat.task_default_knowledge_bases.kindReader.get_by_name_and_namespace",
+        side_effect=_kind_lookup,
+    ):
+        with patch(
+            "app.services.chat.task_default_knowledge_bases._get_accessible_knowledge_base",
+            side_effect=lambda _db, _user_id, kb_id: kb_map.get(kb_id),
+        ):
+            result = build_initial_task_context_refs(
+                db=db,
+                user=user,
+                team=team,
+                explicit_contexts=explicit_contexts,
+                default_context_mode="override",
+            )
+
+    assert [ref["data"]["id"] for ref in result["context_refs"]] == [33]
+    assert [ref["id"] for ref in result["knowledge_base_refs"]] == [33]
+
+
 def test_build_initial_task_context_refs_warns_when_dingtalk_mcp_not_configured():
     from app.services.chat.task_default_knowledge_bases import (
         build_initial_task_context_refs,

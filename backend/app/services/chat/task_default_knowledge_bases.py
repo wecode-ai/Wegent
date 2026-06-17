@@ -7,7 +7,7 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import TypeAdapter
+from pydantic import TypeAdapter, ValidationError
 from sqlalchemy.orm import Session
 
 from app.models.dingtalk_doc import DingtalkSyncedNode
@@ -213,30 +213,36 @@ def _context_item_to_default_ref(context: Any) -> DefaultContextRef | None:
         kb_id = data.get("knowledge_id") or data.get("id")
         if kb_id is None:
             return None
-        return DEFAULT_CONTEXT_REF_ADAPTER.validate_python(
-            {
-                "type": "knowledge_base",
-                "id": int(kb_id),
-                "name": data.get("name") or str(kb_id),
-                "document_count": data.get("document_count"),
-            }
-        )
+        try:
+            return DEFAULT_CONTEXT_REF_ADAPTER.validate_python(
+                {
+                    "type": "knowledge_base",
+                    "id": int(kb_id),
+                    "name": data.get("name") or str(kb_id),
+                    "document_count": data.get("document_count"),
+                }
+            )
+        except (TypeError, ValueError, ValidationError):
+            return None
     if context_type in {"dingtalk_doc", "external_document"}:
         source = data.get("source")
         node_id = data.get("dingtalk_node_id")
         if source not in {"docs", "wikispace"} or not node_id:
             return None
-        return DEFAULT_CONTEXT_REF_ADAPTER.validate_python(
-            {
-                "type": "dingtalk_doc",
-                "source": source,
-                "id": data.get("id") or f"{source}:{node_id}",
-                "dingtalk_node_id": node_id,
-                "name": data.get("name") or node_id,
-                "doc_url": data.get("doc_url") or "",
-                "node_type": data.get("node_type") or "doc",
-            }
-        )
+        try:
+            return DEFAULT_CONTEXT_REF_ADAPTER.validate_python(
+                {
+                    "type": "dingtalk_doc",
+                    "source": source,
+                    "id": data.get("id") or f"{source}:{node_id}",
+                    "dingtalk_node_id": node_id,
+                    "name": data.get("name") or node_id,
+                    "doc_url": data.get("doc_url") or "",
+                    "node_type": data.get("node_type") or "doc",
+                }
+            )
+        except (TypeError, ValueError, ValidationError):
+            return None
     return None
 
 

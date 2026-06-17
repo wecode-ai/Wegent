@@ -573,6 +573,14 @@ export default function SimpleTeamEditForm({
                 onOpenChange={setDefaultContextsOpen}
                 selectedContexts={defaultContextItems}
                 allowedContextTypes={DEFAULT_CONTEXT_ALLOWED_TYPES}
+                allowedKnowledgeBaseSources={
+                  scope === 'group'
+                    ? groupName
+                      ? ['group', 'organization']
+                      : ['organization']
+                    : ['personal', 'group', 'organization']
+                }
+                allowedGroupNamespaces={scope === 'group' && groupName ? [groupName] : undefined}
                 onSelect={context =>
                   updateDefaultContextItems(
                     defaultContextItems.some(

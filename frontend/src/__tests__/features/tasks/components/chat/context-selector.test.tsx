@@ -205,4 +205,61 @@ describe('ContextSelector organization grouping', () => {
     })
     expect(mockListTables).not.toHaveBeenCalled()
   })
+
+  it('filters knowledge bases by allowed sources and group namespaces', async () => {
+    mockListKnowledgeBases.mockResolvedValue({
+      items: [
+        {
+          id: 1,
+          name: 'Personal KB',
+          namespace: 'default',
+          description: 'Private docs',
+          document_count: 1,
+        },
+        {
+          id: 2,
+          name: 'Platform KB',
+          namespace: 'platform',
+          description: 'Platform docs',
+          document_count: 2,
+        },
+        {
+          id: 3,
+          name: 'Growth KB',
+          namespace: 'growth',
+          description: 'Growth docs',
+          document_count: 3,
+        },
+        {
+          id: 4,
+          name: 'Org KB',
+          namespace: 'acme-corp',
+          description: 'Company docs',
+          document_count: 4,
+        },
+      ],
+    })
+
+    render(
+      <ContextSelector
+        open={true}
+        onOpenChange={jest.fn()}
+        selectedContexts={[]}
+        onSelect={jest.fn()}
+        onDeselect={jest.fn()}
+        allowedContextTypes={['knowledge_base']}
+        allowedKnowledgeBaseSources={['group', 'organization']}
+        allowedGroupNamespaces={['platform']}
+      >
+        <button>trigger</button>
+      </ContextSelector>
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('Platform KB')).toBeInTheDocument()
+      expect(screen.getByText('Org KB')).toBeInTheDocument()
+    })
+    expect(screen.queryByText('Personal KB')).not.toBeInTheDocument()
+    expect(screen.queryByText('Growth KB')).not.toBeInTheDocument()
+  })
 })
