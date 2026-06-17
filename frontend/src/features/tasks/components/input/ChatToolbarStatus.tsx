@@ -10,6 +10,7 @@ import { Coins, Gauge } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { quotaApis, QuotaData } from '@/apis/quota'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useToast } from '@/hooks/use-toast'
@@ -256,57 +257,71 @@ export default function ChatToolbarStatus({ className, compact = false }: ChatTo
 
   if (compact) {
     return (
-      <Popover>
-        <PopoverTrigger asChild>
-          <Button
-            variant="ghost"
-            size="icon"
-            className={cn('h-6 w-6 flex-shrink-0', className ?? '')}
-            data-testid="chat-toolbar-status-trigger"
-            style={{ padding: 0 }}
-          >
-            <Coins className={triggerIconClassName} />
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent side="bottom" align="end" className="w-64 p-3">
-          {contentElement}
-        </PopoverContent>
-      </Popover>
+      <TooltipProvider delayDuration={300}>
+        <Tooltip>
+          <Popover>
+            <TooltipTrigger asChild>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className={cn('h-6 w-6 flex-shrink-0', className ?? '')}
+                  data-testid="chat-toolbar-status-trigger"
+                  style={{ padding: 0 }}
+                >
+                  <Coins className={triggerIconClassName} />
+                </Button>
+              </PopoverTrigger>
+            </TooltipTrigger>
+            <PopoverContent side="bottom" align="end" className="w-64 p-3">
+              {contentElement}
+            </PopoverContent>
+          </Popover>
+          <TooltipContent side="top">{t('common:chat_status.tooltip')}</TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
     )
   }
 
   return (
-    <Popover>
-      <PopoverTrigger asChild>
-        <Button
-          variant="ghost"
-          className={cn(
-            'h-auto gap-1.5 px-0 !text-text-muted hover:!text-text-primary',
-            className ?? ''
-          )}
-          data-testid="chat-toolbar-status-trigger"
-          style={{
-            lineHeight: 'normal',
-            color: 'rgb(var(--color-text-muted))',
-          }}
-          onMouseEnter={e => {
-            e.currentTarget.style.color = 'rgb(var(--color-text-primary))'
-          }}
-          onMouseLeave={e => {
-            e.currentTarget.style.color = 'rgb(var(--color-text-muted))'
-          }}
-        >
-          <Coins
-            className={cn(
-              'h-4 w-4',
-              showStatusSection && statusDisplay?.isOverTrigger && 'text-amber-700'
-            )}
-          />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent side="bottom" align="end" className="w-64 p-3">
-        {contentElement}
-      </PopoverContent>
-    </Popover>
+    <TooltipProvider delayDuration={300}>
+      <Tooltip>
+        <Popover>
+          <TooltipTrigger asChild>
+            <PopoverTrigger asChild>
+              <Button
+                variant="ghost"
+                className={cn(
+                  'h-auto gap-1.5 px-0 !text-text-muted hover:!text-text-primary',
+                  className ?? ''
+                )}
+                data-testid="chat-toolbar-status-trigger"
+                style={{
+                  lineHeight: 'normal',
+                  color: 'rgb(var(--color-text-muted))',
+                }}
+                onMouseEnter={e => {
+                  e.currentTarget.style.color = 'rgb(var(--color-text-primary))'
+                }}
+                onMouseLeave={e => {
+                  e.currentTarget.style.color = 'rgb(var(--color-text-muted))'
+                }}
+              >
+                <Coins
+                  className={cn(
+                    'h-4 w-4',
+                    showStatusSection && statusDisplay?.isOverTrigger && 'text-amber-700'
+                  )}
+                />
+              </Button>
+            </PopoverTrigger>
+          </TooltipTrigger>
+          <PopoverContent side="bottom" align="end" className="w-64 p-3">
+            {contentElement}
+          </PopoverContent>
+        </Popover>
+        <TooltipContent side="top">{t('common:chat_status.tooltip')}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   )
 }

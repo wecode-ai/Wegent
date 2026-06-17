@@ -831,6 +831,7 @@
   },
   "chat_status": {
     "title": "Current chat status",
+    "tooltip": "Status & quota",
     "description": "Show the current context budget for the active conversation",
     "status_line_title": "Chat status line",
     "status_line_description": "Show lightweight runtime status items in the chat toolbar.",

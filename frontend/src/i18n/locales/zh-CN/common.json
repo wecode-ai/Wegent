@@ -831,6 +831,7 @@
   },
   "chat_status": {
     "title": "当前对话状态",
+    "tooltip": "状态与额度",
     "description": "显示当前会话可用的上下文预算",
     "status_line_title": "对话状态栏",
     "status_line_description": "在聊天工具栏中显示轻量的运行时状态信息。",

@@ -55,6 +55,8 @@ TOOL_LIMIT_REACHED_MESSAGE = """[SYSTEM NOTICE] Tool call limit reached for this
 
 Additional tool work is still needed, so the information gathered so far may be incomplete.
 
+Continuing to call tools in this turn will not work. If more tool work is required, tell the user to continue in a follow-up turn with a narrower request or a smaller scope.
+
 In your final response:
 - Explicitly tell the user that the tool call limit was reached
 - Summarize only the findings you have already confirmed
@@ -137,6 +139,23 @@ def _tail_signature(messages: list[Any], limit: int = 3) -> str:
             f"(tool_calls={len(getattr(message, 'tool_calls', []) or [])})"
         )
     return " | ".join(parts)
+
+
+def _last_tool_call_name(messages: list[Any]) -> str:
+    """Return the most recent tool-call name from a message sequence."""
+    for message in reversed(messages):
+        tool_calls = getattr(message, "tool_calls", None) or []
+        if not tool_calls:
+            continue
+        name = tool_calls[-1].get("name")
+        if isinstance(name, str) and name.strip():
+            return name
+    return ""
+
+
+def _tool_call_count(message: Any) -> int:
+    """Return the number of parsed tool calls on a message."""
+    return len(getattr(message, "tool_calls", None) or [])
 
 
 def _count_tool_use_blocks(output: Any) -> int:
@@ -1228,6 +1247,8 @@ class LangGraphAgentBuilder:
             else None
         )
         recursion_limit = self.max_iterations * 2 + 1
+        agent_iteration = 0
+        last_model_end_tool_calls = 0
 
         # Get tracer for LLM request span
         tracer = otel_trace.get_tracer("chat_shell.agents")
@@ -1442,6 +1463,7 @@ class LangGraphAgentBuilder:
                             truncation_reason = finish_reason
 
                 elif kind == "on_chat_model_end":
+                    agent_iteration += 1
                     _log_llm_response_event(
                         event,
                         tool_names=[
@@ -1491,14 +1513,16 @@ class LangGraphAgentBuilder:
                             "generation_info", {}
                         )
                     logger.info(
-                        "[stream_tokens] Model end summary: stop_reason=%s, "
+                        "[stream_tokens] Model end summary: agent_iteration=%d stop_reason=%s, "
                         "parsed_tool_calls=%d, content_tool_use_blocks=%d, "
                         "invalid_tool_calls=%d",
+                        agent_iteration,
                         metadata.get("finish_reason") or metadata.get("stop_reason"),
                         parsed_tool_calls_count,
                         content_tool_use_count,
                         invalid_tool_calls_count,
                     )
+                    last_model_end_tool_calls = parsed_tool_calls_count
 
                     if truncation_detected:
                         has_tool_calls = False
@@ -1684,19 +1708,6 @@ class LangGraphAgentBuilder:
                     _message_to_context_metrics_dict(msg)
                     for msg in _collected_state_messages
                 ]
-                if (
-                    _collected_state_messages
-                    and isinstance(_collected_state_messages[-1], AIMessage)
-                    and bool(getattr(_collected_state_messages[-1], "tool_calls", None))
-                ):
-                    logger.error(
-                        "[stream_tokens] Stream finished with unresolved tool calls "
-                        "still present on final AI message: tool_calls=%d",
-                        len(
-                            getattr(_collected_state_messages[-1], "tool_calls", [])
-                            or []
-                        ),
-                    )
                 new_msgs = _new_messages_from_state(
                     _collected_state_messages, _input_message_ids
                 )
@@ -1715,6 +1726,36 @@ class LangGraphAgentBuilder:
                 streamed_content,
                 len(self._last_messages_chain),
             )
+            final_message = (
+                _collected_state_messages[-1] if _collected_state_messages else None
+            )
+            final_tool_calls = (
+                _tool_call_count(final_message)
+                if isinstance(final_message, AIMessage)
+                else 0
+            )
+            termination_reason = "normal_completion"
+            termination_log = logger.info
+            if final_tool_calls > 0 or (
+                last_model_end_tool_calls > 0 and final_tool_calls == 0
+            ):
+                termination_reason = "completed_with_unexecuted_tool_calls"
+                termination_log = logger.warning
+
+            termination_log(
+                "[stream_tokens] Termination: reason=%s "
+                "agent_iteration=%d max_iterations=%d recursion_limit=%d messages=%d "
+                "tail=%s last_tool_call=%s last_model_end_tool_calls=%d final_tool_calls=%d",
+                termination_reason,
+                agent_iteration,
+                self.max_iterations,
+                recursion_limit,
+                len(_collected_state_messages),
+                _tail_signature(_collected_state_messages),
+                _last_tool_call_name(_collected_state_messages) or "none",
+                last_model_end_tool_calls,
+                final_tool_calls,
+            )
 
         except ToolCallTruncatedError as e:
             # Tool call was truncated - report error to LLM for recovery
@@ -1732,6 +1773,17 @@ class LangGraphAgentBuilder:
                     "[stream_tokens] Max truncation retries exceeded (%d). "
                     "Yielding final truncation warning.",
                     self.max_truncation_retries,
+                )
+                logger.warning(
+                    "[stream_tokens] Termination: reason=tool_call_truncation_retry_exhausted "
+                    "agent_iteration=%d max_iterations=%d recursion_limit=%d messages=%d "
+                    "tail=%s last_tool_call=%s",
+                    agent_iteration,
+                    self.max_iterations,
+                    recursion_limit,
+                    len(_collected_state_messages),
+                    _tail_signature(_collected_state_messages),
+                    _last_tool_call_name(_collected_state_messages) or "none",
                 )
                 # Yield truncation marker to show warning in UI
                 yield f"{TRUNCATED_MARKER_START}{e.reason}{TRUNCATED_MARKER_END}"
@@ -1799,11 +1851,15 @@ class LangGraphAgentBuilder:
         except GraphRecursionError:
             # Tool call limit reached - ask model to provide final response
             logger.warning(
-                "[stream_tokens] GraphRecursionError: Tool call limit reached (max_iterations=%d). "
-                "Asking model to provide final response. messages=%d tail=%s",
+                "[stream_tokens] GraphRecursionError: Tool call limit reached "
+                "(agent_iteration=%d, max_iterations=%d, recursion_limit=%d). "
+                "Asking model to provide final response. messages=%d tail=%s last_tool_call=%s",
+                agent_iteration,
                 self.max_iterations,
+                recursion_limit,
                 len(_collected_state_messages),
                 _tail_signature(_collected_state_messages),
+                _last_tool_call_name(_collected_state_messages) or "none",
             )
 
             # Persist messages chain from iterations before the limit
@@ -1850,6 +1906,17 @@ class LangGraphAgentBuilder:
 
                 logger.info(
                     "[stream_tokens] Final response generated after tool limit reached"
+                )
+                logger.warning(
+                    "[stream_tokens] Termination: reason=graph_recursion_limit_recovery "
+                    "agent_iteration=%d max_iterations=%d recursion_limit=%d messages=%d "
+                    "tail=%s last_tool_call=%s",
+                    agent_iteration,
+                    self.max_iterations,
+                    recursion_limit,
+                    len(_collected_state_messages),
+                    _tail_signature(_collected_state_messages),
+                    _last_tool_call_name(_collected_state_messages) or "none",
                 )
             except Exception as recovery_error:
                 logger.exception(

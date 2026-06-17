@@ -124,6 +124,42 @@ describe('TaskStateMachine', () => {
     expect(blocks.every(block => block.status === 'done')).toBe(true)
   })
 
+  it('does not duplicate completed thinking blocks when chat done replays backend blocks', () => {
+    const machine = new TaskStateMachine(100, {
+      joinTask: jest.fn(),
+      isConnected: () => true,
+    })
+
+    machine.handleChatStart(42, 'Chat', 7)
+    machine.handleChatChunk(42, '', { reasoning_chunk: 'Thought.' })
+    machine.handleChatChunk(42, 'Answer.')
+    machine.handleChatDone(42, 'Answer.', {
+      blocks: [
+        {
+          id: 'backend-thinking-1',
+          type: 'thinking',
+          content: 'Thought.',
+          status: 'done',
+        },
+        {
+          id: 'backend-text-1',
+          type: 'text',
+          content: 'Answer.',
+          status: 'done',
+        },
+      ],
+    })
+
+    const message = machine.getState().messages.get('ai-42')
+    const blocks = message?.result?.blocks ?? []
+
+    expect(blocks.map(block => block.type)).toEqual(['thinking', 'text'])
+    expect(
+      blocks.map(block => (block.type === 'text' || block.type === 'thinking' ? block.content : ''))
+    ).toEqual(['Thought.', 'Answer.'])
+    expect(blocks.every(block => block.status === 'done')).toBe(true)
+  })
+
   it('finalizes streaming blocks on chat done without event result', () => {
     const machine = new TaskStateMachine(100, {
       joinTask: vi.fn(),

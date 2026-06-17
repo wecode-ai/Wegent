@@ -48,6 +48,8 @@ STREAMING_TTL = 3600
 # Internal field stored in Redis block metadata. It is stripped before returning
 # blocks to callers so API consumers still see the existing block shape.
 BLOCK_CONTENT_KEY_FIELD = "_content_key"
+UNRESOLVED_PREVIEW_TOOL_BLOCK_STATUSES = {"pending", "generating_arguments"}
+UNRESOLVED_PREVIEW_TOOL_BLOCK_MESSAGE = "Tool call was not executed before the turn completed. The turn may have hit the tool-call limit."
 
 
 class StreamContentType(str, Enum):
@@ -1338,6 +1340,7 @@ class SessionManager:
             redis_client = await self._cache._get_client()
             try:
                 blocks = await self._load_blocks_from_client(redis_client, blocks_key)
+                blocks = self._finalize_unresolved_preview_tool_blocks(blocks)
                 logger.info(
                     f"[SessionManager] Finalized blocks for subtask {subtask_id}: "
                     f"count={len(blocks)}"
@@ -1350,6 +1353,37 @@ class SessionManager:
                 f"[SessionManager] Failed to get blocks for subtask {subtask_id}: {e}"
             )
             return []
+
+    def _finalize_unresolved_preview_tool_blocks(
+        self, blocks: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Convert unresolved preview-only tool blocks into terminal error blocks.
+
+        Preview tool blocks are created while tool arguments stream, before real tool
+        execution begins. If the turn ends without a matching TOOL_RESULT, those
+        blocks would otherwise stay stuck in a pending state in the final result.
+
+        Only preview-only blocks without tool_output are rewritten. Legitimate
+        pending blocks that already carry a semantic output payload (for example
+        deferred interactive forms waiting for user input) are preserved.
+        """
+        finalized_blocks: List[Dict[str, Any]] = []
+        for block in blocks:
+            if (
+                block.get("type") == "tool"
+                and block.get("status") in UNRESOLVED_PREVIEW_TOOL_BLOCK_STATUSES
+                and not block.get("tool_output")
+            ):
+                finalized_blocks.append(
+                    {
+                        **block,
+                        "status": BlockStatus.ERROR.value,
+                        "tool_output": UNRESOLVED_PREVIEW_TOOL_BLOCK_MESSAGE,
+                    }
+                )
+                continue
+            finalized_blocks.append(block)
+        return finalized_blocks
 
     async def get_accumulated_content(self, subtask_id: int) -> str:
         """Get accumulated content for a subtask.
