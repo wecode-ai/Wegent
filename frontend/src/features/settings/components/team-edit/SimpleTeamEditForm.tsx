@@ -5,7 +5,7 @@
 'use client'
 
 import { type ReactNode, useId, useMemo, useState } from 'react'
-import { ChevronDown, Database, SettingsIcon, Wand2, XIcon } from 'lucide-react'
+import { ChevronDown, Database, Plus, SettingsIcon, Wand2, XIcon } from 'lucide-react'
 
 import type { SkillRefMeta } from '@/apis/bots'
 import type { ModelTypeEnum, UnifiedModel } from '@/apis/models'
@@ -536,38 +536,6 @@ export default function SimpleTeamEditForm({
             description={t('settings:team.simple.core.knowledge_description')}
           >
             <div className="space-y-2">
-              <div className="flex flex-wrap gap-2">
-                {defaultContextItems.length === 0 ? (
-                  <span className="text-sm text-text-muted">
-                    {t('common:bot.default_knowledge_bases_empty_selection')}
-                  </span>
-                ) : (
-                  defaultContextItems.map(context => (
-                    <span
-                      key={`${context.type}:${context.id}`}
-                      className="inline-flex items-center gap-1 rounded-md border border-border bg-surface px-2 py-1 text-sm text-text-primary"
-                    >
-                      <Database className="h-3.5 w-3.5 text-text-muted" />
-                      <span className="max-w-[180px] truncate">{context.name}</span>
-                      <button
-                        type="button"
-                        className="inline-flex h-11 w-11 items-center justify-center text-text-muted hover:text-text-primary"
-                        data-testid={`simple-default-context-remove-${context.type}-${context.id}`}
-                        onClick={() =>
-                          updateDefaultContextItems(
-                            defaultContextItems.filter(
-                              item => item.type !== context.type || item.id !== context.id
-                            )
-                          )
-                        }
-                        aria-label={t('common:actions.delete')}
-                      >
-                        <XIcon className="h-3 w-3" />
-                      </button>
-                    </span>
-                  ))
-                )}
-              </div>
               <ContextSelector
                 open={defaultContextsOpen}
                 onOpenChange={setDefaultContextsOpen}
@@ -610,15 +578,43 @@ export default function SimpleTeamEditForm({
                   )
                 }
               >
-                <Button
+                <button
                   type="button"
-                  variant="outline"
-                  size="sm"
+                  className="flex h-9 w-full items-center justify-between rounded-md border border-border/50 bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                   data-testid="simple-default-context-add-button"
                 >
-                  {t('common:bot.default_knowledge_bases_select_to_add')}
-                </Button>
+                  <div className="flex items-center gap-2 text-text-muted">
+                    <Database className="h-4 w-4 text-primary" />
+                    <span>{t('common:bot.default_knowledge_bases_select_to_add')}</span>
+                  </div>
+                  <Plus className="h-4 w-4 opacity-50" />
+                </button>
               </ContextSelector>
+              <div className="flex flex-wrap gap-1.5">
+                {defaultContextItems.map(context => (
+                  <span
+                    key={`${context.type}:${context.id}`}
+                    className="inline-flex items-center gap-1 rounded-md bg-muted px-2.5 py-1.5 text-sm text-text-primary"
+                  >
+                    <span className="max-w-[180px] truncate">{context.name}</span>
+                    <button
+                      type="button"
+                      className="inline-flex h-4 w-4 items-center justify-center text-text-muted hover:text-text-primary"
+                      data-testid={`simple-default-context-remove-${context.type}-${context.id}`}
+                      onClick={() =>
+                        updateDefaultContextItems(
+                          defaultContextItems.filter(
+                            item => item.type !== context.type || item.id !== context.id
+                          )
+                        )
+                      }
+                      aria-label={t('common:actions.delete')}
+                    >
+                      <XIcon className="h-3 w-3" />
+                    </button>
+                  </span>
+                ))}
+              </div>
             </div>
           </SimpleConfigRow>
 
