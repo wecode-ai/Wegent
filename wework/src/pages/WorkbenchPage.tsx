@@ -13,10 +13,13 @@ export function WorkbenchPage() {
     messages,
     queuedMessages,
     guidanceMessages,
+    codeCommentContexts,
     runningTaskIds,
     upgradingDevices,
     projectExecutionMode,
     setProjectExecutionMode,
+    projectWorktreeBaseBranch,
+    setProjectWorktreeBaseBranch,
     projectChat,
     selectProject,
     selectStandaloneDevice,
@@ -55,6 +58,8 @@ export function WorkbenchPage() {
     checkoutEnvironmentBranch,
     createEnvironmentBranch,
     setInput,
+    addCodeCommentContext,
+    clearCodeCommentContexts,
     sendCurrentInput,
     retryFailedMessage,
     pauseCurrentResponse,
@@ -77,6 +82,8 @@ export function WorkbenchPage() {
     onSelectProject: selectProject,
     onSelectStandaloneDevice: selectStandaloneDevice,
     onExecutionModeChange: setProjectExecutionMode,
+    worktreeBaseBranch: projectWorktreeBaseBranch,
+    onWorktreeBaseBranchChange: setProjectWorktreeBaseBranch,
   }
 
   return (
@@ -85,6 +92,7 @@ export function WorkbenchPage() {
       messages={messages}
       queuedMessages={queuedMessages}
       guidanceMessages={guidanceMessages}
+      codeCommentContexts={codeCommentContexts}
       runningTaskIds={runningTaskIds}
       upgradingDevices={upgradingDevices}
       onNewChat={startNewChat}
@@ -135,6 +143,8 @@ export function WorkbenchPage() {
       onCancelGuidanceMessage={cancelGuidanceMessage}
       onLoadFileChangesDiff={loadTurnFileChangesDiff}
       onRevertFileChanges={revertTurnFileChanges}
+      onAddCodeComment={addCodeCommentContext}
+      onClearCodeComments={clearCodeCommentContexts}
       onRefreshWorkLists={refreshWorkLists}
       onLogout={logout}
     />

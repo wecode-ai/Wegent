@@ -4,6 +4,7 @@ export default {
   theme: {
     extend: {
       colors: {
+        base: 'rgb(var(--color-bg-base) / <alpha-value>)',
         primary: 'rgb(var(--color-primary) / <alpha-value>)',
         'primary-contrast': 'rgb(var(--color-primary-contrast) / <alpha-value>)',
         'text-primary': 'rgb(var(--color-text-primary) / <alpha-value>)',

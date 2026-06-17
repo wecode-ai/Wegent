@@ -11,6 +11,7 @@ import type {
   UnifiedSkill,
 } from '@/types/api'
 import type { GuidanceWorkbenchMessage, QueuedWorkbenchMessage } from '@/types/workbench'
+import type { CodeCommentContext } from '@/types/workspace-files'
 import { ConversationQueuePanel } from './ConversationQueuePanel'
 import { CompactChatComposer } from './composer/CompactChatComposer'
 import { ProjectChatComposer } from './composer/ProjectChatComposer'
@@ -54,6 +55,8 @@ export interface ProjectWorkControls {
   onListBranches?: () => Promise<string[]>
   onCheckoutBranch?: (branchName: string) => Promise<void>
   onCreateBranch?: (branchName: string) => Promise<void>
+  worktreeBaseBranch?: string | null
+  onWorktreeBaseBranchChange?: (branchName: string) => void
 }
 
 interface ChatInputProps {
@@ -69,10 +72,12 @@ interface ChatInputProps {
   showProjectWorkBar?: boolean
   queuedMessages?: QueuedWorkbenchMessage[]
   guidanceMessages?: GuidanceWorkbenchMessage[]
+  codeComments?: CodeCommentContext[]
   onCancelQueuedMessage?: (id: string) => void
   onSendQueuedAsGuidance?: (id: string) => void
   onEditQueuedMessage?: (id: string) => void
   onCancelGuidanceMessage?: (id: string) => void
+  onClearCodeComments?: () => void
   isStreaming?: boolean
   onPause?: () => void
 }
@@ -90,35 +95,36 @@ export function ChatInput({
   showProjectWorkBar = true,
   queuedMessages = [],
   guidanceMessages = [],
+  codeComments = [],
   onCancelQueuedMessage,
   onSendQueuedAsGuidance,
   onEditQueuedMessage,
   onCancelGuidanceMessage,
+  onClearCodeComments,
   isStreaming = false,
   onPause,
 }: ChatInputProps) {
   const { t } = useTranslation('common')
   const inputPlaceholder = placeholder ?? t('workbench.input_placeholder', '尽管问')
-  const controls: ProjectChatControls =
-    projectChat ?? {
-      models: [],
-      skills: [],
-      selectedModel: null,
-      selectedModelOptions: {},
-      isModelSelectionReady: true,
-      selectedSkills: [],
-      attachments: [],
-      uploadingFiles: new Map(),
-      errors: new Map(),
-      isOptionsLocked: false,
-      modelSelectorOpenSignal: undefined,
-      setSelectedModel: () => {},
-      setSelectedModelOption: () => {},
-      toggleSkill: () => {},
-      handleFileSelect: async () => {},
-      removeAttachment: async () => {},
-      listLocalSkills: async () => [],
-    }
+  const controls: ProjectChatControls = projectChat ?? {
+    models: [],
+    skills: [],
+    selectedModel: null,
+    selectedModelOptions: {},
+    isModelSelectionReady: true,
+    selectedSkills: [],
+    attachments: [],
+    uploadingFiles: new Map(),
+    errors: new Map(),
+    isOptionsLocked: false,
+    modelSelectorOpenSignal: undefined,
+    setSelectedModel: () => {},
+    setSelectedModelOption: () => {},
+    toggleSkill: () => {},
+    handleFileSelect: async () => {},
+    removeAttachment: async () => {},
+    listLocalSkills: async () => [],
+  }
 
   const composerProps = {
     value,
@@ -151,6 +157,7 @@ export function ChatInput({
           modelSelectorOpenSignal={controls.modelSelectorOpenSignal}
           isModelSelectionReady={controls.isModelSelectionReady ?? true}
           attachments={controls.attachments}
+          codeComments={codeComments}
           uploadingFiles={controls.uploadingFiles}
           attachmentErrors={controls.errors}
           onSelectModel={controls.setSelectedModel}
@@ -161,6 +168,7 @@ export function ChatInput({
           onRemoveAttachment={attachmentId => {
             void controls.removeAttachment(attachmentId)
           }}
+          onClearCodeComments={onClearCodeComments}
           projectWork={
             projectWork ?? {
               projects: [],
@@ -190,6 +198,7 @@ export function ChatInput({
       <CompactChatComposer
         {...composerProps}
         attachments={controls.attachments}
+        codeComments={codeComments}
         uploadingFiles={controls.uploadingFiles}
         attachmentErrors={controls.errors}
         onFileSelect={files => {
@@ -198,6 +207,7 @@ export function ChatInput({
         onRemoveAttachment={attachmentId => {
           void controls.removeAttachment(attachmentId)
         }}
+        onClearCodeComments={onClearCodeComments}
         onListLocalSkills={controls.listLocalSkills}
         selectedModel={controls.selectedModel}
         isStreaming={isStreaming}

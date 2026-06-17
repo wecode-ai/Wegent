@@ -1,22 +1,14 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import type { ReactNode } from 'react'
-import {
-  AlertTriangle,
-  ChevronDown,
-  ChevronUp,
-  Copy,
-  CopyCheck,
-  FileText,
-  Loader2,
-  Package,
-} from 'lucide-react'
+import { AlertTriangle, ChevronDown, ChevronUp, Copy, CopyCheck, Package } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { Attachment, DeviceInfo, TurnFileChangesSummary } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { ProcessingBlock, WorkbenchMessage } from '@/types/workbench'
-import { getAttachmentImageUrl, getAttachmentTypeLabel, isImageAttachment } from '@/lib/attachments'
+import { getAttachmentTypeLabel, isImageAttachment } from '@/lib/attachments'
 import { parseChatError } from '@/lib/chat-error'
+import { AttachmentImagePreview } from './AttachmentImagePreview'
 import { ToolBlocksDisplay } from './blocks/ToolBlocksDisplay'
 import { FileChangesCard } from './FileChangesCard'
 
@@ -198,74 +190,16 @@ function MessageDocumentAttachment({ attachment }: { attachment: Attachment }) {
 }
 
 function MessageImageAttachmentPreview({ attachment }: { attachment: Attachment }) {
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
-  const [hasError, setHasError] = useState(false)
-
-  useEffect(() => {
-    let isMounted = true
-    let objectUrl: string | null = null
-
-    async function loadPreview() {
-      setPreviewUrl(null)
-      setHasError(false)
-
-      try {
-        const token = localStorage.getItem('auth_token')
-        const response = await fetch(getAttachmentImageUrl(attachment.id), {
-          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-        })
-
-        if (!response.ok) {
-          throw new Error(`Failed to load message attachment: ${response.status}`)
-        }
-
-        const blob = await response.blob()
-        if (!blob.type.startsWith('image/')) {
-          throw new Error(`Message attachment is not an image: ${blob.type || 'unknown'}`)
-        }
-
-        objectUrl = URL.createObjectURL(blob)
-        if (isMounted) {
-          setPreviewUrl(objectUrl)
-        } else {
-          URL.revokeObjectURL(objectUrl)
-        }
-      } catch {
-        if (isMounted) {
-          setHasError(true)
-        }
-      }
-    }
-
-    void loadPreview()
-
-    return () => {
-      isMounted = false
-      if (objectUrl) {
-        URL.revokeObjectURL(objectUrl)
-      }
-    }
-  }, [attachment.id])
-
-  if (previewUrl) {
-    return (
-      <img
-        data-testid="message-image-preview"
-        src={previewUrl}
-        alt={attachment.filename}
-        className="block max-h-36 max-w-[180px] shrink-0 rounded-xl border border-border bg-base object-contain"
-      />
-    )
-  }
-
   return (
-    <div
-      data-testid={hasError ? 'message-image-preview-error' : 'message-image-preview-loading'}
-      className="flex h-20 w-28 shrink-0 items-center justify-center rounded-xl border border-border bg-surface text-text-muted"
-      aria-label={attachment.filename}
-    >
-      {hasError ? <FileText className="h-5 w-5" /> : <Loader2 className="h-5 w-5 animate-spin" />}
-    </div>
+    <AttachmentImagePreview
+      attachment={attachment}
+      buttonTestId="message-image-preview-button"
+      imageTestId="message-image-preview"
+      loadingTestId="message-image-preview-loading"
+      errorTestId="message-image-preview-error"
+      imageClassName="block max-h-36 max-w-[180px] shrink-0 rounded-xl border border-border bg-base object-contain"
+      placeholderClassName="flex h-20 w-28 shrink-0 items-center justify-center rounded-xl border border-border bg-surface text-text-muted"
+    />
   )
 }
 

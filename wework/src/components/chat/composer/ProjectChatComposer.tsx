@@ -1,9 +1,5 @@
-import type {
-  Attachment,
-  LocalDeviceSkill,
-  ModelOptions,
-  UnifiedModel,
-} from '@/types/api'
+import type { Attachment, LocalDeviceSkill, ModelOptions, UnifiedModel } from '@/types/api'
+import type { CodeCommentContext } from '@/types/workspace-files'
 import type { ProjectWorkControls } from '../ChatInput'
 import { AttachmentBadges } from './AttachmentBadges'
 import { ComposerToolbar } from './ComposerToolbar'
@@ -24,12 +20,14 @@ interface ProjectChatComposerProps {
   modelSelectorOpenSignal?: number
   isModelSelectionReady: boolean
   attachments: Attachment[]
+  codeComments?: CodeCommentContext[]
   uploadingFiles: Map<string, { file: File; progress: number }>
   attachmentErrors: Map<string, string>
   onSelectModel: (model: UnifiedModel | null) => void
   onSelectModelOption: (optionId: string, value: string) => void
   onFileSelect: (files: File | File[]) => void
   onRemoveAttachment: (attachmentId: number) => void
+  onClearCodeComments?: () => void
   onListLocalSkills?: () => Promise<LocalDeviceSkill[]>
   projectWork: ProjectWorkControls
   showProjectWorkBar?: boolean
@@ -50,12 +48,14 @@ export function ProjectChatComposer({
   modelSelectorOpenSignal,
   isModelSelectionReady,
   attachments,
+  codeComments = [],
   uploadingFiles,
   attachmentErrors,
   onSelectModel,
   onSelectModelOption,
   onFileSelect,
   onRemoveAttachment,
+  onClearCodeComments,
   onListLocalSkills,
   projectWork,
   showProjectWorkBar = true,
@@ -63,7 +63,8 @@ export function ProjectChatComposer({
   onPause,
 }: ProjectChatComposerProps) {
   const textareaRef = useAutoResizeTextarea(value, 168)
-  const canSend = (value.trim().length > 0 || attachments.length > 0) && !disabled
+  const canSend =
+    (value.trim().length > 0 || attachments.length > 0 || codeComments.length > 0) && !disabled
 
   return (
     <div className="relative w-full rounded-[28px] bg-surface shadow-[0_16px_44px_rgba(0,0,0,0.08)]">
@@ -78,7 +79,9 @@ export function ProjectChatComposer({
           attachments={attachments}
           uploadingFiles={uploadingFiles}
           errors={attachmentErrors}
+          codeComments={codeComments}
           onRemoveAttachment={onRemoveAttachment}
+          onClearCodeComments={onClearCodeComments}
         />
         {disabledReason && (
           <div
@@ -136,6 +139,8 @@ export function ProjectChatComposer({
           onListBranches={projectWork.onListBranches}
           onCheckoutBranch={projectWork.onCheckoutBranch}
           onCreateBranch={projectWork.onCreateBranch}
+          worktreeBaseBranch={projectWork.worktreeBaseBranch}
+          onWorktreeBaseBranchChange={projectWork.onWorktreeBaseBranchChange}
           className="min-h-11 px-4"
         />
       )}

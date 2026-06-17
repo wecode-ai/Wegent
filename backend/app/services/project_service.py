@@ -334,6 +334,7 @@ async def prepare_git_worktree_for_task(
     project_id: int,
     client_origin: Optional[str],
     task_id: int,
+    base_branch: Optional[str] = None,
 ) -> dict[str, str]:
     """Create a Git worktree for a project task and return task execution metadata."""
 
@@ -386,6 +387,7 @@ async def prepare_git_worktree_for_task(
         source_checkout_path=source_checkout_path,
         source_workspace_path=source_workspace_path,
         worktree_id=str(task_id),
+        base_branch=base_branch,
     )
 
     return {"source": "git_worktree", "path": worktree_path}
@@ -719,6 +721,7 @@ async def _create_task_worktree(
     source_checkout_path: str,
     source_workspace_path: str,
     worktree_id: str,
+    base_branch: Optional[str] = None,
 ) -> str:
     relative_path = _build_git_worktree_path(source_workspace_path, worktree_id)
     target_path = _join_device_path(executor_workspace_root, relative_path)
@@ -743,12 +746,16 @@ async def _create_task_worktree(
     )
     _raise_for_failed_command(mkdir_result, "Failed to create worktree directory")
 
+    worktree_args = [source_checkout_path, target_path]
+    if base_branch and base_branch.strip():
+        worktree_args.append(base_branch.strip())
+
     worktree_result = await execute_configured_device_command(
         db=db,
         user_id=user_id,
         device_id=device_id,
         command_key="git_worktree_add",
-        args=[source_checkout_path, target_path],
+        args=worktree_args,
         timeout_seconds=GIT_WORKTREE_TIMEOUT_SECONDS,
         max_output_bytes=1024 * 1024,
     )

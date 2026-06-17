@@ -142,6 +142,9 @@ class ChatExecutionWorkspacePayload(BaseModel):
     source: Literal["git_worktree"] = Field(
         ..., description="Execution workspace source"
     )
+    branch: Optional[str] = Field(
+        None, description="Optional source branch used to create the worktree"
+    )
 
 
 class ChatExecutionPayload(BaseModel):

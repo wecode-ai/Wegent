@@ -42,10 +42,10 @@ Task execution enters the same directory. In other words, the `git clone` locati
 
 ## Execution Modes
 
-In the new-conversation input area for a local workspace project, you can choose which workspace directory the task should use. The project can come from “Clone from Git” or “Using existing folder”; as long as the directory is a Git repository when the task is sent, it can use a new worktree.
+In the new-conversation input area for a local workspace project, you can choose which workspace directory the task should use. The project can come from “Clone from Git” or “Using existing folder”; as long as the directory is currently a Git repository, it can use a new worktree.
 
-- “Local workspace”: the task enters the project-bound directory, such as `projects/<repoKey>/<repoName>` or an existing folder selected by the user.
-- “New worktree”: before sending the new task, Wegent runs `git worktree add` on the same execution device and creates a dedicated worktree for that task.
+- “Local mode”/“Local workspace”: the task enters the project-bound directory, such as `projects/<repoKey>/<repoName>` or an existing folder selected by the user.
+- “New worktree”: before sending the new task, Wegent runs `git worktree add` on the same execution device and creates a dedicated worktree for that task. After you select “New worktree”, the composer shows a “Source branch” dropdown. It defaults to the current branch, and you can choose another branch from the same repository as the source used to create the worktree.
 
 New worktrees are created under the execution device workspace root:
 
@@ -53,9 +53,17 @@ New worktrees are created under the execution device workspace root:
 ~/.wecode/wegent-executor/workspace/worktrees/<taskId>/<projectName>
 ```
 
-The worktree ID is the task ID. The task stores only `git_worktree` as the execution workspace source; the actual path is derived from the task ID and project directory rules when executing or managing worktrees. Branch name, base ref, the original checkout path, and the absolute worktree path are not duplicated as task fields. The worktree settings page lists created worktrees by scanning the `worktrees` directory on each execution device. When a worktree is deleted, Wegent removes the corresponding worktree directory and soft-deletes the task that uses it.
+The worktree ID is the task ID. The task stores only `git_worktree` as the execution workspace source; the actual path is derived from the task ID and project directory rules when executing or managing worktrees. The selected source branch is used only for this `git worktree add --detach <path> <branch>` call. Branch name, base ref, the original checkout path, and the absolute worktree path are not duplicated as task fields. The worktree settings page lists created worktrees by scanning the `worktrees` directory on each execution device. When a worktree is deleted, Wegent removes the corresponding worktree directory and soft-deletes the task that uses it.
 
-“New worktree” is available only for new conversations in projects bound to a local execution device and local directory. Existing tasks lock the execution directory so a task cannot switch workspaces midway. If the directory is not currently a Git repository, sending the task shows an error; after the user manually turns that directory into a Git repository, no project configuration change is needed before selecting a new worktree again.
+“New worktree” is available only for new conversations in projects bound to a local execution device, local directory, and a directory that is currently a Git repository. Existing tasks lock the execution directory so a task cannot switch workspaces midway. If the directory is not currently a Git repository, the composer still shows “Local mode”, but it does not show “New worktree” or the source branch selector. After the user manually turns that directory into a Git repository, no project configuration change is needed before selecting a new worktree again.
+
+## Browse Workspace Files and Add Code Comments
+
+In desktop Wework, open the right workspace panel to browse files from the current task or project in read-only mode. The file tree reads the workspace directory from the currently bound execution device; existing tasks prefer the task workspace, and new conversations prefer the current project workspace.
+
+The file preview does not save or modify files. You can select a code range in the preview and add a local comment. The comment appears above the left composer as contextual input, such as “1 comment”. When you send the next message, Wework includes the file path, line range, selected code, and comment text in the request context so the agent can understand the referenced code location.
+
+Code comment context is not uploaded as a normal file and does not use `attachment_ids`. If you add only code comments without typed text, Wework sends a short default prompt. If you upload only normal file attachments without typed text, the message body remains empty and Wework uses the default conversation title.
 
 ## Using an Existing Folder
 

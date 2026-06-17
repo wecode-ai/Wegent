@@ -10,7 +10,7 @@ import signal
 import time
 from typing import Any, Optional
 
-from executor.platform_compat import sanitize_ld_library_path
+from executor.platform_compat import sanitize_subprocess_environment
 from shared.logger import setup_logger
 
 logger = setup_logger("local_command_handler")
@@ -150,11 +150,11 @@ class CommandHandler:
 
     def _build_env(self, extra_env: Any) -> dict[str, str]:
         env = os.environ.copy()
-        sanitize_ld_library_path(env)
         if isinstance(extra_env, dict):
             for key, value in extra_env.items():
                 if isinstance(key, str) and key:
                     env[key] = "" if value is None else str(value)
+        sanitize_subprocess_environment(env)
         return env
 
     def _normalize_cwd(self, cwd: Any) -> Optional[str]:

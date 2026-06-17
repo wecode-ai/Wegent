@@ -10,6 +10,22 @@ import type {
   UnifiedModel,
 } from '@/types/api'
 import type { GuidanceWorkbenchMessage, QueuedWorkbenchMessage } from '@/types/workbench'
+
+vi.mock('@/hooks/useTranslation', () => ({
+  useTranslation: () => ({
+    t: (key: string, options?: string | { count?: number }) => {
+      if (typeof options === 'string') return options
+      if (key === 'workbench.code_comment_count') {
+        return `${options?.count ?? 0} 个评论`
+      }
+      if (key === 'workbench.remove_code_comments') {
+        return '移除代码评论'
+      }
+      return key
+    },
+  }),
+}))
+
 import { ChatInput } from './ChatInput'
 import type { ProjectChatControls, ProjectWorkControls } from './ChatInput'
 
@@ -1505,6 +1521,52 @@ describe('ChatInput', () => {
         'blob:attachment-preview'
       )
     })
+  })
+
+  test('opens an enlarged image from the composer attachment preview', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        blob: () => Promise.resolve(new Blob(['image'], { type: 'image/png' })),
+      })
+    )
+    URL.createObjectURL = vi.fn(() => 'blob:attachment-preview')
+    const attachment: Attachment = {
+      id: 43,
+      filename: 'screenshot.png',
+      file_size: 1200,
+      mime_type: 'image/png',
+      status: 'ready',
+      file_extension: '.png',
+      created_at: '2026-05-27T00:00:00.000Z',
+    }
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({ attachments: [attachment] })}
+      />
+    )
+
+    await userEvent.click(await screen.findByTestId('attachment-image-preview'))
+
+    const lightbox = screen.getByTestId('attachment-image-lightbox')
+
+    expect(lightbox).toBeInTheDocument()
+    expect(lightbox.parentElement).toBe(document.body)
+    expect(screen.getByTestId('attachment-image-lightbox-image')).toHaveAttribute(
+      'src',
+      'blob:attachment-preview'
+    )
+    expect(screen.getByTestId('attachment-image-lightbox-image')).toHaveAttribute(
+      'alt',
+      'screenshot.png'
+    )
   })
 
   test('loads image previews with the auth token from local storage', async () => {

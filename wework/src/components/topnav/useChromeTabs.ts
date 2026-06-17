@@ -11,7 +11,7 @@ export function useChromeTabs(currentPath: string) {
     if (match && APP_TABS.some(t => t.key === match[1])) return match[1]
 
     const nativeMatch = APP_TABS.find(
-      tab => tab.mode === 'native' && tab.path && tab.path !== '/' && normalizedPath === tab.path,
+      tab => tab.mode === 'native' && tab.path && tab.path !== '/' && normalizedPath === tab.path
     )
     if (nativeMatch) return nativeMatch.key
 
@@ -20,7 +20,7 @@ export function useChromeTabs(currentPath: string) {
 
   const activeTab = useMemo(
     () => APP_TABS.find(t => t.key === activeAppKey) ?? null,
-    [activeAppKey],
+    [activeAppKey]
   )
 
   const isNativeApp = activeTab?.mode === 'native'

@@ -6,6 +6,7 @@ import { createProjectApi } from '@/api/projects'
 import { getRuntimeConfig } from '@/config/runtime'
 import { useTranslation } from '@/hooks/useTranslation'
 import { supportsCloudSessions, supportsLocalTerminalLaunch } from '@/lib/device-capabilities'
+import { openExternalUrl } from '@/lib/external-links'
 import {
   closeLocalTerminal,
   getLocalExecutorDeviceId,
@@ -275,7 +276,7 @@ export function WorkspacePanelCards({
       if (!session.url) {
         throw new Error('IDE session URL is missing')
       }
-      window.open(session.url, '_blank', 'noopener')
+      await openExternalUrl(session.url)
       shouldClosePanel = true
     } catch (e) {
       console.error('Failed to start project IDE:', e)
@@ -299,7 +300,7 @@ export function WorkspacePanelCards({
       if (!config.sandbox_id) {
         throw new Error('Desktop sandbox ID is missing')
       }
-      window.open(buildVncPageUrl(projectDeviceId, config.sandbox_id), '_blank', 'noopener')
+      await openExternalUrl(buildVncPageUrl(projectDeviceId, config.sandbox_id))
       shouldClosePanel = true
     } catch (e) {
       console.error('Failed to open project desktop:', e)
