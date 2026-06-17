@@ -98,8 +98,7 @@ async function workspacePath(
   project: ProjectWithTasks
 ): Promise<string | undefined> {
   return resolveProjectWorkspacePath(project, deviceId, {
-    getProjectWorkspaceRoot: targetDeviceId =>
-      resolveProjectWorkspaceRoot(api, targetDeviceId),
+    getProjectWorkspaceRoot: targetDeviceId => resolveProjectWorkspaceRoot(api, targetDeviceId),
   })
 }
 
@@ -281,6 +280,10 @@ async function loadProjectEnvironmentUncached(
     if (!path) {
       return baseInfo
     }
+    const environmentWorkspaceInfo = {
+      ...baseInfo,
+      workspacePath: path,
+    }
     const [branchName, shortStat, porcelain] = await Promise.all([
       runGitCommand(api, deviceId, 'git_branch', path),
       loadBranchDiffShortStat(api, deviceId, path),
@@ -308,7 +311,7 @@ async function loadProjectEnvironmentUncached(
     }
 
     return {
-      ...baseInfo,
+      ...environmentWorkspaceInfo,
       ...diff,
       branchName,
       createPullRequestUrl: buildPullRequestUrl(remoteUrl, branchName),

@@ -1,14 +1,26 @@
-import { CircleDot, GitCommit, GitPullRequest, Info, Laptop, Settings } from 'lucide-react'
+import {
+  CircleDot,
+  Copy,
+  FolderOpen,
+  GitCommit,
+  GitPullRequest,
+  Info,
+  Laptop,
+  MapPin,
+  Settings,
+} from 'lucide-react'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { BranchSelector } from '@/components/common/BranchSelector'
 import { useTranslation } from '@/hooks/useTranslation'
 import { openExternalUrl } from '@/lib/external-links'
 import { cn } from '@/lib/utils'
+import type { DeviceInfo } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
 import { DESKTOP_TOP_BAR_BUTTON_CLASS } from './DesktopTopBar'
 
 interface EnvironmentInfoPopoverProps {
   info: EnvironmentInfo
+  devices?: DeviceInfo[]
   onRefresh?: () => Promise<void>
   onCommitChanges?: (message: string) => Promise<void>
   onListBranches?: () => Promise<string[]>
@@ -17,20 +29,9 @@ interface EnvironmentInfoPopoverProps {
   onOpenChangesReview?: () => void
 }
 
-function formatDeviceId(deviceId?: string) {
-  if (!deviceId) {
-    return ''
-  }
-
-  if (deviceId.length <= 14) {
-    return deviceId
-  }
-
-  return `${deviceId.slice(0, 8)}...${deviceId.slice(-4)}`
-}
-
 export function EnvironmentInfoPopover({
   info,
+  devices = [],
   onRefresh,
   onCommitChanges,
   onListBranches,
@@ -40,7 +41,7 @@ export function EnvironmentInfoPopover({
 }: EnvironmentInfoPopoverProps) {
   const { t } = useTranslation('common')
   const [open, setOpen] = useState(false)
-  const [deviceCopied, setDeviceCopied] = useState(false)
+  const [workspacePathCopied, setWorkspacePathCopied] = useState(false)
   const [commitFormOpen, setCommitFormOpen] = useState(false)
   const [commitMessage, setCommitMessage] = useState('')
   const [commitStatus, setCommitStatus] = useState<'idle' | 'committing' | 'success'>('idle')
@@ -48,12 +49,18 @@ export function EnvironmentInfoPopover({
   const rootRef = useRef<HTMLDivElement>(null)
   const additions = info.additions || '+0'
   const deletions = info.deletions || '-0'
+  const device = info.deviceId
+    ? devices.find(deviceInfo => deviceInfo.device_id === info.deviceId)
+    : undefined
+  const deviceName = device?.name?.trim() || ''
   const executionLabel =
     info.executionTarget === 'cloud'
-      ? t('workbench.environment_cloud', '云端')
+      ? t('workbench.environment_cloud_device')
       : t('workbench.environment_local', '本地')
-  const shortDeviceId = formatDeviceId(info.deviceId)
-  const deviceTitle = info.deviceId ? `${executionLabel} · ${info.deviceId}` : executionLabel
+  const executionTargetLabel = t('workbench.environment_execution_target')
+  const deviceLabel = t('workbench.environment_device')
+  const deviceDisplayName = deviceName || t('workbench.environment_device_unknown')
+  const deviceTitle = [deviceLabel, deviceDisplayName].filter(Boolean).join(' · ')
   const canShowBranchSelector = Boolean(info.branchName?.trim())
   const environmentInfoLabel = t('workbench.environment_info')
   function handleCreatePullRequest() {
@@ -68,14 +75,14 @@ export function EnvironmentInfoPopover({
     setOpen(false)
   }
 
-  async function handleCopyDeviceId() {
-    if (!info.deviceId) {
+  async function handleCopyWorkspacePath() {
+    if (!info.workspacePath) {
       return
     }
 
-    await navigator.clipboard?.writeText(info.deviceId)
-    setDeviceCopied(true)
-    window.setTimeout(() => setDeviceCopied(false), 1200)
+    await navigator.clipboard?.writeText(info.workspacePath)
+    setWorkspacePathCopied(true)
+    window.setTimeout(() => setWorkspacePathCopied(false), 1200)
   }
 
   async function handleSubmitCommit(event: FormEvent<HTMLFormElement>) {
@@ -160,131 +167,186 @@ export function EnvironmentInfoPopover({
             </button>
           </div>
 
-          <div>
-            <button
-              type="button"
-              data-testid="environment-changes-button"
-              disabled={!onOpenChangesReview}
-              onClick={handleOpenChangesReview}
-              className="flex h-9 w-full items-center gap-3 rounded-md text-left text-[13px] text-text-primary hover:bg-hover disabled:cursor-default disabled:hover:bg-transparent"
-            >
-              <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
-                <CircleDot className="h-[18px] w-[18px]" />
-              </span>
-              <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
-                {t('workbench.environment_changes', '变更')}
-              </span>
-              <span className="flex gap-1.5 text-[13px]">
-                <span className="text-green-500">{additions}</span>
-                <span className="text-red-500">{deletions}</span>
-              </span>
-            </button>
-            <button
-              type="button"
-              data-testid="environment-device-button"
-              disabled={!info.deviceId}
-              onClick={handleCopyDeviceId}
-              title={deviceTitle}
-              className="flex h-9 w-full items-center gap-3 rounded-md text-left text-[13px] text-text-primary hover:bg-hover disabled:cursor-default disabled:hover:bg-transparent"
-            >
-              <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
-                <Laptop className="h-[18px] w-[18px]" />
-              </span>
-              <span className="shrink-0">{executionLabel}</span>
-              <span
-                data-testid="environment-device-id"
-                className="ml-auto min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-right font-mono text-xs text-text-secondary"
+          <div className="space-y-3">
+            <section data-testid="environment-device-section" className="space-y-0.5">
+              <div
+                data-testid="environment-execution-target-row"
+                className="flex h-9 w-full items-center gap-3 rounded-md text-left text-[13px] text-text-primary"
               >
-                {shortDeviceId}
-              </span>
-              {deviceCopied && (
-                <span className="shrink-0 text-xs text-green-500">
-                  {t('workbench.environment_copied', '已复制')}
+                <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
+                  <MapPin className="h-[18px] w-[18px]" />
                 </span>
+                <span className="shrink-0">{executionTargetLabel}</span>
+                <span className="ml-auto min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-right text-text-secondary">
+                  {executionLabel}
+                </span>
+              </div>
+              <div
+                data-testid="environment-device-button"
+                title={deviceTitle}
+                className="flex h-9 w-full items-center gap-3 rounded-md text-left text-[13px] text-text-primary"
+              >
+                <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
+                  <Laptop className="h-[18px] w-[18px]" />
+                </span>
+                <span className="shrink-0">{deviceLabel}</span>
+                <span
+                  data-testid="environment-device-name"
+                  className="ml-auto min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-right text-text-secondary"
+                >
+                  {deviceDisplayName}
+                </span>
+              </div>
+              {info.workspacePath && (
+                <button
+                  type="button"
+                  data-testid="environment-workspace-path-button"
+                  onClick={handleCopyWorkspacePath}
+                  title={info.workspacePath}
+                  className="flex h-9 w-full items-center gap-3 rounded-md text-left text-[13px] text-text-primary hover:bg-hover"
+                >
+                  <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
+                    <FolderOpen className="h-[18px] w-[18px]" />
+                  </span>
+                  <span className="shrink-0">{t('workbench.environment_workspace_path')}</span>
+                  <span
+                    data-testid="environment-workspace-path"
+                    className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-right font-mono text-xs text-text-secondary"
+                  >
+                    {info.workspacePath}
+                  </span>
+                  <span
+                    data-testid="environment-workspace-path-copy-icon"
+                    className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary"
+                    aria-hidden="true"
+                  >
+                    <Copy className="h-[16px] w-[16px]" />
+                  </span>
+                  {workspacePathCopied && (
+                    <span className="shrink-0 text-xs text-green-500">
+                      {t('workbench.environment_copied')}
+                    </span>
+                  )}
+                </button>
               )}
-            </button>
-            {canShowBranchSelector && onListBranches && onCheckoutBranch && (
-              <BranchSelector
-                variant="environment"
-                currentBranch={info.branchName}
-                loading={info.loading}
-                onRefresh={onRefresh}
-                onListBranches={onListBranches}
-                onCheckoutBranch={onCheckoutBranch}
-                onCreateBranch={onCreateBranch}
-              />
-            )}
-            <button
-              type="button"
-              data-testid="environment-commit-button"
-              disabled={!onCommitChanges || commitStatus === 'committing'}
-              onClick={() => {
-                setCommitFormOpen(open => !open)
-                setCommitError(null)
-              }}
-              className="flex h-9 w-full items-center gap-3 rounded-md text-left text-[13px] text-text-primary hover:bg-hover disabled:cursor-not-allowed disabled:text-text-muted"
+            </section>
+
+            <section
+              data-testid="environment-git-section"
+              className="space-y-0.5 border-t border-border pt-3"
             >
-              <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
-                <GitCommit className="h-[18px] w-[18px]" />
-              </span>
-              <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
-                {t('workbench.environment_commit', '提交')}
-              </span>
-              {commitStatus === 'success' && (
-                <span className="shrink-0 text-xs text-green-500">
-                  {t('workbench.environment_committed', '已提交')}
+              <button
+                type="button"
+                data-testid="environment-changes-button"
+                disabled={!onOpenChangesReview}
+                onClick={handleOpenChangesReview}
+                className="flex h-9 w-full items-center gap-3 rounded-md text-left text-[13px] text-text-primary hover:bg-hover disabled:cursor-default disabled:hover:bg-transparent"
+              >
+                <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
+                  <CircleDot className="h-[18px] w-[18px]" />
                 </span>
-              )}
-            </button>
-            {commitFormOpen && (
-              <form className="mb-2 ml-[30px] mt-1 space-y-2" onSubmit={handleSubmitCommit}>
-                <input
-                  data-testid="environment-commit-message-input"
-                  value={commitMessage}
-                  onChange={event => setCommitMessage(event.target.value)}
-                  className="h-8 w-full rounded-md border border-border bg-background px-2 text-[13px] text-text-primary outline-none placeholder:text-text-muted focus:border-text-primary"
-                  placeholder={t('workbench.environment_commit_message', '提交说明')}
-                  autoFocus
+                <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
+                  {t('workbench.environment_changes', '变更')}
+                </span>
+                <span className="flex gap-1.5 text-[13px]">
+                  <span className="text-green-500">{additions}</span>
+                  <span className="text-red-500">{deletions}</span>
+                </span>
+              </button>
+              {canShowBranchSelector && onListBranches && onCheckoutBranch && (
+                <BranchSelector
+                  variant="environment"
+                  currentBranch={info.branchName}
+                  loading={info.loading}
+                  onRefresh={onRefresh}
+                  onListBranches={onListBranches}
+                  onCheckoutBranch={onCheckoutBranch}
+                  onCreateBranch={onCreateBranch}
                 />
-                <div className="flex items-center justify-end gap-2">
-                  <button
-                    type="button"
-                    data-testid="environment-cancel-commit-button"
-                    onClick={() => {
-                      setCommitFormOpen(false)
-                      setCommitError(null)
-                    }}
-                    className="h-7 rounded-md px-2 text-xs text-text-secondary hover:bg-hover hover:text-text-primary"
-                  >
-                    {t('workbench.environment_commit_cancel', '取消')}
-                  </button>
-                  <button
-                    type="submit"
-                    data-testid="environment-confirm-commit-button"
-                    disabled={!commitMessage.trim() || commitStatus === 'committing'}
-                    className="h-7 rounded-md bg-text-primary px-2 text-xs font-medium text-background hover:bg-text-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {commitStatus === 'committing'
-                      ? t('workbench.environment_committing', '提交中')
-                      : t('workbench.environment_commit_confirm', '确认')}
-                  </button>
-                </div>
-              </form>
-            )}
-            <button
-              type="button"
-              data-testid="create-pull-request-button"
-              disabled={!info.createPullRequestUrl}
-              onClick={handleCreatePullRequest}
-              className="flex h-9 w-full items-center gap-3 rounded-md text-left text-[13px] text-text-primary hover:bg-hover disabled:cursor-not-allowed disabled:text-text-muted"
-            >
-              <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
-                <GitPullRequest className="h-[18px] w-[18px]" />
-              </span>
-              <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
-                {t('workbench.environment_create_pr', '创建拉取请求')}
-              </span>
-            </button>
+              )}
+              <button
+                type="button"
+                data-testid="environment-commit-button"
+                disabled={!onCommitChanges || commitStatus === 'committing'}
+                onClick={() => {
+                  setCommitFormOpen(open => !open)
+                  setCommitError(null)
+                }}
+                className="flex h-9 w-full items-center gap-3 rounded-md text-left text-[13px] text-text-primary hover:bg-hover disabled:cursor-not-allowed disabled:text-text-muted"
+              >
+                <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
+                  <GitCommit className="h-[18px] w-[18px]" />
+                </span>
+                <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
+                  {t('workbench.environment_commit', '提交')}
+                </span>
+                {commitStatus === 'success' && (
+                  <span className="shrink-0 text-xs text-green-500">
+                    {t('workbench.environment_committed', '已提交')}
+                  </span>
+                )}
+              </button>
+              {commitFormOpen && (
+                <form className="mb-2 ml-[30px] mt-1 space-y-2" onSubmit={handleSubmitCommit}>
+                  <input
+                    data-testid="environment-commit-message-input"
+                    value={commitMessage}
+                    onChange={event => setCommitMessage(event.target.value)}
+                    className="h-8 w-full rounded-md border border-border bg-background px-2 text-[13px] text-text-primary outline-none placeholder:text-text-muted focus:border-text-primary"
+                    placeholder={t('workbench.environment_commit_message', '提交说明')}
+                    autoFocus
+                  />
+                  <div className="flex items-center justify-end gap-2">
+                    <button
+                      type="button"
+                      data-testid="environment-cancel-commit-button"
+                      onClick={() => {
+                        setCommitFormOpen(false)
+                        setCommitError(null)
+                      }}
+                      className="h-7 rounded-md px-2 text-xs text-text-secondary hover:bg-hover hover:text-text-primary"
+                    >
+                      {t('workbench.environment_commit_cancel', '取消')}
+                    </button>
+                    <button
+                      type="submit"
+                      data-testid="environment-confirm-commit-button"
+                      disabled={!commitMessage.trim() || commitStatus === 'committing'}
+                      className="h-7 rounded-md bg-text-primary px-2 text-xs font-medium text-background hover:bg-text-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {commitStatus === 'committing'
+                        ? t('workbench.environment_committing', '提交中')
+                        : t('workbench.environment_commit_confirm', '确认')}
+                    </button>
+                  </div>
+                </form>
+              )}
+              <button
+                type="button"
+                data-testid="create-pull-request-button"
+                disabled={!info.createPullRequestUrl}
+                onClick={handleCreatePullRequest}
+                className="flex h-9 w-full items-center gap-3 rounded-md text-left text-[13px] text-text-primary hover:bg-hover disabled:cursor-not-allowed disabled:text-text-muted"
+              >
+                <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
+                  <GitPullRequest className="h-[18px] w-[18px]" />
+                </span>
+                <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
+                  {t('workbench.environment_create_pr', '创建拉取请求')}
+                </span>
+              </button>
+
+              <div className="my-4 h-px bg-border" />
+
+              <section>
+                <h3 className="mb-3 text-[13px] text-text-secondary">
+                  {t('workbench.environment_sources', '来源')}
+                </h3>
+                <p className="text-[13px] text-text-muted">
+                  {t('workbench.environment_no_sources', '暂无来源')}
+                </p>
+              </section>
+            </section>
           </div>
 
           {info.error && (
@@ -295,17 +357,6 @@ export function EnvironmentInfoPopover({
               {commitError}
             </p>
           )}
-
-          <div className="my-4 h-px bg-border" />
-
-          <section>
-            <h3 className="mb-3 text-[13px] text-text-secondary">
-              {t('workbench.environment_sources', '来源')}
-            </h3>
-            <p className="text-[13px] text-text-muted">
-              {t('workbench.environment_no_sources', '暂无来源')}
-            </p>
-          </section>
         </div>
       )}
     </div>

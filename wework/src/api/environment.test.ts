@@ -35,16 +35,14 @@ describe('buildPullRequestUrl', () => {
     expect(
       buildPullRequestUrl(
         'https://github.com/wecode-ai/Wegent.git',
-        'human/narwhal-20260528-073440',
-      ),
+        'human/narwhal-20260528-073440'
+      )
     ).toBe('https://github.com/wecode-ai/Wegent/compare/human%2Fnarwhal-20260528-073440?expand=1')
   })
 
   test('builds GitLab merge request URL from ssh remote', () => {
-    expect(
-      buildPullRequestUrl('git@gitlab.com:wecode-ai/Wegent.git', 'feature/context-info'),
-    ).toBe(
-      'https://gitlab.com/wecode-ai/Wegent/-/merge_requests/new?merge_request%5Bsource_branch%5D=feature%2Fcontext-info',
+    expect(buildPullRequestUrl('git@gitlab.com:wecode-ai/Wegent.git', 'feature/context-info')).toBe(
+      'https://gitlab.com/wecode-ai/Wegent/-/merge_requests/new?merge_request%5Bsource_branch%5D=feature%2Fcontext-info'
     )
   })
 })
@@ -95,11 +93,12 @@ describe('loadProjectEnvironment', () => {
             checkoutPath: 'directmessage_single',
           },
         },
-      },
+      }
     )
 
     expect(info.additions).toBe('+2')
     expect(info.deletions).toBe('-1')
+    expect(info.workspacePath).toBe('/workspace/projects/directmessage_single')
     expect(executeCommand).toHaveBeenNthCalledWith(1, 'device-123', {
       command_key: 'project_workspace_root',
       timeout_seconds: 10,
@@ -154,12 +153,13 @@ describe('loadProjectEnvironment', () => {
             localPath: '/workspace/Wegent',
           },
         },
-      },
+      }
     )
 
     expect(info).toEqual({
       executionTarget: 'cloud',
       deviceId: 'device-123',
+      workspacePath: '/workspace/Wegent',
       branchName: 'human/narwhal-20260528-073440',
       additions: '+8',
       deletions: '-3',
@@ -216,7 +216,7 @@ describe('loadProjectEnvironment', () => {
             localPath: '/workspace/Wegent',
           },
         },
-      },
+      }
     )
 
     expect(info).toEqual({
@@ -367,7 +367,7 @@ describe('loadProjectEnvironment', () => {
             localPath: '/workspace/Wegent',
           },
         },
-      },
+      }
     )
 
     expect(info.additions).toBe('+1')
@@ -438,7 +438,7 @@ describe('loadProjectEnvironment', () => {
             localPath: '/workspace/Wegent',
           },
         },
-      },
+      }
     )
 
     // 5 tracked insertions + 2 untracked files = +7
@@ -504,7 +504,7 @@ describe('loadProjectEnvironment', () => {
             localPath: '/Volumes/OuterHD/Documents/test-porject',
           },
         },
-      },
+      }
     )
 
     expect(info.additions).toBe('+1')
@@ -576,7 +576,7 @@ describe('loadProjectEnvironment', () => {
             localPath: '/tmp/clean-repo',
           },
         },
-      },
+      }
     )
 
     expect(info.additions).toBe('+0')
@@ -610,8 +610,8 @@ describe('commitProjectChanges', () => {
               localPath: '/workspace/Wegent',
             },
           },
-        },
-      ),
+        }
+      )
     ).resolves.toBe('diff --git a/src/env.ts b/src/env.ts\n+new')
 
     expect(executeCommand).toHaveBeenCalledWith('device-123', {
@@ -645,7 +645,7 @@ describe('commitProjectChanges', () => {
           },
         },
       },
-      'feat: update environment info',
+      'feat: update environment info'
     )
 
     expect(executeCommand).toHaveBeenNthCalledWith(1, 'device-123', {
@@ -678,8 +678,8 @@ describe('commitProjectChanges', () => {
             workspace: { source: 'local_path', localPath: '/workspace/Wegent' },
           },
         },
-        '   ',
-      ),
+        '   '
+      )
     ).rejects.toThrow('Commit message is required')
 
     expect(executeCommand).not.toHaveBeenCalled()
@@ -749,10 +749,10 @@ describe('branch environment commands', () => {
     const executeCommand = vi.fn()
 
     await expect(checkoutProjectBranch({ executeCommand }, project, '-bad')).rejects.toThrow(
-      'Invalid branch name',
+      'Invalid branch name'
     )
     await expect(
-      createAndCheckoutProjectBranch({ executeCommand }, project, 'feature/bad..name'),
+      createAndCheckoutProjectBranch({ executeCommand }, project, 'feature/bad..name')
     ).rejects.toThrow('Invalid branch name')
 
     expect(executeCommand).not.toHaveBeenCalled()
