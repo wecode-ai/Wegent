@@ -8,6 +8,8 @@ use tauri::{Emitter, State};
 
 const TERMINAL_OUTPUT_EVENT: &str = "local-terminal-output";
 const TERMINAL_EXIT_EVENT: &str = "local-terminal-exit";
+const DEFAULT_UTF8_LANG: &str = "en_US.UTF-8";
+const DEFAULT_UTF8_LC_CTYPE: &str = "UTF-8";
 
 pub struct LocalTerminalState {
     sessions: Mutex<HashMap<String, LocalTerminalSession>>,
@@ -60,6 +62,71 @@ fn normalized_cwd(cwd: Option<String>) -> Result<Option<String>, String> {
     Ok(Some(cwd.to_string()))
 }
 
+fn decode_pty_output_chunk(pending: &mut Vec<u8>, chunk: &[u8]) -> String {
+    let mut bytes = std::mem::take(pending);
+    bytes.extend_from_slice(chunk);
+
+    let mut output = String::new();
+    let mut cursor = 0;
+    while cursor < bytes.len() {
+        match std::str::from_utf8(&bytes[cursor..]) {
+            Ok(text) => {
+                output.push_str(text);
+                return output;
+            }
+            Err(error) => {
+                let valid_end = cursor + error.valid_up_to();
+                if valid_end > cursor {
+                    output.push_str(
+                        std::str::from_utf8(&bytes[cursor..valid_end])
+                            .expect("valid_up_to marks a valid UTF-8 prefix"),
+                    );
+                }
+
+                match error.error_len() {
+                    Some(error_len) => {
+                        output.push('\u{FFFD}');
+                        cursor = valid_end + error_len;
+                    }
+                    None => {
+                        pending.extend_from_slice(&bytes[valid_end..]);
+                        return output;
+                    }
+                }
+            }
+        }
+    }
+
+    output
+}
+
+fn is_utf8_locale_value(value: &str) -> bool {
+    let value = value.to_ascii_uppercase();
+    value.contains("UTF-8") || value.contains("UTF8")
+}
+
+fn resolve_utf8_locale_value(value: Option<&str>, default: &str) -> String {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && is_utf8_locale_value(value))
+        .unwrap_or(default)
+        .to_string()
+}
+
+fn process_utf8_locale_value(name: &str, default: &str) -> String {
+    resolve_utf8_locale_value(std::env::var(name).ok().as_deref(), default)
+}
+
+fn configure_terminal_environment(command: &mut CommandBuilder) {
+    command.env("TERM", "xterm-256color");
+    command.env("COLORTERM", "truecolor");
+    command.env("LANG", process_utf8_locale_value("LANG", DEFAULT_UTF8_LANG));
+    command.env(
+        "LC_CTYPE",
+        process_utf8_locale_value("LC_CTYPE", DEFAULT_UTF8_LC_CTYPE),
+    );
+}
+
 #[tauri::command]
 pub fn start_local_terminal(
     app: tauri::AppHandle,
@@ -91,8 +158,7 @@ pub fn start_local_terminal(
             .map_err(|error| format!("Failed to create PTY writer: {error}"))?;
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
         let mut command = CommandBuilder::new(shell);
-        command.env("TERM", "xterm-256color");
-        command.env("COLORTERM", "truecolor");
+        configure_terminal_environment(&mut command);
         if let Some(cwd) = cwd {
             command.cwd(cwd);
         }
@@ -119,11 +185,15 @@ pub fn start_local_terminal(
         std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_millis(80));
             let mut buffer = [0_u8; 8192];
+            let mut pending_utf8 = Vec::new();
             loop {
                 match reader.read(&mut buffer) {
                     Ok(0) => break,
                     Ok(size) => {
-                        let data = String::from_utf8_lossy(&buffer[..size]).to_string();
+                        let data = decode_pty_output_chunk(&mut pending_utf8, &buffer[..size]);
+                        if data.is_empty() {
+                            continue;
+                        }
                         let _ = app.emit(
                             TERMINAL_OUTPUT_EVENT,
                             LocalTerminalOutput {
@@ -221,4 +291,38 @@ pub fn close_local_terminal(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decodes_utf8_output_across_read_boundaries() {
+        let mut pending = Vec::new();
+        let mut output = String::new();
+        let bytes = "修复".as_bytes();
+
+        output.push_str(&decode_pty_output_chunk(&mut pending, &bytes[..2]));
+        output.push_str(&decode_pty_output_chunk(&mut pending, &bytes[2..]));
+
+        assert_eq!(output, "修复");
+        assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn resolves_utf8_locale_for_terminal_processes() {
+        assert_eq!(
+            resolve_utf8_locale_value(None, "en_US.UTF-8"),
+            "en_US.UTF-8"
+        );
+        assert_eq!(
+            resolve_utf8_locale_value(Some("C"), "en_US.UTF-8"),
+            "en_US.UTF-8"
+        );
+        assert_eq!(
+            resolve_utf8_locale_value(Some("zh_CN.UTF-8"), "en_US.UTF-8"),
+            "zh_CN.UTF-8"
+        );
+    }
 }
