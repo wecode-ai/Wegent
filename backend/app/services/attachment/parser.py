@@ -43,6 +43,13 @@ from app.services.attachment.smart_truncation import (
 )
 from shared.utils.xmind_parser import XMindParseError, parse_xmind_to_markdown
 
+# Maximum long-edge dimension (px) applied at image upload time.
+# Mirrors the constraint in chat_shell.messages.converter.MAX_IMAGE_LONG_EDGE.
+# Anthropic hard limit: 8000px; native visual resolution: 1568px for most models.
+# 1568px is the conservative universal limit that avoids Anthropic errors and
+# matches the effective visual resolution cap of standard Claude models.
+MAX_IMAGE_LONG_EDGE = 1568
+
 logger = logging.getLogger(__name__)
 
 
@@ -984,8 +991,10 @@ class DocumentParser:
 
         Images with formats natively supported by all major vision APIs
         (JPEG, PNG, WebP — intersection of Anthropic, OpenAI, Gemini) are
-        stored as-is without re-encoding.  Other formats (GIF, BMP) are
-        converted to JPEG, taking only the first frame for animated images.
+        stored as-is when they fit within the dimension limit.  Oversized images
+        are resized to MAX_IMAGE_LONG_EDGE on the long side and re-encoded as
+        JPEG.  Other formats (GIF, BMP) are converted to JPEG, taking only the
+        first frame for animated images.
 
         Returns:
             Tuple of (metadata_text, base64_encoded_image, actual_mime_type)
@@ -996,45 +1005,73 @@ class DocumentParser:
             image_file = io.BytesIO(binary_data)
             img = Image.open(image_file)
 
-            # Extract image metadata
-            width, height = img.size
+            orig_width, orig_height = img.size
             mode = img.mode
             format_name = img.format or extension[1:].upper()
 
-            # Build description
-            text = f"[图片文件]\n"
-            text += f"格式: {format_name}\n"
-            text += f"尺寸: {width} x {height} 像素\n"
-            text += f"颜色模式: {mode}\n"
-            text += f"文件大小: {len(binary_data)} 字节"
-
             # Try to extract EXIF data if available (JPEG only; PNG raises OSError)
+            has_exif = False
             try:
                 if hasattr(img, "_getexif") and img._getexif():
-                    text += "\n\n[EXIF 信息]\n包含 EXIF 元数据"
+                    has_exif = True
             except Exception:
                 pass
 
             # Force full image load to validate pixel data (Image.open is lazy)
             img.load()
 
+            # Resize if any dimension exceeds the long-edge limit so that the stored
+            # base64 data is always within the vision API constraint.
+            needs_reencode = False
+            if max(orig_width, orig_height) > MAX_IMAGE_LONG_EDGE:
+                scale = MAX_IMAGE_LONG_EDGE / max(orig_width, orig_height)
+                new_w = max(1, int(orig_width * scale))
+                new_h = max(1, int(orig_height * scale))
+                img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                logger.info(
+                    f"Image resized at upload: {orig_width}x{orig_height} -> {new_w}x{new_h} "
+                    f"(long edge {max(orig_width, orig_height)}px > limit {MAX_IMAGE_LONG_EDGE}px)"
+                )
+                width, height = new_w, new_h
+                needs_reencode = True
+            else:
+                width, height = orig_width, orig_height
+
+            # Build description using the actual stored dimensions.
+            text = f"[图片文件]\n"
+            text += f"格式: {format_name}\n"
+            text += f"尺寸: {width} x {height} 像素\n"
+            text += f"颜色模式: {mode}\n"
+            text += f"文件大小: {len(binary_data)} 字节"
+
+            if has_exif:
+                text += "\n\n[EXIF 信息]\n包含 EXIF 元数据"
+
             ext = extension.lower()
-            if ext in self.VISION_SUPPORTED_EXTENSIONS:
-                # Format is natively supported by all major vision APIs — use original bytes
+            if not needs_reencode and ext in self.VISION_SUPPORTED_EXTENSIONS:
+                # Format is natively supported by all major vision APIs and dimensions
+                # are within limits — use original bytes without re-encoding.
                 image_base64 = base64.b64encode(binary_data).decode("utf-8")
                 actual_mime_type = self.get_mime_type(ext)
             else:
-                # Convert to JPEG (supported by all major vision APIs, compact for photos)
-                # JPEG requires RGB or L mode; convert everything else accordingly
+                # Re-encode: either image was resized, or format is not natively supported.
+                # Convert to JPEG (supported by all major vision APIs, compact for photos).
+                # JPEG requires RGB or L mode; convert everything else accordingly.
                 if img.mode not in {"RGB", "L"}:
                     img = img.convert("RGB")
                 output_buf = io.BytesIO()
                 img.save(output_buf, format="JPEG", quality=85)
                 image_base64 = base64.b64encode(output_buf.getvalue()).decode("utf-8")
                 actual_mime_type = "image/jpeg"
-                logger.info(
-                    f"Converted {extension} image to JPEG for vision API compatibility"
-                )
+                if needs_reencode:
+                    logger.info(
+                        f"Re-encoded resized {extension} image as JPEG "
+                        f"({orig_width}x{orig_height} -> {width}x{height})"
+                    )
+                else:
+                    logger.info(
+                        f"Converted {extension} image to JPEG for vision API compatibility"
+                    )
 
             return text, image_base64, actual_mime_type
 

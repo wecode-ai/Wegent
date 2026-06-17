@@ -18,6 +18,13 @@ logger = logging.getLogger(__name__)
 MAX_IMAGE_SIZE_MB = 1
 MAX_IMAGE_SIZE_BYTES = MAX_IMAGE_SIZE_MB * 1024 * 1024
 
+# Maximum long-edge dimension for LLM vision APIs.
+# Anthropic native visual resolution: 1568px for most models (hard API limit: 8000px).
+# OpenAI resizes internally to ~2048px; Gemini to ~3072px.
+# 1568px is the conservative universal limit that avoids Anthropic errors and
+# matches the effective visual resolution cap of standard Claude models.
+MAX_IMAGE_LONG_EDGE = 1568
+
 
 class MessageConverter:
     """Utilities for building and converting messages.
@@ -266,15 +273,16 @@ class MessageConverter:
                             mime_type = header.split(":")[1].split(";")[0]
 
                             image_bytes = base64.b64decode(base64_data)
-                            if len(image_bytes) > MAX_IMAGE_SIZE_BYTES:
-                                compressed_bytes = MessageConverter._compress_image(
-                                    image_bytes, mime_type
-                                )
-                                compressed_base64 = base64.b64encode(
-                                    compressed_bytes
-                                ).decode("utf-8")
+                            # Always normalize: _compress_image checks both dimension and
+                            # file size, returning the original object unchanged when both
+                            # are within limits (identity comparison detects no-op).
+                            normalized_bytes = MessageConverter._compress_image(
+                                image_bytes, mime_type
+                            )
+                            if normalized_bytes is not image_bytes:
                                 image_url = (
-                                    f"data:{mime_type};base64,{compressed_base64}"
+                                    f"data:{mime_type};base64,"
+                                    f"{base64.b64encode(normalized_bytes).decode('utf-8')}"
                                 )
                     except Exception as e:
                         logger.warning(f"Failed to process image: {e}")
@@ -309,33 +317,55 @@ class MessageConverter:
 
     @staticmethod
     def _compress_image(image_data: bytes, mime_type: str = "image/png") -> bytes:
-        """Compress image if it exceeds the size limit."""
-        original_size = len(image_data)
-        if original_size <= MAX_IMAGE_SIZE_BYTES:
-            logger.debug(
-                f"Image size {original_size / 1024 / 1024:.2f}MB is within limit {MAX_IMAGE_SIZE_MB}MB, skipping compression"
-            )
-            return image_data
+        """Normalize image: enforce max long-edge dimension and max file size.
 
-        logger.info(
-            f"Image size {original_size / 1024 / 1024:.2f}MB exceeds limit {MAX_IMAGE_SIZE_MB}MB, compressing..."
-        )
+        Applies two constraints in order:
+        1. Resize to MAX_IMAGE_LONG_EDGE on the long side if dimensions exceed the limit.
+        2. Reduce JPEG/WEBP quality (then progressively downscale) until file size
+           fits within MAX_IMAGE_SIZE_BYTES.
 
+        Returns the original bytes object unchanged when both constraints are already met,
+        so callers can use identity comparison (``is``) to detect whether the image changed.
+        """
         try:
-            # Convert mime_type to PIL format
             fmt = mime_type.split("/")[-1].upper()
             if fmt == "JPG":
                 fmt = "JPEG"
 
             img = Image.open(io.BytesIO(image_data))
+            orig_width, orig_height = img.size
+            original_size = len(image_data)
 
-            # Convert to RGB if necessary (e.g. for JPEG)
+            # Early return when both dimension and size constraints are already satisfied.
+            if (
+                max(orig_width, orig_height) <= MAX_IMAGE_LONG_EDGE
+                and original_size <= MAX_IMAGE_SIZE_BYTES
+            ):
+                logger.debug(
+                    f"Image {orig_width}x{orig_height} "
+                    f"{original_size / 1024 / 1024:.2f}MB is within limits, skipping"
+                )
+                return image_data
+
+            # Step 1: resize if any dimension exceeds the long-edge limit.
+            if max(orig_width, orig_height) > MAX_IMAGE_LONG_EDGE:
+                scale = MAX_IMAGE_LONG_EDGE / max(orig_width, orig_height)
+                new_w = max(1, int(orig_width * scale))
+                new_h = max(1, int(orig_height * scale))
+                img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                logger.info(
+                    f"Image dimension resized: {orig_width}x{orig_height} -> {new_w}x{new_h} "
+                    f"(long edge {max(orig_width, orig_height)}px > limit {MAX_IMAGE_LONG_EDGE}px)"
+                )
+
+            # Convert to RGB if necessary for JPEG output.
             if fmt == "JPEG" and img.mode != "RGB":
                 img = img.convert("RGB")
 
-            # Initial quality
+            # Step 2: quality reduction loop until file size fits within the limit.
             quality = 85
             output = io.BytesIO()
+            compressed_data: bytes = b""
 
             while quality > 10:
                 output.seek(0)
@@ -344,32 +374,32 @@ class MessageConverter:
                 if fmt in ("JPEG", "WEBP"):
                     img.save(output, format=fmt, quality=quality)
                 else:
-                    # For PNG and others, quality param is ignored, try optimize
+                    # PNG: quality parameter is ignored; optimize=True is the only lever.
+                    # Break after the first attempt and fall through to resize if still too big.
                     img.save(output, format=fmt, optimize=True)
 
                 compressed_data = output.getvalue()
 
                 if len(compressed_data) <= MAX_IMAGE_SIZE_BYTES:
                     logger.info(
-                        f"Image compressed (quality reduction): {original_size / 1024 / 1024:.2f}MB -> {len(compressed_data) / 1024 / 1024:.2f}MB "
+                        f"Image normalized: {original_size / 1024 / 1024:.2f}MB -> "
+                        f"{len(compressed_data) / 1024 / 1024:.2f}MB "
                         f"(ratio: {len(compressed_data) / original_size:.2%})"
                     )
                     return compressed_data
 
                 quality -= 10
 
-                # For non-quality formats (like PNG), quality loop is ineffective
-                # so we break after first attempt (with optimize=True) and move to resizing
                 if fmt not in ("JPEG", "WEBP"):
                     break
 
-            # If still too big, resize
-            width, height = img.size
+            # Step 3: progressive downscale as last resort when quality reduction is insufficient.
+            cur_w, cur_h = img.size
             ratio = 0.8
-            while len(compressed_data) > MAX_IMAGE_SIZE_BYTES and width > 100:
-                width = int(width * ratio)
-                height = int(height * ratio)
-                img = img.resize((width, height), Image.Resampling.LANCZOS)
+            while len(compressed_data) > MAX_IMAGE_SIZE_BYTES and cur_w > 100:
+                cur_w = int(cur_w * ratio)
+                cur_h = int(cur_h * ratio)
+                img = img.resize((cur_w, cur_h), Image.Resampling.LANCZOS)
 
                 output.seek(0)
                 output.truncate()
@@ -381,16 +411,15 @@ class MessageConverter:
 
                 compressed_data = output.getvalue()
 
-            final_size = len(compressed_data)
             logger.info(
-                f"Image compressed: {original_size / 1024 / 1024:.2f}MB -> {final_size / 1024 / 1024:.2f}MB "
-                f"(ratio: {final_size / original_size:.2%})"
+                f"Image compressed: {original_size / 1024 / 1024:.2f}MB -> "
+                f"{len(compressed_data) / 1024 / 1024:.2f}MB "
+                f"(ratio: {len(compressed_data) / original_size:.2%})"
             )
             return compressed_data
 
         except Exception as e:
             logger.warning(f"Image compression failed: {e}")
-            # If compression fails, return original data
             return image_data
 
     @staticmethod
@@ -434,8 +463,7 @@ class MessageConverter:
         image_data: bytes, mime_type: str = "image/png"
     ) -> dict[str, Any]:
         """Create an image content block from raw bytes."""
-        if len(image_data) > MAX_IMAGE_SIZE_BYTES:
-            image_data = MessageConverter._compress_image(image_data, mime_type)
+        image_data = MessageConverter._compress_image(image_data, mime_type)
 
         encoded = base64.b64encode(image_data).decode("utf-8")
         return {
