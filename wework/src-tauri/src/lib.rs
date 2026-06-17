@@ -225,6 +225,7 @@ fn get_local_executor_device_id(expected_backend_url: Option<String>) -> Option<
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_http::init())
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
         .manage(local_terminal::LocalTerminalState::default())
         .setup(|app| {

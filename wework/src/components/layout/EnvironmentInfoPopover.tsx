@@ -2,6 +2,7 @@ import { CircleDot, GitCommit, GitPullRequest, Info, Laptop, Settings } from 'lu
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { BranchSelector } from '@/components/common/BranchSelector'
 import { useTranslation } from '@/hooks/useTranslation'
+import { openExternalUrl } from '@/lib/external-links'
 import { cn } from '@/lib/utils'
 import type { EnvironmentInfo } from '@/types/environment'
 import { DESKTOP_TOP_BAR_BUTTON_CLASS } from './DesktopTopBar'
@@ -78,7 +79,7 @@ export function EnvironmentInfoPopover({
     if (!info.createPullRequestUrl) {
       return
     }
-    window.open(info.createPullRequestUrl, '_blank', 'noopener,noreferrer')
+    void openExternalUrl(info.createPullRequestUrl)
   }
 
   async function handleCopyDeviceId() {
