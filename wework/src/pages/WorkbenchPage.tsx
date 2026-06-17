@@ -18,6 +18,8 @@ export function WorkbenchPage() {
     upgradingDevices,
     projectExecutionMode,
     setProjectExecutionMode,
+    projectWorktreeBaseBranch,
+    setProjectWorktreeBaseBranch,
     projectChat,
     selectProject,
     selectStandaloneDevice,
@@ -80,6 +82,8 @@ export function WorkbenchPage() {
     onSelectProject: selectProject,
     onSelectStandaloneDevice: selectStandaloneDevice,
     onExecutionModeChange: setProjectExecutionMode,
+    worktreeBaseBranch: projectWorktreeBaseBranch,
+    onWorktreeBaseBranchChange: setProjectWorktreeBaseBranch,
   }
 
   return (
