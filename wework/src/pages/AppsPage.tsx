@@ -1,12 +1,4 @@
-import {
-  Cpu,
-  Loader2,
-  Network,
-  Search,
-  Server,
-  ShieldCheck,
-  TerminalSquare,
-} from 'lucide-react'
+import { Cpu, Loader2, Network, Search, Server, ShieldCheck, TerminalSquare } from 'lucide-react'
 import type { ComponentType, UIEvent } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createDeviceApi } from '@/api/devices'
@@ -166,7 +158,10 @@ function SidebarNav({
   onSelect: (section: AppsSection) => void
 }) {
   return (
-    <aside className="hidden min-h-0 flex-col rounded-xl border border-border/60 bg-background p-3 shadow-[0_3px_16px_rgba(0,0,0,0.04)] xl:flex">
+    <aside
+      data-testid="apps-sidebar-nav"
+      className="hidden min-h-0 flex-col rounded-xl border border-border/60 bg-background p-3 shadow-[0_3px_16px_rgba(0,0,0,0.04)] md:flex"
+    >
       <div className="flex items-center gap-3 px-2 pb-4 pt-2">
         <div className="grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-br from-primary to-sky-500 text-sm font-bold text-white">
           A
@@ -212,7 +207,10 @@ function SectionTabs({
   onSelect: (section: AppsSection) => void
 }) {
   return (
-    <div className="border-b border-border/70 bg-background px-4 py-3 xl:hidden">
+    <div
+      data-testid="apps-section-tabs"
+      className="border-b border-border/70 bg-background px-4 py-3 md:hidden"
+    >
       <div className="flex gap-2 overflow-x-auto">
         {navItems.map(item => (
           <button
@@ -533,7 +531,7 @@ export function AppsPage() {
   return (
     <div
       data-testid="apps-page"
-      className="grid h-full min-h-0 grid-cols-1 gap-1.5 overflow-hidden bg-transparent p-1.5 xl:grid-cols-[220px_minmax(0,1fr)]"
+      className="grid h-full min-h-0 grid-cols-1 gap-1.5 overflow-hidden bg-transparent p-1.5 md:grid-cols-[220px_minmax(0,1fr)]"
     >
       <SidebarNav activeSection={activeSection} onSelect={setActiveSection} />
 

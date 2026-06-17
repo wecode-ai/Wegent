@@ -121,7 +121,7 @@ export function WorktreeBranchSelector({
           className={cn(
             isMobile
               ? 'fixed inset-x-0 bottom-0 z-modal flex max-h-[45dvh] flex-col rounded-t-[28px] border border-border bg-background shadow-[0_-18px_48px_rgba(0,0,0,0.18)]'
-              : 'absolute left-0 top-11 z-popover w-64 rounded-2xl border border-border bg-background p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]'
+              : 'absolute left-0 top-11 z-popover flex max-h-[min(360px,calc(100dvh-7rem))] w-64 flex-col overflow-hidden rounded-2xl border border-border bg-background p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]'
           )}
         >
           {isMobile && (
@@ -146,10 +146,10 @@ export function WorktreeBranchSelector({
               </div>
             </>
           )}
-          <div className={cn(isMobile && 'min-h-0 px-5 pb-5')}>
+          <div className={cn('min-h-0 flex flex-1 flex-col', isMobile && 'px-5 pb-5')}>
             <label
               className={cn(
-                'flex h-9 items-center gap-2 rounded-xl border border-border bg-surface px-3 text-text-secondary',
+                'flex h-9 shrink-0 items-center gap-2 rounded-xl border border-border bg-surface px-3 text-text-secondary',
                 isMobile && 'h-11 rounded-2xl text-base'
               )}
             >
@@ -166,10 +166,16 @@ export function WorktreeBranchSelector({
                 )}
               />
             </label>
-            <div className="mt-2 px-2 text-xs font-medium leading-5 text-text-muted">
+            <div className="mt-2 shrink-0 px-2 text-xs font-medium leading-5 text-text-muted">
               {t('workbench.project_worktree_branch_title')}
             </div>
-            <div className={cn('max-h-56 overflow-y-auto', isMobile && 'max-h-[28dvh]')}>
+            <div
+              data-testid="project-worktree-branch-list"
+              className={cn(
+                'min-h-0 flex-1 overflow-y-auto',
+                isMobile ? 'max-h-[28dvh]' : 'max-h-56'
+              )}
+            >
               {branchesLoading && (
                 <p className="px-2 py-3 text-[13px] text-text-muted">
                   {t('workbench.project_worktree_branch_loading')}

@@ -1,5 +1,6 @@
 import type { Attachment, LocalDeviceSkill, ModelOptions, UnifiedModel } from '@/types/api'
 import type { CodeCommentContext } from '@/types/workspace-files'
+import type { DragEventHandler } from 'react'
 import type { ProjectWorkControls } from '../ChatInput'
 import { AttachmentBadges } from './AttachmentBadges'
 import { ComposerToolbar } from './ComposerToolbar'
@@ -35,6 +36,10 @@ interface ProjectChatComposerProps {
   onPause?: () => void
 }
 
+function hasDraggedFiles(dataTransfer: DataTransfer): boolean {
+  return Array.from(dataTransfer.types).includes('Files')
+}
+
 export function ProjectChatComposer({
   value,
   onChange,
@@ -65,11 +70,29 @@ export function ProjectChatComposer({
   const textareaRef = useAutoResizeTextarea(value, 168)
   const canSend =
     (value.trim().length > 0 || attachments.length > 0 || codeComments.length > 0) && !disabled
+  const handleDragOver: DragEventHandler<HTMLFormElement> = event => {
+    if (!hasDraggedFiles(event.dataTransfer)) return
+
+    event.preventDefault()
+    event.dataTransfer.dropEffect = disabled ? 'none' : 'copy'
+  }
+  const handleDrop: DragEventHandler<HTMLFormElement> = event => {
+    if (!hasDraggedFiles(event.dataTransfer)) return
+
+    event.preventDefault()
+    if (disabled) return
+
+    const files = Array.from(event.dataTransfer.files)
+    if (files.length > 0) onFileSelect(files)
+  }
 
   return (
     <div className="relative w-full rounded-[28px] bg-surface shadow-[0_16px_44px_rgba(0,0,0,0.08)]">
       <form
+        data-testid="project-chat-composer-form"
         className="flex min-h-[112px] w-full flex-col rounded-[28px] border border-border bg-background pb-2 pl-4 pr-2 pt-3.5"
+        onDragOver={handleDragOver}
+        onDrop={handleDrop}
         onSubmit={event => {
           event.preventDefault()
           if (canSend) onSubmit()
