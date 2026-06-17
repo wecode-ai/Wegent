@@ -2485,8 +2485,16 @@ describe('DesktopWorkbenchLayout', () => {
     expect(fileTab).toHaveAttribute('role', 'tab')
     expect(fileTab).toHaveAttribute('aria-selected', 'true')
     expect(fileTab).toHaveTextContent('打开文件')
+    expect(fileTab).toHaveClass('group')
+    const fileIcon = within(fileTab).getByTestId('right-workspace-file-tab-icon')
+    expect(fileIcon).toHaveClass('opacity-100', 'group-hover:opacity-0')
     const closeButton = within(fileTab).getByTestId('close-right-workspace-panel-button')
-    expect(closeButton).toHaveClass('rounded-full')
+    expect(closeButton).toHaveClass(
+      'rounded-full',
+      'opacity-0',
+      'group-hover:opacity-100',
+      'focus-visible:opacity-100'
+    )
     expect(closeButton).not.toHaveClass('ml-auto')
     expect(screen.getByTestId('right-workspace-new-tab-button')).toBeInTheDocument()
     expect(await screen.findByTestId('workspace-file-tree')).toBeInTheDocument()
