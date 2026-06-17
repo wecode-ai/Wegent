@@ -5,6 +5,7 @@ import { getRuntimeConfig } from '@/config/runtime'
 import { useTranslation } from '@/hooks/useTranslation'
 import type {
   CodeCommentContext,
+  WorkspaceFileOpenRequest,
   WorkspaceFileEntry,
   WorkspaceTarget,
   WorkspaceTextFileResponse,
@@ -14,6 +15,7 @@ import { WorkspaceFileTree } from './WorkspaceFileTree'
 
 interface FileWorkspacePanelProps {
   target: WorkspaceTarget | null
+  openFileRequest?: WorkspaceFileOpenRequest | null
   onAddCodeComment: (context: CodeCommentContext) => void
 }
 
@@ -22,8 +24,27 @@ function createWorkspaceDeviceApi() {
   return createDeviceApi(createHttpClient({ baseUrl: apiBaseUrl }))
 }
 
+function resolveWorkspaceFilePath(target: WorkspaceTarget, path: string): string | null {
+  const normalizedPath = path.trim().replace(/\\/g, '/')
+  if (!normalizedPath) return null
+  if (normalizedPath.startsWith('/')) return normalizedPath
+
+  const segments: string[] = []
+  for (const segment of normalizedPath.split('/')) {
+    if (!segment || segment === '.') continue
+    if (segment === '..') return null
+    segments.push(segment)
+  }
+  if (segments.length === 0) return null
+
+  const root = target.path.replace(/\/+$/, '') || '/'
+  const child = segments.join('/')
+  return root === '/' ? `/${child}` : `${root}/${child}`
+}
+
 export function FileWorkspacePanel({
   target,
+  openFileRequest,
   onAddCodeComment,
 }: FileWorkspacePanelProps) {
   const { t } = useTranslation('common')
@@ -125,6 +146,19 @@ export function FileWorkspacePanel({
     }
   }, [api, target, t])
 
+  const openFilePath = useCallback((path: string) => {
+    if (!target) return
+    const resolvedPath = resolveWorkspaceFilePath(target, path)
+    if (!resolvedPath) return
+
+    void openFile({
+      name: resolvedPath.split('/').pop() ?? resolvedPath,
+      path: resolvedPath,
+      isDirectory: false,
+      size: 0,
+    })
+  }, [openFile, target])
+
   useEffect(() => {
     if (!target) return
     let cancelled = false
@@ -137,6 +171,19 @@ export function FileWorkspacePanel({
       cancelled = true
     }
   }, [loadTree, target])
+
+  useEffect(() => {
+    if (!openFileRequest?.path) return
+    let cancelled = false
+    void Promise.resolve().then(() => {
+      if (!cancelled) {
+        openFilePath(openFileRequest.path)
+      }
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [openFilePath, openFileRequest?.id, openFileRequest?.path])
 
   if (!target) {
     return (
@@ -152,12 +199,7 @@ export function FileWorkspacePanel({
         file={preview}
         loading={previewLoading}
         error={previewError}
-        onRetry={() => selectedFilePath && void openFile({
-          name: selectedFilePath.split('/').pop() ?? selectedFilePath,
-          path: selectedFilePath,
-          isDirectory: false,
-          size: 0,
-        })}
+        onRetry={() => selectedFilePath && openFilePath(selectedFilePath)}
         onAddCodeComment={onAddCodeComment}
       />
       <WorkspaceFileTree

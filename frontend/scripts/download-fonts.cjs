@@ -13,6 +13,7 @@
  * - Skip via environment variables
  * - Progress and timeout
  * - Atomic write with temp file
+ * - Stable Google Sans CSS manifest unless explicitly refreshed
  * - Configurable Google Sans CSS source URL(s) for internal deployments
  */
 
@@ -34,6 +35,7 @@ const PDF_FONT_DIR = FONTS_DIR
 const GOOGLE_SANS_DIR = path.join(FONTS_DIR, 'google-sans')
 const GOOGLE_SANS_CSS_OUTPUT = path.join(__dirname, '..', 'src', 'app', 'google-sans-local.css')
 const DOWNLOAD_TIMEOUT = 30_000 // 30s
+const REFRESH_UI_FONT_CSS = process.env.REFRESH_UI_FONT_CSS === '1'
 const GOOGLE_FONTS_USER_AGENT =
   process.env.GOOGLE_FONT_USER_AGENT ||
   'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0 Safari/537.36'
@@ -374,6 +376,12 @@ async function downloadGoogleSansFromBundle(bundleUrls) {
 
 async function downloadGoogleSansAssets() {
   try {
+    if (fs.existsSync(GOOGLE_SANS_CSS_OUTPUT) && !REFRESH_UI_FONT_CSS) {
+      console.log(`✓ Reusing ${path.relative(process.cwd(), GOOGLE_SANS_CSS_OUTPUT)}`)
+      console.log('  Set REFRESH_UI_FONT_CSS=1 to refresh the tracked CSS manifest.\n')
+      return true
+    }
+
     console.log('⬇ Downloading local Google Sans assets')
 
     // Prefer bundle download (internal Nexus or env override) over per-file CSS approach

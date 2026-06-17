@@ -26,10 +26,21 @@ def test_wework_standalone_chat_uses_global_capabilities():
     assert is_project_task(request) is True
 
 
-def test_frontend_project_zero_chat_uses_project_capabilities():
+def test_frontend_device_chat_project_zero_does_not_use_project_capabilities():
     request = ExecutionRequest(
         task_id=1902,
         project_id=0,
+    )
+
+    assert get_project_id(request) == ""
+    assert is_project_task(request) is False
+
+
+def test_wework_standalone_chat_project_zero_keeps_project_header_id():
+    request = ExecutionRequest(
+        task_id=1904,
+        project_id=0,
+        standalone_chat_workspace=True,
     )
 
     assert get_project_id(request) == "0"

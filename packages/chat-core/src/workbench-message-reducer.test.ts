@@ -160,6 +160,51 @@ describe('reduceWorkbenchMessages', () => {
     ])
   })
 
+  test('clears stale stream error when an active block update arrives after disconnect', () => {
+    const state = reduceWorkbenchMessages(
+      reduceWorkbenchMessages([], {
+        type: 'assistant_started',
+        taskId: 1,
+        subtaskId: 9,
+      }),
+      {
+        type: 'assistant_error',
+        subtaskId: 9,
+        error: 'Device disconnected',
+        errorType: 'container_error',
+      }
+    )
+
+    const withTool = reduceWorkbenchMessages(state, {
+      type: 'block_created',
+      subtaskId: 9,
+      block: {
+        id: 'call_1',
+        subtaskId: 9,
+        type: 'tool',
+        toolName: 'bash',
+        status: 'pending',
+        createdAt: 1770000000000,
+      },
+    })
+    const resumed = reduceWorkbenchMessages(withTool, {
+      type: 'block_updated',
+      subtaskId: 9,
+      blockId: 'call_1',
+      updates: {
+        status: 'streaming',
+        toolOutput: 'still running',
+      },
+    })
+
+    expect(resumed[0].status).toBe('streaming')
+    expect(resumed[0].error).toBeUndefined()
+    expect(resumed[0].errorType).toBeUndefined()
+    expect(resumed[0].blocks).toMatchObject([
+      { id: 'call_1', type: 'tool', status: 'streaming', toolOutput: 'still running' },
+    ])
+  })
+
   test('preserves state for unknown runtime actions', () => {
     const state: WorkbenchMessage[] = [
       {

@@ -189,6 +189,9 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     git_clone_definition = resolve_local_device_command(
         "git_clone", settings.LOCAL_DEVICE_COMMANDS
     )
+    git_config_definition = resolve_local_device_command(
+        "git_config", settings.LOCAL_DEVICE_COMMANDS
+    )
     git_is_worktree_definition = resolve_local_device_command(
         "git_is_worktree", settings.LOCAL_DEVICE_COMMANDS
     )
@@ -272,6 +275,9 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     assert git_clone_definition is not None
     assert git_clone_definition.command == "git clone"
     assert git_clone_definition.post_processor is None
+    assert git_config_definition is not None
+    assert git_config_definition.command == "git config"
+    assert git_config_definition.post_processor is None
     assert git_is_worktree_definition is not None
     assert "rev-parse --is-inside-work-tree" in git_is_worktree_definition.command
     assert git_is_worktree_definition.post_processor is None
@@ -703,6 +709,22 @@ def test_local_device_command_registry_builds_git_clone_argv():
         definition.command,
         ["https://github.com/wecode-ai/Wegent.git", "Wegent"],
     ) == ["git", "clone", "https://github.com/wecode-ai/Wegent.git", "Wegent"]
+
+
+def test_local_device_command_registry_builds_git_config_argv():
+    """git_config should support repo-local config key and value args."""
+    from app.services.device.command_registry import (
+        build_local_device_command_argv,
+        resolve_local_device_command,
+    )
+
+    definition = resolve_local_device_command("git_config")
+
+    assert definition is not None
+    assert build_local_device_command_argv(
+        definition.command,
+        ["user.email", "alice@example.com"],
+    ) == ["git", "config", "user.email", "alice@example.com"]
 
 
 def test_local_device_command_registry_builds_git_worktree_add_argv():

@@ -142,6 +142,14 @@ class TestSettings:
         assert s.WORKSPACE_ARCHIVE_ENABLED is False
         assert s.WORKSPACE_ARCHIVE_TIMEZONE == "UTC"
 
+    def test_tool_output_guard_enabled_from_env(self, monkeypatch):
+        """Test tool output guard default can be controlled from env."""
+        monkeypatch.setenv("TOOL_OUTPUT_GUARD_ENABLED", "true")
+
+        s = build_settings_from_env()
+
+        assert s.TOOL_OUTPUT_GUARD_ENABLED is True
+
     def test_settings_oidc_configuration(self):
         """Test OIDC configuration"""
         s = build_settings()
