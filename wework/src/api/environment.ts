@@ -300,13 +300,26 @@ async function loadProjectEnvironmentUncached(
     return baseInfo
   }
 
+  let deviceId: string
+  let path: string
   try {
-    const { deviceId, path } = await commandContext(api, project, target)
-    const environmentWorkspaceInfo = {
+    const context = await commandContext(api, project, target)
+    deviceId = context.deviceId
+    path = context.path
+  } catch (error) {
+    return {
       ...baseInfo,
-      deviceId,
-      workspacePath: path,
+      error: error instanceof Error ? error.message : 'Failed to load environment info',
     }
+  }
+
+  const environmentWorkspaceInfo = {
+    ...baseInfo,
+    deviceId,
+    workspacePath: path,
+  }
+
+  try {
     const [branchName, shortStat, porcelain] = await Promise.all([
       runGitCommand(api, deviceId, 'git_branch', path),
       loadBranchDiffShortStat(api, deviceId, path),
@@ -341,7 +354,7 @@ async function loadProjectEnvironmentUncached(
     }
   } catch (error) {
     return {
-      ...baseInfo,
+      ...environmentWorkspaceInfo,
       error: error instanceof Error ? error.message : 'Failed to load environment info',
     }
   }

@@ -53,8 +53,13 @@ export function WorkspacePanelActions({
   const [codeServerError, setCodeServerError] = useState<string | null>(null)
   const showEnvironmentInfo = mode !== 'panel-toggles'
   const showPanelToggles = mode !== 'environment'
-  const canShowEnvironmentInfo =
-    environmentInfo.loading !== false || Boolean(environmentInfo.branchName?.trim())
+  const hasEnvironmentContext = Boolean(
+    environmentInfo.branchName?.trim() ||
+    environmentInfo.deviceId?.trim() ||
+    environmentInfo.workspacePath?.trim() ||
+    environmentInfo.error?.trim()
+  )
+  const canShowEnvironmentInfo = environmentInfo.loading !== false || hasEnvironmentContext
   const codeServerProjectDeviceId = workspaceTarget?.deviceId ?? getProjectDeviceId(currentProject)
   const canOpenCodeServer = Boolean(currentProject && codeServerProjectDeviceId)
   const codeServerDevice = codeServerProjectDeviceId
