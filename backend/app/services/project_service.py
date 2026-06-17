@@ -8,6 +8,7 @@ Project service for managing projects and project-task associations.
 Projects are containers for organizing tasks. Each task can belong to one project.
 """
 
+import logging
 import posixpath
 import re
 from typing import Any, Optional
@@ -47,6 +48,8 @@ from app.services.device.command_service import (
 )
 from app.services.device_service import device_service
 from app.stores.tasks import task_store
+from shared.models.db import User
+from shared.utils.url_util import domains_match
 
 GIT_CLONE_TIMEOUT_SECONDS = 600
 GIT_WORKTREE_TIMEOUT_SECONDS = 120
@@ -54,6 +57,7 @@ GIT_REPOSITORY_CHECK_TIMEOUT_SECONDS = 30
 FIND_WORKTREES_TIMEOUT_SECONDS = 30
 WORKTREE_ROOT_DIR = "worktrees"
 WORKTREE_ID_PATTERN = re.compile(r"^[1-9][0-9]*$")
+logger = logging.getLogger(__name__)
 
 
 def _normalize_project_config(
@@ -308,6 +312,11 @@ async def create_git_workspace_project(
     )
 
     try:
+        git_user_name, git_user_email = _resolve_user_git_identity(
+            db,
+            user_id=user_id,
+            git_domain=project_data.git.domain,
+        )
         reused_checkout = await _prepare_git_checkout(
             db=db,
             user_id=user_id,
@@ -315,6 +324,8 @@ async def create_git_workspace_project(
             git_url=project_data.git.url,
             branch=project_data.git.branch,
             checkout_path=config.workspace.checkoutPath,
+            git_user_name=git_user_name,
+            git_user_email=git_user_email,
         )
     except Exception:
         _deactivate_project(db, project.id, user_id, project_data.client_origin)
@@ -583,6 +594,8 @@ async def _prepare_git_checkout(
     git_url: str,
     branch: Optional[str],
     checkout_path: str,
+    git_user_name: Optional[str] = None,
+    git_user_email: Optional[str] = None,
 ) -> bool:
     """Clone the Git checkout on the selected local device."""
 
@@ -641,7 +654,97 @@ async def _prepare_git_checkout(
         max_output_bytes=5 * 1024 * 1024,
     )
     _raise_for_failed_command(clone_result, "Failed to clone Git repository")
+    await _configure_git_checkout_identity(
+        db=db,
+        user_id=user_id,
+        device_id=device_id,
+        checkout_path=target_path,
+        git_user_name=git_user_name,
+        git_user_email=git_user_email,
+    )
     return False
+
+
+async def _configure_git_checkout_identity(
+    *,
+    db: Session,
+    user_id: int,
+    device_id: str,
+    checkout_path: str,
+    git_user_name: Optional[str],
+    git_user_email: Optional[str],
+) -> None:
+    """Set repo-local Git commit identity after Backend-created checkout clone."""
+
+    if not git_user_name or not git_user_email:
+        logger.warning(
+            "Skipping Git checkout identity config: user_id=%s, device_id=%s, "
+            "checkout_path=%s, has_name=%s, has_email=%s",
+            user_id,
+            device_id,
+            checkout_path,
+            bool(git_user_name),
+            bool(git_user_email),
+        )
+        return
+
+    name_result = await execute_configured_device_command(
+        db=db,
+        user_id=user_id,
+        device_id=device_id,
+        command_key="git_config",
+        path=checkout_path,
+        args=["user.name", git_user_name],
+    )
+    _raise_for_failed_command(name_result, "Failed to configure Git user.name")
+
+    email_result = await execute_configured_device_command(
+        db=db,
+        user_id=user_id,
+        device_id=device_id,
+        command_key="git_config",
+        path=checkout_path,
+        args=["user.email", git_user_email],
+    )
+    _raise_for_failed_command(email_result, "Failed to configure Git user.email")
+
+
+def _resolve_user_git_identity(
+    db: Session,
+    *,
+    user_id: int,
+    git_domain: Optional[str],
+) -> tuple[Optional[str], Optional[str]]:
+    """Resolve the commit identity used for a Git workspace checkout."""
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        return None, None
+
+    git_info_list = user.git_info or []
+    if not isinstance(git_info_list, list):
+        git_info_list = [git_info_list] if git_info_list else []
+
+    if not git_info_list:
+        return None, None
+
+    matched_git_info = None
+    if git_domain:
+        for git_info in git_info_list:
+            if domains_match(git_info.get("git_domain", ""), git_domain):
+                matched_git_info = git_info
+                break
+
+    if not matched_git_info:
+        matched_git_info = git_info_list[0]
+
+    git_login = matched_git_info.get("git_login")
+    git_email = matched_git_info.get("git_email")
+    git_id = matched_git_info.get("git_id")
+    if not git_email and git_id and git_login:
+        git_email = f"{git_id}+{git_login}@users.noreply.github.com"
+
+    return git_login, git_email
 
 
 async def _resolve_project_workspace_root(
