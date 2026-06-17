@@ -10,7 +10,7 @@ describe('parseCustomMcpJson', () => {
             url: 'https://mcp.example.com/mcp',
           },
         },
-      }),
+      })
     )
 
     expect(form).toMatchObject({

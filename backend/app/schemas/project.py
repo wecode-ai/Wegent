@@ -40,6 +40,9 @@ class ProjectTaskResponse(BaseModel):
     execution_workspace_source: Optional[str] = Field(
         None, description="Task execution workspace source"
     )
+    execution_workspace_path: Optional[str] = Field(
+        None, description="Task execution workspace path"
+    )
     is_group_chat: bool = Field(
         default=False, description="Whether the task is a group chat"
     )
@@ -391,6 +394,16 @@ class ProjectDeviceSessionResponse(BaseModel):
     expires_at: Optional[datetime] = Field(
         None,
         description="Session expiration timestamp, if provided by the device",
+    )
+
+
+class ProjectDeviceSessionCreate(BaseModel):
+    """Request model for a project-scoped local device session."""
+
+    task_id: Optional[int] = Field(
+        None,
+        ge=1,
+        description="Task whose execution workspace should be used",
     )
 
 

@@ -64,100 +64,112 @@ export function FileWorkspacePanel({
   const latestTreeRequestByPath = useRef(new Map<string, number>())
   const fileRequestSequence = useRef(0)
 
-  const loadTree = useCallback(async (path: string) => {
-    if (!target) return
-    const requestId = treeRequestSequence.current + 1
-    treeRequestSequence.current = requestId
-    latestTreeRequestByPath.current.set(path, requestId)
-    setLoadingPaths((previous) => {
-      const next = new Set(previous)
-      next.add(path)
-      return next
-    })
-    setTreeError(null)
-    setTreeRetryPath(null)
-    try {
-      const result = await api.listWorkspaceEntries(target.deviceId, path)
-      if (latestTreeRequestByPath.current.get(path) !== requestId) return
-      const resolvedPath = result.path || path
-      setEntriesByPath(previous => ({
-        ...previous,
-        [resolvedPath]: result.entries,
-      }))
-      setExpandedPaths((previous) => {
+  const loadTree = useCallback(
+    async (path: string) => {
+      if (!target) return
+      const requestId = treeRequestSequence.current + 1
+      treeRequestSequence.current = requestId
+      latestTreeRequestByPath.current.set(path, requestId)
+      setLoadingPaths(previous => {
         const next = new Set(previous)
-        next.add(resolvedPath)
+        next.add(path)
         return next
       })
+      setTreeError(null)
       setTreeRetryPath(null)
-    } catch (error) {
-      if (latestTreeRequestByPath.current.get(path) !== requestId) return
-      setTreeError(
-        error instanceof Error
-          ? error.message
-          : t('workbench.workspace_file_load_failed', '加载文件失败'),
-      )
-      setTreeRetryPath(path)
-    } finally {
-      if (latestTreeRequestByPath.current.get(path) === requestId) {
-        setLoadingPaths((previous) => {
+      try {
+        const result = await api.listWorkspaceEntries(target.deviceId, path)
+        if (latestTreeRequestByPath.current.get(path) !== requestId) return
+        const resolvedPath = result.path || path
+        setEntriesByPath(previous => ({
+          ...previous,
+          [resolvedPath]: result.entries,
+        }))
+        setExpandedPaths(previous => {
           const next = new Set(previous)
-          next.delete(path)
+          next.add(resolvedPath)
           return next
         })
+        setTreeRetryPath(null)
+      } catch (error) {
+        if (latestTreeRequestByPath.current.get(path) !== requestId) return
+        setTreeError(
+          error instanceof Error
+            ? error.message
+            : t('workbench.workspace_file_load_failed', '加载文件失败')
+        )
+        setTreeRetryPath(path)
+      } finally {
+        if (latestTreeRequestByPath.current.get(path) === requestId) {
+          setLoadingPaths(previous => {
+            const next = new Set(previous)
+            next.delete(path)
+            return next
+          })
+        }
       }
-    }
-  }, [api, target, t])
+    },
+    [api, target, t]
+  )
 
-  const openDirectory = useCallback((entry: WorkspaceFileEntry) => {
-    if (!entry.isDirectory) return
-    setActiveDirectoryPath(entry.path)
-    setTreeError(null)
-    setTreeRetryPath(null)
+  const openDirectory = useCallback(
+    (entry: WorkspaceFileEntry) => {
+      if (!entry.isDirectory) return
+      setActiveDirectoryPath(entry.path)
+      setTreeError(null)
+      setTreeRetryPath(null)
 
-    if (!entriesByPath[entry.path] && !loadingPaths.has(entry.path)) {
-      void loadTree(entry.path)
-    }
-  }, [entriesByPath, loadTree, loadingPaths])
-
-  const openFile = useCallback(async (entry: WorkspaceFileEntry) => {
-    if (!target || entry.isDirectory) return
-    const requestId = fileRequestSequence.current + 1
-    fileRequestSequence.current = requestId
-    setSelectedFilePath(entry.path)
-    setPreviewLoading(true)
-    setPreviewError(null)
-    try {
-      const file = await api.readWorkspaceTextFile(target.deviceId, entry.path)
-      if (fileRequestSequence.current !== requestId) return
-      setPreview(file)
-    } catch (error) {
-      if (fileRequestSequence.current !== requestId) return
-      setPreview(null)
-      setPreviewError(
-        error instanceof Error
-          ? error.message
-          : t('workbench.workspace_file_preview_failed', '读取文件失败'),
-      )
-    } finally {
-      if (fileRequestSequence.current === requestId) {
-        setPreviewLoading(false)
+      if (!entriesByPath[entry.path] && !loadingPaths.has(entry.path)) {
+        void loadTree(entry.path)
       }
-    }
-  }, [api, target, t])
+    },
+    [entriesByPath, loadTree, loadingPaths]
+  )
 
-  const openFilePath = useCallback((path: string) => {
-    if (!target) return
-    const resolvedPath = resolveWorkspaceFilePath(target, path)
-    if (!resolvedPath) return
+  const openFile = useCallback(
+    async (entry: WorkspaceFileEntry) => {
+      if (!target || entry.isDirectory) return
+      const requestId = fileRequestSequence.current + 1
+      fileRequestSequence.current = requestId
+      setSelectedFilePath(entry.path)
+      setPreviewLoading(true)
+      setPreviewError(null)
+      try {
+        const file = await api.readWorkspaceTextFile(target.deviceId, entry.path)
+        if (fileRequestSequence.current !== requestId) return
+        setPreview(file)
+      } catch (error) {
+        if (fileRequestSequence.current !== requestId) return
+        setPreview(null)
+        setPreviewError(
+          error instanceof Error
+            ? error.message
+            : t('workbench.workspace_file_preview_failed', '读取文件失败')
+        )
+      } finally {
+        if (fileRequestSequence.current === requestId) {
+          setPreviewLoading(false)
+        }
+      }
+    },
+    [api, target, t]
+  )
 
-    void openFile({
-      name: resolvedPath.split('/').pop() ?? resolvedPath,
-      path: resolvedPath,
-      isDirectory: false,
-      size: 0,
-    })
-  }, [openFile, target])
+  const openFilePath = useCallback(
+    (path: string) => {
+      if (!target) return
+      const resolvedPath = resolveWorkspaceFilePath(target, path)
+      if (!resolvedPath) return
+
+      void openFile({
+        name: resolvedPath.split('/').pop() ?? resolvedPath,
+        path: resolvedPath,
+        isDirectory: false,
+        size: 0,
+      })
+    },
+    [openFile, target]
+  )
 
   useEffect(() => {
     if (!target) return
@@ -213,11 +225,10 @@ export function FileWorkspacePanel({
         onOpenDirectory={openDirectory}
         onOpenFile={entry => void openFile(entry)}
         onExpandedPathsChange={updaterOrValue => {
-          setExpandedPaths((previous) => {
+          setExpandedPaths(previous => {
             const previousPaths = Array.from(previous)
-            const nextPaths = typeof updaterOrValue === 'function'
-              ? updaterOrValue(previousPaths)
-              : updaterOrValue
+            const nextPaths =
+              typeof updaterOrValue === 'function' ? updaterOrValue(previousPaths) : updaterOrValue
             return new Set(nextPaths)
           })
         }}

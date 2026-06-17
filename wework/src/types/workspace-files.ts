@@ -24,6 +24,7 @@ export interface WorkspaceTarget {
   deviceId: string
   path: string
   source: 'task' | 'project'
+  taskId?: number
 }
 
 export interface WorkspaceFileOpenRequest {

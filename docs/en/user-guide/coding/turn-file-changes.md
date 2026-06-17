@@ -16,6 +16,10 @@ Binary files do not have reliable text line counts, so the card displays only th
 
 Selecting **Review** loads the compressed patch from the original execution device and displays the unified diff grouped by file.
 
+The review view provides a tree-style file navigator on the right. You can filter and select changed files there. Selecting a file does not filter the left diff stream; the full patch remains visible in its original file order and scrolls to the selected file section.
+
+The review toolbar can refresh the diff, toggle word wrap, collapse or expand all hunks, show or hide the file tree, and copy a `git apply` command for applying the patch locally.
+
 Review is not available offline. The original device must be online and the device-side artifact must still exist. The summary remains visible while the device is offline, but Review and Revert are disabled.
 
 ## Revert One Turn

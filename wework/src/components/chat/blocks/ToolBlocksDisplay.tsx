@@ -96,11 +96,7 @@ export function ToolBlocksDisplay({
         <div className="flex min-w-0 flex-col gap-3">
           {rows.map(row =>
             row.type === 'activity_group' ? (
-              <ToolActivityGroup
-                key={row.id}
-                row={row}
-                onOpenWorkspaceFile={onOpenWorkspaceFile}
-              />
+              <ToolActivityGroup key={row.id} row={row} onOpenWorkspaceFile={onOpenWorkspaceFile} />
             ) : (
               <ToolBlockItem
                 key={row.id}
@@ -145,11 +141,7 @@ function ToolActivityGroup({
       {expanded && (
         <div className="mt-2 flex min-w-0 flex-col gap-3 border-l border-border pl-4">
           {row.blocks.map(block => (
-            <ToolBlockItem
-              key={block.id}
-              block={block}
-              onOpenWorkspaceFile={onOpenWorkspaceFile}
-            />
+            <ToolBlockItem key={block.id} block={block} onOpenWorkspaceFile={onOpenWorkspaceFile} />
           ))}
         </div>
       )}

@@ -64,6 +64,17 @@ def get_task_execution_workspace_source(task_crd: Task) -> str | None:
     return None
 
 
+def get_task_execution_workspace_path(task_crd: Task) -> str | None:
+    """Return the task execution workspace path used by workspace tools."""
+
+    execution = getattr(task_crd.spec, "execution", None)
+    workspace = getattr(execution, "workspace", None) if execution else None
+    path = getattr(workspace, "path", None) if workspace else None
+    if isinstance(path, str) and path.strip():
+        return path.strip()
+    return None
+
+
 def convert_to_task_dict(task: Kind, db: Session, user_id: int) -> Dict[str, Any]:
     """
     Convert kinds Task to task-like dictionary.
@@ -183,6 +194,7 @@ def convert_to_task_dict(task: Kind, db: Session, user_id: int) -> Dict[str, Any
     # Extract device_id from task spec
     device_id = task_crd.spec.device_id if hasattr(task_crd.spec, "device_id") else None
     execution_workspace_source = get_task_execution_workspace_source(task_crd)
+    execution_workspace_path = get_task_execution_workspace_path(task_crd)
 
     return {
         "id": task.id,
@@ -212,6 +224,7 @@ def convert_to_task_dict(task: Kind, db: Session, user_id: int) -> Dict[str, Any
         "app": app_data,
         "device_id": device_id,
         "execution_workspace_source": execution_workspace_source,
+        "execution_workspace_path": execution_workspace_path,
         "preserve_executor": preserve_executor,
     }
 
@@ -243,6 +256,7 @@ def convert_to_task_dict_optimized(
     # Extract device_id from task spec
     device_id = task_crd.spec.device_id if hasattr(task_crd.spec, "device_id") else None
     execution_workspace_source = get_task_execution_workspace_source(task_crd)
+    execution_workspace_path = get_task_execution_workspace_path(task_crd)
 
     # Extract preserve_executor flag from task labels
     preserve_executor = (
@@ -283,6 +297,7 @@ def convert_to_task_dict_optimized(
         ),
         "device_id": device_id,
         "execution_workspace_source": execution_workspace_source,
+        "execution_workspace_path": execution_workspace_path,
         "preserve_executor": preserve_executor,
     }
 

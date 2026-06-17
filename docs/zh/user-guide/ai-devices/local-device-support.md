@@ -144,7 +144,7 @@ docker run -d --platform linux/amd64 \
 
 上述项目会话接口用于云设备项目连接；如果项目绑定的是本地设备，Backend 会拒绝启动 terminal 或 code-server 会话。云设备返回的访问地址带有短期 session token，并通过设备侧 session gateway 暴露。每个 terminal 或 code-server session 都有独立路径，因此同一用户可以同时打开多个项目，或在同一项目中打开多个 terminal/code-server。terminal 会话由设备侧动态创建，浏览器连接关闭后会销毁对应 ttyd 进程；code-server 是容器内持久进程，通过 gateway 按项目路径打开目录。若需要保留旧的固定 `8080` code-server 和 `7681` ttyd 入口，可在运行容器时添加 `-e START_DEVICE_UI=1` 并额外映射对应端口。
 
-如果项目配置了 `workspace.localPath` 或 `workspace.checkoutPath`，设备会在启动 terminal 或 code-server 前自动创建该目录。
+如果项目配置了 `workspace.localPath` 或 `workspace.checkoutPath`，设备会在启动 terminal 或 code-server 前自动创建该目录。若请求携带任务 ID 且该任务记录了执行工作区路径（例如 Git 新工作树），terminal 或 code-server 会直接在任务工作区路径中启动，不会回退到项目目录。
 
 ### 非项目会话工作区
 
@@ -152,7 +152,7 @@ Wework 入口的新对话在未选择项目（`project_id=0`）且绑定到在�
 
 首轮任务会在 Chats 工作区树中创建目录，目录名根据日期和用户请求生成。默认根目录为 `~/.wecode/wegent-executor/workspace/chats`。如需自定义位置，可在设备运行环境中设置 `WEGENT_EXECUTOR_CHATS_DIR`。Backend 会把最终路径写入任务元数据标签 `standaloneChatWorkspacePath`，后续继续该会话或打开历史会话时会复用同一目录。
 
-项目会话不使用此路径；项目会话仍然使用项目配置中的 `workspace.localPath` 或 `workspace.checkoutPath`。
+项目会话不使用 Chats 工作区路径；项目会话默认使用项目配置中的 `workspace.localPath` 或 `workspace.checkoutPath`。如果当前任务使用 Git 新工作树，项目工具会使用任务记录的工作树路径。
 
 ### 非项目会话工作区
 

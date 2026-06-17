@@ -32,6 +32,7 @@ function createMockSocket() {
       ack({ subtasks: [] })
     }
   })
+  const connect = jest.fn()
 
   return {
     get connected() {
@@ -41,6 +42,7 @@ function createMockSocket() {
     on: jest.fn((event: string, handler: (...args: unknown[]) => void) => {
       socketHandlers.set(event, handler)
     }),
+    connect,
     disconnect: jest.fn(),
     io: {
       on: jest.fn((event: string, handler: (...args: unknown[]) => void) => {
@@ -177,6 +179,45 @@ describe('SocketProvider reconnect notification', () => {
     await act(async () => {
       socket.triggerSocket('disconnect', 'transport close')
       socket.triggerSocket('connect')
+    })
+
+    expect(mockReconnectCallback).toHaveBeenCalledTimes(1)
+  })
+
+  it('starts a fresh connection attempt when asked to ensure a disconnected socket is connected', async () => {
+    const firstSocket = createMockSocket()
+    const secondSocket = createMockSocket()
+    mockIo.mockReturnValueOnce(firstSocket).mockReturnValueOnce(secondSocket)
+
+    let socketApi: ReturnType<typeof useSocket> | undefined
+    render(
+      <SocketProvider>
+        <SocketProbe
+          onReady={api => {
+            socketApi = api
+          }}
+        />
+      </SocketProvider>
+    )
+
+    await waitFor(() => expect(socketApi?.socket).toBe(firstSocket))
+    socketApi!.onReconnect(mockReconnectCallback)
+
+    await act(async () => {
+      firstSocket.triggerSocket('connect')
+      firstSocket.triggerSocket('disconnect', 'transport close')
+    })
+
+    await act(async () => {
+      socketApi!.ensureConnected()
+    })
+
+    await waitFor(() => expect(socketApi?.socket).toBe(secondSocket))
+    expect(firstSocket.disconnect).toHaveBeenCalledTimes(1)
+    expect(mockIo).toHaveBeenCalledTimes(2)
+
+    await act(async () => {
+      secondSocket.triggerSocket('connect')
     })
 
     expect(mockReconnectCallback).toHaveBeenCalledTimes(1)

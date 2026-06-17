@@ -40,6 +40,7 @@ const mockSocketContext = {
   registerSkillHandlers: jest.fn(() => jest.fn()),
   registerTaskHandlers: jest.fn(() => jest.fn()),
   sendSkillResponse: jest.fn(),
+  ensureConnected: jest.fn(),
   onReconnect: jest.fn(() => jest.fn()),
 }
 

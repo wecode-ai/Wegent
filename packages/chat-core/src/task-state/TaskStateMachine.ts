@@ -249,7 +249,6 @@ export class TaskStateMachine {
   }
 
   private async checkHealth(reason: TaskRecoveryReason): Promise<void> {
-    if (!this.deps.isConnected()) return
     if (!this.deps.pullRuntime) {
       throw new Error('[TaskStateMachine] pullRuntime action is required for checkHealth().')
     }
@@ -260,7 +259,7 @@ export class TaskStateMachine {
   }
 
   async requestRuntimeCheck(reason: TaskRecoveryReason): Promise<void> {
-    if (this.closed || !this.deps.isConnected() || !this.deps.pullRuntime) {
+    if (this.closed || !this.deps.pullRuntime) {
       this.syncRuntimeStabilityProbe()
       return
     }
@@ -272,7 +271,6 @@ export class TaskStateMachine {
     server: TaskRuntimeVerifyResult,
     reason: TaskRecoveryReason
   ): Promise<void> {
-    if (!this.deps.isConnected()) return
     const syncAfterMessageId = server.active_stream
       ? undefined
       : this.getSyncAfterMessageIdBeforeSubtask(this.state.runtime.activeStreamSubtaskId)
@@ -282,6 +280,14 @@ export class TaskStateMachine {
     this.recordRuntimeVerification(server)
 
     if (shouldJoinOrResume) {
+      if (!this.deps.isConnected()) {
+        this.deps.ensureConnected?.()
+        this.enterWaitingSocket(reason)
+        this.notifyListeners()
+        this.syncRuntimeStabilityProbe()
+        return
+      }
+
       await this.joinOrResumeFromRuntime(server, reason, syncAfterMessageId)
       return
     }
@@ -559,7 +565,7 @@ export class TaskStateMachine {
   }
 
   private syncRuntimeStabilityProbe(): void {
-    if (this.closed || !this.deps.pullRuntime || !this.deps.isConnected()) {
+    if (this.closed || !this.deps.pullRuntime) {
       this.runtimeStabilityProbe.stop()
       return
     }

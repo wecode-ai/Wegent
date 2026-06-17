@@ -457,7 +457,10 @@ async def test_create_task_and_subtasks_prepares_git_worktree_with_real_task_id(
     assert prepare_worktree_mock.await_args.kwargs["task_id"] == result.task.id
     assert prepare_worktree_mock.await_args.kwargs["base_branch"] == "develop"
     assert result.task.json["spec"]["execution"] == {
-        "workspace": {"source": "git_worktree"}
+        "workspace": {
+            "source": "git_worktree",
+            "path": "/workspace/worktrees/1/Wegent",
+        }
     }
     assert result.user_subtask.task_id == result.task.id
     assert result.assistant_subtask is not None
