@@ -178,6 +178,15 @@ describe('WorkspacePanelCards', () => {
     expect(screen.queryByText('/workspace/projects/project38')).not.toBeInTheDocument()
   })
 
+  test('gives the embedded terminal frame explicit dimensions for Safari', async () => {
+    render(<WorkspacePanelCards currentProject={project} devices={cloudDevices} />)
+
+    await userEvent.click(await screen.findByTestId('workspace-terminal-card'))
+
+    await waitFor(() => expect(screen.getByTestId('workspace-terminal-frame')).toBeInTheDocument())
+    expect(screen.getByTestId('workspace-terminal-frame')).toHaveClass('h-full', 'w-full')
+  })
+
   test('shows project tool cards from the terminal plus button', async () => {
     const api = createProjectApiMock()
     render(<WorkspacePanelCards currentProject={project} devices={cloudDevices} />)

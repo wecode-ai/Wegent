@@ -8,9 +8,10 @@ const THINKING_PREVIEW_MAX_LENGTH = 96
 
 interface ToolBlockItemProps {
   block: ProcessingBlock
+  onOpenWorkspaceFile?: (path: string) => void
 }
 
-export function ToolBlockItem({ block }: ToolBlockItemProps) {
+export function ToolBlockItem({ block, onOpenWorkspaceFile }: ToolBlockItemProps) {
   const [expanded, setExpanded] = useState(false)
   const isRunning = block.status !== 'done' && block.status !== 'error'
 
@@ -22,27 +23,44 @@ export function ToolBlockItem({ block }: ToolBlockItemProps) {
   }
 
   const { icon, label } = getBlockLabel(block)
+  const workspaceFilePath = getWorkspaceFilePath(block)
 
   return (
     <div className="min-w-0 overflow-x-hidden text-[13px]">
-      <button
-        type="button"
-        onClick={() => setExpanded(!expanded)}
-        className="flex max-w-full items-center gap-1.5 text-text-secondary hover:text-text-primary"
-      >
-        {icon}
-        <span className="min-w-0 truncate">{label}</span>
-        {isRunning && <span className="animate-pulse text-xs">...</span>}
-        <svg
-          className={`h-3 w-3 transition-transform ${expanded ? '' : '-rotate-90'}`}
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-          strokeWidth={2}
+      <div className="flex max-w-full items-center gap-1.5 text-text-secondary">
+        <button
+          type="button"
+          onClick={() => {
+            if (workspaceFilePath && onOpenWorkspaceFile) {
+              onOpenWorkspaceFile(workspaceFilePath)
+              return
+            }
+            setExpanded(value => !value)
+          }}
+          className="flex min-w-0 items-center gap-1.5 hover:text-text-primary"
         >
-          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-        </svg>
-      </button>
+          {icon}
+          <span className="min-w-0 truncate">{label}</span>
+          {isRunning && <span className="animate-pulse text-xs">...</span>}
+        </button>
+        <button
+          type="button"
+          onClick={() => setExpanded(value => !value)}
+          className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-text-secondary hover:bg-muted hover:text-text-primary"
+          aria-label={expanded ? '收起工具详情' : '展开工具详情'}
+          aria-expanded={expanded}
+        >
+          <svg
+            className={`h-3 w-3 transition-transform ${expanded ? '' : '-rotate-90'}`}
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            strokeWidth={2}
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+      </div>
       {expanded && <div className="mt-2 min-w-0 overflow-x-hidden">{renderBlockDetail(block)}</div>}
     </div>
   )
@@ -356,6 +374,23 @@ function renderBlockDetail(block: ToolBlock) {
       {JSON.stringify(input, null, 2)}
     </pre>
   )
+}
+
+function getWorkspaceFilePath(block: ToolBlock): string | undefined {
+  const name = block.toolName.toLowerCase()
+  if (
+    name !== 'read' &&
+    name !== 'read_file' &&
+    name !== 'write' &&
+    name !== 'create_file' &&
+    name !== 'write_file' &&
+    name !== 'edit' &&
+    name !== 'str_replace_editor' &&
+    name !== 'edit_file'
+  ) {
+    return undefined
+  }
+  return getInputField(block, 'file_path', 'path')
 }
 
 function BashBlockDetail({ block }: { block: ToolBlock }) {

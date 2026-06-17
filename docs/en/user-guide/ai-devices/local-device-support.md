@@ -328,10 +328,11 @@ Each device shows:
 
 When a device goes offline:
 
-1. Running tasks are automatically marked as **FAILED**
-2. Error message indicates device disconnection
-3. Task slots are freed immediately
-4. Device appears grayed out in selector
+1. The system waits for a short reconnect confirmation window to avoid treating transient network jitter as a real offline event
+2. If the device does not recover within that window, running tasks are automatically marked as **FAILED**
+3. Error message indicates device disconnection
+4. Task slots are freed after the device is confirmed offline
+5. Device appears grayed out in selector
 
 ---
 

@@ -92,7 +92,8 @@ def is_project_task(task_data: ExecutionRequest) -> bool:
 def get_project_id(task_data: ExecutionRequest) -> str:
     """Return the project ID for a project-backed execution request."""
     project_id = getattr(task_data, "project_id", None)
-    normalized_project_id = _normalize_project_id(project_id)
+    allow_zero = bool(getattr(task_data, "standalone_chat_workspace", False))
+    normalized_project_id = _normalize_project_id(project_id, allow_zero=allow_zero)
     if normalized_project_id:
         return normalized_project_id
 
@@ -126,11 +127,13 @@ def get_project_id(task_data: ExecutionRequest) -> str:
     return ""
 
 
-def _normalize_project_id(project_id: Any) -> str:
+def _normalize_project_id(project_id: Any, *, allow_zero: bool = False) -> str:
     if project_id is None:
         return ""
     value = str(project_id).strip()
     if not value:
+        return ""
+    if value == "0" and not allow_zero:
         return ""
     return value
 

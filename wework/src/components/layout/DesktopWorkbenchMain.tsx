@@ -29,7 +29,11 @@ import type {
   QueuedWorkbenchMessage,
   WorkbenchMessage,
 } from '@/types/workbench'
-import type { CodeCommentContext, WorkspaceTarget } from '@/types/workspace-files'
+import type {
+  CodeCommentContext,
+  WorkspaceFileOpenRequest,
+  WorkspaceTarget,
+} from '@/types/workspace-files'
 import { cn } from '@/lib/utils'
 import { BottomWorkspacePanel } from './workspace-panels/BottomWorkspacePanel'
 import {
@@ -223,6 +227,7 @@ export function DesktopWorkbenchMain({
   const [rightPanelTabs, setRightPanelTabs] = useState<RightWorkspacePanelTab[]>([])
   const [bottomPanelOpen, setBottomPanelOpen] = useState(false)
   const [workspaceTarget, setWorkspaceTarget] = useState<WorkspaceTarget | null>(null)
+  const [openFileRequest, setOpenFileRequest] = useState<WorkspaceFileOpenRequest | null>(null)
   const [workspaceTargetError, setWorkspaceTargetError] = useState<string | null>(null)
   const [reviewState, setReviewState] = useState({
     loading: false,
@@ -366,6 +371,16 @@ export function DesktopWorkbenchMain({
   ])
 
   const selectFilesView = useCallback(() => {
+    openRightPanelTab('files')
+  }, [openRightPanelTab])
+
+  const openWorkspaceFileFromMessage = useCallback((path: string) => {
+    const trimmedPath = path.trim()
+    if (!trimmedPath) return
+    setOpenFileRequest(current => ({
+      id: (current?.id ?? 0) + 1,
+      path: trimmedPath,
+    }))
     openRightPanelTab('files')
   }, [openRightPanelTab])
 
@@ -516,6 +531,7 @@ export function DesktopWorkbenchMain({
               onOpenFileChangesReview={({ loadDiff }) => {
                 void openReviewFromDiffLoader(loadDiff)
               }}
+              onOpenWorkspaceFile={openWorkspaceFileFromMessage}
             />
             <div
               className={DESKTOP_FLOATING_COMPOSER_BACKDROP_CLASS}
@@ -637,6 +653,7 @@ export function DesktopWorkbenchMain({
             activeView={rightPanelView}
             openTabs={rightPanelTabs}
             workspaceTarget={workspaceTarget}
+            openFileRequest={openFileRequest}
             workspaceTargetError={workspaceTargetError}
             review={reviewState}
             canOpenReview={Boolean(onLoadEnvironmentDiff)}
