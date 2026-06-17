@@ -56,7 +56,6 @@ function ThinkingBlockItem({
   isRunning: boolean
 }) {
   const { t } = useTranslation('chat')
-  const [expanded, setExpanded] = useState(false)
 
   if (!block.content) return null
 
@@ -86,27 +85,18 @@ function ThinkingBlockItem({
 
   return (
     <div className="min-w-0 overflow-x-hidden text-[13px]">
-      <button
-        type="button"
-        data-testid="thinking-toggle-button"
-        aria-expanded={expanded}
-        onClick={() => setExpanded(value => !value)}
-        className="flex max-w-full items-center gap-1.5 text-text-muted hover:text-text-secondary"
-      >
+      <div className="flex max-w-full items-center gap-1.5 text-text-muted">
         <CommentaryIcon className="h-4 w-4 shrink-0" />
         <span className="min-w-0 truncate">
           {t('thinking.completed')} · {charCount} {t('thinking.chars')}
         </span>
-        <DisclosureChevron expanded={expanded} />
-      </button>
-      {expanded && (
-        <div
-          className="mt-2 min-w-0 overflow-x-hidden border-l border-border pl-4"
-          data-testid="thinking-detail"
-        >
-          <ProcessMarkdown content={block.content} />
-        </div>
-      )}
+      </div>
+      <div
+        className="mt-2 min-w-0 overflow-x-hidden border-l border-border pl-4"
+        data-testid="thinking-detail"
+      >
+        <ProcessMarkdown content={block.content} />
+      </div>
     </div>
   )
 }
@@ -342,20 +332,6 @@ function CommentaryIcon({ className = 'mt-1 h-4 w-4 shrink-0' }: { className?: s
         strokeLinejoin="round"
         d="M7.5 8.25h9m-9 3h5.25M5.25 19.5l2.25-2.25h9A2.25 2.25 0 0018.75 15V6.75A2.25 2.25 0 0016.5 4.5h-9a2.25 2.25 0 00-2.25 2.25V19.5z"
       />
-    </svg>
-  )
-}
-
-function DisclosureChevron({ expanded }: { expanded: boolean }) {
-  return (
-    <svg
-      className={`h-3 w-3 shrink-0 transition-transform ${expanded ? '' : '-rotate-90'}`}
-      fill="none"
-      viewBox="0 0 24 24"
-      stroke="currentColor"
-      strokeWidth={2}
-    >
-      <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
     </svg>
   )
 }

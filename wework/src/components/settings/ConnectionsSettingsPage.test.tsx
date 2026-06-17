@@ -6,6 +6,7 @@ import { createDeviceApi } from '@/api/devices'
 import { createProjectApi } from '@/api/projects'
 import { createUserApi } from '@/api/users'
 import { AppearanceProvider } from '@/features/appearance'
+import { getLocalExecutorDeviceId, isLocalTerminalAvailable } from '@/lib/local-terminal'
 import '@/i18n'
 import type { DeviceInfo } from '@/types/devices'
 
@@ -38,9 +39,16 @@ vi.mock('@/api/users', () => ({
   createUserApi: vi.fn(),
 }))
 
+vi.mock('@/lib/local-terminal', () => ({
+  getLocalExecutorDeviceId: vi.fn(),
+  isLocalTerminalAvailable: vi.fn(),
+}))
+
 const createDeviceApiMock = vi.mocked(createDeviceApi)
 const createProjectApiMock = vi.mocked(createProjectApi)
 const createUserApiMock = vi.mocked(createUserApi)
+const getLocalExecutorDeviceIdMock = vi.mocked(getLocalExecutorDeviceId)
+const isLocalTerminalAvailableMock = vi.mocked(isLocalTerminalAvailable)
 
 function cloudDevice(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
   return {
@@ -78,6 +86,7 @@ describe('ConnectionsSettingsPage', () => {
     getAllDevices: vi.fn(),
     startTerminal: vi.fn(),
     startCodeServer: vi.fn(),
+    openLocalTerminal: vi.fn(),
     createCloudDevice: vi.fn(),
     renameDevice: vi.fn(),
     restartCloudDevice: vi.fn(),
@@ -116,6 +125,9 @@ describe('ConnectionsSettingsPage', () => {
       cloudDeviceScalingWikiUrl: '',
     }
     window.history.pushState({}, '', '/')
+    isLocalTerminalAvailableMock.mockReturnValue(true)
+    getLocalExecutorDeviceIdMock.mockResolvedValue('local-claude')
+    api.openLocalTerminal.mockResolvedValue(undefined)
     api.getMetrics.mockResolvedValue({
       cpu_usage: 42,
       memory_usage: 68,
@@ -731,7 +743,8 @@ describe('ConnectionsSettingsPage', () => {
     expect(moreButton).toHaveClass('bg-background', 'text-text-secondary')
   })
 
-  test('hides cloud-only actions and metrics for local devices', async () => {
+  test('launches a native terminal for online local devices without exposing cloud-only actions', async () => {
+    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null)
     api.getAllDevices.mockResolvedValue([
       localDevice({
         device_id: 'local-claude',
@@ -742,8 +755,13 @@ describe('ConnectionsSettingsPage', () => {
     render(<ConnectionsSettingsPage onBack={vi.fn()} />)
 
     expect(await screen.findByTestId('connection-device-local-claude')).toBeInTheDocument()
+    await waitFor(() => expect(getLocalExecutorDeviceIdMock).toHaveBeenCalledWith('/api'))
     expect(screen.getByText('Local Claude Device')).toBeInTheDocument()
-    expect(screen.queryByTestId('connection-terminal-button-local-claude')).not.toBeInTheDocument()
+    await userEvent.click(await screen.findByTestId('connection-terminal-button-local-claude'))
+
+    await waitFor(() => expect(api.openLocalTerminal).toHaveBeenCalledWith('local-claude'))
+    expect(api.startTerminal).not.toHaveBeenCalled()
+    expect(openSpy).not.toHaveBeenCalled()
     expect(
       screen.queryByTestId('connection-code-server-button-local-claude')
     ).not.toBeInTheDocument()
@@ -753,6 +771,44 @@ describe('ConnectionsSettingsPage', () => {
     expect(screen.queryByTestId('device-metrics')).not.toBeInTheDocument()
     expect(screen.queryByTestId('connection-scale-wiki')).not.toBeInTheDocument()
     expect(api.getMetrics).not.toHaveBeenCalled()
+  })
+
+  test('keeps local device terminal hidden outside the WeWork macOS app', async () => {
+    isLocalTerminalAvailableMock.mockReturnValue(false)
+    api.getAllDevices.mockResolvedValue([
+      localDevice({
+        device_id: 'local-claude',
+        name: 'Local Claude Device',
+      }),
+    ])
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    expect(await screen.findByTestId('connection-device-local-claude')).toBeInTheDocument()
+    expect(screen.queryByTestId('connection-terminal-button-local-claude')).not.toBeInTheDocument()
+    expect(
+      screen.queryByTestId('connection-code-server-button-local-claude')
+    ).not.toBeInTheDocument()
+  })
+
+  test('keeps local device terminal hidden when the executor is on another device', async () => {
+    getLocalExecutorDeviceIdMock.mockResolvedValue('another-local-device')
+    api.getAllDevices.mockResolvedValue([
+      localDevice({
+        device_id: 'local-claude',
+        name: 'Local Claude Device',
+      }),
+    ])
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    expect(await screen.findByTestId('connection-device-local-claude')).toBeInTheDocument()
+    await waitFor(() =>
+      expect(
+        screen.queryByTestId('connection-terminal-button-local-claude')
+      ).not.toBeInTheDocument()
+    )
+    expect(api.openLocalTerminal).not.toHaveBeenCalled()
   })
 
   test('shows configured cloud device scaling wiki link in the cloud section guidance', async () => {
