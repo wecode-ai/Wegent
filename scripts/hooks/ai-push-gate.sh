@@ -337,7 +337,7 @@ if [ "$FRONTEND_COUNT" -gt 0 ] 2>/dev/null; then
         echo -e "   Running unit tests..."
         pnpm --filter @wegent/chat-core test > "$TEMP_DIR/test.log" 2>&1
         CORE_TEST_EXIT=$?
-        pnpm --filter wecode-ai-assistant test --passWithNoTests >> "$TEMP_DIR/test.log" 2>&1
+        pnpm --filter wecode-ai-assistant run test --passWithNoTests >> "$TEMP_DIR/test.log" 2>&1
         TEST_EXIT=$?
         if [ $CORE_TEST_EXIT -eq 0 ] && [ $TEST_EXIT -eq 0 ]; then
             echo -e "   ${GREEN}✅ Unit Tests: PASSED${NC}"
