@@ -309,7 +309,7 @@ def test_build_initial_task_context_refs_warns_when_dingtalk_mcp_not_configured(
         {
             "type": "external_document",
             "reason": "mcp_not_configured",
-            "message": "未开启钉钉 MCP，无法读取钉钉知识",
+            "message": "未开启钉钉 MCP, 无法读取钉钉知识",
             "name": "Roadmap",
             "provider": "dingtalk",
             "source": "docs",

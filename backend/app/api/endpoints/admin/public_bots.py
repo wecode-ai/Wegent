@@ -8,6 +8,7 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
+from pydantic import TypeAdapter
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -27,6 +28,7 @@ from app.services.adapters.shell_utils import get_shell_info_by_name
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+DEFAULT_CONTEXT_REF_ADAPTER = TypeAdapter(DefaultContextRef)
 
 
 def _get_bot_ref_info(
@@ -207,6 +209,11 @@ def _merge_legacy_default_knowledge_refs(
         if isinstance(ref, dict)
     ]
     return [*non_kb_refs, *kb_refs]
+
+
+def _parse_default_context_refs(refs: list[dict]) -> list[DefaultContextRef]:
+    """Validate raw default context refs before assigning to Ghost spec."""
+    return [DEFAULT_CONTEXT_REF_ADAPTER.validate_python(ref) for ref in refs]
 
 
 def _bot_to_response(bot: Kind, db: Session) -> PublicBotResponse:
@@ -416,12 +423,14 @@ def _create_public_ghost(
                 _extract_default_knowledge_base_refs(default_context_refs)
             )
         else:
-            ghost_crd.spec.defaultContextRefs = _merge_legacy_default_knowledge_refs(
-                [
-                    ref.model_dump(mode="json")
-                    for ref in ghost_crd.spec.defaultContextRefs or []
-                ],
-                default_knowledge_base_refs,
+            ghost_crd.spec.defaultContextRefs = _parse_default_context_refs(
+                _merge_legacy_default_knowledge_refs(
+                    [
+                        ref.model_dump(mode="json")
+                        for ref in ghost_crd.spec.defaultContextRefs or []
+                    ],
+                    default_knowledge_base_refs,
+                )
             )
             ghost_crd.spec.defaultKnowledgeBaseRefs = default_knowledge_base_refs or []
         existing_ghost.json = ghost_crd.model_dump()
@@ -880,7 +889,7 @@ async def update_public_bot(
                         )
                     )
                 elif bot_data.default_knowledge_base_refs is not None:
-                    ghost_crd.spec.defaultContextRefs = (
+                    ghost_crd.spec.defaultContextRefs = _parse_default_context_refs(
                         _merge_legacy_default_knowledge_refs(
                             [
                                 ref.model_dump(mode="json")

@@ -47,9 +47,13 @@ export function contextItemsToDefaultContextRefs(items: ContextItem[]): DefaultC
   return items
     .map(item => {
       if (item.type === 'knowledge_base') {
+        const id = Number(item.id)
+        if (!Number.isInteger(id)) {
+          return null
+        }
         return {
           type: 'knowledge_base',
-          id: Number(item.id),
+          id,
           name: item.name,
           document_count: item.document_count,
         } satisfies DefaultKnowledgeBaseContextRef

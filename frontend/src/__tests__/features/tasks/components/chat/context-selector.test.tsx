@@ -8,6 +8,7 @@ import ContextSelector from '@/features/tasks/components/chat/ContextSelector'
 
 const mockListKnowledgeBases = jest.fn()
 const mockGetOrganizationNamespace = jest.fn()
+const mockListTables = jest.fn()
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
@@ -39,7 +40,7 @@ jest.mock('@/apis/task-knowledge-base', () => ({
 
 jest.mock('@/apis/table', () => ({
   tableApi: {
-    list: jest.fn().mockResolvedValue({ items: [] }),
+    list: (...args: unknown[]) => mockListTables(...args),
   },
 }))
 
@@ -85,6 +86,7 @@ jest.mock('@/components/ui/tabs', () => ({
 
 describe('ContextSelector organization grouping', () => {
   beforeEach(() => {
+    jest.clearAllMocks()
     mockListKnowledgeBases.mockResolvedValue({
       items: [
         {
@@ -99,6 +101,7 @@ describe('ContextSelector organization grouping', () => {
     mockGetOrganizationNamespace.mockResolvedValue({
       namespace: 'acme-corp',
     })
+    mockListTables.mockResolvedValue({ items: [] })
   })
 
   it('shows knowledge bases under the organization section when the organization namespace is dynamic', async () => {
@@ -140,5 +143,45 @@ describe('ContextSelector organization grouping', () => {
     })
 
     expect(screen.getByTestId('context-selector-popover')).toHaveAttribute('data-side', 'top')
+  })
+
+  it('keeps the table tab available by default for chat contexts', async () => {
+    render(
+      <ContextSelector
+        open={true}
+        onOpenChange={jest.fn()}
+        selectedContexts={[]}
+        onSelect={jest.fn()}
+        onDeselect={jest.fn()}
+      >
+        <button>trigger</button>
+      </ContextSelector>
+    )
+
+    expect(screen.getByText('knowledge:table.title')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(mockListTables).toHaveBeenCalled()
+    })
+  })
+
+  it('hides table contexts when restricted to default agent context types', async () => {
+    render(
+      <ContextSelector
+        open={true}
+        onOpenChange={jest.fn()}
+        selectedContexts={[]}
+        onSelect={jest.fn()}
+        onDeselect={jest.fn()}
+        allowedContextTypes={['knowledge_base', 'dingtalk_doc']}
+      >
+        <button>trigger</button>
+      </ContextSelector>
+    )
+
+    expect(screen.queryByText('knowledge:table.title')).not.toBeInTheDocument()
+    await waitFor(() => {
+      expect(mockListKnowledgeBases).toHaveBeenCalled()
+    })
+    expect(mockListTables).not.toHaveBeenCalled()
   })
 })

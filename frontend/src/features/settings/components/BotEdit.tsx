@@ -35,7 +35,7 @@ import PromptFineTuneDialog from '@/features/prompt-tune/components/PromptFineTu
 import ContextSelector from '@/features/tasks/components/chat/ContextSelector'
 
 import { Bot } from '@/types/api'
-import type { ContextItem } from '@/types/context'
+import type { ContextItem, ContextType } from '@/types/context'
 import type { DefaultContextRef } from '@/types/default-context'
 import {
   botApis,
@@ -71,6 +71,24 @@ import {
 
 /** Agent types supported by the system */
 export type AgentType = 'ClaudeCode' | 'Agno' | 'Dify'
+const DEFAULT_CONTEXT_ALLOWED_TYPES: ContextType[] = ['knowledge_base', 'dingtalk_doc']
+
+function filterDefaultContextItems(items: ContextItem[]): ContextItem[] {
+  const seen = new Set<string>()
+  const filtered: ContextItem[] = []
+  for (const item of items) {
+    if (!DEFAULT_CONTEXT_ALLOWED_TYPES.includes(item.type)) {
+      continue
+    }
+    const key = `${item.type}:${item.id}`
+    if (seen.has(key)) {
+      continue
+    }
+    seen.add(key)
+    filtered.push(item)
+  }
+  return filtered
+}
 
 /** Interface for bot data returned by getBotData */
 export interface BotFormData {
@@ -204,14 +222,14 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   )
   const [defaultContextsOpen, setDefaultContextsOpen] = useState(false)
   const [defaultContextItems, setDefaultContextItems] = useState<ContextItem[]>(
-    defaultContextRefsToContextItems(initialDefaultContextRefs)
+    filterDefaultContextItems(defaultContextRefsToContextItems(initialDefaultContextRefs))
   )
   const defaultContextRefs = useMemo(
-    () => contextItemsToDefaultContextRefs(defaultContextItems),
+    () => contextItemsToDefaultContextRefs(filterDefaultContextItems(defaultContextItems)),
     [defaultContextItems]
   )
   const defaultKnowledgeBaseRefs = useMemo(
-    () => contextItemsToDefaultKnowledgeRefs(defaultContextItems),
+    () => contextItemsToDefaultKnowledgeRefs(filterDefaultContextItems(defaultContextItems)),
     [defaultContextItems]
   )
   const [selectedSkills, setSelectedSkills] = useState<string[]>(baseBot?.skills || [])
@@ -551,10 +569,12 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
 
     setSelectedSkills(baseBot?.skills || [])
     setDefaultContextItems(
-      defaultContextRefsToContextItems(
-        baseBot?.default_context_refs?.length
-          ? baseBot.default_context_refs
-          : knowledgeRefsToDefaultContextRefs(baseBot?.default_knowledge_base_refs)
+      filterDefaultContextItems(
+        defaultContextRefsToContextItems(
+          baseBot?.default_context_refs?.length
+            ? baseBot.default_context_refs
+            : knowledgeRefsToDefaultContextRefs(baseBot?.default_knowledge_base_refs)
+        )
       )
     )
     setPreloadSkills(baseBot?.preload_skills || [])
@@ -1560,10 +1580,13 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                             {!readOnly && (
                               <button
                                 type="button"
-                                className="text-text-muted hover:text-text-primary"
+                                className="inline-flex h-11 w-11 items-center justify-center text-text-muted hover:text-text-primary"
+                                data-testid={`default-context-remove-${context.type}-${context.id}`}
                                 onClick={() =>
                                   setDefaultContextItems(prev =>
-                                    prev.filter(item => item.id !== context.id)
+                                    prev.filter(
+                                      item => item.type !== context.type || item.id !== context.id
+                                    )
                                   )
                                 }
                                 aria-label={t('common:bot.default_contexts_remove')}
@@ -1580,9 +1603,16 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                         open={defaultContextsOpen}
                         onOpenChange={setDefaultContextsOpen}
                         selectedContexts={defaultContextItems}
+                        allowedContextTypes={DEFAULT_CONTEXT_ALLOWED_TYPES}
                         onSelect={context =>
                           setDefaultContextItems(prev =>
-                            prev.some(item => item.id === context.id) ? prev : [...prev, context]
+                            filterDefaultContextItems(
+                              prev.some(
+                                item => item.type === context.type && item.id === context.id
+                              )
+                                ? prev
+                                : [...prev, context]
+                            )
                           )
                         }
                         onDeselect={id =>
@@ -1590,11 +1620,15 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                         }
                         onSelectMultiple={contexts =>
                           setDefaultContextItems(prev => {
-                            const existingIds = new Set(prev.map(item => item.id))
-                            return [
+                            const existingKeys = new Set(
+                              prev.map(item => `${item.type}:${item.id}`)
+                            )
+                            return filterDefaultContextItems([
                               ...prev,
-                              ...contexts.filter(context => !existingIds.has(context.id)),
-                            ]
+                              ...contexts.filter(
+                                context => !existingKeys.has(`${context.type}:${context.id}`)
+                              ),
+                            ])
                           })
                         }
                         onDeselectMultiple={ids =>
@@ -1603,7 +1637,12 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                           )
                         }
                       >
-                        <Button type="button" variant="outline" size="sm">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          data-testid="default-context-add-button"
+                        >
                           {t('common:bot.default_contexts_add')}
                         </Button>
                       </ContextSelector>

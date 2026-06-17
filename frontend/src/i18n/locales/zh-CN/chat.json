@@ -694,6 +694,9 @@
     "custom_input": "自定义输入",
     "custom_placeholder": "请输入您的自定义内容..."
   },
+  "contextWarnings": {
+    "nameSeparator": "："
+  },
   "dingtalkDocs": {
     "tabTitle": "钉钉文档",
     "sync": "同步",

@@ -1652,7 +1652,7 @@ function ChatAreaContent({
                 {contextWarnings.map((warning, index) => (
                   <div key={`${warning.reason}:${warning.dingtalk_node_id || index}`}>
                     {warning.message}
-                    {warning.name ? `：${warning.name}` : ''}
+                    {warning.name ? `${t('contextWarnings.nameSeparator')}${warning.name}` : ''}
                   </div>
                 ))}
               </div>

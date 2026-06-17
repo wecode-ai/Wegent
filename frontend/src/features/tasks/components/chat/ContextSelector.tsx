@@ -4,7 +4,7 @@
 
 'use client'
 
-import React, { useEffect, useState, useMemo, useCallback } from 'react'
+import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react'
 import {
   Check,
   Database,
@@ -32,7 +32,7 @@ import { taskKnowledgeBaseApi } from '@/apis/task-knowledge-base'
 import { tableApi, TableDocument } from '@/apis/table'
 import type { KnowledgeBase } from '@/types/api'
 import type { BoundKnowledgeBaseDetail } from '@/types/task-knowledge-base'
-import type { ContextItem, KnowledgeBaseContext, TableContext } from '@/types/context'
+import type { ContextItem, ContextType, KnowledgeBaseContext, TableContext } from '@/types/context'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useOrganizationNamespace } from '@/hooks/useOrganizationNamespace'
 import { cn } from '@/lib/utils'
@@ -45,6 +45,8 @@ interface GroupedKnowledgeBases {
   group: Map<string, KnowledgeBase[]> // namespace -> knowledge bases
   organization: KnowledgeBase[]
 }
+
+const DEFAULT_ALLOWED_CONTEXT_TYPES: ContextType[] = ['knowledge_base', 'table', 'dingtalk_doc']
 
 interface ContextSelectorProps {
   open: boolean
@@ -63,6 +65,8 @@ interface ContextSelectorProps {
   isGroupChat?: boolean
   /** Knowledge base ID to exclude from the list (used in notebook mode to hide current KB) */
   excludeKnowledgeBaseId?: number
+  /** Restrict selectable context types. Defaults to all chat context types. */
+  allowedContextTypes?: ContextType[]
 }
 
 interface KnowledgeBaseItemProps {
@@ -137,8 +141,25 @@ export default function ContextSelector({
   taskId,
   isGroupChat,
   excludeKnowledgeBaseId,
+  allowedContextTypes,
 }: ContextSelectorProps) {
   const { t } = useTranslation()
+  const tRef = useRef(t)
+  useEffect(() => {
+    tRef.current = t
+  }, [t])
+  const allowedTypes = useMemo(
+    () => new Set<ContextType>(allowedContextTypes || DEFAULT_ALLOWED_CONTEXT_TYPES),
+    [allowedContextTypes]
+  )
+  const canSelectKnowledgeBase = allowedTypes.has('knowledge_base')
+  const canSelectTable = allowedTypes.has('table')
+  const canSelectDingTalk = allowedTypes.has('dingtalk_doc')
+  const firstAllowedTab = canSelectKnowledgeBase
+    ? 'knowledge'
+    : canSelectTable
+      ? 'table'
+      : 'dingtalk'
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([])
   const [boundKnowledgeBases, setBoundKnowledgeBases] = useState<BoundKnowledgeBaseDetail[]>([])
   const [tables, setTables] = useState<TableDocument[]>([])
@@ -147,7 +168,7 @@ export default function ContextSelector({
   const [error, setError] = useState<string | null>(null)
   const [tableError, setTableError] = useState<string | null>(null)
   const [searchValue, setSearchValue] = useState('')
-  const [activeTab, setActiveTab] = useState('knowledge')
+  const [activeTab, setActiveTab] = useState(firstAllowedTab)
   const {
     organizationNamespace,
     loading: organizationNamespaceLoading,
@@ -165,11 +186,11 @@ export default function ContextSelector({
       setKnowledgeBases(response.items)
     } catch (error) {
       console.error('Failed to fetch knowledge bases:', error)
-      setError(t('knowledge:fetch_error'))
+      setError(tRef.current('knowledge:fetch_error'))
     } finally {
       setLoading(false)
     }
-  }, [t])
+  }, [])
 
   // Fetch bound knowledge bases for group chat
   const fetchBoundKnowledgeBases = useCallback(async () => {
@@ -196,30 +217,54 @@ export default function ContextSelector({
       setTables(response.items)
     } catch (error) {
       console.error('Failed to fetch tables:', error)
-      setTableError(t('knowledge:table.error.loadFailed'))
+      setTableError(tRef.current('knowledge:table.error.loadFailed'))
     } finally {
       setTableLoading(false)
     }
-  }, [t])
+  }, [])
 
   // Fetch knowledge bases on mount (not on every open) - like ModelSelector
   useEffect(() => {
+    if (!canSelectKnowledgeBase) {
+      setKnowledgeBases([])
+      return
+    }
     fetchKnowledgeBases()
-  }, [fetchKnowledgeBases])
+  }, [canSelectKnowledgeBase, fetchKnowledgeBases])
 
   // Fetch bound knowledge bases when taskId or isGroupChat changes
   useEffect(() => {
+    if (!canSelectKnowledgeBase) {
+      setBoundKnowledgeBases([])
+      return
+    }
     fetchBoundKnowledgeBases()
-  }, [fetchBoundKnowledgeBases])
+  }, [canSelectKnowledgeBase, fetchBoundKnowledgeBases])
 
   // Fetch tables on mount
   useEffect(() => {
+    if (!canSelectTable) {
+      setTables([])
+      return
+    }
     fetchTables()
-  }, [fetchTables])
+  }, [canSelectTable, fetchTables])
 
   const handleTabChange = useCallback((value: string) => {
     setActiveTab(value)
   }, [])
+
+  useEffect(() => {
+    const activeType =
+      activeTab === 'knowledge'
+        ? 'knowledge_base'
+        : activeTab === 'table'
+          ? 'table'
+          : 'dingtalk_doc'
+    if (!allowedTypes.has(activeType)) {
+      setActiveTab(firstAllowedTab)
+    }
+  }, [activeTab, allowedTypes, firstAllowedTab])
 
   // Group knowledge bases by category (personal, group, organization)
   // and exclude bound ones and current notebook KB from user list
@@ -401,9 +446,9 @@ export default function ContextSelector({
   useEffect(() => {
     if (!open) {
       setSearchValue('')
-      setActiveTab('knowledge')
+      setActiveTab(firstAllowedTab)
     }
-  }, [open])
+  }, [firstAllowedTab, open])
 
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
@@ -426,251 +471,174 @@ export default function ContextSelector({
           onValueChange={handleTabChange}
           className="flex flex-col flex-1 min-h-0"
         >
-          {/* Tab list: Knowledge | Table | DingTalk — fixed height, no flex tricks needed */}
           <TabsList className="w-full rounded-none border-b border-border bg-transparent h-9 p-0 flex-shrink-0">
-            <TabsTrigger
-              value="knowledge"
-              className={cn(
-                'flex-1 rounded-none border-b-2 border-transparent h-full text-sm font-medium',
-                'data-[state=active]:border-primary data-[state=active]:text-primary',
-                'data-[state=inactive]:text-text-muted hover:text-text-primary'
-              )}
-            >
-              <Database className="w-3.5 h-3.5 mr-1.5" />
-              {t('knowledge:title')}
-            </TabsTrigger>
-            <TabsTrigger
-              value="table"
-              className={cn(
-                'flex-1 rounded-none border-b-2 border-transparent h-full text-sm font-medium',
-                'data-[state=active]:border-blue-500 data-[state=active]:text-blue-600',
-                'data-[state=inactive]:text-text-muted hover:text-text-primary'
-              )}
-            >
-              <Table2 className="w-3.5 h-3.5 mr-1.5" />
-              {t('knowledge:table.title')}
-            </TabsTrigger>
-            <TabsTrigger
-              value="dingtalk"
-              className={cn(
-                'flex-1 rounded-none border-b-2 border-transparent h-full text-sm font-medium',
-                'data-[state=active]:border-orange-500 data-[state=active]:text-orange-600',
-                'data-[state=inactive]:text-text-muted hover:text-text-primary'
-              )}
-              data-testid="context-selector-dingtalk-tab"
-            >
-              <MessageSquareText className="w-3.5 h-3.5 mr-1.5" />
-              {t('chat:dingtalkDocs.tabTitle')}
-            </TabsTrigger>
+            {canSelectKnowledgeBase && (
+              <TabsTrigger
+                value="knowledge"
+                className={cn(
+                  'flex-1 rounded-none border-b-2 border-transparent h-full text-sm font-medium',
+                  'data-[state=active]:border-primary data-[state=active]:text-primary',
+                  'data-[state=inactive]:text-text-muted hover:text-text-primary'
+                )}
+              >
+                <Database className="w-3.5 h-3.5 mr-1.5" />
+                {t('knowledge:title')}
+              </TabsTrigger>
+            )}
+            {canSelectTable && (
+              <TabsTrigger
+                value="table"
+                className={cn(
+                  'flex-1 rounded-none border-b-2 border-transparent h-full text-sm font-medium',
+                  'data-[state=active]:border-blue-500 data-[state=active]:text-blue-600',
+                  'data-[state=inactive]:text-text-muted hover:text-text-primary'
+                )}
+              >
+                <Table2 className="w-3.5 h-3.5 mr-1.5" />
+                {t('knowledge:table.title')}
+              </TabsTrigger>
+            )}
+            {canSelectDingTalk && (
+              <TabsTrigger
+                value="dingtalk"
+                className={cn(
+                  'flex-1 rounded-none border-b-2 border-transparent h-full text-sm font-medium',
+                  'data-[state=active]:border-orange-500 data-[state=active]:text-orange-600',
+                  'data-[state=inactive]:text-text-muted hover:text-text-primary'
+                )}
+                data-testid="context-selector-dingtalk-tab"
+              >
+                <MessageSquareText className="w-3.5 h-3.5 mr-1.5" />
+                {t('chat:dingtalkDocs.tabTitle')}
+              </TabsTrigger>
+            )}
           </TabsList>
 
           {/* Knowledge Base Tab */}
-          <TabsContent value="knowledge" className="m-0">
-            <Command className="border-0 flex flex-col">
-              <CommandInput
-                placeholder={t('knowledge:search_placeholder')}
-                value={searchValue}
-                onValueChange={setSearchValue}
-                className={cn(
-                  'h-9 rounded-none border-b border-border flex-shrink-0',
-                  'placeholder:text-text-muted text-sm'
-                )}
-              />
-              <CommandList className="max-h-[300px] overflow-y-auto">
-                {loading || organizationNamespaceLoading ? (
-                  <div className="py-4 px-3 text-center text-sm text-text-muted">
-                    {t('common:actions.loading')}
-                  </div>
-                ) : knowledgeBaseError ? (
-                  <div className="py-4 px-3 text-center">
-                    <p className="text-sm text-red-500 mb-2">{knowledgeBaseError}</p>
-                    <button
-                      onClick={handleKnowledgeBaseRetry}
-                      className="text-xs text-primary hover:underline"
-                    >
-                      {t('common:actions.retry')}
-                    </button>
-                  </div>
-                ) : !hasKnowledgeBases && boundKnowledgeBases.length === 0 ? (
-                  <div className="py-6 px-4 text-center">
-                    <p className="text-sm text-text-muted mb-3">
-                      {t('knowledge:no_knowledge_bases')}
-                    </p>
-                    <Link
-                      href="/knowledge"
-                      onClick={() => onOpenChange(false)}
-                      className="inline-flex items-center gap-1.5 text-sm text-primary hover:text-primary/80 font-medium transition-colors"
-                    >
-                      {t('knowledge:go_to_create')}
-                      <ArrowRight className="w-3.5 h-3.5" />
-                    </Link>
-                  </div>
-                ) : (
-                  <>
-                    <CommandEmpty className="py-4 text-center text-sm text-text-muted">
-                      {t('common:branches.no_match')}
-                    </CommandEmpty>
-
-                    {/* Group Chat Bound Knowledge Bases */}
-                    {boundKnowledgeBases.length > 0 && (
-                      <>
-                        <CommandGroup
-                          heading={
-                            <div className="flex items-center gap-1.5 text-xs font-medium text-text-muted">
-                              <Users className="w-3 h-3" />
-                              {t('chat:groupChat.knowledge.groupKnowledgeBases')}
-                            </div>
-                          }
-                        >
-                          {boundKnowledgeBases.map(kb => {
-                            const documentCount = kb.document_count || 0
-                            const documentText = formatDocumentCount(documentCount, t)
-                            const selected = isSelected(kb.id)
-
-                            return (
-                              <CommandItem
-                                key={`bound-${kb.id}`}
-                                value={`${kb.display_name} ${kb.description || ''} ${kb.id}`}
-                                onSelect={() => handleSelectBound(kb)}
-                                className={cn(
-                                  'group cursor-pointer select-none',
-                                  'px-3 py-2 text-sm text-text-primary',
-                                  'rounded-md mx-1 my-[2px]',
-                                  'data-[selected=true]:bg-primary/10 data-[selected=true]:text-primary',
-                                  'aria-selected:bg-hover',
-                                  '!flex !flex-row !items-start !justify-between !gap-2'
-                                )}
-                              >
-                                <div className="flex items-start gap-2 min-w-0 flex-1">
-                                  <Database className="w-4 h-4 text-primary flex-shrink-0 mt-0.5" />
-                                  <div className="flex flex-col min-w-0 flex-1">
-                                    <span
-                                      className="font-medium text-sm text-text-primary truncate"
-                                      title={kb.display_name}
-                                    >
-                                      {kb.display_name}
-                                    </span>
-                                    {kb.description && (
-                                      <span
-                                        className="text-xs text-text-muted truncate"
-                                        title={kb.description}
-                                      >
-                                        {kb.description}
-                                      </span>
-                                    )}
-                                    <span className="text-xs text-text-muted mt-0.5">
-                                      {documentText}
-                                    </span>
-                                  </div>
-                                </div>
-                                <Check
-                                  className={cn(
-                                    'h-3.5 w-3.5 shrink-0 mt-0.5',
-                                    selected ? 'opacity-100 text-primary' : 'opacity-0'
-                                  )}
-                                />
-                              </CommandItem>
-                            )
-                          })}
-                        </CommandGroup>
-                        {hasKnowledgeBases && <CommandSeparator />}
-                      </>
-                    )}
-
-                    {/* Personal Knowledge Bases */}
-                    {groupedKnowledgeBases.personal.length > 0 && (
-                      <CommandGroup
-                        heading={
-                          <div className="flex items-center gap-1.5 text-xs font-medium text-text-muted">
-                            <User className="w-3 h-3" />
-                            {t('knowledge:document.tabs.personal')}
-                          </div>
-                        }
+          {canSelectKnowledgeBase && (
+            <TabsContent value="knowledge" className="m-0">
+              <Command className="border-0 flex flex-col">
+                <CommandInput
+                  placeholder={t('knowledge:search_placeholder')}
+                  value={searchValue}
+                  onValueChange={setSearchValue}
+                  className={cn(
+                    'h-9 rounded-none border-b border-border flex-shrink-0',
+                    'placeholder:text-text-muted text-sm'
+                  )}
+                />
+                <CommandList className="max-h-[300px] overflow-y-auto">
+                  {loading || organizationNamespaceLoading ? (
+                    <div className="py-4 px-3 text-center text-sm text-text-muted">
+                      {t('common:actions.loading')}
+                    </div>
+                  ) : knowledgeBaseError ? (
+                    <div className="py-4 px-3 text-center">
+                      <p className="text-sm text-red-500 mb-2">{knowledgeBaseError}</p>
+                      <button
+                        onClick={handleKnowledgeBaseRetry}
+                        className="text-xs text-primary hover:underline"
                       >
-                        {groupedKnowledgeBases.personal.map(kb => (
-                          <KnowledgeBaseItem
-                            key={kb.id}
-                            kb={kb}
-                            isSelected={isSelected(kb.id)}
-                            onSelect={() => handleSelect(kb)}
-                          />
-                        ))}
-                      </CommandGroup>
-                    )}
-                    {/* Group Knowledge Bases - grouped by namespace with nested style */}
-                    {groupedKnowledgeBases.group.size > 0 && (
-                      <>
-                        {groupedKnowledgeBases.personal.length > 0 && <CommandSeparator />}
-                        <CommandGroup
-                          heading={
-                            <div className="flex items-center gap-1.5 text-xs font-medium text-text-muted">
-                              <Users className="w-3 h-3" />
-                              {t('knowledge:document.tabs.group')}
-                            </div>
-                          }
-                        >
-                          {Array.from(groupedKnowledgeBases.group.entries()).map(
-                            ([namespace, kbs]) => {
-                              const groupFullySelected = isGroupFullySelected(kbs)
-                              const groupPartiallySelected = isGroupPartiallySelected(kbs)
-                              return (
-                                <React.Fragment key={namespace}>
-                                  {/* Group name as clickable sub-heading */}
-                                  <CommandItem
-                                    value={`group:${namespace}`}
-                                    onSelect={() => handleGroupSelect(namespace, kbs)}
-                                    className={cn(
-                                      'group cursor-pointer select-none',
-                                      'px-3 py-1.5 text-xs font-medium text-text-secondary',
-                                      'bg-muted/50 rounded-md mx-1 my-1',
-                                      'data-[selected=true]:bg-primary/10 data-[selected=true]:text-primary',
-                                      'aria-selected:bg-hover',
-                                      '!flex !flex-row !items-center !justify-between !gap-2'
-                                    )}
-                                  >
-                                    <span>{namespace}</span>
-                                    <Check
-                                      className={cn(
-                                        'h-3.5 w-3.5 shrink-0',
-                                        groupFullySelected
-                                          ? 'opacity-100 text-primary'
-                                          : groupPartiallySelected
-                                            ? 'opacity-100 text-primary/50'
-                                            : 'opacity-0'
-                                      )}
-                                    />
-                                  </CommandItem>
-                                  {/* Knowledge bases under this group */}
-                                  {kbs.map(kb => (
-                                    <KnowledgeBaseItem
-                                      key={kb.id}
-                                      kb={kb}
-                                      isSelected={isSelected(kb.id)}
-                                      onSelect={() => handleSelect(kb)}
-                                    />
-                                  ))}
-                                </React.Fragment>
-                              )
-                            }
-                          )}
-                        </CommandGroup>
-                      </>
-                    )}
+                        {t('common:actions.retry')}
+                      </button>
+                    </div>
+                  ) : !hasKnowledgeBases && boundKnowledgeBases.length === 0 ? (
+                    <div className="py-6 px-4 text-center">
+                      <p className="text-sm text-text-muted mb-3">
+                        {t('knowledge:no_knowledge_bases')}
+                      </p>
+                      <Link
+                        href="/knowledge"
+                        onClick={() => onOpenChange(false)}
+                        className="inline-flex items-center gap-1.5 text-sm text-primary hover:text-primary/80 font-medium transition-colors"
+                      >
+                        {t('knowledge:go_to_create')}
+                        <ArrowRight className="w-3.5 h-3.5" />
+                      </Link>
+                    </div>
+                  ) : (
+                    <>
+                      <CommandEmpty className="py-4 text-center text-sm text-text-muted">
+                        {t('common:branches.no_match')}
+                      </CommandEmpty>
 
-                    {/* Organization Knowledge Bases */}
-                    {groupedKnowledgeBases.organization.length > 0 && (
-                      <>
-                        {(groupedKnowledgeBases.personal.length > 0 ||
-                          groupedKnowledgeBases.group.size > 0) && <CommandSeparator />}
+                      {/* Group Chat Bound Knowledge Bases */}
+                      {boundKnowledgeBases.length > 0 && (
+                        <>
+                          <CommandGroup
+                            heading={
+                              <div className="flex items-center gap-1.5 text-xs font-medium text-text-muted">
+                                <Users className="w-3 h-3" />
+                                {t('chat:groupChat.knowledge.groupKnowledgeBases')}
+                              </div>
+                            }
+                          >
+                            {boundKnowledgeBases.map(kb => {
+                              const documentCount = kb.document_count || 0
+                              const documentText = formatDocumentCount(documentCount, t)
+                              const selected = isSelected(kb.id)
+
+                              return (
+                                <CommandItem
+                                  key={`bound-${kb.id}`}
+                                  value={`${kb.display_name} ${kb.description || ''} ${kb.id}`}
+                                  onSelect={() => handleSelectBound(kb)}
+                                  className={cn(
+                                    'group cursor-pointer select-none',
+                                    'px-3 py-2 text-sm text-text-primary',
+                                    'rounded-md mx-1 my-[2px]',
+                                    'data-[selected=true]:bg-primary/10 data-[selected=true]:text-primary',
+                                    'aria-selected:bg-hover',
+                                    '!flex !flex-row !items-start !justify-between !gap-2'
+                                  )}
+                                >
+                                  <div className="flex items-start gap-2 min-w-0 flex-1">
+                                    <Database className="w-4 h-4 text-primary flex-shrink-0 mt-0.5" />
+                                    <div className="flex flex-col min-w-0 flex-1">
+                                      <span
+                                        className="font-medium text-sm text-text-primary truncate"
+                                        title={kb.display_name}
+                                      >
+                                        {kb.display_name}
+                                      </span>
+                                      {kb.description && (
+                                        <span
+                                          className="text-xs text-text-muted truncate"
+                                          title={kb.description}
+                                        >
+                                          {kb.description}
+                                        </span>
+                                      )}
+                                      <span className="text-xs text-text-muted mt-0.5">
+                                        {documentText}
+                                      </span>
+                                    </div>
+                                  </div>
+                                  <Check
+                                    className={cn(
+                                      'h-3.5 w-3.5 shrink-0 mt-0.5',
+                                      selected ? 'opacity-100 text-primary' : 'opacity-0'
+                                    )}
+                                  />
+                                </CommandItem>
+                              )
+                            })}
+                          </CommandGroup>
+                          {hasKnowledgeBases && <CommandSeparator />}
+                        </>
+                      )}
+
+                      {/* Personal Knowledge Bases */}
+                      {groupedKnowledgeBases.personal.length > 0 && (
                         <CommandGroup
                           heading={
                             <div className="flex items-center gap-1.5 text-xs font-medium text-text-muted">
-                              <Building2 className="w-3 h-3" />
-                              {t('knowledge:document.tabs.organization')}
+                              <User className="w-3 h-3" />
+                              {t('knowledge:document.tabs.personal')}
                             </div>
                           }
                         >
-                          {groupedKnowledgeBases.organization.map(kb => (
+                          {groupedKnowledgeBases.personal.map(kb => (
                             <KnowledgeBaseItem
                               key={kb.id}
                               kb={kb}
@@ -679,126 +647,217 @@ export default function ContextSelector({
                             />
                           ))}
                         </CommandGroup>
-                      </>
-                    )}
-                  </>
-                )}
-              </CommandList>
-            </Command>
-          </TabsContent>
+                      )}
+                      {/* Group Knowledge Bases - grouped by namespace with nested style */}
+                      {groupedKnowledgeBases.group.size > 0 && (
+                        <>
+                          {groupedKnowledgeBases.personal.length > 0 && <CommandSeparator />}
+                          <CommandGroup
+                            heading={
+                              <div className="flex items-center gap-1.5 text-xs font-medium text-text-muted">
+                                <Users className="w-3 h-3" />
+                                {t('knowledge:document.tabs.group')}
+                              </div>
+                            }
+                          >
+                            {Array.from(groupedKnowledgeBases.group.entries()).map(
+                              ([namespace, kbs]) => {
+                                const groupFullySelected = isGroupFullySelected(kbs)
+                                const groupPartiallySelected = isGroupPartiallySelected(kbs)
+                                return (
+                                  <React.Fragment key={namespace}>
+                                    {/* Group name as clickable sub-heading */}
+                                    <CommandItem
+                                      value={`group:${namespace}`}
+                                      onSelect={() => handleGroupSelect(namespace, kbs)}
+                                      className={cn(
+                                        'group cursor-pointer select-none',
+                                        'px-3 py-1.5 text-xs font-medium text-text-secondary',
+                                        'bg-muted/50 rounded-md mx-1 my-1',
+                                        'data-[selected=true]:bg-primary/10 data-[selected=true]:text-primary',
+                                        'aria-selected:bg-hover',
+                                        '!flex !flex-row !items-center !justify-between !gap-2'
+                                      )}
+                                    >
+                                      <span>{namespace}</span>
+                                      <Check
+                                        className={cn(
+                                          'h-3.5 w-3.5 shrink-0',
+                                          groupFullySelected
+                                            ? 'opacity-100 text-primary'
+                                            : groupPartiallySelected
+                                              ? 'opacity-100 text-primary/50'
+                                              : 'opacity-0'
+                                        )}
+                                      />
+                                    </CommandItem>
+                                    {/* Knowledge bases under this group */}
+                                    {kbs.map(kb => (
+                                      <KnowledgeBaseItem
+                                        key={kb.id}
+                                        kb={kb}
+                                        isSelected={isSelected(kb.id)}
+                                        onSelect={() => handleSelect(kb)}
+                                      />
+                                    ))}
+                                  </React.Fragment>
+                                )
+                              }
+                            )}
+                          </CommandGroup>
+                        </>
+                      )}
+
+                      {/* Organization Knowledge Bases */}
+                      {groupedKnowledgeBases.organization.length > 0 && (
+                        <>
+                          {(groupedKnowledgeBases.personal.length > 0 ||
+                            groupedKnowledgeBases.group.size > 0) && <CommandSeparator />}
+                          <CommandGroup
+                            heading={
+                              <div className="flex items-center gap-1.5 text-xs font-medium text-text-muted">
+                                <Building2 className="w-3 h-3" />
+                                {t('knowledge:document.tabs.organization')}
+                              </div>
+                            }
+                          >
+                            {groupedKnowledgeBases.organization.map(kb => (
+                              <KnowledgeBaseItem
+                                key={kb.id}
+                                kb={kb}
+                                isSelected={isSelected(kb.id)}
+                                onSelect={() => handleSelect(kb)}
+                              />
+                            ))}
+                          </CommandGroup>
+                        </>
+                      )}
+                    </>
+                  )}
+                </CommandList>
+              </Command>
+            </TabsContent>
+          )}
 
           {/* Table Tab */}
-          <TabsContent value="table" className="m-0">
-            <Command className="border-0 flex flex-col">
-              <CommandInput
-                placeholder={t('knowledge:search_placeholder')}
-                value={searchValue}
-                onValueChange={setSearchValue}
-                className={cn(
-                  'h-9 rounded-none border-b border-border flex-shrink-0',
-                  'placeholder:text-text-muted text-sm'
-                )}
-              />
-              <CommandList className="max-h-[300px] overflow-y-auto">
-                {tableLoading ? (
-                  <div className="py-4 px-3 text-center text-sm text-text-muted">
-                    {t('common:actions.loading')}
-                  </div>
-                ) : tableError ? (
-                  <div className="py-4 px-3 text-center">
-                    <p className="text-sm text-red-500 mb-2">{tableError}</p>
-                    <button onClick={fetchTables} className="text-xs text-primary hover:underline">
-                      {t('common:actions.retry')}
-                    </button>
-                  </div>
-                ) : tables.length === 0 ? (
-                  <div className="py-6 px-4 text-center">
-                    <p className="text-sm text-text-muted mb-2">{t('knowledge:table.empty')}</p>
-                    <p className="text-xs text-text-muted">{t('knowledge:table.emptyHint')}</p>
-                  </div>
-                ) : (
-                  <>
-                    <CommandEmpty className="py-4 text-center text-sm text-text-muted">
-                      {t('common:branches.no_match')}
-                    </CommandEmpty>
+          {canSelectTable && (
+            <TabsContent value="table" className="m-0">
+              <Command className="border-0 flex flex-col">
+                <CommandInput
+                  placeholder={t('knowledge:search_placeholder')}
+                  value={searchValue}
+                  onValueChange={setSearchValue}
+                  className={cn(
+                    'h-9 rounded-none border-b border-border flex-shrink-0',
+                    'placeholder:text-text-muted text-sm'
+                  )}
+                />
+                <CommandList className="max-h-[300px] overflow-y-auto">
+                  {tableLoading ? (
+                    <div className="py-4 px-3 text-center text-sm text-text-muted">
+                      {t('common:actions.loading')}
+                    </div>
+                  ) : tableError ? (
+                    <div className="py-4 px-3 text-center">
+                      <p className="text-sm text-red-500 mb-2">{tableError}</p>
+                      <button
+                        onClick={fetchTables}
+                        className="text-xs text-primary hover:underline"
+                      >
+                        {t('common:actions.retry')}
+                      </button>
+                    </div>
+                  ) : tables.length === 0 ? (
+                    <div className="py-6 px-4 text-center">
+                      <p className="text-sm text-text-muted mb-2">{t('knowledge:table.empty')}</p>
+                      <p className="text-xs text-text-muted">{t('knowledge:table.emptyHint')}</p>
+                    </div>
+                  ) : (
+                    <>
+                      <CommandEmpty className="py-4 text-center text-sm text-text-muted">
+                        {t('common:branches.no_match')}
+                      </CommandEmpty>
 
-                    <CommandGroup>
-                      {tables.map(doc => {
-                        const tableContextId = `table-${doc.id}`
-                        const selected = isSelected(tableContextId)
+                      <CommandGroup>
+                        {tables.map(doc => {
+                          const tableContextId = `table-${doc.id}`
+                          const selected = isSelected(tableContextId)
 
-                        return (
-                          <CommandItem
-                            key={`table-${doc.id}`}
-                            value={`${doc.name} ${doc.id}`}
-                            onSelect={() => handleTableSelect(doc)}
-                            className={cn(
-                              'group cursor-pointer select-none',
-                              'px-3 py-2 text-sm text-text-primary',
-                              'rounded-md mx-1 my-[2px]',
-                              'data-[selected=true]:bg-blue-500/10 data-[selected=true]:text-blue-600',
-                              'aria-selected:bg-hover',
-                              '!flex !flex-row !items-start !justify-between !gap-2'
-                            )}
-                          >
-                            <div className="flex items-start gap-2 min-w-0 flex-1">
-                              <Table2 className="w-4 h-4 text-blue-500 flex-shrink-0 mt-0.5" />
-                              <div className="flex flex-col min-w-0 flex-1">
-                                <span
-                                  className="font-medium text-sm text-text-primary truncate"
-                                  title={doc.name}
-                                >
-                                  {doc.name}
-                                </span>
-                                {doc.source_config?.url && (
-                                  <span
-                                    className="text-xs text-text-muted truncate"
-                                    title={doc.source_config.url}
-                                  >
-                                    {(() => {
-                                      try {
-                                        const url = new URL(doc.source_config.url)
-                                        return url.hostname
-                                      } catch {
-                                        return doc.source_config.url
-                                      }
-                                    })()}
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                            <Check
+                          return (
+                            <CommandItem
+                              key={`table-${doc.id}`}
+                              value={`${doc.name} ${doc.id}`}
+                              onSelect={() => handleTableSelect(doc)}
                               className={cn(
-                                'h-3.5 w-3.5 shrink-0 mt-0.5',
-                                selected ? 'opacity-100 text-blue-500' : 'opacity-0'
+                                'group cursor-pointer select-none',
+                                'px-3 py-2 text-sm text-text-primary',
+                                'rounded-md mx-1 my-[2px]',
+                                'data-[selected=true]:bg-blue-500/10 data-[selected=true]:text-blue-600',
+                                'aria-selected:bg-hover',
+                                '!flex !flex-row !items-start !justify-between !gap-2'
                               )}
-                            />
-                          </CommandItem>
-                        )
-                      })}
-                    </CommandGroup>
-                  </>
-                )}
-              </CommandList>
-            </Command>
-          </TabsContent>
+                            >
+                              <div className="flex items-start gap-2 min-w-0 flex-1">
+                                <Table2 className="w-4 h-4 text-blue-500 flex-shrink-0 mt-0.5" />
+                                <div className="flex flex-col min-w-0 flex-1">
+                                  <span
+                                    className="font-medium text-sm text-text-primary truncate"
+                                    title={doc.name}
+                                  >
+                                    {doc.name}
+                                  </span>
+                                  {doc.source_config?.url && (
+                                    <span
+                                      className="text-xs text-text-muted truncate"
+                                      title={doc.source_config.url}
+                                    >
+                                      {(() => {
+                                        try {
+                                          const url = new URL(doc.source_config.url)
+                                          return url.hostname
+                                        } catch {
+                                          return doc.source_config.url
+                                        }
+                                      })()}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                              <Check
+                                className={cn(
+                                  'h-3.5 w-3.5 shrink-0 mt-0.5',
+                                  selected ? 'opacity-100 text-blue-500' : 'opacity-0'
+                                )}
+                              />
+                            </CommandItem>
+                          )
+                        })}
+                      </CommandGroup>
+                    </>
+                  )}
+                </CommandList>
+              </Command>
+            </TabsContent>
+          )}
 
           {/* DingTalk Docs Tab — delegates rendering to the shared DingTalkDocContextSelector */}
-          <TabsContent value="dingtalk" className="m-0 flex flex-col">
-            {activeTab === 'dingtalk' && (
-              <DingTalkDocContextSelector
-                selectedContexts={selectedDingTalkIds}
-                onSelect={ctx => onSelect(ctx)}
-                onDeselect={id => onDeselect(id)}
-                onSelectMultiple={ctxs => {
-                  if (onSelectMultiple) onSelectMultiple(ctxs)
-                }}
-                onDeselectMultiple={ids => {
-                  if (onDeselectMultiple) onDeselectMultiple(ids)
-                }}
-              />
-            )}
-          </TabsContent>
+          {canSelectDingTalk && (
+            <TabsContent value="dingtalk" className="m-0 flex flex-col">
+              {activeTab === 'dingtalk' && (
+                <DingTalkDocContextSelector
+                  selectedContexts={selectedDingTalkIds}
+                  onSelect={ctx => onSelect(ctx)}
+                  onDeselect={id => onDeselect(id)}
+                  onSelectMultiple={ctxs => {
+                    if (onSelectMultiple) onSelectMultiple(ctxs)
+                  }}
+                  onDeselectMultiple={ids => {
+                    if (onDeselectMultiple) onDeselectMultiple(ids)
+                  }}
+                />
+              )}
+            </TabsContent>
+          )}
         </Tabs>
       </PopoverContent>
     </Popover>

@@ -13,7 +13,7 @@ import logging
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -101,7 +101,9 @@ class TaskCreationParams:
     # Optional API key name for tracing/audit
     api_key_name: Optional[str] = None
     # Default context behavior for new task creation.
-    default_context_mode: str = "use_defaults"
+    default_context_mode: Literal["use_defaults", "disable_defaults", "override"] = (
+        "use_defaults"
+    )
     # Explicit contexts used when default_context_mode is "override".
     contexts: Optional[List[Any]] = None
     # Whether executor runtime should be deleted immediately after completion

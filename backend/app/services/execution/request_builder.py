@@ -359,8 +359,8 @@ class TaskRequestBuilder:
                     current_bot_id,
                 )
 
+        project_workspace = workspace.get("project") or {}
         if web_runtime_guidance:
-            project_workspace = workspace.get("project") or {}
             task_device_id = self._extract_task_device_id(
                 task
             ) or project_workspace.get("device_id")
@@ -376,10 +376,10 @@ class TaskRequestBuilder:
                 workspace_path=project_workspace.get("project_workspace_path"),
             )
 
-        system_prompt = self._append_external_document_context_guidance(
-            system_prompt,
-            task=task,
-        )
+            system_prompt = self._append_external_document_context_guidance(
+                system_prompt,
+                task=task,
+            )
 
         request_project_id = _first_present_project_id(
             project_workspace.get("project_id"), task.project_id

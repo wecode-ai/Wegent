@@ -694,6 +694,9 @@
     "custom_input": "Custom Input",
     "custom_placeholder": "Enter custom input..."
   },
+  "contextWarnings": {
+    "nameSeparator": ": "
+  },
   "dingtalkDocs": {
     "tabTitle": "DingTalk Docs",
     "sync": "Sync",

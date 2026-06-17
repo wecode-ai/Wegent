@@ -13,7 +13,13 @@ from sqlalchemy.orm import Session
 from app.models.dingtalk_doc import DingtalkSyncedNode
 from app.models.kind import Kind
 from app.models.user import User
-from app.schemas.kind import Bot, DefaultContextRef, Ghost, Team
+from app.schemas.kind import (
+    Bot,
+    DefaultContextRef,
+    Ghost,
+    KnowledgeBaseDefaultRef,
+    Team,
+)
 from app.services.dingtalk_doc_service import DingTalkDocService
 from app.services.dingtalk_wikispace_service import DingTalkWikiSpaceService
 from app.services.readers import KindType, kindReader
@@ -50,7 +56,7 @@ def _build_task_knowledge_base_ref(
     }
 
 
-def _legacy_kb_ref_to_context_ref(ref) -> dict[str, Any]:
+def _legacy_kb_ref_to_context_ref(ref: KnowledgeBaseDefaultRef) -> dict[str, Any]:
     return {
         "type": "knowledge_base",
         "id": ref.id,
@@ -165,7 +171,7 @@ def _build_dingtalk_context_ref(
         return None, _build_context_warning(
             ref,
             "mcp_not_configured",
-            "未开启钉钉 MCP，无法读取钉钉知识",
+            "未开启钉钉 MCP, 无法读取钉钉知识",
         )
 
     node = (
@@ -181,7 +187,7 @@ def _build_dingtalk_context_ref(
         return None, _build_context_warning(
             ref,
             "node_inactive",
-            "该钉钉文档已失效或未同步，无法读取",
+            "该钉钉文档已失效或未同步, 无法读取",
         )
 
     data = {

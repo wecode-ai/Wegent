@@ -29,7 +29,7 @@ import type { AgentType as McpAgentType } from '@/features/settings/utils/mcpTyp
 import ContextSelector from '@/features/tasks/components/chat/ContextSelector'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
-import type { ContextItem } from '@/types/context'
+import type { ContextItem, ContextType } from '@/types/context'
 import type { DefaultContextRef } from '@/types/default-context'
 import type { KnowledgeBaseDefaultRef, TaskType } from '@/types/api'
 import {
@@ -44,6 +44,29 @@ import QuickPhraseEditor from './QuickPhraseEditor'
 import TeamBindModeCards from './TeamBindModeCards'
 import { parseModelSelectValue, toModelSelectValue } from './model-select-utils'
 import type { SimpleExecutorMode } from './simple-team-edit-utils'
+
+const DEFAULT_CONTEXT_ALLOWED_TYPES: ContextType[] = ['knowledge_base', 'dingtalk_doc']
+
+function filterDefaultContextItems(items: ContextItem[]): ContextItem[] {
+  const seen = new Set<string>()
+  const filtered: ContextItem[] = []
+
+  for (const item of items) {
+    if (!DEFAULT_CONTEXT_ALLOWED_TYPES.includes(item.type)) {
+      continue
+    }
+
+    const key = `${item.type}:${item.id}`
+    if (seen.has(key)) {
+      continue
+    }
+
+    seen.add(key)
+    filtered.push(item)
+  }
+
+  return filtered
+}
 
 interface SimpleTeamEditFormProps {
   name: string
@@ -191,11 +214,11 @@ export default function SimpleTeamEditForm({
   const [promptFineTuneOpen, setPromptFineTuneOpen] = useState(false)
   const [defaultContextsOpen, setDefaultContextsOpen] = useState(false)
   const defaultContextItems = useMemo(
-    () => defaultContextRefsToContextItems(defaultContextRefs),
+    () => filterDefaultContextItems(defaultContextRefsToContextItems(defaultContextRefs)),
     [defaultContextRefs]
   )
   const updateDefaultContextItems = (items: ContextItem[]) => {
-    onDefaultContextRefsChange(contextItemsToDefaultContextRefs(items))
+    onDefaultContextRefsChange(contextItemsToDefaultContextRefs(filterDefaultContextItems(items)))
   }
   const showRequiresWorkspace = bindMode.includes('code')
   const modelSelectValue = toModelSelectValue(modelName, modelType, modelNamespace)
@@ -528,10 +551,13 @@ export default function SimpleTeamEditForm({
                       <span className="max-w-[180px] truncate">{context.name}</span>
                       <button
                         type="button"
-                        className="text-text-muted hover:text-text-primary"
+                        className="inline-flex h-11 w-11 items-center justify-center text-text-muted hover:text-text-primary"
+                        data-testid={`simple-default-context-remove-${context.type}-${context.id}`}
                         onClick={() =>
                           updateDefaultContextItems(
-                            defaultContextItems.filter(item => item.id !== context.id)
+                            defaultContextItems.filter(
+                              item => item.type !== context.type || item.id !== context.id
+                            )
                           )
                         }
                         aria-label={t('common:bot.default_contexts_remove')}
@@ -546,9 +572,12 @@ export default function SimpleTeamEditForm({
                 open={defaultContextsOpen}
                 onOpenChange={setDefaultContextsOpen}
                 selectedContexts={defaultContextItems}
+                allowedContextTypes={DEFAULT_CONTEXT_ALLOWED_TYPES}
                 onSelect={context =>
                   updateDefaultContextItems(
-                    defaultContextItems.some(item => item.id === context.id)
+                    defaultContextItems.some(
+                      item => item.type === context.type && item.id === context.id
+                    )
                       ? defaultContextItems
                       : [...defaultContextItems, context]
                   )
@@ -557,10 +586,14 @@ export default function SimpleTeamEditForm({
                   updateDefaultContextItems(defaultContextItems.filter(item => item.id !== id))
                 }
                 onSelectMultiple={contexts => {
-                  const existingIds = new Set(defaultContextItems.map(item => item.id))
+                  const existingKeys = new Set(
+                    defaultContextItems.map(item => `${item.type}:${item.id}`)
+                  )
                   updateDefaultContextItems([
                     ...defaultContextItems,
-                    ...contexts.filter(context => !existingIds.has(context.id)),
+                    ...contexts.filter(
+                      context => !existingKeys.has(`${context.type}:${context.id}`)
+                    ),
                   ])
                 }}
                 onDeselectMultiple={ids =>
@@ -569,7 +602,12 @@ export default function SimpleTeamEditForm({
                   )
                 }
               >
-                <Button type="button" variant="outline" size="sm">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  data-testid="simple-default-context-add-button"
+                >
                   {t('common:bot.default_contexts_add')}
                 </Button>
               </ContextSelector>
