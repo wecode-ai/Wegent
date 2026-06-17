@@ -69,12 +69,12 @@ export async function resolveWorkspaceTarget({
   messages,
   api,
 }: ResolveWorkspaceTargetOptions): Promise<WorkspaceTarget | null> {
+  if (currentProject) {
+    return projectWorkspaceTarget(currentProject, api)
+  }
   if (currentTask) {
     const taskWorkspace = latestTaskWorkspace(currentTask, messages)
     if (taskWorkspace) return taskWorkspace
-  }
-  if (currentProject) {
-    return projectWorkspaceTarget(currentProject, api)
   }
   return null
 }

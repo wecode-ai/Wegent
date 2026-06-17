@@ -82,6 +82,7 @@ interface DesktopWorkbenchLayoutProps {
     project: ProjectWithTasks | null,
     message: string,
   ) => Promise<void>
+  onLoadEnvironmentDiff?: (project: ProjectWithTasks | null) => Promise<string>
   onListEnvironmentBranches: (project: ProjectWithTasks | null) => Promise<string[]>
   onCheckoutEnvironmentBranch: (
     project: ProjectWithTasks | null,
@@ -153,6 +154,7 @@ export function DesktopWorkbenchLayout({
   onCreateDeviceDirectory,
   onLoadEnvironmentInfo,
   onCommitEnvironmentChanges,
+  onLoadEnvironmentDiff,
   onListEnvironmentBranches,
   onCheckoutEnvironmentBranch,
   onCreateEnvironmentBranch,
@@ -362,6 +364,7 @@ export function DesktopWorkbenchLayout({
           isBootstrapping={state.isBootstrapping}
           currentTask={state.currentTask}
           currentProject={activeConversationProject}
+          workspaceProject={state.currentProject}
           devices={state.devices}
           upgradingDevices={upgradingDevices}
           messages={messages}
@@ -375,6 +378,11 @@ export function DesktopWorkbenchLayout({
           environmentInfo={environmentInfo}
           onRefreshEnvironmentInfo={refreshEnvironmentInfo}
           onCommitEnvironmentChanges={handleCommitEnvironmentChanges}
+          onLoadEnvironmentDiff={
+            onLoadEnvironmentDiff
+              ? () => onLoadEnvironmentDiff(environmentProject)
+              : undefined
+          }
           onListEnvironmentBranches={() => onListEnvironmentBranches(environmentProject)}
           onCheckoutEnvironmentBranch={handleCheckoutEnvironmentBranch}
           onCreateEnvironmentBranch={handleCreateEnvironmentBranch}
