@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.subtask import Subtask, SubtaskStatus
 from app.models.task import TaskResource
@@ -93,7 +94,7 @@ async def test_cleanup_stale_task_executors_skips_executor_before_24_hours():
         ) as executor_service,
     ):
         result = await job_service.cleanup_stale_task_executors(
-            Mock(), inactive_hours=24
+            AsyncMock(spec=AsyncSession), inactive_hours=24
         )
 
     assert result["deleted"] == []
@@ -136,7 +137,7 @@ async def test_cleanup_stale_task_executors_deletes_executor_after_24_hours():
         executor_service.delete_executor_task_async = AsyncMock(return_value=True)
 
         result = await job_service.cleanup_stale_task_executors(
-            Mock(), inactive_hours=24
+            AsyncMock(spec=AsyncSession), inactive_hours=24
         )
 
     assert result["skipped"] == []
@@ -145,6 +146,110 @@ async def test_cleanup_stale_task_executors_deletes_executor_after_24_hours():
         "executor-stale", "default"
     )
     mark_deleted.assert_awaited_once_with([1])
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_cleanup_releases_read_transaction_before_external_delete():
+    job_service = JobService(Mock())
+    now = datetime.now()
+    stale_subtask = RuntimeCleanupHelpers()._subtask(
+        1, 100, now - timedelta(hours=25), "executor-stale"
+    )
+    stale_task = RuntimeCleanupHelpers()._task(100, now - timedelta(hours=26))
+    call_order = []
+    db = Mock()
+    db.rollback = AsyncMock(side_effect=lambda: call_order.append("rollback"))
+
+    async def delete_executor(*_args, **_kwargs):
+        call_order.append("delete")
+        return True
+
+    with (
+        patch.object(
+            job_service,
+            "_list_runtime_cleanup_subtasks",
+            new_callable=AsyncMock,
+            return_value=[stale_subtask],
+        ),
+        patch.object(
+            job_service,
+            "_load_tasks_for_cleanup",
+            new_callable=AsyncMock,
+            return_value={100: stale_task},
+        ),
+        patch.object(job_service, "_mark_executor_deleted", new_callable=AsyncMock),
+        patch(
+            "app.services.adapters.executor_job.executor_kinds_service"
+        ) as executor_service,
+    ):
+        executor_service.delete_executor_task_async = AsyncMock(
+            side_effect=delete_executor
+        )
+
+        await job_service.cleanup_stale_task_executors(db, inactive_hours=24)
+
+    assert call_order == ["rollback", "delete"]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_scheduled_cleanup_releases_read_transaction_before_external_delete():
+    job_service = JobService(Mock())
+    now = datetime.now()
+    stale_subtask = RuntimeCleanupHelpers()._subtask(
+        1, 100, now - timedelta(hours=25), "executor-stale"
+    )
+    stale_task = RuntimeCleanupHelpers()._task(100, now - timedelta(hours=26))
+    call_order = []
+    db = Mock()
+    db.rollback = AsyncMock(side_effect=lambda: call_order.append("rollback"))
+    db.commit = AsyncMock(side_effect=lambda: call_order.append("commit"))
+
+    async def delete_executor(*_args, **_kwargs):
+        call_order.append("delete")
+        return True
+
+    with (
+        patch(
+            "app.services.adapters.executor_job.CLEANUP_TARGET_DELETED_EXECUTORS_PER_RUN",
+            1,
+        ),
+        patch(
+            "app.services.adapters.executor_job.executor_cleanup_cursor_service.get_cursor",
+            new_callable=AsyncMock,
+            return_value=Mock(last_scanned_subtask_id=0),
+        ),
+        patch.object(
+            job_service,
+            "_scan_candidate_subtasks_batch",
+            new_callable=AsyncMock,
+            return_value=[stale_subtask],
+        ),
+        patch.object(
+            job_service,
+            "_load_tasks_for_cleanup",
+            new_callable=AsyncMock,
+            return_value={100: stale_task},
+        ),
+        patch.object(
+            job_service,
+            "_get_cleanup_subtasks_for_task",
+            new_callable=AsyncMock,
+            return_value=[stale_subtask],
+        ),
+        patch.object(job_service, "_mark_executor_deleted", new_callable=AsyncMock),
+        patch(
+            "app.services.adapters.executor_job.executor_kinds_service"
+        ) as executor_service,
+    ):
+        executor_service.delete_executor_task_async = AsyncMock(
+            side_effect=delete_executor
+        )
+
+        await job_service.cleanup_stale_executors(db)
+
+    assert call_order == ["rollback", "delete", "commit"]
 
 
 @pytest.mark.unit
