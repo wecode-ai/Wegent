@@ -18,6 +18,8 @@ import uuid
 from datetime import datetime
 from typing import Any, AsyncGenerator, Union
 
+from executor.services.image_preprocessor import prepare_image_bytes_for_model
+
 logger = logging.getLogger(__name__)
 
 
@@ -119,6 +121,7 @@ def convert_openai_to_anthropic_content(
         elif block_type == "input_image":
             image_url = block.get("image_url", "")
             media_type, data = _parse_data_uri(image_url)
+            media_type, data = _prepare_base64_image_for_model(media_type, data)
             anthropic_blocks.append(
                 {
                     "type": "image",
@@ -135,6 +138,27 @@ def convert_openai_to_anthropic_content(
             anthropic_blocks.append(block)
 
     return anthropic_blocks
+
+
+def _prepare_base64_image_for_model(media_type: str, data: str) -> tuple[str, str]:
+    try:
+        image_data = base64.b64decode(data)
+    except Exception:
+        return media_type, data
+
+    prepared_image = prepare_image_bytes_for_model(image_data, media_type)
+    if not prepared_image.resized:
+        return media_type, data
+
+    logger.info(
+        "[multimodal] Downscaled inline image from %s to %s",
+        prepared_image.original_size,
+        prepared_image.size,
+    )
+    return (
+        prepared_image.mime_type,
+        base64.b64encode(prepared_image.data).decode("utf-8"),
+    )
 
 
 async def create_multimodal_query(

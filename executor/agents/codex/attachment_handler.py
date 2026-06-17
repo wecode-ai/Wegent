@@ -14,6 +14,7 @@ from executor.services.attachment_prompt_processor import (
     IMAGE_MIME_TYPES,
     AttachmentPromptProcessor,
 )
+from executor.services.image_preprocessor import prepare_image_file_for_model
 from shared.logger import setup_logger
 from shared.models.execution import ExecutionRequest
 
@@ -99,6 +100,11 @@ def process_codex_attachments(
                 if success_attachment and success_attachment.get("local_path")
                 else None
             )
+            if local_path:
+                local_path = prepare_image_file_for_model(
+                    local_path,
+                    attachment.get("mime_type") or success_attachment.get("mime_type"),
+                )
             local_image_paths.append(local_path)
         logger.info(
             "Prepared Codex attachments: %s success, %s failed, %s local images",

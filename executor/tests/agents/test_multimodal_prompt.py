@@ -6,8 +6,11 @@
 
 import asyncio
 import base64
+import binascii
 import os
+import struct
 import tempfile
+import zlib
 
 import pytest
 
@@ -19,6 +22,31 @@ from executor.agents.claude_code.multimodal_prompt import (
     is_vision_prompt,
     save_vision_images,
 )
+
+
+def _make_png(width: int, height: int) -> bytes:
+    raw_rows = b"".join(b"\x00" + (b"\x10\x80\xe0" * width) for _ in range(height))
+
+    def chunk(name: bytes, data: bytes) -> bytes:
+        return (
+            struct.pack(">I", len(data))
+            + name
+            + data
+            + struct.pack(">I", binascii.crc32(name + data) & 0xFFFFFFFF)
+        )
+
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(raw_rows))
+        + chunk(b"IEND", b"")
+    )
+
+
+def _png_size(data: bytes) -> tuple[int, int]:
+    assert data.startswith(b"\x89PNG\r\n\x1a\n")
+    return struct.unpack(">II", data[16:24])
+
 
 # --- is_vision_prompt ---
 
@@ -130,6 +158,26 @@ class TestConvertOpenaiToAnthropicContent:
         assert result[0] == {"type": "text", "text": "What is this?"}
         assert result[1]["type"] == "image"
         assert result[1]["source"]["media_type"] == "image/png"
+
+    def test_downscales_large_input_image_data_uri(self):
+        image_data = _make_png(width=3000, height=1500)
+        blocks = [
+            {
+                "type": "input_image",
+                "image_url": (
+                    "data:image/png;base64,"
+                    f"{base64.b64encode(image_data).decode('utf-8')}"
+                ),
+            }
+        ]
+
+        result = convert_openai_to_anthropic_content(blocks)
+
+        resized_data = base64.b64decode(result[0]["source"]["data"])
+        width, height = _png_size(resized_data)
+        assert result[0]["source"]["media_type"] == "image/png"
+        assert width == 2048
+        assert height == 1024
 
     def test_passes_through_unknown_block_types(self):
         blocks = [{"type": "custom", "data": "foo"}]

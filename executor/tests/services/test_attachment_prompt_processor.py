@@ -2,7 +2,36 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import base64
+import binascii
+import struct
+import zlib
+
 from executor.services.attachment_prompt_processor import AttachmentPromptProcessor
+
+
+def _make_png(width: int, height: int) -> bytes:
+    raw_rows = b"".join(b"\x00" + (b"\x00\x7f\xff" * width) for _ in range(height))
+
+    def chunk(name: bytes, data: bytes) -> bytes:
+        return (
+            struct.pack(">I", len(data))
+            + name
+            + data
+            + struct.pack(">I", binascii.crc32(name + data) & 0xFFFFFFFF)
+        )
+
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(raw_rows))
+        + chunk(b"IEND", b"")
+    )
+
+
+def _png_size(data: bytes) -> tuple[int, int]:
+    assert data.startswith(b"\x89PNG\r\n\x1a\n")
+    return struct.unpack(">II", data[16:24])
 
 
 class TestAttachmentPromptProcessor:
@@ -101,3 +130,25 @@ class TestAttachmentPromptProcessor:
         assert (
             "Do not assume a workspace/<task_id>/attachments/ directory." not in context
         )
+
+    def test_build_image_content_blocks_downscales_large_images(self, tmp_path):
+        """Large image attachments should be resized before model submission."""
+        image_path = tmp_path / "large.png"
+        image_path.write_bytes(_make_png(width=3000, height=1500))
+
+        blocks = AttachmentPromptProcessor.build_image_content_blocks(
+            success_attachments=[
+                {
+                    "id": 1,
+                    "original_filename": "large.png",
+                    "local_path": str(image_path),
+                    "mime_type": "image/png",
+                }
+            ],
+        )
+
+        image_data = base64.b64decode(blocks[0]["source"]["data"])
+        width, height = _png_size(image_data)
+        assert blocks[0]["source"]["media_type"] == "image/png"
+        assert width == 2048
+        assert height == 1024
