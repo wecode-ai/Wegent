@@ -96,6 +96,22 @@ async def test_codex_records_native_turn_diff_for_diagnostics_only():
 
 
 @pytest.mark.asyncio
+async def test_codex_forwards_native_turn_diff_to_tracker():
+    emitter = MagicMock()
+    tracker = MagicMock()
+    mapper = CodeXEventMapper(emitter, turn_file_change_tracker=tracker)
+
+    await mapper.handle(
+        SimpleNamespace(
+            method="turn/diff/updated",
+            payload=SimpleNamespace(diff="diff --git a/a.txt b/a.txt\n"),
+        )
+    )
+
+    tracker.record_diff.assert_called_once_with("diff --git a/a.txt b/a.txt\n")
+
+
+@pytest.mark.asyncio
 async def test_codex_event_mapper_streams_final_answer_delta_and_completion():
     emitter = SimpleNamespace(
         text_delta=AsyncMock(),

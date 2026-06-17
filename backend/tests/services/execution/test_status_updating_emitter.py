@@ -2,11 +2,155 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from unittest.mock import AsyncMock, patch
+import asyncio
+from unittest.mock import AsyncMock, call, patch
 
 import pytest
 
 from shared.models import EventType, ExecutionEvent
+
+
+@pytest.mark.asyncio
+async def test_chunk_events_batch_storage_without_blocking_forward(monkeypatch):
+    """Streaming chunks should forward immediately and persist as a batch."""
+    from app.services.chat.storage.session import StreamContentType
+    from app.services.execution.emitters import status_updating
+    from app.services.execution.emitters.status_updating import StatusUpdatingEmitter
+
+    monkeypatch.setattr(
+        status_updating,
+        "STREAMING_STORAGE_FLUSH_INTERVAL_SECONDS",
+        3600.0,
+        raising=False,
+    )
+
+    wrapped = AsyncMock()
+    emitter = StatusUpdatingEmitter(wrapped=wrapped, task_id=101, subtask_id=202)
+    mock_session_manager = AsyncMock()
+
+    first = ExecutionEvent(
+        type=EventType.CHUNK.value,
+        task_id=101,
+        subtask_id=202,
+        content="Hel",
+    )
+    second = ExecutionEvent(
+        type=EventType.CHUNK.value,
+        task_id=101,
+        subtask_id=202,
+        content="lo",
+    )
+
+    with patch("app.services.chat.storage.session_manager", mock_session_manager):
+        await emitter.emit(first)
+        await emitter.emit(second)
+
+        wrapped.emit.assert_has_awaits([call(first), call(second)])
+        mock_session_manager.add_stream_content.assert_not_awaited()
+
+        await emitter.close()
+
+    mock_session_manager.add_stream_content.assert_awaited_once_with(
+        subtask_id=202,
+        content_type=StreamContentType.TEXT,
+        content="Hello",
+    )
+
+
+@pytest.mark.asyncio
+async def test_done_event_flushes_pending_chunks_before_status_update(monkeypatch):
+    """DONE must persist pending chunks before collecting the final result."""
+    from app.services.chat.storage.session import StreamContentType
+    from app.services.execution.emitters import status_updating
+    from app.services.execution.emitters.status_updating import StatusUpdatingEmitter
+
+    monkeypatch.setattr(
+        status_updating,
+        "STREAMING_STORAGE_FLUSH_INTERVAL_SECONDS",
+        3600.0,
+        raising=False,
+    )
+
+    wrapped = AsyncMock()
+    emitter = StatusUpdatingEmitter(wrapped=wrapped, task_id=101, subtask_id=202)
+    emitter._handle_done = AsyncMock()
+    mock_session_manager = AsyncMock()
+
+    chunk = ExecutionEvent(
+        type=EventType.CHUNK.value,
+        task_id=101,
+        subtask_id=202,
+        content="content",
+    )
+    done = ExecutionEvent(
+        type=EventType.DONE.value,
+        task_id=101,
+        subtask_id=202,
+    )
+
+    with patch("app.services.chat.storage.session_manager", mock_session_manager):
+        await emitter.emit(chunk)
+        await emitter.emit(done)
+
+    mock_session_manager.add_stream_content.assert_awaited_once_with(
+        subtask_id=202,
+        content_type=StreamContentType.TEXT,
+        content="content",
+    )
+    emitter._handle_done.assert_awaited_once_with(done)
+
+
+@pytest.mark.asyncio
+async def test_done_event_waits_for_in_progress_background_flush(monkeypatch):
+    """Terminal handling must wait if the scheduled Redis flush already started."""
+    from app.services.execution.emitters import status_updating
+    from app.services.execution.emitters.status_updating import StatusUpdatingEmitter
+
+    monkeypatch.setattr(
+        status_updating,
+        "STREAMING_STORAGE_FLUSH_INTERVAL_SECONDS",
+        0.0,
+        raising=False,
+    )
+
+    wrapped = AsyncMock()
+    emitter = StatusUpdatingEmitter(wrapped=wrapped, task_id=101, subtask_id=202)
+    emitter._handle_done = AsyncMock()
+    mock_session_manager = AsyncMock()
+    flush_started = asyncio.Event()
+    release_flush = asyncio.Event()
+
+    async def add_stream_content(**_kwargs):
+        flush_started.set()
+        await release_flush.wait()
+
+    mock_session_manager.add_stream_content.side_effect = add_stream_content
+
+    chunk = ExecutionEvent(
+        type=EventType.CHUNK.value,
+        task_id=101,
+        subtask_id=202,
+        content="content",
+    )
+    done = ExecutionEvent(
+        type=EventType.DONE.value,
+        task_id=101,
+        subtask_id=202,
+    )
+
+    with patch("app.services.chat.storage.session_manager", mock_session_manager):
+        await emitter.emit(chunk)
+        await asyncio.wait_for(flush_started.wait(), timeout=1.0)
+
+        done_task = asyncio.create_task(emitter.emit(done))
+        await asyncio.sleep(0)
+
+        emitter._handle_done.assert_not_awaited()
+
+        release_flush.set()
+        await done_task
+
+    emitter._handle_done.assert_awaited_once_with(done)
 
 
 @pytest.mark.asyncio
@@ -250,6 +394,7 @@ async def test_interactive_form_tool_result_persists_render_payload_on_real_tool
 
 @pytest.mark.asyncio
 async def test_thinking_events_persist_thinking_blocks():
+    from app.services.chat.storage.session import StreamContentType
     from app.services.execution.emitters import StatusUpdatingEmitter
 
     wrapped = AsyncMock()
@@ -265,8 +410,10 @@ async def test_thinking_events_persist_thinking_blocks():
 
     with patch("app.services.chat.storage.session_manager", mock_session_manager):
         await emitter.emit(thinking_event)
+        await emitter.close()
 
-    mock_session_manager.add_thinking_content.assert_awaited_once_with(
+    mock_session_manager.add_stream_content.assert_awaited_once_with(
         subtask_id=202,
+        content_type=StreamContentType.THINKING,
         content="Reasoning chunk.",
     )

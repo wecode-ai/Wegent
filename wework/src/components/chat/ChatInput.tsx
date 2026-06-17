@@ -55,6 +55,8 @@ export interface ProjectWorkControls {
   onListBranches?: () => Promise<string[]>
   onCheckoutBranch?: (branchName: string) => Promise<void>
   onCreateBranch?: (branchName: string) => Promise<void>
+  worktreeBaseBranch?: string | null
+  onWorktreeBaseBranchChange?: (branchName: string) => void
 }
 
 interface ChatInputProps {
@@ -104,26 +106,25 @@ export function ChatInput({
 }: ChatInputProps) {
   const { t } = useTranslation('common')
   const inputPlaceholder = placeholder ?? t('workbench.input_placeholder', '尽管问')
-  const controls: ProjectChatControls =
-    projectChat ?? {
-      models: [],
-      skills: [],
-      selectedModel: null,
-      selectedModelOptions: {},
-      isModelSelectionReady: true,
-      selectedSkills: [],
-      attachments: [],
-      uploadingFiles: new Map(),
-      errors: new Map(),
-      isOptionsLocked: false,
-      modelSelectorOpenSignal: undefined,
-      setSelectedModel: () => {},
-      setSelectedModelOption: () => {},
-      toggleSkill: () => {},
-      handleFileSelect: async () => {},
-      removeAttachment: async () => {},
-      listLocalSkills: async () => [],
-    }
+  const controls: ProjectChatControls = projectChat ?? {
+    models: [],
+    skills: [],
+    selectedModel: null,
+    selectedModelOptions: {},
+    isModelSelectionReady: true,
+    selectedSkills: [],
+    attachments: [],
+    uploadingFiles: new Map(),
+    errors: new Map(),
+    isOptionsLocked: false,
+    modelSelectorOpenSignal: undefined,
+    setSelectedModel: () => {},
+    setSelectedModelOption: () => {},
+    toggleSkill: () => {},
+    handleFileSelect: async () => {},
+    removeAttachment: async () => {},
+    listLocalSkills: async () => [],
+  }
 
   const composerProps = {
     value,

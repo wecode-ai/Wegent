@@ -88,6 +88,7 @@ interface MobileWorkbenchLayoutProps {
   onLoadEnvironmentInfo?: (
     project: ProjectWithTasks | null,
   ) => Promise<EnvironmentInfo>
+  onLoadEnvironmentDiff?: (project: ProjectWithTasks | null) => Promise<string>
   onCommitEnvironmentChanges?: (
     project: ProjectWithTasks | null,
     message: string,

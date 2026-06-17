@@ -1,14 +1,8 @@
-import {
-  CircleDot,
-  GitCommit,
-  GitPullRequest,
-  Info,
-  Laptop,
-  Settings,
-} from 'lucide-react'
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { CircleDot, GitCommit, GitPullRequest, Info, Laptop, Settings } from 'lucide-react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { BranchSelector } from '@/components/common/BranchSelector'
 import { useTranslation } from '@/hooks/useTranslation'
+import { openExternalUrl } from '@/lib/external-links'
 import { cn } from '@/lib/utils'
 import type { EnvironmentInfo } from '@/types/environment'
 import { DESKTOP_TOP_BAR_BUTTON_CLASS } from './DesktopTopBar'
@@ -20,27 +14,7 @@ interface EnvironmentInfoPopoverProps {
   onListBranches?: () => Promise<string[]>
   onCheckoutBranch?: (branchName: string) => Promise<void>
   onCreateBranch?: (branchName: string) => Promise<void>
-}
-
-interface InfoRowProps {
-  icon: ReactNode
-  label: string
-  children?: ReactNode
-  testId?: string
-}
-
-function InfoRow({ icon, label, children, testId }: InfoRowProps) {
-  return (
-    <div data-testid={testId} className="flex h-9 items-center gap-3 text-[13px] text-text-primary">
-      <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
-        {icon}
-      </span>
-      <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
-        {label}
-      </span>
-      {children}
-    </div>
-  )
+  onOpenChangesReview?: () => void
 }
 
 function formatDeviceId(deviceId?: string) {
@@ -62,6 +36,7 @@ export function EnvironmentInfoPopover({
   onListBranches,
   onCheckoutBranch,
   onCreateBranch,
+  onOpenChangesReview,
 }: EnvironmentInfoPopoverProps) {
   const { t } = useTranslation('common')
   const [open, setOpen] = useState(false)
@@ -80,11 +55,17 @@ export function EnvironmentInfoPopover({
   const shortDeviceId = formatDeviceId(info.deviceId)
   const deviceTitle = info.deviceId ? `${executionLabel} · ${info.deviceId}` : executionLabel
   const canShowBranchSelector = Boolean(info.branchName?.trim())
+  const environmentInfoLabel = t('workbench.environment_info')
   function handleCreatePullRequest() {
     if (!info.createPullRequestUrl) {
       return
     }
-    window.open(info.createPullRequestUrl, '_blank', 'noopener,noreferrer')
+    void openExternalUrl(info.createPullRequestUrl)
+  }
+
+  function handleOpenChangesReview() {
+    onOpenChangesReview?.()
+    setOpen(false)
   }
 
   async function handleCopyDeviceId() {
@@ -114,7 +95,11 @@ export function EnvironmentInfoPopover({
       window.setTimeout(() => setCommitStatus('idle'), 1600)
     } catch (error) {
       setCommitStatus('idle')
-      setCommitError(error instanceof Error ? error.message : t('workbench.environment_commit_failed', '提交失败'))
+      setCommitError(
+        error instanceof Error
+          ? error.message
+          : t('workbench.environment_commit_failed', '提交失败')
+      )
     }
   }
 
@@ -148,12 +133,10 @@ export function EnvironmentInfoPopover({
         type="button"
         data-testid="environment-info-button"
         onClick={handleToggleOpen}
-        className={cn(
-          DESKTOP_TOP_BAR_BUTTON_CLASS,
-          open && 'bg-muted text-text-primary',
-        )}
+        className={cn(DESKTOP_TOP_BAR_BUTTON_CLASS, open && 'bg-muted text-text-primary')}
         aria-expanded={open}
-        aria-label={t('workbench.environment_info', '环境信息')}
+        aria-label={environmentInfoLabel}
+        title={environmentInfoLabel}
       >
         <Info />
       </button>
@@ -178,16 +161,24 @@ export function EnvironmentInfoPopover({
           </div>
 
           <div>
-            <InfoRow
-              testId="environment-changes-row"
-              icon={<CircleDot className="h-[18px] w-[18px]" />}
-              label={t('workbench.environment_changes', '变更')}
+            <button
+              type="button"
+              data-testid="environment-changes-button"
+              disabled={!onOpenChangesReview}
+              onClick={handleOpenChangesReview}
+              className="flex h-9 w-full items-center gap-3 rounded-md text-left text-[13px] text-text-primary hover:bg-hover disabled:cursor-default disabled:hover:bg-transparent"
             >
+              <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
+                <CircleDot className="h-[18px] w-[18px]" />
+              </span>
+              <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
+                {t('workbench.environment_changes', '变更')}
+              </span>
               <span className="flex gap-1.5 text-[13px]">
                 <span className="text-green-500">{additions}</span>
                 <span className="text-red-500">{deletions}</span>
               </span>
-            </InfoRow>
+            </button>
             <button
               type="button"
               data-testid="environment-device-button"
@@ -199,9 +190,7 @@ export function EnvironmentInfoPopover({
               <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
                 <Laptop className="h-[18px] w-[18px]" />
               </span>
-              <span className="shrink-0">
-                {executionLabel}
-              </span>
+              <span className="shrink-0">{executionLabel}</span>
               <span
                 data-testid="environment-device-id"
                 className="ml-auto min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-right font-mono text-xs text-text-secondary"
@@ -248,10 +237,7 @@ export function EnvironmentInfoPopover({
               )}
             </button>
             {commitFormOpen && (
-              <form
-                className="mb-2 ml-[30px] mt-1 space-y-2"
-                onSubmit={handleSubmitCommit}
-              >
+              <form className="mb-2 ml-[30px] mt-1 space-y-2" onSubmit={handleSubmitCommit}>
                 <input
                   data-testid="environment-commit-message-input"
                   value={commitMessage}
@@ -302,9 +288,7 @@ export function EnvironmentInfoPopover({
           </div>
 
           {info.error && (
-            <p className="mt-2 rounded-md bg-red-50 px-3 py-2 text-xs text-red-600">
-              {info.error}
-            </p>
+            <p className="mt-2 rounded-md bg-red-50 px-3 py-2 text-xs text-red-600">{info.error}</p>
           )}
           {commitError && (
             <p className="mt-2 rounded-md bg-red-50 px-3 py-2 text-xs text-red-600">

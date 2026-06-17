@@ -26,6 +26,14 @@ import os
 from pathlib import Path
 from typing import Any, Dict, Tuple
 
+from executor.agents.api_headers import (
+    DEFAULT_HEADERS_ENV_KEYS,
+    extract_default_headers,
+    merge_anthropic_custom_headers,
+    merge_anthropic_header_defaults,
+    merge_project_header,
+    merge_wegent_runtime_headers,
+)
 from executor.agents.claude_code.mode_strategy import ExecutionModeStrategy
 from executor.config import config
 from executor.platform_compat import (
@@ -50,10 +58,12 @@ class LocalModeStrategy(ExecutionModeStrategy):
 
     def __init__(self) -> None:
         self._use_global_capabilities = False
+        self._project_id: Any = None
 
-    def use_global_capabilities(self, enabled: bool) -> None:
+    def use_global_capabilities(self, enabled: bool, project_id: Any = None) -> None:
         """Enable global Claude capability reuse for project task execution."""
         self._use_global_capabilities = enabled
+        self._project_id = project_id if enabled else None
 
     def get_config_directory(self, task_id: int) -> str:
         """Get the Claude configuration directory.
@@ -181,12 +191,11 @@ class LocalModeStrategy(ExecutionModeStrategy):
         updated_options = options.copy()
         existing_env = dict(updated_options.get("env", {}))
         merged_env = {**existing_env, **env_config, **task_identity_env}
-        # Ensure all values are strings (required by SDK)
-        updated_options["env"] = {k: str(v) for k, v in merged_env.items()}
 
         # Fix PyInstaller environment issues for child processes.
         # See: https://pyinstaller.org/en/stable/common-issues-and-pitfalls.html
-        env = dict(updated_options.get("env", {}))
+        # Ensure all values are strings (required by SDK).
+        env = {k: str(v) for k, v in merged_env.items()}
         sanitize_subprocess_environment(env)
 
         # Project tasks use global Claude capability symlinks; non-project tasks
@@ -194,12 +203,36 @@ class LocalModeStrategy(ExecutionModeStrategy):
         env["CLAUDE_CONFIG_DIR"] = config_dir
         env["SKILLS_DIR"] = self.get_skills_directory(config_dir)
 
-        # Add ANTHROPIC_CUSTOM_HEADERS if configured via environment variable
-        if config.ANTHROPIC_CUSTOM_HEADERS:
-            env["ANTHROPIC_CUSTOM_HEADERS"] = config.ANTHROPIC_CUSTOM_HEADERS
-            logger.info(
-                f"Local mode: ANTHROPIC_CUSTOM_HEADERS={config.ANTHROPIC_CUSTOM_HEADERS}"
+        process_custom_headers = os.environ.get("ANTHROPIC_CUSTOM_HEADERS", "")
+        runtime_custom_headers = env.get("ANTHROPIC_CUSTOM_HEADERS", "")
+        custom_headers = merge_anthropic_custom_headers(
+            process_custom_headers,
+            runtime_custom_headers,
+        )
+        default_headers = extract_default_headers(merged_env)
+        if self._use_global_capabilities:
+            default_headers = merge_wegent_runtime_headers(
+                default_headers,
+                executor="claudecode",
             )
+            default_headers = merge_project_header(default_headers, self._project_id)
+        if default_headers:
+            serialized_default_headers = json.dumps(
+                default_headers,
+                ensure_ascii=True,
+                separators=(",", ":"),
+            )
+            for default_headers_key in DEFAULT_HEADERS_ENV_KEYS:
+                env[default_headers_key] = serialized_default_headers
+            custom_headers = merge_anthropic_header_defaults(
+                custom_headers,
+                default_headers,
+            )
+
+        # Add ANTHROPIC_CUSTOM_HEADERS if configured via environment variable or
+        # project execution source metadata.
+        if custom_headers:
+            env["ANTHROPIC_CUSTOM_HEADERS"] = custom_headers
 
         updated_options["env"] = env
 

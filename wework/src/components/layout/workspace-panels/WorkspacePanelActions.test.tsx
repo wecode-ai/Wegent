@@ -13,6 +13,7 @@ const baseProps = {
   onListEnvironmentBranches: vi.fn(),
   onCheckoutEnvironmentBranch: vi.fn(),
   onCreateEnvironmentBranch: vi.fn(),
+  onOpenEnvironmentChangesReview: vi.fn(),
   rightPanelOpen: false,
   bottomPanelOpen: false,
   onToggleRightPanel: vi.fn(),

@@ -1,4 +1,5 @@
 mod local_terminal;
+mod wecode;
 
 fn normalized_non_empty(value: String) -> Option<String> {
     let trimmed = value.trim();
@@ -224,12 +225,22 @@ fn get_local_executor_device_id(expected_backend_url: Option<String>) -> Option<
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_http::init())
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
         .manage(local_terminal::LocalTerminalState::default())
         .setup(|app| {
             #[cfg(desktop)]
-            app.handle()
-                .plugin(tauri_plugin_updater::Builder::new().build())?;
+            if app
+                .config()
+                .plugins
+                .0
+                .get("updater")
+                .is_some_and(|config| config.is_object())
+            {
+                app.handle()
+                    .plugin(tauri_plugin_updater::Builder::new().build())?;
+            }
 
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -241,10 +252,20 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            wecode::local_executor::detect_wecode_cli,
+            wecode::local_executor::get_executor_process_diagnostics,
+            wecode::local_executor::get_executor_status,
+            wecode::local_executor::get_local_executor_auth_token,
+            wecode::local_executor::get_startup_env,
+            wecode::local_executor::kill_executor_processes,
             local_terminal::close_local_terminal,
             get_local_executor_device_id,
             local_path_exists,
+            wecode::local_executor::open_executor_logs_directory,
             local_terminal::resize_local_terminal,
+            wecode::local_executor::run_executor_command,
+            wecode::local_executor::save_local_executor_auth_token,
+            wecode::local_executor::save_startup_env,
             local_terminal::start_local_terminal,
             local_terminal::write_local_terminal
         ])

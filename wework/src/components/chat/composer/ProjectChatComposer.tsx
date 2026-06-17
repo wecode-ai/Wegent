@@ -1,9 +1,4 @@
-import type {
-  Attachment,
-  LocalDeviceSkill,
-  ModelOptions,
-  UnifiedModel,
-} from '@/types/api'
+import type { Attachment, LocalDeviceSkill, ModelOptions, UnifiedModel } from '@/types/api'
 import type { CodeCommentContext } from '@/types/workspace-files'
 import type { ProjectWorkControls } from '../ChatInput'
 import { AttachmentBadges } from './AttachmentBadges'
@@ -69,8 +64,7 @@ export function ProjectChatComposer({
 }: ProjectChatComposerProps) {
   const textareaRef = useAutoResizeTextarea(value, 168)
   const canSend =
-    (value.trim().length > 0 || attachments.length > 0 || codeComments.length > 0) &&
-    !disabled
+    (value.trim().length > 0 || attachments.length > 0 || codeComments.length > 0) && !disabled
 
   return (
     <div className="relative w-full rounded-[28px] bg-surface shadow-[0_16px_44px_rgba(0,0,0,0.08)]">
@@ -145,6 +139,8 @@ export function ProjectChatComposer({
           onListBranches={projectWork.onListBranches}
           onCheckoutBranch={projectWork.onCheckoutBranch}
           onCreateBranch={projectWork.onCreateBranch}
+          worktreeBaseBranch={projectWork.worktreeBaseBranch}
+          onWorktreeBaseBranchChange={projectWork.onWorktreeBaseBranchChange}
           className="min-h-11 px-4"
         />
       )}

@@ -141,6 +141,11 @@ fn candidate_path_dirs() -> Vec<PathBuf> {
         paths.push(home.join(".wecode").join("bin"));
         paths.push(home.join(".wecode").join("wecode-cli").join("bin"));
         paths.push(home.join(".nvm").join("current").join("bin"));
+        paths.extend(
+            nvm_node_binary_paths(&home)
+                .into_iter()
+                .filter_map(|path| path.parent().map(PathBuf::from)),
+        );
 
         #[cfg(windows)]
         {
@@ -240,9 +245,23 @@ fn candidate_node_paths() -> Vec<PathBuf> {
 
     if let Some(home) = home_dir() {
         paths.push(home.join(".nvm").join("current").join("bin").join("node"));
+        paths.extend(nvm_node_binary_paths(&home));
     }
 
     paths
+}
+
+fn nvm_node_binary_paths(home: &PathBuf) -> Vec<PathBuf> {
+    let versions_dir = home.join(".nvm").join("versions").join("node");
+    let Ok(entries) = fs::read_dir(versions_dir) else {
+        return Vec::new();
+    };
+
+    entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path().join("bin").join(executable_name("node")))
+        .filter(|path| path.exists())
+        .collect()
 }
 
 fn executable_name(name: &str) -> String {

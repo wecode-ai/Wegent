@@ -9,6 +9,7 @@ const guardedFiles = [
   'components/layout/DesktopSettingsMenu.tsx',
   'components/layout/EnvironmentInfoPopover.tsx',
   'components/chat/MessageList.tsx',
+  'components/chat/FileChangesCard.tsx',
   'components/chat/ScrollableMessageArea.tsx',
   'components/chat/blocks/ToolBlockItem.tsx',
   'components/chat/blocks/ToolBlocksDisplay.tsx',
@@ -44,6 +45,16 @@ const forbiddenGlobalZIndexClasses = [
 ]
 
 describe('theme token guard', () => {
+  test('tailwind exposes semantic surface colors', () => {
+    const tailwindConfigPath = resolve(process.cwd(), 'tailwind.config.js')
+    const source = readFileSync(tailwindConfigPath, 'utf8')
+
+    expect(source).toContain("base: 'rgb(var(--color-bg-base) / <alpha-value>)'")
+    expect(source).toContain("background: 'rgb(var(--color-bg-base) / <alpha-value>)'")
+    expect(source).toContain("surface: 'rgb(var(--color-bg-surface) / <alpha-value>)'")
+    expect(source).toContain("popover: 'rgb(var(--color-popover) / <alpha-value>)'")
+  })
+
   test('tailwind exposes semantic z-index layers', () => {
     const tailwindConfigPath = resolve(process.cwd(), 'tailwind.config.js')
     const source = readFileSync(tailwindConfigPath, 'utf8')
@@ -55,25 +66,31 @@ describe('theme token guard', () => {
     expect(source).toContain("system: 'var(--z-system)'")
   })
 
-  test.each(guardedFiles)('%s uses theme tokens instead of hardcoded surface colors', relativePath => {
-    const filePath = resolve(sourceRoot, relativePath)
-    const source = readFileSync(filePath, 'utf8')
+  test.each(guardedFiles)(
+    '%s uses theme tokens instead of hardcoded surface colors',
+    relativePath => {
+      const filePath = resolve(sourceRoot, relativePath)
+      const source = readFileSync(filePath, 'utf8')
 
-    const violations = forbiddenThemeClasses.flatMap(pattern =>
-      [...source.matchAll(pattern)].map(match => match[0]),
-    )
+      const violations = forbiddenThemeClasses.flatMap(pattern =>
+        [...source.matchAll(pattern)].map(match => match[0])
+      )
 
-    expect(violations).toEqual([])
-  })
+      expect(violations).toEqual([])
+    }
+  )
 
-  test.each(zIndexGuardedFiles)('%s uses semantic z-index layers for global stacking', relativePath => {
-    const filePath = resolve(sourceRoot, relativePath)
-    const source = readFileSync(filePath, 'utf8')
+  test.each(zIndexGuardedFiles)(
+    '%s uses semantic z-index layers for global stacking',
+    relativePath => {
+      const filePath = resolve(sourceRoot, relativePath)
+      const source = readFileSync(filePath, 'utf8')
 
-    const violations = forbiddenGlobalZIndexClasses.flatMap(pattern =>
-      [...source.matchAll(pattern)].map(match => match[0]),
-    )
+      const violations = forbiddenGlobalZIndexClasses.flatMap(pattern =>
+        [...source.matchAll(pattern)].map(match => match[0])
+      )
 
-    expect(violations).toEqual([])
-  })
+      expect(violations).toEqual([])
+    }
+  )
 })
