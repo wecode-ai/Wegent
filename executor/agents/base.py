@@ -82,7 +82,7 @@ class Agent:
 
         # Emitter is required and must be provided by caller
         self.emitter: ResponsesAPIEmitter = emitter
-        self.turn_file_change_tracker: Optional[TurnFileChangeTracker] = None
+        self.turn_file_change_tracker: Optional[Any] = None
         self._progress_task_lock = threading.Lock()
         self._inflight_progress_task: Optional[asyncio.Task] = None
 
@@ -151,7 +151,8 @@ class Agent:
             executor_home=Path(config.WEGENT_EXECUTOR_HOME),
             device_id=device_id,
         )
-        if await tracker.start():
+        started = await tracker.start()
+        if started:
             self.turn_file_change_tracker = tracker
             self.emitter.set_completion_fields_provider(tracker.finalize)
             logger.info(
@@ -168,7 +169,7 @@ class Agent:
             )
 
     async def abort_turn_file_change_tracking(self) -> None:
-        """Discard the current turn tracker and release its workspace lock."""
+        """Discard the current turn tracker."""
         tracker = self.turn_file_change_tracker
         self.turn_file_change_tracker = None
         self.emitter.set_completion_fields_provider(None)

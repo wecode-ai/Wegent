@@ -6,12 +6,15 @@ from claude_agent_sdk.types import (
     ResultMessage,
     StreamEvent,
     TextBlock,
+    ToolResultBlock,
     ToolUseBlock,
+    UserMessage,
 )
 
 from executor.agents.claude_code.response_processor import (
     _handle_assistant_message,
     _handle_stream_event,
+    _handle_user_message,
     _process_result_message,
 )
 from executor.tasks.task_state_manager import TaskState, TaskStateManager
@@ -233,6 +236,72 @@ async def test_claude_success_uses_explicit_completion_fields_provider():
     assert result == TaskStatus.COMPLETED
     completion_fields.assert_awaited_once()
     assert completed["file_changes"]["file_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_assistant_tool_use_records_file_change_boundary():
+    emitter = MagicMock()
+    emitter.flush = AsyncMock()
+    emitter.tool_start = AsyncMock()
+    tracker = MagicMock()
+    tracker.record_tool_use_start = AsyncMock()
+    msg = AssistantMessage(
+        content=[
+            ToolUseBlock(
+                id="toolu_1",
+                name="Write",
+                input={"file_path": "a.txt", "content": "hello\n"},
+            )
+        ],
+        model="claude",
+    )
+
+    await _handle_assistant_message(
+        msg,
+        emitter,
+        DummyStateManager(),
+        tool_file_change_tracker=tracker,
+    )
+
+    tracker.record_tool_use_start.assert_awaited_once_with(
+        "Write",
+        "toolu_1",
+        {"file_path": "a.txt", "content": "hello\n"},
+    )
+
+
+@pytest.mark.asyncio
+async def test_user_tool_result_records_file_change_boundary():
+    emitter = MagicMock()
+    emitter.tool_done = AsyncMock()
+    tracker = MagicMock()
+    tracker.record_tool_result = AsyncMock()
+    tool_use_result = {
+        "type": "create",
+        "filePath": "a.txt",
+        "content": "hello\n",
+    }
+    msg = UserMessage(
+        content=[
+            ToolResultBlock(
+                tool_use_id="toolu_1",
+                content="File created successfully",
+            )
+        ],
+        tool_use_result=tool_use_result,
+    )
+
+    await _handle_user_message(
+        msg,
+        emitter,
+        tool_file_change_tracker=tracker,
+    )
+
+    tracker.record_tool_result.assert_awaited_once_with(
+        "toolu_1",
+        None,
+        tool_use_result,
+    )
 
 
 @pytest.mark.asyncio

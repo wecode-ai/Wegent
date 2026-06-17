@@ -1,5 +1,31 @@
+import { fetch as tauriFetch } from '@tauri-apps/plugin-http'
 import { removeToken } from './auth'
 import { redirectToLogin } from '@/features/auth/redirect'
+
+// In a packaged Tauri app the WebView calls the API cross-origin, which
+// triggers CORS preflight. Routing through the Tauri (Rust) HTTP client
+// bypasses the WebView same-origin policy entirely. Outside Tauri (browser
+// dev server via Vite proxy, vitest) fall back to the global fetch.
+function shouldUseTauriFetch(): boolean {
+  return (
+    import.meta.env.MODE !== 'test' &&
+    typeof window !== 'undefined' &&
+    '__TAURI_INTERNALS__' in window
+  )
+}
+
+function requestUrl(baseUrl: string, endpoint: string): string {
+  const rawUrl = `${baseUrl}${endpoint}`
+  if (!shouldUseTauriFetch() || /^[a-z][a-z\d+\-.]*:\/\//i.test(rawUrl)) {
+    return rawUrl
+  }
+
+  return new URL(rawUrl, window.location.origin).toString()
+}
+
+function httpFetch(): typeof fetch {
+  return shouldUseTauriFetch() ? tauriFetch : globalThis.fetch.bind(globalThis)
+}
 
 export class ApiError extends Error {
   status: number
@@ -72,7 +98,7 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
   async function request<T>(endpoint: string, init: RequestInit): Promise<T> {
     const token = getToken()
     const isFormData = init.body instanceof FormData
-    const response = await fetch(`${options.baseUrl}${endpoint}`, {
+    const response = await httpFetch()(requestUrl(options.baseUrl, endpoint), {
       ...init,
       headers: {
         ...(isFormData ? {} : { 'Content-Type': 'application/json' }),

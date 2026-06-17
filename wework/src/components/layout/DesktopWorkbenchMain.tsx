@@ -201,6 +201,8 @@ export function DesktopWorkbenchMain({
     : t('workbench.empty_title', '我们该做什么？')
   const workspacePanelActions = (
     <WorkspacePanelActions
+      currentProject={currentProject}
+      devices={devices}
       environmentInfo={environmentInfo}
       onRefreshEnvironmentInfo={onRefreshEnvironmentInfo}
       onCommitEnvironmentChanges={onCommitEnvironmentChanges}

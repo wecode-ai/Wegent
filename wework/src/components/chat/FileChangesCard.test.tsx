@@ -30,16 +30,17 @@ function renderCard(
     deviceOnline: boolean
     onLoadDiff: (subtaskId: number) => Promise<string>
     onRevert: (subtaskId: number) => Promise<TurnFileChangesSummary>
-  }> = {},
+  }> = {}
 ) {
   const onLoadDiff =
     overrides.onLoadDiff ??
-    vi.fn().mockResolvedValue(
-      'diff --git a/src/file-1.ts b/src/file-1.ts\n--- a/src/file-1.ts\n+++ b/src/file-1.ts\n@@ -1 +1 @@\n-old\n+new\n',
-    )
+    vi
+      .fn()
+      .mockResolvedValue(
+        'diff --git a/src/file-1.ts b/src/file-1.ts\n--- a/src/file-1.ts\n+++ b/src/file-1.ts\n@@ -1 +1 @@\n-old\n+new\n'
+      )
   const onRevert =
-    overrides.onRevert ??
-    vi.fn().mockResolvedValue({ ...summary, status: 'reverted' })
+    overrides.onRevert ?? vi.fn().mockResolvedValue({ ...summary, status: 'reverted' })
 
   render(
     <FileChangesCard
@@ -48,7 +49,7 @@ function renderCard(
       deviceOnline={overrides.deviceOnline ?? true}
       onLoadDiff={onLoadDiff}
       onRevert={onRevert}
-    />,
+    />
   )
   return { onLoadDiff, onRevert }
 }
@@ -77,14 +78,43 @@ describe('FileChangesCard', () => {
     expect(await screen.findAllByText('src/file-1.ts')).toHaveLength(2)
   })
 
+  test('opens a single file diff when a file row is clicked', async () => {
+    const { onLoadDiff } = renderCard({
+      onLoadDiff: vi
+        .fn()
+        .mockResolvedValue(
+          [
+            'diff --git a/src/file-1.ts b/src/file-1.ts',
+            '--- a/src/file-1.ts',
+            '+++ b/src/file-1.ts',
+            '@@ -1 +1 @@',
+            '-old one',
+            '+new one',
+            'diff --git a/src/file-2.ts b/src/file-2.ts',
+            '--- a/src/file-2.ts',
+            '+++ b/src/file-2.ts',
+            '@@ -1 +1 @@',
+            '-old two',
+            '+new two',
+          ].join('\n')
+        ),
+    })
+
+    await userEvent.click(screen.getAllByTestId('file-change-row')[1])
+
+    await waitFor(() => expect(onLoadDiff).toHaveBeenCalledWith(21))
+    expect(await screen.findByText('文件变更：src/file-2.ts')).toBeInTheDocument()
+    expect(screen.getAllByText('src/file-2.ts')).toHaveLength(2)
+    expect(screen.queryByText('old one')).not.toBeInTheDocument()
+    expect(screen.getByText('-old two')).toBeInTheDocument()
+  })
+
   test('disables review and revert while the owning device is offline', () => {
     renderCard({ deviceOnline: false })
 
     expect(screen.getByTestId('review-file-changes-button')).toBeDisabled()
     expect(screen.getByTestId('revert-file-changes-button')).toBeDisabled()
-    expect(
-      screen.getByText('设备离线，无法审核或撤销'),
-    ).toBeInTheDocument()
+    expect(screen.getByText('设备离线，无法审核或撤销')).toBeInTheDocument()
   })
 
   test('confirms before reverting', async () => {
@@ -93,9 +123,7 @@ describe('FileChangesCard', () => {
     await userEvent.click(screen.getByTestId('revert-file-changes-button'))
     expect(onRevert).not.toHaveBeenCalled()
 
-    await userEvent.click(
-      screen.getByTestId('confirm-revert-file-changes-button'),
-    )
+    await userEvent.click(screen.getByTestId('confirm-revert-file-changes-button'))
     await waitFor(() => expect(onRevert).toHaveBeenCalledWith(21))
   })
 
@@ -103,22 +131,16 @@ describe('FileChangesCard', () => {
     renderCard({ summary: { ...summary, status: 'reverted' } })
 
     expect(screen.getByText('已撤销')).toBeInTheDocument()
-    expect(
-      screen.queryByTestId('revert-file-changes-button'),
-    ).not.toBeInTheDocument()
+    expect(screen.queryByTestId('revert-file-changes-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('review-file-changes-button')).toBeEnabled()
   })
 
   test('keeps review available after a revert conflict', () => {
     renderCard({ summary: { ...summary, status: 'conflicted' } })
 
-    expect(
-      screen.getByText('存在后续冲突，未修改工作区'),
-    ).toBeInTheDocument()
+    expect(screen.getByText('存在后续冲突，未修改工作区')).toBeInTheDocument()
     expect(screen.getByTestId('review-file-changes-button')).toBeEnabled()
-    expect(
-      screen.queryByTestId('revert-file-changes-button'),
-    ).not.toBeInTheDocument()
+    expect(screen.queryByTestId('revert-file-changes-button')).not.toBeInTheDocument()
   })
 
   test('labels binary files without line counts', () => {
@@ -147,9 +169,7 @@ describe('FileChangesCard', () => {
 describe('parseUnifiedDiff', () => {
   test('groups unified diff by file', () => {
     expect(
-      parseUnifiedDiff(
-        'diff --git a/a.ts b/a.ts\n+one\ndiff --git a/b.ts b/b.ts\n-two',
-      ),
+      parseUnifiedDiff('diff --git a/a.ts b/a.ts\n+one\ndiff --git a/b.ts b/b.ts\n-two')
     ).toEqual([
       {
         oldPath: 'a.ts',
@@ -166,9 +186,7 @@ describe('parseUnifiedDiff', () => {
 
   test('supports quoted file paths with spaces', () => {
     expect(
-      parseUnifiedDiff(
-        'diff --git "a/src/file one.ts" "b/src/file one.ts"\n+one',
-      )[0],
+      parseUnifiedDiff('diff --git "a/src/file one.ts" "b/src/file one.ts"\n+one')[0]
     ).toMatchObject({
       oldPath: 'src/file one.ts',
       path: 'src/file one.ts',

@@ -240,7 +240,11 @@ describe('WorkspacePanelCards', () => {
 
     await waitFor(() => expect(api.startCodeServerSession).toHaveBeenCalledWith(7))
     expect(fetchMock).not.toHaveBeenCalled()
-    expect(window.open).toHaveBeenCalledWith('http://localhost/ide', '_blank', 'noopener')
+    expect(window.open).toHaveBeenCalledWith(
+      'http://localhost/ide',
+      '_blank',
+      'noopener,noreferrer'
+    )
     expect(onRequestClose).toHaveBeenCalledTimes(1)
   })
 
@@ -260,12 +264,12 @@ describe('WorkspacePanelCards', () => {
     expect(window.open).toHaveBeenCalledWith(
       expect.stringContaining('/vnc.html?wsUrl='),
       '_blank',
-      'noopener'
+      'noopener,noreferrer'
     )
     expect(window.open).toHaveBeenCalledWith(
       expect.stringContaining('sandboxId=sandbox-1'),
       '_blank',
-      'noopener'
+      'noopener,noreferrer'
     )
     expect(onRequestClose).toHaveBeenCalledTimes(1)
   })
@@ -301,7 +305,9 @@ describe('WorkspacePanelCards', () => {
     expect(screen.queryByTestId('workspace-terminal-card')).not.toBeInTheDocument()
     expect(screen.queryByTestId('workspace-ide-card')).not.toBeInTheDocument()
     expect(screen.queryByTestId('workspace-desktop-card')).not.toBeInTheDocument()
-    expect(screen.getByTestId('workspace-local-device-limited-tools')).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-local-device-limited-tools')).toHaveTextContent(
+      'workbench.local_device_limited_tools_title'
+    )
   })
 
   test('launches the native terminal when the executor id differs but the local path exists', async () => {
@@ -379,7 +385,11 @@ describe('WorkspacePanelCards', () => {
     await waitFor(() => expect(api.startCodeServerSession).toHaveBeenCalledWith(7))
     expect(fetchMock).not.toHaveBeenCalled()
     expect(api.startCodeServerSession).toHaveBeenCalledTimes(1)
-    expect(window.open).toHaveBeenCalledWith('http://localhost/ide', '_blank', 'noopener')
+    expect(window.open).toHaveBeenCalledWith(
+      'http://localhost/ide',
+      '_blank',
+      'noopener,noreferrer'
+    )
   })
 
   test('marks IDE as unavailable when the returned session URL is missing', async () => {
