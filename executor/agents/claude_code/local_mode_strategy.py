@@ -202,7 +202,6 @@ class LocalModeStrategy(ExecutionModeStrategy):
         process_custom_headers = os.environ.get("ANTHROPIC_CUSTOM_HEADERS", "")
         runtime_custom_headers = env.get("ANTHROPIC_CUSTOM_HEADERS", "")
         custom_headers = merge_anthropic_custom_headers(
-            config.ANTHROPIC_CUSTOM_HEADERS,
             process_custom_headers,
             runtime_custom_headers,
         )

@@ -427,8 +427,7 @@ class TestLocalModeStrategy:
         options = {"cwd": "/workspace"}
         config_dir = "/workspace/12345/.claude"
 
-        with patch("executor.config.config.ANTHROPIC_CUSTOM_HEADERS", ""):
-            result = strategy.configure_client_options(options, config_dir, {}, {})
+        result = strategy.configure_client_options(options, config_dir, {}, {})
 
         assert result["env"]["ANTHROPIC_CUSTOM_HEADERS"] == "wecode-project: 42"
 
@@ -440,39 +439,12 @@ class TestLocalModeStrategy:
         monkeypatch.setenv("HOME", str(tmp_path))
         options = {"cwd": "/workspace"}
         config_dir = "/workspace/12345/.claude"
-        custom_headers = "x-custom-user: test"
+        env_config = {"ANTHROPIC_CUSTOM_HEADERS": "x-custom-user: test"}
 
-        with patch("executor.config.config.ANTHROPIC_CUSTOM_HEADERS", custom_headers):
-            result = strategy.configure_client_options(options, config_dir, {}, {})
+        result = strategy.configure_client_options(options, config_dir, env_config, {})
 
         assert result["env"]["ANTHROPIC_CUSTOM_HEADERS"] == (
             "x-custom-user: test\nwecode-project: 42"
-        )
-
-    def test_configure_client_options_appends_project_to_startup_headers(
-        self, strategy, tmp_path, monkeypatch
-    ):
-        """Project tasks should append project ID to executor startup headers."""
-        strategy.use_global_capabilities(True, project_id=42)
-        monkeypatch.setenv("HOME", str(tmp_path))
-        options = {"cwd": "/workspace"}
-        config_dir = "/workspace/12345/.claude"
-        custom_headers = (
-            "wecode-source: wegent-local\n"
-            "wecode-action: wegent\n"
-            "wecode-executor: claudecode\n"
-            "wecode-user: yunpeng7"
-        )
-
-        with patch("executor.config.config.ANTHROPIC_CUSTOM_HEADERS", custom_headers):
-            result = strategy.configure_client_options(options, config_dir, {}, {})
-
-        assert result["env"]["ANTHROPIC_CUSTOM_HEADERS"] == (
-            "wecode-source: wegent-local\n"
-            "wecode-action: wegent\n"
-            "wecode-executor: claudecode\n"
-            "wecode-user: yunpeng7\n"
-            "wecode-project: 42"
         )
 
     def test_configure_client_options_appends_project_to_process_headers(
@@ -490,8 +462,7 @@ class TestLocalModeStrategy:
         options = {"cwd": "/workspace"}
         config_dir = "/workspace/12345/.claude"
 
-        with patch("executor.config.config.ANTHROPIC_CUSTOM_HEADERS", ""):
-            result = strategy.configure_client_options(options, config_dir, {}, {})
+        result = strategy.configure_client_options(options, config_dir, {}, {})
 
         assert result["env"]["ANTHROPIC_CUSTOM_HEADERS"] == (
             "wecode-source: wegent-local\n"
@@ -516,13 +487,12 @@ class TestLocalModeStrategy:
             }
         }
 
-        with patch("executor.config.config.ANTHROPIC_CUSTOM_HEADERS", ""):
-            result = strategy.configure_client_options(
-                options,
-                config_dir,
-                env_config,
-                {},
-            )
+        result = strategy.configure_client_options(
+            options,
+            config_dir,
+            env_config,
+            {},
+        )
 
         assert result["env"]["ANTHROPIC_CUSTOM_HEADERS"] == (
             "wecode-action: wecode-cli\n"
@@ -538,14 +508,16 @@ class TestLocalModeStrategy:
         }
         assert result["env"]["default_headers"] == result["env"]["DEFAULT_HEADERS"]
 
-    def test_configure_client_options_adds_anthropic_custom_headers(self, strategy):
+    def test_configure_client_options_adds_anthropic_custom_headers(
+        self, strategy, monkeypatch
+    ):
         """Test that ANTHROPIC_CUSTOM_HEADERS is added when configured."""
         options = {"cwd": "/workspace"}
         config_dir = "/workspace/12345/.claude"
         custom_headers = "x-custom-user: test\nx-custom-source: executor"
+        monkeypatch.setenv("ANTHROPIC_CUSTOM_HEADERS", custom_headers)
 
-        with patch("executor.config.config.ANTHROPIC_CUSTOM_HEADERS", custom_headers):
-            result = strategy.configure_client_options(options, config_dir, {}, {})
+        result = strategy.configure_client_options(options, config_dir, {}, {})
 
         assert result["env"]["ANTHROPIC_CUSTOM_HEADERS"] == custom_headers
 
@@ -554,8 +526,7 @@ class TestLocalModeStrategy:
         options = {"cwd": "/workspace"}
         config_dir = "/workspace/12345/.claude"
 
-        with patch("executor.config.config.ANTHROPIC_CUSTOM_HEADERS", ""):
-            result = strategy.configure_client_options(options, config_dir, {}, {})
+        result = strategy.configure_client_options(options, config_dir, {}, {})
 
         assert "ANTHROPIC_CUSTOM_HEADERS" not in result["env"]
 
