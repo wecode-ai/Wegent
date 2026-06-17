@@ -132,11 +132,6 @@ def _normalize_project_id(project_id: Any) -> str:
     value = str(project_id).strip()
     if not value:
         return ""
-    try:
-        if int(value) <= 0:
-            return ""
-    except ValueError:
-        return value
     return value
 
 

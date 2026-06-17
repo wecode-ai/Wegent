@@ -94,6 +94,28 @@ def test_build_codex_config_adds_project_header_when_requested():
     )
 
 
+def test_build_codex_config_treats_project_zero_as_project():
+    config = build_codex_config(
+        {
+            "model": "openai",
+            "model_id": "gpt-5.5",
+            "base_url": "http://127.0.0.1:3456/v1",
+            "api_key": "wecode-proxy-placeholder",
+            "api_format": "responses",
+        },
+        project_id=0,
+    )
+
+    assert (
+        'model_providers.wecode-openai.http_headers.wecode-project="0"'
+        in config.config_overrides
+    )
+    assert (
+        'model_providers.wecode-openai.http_headers.wecode-executor="codex"'
+        in config.config_overrides
+    )
+
+
 def test_build_codex_config_preserves_default_source_header_when_project_requested():
     config = build_codex_config(
         {

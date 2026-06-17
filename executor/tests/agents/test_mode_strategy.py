@@ -436,6 +436,24 @@ class TestLocalModeStrategy:
             "wecode-project: 42"
         )
 
+    def test_configure_client_options_treats_project_zero_as_project(
+        self, strategy, tmp_path, monkeypatch
+    ):
+        """Project ID 0 should still mark Claude API requests as project-backed."""
+        strategy.use_global_capabilities(True, project_id=0)
+        monkeypatch.setenv("HOME", str(tmp_path))
+        options = {"cwd": "/workspace"}
+        config_dir = "/workspace/12345/.claude"
+
+        result = strategy.configure_client_options(options, config_dir, {}, {})
+
+        assert result["env"]["ANTHROPIC_CUSTOM_HEADERS"] == (
+            "wecode-action: wegent\n"
+            "wecode-source: wegent-local\n"
+            "wecode-executor: claudecode\n"
+            "wecode-project: 0"
+        )
+
     def test_configure_client_options_preserves_custom_headers_for_project_tasks(
         self, strategy, tmp_path, monkeypatch
     ):

@@ -181,6 +181,6 @@ def _normalize_project_id(project_id: Any) -> str:
     if project_id is None:
         return ""
     value = str(project_id).strip()
-    if not value or value == "0":
+    if not value:
         return ""
     return value
