@@ -13,14 +13,16 @@ import type { DeviceInfo, ProjectWithTasks } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
 
 interface WorkspacePanelActionsProps {
-  currentProject: ProjectWithTasks | null
-  devices: DeviceInfo[]
+  mode?: 'all' | 'environment' | 'panel-toggles'
+  currentProject?: ProjectWithTasks | null
+  devices?: DeviceInfo[]
   environmentInfo: EnvironmentInfo
   onRefreshEnvironmentInfo: () => Promise<void>
   onCommitEnvironmentChanges: (message: string) => Promise<void>
   onListEnvironmentBranches: () => Promise<string[]>
   onCheckoutEnvironmentBranch: (branchName: string) => Promise<void>
   onCreateEnvironmentBranch: (branchName: string) => Promise<void>
+  onOpenEnvironmentChangesReview: () => void
   rightPanelOpen: boolean
   bottomPanelOpen: boolean
   onToggleRightPanel: () => void
@@ -28,14 +30,16 @@ interface WorkspacePanelActionsProps {
 }
 
 export function WorkspacePanelActions({
-  currentProject,
-  devices,
+  mode = 'all',
+  currentProject = null,
+  devices = [],
   environmentInfo,
   onRefreshEnvironmentInfo,
   onCommitEnvironmentChanges,
   onListEnvironmentBranches,
   onCheckoutEnvironmentBranch,
   onCreateEnvironmentBranch,
+  onOpenEnvironmentChangesReview,
   rightPanelOpen,
   bottomPanelOpen,
   onToggleRightPanel,
@@ -44,6 +48,8 @@ export function WorkspacePanelActions({
   const { t } = useTranslation('common')
   const [codeServerLoading, setCodeServerLoading] = useState(false)
   const [codeServerError, setCodeServerError] = useState<string | null>(null)
+  const showEnvironmentInfo = mode !== 'panel-toggles'
+  const showPanelToggles = mode !== 'environment'
   const canShowEnvironmentInfo =
     environmentInfo.loading !== false || Boolean(environmentInfo.branchName?.trim())
   const codeServerProjectDeviceId = getProjectDeviceId(currentProject)
@@ -89,7 +95,7 @@ export function WorkspacePanelActions({
 
   return (
     <>
-      {canShowEnvironmentInfo && (
+      {showEnvironmentInfo && canShowEnvironmentInfo && (
         <EnvironmentInfoPopover
           info={environmentInfo}
           onRefresh={onRefreshEnvironmentInfo}
@@ -97,9 +103,10 @@ export function WorkspacePanelActions({
           onListBranches={onListEnvironmentBranches}
           onCheckoutBranch={onCheckoutEnvironmentBranch}
           onCreateBranch={onCreateEnvironmentBranch}
+          onOpenChangesReview={onOpenEnvironmentChangesReview}
         />
       )}
-      {canOpenCodeServer && (
+      {showPanelToggles && canOpenCodeServer && (
         <button
           type="button"
           data-testid="open-code-server-titlebar-button"
@@ -123,32 +130,36 @@ export function WorkspacePanelActions({
       {codeServerError && (
         <CodeServerErrorDialog message={codeServerError} onClose={() => setCodeServerError(null)} />
       )}
-      <button
-        type="button"
-        data-testid="toggle-bottom-workspace-panel-button"
-        onClick={onToggleBottomPanel}
-        className={cn(
-          DESKTOP_TOP_BAR_BUTTON_CLASS,
-          bottomPanelOpen && 'bg-black/[0.10] text-[#374151]'
-        )}
-        aria-label={t('workbench.toggle_bottom_workspace_panel', '打开底部栏')}
-        title={bottomPanelTitle}
-      >
-        <PanelBottom />
-      </button>
-      <button
-        type="button"
-        data-testid="toggle-right-workspace-panel-button"
-        onClick={onToggleRightPanel}
-        className={cn(
-          DESKTOP_TOP_BAR_BUTTON_CLASS,
-          rightPanelOpen && 'bg-black/[0.10] text-[#374151]'
-        )}
-        aria-label={t('workbench.toggle_right_workspace_panel', '打开右侧栏')}
-        title={rightPanelTitle}
-      >
-        <PanelRight />
-      </button>
+      {showPanelToggles && (
+        <>
+          <button
+            type="button"
+            data-testid="toggle-bottom-workspace-panel-button"
+            onClick={onToggleBottomPanel}
+            className={cn(
+              DESKTOP_TOP_BAR_BUTTON_CLASS,
+              bottomPanelOpen && 'bg-black/[0.10] text-[#374151]'
+            )}
+            aria-label={t('workbench.toggle_bottom_workspace_panel', '打开底部栏')}
+            title={bottomPanelTitle}
+          >
+            <PanelBottom />
+          </button>
+          <button
+            type="button"
+            data-testid="toggle-right-workspace-panel-button"
+            onClick={onToggleRightPanel}
+            className={cn(
+              DESKTOP_TOP_BAR_BUTTON_CLASS,
+              rightPanelOpen && 'bg-black/[0.10] text-[#374151]'
+            )}
+            aria-label={t('workbench.toggle_right_workspace_panel', '打开右侧栏')}
+            title={rightPanelTitle}
+          >
+            <PanelRight />
+          </button>
+        </>
+      )}
     </>
   )
 }

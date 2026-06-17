@@ -21,6 +21,10 @@ interface ScrollableMessageAreaProps {
   onSwitchModelForFailedMessage?: (message: WorkbenchMessage) => void
   onLoadFileChangesDiff?: (subtaskId: number) => Promise<string>
   onRevertFileChanges?: (subtaskId: number) => Promise<TurnFileChangesSummary>
+  onOpenFileChangesReview?: (request: {
+    subtaskId: number
+    loadDiff: () => Promise<string>
+  }) => void
 }
 
 export function ScrollableMessageArea({
@@ -35,6 +39,7 @@ export function ScrollableMessageArea({
   onSwitchModelForFailedMessage,
   onLoadFileChangesDiff,
   onRevertFileChanges,
+  onOpenFileChangesReview,
 }: ScrollableMessageAreaProps) {
   const { t } = useTranslation('common')
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -222,6 +227,7 @@ export function ScrollableMessageArea({
               onSwitchModelForFailedMessage={onSwitchModelForFailedMessage}
               onLoadFileChangesDiff={onLoadFileChangesDiff}
               onRevertFileChanges={onRevertFileChanges}
+              onOpenFileChangesReview={onOpenFileChangesReview}
             />
           )}
         </div>

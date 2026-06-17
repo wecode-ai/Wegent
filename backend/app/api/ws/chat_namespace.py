@@ -765,6 +765,9 @@ class ChatNamespace(socketio.AsyncNamespace):
                     raise ValueError("Git worktree execution requires a project")
 
                 execution_workspace = {"source": "git_worktree"}
+                branch = (payload.execution.workspace.branch or "").strip()
+                if branch:
+                    execution_workspace["branch"] = branch
 
             # For pipeline confirm, get the previous stage's bot_id for session management
             previous_bot_id = None

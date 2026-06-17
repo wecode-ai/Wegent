@@ -207,6 +207,71 @@ describe('MessageList', () => {
     )
   })
 
+  test('opens an enlarged image from a user message attachment preview', async () => {
+    URL.createObjectURL = vi.fn(() => 'blob:message-image-preview')
+    URL.revokeObjectURL = vi.fn()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        blob: vi.fn().mockResolvedValue(new Blob(['image'], { type: 'image/png' })),
+      })
+    )
+
+    const attachment: Attachment = {
+      id: 43,
+      filename: 'diagram.png',
+      file_size: 1024,
+      mime_type: 'image/png',
+      status: 'ready',
+      file_extension: '.png',
+      created_at: '2026-05-25T15:08:00.000+08:00',
+    }
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: '1',
+            role: 'user',
+            content: '分析下这个图片',
+            status: 'done',
+            attachments: [attachment],
+            createdAt: '2026-05-25T15:08:00.000+08:00',
+          },
+        ]}
+      />
+    )
+
+    await userEvent.click(await screen.findByTestId('message-image-preview'))
+
+    const lightbox = screen.getByTestId('attachment-image-lightbox')
+    const lightboxImage = screen.getByTestId('attachment-image-lightbox-image')
+
+    expect(lightbox).toBeInTheDocument()
+    expect(lightbox.parentElement).toBe(document.body)
+    expect(lightbox).toHaveClass('h-dvh', 'w-dvw', 'p-0')
+    expect(lightbox).toHaveClass('overflow-hidden')
+    expect(lightboxImage).toHaveClass(
+      'max-h-[calc(100dvh-6rem)]',
+      'max-w-[calc(100dvw-2rem)]',
+      'object-contain'
+    )
+    expect(lightboxImage).not.toHaveClass('h-full', 'w-full')
+    expect(screen.getByTestId('attachment-image-lightbox-close')).toHaveClass('z-20')
+    expect(lightboxImage).toHaveAttribute('src', 'blob:message-image-preview')
+    expect(lightboxImage).toHaveAttribute('alt', 'diagram.png')
+    expect(lightboxImage).toHaveStyle({ transform: 'scale(1)' })
+
+    await userEvent.click(screen.getByTestId('attachment-image-zoom-in'))
+
+    expect(lightboxImage).toHaveStyle({ transform: 'scale(1.25)' })
+
+    await userEvent.click(screen.getByTestId('attachment-image-zoom-reset'))
+
+    expect(lightboxImage).toHaveStyle({ transform: 'scale(1)' })
+  })
+
   test('keeps image attachments compact and allows extras to wrap', async () => {
     URL.createObjectURL = vi.fn(() => 'blob:message-image-preview')
     URL.revokeObjectURL = vi.fn()

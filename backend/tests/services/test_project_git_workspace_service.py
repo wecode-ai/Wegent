@@ -401,6 +401,7 @@ async def test_prepare_git_worktree_for_task_creates_worktree(test_db, test_user
             project_id=project.id,
             client_origin="wework",
             task_id=1386,
+            base_branch="develop",
         )
 
     assert result == {
@@ -417,6 +418,7 @@ async def test_prepare_git_worktree_for_task_creates_worktree(test_db, test_user
     assert command_mock.await_args_list[-1].kwargs["args"] == [
         "/workspace/projects/d837/Wegent",
         "/workspace/worktrees/1386/Wegent",
+        "develop",
     ]
 
 

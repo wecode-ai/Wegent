@@ -127,4 +127,51 @@ describe('resolveWorkspaceTarget', () => {
       source: 'project',
     })
   })
+
+  test('uses the explicit project workspace before stale task file-change workspaces', async () => {
+    const project: ProjectWithTasks = {
+      id: 12,
+      name: 'Wegent',
+      tasks: [],
+      config: {
+        mode: 'workspace',
+        execution: { targetType: 'local', deviceId: 'device-b' },
+        workspace: { source: 'git', checkoutPath: 'projects/abc/Wegent' },
+      },
+    }
+    const messages: WorkbenchMessage[] = [
+      {
+        id: 'assistant-1',
+        taskId: 99,
+        role: 'assistant',
+        content: '',
+        status: 'done',
+        createdAt: '2026-06-12T00:00:00.000Z',
+        fileChanges: {
+          version: 1,
+          status: 'active',
+          artifact_id: 'turn-file-changes/99/100',
+          device_id: 'device-a',
+          workspace_path: '/Users/me/outside-workspace',
+          file_count: 0,
+          additions: 0,
+          deletions: 0,
+          files: [],
+        },
+      },
+    ]
+
+    await expect(
+      resolveWorkspaceTarget({
+        currentTask: { id: 99, title: 'Task', status: 'RUNNING', created_at: 'now' },
+        currentProject: project,
+        messages,
+        api: createApi(),
+      }),
+    ).resolves.toEqual({
+      deviceId: 'device-b',
+      path: '/workspace/projects/abc/Wegent',
+      source: 'project',
+    })
+  })
 })

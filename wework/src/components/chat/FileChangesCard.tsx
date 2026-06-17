@@ -6,7 +6,6 @@ import { Button } from '@/components/ui/button'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { TurnFileChangeItem, TurnFileChangesSummary } from '@/types/api'
-import { FileChangesReviewDialog } from './FileChangesReviewDialog'
 
 const DEFAULT_VISIBLE_FILE_COUNT = 3
 
@@ -16,6 +15,10 @@ interface FileChangesCardProps {
   deviceOnline: boolean
   onLoadDiff: (subtaskId: number) => Promise<string>
   onRevert: (subtaskId: number) => Promise<TurnFileChangesSummary>
+  onOpenReview?: (request: {
+    subtaskId: number
+    loadDiff: () => Promise<string>
+  }) => void
 }
 
 function getErrorMessage(error: unknown, fallback: string) {
@@ -30,7 +33,7 @@ function FileChangeRow({
 }: {
   file: TurnFileChangeItem
   disabled: boolean
-  onPreview: (file: TurnFileChangeItem) => void
+  onPreview: () => void
 }) {
   const { t } = useTranslation('chat')
   const displayPath =
@@ -41,7 +44,7 @@ function FileChangeRow({
       type="button"
       data-testid="file-change-row"
       disabled={disabled}
-      onClick={() => onPreview(file)}
+      onClick={onPreview}
       className="flex w-full min-w-0 items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-muted disabled:cursor-not-allowed disabled:hover:bg-transparent"
       aria-label={t('file_changes.preview_file_label', { path: displayPath })}
     >
@@ -64,35 +67,24 @@ export function FileChangesCard({
   deviceOnline,
   onLoadDiff,
   onRevert,
+  onOpenReview,
 }: FileChangesCardProps) {
   const { t } = useTranslation('chat')
   const [expanded, setExpanded] = useState(false)
-  const [reviewOpen, setReviewOpen] = useState(false)
-  const [reviewLoading, setReviewLoading] = useState(false)
-  const [diff, setDiff] = useState('')
-  const [reviewFile, setReviewFile] = useState<TurnFileChangeItem>()
-  const [reviewError, setReviewError] = useState<string>()
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [reverting, setReverting] = useState(false)
   const [actionError, setActionError] = useState<string>()
   const hiddenCount = Math.max(0, summary.files.length - DEFAULT_VISIBLE_FILE_COUNT)
   const visibleFiles = expanded ? summary.files : summary.files.slice(0, DEFAULT_VISIBLE_FILE_COUNT)
   const actionsDisabled = !deviceOnline || summary.status === 'artifact_missing'
+  const reviewDisabled = actionsDisabled || !onOpenReview
   const canRevert = summary.status === 'active'
 
-  const openReview = async (file?: TurnFileChangeItem) => {
-    setReviewFile(file)
-    setReviewOpen(true)
-    if (diff || reviewLoading) return
-    setReviewLoading(true)
-    setReviewError(undefined)
-    try {
-      setDiff(await onLoadDiff(subtaskId))
-    } catch (error) {
-      setReviewError(getErrorMessage(error, t('file_changes.review_failed')))
-    } finally {
-      setReviewLoading(false)
-    }
+  const openReview = () => {
+    onOpenReview?.({
+      subtaskId,
+      loadDiff: () => onLoadDiff(subtaskId),
+    })
   }
 
   const revert = async () => {
@@ -140,7 +132,7 @@ export function FileChangesCard({
             <button
               type="button"
               data-testid="review-file-changes-button"
-              disabled={actionsDisabled}
+              disabled={reviewDisabled}
               onClick={() => void openReview()}
               className="h-7 rounded border border-border px-2 text-xs font-medium text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
             >
@@ -185,8 +177,8 @@ export function FileChangesCard({
             <FileChangeRow
               key={`${file.old_path ?? ''}:${file.path}`}
               file={file}
-              disabled={actionsDisabled}
-              onPreview={file => void openReview(file)}
+              disabled={reviewDisabled}
+              onPreview={() => openReview()}
             />
           ))}
         </div>
@@ -209,21 +201,6 @@ export function FileChangesCard({
           </button>
         ) : null}
       </section>
-      <FileChangesReviewDialog
-        open={reviewOpen}
-        loading={reviewLoading}
-        diff={diff}
-        error={reviewError}
-        targetFile={
-          reviewFile
-            ? {
-                path: reviewFile.path,
-                oldPath: reviewFile.old_path ?? undefined,
-              }
-            : undefined
-        }
-        onClose={() => setReviewOpen(false)}
-      />
       <ConfirmRevertDialog
         open={confirmOpen}
         submitting={reverting}

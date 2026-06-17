@@ -43,6 +43,9 @@ function ProjectChatProbe() {
           .join(',')}
       </span>
       <span data-testid="project-execution-mode">{workbench.projectExecutionMode}</span>
+      <span data-testid="project-worktree-base-branch">
+        {workbench.projectWorktreeBaseBranch ?? 'no-branch'}
+      </span>
       <span data-testid="workbench-input">{workbench.state.input}</span>
       <span data-testid="workbench-error">{workbench.state.error ?? ''}</span>
       <button type="button" onClick={() => workbench.selectProject(7)}>
@@ -62,6 +65,9 @@ function ProjectChatProbe() {
       </button>
       <button type="button" onClick={() => workbench.setProjectExecutionMode('git_worktree')}>
         select worktree
+      </button>
+      <button type="button" onClick={() => workbench.setProjectWorktreeBaseBranch('develop')}>
+        select develop source branch
       </button>
       <button type="button" onClick={() => workbench.setInput('build it')}>
         set input
@@ -2218,6 +2224,9 @@ describe('WorkbenchProvider', () => {
 
     await userEvent.click(screen.getByText('select project'))
     await userEvent.click(screen.getByText('select worktree'))
+    await userEvent.click(screen.getByText('select develop source branch'))
+
+    expect(screen.getByTestId('project-worktree-base-branch')).toHaveTextContent('develop')
 
     expect(updateCurrentUser).toHaveBeenCalledWith({
       preferences: {
@@ -2236,6 +2245,7 @@ describe('WorkbenchProvider', () => {
           execution: {
             workspace: {
               source: 'git_worktree',
+              branch: 'develop',
             },
           },
         })

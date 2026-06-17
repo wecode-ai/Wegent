@@ -7,6 +7,7 @@ import {
   createAndCheckoutProjectBranch,
   listProjectBranches,
   loadProjectEnvironment,
+  loadProjectEnvironmentDiff,
 } from '@/api/environment'
 import { createGitApi } from '@/api/git'
 import { ApiError, createHttpClient } from '@/api/http'
@@ -219,6 +220,8 @@ export interface WorkbenchContextValue {
   upgradingDevices: Record<string, DeviceUpgradeState>
   projectExecutionMode: ProjectExecutionMode
   setProjectExecutionMode: (mode: ProjectExecutionMode) => void
+  projectWorktreeBaseBranch: string | null
+  setProjectWorktreeBaseBranch: (branchName: string | null) => void
   selectProject: (projectId: number | null) => void
   selectStandaloneDevice: (deviceId: string | null) => void
   startNewChat: () => void
@@ -251,6 +254,7 @@ export interface WorkbenchContextValue {
   listDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
   createDeviceDirectory: (deviceId: string, path: string) => Promise<void>
   loadEnvironmentInfo: (project: ProjectWithTasks | null) => Promise<EnvironmentInfo>
+  loadEnvironmentDiff: (project: ProjectWithTasks | null) => Promise<string>
   commitEnvironmentChanges: (project: ProjectWithTasks | null, message: string) => Promise<void>
   listEnvironmentBranches: (project: ProjectWithTasks | null) => Promise<string[]>
   checkoutEnvironmentBranch: (project: ProjectWithTasks | null, branchName: string) => Promise<void>
@@ -673,6 +677,9 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
   const [routePath, setRoutePath] = useState(getCurrentAppPath)
   const [projectExecutionMode, setProjectExecutionMode] =
     useState<ProjectExecutionMode>('current_workspace')
+  const [projectWorktreeBaseBranch, setProjectWorktreeBaseBranchState] = useState<string | null>(
+    null
+  )
   const guidanceSendInFlightRef = useRef(false)
   const upgradeClearTimersRef = useRef<Record<string, ReturnType<typeof window.setTimeout>>>({})
   const localSkillsCacheRef = useRef<
@@ -749,6 +756,18 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     state.currentProject,
     state.currentTask,
   ])
+  const setProjectWorktreeBaseBranch = useCallback((branchName: string | null) => {
+    const normalizedBranch = branchName?.trim() || null
+    setProjectWorktreeBaseBranchState(normalizedBranch)
+  }, [])
+  useEffect(() => {
+    setProjectWorktreeBaseBranchState(null)
+  }, [state.currentProject?.id, state.currentTask?.id])
+  useEffect(() => {
+    if (projectExecutionMode !== 'git_worktree') {
+      setProjectWorktreeBaseBranchState(null)
+    }
+  }, [projectExecutionMode])
   const modelSelectionConfig = useMemo(
     () => getTaskModelSelection(state.currentTask) ?? getNewChatModelSelection(currentUser) ?? null,
     [currentUser, state.currentTask]
@@ -1590,6 +1609,12 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     [resolvedServices]
   )
 
+  const loadEnvironmentDiff = useCallback(
+    (project: ProjectWithTasks | null) =>
+      loadProjectEnvironmentDiff(resolvedServices.deviceApi, project),
+    [resolvedServices]
+  )
+
   const commitEnvironmentChanges = useCallback(
     (project: ProjectWithTasks | null, message: string) =>
       commitProjectChanges(resolvedServices.deviceApi, project, message),
@@ -1659,9 +1684,11 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         projectExecutionMode === 'git_worktree' &&
         supportsGitWorktreeExecution(activeProject)
       ) {
+        const branch = projectWorktreeBaseBranch?.trim()
         payload.execution = {
           workspace: {
             source: 'git_worktree',
+            ...(branch ? { branch } : {}),
           },
         }
       }
@@ -1694,6 +1721,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
       modelSelection.selectedModel,
       modelSelection.selectedModelOptions,
       skillSelection.selectedSkills,
+      projectWorktreeBaseBranch,
       projectExecutionMode,
       state.currentProject,
       state.currentTask,
@@ -2216,6 +2244,8 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     upgradingDevices,
     projectExecutionMode,
     setProjectExecutionMode: selectProjectExecutionMode,
+    projectWorktreeBaseBranch,
+    setProjectWorktreeBaseBranch,
     projectChat: {
       models: modelSelection.models,
       skills: skillSelection.skills,
@@ -2270,6 +2300,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     listDeviceDirectories,
     createDeviceDirectory,
     loadEnvironmentInfo,
+    loadEnvironmentDiff,
     commitEnvironmentChanges,
     listEnvironmentBranches,
     checkoutEnvironmentBranch,

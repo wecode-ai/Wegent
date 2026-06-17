@@ -6,6 +6,10 @@ import type { TurnFileChangesSummary } from '@/types/api'
 import { FileChangesCard } from './FileChangesCard'
 import { parseUnifiedDiff } from './parseUnifiedDiff'
 
+type OpenReviewRequest = Parameters<
+  NonNullable<Parameters<typeof FileChangesCard>[0]['onOpenReview']>
+>[0]
+
 const summary: TurnFileChangesSummary = {
   version: 1,
   status: 'active',
@@ -30,6 +34,7 @@ function renderCard(
     deviceOnline: boolean
     onLoadDiff: (subtaskId: number) => Promise<string>
     onRevert: (subtaskId: number) => Promise<TurnFileChangesSummary>
+    onOpenReview: (request: OpenReviewRequest) => void
   }> = {}
 ) {
   const onLoadDiff =
@@ -41,6 +46,7 @@ function renderCard(
       )
   const onRevert =
     overrides.onRevert ?? vi.fn().mockResolvedValue({ ...summary, status: 'reverted' })
+  const onOpenReview = overrides.onOpenReview ?? vi.fn()
 
   render(
     <FileChangesCard
@@ -49,9 +55,10 @@ function renderCard(
       deviceOnline={overrides.deviceOnline ?? true}
       onLoadDiff={onLoadDiff}
       onRevert={onRevert}
+      onOpenReview={onOpenReview}
     />
   )
-  return { onLoadDiff, onRevert }
+  return { onLoadDiff, onRevert, onOpenReview }
 }
 
 describe('FileChangesCard', () => {
@@ -68,18 +75,24 @@ describe('FileChangesCard', () => {
     expect(screen.getAllByTestId('file-change-row')).toHaveLength(6)
   })
 
-  test('loads diff only when review opens', async () => {
-    const { onLoadDiff } = renderCard()
+  test('requests the right review panel without loading diff immediately', async () => {
+    const { onLoadDiff, onOpenReview } = renderCard()
 
     expect(onLoadDiff).not.toHaveBeenCalled()
     await userEvent.click(screen.getByTestId('review-file-changes-button'))
 
+    expect(onOpenReview).toHaveBeenCalledTimes(1)
+    const request = vi.mocked(onOpenReview).mock.calls[0][0]
+    expect(request.subtaskId).toBe(21)
+    expect(request.loadDiff).toEqual(expect.any(Function))
+    expect(onLoadDiff).not.toHaveBeenCalled()
+
+    await request.loadDiff()
     await waitFor(() => expect(onLoadDiff).toHaveBeenCalledWith(21))
-    expect(await screen.findAllByText('src/file-1.ts')).toHaveLength(2)
   })
 
-  test('opens a single file diff when a file row is clicked', async () => {
-    const { onLoadDiff } = renderCard({
+  test('opens the shared review panel when a file row is clicked', async () => {
+    const { onLoadDiff, onOpenReview } = renderCard({
       onLoadDiff: vi
         .fn()
         .mockResolvedValue(
@@ -102,11 +115,13 @@ describe('FileChangesCard', () => {
 
     await userEvent.click(screen.getAllByTestId('file-change-row')[1])
 
+    expect(onOpenReview).toHaveBeenCalledTimes(1)
+    const request = vi.mocked(onOpenReview).mock.calls[0][0]
+    expect(request.subtaskId).toBe(21)
+    expect(onLoadDiff).not.toHaveBeenCalled()
+
+    await request.loadDiff()
     await waitFor(() => expect(onLoadDiff).toHaveBeenCalledWith(21))
-    expect(await screen.findByText('文件变更：src/file-2.ts')).toBeInTheDocument()
-    expect(screen.getAllByText('src/file-2.ts')).toHaveLength(2)
-    expect(screen.queryByText('old one')).not.toBeInTheDocument()
-    expect(screen.getByText('-old two')).toBeInTheDocument()
   })
 
   test('disables review and revert while the owning device is offline', () => {

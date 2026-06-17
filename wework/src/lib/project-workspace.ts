@@ -6,7 +6,11 @@ export interface ProjectWorkspaceRootApi {
 
 export function configuredWorkspacePath(project: ProjectWithTasks): string | undefined {
   const config = project.config
-  return config?.workspace?.localPath || config?.workspace?.checkoutPath || config?.path
+  const workspace = config?.workspace
+  if (workspace?.source === 'git') {
+    return workspace.checkoutPath || config?.path
+  }
+  return workspace?.localPath || workspace?.checkoutPath || config?.path
 }
 
 export function executionDeviceId(project: ProjectWithTasks): string | undefined {
