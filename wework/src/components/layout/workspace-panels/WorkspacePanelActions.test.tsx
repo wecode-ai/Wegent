@@ -21,7 +21,7 @@ const baseProps = {
 }
 
 describe('WorkspacePanelActions', () => {
-  test('shows environment info while git state is unknown and hides it after non-git detection', () => {
+  test('shows environment info while loading and keeps it when environment context is available', () => {
     const { rerender } = render(<WorkspacePanelActions {...baseProps} />)
 
     expect(screen.getByTestId('environment-info-button')).toBeInTheDocument()
@@ -35,7 +35,7 @@ describe('WorkspacePanelActions', () => {
           ...baseProps.environmentInfo,
           loading: false,
         }}
-      />,
+      />
     )
 
     expect(screen.queryByTestId('environment-info-button')).not.toBeInTheDocument()
@@ -46,9 +46,23 @@ describe('WorkspacePanelActions', () => {
         environmentInfo={{
           ...baseProps.environmentInfo,
           loading: false,
+          deviceId: 'device-1',
+          workspacePath: '/workspace/project',
+        }}
+      />
+    )
+
+    expect(screen.getByTestId('environment-info-button')).toBeInTheDocument()
+
+    rerender(
+      <WorkspacePanelActions
+        {...baseProps}
+        environmentInfo={{
+          ...baseProps.environmentInfo,
+          loading: false,
           branchName: 'main',
         }}
-      />,
+      />
     )
 
     expect(screen.getByTestId('environment-info-button')).toBeInTheDocument()

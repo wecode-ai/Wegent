@@ -3136,10 +3136,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(await screen.findByTestId('workspace-file-preview')).toHaveTextContent(
       'opened from tool block'
     )
-    expect(screen.getByTestId('right-workspace-file-tab')).toHaveAttribute(
-      'aria-selected',
-      'true'
-    )
+    expect(screen.getByTestId('right-workspace-file-tab')).toHaveAttribute('aria-selected', 'true')
     expect(readWorkspaceTextFile).toHaveBeenCalledWith(
       'workspace-cloud-device',
       '/workspace/project/README.md'
@@ -3954,7 +3951,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('environment-branch-menu')).not.toBeInTheDocument()
   })
 
-  test('hides branch switching in the environment popover without a git branch', async () => {
+  test('keeps environment info visible without a git branch and hides git actions', async () => {
     render(
       <DesktopWorkbenchLayout
         {...baseProps}
@@ -3963,6 +3960,7 @@ describe('DesktopWorkbenchLayout', () => {
           deletions: '-0',
           executionTarget: 'local',
           deviceId: 'device-1',
+          workspacePath: '/workspace/plain-folder',
           branchName: '',
         })}
         onListEnvironmentBranches={vi.fn().mockResolvedValue([])}
@@ -3972,9 +3970,12 @@ describe('DesktopWorkbenchLayout', () => {
 
     await userEvent.click(screen.getByTestId('environment-info-button'))
 
-    await waitFor(() =>
-      expect(screen.queryByTestId('environment-branch-row')).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.getByTestId('environment-info-popover')).toBeInTheDocument())
+    expect(screen.getByTestId('environment-workspace-path')).toHaveTextContent(
+      '/workspace/plain-folder'
     )
+    expect(screen.queryByTestId('environment-git-section')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('environment-branch-row')).not.toBeInTheDocument()
   })
 
   test('closes the branch menu when Escape is pressed', async () => {

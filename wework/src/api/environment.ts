@@ -275,15 +275,26 @@ async function loadProjectEnvironmentUncached(
     return baseInfo
   }
 
+  let path: string | undefined
   try {
-    const path = await workspacePath(api, deviceId, project)
-    if (!path) {
-      return baseInfo
-    }
-    const environmentWorkspaceInfo = {
+    path = await workspacePath(api, deviceId, project)
+  } catch (error) {
+    return {
       ...baseInfo,
-      workspacePath: path,
+      error: error instanceof Error ? error.message : 'Failed to load environment info',
     }
+  }
+
+  if (!path) {
+    return baseInfo
+  }
+
+  const environmentWorkspaceInfo = {
+    ...baseInfo,
+    workspacePath: path,
+  }
+
+  try {
     const [branchName, shortStat, porcelain] = await Promise.all([
       runGitCommand(api, deviceId, 'git_branch', path),
       loadBranchDiffShortStat(api, deviceId, path),
@@ -318,7 +329,7 @@ async function loadProjectEnvironmentUncached(
     }
   } catch (error) {
     return {
-      ...baseInfo,
+      ...environmentWorkspaceInfo,
       error: error instanceof Error ? error.message : 'Failed to load environment info',
     }
   }

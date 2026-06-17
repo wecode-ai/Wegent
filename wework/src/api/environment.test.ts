@@ -224,6 +224,7 @@ describe('loadProjectEnvironment', () => {
       deletions: '-0',
       executionTarget: 'local',
       deviceId: 'device-123',
+      workspacePath: '/workspace/Wegent',
       error: 'Expected text stdout from device command',
     })
   })
