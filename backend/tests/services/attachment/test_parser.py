@@ -452,6 +452,24 @@ def _make_image_bytes(fmt: str, mode: str = "RGB") -> bytes:
     return buf.getvalue()
 
 
+def _make_image_bytes_sized(width: int, height: int, fmt: str = "JPEG") -> bytes:
+    """Create valid image bytes with the given pixel dimensions."""
+    from PIL import Image
+
+    img = Image.new("RGB", (width, height), color="blue")
+    buf = io.BytesIO()
+    img.save(buf, format=fmt)
+    return buf.getvalue()
+
+
+def _decoded_dimensions(image_base64: str) -> tuple[int, int]:
+    """Return (width, height) from a base64-encoded image."""
+    from PIL import Image
+
+    img = Image.open(io.BytesIO(base64.b64decode(image_base64)))
+    return img.size
+
+
 class TestImageParsing:
     """Test image format normalisation in DocumentParser."""
 
@@ -510,3 +528,85 @@ class TestImageParsing:
         assert "application/json" in TEXT_MIME_TYPES
         assert "application/xml" in TEXT_MIME_TYPES
         assert "text/x-python" in TEXT_MIME_TYPES
+
+    # ------------------------------------------------------------------
+    # Dimension enforcement (MAX_IMAGE_LONG_EDGE)
+    # ------------------------------------------------------------------
+
+    def test_jpeg_within_limit_stored_as_original_bytes(self):
+        """JPEG with all dimensions within limit is stored without re-encoding."""
+        from app.services.attachment.parser import MAX_IMAGE_LONG_EDGE
+
+        jpeg_bytes = _make_image_bytes_sized(MAX_IMAGE_LONG_EDGE, 100)
+        result = self.parser.parse(jpeg_bytes, ".jpg")
+
+        assert result.image_mime_type == "image/jpeg"
+        # Original bytes round-trip: decoded base64 equals input.
+        assert base64.b64decode(result.image_base64) == jpeg_bytes
+
+    def test_tall_jpeg_is_resized(self):
+        """Tall JPEG (height > 1568px) is resized so the long edge fits within the limit."""
+        from app.services.attachment.parser import MAX_IMAGE_LONG_EDGE
+
+        jpeg_bytes = _make_image_bytes_sized(100, 13768)
+        result = self.parser.parse(jpeg_bytes, ".jpg")
+
+        assert result.image_mime_type == "image/jpeg"
+        w, h = _decoded_dimensions(result.image_base64)
+        assert max(w, h) <= MAX_IMAGE_LONG_EDGE
+
+    def test_wide_jpeg_is_resized(self):
+        """Wide JPEG (width > 1568px) is resized so the long edge fits within the limit."""
+        from app.services.attachment.parser import MAX_IMAGE_LONG_EDGE
+
+        jpeg_bytes = _make_image_bytes_sized(9000, 100)
+        result = self.parser.parse(jpeg_bytes, ".jpg")
+
+        assert result.image_mime_type == "image/jpeg"
+        w, h = _decoded_dimensions(result.image_base64)
+        assert max(w, h) <= MAX_IMAGE_LONG_EDGE
+
+    def test_oversized_jpeg_aspect_ratio_preserved(self):
+        """Resized JPEG maintains aspect ratio (within 1px rounding tolerance)."""
+        from app.services.attachment.parser import MAX_IMAGE_LONG_EDGE
+
+        orig_w, orig_h = 100, 9000  # 1:90 ratio
+        jpeg_bytes = _make_image_bytes_sized(orig_w, orig_h)
+        result = self.parser.parse(jpeg_bytes, ".jpg")
+
+        out_w, out_h = _decoded_dimensions(result.image_base64)
+        expected_w = max(1, int(orig_w * MAX_IMAGE_LONG_EDGE / max(orig_w, orig_h)))
+        assert abs(out_w - expected_w) <= 1
+
+    def test_oversized_jpeg_metadata_reflects_stored_dimensions(self):
+        """Metadata text reports the post-resize dimensions, not the original ones."""
+        jpeg_bytes = _make_image_bytes_sized(100, 13768)
+        result = self.parser.parse(jpeg_bytes, ".jpg")
+
+        # The metadata text should NOT say "13768"
+        assert "13768" not in result.text
+        # The stored dimensions should appear instead
+        w, h = _decoded_dimensions(result.image_base64)
+        assert f"{w} x {h}" in result.text
+
+    def test_oversized_png_is_resized_and_reencoded_as_jpeg(self):
+        """PNG with dimension > 1568px is resized and re-encoded as JPEG."""
+        from app.services.attachment.parser import MAX_IMAGE_LONG_EDGE
+
+        png_bytes = _make_image_bytes_sized(100, 9000, fmt="PNG")
+        result = self.parser.parse(png_bytes, ".png")
+
+        assert result.image_mime_type == "image/jpeg"
+        w, h = _decoded_dimensions(result.image_base64)
+        assert max(w, h) <= MAX_IMAGE_LONG_EDGE
+
+    def test_oversized_webp_is_resized(self):
+        """WebP image with dimension > 1568px is resized."""
+        from app.services.attachment.parser import MAX_IMAGE_LONG_EDGE
+
+        webp_bytes = _make_image_bytes_sized(9000, 100, fmt="WEBP")
+        result = self.parser.parse(webp_bytes, ".webp")
+
+        assert result.image_mime_type == "image/jpeg"
+        w, h = _decoded_dimensions(result.image_base64)
+        assert max(w, h) <= MAX_IMAGE_LONG_EDGE
