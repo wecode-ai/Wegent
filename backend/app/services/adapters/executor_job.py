@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List, Tuple
 
 from fastapi import HTTPException
+from sqlalchemy import inspect as sqlalchemy_inspect
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.stores.tasks as task_stores
@@ -113,6 +114,12 @@ class JobService(BaseService[Kind, None, None]):
             key = (subtask.executor_namespace or "", subtask.executor_name)
             executor_groups.setdefault(key, []).append(subtask)
 
+        for task in task_map.values():
+            self._detach_loaded_instance(db, task)
+        for subtask in subtasks:
+            self._detach_loaded_instance(db, subtask)
+        await self._release_cleanup_read_transaction(db)
+
         for (namespace, name), group_subtasks in executor_groups.items():
             task_id = group_subtasks[0].task_id
             subtask_ids = [subtask.id for subtask in group_subtasks]
@@ -146,12 +153,16 @@ class JobService(BaseService[Kind, None, None]):
                 continue
 
             try:
-                await self._archive_code_workspace_before_cleanup(
+                archive_task = self._get_code_archive_task(
                     task_map=task_map,
                     subtasks=group_subtasks,
-                    executor_name=name,
-                    executor_namespace=namespace,
                 )
+                if archive_task:
+                    await self._archive_workspace(
+                        task=archive_task,
+                        executor_name=name,
+                        executor_namespace=namespace,
+                    )
                 await executor_kinds_service.delete_executor_task_async(name, namespace)
                 await self._mark_executor_deleted(subtask_ids)
                 result["deleted"].append(
@@ -438,27 +449,28 @@ class JobService(BaseService[Kind, None, None]):
             return None
         return max(datetimes)
 
-    async def _archive_code_workspace_before_cleanup(
+    def _get_code_archive_task(
         self,
         *,
         task_map: Dict[int, TaskResource],
         subtasks: List[Subtask],
-        executor_name: str,
-        executor_namespace: str,
-    ) -> None:
-        """Archive workspaces for stale code task executors before deletion."""
+    ) -> TaskResource | None:
+        """Return the code task that needs archive before releasing the session."""
         for subtask in subtasks:
             task = task_map.get(subtask.task_id)
             if not task:
                 continue
             task_crd = Task.model_validate(task.json)
             if self._get_task_type(task_crd) == "code":
-                await self._archive_workspace(
-                    task=task,
-                    executor_name=executor_name,
-                    executor_namespace=executor_namespace,
-                )
-                return
+                return task
+        return None
+
+    def _detach_loaded_instance(self, db: AsyncSession, instance: object) -> None:
+        """Detach an already-loaded ORM instance before rollback expires it."""
+        state = sqlalchemy_inspect(instance, raiseerr=False)
+        if state is None or not state.persistent:
+            return
+        db.sync_session.expunge(instance)
 
     async def _scan_candidate_subtasks_batch(
         self,
@@ -687,6 +699,9 @@ class JobService(BaseService[Kind, None, None]):
         task_ids = {subtask.task_id for subtask in valid_candidates}
         deleted_count = 0
 
+        for task in task_map.values():
+            self._detach_loaded_instance(db, task)
+
         for task_id in task_ids:
             task = task_map.get(task_id)
             if not task:
@@ -812,6 +827,9 @@ class JobService(BaseService[Kind, None, None]):
 
         task_crd = Task.model_validate(task.json)
         task_type = self._get_task_type(task_crd)
+        self._detach_loaded_instance(db, task)
+        await self._release_cleanup_read_transaction(db)
+
         deleted_executors: List[Dict[str, str]] = []
 
         for (namespace, name), subtask in executor_subtasks.items():
@@ -863,6 +881,10 @@ class JobService(BaseService[Kind, None, None]):
         return self._build_cleanup_result(
             task_id, "executor_deleted", deleted_executors
         )
+
+    async def _release_cleanup_read_transaction(self, db: AsyncSession) -> None:
+        """End the outer read transaction before slow external cleanup calls."""
+        await db.rollback()
 
     def _preserve_executor_enabled(self, task_crd: Task) -> bool:
         """Check whether the task is marked to preserve its executor."""
