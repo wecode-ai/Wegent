@@ -54,6 +54,7 @@ export function BottomWorkspacePanel({
             <WorkspacePanelCards
               currentProject={currentProject}
               devices={devices}
+              defaultOpenTool="terminal"
               onRequestClose={onRequestClose}
             />
           </div>
