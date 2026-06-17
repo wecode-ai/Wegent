@@ -1101,6 +1101,61 @@ describe('TaskStateMachine', () => {
     expect(machine.getState().runtime.activeStreamSubtaskId).toBe(77)
   })
 
+  it('checks runtime before requesting transport connection while disconnected', async () => {
+    const pullRuntime = vi.fn().mockResolvedValue({
+      task_id: 42,
+      task_status: 'RUNNING',
+      status_updated_at: '2026-06-01T10:00:00',
+      active_stream: {
+        subtask_id: 77,
+        cursor: 12,
+        last_activity_at: '2026-06-01T10:00:01',
+      },
+    })
+    const actions = createRuntimeActions({
+      isConnected: vi.fn(() => false),
+      ensureConnected: vi.fn(),
+      pullRuntime,
+    })
+    const machine = new TaskStateMachine(42, actions)
+
+    await machine.requestRuntimeCheck('page-visible')
+
+    expect(actions.pullRuntime).toHaveBeenCalledWith(42)
+    expect(actions.ensureConnected).toHaveBeenCalledTimes(1)
+    expect(pullRuntime.mock.invocationCallOrder[0]).toBeLessThan(
+      (actions.ensureConnected as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]
+    )
+    expect(actions.joinTask).not.toHaveBeenCalled()
+
+    const state = machine.getState()
+    expect(state.phase).toBe('waiting_socket')
+    expect(state.runtime.recoveryReason).toBe('page-visible')
+    expect(state.runtime.recoveryError).toBe('socket-disconnected')
+  })
+
+  it('does not request transport connection when disconnected runtime check requires no socket recovery', async () => {
+    const actions = createRuntimeActions({
+      isConnected: vi.fn(() => false),
+      ensureConnected: vi.fn(),
+      pullRuntime: vi.fn().mockResolvedValue({
+        task_id: 42,
+        task_status: 'COMPLETED',
+        status_updated_at: undefined,
+        active_stream: null,
+      }),
+    })
+    const machine = new TaskStateMachine(42, actions)
+
+    await machine.requestRuntimeCheck('page-visible')
+
+    expect(actions.pullRuntime).toHaveBeenCalledWith(42)
+    expect(actions.ensureConnected).not.toHaveBeenCalled()
+    expect(actions.joinTask).not.toHaveBeenCalled()
+    expect(machine.getState().phase).toBe('ready')
+    expect(machine.getState().runtime.taskStatus).toBe('COMPLETED')
+  })
+
   it('checkHealth syncs messages when the task updatedAt has not been message-synced', async () => {
     const consoleInfoSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
     const actions = createRuntimeActions({

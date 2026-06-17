@@ -32,6 +32,7 @@ const mockSocketContext = {
   registerChatHandlers: jest.fn(() => jest.fn()),
   registerSkillHandlers: jest.fn(() => jest.fn()),
   sendSkillResponse: jest.fn(),
+  ensureConnected: jest.fn(),
   onReconnect: jest.fn((callback: () => void) => {
     mockReconnectHandler = callback
     return jest.fn()
@@ -154,6 +155,7 @@ describe('TaskSessionContext runtime state machine sync', () => {
     mockVisibleHandler = null
     mockReconnectHandler = null
     mockIsConnected = true
+    mockSocketContext.ensureConnected.mockClear()
     mockJoinTask.mockResolvedValue({ subtasks: [] })
 
     mockedTaskApis.getGroupTasksLite.mockResolvedValue(taskListResponse([]))
@@ -367,6 +369,74 @@ describe('TaskSessionContext runtime state machine sync', () => {
       expect(mockedTaskApis.getTaskRuntimeCheck).toHaveBeenCalledWith(42)
     })
     expect(mockedTaskApis.getPersonalTasksLite).toHaveBeenCalledWith({ page: 1, limit: 50 })
+  })
+
+  it('checks runtime before waking the socket when the page becomes visible while disconnected', async () => {
+    mockedTaskApis.getTaskRuntimeCheck.mockResolvedValue({
+      task_id: 42,
+      task_status: 'RUNNING',
+      status_updated_at: '2026-05-31T10:00:00.000Z',
+      active_stream: {
+        subtask_id: 77,
+        cursor: 12,
+        last_activity_at: '2026-05-31T10:00:01.000Z',
+      },
+    })
+    const renderTree = () => (
+      <TaskSessionProvider>
+        <ContextProbe />
+      </TaskSessionProvider>
+    )
+    const { rerender } = render(renderTree())
+
+    await waitFor(() => {
+      expect(contextProbe.current).not.toBeNull()
+    })
+
+    act(() => {
+      contextProbe.current?.selectTask(createTask())
+    })
+
+    await waitFor(() => {
+      expect(mockedTaskApis.getTaskDetail).toHaveBeenCalledWith(42)
+    })
+
+    mockedTaskApis.getTaskRuntimeCheck.mockClear()
+    mockSocketContext.ensureConnected.mockClear()
+    mockJoinTask.mockClear()
+
+    act(() => {
+      mockIsConnected = false
+      rerender(renderTree())
+    })
+
+    act(() => {
+      mockVisibleHandler?.(3000)
+    })
+
+    await waitFor(() => {
+      expect(mockedTaskApis.getTaskRuntimeCheck).toHaveBeenCalledWith(42)
+    })
+    expect(mockSocketContext.ensureConnected).toHaveBeenCalledTimes(1)
+    expect(mockedTaskApis.getTaskRuntimeCheck.mock.invocationCallOrder[0]).toBeLessThan(
+      mockSocketContext.ensureConnected.mock.invocationCallOrder[0]
+    )
+    expect(mockJoinTask).not.toHaveBeenCalled()
+
+    act(() => {
+      mockIsConnected = true
+      rerender(renderTree())
+    })
+
+    await waitFor(() => {
+      expect(mockedTaskApis.getTaskRuntimeCheck).toHaveBeenCalledTimes(2)
+    })
+    expect(mockJoinTask).toHaveBeenCalledWith(42, {
+      forceRefresh: true,
+      afterMessageId: undefined,
+      resumeFromCursor: 0,
+      activeStreamSubtaskId: 77,
+    })
   })
 
   it('refreshes server snapshots even if runtime health check is still pending', async () => {
