@@ -265,6 +265,36 @@ async def test_tracker_rejects_concurrent_turns_in_same_workspace(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_tracker_allows_concurrent_turns_in_distinct_git_worktrees(tmp_path):
+    repo = init_repo(tmp_path)
+    worktrees_root = tmp_path / "worktrees"
+    worktrees_root.mkdir()
+    first_workspace = worktrees_root / "101" / "repo"
+    second_workspace = worktrees_root / "102" / "repo"
+    run_git(repo, "worktree", "add", "-q", "-b", "turn-101", str(first_workspace))
+    run_git(repo, "worktree", "add", "-q", "-b", "turn-102", str(second_workspace))
+    first = TurnFileChangeTracker(
+        workspace=first_workspace,
+        task_id=1,
+        subtask_id=2,
+        executor_home=tmp_path / "home",
+    )
+    second = TurnFileChangeTracker(
+        workspace=second_workspace,
+        task_id=1,
+        subtask_id=3,
+        executor_home=tmp_path / "home",
+    )
+
+    await first.start()
+    try:
+        assert await second.start() is True
+    finally:
+        await second.abort()
+        await first.abort()
+
+
+@pytest.mark.asyncio
 async def test_tracker_removes_stale_same_host_lock(tmp_path):
     repo = init_repo(tmp_path)
     lock_path = repo / ".git" / "wegent-turn-file-changes.lock"
