@@ -27,7 +27,7 @@ def _get_team_from_task_ref(db: Session, team_ref: Any):
     from app.models.kind import Kind
 
     team_owner_id = getattr(team_ref, "user_id", None)
-    if not team_owner_id:
+    if team_owner_id is None:
         return None
 
     return (
