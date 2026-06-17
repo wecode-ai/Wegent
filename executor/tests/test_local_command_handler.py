@@ -7,6 +7,35 @@
 import pytest
 
 
+def test_build_env_removes_pyinstaller_runtime_variables(monkeypatch):
+    """Command subprocess env should not inherit PyInstaller runtime variables."""
+    from executor.modes.local.command_handler import CommandHandler
+
+    monkeypatch.setenv("_PYI_ARCHIVE_FILE", "/tmp/wegent-executor")
+    monkeypatch.setenv("_PYI_PARENT_PROCESS_LEVEL", "0")
+    monkeypatch.setenv("_PYI_APPLICATION_HOME_DIR", "/tmp/_MEI123")
+    monkeypatch.setenv("_MEIPASS", "/tmp/_MEI456")
+    monkeypatch.setenv("_MEI_CUSTOM", "/tmp/_MEI789")
+    monkeypatch.setenv("WECODE_HOME", "/tmp/wecode")
+
+    handler = CommandHandler()
+
+    env = handler._build_env(
+        {
+            "EXTRA_ENV": "ok",
+            "NULL_ENV": None,
+            "_PYI_EXTRA": "bad",
+            "_MEI_EXTRA": "bad",
+        }
+    )
+
+    assert "WECODE_HOME" in env
+    assert env["EXTRA_ENV"] == "ok"
+    assert env["NULL_ENV"] == ""
+    assert all(not key.startswith(("_PYI_", "_MEI_")) for key in env)
+    assert "_MEIPASS" not in env
+
+
 @pytest.mark.asyncio
 async def test_execute_command_uses_argv_and_cwd(tmp_path):
     """Command handler should execute argv args in the requested working directory."""

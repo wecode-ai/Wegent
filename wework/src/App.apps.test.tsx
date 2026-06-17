@@ -5,9 +5,7 @@ import './i18n'
 import App from './App'
 
 vi.mock('@/features/auth/AuthProvider', () => ({
-  AuthProvider: ({ children }: { children: React.ReactNode }) => (
-    <>{children}</>
-  ),
+  AuthProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }))
 
 vi.mock('@/features/auth/useAuth', () => ({
@@ -22,9 +20,7 @@ vi.mock('@/features/auth/useAuth', () => ({
 }))
 
 vi.mock('@/features/workbench/WorkbenchProvider', () => ({
-  WorkbenchProvider: ({ children }: { children: React.ReactNode }) => (
-    <>{children}</>
-  ),
+  WorkbenchProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }))
 
 vi.mock('@/pages/WorkbenchPage', () => ({
@@ -92,7 +88,7 @@ describe('App center route', () => {
           status: 200,
           json: () => Promise.resolve(payload),
         })
-      }),
+      })
     )
   })
 

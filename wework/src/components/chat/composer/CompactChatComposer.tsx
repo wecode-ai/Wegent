@@ -1,8 +1,9 @@
 import { ArrowUp, Camera, Image, Maximize2, Minimize2, Plus, Square } from 'lucide-react'
 import type { ChangeEvent, ClipboardEventHandler } from 'react'
 import { useEffect, useRef, useState } from 'react'
-import { useTranslation } from 'react-i18next'
+import { useTranslation } from '@/hooks/useTranslation'
 import type { Attachment, LocalDeviceSkill, UnifiedModel } from '@/types/api'
+import type { CodeCommentContext } from '@/types/workspace-files'
 import { AttachmentBadges } from './AttachmentBadges'
 import { ComposerTextarea } from './ComposerTextarea'
 import { useAutoResizeTextarea } from './useAutoResizeTextarea'
@@ -14,10 +15,12 @@ interface CompactChatComposerProps {
   disabled: boolean
   placeholder: string
   attachments?: Attachment[]
+  codeComments?: CodeCommentContext[]
   uploadingFiles?: Map<string, { file: File; progress: number }>
   attachmentErrors?: Map<string, string>
   onFileSelect?: (files: File | File[]) => void
   onRemoveAttachment?: (attachmentId: number) => void
+  onClearCodeComments?: () => void
   onListLocalSkills?: () => Promise<LocalDeviceSkill[]>
   selectedModel?: UnifiedModel | null
   isStreaming?: boolean
@@ -31,10 +34,12 @@ export function CompactChatComposer({
   disabled,
   placeholder,
   attachments = [],
+  codeComments = [],
   uploadingFiles = new Map(),
   attachmentErrors = new Map(),
   onFileSelect,
   onRemoveAttachment = () => {},
+  onClearCodeComments,
   onListLocalSkills,
   selectedModel,
   isStreaming = false,
@@ -47,7 +52,9 @@ export function CompactChatComposer({
   const [contextSheetOpen, setContextSheetOpen] = useState(false)
   const [fullscreenInputOpen, setFullscreenInputOpen] = useState(false)
   const [canExpandInput, setCanExpandInput] = useState(false)
-  const canSend = (value.trim().length > 0 || attachments.length > 0) && !disabled
+  const canSend =
+    (value.trim().length > 0 || attachments.length > 0 || codeComments.length > 0) &&
+    !disabled
   const explicitLineCount = value.split('\n').length
 
   const handleImageChange = (event: ChangeEvent<HTMLInputElement>) => {
@@ -83,7 +90,9 @@ export function CompactChatComposer({
         attachments={attachments}
         uploadingFiles={uploadingFiles}
         errors={attachmentErrors}
+        codeComments={codeComments}
         onRemoveAttachment={onRemoveAttachment}
+        onClearCodeComments={onClearCodeComments}
       />
       <input
         ref={imageInputRef}

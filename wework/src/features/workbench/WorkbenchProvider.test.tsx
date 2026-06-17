@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { WorkbenchProvider } from './WorkbenchProvider'
 import { useWorkbench } from './useWorkbench'
 import type { Attachment, SkillRef, UnifiedModel } from '@/types/api'
+import type { CodeCommentContext } from '@/types/workspace-files'
 
 function Probe() {
   const { state } = useWorkbench()
@@ -63,6 +64,41 @@ function ProjectChatProbe() {
         select worktree
       </button>
       <button type="button" onClick={() => workbench.setInput('build it')}>
+        set input
+      </button>
+      <button type="button" onClick={() => void workbench.sendCurrentInput()}>
+        send
+      </button>
+    </div>
+  )
+}
+
+function CodeCommentSendProbe() {
+  const workbench = useWorkbench()
+  const codeComment: CodeCommentContext = {
+    id: 'comment-1',
+    filePath: 'src/app.ts',
+    fileName: 'app.ts',
+    startLine: 12,
+    endLine: 14,
+    selectedText: 'const answer = computeAnswer()',
+    comment: 'Check whether this handles retries.',
+    createdAt: '2026-06-12T00:00:00.000Z',
+  }
+
+  return (
+    <div>
+      <span data-testid="code-comment-context-count">{workbench.codeCommentContexts.length}</span>
+      <span data-testid="message-contents">
+        {workbench.messages.map(message => message.content).join('|')}
+      </span>
+      <button type="button" onClick={() => workbench.selectProject(7)}>
+        select project
+      </button>
+      <button type="button" onClick={() => workbench.addCodeCommentContext(codeComment)}>
+        add code comment
+      </button>
+      <button type="button" onClick={() => workbench.setInput('please inspect')}>
         set input
       </button>
       <button type="button" onClick={() => void workbench.sendCurrentInput()}>
@@ -1758,6 +1794,121 @@ describe('WorkbenchProvider', () => {
     })
     expect(updateProject).not.toHaveBeenCalled()
     expect(listProjects).toHaveBeenCalledTimes(2)
+  })
+
+  test('sends pending code comments as formatted message context', async () => {
+    const sendMessage = vi.fn().mockResolvedValue({ success: true, task_id: 99 })
+
+    render(
+      <WorkbenchProvider
+        user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+        services={{
+          teamApi: {
+            getDefaultWorkbenchTeam: vi
+              .fn()
+              .mockResolvedValue({ id: 2, name: 'coder', is_active: true }),
+          },
+          modelApi: { listModels: vi.fn().mockResolvedValue({ data: [] }) },
+          skillApi: {
+            listSkills: vi.fn().mockResolvedValue([]),
+            getTeamSkills: vi.fn().mockResolvedValue({ skills: [], preload_skills: [] }),
+          },
+          projectApi: {
+            listProjects: vi.fn().mockResolvedValue({
+              items: [
+                {
+                  id: 7,
+                  name: 'Wegent',
+                  tasks: [],
+                  config: {
+                    mode: 'workspace',
+                    execution: {
+                      targetType: 'local',
+                      deviceId: 'device-1',
+                    },
+                  },
+                },
+              ],
+            }),
+            getProject: vi.fn(),
+            createProject: vi.fn(),
+            updateProject: vi.fn(),
+            deleteProject: vi.fn(),
+            archiveProjectChats: vi.fn(),
+            archiveAllProjectChats: vi.fn(),
+            createConversation: vi.fn(),
+          },
+          taskApi: {
+            listRecentTasks: vi.fn().mockResolvedValue({ total: 0, items: [] }),
+            getTaskDetail: vi.fn(),
+            renameTask: vi.fn(),
+            archiveTask: vi.fn(),
+            archiveAllChats: vi.fn(),
+            listArchivedTasks: vi.fn(),
+            unarchiveTask: vi.fn(),
+            deleteTask: vi.fn(),
+            deleteArchivedTasks: vi.fn(),
+          },
+          deviceApi: {
+            listDevices: vi.fn().mockResolvedValue([
+              {
+                id: 1,
+                device_id: 'device-1',
+                name: 'Local Device',
+                status: 'online',
+                is_default: false,
+                device_type: 'local',
+                bind_shell: 'claudecode',
+                executor_version: '1.8.5',
+              },
+            ]),
+            getHomeDirectory: vi.fn(),
+            getProjectWorkspaceRoot: vi.fn(),
+            listDirectories: vi.fn(),
+            listSkills: vi.fn().mockResolvedValue([]),
+          },
+          chatStream: {
+            joinTask: vi.fn(),
+            leaveTask: vi.fn(),
+            sendMessage,
+            subscribe: vi.fn(() => vi.fn()),
+          },
+        }}
+      >
+        <CodeCommentSendProbe />
+      </WorkbenchProvider>
+    )
+
+    await waitFor(() => expect(screen.getByText('select project')).toBeInTheDocument())
+
+    await userEvent.click(screen.getByText('select project'))
+    await userEvent.click(screen.getByText('add code comment'))
+    expect(screen.getByTestId('code-comment-context-count')).toHaveTextContent('1')
+
+    await userEvent.click(screen.getByText('set input'))
+    await userEvent.click(screen.getByText('send'))
+
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1))
+    const payload = sendMessage.mock.calls[0][0]
+    expect(payload).toEqual(
+      expect.objectContaining({
+        team_id: 2,
+        project_id: 7,
+        device_id: 'device-1',
+        task_type: 'code',
+      })
+    )
+    expect(payload.message).toContain('please inspect')
+    expect(payload.message).toContain('<code_comment_context>')
+    expect(payload.message).toContain('"filePath": "src/app.ts"')
+    expect(payload.message).toContain('"lines": "12-14"')
+    expect(payload.message).toContain('"selectedCode": "const answer = computeAnswer()"')
+    expect(payload.message).toContain('"userComment": "Check whether this handles retries."')
+    expect(screen.getByTestId('message-contents')).toHaveTextContent('please inspect')
+    expect(screen.getByTestId('message-contents')).not.toHaveTextContent('<code_comment_context>')
+    await waitFor(() =>
+      expect(screen.getByTestId('code-comment-context-count')).toHaveTextContent('0')
+    )
   })
 
   test('blocks sending when the active project device is offline', async () => {
