@@ -292,7 +292,7 @@ jobs:
       - name: Run frontend tests
         env:
           NEXT_TELEMETRY_DISABLED: 1
-        run: pnpm --filter wecode-ai-assistant test --coverage --passWithNoTests
+        run: pnpm --filter wecode-ai-assistant run test --coverage --passWithNoTests
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v3
