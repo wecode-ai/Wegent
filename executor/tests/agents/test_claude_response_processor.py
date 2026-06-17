@@ -16,6 +16,7 @@ from executor.agents.claude_code.response_processor import (
     _handle_stream_event,
     _handle_user_message,
     _process_result_message,
+    process_response,
 )
 from executor.tasks.task_state_manager import TaskState, TaskStateManager
 from shared.models import EmitterBuilder, GeneratorTransport
@@ -35,6 +36,21 @@ class DummyStateManager:
 
     def report_progress(self, *_args, **_kwargs):
         pass
+
+
+class FakeClaudeClient:
+    def __init__(self, messages):
+        self.messages = messages
+
+    async def query(self, *_args, **_kwargs):
+        pass
+
+    def receive_response(self):
+        async def _receive():
+            for message in self.messages:
+                yield message
+
+        return _receive()
 
 
 @pytest.mark.asyncio
@@ -60,6 +76,26 @@ async def test_stream_tool_use_start_does_not_emit_incomplete_tool_block():
 
     assert sent is False
     emitter.tool_start.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_stream_text_block_start_does_not_mark_text_as_sent():
+    emitter = MagicMock()
+    emitter.text_delta = AsyncMock()
+
+    msg = StreamEvent(
+        uuid="event-text-start-1",
+        session_id="session-1",
+        event={
+            "type": "content_block_start",
+            "content_block": {"type": "text"},
+        },
+    )
+
+    sent = await _handle_stream_event(msg, emitter, DummyStateManager())
+
+    assert sent is False
+    emitter.text_delta.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -115,6 +151,60 @@ async def test_assistant_message_emits_tool_start_when_text_was_streamed():
         name="Bash",
         arguments={"command": "git status"},
     )
+
+
+@pytest.mark.asyncio
+async def test_process_response_resets_stream_dedupe_after_assistant_message():
+    emitter = MagicMock()
+    emitter.text_delta = AsyncMock()
+    emitter.done = AsyncMock()
+    emitter.error = AsyncMock()
+
+    client = FakeClaudeClient(
+        [
+            StreamEvent(
+                uuid="event-text-delta-1",
+                session_id="session-1",
+                event={
+                    "type": "content_block_delta",
+                    "index": 0,
+                    "delta": {
+                        "type": "text_delta",
+                        "text": "Already streamed",
+                    },
+                },
+            ),
+            AssistantMessage(
+                content=[TextBlock(text="Already streamed")],
+                model="claude-test",
+            ),
+            AssistantMessage(
+                content=[TextBlock(text="Visible follow-up")],
+                model="claude-test",
+            ),
+            ResultMessage(
+                subtype="success",
+                duration_ms=1,
+                duration_api_ms=1,
+                is_error=False,
+                num_turns=1,
+                session_id=None,
+                result="done",
+            ),
+        ]
+    )
+
+    result = await process_response(
+        client=client,
+        state_manager=DummyStateManager(),
+        emitter=emitter,
+    )
+
+    assert result == TaskStatus.COMPLETED
+    assert [call.args[0] for call in emitter.text_delta.await_args_list] == [
+        "Already streamed",
+        "Visible follow-up",
+    ]
 
 
 @pytest.mark.asyncio

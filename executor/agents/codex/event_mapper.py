@@ -294,7 +294,7 @@ class CodeXEventMapper:
         await self.emitter.block_created(
             {
                 "id": block_id,
-                "type": "thinking",
+                "type": "text",
                 "content": content,
                 "status": status,
                 "timestamp": int(time.time() * 1000),

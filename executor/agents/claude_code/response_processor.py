@@ -250,6 +250,9 @@ async def process_response(
                         stream_event_sent,
                         tool_file_change_tracker,
                     )
+                    # This guard only applies to the finalized AssistantMessage
+                    # corresponding to the text that was just streamed.
+                    stream_event_sent = False
 
                 elif isinstance(msg, ResultMessage):
 
@@ -866,8 +869,9 @@ async def _handle_stream_event(
             logger.debug("StreamEvent: defer tool_start until ToolUseBlock")
 
         elif block_type == "text":
-            # Text block is starting - mark as sent to avoid duplicate in AssistantMessage
-            sent_content = True
+            # A start event carries no text; only text_delta proves content
+            # reached the UI and should suppress the finalized TextBlock.
+            logger.debug("StreamEvent: text block started")
 
     elif event_type == "content_block_stop":
         # A content block has finished

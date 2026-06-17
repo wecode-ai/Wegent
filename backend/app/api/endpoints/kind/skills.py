@@ -59,6 +59,11 @@ from app.services.skill_binding_service import skill_binding_service
 router = APIRouter(prefix="/kinds/skills")
 
 
+def _release_read_transaction(db: Session) -> None:
+    """Release read-only DB transactions before slow response streaming."""
+    db.rollback()
+
+
 def _extract_bearer_token(authorization: str, oauth2_token: Optional[str]) -> str:
     """Extract a bearer token from FastAPI auth sources."""
     if authorization.startswith("Bearer "):
@@ -866,11 +871,16 @@ def download_public_skill(
     if not binary_data:
         raise HTTPException(status_code=404, detail="Public skill binary not found")
 
+    filename = f"{skill.name}.zip"
+    encoded_filename = quote(filename, safe="")
+    content_disposition = f"attachment; filename*=UTF-8''{encoded_filename}"
+    _release_read_transaction(db)
+
     # Return as streaming response
     return StreamingResponse(
         io.BytesIO(binary_data),
         media_type="application/zip",
-        headers={"Content-Disposition": f"attachment; filename={skill.name}.zip"},
+        headers={"Content-Disposition": content_disposition},
     )
 
 
@@ -1498,6 +1508,8 @@ def download_skill(
     filename = f"{skill.metadata.name}.zip"
     encoded_filename = quote(filename, safe="")
     content_disposition = f"attachment; filename*=UTF-8''{encoded_filename}"
+
+    _release_read_transaction(db)
 
     return StreamingResponse(
         io.BytesIO(binary_data),
