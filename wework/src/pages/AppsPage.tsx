@@ -1,6 +1,5 @@
 import {
   Cpu,
-  Grid3X3,
   Loader2,
   Network,
   Search,
@@ -295,13 +294,6 @@ function HeroSection() {
         >
           配置模型代理
         </button>
-        <button
-          type="button"
-          onClick={() => navigateTo('/app/wegent')}
-          className="inline-flex h-9 items-center rounded-full border border-border bg-background px-4 text-sm font-semibold text-text-primary hover:bg-muted"
-        >
-          打开 Wegent
-        </button>
       </div>
     </article>
   )
@@ -462,17 +454,6 @@ function buildRecommendedApps(state: AppsPageState): AppCardData[] {
       action: codexConfigured ? '打开' : '去配置',
       onClick: () => navigateTo('/settings/personal/codex'),
     },
-    {
-      title: 'Wegent Web',
-      description: '以 iframe 方式打开主 Web 前端，用于完整 AI 编码、聊天和资源管理场景。',
-      icon: Grid3X3,
-      iconClassName: 'bg-gradient-to-br from-primary to-sky-500 text-white',
-      status: '内置',
-      statusTone: 'online',
-      meta: 'iframe app',
-      action: '打开新 tab',
-      onClick: () => navigateTo('/app/wegent'),
-    },
   ]
 }
 
@@ -617,7 +598,7 @@ export function AppsPage() {
                 <h2 className="text-lg font-bold tracking-[-0.02em] text-text-primary">运行概览</h2>
                 <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                   <SummaryCard value={`${onlineCount}`} label="在线执行器" />
-                  <SummaryCard value="3" label="内置应用" />
+                  <SummaryCard value={`${recommendedApps.length}`} label="内置应用" />
                   <SummaryCard value={`${slotUsage.total || 0}`} label="可用任务槽位" />
                   <SummaryCard
                     value={state.proxyConfig?.configured ? '已配置' : '未配置'}
@@ -631,11 +612,7 @@ export function AppsPage() {
                 <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                   <QuickAction icon={Server} title="执行器管理" detail="查看设备、任务槽位和版本" />
                   <QuickAction icon={Network} title="模型代理" detail="配置公司代理服务" />
-                  <QuickAction
-                    icon={Grid3X3}
-                    title="内置应用"
-                    detail="打开 Wegent、Codex 等工作入口"
-                  />
+                  <QuickAction icon={Cpu} title="内置应用" detail="打开 Codex 等工作入口" />
                   <QuickAction
                     icon={ShieldCheck}
                     title="权限与认证"

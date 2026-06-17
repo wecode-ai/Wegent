@@ -8,7 +8,7 @@ import Image from 'next/image'
 import { Bars3Icon } from '@heroicons/react/24/outline'
 
 import { useTranslation } from '@/hooks/useTranslation'
-import { useIsMobile, useIsDesktop } from './hooks/useMediaQuery'
+import { useIsMobile, useIsDesktopLayout } from './hooks/useMediaQuery'
 import TaskTitleDropdown from './TaskTitleDropdown'
 import { TaskDetail } from '@/types/api'
 type TopNavigationProps = {
@@ -46,16 +46,16 @@ export default function TopNavigation({
 }: TopNavigationProps) {
   const { t } = useTranslation()
   const isMobile = useIsMobile()
-  const isDesktop = useIsDesktop()
+  const isDesktopLayout = useIsDesktopLayout()
 
   // Determine if we should show the hamburger menu
-  const showHamburgerMenu = variant === 'with-sidebar' && !isDesktop && onMobileSidebarToggle
+  const showHamburgerMenu = variant === 'with-sidebar' && !isDesktopLayout && onMobileSidebarToggle
 
   // Determine if we should show the logo
   const shouldShowLogo = showLogo || (variant === 'standalone' && !isMobile)
 
   // Compute padding classes separately to avoid conflicts
-  const leftPaddingClass = isSidebarCollapsed && isDesktop ? 'pl-24' : 'pl-4 sm:pl-6'
+  const leftPaddingClass = isSidebarCollapsed && isDesktopLayout ? 'pl-24' : 'pl-4 sm:pl-6'
   // Right padding is always the same - the expand button is fixed positioned and doesn't need reserved space
   const rightPaddingClass = 'pr-4 sm:pr-6'
 
@@ -68,7 +68,7 @@ export default function TopNavigation({
         {showHamburgerMenu && (
           <button
             type="button"
-            className="lg:hidden p-2 rounded-md text-text-muted hover:text-text-primary hover:bg-muted focus:outline-none focus:ring-2 focus:ring-primary/40 bg-surface border border-border flex-shrink-0"
+            className="md:hidden p-2 rounded-md text-text-muted hover:text-text-primary hover:bg-muted focus:outline-none focus:ring-2 focus:ring-primary/40 bg-surface border border-border flex-shrink-0"
             onClick={onMobileSidebarToggle}
             aria-label={t('common:common.open_sidebar')}
           >

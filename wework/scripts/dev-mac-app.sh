@@ -51,7 +51,7 @@ trap 'rm -f "$TAURI_DEV_CONFIG"' EXIT
 printf '{
   "build": {
     "devUrl": "http://localhost:%s",
-    "beforeDevCommand": "pnpm exec vite --host 0.0.0.0 --port %s"
+    "beforeDevCommand": "pnpm exec vite --host 0.0.0.0 --port %s --strictPort"
   },
   "bundle": {
     "icon": [

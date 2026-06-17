@@ -33,7 +33,7 @@ import { listGroups } from '@/apis/groups'
 import { fetchBotsList } from '@/features/settings/services/bots'
 import type { BaseRole } from '@/types/base-role'
 import { RemoteWorkspaceEntry } from '@/features/tasks/components/remote-workspace'
-import { useIsDesktop } from '@/features/layout/hooks/useMediaQuery'
+import { useIsDesktopLayout } from '@/features/layout/hooks/useMediaQuery'
 
 const SearchDialog = dynamic(() => import('@/features/tasks/components/sidebar/SearchDialog'), {
   ssr: false,
@@ -133,12 +133,11 @@ export function ChatPageDesktop() {
   // Collapsed sidebar state
   const [isCollapsed, setIsCollapsed] = useState(false)
 
-  // Mobile sidebar state (for tablet screens 768px-1023px)
+  // Mobile drawer state is kept for the transient mobile-width desktop render.
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
 
-  // Check if we're on a true desktop screen (≥1024px)
-  // On tablet screens (768px-1023px), we use mobile sidebar instead of ResizableSidebar
-  const isDesktop = useIsDesktop()
+  // Keep the desktop sidebar available for tablet-sized embedded app widths.
+  const isDesktopLayout = useIsDesktopLayout()
 
   // Selected team state for sharing
   const [_selectedTeamForNewTask, _setSelectedTeamForNewTask] = useState<Team | null>(null)
@@ -282,9 +281,9 @@ export function ChatPageDesktop() {
   }
 
   // Handle expand for collapsed sidebar buttons
-  // On tablet screens, open mobile sidebar; on desktop, toggle collapsed state
+  // On mobile screens, open mobile sidebar; on desktop-layout screens, toggle collapsed state.
   const handleExpandFromCollapsedButtons = () => {
-    if (isDesktop) {
+    if (isDesktopLayout) {
       handleToggleCollapsed()
     } else {
       setIsMobileSidebarOpen(true)
@@ -293,14 +292,14 @@ export function ChatPageDesktop() {
 
   return (
     <div className="flex smart-h-screen bg-base text-text-primary box-border">
-      {/* Collapsed sidebar floating buttons - show on desktop when collapsed, or on tablet screens */}
-      {(isCollapsed || !isDesktop) && (
+      {/* Collapsed sidebar floating buttons show when collapsed or before desktop layout is active. */}
+      {(isCollapsed || !isDesktopLayout) && (
         <CollapsedSidebarButtons
           onExpand={handleExpandFromCollapsedButtons}
           onNewTask={handleNewTask}
         />
       )}
-      {/* Responsive resizable sidebar - only on true desktop screens (≥1024px) */}
+      {/* Responsive resizable sidebar - visible on desktop-layout screens (≥768px). */}
       <ResizableSidebar isCollapsed={isCollapsed} onToggleCollapsed={handleToggleCollapsed}>
         <TaskSidebar
           isMobileSidebarOpen={isMobileSidebarOpen}
