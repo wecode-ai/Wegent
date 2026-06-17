@@ -219,6 +219,8 @@ export interface WorkbenchContextValue {
   upgradingDevices: Record<string, DeviceUpgradeState>
   projectExecutionMode: ProjectExecutionMode
   setProjectExecutionMode: (mode: ProjectExecutionMode) => void
+  projectWorktreeBaseBranch: string | null
+  setProjectWorktreeBaseBranch: (branchName: string | null) => void
   selectProject: (projectId: number | null) => void
   selectStandaloneDevice: (deviceId: string | null) => void
   startNewChat: () => void
@@ -673,6 +675,9 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
   const [routePath, setRoutePath] = useState(getCurrentAppPath)
   const [projectExecutionMode, setProjectExecutionMode] =
     useState<ProjectExecutionMode>('current_workspace')
+  const [projectWorktreeBaseBranch, setProjectWorktreeBaseBranchState] = useState<string | null>(
+    null
+  )
   const guidanceSendInFlightRef = useRef(false)
   const upgradeClearTimersRef = useRef<Record<string, ReturnType<typeof window.setTimeout>>>({})
   const localSkillsCacheRef = useRef<
@@ -749,6 +754,18 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     state.currentProject,
     state.currentTask,
   ])
+  const setProjectWorktreeBaseBranch = useCallback((branchName: string | null) => {
+    const normalizedBranch = branchName?.trim() || null
+    setProjectWorktreeBaseBranchState(normalizedBranch)
+  }, [])
+  useEffect(() => {
+    setProjectWorktreeBaseBranchState(null)
+  }, [state.currentProject?.id, state.currentTask?.id])
+  useEffect(() => {
+    if (projectExecutionMode !== 'git_worktree') {
+      setProjectWorktreeBaseBranchState(null)
+    }
+  }, [projectExecutionMode])
   const modelSelectionConfig = useMemo(
     () => getTaskModelSelection(state.currentTask) ?? getNewChatModelSelection(currentUser) ?? null,
     [currentUser, state.currentTask]
@@ -1659,9 +1676,11 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         projectExecutionMode === 'git_worktree' &&
         supportsGitWorktreeExecution(activeProject)
       ) {
+        const branch = projectWorktreeBaseBranch?.trim()
         payload.execution = {
           workspace: {
             source: 'git_worktree',
+            ...(branch ? { branch } : {}),
           },
         }
       }
@@ -1694,6 +1713,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
       modelSelection.selectedModel,
       modelSelection.selectedModelOptions,
       skillSelection.selectedSkills,
+      projectWorktreeBaseBranch,
       projectExecutionMode,
       state.currentProject,
       state.currentTask,
@@ -2216,6 +2236,8 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     upgradingDevices,
     projectExecutionMode,
     setProjectExecutionMode: selectProjectExecutionMode,
+    projectWorktreeBaseBranch,
+    setProjectWorktreeBaseBranch,
     projectChat: {
       models: modelSelection.models,
       skills: skillSelection.skills,

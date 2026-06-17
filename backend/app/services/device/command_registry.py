@@ -833,7 +833,13 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
         command="sh -c 'git -C \"$1\" rev-parse --is-inside-work-tree' --"
     ),
     "git_worktree_add": LocalDeviceCommandDefinition(
-        command='sh -c \'git -C "$1" worktree add --detach "$2"\' --'
+        command=(
+            "sh -c '"
+            'if [ -n "$3" ]; then '
+            'git -C "$1" worktree add --detach "$2" "$3"; '
+            'else git -C "$1" worktree add --detach "$2"; fi'
+            "' --"
+        )
     ),
     "git_worktree_remove": LocalDeviceCommandDefinition(
         command='sh -c \'git -C "$1" worktree remove --force "$2"\' --'

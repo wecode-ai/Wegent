@@ -416,7 +416,7 @@ async def test_create_task_and_subtasks_prepares_git_worktree_with_real_task_id(
         message="run tests",
         project_id=project.id,
         client_origin="wework",
-        execution_workspace={"source": "git_worktree"},
+        execution_workspace={"source": "git_worktree", "branch": "develop"},
     )
     prepare_worktree_mock = AsyncMock(
         return_value={"source": "git_worktree", "path": "/workspace/worktrees/1/Wegent"}
@@ -455,6 +455,7 @@ async def test_create_task_and_subtasks_prepares_git_worktree_with_real_task_id(
 
     prepare_worktree_mock.assert_awaited_once()
     assert prepare_worktree_mock.await_args.kwargs["task_id"] == result.task.id
+    assert prepare_worktree_mock.await_args.kwargs["base_branch"] == "develop"
     assert result.task.json["spec"]["execution"] == {
         "workspace": {"source": "git_worktree"}
     }
