@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from executor.config import config
-from executor.platform_compat import sanitize_ld_library_path
+from executor.platform_compat import sanitize_subprocess_environment
 from shared.logger import setup_logger
 
 if TYPE_CHECKING:
@@ -124,9 +124,9 @@ class DeviceExtensionHandler:
     ) -> dict[str, Any]:
         env = os.environ.copy()
 
-        # Fix PyInstaller LD_LIBRARY_PATH issue for child processes.
+        # Fix PyInstaller environment issues for child processes.
         # See: https://pyinstaller.org/en/stable/common-issues-and-pitfalls.html
-        sanitize_ld_library_path(env)
+        sanitize_subprocess_environment(env)
 
         env["WEGENT_EXTENSION_NAME"] = extension_name
         env["WEGENT_EXTENSION_ACTION"] = action

@@ -28,7 +28,10 @@ from typing import Any, Dict, Tuple
 
 from executor.agents.claude_code.mode_strategy import ExecutionModeStrategy
 from executor.config import config
-from executor.platform_compat import get_permissions_manager, sanitize_ld_library_path
+from executor.platform_compat import (
+    get_permissions_manager,
+    sanitize_subprocess_environment,
+)
 from shared.logger import setup_logger
 
 logger = setup_logger("local_mode_strategy")
@@ -181,10 +184,10 @@ class LocalModeStrategy(ExecutionModeStrategy):
         # Ensure all values are strings (required by SDK)
         updated_options["env"] = {k: str(v) for k, v in merged_env.items()}
 
-        # Fix PyInstaller LD_LIBRARY_PATH issue for child processes.
+        # Fix PyInstaller environment issues for child processes.
         # See: https://pyinstaller.org/en/stable/common-issues-and-pitfalls.html
         env = dict(updated_options.get("env", {}))
-        sanitize_ld_library_path(env)
+        sanitize_subprocess_environment(env)
 
         # Project tasks use global Claude capability symlinks; non-project tasks
         # keep their task-local Claude config directory.

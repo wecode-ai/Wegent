@@ -18,7 +18,7 @@ from urllib.parse import parse_qsl, urlencode
 from aiohttp import ClientSession, CookieJar, WSMsgType, web
 
 from executor.config import config
-from executor.platform_compat import sanitize_ld_library_path
+from executor.platform_compat import sanitize_subprocess_environment
 from shared.logger import setup_logger
 
 logger = setup_logger("local_session_handler")
@@ -663,7 +663,7 @@ class LocalSessionHandler:
 
     def _build_env(self) -> dict[str, str]:
         env = os.environ.copy()
-        sanitize_ld_library_path(env)
+        sanitize_subprocess_environment(env)
         return env
 
     def _error(self, error: str) -> dict[str, Any]:

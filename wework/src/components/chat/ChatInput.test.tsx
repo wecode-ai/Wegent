@@ -10,6 +10,25 @@ import type {
   UnifiedModel,
 } from '@/types/api'
 import type { GuidanceWorkbenchMessage, QueuedWorkbenchMessage } from '@/types/workbench'
+
+vi.mock('@/hooks/useTranslation', () => ({
+  useTranslation: () => ({
+    t: (
+      key: string,
+      options?: string | { count?: number },
+    ) => {
+      if (typeof options === 'string') return options
+      if (key === 'workbench.code_comment_count') {
+        return `${options?.count ?? 0} 个评论`
+      }
+      if (key === 'workbench.remove_code_comments') {
+        return '移除代码评论'
+      }
+      return key
+    },
+  }),
+}))
+
 import { ChatInput } from './ChatInput'
 import type { ProjectChatControls, ProjectWorkControls } from './ChatInput'
 
