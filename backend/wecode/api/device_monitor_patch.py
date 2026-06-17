@@ -15,6 +15,7 @@ import logging
 
 from fastapi import Depends, HTTPException, Path, status
 from sqlalchemy.orm import Session
+from starlette.routing import request_response
 
 logger = logging.getLogger(__name__)
 
@@ -118,13 +119,13 @@ def _patch_route_in_router(router, target_path: str, new_endpoint) -> bool:
         methods = getattr(route, "methods", set())
 
         if route_path == target_path and "POST" in methods:
-            endpoint = getattr(route, "endpoint", None)
-            if callable(endpoint) and not getattr(endpoint, "_wecode_patched", False):
-                route.endpoint = new_endpoint
+            if _patch_route_endpoint(route, new_endpoint):
                 logger.info(
                     f"[wecode] Patched route {target_path} with Nevis implementation"
                 )
-                return True
+            else:
+                logger.debug(f"[wecode] Route {target_path} already patched")
+            return True
 
         # Check sub-router (for APIRouter.include_router cases)
         if hasattr(route, "app"):
@@ -136,6 +137,30 @@ def _patch_route_in_router(router, target_path: str, new_endpoint) -> bool:
                     return True
 
     return False
+
+
+def _patch_route_endpoint(route, new_endpoint) -> bool:
+    """Replace a FastAPI route endpoint and refresh its execution handler."""
+    endpoint = getattr(route, "endpoint", None)
+    dependant = getattr(route, "dependant", None)
+    dependant_call = getattr(dependant, "call", None)
+
+    if (
+        callable(endpoint)
+        and getattr(endpoint, "_wecode_patched", False)
+        and getattr(dependant_call, "_wecode_patched", False)
+    ):
+        return False
+
+    route.endpoint = new_endpoint
+
+    if dependant is not None:
+        dependant.call = new_endpoint
+
+    if hasattr(route, "get_route_handler"):
+        route.app = request_response(route.get_route_handler())
+
+    return True
 
 
 def apply_patch() -> None:
@@ -165,8 +190,8 @@ def apply_patch() -> None:
             path = getattr(route, "path", None)
             methods = getattr(route, "methods", set())
             if path == "/devices/{device_id}/restart" and "POST" in methods:
-                route.endpoint = restart_device_patched
-                logger.info("[wecode] Patched device_monitor.router restart route")
+                if _patch_route_endpoint(route, restart_device_patched):
+                    logger.info("[wecode] Patched device_monitor.router restart route")
                 break
 
 
