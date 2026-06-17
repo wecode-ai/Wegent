@@ -14,6 +14,7 @@ sidebar_position: 1
 - [✨ Skill](#-skill)
 - [🧠 Model](#-model)
 - [🐚 Shell](#-shell)
+- [🖥 Device](#-device)
 - [🤖 Bot](#-bot)
 - [👥 Team](#-team)
 - [🤝 Collaboration](#-collaboration)
@@ -58,13 +59,13 @@ spec:
 
 ### 字段说明
 
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `metadata.name` | string | 是 | Ghost 的唯一标识符 |
-| `metadata.namespace` | string | 是 | 命名空间，通常为 `default` |
-| `spec.systemPrompt` | string | 是 | 定义智能体个性和能力的系统提示词 |
-| `spec.mcpServers` | object | 否 | MCP 服务器配置,定义智能体的工具能力 |
-| `spec.skills` | array | 否 | 关联的 Skill 名称列表,例如 `["skill-1", "skill-2"]` |
+| 字段                 | 类型   | 必填 | 说明                                                |
+| -------------------- | ------ | ---- | --------------------------------------------------- |
+| `metadata.name`      | string | 是   | Ghost 的唯一标识符                                  |
+| `metadata.namespace` | string | 是   | 命名空间，通常为 `default`                          |
+| `spec.systemPrompt`  | string | 是   | 定义智能体个性和能力的系统提示词                    |
+| `spec.mcpServers`    | object | 否   | MCP 服务器配置,定义智能体的工具能力                 |
+| `spec.skills`        | array  | 否   | 关联的 Skill 名称列表,例如 `["skill-1", "skill-2"]` |
 
 ---
 
@@ -93,25 +94,27 @@ status:
 
 ### 字段说明
 
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `metadata.name` | string | 是 | Skill 的唯一标识符(用于 Ghost 的 `spec.skills` 字段) |
-| `metadata.namespace` | string | 是 | 命名空间,通常为 `default` |
-| `spec.description` | string | 是 | Skill 功能描述(从 SKILL.md frontmatter 提取) |
-| `spec.version` | string | 否 | 版本号(建议使用语义化版本) |
-| `spec.author` | string | 否 | 作者名称或组织 |
-| `spec.tags` | array | 否 | 分类标签,例如 `["python", "debugging"]` |
-| `status.state` | string | 是 | Skill 状态: `Available` 或 `Unavailable` |
-| `status.fileSize` | integer | 否 | ZIP 包大小(字节) |
-| `status.fileHash` | string | 否 | ZIP 包的 SHA256 哈希值 |
+| 字段                 | 类型    | 必填 | 说明                                                 |
+| -------------------- | ------- | ---- | ---------------------------------------------------- |
+| `metadata.name`      | string  | 是   | Skill 的唯一标识符(用于 Ghost 的 `spec.skills` 字段) |
+| `metadata.namespace` | string  | 是   | 命名空间,通常为 `default`                            |
+| `spec.description`   | string  | 是   | Skill 功能描述(从 SKILL.md frontmatter 提取)         |
+| `spec.version`       | string  | 否   | 版本号(建议使用语义化版本)                           |
+| `spec.author`        | string  | 否   | 作者名称或组织                                       |
+| `spec.tags`          | array   | 否   | 分类标签,例如 `["python", "debugging"]`              |
+| `status.state`       | string  | 是   | Skill 状态: `Available` 或 `Unavailable`             |
+| `status.fileSize`    | integer | 否   | ZIP 包大小(字节)                                     |
+| `status.fileHash`    | string  | 否   | ZIP 包的 SHA256 哈希值                               |
 
 ### ZIP 包要求
 
 Skills 必须以 ZIP 包形式上传,包含:
+
 1. **SKILL.md**(必需): Skill 文档,包含 YAML frontmatter
 2. 其他文件: 脚本、配置、资源等
 
 **SKILL.md 格式:**
+
 ```markdown
 ---
 description: "您的 Skill 描述"
@@ -137,15 +140,13 @@ metadata:
   namespace: default
 spec:
   systemPrompt: "你是一位资深开发工程师..."
-  mcpServers: {...}
+  mcpServers: { ... }
   skills:
     - python-debugger
     - code-formatter
 ```
 
 当使用此 Ghost 启动任务时,Executor 会自动下载并部署这些 Skills 到 `~/.claude/skills/` 目录。
-
-
 
 ## 🧠 Model
 
@@ -172,14 +173,14 @@ spec:
 
 ### 字段说明
 
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `metadata.name` | string | 是 | Model 的唯一标识符 |
-| `metadata.namespace` | string | 是 | 命名空间，通常为 `default` |
-| `spec.modelGroup` | string | 否 | 模型选择器使用的一级展示分组 |
-| `spec.modelSubGroup` | string | 否 | `spec.modelGroup` 下的二级展示分组 |
-| `spec.modelConfig` | object | 是 | 模型配置对象 |
-| `spec.modelConfig.env` | object | 是 | 环境变量配置 |
+| 字段                   | 类型   | 必填 | 说明                               |
+| ---------------------- | ------ | ---- | ---------------------------------- |
+| `metadata.name`        | string | 是   | Model 的唯一标识符                 |
+| `metadata.namespace`   | string | 是   | 命名空间，通常为 `default`         |
+| `spec.modelGroup`      | string | 否   | 模型选择器使用的一级展示分组       |
+| `spec.modelSubGroup`   | string | 否   | `spec.modelGroup` 下的二级展示分组 |
+| `spec.modelConfig`     | object | 是   | 模型配置对象                       |
+| `spec.modelConfig.env` | object | 是   | 环境变量配置                       |
 
 ### 模型选择器分组
 
@@ -187,11 +188,11 @@ spec:
 
 ### ClaudeCode常用环境变量
 
-| 变量名 | 说明 | 示例值 |
-|--------|------|--------|
-| `ANTHROPIC_MODEL` | 主要模型配置 | `openrouter,anthropic/claude-sonnet-4` |
-| `ANTHROPIC_BASE_URL` | API 基础 URL | `http://xxxxx` |
-| `ANTHROPIC_AUTH_TOKEN` | 认证令牌 | `sk-xxxxxx` |
+| 变量名                          | 说明         | 示例值                                  |
+| ------------------------------- | ------------ | --------------------------------------- |
+| `ANTHROPIC_MODEL`               | 主要模型配置 | `openrouter,anthropic/claude-sonnet-4`  |
+| `ANTHROPIC_BASE_URL`            | API 基础 URL | `http://xxxxx`                          |
+| `ANTHROPIC_AUTH_TOKEN`          | 认证令牌     | `sk-xxxxxx`                             |
 | `ANTHROPIC_DEFAULT_HAIKU_MODEL` | 快速模型配置 | `openrouter,anthropic/claude-haiku-4.5` |
 
 ---
@@ -220,29 +221,82 @@ status:
 
 ### 字段说明
 
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `metadata.name` | string | 是 | Shell 的唯一标识符 |
-| `metadata.namespace` | string | 是 | 命名空间，通常为 `default` |
-| `metadata.labels` | object | 否 | 分类标签，如 `type: local_engine` 或 `type: external_api` |
-| `spec.shellType` | string | 是 | Shell 类型，如 `ClaudeCode`、`Agno`、`Dify` |
-| `spec.supportModel` | array | 否 | 支持的模型类型列表 |
-| `spec.baseImage` | string | 否 | 本地引擎 Shell 的 Docker 基础镜像（`local_engine` 类型必填） |
-| `status.state` | string | 否 | Shell 状态：`Available` 或 `Unavailable` |
+| 字段                 | 类型   | 必填 | 说明                                                         |
+| -------------------- | ------ | ---- | ------------------------------------------------------------ |
+| `metadata.name`      | string | 是   | Shell 的唯一标识符                                           |
+| `metadata.namespace` | string | 是   | 命名空间，通常为 `default`                                   |
+| `metadata.labels`    | object | 否   | 分类标签，如 `type: local_engine` 或 `type: external_api`    |
+| `spec.shellType`     | string | 是   | Shell 类型，如 `ClaudeCode`、`Agno`、`Dify`                  |
+| `spec.supportModel`  | array  | 否   | 支持的模型类型列表                                           |
+| `spec.baseImage`     | string | 否   | 本地引擎 Shell 的 Docker 基础镜像（`local_engine` 类型必填） |
+| `status.state`       | string | 否   | Shell 状态：`Available` 或 `Unavailable`                     |
 
 ### Shell 类型
 
-| 类型 | 标签 | 说明 |
-|------|------|------|
-| `ClaudeCode` | `local_engine` | Claude Code 运行时，需要 `baseImage` |
-| `Agno` | `local_engine` | Agno 运行时，需要 `baseImage` |
-| `Dify` | `external_api` | Dify 外部 API 运行时，不需要 `baseImage` |
+| 类型         | 标签           | 说明                                     |
+| ------------ | -------------- | ---------------------------------------- |
+| `ClaudeCode` | `local_engine` | Claude Code 运行时，需要 `baseImage`     |
+| `Agno`       | `local_engine` | Agno 运行时，需要 `baseImage`            |
+| `Dify`       | `external_api` | Dify 外部 API 运行时，不需要 `baseImage` |
 
 ### 标签说明
 
-| 标签 | 可选值 | 说明 |
-|------|--------|------|
+| 标签   | 可选值                         | 说明                                  |
+| ------ | ------------------------------ | ------------------------------------- |
 | `type` | `local_engine`, `external_api` | 表示 Shell 是本地运行还是连接外部 API |
+
+---
+
+## 🖥 Device
+
+Device 定义可执行任务的设备。设备记录通常由本地 executor、云设备服务或远程 Docker 设备入口自动创建，不建议用户手写创建。
+
+### 远程 Docker 设备示例
+
+```yaml
+apiVersion: agent.wecode.io/v1
+kind: Device
+metadata:
+  name: 7b7c9d64-xxxx-xxxx-xxxx-3f70c6f4a931
+  namespace: default
+  displayName: alice-remote-a931
+spec:
+  deviceId: 7b7c9d64-xxxx-xxxx-xxxx-3f70c6f4a931
+  displayName: alice-remote-a931
+  deviceType: remote
+  connectionMode: websocket
+  bindShell: claudecode
+  isDefault: false
+  capabilities: null
+  remoteConfig:
+    provider: docker
+    image: ghcr.io/wecode-ai/wegent-device:latest
+    deviceId: 7b7c9d64-xxxx-xxxx-xxxx-3f70c6f4a931
+    deviceName: alice-remote-a931
+    backendUrl: https://backend.example.com
+    publicBaseUrl: http://localhost:17888
+    createdAt: "2026-06-17T10:00:00"
+status:
+  state: Available
+```
+
+### 字段说明
+
+| 字段                  | 类型                       | 必填 | 说明                                                  |
+| --------------------- | -------------------------- | ---- | ----------------------------------------------------- |
+| `metadata.name`       | string                     | 是   | Device 资源名，通常与 `spec.deviceId` 一致            |
+| `metadata.namespace`  | string                     | 是   | 命名空间，通常为 `default`                            |
+| `spec.deviceId`       | string                     | 是   | Executor 注册和心跳使用的设备 ID                      |
+| `spec.displayName`    | string                     | 否   | 前端展示名称                                          |
+| `spec.deviceType`     | `local`, `cloud`, `remote` | 是   | 设备类型；`remote` 表示用户自管 Docker 容器或远端主机 |
+| `spec.connectionMode` | `websocket`                | 是   | 设备连接后端的方式                                    |
+| `spec.bindShell`      | `claudecode`, `openclaw`   | 否   | 设备绑定的 shell runtime                              |
+| `spec.isDefault`      | boolean                    | 否   | 是否为同类型默认设备                                  |
+| `spec.capabilities`   | array 或 null              | 否   | 设备能力标签                                          |
+| `spec.cloudConfig`    | object                     | 否   | 云设备元数据，仅云设备使用                            |
+| `spec.remoteConfig`   | object                     | 否   | 远程设备元数据，仅远程设备使用                        |
+
+`remoteConfig` 只保存非敏感元数据。远程 Docker 启动命令中的 `WEGENT_AUTH_TOKEN` 是新建的 remote device API Key，不会写入 Device CRD。`backendUrl` 是容器访问 Backend 的地址，由后端当前环境生成；`publicBaseUrl` 是浏览器访问设备 session gateway 的地址。
 
 ---
 
@@ -272,13 +326,13 @@ spec:
 
 ### 字段说明
 
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `metadata.name` | string | 是 | Bot 的唯一标识符 |
-| `metadata.namespace` | string | 是 | 命名空间，通常为 `default` |
-| `spec.ghostRef` | object | 是 | Ghost 引用 |
-| `spec.shellRef` | object | 是 | Shell 引用 |
-| `spec.modelRef` | object | 是 | Model 引用 |
+| 字段                 | 类型   | 必填 | 说明                       |
+| -------------------- | ------ | ---- | -------------------------- |
+| `metadata.name`      | string | 是   | Bot 的唯一标识符           |
+| `metadata.namespace` | string | 是   | 命名空间，通常为 `default` |
+| `spec.ghostRef`      | object | 是   | Ghost 引用                 |
+| `spec.shellRef`      | object | 是   | Shell 引用                 |
+| `spec.modelRef`      | object | 是   | Model 引用                 |
 
 ### 引用格式
 
@@ -316,29 +370,29 @@ spec:
 
 ### 字段说明
 
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `metadata.name` | string | 是 | Team 的唯一标识符 |
-| `metadata.namespace` | string | 是 | 命名空间，通常为 `default` |
-| `spec.members` | array | 是 | 团队成员列表 |
-| `spec.collaborationModel` | string | 是 | 协作模式 |
+| 字段                      | 类型   | 必填 | 说明                       |
+| ------------------------- | ------ | ---- | -------------------------- |
+| `metadata.name`           | string | 是   | Team 的唯一标识符          |
+| `metadata.namespace`      | string | 是   | 命名空间，通常为 `default` |
+| `spec.members`            | array  | 是   | 团队成员列表               |
+| `spec.collaborationModel` | string | 是   | 协作模式                   |
 
 ### 成员配置
 
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `role` | string | 否 | 成员角色，如 `leader` |
-| `botRef` | object | 是 | Bot 引用 |
-| `prompt` | string | 否 | 成员特定的提示词 |
-| `contextPassing` | string | 否 | Pipeline 阶段完成后传给下一阶段的消息：`none`、`original_user`、`previous_bot`、`original_and_previous` |
+| 字段             | 类型   | 必填 | 说明                                                                                                    |
+| ---------------- | ------ | ---- | ------------------------------------------------------------------------------------------------------- |
+| `role`           | string | 否   | 成员角色，如 `leader`                                                                                   |
+| `botRef`         | object | 是   | Bot 引用                                                                                                |
+| `prompt`         | string | 否   | 成员特定的提示词                                                                                        |
+| `contextPassing` | string | 否   | Pipeline 阶段完成后传给下一阶段的消息：`none`、`original_user`、`previous_bot`、`original_and_previous` |
 
 ### 协作模式
 
-| 模式 | 说明 |
-|------|------|
-| `pipeline` | 流水线模式，按顺序执行 |
-| `route` | 路由模式，根据条件路由 |
-| `coordinate` | 协调模式，成员间协调 |
+| 模式          | 说明                     |
+| ------------- | ------------------------ |
+| `pipeline`    | 流水线模式，按顺序执行   |
+| `route`       | 路由模式，根据条件路由   |
+| `coordinate`  | 协调模式，成员间协调     |
 | `collaborate` | 并发模式，成员间同时执行 |
 
 ---
@@ -349,42 +403,42 @@ KnowledgeBase 用于管理文档知识库、检索配置和摘要能力。
 
 ### 检索配置
 
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `spec.retrievalConfig` | object | 否 | RAG 检索配置。缺失或为 `null` 时表示无 RAG 知识库 |
-| `spec.retrievalConfig.retriever_name` | string | 是* | 检索器名称 |
-| `spec.retrievalConfig.retriever_namespace` | string | 否 | 检索器所在 namespace，默认 `default` |
-| `spec.retrievalConfig.embedding_config.model_name` | string | 是* | Embedding 模型名称 |
-| `spec.retrievalConfig.embedding_config.model_namespace` | string | 否 | Embedding 模型所在 namespace，默认 `default` |
-| `spec.retrievalConfig.retrieval_mode` | string | 否 | 检索模式：`vector`、`keyword` 或 `hybrid` |
-| `spec.retrievalConfig.top_k` | integer | 否 | 返回结果数量 |
-| `spec.retrievalConfig.score_threshold` | number | 否 | 最低相关性阈值 |
-| `spec.retrievalConfig.hybrid_weights` | object | 否 | 混合检索权重 |
+| 字段                                                    | 类型    | 必填 | 说明                                              |
+| ------------------------------------------------------- | ------- | ---- | ------------------------------------------------- |
+| `spec.retrievalConfig`                                  | object  | 否   | RAG 检索配置。缺失或为 `null` 时表示无 RAG 知识库 |
+| `spec.retrievalConfig.retriever_name`                   | string  | 是\* | 检索器名称                                        |
+| `spec.retrievalConfig.retriever_namespace`              | string  | 否   | 检索器所在 namespace，默认 `default`              |
+| `spec.retrievalConfig.embedding_config.model_name`      | string  | 是\* | Embedding 模型名称                                |
+| `spec.retrievalConfig.embedding_config.model_namespace` | string  | 否   | Embedding 模型所在 namespace，默认 `default`      |
+| `spec.retrievalConfig.retrieval_mode`                   | string  | 否   | 检索模式：`vector`、`keyword` 或 `hybrid`         |
+| `spec.retrievalConfig.top_k`                            | integer | 否   | 返回结果数量                                      |
+| `spec.retrievalConfig.score_threshold`                  | number  | 否   | 最低相关性阈值                                    |
+| `spec.retrievalConfig.hybrid_weights`                   | object  | 否   | 混合检索权重                                      |
 
 `retriever_name` 和 `embedding_config.model_name` 只有在 `spec.retrievalConfig` 存在时必填。创建知识库默认会自动补齐缺失的检索器和 Embedding 模型；如果创建请求明确使用无 RAG 模式，或无法找到可用默认配置，则不会写入 `retrievalConfig`。创建请求中的 `rag_config_mode` 只表达创建意图，不作为 KnowledgeBase YAML 字段持久化。持久化后的稳定状态只有两种：完整的 `retrievalConfig`，或无 `retrievalConfig`。
 
 ### 摘要相关配置
 
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `spec.summaryEnabled` | boolean | 否 | 是否启用自动摘要生成 |
-| `spec.summaryModelRef.name` | string | 否 | 用于生成摘要的模型名称 |
-| `spec.summaryModelRef.namespace` | string | 否 | 摘要模型所在 namespace |
-| `spec.summaryModelRef.type` | string | 否 | 摘要模型类型：`public`、`user`、`group` |
+| 字段                             | 类型    | 必填 | 说明                                    |
+| -------------------------------- | ------- | ---- | --------------------------------------- |
+| `spec.summaryEnabled`            | boolean | 否   | 是否启用自动摘要生成                    |
+| `spec.summaryModelRef.name`      | string  | 否   | 用于生成摘要的模型名称                  |
+| `spec.summaryModelRef.namespace` | string  | 否   | 摘要模型所在 namespace                  |
+| `spec.summaryModelRef.type`      | string  | 否   | 摘要模型类型：`public`、`user`、`group` |
 
 ### 运行时摘要字段
 
 `spec.summary` 由系统在运行时维护，不建议手工直接写入 YAML。常见字段包括：
 
-| 字段 | 说明 |
-|------|------|
-| `short_summary` | AI 生成的短摘要 |
-| `long_summary` | AI 生成的长摘要 |
-| `manual_long_summary` | 手动编辑的知识库长摘要，展示和上下文注入时优先使用 |
-| `topics` | AI 生成的主题标签 |
-| `status` | 摘要状态：`pending`、`generating`、`completed`、`failed` |
-| `manual_updated_at` | 手动摘要最近更新时间 |
-| `manual_updated_by` | 手动摘要最近编辑人 |
+| 字段                  | 说明                                                     |
+| --------------------- | -------------------------------------------------------- |
+| `short_summary`       | AI 生成的短摘要                                          |
+| `long_summary`        | AI 生成的长摘要                                          |
+| `manual_long_summary` | 手动编辑的知识库长摘要，展示和上下文注入时优先使用       |
+| `topics`              | AI 生成的主题标签                                        |
+| `status`              | 摘要状态：`pending`、`generating`、`completed`、`failed` |
+| `manual_updated_at`   | 手动摘要最近更新时间                                     |
+| `manual_updated_by`   | 手动摘要最近编辑人                                       |
 
 **说明：**
 
@@ -423,20 +477,20 @@ spec:
 
 ### 字段说明
 
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `metadata.name` | string | 是 | Collaboration 的唯一标识符 |
-| `metadata.namespace` | string | 是 | 命名空间，通常为 `default` |
-| `spec.type` | string | 是 | 协作类型 |
-| `spec.config` | object | 是 | 协作配置 |
+| 字段                 | 类型   | 必填 | 说明                       |
+| -------------------- | ------ | ---- | -------------------------- |
+| `metadata.name`      | string | 是   | Collaboration 的唯一标识符 |
+| `metadata.namespace` | string | 是   | 命名空间，通常为 `default` |
+| `spec.type`          | string | 是   | 协作类型                   |
+| `spec.config`        | object | 是   | 协作配置                   |
 
 ### 工作流程配置
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `steps` | array | 工作步骤列表 |
-| `steps.name` | string | 步骤名称 |
-| `steps.participants` | array | 参与者列表 |
+| 字段                 | 类型   | 说明         |
+| -------------------- | ------ | ------------ |
+| `steps`              | array  | 工作步骤列表 |
+| `steps.name`         | string | 步骤名称     |
+| `steps.participants` | array  | 参与者列表   |
 
 ---
 
@@ -462,20 +516,20 @@ spec:
 
 ### 字段说明
 
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `metadata.name` | string | 是 | Workspace 的唯一标识符 |
-| `metadata.namespace` | string | 是 | 命名空间，通常为 `default` |
-| `spec.repository` | object | 是 | 仓库配置 |
+| 字段                 | 类型   | 必填 | 说明                       |
+| -------------------- | ------ | ---- | -------------------------- |
+| `metadata.name`      | string | 是   | Workspace 的唯一标识符     |
+| `metadata.namespace` | string | 是   | 命名空间，通常为 `default` |
+| `spec.repository`    | object | 是   | 仓库配置                   |
 
 ### 仓库配置
 
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `gitUrl` | string | 是 | Git 仓库 URL |
-| `gitRepo` | string | 是 | 仓库路径格式 |
-| `branchName` | string | 是 | 默认分支名 |
-| `gitDomain` | string | 是 | Git 域名 |
+| 字段         | 类型   | 必填 | 说明         |
+| ------------ | ------ | ---- | ------------ |
+| `gitUrl`     | string | 是   | Git 仓库 URL |
+| `gitRepo`    | string | 是   | 仓库路径格式 |
+| `branchName` | string | 是   | 默认分支名   |
+| `gitDomain`  | string | 是   | Git 域名     |
 
 ---
 
@@ -512,40 +566,40 @@ spec:
 
 ### 字段说明
 
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `metadata.name` | string | 是 | Task 的唯一标识符 |
-| `metadata.namespace` | string | 是 | 命名空间，通常为 `default` |
-| `spec.title` | string | 是 | 任务标题 |
-| `spec.prompt` | string | 是 | 任务描述 |
-| `spec.teamRef` | object | 是 | Team 引用 |
-| `spec.workspaceRef` | object | 是 | Workspace 引用 |
-| `spec.knowledgeBaseScopes` | array | 否 | `/api/v1/responses` 绑定的知识库访问范围，用于后续对话继承目录或文档级 scope |
+| 字段                       | 类型   | 必填 | 说明                                                                         |
+| -------------------------- | ------ | ---- | ---------------------------------------------------------------------------- |
+| `metadata.name`            | string | 是   | Task 的唯一标识符                                                            |
+| `metadata.namespace`       | string | 是   | 命名空间，通常为 `default`                                                   |
+| `spec.title`               | string | 是   | 任务标题                                                                     |
+| `spec.prompt`              | string | 是   | 任务描述                                                                     |
+| `spec.teamRef`             | object | 是   | Team 引用                                                                    |
+| `spec.workspaceRef`        | object | 是   | Workspace 引用                                                               |
+| `spec.knowledgeBaseScopes` | array  | 否   | `/api/v1/responses` 绑定的知识库访问范围，用于后续对话继承目录或文档级 scope |
 
 ### 知识库范围
 
 `spec.knowledgeBaseScopes` 由 OpenAPI Responses 知识库工具自动维护。启用目录或文档范围后，后续带 `previous_response_id` 的请求会继承该范围，并在当前轮次重新解析目录内文档。
 
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `id` | integer | 否 | 知识库 ID，存在时优先用于解析 |
-| `namespace` | string | 否 | 知识库命名空间，默认 `default` |
-| `name` | string | 是 | 知识库名称 |
-| `scopeRestricted` | boolean | 否 | 是否限制到指定目录或文档 |
-| `folderIds` | array | 否 | 允许访问的目录 ID，`0` 表示根目录直接文档 |
-| `explicitDocumentIds` | array | 否 | 显式允许访问的文档 ID |
-| `includeSubfolders` | boolean | 否 | 目录范围是否包含子目录，默认 `true` |
+| 字段                  | 类型    | 必填 | 说明                                      |
+| --------------------- | ------- | ---- | ----------------------------------------- |
+| `id`                  | integer | 否   | 知识库 ID，存在时优先用于解析             |
+| `namespace`           | string  | 否   | 知识库命名空间，默认 `default`            |
+| `name`                | string  | 是   | 知识库名称                                |
+| `scopeRestricted`     | boolean | 否   | 是否限制到指定目录或文档                  |
+| `folderIds`           | array   | 否   | 允许访问的目录 ID，`0` 表示根目录直接文档 |
+| `explicitDocumentIds` | array   | 否   | 显式允许访问的文档 ID                     |
+| `includeSubfolders`   | boolean | 否   | 目录范围是否包含子目录，默认 `true`       |
 
 ### 任务状态
 
-| 状态 | 说明 |
-|------|------|
-| `PENDING` | 等待执行 |
-| `RUNNING` | 正在执行 |
-| `COMPLETED` | 已完成 |
-| `FAILED` | 执行失败 |
-| `CANCELLED` | 已取消 |
-| `DELETE` | 已删除 |
+| 状态        | 说明     |
+| ----------- | -------- |
+| `PENDING`   | 等待执行 |
+| `RUNNING`   | 正在执行 |
+| `COMPLETED` | 已完成   |
+| `FAILED`    | 执行失败 |
+| `CANCELLED` | 已取消   |
+| `DELETE`    | 已删除   |
 
 ---
 

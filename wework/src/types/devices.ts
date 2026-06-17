@@ -4,7 +4,7 @@ export interface DeviceInfo {
   name: string
   status: 'online' | 'offline' | 'busy'
   is_default: boolean
-  device_type: 'local' | 'cloud'
+  device_type: 'local' | 'cloud' | 'remote'
   bind_shell: 'claudecode' | 'openclaw'
   capabilities?: string[] | null
   slot_used?: number
@@ -21,6 +21,13 @@ export interface DeviceInfo {
     deviceName?: string
     ubuntuInitialPassword?: string
     ubuntuPassword?: string
+    createdAt?: string
+  }
+  remote_config?: {
+    provider?: 'docker' | string
+    image?: string
+    deviceId?: string
+    deviceName?: string
     createdAt?: string
   }
 }
@@ -67,6 +74,18 @@ export interface CloudDeviceResponse {
   status: string
   device_type: string
   message: string
+}
+
+export interface DockerRemoteDeviceCommandResponse {
+  device_id: string
+  name: string
+  image: string
+  env: Record<string, string>
+  command: string
+}
+
+export interface CreateDockerRemoteDeviceCommandRequest {
+  client_origin?: string
 }
 
 export interface CloudDeviceMetricsResponse {

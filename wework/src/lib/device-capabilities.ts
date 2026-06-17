@@ -40,6 +40,10 @@ export function isCloudDevice(device: Pick<DeviceInfo, 'device_type'>): boolean 
   return device.device_type === 'cloud'
 }
 
+export function isRemoteDevice(device: Pick<DeviceInfo, 'device_type'>): boolean {
+  return device.device_type === 'remote'
+}
+
 export function isUsableDevice(device: Pick<DeviceInfo, 'status'>): boolean {
   return device.status === 'online' || device.status === 'busy'
 }
@@ -89,8 +93,12 @@ export function supportsCloudSessions(device: DeviceLike): boolean {
   return isCloudDevice(device) && isClaudeCodeDevice(device)
 }
 
+export function supportsRemoteSessions(device: DeviceLike): boolean {
+  return isRemoteDevice(device) && isClaudeCodeDevice(device)
+}
+
 export function supportsLocalTerminalLaunch(device: DeviceLike): boolean {
-  return !isCloudDevice(device) && isClaudeCodeDevice(device)
+  return !isCloudDevice(device) && !isRemoteDevice(device) && isClaudeCodeDevice(device)
 }
 
 export function supportsDeviceMetrics(device: Pick<DeviceInfo, 'device_type'>): boolean {
