@@ -13,8 +13,8 @@ import logging
 from typing import Any, Dict, List
 
 from fastapi import HTTPException
-from sqlalchemy import and_, exists, func, or_, tuple_
-from sqlalchemy.orm import Session
+from sqlalchemy import String, and_, cast, exists, func, or_, select, tuple_
+from sqlalchemy.orm import Session, aliased
 
 import app.stores.tasks as task_stores
 from app.models.kind import Kind
@@ -386,41 +386,53 @@ def _batch_query_teams(db: Session, team_refs: set, user_id: int) -> Dict[str, K
 
     team_resource_type_variants = [ResourceType.TEAM.value, ResourceType.TEAM.name]
     approved_status_variants = [MemberStatus.APPROVED.value, "APPROVED"]
+    shared_member = aliased(ResourceMember)
+    namespace_grant = aliased(ResourceMember)
+    direct_namespace_member = aliased(ResourceMember)
+    parent_namespace = aliased(Namespace)
+    parent_namespace_member = aliased(ResourceMember)
+
     shared_team_exists = exists().where(
         and_(
-            ResourceMember.resource_type.in_(team_resource_type_variants),
-            ResourceMember.resource_id == Kind.id,
-            ResourceMember.entity_type == "user",
-            ResourceMember.entity_id == str(user_id),
-            ResourceMember.status.in_(approved_status_variants),
+            shared_member.resource_type.in_(team_resource_type_variants),
+            shared_member.resource_id == Kind.id,
+            shared_member.entity_type == "user",
+            shared_member.entity_id == str(user_id),
+            shared_member.status.in_(approved_status_variants),
         )
     )
-    user_group_names = []
-    try:
-        from app.services.group_permission import get_user_groups
 
-        user_group_names = get_user_groups(db, user_id)
-    except Exception:
-        logger.exception("Failed to resolve user groups for team batch query")
-
-    namespace_ids = []
-    if user_group_names:
-        namespace_ids = [
-            str(row.id)
-            for row in db.query(Namespace.id)
-            .filter(
-                Namespace.name.in_(user_group_names),
-                Namespace.is_active.is_(True),
-            )
-            .all()
-        ]
+    direct_namespace_access_exists = exists().where(
+        and_(
+            direct_namespace_member.resource_type == "Namespace",
+            direct_namespace_member.resource_id == Namespace.id,
+            direct_namespace_member.entity_type == "user",
+            direct_namespace_member.entity_id == str(user_id),
+            direct_namespace_member.status.in_(approved_status_variants),
+        )
+    )
+    parent_namespace_access_exists = exists().where(
+        and_(
+            parent_namespace.is_active.is_(True),
+            Namespace.name.like(parent_namespace.name + "/%"),
+            parent_namespace_member.resource_type == "Namespace",
+            parent_namespace_member.resource_id == parent_namespace.id,
+            parent_namespace_member.entity_type == "user",
+            parent_namespace_member.entity_id == str(user_id),
+            parent_namespace_member.status.in_(approved_status_variants),
+        )
+    )
+    accessible_namespace_ids = select(cast(Namespace.id, String)).where(
+        Namespace.is_active.is_(True),
+        or_(direct_namespace_access_exists, parent_namespace_access_exists),
+    )
     namespace_team_exists = exists().where(
         and_(
-            ResourceMember.resource_type.in_(team_resource_type_variants),
-            ResourceMember.resource_id == Kind.id,
-            ResourceMember.entity_type == "namespace",
-            ResourceMember.entity_id.in_(namespace_ids or [""]),
-            ResourceMember.status.in_(approved_status_variants),
+            namespace_grant.resource_type.in_(team_resource_type_variants),
+            namespace_grant.resource_id == Kind.id,
+            namespace_grant.entity_type == "namespace",
+            namespace_grant.entity_id.in_(accessible_namespace_ids),
+            namespace_grant.status.in_(approved_status_variants),
         )
     )
     accessible_teams = (

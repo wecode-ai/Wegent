@@ -328,13 +328,18 @@ def _sync_user_id_from_entity(target: ResourceMember) -> None:
             target.user_id = int(target.entity_id)
         except (ValueError, TypeError):
             target.user_id = 0
-    else:
+    elif (
+        target.resource_type in (ResourceType.TEAM.value, ResourceType.TEAM.name)
+        and target.entity_type == "namespace"
+    ):
         target.user_id = (
             target.user_id
             or target.invited_by_user_id
             or target.reviewed_by_user_id
             or 0
         )
+    else:
+        target.user_id = target.user_id or 0
 
 
 @event.listens_for(ResourceMember, "before_insert")
