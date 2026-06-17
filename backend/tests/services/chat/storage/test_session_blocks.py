@@ -15,12 +15,20 @@ class FakeRedisClient:
     def __init__(self):
         self.lists = {}
         self.values = {}
+        self.expirations = {}
+        self.lset_calls = []
+        self.pipeline_execute_count = 0
 
     async def get(self, key):
         return self.values.get(key)
 
+    async def mget(self, keys):
+        return [self.values.get(key) for key in keys]
+
     async def set(self, key, value, ex=None):
         self.values[key] = value
+        if ex is not None:
+            self.expirations[key] = ex
         return True
 
     async def append(self, key, value):
@@ -44,14 +52,79 @@ class FakeRedisClient:
         return values[start : end + 1]
 
     async def lset(self, key, index, value):
+        self.lset_calls.append((key, index, value))
         self.lists[key][index] = value
         return True
 
     async def expire(self, key, ttl):
+        self.expirations[key] = ttl
         return True
+
+    def pipeline(self, transaction=True):
+        return FakePipeline(self)
 
     async def aclose(self):
         return None
+
+
+class FakePipeline:
+    def __init__(self, redis_client):
+        self.redis_client = redis_client
+        self.commands = []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return None
+
+    def append(self, key, value):
+        self.commands.append(("append", key, value))
+        return self
+
+    def expire(self, key, ttl):
+        self.commands.append(("expire", key, ttl))
+        return self
+
+    def rpush(self, key, value):
+        self.commands.append(("rpush", key, value))
+        return self
+
+    def set(self, key, value, ex=None):
+        self.commands.append(("set", key, value, ex))
+        return self
+
+    def lset(self, key, index, value):
+        self.commands.append(("lset", key, index, value))
+        return self
+
+    def delete(self, *keys):
+        self.commands.append(("delete", *keys))
+        return self
+
+    async def execute(self):
+        self.redis_client.pipeline_execute_count += 1
+        results = []
+        for command in self.commands:
+            name = command[0]
+            if name == "append":
+                results.append(await self.redis_client.append(command[1], command[2]))
+            elif name == "expire":
+                results.append(await self.redis_client.expire(command[1], command[2]))
+            elif name == "rpush":
+                results.append(await self.redis_client.rpush(command[1], command[2]))
+            elif name == "set":
+                results.append(
+                    await self.redis_client.set(command[1], command[2], ex=command[3])
+                )
+            elif name == "lset":
+                results.append(
+                    await self.redis_client.lset(command[1], command[2], command[3])
+                )
+            elif name == "delete":
+                results.append(await self.redis_client.delete(*command[1:]))
+        self.commands = []
+        return results
 
 
 class FakeCache:
@@ -140,3 +213,55 @@ async def test_add_block_fills_wall_clock_epoch_timestamp():
     # An auto-generated id must also be derived from wall-clock time.
     assert blocks[0]["id"].startswith("block-")
     assert int(blocks[0]["id"].removeprefix("block-")) > 1_000_000_000_000
+
+
+@pytest.mark.asyncio
+async def test_text_chunks_use_block_content_key_and_pipeline():
+    manager = SessionManager()
+    redis_client = FakeRedisClient()
+    manager._cache = FakeCache(redis_client)
+
+    await manager.add_text_content(subtask_id=505, content="Hel")
+    await manager.add_text_content(subtask_id=505, content="lo")
+
+    raw_block = json.loads(redis_client.lists["chat:streaming:blocks:505"][0])
+    content_key = raw_block["_content_key"]
+
+    assert raw_block["content"] == ""
+    assert redis_client.values[content_key] == "Hello"
+    assert redis_client.values["chat:streaming:505"] == "Hello"
+    assert redis_client.pipeline_execute_count >= 2
+    assert redis_client.lset_calls == []
+
+    blocks = await manager.get_blocks(505)
+
+    assert blocks[0]["content"] == "Hello"
+    assert "_content_key" not in blocks[0]
+
+    await manager.cleanup_streaming_state(505)
+
+    assert content_key not in redis_client.values
+
+
+@pytest.mark.asyncio
+async def test_add_block_preserves_existing_block_content_key():
+    manager = SessionManager()
+    redis_client = FakeRedisClient()
+    manager._cache = FakeCache(redis_client)
+
+    await manager.add_text_content(subtask_id=606, content="old")
+    blocks = await manager.get_blocks(606)
+    content_key = json.loads(redis_client.lists["chat:streaming:blocks:606"][0])[
+        "_content_key"
+    ]
+
+    blocks[0]["content"] = "updated"
+    await manager.add_block(subtask_id=606, block=blocks[0])
+
+    raw_block = json.loads(redis_client.lists["chat:streaming:blocks:606"][0])
+    updated_blocks = await manager.get_blocks(606)
+
+    assert raw_block["_content_key"] == content_key
+    assert raw_block["content"] == ""
+    assert redis_client.values[content_key] == "updated"
+    assert updated_blocks[0]["content"] == "updated"
