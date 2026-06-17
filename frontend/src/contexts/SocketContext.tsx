@@ -80,6 +80,8 @@ interface SocketContextType {
   connect: (token: string) => void
   /** Disconnect from server */
   disconnect: () => void
+  /** Ensure a disconnected or stale Socket.IO session starts a fresh connection attempt */
+  ensureConnected: () => void
   /**
    * Join a task room.
    * @param taskId - Task ID to join
@@ -206,14 +208,16 @@ export function SocketProvider({ children }: { children: ReactNode }) {
   const joinedTasksRef = useRef<Set<number>>(new Set())
   // Use ref for socket to avoid dependency issues in connect callback
   const socketRef = useRef<Socket | null>(null)
+  // Tracks whether this provider has ever observed a successful connection.
+  const hasEverConnectedRef = useRef(false)
   // Store reconnect callbacks - single source of truth for reconnection events
   const reconnectCallbacksRef = useRef<Set<ReconnectCallback>>(new Set())
 
   /**
    * Internal function to create socket connection
    */
-  const createSocketConnection = useCallback((token: string, socketUrl: string) => {
-    let hasConnectedBefore = false
+  const createSocketConnection = useCallback((token: string, socketUrl: string, notify = false) => {
+    let hasConnectedBefore = notify
     let lastReconnectNotificationAt = 0
 
     const notifyReconnectSubscribers = () => {
@@ -256,7 +260,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       // This prevents "Invalid transport" errors when switching transports
       upgrade: true,
     })
-    hasConnectedBefore = newSocket.connected
+    hasConnectedBefore = hasConnectedBefore || newSocket.connected
 
     // Store in ref immediately
     socketRef.current = newSocket
@@ -265,6 +269,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     newSocket.on('connect', () => {
       const shouldNotifyReconnect = hasConnectedBefore
       hasConnectedBefore = true
+      hasEverConnectedRef.current = true
       setIsConnected(true)
       setConnectionError(null)
       setReconnectAttempts(0)
@@ -284,6 +289,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     })
 
     newSocket.io.on('reconnect', (_attempt: number) => {
+      hasEverConnectedRef.current = true
       setIsConnected(true)
       setConnectionError(null)
       setReconnectAttempts(0)
@@ -346,7 +352,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
    * Fetches runtime config first to allow runtime URL changes
    */
   const connect = useCallback(
-    (token: string) => {
+    (token: string, notifyReconnectOnConnect = false) => {
       // Check if already connected using ref
       if (socketRef.current?.connected) {
         return
@@ -356,28 +362,48 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       if (socketRef.current) {
         socketRef.current.disconnect()
         socketRef.current = null
+        setSocket(null)
       }
 
       // Fetch runtime config then connect
       // This allows RUNTIME_SOCKET_DIRECT_URL to be changed without rebuilding
       fetchRuntimeConfig().then(config => {
         const socketUrl = config.socketDirectUrl || getSocketUrl()
-        createSocketConnection(token, socketUrl)
+        createSocketConnection(token, socketUrl, notifyReconnectOnConnect)
       })
     },
     [createSocketConnection]
   )
 
+  const ensureConnected = useCallback(() => {
+    if (socketRef.current?.connected) {
+      return
+    }
+
+    const token = getToken()
+    if (!token) {
+      console.error('[Socket.IO] No token found, skipping ensureConnected')
+      return
+    }
+
+    connect(token, hasEverConnectedRef.current)
+  }, [connect])
+
   /**
    * Disconnect from server
    */
   const disconnect = useCallback(() => {
-    if (socket) {
-      socket.disconnect()
-      setSocket(null)
-      setIsConnected(false)
-      joinedTasksRef.current.clear()
+    const currentSocket = socketRef.current ?? socket
+    if (!currentSocket) {
+      return
     }
+
+    currentSocket.disconnect()
+    socketRef.current = null
+    setSocket(null)
+    setIsConnected(false)
+    joinedTasksRef.current.clear()
+    hasEverConnectedRef.current = false
   }, [socket])
 
   /**
@@ -891,7 +917,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      if (socket) {
+      if (socket && socketRef.current === socket) {
         socket.disconnect()
       }
     }
@@ -906,6 +932,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         reconnectAttempts,
         connect,
         disconnect,
+        ensureConnected,
         joinTask,
         leaveTask,
         sendChatMessage,

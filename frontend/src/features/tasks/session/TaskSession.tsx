@@ -29,7 +29,12 @@ import { TaskPuller, useTaskPuller } from './taskPuller'
 
 type MessageSession = Omit<
   MessageSyncer,
-  'joinRoom' | 'leaveRoom' | 'isSocketConnected' | 'stopStream' | 'resetSession'
+  | 'joinRoom'
+  | 'leaveRoom'
+  | 'isSocketConnected'
+  | 'ensureSocketConnected'
+  | 'stopStream'
+  | 'resetSession'
 >
 
 export type TaskSession = Omit<
@@ -76,6 +81,7 @@ export function TaskSessionProvider({ children }: { children: ReactNode }) {
     joinRoom?: MessageSyncer['joinRoom']
     leaveRoom?: MessageSyncer['leaveRoom']
     isSocketConnected?: MessageSyncer['isSocketConnected']
+    ensureSocketConnected?: MessageSyncer['ensureSocketConnected']
   }>({})
   const resetMessageSessionRef = useRef<(() => void) | null>(null)
   const [taskState, setTaskState] = useState<TaskStateSnapshot | null>(null)
@@ -104,6 +110,9 @@ export function TaskSessionProvider({ children }: { children: ReactNode }) {
         messageTransportRef.current.leaveRoom?.(taskId)
       },
       isConnected: () => messageTransportRef.current.isSocketConnected?.() ?? false,
+      ensureConnected: () => {
+        messageTransportRef.current.ensureSocketConnected?.()
+      },
     }),
     [pullRuntime, pullTaskDetail]
   )
@@ -150,6 +159,7 @@ export function TaskSessionProvider({ children }: { children: ReactNode }) {
     joinRoom: messageSyncer.joinRoom,
     leaveRoom: messageSyncer.leaveRoom,
     isSocketConnected: messageSyncer.isSocketConnected,
+    ensureSocketConnected: messageSyncer.ensureSocketConnected,
   }
   resetMessageSessionRef.current = messageSyncer.resetSession
 

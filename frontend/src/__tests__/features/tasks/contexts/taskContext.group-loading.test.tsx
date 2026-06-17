@@ -18,6 +18,7 @@ const mockSocketContext = {
   joinTask: jest.fn().mockResolvedValue({ subtasks: [] }),
   sendChatMessage: jest.fn(),
   leaveTask: jest.fn(),
+  ensureConnected: jest.fn(),
   onReconnect: jest.fn(() => jest.fn()),
 }
 
