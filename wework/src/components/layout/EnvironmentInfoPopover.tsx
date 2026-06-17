@@ -6,7 +6,7 @@ import {
   Laptop,
   Settings,
 } from 'lucide-react'
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { BranchSelector } from '@/components/common/BranchSelector'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
@@ -20,27 +20,7 @@ interface EnvironmentInfoPopoverProps {
   onListBranches?: () => Promise<string[]>
   onCheckoutBranch?: (branchName: string) => Promise<void>
   onCreateBranch?: (branchName: string) => Promise<void>
-}
-
-interface InfoRowProps {
-  icon: ReactNode
-  label: string
-  children?: ReactNode
-  testId?: string
-}
-
-function InfoRow({ icon, label, children, testId }: InfoRowProps) {
-  return (
-    <div data-testid={testId} className="flex h-9 items-center gap-3 text-[13px] text-text-primary">
-      <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
-        {icon}
-      </span>
-      <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
-        {label}
-      </span>
-      {children}
-    </div>
-  )
+  onOpenChangesReview?: () => void
 }
 
 function formatDeviceId(deviceId?: string) {
@@ -62,6 +42,7 @@ export function EnvironmentInfoPopover({
   onListBranches,
   onCheckoutBranch,
   onCreateBranch,
+  onOpenChangesReview,
 }: EnvironmentInfoPopoverProps) {
   const { t } = useTranslation('common')
   const [open, setOpen] = useState(false)
@@ -85,6 +66,11 @@ export function EnvironmentInfoPopover({
       return
     }
     window.open(info.createPullRequestUrl, '_blank', 'noopener,noreferrer')
+  }
+
+  function handleOpenChangesReview() {
+    onOpenChangesReview?.()
+    setOpen(false)
   }
 
   async function handleCopyDeviceId() {
@@ -178,16 +164,24 @@ export function EnvironmentInfoPopover({
           </div>
 
           <div>
-            <InfoRow
-              testId="environment-changes-row"
-              icon={<CircleDot className="h-[18px] w-[18px]" />}
-              label={t('workbench.environment_changes', '变更')}
+            <button
+              type="button"
+              data-testid="environment-changes-button"
+              disabled={!onOpenChangesReview}
+              onClick={handleOpenChangesReview}
+              className="flex h-9 w-full items-center gap-3 rounded-md text-left text-[13px] text-text-primary hover:bg-hover disabled:cursor-default disabled:hover:bg-transparent"
             >
+              <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
+                <CircleDot className="h-[18px] w-[18px]" />
+              </span>
+              <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
+                {t('workbench.environment_changes', '变更')}
+              </span>
               <span className="flex gap-1.5 text-[13px]">
                 <span className="text-green-500">{additions}</span>
                 <span className="text-red-500">{deletions}</span>
               </span>
-            </InfoRow>
+            </button>
             <button
               type="button"
               data-testid="environment-device-button"

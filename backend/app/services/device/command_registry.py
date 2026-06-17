@@ -37,6 +37,19 @@ GIT_BRANCH_DIFF_SHORTSTAT_COMMAND = (
     'git diff --shortstat "$merge_base" --\''
 )
 
+GIT_WORKSPACE_DIFF_COMMAND = (
+    "bash -lc "
+    '\'if git rev-parse --verify --quiet HEAD >/dev/null; then '
+    "git diff --binary HEAD --; "
+    "else "
+    "git diff --binary --; "
+    "fi; "
+    "git ls-files --others --exclude-standard -z | "
+    "while IFS= read -r -d \"\" file; do "
+    "git diff --binary --no-index -- /dev/null \"$file\" || true; "
+    "done'"
+)
+
 WORKSPACE_ROOT_GUARD_SCRIPT = """
 def fail(message, code=64):
     print(json.dumps({"success": False, "error": message}, ensure_ascii=False))
@@ -860,6 +873,7 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
     "git_checkout": LocalDeviceCommandDefinition(command="git checkout"),
     "git_checkout_new": LocalDeviceCommandDefinition(command="git checkout -b"),
     "git_diff_shortstat": LocalDeviceCommandDefinition(command="git diff --shortstat"),
+    "git_diff": LocalDeviceCommandDefinition(command=GIT_WORKSPACE_DIFF_COMMAND),
     "git_branch_diff_shortstat": LocalDeviceCommandDefinition(
         command=GIT_BRANCH_DIFF_SHORTSTAT_COMMAND
     ),

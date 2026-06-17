@@ -27,6 +27,10 @@ interface MessageListProps {
   onSwitchModelForFailedMessage?: (message: WorkbenchMessage) => void
   onLoadFileChangesDiff?: (subtaskId: number) => Promise<string>
   onRevertFileChanges?: (subtaskId: number) => Promise<TurnFileChangesSummary>
+  onOpenFileChangesReview?: (request: {
+    subtaskId: number
+    loadDiff: () => Promise<string>
+  }) => void
 }
 
 const USER_MESSAGE_COLLAPSE_LINES = 10
@@ -39,6 +43,7 @@ export function MessageList({
   onSwitchModelForFailedMessage,
   onLoadFileChangesDiff,
   onRevertFileChanges,
+  onOpenFileChangesReview,
 }: MessageListProps) {
   if (messages.length === 0) {
     return null
@@ -65,6 +70,7 @@ export function MessageList({
               onSwitchModelForFailedMessage={onSwitchModelForFailedMessage}
               onLoadFileChangesDiff={onLoadFileChangesDiff}
               onRevertFileChanges={onRevertFileChanges}
+              onOpenFileChangesReview={onOpenFileChangesReview}
             />
           )}
         </article>
@@ -413,6 +419,7 @@ function AssistantMessage({
   onSwitchModelForFailedMessage,
   onLoadFileChangesDiff,
   onRevertFileChanges,
+  onOpenFileChangesReview,
 }: {
   message: WorkbenchMessage
   devices: DeviceInfo[]
@@ -420,6 +427,10 @@ function AssistantMessage({
   onSwitchModelForFailedMessage?: (message: WorkbenchMessage) => void
   onLoadFileChangesDiff?: (subtaskId: number) => Promise<string>
   onRevertFileChanges?: (subtaskId: number) => Promise<TurnFileChangesSummary>
+  onOpenFileChangesReview?: (request: {
+    subtaskId: number
+    loadDiff: () => Promise<string>
+  }) => void
 }) {
   const shouldHideContent = shouldHideFailedAssistantContent(message)
   const visibleContent = shouldHideContent ? '' : message.content
@@ -530,6 +541,7 @@ function AssistantMessage({
           )}
           onLoadDiff={onLoadFileChangesDiff}
           onRevert={onRevertFileChanges}
+          onOpenReview={onOpenFileChangesReview}
         />
       ) : null}
       {message.status !== 'streaming' && (hasVisibleContent || message.status === 'failed') && (

@@ -26,6 +26,10 @@ interface FileChangesCardProps {
   deviceOnline: boolean
   onLoadDiff: (subtaskId: number) => Promise<string>
   onRevert: (subtaskId: number) => Promise<TurnFileChangesSummary>
+  onOpenReview?: (request: {
+    subtaskId: number
+    loadDiff: () => Promise<string>
+  }) => void
 }
 
 function getErrorMessage(error: unknown, fallback: string) {
@@ -66,6 +70,7 @@ export function FileChangesCard({
   deviceOnline,
   onLoadDiff,
   onRevert,
+  onOpenReview,
 }: FileChangesCardProps) {
   const { t } = useTranslation('chat')
   const [expanded, setExpanded] = useState(false)
@@ -88,6 +93,14 @@ export function FileChangesCard({
   const canRevert = summary.status === 'active'
 
   const openReview = async () => {
+    if (onOpenReview) {
+      onOpenReview({
+        subtaskId,
+        loadDiff: () => onLoadDiff(subtaskId),
+      })
+      return
+    }
+
     setReviewOpen(true)
     if (diff || reviewLoading) return
     setReviewLoading(true)

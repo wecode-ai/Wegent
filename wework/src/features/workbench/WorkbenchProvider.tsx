@@ -7,6 +7,7 @@ import {
   createAndCheckoutProjectBranch,
   listProjectBranches,
   loadProjectEnvironment,
+  loadProjectEnvironmentDiff,
 } from '@/api/environment'
 import { createGitApi } from '@/api/git'
 import { ApiError, createHttpClient } from '@/api/http'
@@ -251,6 +252,7 @@ export interface WorkbenchContextValue {
   listDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
   createDeviceDirectory: (deviceId: string, path: string) => Promise<void>
   loadEnvironmentInfo: (project: ProjectWithTasks | null) => Promise<EnvironmentInfo>
+  loadEnvironmentDiff: (project: ProjectWithTasks | null) => Promise<string>
   commitEnvironmentChanges: (project: ProjectWithTasks | null, message: string) => Promise<void>
   listEnvironmentBranches: (project: ProjectWithTasks | null) => Promise<string[]>
   checkoutEnvironmentBranch: (project: ProjectWithTasks | null, branchName: string) => Promise<void>
@@ -1590,6 +1592,12 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     [resolvedServices]
   )
 
+  const loadEnvironmentDiff = useCallback(
+    (project: ProjectWithTasks | null) =>
+      loadProjectEnvironmentDiff(resolvedServices.deviceApi, project),
+    [resolvedServices]
+  )
+
   const commitEnvironmentChanges = useCallback(
     (project: ProjectWithTasks | null, message: string) =>
       commitProjectChanges(resolvedServices.deviceApi, project, message),
@@ -2270,6 +2278,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     listDeviceDirectories,
     createDeviceDirectory,
     loadEnvironmentInfo,
+    loadEnvironmentDiff,
     commitEnvironmentChanges,
     listEnvironmentBranches,
     checkoutEnvironmentBranch,
