@@ -144,6 +144,7 @@ def test_project_task_list_includes_device_and_execution_workspace_source(
     assert len(items) == 1
     assert items[0].device_id == "device-1"
     assert items[0].execution_workspace_source == "git_worktree"
+    assert items[0].execution_workspace_path == "/workspace/worktrees/1386/Wegent"
 
 
 def test_delete_project_keeps_wework_task_project_id(test_db, test_user):

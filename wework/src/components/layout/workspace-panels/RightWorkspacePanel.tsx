@@ -78,7 +78,7 @@ export function RightWorkspacePanel({
       <div className="flex min-h-0 flex-1">
         {workspaceTarget ? (
           <FileWorkspacePanel
-            key={`${workspaceTarget.deviceId}:${workspaceTarget.path}`}
+            key={`${workspaceTarget.deviceId}:${workspaceTarget.path}:${workspaceTarget.taskId ?? ''}`}
             target={workspaceTarget}
             onAddCodeComment={onAddCodeComment}
           />

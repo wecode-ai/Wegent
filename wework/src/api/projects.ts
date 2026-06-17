@@ -23,6 +23,18 @@ function withClientOrigin(path: string): string {
 }
 
 export function createProjectApi(client: HttpClient) {
+  function projectSessionPayload(options?: { taskId?: number }) {
+    return options?.taskId ? { task_id: options.taskId } : undefined
+  }
+
+  function startProjectSession(
+    path: string,
+    options?: { taskId?: number }
+  ): Promise<ProjectDeviceSessionResponse> {
+    const payload = projectSessionPayload(options)
+    return payload ? client.post(path, payload) : client.post(path)
+  }
+
   return {
     listProjects(): Promise<ProjectListResponse> {
       return client.get(withClientOrigin('/projects?include_tasks=true'))
@@ -47,19 +59,14 @@ export function createProjectApi(client: HttpClient) {
     listWorktrees(): Promise<ProjectWorktreeListResponse> {
       return client.get(withClientOrigin('/projects/worktrees'))
     },
-    deleteWorktree(
-      data: DeleteProjectWorktreeRequest
-    ): Promise<DeleteProjectWorktreeResponse> {
+    deleteWorktree(data: DeleteProjectWorktreeRequest): Promise<DeleteProjectWorktreeResponse> {
       return client.delete(
         withClientOrigin(
-          `/projects/worktrees/${encodeURIComponent(data.device_id)}/${encodeURIComponent(data.worktree_id)}?project_id=${encodeURIComponent(String(data.project_id))}`,
-        ),
+          `/projects/worktrees/${encodeURIComponent(data.device_id)}/${encodeURIComponent(data.worktree_id)}?project_id=${encodeURIComponent(String(data.project_id))}`
+        )
       )
     },
-    updateProject(
-      projectId: number,
-      data: UpdateProjectRequest
-    ): Promise<ProjectWithTasks> {
+    updateProject(projectId: number, data: UpdateProjectRequest): Promise<ProjectWithTasks> {
       return client.put(withClientOrigin(`/projects/${projectId}`), data)
     },
     deleteProject(projectId: number): Promise<void> {
@@ -68,11 +75,17 @@ export function createProjectApi(client: HttpClient) {
     archiveProjectChats(projectId: number): Promise<TaskArchiveBatchResponse> {
       return client.post(withClientOrigin(`/projects/${projectId}/archive-chats`))
     },
-    startTerminalSession(projectId: number): Promise<ProjectDeviceSessionResponse> {
-      return client.post(withClientOrigin(`/projects/${projectId}/terminal`))
+    startTerminalSession(
+      projectId: number,
+      options?: { taskId?: number }
+    ): Promise<ProjectDeviceSessionResponse> {
+      return startProjectSession(withClientOrigin(`/projects/${projectId}/terminal`), options)
     },
-    startCodeServerSession(projectId: number): Promise<ProjectDeviceSessionResponse> {
-      return client.post(withClientOrigin(`/projects/${projectId}/code-server`))
+    startCodeServerSession(
+      projectId: number,
+      options?: { taskId?: number }
+    ): Promise<ProjectDeviceSessionResponse> {
+      return startProjectSession(withClientOrigin(`/projects/${projectId}/code-server`), options)
     },
     archiveAllProjectChats(): Promise<TaskArchiveBatchResponse> {
       return client.post(withClientOrigin('/projects/archive-chats'))

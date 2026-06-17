@@ -58,6 +58,7 @@ const createDeviceApiMock = vi.mocked(createDeviceApi)
 const createProjectApiMock = vi.mocked(createProjectApi)
 const createQuotaApiMock = vi.mocked(createQuotaApi)
 const fetchQuotaMock = vi.fn()
+const startTerminalSessionMock = vi.fn()
 const startCodeServerSessionMock = vi.fn()
 
 describe('DesktopWorkbenchLayout', () => {
@@ -150,7 +151,14 @@ describe('DesktopWorkbenchLayout', () => {
       url: 'http://localhost/ide',
       path: '/workspace/projects/github_wegent',
     })
+    startTerminalSessionMock.mockResolvedValue({
+      session_id: 'terminal-1',
+      url: 'http://localhost/terminal',
+      device_id: 'workspace-cloud-device',
+      path: '/workspace/projects/github_wegent',
+    })
     createProjectApiMock.mockReturnValue({
+      startTerminalSession: startTerminalSessionMock,
       startCodeServerSession: startCodeServerSessionMock,
     } as unknown as ReturnType<typeof createProjectApi>)
   })
@@ -2768,6 +2776,51 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByText('/workspace/project/README.md')).toBeInTheDocument()
   })
 
+  test('right workspace panel uses the current task execution workspace path', async () => {
+    const workspacePanelState = createCloudWorkspacePanelState()
+    const listWorkspaceEntries = vi.fn().mockResolvedValue({
+      path: '/workspace/worktrees/8/workspace-project',
+      entries: [],
+    })
+    createDeviceApiMock.mockReturnValue(
+      createMockDeviceApi({
+        listWorkspaceEntries,
+      }) as never
+    )
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          ...workspacePanelState,
+          currentTask: {
+            id: 8,
+            title: 'Task',
+            status: 'RUNNING',
+            created_at: '2026-06-12T00:00:00.000Z',
+            device_id: 'workspace-cloud-device',
+            execution_workspace_path: '/workspace/worktrees/8/workspace-project',
+          },
+        }}
+        projectWork={{
+          ...baseProps.projectWork,
+          projects: workspacePanelState.projects,
+          devices: workspacePanelState.devices,
+          currentProjectId: workspacePanelState.currentProject?.id,
+        }}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+
+    expect(await screen.findByTestId('workspace-file-tree')).toBeInTheDocument()
+    expect(listWorkspaceEntries).toHaveBeenCalledWith(
+      'workspace-cloud-device',
+      '/workspace/worktrees/8/workspace-project'
+    )
+  })
+
   test('right workspace panel renders nested directories as an expanded tree', async () => {
     const user = userEvent.setup()
     const workspacePanelState = createCloudWorkspacePanelState()
@@ -3727,6 +3780,42 @@ describe('DesktopWorkbenchLayout', () => {
     fireEvent.pointerUp(document)
 
     expect(panel).toHaveStyle({ height: '400px' })
+  })
+
+  test('bottom workspace terminal uses the current task execution workspace session', async () => {
+    const workspacePanelState = createCloudWorkspacePanelState()
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          ...workspacePanelState,
+          currentTask: {
+            id: 8,
+            title: 'Task',
+            status: 'RUNNING',
+            created_at: '2026-06-12T00:00:00.000Z',
+            device_id: 'workspace-cloud-device',
+            execution_workspace_path: '/workspace/worktrees/8/workspace-project',
+          },
+        }}
+        projectWork={{
+          ...baseProps.projectWork,
+          projects: workspacePanelState.projects,
+          devices: workspacePanelState.devices,
+          currentProjectId: workspacePanelState.currentProject?.id,
+        }}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('toggle-bottom-workspace-panel-button'))
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    await userEvent.click(await screen.findByTestId('workspace-terminal-card'))
+
+    await waitFor(() => expect(startTerminalSessionMock).toHaveBeenCalledWith(12, { taskId: 8 }))
   })
 
   test('closes the bottom workspace panel from the panel edge', async () => {

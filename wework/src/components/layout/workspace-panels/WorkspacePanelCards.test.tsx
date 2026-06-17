@@ -178,6 +178,46 @@ describe('WorkspacePanelCards', () => {
     expect(screen.queryByText('/workspace/projects/project38')).not.toBeInTheDocument()
   })
 
+  test('starts cloud project sessions scoped to the active task workspace', async () => {
+    const api = createProjectApiMock()
+    render(
+      <WorkspacePanelCards
+        currentProject={project}
+        devices={cloudDevices}
+        workspaceTarget={{
+          deviceId: 'device-1',
+          path: '/workspace/worktrees/8/project38',
+          source: 'task',
+          taskId: 8,
+        }}
+      />
+    )
+
+    await userEvent.click(await screen.findByTestId('workspace-terminal-card'))
+
+    await waitFor(() => expect(api.startTerminalSession).toHaveBeenCalledWith(7, { taskId: 8 }))
+  })
+
+  test('starts cloud IDE sessions scoped to the active task workspace', async () => {
+    const api = createProjectApiMock()
+    render(
+      <WorkspacePanelCards
+        currentProject={project}
+        devices={cloudDevices}
+        workspaceTarget={{
+          deviceId: 'device-1',
+          path: '/workspace/worktrees/8/project38',
+          source: 'task',
+          taskId: 8,
+        }}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('workspace-ide-card'))
+
+    await waitFor(() => expect(api.startCodeServerSession).toHaveBeenCalledWith(7, { taskId: 8 }))
+  })
+
   test('shows project tool cards from the terminal plus button', async () => {
     const api = createProjectApiMock()
     render(<WorkspacePanelCards currentProject={project} devices={cloudDevices} />)
@@ -295,6 +335,30 @@ describe('WorkspacePanelCards', () => {
     expect(screen.queryByTestId('workspace-ide-card')).not.toBeInTheDocument()
     expect(screen.queryByTestId('workspace-desktop-card')).not.toBeInTheDocument()
     expect(screen.queryByTestId('workspace-local-device-limited-tools')).not.toBeInTheDocument()
+  })
+
+  test('launches the native terminal in the active workspace target path', async () => {
+    render(
+      <WorkspacePanelCards
+        currentProject={project}
+        devices={localDevices}
+        workspaceTarget={{
+          deviceId: 'device-1',
+          path: '/workspace/worktrees/8/project38',
+          source: 'task',
+          taskId: 8,
+        }}
+      />
+    )
+
+    await userEvent.click(await screen.findByTestId('workspace-terminal-card'))
+
+    await waitFor(() =>
+      expect(startLocalTerminalMock).toHaveBeenCalledWith({
+        cwd: '/workspace/worktrees/8/project38',
+      })
+    )
+    expect(localPathExistsMock).toHaveBeenCalledWith('/workspace/worktrees/8/project38')
   })
 
   test('keeps local project tools hidden outside the WeWork macOS app', () => {

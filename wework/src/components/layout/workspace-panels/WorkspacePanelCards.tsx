@@ -16,11 +16,13 @@ import {
 } from '@/lib/local-terminal'
 import { buildVncPageUrl } from '@/lib/vnc'
 import type { DeviceInfo, ProjectDeviceSessionResponse, ProjectWithTasks } from '@/types/api'
+import type { WorkspaceTarget } from '@/types/workspace-files'
 import { EmbeddedLocalTerminal } from './EmbeddedLocalTerminal'
 
 interface WorkspacePanelCardsProps {
   currentProject: ProjectWithTasks | null
   devices?: DeviceInfo[]
+  workspaceTarget?: WorkspaceTarget | null
   onRequestClose?: () => void
 }
 
@@ -78,6 +80,7 @@ function createDeviceSessionApi() {
 export function WorkspacePanelCards({
   currentProject,
   devices = [],
+  workspaceTarget = null,
   onRequestClose,
 }: WorkspacePanelCardsProps) {
   const { t } = useTranslation('common')
@@ -94,9 +97,12 @@ export function WorkspacePanelCards({
     message: null,
   })
   const projectDeviceId = getProjectDeviceId(currentProject)
-  const projectLocalPath = currentProject ? getProjectLocalPath(currentProject) : undefined
-  const projectDevice = projectDeviceId
-    ? devices.find(device => device.device_id === projectDeviceId)
+  const activeWorkspaceDeviceId = workspaceTarget?.deviceId ?? projectDeviceId
+  const activeWorkspacePath =
+    workspaceTarget?.path ?? (currentProject ? getProjectLocalPath(currentProject) : undefined)
+  const activeSessionTaskId = workspaceTarget?.taskId
+  const projectDevice = activeWorkspaceDeviceId
+    ? devices.find(device => device.device_id === activeWorkspaceDeviceId)
     : undefined
   const localTerminalSupported = Boolean(
     projectDevice && supportsLocalTerminalLaunch(projectDevice)
@@ -107,7 +113,7 @@ export function WorkspacePanelCards({
     projectDevice?.device_id ?? '',
     projectDevice?.device_type ?? '',
     projectDevice?.bind_shell ?? '',
-    projectLocalPath ?? '',
+    activeWorkspacePath ?? '',
   ].join(':')
   const [localTerminalCheck, setLocalTerminalCheck] = useState<LocalTerminalCheckState>({
     key: '',
@@ -130,9 +136,16 @@ export function WorkspacePanelCards({
   )
   const projectTerminalAvailable = cloudToolsAvailable || localTerminalAvailable
   const hasLimitedProjectTools = Boolean(
-    currentProject && projectDeviceId && !cloudToolsAvailable && !localTerminalAvailable
+    currentProject && activeWorkspaceDeviceId && !cloudToolsAvailable && !localTerminalAvailable
   )
-  const projectKey = currentProject ? `${currentProject.id}:${projectDeviceId ?? ''}` : ''
+  const projectKey = currentProject
+    ? [
+        currentProject.id,
+        activeWorkspaceDeviceId ?? '',
+        activeWorkspacePath ?? '',
+        activeSessionTaskId ?? '',
+      ].join(':')
+    : ''
   const availableTools =
     toolAvailability.projectKey === projectKey ? toolAvailability.tools : createAvailableTools()
   const error = toolError.projectKey === projectKey ? toolError.message : null
@@ -150,7 +163,7 @@ export function WorkspacePanelCards({
 
     let cancelled = false
     const { apiBaseUrl } = getRuntimeConfig()
-    Promise.all([getLocalExecutorDeviceId(apiBaseUrl), localPathExists(projectLocalPath)])
+    Promise.all([getLocalExecutorDeviceId(apiBaseUrl), localPathExists(activeWorkspacePath)])
       .then(([deviceId, pathExists]) => {
         if (!cancelled) {
           setLocalTerminalCheck({
@@ -177,7 +190,7 @@ export function WorkspacePanelCards({
     localTerminalCheckKey,
     localTerminalRuntimeAvailable,
     localTerminalSupported,
-    projectLocalPath,
+    activeWorkspacePath,
   ])
 
   const markToolUnavailable = (tool: WorkspaceTool) => {
@@ -204,19 +217,19 @@ export function WorkspacePanelCards({
     setLoadingTool('terminal')
     setProjectError(null)
     try {
-      if (localTerminalAvailable && projectDeviceId) {
-        const sessionId = await startLocalTerminal({ cwd: projectLocalPath })
+      if (localTerminalAvailable && activeWorkspaceDeviceId) {
+        const sessionId = await startLocalTerminal({ cwd: activeWorkspacePath })
         setTerminalSessions(sessions => [
           ...sessions,
           {
             terminal_kind: 'local',
             session_id: sessionId,
             project_id: currentProject.id,
-            device_id: projectDeviceId,
+            device_id: activeWorkspaceDeviceId,
             type: 'terminal',
-            path: projectLocalPath ?? '',
+            path: activeWorkspacePath ?? '',
             url: '',
-            cwd: projectLocalPath,
+            cwd: activeWorkspacePath,
           },
         ])
         setActiveTerminalSessionId(sessionId)
@@ -224,7 +237,10 @@ export function WorkspacePanelCards({
         return
       }
 
-      const session = await createProjectSessionApi().startTerminalSession(currentProject.id)
+      const projectApi = createProjectSessionApi()
+      const session = activeSessionTaskId
+        ? await projectApi.startTerminalSession(currentProject.id, { taskId: activeSessionTaskId })
+        : await projectApi.startTerminalSession(currentProject.id)
       if (!session.url) {
         throw new Error('Terminal session URL is missing')
       }
@@ -272,7 +288,12 @@ export function WorkspacePanelCards({
     setProjectError(null)
     let shouldClosePanel = false
     try {
-      const session = await createProjectSessionApi().startCodeServerSession(currentProject.id)
+      const projectApi = createProjectSessionApi()
+      const session = activeSessionTaskId
+        ? await projectApi.startCodeServerSession(currentProject.id, {
+            taskId: activeSessionTaskId,
+          })
+        : await projectApi.startCodeServerSession(currentProject.id)
       if (!session.url) {
         throw new Error('IDE session URL is missing')
       }
@@ -291,16 +312,16 @@ export function WorkspacePanelCards({
   }
 
   const handleDesktopClick = async () => {
-    if (!projectDeviceId || loadingTool || !availableTools.desktop) return
+    if (!activeWorkspaceDeviceId || loadingTool || !availableTools.desktop) return
     setLoadingTool('desktop')
     setProjectError(null)
     let shouldClosePanel = false
     try {
-      const config = await createDeviceSessionApi().getVncConfig(projectDeviceId)
+      const config = await createDeviceSessionApi().getVncConfig(activeWorkspaceDeviceId)
       if (!config.sandbox_id) {
         throw new Error('Desktop sandbox ID is missing')
       }
-      await openExternalUrl(buildVncPageUrl(projectDeviceId, config.sandbox_id))
+      await openExternalUrl(buildVncPageUrl(activeWorkspaceDeviceId, config.sandbox_id))
       shouldClosePanel = true
     } catch (e) {
       console.error('Failed to open project desktop:', e)
@@ -474,7 +495,9 @@ export function WorkspacePanelCards({
                       type="button"
                       data-testid="workspace-desktop-card"
                       onClick={handleDesktopClick}
-                      disabled={toolsDisabled || !projectDeviceId || !availableTools.desktop}
+                      disabled={
+                        toolsDisabled || !activeWorkspaceDeviceId || !availableTools.desktop
+                      }
                       className="flex min-h-[132px] flex-col items-center justify-center rounded-lg bg-surface text-center hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {loadingTool === 'desktop' ? (

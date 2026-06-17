@@ -276,6 +276,23 @@ describe('REST adapters', () => {
     expect(client.post).toHaveBeenNthCalledWith(2, '/projects/7/code-server?client_origin=wework')
   })
 
+  test('starts task-scoped project terminal and IDE sessions', async () => {
+    const client = mockClient()
+    vi.mocked(client.post).mockResolvedValue({ url: 'http://localhost/session' })
+
+    const api = createProjectApi(client)
+
+    await api.startTerminalSession(7, { taskId: 99 })
+    await api.startCodeServerSession(7, { taskId: 99 })
+
+    expect(client.post).toHaveBeenNthCalledWith(1, '/projects/7/terminal?client_origin=wework', {
+      task_id: 99,
+    })
+    expect(client.post).toHaveBeenNthCalledWith(2, '/projects/7/code-server?client_origin=wework', {
+      task_id: 99,
+    })
+  })
+
   test('resolves device home and project workspace root', async () => {
     const client = mockClient()
     vi.mocked(client.post)

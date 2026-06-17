@@ -48,7 +48,7 @@ const DESKTOP_QUEUED_SCROLL_TO_BOTTOM_BUTTON_CLASS =
   'bottom-52 z-popover bg-background/95 shadow-md'
 
 function workspaceTargetKey(target: WorkspaceTarget | null): string {
-  return target ? `${target.deviceId}:${target.path}:${target.source}` : ''
+  return target ? `${target.deviceId}:${target.path}:${target.source}:${target.taskId ?? ''}` : ''
 }
 
 function messageWorkspaceTargetKey(currentTask: Task | null, messages: WorkbenchMessage[]): string {
@@ -163,6 +163,13 @@ export function DesktopWorkbenchMain({
     return createDeviceApi(createHttpClient({ baseUrl: apiBaseUrl }))
   }, [])
   const messagesRef = useRef(messages)
+  const currentTaskWorkspaceKey = currentTask
+    ? [
+        currentTask.id,
+        currentTask.device_id ?? '',
+        currentTask.execution_workspace_path ?? '',
+      ].join(':')
+    : ''
   const workspaceMessageTargetKey = messageWorkspaceTargetKey(currentTask, messages)
   const isTauri = isTauriRuntime()
   const [modelSelectorOpenSignal, setModelSelectorOpenSignal] = useState(0)
@@ -247,7 +254,13 @@ export function DesktopWorkbenchMain({
     return () => {
       cancelled = true
     }
-  }, [currentTask, currentProject, workspaceDeviceApi, workspaceMessageTargetKey])
+  }, [
+    currentTask,
+    currentProject,
+    workspaceDeviceApi,
+    currentTaskWorkspaceKey,
+    workspaceMessageTargetKey,
+  ])
 
   return (
     <main
@@ -402,6 +415,7 @@ export function DesktopWorkbenchMain({
           <BottomWorkspacePanel
             currentProject={currentProject}
             devices={devices}
+            workspaceTarget={workspaceTarget}
             onRequestClose={() => setBottomPanelOpen(false)}
           />
         )}

@@ -1,18 +1,21 @@
 import { X } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { DeviceInfo, ProjectWithTasks } from '@/types/api'
+import type { WorkspaceTarget } from '@/types/workspace-files'
 import { useResizableBottomPanel } from './useResizableWorkspacePanel'
 import { WorkspacePanelCards } from './WorkspacePanelCards'
 
 interface BottomWorkspacePanelProps {
   currentProject: ProjectWithTasks | null
   devices: DeviceInfo[]
+  workspaceTarget: WorkspaceTarget | null
   onRequestClose: () => void
 }
 
 export function BottomWorkspacePanel({
   currentProject,
   devices,
+  workspaceTarget,
   onRequestClose,
 }: BottomWorkspacePanelProps) {
   const { t } = useTranslation('common')
@@ -43,6 +46,7 @@ export function BottomWorkspacePanel({
         <WorkspacePanelCards
           currentProject={currentProject}
           devices={devices}
+          workspaceTarget={workspaceTarget}
           onRequestClose={onRequestClose}
         />
       </div>

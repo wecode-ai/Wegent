@@ -16,23 +16,29 @@ interface ResolveWorkspaceTargetOptions {
 
 function workspaceTargetFromMessage(message: WorkbenchMessage): WorkspaceTarget | null {
   const fileChanges = message.fileChanges
-  if (
-    fileChanges?.status !== 'active' ||
-    !fileChanges.device_id ||
-    !fileChanges.workspace_path
-  ) {
+  if (fileChanges?.status !== 'active' || !fileChanges.device_id || !fileChanges.workspace_path) {
     return null
   }
   return {
     deviceId: fileChanges.device_id,
     path: fileChanges.workspace_path,
     source: 'task',
+    ...(message.taskId ? { taskId: message.taskId } : {}),
   }
+}
+
+function workspaceTargetFromTask(task: Task): WorkspaceTarget | null {
+  const path = task.execution_workspace_path?.trim()
+  const deviceId = task.device_id?.trim()
+  if (!path || !deviceId) {
+    return null
+  }
+  return { deviceId, path, source: 'task', taskId: task.id }
 }
 
 function latestTaskWorkspace(
   currentTask: Task,
-  messages: WorkbenchMessage[],
+  messages: WorkbenchMessage[]
 ): WorkspaceTarget | null {
   let latestUnscopedTarget: WorkspaceTarget | null = null
 
@@ -53,7 +59,7 @@ function latestTaskWorkspace(
 
 async function projectWorkspaceTarget(
   project: ProjectWithTasks,
-  api: ProjectWorkspaceRootApi,
+  api: ProjectWorkspaceRootApi
 ): Promise<WorkspaceTarget | null> {
   const deviceId = executionDeviceId(project)
   const workspacePath = deviceId
@@ -70,6 +76,9 @@ export async function resolveWorkspaceTarget({
   api,
 }: ResolveWorkspaceTargetOptions): Promise<WorkspaceTarget | null> {
   if (currentTask) {
+    const currentTaskWorkspace = workspaceTargetFromTask(currentTask)
+    if (currentTaskWorkspace) return currentTaskWorkspace
+
     const taskWorkspace = latestTaskWorkspace(currentTask, messages)
     if (taskWorkspace) return taskWorkspace
   }

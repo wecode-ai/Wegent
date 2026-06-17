@@ -107,6 +107,6 @@ Enablement rules:
 - The project device must be a local Claude Code device.
 - The App and executor must correspond to the same backend. The frontend passes the current `apiBaseUrl` to the native layer; the native layer first scans running `wegent-executor` processes and matches their `WEGENT_BACKEND_URL`.
 - If no matching process is found, the native layer falls back to local configuration files such as `WEGENT_EXECUTOR_HOME`, `~/.wecode/wegent-executor/device-config.json`, and `~/.wegent-executor/device-config.json`.
-- For project terminals, an existing project `localPath` on the current Mac is also accepted as a same-machine signal. This handles cases where multiple executor config files are temporarily out of sync.
+- For project terminals, an existing current task execution workspace path or project `localPath` on the current Mac is also accepted as a same-machine signal. This handles cases where multiple executor config files are temporarily out of sync. The same path is passed as the Tauri PTY `cwd` when the terminal starts.
 
 This check intentionally does not use IP or MAC addresses. IPs can be duplicated or distorted by proxies, VPNs, container networks, and loopback routing. MAC addresses can also be unstable because of permissions, virtual interfaces, and privacy behavior. Matching a running executor process to the backend URL is closer to the executor connection that the App is actually using.

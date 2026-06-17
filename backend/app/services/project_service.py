@@ -46,6 +46,10 @@ from app.services.device.command_service import (
     execute_configured_device_command,
 )
 from app.services.device_service import device_service
+from app.services.task_execution_workspace import (
+    task_execution_workspace_path,
+    task_execution_workspace_source,
+)
 from app.stores.tasks import task_store
 
 GIT_CLONE_TIMEOUT_SECONDS = 600
@@ -997,12 +1001,12 @@ def _build_worktree_task_ref(
     if not item.project or task.project_id != item.project.id:
         return None
 
-    task_workspace_path = _task_execution_workspace_path(task)
+    task_workspace_path = task_execution_workspace_path(task)
     if task_workspace_path and task_workspace_path != item.path:
         return None
     if (
         not task_workspace_path
-        and _task_execution_workspace_source(task) != "git_worktree"
+        and task_execution_workspace_source(task) != "git_worktree"
     ):
         return None
 
@@ -1065,41 +1069,12 @@ def _find_worktree_tasks(
     )
     if not task or task.project_id != project_id:
         return []
-    task_workspace_path = _task_execution_workspace_path(task)
+    task_workspace_path = task_execution_workspace_path(task)
     if task_workspace_path:
         return [task] if task_workspace_path == worktree_path else []
-    if _task_execution_workspace_source(task) != "git_worktree":
+    if task_execution_workspace_source(task) != "git_worktree":
         return []
     return [task]
-
-
-def _task_execution_workspace_path(task: TaskResource) -> Optional[str]:
-    """Return the persisted Task execution workspace path when present."""
-
-    workspace = _task_execution_workspace(task)
-    path = workspace.get("path")
-    if not isinstance(path, str):
-        return None
-    return path.strip() or None
-
-
-def _task_execution_workspace(task: TaskResource) -> dict[str, Any]:
-    spec = _task_spec(task)
-    execution = spec.get("execution")
-    if not isinstance(execution, dict):
-        return {}
-    workspace = execution.get("workspace")
-    if not isinstance(workspace, dict):
-        return {}
-    return workspace
-
-
-def _task_execution_workspace_source(task: TaskResource) -> Optional[str]:
-    workspace = _task_execution_workspace(task)
-    source = workspace.get("source")
-    if not isinstance(source, str):
-        return None
-    return source.strip() or None
 
 
 def _task_json(task: TaskResource) -> dict[str, Any]:
@@ -1522,7 +1497,8 @@ def add_task_to_project(
         task_title=_task_title(task),
         task_status=_task_status(task),
         device_id=spec.get("device_id"),
-        execution_workspace_source=_task_execution_workspace_source(task),
+        execution_workspace_source=task_execution_workspace_source(task),
+        execution_workspace_path=task_execution_workspace_path(task),
         is_group_chat=is_group_chat,
         project_id=project_id,
         updated_at=task.updated_at,
@@ -1607,7 +1583,8 @@ def _get_project_tasks(
                 task_title=_task_title(task),
                 task_status=_task_status(task),
                 device_id=spec.get("device_id"),
-                execution_workspace_source=_task_execution_workspace_source(task),
+                execution_workspace_source=task_execution_workspace_source(task),
+                execution_workspace_path=task_execution_workspace_path(task),
                 is_group_chat=is_group_chat,
                 project_id=project_id,
                 updated_at=task.updated_at,
