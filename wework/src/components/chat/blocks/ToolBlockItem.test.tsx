@@ -1,6 +1,7 @@
 import '@/i18n'
 
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { describe, expect, test } from 'vitest'
 import { ToolBlockItem } from './ToolBlockItem'
 import type { ProcessingBlock } from '@/types/workbench'
@@ -35,7 +36,9 @@ describe('ToolBlockItem', () => {
     expect(screen.queryByTestId('thinking-toggle-button')).not.toBeInTheDocument()
   })
 
-  test('renders completed thinking without per-block folding', () => {
+  test('renders completed thinking collapsed and expands on click', async () => {
+    const user = userEvent.setup()
+
     render(
       <ToolBlockItem
         block={{
@@ -46,7 +49,14 @@ describe('ToolBlockItem', () => {
       />
     )
 
-    expect(screen.queryByTestId('thinking-toggle-button')).not.toBeInTheDocument()
+    const toggle = screen.getByTestId('thinking-toggle-button')
+
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByTestId('thinking-detail')).not.toBeInTheDocument()
+
+    await user.click(toggle)
+
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
     expect(screen.getByTestId('thinking-detail')).toHaveTextContent(
       'I will inspect the repository before answering.'
     )
