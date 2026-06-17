@@ -126,6 +126,7 @@ async def process_response(
     session_id: str = None,
     mcp_servers: Any = None,
     completion_fields_provider: Optional[CompletionFieldsProvider] = None,
+    tool_file_change_tracker: Optional[Any] = None,
 ) -> Union[TaskStatus, str]:
     """
     Process the response messages from Claude
@@ -138,6 +139,7 @@ async def process_response(
         task_state_manager: Optional TaskStateManager instance for checking cancellation
         session_id: Optional session ID for retry operations
         completion_fields_provider: Optional provider for response.completed fields
+        tool_file_change_tracker: Optional tracker for Claude file-edit tool boundaries
 
     Returns:
         TaskStatus: Processing status
@@ -155,6 +157,12 @@ async def process_response(
     # If True, AssistantMessage will skip sending events to avoid duplicates
     stream_event_sent = False
     deferred_mcp_retry_count = 0
+    logger.info(
+        "Starting Claude response processing: session_id=%s has_completion_fields_provider=%s has_tool_file_change_tracker=%s",
+        session_id,
+        completion_fields_provider is not None,
+        tool_file_change_tracker is not None,
+    )
     try:
         while True:
             retry_requested = False
@@ -210,7 +218,11 @@ async def process_response(
                 elif isinstance(msg, UserMessage):
                     # Handle UserMessage and check for silent_exit in tool results
                     is_silent, reason = await _handle_user_message(
-                        msg, emitter, thinking_manager, state_manager
+                        msg,
+                        emitter,
+                        thinking_manager,
+                        state_manager,
+                        tool_file_change_tracker,
                     )
                     if is_silent:
                         silent_exit_detected = True
@@ -231,7 +243,12 @@ async def process_response(
                     # Note: Retry logic is handled in ResultMessage processing to avoid duplicate retries
                     # Pass stream_event_sent to skip emitting events if streaming already sent them
                     await _handle_assistant_message(
-                        msg, emitter, state_manager, thinking_manager, stream_event_sent
+                        msg,
+                        emitter,
+                        state_manager,
+                        thinking_manager,
+                        stream_event_sent,
+                        tool_file_change_tracker,
                     )
 
                 elif isinstance(msg, ResultMessage):
@@ -415,6 +432,7 @@ async def _handle_user_message(
     emitter: ResponsesAPIEmitter,
     thinking_manager=None,
     state_manager=None,
+    tool_file_change_tracker: Optional[Any] = None,
 ) -> tuple[bool, str]:
     """
     Args:
@@ -514,6 +532,18 @@ async def _handle_user_message(
                 logger.info(
                     f"UserMessage ToolResultBlock: tool_use_id = {block.tool_use_id}, is_error = {block.is_error}"
                 )
+                if tool_file_change_tracker is not None:
+                    try:
+                        await tool_file_change_tracker.record_tool_result(
+                            block.tool_use_id,
+                            block.is_error,
+                            getattr(msg, "tool_use_result", None),
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Failed to record Claude tool-result file change boundary: tool_use_id=%s",
+                            block.tool_use_id,
+                        )
 
                 # Send tool_result event (response.output_item.done) via emitter
                 try:
@@ -597,6 +627,7 @@ async def _handle_assistant_message(
     state_manager,
     thinking_manager=None,
     stream_event_sent: bool = False,
+    tool_file_change_tracker: Optional[Any] = None,
 ) -> bool:
     """
     Handle AssistantMessage from Claude SDK.
@@ -668,6 +699,19 @@ async def _handle_assistant_message(
             message_details["message"]["content"].append(tool_detail)
 
             logger.info(f"ToolUseBlock: tool = {block.name}")
+            if tool_file_change_tracker is not None:
+                try:
+                    await tool_file_change_tracker.record_tool_use_start(
+                        block.name,
+                        block.id,
+                        block.input,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to record Claude tool-use file change boundary: tool=%s tool_use_id=%s",
+                        block.name,
+                        block.id,
+                    )
 
             # Always emit tool_start from the finalized ToolUseBlock. Raw stream
             # events do not contain complete arguments and may not correlate with

@@ -11,6 +11,7 @@ import time
 import uuid
 from typing import Any, Optional
 
+from executor.services.turn_file_changes import NativeTurnFileChangeTracker
 from shared.logger import setup_logger
 from shared.models import ResponsesAPIEmitter
 from shared.status import TaskStatus
@@ -22,8 +23,13 @@ DEFAULT_AGENT_MESSAGE_ID = "__default_agent_message__"
 class CodeXEventMapper:
     """Translate Codex SDK notifications to Wegent Responses API events."""
 
-    def __init__(self, emitter: ResponsesAPIEmitter):
+    def __init__(
+        self,
+        emitter: ResponsesAPIEmitter,
+        turn_file_change_tracker: NativeTurnFileChangeTracker | None = None,
+    ):
         self.emitter = emitter
+        self.turn_file_change_tracker = turn_file_change_tracker
         self.final_text = ""
         self.usage: Optional[dict[str, Any]] = None
         self._saw_delta = False
@@ -76,6 +82,8 @@ class CodeXEventMapper:
 
         if method == "turn/diff/updated":
             self.native_turn_diff = str(getattr(payload, "diff", "") or "")
+            if self.turn_file_change_tracker is not None:
+                self.turn_file_change_tracker.record_diff(self.native_turn_diff)
             logger.debug(
                 "Received native Codex turn diff: bytes=%s",
                 len(self.native_turn_diff.encode("utf-8")),
