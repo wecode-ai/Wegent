@@ -107,6 +107,13 @@ function formatEnvironmentReviewErrorMessage({
   return message
 }
 
+interface DesktopReviewState {
+  loading: boolean
+  diff: string
+  error?: string
+  reloadDiff?: () => Promise<string>
+}
+
 interface DesktopWorkbenchMainProps {
   sidebarCollapsed: boolean
   isBootstrapping: boolean
@@ -196,10 +203,11 @@ export function DesktopWorkbenchMain({
   const [rightPanelTabs, setRightPanelTabs] = useState<RightWorkspacePanelTab[]>([])
   const [bottomPanelOpen, setBottomPanelOpen] = useState(false)
   const [openFileRequest, setOpenFileRequest] = useState<WorkspaceFileOpenRequest | null>(null)
-  const [reviewState, setReviewState] = useState({
+  const [reviewState, setReviewState] = useState<DesktopReviewState>({
     loading: false,
     diff: '',
-    error: undefined as string | undefined,
+    error: undefined,
+    reloadDiff: undefined,
   })
   const { width: rightSplitChatWidth, handleResizeStart: handleRightSplitResizeStart } =
     useResizableRightSplitChat()
@@ -276,6 +284,7 @@ export function DesktopWorkbenchMain({
         loading: true,
         diff: '',
         error: undefined,
+        reloadDiff: loadDiff,
       })
       try {
         const diff = await loadDiff()
@@ -284,6 +293,7 @@ export function DesktopWorkbenchMain({
             loading: false,
             diff,
             error: undefined,
+            reloadDiff: loadDiff,
           })
         }
       } catch (error) {
@@ -296,6 +306,7 @@ export function DesktopWorkbenchMain({
               fallbackMessage: t('workbench.environment_review_failed'),
               deviceUnavailableMessage: t('workbench.environment_review_device_unavailable'),
             }),
+            reloadDiff: loadDiff,
           })
         }
       }
@@ -337,6 +348,14 @@ export function DesktopWorkbenchMain({
     },
     [openRightPanelTab]
   )
+
+  const refreshReview = useCallback(() => {
+    if (!reviewState.reloadDiff) {
+      return
+    }
+
+    void openReviewFromDiffLoader(reviewState.reloadDiff)
+  }, [openReviewFromDiffLoader, reviewState.reloadDiff])
 
   const toggleRightPanel = useCallback(() => {
     setRightPanelOpen(open => {
@@ -387,6 +406,7 @@ export function DesktopWorkbenchMain({
       loading: false,
       diff: '',
       error: undefined,
+      reloadDiff: undefined,
     })
   }, [rightPanelSessionKey])
 
@@ -583,6 +603,7 @@ export function DesktopWorkbenchMain({
             onSelectFiles={selectFilesView}
             onSelectLauncher={() => setRightPanelView('launcher')}
             onCloseTab={closeRightPanelTab}
+            onRefreshReview={reviewState.reloadDiff ? refreshReview : undefined}
           />
         )}
       </div>

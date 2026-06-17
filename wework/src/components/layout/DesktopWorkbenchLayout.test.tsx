@@ -2986,6 +2986,11 @@ describe('DesktopWorkbenchLayout', () => {
     expect(closeButton).not.toHaveClass('ml-auto')
     expect(screen.getByTestId('right-workspace-new-tab-button')).toBeInTheDocument()
     expect(await screen.findByTestId('file-changes-review-panel')).toHaveTextContent('src/env.ts')
+    expect(baseProps.onLoadEnvironmentDiff).toHaveBeenCalledTimes(1)
+
+    await userEvent.click(screen.getByTestId('refresh-review-diff-button'))
+
+    await waitFor(() => expect(baseProps.onLoadEnvironmentDiff).toHaveBeenCalledTimes(2))
   })
 
   test('right workspace panel retries review loading after a stale device offline error', async () => {

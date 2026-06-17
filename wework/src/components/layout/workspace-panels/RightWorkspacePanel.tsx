@@ -33,6 +33,7 @@ interface RightWorkspacePanelProps {
   onSelectFiles: () => void
   onSelectLauncher: () => void
   onCloseTab: (tab: RightWorkspacePanelTab) => void
+  onRefreshReview?: () => void
 }
 
 export function RightWorkspacePanel({
@@ -49,6 +50,7 @@ export function RightWorkspacePanel({
   onSelectFiles,
   onSelectLauncher,
   onCloseTab,
+  onRefreshReview,
 }: RightWorkspacePanelProps) {
   const { t } = useTranslation('common')
   const showTabs = openTabs.length > 0
@@ -110,6 +112,7 @@ export function RightWorkspacePanel({
             loading={review.loading}
             diff={review.diff}
             error={review.error}
+            onRefresh={onRefreshReview}
           />
         ) : workspaceTargetError ? (
           <section
