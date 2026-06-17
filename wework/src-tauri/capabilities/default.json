@@ -7,6 +7,15 @@
     "core:default",
     "core:window:allow-start-dragging",
     "updater:default",
-    "process:allow-restart"
+    "process:allow-restart",
+    {
+      "identifier": "http:default",
+      "allow": [
+        { "url": "https://*.intra.weibo.com/*" },
+        { "url": "http://*.intra.weibo.com/*" },
+        { "url": "http://localhost:*/*" },
+        { "url": "http://127.0.0.1:*/*" }
+      ]
+    }
   ]
 }
