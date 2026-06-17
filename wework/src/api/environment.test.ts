@@ -180,6 +180,53 @@ describe('loadProjectEnvironment', () => {
     })
   })
 
+  test('surfaces structured stdout from text device commands as an environment error', async () => {
+    const executeCommand = vi
+      .fn()
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: { branch: 'main' },
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: '',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: '',
+        stderr: '',
+      })
+
+    const info = await loadProjectEnvironment(
+      { executeCommand },
+      {
+        id: 2,
+        name: 'Wegent',
+        config: {
+          mode: 'workspace',
+          execution: {
+            targetType: 'local',
+            deviceId: 'device-123',
+          },
+          workspace: {
+            source: 'local_path',
+            localPath: '/workspace/Wegent',
+          },
+        },
+      },
+    )
+
+    expect(info).toEqual({
+      additions: '+0',
+      deletions: '-0',
+      executionTarget: 'local',
+      deviceId: 'device-123',
+      error: 'Expected text stdout from device command',
+    })
+  })
+
   test('deduplicates repeated environment loads for the same project briefly', async () => {
     const executeCommand = vi
       .fn()

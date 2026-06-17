@@ -1,5 +1,10 @@
 import type { DeviceCommandRequest, DeviceCommandResponse, ProjectWithTasks } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
+import {
+  configuredWorkspacePath,
+  executionDeviceId,
+  resolveProjectWorkspacePath,
+} from '@/lib/project-workspace'
 
 interface DeviceCommandApi {
   executeCommand(deviceId: string, data: DeviceCommandRequest): Promise<DeviceCommandResponse>
@@ -29,18 +34,13 @@ const environmentInfoCaches = new WeakMap<
 >()
 
 function outputAsString(output: DeviceCommandResponse['stdout']): string {
-  if (typeof output === 'string') return output
-  if (Array.isArray(output)) return output.join('\n')
-  return JSON.stringify(output)
-}
-
-function configuredWorkspacePath(project: ProjectWithTasks): string | undefined {
-  const config = project.config
-  return config?.workspace?.localPath || config?.workspace?.checkoutPath || config?.path
-}
-
-function isGitWorkspace(project: ProjectWithTasks): boolean {
-  return project.config?.workspace?.source === 'git'
+  if (typeof output === 'string') {
+    return output
+  }
+  if (Array.isArray(output) && output.every(item => typeof item === 'string')) {
+    return output.join('\n')
+  }
+  throw new Error('Expected text stdout from device command')
 }
 
 function environmentInfoCacheKey(project: ProjectWithTasks): string | null {
@@ -73,23 +73,6 @@ function getEnvironmentInfoCache(api: DeviceCommandApi): Map<string, Environment
   return cache
 }
 
-function joinDevicePath(root: string, child: string): string {
-  const normalizedRoot = root.trim().replace(/\/+$/, '') || '/'
-  const normalizedChild = child.trim().replace(/^\/+/, '')
-  if (!normalizedChild) {
-    return normalizedRoot
-  }
-  return normalizedRoot === '/' ? `/${normalizedChild}` : `${normalizedRoot}/${normalizedChild}`
-}
-
-function executorWorkspaceRoot(projectWorkspaceRoot: string): string {
-  const normalizedRoot = projectWorkspaceRoot.trim().replace(/\/+$/, '') || '/'
-  if (normalizedRoot.split('/').pop() === 'projects') {
-    return normalizedRoot.slice(0, normalizedRoot.lastIndexOf('/')) || '/'
-  }
-  return normalizedRoot
-}
-
 async function resolveProjectWorkspaceRoot(
   api: DeviceCommandApi,
   deviceId: string
@@ -114,21 +97,10 @@ async function workspacePath(
   deviceId: string,
   project: ProjectWithTasks
 ): Promise<string | undefined> {
-  const path = configuredWorkspacePath(project)
-  if (!path || !isGitWorkspace(project) || path.startsWith('/')) {
-    return path
-  }
-
-  const workspaceRoot = await resolveProjectWorkspaceRoot(api, deviceId)
-  if (path.startsWith('projects/')) {
-    return joinDevicePath(executorWorkspaceRoot(workspaceRoot), path)
-  }
-  return joinDevicePath(workspaceRoot, path)
-}
-
-function executionDeviceId(project: ProjectWithTasks): string | undefined {
-  const config = project.config
-  return config?.execution?.deviceId || config?.device_id
+  return resolveProjectWorkspacePath(project, deviceId, {
+    getProjectWorkspaceRoot: targetDeviceId =>
+      resolveProjectWorkspaceRoot(api, targetDeviceId),
+  })
 }
 
 function validateBranchName(branchName: string): void {

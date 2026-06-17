@@ -57,6 +57,14 @@ The worktree ID is the task ID. The task stores only `git_worktree` as the execu
 
 “New worktree” is available only for new conversations in projects bound to a local execution device and local directory. Existing tasks lock the execution directory so a task cannot switch workspaces midway. If the directory is not currently a Git repository, sending the task shows an error; after the user manually turns that directory into a Git repository, no project configuration change is needed before selecting a new worktree again.
 
+## Browse Workspace Files and Add Code Comments
+
+In desktop Wework, open the right workspace panel to browse files from the current task or project in read-only mode. The file tree reads the workspace directory from the currently bound execution device; existing tasks prefer the task workspace, and new conversations prefer the current project workspace.
+
+The file preview does not save or modify files. You can select a code range in the preview and add a local comment. The comment appears above the left composer as contextual input, such as “1 comment”. When you send the next message, Wework includes the file path, line range, selected code, and comment text in the request context so the agent can understand the referenced code location.
+
+Code comment context is not uploaded as a normal file and does not use `attachment_ids`. If you add only code comments without typed text, Wework sends a short default prompt. If you upload only normal file attachments without typed text, the message body remains empty and Wework uses the default conversation title.
+
 ## Using an Existing Folder
 
 When creating a Wework project with “Using existing folder”, Wegent looks for an existing project by current user, Wework origin, execution device, and normalized local folder path:
