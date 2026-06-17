@@ -25,6 +25,7 @@ from app.services.device.session_service import (
 )
 from app.services.device_service import device_service
 from app.services.task_execution_workspace import task_execution_workspace_path
+from app.stores.tasks import task_store
 
 ProjectSessionType = Literal["terminal", "code_server"]
 
@@ -106,19 +107,14 @@ def _get_task_session_path(
     task_id: int,
     client_origin: Optional[str],
 ) -> str:
-    query = db.query(TaskResource).filter(
-        TaskResource.id == task_id,
-        TaskResource.user_id == user_id,
-        TaskResource.project_id == project_id,
-        TaskResource.kind == "Task",
-        TaskResource.is_active.in_(
-            [TaskResource.STATE_ACTIVE, TaskResource.STATE_SUBSCRIPTION]
-        ),
+    task = task_store.get_project_task_by_states(
+        db,
+        task_id=task_id,
+        project_id=project_id,
+        owner_user_id=user_id,
+        client_origin=client_origin,
+        states=TaskResource.is_active_query(),
     )
-    if client_origin:
-        query = query.filter(TaskResource.client_origin == client_origin)
-
-    task = query.first()
     if not task:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
