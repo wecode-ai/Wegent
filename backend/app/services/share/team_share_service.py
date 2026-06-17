@@ -60,7 +60,7 @@ class TeamShareService(UnifiedShareService):
             .first()
         )
 
-        if team and team.user_id == user_id:
+        if team and (team.user_id == user_id or team.user_id == 0):
             return team
 
         # Check if user has shared access (direct user or entity fallback)

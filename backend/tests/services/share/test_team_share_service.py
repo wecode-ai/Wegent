@@ -37,12 +37,14 @@ def _create_user(test_db: Session, username: str) -> User:
     return user
 
 
-def _create_team(test_db: Session, owner: User, name: str, ns: str = "default") -> Kind:
+def _create_team(
+    test_db: Session, owner: User | None, name: str, ns: str = "default"
+) -> Kind:
     team = Kind(
         name=name,
         namespace=ns,
         kind="Team",
-        user_id=owner.id,
+        user_id=owner.id if owner else 0,
         is_active=True,
         json={"spec": {"name": name}},
     )
@@ -119,6 +121,16 @@ class TestTeamGetResource:
         service = TeamShareService()
 
         result = service._get_resource(test_db, team.id, creator.id)
+
+        assert result is not None
+        assert result.id == team.id
+
+    def test_returns_public_team_for_any_user(self, test_db: Session):
+        user = _create_user(test_db, "public-team-user")
+        team = _create_team(test_db, None, "public-team")
+        service = TeamShareService()
+
+        result = service._get_resource(test_db, team.id, user.id)
 
         assert result is not None
         assert result.id == team.id
