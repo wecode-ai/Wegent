@@ -206,6 +206,39 @@ async def test_codex_pre_execute_uses_project_workspace_path(tmp_path):
     assert status.name == "SUCCESS"
 
 
+def test_codex_project_task_marks_api_project_id():
+    request = ExecutionRequest(
+        task_id=1546,
+        subtask_id=1970,
+        project_id=42,
+        model_config={
+            "model": "openai",
+            "model_id": "gpt-5.5",
+            "base_url": "https://copilot.weibo.com/v1",
+            "api_key": "token",
+            "api_format": "responses",
+        },
+    )
+    agent = CodeXAgent(request, MagicMock())
+
+    status = agent.initialize()
+
+    assert status.name == "SUCCESS"
+    assert agent.codex_config is not None
+    assert (
+        'model_providers.wecode-openai.http_headers.wecode-project="42"'
+        in agent.codex_config.config_overrides
+    )
+    assert (
+        'model_providers.wecode-openai.http_headers.wecode-executor="codex"'
+        in agent.codex_config.config_overrides
+    )
+    assert not any(
+        item == 'model_providers.wecode-openai.http_headers.wecode-source="wework"'
+        for item in agent.codex_config.config_overrides
+    )
+
+
 async def test_initial_codex_standalone_chat_prepares_request_named_cwd(
     tmp_path, monkeypatch
 ):
