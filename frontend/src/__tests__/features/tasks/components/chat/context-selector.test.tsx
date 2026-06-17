@@ -164,6 +164,27 @@ describe('ContextSelector organization grouping', () => {
     })
   })
 
+  it('falls back to default context types when allowed types are explicitly empty', async () => {
+    render(
+      <ContextSelector
+        open={true}
+        onOpenChange={jest.fn()}
+        selectedContexts={[]}
+        onSelect={jest.fn()}
+        onDeselect={jest.fn()}
+        allowedContextTypes={[]}
+      >
+        <button>trigger</button>
+      </ContextSelector>
+    )
+
+    expect(screen.getByText('knowledge:table.title')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(mockListKnowledgeBases).toHaveBeenCalled()
+      expect(mockListTables).toHaveBeenCalled()
+    })
+  })
+
   it('hides table contexts when restricted to default agent context types', async () => {
     render(
       <ContextSelector

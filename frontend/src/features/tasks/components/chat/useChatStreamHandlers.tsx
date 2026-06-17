@@ -444,10 +444,10 @@ export function useChatStreamHandlers({
       }
 
       const contextItems: Array<{
-        type: 'knowledge_base' | 'table' | 'selected_documents'
+        type: 'knowledge_base' | 'table' | 'selected_documents' | 'dingtalk_doc'
         data: Record<string, unknown>
       }> = snapshotContexts
-        .filter(ctx => ctx.type !== 'queue_message' && ctx.type !== 'dingtalk_doc')
+        .filter(ctx => ctx.type !== 'queue_message')
         .map(ctx => {
           if (ctx.type === 'knowledge_base') {
             return {
@@ -456,6 +456,19 @@ export function useChatStreamHandlers({
                 knowledge_id: ctx.id,
                 name: ctx.name,
                 document_count: ctx.document_count,
+              },
+            }
+          }
+          if (ctx.type === 'dingtalk_doc') {
+            return {
+              type: 'dingtalk_doc' as const,
+              data: {
+                id: ctx.id,
+                source: ctx.source,
+                dingtalk_node_id: ctx.dingtalk_node_id,
+                name: ctx.name,
+                doc_url: ctx.doc_url,
+                node_type: ctx.node_type,
               },
             }
           }

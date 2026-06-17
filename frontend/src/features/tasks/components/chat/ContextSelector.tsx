@@ -149,7 +149,12 @@ export default function ContextSelector({
     tRef.current = t
   }, [t])
   const allowedTypes = useMemo(
-    () => new Set<ContextType>(allowedContextTypes || DEFAULT_ALLOWED_CONTEXT_TYPES),
+    () =>
+      new Set<ContextType>(
+        allowedContextTypes && allowedContextTypes.length > 0
+          ? allowedContextTypes
+          : DEFAULT_ALLOWED_CONTEXT_TYPES
+      ),
     [allowedContextTypes]
   )
   const canSelectKnowledgeBase = allowedTypes.has('knowledge_base')
