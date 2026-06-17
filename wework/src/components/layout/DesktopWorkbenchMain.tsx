@@ -63,27 +63,6 @@ function workspaceTargetKey(target: WorkspaceTarget | null): string {
   return target ? `${target.deviceId}:${target.path}:${target.source}:${target.taskId ?? ''}` : ''
 }
 
-function messageWorkspaceTargetKey(currentTask: Task | null, messages: WorkbenchMessage[]): string {
-  let latestUnscopedKey = ''
-
-  for (const message of [...messages].reverse()) {
-    const fileChanges = message.fileChanges
-    if (fileChanges?.status !== 'active' || !fileChanges.device_id || !fileChanges.workspace_path) {
-      continue
-    }
-
-    const key = `${message.taskId ?? ''}:${fileChanges.device_id}:${fileChanges.workspace_path}`
-    if (currentTask && message.taskId === currentTask.id) {
-      return key
-    }
-    if (message.taskId == null && !latestUnscopedKey) {
-      latestUnscopedKey = key
-    }
-  }
-
-  return latestUnscopedKey
-}
-
 function workbenchSessionKey({
   currentTask,
   currentProject,
@@ -235,7 +214,6 @@ export function DesktopWorkbenchMain({
     const { apiBaseUrl } = getRuntimeConfig()
     return createDeviceApi(createHttpClient({ baseUrl: apiBaseUrl }))
   }, [])
-  const messagesRef = useRef(messages)
   const currentTaskWorkspaceKey = currentTask
     ? [
         currentTask.id,
@@ -245,10 +223,6 @@ export function DesktopWorkbenchMain({
     : ''
   const reviewRequestSequence = useRef(0)
   const panelWorkspaceProject = workspaceProject === undefined ? currentProject : workspaceProject
-  const workspaceMessageTargetKey = messageWorkspaceTargetKey(
-    panelWorkspaceProject ? null : currentTask,
-    messages
-  )
   const rightPanelSessionKey = workbenchSessionKey({ currentTask, currentProject })
   const previousRightPanelSessionKey = useRef(rightPanelSessionKey)
   const isTauri = isTauriRuntime()
@@ -403,10 +377,6 @@ export function DesktopWorkbenchMain({
   const workspacePanelActions = renderWorkspacePanelActions('all')
   const showPageTopBar = !isTauri || Boolean(topBarLeftActions)
 
-  useEffect(() => {
-    messagesRef.current = messages
-  }, [messages])
-
   useLayoutEffect(() => {
     if (previousRightPanelSessionKey.current === rightPanelSessionKey) {
       return
@@ -428,7 +398,6 @@ export function DesktopWorkbenchMain({
     resolveWorkspaceTarget({
       currentTask,
       currentProject: panelWorkspaceProject,
-      messages: messagesRef.current,
       api: workspaceDeviceApi,
     })
       .then(target => {
@@ -449,13 +418,7 @@ export function DesktopWorkbenchMain({
     return () => {
       cancelled = true
     }
-  }, [
-    currentTask,
-    panelWorkspaceProject,
-    workspaceDeviceApi,
-    currentTaskWorkspaceKey,
-    workspaceMessageTargetKey,
-  ])
+  }, [currentTask, panelWorkspaceProject, workspaceDeviceApi, currentTaskWorkspaceKey])
 
   return (
     <main
