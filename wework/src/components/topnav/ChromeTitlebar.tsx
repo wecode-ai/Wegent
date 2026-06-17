@@ -4,6 +4,7 @@ import type { AppTab } from '@/config/apps'
 import { Grid3X3, Globe2 } from 'lucide-react'
 import { TITLEBAR_ACTIONS_PORTAL_ID } from './TitlebarActionsPortal'
 import { TitlebarExtensionSlot } from '@extensions/titlebar'
+import type { ReactNode } from 'react'
 
 function getPlatform(): 'mac' | 'win' | 'linux' {
   if (typeof navigator === 'undefined') return 'mac'
@@ -18,9 +19,10 @@ interface ChromeTitlebarProps {
   tabs: AppTab[]
   activeKey: string
   onNavigate: (appKey: string) => void
+  afterTabs?: ReactNode
 }
 
-export function ChromeTitlebar({ tabs, activeKey, onNavigate }: ChromeTitlebarProps) {
+export function ChromeTitlebar({ tabs, activeKey, onNavigate, afterTabs }: ChromeTitlebarProps) {
   const isTauri = isTauriRuntime()
   const platform = getPlatform()
 
@@ -64,6 +66,11 @@ export function ChromeTitlebar({ tabs, activeKey, onNavigate }: ChromeTitlebarPr
           </button>
         ))}
       </div>
+      {afterTabs && (
+        <div data-testid="chrome-titlebar-after-tabs" className="ml-3 flex shrink-0 items-center">
+          {afterTabs}
+        </div>
+      )}
 
       <div className="min-w-6 flex-1" {...(isTauri ? { 'data-tauri-drag-region': '' } : {})} />
       {isTauri && <TitlebarExtensionSlot />}

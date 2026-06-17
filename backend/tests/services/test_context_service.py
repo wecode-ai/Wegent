@@ -2249,6 +2249,38 @@ class TestVideoAttachmentProcessing:
         assert '"fid": 12345' in metadata_text
         assert fid == 12345
 
+    def test_build_video_history_metadata_text_allows_missing_fid(
+        self, test_db
+    ) -> None:
+        """History metadata can preserve video context even without model input fid."""
+        from app.models.subtask_context import (
+            ContextStatus,
+            ContextType,
+            SubtaskContext,
+        )
+        from app.services.context import context_service
+
+        context = SubtaskContext(
+            subtask_id=100,
+            user_id=1,
+            context_type=ContextType.ATTACHMENT.value,
+            name="video.mp4",
+            status=ContextStatus.READY.value,
+            type_data={
+                "file_extension": ".mp4",
+                "original_filename": "video.mp4",
+                "file_size": 1024000,
+                "mime_type": "video/mp4",
+            },
+        )
+        context.id = 999
+
+        metadata_text = context_service.build_video_history_metadata_text(context)
+
+        assert "Video Attachment: video.mp4" in metadata_text
+        assert "ID: 999" in metadata_text
+        assert '"fid"' not in metadata_text
+
     def test_build_video_content_from_attachment_raises_when_url_missing(
         self, monkeypatch, test_db
     ) -> None:

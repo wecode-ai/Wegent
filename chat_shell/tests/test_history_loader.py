@@ -2,13 +2,15 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from types import SimpleNamespace
+import sys
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
 from chat_shell.history.loader import (
     _build_history_messages,
     _build_knowledge_base_text_prefix,
+    _build_video_attachment_payload,
     _extract_user_text,
     _truncate_history,
     get_chat_history,
@@ -274,7 +276,7 @@ class TestPackageModeVideoHistory:
         )
         monkeypatch.setattr(
             "chat_shell.history.loader._build_video_attachment_payload",
-            lambda _context: payload,
+            lambda _db, _context: payload,
         )
 
         messages = _build_history_messages(
@@ -293,7 +295,7 @@ class TestPackageModeVideoHistory:
         }
         assert "Video Attachment" in content[2]["text"]
 
-    def test_rejects_video_blocks_when_model_does_not_support_video(self):
+    def test_uses_video_metadata_when_model_does_not_support_video(self):
         subtask = SimpleNamespace(
             id=10,
             task_id=20,
@@ -313,11 +315,41 @@ class TestPackageModeVideoHistory:
             type_data={"fid": 123},
         )
 
-        with pytest.raises(ValueError, match="requires a video-capable model"):
-            _build_history_messages(
-                _FakeDb([context]),
-                subtask,
-                sender_username=None,
-                is_group_chat=False,
-                supports_video=False,
-            )
+        messages = _build_history_messages(
+            _FakeDb([context]),
+            subtask,
+            sender_username=None,
+            is_group_chat=False,
+            supports_video=False,
+        )
+
+        content = messages[0]["content"]
+        assert content[0] == {"type": "text", "text": "describe the video"}
+        assert len(content) == 2
+        assert "video_url" not in str(content)
+        assert "Video Attachment: clip.mp4" in content[1]["text"]
+        assert "ID: 30" in content[1]["text"]
+
+    def test_video_payload_helper_passes_db_to_context_service(self, monkeypatch):
+        db = object()
+        context = object()
+        payload = object()
+        captured = {}
+        fake_context_module = ModuleType("app.services.context")
+        fake_context_service = SimpleNamespace()
+
+        def fake_build_video_content_from_attachment(received_db, received_context):
+            captured["db"] = received_db
+            captured["context"] = received_context
+            return payload
+
+        fake_context_service.build_video_content_from_attachment = (
+            fake_build_video_content_from_attachment
+        )
+        fake_context_module.context_service = fake_context_service
+        monkeypatch.setitem(sys.modules, "app", ModuleType("app"))
+        monkeypatch.setitem(sys.modules, "app.services", ModuleType("app.services"))
+        monkeypatch.setitem(sys.modules, "app.services.context", fake_context_module)
+
+        assert _build_video_attachment_payload(db, context) is payload
+        assert captured == {"db": db, "context": context}

@@ -623,10 +623,15 @@ def _build_history_messages(
                 )
             elif _is_video_context(attachment):
                 if not supports_video:
-                    raise ValueError(
-                        f"Video attachment {attachment.id} requires a video-capable model"
+                    video_text = _build_video_attachment_metadata_text(attachment)
+                    attachment_text_parts.append(video_text)
+                    total_attachment_text_length += len(video_text)
+                    logger.info(
+                        "[history] Added metadata-only video attachment: id=%s",
+                        attachment.id,
                     )
-                payload = _build_video_attachment_payload(attachment)
+                    continue
+                payload = _build_video_attachment_payload(db, attachment)
                 if payload is None:
                     continue
                 video_parts.append(
@@ -857,11 +862,18 @@ def _is_video_context(context) -> bool:
     return file_extension in {".mp4", ".avi", ".mkv", ".mov", ".flv", ".wmv"}
 
 
-def _build_video_attachment_payload(context):
+def _build_video_attachment_payload(db, context):
     """Build video payload through backend's context service in package mode."""
     from app.services.context import context_service
 
-    return context_service.build_video_content_from_attachment(context)
+    return context_service.build_video_content_from_attachment(db, context)
+
+
+def _build_video_attachment_metadata_text(context) -> str:
+    """Build video attachment metadata without resolving a video URL."""
+    from shared.utils.video_metadata import build_video_history_metadata_text
+
+    return build_video_history_metadata_text(context)
 
 
 def _format_file_size(size_bytes: int) -> str:

@@ -444,9 +444,16 @@ def _build_user_message_content(
             )
 
             if not supports_video:
-                raise ValueError(
-                    f"Video attachment {attachment.id} requires a video-capable model"
+                metadata_text = context_service.build_video_history_metadata_text(
+                    attachment
                 )
+                attachment_text_parts.append(metadata_text)
+                total_attachment_text_length += len(metadata_text)
+                logger.info(
+                    "[history][VIDEO DEBUG] Added metadata-only video attachment: id=%s",
+                    attachment.id,
+                )
+                continue
 
             payload = context_service.build_video_content_from_attachment(
                 db, attachment
@@ -568,50 +575,48 @@ def _build_user_message_content(
     # Output assembly.
     #
     # This internal API serves chat_shell HTTP mode which sends the result
-    # directly to the LLM.  The format must match what the LLM expects:
-    #   [user_msg_block, image_blocks..., system_reminder_block]
+    # directly to the LLM. The format mirrors chat_shell package-mode history:
+    #   [user_msg_block, image/video blocks..., context blocks..., extra blocks]
     #
-    # When extra_blocks is present (new format), the stored system-reminder
-    # already contains all context metadata + time.  Pass it through as-is
-    # to avoid duplication (the DB contexts are only needed for image base64).
-    #
-    # When extra_blocks is empty (old format), rebuild a system-reminder
-    # from the DB context records.
-    if extra_blocks:
-        if vision_parts or video_parts:
-            return [
-                {"type": "text", "text": text_content},
-                *vision_parts,
-                *video_parts,  # Add video blocks
-                *extra_blocks,
-            ]
-        return [{"type": "text", "text": text_content}, *extra_blocks]
-
-    # Old format fallback: rebuild system-reminder from DB context records.
-    context_parts: list[str] = []
+    # Rebuild context blocks from DB context records. Stored attachment blocks
+    # are discarded by parse_prompt_blocks() so history recovery always uses
+    # SubtaskContext as the source of truth.
+    context_blocks: list[dict[str, Any]] = []
     if attachment_text_parts:
-        context_parts.append(
-            "<attachment>" + "".join(attachment_text_parts) + "</attachment>"
+        context_blocks.append(
+            {
+                "type": "text",
+                "text": "<attachment>"
+                + "".join(attachment_text_parts)
+                + "</attachment>",
+            }
         )
     if kb_text_parts:
-        context_parts.append(
-            "<knowledge_base>" + "".join(kb_text_parts) + "</knowledge_base>"
+        context_blocks.append(
+            {
+                "type": "text",
+                "text": "<knowledge_base>"
+                + "".join(kb_text_parts)
+                + "</knowledge_base>",
+            }
         )
 
-    if context_parts:
-        inner = "".join(context_parts)
-        reminder_block = {
-            "type": "text",
-            "text": f"<system-reminder>{inner}</system-reminder>",
-        }
-        if vision_parts or video_parts:
-            return [
-                {"type": "text", "text": text_content},
-                *vision_parts,
-                *video_parts,  # Add video blocks
-                reminder_block,
-            ]
-        return [{"type": "text", "text": text_content}, reminder_block]
+    if extra_blocks:
+        return [
+            {"type": "text", "text": text_content},
+            *vision_parts,
+            *video_parts,
+            *context_blocks,
+            *extra_blocks,
+        ]
+
+    if context_blocks:
+        return [
+            {"type": "text", "text": text_content},
+            *vision_parts,
+            *video_parts,
+            *context_blocks,
+        ]
 
     # No context at all
     if vision_parts or video_parts:

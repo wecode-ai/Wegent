@@ -6,13 +6,21 @@ import type { AppTab } from '@/config/apps'
 
 const mockTabs: AppTab[] = [
   { key: 'wework', label: 'WeWork', mode: 'native', requiresAuth: true },
-  { key: 'wegent', label: 'Wegent', mode: 'iframe', url: 'http://localhost:3000', requiresAuth: true },
+  {
+    key: 'wegent',
+    label: 'Wegent',
+    mode: 'iframe',
+    url: 'http://localhost:3000',
+    requiresAuth: true,
+  },
 ]
 
 function mockUserAgent(ua: string) {
   Object.defineProperty(navigator, 'userAgent', {
     configurable: true,
-    get() { return ua },
+    get() {
+      return ua
+    },
   })
 }
 
@@ -21,8 +29,7 @@ function enableTauri() {
 }
 
 function disableTauri() {
-  delete (window as Window & { __TAURI_INTERNALS__?: object })
-    .__TAURI_INTERNALS__
+  delete (window as Window & { __TAURI_INTERNALS__?: object }).__TAURI_INTERNALS__
 }
 
 describe('ChromeTitlebar', () => {
@@ -34,12 +41,8 @@ describe('ChromeTitlebar', () => {
 
   test('active tab connects to the window canvas', () => {
     render(<ChromeTitlebar tabs={mockTabs} activeKey="wegent" onNavigate={vi.fn()} />)
-    expect(screen.getByTestId('chrome-tab-wegent')).toHaveClass(
-      'bg-black/[0.045]',
-    )
-    expect(screen.getByTestId('chrome-tab-wework')).not.toHaveClass(
-      'bg-black/[0.045]',
-    )
+    expect(screen.getByTestId('chrome-tab-wegent')).toHaveClass('bg-black/[0.045]')
+    expect(screen.getByTestId('chrome-tab-wework')).not.toHaveClass('bg-black/[0.045]')
     expect(screen.getByTestId('chrome-tab-wegent')).toHaveClass(
       'h-7',
       'min-w-24',
@@ -48,14 +51,36 @@ describe('ChromeTitlebar', () => {
       'px-3',
       'text-center',
       'leading-none',
-      'bg-black/[0.045]',
+      'bg-black/[0.045]'
     )
     expect(screen.getByTestId('chrome-tab-wegent')).not.toHaveClass(
       'border',
-      'shadow-[0_1px_2px_rgba(0,0,0,0.06)]',
+      'shadow-[0_1px_2px_rgba(0,0,0,0.06)]'
     )
     expect(screen.getByTestId('chrome-titlebar')).toHaveClass('h-[38px]', 'bg-surface')
     expect(screen.getByTestId('titlebar-actions')).toBeInTheDocument()
+  })
+
+  test('renders after-tabs content between tabs and titlebar actions', () => {
+    render(
+      <ChromeTitlebar
+        tabs={mockTabs}
+        activeKey="wework"
+        onNavigate={vi.fn()}
+        afterTabs={<button type="button">Update</button>}
+      />
+    )
+
+    const afterTabs = screen.getByTestId('chrome-titlebar-after-tabs')
+    const activeTab = screen.getByTestId('chrome-tab-wework')
+    const titlebarActions = screen.getByTestId('titlebar-actions')
+    expect(afterTabs).toHaveTextContent('Update')
+    expect(
+      activeTab.compareDocumentPosition(afterTabs) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+    expect(
+      afterTabs.compareDocumentPosition(titlebarActions) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
   })
 
   test('calls onNavigate on tab click', async () => {

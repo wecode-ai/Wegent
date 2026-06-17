@@ -346,15 +346,15 @@ class TurnFileChangeTracker:
         temp_path.replace(path)
 
     def _acquire_lock(self) -> None:
-        common_dir = _run_git(
+        git_dir = _run_git(
             self.workspace,
             "rev-parse",
-            "--git-common-dir",
+            "--git-dir",
         ).stdout.strip()
-        common_path = Path(common_dir)
-        if not common_path.is_absolute():
-            common_path = self.workspace / common_path
-        self._lock_path = common_path.resolve() / LOCK_FILE_NAME
+        git_path = Path(git_dir)
+        if not git_path.is_absolute():
+            git_path = self.workspace / git_path
+        self._lock_path = git_path.resolve() / LOCK_FILE_NAME
         lock_metadata = {
             "pid": os.getpid(),
             "hostname": socket.gethostname(),
