@@ -98,6 +98,7 @@ describe('loadProjectEnvironment', () => {
 
     expect(info.additions).toBe('+2')
     expect(info.deletions).toBe('-1')
+    expect(info.workspacePath).toBe('/workspace/projects/directmessage_single')
     expect(executeCommand).toHaveBeenNthCalledWith(1, 'device-123', {
       command_key: 'project_workspace_root',
       timeout_seconds: 10,
@@ -158,6 +159,7 @@ describe('loadProjectEnvironment', () => {
     expect(info).toEqual({
       executionTarget: 'cloud',
       deviceId: 'device-123',
+      workspacePath: '/workspace/Wegent',
       branchName: 'human/narwhal-20260528-073440',
       additions: '+8',
       deletions: '-3',

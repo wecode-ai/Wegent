@@ -302,6 +302,11 @@ async function loadProjectEnvironmentUncached(
 
   try {
     const { deviceId, path } = await commandContext(api, project, target)
+    const environmentWorkspaceInfo = {
+      ...baseInfo,
+      deviceId,
+      workspacePath: path,
+    }
     const [branchName, shortStat, porcelain] = await Promise.all([
       runGitCommand(api, deviceId, 'git_branch', path),
       loadBranchDiffShortStat(api, deviceId, path),
@@ -329,7 +334,7 @@ async function loadProjectEnvironmentUncached(
     }
 
     return {
-      ...baseInfo,
+      ...environmentWorkspaceInfo,
       ...diff,
       branchName,
       createPullRequestUrl: buildPullRequestUrl(remoteUrl, branchName),

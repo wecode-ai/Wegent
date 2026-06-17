@@ -3769,7 +3769,35 @@ describe('DesktopWorkbenchLayout', () => {
   })
 
   test('opens the environment info popover and closes it from outside click', async () => {
-    render(<DesktopWorkbenchLayout {...baseProps} />)
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          devices: [
+            {
+              id: 1,
+              device_id: 'e13e1a10-5377-4a87-a3b3-634a098d0bb4',
+              name: 'yunpeng7-executor-0bb4',
+              status: 'online',
+              is_default: false,
+              device_type: 'cloud',
+              bind_shell: 'claudecode',
+            },
+          ],
+        }}
+        onLoadEnvironmentInfo={vi.fn().mockResolvedValue({
+          additions: '+173',
+          deletions: '-13366',
+          executionTarget: 'cloud',
+          deviceId: 'e13e1a10-5377-4a87-a3b3-634a098d0bb4',
+          workspacePath: '/workspace/projects/github_wegent',
+          branchName: 'human/narwhal-20260528-073440',
+          createPullRequestUrl:
+            'https://github.com/wecode-ai/Wegent/compare/human%2Fnarwhal-20260528-073440?expand=1',
+        })}
+      />
+    )
 
     await userEvent.click(screen.getByTestId('environment-info-button'))
 
@@ -3784,26 +3812,47 @@ describe('DesktopWorkbenchLayout', () => {
     )
     expect(screen.getByText('环境信息')).toBeInTheDocument()
     expect(screen.getByText('变更')).toBeInTheDocument()
+    const deviceSection = screen.getByTestId('environment-device-section')
+    const gitSection = screen.getByTestId('environment-git-section')
+    expect(deviceSection).not.toContainElement(gitSection)
+    expect(gitSection).not.toContainElement(deviceSection)
+    const executionTargetRow = screen.getByTestId('environment-execution-target-row')
+    expect(deviceSection).toContainElement(executionTargetRow)
+    expect(executionTargetRow).toHaveTextContent('位置')
+    expect(executionTargetRow).toHaveTextContent('云设备')
     const deviceButton = await screen.findByTestId('environment-device-button')
-    expect(deviceButton).toHaveTextContent('本地')
-    const deviceId = screen.getByTestId('environment-device-id')
-    expect(deviceId).toHaveTextContent('e13e1a10...0bb4')
-    expect(deviceId).toHaveClass('ml-auto', 'text-right')
-    expect(deviceButton).toHaveAttribute('title', '本地 · e13e1a10-5377-4a87-a3b3-634a098d0bb4')
+    expect(deviceSection).toContainElement(deviceButton)
+    expect(deviceButton).toHaveTextContent('设备')
+    expect(deviceButton).toHaveTextContent('yunpeng7-executor-0bb4')
+    expect(deviceButton).not.toHaveTextContent('云设备')
+    expect(deviceButton).not.toHaveTextContent('e13e1a10')
+    expect(deviceButton).not.toHaveTextContent('8ef4')
+    expect(screen.queryByTestId('environment-device-id')).not.toBeInTheDocument()
+    expect(deviceButton).toHaveAttribute('title', '设备 · yunpeng7-executor-0bb4')
+    const workspacePathButton = screen.getByTestId('environment-workspace-path-button')
+    expect(deviceSection).toContainElement(workspacePathButton)
+    expect(workspacePathButton).toHaveTextContent('/workspace/projects/github_wegent')
+    expect(workspacePathButton).toContainElement(
+      screen.getByTestId('environment-workspace-path-copy-icon')
+    )
+    expect(gitSection).toHaveTextContent('变更')
     expect(await screen.findByText('+173')).toBeInTheDocument()
     expect(await screen.findByText('-13366')).toBeInTheDocument()
-    expect(await screen.findByText('human/narwhal-20260528-073440')).toBeInTheDocument()
-    expect(screen.getByText('提交')).toBeInTheDocument()
-    expect(screen.getByText('创建拉取请求')).toBeInTheDocument()
-    expect(screen.getByText('来源')).toBeInTheDocument()
-    expect(screen.getByText('暂无来源')).toBeInTheDocument()
+    expect(gitSection).toHaveTextContent('human/narwhal-20260528-073440')
+    expect(gitSection).toHaveTextContent('提交')
+    expect(gitSection).toHaveTextContent('创建拉取请求')
+    expect(gitSection).toHaveTextContent('来源')
+    expect(gitSection).toHaveTextContent('暂无来源')
 
     await userEvent.click(deviceButton)
 
-    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
-      'e13e1a10-5377-4a87-a3b3-634a098d0bb4'
+    expect(navigator.clipboard.writeText).not.toHaveBeenCalled()
+
+    await userEvent.click(workspacePathButton)
+
+    expect(navigator.clipboard.writeText).toHaveBeenLastCalledWith(
+      '/workspace/projects/github_wegent'
     )
-    expect(screen.getByText('已复制')).toBeInTheDocument()
 
     await userEvent.click(document.body)
 

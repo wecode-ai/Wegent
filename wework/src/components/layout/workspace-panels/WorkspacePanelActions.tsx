@@ -105,6 +105,7 @@ export function WorkspacePanelActions({
       {showEnvironmentInfo && canShowEnvironmentInfo && (
         <EnvironmentInfoPopover
           info={environmentInfo}
+          devices={devices}
           onRefresh={onRefreshEnvironmentInfo}
           onCommitChanges={onCommitEnvironmentChanges}
           onListBranches={onListEnvironmentBranches}
