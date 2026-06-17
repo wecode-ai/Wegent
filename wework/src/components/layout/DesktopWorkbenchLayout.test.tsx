@@ -3148,6 +3148,80 @@ describe('DesktopWorkbenchLayout', () => {
     )
   })
 
+  test('opens an edited file from the conversation tool block in the workspace panel', async () => {
+    const user = userEvent.setup()
+    const workspacePanelState = createCloudWorkspacePanelState()
+    const readWorkspaceTextFile = vi.fn().mockResolvedValue({
+      path: '/workspace/project/README.md',
+      name: 'README.md',
+      content: 'opened from tool block',
+      truncated: false,
+      size: 22,
+      modifiedAt: null,
+    })
+    createDeviceApiMock.mockReturnValue(
+      createMockDeviceApi({
+        listWorkspaceEntries: vi.fn().mockResolvedValue({
+          path: '/workspace/project',
+          entries: [],
+        }),
+        readWorkspaceTextFile,
+      }) as never
+    )
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          ...workspacePanelState,
+        }}
+        messages={[
+          {
+            id: 'assistant-editing-file',
+            taskId: 101,
+            role: 'assistant',
+            content: '',
+            status: 'streaming',
+            createdAt: '2026-06-12T00:00:00.000Z',
+            blocks: [
+              {
+                id: 'edit-file-1',
+                subtaskId: 101,
+                type: 'tool',
+                toolName: 'edit_file',
+                toolInput: {
+                  path: 'README.md',
+                  old_string: 'before',
+                  new_string: 'after',
+                },
+                status: 'streaming',
+                createdAt: 1770000000000,
+              },
+            ],
+          },
+        ]}
+        projectWork={{
+          ...baseProps.projectWork,
+          projects: workspacePanelState.projects,
+          devices: workspacePanelState.devices,
+          currentProjectId: workspacePanelState.currentProject.id,
+        }}
+      />
+    )
+
+    await user.click(screen.getByRole('button', { name: /正在编辑 README\.md/ }))
+
+    expect(await screen.findByTestId('workspace-file-preview')).toHaveTextContent(
+      'opened from tool block'
+    )
+    expect(screen.getByTestId('right-workspace-file-tab')).toHaveAttribute('aria-selected', 'true')
+    expect(readWorkspaceTextFile).toHaveBeenCalledWith(
+      'workspace-cloud-device',
+      '/workspace/project/README.md'
+    )
+  })
+
   test('right workspace panel renders nested directories as an expanded tree', async () => {
     const user = userEvent.setup()
     const workspacePanelState = createCloudWorkspacePanelState()

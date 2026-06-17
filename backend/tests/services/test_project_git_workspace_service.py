@@ -53,6 +53,55 @@ def test_build_git_clone_args_includes_branch_and_single_branch():
     ]
 
 
+@pytest.mark.asyncio
+async def test_prepare_git_checkout_sets_repo_git_identity_after_clone():
+    command_mock = AsyncMock(
+        side_effect=[
+            {"success": True, "exit_code": 0, "stdout": "/workspace/projects"},
+            {"success": True, "exit_code": 0, "stdout": "", "stderr": ""},
+            {"success": False, "exit_code": 1, "stdout": "", "stderr": ""},
+            {"success": True, "exit_code": 0, "stdout": "", "stderr": ""},
+            {"success": True, "exit_code": 0, "stdout": "", "stderr": ""},
+            {"success": True, "exit_code": 0, "stdout": "", "stderr": ""},
+        ]
+    )
+
+    with patch(
+        "app.services.project_service.execute_configured_device_command",
+        command_mock,
+    ):
+        await project_service._prepare_git_checkout(
+            db=object(),
+            user_id=7,
+            device_id="device-1",
+            git_url="https://github.com/wecode-ai/Wegent.git",
+            branch="main",
+            checkout_path="Wegent",
+            git_user_name="alice",
+            git_user_email="alice@example.com",
+        )
+
+    assert [call.kwargs["command_key"] for call in command_mock.await_args_list] == [
+        "project_workspace_root",
+        "mkdir_p",
+        "path_exists",
+        "git_clone",
+        "git_config",
+        "git_config",
+    ]
+    assert (
+        command_mock.await_args_list[4].kwargs["path"] == "/workspace/projects/Wegent"
+    )
+    assert command_mock.await_args_list[4].kwargs["args"] == ["user.name", "alice"]
+    assert (
+        command_mock.await_args_list[5].kwargs["path"] == "/workspace/projects/Wegent"
+    )
+    assert command_mock.await_args_list[5].kwargs["args"] == [
+        "user.email",
+        "alice@example.com",
+    ]
+
+
 def test_default_git_project_name_removes_git_suffix():
     assert (
         project_service._default_git_project_name(

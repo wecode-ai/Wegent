@@ -406,7 +406,7 @@ export function WorkspacePanelCards({
             title={t('workbench.project_terminal_frame_title', '项目终端')}
             src={session.url}
             hidden={!isActive}
-            className="min-h-0 flex-1 border-0"
+            className="h-full min-h-0 w-full flex-1 border-0"
           />
         )
       })}

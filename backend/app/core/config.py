@@ -176,6 +176,9 @@ class Settings(BaseSettings):
     CHAT_TOOL_MAX_TIME_SECONDS: float = (
         60.0  # Maximum time for tool calling flow (5 minutes)
     )
+    # Source-level tool output compaction default for users without an explicit
+    # preference override.
+    TOOL_OUTPUT_GUARD_ENABLED: bool = False
     # Group chat history configuration
     # In group chat mode, AI-bot sees: first N messages + last M messages (no duplicates)
     # If total messages < N + M, all messages are kept

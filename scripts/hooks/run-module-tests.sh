@@ -120,7 +120,7 @@ fi
 # Frontend
 FRONTEND_CHANGES=$(echo "$CHANGED_FILES" | grep -E "^frontend/.*\.(ts|tsx|js|jsx)$" || true)
 if [ -n "$FRONTEND_CHANGES" ]; then
-    run_module_tests "frontend" "pnpm test --passWithNoTests --watchAll=false 2>/dev/null" "$PROJECT_ROOT/frontend"
+    run_module_tests "frontend" "pnpm run test --passWithNoTests --watchAll=false 2>/dev/null" "$PROJECT_ROOT/frontend"
 fi
 
 # Shared chat core
