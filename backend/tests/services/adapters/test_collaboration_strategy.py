@@ -80,6 +80,7 @@ def _pipeline_team_json(
     first_bot_name: str,
     second_bot_name: str,
     first_context_passing: str,
+    first_require_confirmation: bool = False,
 ) -> dict:
     return {
         "apiVersion": "agent.wecode.io/v1",
@@ -92,7 +93,7 @@ def _pipeline_team_json(
                     "botRef": {"name": first_bot_name, "namespace": "default"},
                     "prompt": "",
                     "role": "leader",
-                    "requireConfirmation": False,
+                    "requireConfirmation": first_require_confirmation,
                     "contextPassing": first_context_passing,
                 },
                 {
@@ -602,6 +603,216 @@ class TestPipelineAutoAdvance:
         strategy = CollaborationStrategyFactory.get_strategy_for_task(test_db, task.id)
 
         assert isinstance(strategy, PipelineCollaborationStrategy)
+
+    def test_auto_advance_supports_public_team_owner_zero(
+        self,
+        test_db: Session,
+        test_user: User,
+    ):
+        """Public team user_id=0 is a valid task.teamRef owner."""
+        strategy = self._make_strategy()
+        team_name = "public-pipeline-team"
+
+        public_spec_bot = Kind(
+            user_id=0,
+            kind="Bot",
+            name="public-spec",
+            namespace="default",
+            json={"kind": "Bot", "metadata": {"name": "public-spec"}},
+            is_active=True,
+        )
+        public_dev_bot = Kind(
+            user_id=0,
+            kind="Bot",
+            name="public-dev",
+            namespace="default",
+            json={"kind": "Bot", "metadata": {"name": "public-dev"}},
+            is_active=True,
+        )
+        public_team = Kind(
+            user_id=0,
+            kind="Team",
+            name=team_name,
+            namespace="default",
+            json=_pipeline_team_json(
+                team_name=team_name,
+                first_bot_name="public-spec",
+                second_bot_name="public-dev",
+                first_context_passing="previous_bot",
+            ),
+            is_active=True,
+        )
+        test_db.add_all([public_spec_bot, public_dev_bot, public_team])
+        test_db.flush()
+
+        task = TaskResource(
+            user_id=test_user.id,
+            kind="Task",
+            name="public-team-task",
+            namespace="default",
+            json=_task_json(task_id=7403, team_name=team_name, user_id=0),
+            is_active=True,
+            is_group_chat=False,
+        )
+        test_db.add(task)
+        test_db.flush()
+
+        subtask = Subtask(
+            user_id=test_user.id,
+            task_id=task.id,
+            team_id=public_team.id,
+            title="Assistant response",
+            bot_ids=[public_spec_bot.id],
+            role=SubtaskRole.ASSISTANT,
+            prompt="",
+            status=SubtaskStatus.COMPLETED,
+            progress=100,
+            message_id=2,
+            parent_id=1,
+            executor_namespace="",
+            executor_name="",
+            error_message="",
+            result={"value": "done"},
+            completed_at=datetime.now(),
+        )
+        test_db.add(subtask)
+        test_db.commit()
+
+        with patch.object(strategy, "_should_require_confirmation", return_value=False):
+            result = strategy.get_auto_advance_info(
+                test_db, task.id, subtask.id, "COMPLETED"
+            )
+
+        assert result == {
+            "next_stage_index": 1,
+            "next_bot_id": public_dev_bot.id,
+            "next_bot_name": "public-dev",
+            "context_passing": "previous_bot",
+        }
+
+    def test_strategy_factory_supports_public_team_owner_zero(
+        self,
+        test_db: Session,
+        test_user: User,
+    ):
+        """Public team user_id=0 should still select the pipeline strategy."""
+        team_name = "public-strategy-team"
+        public_team = Kind(
+            user_id=0,
+            kind="Team",
+            name=team_name,
+            namespace="default",
+            json=_pipeline_team_json(
+                team_name=team_name,
+                first_bot_name="spec",
+                second_bot_name="dev",
+                first_context_passing="none",
+            ),
+            is_active=True,
+        )
+        test_db.add(public_team)
+        test_db.flush()
+
+        task = TaskResource(
+            user_id=test_user.id,
+            kind="Task",
+            name="public-team-strategy-task",
+            namespace="default",
+            json=_task_json(task_id=7404, team_name=team_name, user_id=0),
+            is_active=True,
+            is_group_chat=False,
+        )
+        test_db.add(task)
+        test_db.commit()
+
+        strategy = CollaborationStrategyFactory.get_strategy_for_task(test_db, task.id)
+
+        assert isinstance(strategy, PipelineCollaborationStrategy)
+
+    def test_public_team_confirmation_blocks_auto_advance(
+        self,
+        test_db: Session,
+        test_user: User,
+    ):
+        """Public team stages requiring confirmation must wait for the user."""
+        strategy = self._make_strategy()
+        team_name = "public-confirmation-team"
+
+        public_spec_bot = Kind(
+            user_id=0,
+            kind="Bot",
+            name="confirm-spec",
+            namespace="default",
+            json={"kind": "Bot", "metadata": {"name": "confirm-spec"}},
+            is_active=True,
+        )
+        public_dev_bot = Kind(
+            user_id=0,
+            kind="Bot",
+            name="confirm-dev",
+            namespace="default",
+            json={"kind": "Bot", "metadata": {"name": "confirm-dev"}},
+            is_active=True,
+        )
+        public_team = Kind(
+            user_id=0,
+            kind="Team",
+            name=team_name,
+            namespace="default",
+            json=_pipeline_team_json(
+                team_name=team_name,
+                first_bot_name="confirm-spec",
+                second_bot_name="confirm-dev",
+                first_context_passing="previous_bot",
+                first_require_confirmation=True,
+            ),
+            is_active=True,
+        )
+        test_db.add_all([public_spec_bot, public_dev_bot, public_team])
+        test_db.flush()
+
+        task = TaskResource(
+            user_id=test_user.id,
+            kind="Task",
+            name="public-confirmation-task",
+            namespace="default",
+            json=_task_json(task_id=7405, team_name=team_name, user_id=0),
+            is_active=True,
+            is_group_chat=False,
+        )
+        test_db.add(task)
+        test_db.flush()
+
+        subtask = Subtask(
+            user_id=test_user.id,
+            task_id=task.id,
+            team_id=public_team.id,
+            title="Assistant response",
+            bot_ids=[public_spec_bot.id],
+            role=SubtaskRole.ASSISTANT,
+            prompt="",
+            status=SubtaskStatus.COMPLETED,
+            progress=100,
+            message_id=2,
+            parent_id=1,
+            executor_namespace="",
+            executor_name="",
+            error_message="",
+            result={"value": "done"},
+            completed_at=datetime.now(),
+        )
+        test_db.add(subtask)
+        test_db.commit()
+
+        task_status, progress = strategy.get_task_status_on_subtask_complete(
+            test_db, task.id, subtask.id, "COMPLETED"
+        )
+        advance_info = strategy.get_auto_advance_info(
+            test_db, task.id, subtask.id, "COMPLETED"
+        )
+
+        assert (task_status, progress) == ("PENDING_CONFIRMATION", 100)
+        assert advance_info is None
 
     def test_auto_advance_via_patched_imports(self):
         """Stage 0 completes, requireConfirmation=False, stage 1 exists -> advance."""

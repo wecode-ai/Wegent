@@ -6,6 +6,7 @@ import {
   createAndCheckoutProjectBranch,
   listProjectBranches,
   loadProjectEnvironment,
+  loadProjectEnvironmentDiff,
   parseGitShortStat,
 } from './environment'
 
@@ -34,16 +35,14 @@ describe('buildPullRequestUrl', () => {
     expect(
       buildPullRequestUrl(
         'https://github.com/wecode-ai/Wegent.git',
-        'human/narwhal-20260528-073440',
-      ),
+        'human/narwhal-20260528-073440'
+      )
     ).toBe('https://github.com/wecode-ai/Wegent/compare/human%2Fnarwhal-20260528-073440?expand=1')
   })
 
   test('builds GitLab merge request URL from ssh remote', () => {
-    expect(
-      buildPullRequestUrl('git@gitlab.com:wecode-ai/Wegent.git', 'feature/context-info'),
-    ).toBe(
-      'https://gitlab.com/wecode-ai/Wegent/-/merge_requests/new?merge_request%5Bsource_branch%5D=feature%2Fcontext-info',
+    expect(buildPullRequestUrl('git@gitlab.com:wecode-ai/Wegent.git', 'feature/context-info')).toBe(
+      'https://gitlab.com/wecode-ai/Wegent/-/merge_requests/new?merge_request%5Bsource_branch%5D=feature%2Fcontext-info'
     )
   })
 })
@@ -94,7 +93,7 @@ describe('loadProjectEnvironment', () => {
             checkoutPath: 'directmessage_single',
           },
         },
-      },
+      }
     )
 
     expect(info.additions).toBe('+2')
@@ -153,7 +152,7 @@ describe('loadProjectEnvironment', () => {
             localPath: '/workspace/Wegent',
           },
         },
-      },
+      }
     )
 
     expect(info).toEqual({
@@ -215,7 +214,7 @@ describe('loadProjectEnvironment', () => {
             localPath: '/workspace/Wegent',
           },
         },
-      },
+      }
     )
 
     expect(info).toEqual({
@@ -366,7 +365,7 @@ describe('loadProjectEnvironment', () => {
             localPath: '/workspace/Wegent',
           },
         },
-      },
+      }
     )
 
     expect(info.additions).toBe('+1')
@@ -437,7 +436,7 @@ describe('loadProjectEnvironment', () => {
             localPath: '/workspace/Wegent',
           },
         },
-      },
+      }
     )
 
     // 5 tracked insertions + 2 untracked files = +7
@@ -503,7 +502,7 @@ describe('loadProjectEnvironment', () => {
             localPath: '/Volumes/OuterHD/Documents/test-porject',
           },
         },
-      },
+      }
     )
 
     expect(info.additions).toBe('+1')
@@ -575,7 +574,7 @@ describe('loadProjectEnvironment', () => {
             localPath: '/tmp/clean-repo',
           },
         },
-      },
+      }
     )
 
     expect(info.additions).toBe('+0')
@@ -585,6 +584,42 @@ describe('loadProjectEnvironment', () => {
 })
 
 describe('commitProjectChanges', () => {
+  test('loads the full environment diff through the project device command API', async () => {
+    const executeCommand = vi.fn().mockResolvedValue({
+      success: true,
+      stdout: 'diff --git a/src/env.ts b/src/env.ts\n+new\n',
+      stderr: '',
+    })
+
+    await expect(
+      loadProjectEnvironmentDiff(
+        { executeCommand },
+        {
+          id: 1,
+          name: 'Wegent',
+          config: {
+            mode: 'workspace',
+            execution: {
+              targetType: 'local',
+              deviceId: 'device-123',
+            },
+            workspace: {
+              source: 'local_path',
+              localPath: '/workspace/Wegent',
+            },
+          },
+        }
+      )
+    ).resolves.toBe('diff --git a/src/env.ts b/src/env.ts\n+new')
+
+    expect(executeCommand).toHaveBeenCalledWith('device-123', {
+      command_key: 'git_diff',
+      path: '/workspace/Wegent',
+      timeout_seconds: 30,
+      max_output_bytes: 5 * 1024 * 1024,
+    })
+  })
+
   test('stages all changes and commits with the provided message', async () => {
     const executeCommand = vi
       .fn()
@@ -608,7 +643,7 @@ describe('commitProjectChanges', () => {
           },
         },
       },
-      'feat: update environment info',
+      'feat: update environment info'
     )
 
     expect(executeCommand).toHaveBeenNthCalledWith(1, 'device-123', {
@@ -641,8 +676,8 @@ describe('commitProjectChanges', () => {
             workspace: { source: 'local_path', localPath: '/workspace/Wegent' },
           },
         },
-        '   ',
-      ),
+        '   '
+      )
     ).rejects.toThrow('Commit message is required')
 
     expect(executeCommand).not.toHaveBeenCalled()
@@ -712,10 +747,10 @@ describe('branch environment commands', () => {
     const executeCommand = vi.fn()
 
     await expect(checkoutProjectBranch({ executeCommand }, project, '-bad')).rejects.toThrow(
-      'Invalid branch name',
+      'Invalid branch name'
     )
     await expect(
-      createAndCheckoutProjectBranch({ executeCommand }, project, 'feature/bad..name'),
+      createAndCheckoutProjectBranch({ executeCommand }, project, 'feature/bad..name')
     ).rejects.toThrow('Invalid branch name')
 
     expect(executeCommand).not.toHaveBeenCalled()

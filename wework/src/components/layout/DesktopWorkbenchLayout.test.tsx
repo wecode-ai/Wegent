@@ -266,6 +266,11 @@ describe('DesktopWorkbenchLayout', () => {
       ]),
     onCheckoutEnvironmentBranch: vi.fn().mockResolvedValue(undefined),
     onCreateEnvironmentBranch: vi.fn().mockResolvedValue(undefined),
+    onLoadEnvironmentDiff: vi
+      .fn()
+      .mockResolvedValue(
+        'diff --git a/src/env.ts b/src/env.ts\n--- a/src/env.ts\n+++ b/src/env.ts\n@@ -1 +1 @@\n-old\n+new\n'
+      ),
     onInputChange: vi.fn(),
     onSend: vi.fn(),
     onLogout: vi.fn(),
@@ -579,13 +584,14 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('desktop-workbench-main')).not.toHaveClass('ml-1.5')
     expect(screen.getByTestId('collapse-sidebar-button')).toHaveClass('h-7', 'w-7', 'rounded-lg')
     expect(screen.getByTestId('desktop-window-controls')).toHaveClass('gap-3')
-    expect(screen.getByTestId('workbench-topbar-right-actions')).toContainElement(
+    expect(screen.queryByTestId('workbench-topbar-right-actions')).not.toBeInTheDocument()
+    expect(screen.getByTestId('workspace-panel-floating-actions')).toContainElement(
       screen.getByTestId('environment-info-button')
     )
-    expect(screen.getByTestId('workbench-topbar-right-actions')).toContainElement(
+    expect(screen.getByTestId('workspace-panel-floating-actions')).toContainElement(
       screen.getByTestId('toggle-bottom-workspace-panel-button')
     )
-    expect(screen.getByTestId('workbench-topbar-right-actions')).toContainElement(
+    expect(screen.getByTestId('workspace-panel-floating-actions')).toContainElement(
       screen.getByTestId('toggle-right-workspace-panel-button')
     )
 
@@ -831,16 +837,22 @@ describe('DesktopWorkbenchLayout', () => {
     )
   })
 
-  test('keeps workspace panel actions in the page topbar on web', () => {
+  test('keeps panel toggles in stable workbench actions on web', () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
-    expect(screen.getByTestId('workbench-topbar-right-actions')).toContainElement(
+    expect(screen.queryByTestId('workbench-topbar-right-actions')).not.toBeInTheDocument()
+    expect(screen.getByTestId('workbench-topbar')).toHaveClass('z-chrome')
+    expect(screen.getByTestId('workspace-panel-floating-actions')).toHaveClass(
+      'pointer-events-auto',
+      'z-popover'
+    )
+    expect(screen.getByTestId('workspace-panel-floating-actions')).toContainElement(
       screen.getByTestId('environment-info-button')
     )
-    expect(screen.getByTestId('workbench-topbar-right-actions')).toContainElement(
+    expect(screen.getByTestId('workspace-panel-floating-actions')).toContainElement(
       screen.getByTestId('toggle-bottom-workspace-panel-button')
     )
-    expect(screen.getByTestId('workbench-topbar-right-actions')).toContainElement(
+    expect(screen.getByTestId('workspace-panel-floating-actions')).toContainElement(
       screen.getByTestId('toggle-right-workspace-panel-button')
     )
     expect(screen.getByTestId('titlebar-actions')).toBeEmptyDOMElement()
@@ -2598,6 +2610,10 @@ describe('DesktopWorkbenchLayout', () => {
     expect(panel).toBeInTheDocument()
     expect(screen.getByTestId('toggle-right-workspace-panel-button')).toBeInTheDocument()
     expect(screen.getByTestId('toggle-bottom-workspace-panel-button')).toBeInTheDocument()
+    expect(screen.getByTestId('right-workspace-launcher')).toBeInTheDocument()
+    expect(screen.getByTestId('right-workspace-review-option')).toHaveTextContent('审查')
+    expect(screen.getByTestId('right-workspace-file-option')).toHaveTextContent('文件')
+    await userEvent.click(screen.getByTestId('right-workspace-file-option'))
     expect(await screen.findByTestId('workspace-file-tree')).toBeInTheDocument()
     expect(screen.queryByTestId('workspace-tool-launcher')).not.toBeInTheDocument()
 
@@ -2672,6 +2688,14 @@ describe('DesktopWorkbenchLayout', () => {
     expect(topBar).toHaveStyle({ width: '420px' })
     expect(rightPanelShell).toHaveClass('opacity-100')
     expect(rightPanelShell).toHaveStyle({ width: 'calc(100% - 420px)' })
+    expect(screen.queryByTestId('workbench-topbar-right-actions')).not.toBeInTheDocument()
+    expect(screen.getByTestId('workspace-panel-floating-actions')).toContainElement(
+      screen.getByTestId('toggle-bottom-workspace-panel-button')
+    )
+    expect(screen.getByTestId('workspace-panel-floating-actions')).toContainElement(
+      screen.getByTestId('toggle-right-workspace-panel-button')
+    )
+    expect(screen.getByTestId('workspace-panel-floating-actions')).toHaveClass('right-7')
     expect(screen.getByTestId('right-workspace-panel')).toHaveClass(
       'min-w-0',
       'flex-1',
@@ -2688,23 +2712,28 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('desktop-floating-composer-layer')).not.toHaveClass('min-w-[32rem]')
   })
 
-  test('right workspace panel renders the file workspace inside a tab strip', async () => {
+  test('right workspace panel opens only the file tab from the launcher', async () => {
     renderWorkspacePanelLayout()
 
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    expect(screen.getByTestId('right-workspace-launcher')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('right-workspace-file-option'))
 
     const tabbar = screen.getByTestId('right-workspace-tabbar')
     const fileTab = screen.getByTestId('right-workspace-file-tab')
     expect(tabbar).toHaveAttribute('role', 'tablist')
+    expect(screen.queryByTestId('right-workspace-review-tab')).not.toBeInTheDocument()
     expect(fileTab).toHaveAttribute('role', 'tab')
     expect(fileTab).toHaveAttribute('aria-selected', 'true')
-    expect(fileTab).toHaveTextContent('打开文件')
+    expect(fileTab).toHaveTextContent(/^文件$/)
     expect(fileTab).toHaveClass('group')
-    const fileIcon = within(fileTab).getByTestId('right-workspace-file-tab-icon')
-    expect(fileIcon).toHaveClass('opacity-100', 'group-hover:opacity-0')
     const closeButton = within(fileTab).getByTestId('close-right-workspace-panel-button')
     expect(closeButton).toHaveClass(
+      'h-5',
+      'w-5',
       'rounded-full',
+      'border',
+      'bg-muted',
       'opacity-0',
       'group-hover:opacity-100',
       'focus-visible:opacity-100'
@@ -2712,6 +2741,264 @@ describe('DesktopWorkbenchLayout', () => {
     expect(closeButton).not.toHaveClass('ml-auto')
     expect(screen.getByTestId('right-workspace-new-tab-button')).toBeInTheDocument()
     expect(await screen.findByTestId('workspace-file-tree')).toBeInTheDocument()
+  })
+
+  test('right workspace panel restores the previous tab after closing and reopening', async () => {
+    renderWorkspacePanelLayout()
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(screen.getByTestId('right-workspace-file-option'))
+    expect(await screen.findByTestId('workspace-file-tree')).toBeInTheDocument()
+    expect(screen.getByTestId('right-workspace-file-tab')).toHaveAttribute('aria-selected', 'true')
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    expect(screen.queryByTestId('right-workspace-panel')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+
+    expect(screen.queryByTestId('right-workspace-launcher')).not.toBeInTheDocument()
+    expect(screen.getByTestId('right-workspace-file-tab')).toHaveAttribute('aria-selected', 'true')
+    expect(await screen.findByTestId('workspace-file-tree')).toBeInTheDocument()
+  })
+
+  test('right workspace panel clears remembered tabs when switching sessions', async () => {
+    const workspacePanelState = createCloudWorkspacePanelState()
+    const sessionTask = {
+      id: 101,
+      title: 'Session A',
+      status: 'COMPLETED',
+      task_type: 'code' as const,
+      project_id: workspacePanelState.currentProject.id,
+      created_at: '2026-06-12T00:00:00.000Z',
+    }
+    const nextSessionTask = {
+      ...sessionTask,
+      id: 102,
+      title: 'Session B',
+    }
+    const layoutProps = {
+      ...baseProps,
+      state: {
+        ...baseProps.state,
+        ...workspacePanelState,
+        currentTask: sessionTask,
+      },
+      projectWork: {
+        ...baseProps.projectWork,
+        projects: workspacePanelState.projects,
+        devices: workspacePanelState.devices,
+        currentProjectId: workspacePanelState.currentProject.id,
+      },
+    }
+
+    const { rerender } = render(<DesktopWorkbenchLayout {...layoutProps} />)
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(screen.getByTestId('right-workspace-file-option'))
+    expect(await screen.findByTestId('workspace-file-tree')).toBeInTheDocument()
+    expect(screen.getByTestId('right-workspace-file-tab')).toHaveAttribute('aria-selected', 'true')
+
+    rerender(
+      <DesktopWorkbenchLayout
+        {...layoutProps}
+        state={{
+          ...layoutProps.state,
+          currentTask: nextSessionTask,
+        }}
+      />
+    )
+
+    await waitFor(() =>
+      expect(screen.queryByTestId('right-workspace-file-tab')).not.toBeInTheDocument()
+    )
+    expect(screen.getByTestId('right-workspace-launcher')).toBeInTheDocument()
+  })
+
+  test('project conversations open files from the project workspace instead of stale task worktrees', async () => {
+    const workspaceProject = {
+      id: 12,
+      name: 'Wegent',
+      tasks: [],
+      config: {
+        mode: 'workspace' as const,
+        execution: {
+          targetType: 'local' as const,
+          deviceId: 'workspace-device',
+        },
+        workspace: {
+          source: 'git' as const,
+          checkoutPath: 'projects/abc/Wegent',
+        },
+      },
+    }
+    const listWorkspaceEntries = vi.fn().mockResolvedValue({
+      path: '/workspace/projects/abc/Wegent',
+      entries: [],
+    })
+    createDeviceApiMock.mockReturnValue(
+      createMockDeviceApi({
+        listWorkspaceEntries,
+      }) as never
+    )
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          currentProject: workspaceProject,
+          currentTask: {
+            id: 99,
+            title: 'Stale task',
+            status: 'COMPLETED',
+            task_type: 'code',
+            project_id: workspaceProject.id,
+            created_at: '2026-06-12T00:00:00.000Z',
+          },
+          projects: [workspaceProject],
+          devices: [
+            {
+              id: 1,
+              device_id: 'workspace-device',
+              name: 'Workspace Device',
+              status: 'online',
+              is_default: false,
+              device_type: 'cloud',
+              bind_shell: 'claudecode',
+              executor_version: '1.8.5',
+            },
+          ],
+        }}
+        messages={[
+          {
+            id: 'assistant-1',
+            taskId: 99,
+            role: 'assistant',
+            content: 'stale task output',
+            status: 'done',
+            createdAt: '2026-06-12T00:00:00.000Z',
+            fileChanges: {
+              version: 1,
+              status: 'active',
+              artifact_id: 'turn-file-changes/99/100',
+              device_id: 'workspace-device',
+              workspace_path: '/Users/me/outside-workspace',
+              file_count: 0,
+              additions: 0,
+              deletions: 0,
+              files: [],
+            },
+          },
+        ]}
+        projectWork={{
+          ...baseProps.projectWork,
+          projects: [workspaceProject],
+          devices: [
+            {
+              id: 1,
+              device_id: 'workspace-device',
+              name: 'Workspace Device',
+              status: 'online',
+              is_default: false,
+              device_type: 'cloud',
+              bind_shell: 'claudecode',
+              executor_version: '1.8.5',
+            },
+          ],
+          currentProjectId: workspaceProject.id,
+        }}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(screen.getByTestId('right-workspace-file-option'))
+
+    await waitFor(() =>
+      expect(listWorkspaceEntries).toHaveBeenCalledWith(
+        'workspace-device',
+        '/workspace/projects/abc/Wegent'
+      )
+    )
+  })
+
+  test('right workspace panel opens only the review tab from the launcher', async () => {
+    renderWorkspacePanelLayout()
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    expect(screen.getByTestId('right-workspace-launcher')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('right-workspace-review-option'))
+
+    const tabbar = screen.getByTestId('right-workspace-tabbar')
+    const reviewTab = screen.getByTestId('right-workspace-review-tab')
+    expect(tabbar).toHaveAttribute('role', 'tablist')
+    expect(reviewTab).toHaveAttribute('role', 'tab')
+    expect(reviewTab).toHaveAttribute('aria-selected', 'true')
+    expect(reviewTab).toHaveTextContent('审查')
+    expect(screen.queryByTestId('right-workspace-file-tab')).not.toBeInTheDocument()
+    const closeButton = within(reviewTab).getByTestId('close-right-workspace-panel-button')
+    expect(closeButton).toHaveClass(
+      'h-5',
+      'w-5',
+      'rounded-full',
+      'border',
+      'bg-muted',
+      'opacity-0',
+      'group-hover:opacity-100',
+      'focus-visible:opacity-100'
+    )
+    expect(closeButton).not.toHaveClass('ml-auto')
+    expect(screen.getByTestId('right-workspace-new-tab-button')).toBeInTheDocument()
+    expect(await screen.findByTestId('file-changes-review-panel')).toHaveTextContent('src/env.ts')
+  })
+
+  test('right workspace panel retries review loading after a stale device offline error', async () => {
+    const workspacePanelState = createCloudWorkspacePanelState()
+    const onLoadEnvironmentDiff = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Device 'aa1f5585-8ef4-4cf3-a3c0-d8c89d22831a' is offline"))
+      .mockResolvedValueOnce(
+        'diff --git a/src/env.ts b/src/env.ts\n--- a/src/env.ts\n+++ b/src/env.ts\n@@ -1 +1 @@\n-old\n+new\n'
+      )
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onLoadEnvironmentDiff={onLoadEnvironmentDiff}
+        state={{
+          ...baseProps.state,
+          ...workspacePanelState,
+        }}
+        projectWork={{
+          ...baseProps.projectWork,
+          projects: workspacePanelState.projects,
+          devices: workspacePanelState.devices,
+          currentProjectId: workspacePanelState.currentProject.id,
+        }}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(screen.getByTestId('right-workspace-review-option'))
+
+    const failedPanel = await screen.findByTestId('file-changes-review-panel')
+    expect(failedPanel).toHaveTextContent('设备暂时不可用，请稍后重试')
+    expect(failedPanel).not.toHaveTextContent('aa1f5585-8ef4-4cf3-a3c0-d8c89d22831a')
+    expect(onLoadEnvironmentDiff).toHaveBeenCalledTimes(1)
+
+    await userEvent.click(
+      within(screen.getByTestId('right-workspace-review-tab')).getByTestId(
+        'close-right-workspace-panel-button'
+      )
+    )
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(screen.getByTestId('right-workspace-review-option'))
+
+    await waitFor(() => expect(onLoadEnvironmentDiff).toHaveBeenCalledTimes(2))
+    expect(await screen.findByTestId('file-changes-review-panel')).toHaveTextContent('src/env.ts')
+    expect(screen.getByTestId('file-changes-review-panel')).toHaveTextContent('+new')
+    expect(screen.getByTestId('file-changes-review-panel')).not.toHaveTextContent(
+      '设备暂时不可用，请稍后重试'
+    )
   })
 
   test('right workspace panel shows file tree and read-only preview', async () => {
@@ -2768,6 +3055,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await user.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await user.click(screen.getByTestId('right-workspace-file-option'))
 
     expect(await screen.findByTestId('workspace-file-tree')).toBeInTheDocument()
     await user.click(await screen.findByText('README.md'))
@@ -2813,6 +3101,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(screen.getByTestId('right-workspace-file-option'))
 
     expect(await screen.findByTestId('workspace-file-tree')).toBeInTheDocument()
     expect(listWorkspaceEntries).toHaveBeenCalledWith(
@@ -2910,6 +3199,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await user.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await user.click(screen.getByTestId('right-workspace-file-option'))
     await user.click(await screen.findByText('backend'))
 
     const backendRow = screen
@@ -3002,6 +3292,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await user.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await user.click(screen.getByTestId('right-workspace-file-option'))
     await user.click(await screen.findByText('README.md'))
     await user.click(screen.getByText('NOTES.md'))
 
@@ -3100,6 +3391,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(screen.getByTestId('right-workspace-file-option'))
     const srcButton = (await screen.findByText('src')).closest('button')
     const docsButton = screen.getByText('docs').closest('button')
     expect(srcButton).not.toBeNull()
@@ -3205,6 +3497,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await user.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await user.click(screen.getByTestId('right-workspace-file-option'))
     await user.click(await screen.findByText('src'))
     expect(await screen.findByText('src failed')).toBeInTheDocument()
 
@@ -3245,6 +3538,7 @@ describe('DesktopWorkbenchLayout', () => {
     const { rerender } = render(<DesktopWorkbenchLayout {...layoutProps} />)
 
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(screen.getByTestId('right-workspace-file-option'))
     expect(await screen.findByTestId('workspace-file-tree')).toBeInTheDocument()
     await waitFor(() => expect(listWorkspaceEntries).toHaveBeenCalledTimes(1))
 
@@ -3398,6 +3692,57 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(document.body)
 
     expect(screen.queryByTestId('environment-info-popover')).not.toBeInTheDocument()
+  })
+
+  test('opens environment changes review in the right workspace panel', async () => {
+    const onLoadEnvironmentDiff = vi
+      .fn()
+      .mockResolvedValue(
+        'diff --git a/src/env.ts b/src/env.ts\n--- a/src/env.ts\n+++ b/src/env.ts\n@@ -1 +1 @@\n-old\n+new\n'
+      )
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onLoadEnvironmentDiff={onLoadEnvironmentDiff}
+        state={{
+          ...baseProps.state,
+          currentProject: {
+            id: 1,
+            name: 'github_wegent',
+            tasks: [],
+            config: {
+              mode: 'workspace',
+              execution: {
+                targetType: 'local',
+                deviceId: 'device-1',
+              },
+              workspace: {
+                source: 'local_path',
+                localPath: '/workspace/github_wegent',
+              },
+            },
+          },
+        }}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('environment-info-button'))
+    await userEvent.click(screen.getByTestId('environment-changes-button'))
+
+    await waitFor(() =>
+      expect(onLoadEnvironmentDiff).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 1, name: 'github_wegent' })
+      )
+    )
+    expect(screen.queryByRole('dialog', { name: '本轮文件变更' })).not.toBeInTheDocument()
+    expect(screen.getByTestId('right-workspace-panel')).toBeInTheDocument()
+    expect(screen.getByTestId('right-workspace-review-tab')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    expect(await screen.findByTestId('file-changes-review-panel')).toHaveTextContent('src/env.ts')
+    expect(screen.getByTestId('file-changes-review-panel')).toHaveTextContent('+new')
   })
 
   test('submits environment commits from the popover', async () => {
@@ -3749,16 +4094,22 @@ describe('DesktopWorkbenchLayout', () => {
     await waitFor(() => expect(onLoadEnvironmentInfo).toHaveBeenCalledTimes(2))
   })
 
-  test('closes the right workspace panel from the panel edge', async () => {
+  test('closes the right workspace panel from the panel actions', async () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
+    const floatingActions = screen.getByTestId('workspace-panel-floating-actions')
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
     expect(screen.getByTestId('right-workspace-panel')).toBeInTheDocument()
+    expect(floatingActions).toContainElement(
+      screen.getByTestId('toggle-right-workspace-panel-button')
+    )
 
-    await userEvent.click(screen.getByTestId('close-right-workspace-panel-button'))
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
 
     expect(screen.queryByTestId('right-workspace-panel')).not.toBeInTheDocument()
-    expect(screen.getByTestId('toggle-right-workspace-panel-button')).toBeInTheDocument()
+    expect(floatingActions).toContainElement(
+      screen.getByTestId('toggle-right-workspace-panel-button')
+    )
   })
 
   test('opens and resizes the bottom workspace panel', async () => {
@@ -3768,6 +4119,15 @@ describe('DesktopWorkbenchLayout', () => {
 
     const panel = screen.getByTestId('bottom-workspace-panel')
     expect(panel).toBeInTheDocument()
+    expect(panel).toHaveClass(
+      'transition-[height,opacity,transform]',
+      'duration-300',
+      'ease-out',
+      'pointer-events-auto',
+      'translate-y-0',
+      'opacity-100'
+    )
+    expect(panel).toHaveAttribute('aria-hidden', 'false')
     expect(screen.getByTestId('toggle-bottom-workspace-panel-button')).toBeInTheDocument()
     expect(screen.getByTestId('toggle-right-workspace-panel-button')).toBeInTheDocument()
     expect(screen.getByTestId('workspace-tool-launcher')).toBeInTheDocument()
@@ -3822,11 +4182,16 @@ describe('DesktopWorkbenchLayout', () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
     await userEvent.click(screen.getByTestId('toggle-bottom-workspace-panel-button'))
-    expect(screen.getByTestId('bottom-workspace-panel')).toBeInTheDocument()
+    const panel = screen.getByTestId('bottom-workspace-panel')
+    expect(panel).toBeInTheDocument()
+    expect(panel).toHaveClass('opacity-100')
 
     await userEvent.click(screen.getByTestId('close-bottom-workspace-panel-button'))
 
-    expect(screen.queryByTestId('bottom-workspace-panel')).not.toBeInTheDocument()
+    expect(panel).toBeInTheDocument()
+    expect(panel).toHaveStyle({ height: '0px' })
+    expect(panel).toHaveClass('pointer-events-none', 'translate-y-3', 'opacity-0')
+    expect(panel).toHaveAttribute('aria-hidden', 'true')
     expect(screen.getByTestId('toggle-bottom-workspace-panel-button')).toBeInTheDocument()
   })
 })

@@ -98,8 +98,7 @@ async function workspacePath(
   project: ProjectWithTasks
 ): Promise<string | undefined> {
   return resolveProjectWorkspacePath(project, deviceId, {
-    getProjectWorkspaceRoot: targetDeviceId =>
-      resolveProjectWorkspaceRoot(api, targetDeviceId),
+    getProjectWorkspaceRoot: targetDeviceId => resolveProjectWorkspaceRoot(api, targetDeviceId),
   })
 }
 
@@ -353,6 +352,21 @@ export async function loadProjectEnvironment(
     environmentInfoCache.delete(cacheKey)
     throw error
   }
+}
+
+export async function loadProjectEnvironmentDiff(
+  api: DeviceCommandApi,
+  project: ProjectWithTasks | null
+): Promise<string> {
+  if (!project) {
+    throw new Error('Project is required')
+  }
+
+  const { deviceId, path } = await commandContext(api, project)
+  return runGitCommand(api, deviceId, 'git_diff', path, {
+    timeoutSeconds: 30,
+    maxOutputBytes: 5 * 1024 * 1024,
+  })
 }
 
 export async function commitProjectChanges(

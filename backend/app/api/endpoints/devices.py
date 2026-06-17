@@ -10,6 +10,8 @@ Online status is managed via Redis with heartbeat mechanism.
 """
 
 import logging
+import os
+import posixpath
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -18,6 +20,8 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core import security
+from app.core.constants import CLIENT_ORIGIN_WEWORK
+from app.models.project import Project
 from app.models.user import User
 from app.schemas.device import (
     DeviceCommandRequest,
@@ -25,6 +29,7 @@ from app.schemas.device import (
     DeviceInfo,
     DeviceListResponse,
 )
+from app.schemas.project import ProjectConfig
 from app.services.device.command_service import (
     DeviceCommandConfigurationError,
     DeviceCommandError,
@@ -37,6 +42,9 @@ from app.services.device_service import device_service
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+WORKSPACE_FILE_COMMAND_KEYS = {"workspace_tree", "workspace_read_text_file"}
+WORKSPACE_ROOTS_ENV = "WEGENT_WORKSPACE_ROOTS"
 
 
 # ==================== Request/Response Schemas ====================
@@ -82,6 +90,98 @@ class DeviceUpgradeResponse(BaseModel):
 
     success: bool = Field(..., description="Whether the upgrade command was sent")
     message: str = Field(..., description="Human-readable status message")
+
+
+def _normalize_device_path(path: str) -> str:
+    normalized = posixpath.normpath(path.strip())
+    if normalized == ".":
+        return ""
+    return normalized.rstrip("/") or "/"
+
+
+def _is_device_path_within(path: str, root: str) -> bool:
+    normalized_path = _normalize_device_path(path)
+    normalized_root = _normalize_device_path(root)
+    if normalized_root == "/":
+        return normalized_path.startswith("/")
+    return normalized_path == normalized_root or normalized_path.startswith(
+        f"{normalized_root}/"
+    )
+
+
+def _dedupe_paths(paths: list[str]) -> list[str]:
+    seen = set()
+    deduped = []
+    for path in paths:
+        normalized = _normalize_device_path(path)
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        deduped.append(normalized)
+    return deduped
+
+
+def _wework_local_workspace_roots_for_command(
+    *,
+    db: Session,
+    user_id: int,
+    device_id: str,
+    path: Optional[str],
+) -> list[str]:
+    if not path:
+        return []
+
+    roots = []
+    projects = (
+        db.query(Project)
+        .filter(
+            Project.user_id == user_id,
+            Project.client_origin == CLIENT_ORIGIN_WEWORK,
+            Project.is_active.is_(True),
+        )
+        .all()
+    )
+    for project in projects:
+        try:
+            config = ProjectConfig.model_validate(project.config or {})
+        except Exception:
+            continue
+        if (
+            not config.execution
+            or not config.workspace
+            or config.workspace.source != "local_path"
+            or config.execution.deviceId != device_id
+            or not config.workspace.localPath
+        ):
+            continue
+        root = _normalize_device_path(config.workspace.localPath)
+        if _is_device_path_within(path, root):
+            roots.append(root)
+
+    return _dedupe_paths(roots)
+
+
+def _device_command_env(
+    *,
+    db: Session,
+    user_id: int,
+    device_id: str,
+    request: DeviceCommandRequest,
+) -> dict[str, str]:
+    env = dict(request.env)
+    if request.command_key not in WORKSPACE_FILE_COMMAND_KEYS:
+        return env
+
+    env.pop(WORKSPACE_ROOTS_ENV, None)
+    roots = _wework_local_workspace_roots_for_command(
+        db=db,
+        user_id=user_id,
+        device_id=device_id,
+        path=request.path or request.cwd,
+    )
+    if roots:
+        env[WORKSPACE_ROOTS_ENV] = os.pathsep.join(roots)
+    return env
 
 
 @router.get("", response_model=DeviceListResponse)
@@ -398,7 +498,12 @@ async def execute_device_command(
             command_key=request.command_key,
             path=request.path or request.cwd,
             args=request.args,
-            env=request.env,
+            env=_device_command_env(
+                db=db,
+                user_id=user_id,
+                device_id=device_id,
+                request=request,
+            ),
             timeout_seconds=request.timeout_seconds,
             max_output_bytes=request.max_output_bytes,
         )

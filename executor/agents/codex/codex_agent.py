@@ -82,7 +82,12 @@ class CodeXAgent(Agent):
 
     def initialize(self) -> TaskStatus:
         try:
-            self.codex_config = build_codex_config(self.task_data.model_config)
+            from executor.modes.local.capabilities import get_project_id
+
+            self.codex_config = build_codex_config(
+                self.task_data.model_config,
+                project_id=get_project_id(self.task_data),
+            )
             return TaskStatus.SUCCESS
         except Exception as exc:
             logger.exception("Failed to initialize CodeXAgent: %s", exc)

@@ -40,7 +40,32 @@ describe('project workspace helpers', () => {
     }
 
     await expect(resolveProjectWorkspacePath(project, 'device-b', api)).resolves.toBe(
-      '/workspace/projects/abc/Wegent',
+      '/workspace/projects/abc/Wegent'
+    )
+  })
+
+  test('prefers git checkout path over local path for git projects', async () => {
+    const api = {
+      getProjectWorkspaceRoot: vi.fn().mockResolvedValue('/workspace/projects'),
+    }
+    const project: ProjectWithTasks = {
+      id: 12,
+      name: 'Wegent',
+      tasks: [],
+      config: {
+        mode: 'workspace',
+        execution: { targetType: 'local', deviceId: 'device-b' },
+        workspace: {
+          source: 'git',
+          localPath: '/Users/me/Wegent',
+          checkoutPath: 'projects/abc/Wegent',
+        },
+      },
+    }
+
+    expect(configuredWorkspacePath(project)).toBe('projects/abc/Wegent')
+    await expect(resolveProjectWorkspacePath(project, 'device-b', api)).resolves.toBe(
+      '/workspace/projects/abc/Wegent'
     )
   })
 
@@ -60,7 +85,7 @@ describe('project workspace helpers', () => {
     }
 
     await expect(resolveProjectWorkspacePath(project, 'device-b', api)).rejects.toThrow(
-      'Workspace path cannot contain parent traversal',
+      'Workspace path cannot contain parent traversal'
     )
   })
 })

@@ -57,9 +57,7 @@ interface DesktopWorkbenchLayoutProps {
   onRefreshDevices?: () => Promise<void>
   onUpgradeDevice?: (deviceId: string) => Promise<void>
   onCreateProject: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
-  onCreateGitWorkspaceProject: (
-    data: CreateGitWorkspaceProjectRequest,
-  ) => Promise<ProjectWithTasks>
+  onCreateGitWorkspaceProject: (data: CreateGitWorkspaceProjectRequest) => Promise<ProjectWithTasks>
   onListGitRepositories: () => Promise<GitRepoInfo[]>
   onListGitBranches: (repo: GitRepoInfo) => Promise<GitBranch[]>
   onUpdateProjectName: (projectId: number, name: string) => Promise<void>
@@ -78,19 +76,14 @@ interface DesktopWorkbenchLayoutProps {
   onListDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
   onCreateDeviceDirectory: (deviceId: string, path: string) => Promise<void>
   onLoadEnvironmentInfo: (project: ProjectWithTasks | null) => Promise<EnvironmentInfo>
-  onCommitEnvironmentChanges: (
-    project: ProjectWithTasks | null,
-    message: string,
-  ) => Promise<void>
+  onCommitEnvironmentChanges: (project: ProjectWithTasks | null, message: string) => Promise<void>
+  onLoadEnvironmentDiff?: (project: ProjectWithTasks | null) => Promise<string>
   onListEnvironmentBranches: (project: ProjectWithTasks | null) => Promise<string[]>
   onCheckoutEnvironmentBranch: (
     project: ProjectWithTasks | null,
-    branchName: string,
+    branchName: string
   ) => Promise<void>
-  onCreateEnvironmentBranch: (
-    project: ProjectWithTasks | null,
-    branchName: string,
-  ) => Promise<void>
+  onCreateEnvironmentBranch: (project: ProjectWithTasks | null, branchName: string) => Promise<void>
   onInputChange: (value: string) => void
   onSend: () => void
   onRetryFailedMessage?: (messageId: string) => void
@@ -101,9 +94,7 @@ interface DesktopWorkbenchLayoutProps {
   onEditQueuedMessage?: (id: string) => void
   onCancelGuidanceMessage?: (id: string) => void
   onLoadFileChangesDiff?: (subtaskId: number) => Promise<string>
-  onRevertFileChanges?: (
-    subtaskId: number,
-  ) => Promise<TurnFileChangesSummary>
+  onRevertFileChanges?: (subtaskId: number) => Promise<TurnFileChangesSummary>
   onAddCodeComment?: (context: CodeCommentContext) => void
   onClearCodeComments?: () => void
   onRefreshWorkLists?: () => Promise<void>
@@ -153,6 +144,7 @@ export function DesktopWorkbenchLayout({
   onCreateDeviceDirectory,
   onLoadEnvironmentInfo,
   onCommitEnvironmentChanges,
+  onLoadEnvironmentDiff,
   onListEnvironmentBranches,
   onCheckoutEnvironmentBranch,
   onCreateEnvironmentBranch,
@@ -172,15 +164,12 @@ export function DesktopWorkbenchLayout({
   onRefreshWorkLists,
   onLogout,
 }: DesktopWorkbenchLayoutProps) {
-  const { sidebarCollapsed, setSidebarCollapsed } =
-    useDesktopSidebarCollapsed()
+  const { sidebarCollapsed, setSidebarCollapsed } = useDesktopSidebarCollapsed()
   const [settingsOpen, setSettingsOpen] = useState(() =>
     isSettingsRoute(stripAppBasePath(window.location.pathname))
   )
-  const [autoOpenAddCloudDeviceDialog, setAutoOpenAddCloudDeviceDialog] =
-    useState(false)
-  const [projectWorkCreateMode, setProjectWorkCreateMode] =
-    useState<ProjectCreateMode | null>(null)
+  const [autoOpenAddCloudDeviceDialog, setAutoOpenAddCloudDeviceDialog] = useState(false)
+  const [projectWorkCreateMode, setProjectWorkCreateMode] = useState<ProjectCreateMode | null>(null)
   const [environmentInfo, setEnvironmentInfo] = useState<EnvironmentInfo>({
     additions: '+0',
     deletions: '-0',
@@ -188,16 +177,15 @@ export function DesktopWorkbenchLayout({
   })
   const currentTaskProject = useMemo(
     () => findProjectForTask(state.projects, state.currentTask),
-    [state.currentTask, state.projects],
+    [state.currentTask, state.projects]
   )
   const activeConversationProject = state.currentProject ?? currentTaskProject
   const environmentProject = useMemo(
-    () => (
+    () =>
       activeConversationProject ??
       state.projects.find(project => project.config?.mode === 'workspace') ??
-      null
-    ),
-    [activeConversationProject, state.projects],
+      null,
+    [activeConversationProject, state.projects]
   )
   const completedAssistantMessageIds = useRef<Set<string>>(new Set())
   const completedAssistantMessagesInitialized = useRef(false)
@@ -234,10 +222,10 @@ export function DesktopWorkbenchLayout({
     const nextCompletedIds = new Set(
       messages
         .filter(message => message.role === 'assistant' && message.status === 'done')
-        .map(message => message.id),
+        .map(message => message.id)
     )
     const hasNewCompletedMessage = [...nextCompletedIds].some(
-      id => !completedAssistantMessageIds.current.has(id),
+      id => !completedAssistantMessageIds.current.has(id)
     )
     completedAssistantMessageIds.current = nextCompletedIds
 
@@ -266,10 +254,13 @@ export function DesktopWorkbenchLayout({
     await refreshEnvironmentInfo()
   }
 
-  const openProjectFromWorkMenu = useCallback((mode: ProjectCreateMode) => {
-    setProjectWorkCreateMode(mode)
-    void onRefreshDevices?.().catch(() => undefined)
-  }, [onRefreshDevices])
+  const openProjectFromWorkMenu = useCallback(
+    (mode: ProjectCreateMode) => {
+      setProjectWorkCreateMode(mode)
+      void onRefreshDevices?.().catch(() => undefined)
+    },
+    [onRefreshDevices]
+  )
 
   const projectWorkWithCreation: ProjectWorkControls = {
     ...projectWork,
@@ -300,8 +291,7 @@ export function DesktopWorkbenchLayout({
           currentProjectId={state.currentProject?.id}
           currentTaskId={state.currentTask?.id}
           preferredDeviceId={
-            state.standaloneDeviceId ??
-            state.user?.preferences?.default_execution_target
+            state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
           }
           upgradingDevices={upgradingDevices}
           activeItem={activeItem}
@@ -333,9 +323,7 @@ export function DesktopWorkbenchLayout({
           onListDeviceDirectories={onListDeviceDirectories}
           onCreateDeviceDirectory={onCreateDeviceDirectory}
           onOpenSettings={options => {
-            setAutoOpenAddCloudDeviceDialog(
-              Boolean(options?.autoOpenAddCloudDeviceDialog),
-            )
+            setAutoOpenAddCloudDeviceDialog(Boolean(options?.autoOpenAddCloudDeviceDialog))
             setSettingsOpen(true)
             navigateTo('/settings')
           }}
@@ -362,6 +350,7 @@ export function DesktopWorkbenchLayout({
           isBootstrapping={state.isBootstrapping}
           currentTask={state.currentTask}
           currentProject={activeConversationProject}
+          workspaceProject={state.currentProject}
           devices={state.devices}
           upgradingDevices={upgradingDevices}
           messages={messages}
@@ -375,6 +364,9 @@ export function DesktopWorkbenchLayout({
           environmentInfo={environmentInfo}
           onRefreshEnvironmentInfo={refreshEnvironmentInfo}
           onCommitEnvironmentChanges={handleCommitEnvironmentChanges}
+          onLoadEnvironmentDiff={
+            onLoadEnvironmentDiff ? () => onLoadEnvironmentDiff(environmentProject) : undefined
+          }
           onListEnvironmentBranches={() => onListEnvironmentBranches(environmentProject)}
           onCheckoutEnvironmentBranch={handleCheckoutEnvironmentBranch}
           onCreateEnvironmentBranch={handleCreateEnvironmentBranch}
@@ -422,8 +414,7 @@ export function DesktopWorkbenchLayout({
         onCreateProject={onCreateProject}
         onCreateGitWorkspaceProject={onCreateGitWorkspaceProject}
         preferredDeviceId={
-          state.standaloneDeviceId ??
-          state.user?.preferences?.default_execution_target
+          state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
         }
         onSelectDevicePreference={onRememberExecutionDevice}
         upgradingDevices={upgradingDevices}

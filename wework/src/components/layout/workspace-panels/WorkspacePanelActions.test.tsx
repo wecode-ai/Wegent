@@ -13,6 +13,7 @@ const baseProps = {
   onListEnvironmentBranches: vi.fn(),
   onCheckoutEnvironmentBranch: vi.fn(),
   onCreateEnvironmentBranch: vi.fn(),
+  onOpenEnvironmentChangesReview: vi.fn(),
   rightPanelOpen: false,
   bottomPanelOpen: false,
   onToggleRightPanel: vi.fn(),
@@ -34,7 +35,7 @@ describe('WorkspacePanelActions', () => {
           ...baseProps.environmentInfo,
           loading: false,
         }}
-      />,
+      />
     )
 
     expect(screen.queryByTestId('environment-info-button')).not.toBeInTheDocument()
@@ -47,7 +48,7 @@ describe('WorkspacePanelActions', () => {
           loading: false,
           branchName: 'main',
         }}
-      />,
+      />
     )
 
     expect(screen.getByTestId('environment-info-button')).toBeInTheDocument()

@@ -78,12 +78,15 @@ export async function resolveWorkspaceTarget({
   if (currentTask) {
     const currentTaskWorkspace = workspaceTargetFromTask(currentTask)
     if (currentTaskWorkspace) return currentTaskWorkspace
-
-    const taskWorkspace = latestTaskWorkspace(currentTask, messages)
-    if (taskWorkspace) return taskWorkspace
   }
+
   if (currentProject) {
     return projectWorkspaceTarget(currentProject, api)
+  }
+
+  if (currentTask) {
+    const taskWorkspace = latestTaskWorkspace(currentTask, messages)
+    if (taskWorkspace) return taskWorkspace
   }
   return null
 }

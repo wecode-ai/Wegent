@@ -1,10 +1,7 @@
 import { Bot, Menu } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ChatInput } from '@/components/chat/ChatInput'
-import type {
-  ProjectChatControls,
-  ProjectWorkControls,
-} from '@/components/chat/ChatInput'
+import type { ProjectChatControls, ProjectWorkControls } from '@/components/chat/ChatInput'
 import { ModelSelector } from '@/components/chat/composer/ModelSelector'
 import { ProjectWorkBar } from '@/components/chat/composer/ProjectWorkBar'
 import { MobileSettingsPage } from '@/components/settings/MobileSettingsPage'
@@ -17,10 +14,7 @@ import {
   getActiveWorkbenchDeviceId,
   isWorkbenchDeviceOnline,
 } from '@/lib/workbench-device'
-import {
-  isDeviceBelowWeWorkVersion,
-  isWeWorkCompatibleDevice,
-} from '@/lib/device-capabilities'
+import { isDeviceBelowWeWorkVersion, isWeWorkCompatibleDevice } from '@/lib/device-capabilities'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
 import type {
   ArchivedTaskListResponse,
@@ -63,7 +57,7 @@ interface MobileWorkbenchLayoutProps {
   onOpenTask: (taskId: number, projectId?: number) => void
   onCreateProject?: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
   onCreateGitWorkspaceProject?: (
-    data: CreateGitWorkspaceProjectRequest,
+    data: CreateGitWorkspaceProjectRequest
   ) => Promise<ProjectWithTasks>
   onListGitRepositories?: () => Promise<GitRepoInfo[]>
   onListGitBranches?: (repo: GitRepoInfo) => Promise<GitBranch[]>
@@ -80,28 +74,19 @@ interface MobileWorkbenchLayoutProps {
   onDeleteArchivedTasks?: () => Promise<void>
   onGetDeviceHomeDirectory?: (deviceId: string) => Promise<string>
   onGetProjectWorkspaceRoot?: (deviceId: string) => Promise<string>
-  onListDeviceDirectories?: (
-    deviceId: string,
-    path: string,
-  ) => Promise<string[]>
+  onListDeviceDirectories?: (deviceId: string, path: string) => Promise<string[]>
   onCreateDeviceDirectory?: (deviceId: string, path: string) => Promise<void>
-  onLoadEnvironmentInfo?: (
-    project: ProjectWithTasks | null,
-  ) => Promise<EnvironmentInfo>
-  onCommitEnvironmentChanges?: (
-    project: ProjectWithTasks | null,
-    message: string,
-  ) => Promise<void>
-  onListEnvironmentBranches?: (
-    project: ProjectWithTasks | null,
-  ) => Promise<string[]>
+  onLoadEnvironmentInfo?: (project: ProjectWithTasks | null) => Promise<EnvironmentInfo>
+  onLoadEnvironmentDiff?: (project: ProjectWithTasks | null) => Promise<string>
+  onCommitEnvironmentChanges?: (project: ProjectWithTasks | null, message: string) => Promise<void>
+  onListEnvironmentBranches?: (project: ProjectWithTasks | null) => Promise<string[]>
   onCheckoutEnvironmentBranch?: (
     project: ProjectWithTasks | null,
-    branchName: string,
+    branchName: string
   ) => Promise<void>
   onCreateEnvironmentBranch?: (
     project: ProjectWithTasks | null,
-    branchName: string,
+    branchName: string
   ) => Promise<void>
   onUpgradeDevice?: (deviceId: string) => Promise<void>
   onInputChange: (value: string) => void
@@ -114,9 +99,7 @@ interface MobileWorkbenchLayoutProps {
   onEditQueuedMessage?: (id: string) => void
   onCancelGuidanceMessage?: (id: string) => void
   onLoadFileChangesDiff?: (subtaskId: number) => Promise<string>
-  onRevertFileChanges?: (
-    subtaskId: number,
-  ) => Promise<TurnFileChangesSummary>
+  onRevertFileChanges?: (subtaskId: number) => Promise<TurnFileChangesSummary>
   onAddCodeComment?: (context: CodeCommentContext) => void
   onClearCodeComments?: () => void
   onRefreshWorkLists?: () => Promise<void>
@@ -185,7 +168,7 @@ export function MobileWorkbenchLayout({
   const hasConversation = messages.length > 0 || state.currentTask
   const currentTaskProject = useMemo(
     () => findProjectForTask(state.projects, state.currentTask),
-    [state.currentTask, state.projects],
+    [state.currentTask, state.projects]
   )
   const activeConversationProject = state.currentProject ?? currentTaskProject
   const effectiveProjectChat = projectChat ?? {
@@ -264,12 +247,12 @@ export function MobileWorkbenchLayout({
     standaloneDeviceId: effectiveProjectWork.currentStandaloneDeviceId,
   })
   const activeDevice = findWorkbenchDevice(state.devices, activeDeviceId)
-  const activeDeviceUnavailable =
-    Boolean(activeDeviceId) && !isWorkbenchDeviceOnline(activeDevice)
+  const activeDeviceUnavailable = Boolean(activeDeviceId) && !isWorkbenchDeviceOnline(activeDevice)
   const showConversationDeviceBanner =
     Boolean(activeDeviceId) && (!activeDevice || activeDevice.status === 'offline')
-  const activeDeviceVersionUnsupported =
-    Boolean(activeDevice && isDeviceBelowWeWorkVersion(activeDevice))
+  const activeDeviceVersionUnsupported = Boolean(
+    activeDevice && isDeviceBelowWeWorkVersion(activeDevice)
+  )
   const noStandaloneCompatibleDevice =
     !activeConversationProject &&
     !activeDeviceId &&
@@ -362,9 +345,7 @@ export function MobileWorkbenchLayout({
               scrollerClassName="pb-28 pt-16"
               devices={state.devices}
               onRetryFailedMessage={message => onRetryFailedMessage?.(message.id)}
-              onSwitchModelForFailedMessage={() =>
-                setModelSelectorOpenSignal(signal => signal + 1)
-              }
+              onSwitchModelForFailedMessage={() => setModelSelectorOpenSignal(signal => signal + 1)}
               onLoadFileChangesDiff={onLoadFileChangesDiff}
               onRevertFileChanges={onRevertFileChanges}
             />
@@ -396,10 +377,7 @@ export function MobileWorkbenchLayout({
                   onChange={onInputChange}
                   onSubmit={onSend}
                   disabled={composerDisabled}
-                  placeholder={t(
-                    'workbench.mobile_input_placeholder',
-                    '询问 Wework',
-                  )}
+                  placeholder={t('workbench.mobile_input_placeholder', '询问 Wework')}
                   projectChat={projectChatWithModelSelectorSignal}
                   projectWork={projectWork}
                   queuedMessages={queuedMessages}
@@ -458,9 +436,7 @@ export function MobileWorkbenchLayout({
                 className="flex w-full max-w-[360px] flex-col items-center gap-6"
               >
                 <Bot className="h-8 w-8 text-text-muted" />
-                <h1 className="text-center text-2xl font-semibold tracking-normal">
-                  {emptyTitle}
-                </h1>
+                <h1 className="text-center text-2xl font-semibold tracking-normal">{emptyTitle}</h1>
                 <ProjectWorkBar
                   {...effectiveProjectWork}
                   className="min-h-0 flex-col justify-center gap-1 px-0"
@@ -470,10 +446,7 @@ export function MobileWorkbenchLayout({
                 />
               </div>
             </section>
-            <div
-              data-testid="mobile-empty-chat-input-dock"
-              className="px-4 pb-0 pt-3"
-            >
+            <div data-testid="mobile-empty-chat-input-dock" className="px-4 pb-0 pt-3">
               <DeviceStatusPrompt
                 devices={state.devices}
                 upgradingDevices={upgradingDevices}
@@ -489,10 +462,7 @@ export function MobileWorkbenchLayout({
                 onChange={onInputChange}
                 onSubmit={onSend}
                 disabled={composerDisabled}
-                placeholder={t(
-                  'workbench.mobile_input_placeholder',
-                  '询问 Wework',
-                )}
+                placeholder={t('workbench.mobile_input_placeholder', '询问 Wework')}
                 projectChat={projectChatWithModelSelectorSignal}
                 projectWork={projectWork}
                 queuedMessages={queuedMessages}

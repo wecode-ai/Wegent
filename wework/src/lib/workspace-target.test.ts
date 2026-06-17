@@ -129,7 +129,7 @@ describe('resolveWorkspaceTarget', () => {
     })
   })
 
-  test('uses current task execution workspace path before project workspace', async () => {
+  test('uses the explicit project workspace before stale task file-change workspaces', async () => {
     const project: ProjectWithTasks = {
       id: 12,
       name: 'Wegent',
@@ -140,6 +140,74 @@ describe('resolveWorkspaceTarget', () => {
         workspace: { source: 'git', checkoutPath: 'projects/abc/Wegent' },
       },
     }
+    const messages: WorkbenchMessage[] = [
+      {
+        id: 'assistant-1',
+        taskId: 99,
+        role: 'assistant',
+        content: '',
+        status: 'done',
+        createdAt: '2026-06-12T00:00:00.000Z',
+        fileChanges: {
+          version: 1,
+          status: 'active',
+          artifact_id: 'turn-file-changes/99/100',
+          device_id: 'device-a',
+          workspace_path: '/Users/me/outside-workspace',
+          file_count: 0,
+          additions: 0,
+          deletions: 0,
+          files: [],
+        },
+      },
+    ]
+
+    await expect(
+      resolveWorkspaceTarget({
+        currentTask: { id: 99, title: 'Task', status: 'RUNNING', created_at: 'now' },
+        currentProject: project,
+        messages,
+        api: createApi(),
+      })
+    ).resolves.toEqual({
+      deviceId: 'device-b',
+      path: '/workspace/projects/abc/Wegent',
+      source: 'project',
+    })
+  })
+
+  test('uses current task execution workspace path before project and task file-change workspace', async () => {
+    const project: ProjectWithTasks = {
+      id: 12,
+      name: 'Wegent',
+      tasks: [],
+      config: {
+        mode: 'workspace',
+        execution: { targetType: 'local', deviceId: 'device-b' },
+        workspace: { source: 'git', checkoutPath: 'projects/abc/Wegent' },
+      },
+    }
+    const messages: WorkbenchMessage[] = [
+      {
+        id: 'assistant-1',
+        taskId: 8,
+        role: 'assistant',
+        content: '',
+        status: 'done',
+        createdAt: '2026-06-12T00:00:00.000Z',
+        fileChanges: {
+          version: 1,
+          status: 'active',
+          artifact_id: 'turn-file-changes/8/9',
+          device_id: 'device-b',
+          workspace_path: '/workspace/worktrees/stale/Wegent',
+          file_count: 0,
+          additions: 0,
+          deletions: 0,
+          files: [],
+        },
+      },
+    ]
 
     await expect(
       resolveWorkspaceTarget({
@@ -152,7 +220,7 @@ describe('resolveWorkspaceTarget', () => {
           created_at: 'now',
         },
         currentProject: project,
-        messages: [],
+        messages,
         api: createApi(),
       })
     ).resolves.toEqual({
