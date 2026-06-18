@@ -62,13 +62,61 @@ def test_runtime_stream_accumulator_builds_snapshot():
     assert snapshot["offset"] == len("hello world")
     assert snapshot["terminal"] is True
     assert snapshot["context_metrics"]["phase"] == "compacting"
-    assert [block["type"] for block in snapshot["blocks"]] == [
-        "text",
-        "tool",
-        "text",
-    ]
-    assert snapshot["blocks"][1]["tool_output"] == "/tmp"
+    assert [block["type"] for block in snapshot["blocks"]] == ["tool"]
+    assert snapshot["blocks"][0]["tool_output"] == "/tmp"
     assert all(block["status"] == "done" for block in snapshot["blocks"])
+
+
+def test_runtime_stream_accumulator_does_not_block_plain_output_text():
+    """Plain assistant output belongs in content, not process blocks."""
+
+    accumulator = RuntimeStreamAccumulator(task_id=101, subtask_id=202)
+    accumulator.apply_event(
+        ResponsesAPIStreamEvents.OUTPUT_TEXT_DELTA.value,
+        {"delta": "题目：从宜居标准看北京的不宜居性"},
+    )
+    accumulator.apply_event(
+        ResponsesAPIStreamEvents.OUTPUT_TEXT_DELTA.value,
+        {"delta": "\n\n北京是否宜居，不能只看资源丰富。"},
+    )
+
+    snapshot = accumulator.to_snapshot().to_dict()
+
+    assert snapshot["content"] == (
+        "题目：从宜居标准看北京的不宜居性" "\n\n北京是否宜居，不能只看资源丰富。"
+    )
+    assert snapshot["offset"] == len(snapshot["content"])
+    assert snapshot["blocks"] == []
+
+
+def test_runtime_stream_accumulator_keeps_custom_text_blocks():
+    """Explicit text blocks should still be preserved as process blocks."""
+
+    accumulator = RuntimeStreamAccumulator(task_id=101, subtask_id=202)
+    accumulator.apply_event(
+        ResponsesAPIStreamEvents.BLOCK_CREATED.value,
+        {
+            "block": {
+                "id": "codex-commentary-1",
+                "type": "text",
+                "content": "正在整理上下文",
+                "status": "done",
+            }
+        },
+    )
+    accumulator.apply_event(
+        ResponsesAPIStreamEvents.OUTPUT_TEXT_DELTA.value,
+        {"delta": "最终答案"},
+    )
+
+    snapshot = accumulator.to_snapshot().to_dict()
+
+    assert snapshot["content"] == "最终答案"
+    assert len(snapshot["blocks"]) == 1
+    assert snapshot["blocks"][0]["id"] == "codex-commentary-1"
+    assert snapshot["blocks"][0]["type"] == "text"
+    assert snapshot["blocks"][0]["content"] == "正在整理上下文"
+    assert snapshot["blocks"][0]["status"] == "done"
 
 
 class _RuntimeCacheRecorder:

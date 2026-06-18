@@ -40,6 +40,12 @@ Backend decides cache ownership from this event-level marker:
 
 Because this is decided per task stream event, older executors remain compatible without a protocol upgrade.
 
+## Snapshot Semantics
+
+Plain assistant output in executor runtime snapshots is stored only in `content` and `offset`. `blocks` only stores independently rendered process information, such as reasoning, tool calls, and explicit commentary/text blocks produced by `response.block.*` events.
+
+This prevents refresh recovery from exposing the same plain output through both `cached_content` and a process `text` block, which would otherwise leave the process block stuck at the refresh point while the main answer keeps streaming.
+
 ## Data Flow
 
 ### Running

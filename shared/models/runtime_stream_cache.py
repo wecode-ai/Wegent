@@ -12,7 +12,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-from .blocks import BlockStatus, create_text_block, create_tool_block
+from .blocks import BlockStatus, create_tool_block
 from .responses_api import ResponsesAPIStreamEvents
 
 RUNTIME_STREAM_CACHE_VERSION = 1
@@ -70,7 +70,6 @@ class RuntimeStreamAccumulator:
 
     def __init__(self, task_id: int, subtask_id: int) -> None:
         self.snapshot = RuntimeStreamSnapshot(task_id=task_id, subtask_id=subtask_id)
-        self._current_text_block_id: Optional[str] = None
         self._current_thinking_block_id: Optional[str] = None
         self._tool_contexts: dict[str, dict[str, Any]] = {}
 
@@ -142,7 +141,6 @@ class RuntimeStreamAccumulator:
     def mark_terminal(self) -> None:
         """Mark the snapshot terminal and finalize open text-like blocks."""
 
-        self._finalize_current_text_block()
         self._finalize_current_thinking_block()
         self.snapshot.terminal = True
         self.snapshot.last_activity_at = time.time()
@@ -173,10 +171,6 @@ class RuntimeStreamAccumulator:
         if not content:
             return
 
-        self._finalize_current_thinking_block()
-        block = self._ensure_current_text_block()
-        block["content"] = str(block.get("content", "")) + content
-        block["status"] = BlockStatus.STREAMING.value
         self.snapshot.content += content
         self.snapshot.offset = len(self.snapshot.content)
 
@@ -184,22 +178,9 @@ class RuntimeStreamAccumulator:
         if not content:
             return
 
-        self._finalize_current_text_block()
         block = self._ensure_current_thinking_block()
         block["content"] = str(block.get("content", "")) + content
         block["status"] = BlockStatus.STREAMING.value
-
-    def _ensure_current_text_block(self) -> dict[str, Any]:
-        if self._current_text_block_id:
-            block = self._find_block(self._current_text_block_id)
-            if block is not None:
-                return block
-
-        block_id = f"text-{uuid.uuid4().hex[:12]}"
-        block = create_text_block(content="", block_id=block_id)
-        self.snapshot.blocks.append(block)
-        self._current_text_block_id = block_id
-        return block
 
     def _ensure_current_thinking_block(self) -> dict[str, Any]:
         if self._current_thinking_block_id:
@@ -218,14 +199,6 @@ class RuntimeStreamAccumulator:
         self.snapshot.blocks.append(block)
         self._current_thinking_block_id = block_id
         return block
-
-    def _finalize_current_text_block(self) -> None:
-        if not self._current_text_block_id:
-            return
-        block = self._find_block(self._current_text_block_id)
-        if block is not None:
-            block["status"] = BlockStatus.DONE.value
-        self._current_text_block_id = None
 
     def _finalize_current_thinking_block(self) -> None:
         if not self._current_thinking_block_id:
@@ -412,7 +385,6 @@ class RuntimeStreamAccumulator:
         if not isinstance(block, dict):
             return
 
-        self._finalize_current_text_block()
         self._finalize_current_thinking_block()
         block_to_store = dict(block)
         block_to_store.setdefault("id", f"block-{uuid.uuid4().hex[:12]}")
@@ -456,7 +428,6 @@ class RuntimeStreamAccumulator:
         if not tool_use_id:
             return
 
-        self._finalize_current_text_block()
         self._finalize_current_thinking_block()
         block = create_tool_block(
             tool_use_id=tool_use_id,

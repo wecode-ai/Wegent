@@ -40,6 +40,12 @@ Backend 收到事件后按事件级 marker 判断缓存归属：
 
 这个判断是按任务流事件生效的，因此旧 executor 不需要升级协议即可继续工作。
 
+## 快照语义
+
+executor runtime snapshot 中的普通助手正文只写入 `content` 和 `offset`。`blocks` 只保存可独立展示的过程信息，例如 reasoning、tool 调用和显式 `response.block.*` 事件产生的 commentary/text block。
+
+这避免刷新恢复时同一段普通正文同时出现在 `cached_content` 和 process `text` block 中，导致后续正文继续增长后 process block 停留在刷新点。
+
 ## 数据流
 
 ### 运行中

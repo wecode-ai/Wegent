@@ -29,7 +29,7 @@ async def test_runtime_stream_cache_records_and_cleans_snapshot():
     assert snapshot is not None
     assert snapshot["content"] == "hello"
     assert snapshot["terminal"] is True
-    assert snapshot["blocks"][0]["status"] == "done"
+    assert snapshot["blocks"] == []
 
     removed = await cache.cleanup(202)
     assert removed is True
