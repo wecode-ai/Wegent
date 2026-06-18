@@ -24,6 +24,26 @@ function firstStringValue(...values: Array<string | undefined>): string | undefi
   return values.find(value => typeof value === 'string' && value.length > 0)
 }
 
+function hasOwnRuntimeValue(
+  runtimeConfig: RuntimeConfigOverrides,
+  key: keyof RuntimeConfigOverrides
+): boolean {
+  return Object.prototype.hasOwnProperty.call(runtimeConfig, key)
+}
+
+function getRuntimeOrBuildValue(
+  runtimeConfig: RuntimeConfigOverrides,
+  key: keyof RuntimeConfigOverrides,
+  buildValue: string | undefined,
+  fallback: string
+): string {
+  if (hasOwnRuntimeValue(runtimeConfig, key)) {
+    return firstStringValue(runtimeConfig[key], fallback) || fallback
+  }
+
+  return firstStringValue(buildValue, fallback) || fallback
+}
+
 function normalizeBasePath(value: string | undefined): string {
   if (!value || value === '/') {
     return ''
@@ -64,43 +84,56 @@ export function stripAppBasePath(path: string): string {
 export function getRuntimeConfig(): RuntimeConfig {
   const runtimeConfig = window.__WEWORK_RUNTIME_CONFIG__ || {}
   const appBasePath = normalizeBasePath(
-    firstStringValue(
-      runtimeConfig.appBasePath,
+    getRuntimeOrBuildValue(
+      runtimeConfig,
+      'appBasePath',
       import.meta.env.VITE_APP_BASE_PATH,
-      import.meta.env.BASE_URL,
+      import.meta.env.BASE_URL || '',
     ),
   )
-  const apiBaseUrl = firstStringValue(
-    runtimeConfig.apiBaseUrl,
+  const apiBaseUrl = getRuntimeOrBuildValue(
+    runtimeConfig,
+    'apiBaseUrl',
     import.meta.env.VITE_API_BASE_URL,
-  ) || joinAppPath(appBasePath, '/api')
-  const socketBaseUrl = firstStringValue(
-    runtimeConfig.socketBaseUrl,
+    joinAppPath(appBasePath, '/api'),
+  )
+  const socketBaseUrl = getRuntimeOrBuildValue(
+    runtimeConfig,
+    'socketBaseUrl',
     import.meta.env.VITE_SOCKET_BASE_URL,
-  ) || window.location.origin
-  const socketPath = firstStringValue(
-    runtimeConfig.socketPath,
+    window.location.origin,
+  )
+  const socketPath = getRuntimeOrBuildValue(
+    runtimeConfig,
+    'socketPath',
     import.meta.env.VITE_SOCKET_PATH,
-  ) || joinAppPath(appBasePath, '/socket.io')
+    joinAppPath(appBasePath, '/socket.io'),
+  )
   const loginMode =
-    firstStringValue(
-      runtimeConfig.loginMode,
+    getRuntimeOrBuildValue(
+      runtimeConfig,
+      'loginMode',
       import.meta.env.VITE_LOGIN_MODE,
-    ) as RuntimeConfig['loginMode'] | undefined
+      'all',
+    ) as RuntimeConfig['loginMode']
 
   return {
     appBasePath,
     apiBaseUrl: trimTrailingSlash(apiBaseUrl),
     socketBaseUrl: trimTrailingSlash(socketBaseUrl),
     socketPath,
-    loginMode: loginMode || 'all',
-    oidcLoginText: firstStringValue(
-      runtimeConfig.oidcLoginText,
+    loginMode,
+    oidcLoginText: getRuntimeOrBuildValue(
+      runtimeConfig,
+      'oidcLoginText',
       import.meta.env.VITE_OIDC_LOGIN_TEXT,
-    ) || '',
-    cloudDeviceScalingWikiUrl: firstStringValue(
-      runtimeConfig.cloudDeviceScalingWikiUrl,
+      '',
+    ),
+    cloudDeviceScalingWikiUrl: getRuntimeOrBuildValue(
+      runtimeConfig,
+      'cloudDeviceScalingWikiUrl',
       import.meta.env.VITE_CLOUD_DEVICE_SCALING_WIKI_URL,
-    ) || '',
+      '',
+    ),
   }
 }

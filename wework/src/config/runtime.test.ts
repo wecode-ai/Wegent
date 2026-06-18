@@ -45,6 +45,29 @@ describe('getRuntimeConfig', () => {
     })
   })
 
+  test('does not fall back to preview build-time URLs when runtime keys are present', () => {
+    vi.stubEnv('VITE_APP_BASE_PATH', '/wework/')
+    vi.stubEnv('VITE_API_BASE_URL', 'https://preview-wegent.intra.weibo.com/api')
+    vi.stubEnv('VITE_SOCKET_BASE_URL', 'wss://wss-wegent.intra.weibo.com')
+    vi.stubEnv('VITE_SOCKET_PATH', '/socket.io')
+    vi.stubEnv('VITE_LOGIN_MODE', 'oidc')
+
+    window.__WEWORK_RUNTIME_CONFIG__ = {
+      appBasePath: '/wework/',
+      apiBaseUrl: undefined,
+      socketBaseUrl: undefined,
+      socketPath: undefined,
+      loginMode: 'oidc',
+    }
+
+    expect(getRuntimeConfig()).toMatchObject({
+      apiBaseUrl: '/wework/api',
+      socketBaseUrl: window.location.origin,
+      socketPath: '/wework/socket.io',
+      loginMode: 'oidc',
+    })
+  })
+
   test('reads cloud device scaling wiki URL from wework frontend config', () => {
     vi.stubEnv(
       'VITE_CLOUD_DEVICE_SCALING_WIKI_URL',
