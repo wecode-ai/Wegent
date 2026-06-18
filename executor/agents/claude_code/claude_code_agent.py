@@ -44,7 +44,7 @@ from executor.agents.claude_code.mode_strategy import (
 )
 from executor.agents.claude_code.multimodal_prompt import (
     append_text_to_vision_prompt,
-    convert_openai_to_anthropic_content,
+    convert_openai_to_anthropic_content_async,
     create_multimodal_query,
     is_vision_prompt,
     save_vision_images,
@@ -897,7 +897,9 @@ class ClaudeCodeAgent(Agent):
                     logger.info(
                         f"Saved {len(saved_paths)} images to disk: {saved_paths}"
                     )
-                anthropic_content = convert_openai_to_anthropic_content(prompt)
+                anthropic_content = await convert_openai_to_anthropic_content_async(
+                    prompt
+                )
                 await self.client.query(
                     create_multimodal_query(anthropic_content),
                     session_id=self.session_id,
@@ -905,7 +907,9 @@ class ClaudeCodeAgent(Agent):
             elif isinstance(prompt, list):
                 # Content block list without images - convert to Anthropic format
                 # and send via multimodal query (SDK expects async generator for content blocks)
-                anthropic_content = convert_openai_to_anthropic_content(prompt)
+                anthropic_content = await convert_openai_to_anthropic_content_async(
+                    prompt
+                )
                 await self.client.query(
                     create_multimodal_query(anthropic_content),
                     session_id=self.session_id,
