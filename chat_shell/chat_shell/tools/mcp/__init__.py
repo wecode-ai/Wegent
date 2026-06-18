@@ -7,12 +7,8 @@
 Usage:
     async with MCPClient(config) as client:
         tools = client.get_tools()
-
-    # Or use the loader function
-    client = await load_mcp_tools(task_id, bot_name, bot_namespace)
 """
 
 from .client import MCPClient, build_connections
-from .loader import load_mcp_tools
 
-__all__ = ["MCPClient", "build_connections", "load_mcp_tools"]
+__all__ = ["MCPClient", "build_connections"]
