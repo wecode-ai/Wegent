@@ -243,6 +243,68 @@ def _summarize_execution_request(
     }
 
 
+def _as_list(value: object) -> list:
+    """Return a list only when the original value is a list."""
+    return value if isinstance(value, list) else []
+
+
+def _summarize_metadata_for_log(metadata: Optional[dict]) -> dict[str, object]:
+    """Build a safe metadata summary without logging secrets or bulky configs."""
+    metadata = metadata or {}
+    skill_names = _as_list(metadata.get("skill_names"))
+    skill_configs = _as_list(metadata.get("skill_configs"))
+
+    skill_mcp_server_count = 0
+    skill_declared_tool_count = 0
+    for skill_config in skill_configs:
+        if not isinstance(skill_config, dict):
+            continue
+        mcp_servers = skill_config.get("mcpServers")
+        if isinstance(mcp_servers, dict):
+            skill_mcp_server_count += len(mcp_servers)
+        tools = skill_config.get("tools")
+        if isinstance(tools, list):
+            skill_declared_tool_count += len(tools)
+
+    knowledge_base_ids = _as_list(metadata.get("knowledge_base_ids"))
+    document_ids = _as_list(metadata.get("document_ids"))
+    knowledge_base_scopes = _as_list(metadata.get("knowledge_base_scopes"))
+    table_contexts = _as_list(metadata.get("table_contexts"))
+
+    return {
+        "task_id": metadata.get("task_id"),
+        "subtask_id": metadata.get("subtask_id"),
+        "request_id": metadata.get("request_id"),
+        "user_id": metadata.get("user_id"),
+        "user_name": metadata.get("user_name"),
+        "team_id": metadata.get("team_id"),
+        "team_name": metadata.get("team_name"),
+        "bot_name": metadata.get("bot_name"),
+        "message_id": metadata.get("message_id"),
+        "user_message_id": metadata.get("user_message_id"),
+        "user_subtask_id": metadata.get("user_subtask_id"),
+        "is_group_chat": metadata.get("is_group_chat"),
+        "stateless": metadata.get("stateless"),
+        "enable_tools": metadata.get("enable_tools"),
+        "enable_web_search": metadata.get("enable_web_search"),
+        "enable_deep_thinking": metadata.get("enable_deep_thinking"),
+        "skill_count": len(skill_names),
+        "skill_names": skill_names,
+        "skill_config_count": len(skill_configs),
+        "skill_mcp_server_count": skill_mcp_server_count,
+        "skill_declared_tool_count": skill_declared_tool_count,
+        "preload_skills": _as_list(metadata.get("preload_skills")),
+        "user_selected_skills": _as_list(metadata.get("user_selected_skills")),
+        "knowledge_base_count": len(knowledge_base_ids),
+        "document_count": len(document_ids),
+        "knowledge_base_scope_count": len(knowledge_base_scopes),
+        "table_context_count": len(table_contexts),
+        "has_auth_token": bool(metadata.get("auth_token")),
+        "has_skill_identity_token": bool(metadata.get("skill_identity_token")),
+        "has_task_data": bool(metadata.get("task_data")),
+    }
+
+
 # ============================================================
 # Stream Response Generator
 # ============================================================
@@ -313,7 +375,7 @@ async def _stream_response(
         request_summary["message_count"],
         json.dumps(request_summary["roles"], ensure_ascii=False),
         request_summary["last_user"],
-        json.dumps(request.metadata or {}, ensure_ascii=False),
+        json.dumps(_summarize_metadata_for_log(request.metadata), ensure_ascii=False),
     )
     execution_summary = _summarize_execution_request(execution_request)
     logger.info(

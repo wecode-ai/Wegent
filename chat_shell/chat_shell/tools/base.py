@@ -8,7 +8,7 @@ Note: Tool invocation is handled automatically by LangGraph's create_react_agent
 This registry is only for tool registration and retrieval.
 
 This module also defines the PromptModifierTool protocol for tools that can
-dynamically modify the system prompt during agent execution.
+dynamically inject model-call context during agent execution.
 """
 
 from typing import Protocol, runtime_checkable
@@ -18,10 +18,10 @@ from langchain_core.tools.base import BaseTool
 
 @runtime_checkable
 class PromptModifierTool(Protocol):
-    """Protocol for tools that can dynamically modify the system prompt.
+    """Protocol for tools that can dynamically inject model-call context.
 
-    Tools implementing this protocol can inject additional content into the
-    system prompt during agent execution. This is useful for:
+    Tools implementing this protocol can inject additional content into the model
+    input during agent execution. This is useful for:
     - On-demand skill loading (LoadSkillTool)
     - Dynamic context injection
     - Any tool that needs to modify agent behavior via prompt
@@ -30,25 +30,25 @@ class PromptModifierTool(Protocol):
     protocol from the tool registry and creates a combined prompt modifier.
 
     Unlike static prompt modification (e.g., KB tools that modify prompt at
-    preparation time), this protocol enables dynamic modification - the prompt
-    is updated after the tool is called during agent execution.
+    preparation time), this protocol enables dynamic modification after a tool
+    is called during agent execution.
 
     Example implementation:
         class MyTool(BaseTool):
             def get_prompt_modification(self) -> str:
-                # Return content to append to system prompt
+                # Return dynamic instruction content for the next model call
                 # Return empty string if no modification needed
                 return "Additional instructions..."
     """
 
     def get_prompt_modification(self) -> str:
-        """Get the prompt modification content to inject into system prompt.
+        """Get the prompt modification content to inject into model input.
 
         This method is called by the prompt_modifier before each model invocation.
-        The returned content will be appended to the system message.
+        The returned content will be inserted as dynamic instruction context.
 
         Returns:
-            String content to append to the system prompt.
+            String content to inject into model input.
             Return empty string if no modification is needed.
         """
         ...

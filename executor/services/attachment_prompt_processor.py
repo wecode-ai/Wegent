@@ -14,6 +14,8 @@ import logging
 import re
 from typing import Any, Dict, List, Union
 
+from executor.services.image_preprocessor import prepare_image_bytes_for_model
+
 logger = logging.getLogger(__name__)
 
 # Image MIME types that support vision
@@ -207,7 +209,8 @@ class AttachmentPromptProcessor:
             try:
                 with open(local_path, "rb") as f:
                     image_data = f.read()
-                image_base64 = base64.b64encode(image_data).decode("utf-8")
+                prepared_image = prepare_image_bytes_for_model(image_data, mime_type)
+                image_base64 = base64.b64encode(prepared_image.data).decode("utf-8")
 
                 # Build vision content block
                 content_blocks.append(
@@ -215,11 +218,18 @@ class AttachmentPromptProcessor:
                         "type": "image",
                         "source": {
                             "type": "base64",
-                            "media_type": mime_type,
+                            "media_type": prepared_image.mime_type,
                             "data": image_base64,
                         },
                     }
                 )
+                if prepared_image.resized:
+                    logger.info(
+                        "Downscaled image attachment %s from %s to %s",
+                        att.get("original_filename"),
+                        prepared_image.original_size,
+                        prepared_image.size,
+                    )
                 logger.debug(
                     f"Built image content block for {att.get('original_filename')}"
                 )

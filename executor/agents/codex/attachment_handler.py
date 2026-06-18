@@ -14,6 +14,7 @@ from executor.services.attachment_prompt_processor import (
     IMAGE_MIME_TYPES,
     AttachmentPromptProcessor,
 )
+from executor.services.image_preprocessor import prepare_image_file_for_model
 from shared.logger import setup_logger
 from shared.models.execution import ExecutionRequest
 
@@ -26,6 +27,7 @@ class CodexAttachmentProcessResult:
 
     prompt: Union[str, list[dict[str, Any]]]
     local_image_paths: list[str | None]
+    model_input_files: list[str]
     success_count: int
     failed_count: int
 
@@ -43,6 +45,7 @@ def process_codex_attachments(
         return CodexAttachmentProcessResult(
             prompt=prompt,
             local_image_paths=[],
+            model_input_files=[],
             success_count=0,
             failed_count=0,
         )
@@ -53,6 +56,7 @@ def process_codex_attachments(
         return CodexAttachmentProcessResult(
             prompt=prompt,
             local_image_paths=[],
+            model_input_files=[],
             success_count=0,
             failed_count=len(attachments),
         )
@@ -90,6 +94,7 @@ def process_codex_attachments(
 
         success_by_id = {att.get("id"): att for att in result.success}
         local_image_paths = []
+        model_input_files = []
         for attachment in attachments:
             if attachment.get("mime_type") not in IMAGE_MIME_TYPES:
                 continue
@@ -99,6 +104,14 @@ def process_codex_attachments(
                 if success_attachment and success_attachment.get("local_path")
                 else None
             )
+            if local_path:
+                original_local_path = local_path
+                local_path = prepare_image_file_for_model(
+                    local_path,
+                    attachment.get("mime_type") or success_attachment.get("mime_type"),
+                )
+                if local_path != original_local_path:
+                    model_input_files.append(local_path)
             local_image_paths.append(local_path)
         logger.info(
             "Prepared Codex attachments: %s success, %s failed, %s local images",
@@ -109,6 +122,7 @@ def process_codex_attachments(
         return CodexAttachmentProcessResult(
             prompt=modified_prompt,
             local_image_paths=local_image_paths,
+            model_input_files=model_input_files,
             success_count=len(result.success),
             failed_count=len(result.failed),
         )
@@ -117,6 +131,7 @@ def process_codex_attachments(
         return CodexAttachmentProcessResult(
             prompt=prompt,
             local_image_paths=[],
+            model_input_files=[],
             success_count=0,
             failed_count=len(attachments),
         )

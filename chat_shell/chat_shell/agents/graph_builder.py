@@ -23,6 +23,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import (
     AIMessage,
     BaseMessage,
+    ChatMessage,
     HumanMessage,
     SystemMessage,
     ToolMessage,
@@ -374,6 +375,8 @@ def _message_to_context_metrics_dict(msg: BaseMessage) -> dict[str, Any]:
     """Convert a LangChain message into the dict view used by metrics counting."""
     if isinstance(msg, SystemMessage):
         role = "system"
+    elif isinstance(msg, ChatMessage):
+        role = msg.role
     elif isinstance(msg, HumanMessage):
         role = "user"
     elif isinstance(msg, AIMessage):
@@ -786,7 +789,7 @@ class LangGraphAgentBuilder:
         return modifier_tools
 
     def _create_prompt_modifier(self) -> Callable | None:
-        """Create a prompt modifier function for dynamic prompt injection.
+        """Create a prompt modifier function for dynamic instruction injection.
 
         This function is called before each model invocation to inject
         prompt modifications from all PromptModifierTool instances.
@@ -799,12 +802,42 @@ class LangGraphAgentBuilder:
 
         modifier_tools = self._prompt_modifier_tools
 
+        def supports_developer_message() -> bool:
+            """Return whether the current LangChain adapter accepts developer role."""
+            return self._provider == "openai"
+
+        def create_dynamic_instruction_message(content: str) -> BaseMessage:
+            """Create a provider-safe message for dynamic skill instructions."""
+            if supports_developer_message():
+                return ChatMessage(role="developer", content=content)
+
+            wrapped_content = (
+                "<application_skill_context>\n"
+                "The following skill context was injected by the application for "
+                "this model call. It is not authored by the user.\n"
+                f"{content.strip()}\n"
+                "</application_skill_context>"
+            )
+            return HumanMessage(content=wrapped_content)
+
+        def insert_after_leading_system_messages(
+            messages: list[BaseMessage], dynamic_message: BaseMessage
+        ) -> list[BaseMessage]:
+            """Insert dynamic context without mutating stable system prompts."""
+            insert_at = 0
+            while insert_at < len(messages) and isinstance(
+                messages[insert_at], SystemMessage
+            ):
+                insert_at += 1
+            return messages[:insert_at] + [dynamic_message] + messages[insert_at:]
+
         def prompt_modifier(state: dict[str, Any]) -> list[BaseMessage]:
-            """Modify messages to inject prompt modifications into system message.
+            """Inject dynamic prompt modifications as a separate message.
 
             This function is called by LangGraph's create_react_agent before each
             model invocation. It collects prompt modifications from all
-            PromptModifierTool instances and appends them to the system message.
+            PromptModifierTool instances and inserts them after the stable system
+            prompts so prompt caching can keep the base system prefix unchanged.
             """
             messages = state.get("messages", [])
             if not messages:
@@ -821,55 +854,13 @@ class LangGraphAgentBuilder:
                 # No modifications, return messages unchanged
                 return messages
 
-            # Find and update the system message
-            new_messages = []
-            system_updated = False
-
-            for msg in messages:
-                if isinstance(msg, SystemMessage) and not system_updated:
-                    # Append modifications to existing system message.
-                    # Content may be a string or a list of content blocks
-                    # (e.g., when Anthropic cache_control breakpoints are set).
-                    # Preserve the original format to keep cache markers intact.
-                    if isinstance(msg.content, list):
-                        # List of content blocks — append modification as a new
-                        # text block so existing cache_control markers stay valid.
-                        updated_content = msg.content + [
-                            {"type": "text", "text": combined_modification}
-                        ]
-                    else:
-                        updated_content = msg.content + combined_modification
-                    new_messages.append(SystemMessage(content=updated_content))
-                    system_updated = True
-
-                    # Log the final system prompt metadata at INFO level
-                    # Full content is only logged at DEBUG level to avoid leaking sensitive data
-                    content_len = (
-                        sum(
-                            len(b.get("text", ""))
-                            for b in updated_content
-                            if isinstance(b, dict)
-                        )
-                        if isinstance(updated_content, list)
-                        else len(updated_content)
-                    )
-                    logger.info(
-                        "[prompt_modifier] Final system prompt (len=%d)",
-                        content_len,
-                    )
-                    # logger.debug(
-                    #     "[prompt_modifier] Final system prompt content:\n%s",
-                    #     updated_content,
-                    # )
-
-                else:
-                    new_messages.append(msg)
-
-            # If no system message found, prepend one with modifications
-            if not system_updated:
-                new_messages.insert(0, SystemMessage(content=combined_modification))
-
-            return new_messages
+            dynamic_message = create_dynamic_instruction_message(combined_modification)
+            logger.info(
+                "[prompt_modifier] Dynamic skill context injected role=%s len=%d",
+                getattr(dynamic_message, "role", dynamic_message.type),
+                len(str(dynamic_message.content)),
+            )
+            return insert_after_leading_system_messages(messages, dynamic_message)
 
         return prompt_modifier
 
@@ -961,7 +952,8 @@ class LangGraphAgentBuilder:
 
         # Get all registered skill tools
         all_skill_tools = load_skill_tool.get_all_registered_tools()
-        if not all_skill_tools:
+        has_deferred_loaders = load_skill_tool.has_deferred_tool_loaders()
+        if not all_skill_tools and not has_deferred_loaders:
             return None, self.tools
 
         # Create a set of skill tool names for quick lookup
@@ -1049,6 +1041,44 @@ class LangGraphAgentBuilder:
 
         return gemini_prompt_modifier
 
+    def _create_dynamic_tool_node(
+        self,
+        *,
+        all_tools: list[BaseTool],
+        load_skill_tool: Any | None,
+    ) -> list[BaseTool] | Any:
+        """Create a ToolNode that can execute tools registered after graph build."""
+        if not load_skill_tool:
+            return all_tools
+
+        from langgraph.prebuilt.tool_node import ToolCallRequest, ToolNode
+
+        async def awrap_tool_call(tool_request: Any, execute: Callable) -> Any:
+            """Resolve a dynamically registered skill tool before execution."""
+            if tool_request.tool is not None:
+                return await execute(tool_request)
+
+            finder = getattr(load_skill_tool, "find_registered_tool", None)
+            if not finder:
+                return await execute(tool_request)
+
+            tool_name = tool_request.tool_call["name"]
+            dynamic_tool = finder(tool_name)
+            if dynamic_tool is None:
+                return await execute(tool_request)
+
+            logger.info("[dynamic_tool_node] Resolved dynamic tool '%s'", tool_name)
+            return await execute(
+                ToolCallRequest(
+                    tool_call=tool_request.tool_call,
+                    tool=dynamic_tool,
+                    state=tool_request.state,
+                    runtime=tool_request.runtime,
+                )
+            )
+
+        return ToolNode(all_tools, awrap_tool_call=awrap_tool_call)
+
     @trace_sync(
         span_name="agent_builder.build_agent",
         tracer_name="chat_shell.agents",
@@ -1091,6 +1121,7 @@ class LangGraphAgentBuilder:
 
         # Store all_tools for external access (e.g., for display_name lookup)
         self.all_tools = all_tools
+        load_skill_tool = self._find_load_skill_tool()
 
         # Track GeminiSearchTool instance for dynamic filtering
         gemini_search_tool: GeminiSearchTool | None = None
@@ -1145,22 +1176,7 @@ class LangGraphAgentBuilder:
             # Keep the externally visible tool registry aligned with the final execution set.
             self.all_tools = all_tools
 
-            # Identify search tools: GeminiSearchTool and WebSearchTool
-            other_search_tools = [t for t in all_tools if isinstance(t, WebSearchTool)]
-
-            # Tools for first call: all tools except other search tools (only gemini_search for search)
-            tools_with_gemini_only = [
-                t for t in all_tools if not isinstance(t, WebSearchTool)
-            ]
-
-            # Tools after gemini_search is called: all tools except gemini_search
-            # (includes other search tools if any)
-            tools_without_gemini = [
-                t for t in all_tools if not isinstance(t, GeminiSearchTool)
-            ]
-
             captured_gemini_tool = gemini_search_tool
-            has_other_search_tools = len(other_search_tools) > 0
 
             def gemini_model_callable(state: dict[str, Any], runtime: Any) -> Runnable:
                 """Dynamic model that manages search tool visibility for Gemini.
@@ -1174,48 +1190,77 @@ class LangGraphAgentBuilder:
                 2. Other search tools are available as fallback after gemini_search is used
                 3. No duplicate search capabilities confuse the model
                 """
+                selected_tools = all_tools
+                if load_skill_tool:
+                    all_skill_tools = load_skill_tool.get_all_registered_tools()
+                    skill_tool_names = {
+                        getattr(tool, "name", None) for tool in all_skill_tools
+                    }
+                    base_tools = [
+                        tool
+                        for tool in all_tools
+                        if getattr(tool, "name", None) not in skill_tool_names
+                    ]
+                    selected_tools = base_tools + load_skill_tool.get_available_tools()
+
                 if captured_gemini_tool.has_been_called():
-                    # GeminiSearchTool has been called, filter it out and restore other search tools
+                    # GeminiSearchTool has been called, filter it out and restore other search tools.
+                    tools_for_model = [
+                        tool
+                        for tool in selected_tools
+                        if getattr(tool, "name", None) != captured_gemini_tool.name
+                    ]
+                    has_other_search_tools = any(
+                        isinstance(tool, WebSearchTool) for tool in tools_for_model
+                    )
                     logger.info(
                         "[LangGraphAgentBuilder] gemini_search already called, "
                         "returning model without gemini_search. "
                         "Other search tools available: %s, Remaining tools: %d",
                         has_other_search_tools,
-                        len(tools_without_gemini),
+                        len(tools_for_model),
                     )
-                    return base_llm.bind_tools(tools_without_gemini)
+                    return base_llm.bind_tools(tools_for_model)
                 else:
-                    # First call, include gemini_search but hide other search tools
+                    # First call, include gemini_search but hide other search tools.
+                    hidden_search_count = sum(
+                        1 for tool in selected_tools if isinstance(tool, WebSearchTool)
+                    )
+                    tools_for_model = [
+                        tool
+                        for tool in selected_tools
+                        if not isinstance(tool, WebSearchTool)
+                    ]
                     logger.debug(
                         "[LangGraphAgentBuilder] gemini_search not yet called, "
                         "returning model with gemini_search only (hiding %d other search tools). "
                         "Total tools: %d",
-                        len(other_search_tools),
-                        len(tools_with_gemini_only),
+                        hidden_search_count,
+                        len(tools_for_model),
                     )
-                    return base_llm.bind_tools(tools_with_gemini_only)
+                    return base_llm.bind_tools(tools_for_model)
 
             model_with_tools = gemini_model_callable
 
-        # If we have a model configurator, use it for dynamic tool selection
-        # Note: all_tools includes ALL possible tools (base + all skill tools) for execution
-        # while model_configurator controls which tools the model sees at each step
-        if model_configurator:
-            self._agent = create_react_agent(
-                model=model_configurator,
-                tools=all_tools,
-                checkpointer=checkpointer,
-                prompt=prompt_modifier,
-                pre_model_hook=self.pre_model_hook,
-            )
-        else:
-            self._agent = create_react_agent(
-                model=model_with_tools,
-                tools=all_tools,
-                checkpointer=checkpointer,
-                prompt=prompt_modifier,
-                pre_model_hook=self.pre_model_hook,
-            )
+        tool_node_or_tools = self._create_dynamic_tool_node(
+            all_tools=all_tools,
+            load_skill_tool=load_skill_tool if model_configurator else None,
+        )
+        model_for_agent = (
+            model_with_tools
+            if gemini_search_tool is not None
+            else model_configurator or model_with_tools
+        )
+
+        # all_tools includes every executable tool. The selected model callable
+        # controls which subset the model sees at each step.
+        self._agent = create_react_agent(
+            model=model_for_agent,
+            tools=tool_node_or_tools,
+            checkpointer=checkpointer,
+            prompt=prompt_modifier,
+            pre_model_hook=self.pre_model_hook,
+        )
         add_span_event("react_agent_created")
 
         return self._agent

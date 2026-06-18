@@ -5,6 +5,7 @@
 'use client'
 
 import React, { useCallback, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Download, X, ZoomIn, ZoomOut, RotateCw, Loader2, Eye, Video } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -103,8 +104,11 @@ function ImageLightbox({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm"
+      className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/80 backdrop-blur-sm"
       onClick={handleBackdropClick}
+      role="dialog"
+      aria-modal="true"
+      aria-label={alt}
     >
       {/* Toolbar */}
       <div className="absolute top-4 right-4 flex items-center gap-2 z-10">
@@ -160,6 +164,7 @@ function ImageLightbox({
 
       {/* Image container */}
       <div className="max-w-[90vw] max-h-[90vh] overflow-auto">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src={src}
           alt={alt}
@@ -227,6 +232,19 @@ export default function AttachmentPreview({
     error: imageError,
   } = useAttachmentImage(attachment.id, isImage, shareToken)
 
+  const lightbox =
+    showLightbox && typeof document !== 'undefined'
+      ? createPortal(
+          <ImageLightbox
+            src={imageUrl ?? ''}
+            alt={attachment.filename}
+            onClose={handleCloseLightbox}
+            onDownload={handleDownload}
+          />,
+          document.body
+        )
+      : null
+
   // Render image preview for image types
   if (isImage && !imageError) {
     // Show loading state while fetching image
@@ -255,16 +273,10 @@ export default function AttachmentPreview({
               onClick={handleImageClick}
               title={attachment.filename}
             >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={imageUrl} alt={attachment.filename} className="h-12 w-12 object-cover" />
             </div>
-            {showLightbox && (
-              <ImageLightbox
-                src={imageUrl}
-                alt={attachment.filename}
-                onClose={handleCloseLightbox}
-                onDownload={handleDownload}
-              />
-            )}
+            {lightbox}
           </>
         )
       }
@@ -276,6 +288,7 @@ export default function AttachmentPreview({
               className="cursor-pointer rounded-lg overflow-hidden border border-border hover:border-primary transition-colors"
               onClick={handleImageClick}
             >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={imageUrl}
                 alt={attachment.filename}
@@ -309,14 +322,7 @@ export default function AttachmentPreview({
               </div>
             </div>
           </div>
-          {showLightbox && (
-            <ImageLightbox
-              src={imageUrl}
-              alt={attachment.filename}
-              onClose={handleCloseLightbox}
-              onDownload={handleDownload}
-            />
-          )}
+          {lightbox}
         </>
       )
     }

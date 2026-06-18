@@ -14,6 +14,7 @@ In HTTP mode, skill binaries are downloaded from backend API.
 
 import asyncio
 import logging
+import time
 from typing import Any, Optional
 
 import httpx
@@ -131,6 +132,108 @@ async def _download_skill_binary(download_url: str, skill_name: str) -> Optional
     return None
 
 
+async def _create_provider_tools_for_skill(
+    *,
+    task_id: int,
+    subtask_id: int,
+    user_id: int,
+    skill_config: dict[str, Any],
+    registry: Any,
+    remote_url: str,
+    ws_emitter: Any = None,
+    user_name: Optional[str] = None,
+    auth_token: Optional[str] = None,
+    skill_identity_token: Optional[str] = None,
+) -> list[Any]:
+    """Load a skill provider if needed and create concrete tool instances."""
+    from chat_shell.skills import SkillToolContext
+
+    skill_name = skill_config.get("name", "unknown")
+    provider_config = skill_config.get("provider")
+    skill_id = skill_config.get("skill_id")
+    skill_user_id = skill_config.get("skill_user_id")
+
+    # Load provider from skill package if provider config is present.
+    # SECURITY: Only public skills (user_id=0) can load code.
+    if provider_config and skill_id:
+        is_public = skill_user_id == 0
+
+        if not is_public:
+            logger.warning(
+                "[skill_factory] SECURITY: Skipping code loading for non-public "
+                "skill '%s' (user_id=%s). Only public skills can load code.",
+                skill_name,
+                skill_user_id,
+            )
+        else:
+            try:
+                binary_data = None
+
+                if remote_url and skill_id:
+                    download_start = time.perf_counter()
+                    download_url = f"{remote_url}/skills/{skill_id}/binary"
+                    binary_data = await _download_skill_binary(download_url, skill_name)
+                    logger.info(
+                        "[skill_factory_perf] skill=%s binary_download=%.2fms",
+                        skill_name,
+                        (time.perf_counter() - download_start) * 1000,
+                    )
+
+                if binary_data:
+                    provider_start = time.perf_counter()
+                    loaded = registry.ensure_provider_loaded(
+                        skill_name=skill_name,
+                        provider_config=provider_config,
+                        zip_content=binary_data,
+                        is_public=is_public,
+                    )
+                    logger.info(
+                        "[skill_factory_perf] skill=%s provider_load=%.2fms loaded=%s",
+                        skill_name,
+                        (time.perf_counter() - provider_start) * 1000,
+                        loaded,
+                    )
+                    if not loaded:
+                        logger.warning(
+                            "[skill_factory] Failed to load provider for skill '%s'",
+                            skill_name,
+                        )
+                else:
+                    logger.warning(
+                        "[skill_factory] No binary data found for skill '%s' (id=%s)",
+                        skill_name,
+                        skill_id,
+                    )
+            except Exception as e:
+                logger.error(
+                    "[skill_factory] Error loading provider for skill '%s': %s",
+                    skill_name,
+                    str(e),
+                )
+
+    context = SkillToolContext(
+        task_id=task_id,
+        subtask_id=subtask_id,
+        user_id=user_id,
+        db_session=None,
+        ws_emitter=ws_emitter,
+        skill_config=skill_config,
+        user_name=user_name,
+        auth_token=auth_token,
+        skill_identity_token=skill_identity_token,
+    )
+
+    create_tools_start = time.perf_counter()
+    skill_tools = registry.create_tools_for_skill(skill_config, context)
+    logger.info(
+        "[skill_factory_perf] skill=%s create_tools=%.2fms tool_count=%d",
+        skill_name,
+        (time.perf_counter() - create_tools_start) * 1000,
+        len(skill_tools or []),
+    )
+    return skill_tools or []
+
+
 async def prepare_skill_tools(
     task_id: int,
     subtask_id: int,
@@ -148,24 +251,23 @@ async def prepare_skill_tools(
     """
     Prepare skill tools dynamically using SkillToolRegistry.
 
-    This function creates tool instances for ALL skills that have tool declarations
-    in their SKILL.md configuration. Tools are grouped by skill name and stored
-    in the LoadSkillTool for dynamic tool selection at runtime.
+    This function creates concrete tool instances only for active skills. For
+    inactive provider-backed skills, lightweight proxy tools are registered and
+    the provider package is downloaded only after load_skill activates the skill.
 
-    For preloaded skills, their tools are immediately available.
-    For non-preloaded skills, tools are created but only become available
-    after the skill is loaded via load_skill tool.
+    For preloaded or user-selected skills, their tools are immediately available.
+    For non-preloaded skills, registered tools become available after the skill
+    is loaded via load_skill tool.
 
-    Additionally, if a skill has mcpServers configured, the MCP servers will be
-    connected upfront and their tools will be registered to LoadSkillTool under
-    that skill name. These MCP tools are only exposed to the model after the
-    corresponding skill is loaded (or preloaded).
+    Additionally, if an active skill has mcpServers configured, the MCP servers
+    will be merged and loaded as one batch. Inactive skill MCP servers are
+    deferred so ordinary chat turns do not pay connection and schema loading cost.
 
     Skill binaries are downloaded from backend API using REMOTE_STORAGE_URL.
 
     When a load_skill_tool is provided, this function will preload skills specified
     in preload_skills by calling preload_skill_prompt(). These skills will be automatically
-    injected into the system prompt via prompt_modifier.
+    injected into model input via prompt_modifier.
 
     Args:
         task_id: Task ID for WebSocket room
@@ -176,11 +278,11 @@ async def prepare_skill_tools(
                                    "provider": {...}, "skill_id": int, "mcpServers": {...}}
         ws_emitter: Optional WebSocket emitter for real-time communication
         load_skill_tool: Optional LoadSkillTool instance to preload skill prompts
-        preload_skills: Optional list of skill names to preload into system prompt.
+        preload_skills: Optional list of skill names to preload into dynamic context.
                        Skills in this list will have their prompts injected automatically.
         user_selected_skills: Optional list of skill names that were explicitly selected
                              by the user for this message. These skills will be highlighted
-                             in the system prompt to encourage the model to prioritize them.
+                             in dynamic context to encourage the model to prioritize them.
         user_name: Username for identifying the user
         auth_token: JWT token for API authentication (e.g., attachment upload/download)
         skill_identity_token: JWT token for skill identity verification
@@ -209,19 +311,19 @@ async def prepare_skill_tools(
     # Get base URL for skill binary downloads
     remote_url = getattr(settings, "REMOTE_STORAGE_URL", "").rstrip("/")
 
-    # Collect all skill MCP server configs for batch loading.
-    #
-    # NOTE:
-    # - LangGraph's ToolNode builds a static tool map at agent creation time.
-    # - To make skill MCP tools available after a user calls load_skill, we must
-    #   connect and materialize these tools BEFORE the agent graph is built.
-    # - We still keep skill gating: MCP tools are registered under their owning
-    #   skill name and are only exposed to the model after that skill is loaded.
+    # Collect active skill MCP server configs for batch loading. Candidate skills
+    # stay available through load_skill prompt metadata without connecting their
+    # MCP servers during request startup.
     skill_mcp_configs: dict[str, dict[str, Any]] = {}
     skill_mcp_server_owner: dict[str, str] = {}  # prefixed_server_name -> skill_name
+    preload_skill_set = set(preload_skills or [])
+    user_selected_skill_set = set(user_selected_skills or [])
+    active_skill_set = preload_skill_set | user_selected_skill_set
+    function_start = time.perf_counter()
 
     # Process each skill configuration
     for skill_config in skill_configs:
+        skill_start = time.perf_counter()
         skill_name = skill_config.get("name", "unknown")
         tool_declarations = skill_config.get("tools", [])
         provider_config = skill_config.get("provider")
@@ -230,17 +332,20 @@ async def prepare_skill_tools(
         mcp_servers = skill_config.get("mcpServers")
 
         # Check if this skill should be preloaded
-        should_preload = preload_skills is not None and skill_name in preload_skills
+        should_preload = skill_name in preload_skill_set
+        is_user_selected = skill_name in user_selected_skill_set
+        should_activate = skill_name in active_skill_set
 
         # Collect MCP servers from skill config.
-        # We only load MCP tools if we can register them under LoadSkillTool
-        # (for skill-gated exposure) or the skill is explicitly preloaded.
-        if mcp_servers and (load_skill_tool is not None or should_preload):
+        # Only active skill MCP servers are loaded here.
+        if mcp_servers and should_activate:
             logger.info(
-                "[skill_factory] Skill '%s' has %d MCP server(s) configured (preload=%s)",
+                "[skill_factory] Skill '%s' has %d active MCP server(s) configured "
+                "(preload=%s, user_selected=%s)",
                 skill_name,
                 len(mcp_servers),
                 should_preload,
+                is_user_selected,
             )
             # Prefix MCP server names with skill name to avoid conflicts across skills.
             for server_name, server_config in mcp_servers.items():
@@ -248,25 +353,60 @@ async def prepare_skill_tools(
                 skill_mcp_configs[prefixed_name] = server_config
                 skill_mcp_server_owner[prefixed_name] = skill_name
         elif mcp_servers:
-            logger.debug(
-                "[skill_factory] Skipping MCP servers for skill '%s': load_skill_tool=%s, preload=%s",
+            logger.info(
+                "[skill_factory] Deferring %d MCP server(s) for inactive skill '%s' "
+                "(preload=%s, user_selected=%s)",
+                len(mcp_servers),
                 skill_name,
-                load_skill_tool is not None,
                 should_preload,
+                is_user_selected,
             )
+            if load_skill_tool is not None:
+
+                async def load_deferred_mcp_tools(
+                    skill_name=skill_name,
+                    mcp_servers=mcp_servers,
+                ):
+                    load_start = time.perf_counter()
+                    deferred_mcp_configs: dict[str, dict[str, Any]] = {}
+                    for server_name, server_config in mcp_servers.items():
+                        deferred_mcp_configs[f"{skill_name}_{server_name}"] = (
+                            server_config
+                        )
+
+                    tools_with_server, clients = await _load_skill_mcp_tools(
+                        deferred_mcp_configs,
+                        task_id,
+                        task_data,
+                    )
+                    if hasattr(load_skill_tool, "add_deferred_mcp_clients"):
+                        load_skill_tool.add_deferred_mcp_clients(clients)
+
+                    loaded_tools: list[Any] = []
+                    for server_tools in tools_with_server.values():
+                        loaded_tools.extend(server_tools)
+
+                    logger.info(
+                        "[skill_factory_perf] skill=%s deferred_mcp_load=%.2fms "
+                        "server_count=%d tool_count=%d",
+                        skill_name,
+                        (time.perf_counter() - load_start) * 1000,
+                        len(deferred_mcp_configs),
+                        len(loaded_tools),
+                    )
+                    return loaded_tools
+
+                load_skill_tool.register_skill_tool_loader(
+                    skill_name, load_deferred_mcp_tools
+                )
 
         if not tool_declarations:
             # No tools declared for this skill, skip tool creation
-            # but MCP servers may still be loaded above for preloaded skills
-            # Still preload the skill prompt if it's in preload_skills list
-            if should_preload and load_skill_tool is not None:
+            # but MCP servers may still be loaded above for active skills.
+            # Still preload the skill prompt if this skill is active.
+            if should_activate and load_skill_tool is not None:
                 skill_prompt = skill_config.get("prompt", "")
                 if skill_prompt:
-                    # Check if this skill was explicitly selected by the user
-                    is_user_selected = (
-                        user_selected_skills is not None
-                        and skill_name in user_selected_skills
-                    )
                     load_skill_tool.preload_skill_prompt(
                         skill_name, skill_config, is_user_selected=is_user_selected
                     )
@@ -276,6 +416,14 @@ async def prepare_skill_tools(
                         skill_name,
                         is_user_selected,
                     )
+            logger.info(
+                "[skill_factory_perf] skill=%s total=%.2fms active=%s "
+                "tool_declarations=0 mcp_servers=%d",
+                skill_name,
+                (time.perf_counter() - skill_start) * 1000,
+                should_activate,
+                len(mcp_servers or {}),
+            )
             continue
 
         logger.debug(
@@ -284,71 +432,84 @@ async def prepare_skill_tools(
             len(tool_declarations),
         )
 
-        # Load provider from skill package if provider config is present
-        # SECURITY: Only public skills (user_id=0) can load code
-        if provider_config and skill_id:
-            # Check if this is a public skill (user_id=0)
-            is_public = skill_user_id == 0
+        if not should_activate and load_skill_tool is not None:
+            from chat_shell.tools.builtin.load_skill import LazySkillProviderTool
 
-            if not is_public:
-                logger.warning(
-                    "[skill_factory] SECURITY: Skipping code loading for non-public "
-                    "skill '%s' (user_id=%s). Only public skills can load code.",
-                    skill_name,
-                    skill_user_id,
-                )
-            else:
-                try:
-                    binary_data = None
-
-                    # Download from backend API
-                    if remote_url and skill_id:
-                        download_url = f"{remote_url}/skills/{skill_id}/binary"
-                        binary_data = await _download_skill_binary(
-                            download_url, skill_name
-                        )
-
-                    if binary_data:
-                        # Load and register the provider
-                        loaded = registry.ensure_provider_loaded(
-                            skill_name=skill_name,
-                            provider_config=provider_config,
-                            zip_content=binary_data,
-                            is_public=is_public,
-                        )
-                        if not loaded:
-                            logger.warning(
-                                "[skill_factory] Failed to load provider for skill '%s'",
-                                skill_name,
-                            )
-                    else:
-                        logger.warning(
-                            "[skill_factory] No binary data found for skill '%s' (id=%s)",
-                            skill_name,
-                            skill_id,
-                        )
-                except Exception as e:
-                    logger.error(
-                        "[skill_factory] Error loading provider for skill '%s': %s",
-                        skill_name,
-                        str(e),
+            lazy_tools = []
+            for tool_decl in tool_declarations:
+                tool_name = tool_decl.get("name")
+                if not tool_name:
+                    continue
+                lazy_tools.append(
+                    LazySkillProviderTool(
+                        skill_name=skill_name,
+                        tool_name=tool_name,
+                        description=tool_decl.get("description", ""),
+                        load_skill_tool=load_skill_tool,
                     )
+                )
 
-        # Create context for this skill
-        context = SkillToolContext(
+            if lazy_tools:
+
+                async def load_deferred_tools(
+                    skill_config=skill_config,
+                    skill_name=skill_name,
+                ):
+                    load_start = time.perf_counter()
+                    loaded_tools = await _create_provider_tools_for_skill(
+                        task_id=task_id,
+                        subtask_id=subtask_id,
+                        user_id=user_id,
+                        skill_config=skill_config,
+                        registry=registry,
+                        remote_url=remote_url,
+                        ws_emitter=ws_emitter,
+                        user_name=user_name,
+                        auth_token=auth_token,
+                        skill_identity_token=skill_identity_token,
+                    )
+                    logger.info(
+                        "[skill_factory_perf] skill=%s deferred_provider_load=%.2fms "
+                        "tool_count=%d",
+                        skill_name,
+                        (time.perf_counter() - load_start) * 1000,
+                        len(loaded_tools),
+                    )
+                    return loaded_tools
+
+                load_skill_tool.register_skill_tools(skill_name, lazy_tools)
+                load_skill_tool.register_skill_tool_loader(
+                    skill_name, load_deferred_tools
+                )
+                logger.info(
+                    "[skill_factory] Deferred %d provider tool(s) for inactive skill '%s'",
+                    len(lazy_tools),
+                    skill_name,
+                )
+
+            logger.info(
+                "[skill_factory_perf] skill=%s total=%.2fms active=%s "
+                "tool_declarations=%d mcp_servers=%d",
+                skill_name,
+                (time.perf_counter() - skill_start) * 1000,
+                should_activate,
+                len(tool_declarations or []),
+                len(mcp_servers or {}),
+            )
+            continue
+
+        skill_tools = await _create_provider_tools_for_skill(
             task_id=task_id,
             subtask_id=subtask_id,
             user_id=user_id,
-            db_session=None,
-            ws_emitter=ws_emitter,
             skill_config=skill_config,
+            registry=registry,
+            remote_url=remote_url,
+            ws_emitter=ws_emitter,
             user_name=user_name,
             auth_token=auth_token,
             skill_identity_token=skill_identity_token,
         )
-
-        # Create tools using the registry
-        skill_tools = registry.create_tools_for_skill(skill_config, context)
 
         if skill_tools:
             logger.info(
@@ -367,18 +528,13 @@ async def prepare_skill_tools(
                     skill_name,
                 )
 
-            # For preloaded skills, add tools to the immediate tools list
+            # For active skills, add tools to the immediate tools list
             # and preload the skill prompt
-            if should_preload:
+            if should_activate:
                 tools.extend(skill_tools)
                 if load_skill_tool is not None:
                     skill_prompt = skill_config.get("prompt", "")
                     if skill_prompt:
-                        # Check if this skill was explicitly selected by the user
-                        is_user_selected = (
-                            user_selected_skills is not None
-                            and skill_name in user_selected_skills
-                        )
                         load_skill_tool.preload_skill_prompt(
                             skill_name, skill_config, is_user_selected=is_user_selected
                         )
@@ -395,12 +551,28 @@ async def prepare_skill_tools(
                     skill_name,
                 )
 
+        logger.info(
+            "[skill_factory_perf] skill=%s total=%.2fms active=%s "
+            "tool_declarations=%d mcp_servers=%d",
+            skill_name,
+            (time.perf_counter() - skill_start) * 1000,
+            should_activate,
+            len(tool_declarations or []),
+            len(mcp_servers or {}),
+        )
+
     # Load MCP tools from all skills if any MCP servers are configured
     if skill_mcp_configs:
+        mcp_load_start = time.perf_counter()
         mcp_tools_with_server, skill_mcp_clients = await _load_skill_mcp_tools(
             skill_mcp_configs, task_id, task_data
         )
         mcp_clients.extend(skill_mcp_clients)
+        logger.info(
+            "[skill_factory_perf] active_skill_mcp_load=%.2fms server_count=%d",
+            (time.perf_counter() - mcp_load_start) * 1000,
+            len(skill_mcp_configs),
+        )
 
         # Calculate total tools count
         total_mcp_tools = sum(len(tools) for tools in mcp_tools_with_server.values())
@@ -486,6 +658,16 @@ async def prepare_skill_tools(
             tool_names,
         )
 
+    logger.info(
+        "[skill_factory_perf] prepare_skill_tools total=%.2fms skill_count=%d "
+        "active_skill_count=%d loaded_mcp_server_count=%d immediate_tool_count=%d",
+        (time.perf_counter() - function_start) * 1000,
+        len(skill_configs),
+        len(active_skill_set),
+        len(skill_mcp_configs),
+        len(tools),
+    )
+
     return tools, mcp_clients
 
 
@@ -520,6 +702,7 @@ async def _load_skill_mcp_tools(
         len(mcp_configs),
         list(mcp_configs.keys()),
     )
+    load_start = time.perf_counter()
 
     mcp_tools_with_server: dict[str, list[Any]] = {}
     mcp_clients: list[Any] = []
@@ -541,10 +724,12 @@ async def _load_skill_mcp_tools(
                     len(tools) for tools in mcp_tools_with_server.values()
                 )
                 logger.info(
-                    "[skill_factory] Loaded %d MCP tools from %d skill servers for task %d",
+                    "[skill_factory] Loaded %d MCP tools from %d skill servers for task %d "
+                    "in %.2fms",
                     total_tools,
                     len(mcp_tools_with_server),
                     task_id,
+                    (time.perf_counter() - load_start) * 1000,
                 )
 
                 # Log tool count per server
