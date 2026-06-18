@@ -805,7 +805,7 @@ export default function TeamList({
                             size="icon"
                             onClick={() => setChildAuthorizationTeam(team)}
                             title={t('teams.child_authorization.action')}
-                            className="h-7 w-7 sm:h-8 sm:w-8"
+                            className="h-11 min-w-[44px] sm:h-8 sm:min-w-8"
                             data-testid={`team-child-auth-button-${team.id}`}
                           >
                             <UserGroupIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />

@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Loader2 } from 'lucide-react'
 import { listGroups } from '@/apis/groups'
 import { teamApis, type TeamResourceMember } from '@/apis/team'
@@ -40,6 +40,15 @@ export function TeamChildNamespaceAuthorizationDialog({
   const [members, setMembers] = useState<TeamResourceMember[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [updatingGroupIds, setUpdatingGroupIds] = useState<Set<number>>(new Set())
+  const activeTeamIdRef = useRef<number | null>(null)
+  const teamId = team?.id ?? null
+
+  useEffect(() => {
+    activeTeamIdRef.current = open ? teamId : null
+    if (!open || teamId === null) {
+      setIsLoading(false)
+    }
+  }, [open, teamId])
 
   const childGroups = useMemo(() => {
     if (!team?.namespace || team.namespace === 'default') return []
@@ -60,24 +69,30 @@ export function TeamChildNamespaceAuthorizationDialog({
   }, [members])
 
   const loadAuthorizations = useCallback(async () => {
-    if (!team || !open) return
+    if (teamId === null || !open) return
+    const requestTeamId = teamId
+    activeTeamIdRef.current = requestTeamId
     setIsLoading(true)
     try {
       const [groupsResponse, membersResponse] = await Promise.all([
         listGroups({ page: 1, limit: 100 }),
-        teamApis.listTeamMembers(team.id),
+        teamApis.listTeamMembers(teamId),
       ])
+      if (activeTeamIdRef.current !== requestTeamId) return
       setGroups(groupsResponse.items)
       setMembers(membersResponse.members)
     } catch {
+      if (activeTeamIdRef.current !== requestTeamId) return
       toast({
         variant: 'destructive',
         title: t('teams.child_authorization.load_failed'),
       })
     } finally {
-      setIsLoading(false)
+      if (activeTeamIdRef.current === requestTeamId) {
+        setIsLoading(false)
+      }
     }
-  }, [open, t, team, toast])
+  }, [open, t, teamId, toast])
 
   useEffect(() => {
     void loadAuthorizations()

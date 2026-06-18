@@ -55,7 +55,7 @@ class TeamShareService(UnifiedShareService):
             .filter(
                 Kind.id == resource_id,
                 Kind.kind == "Team",
-                Kind.is_active == True,
+                Kind.is_active.is_(True),
             )
             .first()
         )
@@ -121,7 +121,11 @@ class TeamShareService(UnifiedShareService):
         )
 
     def _ensure_can_manage_members(
-        self, db: Session, resource_id: int, current_user_id: int
+        self,
+        db: Session,
+        resource_id: int,
+        current_user_id: int,
+        action: str = "add",
     ) -> Kind:
         resource = self._get_resource(db, resource_id, current_user_id)
         if not resource:
@@ -131,7 +135,10 @@ class TeamShareService(UnifiedShareService):
             db, resource_id, current_user_id, BaseRole.Maintainer
         )
         if resource.user_id != current_user_id and not has_manage:
-            raise HTTPException(status_code=403, detail="No permission to add members")
+            raise HTTPException(
+                status_code=403,
+                detail=f"No permission to {action} members",
+            )
 
         return resource
 
@@ -210,6 +217,7 @@ class TeamShareService(UnifiedShareService):
         entity_display_name: Optional[str] = None,
     ) -> ResourceMemberResponse:
         """Add a Team member or child namespace authorization."""
+        self._ensure_can_manage_members(db, resource_id, current_user_id, action="add")
         self._validate_child_namespace_authorization(
             db,
             resource_id=resource_id,
@@ -243,7 +251,7 @@ class TeamShareService(UnifiedShareService):
         filtered_members = []
         failed: List[FailedMemberResponse] = []
         for entry in members_data:
-            target_user_id, role, entity_type, entity_id, entity_display_name = entry
+            target_user_id, role, entity_type, entity_id, _entity_display_name = entry
             try:
                 self._validate_child_namespace_authorization(
                     db,
@@ -285,6 +293,9 @@ class TeamShareService(UnifiedShareService):
         role: BaseRole,
     ) -> ResourceMemberResponse:
         """Update a Team member role while keeping namespace grants read-only."""
+        self._ensure_can_manage_members(
+            db, resource_id, current_user_id, action="update"
+        )
         member = (
             db.query(ResourceMember)
             .filter(

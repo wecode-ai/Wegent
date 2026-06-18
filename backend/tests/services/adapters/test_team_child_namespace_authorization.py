@@ -258,6 +258,7 @@ def test_child_group_team_list_includes_authorized_parent_team(test_db: Session)
     listed_team = next(item for item in teams if item["id"] == team.id)
     assert listed_team["name"] == "parent-team"
     assert listed_team["namespace"] == "agent-parent"
+    # share_status=2 means the team is shared from others.
     assert listed_team["share_status"] == 2
     assert listed_team["access_source"] == "namespace_authorization"
     assert team_kinds_service.count_user_teams(
@@ -292,6 +293,7 @@ def test_child_member_can_create_task_with_authorized_parent_team_and_use_skills
     assert task.user_id == child_member.id
     assert task.json["spec"]["teamRef"]["user_id"] == team.user_id
     subtasks = test_db.query(Subtask).filter(Subtask.task_id == task.id).all()
+    # Task creation stores the initial user request plus the execution subtask.
     assert len(subtasks) == 2
 
     resolved = resolve_task_skills(test_db, task_id=task.id, user_id=child_member.id)

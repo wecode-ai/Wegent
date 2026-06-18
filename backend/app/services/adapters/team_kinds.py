@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 from fastapi import HTTPException
-from sqlalchemy import and_, distinct, literal, literal_column, union_all
+from sqlalchemy import and_, literal, literal_column, union_all
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -27,6 +27,7 @@ from app.models.namespace import Namespace
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.user import User
+from app.schemas.base_role import BaseRole, has_permission
 from app.schemas.kind import Bot, Ghost, Model, Shell, Task, Team
 from app.schemas.quick_launch import normalize_quick_phrases
 from app.schemas.team import BotInfo, TeamCreate, TeamDetail, TeamInDB, TeamUpdate
@@ -67,11 +68,11 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
 
         from app.services.group_permission import get_effective_role_in_group
 
-        accessible_namespaces = [
-            namespace
-            for namespace in group_namespaces
-            if get_effective_role_in_group(db, user_id, namespace) is not None
-        ]
+        accessible_namespaces = []
+        for namespace in group_namespaces:
+            role = get_effective_role_in_group(db, user_id, namespace)
+            if role is not None and has_permission(role, BaseRole.Reporter.value):
+                accessible_namespaces.append(namespace)
         if not accessible_namespaces:
             return []
 
@@ -426,38 +427,38 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             queries.append(group_teams_query)
 
         if authorized_namespace_ids:
-            authorized_team_query = (
-                db.query(
-                    Kind.id.label("team_id"),
-                    Kind.user_id.label("team_user_id"),
-                    Kind.name.label("team_name"),
-                    Kind.namespace.label("team_namespace"),
-                    Kind.json.label("team_json"),
-                    Kind.created_at.label("team_created_at"),
-                    Kind.updated_at.label("team_updated_at"),
-                    literal_column("2").label("share_status"),
-                    Kind.user_id.label("context_user_id"),
-                    literal(self.ACCESS_SOURCE_NAMESPACE_AUTHORIZATION).label(
-                        "access_source"
-                    ),
-                )
-                .join(
-                    ResourceMember,
-                    and_(
-                        ResourceMember.resource_id == Kind.id,
-                        ResourceMember.resource_type.in_(team_resource_type_variants),
-                    ),
-                )
+            authorized_namespace_entity_ids = [
+                str(ns_id) for ns_id in authorized_namespace_ids
+            ]
+            authorized_member_exists = (
+                db.query(ResourceMember.id)
                 .filter(
+                    ResourceMember.resource_id == Kind.id,
+                    ResourceMember.resource_type.in_(team_resource_type_variants),
                     ResourceMember.entity_type == "namespace",
-                    ResourceMember.entity_id.in_(
-                        [str(ns_id) for ns_id in authorized_namespace_ids]
-                    ),
+                    ResourceMember.entity_id.in_(authorized_namespace_entity_ids),
                     ResourceMember.status.in_(approved_status_variants),
-                    Kind.kind == "Team",
-                    Kind.is_active == True,
-                    ~Kind.namespace.in_(group_namespaces),
                 )
+                .exists()
+            )
+            authorized_team_query = db.query(
+                Kind.id.label("team_id"),
+                Kind.user_id.label("team_user_id"),
+                Kind.name.label("team_name"),
+                Kind.namespace.label("team_namespace"),
+                Kind.json.label("team_json"),
+                Kind.created_at.label("team_created_at"),
+                Kind.updated_at.label("team_updated_at"),
+                literal_column("2").label("share_status"),
+                Kind.user_id.label("context_user_id"),
+                literal(self.ACCESS_SOURCE_NAMESPACE_AUTHORIZATION).label(
+                    "access_source"
+                ),
+            ).filter(
+                authorized_member_exists,
+                Kind.kind == "Team",
+                Kind.is_active.is_(True),
+                ~Kind.namespace.in_(group_namespaces),
             )
             queries.append(authorized_team_query)
 
@@ -1269,23 +1270,26 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             db, user_id, group_namespaces
         )
         if authorized_namespace_ids:
-            total_count += (
-                db.query(distinct(Kind.id))
-                .join(
-                    ResourceMember,
-                    and_(
-                        ResourceMember.resource_id == Kind.id,
-                        ResourceMember.resource_type.in_(team_resource_type_variants),
-                    ),
-                )
+            authorized_namespace_entity_ids = [
+                str(ns_id) for ns_id in authorized_namespace_ids
+            ]
+            authorized_member_exists = (
+                db.query(ResourceMember.id)
                 .filter(
+                    ResourceMember.resource_id == Kind.id,
+                    ResourceMember.resource_type.in_(team_resource_type_variants),
                     ResourceMember.entity_type == "namespace",
-                    ResourceMember.entity_id.in_(
-                        [str(ns_id) for ns_id in authorized_namespace_ids]
-                    ),
+                    ResourceMember.entity_id.in_(authorized_namespace_entity_ids),
                     ResourceMember.status.in_(approved_status_variants),
+                )
+                .exists()
+            )
+            total_count += (
+                db.query(Kind.id)
+                .filter(
+                    authorized_member_exists,
                     Kind.kind == "Team",
-                    Kind.is_active == True,
+                    Kind.is_active.is_(True),
                     ~Kind.namespace.in_(group_namespaces),
                 )
                 .count()
