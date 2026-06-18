@@ -395,6 +395,8 @@ async def build_execution_request(
             web_runtime_guidance=web_runtime_guidance,
             runtime_contexts=getattr(payload, "contexts", None),
         )
+        if builder.runtime_context_warnings_updated:
+            db.commit()
         request.device_id = device_id or request.device_id
 
         # Merge reasoning config from API/model selection into model_config.

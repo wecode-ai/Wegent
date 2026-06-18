@@ -270,9 +270,34 @@ def test_runtime_dingtalk_context_warning_is_persisted_for_task_detail() -> None
     with patch(
         "app.services.execution.request_builder.task_store.update_json"
     ) as update_json:
-        builder._append_runtime_external_context_warnings(task, warnings)
+        updated = builder._append_runtime_external_context_warnings(task, warnings)
 
+    assert updated is True
     update_json.assert_called_once()
     payload = update_json.call_args.kwargs["payload"]
     assert payload["spec"]["contextWarnings"] == warnings
-    db.commit.assert_called_once()
+    db.commit.assert_not_called()
+
+
+def test_runtime_external_context_warning_deduplicates_existing_task_warning() -> None:
+    db = Mock()
+    builder = TaskRequestBuilder(db=db)
+    warning = {
+        "type": "external_document",
+        "reason": "mcp_not_configured",
+        "message": "未开启钉钉 MCP, 无法读取钉钉知识",
+        "name": "Roadmap",
+        "provider": "dingtalk",
+        "source": "docs",
+        "dingtalk_node_id": "node-1",
+    }
+    task = SimpleNamespace(json={"spec": {"contextWarnings": [warning]}})
+
+    with patch(
+        "app.services.execution.request_builder.task_store.update_json"
+    ) as update_json:
+        updated = builder._append_runtime_external_context_warnings(task, [warning])
+
+    assert updated is False
+    update_json.assert_not_called()
+    db.commit.assert_not_called()

@@ -104,6 +104,7 @@ class TaskRequestBuilder:
         # Cache shell info by (user_id, namespace, shell_name)
         # to avoid repeated database queries while keeping per-shell isolation.
         self._cached_shell_info: dict[tuple[int, str, str], dict] = {}
+        self.runtime_context_warnings_updated = False
 
     def build(
         self,
@@ -234,9 +235,11 @@ class TaskRequestBuilder:
             contexts=runtime_contexts,
         )
         if runtime_external_context_warnings:
-            self._append_runtime_external_context_warnings(
-                task,
-                runtime_external_context_warnings,
+            self.runtime_context_warnings_updated = (
+                self._append_runtime_external_context_warnings(
+                    task,
+                    runtime_external_context_warnings,
+                )
             )
 
         # Get skills for the bot (full resolution from Ghost)
@@ -2182,10 +2185,10 @@ Response template:
         self,
         task: TaskResource,
         warnings: list[dict[str, Any]],
-    ) -> None:
+    ) -> bool:
         """Persist runtime external context warnings for TaskDetail display."""
         if not warnings:
-            return
+            return False
 
         task_json = task.json if isinstance(task.json, dict) else {}
         next_task_json = dict(task_json)
@@ -2209,12 +2212,12 @@ Response template:
             appended = True
 
         if not appended:
-            return
+            return False
 
         spec["contextWarnings"] = existing_warnings
         next_task_json["spec"] = spec
         task_store.update_json(self.db, task=task, payload=next_task_json)
-        self.db.commit()
+        return True
 
     @staticmethod
     def _make_external_context_warning_key(warning: dict[str, Any]) -> str:
