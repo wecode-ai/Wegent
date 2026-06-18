@@ -11,11 +11,13 @@ import { DESKTOP_TOP_BAR_BUTTON_CLASS } from '../DesktopTopBar'
 import { cn } from '@/lib/utils'
 import type { DeviceInfo, ProjectWithTasks } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
+import type { WorkspaceTarget } from '@/types/workspace-files'
 
 interface WorkspacePanelActionsProps {
   mode?: 'all' | 'environment' | 'panel-toggles'
   currentProject?: ProjectWithTasks | null
   devices?: DeviceInfo[]
+  workspaceTarget?: WorkspaceTarget | null
   environmentInfo: EnvironmentInfo
   onRefreshEnvironmentInfo: () => Promise<void>
   onCommitEnvironmentChanges: (message: string) => Promise<void>
@@ -33,6 +35,7 @@ export function WorkspacePanelActions({
   mode = 'all',
   currentProject = null,
   devices = [],
+  workspaceTarget = null,
   environmentInfo,
   onRefreshEnvironmentInfo,
   onCommitEnvironmentChanges,
@@ -50,9 +53,14 @@ export function WorkspacePanelActions({
   const [codeServerError, setCodeServerError] = useState<string | null>(null)
   const showEnvironmentInfo = mode !== 'panel-toggles'
   const showPanelToggles = mode !== 'environment'
-  const canShowEnvironmentInfo =
-    environmentInfo.loading !== false || Boolean(environmentInfo.branchName?.trim())
-  const codeServerProjectDeviceId = getProjectDeviceId(currentProject)
+  const hasEnvironmentContext = Boolean(
+    environmentInfo.branchName?.trim() ||
+    environmentInfo.deviceId?.trim() ||
+    environmentInfo.workspacePath?.trim() ||
+    environmentInfo.error?.trim()
+  )
+  const canShowEnvironmentInfo = environmentInfo.loading !== false || hasEnvironmentContext
+  const codeServerProjectDeviceId = workspaceTarget?.deviceId ?? getProjectDeviceId(currentProject)
   const canOpenCodeServer = Boolean(currentProject && codeServerProjectDeviceId)
   const codeServerDevice = codeServerProjectDeviceId
     ? devices.find(device => device.device_id === codeServerProjectDeviceId)
@@ -80,7 +88,11 @@ export function WorkspacePanelActions({
     setCodeServerLoading(true)
     setCodeServerError(null)
     try {
-      const session = await projectApi.startCodeServerSession(currentProject.id)
+      const session = workspaceTarget?.taskId
+        ? await projectApi.startCodeServerSession(currentProject.id, {
+            taskId: workspaceTarget.taskId,
+          })
+        : await projectApi.startCodeServerSession(currentProject.id)
       if (!session.url) {
         throw new Error('IDE session URL is missing')
       }
@@ -98,6 +110,7 @@ export function WorkspacePanelActions({
       {showEnvironmentInfo && canShowEnvironmentInfo && (
         <EnvironmentInfoPopover
           info={environmentInfo}
+          devices={devices}
           onRefresh={onRefreshEnvironmentInfo}
           onCommitChanges={onCommitEnvironmentChanges}
           onListBranches={onListEnvironmentBranches}

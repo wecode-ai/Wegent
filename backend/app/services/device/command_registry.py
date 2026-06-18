@@ -197,6 +197,7 @@ print(
 
 LS_SKILLS_SCRIPT = """
 import json
+import os
 import re
 from pathlib import Path
 
@@ -325,6 +326,64 @@ def truncate(text, max_len=300):
     return text[: max_len - 1].rstrip() + "…"
 
 
+def real_directory_key(path):
+    try:
+        return str(path.resolve())
+    except OSError:
+        return str(path)
+
+
+def matches_skill_pattern(skill_file, root, pattern):
+    if pattern == "**/SKILL.md":
+        return True
+    try:
+        relative_parts = skill_file.relative_to(root).parts
+    except ValueError:
+        relative_parts = skill_file.parts
+    if pattern == "**/skills/**/SKILL.md":
+        return "skills" in relative_parts[:-1]
+    return skill_file.match(pattern)
+
+
+def same_directory(left, right):
+    try:
+        return left.resolve() == right.resolve()
+    except OSError:
+        return False
+
+
+def is_shared_legacy_skill_root(root, source):
+    if source not in {"claude", "codex"} or not root.is_symlink():
+        return False
+    return same_directory(root, Path.home() / ".agents" / "skills")
+
+
+def iter_skill_files(root, pattern):
+    visited = set()
+    for current, dirnames, filenames in os.walk(root, followlinks=True):
+        current_path = Path(current)
+        current_key = real_directory_key(current_path)
+        if current_key in visited:
+            dirnames[:] = []
+            continue
+        visited.add(current_key)
+
+        next_dirs = []
+        for dirname in sorted(dirnames):
+            child = current_path / dirname
+            child_key = real_directory_key(child)
+            if child_key not in visited:
+                next_dirs.append(dirname)
+        dirnames[:] = next_dirs
+
+        for filename in sorted(filenames):
+            if filename != "SKILL.md":
+                continue
+            skill_file = current_path / filename
+            if matches_skill_pattern(skill_file, root, pattern):
+                yield skill_file
+
+
 def skill_metadata(skill_file, source, source_kind, manifest):
     stat = skill_file.stat()
     frontmatter = read_frontmatter(skill_file)
@@ -354,7 +413,14 @@ seen_names = set()
 for root, source, pattern, source_kind in SKILL_SOURCES:
     if not root.is_dir():
         continue
-    for skill_file in sorted(root.glob(pattern)):
+    if is_shared_legacy_skill_root(root, source):
+        continue
+    skill_files = (
+        iter_skill_files(root, pattern)
+        if source_kind == "skill"
+        else sorted(root.glob(pattern))
+    )
+    for skill_file in skill_files:
         key = str(skill_file)
         if key in seen_paths:
             continue
@@ -831,6 +897,7 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
     "mkdir_p": LocalDeviceCommandDefinition(command="mkdir -p"),
     "path_exists": LocalDeviceCommandDefinition(command="test -e"),
     "git_clone": LocalDeviceCommandDefinition(command="git clone"),
+    "git_config": LocalDeviceCommandDefinition(command="git config"),
     "git_worktree_list": LocalDeviceCommandDefinition(
         command="sh -c 'git -C \"$1\" worktree list --porcelain' --"
     ),

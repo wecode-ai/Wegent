@@ -176,6 +176,9 @@ class Settings(BaseSettings):
     CHAT_TOOL_MAX_TIME_SECONDS: float = (
         60.0  # Maximum time for tool calling flow (5 minutes)
     )
+    # Source-level tool output compaction default for users without an explicit
+    # preference override.
+    TOOL_OUTPUT_GUARD_ENABLED: bool = False
     # Group chat history configuration
     # In group chat mode, AI-bot sees: first N messages + last M messages (no duplicates)
     # If total messages < N + M, all messages are kept
@@ -363,6 +366,7 @@ class Settings(BaseSettings):
     FLOW_DEFAULT_TIMEOUT_SECONDS: int = 600  # 10 minutes
     FLOW_DEFAULT_RETRY_COUNT: int = 1
     FLOW_EXECUTION_PAGE_LIMIT: int = 50
+    SUBSCRIPTION_SCHEDULER_ENABLED: bool = True
     # Subscription minimum interval configuration (minutes)
     SUBSCRIPTION_MIN_INTERVAL_MINUTES: int = 15
     # Stale execution cleanup thresholds (hours)

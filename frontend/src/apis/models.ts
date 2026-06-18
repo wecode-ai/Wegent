@@ -188,7 +188,13 @@ export type ErrorRecommendationsResponse = {
 
 // Test Connection Types
 export interface TestConnectionRequest {
-  provider_type: 'openai' | 'anthropic' | 'gemini' | 'gemini-deep-research' | 'openai-responses'
+  provider_type:
+    | 'openai'
+    | 'anthropic'
+    | 'gemini'
+    | 'gemini-deep-research'
+    | 'openai-responses'
+    | 'custom'
   model_id: string
   api_key: string
   base_url?: string

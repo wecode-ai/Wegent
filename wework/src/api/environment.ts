@@ -1,5 +1,6 @@
 import type { DeviceCommandRequest, DeviceCommandResponse, ProjectWithTasks } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
+import type { WorkspaceTarget } from '@/types/workspace-files'
 import {
   configuredWorkspacePath,
   executionDeviceId,
@@ -9,6 +10,9 @@ import {
 interface DeviceCommandApi {
   executeCommand(deviceId: string, data: DeviceCommandRequest): Promise<DeviceCommandResponse>
 }
+
+type EnvironmentWorkspaceTarget = Pick<WorkspaceTarget, 'deviceId' | 'path'> &
+  Partial<Pick<WorkspaceTarget, 'source' | 'taskId'>>
 
 interface GitRemoteParts {
   host: string
@@ -43,20 +47,26 @@ function outputAsString(output: DeviceCommandResponse['stdout']): string {
   throw new Error('Expected text stdout from device command')
 }
 
-function environmentInfoCacheKey(project: ProjectWithTasks): string | null {
-  const deviceId = executionDeviceId(project)
+function environmentInfoCacheKey(
+  project: ProjectWithTasks | null,
+  target?: EnvironmentWorkspaceTarget | null
+): string | null {
+  const deviceId = target?.deviceId ?? (project ? executionDeviceId(project) : undefined)
   if (!deviceId) {
     return null
   }
 
-  const config = project.config
+  const config = project?.config
   const workspace = config?.workspace
   return JSON.stringify({
-    projectId: project.id,
+    projectId: project?.id ?? null,
     deviceId,
+    path: target?.path ?? null,
+    source: target?.source ?? 'project',
+    taskId: target?.taskId ?? null,
     executionTarget: config?.execution?.targetType ?? 'local',
     workspaceSource: workspace?.source,
-    workspacePath: configuredWorkspacePath(project),
+    workspacePath: project ? configuredWorkspacePath(project) : null,
   })
 }
 
@@ -98,8 +108,7 @@ async function workspacePath(
   project: ProjectWithTasks
 ): Promise<string | undefined> {
   return resolveProjectWorkspacePath(project, deviceId, {
-    getProjectWorkspaceRoot: targetDeviceId =>
-      resolveProjectWorkspaceRoot(api, targetDeviceId),
+    getProjectWorkspaceRoot: targetDeviceId => resolveProjectWorkspaceRoot(api, targetDeviceId),
   })
 }
 
@@ -241,8 +250,22 @@ async function loadBranchDiffShortStat(
 
 async function commandContext(
   api: DeviceCommandApi,
-  project: ProjectWithTasks
+  project: ProjectWithTasks | null,
+  target?: EnvironmentWorkspaceTarget | null
 ): Promise<{ deviceId: string; path: string }> {
+  if (target) {
+    const deviceId = target.deviceId.trim()
+    const path = target.path.trim()
+    if (!deviceId || !path) {
+      throw new Error('Workspace target device and path are required')
+    }
+    return { deviceId, path }
+  }
+
+  if (!project) {
+    throw new Error('Project is required')
+  }
+
   const deviceId = executionDeviceId(project)
 
   if (!deviceId) {
@@ -258,29 +281,45 @@ async function commandContext(
 
 async function loadProjectEnvironmentUncached(
   api: DeviceCommandApi,
-  project: ProjectWithTasks | null
+  project: ProjectWithTasks | null,
+  target?: EnvironmentWorkspaceTarget | null
 ): Promise<EnvironmentInfo> {
-  if (!project) {
+  if (!project && !target) {
     return EMPTY_ENVIRONMENT_INFO
   }
 
-  const executionTarget = project.config?.execution?.targetType ?? 'local'
-  const deviceId = executionDeviceId(project)
+  const executionTarget = project?.config?.execution?.targetType ?? 'local'
+  const initialDeviceId = target?.deviceId ?? (project ? executionDeviceId(project) : undefined)
   const baseInfo: EnvironmentInfo = {
     ...EMPTY_ENVIRONMENT_INFO,
     executionTarget,
-    deviceId,
+    deviceId: initialDeviceId,
   }
 
-  if (!deviceId) {
+  if (!initialDeviceId) {
     return baseInfo
   }
 
+  let deviceId: string
+  let path: string
   try {
-    const path = await workspacePath(api, deviceId, project)
-    if (!path) {
-      return baseInfo
+    const context = await commandContext(api, project, target)
+    deviceId = context.deviceId
+    path = context.path
+  } catch (error) {
+    return {
+      ...baseInfo,
+      error: error instanceof Error ? error.message : 'Failed to load environment info',
     }
+  }
+
+  const environmentWorkspaceInfo = {
+    ...baseInfo,
+    deviceId,
+    workspacePath: path,
+  }
+
+  try {
     const [branchName, shortStat, porcelain] = await Promise.all([
       runGitCommand(api, deviceId, 'git_branch', path),
       loadBranchDiffShortStat(api, deviceId, path),
@@ -308,14 +347,14 @@ async function loadProjectEnvironmentUncached(
     }
 
     return {
-      ...baseInfo,
+      ...environmentWorkspaceInfo,
       ...diff,
       branchName,
       createPullRequestUrl: buildPullRequestUrl(remoteUrl, branchName),
     }
   } catch (error) {
     return {
-      ...baseInfo,
+      ...environmentWorkspaceInfo,
       error: error instanceof Error ? error.message : 'Failed to load environment info',
     }
   }
@@ -323,15 +362,16 @@ async function loadProjectEnvironmentUncached(
 
 export async function loadProjectEnvironment(
   api: DeviceCommandApi,
-  project: ProjectWithTasks | null
+  project: ProjectWithTasks | null,
+  target?: EnvironmentWorkspaceTarget | null
 ): Promise<EnvironmentInfo> {
-  if (!project) {
+  if (!project && !target) {
     return cloneEnvironmentInfo(EMPTY_ENVIRONMENT_INFO)
   }
 
-  const cacheKey = environmentInfoCacheKey(project)
+  const cacheKey = environmentInfoCacheKey(project, target)
   if (!cacheKey) {
-    return loadProjectEnvironmentUncached(api, project)
+    return loadProjectEnvironmentUncached(api, project, target)
   }
 
   const now = Date.now()
@@ -341,7 +381,7 @@ export async function loadProjectEnvironment(
     return cloneEnvironmentInfo(await cached.promise)
   }
 
-  const promise = loadProjectEnvironmentUncached(api, project)
+  const promise = loadProjectEnvironmentUncached(api, project, target)
   environmentInfoCache.set(cacheKey, {
     expiresAt: now + ENVIRONMENT_INFO_CACHE_TTL_MS,
     promise,
@@ -357,13 +397,10 @@ export async function loadProjectEnvironment(
 
 export async function loadProjectEnvironmentDiff(
   api: DeviceCommandApi,
-  project: ProjectWithTasks | null
+  project: ProjectWithTasks | null,
+  target?: EnvironmentWorkspaceTarget | null
 ): Promise<string> {
-  if (!project) {
-    throw new Error('Project is required')
-  }
-
-  const { deviceId, path } = await commandContext(api, project)
+  const { deviceId, path } = await commandContext(api, project, target)
   return runGitCommand(api, deviceId, 'git_diff', path, {
     timeoutSeconds: 30,
     maxOutputBytes: 5 * 1024 * 1024,
@@ -373,7 +410,8 @@ export async function loadProjectEnvironmentDiff(
 export async function commitProjectChanges(
   api: DeviceCommandApi,
   project: ProjectWithTasks | null,
-  message: string
+  message: string,
+  target?: EnvironmentWorkspaceTarget | null
 ): Promise<void> {
   const trimmedMessage = message.trim()
 
@@ -381,11 +419,7 @@ export async function commitProjectChanges(
     throw new Error('Commit message is required')
   }
 
-  if (!project) {
-    throw new Error('Project is required')
-  }
-
-  const { deviceId, path } = await commandContext(api, project)
+  const { deviceId, path } = await commandContext(api, project, target)
 
   await runGitCommand(api, deviceId, 'git_add_all', path, {
     timeoutSeconds: 30,
@@ -400,13 +434,10 @@ export async function commitProjectChanges(
 
 export async function listProjectBranches(
   api: DeviceCommandApi,
-  project: ProjectWithTasks | null
+  project: ProjectWithTasks | null,
+  target?: EnvironmentWorkspaceTarget | null
 ): Promise<string[]> {
-  if (!project) {
-    throw new Error('Project is required')
-  }
-
-  const { deviceId, path } = await commandContext(api, project)
+  const { deviceId, path } = await commandContext(api, project, target)
   const output = await runGitCommand(api, deviceId, 'git_branch_list', path, {
     timeoutSeconds: 15,
     maxOutputBytes: 1024 * 64,
@@ -422,18 +453,15 @@ export async function listProjectBranches(
 export async function checkoutProjectBranch(
   api: DeviceCommandApi,
   project: ProjectWithTasks | null,
-  branchName: string
+  branchName: string,
+  target?: EnvironmentWorkspaceTarget | null
 ): Promise<void> {
   const trimmedBranch = branchName.trim()
   if (!trimmedBranch) {
     throw new Error('Branch name is required')
   }
   validateBranchName(trimmedBranch)
-  if (!project) {
-    throw new Error('Project is required')
-  }
-
-  const { deviceId, path } = await commandContext(api, project)
+  const { deviceId, path } = await commandContext(api, project, target)
   await runGitCommand(api, deviceId, 'git_checkout', path, {
     args: [trimmedBranch],
     timeoutSeconds: 30,
@@ -444,18 +472,15 @@ export async function checkoutProjectBranch(
 export async function createAndCheckoutProjectBranch(
   api: DeviceCommandApi,
   project: ProjectWithTasks | null,
-  branchName: string
+  branchName: string,
+  target?: EnvironmentWorkspaceTarget | null
 ): Promise<void> {
   const trimmedBranch = branchName.trim()
   if (!trimmedBranch) {
     throw new Error('Branch name is required')
   }
   validateBranchName(trimmedBranch)
-  if (!project) {
-    throw new Error('Project is required')
-  }
-
-  const { deviceId, path } = await commandContext(api, project)
+  const { deviceId, path } = await commandContext(api, project, target)
   await runGitCommand(api, deviceId, 'git_checkout_new', path, {
     args: [trimmedBranch],
     timeoutSeconds: 30,

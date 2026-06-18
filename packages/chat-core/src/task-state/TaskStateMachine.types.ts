@@ -275,4 +275,5 @@ export interface TaskStateMachineDeps {
   }>
   leaveTask?: (taskId: number) => void
   isConnected: () => boolean
+  ensureConnected?: () => void
 }

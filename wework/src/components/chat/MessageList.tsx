@@ -23,6 +23,7 @@ interface MessageListProps {
     subtaskId: number
     loadDiff: () => Promise<string>
   }) => void
+  onOpenWorkspaceFile?: (path: string) => void
 }
 
 const USER_MESSAGE_COLLAPSE_LINES = 10
@@ -36,6 +37,7 @@ export function MessageList({
   onLoadFileChangesDiff,
   onRevertFileChanges,
   onOpenFileChangesReview,
+  onOpenWorkspaceFile,
 }: MessageListProps) {
   if (messages.length === 0) {
     return null
@@ -63,6 +65,7 @@ export function MessageList({
               onLoadFileChangesDiff={onLoadFileChangesDiff}
               onRevertFileChanges={onRevertFileChanges}
               onOpenFileChangesReview={onOpenFileChangesReview}
+              onOpenWorkspaceFile={onOpenWorkspaceFile}
             />
           )}
         </article>
@@ -354,6 +357,7 @@ function AssistantMessage({
   onLoadFileChangesDiff,
   onRevertFileChanges,
   onOpenFileChangesReview,
+  onOpenWorkspaceFile,
 }: {
   message: WorkbenchMessage
   devices: DeviceInfo[]
@@ -365,6 +369,7 @@ function AssistantMessage({
     subtaskId: number
     loadDiff: () => Promise<string>
   }) => void
+  onOpenWorkspaceFile?: (path: string) => void
 }) {
   const shouldHideContent = shouldHideFailedAssistantContent(message)
   const visibleContent = shouldHideContent ? '' : message.content
@@ -382,6 +387,7 @@ function AssistantMessage({
           blocks={displayBlocks}
           isStreaming={isStreaming}
           startedAt={getTurnStartMs(message.createdAt)}
+          onOpenWorkspaceFile={onOpenWorkspaceFile}
         />
       )}
       {hasVisibleContent && (

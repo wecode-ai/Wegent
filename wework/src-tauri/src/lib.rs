@@ -169,6 +169,38 @@ fn local_path_exists(path: String) -> bool {
     std::path::Path::new(&path).exists()
 }
 
+#[derive(serde::Serialize)]
+struct DroppedFilePayload {
+    name: String,
+    bytes: Vec<u8>,
+}
+
+#[tauri::command]
+fn read_dropped_files(paths: Vec<String>) -> Result<Vec<DroppedFilePayload>, String> {
+    let mut files = Vec::new();
+
+    for raw_path in paths {
+        let Some(path) = normalized_non_empty(raw_path) else {
+            continue;
+        };
+        let path = std::path::PathBuf::from(path);
+        if !path.is_file() {
+            continue;
+        }
+
+        let name = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .map(String::from)
+            .ok_or_else(|| "Dropped file name is invalid".to_string())?;
+        let bytes = std::fs::read(&path)
+            .map_err(|error| format!("Failed to read dropped file {name}: {error}"))?;
+        files.push(DroppedFilePayload { name, bytes });
+    }
+
+    Ok(files)
+}
+
 #[tauri::command]
 fn get_local_executor_device_id(expected_backend_url: Option<String>) -> Option<String> {
     let expected_backend_url = expected_backend_url
@@ -254,6 +286,7 @@ pub fn run() {
             local_terminal::close_local_terminal,
             get_local_executor_device_id,
             local_path_exists,
+            read_dropped_files,
             local_terminal::resize_local_terminal,
             local_terminal::start_local_terminal,
             local_terminal::write_local_terminal

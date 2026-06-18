@@ -172,6 +172,18 @@ class TaskStore(Protocol):
         client_origin: Optional[str] = None,
     ) -> Optional[TaskResource]: ...
 
+    def get_project_task_by_states(
+        self,
+        db: Session,
+        *,
+        task_id: int,
+        project_id: int,
+        states: Sequence[int],
+        kind: str = "Task",
+        owner_user_id: Optional[int] = None,
+        client_origin: Optional[str] = None,
+    ) -> Optional[TaskResource]: ...
+
     def get_owned_task_by_state(
         self,
         db: Session,

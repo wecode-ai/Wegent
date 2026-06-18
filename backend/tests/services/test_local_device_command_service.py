@@ -189,6 +189,9 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     git_clone_definition = resolve_local_device_command(
         "git_clone", settings.LOCAL_DEVICE_COMMANDS
     )
+    git_config_definition = resolve_local_device_command(
+        "git_config", settings.LOCAL_DEVICE_COMMANDS
+    )
     git_is_worktree_definition = resolve_local_device_command(
         "git_is_worktree", settings.LOCAL_DEVICE_COMMANDS
     )
@@ -272,6 +275,9 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     assert git_clone_definition is not None
     assert git_clone_definition.command == "git clone"
     assert git_clone_definition.post_processor is None
+    assert git_config_definition is not None
+    assert git_config_definition.command == "git config"
+    assert git_config_definition.post_processor is None
     assert git_is_worktree_definition is not None
     assert "rev-parse --is-inside-work-tree" in git_is_worktree_definition.command
     assert git_is_worktree_definition.post_processor is None
@@ -705,6 +711,22 @@ def test_local_device_command_registry_builds_git_clone_argv():
     ) == ["git", "clone", "https://github.com/wecode-ai/Wegent.git", "Wegent"]
 
 
+def test_local_device_command_registry_builds_git_config_argv():
+    """git_config should support repo-local config key and value args."""
+    from app.services.device.command_registry import (
+        build_local_device_command_argv,
+        resolve_local_device_command,
+    )
+
+    definition = resolve_local_device_command("git_config")
+
+    assert definition is not None
+    assert build_local_device_command_argv(
+        definition.command,
+        ["user.email", "alice@example.com"],
+    ) == ["git", "config", "user.email", "alice@example.com"]
+
+
 def test_local_device_command_registry_builds_git_worktree_add_argv():
     """git_worktree_add should bind args to the fixed worktree subcommand."""
     from app.services.device.command_registry import (
@@ -982,6 +1004,94 @@ description: Shared local context.
     assert skills[0]["name"] == "shared-context"
     assert skills[0]["source"] == "agents"
     assert skills[0]["path"] == str(skill_dir / "SKILL.md")
+
+
+def test_ls_skills_command_follows_agents_skill_directory_symlinks(tmp_path):
+    """ls_skills should include skill directories symlinked under ~/.agents/skills."""
+    from app.services.device.command_registry import LS_SKILLS_SCRIPT
+
+    agents_skills_dir = tmp_path / ".agents" / "skills"
+    agents_skills_dir.mkdir(parents=True)
+    external_skill_dir = tmp_path / "external-skills" / "linked-helper"
+    external_skill_dir.mkdir(parents=True)
+    (agents_skills_dir / "linked-helper").symlink_to(
+        external_skill_dir,
+        target_is_directory=True,
+    )
+    (agents_skills_dir / "missing-helper").symlink_to(
+        tmp_path / "missing-helper",
+        target_is_directory=True,
+    )
+    (external_skill_dir / "SKILL.md").write_text(
+        """---
+name: linked-helper
+description: Linked helper skill.
+---
+
+# Linked Helper
+""",
+        encoding="utf-8",
+    )
+
+    env = {**os.environ, "HOME": str(tmp_path)}
+    result = subprocess.run(
+        ["python3", "-c", LS_SKILLS_SCRIPT],
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    skills = json.loads(result.stdout)
+
+    assert len(skills) == 1
+    assert skills[0]["name"] == "linked-helper"
+    assert skills[0]["source"] == "agents"
+    assert skills[0]["origin"] == "local"
+    assert skills[0]["path"] == str(agents_skills_dir / "linked-helper" / "SKILL.md")
+
+
+def test_ls_skills_command_scans_legacy_symlink_when_not_shared_root(tmp_path):
+    """ls_skills should scan legacy skill roots linked outside ~/.agents/skills."""
+    from app.services.device.command_registry import LS_SKILLS_SCRIPT
+
+    codex_target_dir = tmp_path / "custom-codex-skills"
+    codex_skill_dir = codex_target_dir / "codex-only"
+    codex_skill_dir.mkdir(parents=True)
+    (tmp_path / ".agents" / "skills").mkdir(parents=True)
+    (tmp_path / ".codex").mkdir()
+    (tmp_path / ".codex" / "skills").symlink_to(
+        codex_target_dir,
+        target_is_directory=True,
+    )
+    (codex_skill_dir / "SKILL.md").write_text(
+        """---
+name: codex-only
+description: Codex-only linked skill.
+---
+
+# Codex Only
+""",
+        encoding="utf-8",
+    )
+
+    env = {**os.environ, "HOME": str(tmp_path)}
+    result = subprocess.run(
+        ["python3", "-c", LS_SKILLS_SCRIPT],
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    skills = json.loads(result.stdout)
+
+    assert len(skills) == 1
+    assert skills[0]["name"] == "codex-only"
+    assert skills[0]["source"] == "codex"
+    assert skills[0]["path"] == str(
+        tmp_path / ".codex" / "skills" / "codex-only" / "SKILL.md"
+    )
 
 
 def test_setup_shared_skills_command_migrates_legacy_skill_dirs(tmp_path):

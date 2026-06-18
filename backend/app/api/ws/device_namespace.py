@@ -75,6 +75,7 @@ DEVICE_CONNECT_RATE_LIMIT_WINDOW_SECONDS = 30
 DEVICE_CONNECT_RATE_LIMIT_MAX_ATTEMPTS = 30
 DEVICE_REGISTER_UPSERT_DEBOUNCE_SECONDS = 10
 REGISTER_CAPABILITY_SYNC_TIMEOUT_SECONDS = 5
+DEVICE_DISCONNECT_FAILURE_GRACE_SECONDS = 2
 
 
 @contextmanager
@@ -842,6 +843,22 @@ class DeviceNamespace(socketio.AsyncNamespace):
                     logger.info(
                         "[Device WS] Ignoring stale disconnect: user=%s, device=%s, "
                         "sid=%s, current_sid=%s",
+                        user_id,
+                        device_id,
+                        sid,
+                        online_socket_id,
+                    )
+                    return
+
+                await asyncio.sleep(DEVICE_DISCONNECT_FAILURE_GRACE_SECONDS)
+                online_info = await device_service.get_device_online_info(
+                    user_id, device_id
+                )
+                online_socket_id = online_info.get("socket_id") if online_info else None
+                if online_socket_id and online_socket_id != sid:
+                    logger.info(
+                        "[Device WS] Ignoring transient disconnect after reconnect: "
+                        "user=%s, device=%s, sid=%s, current_sid=%s",
                         user_id,
                         device_id,
                         sid,

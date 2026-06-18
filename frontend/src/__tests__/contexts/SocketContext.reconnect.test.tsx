@@ -23,7 +23,6 @@ jest.mock('@/lib/runtime-config', () => ({
 
 function createMockSocket() {
   const socketHandlers = new Map<string, (...args: unknown[]) => void>()
-  const managerHandlers = new Map<string, (...args: unknown[]) => void>()
   const socketState = {
     connected: false,
   }
@@ -32,6 +31,7 @@ function createMockSocket() {
       ack({ subtasks: [] })
     }
   })
+  const connect = jest.fn()
 
   return {
     get connected() {
@@ -41,18 +41,17 @@ function createMockSocket() {
     on: jest.fn((event: string, handler: (...args: unknown[]) => void) => {
       socketHandlers.set(event, handler)
     }),
+    connect,
     disconnect: jest.fn(),
     io: {
-      on: jest.fn((event: string, handler: (...args: unknown[]) => void) => {
-        managerHandlers.set(event, handler)
-      }),
+      on: jest.fn(),
     },
     triggerSocket: (event: string, ...args: unknown[]) => {
       if (event === 'connect') socketState.connected = true
       if (event === 'disconnect') socketState.connected = false
+      if (event === 'connect_error') socketState.connected = false
       socketHandlers.get(event)?.(...args)
     },
-    triggerManager: (event: string, ...args: unknown[]) => managerHandlers.get(event)?.(...args),
   }
 }
 
@@ -68,16 +67,19 @@ function SocketProbe({ onReady }: { onReady: (api: ReturnType<typeof useSocket>)
 
 describe('SocketProvider reconnect notification', () => {
   let consoleInfoSpy: jest.SpyInstance
+  let consoleErrorSpy: jest.SpyInstance
 
   beforeEach(() => {
     jest.clearAllMocks()
     consoleInfoSpy = jest.spyOn(console, 'info').mockImplementation(() => {})
+    consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {})
     mockGetToken.mockReturnValue('token')
     mockFetchRuntimeConfig.mockResolvedValue({ socketDirectUrl: 'http://socket' })
   })
 
   afterEach(() => {
     consoleInfoSpy.mockRestore()
+    consoleErrorSpy.mockRestore()
   })
 
   it('notifies reconnect subscribers instead of issuing a raw task join', async () => {
@@ -96,6 +98,14 @@ describe('SocketProvider reconnect notification', () => {
     )
 
     await waitFor(() => expect(socketApi?.socket).toBe(socket))
+    expect(socket.connect).toHaveBeenCalledTimes(1)
+    expect(mockIo.mock.calls[0][1]).toEqual(
+      expect.objectContaining({
+        autoConnect: false,
+        reconnection: false,
+        transports: ['websocket'],
+      })
+    )
     socketApi!.onReconnect(mockReconnectCallback)
 
     await act(async () => {
@@ -114,7 +124,8 @@ describe('SocketProvider reconnect notification', () => {
     socket.emit.mockClear()
 
     await act(async () => {
-      socket.triggerManager('reconnect', 1)
+      socket.triggerSocket('disconnect', 'transport close')
+      socket.triggerSocket('connect')
     })
 
     expect(mockReconnectCallback).toHaveBeenCalledTimes(1)
@@ -180,6 +191,116 @@ describe('SocketProvider reconnect notification', () => {
     })
 
     expect(mockReconnectCallback).toHaveBeenCalledTimes(1)
+  })
+
+  it('starts a fresh connection attempt when asked to ensure a disconnected socket is connected', async () => {
+    const firstSocket = createMockSocket()
+    const secondSocket = createMockSocket()
+    mockIo.mockReturnValueOnce(firstSocket).mockReturnValueOnce(secondSocket)
+
+    let socketApi: ReturnType<typeof useSocket> | undefined
+    render(
+      <SocketProvider>
+        <SocketProbe
+          onReady={api => {
+            socketApi = api
+          }}
+        />
+      </SocketProvider>
+    )
+
+    await waitFor(() => expect(socketApi?.socket).toBe(firstSocket))
+    socketApi!.onReconnect(mockReconnectCallback)
+
+    await act(async () => {
+      firstSocket.triggerSocket('connect')
+      firstSocket.triggerSocket('disconnect', 'transport close')
+    })
+
+    await act(async () => {
+      socketApi!.ensureConnected()
+    })
+
+    await waitFor(() => expect(socketApi?.socket).toBe(secondSocket))
+    expect(firstSocket.disconnect).toHaveBeenCalledTimes(1)
+    expect(mockIo).toHaveBeenCalledTimes(2)
+    expect(mockIo.mock.calls[0][1]).toEqual(
+      expect.objectContaining({
+        autoConnect: false,
+        reconnection: false,
+        forceNew: true,
+        multiplex: false,
+        transports: ['websocket'],
+      })
+    )
+    expect(mockIo.mock.calls[1][1]).toEqual(
+      expect.objectContaining({
+        autoConnect: false,
+        reconnection: false,
+        forceNew: true,
+        multiplex: false,
+        transports: ['websocket'],
+      })
+    )
+    expect(secondSocket.connect).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      secondSocket.triggerSocket('connect')
+    })
+
+    expect(mockReconnectCallback).toHaveBeenCalledTimes(1)
+  })
+
+  it('recreates a fresh authenticated namespace socket after connect_error', async () => {
+    const firstSocket = createMockSocket()
+    const secondSocket = createMockSocket()
+    mockIo.mockReturnValueOnce(firstSocket).mockReturnValueOnce(secondSocket)
+
+    let socketApi: ReturnType<typeof useSocket> | undefined
+    render(
+      <SocketProvider>
+        <SocketProbe
+          onReady={api => {
+            socketApi = api
+          }}
+        />
+      </SocketProvider>
+    )
+
+    await waitFor(() => expect(socketApi?.socket).toBe(firstSocket))
+
+    await act(async () => {
+      firstSocket.triggerSocket('connect')
+      firstSocket.triggerSocket('connect_error', new Error('timeout'))
+    })
+
+    expect(firstSocket.connect).toHaveBeenCalledTimes(1)
+    expect(mockIo).toHaveBeenCalledTimes(1)
+    expect(mockIo.mock.calls[0][1]).toEqual(
+      expect.objectContaining({
+        autoConnect: false,
+        reconnection: false,
+        transports: ['websocket'],
+      })
+    )
+    expect(mockIo.mock.calls[0][1]).not.toHaveProperty('query')
+    await waitFor(() => expect(socketApi?.connectionError?.message).toBe('timeout'))
+    expect(socketApi?.socket?.connected).toBe(false)
+    await waitFor(() => expect(socketApi?.reconnectAttempts).toBe(1))
+
+    await waitFor(() => expect(mockIo).toHaveBeenCalledTimes(2), { timeout: 2000 })
+    expect(mockIo.mock.calls[1][1]).toEqual(
+      expect.objectContaining({
+        auth: { token: 'token' },
+        autoConnect: false,
+        reconnection: false,
+        forceNew: true,
+        multiplex: false,
+        transports: ['websocket'],
+      })
+    )
+    expect(mockIo.mock.calls[1][1]).not.toHaveProperty('query')
+    expect(secondSocket.connect).toHaveBeenCalledTimes(1)
   })
 
   it('emits chat cancel without owning ack timeout recovery', async () => {

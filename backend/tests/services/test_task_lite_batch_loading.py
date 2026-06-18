@@ -10,6 +10,7 @@ from sqlalchemy import event
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
+from app.models.namespace import Namespace
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.task import TaskResource
@@ -53,13 +54,15 @@ def _build_task(task_id: int, title: str, project_id: int = 0) -> Mock:
     return task
 
 
-def _team_json(name: str, display_name: str, icon: str) -> dict:
+def _team_json(
+    name: str, display_name: str, icon: str, namespace: str = "default"
+) -> dict:
     return {
         "apiVersion": "agent.wecode.io/v1",
         "kind": "Team",
         "metadata": {
             "name": name,
-            "namespace": "default",
+            "namespace": namespace,
             "displayName": display_name,
         },
         "spec": {
@@ -249,7 +252,7 @@ def test_batch_query_teams_includes_public_system_team_metadata(test_db):
 
 
 @pytest.mark.unit
-def test_batch_query_teams_loads_accessible_scopes_with_one_select_and_priority(
+def test_batch_query_teams_loads_accessible_scopes_without_subqueries_and_priority(
     test_db,
 ):
     user_id = 7
@@ -323,15 +326,14 @@ def test_batch_query_teams_loads_accessible_scopes_with_one_select_and_priority(
     )
     test_db.commit()
 
-    select_count = 0
+    statements = []
 
-    def count_selects(_conn, _cursor, statement, _parameters, _context, _executemany):
-        nonlocal select_count
+    def collect_selects(_conn, _cursor, statement, _parameters, _context, _executemany):
         if statement.lstrip().upper().startswith("SELECT"):
-            select_count += 1
+            statements.append(statement)
 
     connection = test_db.connection()
-    event.listen(connection, "before_cursor_execute", count_selects)
+    event.listen(connection, "before_cursor_execute", collect_selects)
     try:
         teams = _batch_query_teams(
             test_db,
@@ -343,9 +345,141 @@ def test_batch_query_teams_loads_accessible_scopes_with_one_select_and_priority(
             user_id=user_id,
         )
     finally:
-        event.remove(connection, "before_cursor_execute", count_selects)
+        event.remove(connection, "before_cursor_execute", collect_selects)
 
-    assert select_count == 1
+    normalized_statements = [statement.upper() for statement in statements]
+    assert all("EXISTS" not in statement for statement in normalized_statements)
+    assert all(" IN (SELECT" not in statement for statement in normalized_statements)
     assert teams["priority-team:default"].id == personal_team.id
     assert teams["shared-only:default"].id == shared_only_team.id
     assert teams["public-only:default"].id == public_only_team.id
+
+
+@pytest.mark.unit
+def test_batch_query_teams_loads_child_namespace_grants_without_subqueries(test_db):
+    user_id = 7
+    parent = Namespace(
+        name="parent",
+        display_name="parent",
+        owner_user_id=1,
+        visibility="private",
+        description="",
+        is_active=True,
+    )
+    child = Namespace(
+        name="parent/child",
+        display_name="child",
+        owner_user_id=1,
+        visibility="private",
+        description="",
+        is_active=True,
+    )
+    team = Kind(
+        user_id=1,
+        kind="Team",
+        name="parent-team",
+        namespace="parent",
+        json=_team_json("parent-team", "Parent Team", "bot", namespace="parent"),
+        is_active=True,
+    )
+    test_db.add_all([parent, child, team])
+    test_db.flush()
+    test_db.add_all(
+        [
+            ResourceMember(
+                resource_type="Namespace",
+                resource_id=parent.id,
+                entity_type="user",
+                entity_id=str(user_id),
+                status=MemberStatus.APPROVED,
+            ),
+            ResourceMember(
+                resource_type=ResourceType.TEAM.value,
+                resource_id=team.id,
+                entity_type="namespace",
+                entity_id=str(child.id),
+                status=MemberStatus.APPROVED,
+            ),
+        ]
+    )
+    test_db.commit()
+
+    statements = []
+
+    def collect_selects(_conn, _cursor, statement, _parameters, _context, _executemany):
+        if statement.lstrip().upper().startswith("SELECT"):
+            statements.append(statement)
+
+    connection = test_db.connection()
+    event.listen(connection, "before_cursor_execute", collect_selects)
+    try:
+        teams = _batch_query_teams(test_db, {("parent-team", "parent")}, user_id)
+    finally:
+        event.remove(connection, "before_cursor_execute", collect_selects)
+
+    normalized_statements = [statement.upper() for statement in statements]
+    assert all("EXISTS" not in statement for statement in normalized_statements)
+    assert all(" IN (SELECT" not in statement for statement in normalized_statements)
+    assert teams["parent-team:parent"].id == team.id
+
+
+@pytest.mark.unit
+def test_batch_query_teams_requires_reporter_for_child_namespace_grants(test_db):
+    user_id = 7
+    parent = Namespace(
+        name="restricted-parent",
+        display_name="restricted-parent",
+        owner_user_id=1,
+        visibility="private",
+        description="",
+        is_active=True,
+    )
+    child = Namespace(
+        name="restricted-parent/child",
+        display_name="child",
+        owner_user_id=1,
+        visibility="private",
+        description="",
+        is_active=True,
+    )
+    team = Kind(
+        user_id=1,
+        kind="Team",
+        name="restricted-parent-team",
+        namespace="restricted-parent",
+        json=_team_json(
+            "restricted-parent-team",
+            "Restricted Parent Team",
+            "bot",
+            namespace="restricted-parent",
+        ),
+        is_active=True,
+    )
+    test_db.add_all([parent, child, team])
+    test_db.flush()
+    test_db.add_all(
+        [
+            ResourceMember(
+                resource_type="Namespace",
+                resource_id=parent.id,
+                entity_type="user",
+                entity_id=str(user_id),
+                role="RestrictedAnalyst",
+                status=MemberStatus.APPROVED,
+            ),
+            ResourceMember(
+                resource_type=ResourceType.TEAM.value,
+                resource_id=team.id,
+                entity_type="namespace",
+                entity_id=str(child.id),
+                status=MemberStatus.APPROVED,
+            ),
+        ]
+    )
+    test_db.commit()
+
+    teams = _batch_query_teams(
+        test_db, {("restricted-parent-team", "restricted-parent")}, user_id
+    )
+
+    assert "restricted-parent-team:restricted-parent" not in teams

@@ -1133,6 +1133,9 @@ class UnifiedShareService(ABC):
             db.add(share_link)
             db.flush()
 
+        succeeded: List[ResourceMember] = []
+        failed: List[FailedMemberResponse] = []
+
         # Separate user-type and entity-type members
         user_member_entries: List[Tuple[int, SchemaMemberRole]] = []
         entity_member_entries: List[
@@ -1157,13 +1160,16 @@ class UnifiedShareService(ABC):
                     continue
                 # Suppress snapshots for reliably resolvable entity types
                 needs_snapshot = True
-                if not resolver.requires_display_name_snapshot:
+                if resolver and not resolver.requires_display_name_snapshot:
                     needs_snapshot = False
                 if not needs_snapshot:
                     entity_display_name = None
                 elif not entity_display_name:
                     # Auto-fill snapshot for external types that require it
-                    entity_display_name = resolver.get_display_name(db, eff_entity_id)
+                    if resolver:
+                        entity_display_name = resolver.get_display_name(
+                            db, eff_entity_id
+                        )
                 entity_member_entries.append(
                     (eff_entity_type, eff_entity_id, role, entity_display_name)
                 )
@@ -1226,8 +1232,6 @@ class UnifiedShareService(ABC):
             (m.entity_type, m.entity_id): m for m in entity_existing_members
         }
 
-        succeeded: List[ResourceMember] = []
-        failed: List[FailedMemberResponse] = []
         # Track processed entity keys to guard against duplicates within members_data
         processed_user_ids: set = set()
         processed_entity_keys: set = set()
@@ -1690,13 +1694,16 @@ class UnifiedShareService(ABC):
         external_display_names: Optional[dict[str, dict[str, str]]] = None,
     ) -> ResourceMemberResponse:
         """Convert ResourceMember model to response schema."""
+        is_entity_member = bool(
+            member.entity_type and member.entity_type != "user" and member.entity_id
+        )
         # Get user name and email from map
-        user = user_map.get(member.user_id)
+        user = None if is_entity_member else user_map.get(member.user_id)
         user_email = user.email if user else None
 
         # Determine unified display_name based on member type
         display_name = None
-        if member.entity_type and member.entity_type != "user":
+        if is_entity_member:
             # Entity-type member — prefer persisted snapshot for unreliable
             # types, then live lookup via _get_entity_display_name.
             if member.entity_display_name:
@@ -1733,7 +1740,7 @@ class UnifiedShareService(ABC):
             id=member.id,
             resource_type=member.resource_type,
             resource_id=member.resource_id,
-            user_id=member.user_id,
+            user_id=None if is_entity_member else member.user_id,
             display_name=display_name,
             user_email=user_email,
             role=effective_role,

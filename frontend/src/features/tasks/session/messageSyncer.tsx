@@ -116,6 +116,7 @@ export interface MessageSyncer {
   joinRoom: TaskStateMachineDeps['joinTask']
   leaveRoom: (taskId: number) => void
   isSocketConnected: () => boolean
+  ensureSocketConnected: () => void
   /** Send a chat message (returns task ID) */
   sendMessage: (
     request: ChatMessageRequest,
@@ -172,6 +173,7 @@ export function useMessageSyncer({
     sendSkillResponse,
     joinTask,
     leaveTask,
+    ensureConnected,
   } = useSocket()
 
   // Refs for callbacks (don't need to trigger re-renders)
@@ -886,6 +888,7 @@ export function useMessageSyncer({
     joinRoom: joinTask,
     leaveRoom: leaveTask,
     isSocketConnected: () => isConnectedRef.current,
+    ensureSocketConnected: ensureConnected,
     sendMessage,
     stopStream,
     resetSession,

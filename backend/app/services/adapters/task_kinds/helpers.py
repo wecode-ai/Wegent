@@ -13,15 +13,17 @@ import logging
 from typing import Any, Dict, List
 
 from fastapi import HTTPException
-from sqlalchemy import and_, exists, func, or_, tuple_
+from sqlalchemy import and_, func, or_, tuple_
 from sqlalchemy.orm import Session
 
 import app.stores.tasks as task_stores
 from app.models.kind import Kind
+from app.models.namespace import Namespace
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.subtask import Subtask
 from app.models.task import TaskResource
+from app.schemas.base_role import BaseRole
 from app.schemas.kind import Task, Team, Workspace
 from app.services.adapters.pipeline_stage import pipeline_stage_service
 from app.services.device.display_name import resolve_device_display_name
@@ -29,9 +31,19 @@ from app.services.readers.kinds import KindType, kindReader
 from app.services.readers.users import userReader
 from app.stores.tasks import WorkspaceRefLookup
 
-from .converters import get_task_execution_workspace_source
+from .converters import (
+    get_task_execution_workspace_path,
+    get_task_execution_workspace_source,
+)
 
 logger = logging.getLogger(__name__)
+
+REPORTER_OR_HIGHER_ROLES = (
+    BaseRole.Owner.value,
+    BaseRole.Maintainer.value,
+    BaseRole.Developer.value,
+    BaseRole.Reporter.value,
+)
 
 
 def create_subtasks(
@@ -383,14 +395,16 @@ def _batch_query_teams(db: Session, team_refs: set, user_id: int) -> Dict[str, K
     if not team_refs:
         return {}
 
-    shared_team_exists = exists().where(
-        and_(
-            ResourceMember.resource_type == ResourceType.TEAM,
-            ResourceMember.resource_id == Kind.id,
-            ResourceMember.entity_type == "user",
-            ResourceMember.entity_id == str(user_id),
-            ResourceMember.status == MemberStatus.APPROVED,
-        )
+    team_resource_type_variants = [ResourceType.TEAM.value, ResourceType.TEAM.name]
+    approved_status_variants = [MemberStatus.APPROVED.value, "APPROVED"]
+    accessible_team_ids = _get_accessible_team_ids(
+        db, user_id, team_resource_type_variants, approved_status_variants
+    )
+    owner_filter = Kind.user_id.in_([user_id, 0])
+    access_filter = (
+        or_(owner_filter, Kind.id.in_(accessible_team_ids))
+        if accessible_team_ids
+        else owner_filter
     )
     accessible_teams = (
         db.query(Kind)
@@ -398,11 +412,7 @@ def _batch_query_teams(db: Session, team_refs: set, user_id: int) -> Dict[str, K
             Kind.kind == "Team",
             tuple_(Kind.name, Kind.namespace).in_(team_refs),
             Kind.is_active.is_(True),
-            or_(
-                Kind.user_id == user_id,
-                Kind.user_id == 0,
-                shared_team_exists,
-            ),
+            access_filter,
         )
         .all()
     )
@@ -417,6 +427,116 @@ def _batch_query_teams(db: Session, team_refs: set, user_id: int) -> Dict[str, K
             team_priorities[key] = priority
 
     return team_data
+
+
+def _get_accessible_team_ids(
+    db: Session,
+    user_id: int,
+    team_resource_type_variants: List[str],
+    approved_status_variants: List[str],
+) -> set[int]:
+    """Return shared Team ids accessible to a user without SQL subqueries."""
+    team_ids = _get_direct_shared_team_ids(
+        db, user_id, team_resource_type_variants, approved_status_variants
+    )
+    namespace_ids = _get_user_accessible_namespace_ids(
+        db, user_id, approved_status_variants
+    )
+    if namespace_ids:
+        team_ids.update(
+            _get_namespace_granted_team_ids(
+                db,
+                namespace_ids,
+                team_resource_type_variants,
+                approved_status_variants,
+            )
+        )
+    return team_ids
+
+
+def _get_direct_shared_team_ids(
+    db: Session,
+    user_id: int,
+    team_resource_type_variants: List[str],
+    approved_status_variants: List[str],
+) -> set[int]:
+    """Return Team ids directly shared with the user."""
+    rows = (
+        db.query(ResourceMember.resource_id)
+        .filter(
+            ResourceMember.resource_type.in_(team_resource_type_variants),
+            ResourceMember.entity_type == "user",
+            ResourceMember.entity_id == str(user_id),
+            ResourceMember.status.in_(approved_status_variants),
+        )
+        .all()
+    )
+    return {row.resource_id for row in rows}
+
+
+def _get_user_accessible_namespace_ids(
+    db: Session, user_id: int, approved_status_variants: List[str]
+) -> set[str]:
+    """Return namespace ids accessible through direct or parent membership."""
+    direct_namespaces = (
+        db.query(Namespace.id, Namespace.name)
+        .join(
+            ResourceMember,
+            and_(
+                ResourceMember.resource_type == "Namespace",
+                ResourceMember.resource_id == Namespace.id,
+            ),
+        )
+        .filter(
+            Namespace.is_active.is_(True),
+            ResourceMember.entity_type == "user",
+            ResourceMember.entity_id == str(user_id),
+            ResourceMember.status.in_(approved_status_variants),
+            ResourceMember.role.in_(REPORTER_OR_HIGHER_ROLES),
+        )
+        .all()
+    )
+    namespace_ids = {str(row.id) for row in direct_namespaces}
+    parent_names = [row.name for row in direct_namespaces]
+    if not parent_names:
+        return namespace_ids
+
+    child_filters = [
+        Namespace.name.like(f"{_escape_sql_like(name)}/%", escape="\\")
+        for name in parent_names
+    ]
+    child_rows = (
+        db.query(Namespace.id)
+        .filter(Namespace.is_active.is_(True), or_(*child_filters))
+        .all()
+    )
+    namespace_ids.update(str(row.id) for row in child_rows)
+    return namespace_ids
+
+
+def _escape_sql_like(value: str) -> str:
+    """Escape SQL LIKE wildcard characters."""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _get_namespace_granted_team_ids(
+    db: Session,
+    namespace_ids: set[str],
+    team_resource_type_variants: List[str],
+    approved_status_variants: List[str],
+) -> set[int]:
+    """Return Team ids granted to accessible namespaces."""
+    rows = (
+        db.query(ResourceMember.resource_id)
+        .filter(
+            ResourceMember.resource_type.in_(team_resource_type_variants),
+            ResourceMember.entity_type == "namespace",
+            ResourceMember.entity_id.in_(namespace_ids),
+            ResourceMember.status.in_(approved_status_variants),
+        )
+        .all()
+    )
+    return {row.resource_id for row in rows}
 
 
 def _get_team_scope_priority(team: Kind, user_id: int) -> int:
@@ -548,6 +668,7 @@ def build_lite_task_list(
         device_id = task_related_data.get("device_id")
         device_name = task_related_data.get("device_name")
         execution_workspace_source = get_task_execution_workspace_source(task_crd)
+        execution_workspace_path = get_task_execution_workspace_path(task_crd)
         git_repo = workspace_data.get("git_repo")
         is_group_chat = task_related_data.get(
             "is_group_chat",
@@ -581,6 +702,7 @@ def build_lite_task_list(
                 "device_id": device_id,
                 "device_name": device_name,
                 "execution_workspace_source": execution_workspace_source,
+                "execution_workspace_path": execution_workspace_path,
                 "git_repo": git_repo,
                 "is_group_chat": is_group_chat,
                 "knowledge_base_id": knowledge_base_id,
