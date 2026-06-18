@@ -10,7 +10,6 @@ from typing import Any
 from pydantic import TypeAdapter, ValidationError
 from sqlalchemy.orm import Session
 
-from app.models.dingtalk_doc import DingtalkSyncedNode
 from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.kind import (
@@ -20,8 +19,7 @@ from app.schemas.kind import (
     KnowledgeBaseDefaultRef,
     Team,
 )
-from app.services.dingtalk_doc_service import DingTalkDocService
-from app.services.dingtalk_wikispace_service import DingTalkWikiSpaceService
+from app.services.chat.dingtalk_default_context import DingTalkDefaultContextResolver
 from app.services.readers import KindType, kindReader
 
 DEFAULT_CONTEXT_REF_ADAPTER = TypeAdapter(DefaultContextRef)
@@ -128,81 +126,6 @@ def _make_context_key(ref: DefaultContextRef) -> str:
     return f"{ref.type}:{getattr(ref, 'id', '')}"
 
 
-def _build_context_warning(
-    ref: DefaultContextRef,
-    reason: str,
-    message: str,
-) -> dict[str, Any]:
-    warning: dict[str, Any] = {
-        "type": "external_document" if ref.type == "dingtalk_doc" else ref.type,
-        "reason": reason,
-        "message": message,
-        "name": getattr(ref, "name", None),
-    }
-    if ref.type == "dingtalk_doc":
-        warning.update(
-            {
-                "provider": "dingtalk",
-                "source": ref.source,
-                "dingtalk_node_id": ref.dingtalk_node_id,
-            }
-        )
-    return warning
-
-
-def _is_dingtalk_mcp_configured(user: User, source: str) -> bool:
-    if source == "docs":
-        return DingTalkDocService.is_configured(user)
-    if source == "wikispace":
-        return DingTalkWikiSpaceService.is_configured(user)
-    return False
-
-
-def _build_dingtalk_context_ref(
-    db: Session,
-    user: User,
-    ref: DefaultContextRef,
-    bound_at: str,
-) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-    if ref.type != "dingtalk_doc":
-        return None, None
-
-    if not _is_dingtalk_mcp_configured(user, ref.source):
-        return None, _build_context_warning(
-            ref,
-            "mcp_not_configured",
-            "未开启钉钉 MCP, 无法读取钉钉知识",
-        )
-
-    node = (
-        db.query(DingtalkSyncedNode)
-        .filter(
-            DingtalkSyncedNode.user_id == user.id,
-            DingtalkSyncedNode.dingtalk_node_id == ref.dingtalk_node_id,
-            DingtalkSyncedNode.source == ref.source,
-        )
-        .first()
-    )
-    if node and not node.is_active:
-        return None, _build_context_warning(
-            ref,
-            "node_inactive",
-            "该钉钉文档已失效或未同步, 无法读取",
-        )
-
-    data = {
-        "provider": "dingtalk",
-        "source": ref.source,
-        "dingtalk_node_id": ref.dingtalk_node_id,
-        "name": node.name if node else ref.name,
-        "doc_url": node.doc_url if node else ref.doc_url,
-        "node_type": node.node_type if node else ref.node_type,
-        "boundBy": user.user_name,
-        "boundAt": bound_at,
-    }
-    return {"type": "external_document", "data": data}, None
-
-
 def _context_item_to_default_ref(context: Any) -> DefaultContextRef | None:
     raw = context.model_dump() if hasattr(context, "model_dump") else context
     if not isinstance(raw, dict):
@@ -288,6 +211,7 @@ def build_initial_task_context_refs(
     context_refs: list[dict[str, Any]] = []
     context_warnings: list[dict[str, Any]] = []
     knowledge_base_refs_by_id: dict[int, dict[str, Any]] = {}
+    dingtalk_resolver = DingTalkDefaultContextResolver(db)
 
     for ref in candidate_refs:
         key = _make_context_key(ref)
@@ -309,7 +233,7 @@ def build_initial_task_context_refs(
             continue
 
         if ref.type == "dingtalk_doc":
-            context_ref, warning = _build_dingtalk_context_ref(db, user, ref, bound_at)
+            context_ref, warning = dingtalk_resolver.resolve(user, ref, bound_at)
             if context_ref:
                 context_refs.append(context_ref)
             if warning:
