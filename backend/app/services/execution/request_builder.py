@@ -47,6 +47,7 @@ logger = logging.getLogger(__name__)
 SELECTED_KB_PRELOAD_SKILL = "wegent-knowledge"
 WEB_RUNTIME_GUIDANCE_MARKER = "<wegent_runtime_guidance>"
 WEB_RUNTIME_GUIDANCE_CLOSE = "</wegent_runtime_guidance>"
+SYSTEM_RESOURCE_USER_ID = 0
 
 
 def _first_present_project_id(*values: Any) -> Optional[int]:
@@ -1831,6 +1832,11 @@ Response template:
             )
             return []
 
+    @staticmethod
+    def _is_system_agent_team(team: Kind) -> bool:
+        """Return whether the Team is a system-owned public agent."""
+        return getattr(team, "user_id", None) == SYSTEM_RESOURCE_USER_ID
+
     def _build_mcp_servers(
         self,
         bot: Kind,
@@ -1843,7 +1849,7 @@ Response template:
         """Build MCP servers configuration.
 
         Merges MCP servers from multiple sources:
-        1. System-level MCP servers (from CHAT_MCP_SERVERS setting)
+        1. Environment-level MCP servers (from CHAT_MCP_SERVERS setting)
         2. Bot-level MCP servers (from Ghost CRD mcpServers config)
         3. Auto-injected System MCP (for subscription tasks)
 
@@ -1865,8 +1871,16 @@ Response template:
         Returns:
             List of MCP server configuration dictionaries
         """
-        # Load system-level MCP servers first
-        system_mcp_servers = self._load_system_mcp_servers()
+        # Load environment-level MCP servers first. System-owned public agents
+        # should only use their declared capabilities, not deployment-wide extras.
+        if self._is_system_agent_team(team):
+            system_mcp_servers = []
+            logger.info(
+                "[TaskRequestBuilder] Skipping CHAT_MCP_SERVERS for system agent %s",
+                getattr(team, "name", ""),
+            )
+        else:
+            system_mcp_servers = self._load_system_mcp_servers()
 
         # Auto-inject System MCP for subscription tasks (provides silent_exit tool)
         if is_subscription and auth_token:
