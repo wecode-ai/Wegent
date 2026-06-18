@@ -12,6 +12,7 @@ jest.mock('@/hooks/useTranslation', () => ({
     t: (key: string) =>
       ({
         'thinking.no_output': 'No output',
+        'thinking.tools.load_skill': '加载技能',
       })[key] ?? key,
   }),
 }))
@@ -21,18 +22,18 @@ jest.mock('@/components/common/EnhancedMarkdown', () => ({
   default: ({ source }: { source: string }) => <div>{source}</div>,
 }))
 
-function createTool(input: string | Record<string, unknown>): ToolPair {
+function createTool(input: string | Record<string, unknown>, toolName = 'Write'): ToolPair {
   return {
-    toolUseId: 'tool_write',
-    toolName: 'Write',
+    toolUseId: `tool_${toolName}`,
+    toolName,
     status: 'done',
     toolUse: {
-      title: 'Using Write',
+      title: `Using ${toolName}`,
       next_action: 'continue',
-      tool_use_id: 'tool_write',
+      tool_use_id: `tool_${toolName}`,
       details: {
         type: 'tool_use',
-        tool_name: 'Write',
+        tool_name: toolName,
         status: 'started',
         input,
       },
@@ -66,5 +67,12 @@ describe('ToolBlock', () => {
 
     expect(screen.queryByText('thinking.no_output')).not.toBeInTheDocument()
     expect(screen.getAllByText('No output')).toHaveLength(2)
+  })
+
+  it('shows the localized load_skill action and skill name in the compact label', () => {
+    render(<ToolBlock tool={createTool({ skill_name: 'weibo-tools' }, 'load_skill')} />)
+
+    expect(screen.getByText('加载技能 weibo-tools')).toBeInTheDocument()
+    expect(screen.queryByText('load_skill')).not.toBeInTheDocument()
   })
 })
