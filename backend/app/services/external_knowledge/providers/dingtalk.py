@@ -2,11 +2,11 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Resolve DingTalk default knowledge refs into task context refs."""
+"""DingTalk external knowledge provider."""
 
-from dataclasses import dataclass
 from typing import Any
 
+from pydantic import TypeAdapter, ValidationError
 from sqlalchemy.orm import Session
 
 from app.models.dingtalk_doc import DingtalkSyncedNode
@@ -14,33 +14,62 @@ from app.models.user import User
 from app.schemas.kind import DefaultContextRef
 from app.services.dingtalk_doc_service import DingTalkDocService
 from app.services.dingtalk_wikispace_service import DingTalkWikiSpaceService
+from app.services.external_knowledge.base import ResolvedExternalKnowledge
+
+DEFAULT_CONTEXT_REF_ADAPTER = TypeAdapter(DefaultContextRef)
 
 
-@dataclass(frozen=True)
-class ResolvedDefaultContext:
-    """Resolved task context data for a default knowledge ref."""
-
-    context_ref: dict[str, Any] | None = None
-    warning: dict[str, Any] | None = None
-
-
-class DingTalkDefaultContextResolver:
+class DingTalkExternalKnowledgeProvider:
     """Build task-level context refs and warnings for DingTalk knowledge."""
 
-    def __init__(self, db: Session):
-        self.db = db
+    provider = "dingtalk"
+
+    def supports(self, ref: DefaultContextRef) -> bool:
+        return ref.type == "dingtalk_doc"
+
+    def context_item_to_default_ref(
+        self, raw: dict[str, Any]
+    ) -> DefaultContextRef | None:
+        context_type = raw.get("type")
+        if context_type not in {"dingtalk_doc", "external_document"}:
+            return None
+
+        data = raw.get("data") or {}
+        if data.get("provider") not in {None, self.provider}:
+            return None
+
+        source = data.get("source")
+        node_id = data.get("dingtalk_node_id")
+        if source not in {"docs", "wikispace"} or not node_id:
+            return None
+
+        try:
+            return DEFAULT_CONTEXT_REF_ADAPTER.validate_python(
+                {
+                    "type": "dingtalk_doc",
+                    "source": source,
+                    "id": data.get("id") or f"{source}:{node_id}",
+                    "dingtalk_node_id": node_id,
+                    "name": data.get("name") or node_id,
+                    "doc_url": data.get("doc_url") or "",
+                    "node_type": data.get("node_type") or "doc",
+                }
+            )
+        except (TypeError, ValueError, ValidationError):
+            return None
 
     def resolve(
         self,
+        db: Session,
         user: User,
         ref: DefaultContextRef,
         bound_at: str,
-    ) -> ResolvedDefaultContext:
-        if ref.type != "dingtalk_doc":
-            return ResolvedDefaultContext()
+    ) -> ResolvedExternalKnowledge:
+        if not self.supports(ref):
+            return ResolvedExternalKnowledge()
 
         if not self._is_mcp_configured(user, ref.source):
-            return ResolvedDefaultContext(
+            return ResolvedExternalKnowledge(
                 warning=self._build_warning(
                     ref,
                     "mcp_not_configured",
@@ -48,9 +77,9 @@ class DingTalkDefaultContextResolver:
                 )
             )
 
-        node = self._get_synced_node(user.id, ref)
+        node = self._get_synced_node(db, user.id, ref)
         if node and not node.is_active:
-            return ResolvedDefaultContext(
+            return ResolvedExternalKnowledge(
                 warning=self._build_warning(
                     ref,
                     "node_inactive",
@@ -59,7 +88,7 @@ class DingTalkDefaultContextResolver:
             )
 
         data = {
-            "provider": "dingtalk",
+            "provider": self.provider,
             "source": ref.source,
             "dingtalk_node_id": ref.dingtalk_node_id,
             "name": node.name if node else ref.name,
@@ -68,15 +97,16 @@ class DingTalkDefaultContextResolver:
             "boundBy": user.user_name,
             "boundAt": bound_at,
         }
-        return ResolvedDefaultContext(
+        return ResolvedExternalKnowledge(
             context_ref={"type": "external_document", "data": data}
         )
 
+    @staticmethod
     def _get_synced_node(
-        self, user_id: int, ref: DefaultContextRef
+        db: Session, user_id: int, ref: DefaultContextRef
     ) -> DingtalkSyncedNode | None:
         return (
-            self.db.query(DingtalkSyncedNode)
+            db.query(DingtalkSyncedNode)
             .filter(
                 DingtalkSyncedNode.user_id == user_id,
                 DingtalkSyncedNode.dingtalk_node_id == ref.dingtalk_node_id,
@@ -93,8 +123,8 @@ class DingTalkDefaultContextResolver:
             return DingTalkWikiSpaceService.is_configured(user)
         return False
 
-    @staticmethod
     def _build_warning(
+        self,
         ref: DefaultContextRef,
         reason: str,
         message: str,
@@ -104,7 +134,7 @@ class DingTalkDefaultContextResolver:
             "reason": reason,
             "message": message,
             "name": ref.name,
-            "provider": "dingtalk",
+            "provider": self.provider,
             "source": ref.source,
             "dingtalk_node_id": ref.dingtalk_node_id,
         }

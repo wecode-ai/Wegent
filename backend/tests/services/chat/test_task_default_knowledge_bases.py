@@ -352,9 +352,18 @@ def test_build_initial_task_context_refs_warns_when_dingtalk_mcp_not_configured(
         "app.services.chat.task_default_knowledge_bases.kindReader.get_by_name_and_namespace",
         side_effect=_kind_lookup,
     ):
-        with patch(
-            "app.services.chat.dingtalk_default_context.DingTalkDocService.is_configured",
-            return_value=False,
+        with (
+            patch(
+                "app.services.external_knowledge.registry.settings.EXTERNAL_KNOWLEDGE_PROVIDER_IMPORTS",
+                [
+                    "app.services.external_knowledge.providers.dingtalk:"
+                    "DingTalkExternalKnowledgeProvider"
+                ],
+            ),
+            patch(
+                "app.services.external_knowledge.providers.dingtalk.DingTalkDocService.is_configured",
+                return_value=False,
+            ),
         ):
             result = build_initial_task_context_refs(db=db, user=user, team=team)
 

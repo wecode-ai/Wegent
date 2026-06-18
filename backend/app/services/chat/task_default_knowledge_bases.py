@@ -19,7 +19,10 @@ from app.schemas.kind import (
     KnowledgeBaseDefaultRef,
     Team,
 )
-from app.services.chat.dingtalk_default_context import DingTalkDefaultContextResolver
+from app.services.external_knowledge.registry import (
+    ExternalKnowledgeProviderRegistry,
+    build_default_external_knowledge_registry,
+)
 from app.services.readers import KindType, kindReader
 
 DEFAULT_CONTEXT_REF_ADAPTER = TypeAdapter(DefaultContextRef)
@@ -121,12 +124,13 @@ def _iter_team_member_default_knowledge_base_ids(
 def _make_context_key(ref: DefaultContextRef) -> str:
     if ref.type == "knowledge_base":
         return f"knowledge_base:{ref.id}"
-    if ref.type == "dingtalk_doc":
-        return f"dingtalk_doc:{ref.source}:{ref.dingtalk_node_id}"
     return f"{ref.type}:{getattr(ref, 'id', '')}"
 
 
-def _context_item_to_default_ref(context: Any) -> DefaultContextRef | None:
+def _context_item_to_default_ref(
+    context: Any,
+    external_registry: ExternalKnowledgeProviderRegistry,
+) -> DefaultContextRef | None:
     raw = context.model_dump() if hasattr(context, "model_dump") else context
     if not isinstance(raw, dict):
         return None
@@ -147,26 +151,7 @@ def _context_item_to_default_ref(context: Any) -> DefaultContextRef | None:
             )
         except (TypeError, ValueError, ValidationError):
             return None
-    if context_type in {"dingtalk_doc", "external_document"}:
-        source = data.get("source")
-        node_id = data.get("dingtalk_node_id")
-        if source not in {"docs", "wikispace"} or not node_id:
-            return None
-        try:
-            return DEFAULT_CONTEXT_REF_ADAPTER.validate_python(
-                {
-                    "type": "dingtalk_doc",
-                    "source": source,
-                    "id": data.get("id") or f"{source}:{node_id}",
-                    "dingtalk_node_id": node_id,
-                    "name": data.get("name") or node_id,
-                    "doc_url": data.get("doc_url") or "",
-                    "node_type": data.get("node_type") or "doc",
-                }
-            )
-        except (TypeError, ValueError, ValidationError):
-            return None
-    return None
+    return external_registry.context_item_to_default_ref(raw)
 
 
 def build_initial_task_context_refs(
@@ -179,10 +164,11 @@ def build_initial_task_context_refs(
 ) -> dict[str, list[dict[str, Any]]]:
     """Build task-level context refs and legacy KB refs."""
     bound_at = datetime.now().isoformat()
+    external_registry = build_default_external_knowledge_registry()
     explicit_refs = [
         ref
         for context in explicit_contexts or []
-        if (ref := _context_item_to_default_ref(context)) is not None
+        if (ref := _context_item_to_default_ref(context, external_registry)) is not None
     ]
     if default_context_mode == "disable_defaults":
         candidate_refs = explicit_refs
@@ -211,7 +197,6 @@ def build_initial_task_context_refs(
     context_refs: list[dict[str, Any]] = []
     context_warnings: list[dict[str, Any]] = []
     knowledge_base_refs_by_id: dict[int, dict[str, Any]] = {}
-    dingtalk_resolver = DingTalkDefaultContextResolver(db)
 
     for ref in candidate_refs:
         key = _make_context_key(ref)
@@ -232,12 +217,11 @@ def build_initial_task_context_refs(
             context_refs.append({"type": "knowledge_base", "data": kb_ref})
             continue
 
-        if ref.type == "dingtalk_doc":
-            resolved = dingtalk_resolver.resolve(user, ref, bound_at)
-            if resolved.context_ref:
-                context_refs.append(resolved.context_ref)
-            if resolved.warning:
-                context_warnings.append(resolved.warning)
+        resolved = external_registry.resolve(db, user, ref, bound_at)
+        if resolved.context_ref:
+            context_refs.append(resolved.context_ref)
+        if resolved.warning:
+            context_warnings.append(resolved.warning)
 
     return {
         "context_refs": context_refs,

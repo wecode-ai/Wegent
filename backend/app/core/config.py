@@ -133,6 +133,8 @@ class Settings(BaseSettings):
     # Optional local device command overrides/additions. API callers pass the key;
     # Backend resolves the shell command and optional post processor from registry.
     LOCAL_DEVICE_COMMANDS: dict[str, Any] = {}
+    # External knowledge providers loaded as "module.path:ClassName" entries.
+    EXTERNAL_KNOWLEDGE_PROVIDER_IMPORTS: list[str] = []
 
     # Executor version checking configuration
     # If EXECUTOR_REGISTRY_URL is set, version is fetched from registry
