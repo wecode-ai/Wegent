@@ -393,6 +393,7 @@ async def build_execution_request(
             force_override=force_override,
             previous_bot_id=previous_bot_id,
             web_runtime_guidance=web_runtime_guidance,
+            runtime_contexts=getattr(payload, "contexts", None),
         )
         request.device_id = device_id or request.device_id
 

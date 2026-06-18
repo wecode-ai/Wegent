@@ -12,6 +12,7 @@ providing complete Bot, Model, Ghost, Shell, and Skill resolution.
 
 import json
 import logging
+from datetime import datetime
 from typing import Any, List, Optional, Union
 
 from pydantic import BaseModel
@@ -31,7 +32,6 @@ from app.services.external_knowledge.registry import (
     build_default_external_knowledge_registry,
 )
 from app.services.mcp_provider_registry import (
-    get_mcp_provider_service,
     get_mcp_service_by_skill_name,
     list_mcp_providers,
 )
@@ -141,6 +141,7 @@ class TaskRequestBuilder:
         force_override: bool = False,
         team_member_prompt: Optional[str] = None,
         web_runtime_guidance: bool = False,
+        runtime_contexts: Optional[List[Any]] = None,
     ) -> ExecutionRequest:
         """Build ExecutionRequest from database models.
 
@@ -225,6 +226,12 @@ class TaskRequestBuilder:
             team_crd=team_crd,
             team_member_prompt=team_member_prompt,
         )
+        runtime_external_document_contexts = (
+            self._resolve_runtime_external_document_contexts(
+                user=user,
+                contexts=runtime_contexts,
+            )
+        )
 
         # Get skills for the bot (full resolution from Ghost)
         # Convert preload_skills to the format expected by _get_bot_skills
@@ -246,6 +253,7 @@ class TaskRequestBuilder:
         effective_preload_skills = self._inject_default_context_provider_skills(
             task=task,
             preload_skills=effective_preload_skills,
+            runtime_external_document_contexts=runtime_external_document_contexts,
         )
 
         # Get subscription-manager skill as available (non-preloaded) skill
@@ -379,10 +387,11 @@ class TaskRequestBuilder:
                 workspace_path=project_workspace.get("project_workspace_path"),
             )
 
-            system_prompt = self._append_external_document_context_guidance(
-                system_prompt,
-                task=task,
-            )
+        system_prompt = self._append_external_document_context_guidance(
+            system_prompt,
+            task=task,
+            runtime_external_document_contexts=runtime_external_document_contexts,
+        )
 
         request_project_id = _first_present_project_id(
             project_workspace.get("project_id"), task.project_id
@@ -2106,6 +2115,7 @@ Response template:
         *,
         task: TaskResource,
         preload_skills: list,
+        runtime_external_document_contexts: list[dict[str, Any]] | None = None,
     ) -> list:
         """Preload MCP provider skills required by task-level external contexts."""
         merged_preload_skills = list(preload_skills)
@@ -2116,7 +2126,10 @@ Response template:
         }
         external_registry = build_default_external_knowledge_registry()
 
-        for context in self._get_external_document_contexts(task):
+        for context in self._get_external_document_contexts(
+            task,
+            runtime_external_document_contexts=runtime_external_document_contexts,
+        ):
             for skill_name in external_registry.get_runtime_skill_names(context):
                 if skill_name in existing_names:
                     continue
@@ -2131,18 +2144,70 @@ Response template:
 
         return merged_preload_skills
 
-    @staticmethod
-    def _get_external_document_contexts(task: TaskResource) -> list[dict[str, Any]]:
+    def _resolve_runtime_external_document_contexts(
+        self,
+        *,
+        user: User,
+        contexts: Optional[List[Any]],
+    ) -> list[dict[str, Any]]:
+        """Resolve per-message external context selections into runtime refs."""
+        if not contexts:
+            return []
+
+        bound_at = datetime.now().isoformat()
+        external_registry = build_default_external_knowledge_registry()
+        resolved_contexts: list[dict[str, Any]] = []
+        for context in contexts:
+            raw = context.model_dump() if hasattr(context, "model_dump") else context
+            if not isinstance(raw, dict):
+                continue
+            ref = external_registry.context_item_to_default_ref(raw)
+            if ref is None:
+                continue
+            resolved = external_registry.resolve(self.db, user, ref, bound_at)
+            if resolved.context_ref:
+                resolved_contexts.append(resolved.context_ref)
+        return resolved_contexts
+
+    @classmethod
+    def _get_external_document_contexts(
+        cls,
+        task: TaskResource,
+        *,
+        runtime_external_document_contexts: list[dict[str, Any]] | None = None,
+    ) -> list[dict[str, Any]]:
         task_json = task.json if isinstance(task.json, dict) else {}
         spec = task_json.get("spec", {}) if isinstance(task_json, dict) else {}
         context_refs = spec.get("contextRefs", []) if isinstance(spec, dict) else []
-        if not isinstance(context_refs, list):
-            return []
-        return [
-            context
-            for context in context_refs
-            if isinstance(context, dict) and context.get("type") == "external_document"
+        task_contexts = context_refs if isinstance(context_refs, list) else []
+        candidates = [
+            *task_contexts,
+            *(runtime_external_document_contexts or []),
         ]
+
+        contexts: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for context in [
+            context
+            for context in candidates
+            if isinstance(context, dict) and context.get("type") == "external_document"
+        ]:
+            key = cls._make_external_document_context_key(context)
+            if key in seen:
+                continue
+            seen.add(key)
+            contexts.append(context)
+        return contexts
+
+    @staticmethod
+    def _make_external_document_context_key(context: dict[str, Any]) -> str:
+        data = context.get("data") or {}
+        provider = data.get("provider") or ""
+        source = data.get("source") or ""
+        node_id = data.get("dingtalk_node_id") or data.get("id") or ""
+        if provider or source or node_id:
+            return f"{provider}:{source}:{node_id}"
+        return repr(context)
 
     @classmethod
     def _append_external_document_context_guidance(
@@ -2150,9 +2215,13 @@ Response template:
         system_prompt: str,
         *,
         task: TaskResource,
+        runtime_external_document_contexts: list[dict[str, Any]] | None = None,
     ) -> str:
         """Append concise MCP usage guidance for task-level external documents."""
-        contexts = cls._get_external_document_contexts(task)
+        contexts = cls._get_external_document_contexts(
+            task,
+            runtime_external_document_contexts=runtime_external_document_contexts,
+        )
         if not contexts:
             return system_prompt
 

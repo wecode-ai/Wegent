@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 from app.services.execution.request_builder import TaskRequestBuilder
 
@@ -140,3 +141,85 @@ def test_external_document_context_preloads_provider_skill() -> None:
             "is_public": True,
         }
     ]
+
+
+def test_runtime_dingtalk_context_resolves_to_external_document_context() -> None:
+    builder = TaskRequestBuilder(db=Mock())
+    user = SimpleNamespace(id=1, user_name="alice")
+    contexts = [
+        {
+            "type": "dingtalk_doc",
+            "data": {
+                "id": "docs:node-1",
+                "source": "docs",
+                "dingtalk_node_id": "node-1",
+                "name": "Roadmap",
+                "doc_url": "https://example.com/doc",
+                "node_type": "doc",
+            },
+        }
+    ]
+
+    with (
+        patch(
+            "app.services.external_knowledge.providers.dingtalk.DingTalkDocService.is_configured",
+            return_value=True,
+        ),
+        patch(
+            "app.services.external_knowledge.providers.dingtalk.DingTalkExternalKnowledgeProvider._get_synced_node",
+            return_value=None,
+        ),
+    ):
+        resolved = builder._resolve_runtime_external_document_contexts(
+            user=user,
+            contexts=contexts,
+        )
+
+    assert resolved == [
+        {
+            "type": "external_document",
+            "data": {
+                "provider": "dingtalk",
+                "source": "docs",
+                "dingtalk_node_id": "node-1",
+                "name": "Roadmap",
+                "doc_url": "https://example.com/doc",
+                "node_type": "doc",
+                "boundBy": "alice",
+                "boundAt": resolved[0]["data"]["boundAt"],
+            },
+        }
+    ]
+
+
+def test_external_document_context_uses_runtime_contexts() -> None:
+    task = SimpleNamespace(json={"spec": {}})
+    runtime_contexts = [
+        {
+            "type": "external_document",
+            "data": {
+                "provider": "dingtalk",
+                "source": "docs",
+                "dingtalk_node_id": "node-1",
+                "name": "Roadmap",
+                "node_type": "doc",
+                "doc_url": "https://example.com/doc",
+            },
+        }
+    ]
+    builder = TaskRequestBuilder(db=None)
+
+    preload_skills = builder._inject_default_context_provider_skills(
+        task=task,
+        preload_skills=[],
+        runtime_external_document_contexts=runtime_contexts,
+    )
+    system_prompt = TaskRequestBuilder._append_external_document_context_guidance(
+        "Base prompt",
+        task=task,
+        runtime_external_document_contexts=runtime_contexts,
+    )
+
+    assert preload_skills[0]["name"] == "dingtalk-docs"
+    assert "Roadmap" in system_prompt
+    assert "Use the corresponding DingTalk MCP tools" in system_prompt
