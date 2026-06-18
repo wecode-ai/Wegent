@@ -162,14 +162,25 @@ class ChatContext:
                 self._load_skill_tool.restore_from_history(history)
                 restored_skills = self._load_skill_tool.get_loaded_skills()
                 if restored_skills:
+                    restored_skill_tools = (
+                        await self._load_skill_tool.ensure_loaded_skill_tools_loaded()
+                    )
+                    restored_tool_count = sum(
+                        len(tools) for tools in restored_skill_tools.values()
+                    )
                     add_span_event(
                         "skill_state_restored",
-                        {"restored_skills": list(restored_skills)},
+                        {
+                            "restored_skills": list(restored_skills),
+                            "restored_tool_count": restored_tool_count,
+                        },
                     )
                     logger.info(
-                        "[CHAT_CONTEXT] Restored %d skills from history: %s",
+                        "[CHAT_CONTEXT] Restored %d skills from history: %s "
+                        "(materialized_tool_count=%d)",
                         len(restored_skills),
                         list(restored_skills),
+                        restored_tool_count,
                     )
 
             # Build extra_tools from all sources (including builtin tools)
@@ -217,12 +228,17 @@ class ChatContext:
         This method should be called after chat completion to release resources.
         """
         add_span_event("cleanup_started", {"mcp_clients_count": len(self._mcp_clients)})
-        if self._mcp_clients:
-            logger.debug(
-                "[CHAT_CONTEXT] Cleaning up %d MCP clients", len(self._mcp_clients)
-            )
+        dynamic_mcp_clients = []
+        if self._load_skill_tool and hasattr(
+            self._load_skill_tool, "drain_deferred_mcp_clients"
+        ):
+            dynamic_mcp_clients = self._load_skill_tool.drain_deferred_mcp_clients()
+
+        clients = self._mcp_clients + dynamic_mcp_clients
+        if clients:
+            logger.debug("[CHAT_CONTEXT] Cleaning up %d MCP clients", len(clients))
             await asyncio.gather(
-                *[self._close_mcp_client(c) for c in self._mcp_clients if c],
+                *[self._close_mcp_client(c) for c in clients if c],
                 return_exceptions=True,
             )
             self._mcp_clients = []

@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from typing import Any, Optional
@@ -149,7 +150,10 @@ class ContextMetricsTracker:
         phase: str,
     ) -> ContextMetricsSnapshot:
         """Compute, log, and optionally emit a context metrics snapshot."""
+        total_start = time.perf_counter()
+        compute_start = time.perf_counter()
         snapshot = self._metrics_fn(messages)
+        compute_ms = (time.perf_counter() - compute_start) * 1000
         self.latest_snapshot = snapshot
 
         logger.info(
@@ -165,15 +169,33 @@ class ContextMetricsTracker:
             snapshot.is_over_trigger,
         )
 
+        emitted = False
+        emit_ms = 0.0
         if should_emit_status_update(
             self.last_emitted_snapshot,
             snapshot,
             phase=phase,
         ):
+            emit_start = time.perf_counter()
             await self.emitter.status_updated(
                 phase=phase,
                 context_metrics=snapshot.to_dict(),
             )
+            emit_ms = (time.perf_counter() - emit_start) * 1000
+            emitted = True
             self.last_emitted_snapshot = snapshot
+
+        logger.info(
+            "[CONTEXT_METRICS_PERF] task_id=%d subtask_id=%d phase=%s "
+            "message_count=%d compute_ms=%.2f emit_ms=%.2f total_ms=%.2f emitted=%s",
+            self.task_id,
+            self.subtask_id,
+            phase,
+            len(messages),
+            compute_ms,
+            emit_ms,
+            (time.perf_counter() - total_start) * 1000,
+            emitted,
+        )
 
         return snapshot

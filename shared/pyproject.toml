@@ -19,6 +19,8 @@ dependencies = [
     "dacite>=1.8.0", # For dataclass deserialization
     # Note: litellm removed - ResponsesAPIStreamEvents now defined locally
     # to avoid loading ~907 modules (~156MB memory)
+    # Image preprocessing
+    "pillow>=12.0.0",
     # Database ORM
     "sqlalchemy>=2.0.25",
     "pymysql>=1.1.0",
