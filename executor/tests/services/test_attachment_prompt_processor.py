@@ -8,6 +8,7 @@ import struct
 import zlib
 
 from executor.services.attachment_prompt_processor import AttachmentPromptProcessor
+from executor.services.image_preprocessor import MAX_MODEL_IMAGE_LONG_EDGE
 
 
 def _make_png(width: int, height: int) -> bytes:
@@ -150,5 +151,5 @@ class TestAttachmentPromptProcessor:
         image_data = base64.b64decode(blocks[0]["source"]["data"])
         width, height = _png_size(image_data)
         assert blocks[0]["source"]["media_type"] == "image/png"
-        assert width == 2048
-        assert height == 1024
+        assert width == MAX_MODEL_IMAGE_LONG_EDGE
+        assert height == MAX_MODEL_IMAGE_LONG_EDGE // 2

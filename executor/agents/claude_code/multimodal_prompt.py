@@ -10,6 +10,7 @@ Anthropic Messages API format, and creates async generators for
 the Claude SDK's multimodal query path.
 """
 
+import asyncio
 import base64
 import logging
 import os
@@ -138,6 +139,19 @@ def convert_openai_to_anthropic_content(
             anthropic_blocks.append(block)
 
     return anthropic_blocks
+
+
+async def convert_openai_to_anthropic_content_async(
+    content_blocks: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Convert content blocks without blocking the asyncio event loop."""
+
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        None,
+        convert_openai_to_anthropic_content,
+        content_blocks,
+    )
 
 
 def _prepare_base64_image_for_model(media_type: str, data: str) -> tuple[str, str]:

@@ -2,7 +2,9 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
 import binascii
+import os
 import struct
 import sys
 import zlib
@@ -34,6 +36,7 @@ sys.modules.setdefault("openai_codex", openai_codex_stub)
 
 from executor.agents.codex.codex_agent import CodeXAgent
 from executor.services.attachment_downloader import AttachmentDownloadResult
+from executor.services.image_preprocessor import MAX_MODEL_IMAGE_LONG_EDGE
 from shared.models.execution import ExecutionRequest
 
 
@@ -358,4 +361,52 @@ def test_codex_attachment_processing_downscales_large_local_images(
     resized_path = turn_input[1].path
     assert resized_path != str(local_image)
     assert resized_path.endswith(".model-input.png")
-    assert _png_size(open(resized_path, "rb").read()) == (2048, 1024)
+    assert _png_size(open(resized_path, "rb").read()) == (
+        MAX_MODEL_IMAGE_LONG_EDGE,
+        MAX_MODEL_IMAGE_LONG_EDGE // 2,
+    )
+
+
+def test_codex_cleanup_removes_generated_model_input_files(tmp_path, monkeypatch):
+    local_image = tmp_path / "large.png"
+    local_image.write_bytes(_make_png(width=3000, height=1500))
+    request = _codex_request(
+        auth_token="token",
+        prompt=[
+            {"type": "input_text", "text": "Analyze this image"},
+            {"type": "input_image", "image_url": "data:image/png;base64,abc"},
+        ],
+        attachments=[
+            {
+                "id": 15,
+                "original_filename": "large.png",
+                "mime_type": "image/png",
+                "file_size": local_image.stat().st_size,
+                "subtask_id": 43,
+            }
+        ],
+    )
+    agent = CodeXAgent(request, MagicMock())
+
+    def fake_download_all(self, attachments):
+        return AttachmentDownloadResult(
+            success=[{**attachments[0], "local_path": str(local_image)}],
+            failed=[],
+        )
+
+    monkeypatch.setattr(
+        "executor.services.attachment_downloader.AttachmentDownloader.download_all",
+        fake_download_all,
+    )
+
+    agent._process_attachments_for_codex()
+    turn_input = agent._build_turn_input()
+
+    generated_path = turn_input[1].path
+    assert generated_path != str(local_image)
+    assert os.path.exists(generated_path)
+
+    asyncio.run(agent.cleanup_async())
+
+    assert local_image.exists()
+    assert not os.path.exists(generated_path)

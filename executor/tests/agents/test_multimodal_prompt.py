@@ -18,10 +18,12 @@ from executor.agents.claude_code.multimodal_prompt import (
     _parse_data_uri,
     append_text_to_vision_prompt,
     convert_openai_to_anthropic_content,
+    convert_openai_to_anthropic_content_async,
     create_multimodal_query,
     is_vision_prompt,
     save_vision_images,
 )
+from executor.services.image_preprocessor import MAX_MODEL_IMAGE_LONG_EDGE
 
 
 def _make_png(width: int, height: int) -> bytes:
@@ -176,13 +178,30 @@ class TestConvertOpenaiToAnthropicContent:
         resized_data = base64.b64decode(result[0]["source"]["data"])
         width, height = _png_size(resized_data)
         assert result[0]["source"]["media_type"] == "image/png"
-        assert width == 2048
-        assert height == 1024
+        assert width == MAX_MODEL_IMAGE_LONG_EDGE
+        assert height == MAX_MODEL_IMAGE_LONG_EDGE // 2
 
     def test_passes_through_unknown_block_types(self):
         blocks = [{"type": "custom", "data": "foo"}]
         result = convert_openai_to_anthropic_content(blocks)
         assert result == blocks
+
+    def test_async_converter_offloads_to_executor(self, monkeypatch):
+        calls = []
+        expected = [{"type": "text", "text": "converted"}]
+
+        class FakeLoop:
+            async def run_in_executor(self, executor, func, *args):
+                calls.append((executor, func, args))
+                return expected
+
+        monkeypatch.setattr(asyncio, "get_running_loop", lambda: FakeLoop())
+        blocks = [{"type": "input_text", "text": "hello"}]
+
+        result = asyncio.run(convert_openai_to_anthropic_content_async(blocks))
+
+        assert result == expected
+        assert calls == [(None, convert_openai_to_anthropic_content, (blocks,))]
 
 
 # --- create_multimodal_query ---

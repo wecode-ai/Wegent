@@ -442,14 +442,26 @@ done
         assert "text/plain" in TEXT_MIME_TYPES
 
 
-def _make_image_bytes(fmt: str, mode: str = "RGB") -> bytes:
+def _make_image_bytes(
+    fmt: str,
+    mode: str = "RGB",
+    size: tuple[int, int] = (4, 4),
+) -> bytes:
     """Create minimal valid image bytes in the given PIL format."""
     from PIL import Image
 
-    img = Image.new(mode, (4, 4), color=0)
+    img = Image.new(mode, size, color=0)
     buf = io.BytesIO()
     img.save(buf, format=fmt)
     return buf.getvalue()
+
+
+def _decoded_dimensions(image_base64: str) -> tuple[int, int]:
+    """Return image dimensions from base64-encoded image bytes."""
+    from PIL import Image
+
+    with Image.open(io.BytesIO(base64.b64decode(image_base64))) as image:
+        return image.size
 
 
 class TestImageParsing:
@@ -485,28 +497,57 @@ class TestImageParsing:
         decoded = base64.b64decode(result.image_base64)
         assert decoded[8:12] == b"WEBP"  # WebP RIFF sub-chunk
 
-    def test_gif_converted_to_jpeg(self):
-        """GIF (not in three-way intersection) must be converted to JPEG."""
+    def test_gif_preserved_without_resize(self):
+        """GIF within the model image limit is stored without conversion."""
         gif_bytes = _make_image_bytes("GIF", mode="P")
         result = self.parser.parse(gif_bytes, ".gif")
 
-        assert result.image_mime_type == "image/jpeg"
+        assert result.image_mime_type == "image/gif"
         decoded = base64.b64decode(result.image_base64)
-        assert decoded[:2] == b"\xff\xd8"  # JPEG SOI marker
+        assert decoded[:6] in {b"GIF87a", b"GIF89a"}
 
-    def test_bmp_converted_to_jpeg(self):
-        """BMP (not in three-way intersection) must be converted to JPEG."""
+    def test_bmp_converted_to_png(self):
+        """BMP must be converted to PNG for model compatibility."""
         bmp_bytes = _make_image_bytes("BMP")
         result = self.parser.parse(bmp_bytes, ".bmp")
 
-        assert result.image_mime_type == "image/jpeg"
+        assert result.image_mime_type == "image/png"
         decoded = base64.b64decode(result.image_base64)
-        assert decoded[:2] == b"\xff\xd8"  # JPEG SOI marker
+        assert decoded[:4] == b"\x89PNG"
 
-    def test_vision_supported_extensions_constant(self):
-        """VISION_SUPPORTED_EXTENSIONS must contain exactly the three-API intersection."""
-        expected = {".jpg", ".jpeg", ".png", ".webp"}
-        assert DocumentParser.VISION_SUPPORTED_EXTENSIONS == expected
+    def test_text_mime_types_constant(self):
+        """TEXT_MIME_TYPES must contain common structured text formats."""
         assert "application/json" in TEXT_MIME_TYPES
         assert "application/xml" in TEXT_MIME_TYPES
         assert "text/x-python" in TEXT_MIME_TYPES
+
+    def test_tall_jpeg_is_resized(self):
+        """Tall JPEG is resized so the long edge fits within the model limit."""
+        from app.services.attachment.parser import MAX_IMAGE_LONG_EDGE
+
+        jpeg_bytes = _make_image_bytes("JPEG", size=(100, 9000))
+        result = self.parser.parse(jpeg_bytes, ".jpg")
+
+        assert result.image_mime_type == "image/jpeg"
+        width, height = _decoded_dimensions(result.image_base64)
+        assert max(width, height) <= MAX_IMAGE_LONG_EDGE
+
+    def test_wide_png_is_resized_and_keeps_png_mime_type(self):
+        """Oversized PNG is resized through the shared model image preprocessor."""
+        from app.services.attachment.parser import MAX_IMAGE_LONG_EDGE
+
+        png_bytes = _make_image_bytes("PNG", size=(9000, 100))
+        result = self.parser.parse(png_bytes, ".png")
+
+        assert result.image_mime_type == "image/png"
+        width, height = _decoded_dimensions(result.image_base64)
+        assert max(width, height) <= MAX_IMAGE_LONG_EDGE
+
+    def test_oversized_metadata_reflects_stored_dimensions(self):
+        """Metadata text reports post-resize dimensions."""
+        jpeg_bytes = _make_image_bytes("JPEG", size=(100, 9000))
+        result = self.parser.parse(jpeg_bytes, ".jpg")
+
+        assert "9000" not in result.text
+        width, height = _decoded_dimensions(result.image_base64)
+        assert f"{width} x {height}" in result.text

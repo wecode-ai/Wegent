@@ -41,7 +41,13 @@ from app.services.attachment.smart_truncation import (
     SmartTruncationManager,
     TruncationType,
 )
+from shared.utils.image_preprocessor import (
+    MAX_MODEL_IMAGE_LONG_EDGE,
+    prepare_image_bytes_for_model,
+)
 from shared.utils.xmind_parser import XMindParseError, parse_xmind_to_markdown
+
+MAX_IMAGE_LONG_EDGE = MAX_MODEL_IMAGE_LONG_EDGE
 
 logger = logging.getLogger(__name__)
 
@@ -247,12 +253,6 @@ class DocumentParser:
         # Archive formats (binary, no text extraction)
         ".zip": "application/zip",
     }
-
-    # Formats supported by all major vision APIs (intersection of Anthropic, OpenAI, Gemini).
-    # Images with these extensions are stored as-is without re-encoding.
-    VISION_SUPPORTED_EXTENSIONS: frozenset = frozenset(
-        {".jpg", ".jpeg", ".png", ".webp"}
-    )
 
     # Special format extensions that have dedicated parsers
     SPECIAL_FORMAT_EXTENSIONS = {
@@ -982,10 +982,9 @@ class DocumentParser:
         """
         Parse image file and return metadata, base64 data, and actual MIME type.
 
-        Images with formats natively supported by all major vision APIs
-        (JPEG, PNG, WebP — intersection of Anthropic, OpenAI, Gemini) are
-        stored as-is without re-encoding.  Other formats (GIF, BMP) are
-        converted to JPEG, taking only the first frame for animated images.
+        Images are normalized through the shared model image preprocessor:
+        unsupported formats are converted, oversized dimensions are resized,
+        and animated GIFs are flattened to PNG only when re-encoding is needed.
 
         Returns:
             Tuple of (metadata_text, base64_encoded_image, actual_mime_type)
@@ -993,47 +992,47 @@ class DocumentParser:
         try:
             from PIL import Image
 
-            image_file = io.BytesIO(binary_data)
-            img = Image.open(image_file)
+            ext = extension.lower()
+            with Image.open(io.BytesIO(binary_data)) as img:
+                original_width, original_height = img.size
+                mode = img.mode
+                format_name = img.format or extension[1:].upper()
 
-            # Extract image metadata
-            width, height = img.size
-            mode = img.mode
-            format_name = img.format or extension[1:].upper()
+                has_exif = False
+                try:
+                    if hasattr(img, "_getexif") and img._getexif():
+                        has_exif = True
+                except Exception:
+                    pass
 
-            # Build description
+                # Force full image load to validate pixel data (Image.open is lazy).
+                img.load()
+
+            prepared = prepare_image_bytes_for_model(
+                binary_data,
+                self.get_mime_type(ext),
+                max_long_edge=MAX_IMAGE_LONG_EDGE,
+            )
+            width, height = prepared.size or (original_width, original_height)
+
             text = f"[图片文件]\n"
             text += f"格式: {format_name}\n"
             text += f"尺寸: {width} x {height} 像素\n"
             text += f"颜色模式: {mode}\n"
             text += f"文件大小: {len(binary_data)} 字节"
+            if has_exif:
+                text += "\n\n[EXIF 信息]\n包含 EXIF 元数据"
 
-            # Try to extract EXIF data if available (JPEG only; PNG raises OSError)
-            try:
-                if hasattr(img, "_getexif") and img._getexif():
-                    text += "\n\n[EXIF 信息]\n包含 EXIF 元数据"
-            except Exception:
-                pass
-
-            # Force full image load to validate pixel data (Image.open is lazy)
-            img.load()
-
-            ext = extension.lower()
-            if ext in self.VISION_SUPPORTED_EXTENSIONS:
-                # Format is natively supported by all major vision APIs — use original bytes
-                image_base64 = base64.b64encode(binary_data).decode("utf-8")
-                actual_mime_type = self.get_mime_type(ext)
-            else:
-                # Convert to JPEG (supported by all major vision APIs, compact for photos)
-                # JPEG requires RGB or L mode; convert everything else accordingly
-                if img.mode not in {"RGB", "L"}:
-                    img = img.convert("RGB")
-                output_buf = io.BytesIO()
-                img.save(output_buf, format="JPEG", quality=85)
-                image_base64 = base64.b64encode(output_buf.getvalue()).decode("utf-8")
-                actual_mime_type = "image/jpeg"
+            image_base64 = base64.b64encode(prepared.data).decode("utf-8")
+            actual_mime_type = prepared.mime_type
+            if prepared.resized:
                 logger.info(
-                    f"Converted {extension} image to JPEG for vision API compatibility"
+                    "Prepared %s image for model input: %sx%s -> %s, mime=%s",
+                    extension,
+                    original_width,
+                    original_height,
+                    prepared.size,
+                    prepared.mime_type,
                 )
 
             return text, image_base64, actual_mime_type
