@@ -1,7 +1,11 @@
 import type { Attachment } from '@/types/api'
 import { getRuntimeConfig } from '@/config/runtime'
+import { createHttpClient, shouldUseTauriFetch } from './http'
 
 export const MAX_FILE_SIZE = 100 * 1024 * 1024
+
+type UploadAttachmentResponse = Omit<Attachment, 'created_at' | 'file_extension' | 'subtask_id'> &
+  Partial<Pick<Attachment, 'created_at' | 'file_extension' | 'subtask_id'>>
 
 export function isValidFileSize(size: number): boolean {
   return size <= MAX_FILE_SIZE
@@ -10,6 +14,22 @@ export function isValidFileSize(size: number): boolean {
 function getFileExtension(fileName: string): string {
   const dotIndex = fileName.lastIndexOf('.')
   return dotIndex >= 0 ? fileName.substring(dotIndex) : ''
+}
+
+function toAttachmentResponse(response: UploadAttachmentResponse, file: File): Attachment {
+  return {
+    id: response.id,
+    filename: response.filename,
+    file_size: response.file_size,
+    mime_type: response.mime_type,
+    status: response.status,
+    text_length: response.text_length,
+    error_message: response.error_message,
+    error_code: response.error_code,
+    subtask_id: response.subtask_id ?? null,
+    file_extension: response.file_extension || getFileExtension(file.name),
+    created_at: response.created_at || new Date().toISOString(),
+  }
 }
 
 export function uploadAttachment(
@@ -25,6 +45,15 @@ export function uploadAttachment(
   const formData = new FormData()
   formData.append('file', file)
 
+  if (shouldUseTauriFetch()) {
+    onProgress?.(0)
+    const client = createHttpClient({ baseUrl: apiBaseUrl })
+    return client.post<UploadAttachmentResponse>('/attachments/upload', formData).then(response => {
+      onProgress?.(100)
+      return toAttachmentResponse(response, file)
+    })
+  }
+
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest()
 
@@ -38,19 +67,7 @@ export function uploadAttachment(
       if (xhr.status >= 200 && xhr.status < 300) {
         try {
           const response = JSON.parse(xhr.responseText)
-          resolve({
-            id: response.id,
-            filename: response.filename,
-            file_size: response.file_size,
-            mime_type: response.mime_type,
-            status: response.status,
-            text_length: response.text_length,
-            error_message: response.error_message,
-            error_code: response.error_code,
-            subtask_id: null,
-            file_extension: getFileExtension(file.name),
-            created_at: new Date().toISOString(),
-          })
+          resolve(toAttachmentResponse(response, file))
         } catch {
           reject(new Error('Failed to parse upload response'))
         }
@@ -78,13 +95,6 @@ export function uploadAttachment(
 
 export async function deleteAttachment(attachmentId: number): Promise<void> {
   const { apiBaseUrl } = getRuntimeConfig()
-  const token = localStorage.getItem('auth_token')
-  const response = await fetch(`${apiBaseUrl}/attachments/${attachmentId}`, {
-    method: 'DELETE',
-    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-  })
-
-  if (!response.ok) {
-    throw new Error(`Failed to delete attachment: ${response.status}`)
-  }
+  const client = createHttpClient({ baseUrl: apiBaseUrl })
+  await client.delete(`/attachments/${attachmentId}`)
 }
