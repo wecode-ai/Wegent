@@ -1,6 +1,19 @@
 import { Check, ChevronDown, GitBranch, Plus, Search, X } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+} from 'react'
 import { useIsMobile } from '@/hooks/useIsMobile'
+import {
+  calculateFloatingMenuLayout,
+  getFloatingMenuVisibleBounds,
+  type FloatingMenuPlacement,
+} from '@/lib/floating-menu'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 
@@ -14,6 +27,8 @@ interface BranchSelectorProps {
   variant: 'environment' | 'workbar'
   mobileSheet?: boolean
 }
+
+const BRANCH_MENU_MAX_HEIGHT = 420
 
 function branchMatchesQuery(branch: string, query: string): boolean {
   const normalizedBranch = branch.toLowerCase()
@@ -43,6 +58,7 @@ export function BranchSelector({
   const { t } = useTranslation('common')
   const isMobile = useIsMobile()
   const rootRef = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
   const [open, setOpen] = useState(false)
   const [branches, setBranches] = useState<string[]>([])
   const [query, setQuery] = useState('')
@@ -51,6 +67,13 @@ export function BranchSelector({
   const [error, setError] = useState<string | null>(null)
   const [createFormOpen, setCreateFormOpen] = useState(false)
   const [newBranchName, setNewBranchName] = useState('')
+  const [desktopMenuLayout, setDesktopMenuLayout] = useState<{
+    placement: FloatingMenuPlacement
+    maxHeight: number
+  }>({
+    placement: variant === 'environment' ? 'below' : 'above',
+    maxHeight: BRANCH_MENU_MAX_HEIGHT,
+  })
   const prefix = variant === 'environment' ? 'environment' : 'project'
   const useMobileSheet = mobileSheet && isMobile && variant === 'workbar'
   const filteredBranches = useMemo(
@@ -65,6 +88,27 @@ export function BranchSelector({
     setCreateFormOpen(false)
     setNewBranchName('')
   }, [])
+
+  const updateDesktopMenuLayout = useCallback(() => {
+    if (!open || useMobileSheet || typeof window === 'undefined') return
+
+    const triggerRect = triggerRef.current?.getBoundingClientRect()
+    if (!triggerRect) return
+
+    const preferredPlacement = variant === 'environment' ? 'below' : 'above'
+    const nextLayout = calculateFloatingMenuLayout({
+      triggerRect,
+      visibleBounds: getFloatingMenuVisibleBounds(rootRef.current),
+      preferredPlacement,
+      maxHeight: BRANCH_MENU_MAX_HEIGHT,
+    })
+
+    setDesktopMenuLayout(current =>
+      current.placement === nextLayout.placement && current.maxHeight === nextLayout.maxHeight
+        ? current
+        : nextLayout
+    )
+  }, [open, useMobileSheet, variant])
 
   useEffect(() => {
     if (!open) return
@@ -86,6 +130,23 @@ export function BranchSelector({
       window.removeEventListener('keydown', handleKeyDown)
     }
   }, [close, open, useMobileSheet])
+
+  useLayoutEffect(() => {
+    if (!open || useMobileSheet) return
+
+    updateDesktopMenuLayout()
+  }, [open, updateDesktopMenuLayout, useMobileSheet])
+
+  useEffect(() => {
+    if (!open || useMobileSheet) return
+
+    window.addEventListener('resize', updateDesktopMenuLayout)
+    window.addEventListener('scroll', updateDesktopMenuLayout, true)
+    return () => {
+      window.removeEventListener('resize', updateDesktopMenuLayout)
+      window.removeEventListener('scroll', updateDesktopMenuLayout, true)
+    }
+  }, [open, updateDesktopMenuLayout, useMobileSheet])
 
   async function handleToggle() {
     if (open) {
@@ -161,6 +222,7 @@ export function BranchSelector({
   return (
     <div ref={rootRef} className="relative">
       <button
+        ref={triggerRef}
         type="button"
         data-testid={`${prefix}-branch-${variant === 'environment' ? 'row' : 'button'}`}
         onClick={() => void handleToggle()}
@@ -191,12 +253,17 @@ export function BranchSelector({
           className={cn(
             useMobileSheet
               ? 'fixed inset-x-0 bottom-0 z-modal flex max-h-[56dvh] flex-col rounded-t-[28px] border border-border bg-background px-5 pb-2 text-text-primary shadow-[0_-18px_48px_rgba(0,0,0,0.18)]'
-              : 'absolute z-system-popover flex max-h-[min(420px,calc(100dvh-7rem))] w-[320px] flex-col overflow-hidden rounded-2xl border border-border bg-background px-3 py-3 text-text-primary shadow-[0_18px_44px_rgba(0,0,0,0.18)]',
+              : 'absolute z-system-popover flex w-[320px] flex-col overflow-hidden rounded-2xl border border-border bg-background px-3 py-3 text-text-primary shadow-[0_18px_44px_rgba(0,0,0,0.18)]',
             !useMobileSheet &&
               (variant === 'environment'
-                ? 'right-[calc(100%-44px)] top-[38px]'
-                : 'bottom-11 left-0')
+                ? desktopMenuLayout.placement === 'below'
+                  ? 'right-[calc(100%-44px)] top-[38px]'
+                  : 'bottom-[38px] right-[calc(100%-44px)]'
+                : desktopMenuLayout.placement === 'below'
+                  ? 'left-0 top-11'
+                  : 'bottom-11 left-0')
           )}
+          style={useMobileSheet ? undefined : { maxHeight: desktopMenuLayout.maxHeight }}
         >
           {useMobileSheet && (
             <>

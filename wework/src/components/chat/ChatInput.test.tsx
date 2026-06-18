@@ -105,6 +105,7 @@ describe('ChatInput', () => {
     vi.useRealTimers()
     localStorage.clear()
     URL.createObjectURL = originalCreateObjectUrl
+    delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
   })
 
   test('renders the desktop composer sections', () => {
@@ -2124,6 +2125,7 @@ describe('ChatInput', () => {
 
   test('limits the desktop project branch menu while branches scroll', async () => {
     const branches = Array.from({ length: 50 }, (_, index) => `feature/branch-${index}`)
+    vi.stubGlobal('innerHeight', 380)
 
     render(
       <ChatInput
@@ -2147,10 +2149,24 @@ describe('ChatInput', () => {
       />
     )
 
-    await userEvent.click(screen.getByTestId('project-branch-button'))
+    const branchButton = screen.getByTestId('project-branch-button')
+    vi.spyOn(branchButton, 'getBoundingClientRect').mockReturnValue({
+      x: 0,
+      y: 300,
+      left: 0,
+      top: 300,
+      right: 120,
+      bottom: 336,
+      width: 120,
+      height: 36,
+      toJSON: () => ({}),
+    })
+
+    await userEvent.click(branchButton)
 
     const menu = await screen.findByTestId('project-branch-menu')
-    expect(menu).toHaveClass('max-h-[min(420px,calc(100dvh-7rem))]', 'overflow-hidden')
+    await waitFor(() => expect(menu).toHaveStyle({ maxHeight: '276px' }))
+    expect(menu).toHaveClass('bottom-11', 'overflow-hidden')
     expect(screen.getByTestId('project-branch-list')).toHaveClass(
       'min-h-0',
       'flex-1',

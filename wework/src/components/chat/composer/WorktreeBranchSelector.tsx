@@ -1,7 +1,12 @@
 import { Check, ChevronDown, GitBranch, Search, X } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
+import {
+  calculateFloatingMenuLayout,
+  getFloatingMenuVisibleBounds,
+  type FloatingMenuPlacement,
+} from '@/lib/floating-menu'
 import { cn } from '@/lib/utils'
 import { useOutsideClick } from './useOutsideClick'
 
@@ -12,6 +17,8 @@ interface WorktreeBranchSelectorProps {
   onListBranches: () => Promise<string[]>
   onSelectBranch: (branchName: string) => void
 }
+
+const WORKTREE_BRANCH_MENU_MAX_HEIGHT = 360
 
 function branchMatchesQuery(branch: string, query: string): boolean {
   const normalizedBranch = branch.toLowerCase()
@@ -45,6 +52,13 @@ export function WorktreeBranchSelector({
   const [query, setQuery] = useState('')
   const [branchesLoading, setBranchesLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [desktopMenuLayout, setDesktopMenuLayout] = useState<{
+    placement: FloatingMenuPlacement
+    maxHeight: number
+  }>({
+    placement: 'below',
+    maxHeight: WORKTREE_BRANCH_MENU_MAX_HEIGHT,
+  })
   const effectiveBranch = selectedBranch?.trim() || currentBranch?.trim() || ''
   const branchLabel = loading
     ? t('workbench.project_worktree_branch_loading')
@@ -60,6 +74,26 @@ export function WorktreeBranchSelector({
   }, [])
 
   useOutsideClick(containerRef, open, close)
+
+  const updateDesktopMenuLayout = useCallback(() => {
+    if (!open || isMobile || typeof window === 'undefined') return
+
+    const triggerRect = triggerRef.current?.getBoundingClientRect()
+    if (!triggerRect) return
+
+    const nextLayout = calculateFloatingMenuLayout({
+      triggerRect,
+      visibleBounds: getFloatingMenuVisibleBounds(containerRef.current),
+      preferredPlacement: 'below',
+      maxHeight: WORKTREE_BRANCH_MENU_MAX_HEIGHT,
+    })
+
+    setDesktopMenuLayout(current =>
+      current.placement === nextLayout.placement && current.maxHeight === nextLayout.maxHeight
+        ? current
+        : nextLayout
+    )
+  }, [isMobile, open])
 
   useEffect(() => {
     if (!open) return
@@ -95,6 +129,23 @@ export function WorktreeBranchSelector({
     searchInputRef.current?.focus()
   }, [isMobile, open])
 
+  useLayoutEffect(() => {
+    if (!open || isMobile) return
+
+    updateDesktopMenuLayout()
+  }, [isMobile, open, updateDesktopMenuLayout])
+
+  useEffect(() => {
+    if (!open || isMobile) return
+
+    window.addEventListener('resize', updateDesktopMenuLayout)
+    window.addEventListener('scroll', updateDesktopMenuLayout, true)
+    return () => {
+      window.removeEventListener('resize', updateDesktopMenuLayout)
+      window.removeEventListener('scroll', updateDesktopMenuLayout, true)
+    }
+  }, [isMobile, open, updateDesktopMenuLayout])
+
   useEffect(() => {
     if (!open) return
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -121,8 +172,10 @@ export function WorktreeBranchSelector({
           className={cn(
             isMobile
               ? 'fixed inset-x-0 bottom-0 z-modal flex max-h-[45dvh] flex-col rounded-t-[28px] border border-border bg-background shadow-[0_-18px_48px_rgba(0,0,0,0.18)]'
-              : 'absolute left-0 top-11 z-popover flex max-h-[min(360px,calc(100dvh-7rem))] w-64 flex-col overflow-hidden rounded-2xl border border-border bg-background p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]'
+              : 'absolute left-0 z-popover flex w-64 flex-col overflow-hidden rounded-2xl border border-border bg-background p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]',
+            !isMobile && (desktopMenuLayout.placement === 'below' ? 'top-11' : 'bottom-11')
           )}
+          style={isMobile ? undefined : { maxHeight: desktopMenuLayout.maxHeight }}
         >
           {isMobile && (
             <>

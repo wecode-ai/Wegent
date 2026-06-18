@@ -1,6 +1,10 @@
 import type { Attachment, LocalDeviceSkill, ModelOptions, UnifiedModel } from '@/types/api'
 import type { CodeCommentContext } from '@/types/workspace-files'
+import { invoke } from '@tauri-apps/api/core'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import type { DragEventHandler } from 'react'
+import { useEffect, useRef } from 'react'
+import { isTauriRuntime } from '@/lib/runtime-environment'
 import type { ProjectWorkControls } from '../ChatInput'
 import { AttachmentBadges } from './AttachmentBadges'
 import { ComposerToolbar } from './ComposerToolbar'
@@ -40,6 +44,16 @@ function hasDraggedFiles(dataTransfer: DataTransfer): boolean {
   return Array.from(dataTransfer.types).includes('Files')
 }
 
+interface NativeDroppedFile {
+  name: string
+  bytes: number[]
+}
+
+async function readNativeDroppedFiles(paths: string[]): Promise<File[]> {
+  const droppedFiles = await invoke<NativeDroppedFile[]>('read_dropped_files', { paths })
+  return droppedFiles.map(file => new File([new Uint8Array(file.bytes)], file.name))
+}
+
 export function ProjectChatComposer({
   value,
   onChange,
@@ -67,6 +81,7 @@ export function ProjectChatComposer({
   isStreaming = false,
   onPause,
 }: ProjectChatComposerProps) {
+  const formRef = useRef<HTMLFormElement>(null)
   const textareaRef = useAutoResizeTextarea(value, 168)
   const canSend =
     (value.trim().length > 0 || attachments.length > 0 || codeComments.length > 0) && !disabled
@@ -86,9 +101,45 @@ export function ProjectChatComposer({
     if (files.length > 0) onFileSelect(files)
   }
 
+  useEffect(() => {
+    if (!isTauriRuntime()) return
+
+    let unlisten: (() => void) | undefined
+    let cancelled = false
+
+    async function listenForNativeFileDrops() {
+      unlisten = await getCurrentWindow().onDragDropEvent(event => {
+        const { payload } = event
+        if (payload.type !== 'drop' || payload.paths.length === 0 || disabled || !formRef.current) {
+          return
+        }
+
+        void readNativeDroppedFiles(payload.paths)
+          .then(files => {
+            if (files.length > 0) onFileSelect(files)
+          })
+          .catch(error => {
+            console.error('Failed to read dropped files:', error)
+          })
+      })
+
+      if (cancelled) unlisten()
+    }
+
+    void listenForNativeFileDrops().catch(error => {
+      console.error('Failed to listen for native file drops:', error)
+    })
+
+    return () => {
+      cancelled = true
+      unlisten?.()
+    }
+  }, [disabled, onFileSelect])
+
   return (
     <div className="relative w-full rounded-[28px] bg-surface shadow-[0_16px_44px_rgba(0,0,0,0.08)]">
       <form
+        ref={formRef}
         data-testid="project-chat-composer-form"
         className="flex min-h-[112px] w-full flex-col rounded-[28px] border border-border bg-background pb-2 pl-4 pr-2 pt-3.5"
         onDragOver={handleDragOver}
