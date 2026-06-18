@@ -54,6 +54,18 @@ spec:
         - GITHUB_READ_ONLY
         - ghcr.io/github/github-mcp-server
       command: docker
+  defaultContextRefs:
+    - type: knowledge_base
+      id: 101
+      name: Product Docs
+    - type: external_document
+      provider: example-provider
+      source: docs
+      id: docs:node-1
+      name: External Docs
+      metadata:
+        external_id: node-1
+        url: https://example.com/docs/node-1
 ```
 
 ### 字段说明
@@ -64,7 +76,15 @@ spec:
 | `metadata.namespace` | string | 是 | 命名空间，通常为 `default` |
 | `spec.systemPrompt` | string | 是 | 定义智能体个性和能力的系统提示词 |
 | `spec.mcpServers` | object | 否 | MCP 服务器配置,定义智能体的工具能力 |
+| `spec.defaultContextRefs` | array | 否 | Ghost 级默认上下文，支持 `knowledge_base` 和已配置 provider 处理的 `external_document` |
+| `spec.defaultKnowledgeBaseRefs` | array | 否 | 兼容旧客户端的默认知识库字段，只保存 `knowledge_base` 子集 |
 | `spec.skills` | array | 否 | 关联的 Skill 名称列表,例如 `["skill-1", "skill-2"]` |
+
+### 默认上下文
+
+`spec.defaultContextRefs` 是智能体创建任务时自动注入的默认上下文集合。Wegent 知识库使用 `type: knowledge_base`，外部知识使用通用的 `type: external_document`，并通过 `provider`、`source`、`id` 和 `metadata.external_id` 标识具体外部节点。开源默认不启用任何外部知识 provider；部署方需要通过后端配置显式注册 provider 后，相关 `external_document` 才会被解析、校验并在运行时注入工具使用指导。
+
+`spec.defaultKnowledgeBaseRefs` 继续保留用于兼容旧客户端。新客户端应优先写入 `defaultContextRefs`，后端会从其中的 `knowledge_base` 条目派生旧字段。
 
 ---
 
@@ -500,6 +520,29 @@ spec:
   workspaceRef:
     name: project-workspace
     namespace: default
+  contextRefs:
+    - type: knowledge_base
+      data:
+        id: 101
+        name: Product Docs
+        boundBy: alice
+        boundAt: "2026-06-18T10:00:00"
+    - type: external_document
+      data:
+        provider: example-provider
+        source: docs
+        external_id: node-1
+        name: External Docs
+        url: https://example.com/docs/node-1
+        metadata:
+          external_id: node-1
+  contextWarnings:
+    - type: external_document
+      reason: provider_unsupported
+      message: 该外部知识类型暂不支持, 无法读取
+      provider: example-provider
+      source: docs
+      external_id: node-1
   knowledgeBaseScopes:
     - id: 101
       namespace: default
@@ -520,7 +563,16 @@ spec:
 | `spec.prompt` | string | 是 | 任务描述 |
 | `spec.teamRef` | object | 是 | Team 引用 |
 | `spec.workspaceRef` | object | 是 | Workspace 引用 |
+| `spec.contextRefs` | array | 否 | 任务级上下文快照，包含知识库和外部文档等已解析上下文 |
+| `spec.contextWarnings` | array | 否 | 默认或运行时上下文无法解析时展示给用户的 warning |
+| `spec.knowledgeBaseRefs` | array | 否 | 兼容旧知识库 RAG 链路的知识库快照，由 `contextRefs` 中的 `knowledge_base` 派生 |
 | `spec.knowledgeBaseScopes` | array | 否 | `/api/v1/responses` 绑定的知识库访问范围，用于后续对话继承目录或文档级 scope |
+
+### 任务上下文快照
+
+`spec.contextRefs` 保存任务创建或本轮对话解析后的上下文快照。`knowledge_base` 条目继续派生到 `spec.knowledgeBaseRefs`，以兼容现有知识库 RAG 链路；`external_document` 条目由已注册的外部知识 provider 解析，并在执行请求中用于预加载对应工具和生成工具使用指导。
+
+如果外部 provider 未启用、用户未配置对应 MCP，或外部节点不可用，后端不会把该节点写入 `contextRefs`，而是写入 `spec.contextWarnings`。warning 使用通用字段 `provider`、`source`、`external_id` 和可选 `metadata`，不依赖具体外部系统的私有字段。
 
 ### 知识库范围
 

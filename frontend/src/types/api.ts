@@ -4,6 +4,8 @@
 
 // Authentication Types
 
+import type { DefaultContextRef } from './default-context'
+
 // User Preferences
 export interface QuickAccessConfig {
   version?: number // User's synced system version
@@ -95,6 +97,7 @@ export interface Bot {
   agent_config: Record<string, unknown>
   system_prompt: string
   mcp_servers: Record<string, unknown>
+  default_context_refs?: DefaultContextRef[]
   default_knowledge_base_refs?: KnowledgeBaseDefaultRef[]
   skills?: string[] // Skills associated with this bot
   skill_refs?: Record<string, SkillRefMeta>
@@ -296,6 +299,17 @@ export interface TaskApp {
   previewUrl: string
 }
 
+export interface TaskContextWarning {
+  type: string
+  reason: string
+  message: string
+  provider?: string | null
+  source?: string | null
+  external_id?: string | null
+  name?: string | null
+  metadata?: Record<string, unknown> | null
+}
+
 export interface TaskDetail {
   id: number
   title: string
@@ -325,6 +339,7 @@ export interface TaskDetail {
   device_id?: string | null // Device ID used for execution (for task history)
   preserve_executor?: boolean // Whether to preserve executor pod after task completion
   requested_skills?: SkillRef[] | null // User-selected skills for this task
+  context_warnings?: TaskContextWarning[] | null
 }
 
 export interface TaskRuntimeActiveStream {

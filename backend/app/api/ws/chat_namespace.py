@@ -801,6 +801,8 @@ class ChatNamespace(socketio.AsyncNamespace):
                 project_id=payload.project_id,
                 execution_workspace=execution_workspace,
                 client_origin=payload.client_origin,
+                default_context_mode=payload.default_context_mode,
+                contexts=payload.contexts,
                 generate_params=generate_params_dict,
             )
 

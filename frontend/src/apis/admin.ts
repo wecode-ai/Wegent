@@ -10,6 +10,7 @@ import {
 import { outboundTokenAdminApis } from './outboundTokens'
 import { RetrieverCRD } from './retrievers'
 import type { SkillRefMeta } from '@/types/api'
+import type { DefaultContextRef } from '@/types/default-context'
 
 // Re-export RetrieverCRD for backward compatibility
 export type { RetrieverCRD } from './retrievers'
@@ -292,6 +293,7 @@ export interface AdminPublicBot {
   skill_refs: Record<string, SkillRefMeta> | null
   preload_skills: string[] | null
   preload_skill_refs: Record<string, SkillRefMeta> | null
+  default_context_refs?: DefaultContextRef[] | null
   // Expanded Model fields for UI convenience
   agent_config: Record<string, unknown> | null
   default_knowledge_base_refs: { id: number; name: string }[] | null
@@ -314,6 +316,7 @@ export interface AdminPublicBotCreate {
   skill_refs?: Record<string, SkillRefMeta>
   preload_skills?: string[]
   preload_skill_refs?: Record<string, SkillRefMeta>
+  default_context_refs?: DefaultContextRef[]
   agent_config?: Record<string, unknown>
   default_knowledge_base_refs?: { id: number; name: string }[]
 }
@@ -331,6 +334,7 @@ export interface AdminPublicBotUpdate {
   skill_refs?: Record<string, SkillRefMeta>
   preload_skills?: string[]
   preload_skill_refs?: Record<string, SkillRefMeta>
+  default_context_refs?: DefaultContextRef[]
   agent_config?: Record<string, unknown>
   default_knowledge_base_refs?: { id: number; name: string }[]
 }

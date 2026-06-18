@@ -7,6 +7,7 @@ import type { ModelTypeEnum } from '@/apis/models'
 import type { UnifiedSkill } from '@/apis/skills'
 import type { CreateTeamRequest } from '@/apis/team'
 import type { TaskType } from '@/types/api'
+import type { DefaultContextRef } from '@/types/default-context'
 import { createPredefinedModelConfig } from '@/features/settings/services/bots'
 import { buildSkillRefsFromSelection } from '@/features/settings/utils/skillRefResolver'
 
@@ -21,6 +22,7 @@ export interface SimpleBotFormValue {
   selectedSkillRefs: Record<string, SkillRefMeta>
   preloadSkills?: string[]
   availableSkills: UnifiedSkill[]
+  defaultContextRefs: DefaultContextRef[]
   defaultKnowledgeBaseRefs: KnowledgeBaseDefaultRef[]
   mcpServers?: Record<string, unknown>
 }
@@ -67,6 +69,7 @@ export function buildSimpleBotRequest(
     agent_config: agentConfig,
     system_prompt: form.prompt.trim(),
     mcp_servers: form.mcpServers || {},
+    default_context_refs: form.defaultContextRefs,
     default_knowledge_base_refs: form.defaultKnowledgeBaseRefs,
     skills: form.selectedSkills,
     skill_refs: buildSkillRefsFromSelection(

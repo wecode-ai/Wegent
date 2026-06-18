@@ -7,7 +7,7 @@ from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
-from app.schemas.kind import SkillRefMeta
+from app.schemas.kind import DefaultContextRef, SkillRefMeta
 
 
 # User Management Schemas
@@ -405,6 +405,9 @@ class PublicBotCreate(BaseModel):
     default_knowledge_base_refs: Optional[List[dict]] = Field(
         None, description="Default knowledge base refs for Ghost"
     )
+    default_context_refs: Optional[List[DefaultContextRef]] = Field(
+        None, description="Default context refs for Ghost"
+    )
 
     class Config:
         populate_by_name = True
@@ -439,6 +442,9 @@ class PublicBotUpdate(BaseModel):
     default_knowledge_base_refs: Optional[List[dict]] = Field(
         None, description="Default knowledge base refs for Ghost"
     )
+    default_context_refs: Optional[List[DefaultContextRef]] = Field(
+        None, description="Default context refs for Ghost"
+    )
 
     class Config:
         populate_by_name = True
@@ -467,6 +473,7 @@ class PublicBotResponse(BaseModel):
     preload_skills: Optional[List[str]] = None
     preload_skill_refs: Optional[Dict[str, SkillRefMeta]] = None
     default_knowledge_base_refs: Optional[List[dict]] = None
+    default_context_refs: Optional[List[DefaultContextRef]] = None
     # Expanded Model fields for UI convenience
     agent_config: Optional[dict] = None
 

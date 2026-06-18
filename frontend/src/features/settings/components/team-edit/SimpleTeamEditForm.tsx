@@ -5,7 +5,7 @@
 'use client'
 
 import { type ReactNode, useId, useMemo, useState } from 'react'
-import { ChevronDown, SettingsIcon, Wand2, XIcon } from 'lucide-react'
+import { ChevronDown, Database, Plus, SettingsIcon, Wand2, XIcon } from 'lucide-react'
 
 import type { SkillRefMeta } from '@/apis/bots'
 import type { ModelTypeEnum, UnifiedModel } from '@/apis/models'
@@ -23,13 +23,19 @@ import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import PromptFineTuneDialog from '@/features/prompt-tune/components/PromptFineTuneDialog'
 import McpConfigSection from '@/features/settings/components/McpConfigSection'
-import { KnowledgeBaseMultiSelector } from '@/features/settings/components/knowledge/KnowledgeBaseMultiSelector'
 import SkillManagementModal from '@/features/settings/components/skills/SkillManagementModal'
 import { RichSkillSelector } from '@/features/settings/components/skills/RichSkillSelector'
 import type { AgentType as McpAgentType } from '@/features/settings/utils/mcpTypeAdapter'
+import ContextSelector from '@/features/tasks/components/chat/ContextSelector'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
+import type { ContextItem, ContextType } from '@/types/context'
+import type { DefaultContextRef } from '@/types/default-context'
 import type { KnowledgeBaseDefaultRef, TaskType } from '@/types/api'
+import {
+  contextItemsToDefaultContextRefs,
+  defaultContextRefsToContextItems,
+} from '@/features/context-selector/adapters/defaultContextAdapters'
 
 import { TeamIconPicker } from '../teams/TeamIconPicker'
 import ExecutorModeSelector from './ExecutorModeSelector'
@@ -38,6 +44,32 @@ import QuickPhraseEditor from './QuickPhraseEditor'
 import TeamBindModeCards from './TeamBindModeCards'
 import { parseModelSelectValue, toModelSelectValue } from './model-select-utils'
 import type { SimpleExecutorMode } from './simple-team-edit-utils'
+
+const DEFAULT_CONTEXT_ALLOWED_TYPES: ContextType[] =
+  process.env.NEXT_PUBLIC_ENABLE_DINGTALK_CONTEXT === 'true'
+    ? ['knowledge_base', 'external_document']
+    : ['knowledge_base']
+
+function filterDefaultContextItems(items: ContextItem[]): ContextItem[] {
+  const seen = new Set<string>()
+  const filtered: ContextItem[] = []
+
+  for (const item of items) {
+    if (!DEFAULT_CONTEXT_ALLOWED_TYPES.includes(item.type)) {
+      continue
+    }
+
+    const key = `${item.type}:${item.id}`
+    if (seen.has(key)) {
+      continue
+    }
+
+    seen.add(key)
+    filtered.push(item)
+  }
+
+  return filtered
+}
 
 interface SimpleTeamEditFormProps {
   name: string
@@ -77,6 +109,8 @@ interface SimpleTeamEditFormProps {
   loadingSkills: boolean
   onSkillsChange: (skills: string[], refs: Record<string, SkillRefMeta>) => void
   onReloadSkills: () => void
+  defaultContextRefs: DefaultContextRef[]
+  onDefaultContextRefsChange: (value: DefaultContextRef[]) => void
   defaultKnowledgeBaseRefs: KnowledgeBaseDefaultRef[]
   onDefaultKnowledgeBaseRefsChange: (value: KnowledgeBaseDefaultRef[]) => void
   mcpConfig: string
@@ -167,8 +201,8 @@ export default function SimpleTeamEditForm({
   loadingSkills,
   onSkillsChange,
   onReloadSkills,
-  defaultKnowledgeBaseRefs,
-  onDefaultKnowledgeBaseRefsChange,
+  defaultContextRefs,
+  onDefaultContextRefsChange,
   mcpConfig,
   onMcpConfigChange,
   mcpAgentType,
@@ -181,6 +215,14 @@ export default function SimpleTeamEditForm({
   const { t } = useTranslation()
   const [skillManagementModalOpen, setSkillManagementModalOpen] = useState(false)
   const [promptFineTuneOpen, setPromptFineTuneOpen] = useState(false)
+  const [defaultContextsOpen, setDefaultContextsOpen] = useState(false)
+  const defaultContextItems = useMemo(
+    () => filterDefaultContextItems(defaultContextRefsToContextItems(defaultContextRefs)),
+    [defaultContextRefs]
+  )
+  const updateDefaultContextItems = (items: ContextItem[]) => {
+    onDefaultContextRefsChange(contextItemsToDefaultContextRefs(filterDefaultContextItems(items)))
+  }
   const showRequiresWorkspace = bindMode.includes('code')
   const modelSelectValue = toModelSelectValue(modelName, modelType, modelNamespace)
   const selectedModel = useMemo(
@@ -496,19 +538,87 @@ export default function SimpleTeamEditForm({
             label={t('common:bot.default_knowledge_bases')}
             description={t('settings:team.simple.core.knowledge_description')}
           >
-            <KnowledgeBaseMultiSelector
-              value={defaultKnowledgeBaseRefs}
-              onChange={onDefaultKnowledgeBaseRefsChange}
-              helperText={null}
-              allowedSources={
-                scope === 'group'
-                  ? groupName
-                    ? ['group', 'organization']
-                    : ['organization']
-                  : ['personal', 'group', 'organization']
-              }
-              allowedGroupNamespaces={scope === 'group' && groupName ? [groupName] : undefined}
-            />
+            <div className="space-y-2">
+              <ContextSelector
+                open={defaultContextsOpen}
+                onOpenChange={setDefaultContextsOpen}
+                selectedContexts={defaultContextItems}
+                allowedContextTypes={DEFAULT_CONTEXT_ALLOWED_TYPES}
+                allowedKnowledgeBaseSources={
+                  scope === 'group'
+                    ? groupName
+                      ? ['group', 'organization']
+                      : ['organization']
+                    : ['personal', 'group', 'organization']
+                }
+                allowedGroupNamespaces={scope === 'group' && groupName ? [groupName] : undefined}
+                onSelect={context =>
+                  updateDefaultContextItems(
+                    defaultContextItems.some(
+                      item => item.type === context.type && item.id === context.id
+                    )
+                      ? defaultContextItems
+                      : [...defaultContextItems, context]
+                  )
+                }
+                onDeselect={id =>
+                  updateDefaultContextItems(defaultContextItems.filter(item => item.id !== id))
+                }
+                onSelectMultiple={contexts => {
+                  const existingKeys = new Set(
+                    defaultContextItems.map(item => `${item.type}:${item.id}`)
+                  )
+                  updateDefaultContextItems([
+                    ...defaultContextItems,
+                    ...contexts.filter(
+                      context => !existingKeys.has(`${context.type}:${context.id}`)
+                    ),
+                  ])
+                }}
+                onDeselectMultiple={ids =>
+                  updateDefaultContextItems(
+                    defaultContextItems.filter(item => !ids.includes(item.id))
+                  )
+                }
+              >
+                <button
+                  type="button"
+                  className="flex h-9 w-full items-center justify-between rounded-md border border-border/50 bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                  data-testid="simple-default-context-add-button"
+                >
+                  <div className="flex items-center gap-2 text-text-muted">
+                    <Database className="h-4 w-4 text-primary" />
+                    <span>{t('common:bot.default_knowledge_bases_select_to_add')}</span>
+                  </div>
+                  <Plus className="h-4 w-4 opacity-50" />
+                </button>
+              </ContextSelector>
+              <div className="flex flex-wrap gap-1.5">
+                {defaultContextItems.map(context => (
+                  <span
+                    key={`${context.type}:${context.id}`}
+                    className="inline-flex items-center gap-1 rounded-md bg-muted px-2.5 py-1.5 text-sm text-text-primary"
+                  >
+                    <span className="max-w-[180px] truncate">{context.name}</span>
+                    <button
+                      type="button"
+                      className="inline-flex h-4 w-4 items-center justify-center text-text-muted hover:text-text-primary"
+                      data-testid={`simple-default-context-remove-${context.type}-${context.id}`}
+                      onClick={() =>
+                        updateDefaultContextItems(
+                          defaultContextItems.filter(
+                            item => item.type !== context.type || item.id !== context.id
+                          )
+                        )
+                      }
+                      aria-label={t('common:actions.delete')}
+                    >
+                      <XIcon className="h-3 w-3" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            </div>
           </SimpleConfigRow>
 
           <SimpleConfigRow

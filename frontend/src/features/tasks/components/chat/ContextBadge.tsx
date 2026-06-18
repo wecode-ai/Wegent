@@ -29,7 +29,7 @@ const getContextIcon = (type: ContextItem['type']) => {
       return Table2
     case 'queue_message':
       return MessageSquare
-    case 'dingtalk_doc':
+    case 'external_document':
       return FileText
     // Future context types will be added here
     // case 'person': return User;
@@ -57,7 +57,7 @@ export default function ContextBadge({
         return 'border-blue-500 bg-blue-500/10 text-blue-600'
       case 'queue_message':
         return 'border-orange-500 bg-orange-500/10 text-orange-600'
-      case 'dingtalk_doc':
+      case 'external_document':
         return 'border-orange-400 bg-orange-400/10 text-orange-600'
       default:
         return 'border-primary bg-primary/10 text-primary'
@@ -72,19 +72,19 @@ export default function ContextBadge({
     }
     if (
       !disableUrlClick &&
-      context.type === 'dingtalk_doc' &&
-      (context as DingTalkDocContext).doc_url
+      context.type === 'external_document' &&
+      (context as DingTalkDocContext).url
     ) {
       e.stopPropagation()
-      window.open((context as DingTalkDocContext).doc_url, '_blank', 'noopener,noreferrer')
+      window.open((context as DingTalkDocContext).url, '_blank', 'noopener,noreferrer')
     }
   }
 
   const isClickable =
     (!disableUrlClick && context.type === 'table' && context.source_config?.url) ||
     (!disableUrlClick &&
-      context.type === 'dingtalk_doc' &&
-      !!(context as DingTalkDocContext).doc_url)
+      context.type === 'external_document' &&
+      !!(context as DingTalkDocContext).url)
 
   // Get remove button color based on context type
   const getRemoveButtonColor = () => {
@@ -93,7 +93,7 @@ export default function ContextBadge({
         return 'text-blue-600 hover:text-blue-600 hover:bg-blue-500/20'
       case 'queue_message':
         return 'text-orange-600 hover:text-orange-600 hover:bg-orange-500/20'
-      case 'dingtalk_doc':
+      case 'external_document':
         return 'text-orange-600 hover:text-orange-600 hover:bg-orange-400/20'
       default:
         return 'text-primary hover:text-primary hover:bg-primary/20'
@@ -131,7 +131,7 @@ export default function ContextBadge({
             {(context as QueueMessageContext).messageCount} {t('inbox:message.messages_count')}
           </span>
         )}
-        {context.type === 'dingtalk_doc' && (
+        {context.type === 'external_document' && (
           <span className="text-xs opacity-70 truncate">{t('chat:dingtalkDocs.docBadgeHint')}</span>
         )}
       </div>

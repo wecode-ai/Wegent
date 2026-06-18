@@ -54,6 +54,18 @@ spec:
         - GITHUB_READ_ONLY
         - ghcr.io/github/github-mcp-server
       command: docker
+  defaultContextRefs:
+    - type: knowledge_base
+      id: 101
+      name: Product Docs
+    - type: external_document
+      provider: example-provider
+      source: docs
+      id: docs:node-1
+      name: External Docs
+      metadata:
+        external_id: node-1
+        url: https://example.com/docs/node-1
 ```
 
 ### Field Description
@@ -64,7 +76,15 @@ spec:
 | `metadata.namespace` | string | Yes | Namespace, typically `default` |
 | `spec.systemPrompt` | string | Yes | System prompt defining agent personality and capabilities |
 | `spec.mcpServers` | object | No | MCP server configuration defining agent's tool capabilities |
+| `spec.defaultContextRefs` | array | No | Ghost-level default contexts. Supports `knowledge_base` and `external_document` handled by configured providers |
+| `spec.defaultKnowledgeBaseRefs` | array | No | Legacy default knowledge-base field for older clients. Stores only the `knowledge_base` subset |
 | `spec.skills` | array | No | List of Skill names to associate with this Ghost, e.g., `["skill-1", "skill-2"]` |
+
+### Default Contexts
+
+`spec.defaultContextRefs` is the default context collection automatically injected when an agent creates a task. Wegent knowledge bases use `type: knowledge_base`. External knowledge uses the generic `type: external_document` shape and identifies the external node with `provider`, `source`, `id`, and `metadata.external_id`. Open-source deployments do not enable any external knowledge provider by default; operators must explicitly register providers in backend configuration before related `external_document` refs can be resolved, validated, and converted into runtime tool guidance.
+
+`spec.defaultKnowledgeBaseRefs` remains for backward compatibility with older clients. New clients should write `defaultContextRefs`; the backend derives the legacy field from `knowledge_base` entries.
 
 ---
 
@@ -500,6 +520,29 @@ spec:
   workspaceRef:
     name: project-workspace
     namespace: default
+  contextRefs:
+    - type: knowledge_base
+      data:
+        id: 101
+        name: Product Docs
+        boundBy: alice
+        boundAt: "2026-06-18T10:00:00"
+    - type: external_document
+      data:
+        provider: example-provider
+        source: docs
+        external_id: node-1
+        name: External Docs
+        url: https://example.com/docs/node-1
+        metadata:
+          external_id: node-1
+  contextWarnings:
+    - type: external_document
+      reason: provider_unsupported
+      message: This external knowledge type is not supported and cannot be read
+      provider: example-provider
+      source: docs
+      external_id: node-1
   knowledgeBaseScopes:
     - id: 101
       namespace: default
@@ -520,7 +563,16 @@ spec:
 | `spec.prompt` | string | Yes | Task description |
 | `spec.teamRef` | object | Yes | Team reference |
 | `spec.workspaceRef` | object | Yes | Workspace reference |
+| `spec.contextRefs` | array | No | Task-level context snapshot, including resolved knowledge bases and external documents |
+| `spec.contextWarnings` | array | No | Warnings displayed when default or runtime contexts cannot be resolved |
+| `spec.knowledgeBaseRefs` | array | No | Legacy knowledge-base snapshot for the existing RAG path, derived from `knowledge_base` entries in `contextRefs` |
 | `spec.knowledgeBaseScopes` | array | No | Knowledge-base access scopes bound by `/api/v1/responses`, used to inherit folder/document scope in follow-up turns |
+
+### Task Context Snapshots
+
+`spec.contextRefs` stores the context snapshot resolved when the task is created or when a runtime turn supplies external contexts. `knowledge_base` entries are still derived into `spec.knowledgeBaseRefs` for compatibility with the existing knowledge-base RAG path. `external_document` entries are resolved by registered external knowledge providers and are used in execution requests to preload related tools and generate tool-usage guidance.
+
+If the external provider is not enabled, the user has not configured the corresponding MCP, or the external node is unavailable, the backend does not write that node to `contextRefs`. Instead, it writes a `spec.contextWarnings` entry. Warnings use generic fields such as `provider`, `source`, `external_id`, and optional `metadata`; they do not depend on private fields from a specific external system.
 
 ### Knowledge Base Scopes
 

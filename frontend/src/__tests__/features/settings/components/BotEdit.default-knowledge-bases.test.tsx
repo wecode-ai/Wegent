@@ -14,9 +14,12 @@ import { publicResourceApis } from '@/apis/publicResources'
 import { shellApis } from '@/apis/shells'
 import { fetchPublicSkillsList, fetchUnifiedSkillsList } from '@/apis/skills'
 import type { Bot } from '@/types/api'
+import type { ContextItem } from '@/types/context'
 
 const mockTranslate = (key: string, options?: { count?: number }) => {
   const translations: Record<string, string> = {
+    'actions.delete': 'Delete',
+    'bot.default_knowledge_bases': 'Default Knowledge Bases',
     'bot.default_knowledge_bases_search_placeholder': 'Search knowledge bases',
     'bot.default_knowledge_bases_used_for_new_chats':
       'Used to initialize knowledge bases for new chats.',
@@ -31,6 +34,7 @@ const mockTranslate = (key: string, options?: { count?: number }) => {
     'bot.default_knowledge_bases_load_failed': 'Failed to load knowledge bases',
     'bot.default_knowledge_bases_updated_at': 'Updated',
     'bot.default_knowledge_bases_selected_badge': 'Selected',
+    'bot.default_knowledge_bases_select_to_add': 'Select a knowledge base to add...',
     'bot.default_knowledge_bases_selected_count': `${options?.count ?? 0} selected`,
     'bot.default_knowledge_bases_group_personal': 'Personal knowledge bases',
     'bot.default_knowledge_bases_group_group': 'Group knowledge bases',
@@ -152,6 +156,37 @@ jest.mock('@/features/prompt-tune/components/PromptFineTuneDialog', () => {
 
   return MockPromptFineTuneDialog
 })
+
+jest.mock('@/features/tasks/components/chat/ContextSelector', () => ({
+  __esModule: true,
+  default: function MockContextSelector({
+    children,
+    onSelect,
+  }: {
+    children: ReactNode
+    onSelect: (context: ContextItem) => void
+  }) {
+    return (
+      <div data-testid="default-context-selector">
+        {children}
+        <button
+          type="button"
+          data-testid="default-context-add-runbooks"
+          onClick={() =>
+            onSelect({
+              type: 'knowledge_base',
+              id: 202,
+              name: 'Runbooks',
+              document_count: 4,
+            })
+          }
+        >
+          Add Runbooks
+        </button>
+      </div>
+    )
+  },
+}))
 
 jest.mock('@/components/ui/select', () => ({
   Select: ({
@@ -399,11 +434,10 @@ describe('BotEdit default knowledge bases', () => {
     })
   })
 
-  test('loads existing bot default knowledge bases into the form', async () => {
+  test('loads existing bot default contexts into the form', async () => {
     renderBotEdit()
 
-    expect(await screen.findByTestId('default-knowledge-base-chip-101')).toBeInTheDocument()
-    expect(screen.getByText('Product Docs')).toBeInTheDocument()
+    expect(await screen.findByText('Product Docs')).toBeInTheDocument()
   })
 
   test('renders selected hidden skill display name without exposing it as selectable', async () => {
@@ -501,21 +535,16 @@ describe('BotEdit default knowledge bases', () => {
     await waitFor(() => {
       expect(mockedGetPublicShells).toHaveBeenCalled()
     })
-    expect(screen.queryByTestId('default-knowledge-base-trigger')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('default-context-selector')).not.toBeInTheDocument()
   })
 
-  test('shows only organization knowledge bases for public non-Dify bots', async () => {
+  test('shows default context selector for public non-Dify bots', async () => {
     renderBotEdit({}, { scope: 'public' })
 
-    fireEvent.click(await screen.findByTestId('default-knowledge-base-trigger'))
-
-    expect(screen.getByTestId('default-knowledge-base-group-organization')).toBeInTheDocument()
-    expect(screen.queryByTestId('default-knowledge-base-group-personal')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('default-knowledge-base-group-group')).not.toBeInTheDocument()
-    expect(screen.getByText('Company-wide security guidance')).toBeInTheDocument()
+    expect(await screen.findByTestId('default-context-selector')).toBeInTheDocument()
   })
 
-  test('shows only current group and organization knowledge bases for group bots', async () => {
+  test('shows default context selector for group bots', async () => {
     renderBotEdit(
       {
         namespace: 'platform',
@@ -524,71 +553,46 @@ describe('BotEdit default knowledge bases', () => {
       { scope: 'group', groupName: 'platform' }
     )
 
-    fireEvent.click(await screen.findByTestId('default-knowledge-base-trigger'))
-
-    expect(screen.queryByTestId('default-knowledge-base-group-personal')).not.toBeInTheDocument()
-    expect(screen.getByTestId('default-knowledge-base-group-group')).toBeInTheDocument()
-    expect(screen.getByTestId('default-knowledge-base-group-organization')).toBeInTheDocument()
-    expect(screen.getByText('Ops guides')).toBeInTheDocument()
-    expect(screen.getByText('Company-wide security guidance')).toBeInTheDocument()
-    expect(screen.queryByText('Growth experiments')).not.toBeInTheDocument()
+    expect(await screen.findByTestId('default-context-selector')).toBeInTheDocument()
   })
 
-  test('renders popover-based selector with grouped metadata', async () => {
+  test('renders the default context selector', async () => {
     renderBotEdit()
 
-    fireEvent.click(await screen.findByTestId('default-knowledge-base-trigger'))
-
-    expect(screen.queryByTestId('default-knowledge-base-selected-section')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('default-knowledge-base-available-section')).not.toBeInTheDocument()
-    expect(screen.getByTestId('default-knowledge-base-popover')).toBeInTheDocument()
-    expect(screen.getByTestId('default-knowledge-base-search-input')).toBeInTheDocument()
-
-    expect(screen.getByTestId('default-knowledge-base-group-personal')).toBeInTheDocument()
-    expect(screen.getAllByTestId('default-knowledge-base-group-group')).toHaveLength(2)
-    expect(screen.getByTestId('default-knowledge-base-group-organization')).toBeInTheDocument()
-
-    expect(screen.getByText('Ops guides')).toBeInTheDocument()
-    expect(screen.getByText('Company-wide security guidance')).toBeInTheDocument()
-    expect(screen.getByText('Shared support answers')).toBeInTheDocument()
-    expect(screen.getAllByText('Group').length).toBeGreaterThan(0)
-    expect(screen.getByText('Organization')).toBeInTheDocument()
-    expect(screen.getByText('Shared')).toBeInTheDocument()
-    expect(screen.getByText('Platform')).toBeInTheDocument()
-    expect(screen.getByText('4 documents')).toBeInTheDocument()
-    expect(screen.getByText('6 documents')).toBeInTheDocument()
-    expect(screen.getAllByText(/Updated 2026-04-02/).length).toBeGreaterThan(0)
+    expect(await screen.findByText('Default Knowledge Bases')).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Select a knowledge base to add...' })
+    ).toBeInTheDocument()
   })
 
-  test('allows adding and removing multiple knowledge bases', async () => {
+  test('allows adding and removing multiple default contexts', async () => {
     renderBotEdit()
+    await waitFor(() => expect(mockedGetUnifiedModels).toHaveBeenCalled())
 
-    fireEvent.click(await screen.findByTestId('default-knowledge-base-trigger'))
+    fireEvent.click(await screen.findByTestId('default-context-add-runbooks'))
 
-    const searchInput = await screen.findByTestId('default-knowledge-base-search-input')
-    fireEvent.change(searchInput, { target: { value: 'Runbooks' } })
+    expect(screen.getByText('Product Docs')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.getByText('Runbooks')).toBeInTheDocument()
+    })
 
-    fireEvent.click(await screen.findByTestId('default-knowledge-base-option-202'))
-
-    expect(screen.getByTestId('default-knowledge-base-chip-101')).toBeInTheDocument()
-    expect(screen.getByTestId('default-knowledge-base-chip-202')).toBeInTheDocument()
-
-    fireEvent.click(screen.getByTestId('default-knowledge-base-remove-101'))
+    fireEvent.click(screen.getAllByLabelText('Delete')[0])
 
     await waitFor(() => {
-      expect(screen.queryByTestId('default-knowledge-base-chip-101')).not.toBeInTheDocument()
+      expect(screen.queryByText('Product Docs')).not.toBeInTheDocument()
     })
-    expect(screen.getByTestId('default-knowledge-base-chip-202')).toBeInTheDocument()
+    expect(screen.getByText('Runbooks')).toBeInTheDocument()
   })
 
-  test('includes default_knowledge_base_refs in save payload', async () => {
+  test('includes default context refs in save payload', async () => {
     renderBotEdit()
+    await waitFor(() => expect(mockedGetUnifiedModels).toHaveBeenCalled())
+    expect(await screen.findByText('Product Docs')).toBeInTheDocument()
 
-    fireEvent.click(await screen.findByTestId('default-knowledge-base-trigger'))
-
-    const searchInput = await screen.findByTestId('default-knowledge-base-search-input')
-    fireEvent.change(searchInput, { target: { value: 'Runbooks' } })
-    fireEvent.click(await screen.findByTestId('default-knowledge-base-option-202'))
+    fireEvent.click(await screen.findByTestId('default-context-add-runbooks'))
+    await waitFor(() => {
+      expect(screen.getByText('Runbooks')).toBeInTheDocument()
+    })
 
     fireEvent.click(screen.getByTestId('save-button'))
 
@@ -596,9 +600,23 @@ describe('BotEdit default knowledge bases', () => {
       expect(mockedUpdateBot).toHaveBeenCalledWith(
         7,
         expect.objectContaining({
+          default_context_refs: [
+            {
+              type: 'knowledge_base',
+              id: 101,
+              name: 'Product Docs',
+              document_count: undefined,
+            },
+            { type: 'knowledge_base', id: 202, name: 'Runbooks', document_count: 4 },
+          ],
           default_knowledge_base_refs: [
-            { id: 101, name: 'Product Docs' },
-            { id: 202, name: 'Runbooks' },
+            {
+              type: 'knowledge_base',
+              id: 101,
+              name: 'Product Docs',
+              document_count: undefined,
+            },
+            { type: 'knowledge_base', id: 202, name: 'Runbooks', document_count: 4 },
           ],
         })
       )

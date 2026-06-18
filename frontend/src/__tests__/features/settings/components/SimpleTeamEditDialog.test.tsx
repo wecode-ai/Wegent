@@ -13,6 +13,7 @@ import { fetchUnifiedSkillsList } from '@/apis/skills'
 import TeamEditDialog from '@/features/settings/components/TeamEditDialog'
 import { createTeam, updateTeam } from '@/features/settings/services/teams'
 import type { Bot, Team } from '@/types/api'
+import type { ContextItem } from '@/types/context'
 
 const mockRefreshTeams = jest.fn()
 
@@ -21,11 +22,14 @@ jest.mock('@/hooks/useTranslation', () => ({
     t: (key: string) =>
       ({
         'common:actions.cancel': 'Cancel',
+        'common:actions.delete': 'Delete',
         'common:actions.remove': 'Remove',
         'common:actions.save': 'Save',
         'common:actions.saving': 'Saving',
         'common:bot.agent_config': 'Model',
         'common:bot.default_knowledge_bases': 'Knowledge bases',
+        'common:bot.default_knowledge_bases_empty_selection': 'No default knowledge bases selected',
+        'common:bot.default_knowledge_bases_select_to_add': 'Select a knowledge base to add...',
         'common:bot.fine_tune_prompt': 'Optimize',
         'common:bot.mcp_config': 'MCP',
         'common:bot.model_select': 'Select model',
@@ -235,6 +239,35 @@ jest.mock('@/features/settings/components/knowledge/KnowledgeBaseMultiSelector',
   ),
 }))
 
+jest.mock('@/features/tasks/components/chat/ContextSelector', () => ({
+  __esModule: true,
+  default: function MockContextSelector({
+    children,
+    onSelect,
+  }: {
+    children: ReactNode
+    onSelect: (context: ContextItem) => void
+  }) {
+    return (
+      <div>
+        {children}
+        <button
+          type="button"
+          onClick={() =>
+            onSelect({
+              type: 'knowledge_base',
+              id: 10,
+              name: 'Product Docs',
+            })
+          }
+        >
+          Add knowledge
+        </button>
+      </div>
+    )
+  },
+}))
+
 jest.mock('@/features/settings/components/McpConfigSection', () => {
   function MockMcpConfigSection() {
     return <div data-testid="mcp-config-section" />
@@ -431,7 +464,8 @@ describe('Simple TeamEditDialog', () => {
               is_public: false,
             },
           },
-          default_knowledge_base_refs: [{ id: 10, name: 'Product Docs' }],
+          default_context_refs: [{ type: 'knowledge_base', id: 10, name: 'Product Docs' }],
+          default_knowledge_base_refs: [{ type: 'knowledge_base', id: 10, name: 'Product Docs' }],
         })
       )
       expect(mockedCreateTeam).toHaveBeenCalledWith(

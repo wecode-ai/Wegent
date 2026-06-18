@@ -8,6 +8,7 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
+from pydantic import TypeAdapter
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -21,12 +22,13 @@ from app.schemas.admin import (
     PublicBotResponse,
     PublicBotUpdate,
 )
-from app.schemas.kind import Ghost, Model, SkillRefMeta
+from app.schemas.kind import DefaultContextRef, Ghost, Model, SkillRefMeta
 from app.services.adapters.shell_utils import get_shell_info_by_name
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+DEFAULT_CONTEXT_REF_ADAPTER = TypeAdapter(DefaultContextRef)
 
 
 def _get_bot_ref_info(
@@ -169,6 +171,51 @@ def _normalize_skill_refs(refs: Optional[dict]) -> dict[str, SkillRefMeta]:
     }
 
 
+def _dump_default_context_refs(
+    refs: Optional[list[DefaultContextRef]],
+) -> list[dict]:
+    """Serialize default context refs for Ghost JSON."""
+    return [ref.model_dump(mode="json") for ref in refs or []]
+
+
+def _extract_default_knowledge_base_refs(
+    refs: Optional[list[DefaultContextRef]],
+) -> list[dict]:
+    """Derive legacy KB-only refs from unified default context refs."""
+    knowledge_refs = []
+    for ref in refs or []:
+        if ref.type != "knowledge_base":
+            continue
+        item = {"id": ref.id, "name": ref.name}
+        if ref.document_count is not None:
+            item["document_count"] = ref.document_count
+        knowledge_refs.append(item)
+    return knowledge_refs
+
+
+def _merge_legacy_default_knowledge_refs(
+    existing_context_refs: Optional[list[dict]],
+    default_knowledge_base_refs: Optional[list[dict]],
+) -> list[dict]:
+    """Replace only KB refs while preserving non-KB default contexts."""
+    non_kb_refs = [
+        ref
+        for ref in existing_context_refs or []
+        if isinstance(ref, dict) and ref.get("type") != "knowledge_base"
+    ]
+    kb_refs = [
+        {"type": "knowledge_base", **ref}
+        for ref in default_knowledge_base_refs or []
+        if isinstance(ref, dict)
+    ]
+    return [*non_kb_refs, *kb_refs]
+
+
+def _parse_default_context_refs(refs: list[dict]) -> list[DefaultContextRef]:
+    """Validate raw default context refs before assigning to Ghost spec."""
+    return [DEFAULT_CONTEXT_REF_ADAPTER.validate_python(ref) for ref in refs]
+
+
 def _bot_to_response(bot: Kind, db: Session) -> PublicBotResponse:
     """Convert Kind model to PublicBotResponse with expanded Ghost and Model info."""
     ghost_name, shell_name, model_name = _get_bot_ref_info(bot)
@@ -182,6 +229,7 @@ def _bot_to_response(bot: Kind, db: Session) -> PublicBotResponse:
     preload_skill_refs = None
     agent_config = None
     default_knowledge_base_refs = None
+    default_context_refs = None
 
     # Get Ghost info if available
     if ghost_name:
@@ -212,9 +260,16 @@ def _bot_to_response(bot: Kind, db: Session) -> PublicBotResponse:
                 skill_refs = ghost_spec.get("skill_refs", {})
                 preload_skills = ghost_spec.get("preload_skills", [])
                 preload_skill_refs = ghost_spec.get("preload_skill_refs", {})
+                default_context_refs = ghost_spec.get("defaultContextRefs")
                 default_knowledge_base_refs = ghost_spec.get(
                     "defaultKnowledgeBaseRefs", []
                 )
+                if default_context_refs is None:
+                    default_context_refs = [
+                        {"type": "knowledge_base", **ref}
+                        for ref in default_knowledge_base_refs or []
+                        if isinstance(ref, dict)
+                    ]
 
     # Get Model info if available
     if model_name:
@@ -277,6 +332,7 @@ def _bot_to_response(bot: Kind, db: Session) -> PublicBotResponse:
         preload_skill_refs=preload_skill_refs,
         agent_config=agent_config,
         default_knowledge_base_refs=default_knowledge_base_refs,
+        default_context_refs=default_context_refs,
     )
 
 
@@ -334,6 +390,7 @@ def _create_public_ghost(
     preload_skills: Optional[list[str]] = None,
     preload_skill_refs: Optional[dict] = None,
     default_knowledge_base_refs: Optional[list[dict]] = None,
+    default_context_refs: Optional[list[DefaultContextRef]] = None,
 ) -> Kind:
     """Create a public Ghost for the bot."""
     ghost_name = f"{bot_name}-ghost"
@@ -360,7 +417,22 @@ def _create_public_ghost(
         ghost_crd.spec.preload_skill_refs = (
             _normalize_skill_refs(preload_skill_refs) or None
         )
-        ghost_crd.spec.defaultKnowledgeBaseRefs = default_knowledge_base_refs or []
+        if default_context_refs is not None:
+            ghost_crd.spec.defaultContextRefs = list(default_context_refs)
+            ghost_crd.spec.defaultKnowledgeBaseRefs = (
+                _extract_default_knowledge_base_refs(default_context_refs)
+            )
+        else:
+            ghost_crd.spec.defaultContextRefs = _parse_default_context_refs(
+                _merge_legacy_default_knowledge_refs(
+                    [
+                        ref.model_dump(mode="json")
+                        for ref in ghost_crd.spec.defaultContextRefs or []
+                    ],
+                    default_knowledge_base_refs,
+                )
+            )
+            ghost_crd.spec.defaultKnowledgeBaseRefs = default_knowledge_base_refs or []
         existing_ghost.json = ghost_crd.model_dump()
         flag_modified(existing_ghost, "json")
         return existing_ghost
@@ -384,8 +456,18 @@ def _create_public_ghost(
             name: ref.model_dump()
             for name, ref in _normalize_skill_refs(preload_skill_refs).items()
         }
-    if default_knowledge_base_refs:
+    if default_context_refs is not None:
+        ghost_spec["defaultContextRefs"] = _dump_default_context_refs(
+            default_context_refs
+        )
+        ghost_spec["defaultKnowledgeBaseRefs"] = _extract_default_knowledge_base_refs(
+            default_context_refs
+        )
+    elif default_knowledge_base_refs:
         ghost_spec["defaultKnowledgeBaseRefs"] = default_knowledge_base_refs
+        ghost_spec["defaultContextRefs"] = _merge_legacy_default_knowledge_refs(
+            None, default_knowledge_base_refs
+        )
 
     ghost_json = {
         "kind": "Ghost",
@@ -577,6 +659,7 @@ async def create_public_bot(
             bot_data.preload_skills or [],
             bot_data.preload_skill_refs or {},
             bot_data.default_knowledge_base_refs or [],
+            bot_data.default_context_refs,
         )
         ghost_name = ghost.name
 
@@ -717,6 +800,7 @@ async def update_public_bot(
         or bot_data.preload_skills is not None
         or bot_data.preload_skill_refs is not None
         or bot_data.agent_config is not None
+        or bot_data.default_context_refs is not None
         or bot_data.default_knowledge_base_refs is not None
     ):
         # Form data mode - auto-update Ghost and optionally Model
@@ -764,6 +848,7 @@ async def update_public_bot(
             or bot_data.skill_refs is not None
             or bot_data.preload_skills is not None
             or bot_data.preload_skill_refs is not None
+            or bot_data.default_context_refs is not None
             or bot_data.default_knowledge_base_refs is not None
         ):
             # Get existing ghost to preserve unchanged fields
@@ -796,7 +881,23 @@ async def update_public_bot(
                     ghost_crd.spec.preload_skill_refs = (
                         _normalize_skill_refs(bot_data.preload_skill_refs) or None
                     )
-                if bot_data.default_knowledge_base_refs is not None:
+                if bot_data.default_context_refs is not None:
+                    ghost_crd.spec.defaultContextRefs = bot_data.default_context_refs
+                    ghost_crd.spec.defaultKnowledgeBaseRefs = (
+                        _extract_default_knowledge_base_refs(
+                            bot_data.default_context_refs
+                        )
+                    )
+                elif bot_data.default_knowledge_base_refs is not None:
+                    ghost_crd.spec.defaultContextRefs = _parse_default_context_refs(
+                        _merge_legacy_default_knowledge_refs(
+                            [
+                                ref.model_dump(mode="json")
+                                for ref in ghost_crd.spec.defaultContextRefs or []
+                            ],
+                            bot_data.default_knowledge_base_refs,
+                        )
+                    )
                     ghost_crd.spec.defaultKnowledgeBaseRefs = (
                         bot_data.default_knowledge_base_refs
                     )
@@ -815,6 +916,7 @@ async def update_public_bot(
                     bot_data.preload_skills or [],
                     bot_data.preload_skill_refs or {},
                     bot_data.default_knowledge_base_refs or [],
+                    bot_data.default_context_refs,
                 )
                 ghost_name = ghost.name
 

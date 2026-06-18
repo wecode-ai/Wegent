@@ -14,7 +14,7 @@ import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
-import { Loader2, XIcon, SettingsIcon, Edit, Wand2 } from 'lucide-react'
+import { Database, Loader2, Plus, XIcon, SettingsIcon, Edit, Wand2 } from 'lucide-react'
 import {
   Select,
   SelectContent,
@@ -32,9 +32,11 @@ import SkillManagementModal from './skills/SkillManagementModal'
 import { RichSkillSelector } from './skills/RichSkillSelector'
 import DifyBotConfig from './DifyBotConfig'
 import PromptFineTuneDialog from '@/features/prompt-tune/components/PromptFineTuneDialog'
-import { KnowledgeBaseMultiSelector } from './knowledge/KnowledgeBaseMultiSelector'
+import ContextSelector from '@/features/tasks/components/chat/ContextSelector'
 
 import { Bot } from '@/types/api'
+import type { ContextItem, ContextType } from '@/types/context'
+import type { DefaultContextRef } from '@/types/default-context'
 import {
   botApis,
   CreateBotRequest,
@@ -60,9 +62,36 @@ import { adaptMcpConfigForAgent, isValidAgentType } from '../utils/mcpTypeAdapte
 import { buildSkillRefsFromSelection } from '../utils/skillRefResolver'
 import { filterVisibleSkills } from '@/utils/skillVisibility'
 import { shellSupportsPreloadSkills } from './team-edit/simple-team-edit-utils'
+import {
+  contextItemsToDefaultContextRefs,
+  contextItemsToDefaultKnowledgeRefs,
+  defaultContextRefsToContextItems,
+  knowledgeRefsToDefaultContextRefs,
+} from '@/features/context-selector/adapters/defaultContextAdapters'
 
 /** Agent types supported by the system */
 export type AgentType = 'ClaudeCode' | 'Agno' | 'Dify'
+const DEFAULT_CONTEXT_ALLOWED_TYPES: ContextType[] =
+  process.env.NEXT_PUBLIC_ENABLE_DINGTALK_CONTEXT === 'true'
+    ? ['knowledge_base', 'external_document']
+    : ['knowledge_base']
+
+function filterDefaultContextItems(items: ContextItem[]): ContextItem[] {
+  const seen = new Set<string>()
+  const filtered: ContextItem[] = []
+  for (const item of items) {
+    if (!DEFAULT_CONTEXT_ALLOWED_TYPES.includes(item.type)) {
+      continue
+    }
+    const key = `${item.type}:${item.id}`
+    if (seen.has(key)) {
+      continue
+    }
+    seen.add(key)
+    filtered.push(item)
+  }
+  return filtered
+}
 
 /** Interface for bot data returned by getBotData */
 export interface BotFormData {
@@ -71,6 +100,7 @@ export interface BotFormData {
   agent_config: Record<string, unknown>
   system_prompt: string
   mcp_servers: Record<string, unknown>
+  default_context_refs: DefaultContextRef[]
   default_knowledge_base_refs: KnowledgeBaseDefaultRef[]
   skills: string[]
   skill_refs: Record<string, SkillRefMeta>
@@ -186,9 +216,25 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   const [mcpConfig, setMcpConfig] = useState(
     baseBot?.mcp_servers ? JSON.stringify(baseBot.mcp_servers, null, 2) : ''
   )
-  const [defaultKnowledgeBaseRefs, setDefaultKnowledgeBaseRefs] = useState<
-    KnowledgeBaseDefaultRef[]
-  >(baseBot?.default_knowledge_base_refs || [])
+  const initialDefaultContextRefs = useMemo(
+    () =>
+      baseBot?.default_context_refs?.length
+        ? baseBot.default_context_refs
+        : knowledgeRefsToDefaultContextRefs(baseBot?.default_knowledge_base_refs),
+    [baseBot?.default_context_refs, baseBot?.default_knowledge_base_refs]
+  )
+  const [defaultContextsOpen, setDefaultContextsOpen] = useState(false)
+  const [defaultContextItems, setDefaultContextItems] = useState<ContextItem[]>(
+    filterDefaultContextItems(defaultContextRefsToContextItems(initialDefaultContextRefs))
+  )
+  const defaultContextRefs = useMemo(
+    () => contextItemsToDefaultContextRefs(filterDefaultContextItems(defaultContextItems)),
+    [defaultContextItems]
+  )
+  const defaultKnowledgeBaseRefs = useMemo(
+    () => contextItemsToDefaultKnowledgeRefs(filterDefaultContextItems(defaultContextItems)),
+    [defaultContextItems]
+  )
   const [selectedSkills, setSelectedSkills] = useState<string[]>(baseBot?.skills || [])
   const [preloadSkills, setPreloadSkills] = useState<string[]>(baseBot?.preload_skills || [])
   const [selectedSkillRefs, setSelectedSkillRefs] = useState<Record<string, SkillRefMeta>>(
@@ -525,7 +571,15 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     }
 
     setSelectedSkills(baseBot?.skills || [])
-    setDefaultKnowledgeBaseRefs(baseBot?.default_knowledge_base_refs || [])
+    setDefaultContextItems(
+      filterDefaultContextItems(
+        defaultContextRefsToContextItems(
+          baseBot?.default_context_refs?.length
+            ? baseBot.default_context_refs
+            : knowledgeRefsToDefaultContextRefs(baseBot?.default_knowledge_base_refs)
+        )
+      )
+    )
     setPreloadSkills(baseBot?.preload_skills || [])
     setSelectedSkillRefs(baseBot?.skill_refs || {})
     setAgentConfigError(false)
@@ -721,6 +775,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       agent_config: parsedAgentConfig,
       system_prompt: isDifyAgent ? '' : prompt.trim() || '',
       mcp_servers: parsedMcpConfig,
+      default_context_refs: defaultContextRefs,
       default_knowledge_base_refs: defaultKnowledgeBaseRefs,
       skills: selectedSkills.length > 0 ? selectedSkills : [],
       skill_refs: buildSkillRefsFromSelection(
@@ -750,6 +805,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     mcpConfig,
     agentName,
     botName,
+    defaultContextRefs,
     defaultKnowledgeBaseRefs,
     prompt,
     selectedSkills,
@@ -794,6 +850,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
           preload_skills: botData.preload_skills,
           preload_skill_refs: botData.preload_skill_refs,
           namespace: 'default',
+          default_context_refs: botData.default_context_refs,
           default_knowledge_base_refs: botData.default_knowledge_base_refs,
         }
 
@@ -814,6 +871,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
           agent_config: botData.agent_config,
           system_prompt: botData.system_prompt,
           mcp_servers: botData.mcp_servers,
+          default_context_refs: botData.default_context_refs,
           default_knowledge_base_refs: botData.default_knowledge_base_refs,
           skills: botData.skills,
           skill_refs: botData.skill_refs,
@@ -962,6 +1020,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
             groupName
           ),
           namespace: 'default',
+          default_context_refs: defaultContextRefs,
           default_knowledge_base_refs: defaultKnowledgeBaseRefs,
         }
 
@@ -980,6 +1039,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
           agent_config: parsedAgentConfig as Record<string, unknown>,
           system_prompt: isDifyAgent ? '' : prompt.trim() || '', // Clear system_prompt for Dify
           mcp_servers: parsedMcpConfig ?? {},
+          default_context_refs: defaultContextRefs,
           default_knowledge_base_refs: defaultKnowledgeBaseRefs,
           skills: selectedSkills.length > 0 ? selectedSkills : [],
           skill_refs: buildSkillRefsFromSelection(
@@ -1506,24 +1566,98 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                       </span>
                     </div>
                   </div>
-                  <div className="bg-base rounded-md p-2 min-h-[80px]">
-                    <KnowledgeBaseMultiSelector
-                      value={defaultKnowledgeBaseRefs}
-                      onChange={setDefaultKnowledgeBaseRefs}
-                      disabled={readOnly}
-                      allowedSources={
-                        scope === 'public'
-                          ? ['organization']
-                          : scope === 'group'
-                            ? groupName
-                              ? ['group', 'organization']
-                              : ['organization']
-                            : ['personal', 'group', 'organization']
-                      }
-                      allowedGroupNamespaces={
-                        scope === 'group' && groupName ? [groupName] : undefined
-                      }
-                    />
+                  <div className="bg-base rounded-md p-2 min-h-[80px] space-y-2">
+                    {!readOnly && (
+                      <ContextSelector
+                        open={defaultContextsOpen}
+                        onOpenChange={setDefaultContextsOpen}
+                        selectedContexts={defaultContextItems}
+                        allowedContextTypes={DEFAULT_CONTEXT_ALLOWED_TYPES}
+                        allowedKnowledgeBaseSources={
+                          scope === 'public'
+                            ? ['organization']
+                            : scope === 'group'
+                              ? groupName
+                                ? ['group', 'organization']
+                                : ['organization']
+                              : ['personal', 'group', 'organization']
+                        }
+                        allowedGroupNamespaces={
+                          scope === 'group' && groupName ? [groupName] : undefined
+                        }
+                        onSelect={context =>
+                          setDefaultContextItems(prev =>
+                            filterDefaultContextItems(
+                              prev.some(
+                                item => item.type === context.type && item.id === context.id
+                              )
+                                ? prev
+                                : [...prev, context]
+                            )
+                          )
+                        }
+                        onDeselect={id =>
+                          setDefaultContextItems(prev => prev.filter(item => item.id !== id))
+                        }
+                        onSelectMultiple={contexts =>
+                          setDefaultContextItems(prev => {
+                            const existingKeys = new Set(
+                              prev.map(item => `${item.type}:${item.id}`)
+                            )
+                            return filterDefaultContextItems([
+                              ...prev,
+                              ...contexts.filter(
+                                context => !existingKeys.has(`${context.type}:${context.id}`)
+                              ),
+                            ])
+                          })
+                        }
+                        onDeselectMultiple={ids =>
+                          setDefaultContextItems(prev =>
+                            prev.filter(item => !ids.includes(item.id))
+                          )
+                        }
+                      >
+                        <button
+                          type="button"
+                          className="flex h-9 w-full items-center justify-between rounded-md border border-border/50 bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                          data-testid="default-context-add-button"
+                        >
+                          <div className="flex items-center gap-2 text-text-muted">
+                            <Database className="h-4 w-4 text-primary" />
+                            <span>{t('common:bot.default_knowledge_bases_select_to_add')}</span>
+                          </div>
+                          <Plus className="h-4 w-4 opacity-50" />
+                        </button>
+                      </ContextSelector>
+                    )}
+                    <div className="flex flex-wrap gap-1.5">
+                      {defaultContextItems.map(context => (
+                        <span
+                          key={`${context.type}:${context.id}`}
+                          className="inline-flex items-center gap-1 rounded-md bg-muted px-2.5 py-1.5 text-sm text-text-primary"
+                        >
+                          <span className="max-w-[180px] truncate">{context.name}</span>
+                          {!readOnly && (
+                            <button
+                              type="button"
+                              className="inline-flex h-4 w-4 items-center justify-center text-text-muted hover:text-text-primary"
+                              data-testid={`default-context-remove-${context.type}-${context.id}`}
+                              onClick={() =>
+                                setDefaultContextItems(prev =>
+                                  prev.filter(
+                                    item => item.type !== context.type || item.id !== context.id
+                                  )
+                                )
+                              }
+                              aria-label={t('common:actions.delete')}
+                            >
+                              <XIcon className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                        </span>
+                      ))}
+                    </div>
                   </div>
                 </div>
               )}

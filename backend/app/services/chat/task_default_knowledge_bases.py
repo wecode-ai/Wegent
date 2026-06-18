@@ -2,17 +2,32 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Helpers for initializing task-level knowledge base bindings from Ghost defaults."""
+"""Helpers for initializing task-level context bindings from Ghost defaults."""
 
 from datetime import datetime
 from typing import Any
 
+from pydantic import TypeAdapter, ValidationError
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
+from app.models.task import TaskResource
 from app.models.user import User
-from app.schemas.kind import Bot, Ghost, Team
+from app.schemas.kind import (
+    Bot,
+    DefaultContextRef,
+    Ghost,
+    KnowledgeBaseDefaultRef,
+    Team,
+)
+from app.services.external_knowledge.registry import (
+    ExternalKnowledgeProviderRegistry,
+    build_default_external_knowledge_registry,
+)
 from app.services.readers import KindType, kindReader
+from app.stores.tasks import task_store
+
+DEFAULT_CONTEXT_REF_ADAPTER = TypeAdapter(DefaultContextRef)
 
 
 def _get_accessible_knowledge_base(
@@ -44,13 +59,21 @@ def _build_task_knowledge_base_ref(
     }
 
 
-def _iter_team_member_default_knowledge_base_ids(
+def _legacy_kb_ref_to_context_ref(ref: KnowledgeBaseDefaultRef) -> dict[str, Any]:
+    return {
+        "type": "knowledge_base",
+        "id": ref.id,
+        "name": ref.name,
+    }
+
+
+def _iter_team_member_default_context_refs(
     db: Session,
     team,
-) -> list[int]:
-    """Collect default knowledge base IDs from all team member Ghosts."""
+) -> list[DefaultContextRef]:
+    """Collect default context refs from all team member Ghosts."""
     team_crd = Team.model_validate(team.json)
-    knowledge_base_ids: list[int] = []
+    context_refs: list[DefaultContextRef] = []
 
     for member in team_crd.spec.members or []:
         bot = kindReader.get_by_name_and_namespace(
@@ -75,10 +98,192 @@ def _iter_team_member_default_knowledge_base_ids(
             continue
 
         ghost_crd = Ghost.model_validate(ghost.json)
-        for ref in ghost_crd.spec.defaultKnowledgeBaseRefs or []:
-            knowledge_base_ids.append(ref.id)
+        if ghost_crd.spec.defaultContextRefs is not None:
+            context_refs.extend(ghost_crd.spec.defaultContextRefs)
+        else:
+            for ref in ghost_crd.spec.defaultKnowledgeBaseRefs or []:
+                context_refs.append(
+                    DEFAULT_CONTEXT_REF_ADAPTER.validate_python(
+                        _legacy_kb_ref_to_context_ref(ref)
+                    )
+                )
 
-    return knowledge_base_ids
+    return context_refs
+
+
+def _iter_team_member_default_knowledge_base_ids(
+    db: Session,
+    team,
+) -> list[int]:
+    """Collect default knowledge base IDs from all team member Ghosts."""
+    return [
+        ref.id
+        for ref in _iter_team_member_default_context_refs(db, team)
+        if ref.type == "knowledge_base"
+    ]
+
+
+def _make_context_key(ref: DefaultContextRef) -> str:
+    if ref.type == "knowledge_base":
+        return f"knowledge_base:{ref.id}"
+    return f"{ref.type}:{getattr(ref, 'id', '')}"
+
+
+def _make_context_warning_key(warning: dict[str, Any]) -> str:
+    metadata = (
+        warning.get("metadata") if isinstance(warning.get("metadata"), dict) else {}
+    )
+    return ":".join(
+        [
+            str(warning.get("type") or ""),
+            str(warning.get("reason") or ""),
+            str(warning.get("provider") or ""),
+            str(warning.get("source") or ""),
+            str(warning.get("external_id") or ""),
+            str(metadata.get("external_id") or ""),
+            str(warning.get("name") or ""),
+            str(warning.get("message") or ""),
+        ]
+    )
+
+
+def append_task_context_warnings(
+    db: Session,
+    task: TaskResource,
+    warnings: list[dict[str, Any]],
+) -> bool:
+    """Append task context warnings and return whether the task changed."""
+    if not warnings:
+        return False
+
+    task_json = task.json if isinstance(task.json, dict) else {}
+    next_task_json = dict(task_json)
+    spec = dict(next_task_json.get("spec") or {})
+    existing_warnings = [
+        warning
+        for warning in spec.get("contextWarnings", []) or []
+        if isinstance(warning, dict)
+    ]
+    seen = {_make_context_warning_key(warning) for warning in existing_warnings}
+    appended = False
+    for warning in warnings:
+        key = _make_context_warning_key(warning)
+        if key in seen:
+            continue
+        existing_warnings.append(warning)
+        seen.add(key)
+        appended = True
+
+    if not appended:
+        return False
+
+    spec["contextWarnings"] = existing_warnings
+    next_task_json["spec"] = spec
+    task_store.update_json(db, task=task, payload=next_task_json)
+    return True
+
+
+def _context_item_to_default_ref(
+    context: Any,
+    external_registry: ExternalKnowledgeProviderRegistry,
+) -> DefaultContextRef | None:
+    raw = context.model_dump() if hasattr(context, "model_dump") else context
+    if not isinstance(raw, dict):
+        return None
+    context_type = raw.get("type")
+    data = raw.get("data") or {}
+    if context_type == "knowledge_base":
+        kb_id = data.get("knowledge_id") or data.get("id")
+        if kb_id is None:
+            return None
+        try:
+            return DEFAULT_CONTEXT_REF_ADAPTER.validate_python(
+                {
+                    "type": "knowledge_base",
+                    "id": int(kb_id),
+                    "name": data.get("name") or str(kb_id),
+                    "document_count": data.get("document_count"),
+                }
+            )
+        except (TypeError, ValueError, ValidationError):
+            return None
+    return external_registry.context_item_to_default_ref(raw)
+
+
+def build_initial_task_context_refs(
+    db: Session,
+    user: User,
+    team,
+    explicit_contexts: list[Any] | None = None,
+    default_context_mode: str = "use_defaults",
+    knowledge_base_id: int | None = None,
+) -> dict[str, list[dict[str, Any]]]:
+    """Build task-level context refs and legacy KB refs."""
+    bound_at = datetime.now().isoformat()
+    external_registry = build_default_external_knowledge_registry()
+    explicit_refs = [
+        ref
+        for context in explicit_contexts or []
+        if (ref := _context_item_to_default_ref(context, external_registry)) is not None
+    ]
+    if default_context_mode == "disable_defaults":
+        candidate_refs = explicit_refs
+    elif default_context_mode == "override":
+        candidate_refs = explicit_refs
+    else:
+        candidate_refs = [
+            *_iter_team_member_default_context_refs(db, team),
+            *explicit_refs,
+        ]
+
+    if knowledge_base_id is not None:
+        kb = _get_accessible_knowledge_base(db, user.id, knowledge_base_id)
+        if kb:
+            candidate_refs.append(
+                DEFAULT_CONTEXT_REF_ADAPTER.validate_python(
+                    {
+                        "type": "knowledge_base",
+                        "id": kb.id,
+                        "name": _get_knowledge_base_display_name(kb),
+                    }
+                )
+            )
+
+    seen: set[str] = set()
+    context_refs: list[dict[str, Any]] = []
+    context_warnings: list[dict[str, Any]] = []
+    knowledge_base_refs_by_id: dict[int, dict[str, Any]] = {}
+
+    for ref in candidate_refs:
+        key = _make_context_key(ref)
+        if key in seen:
+            continue
+        seen.add(key)
+
+        if ref.type == "knowledge_base":
+            knowledge_base = _get_accessible_knowledge_base(db, user.id, ref.id)
+            if not knowledge_base:
+                continue
+            kb_ref = _build_task_knowledge_base_ref(
+                knowledge_base=knowledge_base,
+                user_name=user.user_name,
+                bound_at=bound_at,
+            )
+            knowledge_base_refs_by_id[knowledge_base.id] = kb_ref
+            context_refs.append({"type": "knowledge_base", "data": kb_ref})
+            continue
+
+        resolved = external_registry.resolve(db, user, ref, bound_at)
+        if resolved.context_ref:
+            context_refs.append(resolved.context_ref)
+        if resolved.warning:
+            context_warnings.append(resolved.warning)
+
+    return {
+        "context_refs": context_refs,
+        "context_warnings": context_warnings,
+        "knowledge_base_refs": list(knowledge_base_refs_by_id.values()),
+    }
 
 
 def build_initial_task_knowledge_base_refs(
@@ -88,25 +293,9 @@ def build_initial_task_knowledge_base_refs(
     knowledge_base_id: int | None = None,
 ) -> list[dict[str, Any]]:
     """Build task-level knowledge base refs from Ghost defaults plus explicit selection."""
-    bound_at = datetime.now().isoformat()
-    refs_by_id: dict[int, dict[str, Any]] = {}
-
-    candidate_ids = _iter_team_member_default_knowledge_base_ids(db, team)
-    if knowledge_base_id is not None:
-        candidate_ids.append(knowledge_base_id)
-
-    for candidate_id in candidate_ids:
-        if candidate_id in refs_by_id:
-            continue
-
-        knowledge_base = _get_accessible_knowledge_base(db, user.id, candidate_id)
-        if not knowledge_base:
-            continue
-
-        refs_by_id[candidate_id] = _build_task_knowledge_base_ref(
-            knowledge_base=knowledge_base,
-            user_name=user.user_name,
-            bound_at=bound_at,
-        )
-
-    return list(refs_by_id.values())
+    return build_initial_task_context_refs(
+        db=db,
+        user=user,
+        team=team,
+        knowledge_base_id=knowledge_base_id,
+    )["knowledge_base_refs"]

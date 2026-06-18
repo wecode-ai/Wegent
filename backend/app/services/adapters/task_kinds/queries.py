@@ -332,6 +332,11 @@ class TaskQueryMixin:
             requested_skills = get_requested_skills_from_task(task_crd_for_skills)
             if requested_skills:
                 task_dict["requested_skills"] = requested_skills
+            context_warnings = task_crd_for_skills.spec.contextWarnings
+            if context_warnings:
+                task_dict["context_warnings"] = [
+                    warning.model_dump(mode="json") for warning in context_warnings
+                ]
 
         user = userReader.get_by_id(db, user_id)
 

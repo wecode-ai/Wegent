@@ -35,6 +35,7 @@ const botForm: SimpleBotFormValue = {
   selectedSkills: ['repo-reader'],
   selectedSkillRefs: {},
   availableSkills: skills,
+  defaultContextRefs: [{ type: 'knowledge_base', id: 10, name: 'Product Docs' }],
   defaultKnowledgeBaseRefs: [{ id: 10, name: 'Product Docs' }],
 }
 
@@ -66,6 +67,7 @@ describe('simple team edit save helpers', () => {
       },
       system_prompt: 'Answer clearly.',
       mcp_servers: {},
+      default_context_refs: [{ type: 'knowledge_base', id: 10, name: 'Product Docs' }],
       default_knowledge_base_refs: [{ id: 10, name: 'Product Docs' }],
       skills: ['repo-reader'],
       skill_refs: {

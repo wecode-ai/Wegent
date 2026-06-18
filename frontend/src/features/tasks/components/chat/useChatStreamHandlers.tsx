@@ -41,6 +41,7 @@ import type {
   InteractiveFormAnswerPayload,
 } from '@/types/api'
 import type { ContextItem } from '@/types/context'
+import type { DefaultContextMode } from '@/types/default-context'
 import type { SkillRef } from '../../hooks/useSkillSelector'
 
 function isVirtualKnowledgeBasePath(path: string): boolean {
@@ -443,10 +444,10 @@ export function useChatStreamHandlers({
       }
 
       const contextItems: Array<{
-        type: 'knowledge_base' | 'table' | 'selected_documents'
+        type: 'knowledge_base' | 'table' | 'selected_documents' | 'external_document'
         data: Record<string, unknown>
       }> = snapshotContexts
-        .filter(ctx => ctx.type !== 'queue_message' && ctx.type !== 'dingtalk_doc')
+        .filter(ctx => ctx.type !== 'queue_message')
         .map(ctx => {
           if (ctx.type === 'knowledge_base') {
             return {
@@ -455,6 +456,21 @@ export function useChatStreamHandlers({
                 knowledge_id: ctx.id,
                 name: ctx.name,
                 document_count: ctx.document_count,
+              },
+            }
+          }
+          if (ctx.type === 'external_document') {
+            return {
+              type: 'external_document' as const,
+              data: {
+                id: ctx.id,
+                provider: ctx.provider,
+                source: ctx.source,
+                external_id: ctx.external_id,
+                name: ctx.name,
+                url: ctx.url,
+                node_type: ctx.node_type,
+                metadata: ctx.metadata,
               },
             }
           }
@@ -477,12 +493,14 @@ export function useChatStreamHandlers({
         messageWithQueueContent = `${queueContents}\n\n---\n\n${finalMessage}`
       }
 
-      const dingtalkDocContexts = snapshotContexts.filter(ctx => ctx.type === 'dingtalk_doc')
+      const dingtalkDocContexts = snapshotContexts.filter(
+        (ctx): ctx is import('@/types/context').DingTalkDocContext =>
+          ctx.type === 'external_document' && ctx.provider === 'dingtalk'
+      )
       if (dingtalkDocContexts.length > 0) {
         const docRefs = dingtalkDocContexts
           .map(ctx => {
-            const docCtx = ctx as import('@/types/context').DingTalkDocContext
-            return `- [${docCtx.name}](${docCtx.doc_url})`
+            return `- [${ctx.name}](${ctx.url || ''})`
           })
           .join('\n')
         const dingtalkPrefix = `**${t('chat:dingtalkDocs.referencedDocsLabel')}**\n${docRefs}\n\n---\n\n`
@@ -600,6 +618,7 @@ export function useChatStreamHandlers({
         task_type: taskType,
         knowledge_base_id: taskType === 'knowledge' ? knowledgeBaseId : undefined,
         contexts: contextItems.length > 0 ? contextItems : undefined,
+        default_context_mode: 'use_defaults' satisfies DefaultContextMode,
         device_id: effectiveDeviceId,
         // Project association for workspace project conversations
         project_id: currentTaskId ? undefined : projectId,
@@ -1310,6 +1329,7 @@ export function useChatStreamHandlers({
             task_type: taskType,
             knowledge_base_id: taskType === 'knowledge' ? knowledgeBaseId : undefined,
             contexts: contextItems.length > 0 ? contextItems : undefined,
+            default_context_mode: 'use_defaults',
           },
           {
             pendingUserMessage: message,

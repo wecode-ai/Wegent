@@ -236,6 +236,7 @@ interface DingTalkDocContextSelectorProps {
   onDeselect: (id: string) => void
   onSelectMultiple: (contexts: DingTalkDocContext[]) => void
   onDeselectMultiple: (ids: string[]) => void
+  onScrollableWheel?: (event: React.WheelEvent<HTMLElement>) => void
 }
 
 /**
@@ -249,6 +250,7 @@ export function DingTalkDocContextSelector({
   onDeselect,
   onSelectMultiple,
   onDeselectMultiple,
+  onScrollableWheel,
 }: DingTalkDocContextSelectorProps) {
   const { t } = useTranslation('chat')
 
@@ -351,11 +353,15 @@ export function DingTalkDocContextSelector({
     return {
       id: getDingTalkSelectionKey(node.source, node.dingtalk_node_id),
       name: node.name,
-      type: 'dingtalk_doc',
-      doc_url: node.doc_url,
+      type: 'external_document',
+      provider: 'dingtalk',
+      external_id: node.dingtalk_node_id,
+      url: node.doc_url,
       node_type: node.node_type as 'folder' | 'doc' | 'file',
-      dingtalk_node_id: node.dingtalk_node_id,
       source: node.source,
+      metadata: {
+        dingtalk_node_id: node.dingtalk_node_id,
+      },
     }
   }, [])
 
@@ -590,7 +596,9 @@ export function DingTalkDocContextSelector({
       </div>
 
       {/* Tree content area */}
-      <div className="overflow-y-auto flex-1 max-h-[260px] py-1 px-1">{renderContent()}</div>
+      <div className="overflow-y-auto flex-1 max-h-[260px] py-1 px-1" onWheel={onScrollableWheel}>
+        {renderContent()}
+      </div>
     </div>
   )
 }
@@ -603,11 +611,15 @@ export function DingTalkDocContextSelector({
 export function getDingTalkSelectedIds(selectedContexts: ContextItem[]): Set<string> {
   return new Set(
     selectedContexts
-      .filter((ctx): ctx is DingTalkDocContext => ctx.type === 'dingtalk_doc')
+      .filter(
+        (ctx): ctx is DingTalkDocContext =>
+          ctx.type === 'external_document' && ctx.provider === 'dingtalk'
+      )
       .map(ctx => {
         const source: DingtalkNodeSource =
           ctx.source === 'wikispace' || ctx.source === 'docs' ? ctx.source : 'docs'
-        return getDingTalkSelectionKey(source, ctx.dingtalk_node_id)
+        const nodeId = String(ctx.metadata?.dingtalk_node_id || ctx.external_id)
+        return getDingTalkSelectionKey(source, nodeId)
       })
   )
 }

@@ -9,7 +9,7 @@ from typing import Any, List, Optional
 from pydantic import BaseModel, model_validator
 
 from app.core.constants import CLIENT_ORIGIN_FRONTEND, SUPPORTED_CLIENT_ORIGINS
-from app.schemas.kind import SkillRefMeta
+from app.schemas.kind import SkillRefMeta, TaskContextWarning
 from app.schemas.subtask import SubtaskWithBot
 from app.schemas.team import TeamInDB
 from app.schemas.user import UserInDB
@@ -203,6 +203,7 @@ class TaskDetail(BaseModel):
     requested_skills: Optional[List[SkillRef]] = (
         None  # User-selected skills for this task
     )
+    context_warnings: Optional[List[TaskContextWarning]] = None
 
     class Config:
         """Pydantic config."""

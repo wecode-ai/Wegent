@@ -230,6 +230,12 @@ class ChatSendPayload(BaseModel):
     contexts: Optional[List[ContextItem]] = Field(
         None, description="Context items (knowledge bases, etc.)"
     )
+    default_context_mode: Literal["use_defaults", "disable_defaults", "override"] = (
+        Field(
+            "use_defaults",
+            description="How to apply team/bot default contexts for new tasks.",
+        )
+    )
     # Repository info for code tasks
     git_url: Optional[str] = Field(None, description="Git repository URL")
     git_repo: Optional[str] = Field(None, description="Git repository name")

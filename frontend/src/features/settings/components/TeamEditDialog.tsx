@@ -28,6 +28,7 @@ import {
   type KnowledgeBaseDefaultRef,
   type PipelineContextPassing,
 } from '@/types/api'
+import type { DefaultContextRef } from '@/types/default-context'
 import {
   TeamMode,
   getAllowedAgentsForTeamMode,
@@ -67,6 +68,11 @@ import {
 import { getAllowedAgentsForBindMode } from '../utils/team-bind-mode-rules'
 import { normalizeMcpServers, parseMcpConfig, stringifyMcpConfig } from '../utils/mcpConfig'
 import type { AgentType as McpAgentType } from '../utils/mcpTypeAdapter'
+import {
+  contextItemsToDefaultKnowledgeRefs,
+  defaultContextRefsToContextItems,
+  knowledgeRefsToDefaultContextRefs,
+} from '@/features/context-selector/adapters/defaultContextAdapters'
 
 interface TeamEditDialogProps {
   open: boolean
@@ -217,6 +223,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   const [simpleDefaultKnowledgeBaseRefs, setSimpleDefaultKnowledgeBaseRefs] = useState<
     KnowledgeBaseDefaultRef[]
   >([])
+  const [simpleDefaultContextRefs, setSimpleDefaultContextRefs] = useState<DefaultContextRef[]>([])
   const [simpleMcpConfig, setSimpleMcpConfig] = useState('')
 
   // Ref for BotEdit in solo mode
@@ -317,7 +324,13 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       setSimpleSelectedSkills(fullLeaderBot?.skills || [])
       setSimpleSelectedSkillRefs(fullLeaderBot?.skill_refs || {})
       setSimplePreloadSkills(fullLeaderBot?.preload_skills || [])
-      setSimpleDefaultKnowledgeBaseRefs(fullLeaderBot?.default_knowledge_base_refs || [])
+      const defaultContextRefs = fullLeaderBot?.default_context_refs?.length
+        ? fullLeaderBot.default_context_refs
+        : knowledgeRefsToDefaultContextRefs(fullLeaderBot?.default_knowledge_base_refs)
+      setSimpleDefaultContextRefs(defaultContextRefs)
+      setSimpleDefaultKnowledgeBaseRefs(
+        contextItemsToDefaultKnowledgeRefs(defaultContextRefsToContextItems(defaultContextRefs))
+      )
       setSimpleMcpConfig(stringifyMcpConfig(fullLeaderBot?.mcp_servers || {}))
       setSimpleModelName(
         fullLeaderBot?.agent_config ? getModelFromConfig(fullLeaderBot.agent_config) : ''
@@ -370,6 +383,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       setSimpleSelectedSkillRefs({})
       setSimplePreloadSkills([])
       setSimpleDefaultKnowledgeBaseRefs([])
+      setSimpleDefaultContextRefs([])
       setSimpleMcpConfig('')
       // Default to true for new teams (requires workspace by default)
       setRequiresWorkspace(true)
@@ -639,6 +653,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
           selectedSkillRefs: simpleSelectedSkillRefs,
           preloadSkills: simpleSupportsPreloadSkills ? simplePreloadSkills : [],
           availableSkills: simpleAllSkills,
+          defaultContextRefs: simpleDefaultContextRefs,
           defaultKnowledgeBaseRefs: simpleDefaultKnowledgeBaseRefs,
           mcpServers: parsedMcpServers,
         },
@@ -991,8 +1006,18 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                   )
                 }}
                 onReloadSkills={reloadSimpleSkills}
+                defaultContextRefs={simpleDefaultContextRefs}
+                onDefaultContextRefsChange={refs => {
+                  setSimpleDefaultContextRefs(refs)
+                  setSimpleDefaultKnowledgeBaseRefs(
+                    contextItemsToDefaultKnowledgeRefs(defaultContextRefsToContextItems(refs))
+                  )
+                }}
                 defaultKnowledgeBaseRefs={simpleDefaultKnowledgeBaseRefs}
-                onDefaultKnowledgeBaseRefsChange={setSimpleDefaultKnowledgeBaseRefs}
+                onDefaultKnowledgeBaseRefsChange={refs => {
+                  setSimpleDefaultKnowledgeBaseRefs(refs)
+                  setSimpleDefaultContextRefs(knowledgeRefsToDefaultContextRefs(refs))
+                }}
                 mcpConfig={simpleMcpConfig}
                 onMcpConfigChange={setSimpleMcpConfig}
                 mcpAgentType={simpleMcpAgentType}

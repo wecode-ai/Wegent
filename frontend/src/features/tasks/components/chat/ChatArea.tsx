@@ -26,7 +26,13 @@ import { useChatAreaState } from './useChatAreaState'
 import { useChatStreamHandlers } from './useChatStreamHandlers'
 import { allBotsHavePredefinedModel } from '../selector/ModelSelector'
 import { QuoteProvider, SelectionTooltip, useQuote } from '../text-selection'
-import type { InteractiveFormAnswerPayload, Team, SubtaskContextBrief, TaskType } from '@/types/api'
+import type {
+  InteractiveFormAnswerPayload,
+  Team,
+  SubtaskContextBrief,
+  TaskContextWarning,
+  TaskType,
+} from '@/types/api'
 import type { PipelineContextPassing } from '@/types/api'
 import type { Model } from '../../hooks/useModelSelection'
 import type { ContextItem, QueueMessageContext } from '@/types/context'
@@ -88,6 +94,19 @@ const PIPELINE_NEXT_STEP_CONTEXT_TYPES = new Set<SubtaskContextBrief['context_ty
   'knowledge_base',
   'table',
 ])
+
+function getContextWarningKey(taskId: number | undefined, warning: TaskContextWarning): string {
+  return [
+    taskId ?? 'new',
+    warning.type,
+    warning.reason,
+    warning.provider ?? '',
+    warning.source ?? '',
+    warning.external_id ?? '',
+    warning.name ?? '',
+    warning.message,
+  ].join(':')
+}
 
 function isPipelineNextStepContext(context: unknown): context is SubtaskContextBrief {
   if (!context || typeof context !== 'object') {
@@ -223,6 +242,9 @@ function ChatAreaContent({
   const [pendingQuickPhrase, setPendingQuickPhrase] = useState<string | null>(null)
   const [isQuickPhraseOverwriteOpen, setIsQuickPhraseOverwriteOpen] = useState(false)
   const [focusInputAtEndSignal, setFocusInputAtEndSignal] = useState(0)
+  const [dismissedContextWarningKeys, setDismissedContextWarningKeys] = useState<Set<string>>(
+    () => new Set()
+  )
   const { quote, clearQuote, formatQuoteForMessage } = useQuote()
 
   // Task context
@@ -1605,6 +1627,20 @@ function ChatAreaContent({
 
   const shouldMountQueueMessageHandler =
     taskType === 'chat' || taskType === 'task' || taskType === 'code'
+  const contextWarnings = selectedTaskDetail?.context_warnings || []
+  const visibleContextWarnings = contextWarnings.filter(
+    warning =>
+      !dismissedContextWarningKeys.has(getContextWarningKey(selectedTaskDetail?.id, warning))
+  )
+  const dismissContextWarnings = () => {
+    setDismissedContextWarningKeys(prev => {
+      const next = new Set(prev)
+      visibleContextWarnings.forEach(warning => {
+        next.add(getContextWarningKey(selectedTaskDetail?.id, warning))
+      })
+      return next
+    })
+  }
 
   return (
     <div
@@ -1640,6 +1676,32 @@ function ChatAreaContent({
           canContinueToNextStage={pipelineNextStepDraft.hasSelectableContext}
           onNextStepClick={handlePipelineNextStepClick}
         />
+      )}
+
+      {visibleContextWarnings.length > 0 && (
+        <div className="mx-auto w-full max-w-3xl px-4 pt-3">
+          <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            <div className="flex items-start gap-2">
+              <ShieldX className="mt-0.5 h-4 w-4 flex-shrink-0" />
+              <div className="min-w-0 flex-1 space-y-1">
+                {visibleContextWarnings.map((warning, index) => (
+                  <div key={`${warning.reason}:${warning.external_id || index}`}>
+                    {warning.message}
+                    {warning.name ? `${t('contextWarnings.nameSeparator')}${warning.name}` : ''}
+                  </div>
+                ))}
+              </div>
+              <button
+                type="button"
+                className="inline-flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md text-amber-700 hover:bg-amber-100 hover:text-amber-950"
+                aria-label={t('common:actions.close')}
+                onClick={dismissContextWarnings}
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Messages Area: always mounted to keep scroll container stable */}

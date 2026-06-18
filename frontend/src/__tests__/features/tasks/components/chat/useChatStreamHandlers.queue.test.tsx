@@ -1,5 +1,6 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { useChatStreamHandlers } from '@/features/tasks/components/chat/useChatStreamHandlers'
+import type { ContextItem } from '@/types/context'
 import type { TaskDetail } from '@/types/api'
 import type React from 'react'
 
@@ -113,7 +114,7 @@ jest.mock('@/hooks/useTraceAction', () => ({
   }),
 }))
 
-function renderQueueableHook() {
+function renderQueueableHook(selectedContexts: ContextItem[] = []) {
   return renderHook(() =>
     useChatStreamHandlers({
       selectedTeam: { id: 5, name: 'Team', agent_type: 'chat' } as never,
@@ -142,7 +143,7 @@ function renderQueueableHook() {
       taskType: 'chat',
       shouldHideChatInput: false,
       scrollToBottom: mockScrollToBottom,
-      selectedContexts: [],
+      selectedContexts,
       resetContexts: mockResetContexts,
       additionalSkills: [],
     })
@@ -374,6 +375,61 @@ describe('useChatStreamHandlers queue integration', () => {
     expect(mockSetTaskInputMessage).toHaveBeenCalledWith('')
     expect(mockResetAttachment).toHaveBeenCalled()
     expect(mockResetContexts).toHaveBeenCalled()
+  })
+
+  it('sends selected DingTalk docs as structured contexts while preserving the message prefix', async () => {
+    isMachineStreamingMock = false
+    selectedTaskDetailMock = {
+      id: 42,
+      status: 'COMPLETED',
+      is_group_chat: false,
+      subtasks: [],
+    } as unknown as TaskDetail
+    const selectedContexts: ContextItem[] = [
+      {
+        type: 'external_document',
+        id: 'wikispace:node-1',
+        name: 'Roadmap',
+        provider: 'dingtalk',
+        source: 'wikispace',
+        external_id: 'node-1',
+        url: 'https://alidocs.dingtalk.com/i/nodes/node-1',
+        node_type: 'doc',
+        metadata: {
+          dingtalk_node_id: 'node-1',
+        },
+      },
+    ]
+
+    const { result } = renderQueueableHook(selectedContexts)
+
+    await act(async () => {
+      await result.current.handleSendMessage()
+    })
+
+    expect(mockContextSendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.stringContaining('[Roadmap](https://alidocs.dingtalk.com/i/nodes/node-1)'),
+        contexts: [
+          {
+            type: 'external_document',
+            data: {
+              id: 'wikispace:node-1',
+              provider: 'dingtalk',
+              source: 'wikispace',
+              external_id: 'node-1',
+              name: 'Roadmap',
+              url: 'https://alidocs.dingtalk.com/i/nodes/node-1',
+              node_type: 'doc',
+              metadata: {
+                dingtalk_node_id: 'node-1',
+              },
+            },
+          },
+        ],
+      }),
+      expect.anything()
+    )
   })
 
   it('uses the current task id for a follow-up while task detail is temporarily unavailable', async () => {
