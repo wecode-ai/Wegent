@@ -14,6 +14,9 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 from executor.config import config
+from executor.services.runtime_stream_cache import (
+    runtime_stream_cache_transport_kwargs,
+)
 from executor.services.turn_file_changes import TurnFileChangeTracker
 from shared.logger import setup_logger
 from shared.models import EmitterBuilder, ResponsesAPIEmitter, TransportFactory
@@ -115,7 +118,8 @@ class Agent:
             .with_task(self.task_id, new_subtask_id)
             .with_transport(
                 TransportFactory.create_callback_throttled(
-                    callback_url=config.CALLBACK_URL
+                    callback_url=config.CALLBACK_URL,
+                    **runtime_stream_cache_transport_kwargs(),
                 )
             )
             .with_executor_info(

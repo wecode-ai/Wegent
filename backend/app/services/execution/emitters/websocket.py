@@ -44,6 +44,7 @@ class WebSocketResultEmitter(BaseResultEmitter):
         team_name: Optional[str] = None,
         task_title: Optional[str] = None,
         is_group_chat: bool = False,
+        runtime_cache_enabled: bool = False,
     ):
         """Initialize the WebSocket emitter.
 
@@ -55,6 +56,7 @@ class WebSocketResultEmitter(BaseResultEmitter):
             team_name: Optional team name for task:created event
             task_title: Optional task title for task:created event
             is_group_chat: Whether this is a group chat task
+            runtime_cache_enabled: Whether executor runtime cache owns snapshots
         """
         super().__init__(task_id, subtask_id)
         self.user_id = user_id
@@ -62,6 +64,7 @@ class WebSocketResultEmitter(BaseResultEmitter):
         self.team_name = team_name
         self.task_title = task_title
         self.is_group_chat = is_group_chat
+        self.runtime_cache_enabled = runtime_cache_enabled
 
     async def emit(self, event: ExecutionEvent) -> None:
         """Emit event via WebSocket.
@@ -259,23 +262,24 @@ class WebSocketResultEmitter(BaseResultEmitter):
             )
             return
 
-        try:
-            await session_manager.save_context_metrics(
-                event.subtask_id,
-                {
-                    "task_id": event.task_id,
-                    "subtask_id": event.subtask_id,
-                    "phase": phase,
-                    "context_metrics": context_metrics,
-                },
-            )
-        except Exception as exc:
-            logger.warning(
-                "[WebSocketResultEmitter] Failed to cache context metrics for task_id=%s subtask_id=%s: %s",
-                event.task_id,
-                event.subtask_id,
-                exc,
-            )
+        if not self.runtime_cache_enabled:
+            try:
+                await session_manager.save_context_metrics(
+                    event.subtask_id,
+                    {
+                        "task_id": event.task_id,
+                        "subtask_id": event.subtask_id,
+                        "phase": phase,
+                        "context_metrics": context_metrics,
+                    },
+                )
+            except Exception as exc:
+                logger.warning(
+                    "[WebSocketResultEmitter] Failed to cache context metrics for task_id=%s subtask_id=%s: %s",
+                    event.task_id,
+                    event.subtask_id,
+                    exc,
+                )
         await ws_emitter.emit_chat_status_updated(
             task_id=event.task_id,
             subtask_id=event.subtask_id,
@@ -346,11 +350,12 @@ class WebSocketResultEmitter(BaseResultEmitter):
             subtask_id=event.subtask_id,
             block=block,
         )
-        # Persist block to Redis so it survives page refresh and is included
-        # in the final subtask result via finalize_and_get_blocks().
-        import app.services.chat.storage as chat_storage
+        # When Redis owns snapshots, persist direct blocks for refresh recovery
+        # and final subtask result assembly.
+        if not self.runtime_cache_enabled:
+            import app.services.chat.storage as chat_storage
 
-        await chat_storage.session_manager.add_block(event.subtask_id, block)
+            await chat_storage.session_manager.add_block(event.subtask_id, block)
 
     async def _emit_direct_block_updated(
         self, event: ExecutionEvent, ws_emitter
@@ -376,17 +381,21 @@ class WebSocketResultEmitter(BaseResultEmitter):
                 update_kwargs[target_key] = updates[source_key]
         await ws_emitter.emit_block_updated(**update_kwargs)
 
-        import app.services.chat.storage as chat_storage
+        if not self.runtime_cache_enabled:
+            import app.services.chat.storage as chat_storage
 
-        blocks = await chat_storage.session_manager.get_blocks(event.subtask_id)
-        existing_block = next(
-            (block for block in blocks if block.get("id") == str(block_id)),
-            None,
-        )
-        if existing_block is None:
-            return
-        existing_block.update(updates)
-        await chat_storage.session_manager.add_block(event.subtask_id, existing_block)
+            blocks = await chat_storage.session_manager.get_blocks(event.subtask_id)
+            existing_block = next(
+                (block for block in blocks if block.get("id") == str(block_id)),
+                None,
+            )
+            if existing_block is None:
+                return
+            existing_block.update(updates)
+            await chat_storage.session_manager.add_block(
+                event.subtask_id,
+                existing_block,
+            )
 
     async def _emit_result_guidance_blocks(
         self, event: ExecutionEvent, ws_emitter

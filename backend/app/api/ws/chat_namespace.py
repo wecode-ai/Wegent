@@ -68,6 +68,7 @@ from app.services.chat.operations import (
     update_subtask_on_cancel,
 )
 from app.services.chat.rag import process_context_and_rag
+from app.services.chat.runtime_stream_snapshot import runtime_stream_snapshot_service
 from app.services.chat.storage import session_manager
 from app.services.chat.storage.db import get_db_session, run_sync_in_executor
 from app.services.chat.trigger import trigger_ai_response_unified
@@ -466,12 +467,14 @@ class ChatNamespace(socketio.AsyncNamespace):
         if streaming_info:
             subtask_id = streaming_info["subtask_id"]
 
-            # Get cached content and blocks from Redis
-            cached_content = await session_manager.get_streaming_content(subtask_id)
-            blocks = await session_manager.get_blocks(subtask_id)
-            cached_context_metrics = await session_manager.get_context_metrics(
-                subtask_id
+            snapshot = await runtime_stream_snapshot_service.get_snapshot(
+                task_id=payload.task_id,
+                subtask_id=subtask_id,
+                streaming_info=streaming_info,
             )
+            cached_content = snapshot.get("content", "")
+            blocks = snapshot.get("blocks", [])
+            cached_context_metrics = snapshot.get("context_metrics")
             offset = len(cached_content) if cached_content else 0
 
             logger.info(
@@ -1447,8 +1450,16 @@ class ChatNamespace(socketio.AsyncNamespace):
         task_room = f"task:{payload.task_id}"
         await self.enter_room(sid, task_room)
 
-        # Get cached content
-        cached_content = await session_manager.get_streaming_content(payload.subtask_id)
+        streaming_info = await get_active_streaming(payload.task_id)
+        if streaming_info and streaming_info.get("subtask_id") != payload.subtask_id:
+            streaming_info = None
+
+        snapshot = await runtime_stream_snapshot_service.get_snapshot(
+            task_id=payload.task_id,
+            subtask_id=payload.subtask_id,
+            streaming_info=streaming_info,
+        )
+        cached_content = snapshot.get("content", "")
 
         if cached_content and payload.offset < len(cached_content):
             # Send remaining content
@@ -1465,9 +1476,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                 to=sid,
             )
 
-        cached_context_metrics = await session_manager.get_context_metrics(
-            payload.subtask_id
-        )
+        cached_context_metrics = snapshot.get("context_metrics")
         if cached_context_metrics:
             from app.api.ws.events import ServerEvents
 

@@ -265,6 +265,14 @@ class LocalRunner:
             self.capability_sync_handler.handle_sync_capabilities,
         )
         self.websocket_client.on(
+            "runtime_cache:get_snapshot",
+            self._handle_runtime_cache_get_snapshot,
+        )
+        self.websocket_client.on(
+            "runtime_cache:cleanup",
+            self._handle_runtime_cache_cleanup,
+        )
+        self.websocket_client.on(
             DeviceEvents.START_TERMINAL_SESSION,
             self.session_handler.handle_start_session,
         )
@@ -283,6 +291,32 @@ class LocalRunner:
         self._register_extension_handlers()
 
         logger.info("WebSocket event handlers registered")
+
+    async def _handle_runtime_cache_get_snapshot(self, data: dict) -> dict:
+        """Return a cached stream snapshot for backend recovery."""
+
+        from executor.services.runtime_stream_cache import runtime_stream_cache
+
+        try:
+            subtask_id = int((data or {}).get("subtask_id"))
+        except (TypeError, ValueError):
+            return {"success": False, "error": "Invalid subtask_id"}
+
+        snapshot = await runtime_stream_cache.get_snapshot(subtask_id)
+        return {"success": True, "snapshot": snapshot}
+
+    async def _handle_runtime_cache_cleanup(self, data: dict) -> dict:
+        """Delete a cached stream snapshot after backend persistence."""
+
+        from executor.services.runtime_stream_cache import runtime_stream_cache
+
+        try:
+            subtask_id = int((data or {}).get("subtask_id"))
+        except (TypeError, ValueError):
+            return {"success": False, "error": "Invalid subtask_id"}
+
+        removed = await runtime_stream_cache.cleanup(subtask_id)
+        return {"success": True, "removed": removed}
 
     def _register_extension_handlers(self) -> None:
         """Allow downstream distributions to attach local runner handlers."""
@@ -544,12 +578,18 @@ class LocalRunner:
         Returns:
             ResponsesAPIEmitter configured with WebSocket transport
         """
-        from shared.models import EmitterBuilder, WebSocketTransport
+        from executor.services.runtime_stream_cache import (
+            runtime_stream_cache_transport_kwargs,
+        )
+        from shared.models import EmitterBuilder, TransportFactory
 
         # Create WebSocket transport for local mode
         # No event_mapping - use original OpenAI Responses API event types as Socket.IO event names
         # This allows backend's DeviceNamespace to route events correctly to _handle_responses_api_event
-        ws_transport = WebSocketTransport(self.websocket_client)
+        ws_transport = TransportFactory.create_websocket(
+            self.websocket_client,
+            **runtime_stream_cache_transport_kwargs(),
+        )
 
         # Create WebSocket emitter for local mode
         return (

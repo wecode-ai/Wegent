@@ -12,6 +12,9 @@ from typing import Any, Dict, Optional, Tuple, Union
 
 from executor.agents import Agent
 from executor.services.agent_service import AgentService
+from executor.services.runtime_stream_cache import (
+    runtime_stream_cache_transport_kwargs,
+)
 from shared.logger import setup_logger
 from shared.models import EmitterBuilder, ResponsesAPIEmitter, TransportFactory
 from shared.models.execution import ExecutionRequest
@@ -88,7 +91,10 @@ def _create_emitter(
         EmitterBuilder()
         .with_task(task_id, subtask_id)
         .with_transport(
-            TransportFactory.create_callback(callback_url=config.CALLBACK_URL)
+            TransportFactory.create_callback(
+                callback_url=config.CALLBACK_URL,
+                **runtime_stream_cache_transport_kwargs(),
+            )
         )
         .with_executor_info(
             name=os.getenv("EXECUTOR_NAME"),

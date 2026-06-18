@@ -95,6 +95,10 @@ class CallbackRequest(BaseModel):
     message_id: Optional[int] = Field(None, description="Message ID for ordering")
     executor_name: Optional[str] = Field(None, description="Executor name")
     executor_namespace: Optional[str] = Field(None, description="Executor namespace")
+    runtime_cache: Optional[dict] = Field(
+        None,
+        description="Executor runtime stream cache capability metadata",
+    )
     data: dict = Field(
         default_factory=dict,
         description="Event data in OpenAI Responses API format",
@@ -166,7 +170,12 @@ async def handle_callback(
         # 1. Database status updates (including executor_name for container reuse)
         # 2. Publishing TaskCompletedEvent for unified handling
         ws_emitter = WebSocketResultEmitter(
-            task_id=request.task_id, subtask_id=request.subtask_id, user_id=user_id
+            task_id=request.task_id,
+            subtask_id=request.subtask_id,
+            user_id=user_id,
+            runtime_cache_enabled=bool(
+                request.runtime_cache and request.runtime_cache.get("enabled")
+            ),
         )
         emitter = StatusUpdatingEmitter(
             wrapped=ws_emitter,
@@ -174,6 +183,7 @@ async def handle_callback(
             subtask_id=request.subtask_id,
             executor_name=request.executor_name,
             executor_namespace=request.executor_namespace,
+            runtime_cache=request.runtime_cache,
         )
         await emitter.emit(event)
         await emitter.close()
@@ -273,6 +283,9 @@ async def handle_batch_callback(
                 task_id=request.task_id,
                 subtask_id=request.subtask_id,
                 user_id=user_id,
+                runtime_cache_enabled=bool(
+                    request.runtime_cache and request.runtime_cache.get("enabled")
+                ),
             )
             emitter = StatusUpdatingEmitter(
                 wrapped=ws_emitter,
@@ -280,6 +293,7 @@ async def handle_batch_callback(
                 subtask_id=request.subtask_id,
                 executor_name=request.executor_name,
                 executor_namespace=request.executor_namespace,
+                runtime_cache=request.runtime_cache,
             )
             await emitter.emit(event)
             await emitter.close()

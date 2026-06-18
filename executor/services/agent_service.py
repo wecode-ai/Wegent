@@ -16,6 +16,9 @@ from typing import Any, ClassVar, Dict, List, Optional, Tuple, Union
 from executor.agents import Agent, AgentFactory
 from executor.agents.agno.agno_agent import AgnoAgent
 from executor.config import config
+from executor.services.runtime_stream_cache import (
+    runtime_stream_cache_transport_kwargs,
+)
 from shared.logger import setup_logger
 from shared.models import EmitterBuilder, TransportFactory
 from shared.models.execution import ExecutionRequest
@@ -119,7 +122,8 @@ class AgentService:
                 .with_task(task_id, subtask_id)
                 .with_transport(
                     TransportFactory.create_callback_throttled(
-                        callback_url=config.CALLBACK_URL
+                        callback_url=config.CALLBACK_URL,
+                        **runtime_stream_cache_transport_kwargs(),
                     )
                 )
                 .with_executor_info(
@@ -465,7 +469,10 @@ class AgentService:
                 EmitterBuilder()
                 .with_task(task_id, subtask_id)
                 .with_transport(
-                    TransportFactory.create_callback(callback_url=config.CALLBACK_URL)
+                    TransportFactory.create_callback(
+                        callback_url=config.CALLBACK_URL,
+                        **runtime_stream_cache_transport_kwargs(),
+                    )
                 )
                 .with_executor_info(
                     name=os.getenv("EXECUTOR_NAME"),

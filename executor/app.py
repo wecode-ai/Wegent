@@ -25,6 +25,7 @@ from pydantic import BaseModel
 
 from executor.services.agent_service import AgentService
 from executor.services.heartbeat_service import start_heartbeat, stop_heartbeat
+from executor.services.runtime_stream_cache import runtime_stream_cache
 from executor.tasks import process, process_async, run_task, run_task_async
 
 # Import the shared logger
@@ -557,6 +558,31 @@ agent_service = AgentService()
 async def health_check():
     """Health check endpoint for container readiness probes."""
     return {"status": "healthy", "service": "task_executor"}
+
+
+@app.get("/api/runtime-cache/capabilities")
+async def runtime_cache_capabilities():
+    """Return executor runtime stream cache capability metadata."""
+
+    return runtime_stream_cache.capability()
+
+
+@app.get("/api/runtime-cache/subtasks/{subtask_id}")
+async def get_runtime_cache_snapshot(subtask_id: int):
+    """Return a cached stream snapshot for backend recovery."""
+
+    snapshot = await runtime_stream_cache.get_snapshot(subtask_id)
+    if snapshot is None:
+        raise HTTPException(status_code=404, detail="Runtime stream cache not found")
+    return {"snapshot": snapshot}
+
+
+@app.delete("/api/runtime-cache/subtasks/{subtask_id}")
+async def delete_runtime_cache_snapshot(subtask_id: int):
+    """Delete a cached stream snapshot after backend persistence."""
+
+    removed = await runtime_stream_cache.cleanup(subtask_id)
+    return {"removed": removed}
 
 
 class OpenAIBackgroundResponse(BaseModel):

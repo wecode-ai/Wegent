@@ -27,6 +27,8 @@ Wegent is an open-source AI-native operating system for defining, organizing, an
 - When adding new features, put detailed docs in `docs/en/` and `docs/zh/`, reference from AGENTS.md
 
 **Recent design docs:**
+- Executor runtime stream cache (store active stream snapshots in executor memory while keeping Redis coordination): [`docs/zh/developer-guide/executor-runtime-stream-cache.md`](docs/zh/developer-guide/executor-runtime-stream-cache.md)
+- English version: [`docs/en/developer-guide/executor-runtime-stream-cache.md`](docs/en/developer-guide/executor-runtime-stream-cache.md)
 - Task runtime state machine and frontend consistency recovery: [`docs/zh/developer-guide/task-runtime-state-machine.md`](docs/zh/developer-guide/task-runtime-state-machine.md)
 - English version: [`docs/en/developer-guide/task-runtime-state-machine.md`](docs/en/developer-guide/task-runtime-state-machine.md)
 - Prompt caching optimization via dynamic context injection: [`docs/zh/developer-guide/dynamic-context.md`](docs/zh/developer-guide/dynamic-context.md)

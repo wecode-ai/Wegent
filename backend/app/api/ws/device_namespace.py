@@ -1348,6 +1348,12 @@ class DeviceNamespace(socketio.AsyncNamespace):
         subtask_id = data.get("subtask_id")
         event_data = data.get("data", {})
         message_id = data.get("message_id")
+        runtime_cache = data.get("runtime_cache")
+        runtime_cache_enabled = bool(
+            isinstance(runtime_cache, dict) and runtime_cache.get("enabled")
+        )
+        executor_name = data.get("executor_name") or f"device-{device_id}"
+        executor_namespace = data.get("executor_namespace") or f"user-{user_id}"
 
         if not task_id or not subtask_id:
             return {"error": "Missing task_id or subtask_id"}
@@ -1386,11 +1392,15 @@ class DeviceNamespace(socketio.AsyncNamespace):
                     task_id=task_id,
                     subtask_id=subtask_id,
                     user_id=user_id,
+                    runtime_cache_enabled=runtime_cache_enabled,
                 )
                 emitter = StatusUpdatingEmitter(
                     wrapped=ws_emitter,
                     task_id=task_id,
                     subtask_id=subtask_id,
+                    executor_name=executor_name,
+                    executor_namespace=executor_namespace,
+                    runtime_cache=runtime_cache if runtime_cache_enabled else None,
                 )
                 await emitter.emit(event)
                 await emitter.close()

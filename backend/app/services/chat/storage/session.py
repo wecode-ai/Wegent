@@ -664,6 +664,9 @@ class SessionManager:
         subtask_id: int,
         user_id: int,
         username: str,
+        executor_name: Optional[str] = None,
+        executor_namespace: Optional[str] = None,
+        runtime_cache: Optional[Dict[str, Any]] = None,
     ) -> bool:
         """
         Set task-level streaming status (used for group chat).
@@ -687,6 +690,13 @@ class SessionManager:
                 "started_at": now_iso,
                 "last_activity_at": now_iso,
             }
+            if executor_name:
+                value["executor_name"] = executor_name
+            if executor_namespace:
+                value["executor_namespace"] = executor_namespace
+            if isinstance(runtime_cache, dict) and runtime_cache.get("enabled"):
+                value["runtime_cache"] = runtime_cache
+                value["cache_source"] = "executor"
             logger.info(
                 f"[SessionManager] set_task_streaming_status: key={key}, "
                 f"task_id={task_id}, subtask_id={subtask_id}, user_id={user_id}, "
@@ -698,6 +708,59 @@ class SessionManager:
         except Exception as e:
             logger.error(
                 f"Error setting task streaming status for task {task_id}: {e}",
+                exc_info=True,
+            )
+            return False
+
+    async def update_task_streaming_runtime_cache(
+        self,
+        task_id: int,
+        subtask_id: int,
+        executor_name: Optional[str] = None,
+        executor_namespace: Optional[str] = None,
+        runtime_cache: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        """Attach executor runtime cache metadata to an active stream status."""
+
+        if not isinstance(runtime_cache, dict) or not runtime_cache.get("enabled"):
+            return False
+
+        try:
+            key = self._get_task_streaming_key(task_id)
+            status = await self._cache.get(key)
+            if not isinstance(status, dict):
+                return await self.set_task_streaming_status(
+                    task_id=task_id,
+                    subtask_id=subtask_id,
+                    user_id=0,
+                    username="",
+                    executor_name=executor_name,
+                    executor_namespace=executor_namespace,
+                    runtime_cache=runtime_cache,
+                )
+
+            if (
+                status.get("cache_source") == "executor"
+                and status.get("runtime_cache") == runtime_cache
+                and status.get("executor_name") == executor_name
+                and status.get("executor_namespace") == executor_namespace
+            ):
+                return True
+
+            status["subtask_id"] = subtask_id
+            status["last_activity_at"] = datetime.now().isoformat()
+            status["runtime_cache"] = runtime_cache
+            status["cache_source"] = "executor"
+            if executor_name:
+                status["executor_name"] = executor_name
+            if executor_namespace:
+                status["executor_namespace"] = executor_namespace
+            return await self._cache.set(key, status, expire=STREAMING_TTL)
+        except Exception as e:
+            logger.error(
+                "Error updating task runtime cache metadata for task %s: %s",
+                task_id,
+                e,
                 exc_info=True,
             )
             return False

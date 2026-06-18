@@ -26,6 +26,7 @@ from app.schemas.turn_file_changes import (
     TurnFileChangesDiffResponse,
     TurnFileChangesRevertResponse,
 )
+from app.services.chat.runtime_stream_snapshot import runtime_stream_snapshot_service
 from app.services.chat.storage import session_manager
 from app.services.subtask import subtask_service
 from app.services.turn_file_changes import turn_file_changes_service
@@ -261,7 +262,12 @@ async def get_streaming_status(
     subtask_id = streaming_status.get("subtask_id")
     current_content = None
     if subtask_id:
-        current_content = await session_manager.get_streaming_content(subtask_id)
+        snapshot = await runtime_stream_snapshot_service.get_snapshot(
+            task_id=task_id,
+            subtask_id=subtask_id,
+            streaming_info=streaming_status,
+        )
+        current_content = snapshot.get("content")
 
     return StreamingStatus(
         is_streaming=True,
@@ -310,7 +316,13 @@ async def subscribe_group_stream(
     async def event_generator():
         """Generate SSE events for the subscribed stream."""
         # Get current cached content
-        current_content = await session_manager.get_streaming_content(subtask_id)
+        streaming_status = await session_manager.get_task_streaming_status(task_id)
+        snapshot = await runtime_stream_snapshot_service.get_snapshot(
+            task_id=task_id,
+            subtask_id=subtask_id,
+            streaming_info=streaming_status,
+        )
+        current_content = snapshot.get("content", "")
 
         # If offset is provided and we have cached content, send the portion after offset
         if offset > 0 and current_content:

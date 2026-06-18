@@ -670,13 +670,54 @@ class EventTransport(ABC):
 class CallbackTransport(EventTransport):
     """HTTP callback transport for executor -> executor_manager -> backend."""
 
-    def __init__(self, client: Any):
+    def __init__(
+        self,
+        client: Any,
+        runtime_cache: Optional[Any] = None,
+        runtime_cache_capability: Optional[dict[str, Any]] = None,
+    ):
         """Initialize callback transport.
 
         Args:
             client: Callback client with send_event_dict method
+            runtime_cache: Optional executor runtime cache service.
+            runtime_cache_capability: Optional capability marker sent to backend.
         """
         self.client = client
+        self.runtime_cache = runtime_cache
+        self.runtime_cache_capability = runtime_cache_capability
+
+    async def _record_runtime_cache(
+        self,
+        event_type: str,
+        task_id: int,
+        subtask_id: int,
+        data: dict,
+    ) -> None:
+        """Best-effort write to the executor-local runtime cache."""
+
+        if self.runtime_cache is None:
+            return
+
+        record_event = getattr(self.runtime_cache, "record_event", None)
+        if not callable(record_event):
+            return
+
+        try:
+            result = record_event(
+                event_type=event_type,
+                task_id=task_id,
+                subtask_id=subtask_id,
+                data=data,
+            )
+            if inspect.isawaitable(result):
+                await result
+        except Exception as exc:
+            logger.warning(
+                "[CallbackTransport] Failed to record runtime stream cache: %s",
+                exc,
+                exc_info=True,
+            )
 
     async def send(
         self,
@@ -693,6 +734,7 @@ class CallbackTransport(EventTransport):
         Returns:
             Callback response dict
         """
+        await self._record_runtime_cache(event_type, task_id, subtask_id, data)
         event = {
             "event_type": event_type,
             "task_id": task_id,
@@ -705,6 +747,8 @@ class CallbackTransport(EventTransport):
             event["executor_name"] = executor_name
         if executor_namespace is not None:
             event["executor_namespace"] = executor_namespace
+        if self.runtime_cache_capability:
+            event["runtime_cache"] = self.runtime_cache_capability
 
         import asyncio
 
@@ -718,15 +762,57 @@ class CallbackTransport(EventTransport):
 class WebSocketTransport(EventTransport):
     """WebSocket transport for executor local mode."""
 
-    def __init__(self, client: Any, event_mapping: Optional[dict] = None):
+    def __init__(
+        self,
+        client: Any,
+        event_mapping: Optional[dict] = None,
+        runtime_cache: Optional[Any] = None,
+        runtime_cache_capability: Optional[dict[str, Any]] = None,
+    ):
         """Initialize WebSocket transport.
 
         Args:
             client: WebSocket client with emit method
             event_mapping: Optional mapping from event_type to socket event name
+            runtime_cache: Optional executor runtime cache service.
+            runtime_cache_capability: Optional capability marker sent to backend.
         """
         self.client = client
         self.event_mapping = event_mapping or {}
+        self.runtime_cache = runtime_cache
+        self.runtime_cache_capability = runtime_cache_capability
+
+    async def _record_runtime_cache(
+        self,
+        event_type: str,
+        task_id: int,
+        subtask_id: int,
+        data: dict,
+    ) -> None:
+        """Best-effort write to the executor-local runtime cache."""
+
+        if self.runtime_cache is None:
+            return
+
+        record_event = getattr(self.runtime_cache, "record_event", None)
+        if not callable(record_event):
+            return
+
+        try:
+            result = record_event(
+                event_type=event_type,
+                task_id=task_id,
+                subtask_id=subtask_id,
+                data=data,
+            )
+            if inspect.isawaitable(result):
+                await result
+        except Exception as exc:
+            logger.warning(
+                "[WebSocketTransport] Failed to record runtime stream cache: %s",
+                exc,
+                exc_info=True,
+            )
 
     async def send(
         self,
@@ -743,6 +829,7 @@ class WebSocketTransport(EventTransport):
         Returns:
             None
         """
+        await self._record_runtime_cache(event_type, task_id, subtask_id, data)
         payload = {
             "event_type": event_type,
             "task_id": task_id,
@@ -751,6 +838,12 @@ class WebSocketTransport(EventTransport):
         }
         if message_id is not None:
             payload["message_id"] = message_id
+        if executor_name is not None:
+            payload["executor_name"] = executor_name
+        if executor_namespace is not None:
+            payload["executor_namespace"] = executor_namespace
+        if self.runtime_cache_capability:
+            payload["runtime_cache"] = self.runtime_cache_capability
 
         # Map event_type to socket event name
         # If no mapping provided, use the original event_type as socket event name

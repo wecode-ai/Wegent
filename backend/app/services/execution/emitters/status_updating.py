@@ -38,6 +38,8 @@ logger = logging.getLogger(__name__)
 
 STREAMING_STORAGE_FLUSH_INTERVAL_SECONDS = 1.0
 TASK_STREAMING_ACTIVITY_TOUCH_INTERVAL_SECONDS = 1.0
+RUNTIME_CACHE_STATUS_ENSURE_INTERVAL_SECONDS = 30.0
+_RUNTIME_CACHE_STATUS_ENSURE_TIMES: dict[str, float] = {}
 
 STREAM_CONTENT_EVENT_TYPES = {
     EventType.CHUNK.value: StreamContentType.TEXT,
@@ -86,6 +88,7 @@ class StatusUpdatingEmitter(ResultEmitter):
         subtask_id: int,
         executor_name: Optional[str] = None,
         executor_namespace: Optional[str] = None,
+        runtime_cache: Optional[Dict[str, Any]] = None,
     ):
         """Initialize the status updating emitter.
 
@@ -95,12 +98,17 @@ class StatusUpdatingEmitter(ResultEmitter):
             subtask_id: Subtask ID for status updates
             executor_name: Optional executor name for container reuse
             executor_namespace: Optional executor namespace
+            runtime_cache: Optional executor runtime cache capability metadata
         """
         self._wrapped = wrapped
         self._task_id = task_id
         self._subtask_id = subtask_id
         self._executor_name = executor_name
         self._executor_namespace = executor_namespace
+        self._runtime_cache = runtime_cache if isinstance(runtime_cache, dict) else None
+        self._uses_executor_runtime_cache = bool(
+            self._runtime_cache and self._runtime_cache.get("enabled")
+        )
         self._status_updated = False
         self._stream_storage_buffer: list[_BufferedStreamContent] = []
         self._stream_storage_lock = asyncio.Lock()
@@ -127,6 +135,8 @@ class StatusUpdatingEmitter(ResultEmitter):
         content: str,
     ) -> None:
         """Buffer high-frequency stream content for batched Redis persistence."""
+        if self._uses_executor_runtime_cache:
+            return
         if not content:
             return
 
@@ -173,6 +183,9 @@ class StatusUpdatingEmitter(ResultEmitter):
 
     async def _flush_stream_storage(self) -> None:
         """Persist buffered stream content to Redis in order."""
+        if self._uses_executor_runtime_cache:
+            return
+
         async with self._stream_storage_lock:
             pending = self._stream_storage_buffer
             self._stream_storage_buffer = []
@@ -207,6 +220,43 @@ class StatusUpdatingEmitter(ResultEmitter):
         await session_manager.touch_task_streaming_activity(self._task_id)
         self._last_task_activity_touch = now
 
+    async def _ensure_runtime_cache_streaming_status(
+        self, session_manager: Any
+    ) -> None:
+        """Ensure Redis active-stream metadata points at executor runtime cache."""
+
+        if not self._uses_executor_runtime_cache:
+            return
+        if not self._should_ensure_runtime_cache_streaming_status():
+            return
+
+        await session_manager.update_task_streaming_runtime_cache(
+            task_id=self._task_id,
+            subtask_id=self._subtask_id,
+            executor_name=self._executor_name,
+            executor_namespace=self._executor_namespace,
+            runtime_cache=self._runtime_cache,
+        )
+
+    def _should_ensure_runtime_cache_streaming_status(self) -> bool:
+        key = (
+            f"{self._task_id}:{self._subtask_id}:"
+            f"{self._executor_namespace or ''}:{self._executor_name or ''}"
+        )
+        now = time.monotonic()
+        last_touch = _RUNTIME_CACHE_STATUS_ENSURE_TIMES.get(key, 0.0)
+        if now - last_touch < RUNTIME_CACHE_STATUS_ENSURE_INTERVAL_SECONDS:
+            return False
+        _RUNTIME_CACHE_STATUS_ENSURE_TIMES[key] = now
+        if len(_RUNTIME_CACHE_STATUS_ENSURE_TIMES) > 10000:
+            stale_before = now - RUNTIME_CACHE_STATUS_ENSURE_INTERVAL_SECONDS * 4
+            for cache_key, touched_at in list(
+                _RUNTIME_CACHE_STATUS_ENSURE_TIMES.items()
+            ):
+                if touched_at < stale_before:
+                    _RUNTIME_CACHE_STATUS_ENSURE_TIMES.pop(cache_key, None)
+        return True
+
     async def _cancel_pending_storage_flush_task(self) -> None:
         """Cancel a scheduled delayed flush after a synchronous flush."""
         task = self._stream_storage_flush_task
@@ -240,6 +290,8 @@ class StatusUpdatingEmitter(ResultEmitter):
             f"content_len={len(event.content) if event.content else 0}"
         )
 
+        await self._ensure_runtime_cache_streaming_status(session_manager)
+
         # Handle START event - set task streaming status for page refresh recovery
         if event.type == EventType.START.value:
             # Set task-level streaming status so get_active_streaming can find it
@@ -248,6 +300,9 @@ class StatusUpdatingEmitter(ResultEmitter):
                 subtask_id=self._subtask_id,
                 user_id=0,  # Will be updated if needed
                 username="",
+                executor_name=self._executor_name,
+                executor_namespace=self._executor_namespace,
+                runtime_cache=self._runtime_cache,
             )
             logger.info(
                 f"[StatusUpdatingEmitter] Set task streaming status: "
@@ -263,7 +318,9 @@ class StatusUpdatingEmitter(ResultEmitter):
             await self._touch_task_streaming_activity(session_manager)
 
         # Collect blocks for mixed content rendering using session_manager
-        if event.type == EventType.TOOL_START.value:
+        if self._uses_executor_runtime_cache:
+            pass
+        elif event.type == EventType.TOOL_START.value:
             # When a tool starts, finalize any current text block and add tool block
             display_name = event.data.get("display_name") if event.data else None
             tool_protocol = event.data.get("tool_protocol") if event.data else None
@@ -359,7 +416,7 @@ class StatusUpdatingEmitter(ResultEmitter):
         **kwargs,
     ) -> None:
         """Forward chunk event and accumulate content."""
-        if content:
+        if content and not self._uses_executor_runtime_cache:
             await self._buffer_stream_content(
                 StreamContentType.TEXT,
                 content,
@@ -467,6 +524,9 @@ class StatusUpdatingEmitter(ResultEmitter):
                 self._subtask_id,
                 status="COMPLETED",
                 result=result,
+                executor_name=self._executor_name,
+                executor_namespace=self._executor_namespace,
+                runtime_cache=self._runtime_cache,
             )
             await persist_completed_result(
                 subtask_id=self._subtask_id,
@@ -475,6 +535,7 @@ class StatusUpdatingEmitter(ResultEmitter):
                 result=final_result,
                 executor_name=self._executor_name,
                 executor_namespace=self._executor_namespace,
+                runtime_cache=self._runtime_cache,
             )
             self._status_updated = True
             logger.info(
@@ -510,6 +571,9 @@ class StatusUpdatingEmitter(ResultEmitter):
                 status="FAILED",
                 error_message=error_message,
                 error_code=error_code,
+                executor_name=self._executor_name,
+                executor_namespace=self._executor_namespace,
+                runtime_cache=self._runtime_cache,
             )
             await persist_completed_result(
                 subtask_id=self._subtask_id,
@@ -519,6 +583,7 @@ class StatusUpdatingEmitter(ResultEmitter):
                 error=error_message,
                 executor_name=self._executor_name,
                 executor_namespace=self._executor_namespace,
+                runtime_cache=self._runtime_cache,
             )
             self._status_updated = True
             logger.info(
@@ -545,6 +610,9 @@ class StatusUpdatingEmitter(ResultEmitter):
             result = await collect_completed_result(
                 self._subtask_id,
                 status="CANCELLED",
+                executor_name=self._executor_name,
+                executor_namespace=self._executor_namespace,
+                runtime_cache=self._runtime_cache,
             )
             await persist_completed_result(
                 subtask_id=self._subtask_id,
@@ -553,6 +621,7 @@ class StatusUpdatingEmitter(ResultEmitter):
                 result=result,
                 executor_name=self._executor_name,
                 executor_namespace=self._executor_namespace,
+                runtime_cache=self._runtime_cache,
             )
             self._status_updated = True
             logger.info(

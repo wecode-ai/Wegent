@@ -389,16 +389,27 @@ async def collect_completed_result(
     result: Optional[Dict[str, Any]] = None,
     error_message: Optional[str] = None,
     error_code: Optional[str] = None,
+    executor_name: Optional[str] = None,
+    executor_namespace: Optional[str] = None,
+    runtime_cache: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
     """Collect the final terminal result payload for a subtask."""
-    import app.services.chat.storage as chat_storage
+    from app.services.chat.runtime_stream_snapshot import (
+        runtime_stream_snapshot_service,
+    )
 
     normalized_status = status.upper()
 
-    accumulated_content = await chat_storage.session_manager.get_accumulated_content(
-        subtask_id
+    snapshot = await runtime_stream_snapshot_service.get_snapshot(
+        task_id=0,
+        subtask_id=subtask_id,
+        executor_name=executor_name,
+        executor_namespace=executor_namespace,
+        runtime_cache=runtime_cache,
+        finalize_redis_blocks=True,
     )
-    blocks = await chat_storage.session_manager.finalize_and_get_blocks(subtask_id)
+    accumulated_content = snapshot.get("content", "")
+    blocks = snapshot.get("blocks", [])
     existing_result = await _get_existing_subtask_result(subtask_id)
 
     if result is not None and not isinstance(result, dict):
@@ -479,10 +490,13 @@ async def persist_completed_result(
     error: Optional[str] = None,
     executor_name: Optional[str] = None,
     executor_namespace: Optional[str] = None,
+    runtime_cache: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Persist a terminal result and clean up streaming state."""
-    import app.services.chat.storage as chat_storage
     import app.services.chat.storage.db as chat_db
+    from app.services.chat.runtime_stream_snapshot import (
+        runtime_stream_snapshot_service,
+    )
 
     normalized_status = status.upper()
 
@@ -501,9 +515,12 @@ async def persist_completed_result(
     if normalized_status == "COMPLETED":
         await _persist_standalone_workspace_path(task_id, result)
     try:
-        await chat_storage.session_manager.cleanup_streaming_state(
-            subtask_id,
+        await runtime_stream_snapshot_service.cleanup_snapshot(
+            subtask_id=subtask_id,
             task_id=task_id,
+            executor_name=executor_name,
+            executor_namespace=executor_namespace,
+            runtime_cache=runtime_cache,
         )
     except Exception as exc:
         logger.warning(

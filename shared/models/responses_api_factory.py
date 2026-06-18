@@ -161,13 +161,18 @@ class TransportFactory:
 
     @staticmethod
     def create_callback(
-        callback_url: Optional[str] = None, client: Optional["CallbackClient"] = None
+        callback_url: Optional[str] = None,
+        client: Optional["CallbackClient"] = None,
+        runtime_cache: Optional[Any] = None,
+        runtime_cache_capability: Optional[dict[str, Any]] = None,
     ) -> CallbackTransport:
         """Create HTTP Callback Transport.
 
         Args:
             callback_url: URL for the callback endpoint (required if client is None)
             client: HTTP callback client. If None, creates CallbackClient with callback_url.
+            runtime_cache: Optional executor-local runtime cache service.
+            runtime_cache_capability: Optional capability marker sent to backend.
 
         Returns:
             CallbackTransport instance
@@ -181,22 +186,36 @@ class TransportFactory:
             from shared.utils.callback_client import CallbackClient
 
             client = CallbackClient(callback_url=callback_url)
-        return CallbackTransport(client)
+        return CallbackTransport(
+            client,
+            runtime_cache=runtime_cache,
+            runtime_cache_capability=runtime_cache_capability,
+        )
 
     @staticmethod
     def create_websocket(
-        client: Any, event_mapping: Optional[dict] = None
+        client: Any,
+        event_mapping: Optional[dict] = None,
+        runtime_cache: Optional[Any] = None,
+        runtime_cache_capability: Optional[dict[str, Any]] = None,
     ) -> WebSocketTransport:
         """Create WebSocket Transport.
 
         Args:
             client: WebSocket client (required)
             event_mapping: Event type to socket event name mapping
+            runtime_cache: Optional executor-local runtime cache service.
+            runtime_cache_capability: Optional capability marker sent to backend.
 
         Returns:
             WebSocketTransport instance
         """
-        return WebSocketTransport(client, event_mapping)
+        return WebSocketTransport(
+            client,
+            event_mapping,
+            runtime_cache=runtime_cache,
+            runtime_cache_capability=runtime_cache_capability,
+        )
 
     @staticmethod
     def create_generator(
@@ -234,6 +253,8 @@ class TransportFactory:
         callback_url: Optional[str] = None,
         client: Optional["CallbackClient"] = None,
         config: Optional[ThrottleConfig] = None,
+        runtime_cache: Optional[Any] = None,
+        runtime_cache_capability: Optional[dict[str, Any]] = None,
     ) -> ThrottledTransport:
         """Create HTTP Callback Transport with throttling.
 
@@ -241,6 +262,8 @@ class TransportFactory:
             callback_url: URL for the callback endpoint (required if client is None)
             client: HTTP callback client. If None, creates CallbackClient with callback_url.
             config: Throttle configuration
+            runtime_cache: Optional executor-local runtime cache service.
+            runtime_cache_capability: Optional capability marker sent to backend.
 
         Returns:
             ThrottledTransport wrapping CallbackTransport
@@ -249,7 +272,10 @@ class TransportFactory:
             ValueError: If neither callback_url nor client is provided
         """
         base = TransportFactory.create_callback(
-            callback_url=callback_url, client=client
+            callback_url=callback_url,
+            client=client,
+            runtime_cache=runtime_cache,
+            runtime_cache_capability=runtime_cache_capability,
         )
         return ThrottledTransport(base, config)
 
@@ -258,6 +284,8 @@ class TransportFactory:
         client: Any,
         event_mapping: Optional[dict] = None,
         config: Optional[ThrottleConfig] = None,
+        runtime_cache: Optional[Any] = None,
+        runtime_cache_capability: Optional[dict[str, Any]] = None,
     ) -> ThrottledTransport:
         """Create WebSocket Transport with throttling.
 
@@ -265,11 +293,18 @@ class TransportFactory:
             client: WebSocket client (required)
             event_mapping: Event type to socket event name mapping
             config: Throttle configuration
+            runtime_cache: Optional executor-local runtime cache service.
+            runtime_cache_capability: Optional capability marker sent to backend.
 
         Returns:
             ThrottledTransport wrapping WebSocketTransport
         """
-        base = TransportFactory.create_websocket(client, event_mapping)
+        base = TransportFactory.create_websocket(
+            client,
+            event_mapping,
+            runtime_cache=runtime_cache,
+            runtime_cache_capability=runtime_cache_capability,
+        )
         return ThrottledTransport(base, config)
 
     @staticmethod

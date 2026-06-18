@@ -19,6 +19,9 @@ from typing import Optional
 import requests
 
 from executor.config.env_reader import get_env, get_heartbeat_base_url
+from executor.services.runtime_stream_cache import (
+    runtime_stream_cache_transport_kwargs,
+)
 from shared.logger import setup_logger
 
 logger = setup_logger("heartbeat_service")
@@ -369,7 +372,8 @@ class HeartbeatService:
                 .with_task(task_id, -1)
                 .with_transport(
                     TransportFactory.create_callback_throttled(
-                        callback_url=config.CALLBACK_URL
+                        callback_url=config.CALLBACK_URL,
+                        **runtime_stream_cache_transport_kwargs(),
                     )
                 )
                 .build()

@@ -63,6 +63,7 @@ from app.services.adapters.task_kinds import task_kinds_service
 from app.services.adapters.wework_conversation_search import (
     search_wework_conversation_tasks,
 )
+from app.services.chat.runtime_stream_snapshot import runtime_stream_snapshot_service
 from app.services.chat.storage import session_manager
 from app.services.remote_workspace_service import remote_workspace_service
 from app.services.shared_task import shared_task_service
@@ -358,7 +359,12 @@ async def get_task_runtime_check(
         raw_subtask_id = streaming_status.get("subtask_id")
         subtask_id = int(raw_subtask_id) if raw_subtask_id is not None else None
         if subtask_id is not None:
-            cached_content = await session_manager.get_streaming_content(subtask_id)
+            snapshot = await runtime_stream_snapshot_service.get_snapshot(
+                task_id=task_id,
+                subtask_id=subtask_id,
+                streaming_info=streaming_status,
+            )
+            cached_content = snapshot.get("content", "")
             active_stream = TaskRuntimeActiveStream(
                 subtask_id=subtask_id,
                 cursor=len(cached_content or ""),
