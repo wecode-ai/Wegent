@@ -408,6 +408,7 @@ class ChatService(ChatInterface):
             # updates from Phase 1 while sourcing accounting from the
             # guard's authoritative state.
             context_guard.set_tracker(context_metrics_tracker)
+            agent_config.on_model_usage = context_metrics_tracker.record_provider_usage
             initial_snapshot = await context_metrics_tracker.capture(
                 messages, PHASE_BUILD_MESSAGES
             )

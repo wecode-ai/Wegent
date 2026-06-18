@@ -94,6 +94,7 @@ class Settings(BaseSettings):
     # Phase 2 unified context guard
     TOOL_OUTPUT_TOKEN_LIMIT: int = 15000
     EMERGENCY_TOOL_OUTPUT_RATIO: float = 0.3
+    AUTO_COMPACT_TOKEN_LIMIT: int | None = None
 
     # Web search configuration
     WEB_SEARCH_ENABLED: bool = False

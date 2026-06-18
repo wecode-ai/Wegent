@@ -841,6 +841,7 @@
     "context_remaining": "上下文剩余 {{percent}}%",
     "context_usage": "{{used}} / {{total}} 上下文 token",
     "token_usage": "{{used}} / {{total}} 输入 token",
+    "compacting": "正在压缩上下文...",
     "over_trigger": "已达到压缩阈值",
     "save_success": "对话状态偏好已保存",
     "save_failed": "保存对话状态偏好失败"

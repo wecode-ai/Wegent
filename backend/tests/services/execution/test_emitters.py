@@ -256,6 +256,10 @@ class TestWebSocketResultEmitter:
                         "remaining_percent": 38,
                         "is_over_trigger": False,
                     },
+                    "context_compaction": {
+                        "type": "summary_compact",
+                        "status": "started",
+                    },
                 },
             )
 
@@ -280,6 +284,10 @@ class TestWebSocketResultEmitter:
                 context_metrics={
                     "remaining_percent": 38,
                     "is_over_trigger": False,
+                },
+                context_compaction={
+                    "type": "summary_compact",
+                    "status": "started",
                 },
             )
 
@@ -319,6 +327,7 @@ class TestWebSocketResultEmitter:
                 subtask_id=2,
                 phase="after_tool_end",
                 context_metrics={"remaining_percent": 38},
+                context_compaction=None,
             )
 
     @pytest.mark.asyncio

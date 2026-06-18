@@ -919,6 +919,82 @@ class TestTrackerEmits:
         # first such call IS emitted.
         assert emitted_phases == [PHASE_AFTER_TOOL_END]
 
+    async def test_summary_compaction_emits_started_and_completed_runtime_events(
+        self, guard
+    ):
+        from unittest.mock import AsyncMock
+
+        from chat_shell.compression.context_metrics import ContextMetricsTracker
+
+        emitter = AsyncMock()
+        tracker = ContextMetricsTracker(
+            task_id=1,
+            subtask_id=2,
+            metrics_fn=guard.metrics,
+            emitter=emitter,
+        )
+        guard.set_tracker(tracker)
+        guard._summary_compactor = _FakeSummaryCompactor(
+            result=SummaryCompactResult(
+                summary_text="Current objective:\ncontinue",
+                replacement_history=[
+                    HumanMessage(
+                        content="[COMPACT SUMMARY]\n\nCurrent objective:\ncontinue"
+                    )
+                ],
+                removed_history_items=1,
+            )
+        )
+
+        state = {
+            "messages": [
+                HumanMessage(content="x" * 40000, id="h-1"),
+                AIMessage(content="y" * 40000, id="a-1"),
+            ]
+        }
+
+        await guard(state)
+
+        compaction_statuses = [
+            call.kwargs["context_compaction"]["status"]
+            for call in emitter.status_updated.await_args_list
+            if call.kwargs.get("context_compaction") is not None
+        ]
+        assert compaction_statuses == ["started", "completed"]
+
+    async def test_summary_compaction_failure_emits_fallback_runtime_event(self, guard):
+        from unittest.mock import AsyncMock
+
+        from chat_shell.compression.context_metrics import ContextMetricsTracker
+
+        emitter = AsyncMock()
+        tracker = ContextMetricsTracker(
+            task_id=1,
+            subtask_id=2,
+            metrics_fn=guard.metrics,
+            emitter=emitter,
+        )
+        guard.set_tracker(tracker)
+        guard._summary_compactor = _FakeSummaryCompactor(
+            error=RuntimeError("context length exceeded")
+        )
+
+        state = {
+            "messages": [
+                HumanMessage(content="x" * 40000, id="h-1"),
+                AIMessage(content="y" * 40000, id="a-1"),
+            ]
+        }
+
+        await guard(state)
+
+        compaction_statuses = [
+            call.kwargs["context_compaction"]["status"]
+            for call in emitter.status_updated.await_args_list
+            if call.kwargs.get("context_compaction") is not None
+        ]
+        assert compaction_statuses == ["started", "fallback"]
+
     async def test_no_tracker_no_emit(self, guard):
         """When no tracker is wired, the guard simply skips emitting — no
         crashes, no warnings."""

@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable
+from copy import deepcopy
 from dataclasses import asdict, dataclass
 from typing import Any, Optional
 
@@ -24,6 +25,14 @@ PHASE_AFTER_TOOL_END = "after_tool_end"
 PHASE_AFTER_COMPACTION = "after_compaction"
 PHASE_FINAL = "final"
 STATUS_UPDATE_STEP_PERCENT = 5
+
+
+@dataclass
+class ProviderUsageBaseline:
+    """Observed provider input-token usage for a previously executed prompt."""
+
+    input_tokens: int
+    messages: list[dict[str, Any]]
 
 
 @dataclass
@@ -47,6 +56,26 @@ class ContextMetricsSnapshot:
         return asdict(self)
 
 
+@dataclass
+class ContextCompactionEvent:
+    """Transient runtime event describing a summary-compaction lifecycle step."""
+
+    type: str
+    status: str
+    before_tokens: int
+    trigger_limit: int
+    target_limit: int
+    used_legacy_fallback: bool
+    created_at: str
+    after_tokens: int | None = None
+    summary_message_id: str | None = None
+    failure_reason: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = asdict(self)
+        return {key: value for key, value in payload.items() if value is not None}
+
+
 def calculate_context_metrics(
     messages: list[dict[str, Any]],
     *,
@@ -55,6 +84,7 @@ def calculate_context_metrics(
     model_config: Optional[dict[str, Any]] = None,
     token_counter: TokenCounter | None = None,
     context_config: ModelContextConfig | None = None,
+    usage_baseline: ProviderUsageBaseline | None = None,
 ) -> ContextMetricsSnapshot:
     """Calculate context metrics for the provided messages.
 
@@ -67,7 +97,11 @@ def calculate_context_metrics(
         context_config = get_model_context_config(model_id, model_config=model_config)
     if token_counter is None:
         token_counter = TokenCounter(model_name=model_id, model_type=model_type)
-    used_input_tokens = token_counter.count_messages(messages)
+    used_input_tokens = _estimate_used_input_tokens(
+        messages,
+        token_counter=token_counter,
+        usage_baseline=usage_baseline,
+    )
     available_input_tokens = max(0, context_config.available_tokens)
     remaining_input_tokens = max(0, available_input_tokens - used_input_tokens)
     remaining_percent = (
@@ -95,6 +129,33 @@ def calculate_context_metrics(
         target_limit=context_config.target_limit,
         is_over_trigger=used_input_tokens >= context_config.trigger_limit,
     )
+
+
+def _message_prefix_matches(
+    messages: list[dict[str, Any]],
+    prefix: list[dict[str, Any]],
+) -> bool:
+    """Return True when *prefix* matches the head of *messages* exactly."""
+    if len(messages) < len(prefix):
+        return False
+    return messages[: len(prefix)] == prefix
+
+
+def _estimate_used_input_tokens(
+    messages: list[dict[str, Any]],
+    *,
+    token_counter: TokenCounter,
+    usage_baseline: ProviderUsageBaseline | None,
+) -> int:
+    """Estimate current prompt usage with optional provider-observed baseline."""
+    if usage_baseline is None or not _message_prefix_matches(
+        messages, usage_baseline.messages
+    ):
+        return token_counter.count_messages(messages)
+
+    delta_messages = messages[len(usage_baseline.messages) :]
+    delta_tokens = token_counter.count_messages(delta_messages) if delta_messages else 0
+    return usage_baseline.input_tokens + delta_tokens
 
 
 def should_emit_status_update(
@@ -134,7 +195,7 @@ class ContextMetricsTracker:
         *,
         task_id: int,
         subtask_id: int,
-        metrics_fn: Callable[[list[dict[str, Any]]], ContextMetricsSnapshot],
+        metrics_fn: Callable[..., ContextMetricsSnapshot],
         emitter: ResponsesAPIEmitter,
     ) -> None:
         self.task_id = task_id
@@ -143,6 +204,7 @@ class ContextMetricsTracker:
         self.emitter = emitter
         self.latest_snapshot: ContextMetricsSnapshot | None = None
         self.last_emitted_snapshot: ContextMetricsSnapshot | None = None
+        self._usage_baseline: ProviderUsageBaseline | None = None
 
     async def capture(
         self,
@@ -152,7 +214,14 @@ class ContextMetricsTracker:
         """Compute, log, and optionally emit a context metrics snapshot."""
         total_start = time.perf_counter()
         compute_start = time.perf_counter()
-        snapshot = self._metrics_fn(messages)
+        baseline = self._usage_baseline
+        if baseline is not None and not _message_prefix_matches(
+            messages, baseline.messages
+        ):
+            self._usage_baseline = None
+            baseline = None
+
+        snapshot = self._metrics_fn(messages, usage_baseline=baseline)
         compute_ms = (time.perf_counter() - compute_start) * 1000
         self.latest_snapshot = snapshot
 
@@ -199,3 +268,40 @@ class ContextMetricsTracker:
         )
 
         return snapshot
+
+    def record_provider_usage(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        input_tokens: int,
+    ) -> None:
+        """Remember provider-observed prompt usage for the next pre-call estimate."""
+        self._usage_baseline = ProviderUsageBaseline(
+            input_tokens=input_tokens,
+            messages=deepcopy(messages),
+        )
+
+    def invalidate_provider_usage_baseline(self) -> None:
+        """Drop the cached provider-usage baseline after non-append rewrites."""
+        self._usage_baseline = None
+
+    async def emit_status(
+        self,
+        *,
+        phase: str,
+        snapshot: ContextMetricsSnapshot,
+        context_compaction: ContextCompactionEvent | None = None,
+    ) -> None:
+        """Emit an explicit status update without throttling.
+
+        Used for transient runtime control-plane markers such as summary
+        compaction start/completion/fallback, which the frontend should see
+        immediately regardless of the normal bucket-throttling rules.
+        """
+        await self.emitter.status_updated(
+            phase=phase,
+            context_metrics=snapshot.to_dict(),
+            context_compaction=(
+                context_compaction.to_dict() if context_compaction is not None else None
+            ),
+        )

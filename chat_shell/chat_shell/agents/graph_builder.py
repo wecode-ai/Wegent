@@ -12,6 +12,7 @@ This module provides a simplified LangGraph agent implementation using:
 """
 
 import asyncio
+import inspect
 import json
 import logging
 import time
@@ -172,6 +173,123 @@ def _count_tool_use_blocks(output: Any) -> int:
         if isinstance(part, dict) and part.get("type") == "tool_use":
             count += 1
     return count
+
+
+def _message_like_to_metrics_dict(message: Any) -> dict[str, Any] | None:
+    """Normalize a message-like object into the token-counter dict shape."""
+    if isinstance(message, BaseMessage):
+        payload: dict[str, Any] = {
+            "role": (
+                "system"
+                if isinstance(message, SystemMessage)
+                else (
+                    "assistant"
+                    if isinstance(message, AIMessage)
+                    else "tool" if isinstance(message, ToolMessage) else "user"
+                )
+            ),
+            "content": message.content,
+        }
+        name = getattr(message, "name", None)
+        if name:
+            payload["name"] = name
+        tool_call_id = getattr(message, "tool_call_id", None)
+        if tool_call_id:
+            payload["tool_call_id"] = tool_call_id
+        tool_calls = getattr(message, "tool_calls", None)
+        if tool_calls:
+            payload["tool_calls"] = tool_calls
+        return payload
+
+    if not isinstance(message, dict):
+        return None
+
+    role = message.get("role")
+    if role is None:
+        msg_type = message.get("type")
+        if msg_type == "system":
+            role = "system"
+        elif msg_type in {"ai", "assistant"}:
+            role = "assistant"
+        elif msg_type == "tool":
+            role = "tool"
+        else:
+            role = "user"
+
+    payload = {"role": role, "content": message.get("content", "")}
+    if message.get("name"):
+        payload["name"] = message["name"]
+    if message.get("tool_call_id"):
+        payload["tool_call_id"] = message["tool_call_id"]
+    tool_calls = message.get("tool_calls")
+    if tool_calls:
+        payload["tool_calls"] = tool_calls
+    return payload
+
+
+def _normalize_metrics_messages(messages: Any) -> list[dict[str, Any]] | None:
+    """Best-effort normalize callback payload messages for context metrics."""
+    if not isinstance(messages, list):
+        return None
+
+    normalized: list[dict[str, Any]] = []
+    for message in messages:
+        payload = _message_like_to_metrics_dict(message)
+        if payload is None:
+            return None
+        normalized.append(payload)
+    return normalized
+
+
+def _extract_model_input_messages(event: dict[str, Any]) -> list[dict[str, Any]] | None:
+    """Extract the exact model-input messages from an ``on_chat_model_start`` event."""
+    data = event.get("data") or {}
+    input_payload = data.get("input")
+    candidates: list[Any] = []
+
+    if isinstance(data.get("messages"), list):
+        candidates.append(data["messages"])
+
+    if isinstance(input_payload, dict):
+        if isinstance(input_payload.get("messages"), list):
+            candidates.append(input_payload["messages"])
+    elif isinstance(input_payload, list):
+        candidates.append(input_payload)
+        for item in input_payload:
+            if isinstance(item, dict) and isinstance(item.get("messages"), list):
+                candidates.append(item["messages"])
+
+    for candidate in candidates:
+        normalized = _normalize_metrics_messages(candidate)
+        if normalized is not None:
+            return normalized
+    return None
+
+
+def _extract_model_input_tokens(output: Any) -> int | None:
+    """Extract provider-observed input tokens from a completed model output."""
+    usage_metadata = getattr(output, "usage_metadata", None)
+    if isinstance(usage_metadata, dict):
+        input_tokens = usage_metadata.get("input_tokens")
+        if isinstance(input_tokens, int):
+            return input_tokens
+
+    metadata: dict[str, Any] = {}
+    if hasattr(output, "response_metadata"):
+        metadata = output.response_metadata or {}
+    elif isinstance(output, dict):
+        metadata = output.get("response_metadata") or output.get("generation_info", {})
+
+    usage = metadata.get("usage")
+    if isinstance(usage, dict):
+        input_tokens = usage.get("input_tokens")
+        if isinstance(input_tokens, int):
+            return input_tokens
+
+    input_tokens = metadata.get("input_tokens")
+    if isinstance(input_tokens, int):
+        return input_tokens
+    return None
 
 
 def _validate_tool_message_sequence(
@@ -573,6 +691,7 @@ class LangGraphAgentBuilder:
         enable_checkpointing: bool = False,
         max_truncation_retries: int | None = None,
         pre_model_hook: Callable | None = None,
+        on_model_usage: Callable[[list[dict[str, Any]], int], Any] | None = None,
     ):
         """Initialize agent builder.
 
@@ -584,12 +703,15 @@ class LangGraphAgentBuilder:
             max_truncation_retries: Maximum retry attempts when tool calls are truncated.
                 If None, uses settings.MAX_TRUNCATION_RETRIES
             pre_model_hook: Optional LangGraph hook called before each model call
+            on_model_usage: Optional callback fed provider-observed input tokens for
+                the exact prompt messages used by a completed model invocation
         """
         self.llm = llm
         self.tool_registry = tool_registry
         self.max_iterations = max_iterations
         self.enable_checkpointing = enable_checkpointing
         self.pre_model_hook = pre_model_hook
+        self.on_model_usage = on_model_usage
         self.max_truncation_retries = (
             max_truncation_retries
             if max_truncation_retries is not None
@@ -1240,6 +1362,7 @@ class LangGraphAgentBuilder:
         # TTFT tracking variables
         first_token_received = False
         llm_request_start_time: float | None = None
+        last_model_input_messages: list[dict[str, Any]] | None = None
         ttft_ms: float | None = None  # Time to first token in milliseconds
         tool_argument_tracker = (
             ToolCallStreamTracker(on_tool_event=on_tool_event)
@@ -1281,6 +1404,7 @@ class LangGraphAgentBuilder:
                 if kind == "on_chat_model_start":
                     llm_request_start_time = time.perf_counter()
                     first_token_received = False
+                    last_model_input_messages = _extract_model_input_messages(event)
                     add_span_event(
                         "llm_request_started",
                         {"model_name": event.get("name", "unknown")},
@@ -1523,6 +1647,19 @@ class LangGraphAgentBuilder:
                         invalid_tool_calls_count,
                     )
                     last_model_end_tool_calls = parsed_tool_calls_count
+                    input_tokens = _extract_model_input_tokens(output)
+                    if (
+                        input_tokens is not None
+                        and last_model_input_messages is not None
+                        and self.on_model_usage is not None
+                    ):
+                        callback_result = self.on_model_usage(
+                            last_model_input_messages,
+                            input_tokens,
+                        )
+                        if inspect.isawaitable(callback_result):
+                            await callback_result
+                    last_model_input_messages = None
 
                     if truncation_detected:
                         has_tool_calls = False

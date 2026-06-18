@@ -691,14 +691,22 @@ class ResponsesAPIEventBuilder:
             "updates": updates,
         }
 
-    def status_updated(self, phase: str, context_metrics: dict[str, Any]) -> dict:
+    def status_updated(
+        self,
+        phase: str,
+        context_metrics: dict[str, Any],
+        context_compaction: dict[str, Any] | None = None,
+    ) -> dict:
         """Create a context-status update event."""
-        return {
+        event = {
             "type": ResponsesAPIStreamEvents.STATUS_UPDATED.value,
             "response_id": self.response_id,
             "phase": phase,
             "context_metrics": context_metrics,
         }
+        if context_compaction is not None:
+            event["context_compaction"] = context_compaction
+        return event
 
     # ============================================================
     # Text Streaming Events

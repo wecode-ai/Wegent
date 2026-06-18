@@ -60,6 +60,7 @@ class AgentConfig:
     enable_deep_thinking: bool = True
     skills: list[dict[str, Any]] | None = None  # All skill configs (with preload field)
     pre_model_hook: Callable[[dict[str, Any]], Any] | None = None
+    on_model_usage: Callable[[list[dict[str, Any]], int], Any] | None = None
 
 
 class ChatAgent:
@@ -173,6 +174,7 @@ class ChatAgent:
             max_iterations=config.max_iterations,
             enable_checkpointing=self.enable_checkpointing,
             pre_model_hook=config.pre_model_hook,
+            on_model_usage=config.on_model_usage,
         )
         add_span_event("langgraph_agent_builder_created")
         return builder

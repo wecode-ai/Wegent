@@ -9,7 +9,7 @@ Model-specific limits can be configured in Model CRD spec (contextWindow, maxOut
 or fall back to built-in defaults based on model ID.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Optional
 
 
@@ -28,6 +28,7 @@ class ModelContextConfig:
     output_tokens: int = 4096
     trigger_threshold: float = 0.90  # Trigger compression at 90% of available context
     target_threshold: float = 0.70  # Compress to 70% of available context
+    auto_compact_token_limit: int | None = None
 
     @property
     def available_tokens(self) -> int:
@@ -37,12 +38,19 @@ class ModelContextConfig:
     @property
     def trigger_limit(self) -> int:
         """Calculate token count that triggers compression."""
-        return int(self.available_tokens * self.trigger_threshold)
+        base_limit = int(self.available_tokens * self.trigger_threshold)
+        if self.auto_compact_token_limit is None:
+            return base_limit
+        hard_limit = max(0, self.available_tokens)
+        return min(max(0, self.auto_compact_token_limit), hard_limit)
 
     @property
     def target_limit(self) -> int:
         """Calculate target token count after compression."""
-        return int(self.available_tokens * self.target_threshold)
+        base_limit = int(self.available_tokens * self.target_threshold)
+        if self.auto_compact_token_limit is None:
+            return base_limit
+        return min(base_limit, self.trigger_limit)
 
     @property
     def effective_limit(self) -> int:
@@ -133,6 +141,15 @@ def get_model_context_config(
     Returns:
         ModelContextConfig for the model
     """
+
+    def _apply_auto_compact_limit(config: ModelContextConfig) -> ModelContextConfig:
+        from chat_shell.core.config import settings
+
+        override = settings.AUTO_COMPACT_TOKEN_LIMIT
+        if override is None:
+            return replace(config)
+        return replace(config, auto_compact_token_limit=override)
+
     # Priority 1: Use values from Model CRD spec if provided
     if model_config:
         context_window = model_config.get("context_window")
@@ -141,11 +158,13 @@ def get_model_context_config(
         if context_window is not None:
             # Use CRD values with fallback for output_tokens
             output_tokens = max_output_tokens if max_output_tokens is not None else 4096
-            return ModelContextConfig(
-                context_window=context_window,
-                output_tokens=output_tokens,
-                trigger_threshold=0.90,
-                target_threshold=0.70,
+            return _apply_auto_compact_limit(
+                ModelContextConfig(
+                    context_window=context_window,
+                    output_tokens=output_tokens,
+                    trigger_threshold=0.90,
+                    target_threshold=0.70,
+                )
             )
 
     # Priority 2: Look up in built-in defaults
@@ -153,17 +172,19 @@ def get_model_context_config(
 
     # Try exact match first
     if model_lower in MODEL_CONTEXT_LIMITS:
-        return MODEL_CONTEXT_LIMITS[model_lower]
+        return _apply_auto_compact_limit(MODEL_CONTEXT_LIMITS[model_lower])
 
     # Try prefix matching (handles versioned model names)
     for prefix, config in MODEL_CONTEXT_LIMITS.items():
         if model_lower.startswith(prefix):
-            return config
+            return _apply_auto_compact_limit(config)
 
     # Priority 3: Default config for unknown models (conservative estimate)
-    return ModelContextConfig(
-        context_window=128000,
-        output_tokens=4096,
-        trigger_threshold=0.85,  # More conservative for unknown models
-        target_threshold=0.65,
+    return _apply_auto_compact_limit(
+        ModelContextConfig(
+            context_window=128000,
+            output_tokens=4096,
+            trigger_threshold=0.85,  # More conservative for unknown models
+            target_threshold=0.65,
+        )
     )
