@@ -12,10 +12,10 @@ import {
   type StartupEnvVar,
 } from '@wecode/api/local-executor'
 import {
-  canSaveEnvVars,
   initialLocalExecutorState,
   type LocalExecutorState,
-} from './LocalManagementPage'
+  canSaveEnvVars,
+} from './localManagementState'
 
 const EXECUTOR_ACTION_MIN_FEEDBACK_MS = 400
 const ENV_AUTO_SAVE_DELAY_MS = 500

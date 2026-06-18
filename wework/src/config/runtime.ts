@@ -8,8 +8,20 @@ export interface RuntimeConfig {
   cloudDeviceScalingWikiUrl: string
 }
 
+type RuntimeConfigOverrides = Partial<RuntimeConfig>
+
+declare global {
+  interface Window {
+    __WEWORK_RUNTIME_CONFIG__?: RuntimeConfigOverrides
+  }
+}
+
 function trimTrailingSlash(value: string): string {
   return value.replace(/\/+$/, '')
+}
+
+function firstStringValue(...values: Array<string | undefined>): string | undefined {
+  return values.find(value => typeof value === 'string' && value.length > 0)
 }
 
 function normalizeBasePath(value: string | undefined): string {
@@ -50,23 +62,45 @@ export function stripAppBasePath(path: string): string {
 }
 
 export function getRuntimeConfig(): RuntimeConfig {
+  const runtimeConfig = window.__WEWORK_RUNTIME_CONFIG__ || {}
   const appBasePath = normalizeBasePath(
-    import.meta.env.VITE_APP_BASE_PATH || import.meta.env.BASE_URL,
+    firstStringValue(
+      runtimeConfig.appBasePath,
+      import.meta.env.VITE_APP_BASE_PATH,
+      import.meta.env.BASE_URL,
+    ),
   )
-  const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || joinAppPath(appBasePath, '/api')
-  const socketBaseUrl =
-    import.meta.env.VITE_SOCKET_BASE_URL || window.location.origin
-  const socketPath =
-    import.meta.env.VITE_SOCKET_PATH || joinAppPath(appBasePath, '/socket.io')
+  const apiBaseUrl = firstStringValue(
+    runtimeConfig.apiBaseUrl,
+    import.meta.env.VITE_API_BASE_URL,
+  ) || joinAppPath(appBasePath, '/api')
+  const socketBaseUrl = firstStringValue(
+    runtimeConfig.socketBaseUrl,
+    import.meta.env.VITE_SOCKET_BASE_URL,
+  ) || window.location.origin
+  const socketPath = firstStringValue(
+    runtimeConfig.socketPath,
+    import.meta.env.VITE_SOCKET_PATH,
+  ) || joinAppPath(appBasePath, '/socket.io')
+  const loginMode =
+    firstStringValue(
+      runtimeConfig.loginMode,
+      import.meta.env.VITE_LOGIN_MODE,
+    ) as RuntimeConfig['loginMode'] | undefined
 
   return {
     appBasePath,
     apiBaseUrl: trimTrailingSlash(apiBaseUrl),
     socketBaseUrl: trimTrailingSlash(socketBaseUrl),
     socketPath,
-    loginMode:
-      (import.meta.env.VITE_LOGIN_MODE as RuntimeConfig['loginMode'] | undefined) || 'all',
-    oidcLoginText: import.meta.env.VITE_OIDC_LOGIN_TEXT || '',
-    cloudDeviceScalingWikiUrl: import.meta.env.VITE_CLOUD_DEVICE_SCALING_WIKI_URL || '',
+    loginMode: loginMode || 'all',
+    oidcLoginText: firstStringValue(
+      runtimeConfig.oidcLoginText,
+      import.meta.env.VITE_OIDC_LOGIN_TEXT,
+    ) || '',
+    cloudDeviceScalingWikiUrl: firstStringValue(
+      runtimeConfig.cloudDeviceScalingWikiUrl,
+      import.meta.env.VITE_CLOUD_DEVICE_SCALING_WIKI_URL,
+    ) || '',
   }
 }
