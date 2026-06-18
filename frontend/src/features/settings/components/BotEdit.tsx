@@ -68,19 +68,22 @@ import {
   defaultContextRefsToContextItems,
   knowledgeRefsToDefaultContextRefs,
 } from '@/features/context-selector/adapters/defaultContextAdapters'
+import { getRuntimeConfigSync } from '@/lib/runtime-config'
 
 /** Agent types supported by the system */
 export type AgentType = 'ClaudeCode' | 'Agno' | 'Dify'
-const DEFAULT_CONTEXT_ALLOWED_TYPES: ContextType[] =
-  process.env.NEXT_PUBLIC_ENABLE_DINGTALK_CONTEXT === 'true'
+function getDefaultContextAllowedTypes(): ContextType[] {
+  return getRuntimeConfigSync().enableDingTalkContext
     ? ['knowledge_base', 'external_document']
     : ['knowledge_base']
+}
 
 function filterDefaultContextItems(items: ContextItem[]): ContextItem[] {
+  const allowedTypes = getDefaultContextAllowedTypes()
   const seen = new Set<string>()
   const filtered: ContextItem[] = []
   for (const item of items) {
-    if (!DEFAULT_CONTEXT_ALLOWED_TYPES.includes(item.type)) {
+    if (!allowedTypes.includes(item.type)) {
       continue
     }
     const key = `${item.type}:${item.id}`
@@ -1572,7 +1575,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                         open={defaultContextsOpen}
                         onOpenChange={setDefaultContextsOpen}
                         selectedContexts={defaultContextItems}
-                        allowedContextTypes={DEFAULT_CONTEXT_ALLOWED_TYPES}
+                        allowedContextTypes={getDefaultContextAllowedTypes()}
                         allowedKnowledgeBaseSources={
                           scope === 'public'
                             ? ['organization']

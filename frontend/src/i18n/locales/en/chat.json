@@ -697,6 +697,9 @@
   "contextWarnings": {
     "nameSeparator": ": "
   },
+  "externalDocument": {
+    "docBadgeHint": "External knowledge"
+  },
   "dingtalkDocs": {
     "tabTitle": "DingTalk Docs",
     "sync": "Sync",

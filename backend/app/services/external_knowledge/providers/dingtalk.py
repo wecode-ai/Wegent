@@ -297,5 +297,7 @@ class DingTalkExternalKnowledgeProvider:
 
     @classmethod
     def _get_node_id(cls, ref: DefaultContextRef) -> str | None:
-        value = cls._get_metadata_value(ref, "dingtalk_node_id")
+        value = cls._get_metadata_value(ref, "external_id") or cls._get_metadata_value(
+            ref, "dingtalk_node_id"
+        )
         return str(value) if value else None

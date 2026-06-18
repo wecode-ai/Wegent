@@ -354,7 +354,6 @@ def test_build_initial_task_context_refs_warns_when_dingtalk_mcp_not_configured(
             "name": "Roadmap",
             "metadata": {
                 "external_id": "node-1",
-                "dingtalk_node_id": "node-1",
                 "url": "https://example.com/doc",
                 "node_type": "doc",
             },

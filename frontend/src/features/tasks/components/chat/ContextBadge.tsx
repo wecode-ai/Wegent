@@ -132,7 +132,9 @@ export default function ContextBadge({
           </span>
         )}
         {context.type === 'external_document' && (
-          <span className="text-xs opacity-70 truncate">{t('chat:dingtalkDocs.docBadgeHint')}</span>
+          <span className="text-xs opacity-70 truncate">
+            {t('chat:externalDocument.docBadgeHint')}
+          </span>
         )}
       </div>
       <Button

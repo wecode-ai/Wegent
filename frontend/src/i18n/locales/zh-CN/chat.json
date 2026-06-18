@@ -697,6 +697,9 @@
   "contextWarnings": {
     "nameSeparator": "："
   },
+  "externalDocument": {
+    "docBadgeHint": "外部知识"
+  },
   "dingtalkDocs": {
     "tabTitle": "钉钉文档",
     "sync": "同步",

@@ -23,6 +23,8 @@ export interface RuntimeConfig {
   socketDirectUrl: string
   /** Enable chat context feature (knowledge base background) */
   enableChatContext: boolean
+  /** Enable DingTalk external document contexts in selectors */
+  enableDingTalkContext: boolean
   /** Login mode: 'password', 'oidc', or 'all' */
   loginMode: string
   /** OIDC login button text */
@@ -111,6 +113,7 @@ export const fetchRuntimeConfig = async (): Promise<RuntimeConfig> => {
         publicApiUrl: process.env.NEXT_PUBLIC_API_URL || '',
         socketDirectUrl: process.env.NEXT_PUBLIC_SOCKET_DIRECT_URL || '',
         enableChatContext: process.env.NEXT_PUBLIC_ENABLE_CHAT_CONTEXT === 'true',
+        enableDingTalkContext: process.env.NEXT_PUBLIC_ENABLE_DINGTALK_CONTEXT === 'true',
         loginMode: process.env.NEXT_PUBLIC_LOGIN_MODE || 'all',
         oidcLoginText: process.env.NEXT_PUBLIC_OIDC_LOGIN_TEXT || '',
         enableDisplayQuotas: process.env.NEXT_PUBLIC_FRONTEND_ENABLE_DISPLAY_QUOTAS === 'enable',
@@ -155,6 +158,7 @@ export const getRuntimeConfigSync = (): RuntimeConfig => {
     publicApiUrl: process.env.NEXT_PUBLIC_API_URL || '',
     socketDirectUrl: process.env.NEXT_PUBLIC_SOCKET_DIRECT_URL || '',
     enableChatContext: process.env.NEXT_PUBLIC_ENABLE_CHAT_CONTEXT === 'true',
+    enableDingTalkContext: process.env.NEXT_PUBLIC_ENABLE_DINGTALK_CONTEXT === 'true',
     loginMode: process.env.NEXT_PUBLIC_LOGIN_MODE || 'all',
     oidcLoginText: process.env.NEXT_PUBLIC_OIDC_LOGIN_TEXT || '',
     enableDisplayQuotas: process.env.NEXT_PUBLIC_FRONTEND_ENABLE_DISPLAY_QUOTAS === 'enable',

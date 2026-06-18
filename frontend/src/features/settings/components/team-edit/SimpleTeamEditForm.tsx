@@ -36,6 +36,7 @@ import {
   contextItemsToDefaultContextRefs,
   defaultContextRefsToContextItems,
 } from '@/features/context-selector/adapters/defaultContextAdapters'
+import { getRuntimeConfigSync } from '@/lib/runtime-config'
 
 import { TeamIconPicker } from '../teams/TeamIconPicker'
 import ExecutorModeSelector from './ExecutorModeSelector'
@@ -45,17 +46,19 @@ import TeamBindModeCards from './TeamBindModeCards'
 import { parseModelSelectValue, toModelSelectValue } from './model-select-utils'
 import type { SimpleExecutorMode } from './simple-team-edit-utils'
 
-const DEFAULT_CONTEXT_ALLOWED_TYPES: ContextType[] =
-  process.env.NEXT_PUBLIC_ENABLE_DINGTALK_CONTEXT === 'true'
+function getDefaultContextAllowedTypes(): ContextType[] {
+  return getRuntimeConfigSync().enableDingTalkContext
     ? ['knowledge_base', 'external_document']
     : ['knowledge_base']
+}
 
 function filterDefaultContextItems(items: ContextItem[]): ContextItem[] {
+  const allowedTypes = getDefaultContextAllowedTypes()
   const seen = new Set<string>()
   const filtered: ContextItem[] = []
 
   for (const item of items) {
-    if (!DEFAULT_CONTEXT_ALLOWED_TYPES.includes(item.type)) {
+    if (!allowedTypes.includes(item.type)) {
       continue
     }
 
@@ -543,7 +546,7 @@ export default function SimpleTeamEditForm({
                 open={defaultContextsOpen}
                 onOpenChange={setDefaultContextsOpen}
                 selectedContexts={defaultContextItems}
-                allowedContextTypes={DEFAULT_CONTEXT_ALLOWED_TYPES}
+                allowedContextTypes={getDefaultContextAllowedTypes()}
                 allowedKnowledgeBaseSources={
                   scope === 'group'
                     ? groupName

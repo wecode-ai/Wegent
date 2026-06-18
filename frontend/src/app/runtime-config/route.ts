@@ -61,6 +61,12 @@ export async function GET() {
         parseBoolean(process.env.RUNTIME_ENABLE_CHAT_CONTEXT, true) ||
         parseBoolean(process.env.NEXT_PUBLIC_ENABLE_CHAT_CONTEXT, true),
 
+      // Enable DingTalk external document contexts in selectors
+      // Priority: RUNTIME_ENABLE_DINGTALK_CONTEXT > NEXT_PUBLIC_ENABLE_DINGTALK_CONTEXT > false
+      enableDingTalkContext:
+        parseBoolean(process.env.RUNTIME_ENABLE_DINGTALK_CONTEXT, false) ||
+        parseBoolean(process.env.NEXT_PUBLIC_ENABLE_DINGTALK_CONTEXT, false),
+
       // Login mode: 'password', 'oidc', or 'all'
       // Priority: RUNTIME_LOGIN_MODE > NEXT_PUBLIC_LOGIN_MODE > 'all'
       loginMode: process.env.RUNTIME_LOGIN_MODE || process.env.NEXT_PUBLIC_LOGIN_MODE || 'all',
