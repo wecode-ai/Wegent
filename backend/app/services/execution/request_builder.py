@@ -226,12 +226,18 @@ class TaskRequestBuilder:
             team_crd=team_crd,
             team_member_prompt=team_member_prompt,
         )
-        runtime_external_document_contexts = (
-            self._resolve_runtime_external_document_contexts(
-                user=user,
-                contexts=runtime_contexts,
-            )
+        (
+            runtime_external_document_contexts,
+            runtime_external_context_warnings,
+        ) = self._resolve_runtime_external_document_contexts(
+            user=user,
+            contexts=runtime_contexts,
         )
+        if runtime_external_context_warnings:
+            self._append_runtime_external_context_warnings(
+                task,
+                runtime_external_context_warnings,
+            )
 
         # Get skills for the bot (full resolution from Ghost)
         # Convert preload_skills to the format expected by _get_bot_skills
@@ -2149,14 +2155,15 @@ Response template:
         *,
         user: User,
         contexts: Optional[List[Any]],
-    ) -> list[dict[str, Any]]:
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         """Resolve per-message external context selections into runtime refs."""
         if not contexts:
-            return []
+            return [], []
 
         bound_at = datetime.now().isoformat()
         external_registry = build_default_external_knowledge_registry()
         resolved_contexts: list[dict[str, Any]] = []
+        warnings: list[dict[str, Any]] = []
         for context in contexts:
             raw = context.model_dump() if hasattr(context, "model_dump") else context
             if not isinstance(raw, dict):
@@ -2167,7 +2174,61 @@ Response template:
             resolved = external_registry.resolve(self.db, user, ref, bound_at)
             if resolved.context_ref:
                 resolved_contexts.append(resolved.context_ref)
-        return resolved_contexts
+            if resolved.warning:
+                warnings.append(resolved.warning)
+        return resolved_contexts, warnings
+
+    def _append_runtime_external_context_warnings(
+        self,
+        task: TaskResource,
+        warnings: list[dict[str, Any]],
+    ) -> None:
+        """Persist runtime external context warnings for TaskDetail display."""
+        if not warnings:
+            return
+
+        task_json = task.json if isinstance(task.json, dict) else {}
+        next_task_json = dict(task_json)
+        spec = dict(next_task_json.get("spec") or {})
+        existing_warnings = [
+            warning
+            for warning in spec.get("contextWarnings", []) or []
+            if isinstance(warning, dict)
+        ]
+        seen = {
+            self._make_external_context_warning_key(warning)
+            for warning in existing_warnings
+        }
+        appended = False
+        for warning in warnings:
+            key = self._make_external_context_warning_key(warning)
+            if key in seen:
+                continue
+            existing_warnings.append(warning)
+            seen.add(key)
+            appended = True
+
+        if not appended:
+            return
+
+        spec["contextWarnings"] = existing_warnings
+        next_task_json["spec"] = spec
+        task_store.update_json(self.db, task=task, payload=next_task_json)
+        self.db.commit()
+
+    @staticmethod
+    def _make_external_context_warning_key(warning: dict[str, Any]) -> str:
+        return ":".join(
+            [
+                str(warning.get("type") or ""),
+                str(warning.get("reason") or ""),
+                str(warning.get("provider") or ""),
+                str(warning.get("source") or ""),
+                str(warning.get("dingtalk_node_id") or ""),
+                str(warning.get("name") or ""),
+                str(warning.get("message") or ""),
+            ]
+        )
 
     @classmethod
     def _get_external_document_contexts(

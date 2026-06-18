@@ -170,11 +170,12 @@ def test_runtime_dingtalk_context_resolves_to_external_document_context() -> Non
             return_value=None,
         ),
     ):
-        resolved = builder._resolve_runtime_external_document_contexts(
+        resolved, warnings = builder._resolve_runtime_external_document_contexts(
             user=user,
             contexts=contexts,
         )
 
+    assert warnings == []
     assert resolved == [
         {
             "type": "external_document",
@@ -223,3 +224,55 @@ def test_external_document_context_uses_runtime_contexts() -> None:
     assert preload_skills[0]["name"] == "dingtalk-docs"
     assert "Roadmap" in system_prompt
     assert "Use the corresponding DingTalk MCP tools" in system_prompt
+
+
+def test_runtime_dingtalk_context_warning_is_persisted_for_task_detail() -> None:
+    db = Mock()
+    builder = TaskRequestBuilder(db=db)
+    user = SimpleNamespace(id=1, user_name="alice")
+    contexts = [
+        {
+            "type": "dingtalk_doc",
+            "data": {
+                "id": "docs:node-1",
+                "source": "docs",
+                "dingtalk_node_id": "node-1",
+                "name": "Roadmap",
+                "doc_url": "https://example.com/doc",
+                "node_type": "doc",
+            },
+        }
+    ]
+    task = SimpleNamespace(json={"spec": {"title": "task"}})
+
+    with patch(
+        "app.services.external_knowledge.providers.dingtalk.DingTalkDocService.is_configured",
+        return_value=False,
+    ):
+        resolved, warnings = builder._resolve_runtime_external_document_contexts(
+            user=user,
+            contexts=contexts,
+        )
+
+    assert resolved == []
+    assert warnings == [
+        {
+            "type": "external_document",
+            "reason": "mcp_not_configured",
+            "message": "未开启钉钉 MCP, 无法读取钉钉知识",
+            "name": "Roadmap",
+            "provider": "dingtalk",
+            "source": "docs",
+            "dingtalk_node_id": "node-1",
+        }
+    ]
+
+    with patch(
+        "app.services.execution.request_builder.task_store.update_json"
+    ) as update_json:
+        builder._append_runtime_external_context_warnings(task, warnings)
+
+    update_json.assert_called_once()
+    payload = update_json.call_args.kwargs["payload"]
+    assert payload["spec"]["contextWarnings"] == warnings
+    db.commit.assert_called_once()
