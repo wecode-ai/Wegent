@@ -125,4 +125,21 @@ describe('ChatToolbarStatus', () => {
     expect(await screen.findByTestId('quota-usage-section')).toHaveTextContent('Quota brief')
     expect(screen.queryByTestId('chat-status-section')).not.toBeInTheDocument()
   })
+
+  test('does not render a standalone loading spinner in compact mode', () => {
+    getRuntimeConfigSync.mockReturnValue({
+      enableDisplayQuotas: true,
+    })
+    fetchQuota.mockReturnValue(new Promise(() => {}))
+    useChatStatusIndicator.mockReturnValue({
+      enabled: false,
+      currentTaskId: null,
+      display: null,
+    })
+
+    render(<ChatToolbarStatus compact />)
+
+    expect(screen.queryByRole('status', { name: 'Loading' })).not.toBeInTheDocument()
+    expect(screen.queryByTestId('chat-toolbar-status-trigger')).not.toBeInTheDocument()
+  })
 })
