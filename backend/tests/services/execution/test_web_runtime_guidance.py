@@ -176,11 +176,10 @@ def test_runtime_dingtalk_context_resolves_to_external_document_context() -> Non
                 "id": "docs:node-1",
                 "provider": "dingtalk",
                 "source": "docs",
-                "external_id": "node-1",
                 "name": "Roadmap",
                 "url": "https://example.com/doc",
                 "node_type": "doc",
-                "metadata": {"external_id": "node-1", "dingtalk_node_id": "node-1"},
+                "metadata": {"external_id": "node-1"},
             },
         }
     ]

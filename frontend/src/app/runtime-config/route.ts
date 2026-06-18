@@ -33,6 +33,10 @@ export async function GET() {
     if (value === undefined || value === '') return defaultValue
     return value.toLowerCase() === 'true'
   }
+  const parseOptionalBoolean = (value: string | undefined): boolean | undefined => {
+    if (value === undefined || value === '') return undefined
+    return value.toLowerCase() === 'true'
+  }
 
   return NextResponse.json(
     {
@@ -64,7 +68,7 @@ export async function GET() {
       // Enable DingTalk external document contexts in selectors
       // Priority: RUNTIME_ENABLE_DINGTALK_CONTEXT > NEXT_PUBLIC_ENABLE_DINGTALK_CONTEXT > false
       enableDingTalkContext:
-        parseBoolean(process.env.RUNTIME_ENABLE_DINGTALK_CONTEXT, false) ||
+        parseOptionalBoolean(process.env.RUNTIME_ENABLE_DINGTALK_CONTEXT) ??
         parseBoolean(process.env.NEXT_PUBLIC_ENABLE_DINGTALK_CONTEXT, false),
 
       // Login mode: 'password', 'oidc', or 'all'

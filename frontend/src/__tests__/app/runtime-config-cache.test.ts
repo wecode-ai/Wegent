@@ -11,8 +11,18 @@ import {
   getPublicApiBaseUrl,
 } from '@/lib/runtime-config'
 
+function restoreEnvValue(key: string, value: string | undefined) {
+  if (value === undefined) {
+    delete process.env[key]
+    return
+  }
+  process.env[key] = value
+}
+
 describe('runtime config caching', () => {
   const originalFetch = global.fetch
+  const originalRuntimeDingTalkContext = process.env.RUNTIME_ENABLE_DINGTALK_CONTEXT
+  const originalNextPublicDingTalkContext = process.env.NEXT_PUBLIC_ENABLE_DINGTALK_CONTEXT
 
   beforeEach(() => {
     clearRuntimeConfigCache()
@@ -45,6 +55,8 @@ describe('runtime config caching', () => {
   afterEach(() => {
     jest.clearAllMocks()
     clearRuntimeConfigCache()
+    restoreEnvValue('RUNTIME_ENABLE_DINGTALK_CONTEXT', originalRuntimeDingTalkContext)
+    restoreEnvValue('NEXT_PUBLIC_ENABLE_DINGTALK_CONTEXT', originalNextPublicDingTalkContext)
   })
 
   afterAll(() => {
@@ -63,6 +75,16 @@ describe('runtime config caching', () => {
 
     // In test/production mode, uses caching strategy
     expect(response.headers.get('Cache-Control')).toBe('max-age=60, stale-while-revalidate=300')
+  })
+
+  test('runtime DingTalk context flag overrides build-time flag when false', async () => {
+    process.env.RUNTIME_ENABLE_DINGTALK_CONTEXT = 'false'
+    process.env.NEXT_PUBLIC_ENABLE_DINGTALK_CONTEXT = 'true'
+
+    const response = await GET()
+    const config = await response.json()
+
+    expect(config.enableDingTalkContext).toBe(false)
   })
 
   test('getPublicApiBaseUrl uses the public backend URL from runtime config', async () => {

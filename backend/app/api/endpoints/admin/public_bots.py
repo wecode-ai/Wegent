@@ -8,7 +8,6 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
-from pydantic import TypeAdapter
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -24,11 +23,16 @@ from app.schemas.admin import (
 )
 from app.schemas.kind import DefaultContextRef, Ghost, Model, SkillRefMeta
 from app.services.adapters.shell_utils import get_shell_info_by_name
+from app.services.context.default_context_refs import (
+    dump_default_context_refs,
+    extract_default_knowledge_base_ref_dicts,
+    merge_raw_legacy_knowledge_refs,
+    parse_default_context_refs,
+)
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-DEFAULT_CONTEXT_REF_ADAPTER = TypeAdapter(DefaultContextRef)
 
 
 def _get_bot_ref_info(
@@ -169,51 +173,6 @@ def _normalize_skill_refs(refs: Optional[dict]) -> dict[str, SkillRefMeta]:
     return {
         skill_name: SkillRefMeta.model_validate(ref) for skill_name, ref in refs.items()
     }
-
-
-def _dump_default_context_refs(
-    refs: Optional[list[DefaultContextRef]],
-) -> list[dict]:
-    """Serialize default context refs for Ghost JSON."""
-    return [ref.model_dump(mode="json") for ref in refs or []]
-
-
-def _extract_default_knowledge_base_refs(
-    refs: Optional[list[DefaultContextRef]],
-) -> list[dict]:
-    """Derive legacy KB-only refs from unified default context refs."""
-    knowledge_refs = []
-    for ref in refs or []:
-        if ref.type != "knowledge_base":
-            continue
-        item = {"id": ref.id, "name": ref.name}
-        if ref.document_count is not None:
-            item["document_count"] = ref.document_count
-        knowledge_refs.append(item)
-    return knowledge_refs
-
-
-def _merge_legacy_default_knowledge_refs(
-    existing_context_refs: Optional[list[dict]],
-    default_knowledge_base_refs: Optional[list[dict]],
-) -> list[dict]:
-    """Replace only KB refs while preserving non-KB default contexts."""
-    non_kb_refs = [
-        ref
-        for ref in existing_context_refs or []
-        if isinstance(ref, dict) and ref.get("type") != "knowledge_base"
-    ]
-    kb_refs = [
-        {"type": "knowledge_base", **ref}
-        for ref in default_knowledge_base_refs or []
-        if isinstance(ref, dict)
-    ]
-    return [*non_kb_refs, *kb_refs]
-
-
-def _parse_default_context_refs(refs: list[dict]) -> list[DefaultContextRef]:
-    """Validate raw default context refs before assigning to Ghost spec."""
-    return [DEFAULT_CONTEXT_REF_ADAPTER.validate_python(ref) for ref in refs]
 
 
 def _bot_to_response(bot: Kind, db: Session) -> PublicBotResponse:
@@ -420,11 +379,11 @@ def _create_public_ghost(
         if default_context_refs is not None:
             ghost_crd.spec.defaultContextRefs = list(default_context_refs)
             ghost_crd.spec.defaultKnowledgeBaseRefs = (
-                _extract_default_knowledge_base_refs(default_context_refs)
+                extract_default_knowledge_base_ref_dicts(default_context_refs)
             )
         else:
-            ghost_crd.spec.defaultContextRefs = _parse_default_context_refs(
-                _merge_legacy_default_knowledge_refs(
+            ghost_crd.spec.defaultContextRefs = parse_default_context_refs(
+                merge_raw_legacy_knowledge_refs(
                     [
                         ref.model_dump(mode="json")
                         for ref in ghost_crd.spec.defaultContextRefs or []
@@ -457,15 +416,15 @@ def _create_public_ghost(
             for name, ref in _normalize_skill_refs(preload_skill_refs).items()
         }
     if default_context_refs is not None:
-        ghost_spec["defaultContextRefs"] = _dump_default_context_refs(
+        ghost_spec["defaultContextRefs"] = dump_default_context_refs(
             default_context_refs
         )
-        ghost_spec["defaultKnowledgeBaseRefs"] = _extract_default_knowledge_base_refs(
-            default_context_refs
+        ghost_spec["defaultKnowledgeBaseRefs"] = (
+            extract_default_knowledge_base_ref_dicts(default_context_refs)
         )
     elif default_knowledge_base_refs:
         ghost_spec["defaultKnowledgeBaseRefs"] = default_knowledge_base_refs
-        ghost_spec["defaultContextRefs"] = _merge_legacy_default_knowledge_refs(
+        ghost_spec["defaultContextRefs"] = merge_raw_legacy_knowledge_refs(
             None, default_knowledge_base_refs
         )
 
@@ -884,13 +843,13 @@ async def update_public_bot(
                 if bot_data.default_context_refs is not None:
                     ghost_crd.spec.defaultContextRefs = bot_data.default_context_refs
                     ghost_crd.spec.defaultKnowledgeBaseRefs = (
-                        _extract_default_knowledge_base_refs(
+                        extract_default_knowledge_base_ref_dicts(
                             bot_data.default_context_refs
                         )
                     )
                 elif bot_data.default_knowledge_base_refs is not None:
-                    ghost_crd.spec.defaultContextRefs = _parse_default_context_refs(
-                        _merge_legacy_default_knowledge_refs(
+                    ghost_crd.spec.defaultContextRefs = parse_default_context_refs(
+                        merge_raw_legacy_knowledge_refs(
                             [
                                 ref.model_dump(mode="json")
                                 for ref in ghost_crd.spec.defaultContextRefs or []

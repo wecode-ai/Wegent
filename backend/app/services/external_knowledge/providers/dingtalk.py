@@ -50,6 +50,7 @@ class DingTalkExternalKnowledgeProvider:
         node_id = (
             data.get("external_id")
             or data.get("dingtalk_node_id")
+            or metadata.get("external_id")
             or metadata.get("dingtalk_node_id")
         )
         if source not in {"docs", "wikispace"} or not node_id:

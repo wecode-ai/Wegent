@@ -21,7 +21,6 @@ from app.schemas.bot import BotCreate, BotDetail, BotInDB, BotUpdate
 from app.schemas.kind import (
     Bot,
     DefaultContextRef,
-    DefaultKnowledgeBaseContextRef,
     Ghost,
     KnowledgeBaseDefaultRef,
     Model,
@@ -37,6 +36,11 @@ from app.services.adapters.shell_utils import (
 )
 from app.services.adapters.task_kinds.running_tasks import get_running_tasks_for_team
 from app.services.base import BaseService
+from app.services.context.default_context_refs import (
+    extract_default_knowledge_base_refs,
+    knowledge_refs_to_default_context_refs,
+    merge_legacy_knowledge_refs,
+)
 from app.services.external_knowledge.registry import (
     build_default_external_knowledge_registry,
 )
@@ -73,46 +77,6 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         # Add more sensitive keys here as needed
     ]
 
-    def _knowledge_refs_to_default_context_refs(
-        self, refs: Optional[List[KnowledgeBaseDefaultRef]]
-    ) -> list[DefaultContextRef]:
-        """Convert legacy default KB refs into default context refs."""
-        if not refs:
-            return []
-        return [
-            DefaultKnowledgeBaseContextRef(
-                type="knowledge_base",
-                id=ref.id,
-                name=ref.name,
-            )
-            for ref in refs
-        ]
-
-    def _extract_default_knowledge_base_refs(
-        self, refs: Optional[List[DefaultContextRef]]
-    ) -> list[KnowledgeBaseDefaultRef]:
-        """Extract legacy KB refs from the new default context collection."""
-        result: list[KnowledgeBaseDefaultRef] = []
-        for ref in refs or []:
-            if ref.type != "knowledge_base":
-                continue
-            result.append(KnowledgeBaseDefaultRef(id=ref.id, name=ref.name))
-        return result
-
-    def _merge_legacy_knowledge_refs(
-        self,
-        existing_refs: Optional[List[DefaultContextRef]],
-        legacy_refs: Optional[List[KnowledgeBaseDefaultRef]],
-    ) -> list[DefaultContextRef]:
-        """Replace only the KB subset when legacy clients update default KB refs."""
-        non_kb_refs = [
-            ref for ref in existing_refs or [] if ref.type != "knowledge_base"
-        ]
-        return [
-            *non_kb_refs,
-            *self._knowledge_refs_to_default_context_refs(legacy_refs),
-        ]
-
     def _validate_default_context_refs(
         self,
         db: Session,
@@ -125,7 +89,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             return
         self._validate_default_knowledge_bases(
             db,
-            self._extract_default_knowledge_base_refs(refs),
+            extract_default_knowledge_base_refs(refs),
             user_id,
             namespace,
         )
@@ -431,7 +395,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         if obj_in.default_context_refs is not None:
             default_context_refs = obj_in.default_context_refs
         else:
-            default_context_refs = self._knowledge_refs_to_default_context_refs(
+            default_context_refs = knowledge_refs_to_default_context_refs(
                 obj_in.default_knowledge_base_refs
             )
         self._validate_default_context_refs(
@@ -452,9 +416,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             ]
             ghost_spec["defaultKnowledgeBaseRefs"] = [
                 ref.model_dump()
-                for ref in self._extract_default_knowledge_base_refs(
-                    default_context_refs
-                )
+                for ref in extract_default_knowledge_base_refs(default_context_refs)
             ]
         elif obj_in.default_knowledge_base_refs is not None:
             ghost_spec["defaultContextRefs"] = [
@@ -1157,16 +1119,14 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             ghost_crd = Ghost.model_validate(ghost.json)
             ghost_crd.spec.defaultContextRefs = obj_in.default_context_refs or []
             ghost_crd.spec.defaultKnowledgeBaseRefs = (
-                self._extract_default_knowledge_base_refs(
-                    obj_in.default_context_refs or []
-                )
+                extract_default_knowledge_base_refs(obj_in.default_context_refs or [])
             )
             ghost.json = ghost_crd.model_dump()
             flag_modified(ghost, "json")
             db.add(ghost)
         elif "default_knowledge_base_refs" in update_data and ghost:
             ghost_crd = Ghost.model_validate(ghost.json)
-            merged_refs = self._merge_legacy_knowledge_refs(
+            merged_refs = merge_legacy_knowledge_refs(
                 ghost_crd.spec.defaultContextRefs,
                 obj_in.default_knowledge_base_refs,
             )
@@ -1864,7 +1824,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             ]
             context_refs = ghost_crd.spec.defaultContextRefs
             if context_refs is None and ghost_crd.spec.defaultKnowledgeBaseRefs:
-                context_refs = self._knowledge_refs_to_default_context_refs(
+                context_refs = knowledge_refs_to_default_context_refs(
                     ghost_crd.spec.defaultKnowledgeBaseRefs
                 )
             default_context_refs = [ref.model_dump() for ref in (context_refs or [])]
