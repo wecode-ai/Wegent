@@ -843,6 +843,36 @@ class TestSandboxManager:
         mock_redis_client.expire.assert_called()
         mock_redis_client.zadd.assert_called()
 
+    def test_save_sandbox_round_trip_preserves_timing_fields(
+        self, sandbox_manager_with_mock_redis, mock_redis_client, sample_sandbox
+    ):
+        """Test save/load preserves started_at, last_activity_at, and expires_at."""
+        manager = sandbox_manager_with_mock_redis
+
+        result = manager._repository.save_sandbox(sample_sandbox)
+
+        assert result is True
+
+        hset_args = mock_redis_client.hset.call_args[0]
+        saved_hash_key = hset_args[0]
+        saved_field = hset_args[1]
+        saved_payload = hset_args[2]
+        saved_data = json.loads(saved_payload)
+
+        assert saved_data["started_at"] == sample_sandbox.started_at
+        assert saved_data["last_activity_at"] == sample_sandbox.last_activity_at
+        assert saved_data["expires_at"] == sample_sandbox.expires_at
+
+        mock_redis_client.hget.return_value = saved_payload
+        loaded_sandbox = manager._repository.load_sandbox(sample_sandbox.sandbox_id)
+
+        assert loaded_sandbox is not None
+        assert saved_hash_key.endswith(sample_sandbox.sandbox_id)
+        assert saved_field == "__sandbox__"
+        assert loaded_sandbox.started_at == sample_sandbox.started_at
+        assert loaded_sandbox.last_activity_at == sample_sandbox.last_activity_at
+        assert loaded_sandbox.expires_at == sample_sandbox.expires_at
+
     def test_save_sandbox_missing_task_id(
         self, sandbox_manager_with_mock_redis, mock_redis_client
     ):
@@ -1224,13 +1254,14 @@ class TestSandboxManager:
         self,
         sandbox_manager_with_mock_redis,
         mock_redis_client,
-        sample_sandbox_redis_data,
         mocker,
         sample_sandbox,
     ):
-        """Test terminates sandboxes older than 24 hours."""
+        """Test terminates sandboxes idle for more than two hours."""
         manager = sandbox_manager_with_mock_redis
-        mock_redis_client.zrangebyscore.return_value = ["12345"]
+        mock_redis_client.zrange.return_value = ["12345"]
+        sample_sandbox.last_activity_at = time.time() - (2 * 3600) - 60
+        sample_sandbox.expires_at = time.time() + 3600
 
         # Mock repository.load_sandbox to return a sandbox
         mocker.patch.object(
@@ -1253,9 +1284,9 @@ class TestSandboxManager:
     async def test_collect_expired_sandboxes_cleans_orphaned(
         self, sandbox_manager_with_mock_redis, mock_redis_client, mocker
     ):
-        """Test cleans orphaned ZSet entries."""
+        """Test cleans orphaned active set entries."""
         manager = sandbox_manager_with_mock_redis
-        mock_redis_client.zrangebyscore.return_value = ["orphaned-id"]
+        mock_redis_client.zrange.return_value = ["orphaned-id"]
         mock_redis_client.hget.return_value = None  # No sandbox data
 
         await manager._collect_expired_sandboxes()
@@ -1263,6 +1294,34 @@ class TestSandboxManager:
         mock_redis_client.zrem.assert_called_with(
             "wegent-sandbox:active", "orphaned-id"
         )
+
+    @pytest.mark.asyncio
+    async def test_collect_expired_sandboxes_skips_unexpired(
+        self,
+        sandbox_manager_with_mock_redis,
+        mock_redis_client,
+        mocker,
+        sample_sandbox,
+    ):
+        """Test keeps sandboxes with recent activity even if expires_at is in the past."""
+        manager = sandbox_manager_with_mock_redis
+        mock_redis_client.zrange.return_value = ["12345"]
+        sample_sandbox.last_activity_at = time.time() - 300
+        sample_sandbox.expires_at = time.time() - 60
+
+        mocker.patch.object(
+            manager._repository, "load_sandbox", return_value=sample_sandbox
+        )
+        mock_terminate = mocker.patch.object(
+            manager,
+            "terminate_sandbox",
+            new_callable=AsyncMock,
+            return_value=(True, "Terminated"),
+        )
+
+        await manager._collect_expired_sandboxes()
+
+        mock_terminate.assert_not_called()
 
     # ----- Scheduler Integration Tests -----
 

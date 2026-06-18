@@ -64,6 +64,9 @@ class TimeoutConfig:
 
     # Sandbox timeouts
     sandbox_default: int = 1800  # 30 minutes
+    sandbox_inactive_timeout: int = field(
+        default_factory=lambda: int(os.getenv("SANDBOX_INACTIVE_TIMEOUT", "7200"))
+    )
     execution_default: int = 600  # 10 minutes
     container_ready: int = field(
         default_factory=lambda: int(os.getenv("CONTAINER_READY_TIMEOUT", "20"))
@@ -83,7 +86,8 @@ class TimeoutConfig:
     http_execution_request: float = 30.0
     http_container_wait: float = 5.0
 
-    # Redis TTL
+    # Redis data retention window for sandbox state
+    # This is not the sandbox execution timeout; sandbox expiry uses expires_at.
     redis_ttl: int = 86400  # 24 hours
     # Session hash TTL must be longer than redis_ttl to ensure GC can load sandbox data
     # Formula: redis_ttl + GC_INTERVAL + buffer (default: 86400 + 3600 + 3600 = 93600)
