@@ -377,6 +377,20 @@ def _append_global_mcp_servers(target: list[dict[str, Any]]) -> None:
     logger.info("[MCP] Appended global MCP servers: names=%s", appended)
 
 
+def _extract_task_model_id(bot_config: Dict[str, Any]) -> str:
+    """Return the task-scoped model ID from a bot's agent configuration."""
+    agent_config = bot_config.get("agent_config", {})
+    if not isinstance(agent_config, dict):
+        return ""
+
+    env = agent_config.get("env", {})
+    if not isinstance(env, dict) or not env.get("model"):
+        return ""
+
+    model_id = env.get("model_id")
+    return str(model_id).strip() if model_id else ""
+
+
 def extract_claude_options(task_data: ExecutionRequest) -> Dict[str, Any]:
     """Extract Claude Code options from task data.
 
@@ -427,6 +441,16 @@ def extract_claude_options(task_data: ExecutionRequest) -> Dict[str, Any]:
     if bot_config:
         # Create a shallow copy of bot_config to avoid modifying the original
         bot_config = bot_config.copy()
+
+        task_model_id = _extract_task_model_id(bot_config)
+        if task_model_id:
+            # Pass the task model explicitly so user/project Claude settings
+            # cannot override the model selected in Wegent.
+            options["model"] = task_model_id
+            logger.info(
+                "[ClaudeOptions] Using task-scoped SDK model: %s",
+                task_model_id,
+            )
 
         # Extract MCP servers. Claude Code subagents share the parent SDK
         # session, so coordinate mode must register member bot MCP servers on
