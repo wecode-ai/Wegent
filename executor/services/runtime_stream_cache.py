@@ -11,7 +11,7 @@ import logging
 import time
 from typing import Any, Optional
 
-from shared.models import RuntimeStreamAccumulator, runtime_stream_cache_capability
+from shared.models import RuntimeStreamAccumulator
 
 logger = logging.getLogger(__name__)
 
@@ -32,14 +32,6 @@ class RuntimeStreamCache:
         self._terminal_ttl_seconds = terminal_ttl_seconds
         self._entries: dict[int, RuntimeStreamAccumulator] = {}
         self._lock = asyncio.Lock()
-
-    def capability(self) -> dict[str, Any]:
-        """Return the capability marker sent with callback events."""
-
-        capability = runtime_stream_cache_capability()
-        capability["active_idle_ttl_seconds"] = self._active_idle_ttl_seconds
-        capability["terminal_ttl_seconds"] = self._terminal_ttl_seconds
-        return capability
 
     async def record_event(
         self,
@@ -127,5 +119,4 @@ def runtime_stream_cache_transport_kwargs() -> dict[str, Any]:
 
     return {
         "runtime_cache": runtime_stream_cache,
-        "runtime_cache_capability": runtime_stream_cache.capability(),
     }

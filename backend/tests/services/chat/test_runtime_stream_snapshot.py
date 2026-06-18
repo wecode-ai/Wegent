@@ -29,7 +29,7 @@ async def test_runtime_snapshot_prefers_executor_cache(monkeypatch):
         task_id=101,
         subtask_id=202,
         streaming_info={
-            "runtime_cache": {"enabled": True, "version": 1},
+            "runtime_cache": {"enabled": True},
             "executor_name": "executor-1",
             "executor_namespace": "default",
         },

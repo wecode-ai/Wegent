@@ -113,6 +113,10 @@ class DeviceInfo(BaseModel):
         BindShell.CLAUDECODE,
         description="Shell runtime binding (claudecode or openclaw)",
     )
+    runtime_cache: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Device-level runtime cache capability, e.g. {'enabled': true}",
+    )
 
     class Config:
         from_attributes = True
@@ -278,6 +282,10 @@ class DeviceRegisterPayload(BaseModel):
         BindShell.CLAUDECODE,
         description="Shell runtime binding (claudecode or openclaw)",
     )
+    runtime_cache: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Device-level runtime cache capability, e.g. {'enabled': true}",
+    )
 
 
 class DeviceHeartbeatPayload(BaseModel):
@@ -295,6 +303,10 @@ class DeviceHeartbeatPayload(BaseModel):
     capabilities: Optional[Dict[str, Any]] = Field(
         None,
         description="Sanitized local global capability state reported by executor",
+    )
+    runtime_cache: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Device-level runtime cache capability, e.g. {'enabled': true}",
     )
     runtime_auth_files: Optional[Dict[str, Any]] = Field(
         None,

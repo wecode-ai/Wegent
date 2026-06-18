@@ -15,18 +15,13 @@ from typing import Any, Optional
 from .blocks import BlockStatus, create_tool_block
 from .responses_api import ResponsesAPIStreamEvents
 
-RUNTIME_STREAM_CACHE_VERSION = 1
 RUNTIME_STREAM_CACHE_SOURCE = "executor"
 
 
 def runtime_stream_cache_capability() -> dict[str, Any]:
-    """Return the runtime cache capability marker sent with executor events."""
+    """Return the runtime cache capability marker."""
 
-    return {
-        "enabled": True,
-        "version": RUNTIME_STREAM_CACHE_VERSION,
-        "source": RUNTIME_STREAM_CACHE_SOURCE,
-    }
+    return {"enabled": True}
 
 
 @dataclass
@@ -43,7 +38,6 @@ class RuntimeStreamSnapshot:
     last_activity_at: float = field(default_factory=time.time)
     terminal: bool = False
     source: str = RUNTIME_STREAM_CACHE_SOURCE
-    version: int = RUNTIME_STREAM_CACHE_VERSION
 
     def to_dict(self) -> dict[str, Any]:
         """Convert the snapshot to a JSON-serializable dictionary."""
@@ -58,7 +52,6 @@ class RuntimeStreamSnapshot:
             "last_activity_at": self.last_activity_at,
             "terminal": self.terminal,
             "source": self.source,
-            "version": self.version,
         }
         if self.context_metrics is not None:
             payload["context_metrics"] = dict(self.context_metrics)
@@ -164,7 +157,6 @@ class RuntimeStreamAccumulator:
             last_activity_at=source.last_activity_at,
             terminal=source.terminal,
             source=source.source,
-            version=source.version,
         )
 
     def _append_text(self, content: str) -> None:

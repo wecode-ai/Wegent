@@ -238,6 +238,38 @@ describe('messageReducer', () => {
     })
   })
 
+  test('clears restored processing blocks when completion has no blocks', () => {
+    const state = messageReducer([], {
+      type: 'assistant_cached',
+      taskId: 1,
+      subtaskId: 9,
+      content: 'Partial answer',
+      blocks: [
+        {
+          id: 'text-restored',
+          subtaskId: 9,
+          type: 'text',
+          content: 'Partial answer',
+          status: 'streaming',
+          createdAt: 1770000000000,
+        },
+      ],
+    })
+
+    const done = messageReducer(state, {
+      type: 'assistant_done',
+      subtaskId: 9,
+      content: 'Final answer',
+      blocks: [],
+    })
+
+    expect(done[0]).toMatchObject({
+      content: 'Final answer',
+      status: 'done',
+      blocks: [],
+    })
+  })
+
   test('stores file changes on completion and updates them after revert', () => {
     const activeFileChanges = {
       version: 1 as const,

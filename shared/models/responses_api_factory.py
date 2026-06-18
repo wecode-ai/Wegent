@@ -164,7 +164,6 @@ class TransportFactory:
         callback_url: Optional[str] = None,
         client: Optional["CallbackClient"] = None,
         runtime_cache: Optional[Any] = None,
-        runtime_cache_capability: Optional[dict[str, Any]] = None,
     ) -> CallbackTransport:
         """Create HTTP Callback Transport.
 
@@ -172,7 +171,6 @@ class TransportFactory:
             callback_url: URL for the callback endpoint (required if client is None)
             client: HTTP callback client. If None, creates CallbackClient with callback_url.
             runtime_cache: Optional executor-local runtime cache service.
-            runtime_cache_capability: Optional capability marker sent to backend.
 
         Returns:
             CallbackTransport instance
@@ -189,7 +187,6 @@ class TransportFactory:
         return CallbackTransport(
             client,
             runtime_cache=runtime_cache,
-            runtime_cache_capability=runtime_cache_capability,
         )
 
     @staticmethod
@@ -197,7 +194,6 @@ class TransportFactory:
         client: Any,
         event_mapping: Optional[dict] = None,
         runtime_cache: Optional[Any] = None,
-        runtime_cache_capability: Optional[dict[str, Any]] = None,
     ) -> WebSocketTransport:
         """Create WebSocket Transport.
 
@@ -205,7 +201,6 @@ class TransportFactory:
             client: WebSocket client (required)
             event_mapping: Event type to socket event name mapping
             runtime_cache: Optional executor-local runtime cache service.
-            runtime_cache_capability: Optional capability marker sent to backend.
 
         Returns:
             WebSocketTransport instance
@@ -214,7 +209,6 @@ class TransportFactory:
             client,
             event_mapping,
             runtime_cache=runtime_cache,
-            runtime_cache_capability=runtime_cache_capability,
         )
 
     @staticmethod
@@ -254,7 +248,6 @@ class TransportFactory:
         client: Optional["CallbackClient"] = None,
         config: Optional[ThrottleConfig] = None,
         runtime_cache: Optional[Any] = None,
-        runtime_cache_capability: Optional[dict[str, Any]] = None,
     ) -> ThrottledTransport:
         """Create HTTP Callback Transport with throttling.
 
@@ -263,7 +256,6 @@ class TransportFactory:
             client: HTTP callback client. If None, creates CallbackClient with callback_url.
             config: Throttle configuration
             runtime_cache: Optional executor-local runtime cache service.
-            runtime_cache_capability: Optional capability marker sent to backend.
 
         Returns:
             ThrottledTransport wrapping CallbackTransport
@@ -275,7 +267,6 @@ class TransportFactory:
             callback_url=callback_url,
             client=client,
             runtime_cache=runtime_cache,
-            runtime_cache_capability=runtime_cache_capability,
         )
         return ThrottledTransport(base, config)
 
@@ -285,7 +276,6 @@ class TransportFactory:
         event_mapping: Optional[dict] = None,
         config: Optional[ThrottleConfig] = None,
         runtime_cache: Optional[Any] = None,
-        runtime_cache_capability: Optional[dict[str, Any]] = None,
     ) -> ThrottledTransport:
         """Create WebSocket Transport with throttling.
 
@@ -294,7 +284,6 @@ class TransportFactory:
             event_mapping: Event type to socket event name mapping
             config: Throttle configuration
             runtime_cache: Optional executor-local runtime cache service.
-            runtime_cache_capability: Optional capability marker sent to backend.
 
         Returns:
             ThrottledTransport wrapping WebSocketTransport
@@ -303,7 +292,6 @@ class TransportFactory:
             client,
             event_mapping,
             runtime_cache=runtime_cache,
-            runtime_cache_capability=runtime_cache_capability,
         )
         return ThrottledTransport(base, config)
 

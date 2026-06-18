@@ -674,18 +674,15 @@ class CallbackTransport(EventTransport):
         self,
         client: Any,
         runtime_cache: Optional[Any] = None,
-        runtime_cache_capability: Optional[dict[str, Any]] = None,
     ):
         """Initialize callback transport.
 
         Args:
             client: Callback client with send_event_dict method
             runtime_cache: Optional executor runtime cache service.
-            runtime_cache_capability: Optional capability marker sent to backend.
         """
         self.client = client
         self.runtime_cache = runtime_cache
-        self.runtime_cache_capability = runtime_cache_capability
 
     async def _record_runtime_cache(
         self,
@@ -747,8 +744,6 @@ class CallbackTransport(EventTransport):
             event["executor_name"] = executor_name
         if executor_namespace is not None:
             event["executor_namespace"] = executor_namespace
-        if self.runtime_cache_capability:
-            event["runtime_cache"] = self.runtime_cache_capability
 
         import asyncio
 
@@ -767,7 +762,6 @@ class WebSocketTransport(EventTransport):
         client: Any,
         event_mapping: Optional[dict] = None,
         runtime_cache: Optional[Any] = None,
-        runtime_cache_capability: Optional[dict[str, Any]] = None,
     ):
         """Initialize WebSocket transport.
 
@@ -775,12 +769,10 @@ class WebSocketTransport(EventTransport):
             client: WebSocket client with emit method
             event_mapping: Optional mapping from event_type to socket event name
             runtime_cache: Optional executor runtime cache service.
-            runtime_cache_capability: Optional capability marker sent to backend.
         """
         self.client = client
         self.event_mapping = event_mapping or {}
         self.runtime_cache = runtime_cache
-        self.runtime_cache_capability = runtime_cache_capability
 
     async def _record_runtime_cache(
         self,
@@ -842,8 +834,6 @@ class WebSocketTransport(EventTransport):
             payload["executor_name"] = executor_name
         if executor_namespace is not None:
             payload["executor_namespace"] = executor_namespace
-        if self.runtime_cache_capability:
-            payload["runtime_cache"] = self.runtime_cache_capability
 
         # Map event_type to socket event name
         # If no mapping provided, use the original event_type as socket event name

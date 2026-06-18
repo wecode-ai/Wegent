@@ -115,7 +115,7 @@ async def test_runtime_cache_mode_skips_redis_stream_snapshot_writes():
         subtask_id=202,
         executor_name="executor-1",
         executor_namespace="default",
-        runtime_cache={"enabled": True, "version": 1},
+        runtime_cache={"enabled": True},
     )
     mock_session_manager = AsyncMock()
 
@@ -146,7 +146,7 @@ async def test_runtime_cache_mode_skips_redis_stream_snapshot_writes():
         subtask_id=202,
         executor_name="executor-1",
         executor_namespace="default",
-        runtime_cache={"enabled": True, "version": 1},
+        runtime_cache={"enabled": True},
     )
     wrapped.emit.assert_has_awaits([call(chunk), call(tool_start)])
 

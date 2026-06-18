@@ -47,6 +47,7 @@ from executor.modes.local.capabilities import GlobalCapabilityReporter
 from executor.platform_compat import get_permissions_manager
 from executor.version import get_version
 from shared.logger import setup_logger
+from shared.models import runtime_stream_cache_capability
 
 if TYPE_CHECKING:
     from executor.config.device_config import DeviceConfig
@@ -498,6 +499,7 @@ class WebSocketClient:
                 "bind_shell": self.bind_shell,
                 "executor_version": get_version(),
                 "client_ip": self._get_client_ip(),
+                "runtime_cache": runtime_stream_cache_capability(),
             }
             logger.info(f"Sending device:register to /local-executor: {register_data}")
 
@@ -555,6 +557,7 @@ class WebSocketClient:
                 "running_task_ids": running_task_ids,
                 "executor_version": get_version(),
                 "capabilities": self.capability_reporter.build_report(),
+                "runtime_cache": runtime_stream_cache_capability(),
                 "runtime_auth_files": build_runtime_auth_file_report(),
             }
             logger.info(

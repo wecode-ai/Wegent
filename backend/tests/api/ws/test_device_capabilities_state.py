@@ -84,6 +84,20 @@ def test_runtime_auth_file_missing_requires_explicit_false():
     assert device_namespace._runtime_auth_file_missing(None, "codex") is False
 
 
+def test_normalize_runtime_cache_capability_only_keeps_enabled():
+    assert device_namespace._normalize_runtime_cache_capability(
+        {
+            "enabled": True,
+            "source": "executor",
+            "active_idle_ttl_seconds": 3600,
+        }
+    ) == {"enabled": True}
+    assert (
+        device_namespace._normalize_runtime_cache_capability({"enabled": False}) is None
+    )
+    assert device_namespace._normalize_runtime_cache_capability(None) is None
+
+
 @pytest.mark.asyncio
 async def test_heartbeat_runtime_auth_sync_uses_user_preferences(monkeypatch):
     namespace = device_namespace.DeviceNamespace()
@@ -148,6 +162,75 @@ async def test_heartbeat_runtime_auth_sync_uses_user_preferences(monkeypatch):
         device_ids=["device-1"],
     )
     assert key not in namespace._runtime_auth_sync_inflight
+
+
+@pytest.mark.asyncio
+async def test_responses_api_event_uses_device_runtime_cache_capability(monkeypatch):
+    namespace = device_namespace.DeviceNamespace()
+    event = SimpleNamespace(type=device_namespace.EventType.CHUNK.value)
+    payload = {
+        "task_id": 101,
+        "subtask_id": 202,
+        "message_id": 303,
+        "runtime_cache": {"enabled": False, "source": "event"},
+        "data": {"delta": "hello"},
+    }
+    websocket_kwargs = {}
+    status_kwargs = {}
+
+    async def fake_get_session(sid):
+        return {"user_id": 7, "device_id": "device-1"}
+
+    def fake_parse(**kwargs):
+        return event
+
+    class FakeWebSocketResultEmitter:
+        def __init__(self, **kwargs):
+            websocket_kwargs.update(kwargs)
+
+    class FakeStatusUpdatingEmitter:
+        def __init__(self, **kwargs):
+            status_kwargs.update(kwargs)
+
+        async def emit(self, emitted_event):
+            assert emitted_event is event
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr(namespace, "get_session", fake_get_session)
+    monkeypatch.setattr(namespace._event_parser, "parse", fake_parse)
+    monkeypatch.setattr(
+        device_namespace.device_service,
+        "get_device_online_info",
+        AsyncMock(
+            return_value={
+                "runtime_cache": {
+                    "enabled": True,
+                    "source": "device",
+                    "active_idle_ttl_seconds": 3600,
+                }
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        device_namespace,
+        "WebSocketResultEmitter",
+        FakeWebSocketResultEmitter,
+    )
+    monkeypatch.setattr(
+        device_namespace,
+        "StatusUpdatingEmitter",
+        FakeStatusUpdatingEmitter,
+    )
+
+    result = await namespace._handle_responses_api_event(
+        "sid-1", "response.output_text.delta", payload
+    )
+
+    assert result == {"success": True}
+    assert websocket_kwargs["runtime_cache_enabled"] is True
+    assert status_kwargs["runtime_cache"] == {"enabled": True}
 
 
 @pytest.mark.asyncio

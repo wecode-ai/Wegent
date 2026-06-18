@@ -106,7 +106,6 @@ from .runtime_config import (
 )
 from .runtime_stream_cache import (
     RUNTIME_STREAM_CACHE_SOURCE,
-    RUNTIME_STREAM_CACHE_VERSION,
     RuntimeStreamAccumulator,
     RuntimeStreamSnapshot,
     runtime_stream_cache_capability,
@@ -192,7 +191,6 @@ __all__ = [
     "ThrottledTransport",
     # Runtime stream cache
     "RUNTIME_STREAM_CACHE_SOURCE",
-    "RUNTIME_STREAM_CACHE_VERSION",
     "RuntimeStreamAccumulator",
     "RuntimeStreamSnapshot",
     "runtime_stream_cache_capability",

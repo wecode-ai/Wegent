@@ -78,6 +78,14 @@ REGISTER_CAPABILITY_SYNC_TIMEOUT_SECONDS = 5
 DEVICE_DISCONNECT_FAILURE_GRACE_SECONDS = 2
 
 
+def _normalize_runtime_cache_capability(value: Any) -> Optional[dict[str, bool]]:
+    """Return the normalized runtime cache capability."""
+
+    if isinstance(value, dict) and value.get("enabled") is True:
+        return {"enabled": True}
+    return None
+
+
 @contextmanager
 def _db_session() -> Generator[Session, None, None]:
     """Context manager for database session with auto-commit and auto-close."""
@@ -976,6 +984,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
             socket_id=sid,
             name=effective_device_name,
             executor_version=payload.executor_version,
+            runtime_cache=_normalize_runtime_cache_capability(payload.runtime_cache),
         )
 
         # Update session with device_id and device_name
@@ -1163,6 +1172,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
             payload.device_id,
             payload.running_task_ids,
             payload.executor_version,
+            runtime_cache=_normalize_runtime_cache_capability(payload.runtime_cache),
         )
 
         if not success:
@@ -1178,6 +1188,9 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 socket_id=sid,
                 name=device_name,
                 executor_version=payload.executor_version,
+                runtime_cache=_normalize_runtime_cache_capability(
+                    payload.runtime_cache
+                ),
             )
             # Re-broadcast device online event
             await self._broadcast_device_online(user_id, payload.device_id, device_name)
@@ -1348,10 +1361,13 @@ class DeviceNamespace(socketio.AsyncNamespace):
         subtask_id = data.get("subtask_id")
         event_data = data.get("data", {})
         message_id = data.get("message_id")
-        runtime_cache = data.get("runtime_cache")
-        runtime_cache_enabled = bool(
-            isinstance(runtime_cache, dict) and runtime_cache.get("enabled")
+        device_online_info = await device_service.get_device_online_info(
+            user_id, device_id
         )
+        runtime_cache = _normalize_runtime_cache_capability(
+            device_online_info.get("runtime_cache") if device_online_info else None
+        )
+        runtime_cache_enabled = bool(runtime_cache)
         executor_name = data.get("executor_name") or f"device-{device_id}"
         executor_namespace = data.get("executor_namespace") or f"user-{user_id}"
 
@@ -1400,7 +1416,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
                     subtask_id=subtask_id,
                     executor_name=executor_name,
                     executor_namespace=executor_namespace,
-                    runtime_cache=runtime_cache if runtime_cache_enabled else None,
+                    runtime_cache=runtime_cache,
                 )
                 await emitter.emit(event)
                 await emitter.close()

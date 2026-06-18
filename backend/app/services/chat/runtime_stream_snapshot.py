@@ -383,7 +383,6 @@ class RuntimeStreamSnapshotService:
             "last_activity_at": snapshot.get("last_activity_at"),
             "terminal": bool(snapshot.get("terminal")),
             "source": snapshot.get("source") or "executor",
-            "version": snapshot.get("version"),
         }
 
     @staticmethod

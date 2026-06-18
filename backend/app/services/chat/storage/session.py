@@ -695,8 +695,7 @@ class SessionManager:
             if executor_namespace:
                 value["executor_namespace"] = executor_namespace
             if isinstance(runtime_cache, dict) and runtime_cache.get("enabled"):
-                value["runtime_cache"] = runtime_cache
-                value["cache_source"] = "executor"
+                value["runtime_cache"] = {"enabled": True}
             logger.info(
                 f"[SessionManager] set_task_streaming_status: key={key}, "
                 f"task_id={task_id}, subtask_id={subtask_id}, user_id={user_id}, "
@@ -740,8 +739,7 @@ class SessionManager:
                 )
 
             if (
-                status.get("cache_source") == "executor"
-                and status.get("runtime_cache") == runtime_cache
+                status.get("runtime_cache") == {"enabled": True}
                 and status.get("executor_name") == executor_name
                 and status.get("executor_namespace") == executor_namespace
             ):
@@ -749,8 +747,7 @@ class SessionManager:
 
             status["subtask_id"] = subtask_id
             status["last_activity_at"] = datetime.now().isoformat()
-            status["runtime_cache"] = runtime_cache
-            status["cache_source"] = "executor"
+            status["runtime_cache"] = {"enabled": True}
             if executor_name:
                 status["executor_name"] = executor_name
             if executor_namespace:

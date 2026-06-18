@@ -6,11 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from shared.models import (
-    CallbackTransport,
-    RuntimeStreamAccumulator,
-    runtime_stream_cache_capability,
-)
+from shared.models import CallbackTransport, RuntimeStreamAccumulator
 from shared.models.responses_api import ResponsesAPIStreamEvents
 
 
@@ -128,17 +124,15 @@ class _RuntimeCacheRecorder:
 
 
 @pytest.mark.asyncio
-async def test_callback_transport_records_runtime_cache_and_sends_marker():
+async def test_callback_transport_records_runtime_cache_without_event_marker():
     """Callback transport should cache locally before sending the callback."""
 
     client = MagicMock()
     client.send_event_dict.return_value = {"status": "ok"}
     recorder = _RuntimeCacheRecorder()
-    capability = runtime_stream_cache_capability()
     transport = CallbackTransport(
         client,
         runtime_cache=recorder,
-        runtime_cache_capability=capability,
     )
 
     result = await transport.send(
@@ -160,5 +154,5 @@ async def test_callback_transport_records_runtime_cache_and_sends_marker():
         }
     ]
     sent_event = client.send_event_dict.call_args.args[0]
-    assert sent_event["runtime_cache"] == capability
+    assert "runtime_cache" not in sent_event
     assert sent_event["executor_name"] == "executor-1"

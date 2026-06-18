@@ -74,6 +74,7 @@ class DeviceService:
         name: str,
         status: str = "online",
         executor_version: Optional[str] = None,
+        runtime_cache: Optional[dict] = None,
     ) -> bool:
         """Set device online status in Redis.
 
@@ -84,6 +85,7 @@ class DeviceService:
             name: Device name
             status: Device status (online, busy)
             executor_version: Executor version (e.g., '1.0.0')
+            runtime_cache: Device-level runtime cache capability
 
         Returns:
             True if set successfully
@@ -96,6 +98,7 @@ class DeviceService:
             name=name,
             status=status,
             executor_version=executor_version,
+            runtime_cache=runtime_cache,
         )
 
     @staticmethod
@@ -104,6 +107,7 @@ class DeviceService:
         device_id: str,
         running_task_ids: list[int] = None,
         executor_version: Optional[str] = None,
+        runtime_cache: Optional[dict] = None,
     ) -> bool:
         """Refresh device heartbeat in Redis (extend TTL) and update running task IDs.
 
@@ -122,6 +126,7 @@ class DeviceService:
             device_id=device_id,
             running_task_ids=running_task_ids,
             executor_version=executor_version,
+            runtime_cache=runtime_cache,
         )
 
     @staticmethod

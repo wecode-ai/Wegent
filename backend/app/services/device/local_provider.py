@@ -218,6 +218,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
         name: str,
         status: str = "online",
         executor_version: Optional[str] = None,
+        runtime_cache: Optional[dict] = None,
     ) -> bool:
         """Set device online status in Redis."""
         key = self.generate_online_key(user_id, device_id)
@@ -228,6 +229,8 @@ class LocalDeviceProvider(BaseDeviceProvider):
             "last_heartbeat": datetime.now().isoformat(),
             "executor_version": executor_version,
         }
+        if isinstance(runtime_cache, dict) and runtime_cache.get("enabled"):
+            data["runtime_cache"] = {"enabled": True}
         result = await cache_manager.set(key, data, expire=DEVICE_ONLINE_TTL)
         logger.info(f"[LocalDeviceProvider] set_online: key={key}, result={result}")
         return result
@@ -448,6 +451,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
         device_id: str,
         running_task_ids: Optional[List[int]] = None,
         executor_version: Optional[str] = None,
+        runtime_cache: Optional[dict] = None,
     ) -> bool:
         """Refresh device heartbeat in Redis."""
         key = self.generate_online_key(user_id, device_id)
@@ -458,6 +462,8 @@ class LocalDeviceProvider(BaseDeviceProvider):
                 data["running_task_ids"] = running_task_ids
             if executor_version is not None:
                 data["executor_version"] = executor_version
+            if isinstance(runtime_cache, dict) and runtime_cache.get("enabled"):
+                data["runtime_cache"] = {"enabled": True}
             result = await cache_manager.set(key, data, expire=DEVICE_ONLINE_TTL)
             logger.debug(
                 f"[LocalDeviceProvider] refresh_heartbeat: key={key}, "
