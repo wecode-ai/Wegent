@@ -14,6 +14,7 @@ import { Drawer, DrawerContent, DrawerTrigger } from '@/components/ui/drawer'
 import { TeamIconDisplay } from '@/features/settings/components/teams/TeamIconDisplay'
 import { Tag } from '@/components/ui/tag'
 import type { Team } from '@/types/api'
+import { isNamespaceAuthorizedTeam } from '@/utils/team-permissions'
 import SystemTeamTag from './SystemTeamTag'
 import { useTeamFavorites } from './useTeamFavorites'
 
@@ -164,7 +165,9 @@ export default function MobileTeamSelector({
                 const displayName = getTeamDisplayName(team)
                 const isSelected = selectedTeam?.id === team.id
                 const isSystemTeam = team.user_id === 0
-                const isSharedTeam = team.share_status === 2 && team.user?.user_name
+                const isNamespaceAuthorized = isNamespaceAuthorizedTeam(team)
+                const isSharedTeam =
+                  team.share_status === 2 && team.user?.user_name && !isNamespaceAuthorized
                 const isGroupTeam = team.namespace && team.namespace !== 'default'
                 const isLast = index === searchFilteredTeams.length - 1
 
@@ -213,6 +216,13 @@ export default function MobileTeamSelector({
                         {isSharedTeam && (
                           <div className="text-[13px] text-[#8e8e93] mt-0.5 truncate">
                             {t('common:teams.shared_by', { author: team.user?.user_name })}
+                          </div>
+                        )}
+                        {isNamespaceAuthorized && team.namespace && (
+                          <div className="text-[13px] text-[#8e8e93] mt-0.5 truncate">
+                            {t('common:teams.authorized_from_group', {
+                              group: team.namespace,
+                            })}
                           </div>
                         )}
                       </div>

@@ -105,6 +105,7 @@ describe('ChatInput', () => {
     vi.useRealTimers()
     localStorage.clear()
     URL.createObjectURL = originalCreateObjectUrl
+    delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
   })
 
   test('renders the desktop composer sections', () => {
@@ -833,6 +834,33 @@ describe('ChatInput', () => {
 
     fireEvent.paste(screen.getByTestId('chat-message-input'), {
       clipboardData: {
+        files: [documentFile],
+      },
+    })
+
+    expect(handleFileSelect).toHaveBeenCalledWith([documentFile])
+  })
+
+  test('uploads dropped files from the desktop composer', () => {
+    const handleFileSelect = vi.fn().mockResolvedValue(undefined)
+    const documentFile = new File(['document'], 'drop-requirements.pdf', {
+      type: 'application/pdf',
+    })
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({ handleFileSelect })}
+      />
+    )
+
+    fireEvent.drop(screen.getByTestId('chat-message-input'), {
+      dataTransfer: {
+        types: ['Files'],
         files: [documentFile],
       },
     })
@@ -2094,6 +2122,58 @@ describe('ChatInput', () => {
       expect(screen.queryByTestId(menuTestId)).not.toBeInTheDocument()
     }
   )
+
+  test('limits the desktop project branch menu while branches scroll', async () => {
+    const branches = Array.from({ length: 50 }, (_, index) => `feature/branch-${index}`)
+    vi.stubGlobal('innerHeight', 380)
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectWork={projectWorkControls({
+          projects: [{ id: 7, name: 'Wegent', tasks: [] }],
+          currentProjectId: 7,
+          executionMode: 'current_workspace',
+          executionModeLocked: false,
+          onExecutionModeChange: vi.fn(),
+          branchName: 'main',
+          branchLoading: false,
+          onRefreshBranch: vi.fn().mockResolvedValue(undefined),
+          onListBranches: vi.fn().mockResolvedValue(branches),
+          onCheckoutBranch: vi.fn().mockResolvedValue(undefined),
+        })}
+      />
+    )
+
+    const branchButton = screen.getByTestId('project-branch-button')
+    vi.spyOn(branchButton, 'getBoundingClientRect').mockReturnValue({
+      x: 0,
+      y: 300,
+      left: 0,
+      top: 300,
+      right: 120,
+      bottom: 336,
+      width: 120,
+      height: 36,
+      toJSON: () => ({}),
+    })
+
+    await userEvent.click(branchButton)
+
+    const menu = await screen.findByTestId('project-branch-menu')
+    await waitFor(() => expect(menu).toHaveStyle({ maxHeight: '276px' }))
+    expect(menu).toHaveClass('bottom-11', 'overflow-hidden')
+    expect(screen.getByTestId('project-branch-list')).toHaveClass(
+      'min-h-0',
+      'flex-1',
+      'overflow-y-auto'
+    )
+    expect(await screen.findAllByTestId('project-branch-option')).toHaveLength(50)
+  })
 
   test('submits typed content', async () => {
     const onChange = vi.fn()

@@ -6,7 +6,7 @@ import { redirectToLogin } from '@/features/auth/redirect'
 // triggers CORS preflight. Routing through the Tauri (Rust) HTTP client
 // bypasses the WebView same-origin policy entirely. Outside Tauri (browser
 // dev server via Vite proxy, vitest) fall back to the global fetch.
-function shouldUseTauriFetch(): boolean {
+export function shouldUseTauriFetch(): boolean {
   return (
     import.meta.env.MODE !== 'test' &&
     typeof window !== 'undefined' &&
@@ -32,12 +32,7 @@ export class ApiError extends Error {
   errorCode?: string | number
   detail?: unknown
 
-  constructor(
-    message: string,
-    status: number,
-    errorCode?: string | number,
-    detail?: unknown,
-  ) {
+  constructor(message: string, status: number, errorCode?: string | number, detail?: unknown) {
     super(message)
     this.name = 'ApiError'
     this.status = status
@@ -144,21 +139,13 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
       request(endpoint, {
         method: 'POST',
         body:
-          data === undefined
-            ? undefined
-            : data instanceof FormData
-              ? data
-              : JSON.stringify(data),
+          data === undefined ? undefined : data instanceof FormData ? data : JSON.stringify(data),
       }),
     put: (endpoint, data) =>
       request(endpoint, {
         method: 'PUT',
         body:
-          data === undefined
-            ? undefined
-            : data instanceof FormData
-              ? data
-              : JSON.stringify(data),
+          data === undefined ? undefined : data instanceof FormData ? data : JSON.stringify(data),
       }),
     delete: endpoint => request(endpoint, { method: 'DELETE' }),
   }
