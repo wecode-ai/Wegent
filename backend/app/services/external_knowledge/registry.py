@@ -8,6 +8,7 @@ import importlib
 import logging
 from typing import Any
 
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -55,6 +56,45 @@ class ExternalKnowledgeProviderRegistry:
             if ref is not None:
                 return ref
         return None
+
+    def validate_ref(
+        self,
+        db: Session,
+        user: User,
+        ref: DefaultContextRef,
+        namespace: str,
+    ) -> None:
+        for provider in self._providers:
+            if provider.supports(ref):
+                provider.validate_ref(db, user, ref, namespace)
+                return
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported external knowledge type: {ref.type}",
+        )
+
+    def get_runtime_skill_names(self, context: dict[str, Any]) -> list[str]:
+        for provider in self._providers:
+            if provider.supports_task_context(context):
+                return provider.get_runtime_skill_names(context)
+        return []
+
+    def build_runtime_guidance(self, contexts: list[dict[str, Any]]) -> str | None:
+        sections: list[str] = []
+        for provider in self._providers:
+            provider_contexts = [
+                context
+                for context in contexts
+                if provider.supports_task_context(context)
+            ]
+            if not provider_contexts:
+                continue
+            guidance = provider.build_runtime_guidance(provider_contexts)
+            if guidance:
+                sections.append(guidance)
+        if not sections:
+            return None
+        return "\n\n".join(sections)
 
 
 def build_default_external_knowledge_registry() -> ExternalKnowledgeProviderRegistry:

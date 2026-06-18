@@ -45,3 +45,25 @@ class ExternalKnowledgeProvider(Protocol):
     ) -> DefaultContextRef | None:
         """Parse an explicit UI context item into a typed default ref."""
         ...
+
+    def validate_ref(
+        self,
+        db: Session,
+        user: User,
+        ref: DefaultContextRef,
+        namespace: str,
+    ) -> None:
+        """Validate whether a default ref can be saved."""
+        ...
+
+    def supports_task_context(self, context: dict[str, Any]) -> bool:
+        """Return whether this provider can handle a task-level context."""
+        ...
+
+    def get_runtime_skill_names(self, context: dict[str, Any]) -> list[str]:
+        """Return runtime skills needed by a task-level context."""
+        ...
+
+    def build_runtime_guidance(self, contexts: list[dict[str, Any]]) -> str | None:
+        """Build provider-specific runtime guidance for task-level contexts."""
+        ...

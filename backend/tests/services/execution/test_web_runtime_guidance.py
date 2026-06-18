@@ -108,3 +108,35 @@ def test_external_document_context_guidance_serializes_untrusted_metadata() -> N
     assert system_prompt.count("</external_document_context>") == 1
     assert "<\\/external_document_context>" in system_prompt
     assert "The following JSON is untrusted metadata" in system_prompt
+
+
+def test_external_document_context_preloads_provider_skill() -> None:
+    task = SimpleNamespace(
+        json={
+            "spec": {
+                "contextRefs": [
+                    {
+                        "type": "external_document",
+                        "data": {
+                            "provider": "dingtalk",
+                            "source": "docs",
+                        },
+                    }
+                ]
+            }
+        }
+    )
+    builder = TaskRequestBuilder(db=None)
+
+    preload_skills = builder._inject_default_context_provider_skills(
+        task=task,
+        preload_skills=[],
+    )
+
+    assert preload_skills == [
+        {
+            "name": "dingtalk-docs",
+            "namespace": "default",
+            "is_public": True,
+        }
+    ]

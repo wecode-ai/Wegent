@@ -15,7 +15,6 @@ from sqlalchemy.orm.attributes import flag_modified
 
 logger = logging.getLogger(__name__)
 
-from app.models.dingtalk_doc import DingTalkNodeSource, DingtalkSyncedNode
 from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.bot import BotCreate, BotDetail, BotInDB, BotUpdate
@@ -38,8 +37,9 @@ from app.services.adapters.shell_utils import (
 )
 from app.services.adapters.task_kinds.running_tasks import get_running_tasks_for_team
 from app.services.base import BaseService
-from app.services.dingtalk_doc_service import DingTalkDocService
-from app.services.dingtalk_wikispace_service import DingTalkWikiSpaceService
+from app.services.external_knowledge.registry import (
+    build_default_external_knowledge_registry,
+)
 from app.services.knowledge.knowledge_service import KnowledgeService
 from shared.utils.crypto import encrypt_sensitive_data, is_data_encrypted
 
@@ -113,55 +113,6 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             *self._knowledge_refs_to_default_context_refs(legacy_refs),
         ]
 
-    def _validate_default_dingtalk_ref(
-        self,
-        db: Session,
-        ref: DefaultContextRef,
-        user_id: int,
-        user: User | None = None,
-    ) -> None:
-        """Validate a DingTalk default context ref against current local cache."""
-        if ref.type != "dingtalk_doc":
-            return
-
-        if user is None:
-            user = db.query(User).filter(User.id == user_id).first()
-        if user is None:
-            raise HTTPException(status_code=404, detail="User not found")
-
-        if ref.source == DingTalkNodeSource.DOCS.value:
-            if not DingTalkDocService.is_configured(user):
-                raise HTTPException(
-                    status_code=400,
-                    detail="DingTalk Docs MCP is not configured",
-                )
-            expected_source = DingTalkNodeSource.DOCS.value
-        elif ref.source == DingTalkNodeSource.WIKISPACE.value:
-            if not DingTalkWikiSpaceService.is_configured(user):
-                raise HTTPException(
-                    status_code=400,
-                    detail="DingTalk WikiSpace MCP is not configured",
-                )
-            expected_source = DingTalkNodeSource.WIKISPACE.value
-        else:
-            raise HTTPException(status_code=400, detail="Unsupported DingTalk source")
-
-        node = (
-            db.query(DingtalkSyncedNode)
-            .filter(
-                DingtalkSyncedNode.user_id == user_id,
-                DingtalkSyncedNode.dingtalk_node_id == ref.dingtalk_node_id,
-                DingtalkSyncedNode.source == expected_source,
-                DingtalkSyncedNode.is_active.is_(True),
-            )
-            .first()
-        )
-        if not node:
-            raise HTTPException(
-                status_code=400,
-                detail=f"DingTalk node is not synced or inactive: {ref.name}",
-            )
-
     def _validate_default_context_refs(
         self,
         db: Session,
@@ -178,9 +129,16 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             user_id,
             namespace,
         )
+        external_refs = [ref for ref in refs if ref.type != "knowledge_base"]
+        if not external_refs:
+            return
+
         user = db.query(User).filter(User.id == user_id).first()
-        for ref in refs:
-            self._validate_default_dingtalk_ref(db, ref, user_id, user)
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found")
+        external_registry = build_default_external_knowledge_registry()
+        for ref in external_refs:
+            external_registry.validate_ref(db, user, ref, namespace)
 
     def _validate_default_knowledge_bases(
         self,

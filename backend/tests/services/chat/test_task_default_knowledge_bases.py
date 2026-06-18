@@ -354,13 +354,6 @@ def test_build_initial_task_context_refs_warns_when_dingtalk_mcp_not_configured(
     ):
         with (
             patch(
-                "app.services.external_knowledge.registry.settings.EXTERNAL_KNOWLEDGE_PROVIDER_IMPORTS",
-                [
-                    "app.services.external_knowledge.providers.dingtalk:"
-                    "DingTalkExternalKnowledgeProvider"
-                ],
-            ),
-            patch(
                 "app.services.external_knowledge.providers.dingtalk.DingTalkDocService.is_configured",
                 return_value=False,
             ),
