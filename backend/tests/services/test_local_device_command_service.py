@@ -1006,6 +1006,94 @@ description: Shared local context.
     assert skills[0]["path"] == str(skill_dir / "SKILL.md")
 
 
+def test_ls_skills_command_follows_agents_skill_directory_symlinks(tmp_path):
+    """ls_skills should include skill directories symlinked under ~/.agents/skills."""
+    from app.services.device.command_registry import LS_SKILLS_SCRIPT
+
+    agents_skills_dir = tmp_path / ".agents" / "skills"
+    agents_skills_dir.mkdir(parents=True)
+    external_skill_dir = tmp_path / "external-skills" / "linked-helper"
+    external_skill_dir.mkdir(parents=True)
+    (agents_skills_dir / "linked-helper").symlink_to(
+        external_skill_dir,
+        target_is_directory=True,
+    )
+    (agents_skills_dir / "missing-helper").symlink_to(
+        tmp_path / "missing-helper",
+        target_is_directory=True,
+    )
+    (external_skill_dir / "SKILL.md").write_text(
+        """---
+name: linked-helper
+description: Linked helper skill.
+---
+
+# Linked Helper
+""",
+        encoding="utf-8",
+    )
+
+    env = {**os.environ, "HOME": str(tmp_path)}
+    result = subprocess.run(
+        ["python3", "-c", LS_SKILLS_SCRIPT],
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    skills = json.loads(result.stdout)
+
+    assert len(skills) == 1
+    assert skills[0]["name"] == "linked-helper"
+    assert skills[0]["source"] == "agents"
+    assert skills[0]["origin"] == "local"
+    assert skills[0]["path"] == str(agents_skills_dir / "linked-helper" / "SKILL.md")
+
+
+def test_ls_skills_command_scans_legacy_symlink_when_not_shared_root(tmp_path):
+    """ls_skills should scan legacy skill roots linked outside ~/.agents/skills."""
+    from app.services.device.command_registry import LS_SKILLS_SCRIPT
+
+    codex_target_dir = tmp_path / "custom-codex-skills"
+    codex_skill_dir = codex_target_dir / "codex-only"
+    codex_skill_dir.mkdir(parents=True)
+    (tmp_path / ".agents" / "skills").mkdir(parents=True)
+    (tmp_path / ".codex").mkdir()
+    (tmp_path / ".codex" / "skills").symlink_to(
+        codex_target_dir,
+        target_is_directory=True,
+    )
+    (codex_skill_dir / "SKILL.md").write_text(
+        """---
+name: codex-only
+description: Codex-only linked skill.
+---
+
+# Codex Only
+""",
+        encoding="utf-8",
+    )
+
+    env = {**os.environ, "HOME": str(tmp_path)}
+    result = subprocess.run(
+        ["python3", "-c", LS_SKILLS_SCRIPT],
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    skills = json.loads(result.stdout)
+
+    assert len(skills) == 1
+    assert skills[0]["name"] == "codex-only"
+    assert skills[0]["source"] == "codex"
+    assert skills[0]["path"] == str(
+        tmp_path / ".codex" / "skills" / "codex-only" / "SKILL.md"
+    )
+
+
 def test_setup_shared_skills_command_migrates_legacy_skill_dirs(tmp_path):
     """setup_shared_skills should move existing skills and link legacy dirs."""
     from app.services.device.command_registry import SETUP_SHARED_SKILLS_SCRIPT

@@ -9,6 +9,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { Tag } from '@/components/ui/tag'
 import { cn } from '@/lib/utils'
 import { getSharedTagStyle as getSharedBadgeStyle } from '@/utils/styles'
+import { isNamespaceAuthorizedTeam } from '@/utils/team-permissions'
 import type { Team } from '@/types/api'
 import SystemTeamTag from './SystemTeamTag'
 import { getTeamDisplayName, type SelectableTeam } from './team-selector-utils'
@@ -71,7 +72,9 @@ export default function TeamSelectorList({
         const isSystemTeam = team.is_system ?? team.user_id === 0
         const isFavorite = favoriteTeamIdSet.has(team.id)
         const isSystemRecommended = systemRecommendedTeamIdSet.has(team.id)
-        const isSharedTeam = team.share_status === 2 && team.user?.user_name
+        const isNamespaceAuthorized = isNamespaceAuthorizedTeam(team)
+        const isSharedTeam =
+          team.share_status === 2 && team.user?.user_name && !isNamespaceAuthorized
         const isGroupTeam =
           team.namespace && team.namespace !== 'default' && team.namespace !== 'community'
 
@@ -146,6 +149,16 @@ export default function TeamSelectorList({
                     title={t('teams.shared_by', { author: team.user?.user_name })}
                   >
                     {t('teams.shared_by', { author: team.user?.user_name })}
+                  </Tag>
+                )}
+                {isNamespaceAuthorized && team.namespace && (
+                  <Tag
+                    className="text-xs !m-0 flex-shrink-0 max-w-[160px] truncate"
+                    variant="default"
+                    style={sharedBadgeStyle}
+                    title={t('teams.authorized_from_group', { group: team.namespace })}
+                  >
+                    {t('teams.authorized_from_group', { group: team.namespace })}
                   </Tag>
                 )}
               </div>

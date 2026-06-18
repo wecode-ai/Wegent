@@ -91,15 +91,18 @@ def build_initial_task_knowledge_base_refs(
     bound_at = datetime.now().isoformat()
     refs_by_id: dict[int, dict[str, Any]] = {}
 
-    candidate_ids = _iter_team_member_default_knowledge_base_ids(db, team)
+    team_default_ids = _iter_team_member_default_knowledge_base_ids(db, team)
+    candidates = [(candidate_id, team.user_id) for candidate_id in team_default_ids]
     if knowledge_base_id is not None:
-        candidate_ids.append(knowledge_base_id)
+        candidates.append((knowledge_base_id, user.id))
 
-    for candidate_id in candidate_ids:
+    for candidate_id, access_user_id in candidates:
         if candidate_id in refs_by_id:
             continue
 
-        knowledge_base = _get_accessible_knowledge_base(db, user.id, candidate_id)
+        knowledge_base = _get_accessible_knowledge_base(
+            db, access_user_id, candidate_id
+        )
         if not knowledge_base:
             continue
 
