@@ -1,13 +1,4 @@
-import {
-  Cpu,
-  Grid3X3,
-  Loader2,
-  Network,
-  Search,
-  Server,
-  ShieldCheck,
-  TerminalSquare,
-} from 'lucide-react'
+import { Cpu, Loader2, Network, Search, Server, ShieldCheck, TerminalSquare } from 'lucide-react'
 import type { ComponentType, UIEvent } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createDeviceApi } from '@/api/devices'
@@ -167,7 +158,10 @@ function SidebarNav({
   onSelect: (section: AppsSection) => void
 }) {
   return (
-    <aside className="hidden min-h-0 flex-col rounded-xl border border-border/60 bg-background p-3 shadow-[0_3px_16px_rgba(0,0,0,0.04)] xl:flex">
+    <aside
+      data-testid="apps-sidebar-nav"
+      className="hidden min-h-0 flex-col rounded-xl border border-border/60 bg-background p-3 shadow-[0_3px_16px_rgba(0,0,0,0.04)] md:flex"
+    >
       <div className="flex items-center gap-3 px-2 pb-4 pt-2">
         <div className="grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-br from-primary to-sky-500 text-sm font-bold text-white">
           A
@@ -213,7 +207,10 @@ function SectionTabs({
   onSelect: (section: AppsSection) => void
 }) {
   return (
-    <div className="border-b border-border/70 bg-background px-4 py-3 xl:hidden">
+    <div
+      data-testid="apps-section-tabs"
+      className="border-b border-border/70 bg-background px-4 py-3 md:hidden"
+    >
       <div className="flex gap-2 overflow-x-auto">
         {navItems.map(item => (
           <button
@@ -294,13 +291,6 @@ function HeroSection() {
           className="inline-flex h-9 items-center rounded-full border border-border bg-background px-4 text-sm font-semibold text-text-primary hover:bg-muted"
         >
           配置模型代理
-        </button>
-        <button
-          type="button"
-          onClick={() => navigateTo('/app/wegent')}
-          className="inline-flex h-9 items-center rounded-full border border-border bg-background px-4 text-sm font-semibold text-text-primary hover:bg-muted"
-        >
-          打开 Wegent
         </button>
       </div>
     </article>
@@ -462,17 +452,6 @@ function buildRecommendedApps(state: AppsPageState): AppCardData[] {
       action: codexConfigured ? '打开' : '去配置',
       onClick: () => navigateTo('/settings/personal/codex'),
     },
-    {
-      title: 'Wegent Web',
-      description: '以 iframe 方式打开主 Web 前端，用于完整 AI 编码、聊天和资源管理场景。',
-      icon: Grid3X3,
-      iconClassName: 'bg-gradient-to-br from-primary to-sky-500 text-white',
-      status: '内置',
-      statusTone: 'online',
-      meta: 'iframe app',
-      action: '打开新 tab',
-      onClick: () => navigateTo('/app/wegent'),
-    },
   ]
 }
 
@@ -552,7 +531,7 @@ export function AppsPage() {
   return (
     <div
       data-testid="apps-page"
-      className="grid h-full min-h-0 grid-cols-1 gap-1.5 overflow-hidden bg-transparent p-1.5 xl:grid-cols-[220px_minmax(0,1fr)]"
+      className="grid h-full min-h-0 grid-cols-1 gap-1.5 overflow-hidden bg-transparent p-1.5 md:grid-cols-[220px_minmax(0,1fr)]"
     >
       <SidebarNav activeSection={activeSection} onSelect={setActiveSection} />
 
@@ -617,7 +596,7 @@ export function AppsPage() {
                 <h2 className="text-lg font-bold tracking-[-0.02em] text-text-primary">运行概览</h2>
                 <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                   <SummaryCard value={`${onlineCount}`} label="在线执行器" />
-                  <SummaryCard value="3" label="内置应用" />
+                  <SummaryCard value={`${recommendedApps.length}`} label="内置应用" />
                   <SummaryCard value={`${slotUsage.total || 0}`} label="可用任务槽位" />
                   <SummaryCard
                     value={state.proxyConfig?.configured ? '已配置' : '未配置'}
@@ -631,11 +610,7 @@ export function AppsPage() {
                 <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                   <QuickAction icon={Server} title="执行器管理" detail="查看设备、任务槽位和版本" />
                   <QuickAction icon={Network} title="模型代理" detail="配置公司代理服务" />
-                  <QuickAction
-                    icon={Grid3X3}
-                    title="内置应用"
-                    detail="打开 Wegent、Codex 等工作入口"
-                  />
+                  <QuickAction icon={Cpu} title="内置应用" detail="打开 Codex 等工作入口" />
                   <QuickAction
                     icon={ShieldCheck}
                     title="权限与认证"

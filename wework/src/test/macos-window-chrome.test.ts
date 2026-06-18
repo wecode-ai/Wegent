@@ -6,6 +6,7 @@ interface TauriWindowConfig {
   titleBarStyle?: string
   hiddenTitle?: boolean
   decorations?: boolean
+  dragDropEnabled?: boolean
   trafficLightPosition?: {
     x: number
     y: number
@@ -30,17 +31,20 @@ describe('macOS window chrome', () => {
     expect(mainWindow.trafficLightPosition).toEqual({ x: 19, y: 21 })
   })
 
+  test('enables native file drop events in the desktop webview', () => {
+    const configPath = resolve(process.cwd(), 'src-tauri/tauri.conf.json')
+    const config = JSON.parse(readFileSync(configPath, 'utf8')) as TauriConfig
+    const mainWindow = config.app.windows[0]
+
+    expect(mainWindow.dragDropEnabled).toBe(true)
+  })
+
   test('grants permission to start native window dragging', () => {
-    const capabilityPath = resolve(
-      process.cwd(),
-      'src-tauri/capabilities/default.json',
-    )
+    const capabilityPath = resolve(process.cwd(), 'src-tauri/capabilities/default.json')
     const capability = JSON.parse(readFileSync(capabilityPath, 'utf8')) as {
       permissions: string[]
     }
 
-    expect(capability.permissions).toContain(
-      'core:window:allow-start-dragging',
-    )
+    expect(capability.permissions).toContain('core:window:allow-start-dragging')
   })
 })
