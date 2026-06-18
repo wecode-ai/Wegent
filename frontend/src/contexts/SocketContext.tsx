@@ -208,144 +208,161 @@ export function SocketProvider({ children }: { children: ReactNode }) {
   const joinedTasksRef = useRef<Set<number>>(new Set())
   // Use ref for socket to avoid dependency issues in connect callback
   const socketRef = useRef<Socket | null>(null)
+  const isConnectingRef = useRef(false)
+  const connectRequestPendingRef = useRef(false)
+  const reconnectTimerRef = useRef<ReturnType<typeof globalThis.setTimeout> | null>(null)
+  const manualReconnectAttemptRef = useRef(0)
+  const intentionalDisconnectRef = useRef(false)
+  const queueReconnectRef = useRef<(reason: string) => void>(() => {})
   // Tracks whether this provider has ever observed a successful connection.
   const hasEverConnectedRef = useRef(false)
   // Store reconnect callbacks - single source of truth for reconnection events
   const reconnectCallbacksRef = useRef<Set<ReconnectCallback>>(new Set())
 
+  const setConnectingState = useCallback((connecting: boolean) => {
+    isConnectingRef.current = connecting
+  }, [])
+
+  const clearReconnectTimer = useCallback(() => {
+    if (reconnectTimerRef.current !== null) {
+      globalThis.clearTimeout(reconnectTimerRef.current)
+      reconnectTimerRef.current = null
+    }
+  }, [])
+
   /**
    * Internal function to create socket connection
    */
-  const createSocketConnection = useCallback((token: string, socketUrl: string, notify = false) => {
-    let hasConnectedBefore = notify
-    let lastReconnectNotificationAt = 0
+  const createSocketConnection = useCallback(
+    (token: string, socketUrl: string, notify = false) => {
+      let hasConnectedBefore = notify
+      let lastReconnectNotificationAt = 0
 
-    const notifyReconnectSubscribers = () => {
-      const now = Date.now()
-      if (now - lastReconnectNotificationAt < 500) {
-        return
+      const notifyReconnectSubscribers = () => {
+        const now = Date.now()
+        if (now - lastReconnectNotificationAt < 500) {
+          return
+        }
+        lastReconnectNotificationAt = now
+
+        reconnectCallbacksRef.current.forEach(callback => {
+          try {
+            callback()
+          } catch (err) {
+            console.error('[Socket.IO] Error in reconnect callback:', err)
+          }
+        })
       }
-      lastReconnectNotificationAt = now
 
-      reconnectCallbacksRef.current.forEach(callback => {
-        try {
-          callback()
-        } catch (err) {
-          console.error('[Socket.IO] Error in reconnect callback:', err)
+      const shouldReconnect = (reason: string) => {
+        if (reason === 'io client disconnect' || reason === 'client namespace disconnect') {
+          return false
+        }
+        return !intentionalDisconnectRef.current && Boolean(getToken())
+      }
+
+      // Create a fresh namespace socket for every connection attempt. Socket.IO
+      // Manager auto-reconnect is disabled so each retry sends namespace auth.
+      const newSocket = io(socketUrl + '/chat', {
+        path: SOCKETIO_PATH,
+        auth: { token },
+        autoConnect: false,
+        reconnection: false,
+        transports: ['websocket'],
+        timeout: 20000,
+        forceNew: true,
+        multiplex: false,
+      })
+      hasConnectedBefore = hasConnectedBefore || newSocket.connected
+
+      // Store in ref immediately
+      socketRef.current = newSocket
+
+      // Connection event handlers
+      newSocket.on('connect', () => {
+        const shouldNotifyReconnect = hasConnectedBefore
+        hasConnectedBefore = true
+        hasEverConnectedRef.current = true
+        manualReconnectAttemptRef.current = 0
+        clearReconnectTimer()
+        setConnectingState(false)
+        setIsConnected(true)
+        setConnectionError(null)
+        setReconnectAttempts(0)
+        if (shouldNotifyReconnect) {
+          notifyReconnectSubscribers()
         }
       })
-    }
 
-    // Create new socket connection
-    // Transport strategy:
-    // 1. Try WebSocket first (preferred for load-balanced environments without sticky sessions)
-    // 2. If WebSocket fails (e.g., load balancer doesn't support it), fall back to polling
-    // Note: Polling requires sticky sessions in load-balanced environments
-    const newSocket = io(socketUrl + '/chat', {
-      path: SOCKETIO_PATH,
-      auth: { token },
-      autoConnect: true,
-      reconnection: true,
-      reconnectionAttempts: Infinity,
-      reconnectionDelay: 1000,
-      reconnectionDelayMax: 5000,
-      // Try websocket first, then fall back to polling if websocket fails
-      // This handles cases where load balancer doesn't support WebSocket upgrade
-      transports: ['websocket', 'polling'],
-      // Increase timeout for mobile networks which may have higher latency
-      timeout: 20000,
-      // Force new connection to avoid stale connections on mobile
-      forceNew: false,
-      // Disable automatic upgrade from polling to websocket
-      // This prevents "Invalid transport" errors when switching transports
-      upgrade: true,
-    })
-    hasConnectedBefore = hasConnectedBefore || newSocket.connected
+      newSocket.on('disconnect', (reason: string) => {
+        hasConnectedBefore = true
+        setConnectingState(false)
+        setIsConnected(false)
+        joinedTasksRef.current.clear()
+        if (shouldReconnect(reason)) {
+          queueReconnectRef.current(reason)
+        }
+      })
 
-    // Store in ref immediately
-    socketRef.current = newSocket
-
-    // Connection event handlers
-    newSocket.on('connect', () => {
-      const shouldNotifyReconnect = hasConnectedBefore
-      hasConnectedBefore = true
-      hasEverConnectedRef.current = true
-      setIsConnected(true)
-      setConnectionError(null)
-      setReconnectAttempts(0)
-      if (shouldNotifyReconnect) {
-        notifyReconnectSubscribers()
-      }
-    })
-
-    newSocket.on('disconnect', (_: string) => {
-      hasConnectedBefore = true
-      setIsConnected(false)
-      // Don't clear joinedTasksRef here - we need it for rejoining after reconnect
-    })
-
-    newSocket.io.on('reconnect_attempt', (attempt: number) => {
-      setReconnectAttempts(attempt)
-    })
-
-    newSocket.io.on('reconnect', (_attempt: number) => {
-      hasEverConnectedRef.current = true
-      setIsConnected(true)
-      setConnectionError(null)
-      setReconnectAttempts(0)
-      notifyReconnectSubscribers()
-    })
-
-    newSocket.io.on('reconnect_error', (error: Error) => {
-      console.error('[Socket.IO] Reconnect error:', error)
-      setConnectionError(error)
-    })
-
-    // Handle authentication errors (token expired during session)
-    newSocket.on(ServerEvents.AUTH_ERROR, (_: AuthErrorPayload) => {
-      // Remove token and redirect to login
-      removeToken()
-      newSocket.disconnect()
-
-      const loginPath = paths.auth.login.getHref()
-      if (typeof window !== 'undefined' && window.location.pathname !== loginPath) {
-        // Save current path for redirect after login
-        const currentPath = window.location.pathname + window.location.search
-        sessionStorage.setItem(POST_LOGIN_REDIRECT_KEY, currentPath)
-        window.location.href = loginPath
-      }
-    })
-
-    // Handle connect_error for initial connection auth failures
-    newSocket.on('connect_error', (error: Error) => {
-      console.error('[Socket.IO] Connection error:', error)
-      setConnectionError(error)
-      setIsConnected(false)
-
-      // Check if error message indicates auth failure
-      // Use specific auth-related error patterns to avoid false positives
-      const errorMsg = error.message?.toLowerCase() || ''
-      const isAuthError =
-        errorMsg.includes('expired') ||
-        errorMsg.includes('unauthorized') ||
-        errorMsg.includes('jwt') ||
-        errorMsg.includes('authentication')
-
-      if (isAuthError) {
+      // Handle authentication errors (token expired during session)
+      newSocket.on(ServerEvents.AUTH_ERROR, (_: AuthErrorPayload) => {
+        // Remove token and redirect to login
+        intentionalDisconnectRef.current = true
         removeToken()
+        newSocket.disconnect()
 
         const loginPath = paths.auth.login.getHref()
         if (typeof window !== 'undefined' && window.location.pathname !== loginPath) {
-          // Save current path for redirect after login (consistent with AUTH_ERROR handler)
+          // Save current path for redirect after login
           const currentPath = window.location.pathname + window.location.search
           sessionStorage.setItem(POST_LOGIN_REDIRECT_KEY, currentPath)
           window.location.href = loginPath
         }
-      }
-    })
+      })
 
-    setSocket(newSocket)
-  }, []) // No dependencies - use refs instead
+      // Handle connect_error for initial connection auth failures
+      newSocket.on('connect_error', (error: Error) => {
+        console.error('[Socket.IO] Connection error:', error)
+        setConnectingState(false)
+        setConnectionError(error)
+        setIsConnected(false)
+        joinedTasksRef.current.clear()
+
+        // Check if error message indicates auth failure
+        // Use specific auth-related error patterns to avoid false positives
+        const errorMsg = error.message?.toLowerCase() || ''
+        const isAuthError =
+          errorMsg.includes('expired') ||
+          errorMsg.includes('unauthorized') ||
+          errorMsg.includes('jwt') ||
+          errorMsg.includes('authentication')
+
+        if (isAuthError) {
+          intentionalDisconnectRef.current = true
+          removeToken()
+
+          const loginPath = paths.auth.login.getHref()
+          if (typeof window !== 'undefined' && window.location.pathname !== loginPath) {
+            // Save current path for redirect after login (consistent with AUTH_ERROR handler)
+            const currentPath = window.location.pathname + window.location.search
+            sessionStorage.setItem(POST_LOGIN_REDIRECT_KEY, currentPath)
+            window.location.href = loginPath
+          }
+          return
+        }
+
+        const reason = error.message || 'connect_error'
+        if (shouldReconnect(reason)) {
+          queueReconnectRef.current(reason)
+        }
+      })
+
+      setSocket(newSocket)
+      setConnectingState(true)
+      newSocket.connect()
+    },
+    [clearReconnectTimer, setConnectingState]
+  )
 
   /**
    * Connect to Socket.IO server
@@ -354,26 +371,85 @@ export function SocketProvider({ children }: { children: ReactNode }) {
   const connect = useCallback(
     (token: string, notifyReconnectOnConnect = false) => {
       // Check if already connected using ref
-      if (socketRef.current?.connected) {
+      if (
+        socketRef.current?.connected ||
+        isConnectingRef.current ||
+        connectRequestPendingRef.current
+      ) {
         return
       }
 
+      clearReconnectTimer()
+
       // Disconnect existing socket if any
       if (socketRef.current) {
+        intentionalDisconnectRef.current = true
         socketRef.current.disconnect()
         socketRef.current = null
         setSocket(null)
       }
+      intentionalDisconnectRef.current = false
 
       // Fetch runtime config then connect
       // This allows RUNTIME_SOCKET_DIRECT_URL to be changed without rebuilding
-      fetchRuntimeConfig().then(config => {
-        const socketUrl = config.socketDirectUrl || getSocketUrl()
-        createSocketConnection(token, socketUrl, notifyReconnectOnConnect)
-      })
+      connectRequestPendingRef.current = true
+      fetchRuntimeConfig()
+        .then(config => {
+          const socketUrl = config.socketDirectUrl || getSocketUrl()
+          connectRequestPendingRef.current = false
+          createSocketConnection(token, socketUrl, notifyReconnectOnConnect)
+        })
+        .catch(error => {
+          console.error('[Socket.IO] Failed to load runtime config:', error)
+          setConnectionError(error instanceof Error ? error : new Error(String(error)))
+        })
+        .finally(() => {
+          connectRequestPendingRef.current = false
+        })
     },
-    [createSocketConnection]
+    [clearReconnectTimer, createSocketConnection]
   )
+
+  const queueReconnect = useCallback(
+    (reason: string) => {
+      if (
+        intentionalDisconnectRef.current ||
+        socketRef.current?.connected ||
+        isConnectingRef.current ||
+        reconnectTimerRef.current !== null
+      ) {
+        return
+      }
+
+      if (!getToken()) {
+        return
+      }
+
+      const attempt = manualReconnectAttemptRef.current + 1
+      manualReconnectAttemptRef.current = attempt
+      setReconnectAttempts(attempt)
+      const delayMs = Math.min(1000 * 2 ** Math.min(attempt - 1, 3), 5000)
+      reconnectTimerRef.current = globalThis.setTimeout(() => {
+        reconnectTimerRef.current = null
+        if (connectRequestPendingRef.current || isConnectingRef.current) {
+          queueReconnectRef.current(reason)
+          return
+        }
+        console.info('[Socket.IO] Reconnecting with a fresh authenticated namespace socket', {
+          reason,
+          attempt,
+        })
+        const currentToken = getToken()
+        if (!currentToken) {
+          return
+        }
+        connect(currentToken, true)
+      }, delayMs)
+    },
+    [connect]
+  )
+
+  queueReconnectRef.current = queueReconnect
 
   const ensureConnected = useCallback(() => {
     if (socketRef.current?.connected) {
@@ -393,18 +469,27 @@ export function SocketProvider({ children }: { children: ReactNode }) {
    * Disconnect from server
    */
   const disconnect = useCallback(() => {
+    intentionalDisconnectRef.current = true
+    clearReconnectTimer()
     const currentSocket = socketRef.current ?? socket
     if (!currentSocket) {
+      setConnectingState(false)
+      setIsConnected(false)
+      manualReconnectAttemptRef.current = 0
+      setReconnectAttempts(0)
       return
     }
 
     currentSocket.disconnect()
     socketRef.current = null
+    setConnectingState(false)
     setSocket(null)
     setIsConnected(false)
     joinedTasksRef.current.clear()
     hasEverConnectedRef.current = false
-  }, [socket])
+    manualReconnectAttemptRef.current = 0
+    setReconnectAttempts(0)
+  }, [clearReconnectTimer, setConnectingState, socket])
 
   /**
    * Join a task room
@@ -917,11 +1002,11 @@ export function SocketProvider({ children }: { children: ReactNode }) {
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      if (socket && socketRef.current === socket) {
-        socket.disconnect()
-      }
+      intentionalDisconnectRef.current = true
+      clearReconnectTimer()
+      socketRef.current?.disconnect()
     }
-  }, [socket])
+  }, [clearReconnectTimer])
 
   return (
     <SocketContext.Provider
