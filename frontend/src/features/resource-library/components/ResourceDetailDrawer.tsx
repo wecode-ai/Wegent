@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { Download, X } from 'lucide-react'
+import { CheckCircle2, Lightbulb, ListChecks, UserPlus, X } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -31,6 +31,14 @@ interface ResourceDetailDrawerProps {
 
 function getListingTitle(listing: ResourceLibraryListing) {
   return listing.display_name || listing.name
+}
+
+function getStartSteps(t: (key: string) => string) {
+  return [
+    t('detail.start_steps.accept'),
+    t('detail.start_steps.open_mine'),
+    t('detail.start_steps.use'),
+  ]
 }
 
 export function ResourceDetailDrawer({
@@ -91,38 +99,77 @@ export function ResourceDetailDrawer({
             </div>
           ) : listing ? (
             <div className="space-y-5">
-              <p className="text-sm leading-6 text-text-secondary">
-                {listing.description || listing.name}
-              </p>
+              <section className="rounded-lg border border-border bg-surface p-4">
+                <div className="flex items-center gap-2 text-sm font-semibold text-text-primary">
+                  <Lightbulb className="h-4 w-4 text-primary" aria-hidden="true" />
+                  {t('detail.sections.solves')}
+                </div>
+                <p className="mt-3 text-sm leading-6 text-text-secondary">
+                  {listing.description || listing.name}
+                </p>
+              </section>
 
-              {listing.tags.length > 0 && (
-                <div className="flex flex-wrap gap-2">
-                  {listing.tags.map(tag => (
-                    <Badge key={tag} variant="secondary">
-                      {tag}
-                    </Badge>
+              <section className="rounded-lg border border-border bg-surface p-4">
+                <div className="flex items-center gap-2 text-sm font-semibold text-text-primary">
+                  <ListChecks className="h-4 w-4 text-primary" aria-hidden="true" />
+                  {t('detail.sections.get_started')}
+                </div>
+                <ol className="mt-3 space-y-3">
+                  {getStartSteps(t).map((step, index) => (
+                    <li key={step} className="flex gap-3 text-sm text-text-secondary">
+                      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
+                        {index + 1}
+                      </span>
+                      <span className="pt-0.5">{step}</span>
+                    </li>
                   ))}
-                </div>
-              )}
+                </ol>
+              </section>
 
-              <dl className="grid grid-cols-1 gap-4 text-sm sm:grid-cols-2">
-                <div>
-                  <dt className="text-text-muted">{t('fields.install_count')}</dt>
-                  <dd className="mt-1 font-medium">{listing.install_count}</dd>
+              <section className="rounded-lg border border-border bg-surface p-4">
+                <div className="flex items-center gap-2 text-sm font-semibold text-text-primary">
+                  <CheckCircle2 className="h-4 w-4 text-primary" aria-hidden="true" />
+                  {t('detail.sections.examples')}
                 </div>
-                <div>
-                  <dt className="text-text-muted">{t('fields.publisher')}</dt>
-                  <dd className="mt-1 font-medium">#{listing.publisher_user_id}</dd>
+                <div className="mt-3 rounded-lg border border-border bg-base px-3 py-2 text-sm text-text-secondary">
+                  {t('detail.example_prompt', { title })}
                 </div>
-                <div>
-                  <dt className="text-text-muted">{t('fields.updated_at')}</dt>
-                  <dd className="mt-1 font-medium">{formatUTCDate(listing.updated_at)}</dd>
+              </section>
+
+              <section className="space-y-4 rounded-lg border border-border bg-surface p-4">
+                <div className="text-sm font-semibold text-text-primary">
+                  {t('detail.sections.resource_info')}
                 </div>
-                <div>
-                  <dt className="text-text-muted">{t('fields.name')}</dt>
-                  <dd className="mt-1 break-all font-medium">{listing.name}</dd>
-                </div>
-              </dl>
+
+                {listing.tags.length > 0 && (
+                  <div className="flex flex-wrap gap-2">
+                    {listing.tags.map(tag => (
+                      <Badge key={tag} variant="secondary">
+                        {tag}
+                      </Badge>
+                    ))}
+                  </div>
+                )}
+
+                <dl className="grid grid-cols-1 gap-4 text-sm sm:grid-cols-2">
+                  <div>
+                    <dt className="text-text-muted">{t('fields.install_count')}</dt>
+                    <dd className="mt-1 font-medium">{listing.install_count}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-text-muted">{t('fields.publisher')}</dt>
+                    <dd className="mt-1 font-medium">#{listing.publisher_user_id}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-text-muted">{t('fields.updated_at')}</dt>
+                    <dd className="mt-1 font-medium">{formatUTCDate(listing.updated_at)}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-text-muted">{t('fields.name')}</dt>
+                    <dd className="mt-1 break-all font-medium">{listing.name}</dd>
+                  </div>
+                </dl>
+              </section>
             </div>
           ) : null}
         </div>
@@ -137,7 +184,7 @@ export function ResourceDetailDrawer({
             aria-label={`${listing?.is_installed ? t('actions.installed') : t('actions.install')} ${title}`}
             data-testid="resource-detail-install-button"
           >
-            <Download className="h-4 w-4" aria-hidden="true" />
+            <UserPlus className="h-4 w-4" aria-hidden="true" />
             {listing?.is_installed ? t('actions.installed') : t('actions.install')}
           </Button>
         </DrawerFooter>

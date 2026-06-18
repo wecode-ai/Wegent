@@ -3,8 +3,50 @@
   "tabs": {
     "discover": "发现",
     "mine": "我的",
-    "installed": "已安装",
+    "installed": "已接受",
     "published": "我发布的"
+  },
+  "discover": {
+    "title": "发现资源",
+    "description": "查找团队共享的资源，接受后可在“我的”中使用。",
+    "assistant": {
+      "action": "发现助手",
+      "title": "发现助手",
+      "agent_badge": "Agent",
+      "description": "这是一个实际智能体，会通过聊天帮你梳理任务并选择合适资源。",
+      "callout_title": "不知道用哪个资源？",
+      "callout_description": "描述你要做的事，发现助手会推荐合适资源。",
+      "empty_title": "让发现助手帮你找资源",
+      "empty_description": "输入你要完成的任务或遇到的问题，它会帮你判断该接受哪个资源。",
+      "loading": "正在加载发现助手",
+      "unavailable_title": "发现助手未初始化",
+      "unavailable_description": "系统还没有可用的发现助手智能体，请先初始化公开资源后再使用。",
+      "prompts": {
+        "weekly_report": "写周报",
+        "code_review": "代码评审",
+        "doc_summary": "文档总结"
+      }
+    },
+    "card": {
+      "solution_label": "共享资源",
+      "best_for": "标签",
+      "start_hint": "接受后出现在“我的”",
+      "no_tags": "暂无标签"
+    }
+  },
+  "detail": {
+    "sections": {
+      "solves": "资源介绍",
+      "get_started": "使用方式",
+      "examples": "示例",
+      "resource_info": "资源信息"
+    },
+    "start_steps": {
+      "accept": "接受资源",
+      "open_mine": "在“我的”中找到它",
+      "use": "开始使用"
+    },
+    "example_prompt": "帮我用 {{title}} 处理这个任务"
   },
   "filters": {
     "all": "全部",
@@ -35,14 +77,16 @@
     "select": "选择"
   },
   "actions": {
-    "install": "安装",
-    "installed": "已安装",
+    "install": "接受分享",
+    "installed": "已接受",
     "publish": "发布资源",
+    "publish_to_library": "发布到资源库",
     "upgrade": "升级",
     "archive": "归档",
     "configure": "配置",
     "view_detail": "查看详情",
     "details": "详情",
+    "view_usage": "查看用法",
     "manage_groups": "管理...",
     "retry": "重试",
     "create_to_personal": "创建到我的资源",
@@ -54,7 +98,7 @@
     "cancel": "取消"
   },
   "status": {
-    "installed": "已安装",
+    "installed": "已接受",
     "requires_configuration": "需要配置",
     "draft": "草稿",
     "published": "已发布",
@@ -71,7 +115,7 @@
     "source_id": "源资源 ID",
     "version": "版本",
     "publisher": "发布者",
-    "install_count": "安装次数",
+    "install_count": "接受次数",
     "updated_at": "更新时间"
   },
   "sort": {
@@ -95,13 +139,14 @@
     "groups_empty": "没有匹配的团队"
   },
   "messages": {
-    "install_success": "安装成功",
-    "install_requires_configuration": "安装成功，需要配置",
-    "install_failed": "安装失败",
+    "install_success": "已接受分享",
+    "install_requires_configuration": "已接受分享，需要配置",
+    "install_failed": "接受分享失败",
     "publish_success": "发布成功",
     "publish_failed": "发布失败"
   },
   "publish": {
-    "description": "将已有智能体或技能发布到资源库"
+    "description": "将已有智能体或技能作为分享说明发布到资源库",
+    "selected_resource": "已选资源"
   }
 }

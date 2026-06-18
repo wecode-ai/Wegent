@@ -226,7 +226,14 @@ def apply_public_resources(
     from app.models.kind import Kind
 
     # Supported public resource kinds
-    supported_kinds = {"Shell", "Ghost", "Bot", "Team", "Template"}
+    supported_kinds = {
+        "Shell",
+        "Ghost",
+        "Bot",
+        "Team",
+        "Template",
+        "ResourceLibraryDiscoveryConfig",
+    }
 
     results = []
     created_count = 0

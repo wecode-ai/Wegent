@@ -4,9 +4,20 @@
 
 import i18next from 'i18next'
 import { initReactI18next } from 'react-i18next'
+import enResourceLibrary from './locales/en/resource-library.json'
+import zhResourceLibrary from './locales/zh-CN/resource-library.json'
 
 // Supported languages list
 export const supportedLanguages = ['en', 'zh-CN']
+
+const staticTranslationBundles: Record<string, Record<string, unknown>> = {
+  en: {
+    'resource-library': enResourceLibrary,
+  },
+  'zh-CN': {
+    'resource-library': zhResourceLibrary,
+  },
+}
 
 // Function to dynamically import translation resources
 async function loadTranslations() {
@@ -50,6 +61,8 @@ async function loadTranslations() {
         resources[lng][ns] = {}
       }
     }
+
+    Object.assign(resources[lng], staticTranslationBundles[lng] ?? {})
   }
 
   return resources

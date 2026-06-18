@@ -55,6 +55,7 @@ from app.api.endpoints.adapter import (
     dify,
     model_runtime,
     models,
+    resource_library,
     retrievers,
     shells,
     subscription_follows,
@@ -122,6 +123,9 @@ api_router.include_router(
 # Subscription market endpoints (browse, rent, rentals)
 api_router.include_router(
     subscription_market.router, prefix="/market", tags=["subscription-market"]
+)
+api_router.include_router(
+    resource_library.router, prefix="/resource-library", tags=["resource-library"]
 )
 api_router.include_router(tasks.router, prefix="/tasks", tags=["tasks"])
 api_router.include_router(subtasks.router, prefix="/subtasks", tags=["subtasks"])

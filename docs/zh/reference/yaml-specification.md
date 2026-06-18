@@ -20,6 +20,7 @@ sidebar_position: 1
 - [💼 Workspace](#-workspace)
 - [🎯 Task](#-task)
 - [📚 KnowledgeBase](#-knowledgebase)
+- [🧭 ResourceLibraryDiscoveryConfig](#-resourcelibrarydiscoveryconfig)
 
 ---
 
@@ -391,6 +392,53 @@ KnowledgeBase 用于管理文档知识库、检索配置和摘要能力。
 - 手动摘要不会阻止 AI 自动摘要继续更新
 - 当 `manual_long_summary` 存在时，系统优先使用它做页面展示和聊天上下文注入
 - 点击“恢复 AI 摘要”后，系统会回退到最新的 `long_summary`
+
+---
+
+## 🧭 ResourceLibraryDiscoveryConfig
+
+ResourceLibraryDiscoveryConfig 定义资源库发现页的运行配置，包括用于可发现资源检索的组织知识库，以及发现助手对应的 Team。它本身是一个配置型 Kind，不承载资源副本；资源卡片仍指向发布者自己的 Team 或 Skill。
+
+### 完整配置示例
+
+```yaml
+apiVersion: agent.wecode.io/v1
+kind: ResourceLibraryDiscoveryConfig
+metadata:
+  name: default
+  namespace: resource-library
+spec:
+  knowledgeBaseRef:
+    # 可选。配置后优先按 ID 查找组织知识库。
+    id: 123
+    # 未配置 id 时，后端会按名称查找组织知识库。
+    name: 资源库
+    # 可选。限制知识库所在 namespace。
+    namespace: company
+  assistantTeamRef:
+    name: resource-discovery-assistant
+    namespace: default
+status:
+  state: Available
+```
+
+### 字段说明
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `metadata.name` | string | 是 | 当前固定使用 `default` |
+| `metadata.namespace` | string | 是 | 当前固定使用 `resource-library` |
+| `spec.knowledgeBaseRef.id` | integer | 否 | 组织级 KnowledgeBase 的数据库 ID，配置后优先使用 |
+| `spec.knowledgeBaseRef.name` | string | 否 | 组织级 KnowledgeBase 名称，默认可使用 `资源库` |
+| `spec.knowledgeBaseRef.namespace` | string | 否 | 用于限制知识库所在 namespace |
+| `spec.assistantTeamRef.name` | string | 是 | 发现助手 Team 名称 |
+| `spec.assistantTeamRef.namespace` | string | 否 | 发现助手 Team 所在 namespace，默认 `default` |
+
+**说明：**
+
+- 发布、更新或下架资源库条目时，后端会把展示说明同步到配置的组织知识库文档中
+- 发现助手是普通 Team，应该通过已有知识库 MCP 工具检索这个组织知识库
+- 接受资源仍走资源分享逻辑，不会为资源库维护一套独立安装流程
 
 ---
 

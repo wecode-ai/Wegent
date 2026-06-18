@@ -8,6 +8,7 @@ import userEvent from '@testing-library/user-event'
 
 import { listGroups } from '@/apis/groups'
 import { MyResources } from '@/features/resource-library/components/MyResources'
+import type { ResourceLibraryPublishSource } from '@/features/resource-library/types'
 
 const mockReplace = jest.fn()
 
@@ -27,12 +28,14 @@ jest.mock('@/features/settings/components/TeamListWithScope', () => ({
   TeamListWithScope: ({
     scope,
     selectedGroup,
+    onPublishResource,
     sourceControls,
     sortControls,
     sortMode,
   }: {
     scope: string
     selectedGroup?: string | null
+    onPublishResource?: (source: ResourceLibraryPublishSource) => void
     sourceControls?: React.ReactNode
     sortControls?: React.ReactNode
     sortMode?: string
@@ -44,6 +47,21 @@ jest.mock('@/features/settings/components/TeamListWithScope', () => ({
       data-sort={sortMode ?? ''}
     >
       {sourceControls}
+      <button
+        type="button"
+        data-testid="mock-publish-agent"
+        onClick={() =>
+          onPublishResource?.({
+            resourceType: 'agent',
+            sourceId: 11,
+            name: 'agent-one',
+            displayName: 'Agent One',
+            description: 'Agent desc',
+          })
+        }
+      >
+        publish agent
+      </button>
       {sortControls}
     </div>
   ),
@@ -105,12 +123,14 @@ jest.mock('@/features/settings/components/SkillListWithScope', () => ({
   SkillListWithScope: ({
     scope,
     selectedGroup,
+    onPublishResource,
     sourceControls,
     sortControls,
     sortMode,
   }: {
     scope: string
     selectedGroup?: string | null
+    onPublishResource?: (source: ResourceLibraryPublishSource) => void
     sourceControls?: React.ReactNode
     sortControls?: React.ReactNode
     sortMode?: string
@@ -122,6 +142,22 @@ jest.mock('@/features/settings/components/SkillListWithScope', () => ({
       data-sort={sortMode ?? ''}
     >
       {sourceControls}
+      <button
+        type="button"
+        data-testid="mock-publish-skill"
+        onClick={() =>
+          onPublishResource?.({
+            resourceType: 'skill',
+            sourceId: 22,
+            name: 'skill-one',
+            displayName: 'Skill One',
+            description: 'Skill desc',
+            tags: ['chat'],
+          })
+        }
+      >
+        publish skill
+      </button>
       {sortControls}
     </div>
   ),
@@ -151,6 +187,29 @@ jest.mock('@/features/settings/components/RetrieverListWithScope', () => ({
       {sortControls}
     </div>
   ),
+}))
+
+jest.mock('@/features/resource-library/components/PublishResourceDialog', () => ({
+  PublishResourceDialog: ({
+    open,
+    sourceResource,
+    onOpenChange,
+  }: {
+    open: boolean
+    sourceResource?: ResourceLibraryPublishSource | null
+    onOpenChange: (open: boolean) => void
+  }) =>
+    open ? (
+      <div
+        data-testid="publish-resource-dialog"
+        data-resource-type={sourceResource?.resourceType ?? ''}
+        data-source-id={sourceResource?.sourceId ?? ''}
+      >
+        <button type="button" onClick={() => onOpenChange(false)}>
+          close
+        </button>
+      </div>
+    ) : null,
 }))
 
 jest.mock('@/hooks/useTranslation', () => ({
@@ -340,6 +399,23 @@ describe('MyResources', () => {
     expect(within(sourceFilter).getByTestId('resource-source-system-button')).toBeInTheDocument()
   })
 
+  it('uses tablet-width layout for the managed resource toolbar', async () => {
+    render(<MyResources />)
+
+    const agentTab = screen.getByTestId('managed-resource-agent-tab')
+    const header = screen.getByTestId('managed-resource-header')
+    const sourceFilter = screen.getByTestId('managed-resource-source-filter')
+    const groupSelect = screen.getByTestId('resource-source-group-button')
+
+    expect(await screen.findByTestId('agent-resource-manager')).toBeInTheDocument()
+    expect(header).toHaveClass('sm:flex-row')
+    expect(header).toHaveClass('sm:items-center')
+    expect(header).toHaveClass('sm:justify-between')
+    expect(sourceFilter).toHaveClass('sm:flex-row')
+    expect(agentTab).toHaveClass('md:h-9')
+    expect(groupSelect).toHaveClass('lg:h-9')
+  })
+
   it('switches between managed resource types', async () => {
     render(<MyResources />)
 
@@ -359,6 +435,29 @@ describe('MyResources', () => {
       'data-scope',
       'all'
     )
+  })
+
+  it('opens publish dialog from the selected agent manager item', async () => {
+    render(<MyResources />)
+
+    expect(await screen.findByTestId('agent-resource-manager')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('mock-publish-agent'))
+
+    const dialog = screen.getByTestId('publish-resource-dialog')
+    expect(dialog).toHaveAttribute('data-resource-type', 'agent')
+    expect(dialog).toHaveAttribute('data-source-id', '11')
+  })
+
+  it('opens publish dialog from the selected skill manager item', async () => {
+    render(<MyResources />)
+
+    expect(await screen.findByTestId('agent-resource-manager')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('managed-resource-skill-tab'))
+    fireEvent.click(screen.getByTestId('mock-publish-skill'))
+
+    const dialog = screen.getByTestId('publish-resource-dialog')
+    expect(dialog).toHaveAttribute('data-resource-type', 'skill')
+    expect(dialog).toHaveAttribute('data-source-id', '22')
   })
 
   it('opens the managed resource type from the URL query', async () => {

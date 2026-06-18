@@ -52,7 +52,16 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Progress } from '@/components/ui/progress'
-import { Download, Trash2, Sparkles, Globe, RefreshCw, ExternalLink, Link2 } from 'lucide-react'
+import {
+  Download,
+  Trash2,
+  Sparkles,
+  Globe,
+  RefreshCw,
+  ExternalLink,
+  Link2,
+  UploadCloud,
+} from 'lucide-react'
 import { toast } from 'sonner'
 import SkillUploadModal from './skills/SkillUploadModal'
 import SkillSearchModal from './skills/SkillSearchModal'
@@ -60,7 +69,10 @@ import { SkillReferenceConflictDialog } from './skills/SkillReferenceConflictDia
 import { AutoEnabledSkillsSection } from './skills/AutoEnabledSkillsSection'
 import { AutoEnabledSkillSettingsView } from './skills/AutoEnabledSkillSettingsView'
 import { useUser } from '@/features/common/UserContext'
-import type { ManagedResourceSourceFilter } from '@/features/resource-library/types'
+import type {
+  ManagedResourceSourceFilter,
+  ResourceLibraryPublishSource,
+} from '@/features/resource-library/types'
 import {
   buildGroupDisplayNameMap,
   sortResourceLibraryItems,
@@ -78,6 +90,7 @@ interface SkillListWithScopeProps {
   scope: 'personal' | 'group' | 'all'
   selectedGroup?: string | null
   onGroupChange?: (groupName: string | null) => void
+  onPublishResource?: (source: ResourceLibraryPublishSource) => void
   sourceControls?: ReactNode
   sortControls?: ReactNode
   sourceFilter?: ManagedResourceSourceFilter
@@ -88,6 +101,7 @@ interface SkillListWithScopeProps {
 export function SkillListWithScope({
   scope,
   selectedGroup,
+  onPublishResource,
   sourceControls,
   sortControls,
   sourceFilter = 'all',
@@ -217,6 +231,24 @@ export function SkillListWithScope({
     if (user.role === 'admin') return true
 
     return false
+  }
+
+  const canPublishSkill = (skill: UnifiedSkill): boolean => {
+    if (!onPublishResource || skill.is_public) return false
+    if (scope === 'personal') return true
+    return canDeleteSkill(skill)
+  }
+
+  const handlePublishSkill = (skill: UnifiedSkill) => {
+    onPublishResource?.({
+      resourceType: 'skill',
+      sourceId: skill.id,
+      name: skill.name,
+      displayName: skill.displayName || skill.name,
+      description: skill.description,
+      tags: skill.tags || [],
+      namespace: skill.namespace,
+    })
   }
 
   const getSkillSourceLabel = (skill: UnifiedSkill): string => {
@@ -805,6 +837,21 @@ export function SkillListWithScope({
                         >
                           <Download className="w-4 h-4" />
                         </Button>
+                        {canPublishSkill(skill) && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handlePublishSkill(skill)}
+                            className="h-8 w-8 text-text-secondary hover:text-text-primary"
+                            title={t('resource-library:actions.publish_to_library')}
+                            aria-label={`${t('resource-library:actions.publish_to_library')} ${
+                              skill.displayName || skill.name
+                            }`}
+                            data-testid={`publish-skill-${skill.id}-button`}
+                          >
+                            <UploadCloud className="w-4 h-4" />
+                          </Button>
+                        )}
                         {canDeleteSkill(skill) && (
                           <Button
                             variant="ghost"

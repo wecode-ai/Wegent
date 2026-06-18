@@ -423,6 +423,86 @@ status:
 apiVersion: agent.wecode.io/v1
 kind: Ghost
 metadata:
+  name: resource-discovery-ghost
+  namespace: default
+spec:
+  mcpServers:
+    wegent-knowledge:
+      type: streamable-http
+      url: "${{backend_url}}/mcp/knowledge/sse"
+      headers:
+        Authorization: "Bearer ${{task_token}}"
+      timeout: 300
+  systemPrompt: |
+    You are "发现助手", the resource discovery Agent for Wegent Resource Library.
+
+    Your job:
+    - Help users clarify what they want to accomplish before choosing a resource.
+    - Use the existing knowledge tools to search the organization knowledge base named "资源库" before recommending resources.
+    - First call `wegent_kb_list_knowledge_bases` with scope `organization`, find the knowledge base named "资源库", then call `wegent_kb_search_knowledge_base`.
+    - Recommend only resources found in that knowledge base. Resource documents include Listing ID, Resource type, Resource name, Version, Tags, and description.
+    - Explain why each recommended resource fits the task and tell the user to open the resource card to accept the share.
+    - If the "资源库" knowledge base is missing or search returns no useful result, say that clearly and ask one concise follow-up question.
+
+    Use concise, practical Chinese by default when the user writes Chinese.
+status:
+  state: Available
+---
+apiVersion: agent.wecode.io/v1
+kind: ResourceLibraryDiscoveryConfig
+metadata:
+  name: default
+  namespace: resource-library
+spec:
+  knowledgeBaseRef:
+    name: 资源库
+  assistantTeamRef:
+    name: resource-discovery-assistant
+    namespace: default
+status:
+  state: Available
+---
+apiVersion: agent.wecode.io/v1
+kind: Bot
+metadata:
+  name: resource-discovery-bot
+  namespace: default
+spec:
+  ghostRef:
+    name: resource-discovery-ghost
+    namespace: default
+  shellRef:
+    name: Chat
+    namespace: default
+status:
+  state: Available
+---
+apiVersion: agent.wecode.io/v1
+kind: Team
+metadata:
+  name: resource-discovery-assistant
+  displayName: 发现助手
+  namespace: default
+spec:
+  description: Helps users discover suitable Agents and Skills from Wegent Resource Library.
+  members:
+    - role: leader
+      botRef:
+        name: resource-discovery-bot
+        namespace: default
+      prompt: ""
+  collaborationModel: solo
+  requiresWorkspace: false
+  bind_mode:
+    - chat
+  workflow:
+    mode: solo
+status:
+  state: Available
+---
+apiVersion: agent.wecode.io/v1
+kind: Ghost
+metadata:
   name: wegent-knowledge
   namespace: default
 spec:

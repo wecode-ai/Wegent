@@ -20,6 +20,7 @@ This document provides detailed explanations of the YAML configuration formats f
 - [💼 Workspace](#-workspace)
 - [🎯 Task](#-task)
 - [📚 KnowledgeBase](#-knowledgebase)
+- [🧭 ResourceLibraryDiscoveryConfig](#-resourcelibrarydiscoveryconfig)
 
 ---
 
@@ -391,6 +392,53 @@ KnowledgeBase is used to manage document knowledge bases, retrieval configuratio
 - Manual summary does not stop AI summary generation from continuing
 - When `manual_long_summary` exists, the system uses it first for UI display and chat-context injection
 - After using **Restore AI Summary**, the system falls back to the latest `long_summary`
+
+---
+
+## 🧭 ResourceLibraryDiscoveryConfig
+
+ResourceLibraryDiscoveryConfig defines the runtime configuration for the Resource Library Discover page, including the organization knowledge base used for searchable resource descriptions and the Team used as the Discover Assistant. It is a configuration Kind only and does not store resource copies; resource cards still point to the publisher's own Team or Skill.
+
+### Complete Configuration Example
+
+```yaml
+apiVersion: agent.wecode.io/v1
+kind: ResourceLibraryDiscoveryConfig
+metadata:
+  name: default
+  namespace: resource-library
+spec:
+  knowledgeBaseRef:
+    # Optional. When configured, the backend resolves the organization knowledge base by ID first.
+    id: 123
+    # When id is omitted, the backend resolves the organization knowledge base by name.
+    name: 资源库
+    # Optional. Restricts the namespace used for knowledge base lookup.
+    namespace: company
+  assistantTeamRef:
+    name: resource-discovery-assistant
+    namespace: default
+status:
+  state: Available
+```
+
+### Field Reference
+
+| Field | Type | Required | Description |
+|------|------|----------|-------------|
+| `metadata.name` | string | Yes | Currently fixed to `default` |
+| `metadata.namespace` | string | Yes | Currently fixed to `resource-library` |
+| `spec.knowledgeBaseRef.id` | integer | No | Database ID of the organization-level KnowledgeBase; used first when configured |
+| `spec.knowledgeBaseRef.name` | string | No | Organization-level KnowledgeBase name, commonly `资源库` |
+| `spec.knowledgeBaseRef.namespace` | string | No | Restricts the namespace used for knowledge base lookup |
+| `spec.assistantTeamRef.name` | string | Yes | Discover Assistant Team name |
+| `spec.assistantTeamRef.namespace` | string | No | Namespace of the Discover Assistant Team, defaults to `default` |
+
+**Notes:**
+
+- When a Resource Library listing is published, updated, or archived, the backend synchronizes its display description into the configured organization knowledge base
+- The Discover Assistant is a normal Team and should search this organization knowledge base through the existing knowledge MCP tools
+- Accepting a resource still uses the resource-sharing flow; Resource Library does not maintain a separate installation flow
 
 ---
 
