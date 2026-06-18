@@ -14,7 +14,7 @@ sidebar_position: 22
 
 - 降低流式增量内容对 Redis 的高频写入。
 - 保留 Redis 作为活跃任务索引、TTL、跨进程协调和旧 executor 兼容路径。
-- 不做双写灰度。支持 runtime cache 的 executor 走 executor 内存快照；未带能力标记的 executor 继续走 Redis 快照。
+- 不做双写灰度。上报 runtime cache 能力的设备走 executor 内存快照；未上报该能力的设备继续走 Redis 快照。
 - 接受 executor 进程崩溃时丢失未定稿的中间快照。终态结果仍在完成事件处理中落库。
 
 ## 能力识别
@@ -50,16 +50,16 @@ executor runtime snapshot 中的普通助手正文只写入 `content` 和 `offse
 2. executor transport 先把事件写入本地 `RuntimeStreamCache`。
 3. Backend 的 WebSocket callback handler 根据设备在线状态中的 `runtime_cache.enabled` 判断快照归属。
 4. 支持 runtime cache 时，`StatusUpdatingEmitter` 跳过 Redis 内容快照写入。
-5. `StatusUpdatingEmitter` 更新 Redis task 级活跃状态，记录 executor 名称、namespace 和 runtime cache 元数据。
+5. `StatusUpdatingEmitter` 更新 Redis task 级活跃状态，只记录 active subtask、executor 名称和 namespace 等路由信息。
 6. Backend 继续把事件广播给前端。
 
 ### 刷新恢复
 
 1. 前端重新加入 task room 或触发 runtime check。
 2. Backend 从 Redis 读取 `chat:task_streaming:{task_id}`，确认活跃 subtask 和对应 executor。
-3. 如果状态里带 `runtime_cache.enabled=true`，Backend 向 local executor 发送 `runtime_cache:get_snapshot`。
+3. 如果路由对应的在线设备带 `runtime_cache.enabled=true`，Backend 向 local executor 发送 `runtime_cache:get_snapshot`。
 4. executor 返回内存快照，Backend 将快照转换为 join/resume 所需的 content、blocks、offset 和 context metrics。
-5. 如果状态没有 runtime cache marker，Backend 使用 Redis 内容快照恢复。
+5. 如果路由没有对应的 runtime cache 设备能力，Backend 使用 Redis 内容快照恢复。
 
 ### 任务完成
 
@@ -93,7 +93,7 @@ executor 内存快照有两类回收：
 
 判断 runtime cache 是否生效时，不要只看 executor 注册或心跳 capability 日志。应检查 backend callback 日志：
 
-- 设备注册、心跳或 Redis active status 中是否出现 `runtime_cache.enabled=true`。
+- 设备注册、心跳或设备在线状态中是否出现 `runtime_cache.enabled=true`。
 - 刷新或 join 时是否发送 `runtime_cache:get_snapshot`。
 - 完成时是否发送 `runtime_cache:cleanup`，且返回 `removed=true`。
 - Redis 内容快照读取是否为 key not found；这表示内容未走 Redis，而不是 Redis active status 未生效。

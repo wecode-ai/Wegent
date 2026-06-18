@@ -24,22 +24,32 @@ async def test_runtime_snapshot_prefers_executor_cache(monkeypatch):
     get_redis_snapshot = AsyncMock(return_value={"content": "from redis"})
     monkeypatch.setattr(service, "_get_executor_snapshot", get_executor_snapshot)
     monkeypatch.setattr(service, "_get_redis_snapshot", get_redis_snapshot)
+    monkeypatch.setattr(
+        "app.services.chat.runtime_stream_snapshot.device_service.get_device_online_info",
+        AsyncMock(
+            return_value={
+                "runtime_cache": {
+                    "enabled": True,
+                    "source": "ignored",
+                }
+            }
+        ),
+    )
 
     snapshot = await service.get_snapshot(
         task_id=101,
         subtask_id=202,
         streaming_info={
-            "runtime_cache": {"enabled": True},
-            "executor_name": "executor-1",
-            "executor_namespace": "default",
+            "executor_name": "device-device-1",
+            "executor_namespace": "user-7",
         },
     )
 
     assert snapshot["content"] == "from executor"
     get_executor_snapshot.assert_awaited_once_with(
         subtask_id=202,
-        executor_name="executor-1",
-        executor_namespace="default",
+        executor_name="device-device-1",
+        executor_namespace="user-7",
     )
     get_redis_snapshot.assert_not_awaited()
 

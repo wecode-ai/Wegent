@@ -39,10 +39,6 @@ class RuntimeStreamSnapshotService:
     ) -> dict[str, Any]:
         """Return the best available stream snapshot."""
 
-        resolved_runtime_cache = self._resolve_runtime_cache(
-            runtime_cache,
-            streaming_info,
-        )
         resolved_executor_name = executor_name or self._read_str(
             streaming_info,
             "executor_name",
@@ -50,6 +46,11 @@ class RuntimeStreamSnapshotService:
         resolved_executor_namespace = executor_namespace or self._read_str(
             streaming_info,
             "executor_namespace",
+        )
+        resolved_runtime_cache = await self._resolve_runtime_cache(
+            runtime_cache=runtime_cache,
+            executor_name=resolved_executor_name,
+            executor_namespace=resolved_executor_namespace,
         )
 
         if self._runtime_cache_enabled(resolved_runtime_cache):
@@ -385,21 +386,41 @@ class RuntimeStreamSnapshotService:
             "source": snapshot.get("source") or "executor",
         }
 
-    @staticmethod
-    def _resolve_runtime_cache(
+    async def _resolve_runtime_cache(
+        self,
+        *,
         runtime_cache: Optional[dict[str, Any]],
-        streaming_info: Optional[dict[str, Any]],
-    ) -> Optional[dict[str, Any]]:
-        if isinstance(runtime_cache, dict):
-            return runtime_cache
-        if not isinstance(streaming_info, dict):
+        executor_name: Optional[str],
+        executor_namespace: Optional[str],
+    ) -> Optional[dict[str, bool]]:
+        normalized = self._normalize_runtime_cache(runtime_cache)
+        if normalized is not None:
+            return normalized
+
+        device_id = self._parse_device_id(executor_name)
+        user_id = self._parse_user_id(executor_namespace)
+        if device_id is None or user_id is None:
             return None
-        candidate = streaming_info.get("runtime_cache")
-        return candidate if isinstance(candidate, dict) else None
+
+        device_online_info = await device_service.get_device_online_info(
+            user_id,
+            device_id,
+        )
+        if not isinstance(device_online_info, dict):
+            return None
+        return self._normalize_runtime_cache(device_online_info.get("runtime_cache"))
 
     @staticmethod
     def _runtime_cache_enabled(runtime_cache: Optional[dict[str, Any]]) -> bool:
         return bool(isinstance(runtime_cache, dict) and runtime_cache.get("enabled"))
+
+    @staticmethod
+    def _normalize_runtime_cache(
+        runtime_cache: Optional[dict[str, Any]],
+    ) -> Optional[dict[str, bool]]:
+        if isinstance(runtime_cache, dict) and runtime_cache.get("enabled") is True:
+            return {"enabled": True}
+        return None
 
     @staticmethod
     def _read_str(payload: Optional[dict[str, Any]], key: str) -> Optional[str]:
@@ -419,6 +440,13 @@ class RuntimeStreamSnapshotService:
             return int(raw)
         except (TypeError, ValueError):
             return None
+
+    @staticmethod
+    def _parse_device_id(executor_name: Optional[str]) -> Optional[str]:
+        if not executor_name or not executor_name.startswith(LOCAL_EXECUTOR_PREFIX):
+            return None
+        device_id = executor_name.removeprefix(LOCAL_EXECUTOR_PREFIX)
+        return device_id or None
 
 
 runtime_stream_snapshot_service = RuntimeStreamSnapshotService()

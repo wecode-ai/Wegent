@@ -14,7 +14,7 @@ Executor runtime stream cache keeps active task snapshots in executor-local memo
 
 - Reduce high-frequency Redis writes for streamed incremental content.
 - Keep Redis for active task indexing, TTL, cross-process coordination, and compatibility with older executors.
-- Avoid dual-write rollout. Executors that send the runtime cache marker use executor-local snapshots; executors that do not send it continue using Redis snapshots.
+- Avoid dual-write rollout. Devices that report the runtime cache capability use executor-local snapshots; devices that do not report it continue using Redis snapshots.
 - Accept losing unfinished intermediate snapshots if the executor process crashes. Terminal results are still persisted by the completion handler.
 
 ## Capability Detection
@@ -50,16 +50,16 @@ This prevents refresh recovery from exposing the same plain output through both 
 2. The executor transport records each event in the local `RuntimeStreamCache`.
 3. Backend's WebSocket callback handler decides snapshot ownership from `runtime_cache.enabled` in the device online state.
 4. When runtime cache is supported, `StatusUpdatingEmitter` skips Redis content snapshot writes.
-5. `StatusUpdatingEmitter` updates the Redis task-level active status with executor name, namespace, and runtime cache metadata.
+5. `StatusUpdatingEmitter` updates the Redis task-level active status with only active subtask, executor name, namespace, and other routing fields.
 6. Backend still broadcasts events to the frontend.
 
 ### Refresh Recovery
 
 1. The frontend rejoins the task room or triggers a runtime check.
 2. Backend reads `chat:task_streaming:{task_id}` from Redis to find the active subtask and executor route.
-3. If the status has `runtime_cache.enabled=true`, Backend sends `runtime_cache:get_snapshot` to the local executor.
+3. If the route points to an online device with `runtime_cache.enabled=true`, Backend sends `runtime_cache:get_snapshot` to the local executor.
 4. The executor returns the in-memory snapshot, and Backend converts it into content, blocks, offset, and context metrics for join/resume.
-5. If there is no runtime cache marker, Backend falls back to the Redis content snapshot.
+5. If the route has no matching runtime-cache-capable device, Backend falls back to the Redis content snapshot.
 
 ### Completion
 
@@ -93,7 +93,7 @@ If the executor crashes or restarts, in-memory snapshots are lost. Backend can n
 
 Do not rely only on executor registration or heartbeat capability logs when checking whether runtime cache is active. Inspect backend callback logs instead:
 
-- Whether device registration, heartbeat, or Redis active status contains `runtime_cache.enabled=true`.
+- Whether device registration, heartbeat, or device online state contains `runtime_cache.enabled=true`.
 - Whether refresh or join sends `runtime_cache:get_snapshot`.
 - Whether completion sends `runtime_cache:cleanup` and receives `removed=true`.
 - Whether Redis content snapshot reads return key not found; that means content did not go through Redis, not that Redis active status failed.

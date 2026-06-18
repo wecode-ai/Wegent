@@ -694,8 +694,6 @@ class SessionManager:
                 value["executor_name"] = executor_name
             if executor_namespace:
                 value["executor_namespace"] = executor_namespace
-            if isinstance(runtime_cache, dict) and runtime_cache.get("enabled"):
-                value["runtime_cache"] = {"enabled": True}
             logger.info(
                 f"[SessionManager] set_task_streaming_status: key={key}, "
                 f"task_id={task_id}, subtask_id={subtask_id}, user_id={user_id}, "
@@ -719,7 +717,7 @@ class SessionManager:
         executor_namespace: Optional[str] = None,
         runtime_cache: Optional[Dict[str, Any]] = None,
     ) -> bool:
-        """Attach executor runtime cache metadata to an active stream status."""
+        """Ensure active stream status contains the executor route for cache lookup."""
 
         if not isinstance(runtime_cache, dict) or not runtime_cache.get("enabled"):
             return False
@@ -739,15 +737,13 @@ class SessionManager:
                 )
 
             if (
-                status.get("runtime_cache") == {"enabled": True}
-                and status.get("executor_name") == executor_name
+                status.get("executor_name") == executor_name
                 and status.get("executor_namespace") == executor_namespace
             ):
                 return True
 
             status["subtask_id"] = subtask_id
             status["last_activity_at"] = datetime.now().isoformat()
-            status["runtime_cache"] = {"enabled": True}
             if executor_name:
                 status["executor_name"] = executor_name
             if executor_namespace:
@@ -755,7 +751,7 @@ class SessionManager:
             return await self._cache.set(key, status, expire=STREAMING_TTL)
         except Exception as e:
             logger.error(
-                "Error updating task runtime cache metadata for task %s: %s",
+                "Error updating task runtime cache route for task %s: %s",
                 task_id,
                 e,
                 exc_info=True,
