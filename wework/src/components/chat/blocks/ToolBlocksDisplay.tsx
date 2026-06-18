@@ -7,6 +7,7 @@ import { buildProcessingDisplayRows, type ProcessingDisplayRow } from './toolBlo
 interface ToolBlocksDisplayProps {
   blocks: ProcessingBlock[]
   isStreaming: boolean
+  hasVisibleContent?: boolean
   // Wall-clock epoch ms when the turn started (the assistant subtask's
   // created_at). Used as the duration anchor so the elapsed time survives a
   // page refresh: after a refresh the in-progress blocks are re-streamed with
@@ -19,6 +20,7 @@ interface ToolBlocksDisplayProps {
 export function ToolBlocksDisplay({
   blocks,
   isStreaming,
+  hasVisibleContent = false,
   startedAt,
   onOpenWorkspaceFile,
 }: ToolBlocksDisplayProps) {
@@ -105,7 +107,7 @@ export function ToolBlocksDisplay({
               />
             )
           )}
-          {isRunning && !hasLiveNarrativeBlock && <ThinkingIndicator />}
+          {isRunning && !hasVisibleContent && !hasLiveNarrativeBlock && <ThinkingIndicator />}
         </div>
       )}
     </div>

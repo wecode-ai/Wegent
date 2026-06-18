@@ -165,4 +165,21 @@ describe('ToolBlocksDisplay', () => {
     expect(screen.getByTestId('process-text-block')).toBeInTheDocument()
     expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
   })
+
+  test('does not show the generic thinking indicator after assistant content starts', () => {
+    const doneBlock: ProcessingBlock = {
+      ...completedCommandBlock,
+      status: 'done',
+    }
+
+    render(
+      <ToolBlocksDisplay
+        blocks={[doneBlock]}
+        isStreaming={true}
+        hasVisibleContent={true}
+      />
+    )
+
+    expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
+  })
 })

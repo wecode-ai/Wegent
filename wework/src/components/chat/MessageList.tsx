@@ -386,6 +386,7 @@ function AssistantMessage({
         <ToolBlocksDisplay
           blocks={displayBlocks}
           isStreaming={isStreaming}
+          hasVisibleContent={hasVisibleContent}
           startedAt={getTurnStartMs(message.createdAt)}
           onOpenWorkspaceFile={onOpenWorkspaceFile}
         />
@@ -458,9 +459,6 @@ function AssistantMessage({
         </div>
       )}
       {isThinking && <span className="text-text-muted">正在思考</span>}
-      {isStreaming && hasVisibleContent && !hasBlocks && (
-        <span className="text-text-muted">正在思考</span>
-      )}
       {message.status === 'failed' && message.error && (
         <AssistantErrorCard
           error={message.error}

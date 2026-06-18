@@ -77,6 +77,14 @@ class _OutputTextBlockSessionManager:
         ]
 
 
+class _SnapshotService:
+    def __init__(self, snapshot: dict):
+        self.snapshot = snapshot
+
+    async def get_snapshot(self, **_kwargs) -> dict:
+        return self.snapshot
+
+
 @pytest.mark.asyncio
 async def test_collect_completed_result_merges_duplicate_block_fields(monkeypatch):
     async def _empty_existing_result(_subtask_id: int) -> dict:
@@ -230,3 +238,88 @@ async def test_collect_completed_result_normalizes_empty_value_from_output_text_
 
     assert result is not None
     assert result["value"] == "Visible assistant answer."
+
+
+@pytest.mark.asyncio
+async def test_collect_completed_result_drops_reasoning_only_snapshot_blocks(
+    monkeypatch,
+):
+    async def _empty_existing_result(_subtask_id: int) -> dict:
+        return {}
+
+    monkeypatch.setattr(
+        lifecycle,
+        "_get_existing_subtask_result",
+        _empty_existing_result,
+    )
+    monkeypatch.setattr(
+        "app.services.chat.runtime_stream_snapshot.runtime_stream_snapshot_service",
+        _SnapshotService(
+            {
+                "content": "Visible assistant answer.",
+                "blocks": [
+                    {
+                        "id": "thinking-1",
+                        "type": "thinking",
+                        "content": "Drafting the answer.",
+                        "status": "done",
+                    }
+                ],
+            }
+        ),
+    )
+
+    result = await lifecycle.collect_completed_result(
+        1234,
+        status="COMPLETED",
+        result={"value": "Visible assistant answer."},
+    )
+
+    assert result is not None
+    assert result["value"] == "Visible assistant answer."
+    assert "blocks" not in result
+
+
+@pytest.mark.asyncio
+async def test_collect_completed_result_preserves_snapshot_blocks_with_tools(
+    monkeypatch,
+):
+    async def _empty_existing_result(_subtask_id: int) -> dict:
+        return {}
+
+    monkeypatch.setattr(
+        lifecycle,
+        "_get_existing_subtask_result",
+        _empty_existing_result,
+    )
+    monkeypatch.setattr(
+        "app.services.chat.runtime_stream_snapshot.runtime_stream_snapshot_service",
+        _SnapshotService(
+            {
+                "content": "Final answer.",
+                "blocks": [
+                    {
+                        "id": "thinking-1",
+                        "type": "thinking",
+                        "content": "Checking files.",
+                        "status": "done",
+                    },
+                    {
+                        "id": "tool-1",
+                        "type": "tool",
+                        "tool_name": "Bash",
+                        "status": "done",
+                    },
+                ],
+            }
+        ),
+    )
+
+    result = await lifecycle.collect_completed_result(
+        1234,
+        status="COMPLETED",
+        result={"value": "Final answer."},
+    )
+
+    assert result is not None
+    assert [block["type"] for block in result["blocks"]] == ["thinking", "tool"]

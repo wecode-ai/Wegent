@@ -3806,4 +3806,130 @@ describe('WorkbenchProvider', () => {
 
     expect(screen.getByTestId('running-task-ids')).toHaveTextContent('8')
   })
+
+  test('keeps live thinking blocks when chat done has no persisted blocks', async () => {
+    type StreamHandlers = {
+      onChatStart?: (payload: {
+        task_id: number
+        subtask_id: number
+        shell_type?: string
+      }) => void
+      onChatChunk?: (payload: {
+        task_id: number
+        subtask_id: number
+        content: string
+        result: Record<string, unknown>
+      }) => void
+      onChatDone?: (payload: {
+        task_id: number
+        subtask_id: number
+        result: { value?: string; file_changes?: unknown }
+      }) => void
+    }
+    let streamHandlers: StreamHandlers | undefined
+
+    function LiveBlocksProbe() {
+      const workbench = useWorkbench()
+
+      return (
+        <div>
+          <span data-testid="live-message">
+            {workbench.messages.map(message => `${message.status}:${message.content}`).join('|')}
+          </span>
+          <span data-testid="live-blocks">
+            {workbench.messages
+              .flatMap(message =>
+                (message.blocks ?? []).map(block =>
+                  block.type === 'thinking'
+                    ? `${block.type}:${block.status}:${block.content}`
+                    : `${block.type}:${block.status}`
+                )
+              )
+              .join('|')}
+          </span>
+        </div>
+      )
+    }
+
+    render(
+      <WorkbenchProvider
+        user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+        services={{
+          teamApi: {
+            getDefaultWorkbenchTeam: vi.fn().mockResolvedValue({ id: 2, name: 'coder' }),
+          },
+          modelApi: { listModels: vi.fn().mockResolvedValue({ data: [] }) },
+          skillApi: {
+            listSkills: vi.fn().mockResolvedValue([]),
+            getTeamSkills: vi.fn().mockResolvedValue({ skills: [], preload_skills: [] }),
+          },
+          projectApi: {
+            listProjects: vi.fn().mockResolvedValue({ items: [] }),
+            getProject: vi.fn(),
+            createProject: vi.fn(),
+            updateProject: vi.fn(),
+            deleteProject: vi.fn(),
+            archiveProjectChats: vi.fn(),
+            archiveAllProjectChats: vi.fn(),
+            createConversation: vi.fn(),
+          },
+          taskApi: {
+            listRecentTasks: vi.fn().mockResolvedValue({ total: 0, items: [] }),
+            getTaskDetail: vi.fn(),
+            renameTask: vi.fn(),
+            archiveTask: vi.fn(),
+            archiveAllChats: vi.fn(),
+            listArchivedTasks: vi.fn(),
+            unarchiveTask: vi.fn(),
+            deleteTask: vi.fn(),
+            deleteArchivedTasks: vi.fn(),
+          },
+          deviceApi: {
+            listDevices: vi.fn().mockResolvedValue([]),
+            getHomeDirectory: vi.fn(),
+            getProjectWorkspaceRoot: vi.fn(),
+            listDirectories: vi.fn(),
+            listSkills: vi.fn().mockResolvedValue([]),
+          },
+          chatStream: {
+            joinTask: vi.fn(),
+            leaveTask: vi.fn(),
+            sendMessage: vi.fn(),
+            subscribe: vi.fn(handlers => {
+              streamHandlers = handlers as StreamHandlers
+              return vi.fn()
+            }),
+          },
+        }}
+      >
+        <LiveBlocksProbe />
+      </WorkbenchProvider>
+    )
+
+    await waitFor(() => expect(streamHandlers?.onChatStart).toBeDefined())
+
+    act(() => {
+      streamHandlers?.onChatStart?.({ task_id: 8, subtask_id: 80, shell_type: 'Chat' })
+      streamHandlers?.onChatChunk?.({
+        task_id: 8,
+        subtask_id: 80,
+        content: '',
+        result: { reasoning_chunk: 'Drafting' },
+      })
+      streamHandlers?.onChatChunk?.({
+        task_id: 8,
+        subtask_id: 80,
+        content: 'Final answer',
+        result: {},
+      })
+      streamHandlers?.onChatDone?.({
+        task_id: 8,
+        subtask_id: 80,
+        result: { value: 'Final answer' },
+      })
+    })
+
+    expect(screen.getByTestId('live-message')).toHaveTextContent('done:Final answer')
+    expect(screen.getByTestId('live-blocks')).toHaveTextContent('thinking:done:Drafting')
+  })
 })

@@ -1073,7 +1073,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
           type: 'assistant_done',
           subtaskId: payload.subtask_id,
           content: typeof payload.result.value === 'string' ? payload.result.value : undefined,
-          blocks: getResultBlocks(payload.subtask_id, payload.result) ?? [],
+          blocks: getResultBlocks(payload.subtask_id, payload.result),
           fileChanges: normalizeTurnFileChanges(payload.result.file_changes),
         })
       },

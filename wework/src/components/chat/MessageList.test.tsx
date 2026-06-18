@@ -549,10 +549,28 @@ describe('MessageList', () => {
 
     expect(screen.queryByTestId('message-hover-time')).not.toBeInTheDocument()
     expect(screen.queryByTestId('copy-message-button')).not.toBeInTheDocument()
+    expect(screen.queryByText('正在思考')).not.toBeInTheDocument()
+  })
+
+  test('shows the thinking indicator before assistant content starts', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: '2',
+            role: 'assistant',
+            content: '',
+            status: 'streaming',
+            createdAt: '2026-05-25T18:46:00.000+08:00',
+          },
+        ]}
+      />
+    )
+
     expect(screen.getByText('正在思考')).toBeInTheDocument()
   })
 
-  test('shows a single thinking indicator for streaming assistant messages with blocks', () => {
+  test('does not show the generic thinking indicator after visible content starts', () => {
     const runningBlock: ProcessingBlock = {
       id: 'call-1',
       subtaskId: 1,
@@ -578,7 +596,7 @@ describe('MessageList', () => {
       />
     )
 
-    expect(screen.getAllByText('正在思考')).toHaveLength(1)
+    expect(screen.queryByText('正在思考')).not.toBeInTheDocument()
   })
 
   test('renders process text inside the processing timeline before the following tool', () => {

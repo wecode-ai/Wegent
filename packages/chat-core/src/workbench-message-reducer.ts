@@ -139,7 +139,7 @@ export function reduceWorkbenchMessages<TAttachment = unknown, TFileChanges = un
                 taskId: action.taskId ?? message.taskId,
                 content: action.content,
                 status: 'streaming' as const,
-                blocks: action.blocks ?? message.blocks,
+                blocks: getCachedBlocks(action.blocks ?? message.blocks, action.content),
               }
             : message
         )
@@ -153,7 +153,7 @@ export function reduceWorkbenchMessages<TAttachment = unknown, TFileChanges = un
           role: 'assistant',
           content: action.content,
           status: 'streaming',
-          blocks: action.blocks ?? [],
+          blocks: getCachedBlocks(action.blocks, action.content) ?? [],
           createdAt: new Date().toISOString(),
         },
       ]
@@ -251,6 +251,13 @@ function isActiveBlockStatus(status?: WorkbenchToolBlockStatus): boolean {
   )
 }
 
+function getCachedBlocks(
+  blocks: WorkbenchProcessingBlock[] | undefined,
+  content: string
+): WorkbenchProcessingBlock[] | undefined {
+  return content ? finalizeStreamingThinkingBlocks(blocks) : blocks
+}
+
 function createBlockCreatedMessage<TAttachment, TFileChanges>(
   message: WorkbenchMessage<TAttachment, TFileChanges>,
   action: Extract<WorkbenchMessageAction<TAttachment, TFileChanges>, { type: 'block_created' }>
@@ -304,8 +311,11 @@ function getChunkBlocks<TAttachment, TFileChanges>(
     action.reasoningChunk
   )
 
-  if (!action.blocks) return withReasoning
-  return action.blocks.reduce(mergeProcessingBlock, withReasoning ?? [])
+  const withIncomingBlocks = action.blocks
+    ? action.blocks.reduce(mergeProcessingBlock, withReasoning ?? [])
+    : withReasoning
+
+  return action.content ? finalizeStreamingThinkingBlocks(withIncomingBlocks) : withIncomingBlocks
 }
 
 function appendThinkingChunk(
@@ -337,6 +347,18 @@ function appendThinkingChunk(
       createdAt: Date.now(),
     },
   ]
+}
+
+function finalizeStreamingThinkingBlocks(
+  blocks: WorkbenchProcessingBlock[] | undefined
+): WorkbenchProcessingBlock[] | undefined {
+  if (!blocks) return undefined
+
+  return blocks.map(block =>
+    block.type === 'thinking' && block.status === 'streaming'
+      ? { ...block, status: 'done' as const }
+      : block
+  )
 }
 
 function getBlocksBeforeIncomingBlock<TAttachment, TFileChanges>(

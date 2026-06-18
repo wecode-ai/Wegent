@@ -80,6 +80,28 @@ def _merge_blocks(
     return merged
 
 
+def _has_non_thinking_block(blocks: Any) -> bool:
+    if not isinstance(blocks, list):
+        return False
+
+    return any(
+        isinstance(block, dict) and block.get("type") != "thinking" for block in blocks
+    )
+
+
+def _should_merge_snapshot_blocks(
+    final_result: Dict[str, Any],
+    snapshot_blocks: Any,
+) -> bool:
+    if not isinstance(snapshot_blocks, list) or not snapshot_blocks:
+        return False
+
+    if _has_non_thinking_block(snapshot_blocks):
+        return True
+
+    return _has_non_thinking_block(final_result.get("blocks"))
+
+
 def _is_blank_text_value(value: Any) -> bool:
     if value is None:
         return True
@@ -409,7 +431,7 @@ async def collect_completed_result(
         finalize_redis_blocks=True,
     )
     accumulated_content = snapshot.get("content", "")
-    blocks = snapshot.get("blocks", [])
+    snapshot_blocks = snapshot.get("blocks", [])
     existing_result = await _get_existing_subtask_result(subtask_id)
 
     if result is not None and not isinstance(result, dict):
@@ -425,7 +447,7 @@ async def collect_completed_result(
         runtime_result
         or existing_result
         or accumulated_content
-        or blocks
+        or snapshot_blocks
         or normalized_status == "COMPLETED"
         or (normalized_status == "FAILED" and error_code)
     )
@@ -448,13 +470,13 @@ async def collect_completed_result(
         ):
             final_result[key] = value
 
-    if blocks:
-        merged_blocks = _merge_blocks(final_result.get("blocks"), blocks)
+    if _should_merge_snapshot_blocks(final_result, snapshot_blocks):
+        merged_blocks = _merge_blocks(final_result.get("blocks"), snapshot_blocks)
         if merged_blocks:
             final_result["blocks"] = merged_blocks
         logger.info(
             "[CompletedResult] Added %d blocks to %s result for subtask %s",
-            len(blocks),
+            len(snapshot_blocks),
             normalized_status.lower(),
             subtask_id,
         )

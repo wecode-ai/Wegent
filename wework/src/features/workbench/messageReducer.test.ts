@@ -161,6 +161,65 @@ describe('messageReducer', () => {
     ])
   })
 
+  test('finalizes thinking blocks when visible assistant content starts', () => {
+    const state = messageReducer(
+      messageReducer([], {
+        type: 'assistant_started',
+        taskId: 1,
+        subtaskId: 9,
+      }),
+      {
+        type: 'assistant_chunk',
+        subtaskId: 9,
+        content: '',
+        reasoningChunk: 'Drafting the answer',
+      }
+    )
+
+    const withContent = messageReducer(state, {
+      type: 'assistant_chunk',
+      subtaskId: 9,
+      content: 'Final answer starts here.',
+    })
+
+    expect(withContent[0].content).toBe('Final answer starts here.')
+    expect(withContent[0].blocks).toMatchObject([
+      {
+        type: 'thinking',
+        content: 'Drafting the answer',
+        status: 'done',
+      },
+    ])
+  })
+
+  test('finalizes cached thinking blocks when cached content already exists', () => {
+    const state = messageReducer([], {
+      type: 'assistant_cached',
+      taskId: 1,
+      subtaskId: 9,
+      content: 'Cached visible answer.',
+      blocks: [
+        {
+          id: 'thinking-9-1',
+          subtaskId: 9,
+          type: 'thinking',
+          content: 'Drafting the answer',
+          status: 'streaming',
+          createdAt: 1770000000000,
+        },
+      ],
+    })
+
+    expect(state[0].content).toBe('Cached visible answer.')
+    expect(state[0].blocks).toMatchObject([
+      {
+        type: 'thinking',
+        content: 'Drafting the answer',
+        status: 'done',
+      },
+    ])
+  })
+
   test('places streamed process text before the following tool block', () => {
     const state = messageReducer(
       messageReducer([], {
@@ -235,6 +294,34 @@ describe('messageReducer', () => {
       content: 'Final',
       status: 'done',
       blocks: [{ id: 'thinking-real', type: 'thinking', status: 'done' }],
+    })
+  })
+
+  test('preserves current processing blocks when done does not include blocks', () => {
+    const state = messageReducer(
+      messageReducer([], {
+        type: 'assistant_started',
+        taskId: 1,
+        subtaskId: 9,
+      }),
+      {
+        type: 'assistant_chunk',
+        subtaskId: 9,
+        content: '',
+        reasoningChunk: 'Drafting',
+      }
+    )
+
+    const done = messageReducer(state, {
+      type: 'assistant_done',
+      subtaskId: 9,
+      content: 'Final',
+    })
+
+    expect(done[0]).toMatchObject({
+      content: 'Final',
+      status: 'done',
+      blocks: [{ type: 'thinking', content: 'Drafting', status: 'done' }],
     })
   })
 
