@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 from fastapi import HTTPException
-from sqlalchemy import and_, literal, literal_column, union_all
+from sqlalchemy import and_, func, literal, literal_column, union_all
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -49,6 +49,9 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
     ACCESS_SOURCE_NATIVE = "native"
     ACCESS_SOURCE_USER_SHARE = "user_share"
     ACCESS_SOURCE_NAMESPACE_AUTHORIZATION = "namespace_authorization"
+    ACCESS_RANK_NATIVE = 0
+    ACCESS_RANK_USER_SHARE = 1
+    ACCESS_RANK_NAMESPACE_AUTHORIZATION = 2
 
     # List of sensitive keys that should be decrypted when reading
     SENSITIVE_CONFIG_KEYS = [
@@ -336,6 +339,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 literal_column("0").label("share_status"),  # Default 0 for own teams
                 literal_column(str(user_id)).label("context_user_id"),
                 literal(self.ACCESS_SOURCE_NATIVE).label("access_source"),
+                literal(self.ACCESS_RANK_NATIVE).label("access_rank"),
             ).filter(
                 Kind.user_id == user_id,
                 Kind.kind == "Team",
@@ -361,6 +365,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                             "context_user_id"
                         ),  # Use team owner, not inviter
                         literal(self.ACCESS_SOURCE_USER_SHARE).label("access_source"),
+                        literal(self.ACCESS_RANK_USER_SHARE).label("access_rank"),
                     )
                     .join(
                         ResourceMember,
@@ -395,6 +400,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                     ),  # 0 for public teams (system-owned)
                     literal_column("0").label("context_user_id"),
                     literal(self.ACCESS_SOURCE_NATIVE).label("access_source"),
+                    literal(self.ACCESS_RANK_NATIVE).label("access_rank"),
                 ).filter(
                     Kind.user_id == 0,
                     Kind.kind == "Team",
@@ -417,6 +423,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 literal_column("0").label("share_status"),
                 Kind.user_id.label("context_user_id"),
                 literal(self.ACCESS_SOURCE_NATIVE).label("access_source"),
+                literal(self.ACCESS_RANK_NATIVE).label("access_rank"),
             ).filter(
                 Kind.kind == "Team",
                 Kind.namespace.in_(
@@ -454,6 +461,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 literal(self.ACCESS_SOURCE_NAMESPACE_AUTHORIZATION).label(
                     "access_source"
                 ),
+                literal(self.ACCESS_RANK_NAMESPACE_AUTHORIZATION).label("access_rank"),
             ).filter(
                 authorized_member_exists,
                 Kind.kind == "Team",
@@ -472,9 +480,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             combined_query = queries[0].subquery()
         else:
             combined_query = union_all(*queries).alias("combined_teams")
-
-        # Create final query with pagination
-        final_query = (
+        ranked_query = (
             db.query(
                 combined_query.c.team_id,
                 combined_query.c.team_user_id,
@@ -486,9 +492,36 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 combined_query.c.share_status,
                 combined_query.c.context_user_id,
                 combined_query.c.access_source,
+                func.row_number()
+                .over(
+                    partition_by=combined_query.c.team_id,
+                    order_by=(
+                        combined_query.c.access_rank.asc(),
+                        combined_query.c.team_updated_at.desc(),
+                        combined_query.c.team_id.desc(),
+                    ),
+                )
+                .label("access_row_number"),
             )
+        ).subquery()
+
+        # Create final query with pagination
+        final_query = (
+            db.query(
+                ranked_query.c.team_id,
+                ranked_query.c.team_user_id,
+                ranked_query.c.team_name,
+                ranked_query.c.team_namespace,
+                ranked_query.c.team_json,
+                ranked_query.c.team_created_at,
+                ranked_query.c.team_updated_at,
+                ranked_query.c.share_status,
+                ranked_query.c.context_user_id,
+                ranked_query.c.access_source,
+            )
+            .filter(ranked_query.c.access_row_number == 1)
             .order_by(
-                combined_query.c.team_updated_at.desc(), combined_query.c.team_id.desc()
+                ranked_query.c.team_updated_at.desc(), ranked_query.c.team_id.desc()
             )
             .offset(skip)
             .limit(limit)
@@ -1210,14 +1243,13 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         else:
             raise ValueError(f"Invalid scope: {scope}")
 
-        total_count = 0
+        count_queries = []
         team_resource_type_variants = [ResourceType.TEAM.value, ResourceType.TEAM.name]
         approved_status_variants = [MemberStatus.APPROVED.value, "APPROVED"]
 
         for namespace in namespaces_to_count:
             if namespace == "default":
-                # Count user's own teams
-                own_teams_count = (
+                count_queries.append(
                     db.query(Kind)
                     .filter(
                         Kind.user_id == user_id,
@@ -1225,13 +1257,11 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                         Kind.namespace == "default",
                         Kind.is_active == True,
                     )
-                    .count()
+                    .with_entities(Kind.id.label("team_id"))
                 )
-                total_count += own_teams_count
 
-                # Count shared teams (for personal and all scopes) using ResourceMember
                 if scope in ("personal", "all"):
-                    shared_teams_count = (
+                    count_queries.append(
                         db.query(ResourceMember)
                         .join(
                             Kind,
@@ -1249,21 +1279,29 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                             Kind.is_active == True,
                             Kind.kind == "Team",
                         )
-                        .count()
+                        .with_entities(Kind.id.label("team_id"))
                     )
-                    total_count += shared_teams_count
+
+                    count_queries.append(
+                        db.query(Kind)
+                        .filter(
+                            Kind.user_id == 0,
+                            Kind.kind == "Team",
+                            Kind.namespace == "default",
+                            Kind.is_active == True,
+                        )
+                        .with_entities(Kind.id.label("team_id"))
+                    )
             else:
-                # Count group teams
-                group_teams_count = (
+                count_queries.append(
                     db.query(Kind)
                     .filter(
                         Kind.kind == "Team",
                         Kind.namespace == namespace,
                         Kind.is_active == True,
                     )
-                    .count()
+                    .with_entities(Kind.id.label("team_id"))
                 )
-                total_count += group_teams_count
 
         group_namespaces = [ns for ns in namespaces_to_count if ns != "default"]
         authorized_namespace_ids = self._get_accessible_authorization_namespace_ids(
@@ -1284,7 +1322,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 )
                 .exists()
             )
-            total_count += (
+            count_queries.append(
                 db.query(Kind.id)
                 .filter(
                     authorized_member_exists,
@@ -1292,10 +1330,21 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                     Kind.is_active.is_(True),
                     ~Kind.namespace.in_(group_namespaces),
                 )
-                .count()
+                .with_entities(Kind.id.label("team_id"))
             )
 
-        return total_count
+        if not count_queries:
+            return 0
+
+        combined_count_query = (
+            count_queries[0].subquery()
+            if len(count_queries) == 1
+            else union_all(*count_queries).alias("combined_team_counts")
+        )
+        return (
+            db.query(func.count(func.distinct(combined_count_query.c.team_id))).scalar()
+            or 0
+        )
 
     def _validate_bots(self, db: Session, bots: List[BotInfo], user_id: int) -> None:
         """

@@ -421,3 +421,65 @@ def test_batch_query_teams_loads_child_namespace_grants_without_subqueries(test_
     assert all("EXISTS" not in statement for statement in normalized_statements)
     assert all(" IN (SELECT" not in statement for statement in normalized_statements)
     assert teams["parent-team:parent"].id == team.id
+
+
+@pytest.mark.unit
+def test_batch_query_teams_requires_reporter_for_child_namespace_grants(test_db):
+    user_id = 7
+    parent = Namespace(
+        name="restricted-parent",
+        display_name="restricted-parent",
+        owner_user_id=1,
+        visibility="private",
+        description="",
+        is_active=True,
+    )
+    child = Namespace(
+        name="restricted-parent/child",
+        display_name="child",
+        owner_user_id=1,
+        visibility="private",
+        description="",
+        is_active=True,
+    )
+    team = Kind(
+        user_id=1,
+        kind="Team",
+        name="restricted-parent-team",
+        namespace="restricted-parent",
+        json=_team_json(
+            "restricted-parent-team",
+            "Restricted Parent Team",
+            "bot",
+            namespace="restricted-parent",
+        ),
+        is_active=True,
+    )
+    test_db.add_all([parent, child, team])
+    test_db.flush()
+    test_db.add_all(
+        [
+            ResourceMember(
+                resource_type="Namespace",
+                resource_id=parent.id,
+                entity_type="user",
+                entity_id=str(user_id),
+                role="RestrictedAnalyst",
+                status=MemberStatus.APPROVED,
+            ),
+            ResourceMember(
+                resource_type=ResourceType.TEAM.value,
+                resource_id=team.id,
+                entity_type="namespace",
+                entity_id=str(child.id),
+                status=MemberStatus.APPROVED,
+            ),
+        ]
+    )
+    test_db.commit()
+
+    teams = _batch_query_teams(
+        test_db, {("restricted-parent-team", "restricted-parent")}, user_id
+    )
+
+    assert "restricted-parent-team:restricted-parent" not in teams

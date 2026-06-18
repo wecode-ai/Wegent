@@ -23,6 +23,7 @@ from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.subtask import Subtask
 from app.models.task import TaskResource
+from app.schemas.base_role import BaseRole
 from app.schemas.kind import Task, Team, Workspace
 from app.services.adapters.pipeline_stage import pipeline_stage_service
 from app.services.device.display_name import resolve_device_display_name
@@ -33,6 +34,13 @@ from app.stores.tasks import WorkspaceRefLookup
 from .converters import get_task_execution_workspace_source
 
 logger = logging.getLogger(__name__)
+
+REPORTER_OR_HIGHER_ROLES = (
+    BaseRole.Owner.value,
+    BaseRole.Maintainer.value,
+    BaseRole.Developer.value,
+    BaseRole.Reporter.value,
+)
 
 
 def create_subtasks(
@@ -481,6 +489,7 @@ def _get_user_accessible_namespace_ids(
             ResourceMember.entity_type == "user",
             ResourceMember.entity_id == str(user_id),
             ResourceMember.status.in_(approved_status_variants),
+            ResourceMember.role.in_(REPORTER_OR_HIGHER_ROLES),
         )
         .all()
     )
@@ -489,7 +498,10 @@ def _get_user_accessible_namespace_ids(
     if not parent_names:
         return namespace_ids
 
-    child_filters = [Namespace.name.like(f"{name}/%") for name in parent_names]
+    child_filters = [
+        Namespace.name.like(f"{_escape_sql_like(name)}/%", escape="\\")
+        for name in parent_names
+    ]
     child_rows = (
         db.query(Namespace.id)
         .filter(Namespace.is_active.is_(True), or_(*child_filters))
@@ -497,6 +509,11 @@ def _get_user_accessible_namespace_ids(
     )
     namespace_ids.update(str(row.id) for row in child_rows)
     return namespace_ids
+
+
+def _escape_sql_like(value: str) -> str:
+    """Escape SQL LIKE wildcard characters."""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def _get_namespace_granted_team_ids(

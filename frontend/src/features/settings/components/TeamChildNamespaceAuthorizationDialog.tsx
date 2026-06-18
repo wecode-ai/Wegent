@@ -29,6 +29,21 @@ interface TeamChildNamespaceAuthorizationDialogProps {
   onOpenChange: (open: boolean) => void
 }
 
+const GROUP_PAGE_SIZE = 100
+
+async function listAllGroups(): Promise<Group[]> {
+  const firstPage = await listGroups({ page: 1, limit: GROUP_PAGE_SIZE })
+  const items = [...firstPage.items]
+  const totalPages = Math.ceil(firstPage.total / GROUP_PAGE_SIZE)
+
+  for (let page = 2; page <= totalPages; page += 1) {
+    const response = await listGroups({ page, limit: GROUP_PAGE_SIZE })
+    items.push(...response.items)
+  }
+
+  return items
+}
+
 export function TeamChildNamespaceAuthorizationDialog({
   open,
   team,
@@ -45,8 +60,10 @@ export function TeamChildNamespaceAuthorizationDialog({
 
   useEffect(() => {
     activeTeamIdRef.current = open ? teamId : null
+    setUpdatingGroupIds(new Set())
     if (!open || teamId === null) {
       setIsLoading(false)
+      setMembers([])
     }
   }, [open, teamId])
 
@@ -75,11 +92,11 @@ export function TeamChildNamespaceAuthorizationDialog({
     setIsLoading(true)
     try {
       const [groupsResponse, membersResponse] = await Promise.all([
-        listGroups({ page: 1, limit: 100 }),
+        listAllGroups(),
         teamApis.listTeamMembers(teamId),
       ])
       if (activeTeamIdRef.current !== requestTeamId) return
-      setGroups(groupsResponse.items)
+      setGroups(groupsResponse)
       setMembers(membersResponse.members)
     } catch {
       if (activeTeamIdRef.current !== requestTeamId) return
@@ -100,25 +117,31 @@ export function TeamChildNamespaceAuthorizationDialog({
 
   const updateGroupAuthorization = async (group: Group, checked: boolean) => {
     if (!team) return
+    const requestTeamId = team.id
     setUpdatingGroupIds(prev => new Set(prev).add(group.id))
     try {
       if (checked) {
-        const created = await teamApis.addTeamNamespaceAuthorization(team.id, group.id)
+        const created = await teamApis.addTeamNamespaceAuthorization(requestTeamId, group.id)
+        if (activeTeamIdRef.current !== requestTeamId) return
         setMembers(prev => [...prev.filter(member => member.id !== created.id), created])
       } else {
         const member = authorizationByNamespaceId.get(String(group.id))
         if (member) {
-          await teamApis.removeTeamMember(team.id, member.id)
+          await teamApis.removeTeamMember(requestTeamId, member.id)
+          if (activeTeamIdRef.current !== requestTeamId) return
           setMembers(prev => prev.filter(item => item.id !== member.id))
         }
       }
+      if (activeTeamIdRef.current !== requestTeamId) return
       toast({ title: t('teams.child_authorization.save_success') })
     } catch {
+      if (activeTeamIdRef.current !== requestTeamId) return
       toast({
         variant: 'destructive',
         title: t('teams.child_authorization.save_failed'),
       })
     } finally {
+      if (activeTeamIdRef.current !== requestTeamId) return
       setUpdatingGroupIds(prev => {
         const next = new Set(prev)
         next.delete(group.id)

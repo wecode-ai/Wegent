@@ -269,6 +269,44 @@ def test_child_group_team_list_includes_authorized_parent_team(test_db: Session)
     ) == len(teams)
 
 
+def test_team_list_deduplicates_direct_share_and_namespace_authorization(
+    test_db: Session,
+):
+    _owner, child_member, _child, team, _kb = _arrange_parent_team_authorized_to_child(
+        test_db
+    )
+    test_db.add(
+        ResourceMember(
+            resource_type=ResourceType.TEAM.value,
+            resource_id=team.id,
+            entity_type="user",
+            entity_id=str(child_member.id),
+            role=MemberRole.Reporter.value,
+            status=MemberStatus.APPROVED.value,
+            invited_by_user_id=team.user_id,
+            share_link_id=0,
+            reviewed_by_user_id=team.user_id,
+            copied_resource_id=0,
+        )
+    )
+    test_db.commit()
+
+    teams = team_kinds_service.get_user_teams(
+        test_db,
+        user_id=child_member.id,
+        scope="all",
+    )
+
+    matching_teams = [item for item in teams if item["id"] == team.id]
+    assert len(matching_teams) == 1
+    assert matching_teams[0]["access_source"] == "user_share"
+    assert team_kinds_service.count_user_teams(
+        test_db,
+        user_id=child_member.id,
+        scope="all",
+    ) == len(teams)
+
+
 def test_child_member_can_create_task_with_authorized_parent_team_and_use_skills(
     test_db: Session,
 ):
