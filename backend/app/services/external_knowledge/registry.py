@@ -6,7 +6,7 @@
 
 import importlib
 import logging
-from typing import Any
+from typing import Any, Callable
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -36,15 +36,19 @@ class ExternalKnowledgeProviderRegistry:
         bound_at: str,
     ) -> ResolvedExternalKnowledge:
         for provider in self._providers:
-            if provider.supports(ref):
-                return provider.resolve(db, user, ref, bound_at)
+            supports = _get_callable(provider, "supports")
+            resolve = _get_callable(provider, "resolve")
+            if supports is not None and resolve is not None and supports(ref):
+                return resolve(db, user, ref, bound_at)
         return ResolvedExternalKnowledge(
             warning={
                 "type": "external_document",
                 "reason": "provider_unsupported",
                 "message": "该外部知识类型暂不支持, 无法读取",
                 "name": getattr(ref, "name", ""),
-                "provider": getattr(ref, "type", ""),
+                "provider": getattr(ref, "provider", getattr(ref, "type", "")),
+                "source": getattr(ref, "source", ""),
+                "external_id": getattr(ref, "id", ""),
             }
         )
 
@@ -52,7 +56,10 @@ class ExternalKnowledgeProviderRegistry:
         self, raw: dict[str, Any]
     ) -> DefaultContextRef | None:
         for provider in self._providers:
-            ref = provider.context_item_to_default_ref(raw)
+            parser = _get_callable(provider, "context_item_to_default_ref")
+            if parser is None:
+                continue
+            ref = parser(raw)
             if ref is not None:
                 return ref
         return None
@@ -65,8 +72,10 @@ class ExternalKnowledgeProviderRegistry:
         namespace: str,
     ) -> None:
         for provider in self._providers:
-            if provider.supports(ref):
-                provider.validate_ref(db, user, ref, namespace)
+            supports = _get_callable(provider, "supports")
+            validate = _get_callable(provider, "validate_ref")
+            if supports is not None and validate is not None and supports(ref):
+                validate(db, user, ref, namespace)
                 return
         raise HTTPException(
             status_code=400,
@@ -75,21 +84,27 @@ class ExternalKnowledgeProviderRegistry:
 
     def get_runtime_skill_names(self, context: dict[str, Any]) -> list[str]:
         for provider in self._providers:
-            if provider.supports_task_context(context):
-                return provider.get_runtime_skill_names(context)
+            supports = _get_callable(provider, "supports_task_context")
+            get_skill_names = _get_callable(provider, "get_runtime_skill_names")
+            if (
+                supports is not None
+                and get_skill_names is not None
+                and supports(context)
+            ):
+                return get_skill_names(context)
         return []
 
     def build_runtime_guidance(self, contexts: list[dict[str, Any]]) -> str | None:
         sections: list[str] = []
         for provider in self._providers:
-            provider_contexts = [
-                context
-                for context in contexts
-                if provider.supports_task_context(context)
-            ]
+            supports = _get_callable(provider, "supports_task_context")
+            build_guidance = _get_callable(provider, "build_runtime_guidance")
+            if supports is None or build_guidance is None:
+                continue
+            provider_contexts = [context for context in contexts if supports(context)]
             if not provider_contexts:
                 continue
-            guidance = provider.build_runtime_guidance(provider_contexts)
+            guidance = build_guidance(provider_contexts)
             if guidance:
                 sections.append(guidance)
         if not sections:
@@ -130,3 +145,10 @@ def _load_provider(import_path: str) -> ExternalKnowledgeProvider | None:
             exc,
         )
         return None
+
+
+def _get_callable(
+    provider: ExternalKnowledgeProvider, name: str
+) -> Callable[..., Any] | None:
+    value = getattr(provider, name, None)
+    return value if callable(value) else None

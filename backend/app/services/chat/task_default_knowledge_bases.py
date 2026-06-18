@@ -11,6 +11,7 @@ from pydantic import TypeAdapter, ValidationError
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
+from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.kind import (
     Bot,
@@ -24,6 +25,7 @@ from app.services.external_knowledge.registry import (
     build_default_external_knowledge_registry,
 )
 from app.services.readers import KindType, kindReader
+from app.stores.tasks import task_store
 
 DEFAULT_CONTEXT_REF_ADAPTER = TypeAdapter(DefaultContextRef)
 
@@ -125,6 +127,60 @@ def _make_context_key(ref: DefaultContextRef) -> str:
     if ref.type == "knowledge_base":
         return f"knowledge_base:{ref.id}"
     return f"{ref.type}:{getattr(ref, 'id', '')}"
+
+
+def _make_context_warning_key(warning: dict[str, Any]) -> str:
+    metadata = (
+        warning.get("metadata") if isinstance(warning.get("metadata"), dict) else {}
+    )
+    return ":".join(
+        [
+            str(warning.get("type") or ""),
+            str(warning.get("reason") or ""),
+            str(warning.get("provider") or ""),
+            str(warning.get("source") or ""),
+            str(warning.get("external_id") or ""),
+            str(metadata.get("external_id") or ""),
+            str(warning.get("name") or ""),
+            str(warning.get("message") or ""),
+        ]
+    )
+
+
+def append_task_context_warnings(
+    db: Session,
+    task: TaskResource,
+    warnings: list[dict[str, Any]],
+) -> bool:
+    """Append task context warnings and return whether the task changed."""
+    if not warnings:
+        return False
+
+    task_json = task.json if isinstance(task.json, dict) else {}
+    next_task_json = dict(task_json)
+    spec = dict(next_task_json.get("spec") or {})
+    existing_warnings = [
+        warning
+        for warning in spec.get("contextWarnings", []) or []
+        if isinstance(warning, dict)
+    ]
+    seen = {_make_context_warning_key(warning) for warning in existing_warnings}
+    appended = False
+    for warning in warnings:
+        key = _make_context_warning_key(warning)
+        if key in seen:
+            continue
+        existing_warnings.append(warning)
+        seen.add(key)
+        appended = True
+
+    if not appended:
+        return False
+
+    spec["contextWarnings"] = existing_warnings
+    next_task_json["spec"] = spec
+    task_store.update_json(db, task=task, payload=next_task_json)
+    return True
 
 
 def _context_item_to_default_ref(

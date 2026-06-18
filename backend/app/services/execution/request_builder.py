@@ -42,7 +42,6 @@ from app.services.skill_binding_service import (
 )
 from app.services.skill_resolution import find_skill_by_name, find_skill_by_ref
 from app.services.user_mcp_service import user_mcp_service
-from app.stores.tasks import task_store
 from shared.models import ExecutionRequest
 from shared.models.db import Kind, User
 from shared.utils.url_util import domains_match
@@ -104,7 +103,7 @@ class TaskRequestBuilder:
         # Cache shell info by (user_id, namespace, shell_name)
         # to avoid repeated database queries while keeping per-shell isolation.
         self._cached_shell_info: dict[tuple[int, str, str], dict] = {}
-        self.runtime_context_warnings_updated = False
+        self.runtime_context_warnings: list[dict[str, Any]] = []
 
     def build(
         self,
@@ -176,6 +175,8 @@ class TaskRequestBuilder:
         Returns:
             ExecutionRequest ready for dispatch
         """
+        self.runtime_context_warnings = []
+
         # Parse team CRD
         team_crd = Team.model_validate(team.json)
 
@@ -234,13 +235,7 @@ class TaskRequestBuilder:
             user=user,
             contexts=runtime_contexts,
         )
-        if runtime_external_context_warnings:
-            self.runtime_context_warnings_updated = (
-                self._append_runtime_external_context_warnings(
-                    task,
-                    runtime_external_context_warnings,
-                )
-            )
+        self.runtime_context_warnings = runtime_external_context_warnings
 
         # Get skills for the bot (full resolution from Ghost)
         # Convert preload_skills to the format expected by _get_bot_skills
@@ -2181,58 +2176,6 @@ Response template:
                 warnings.append(resolved.warning)
         return resolved_contexts, warnings
 
-    def _append_runtime_external_context_warnings(
-        self,
-        task: TaskResource,
-        warnings: list[dict[str, Any]],
-    ) -> bool:
-        """Persist runtime external context warnings for TaskDetail display."""
-        if not warnings:
-            return False
-
-        task_json = task.json if isinstance(task.json, dict) else {}
-        next_task_json = dict(task_json)
-        spec = dict(next_task_json.get("spec") or {})
-        existing_warnings = [
-            warning
-            for warning in spec.get("contextWarnings", []) or []
-            if isinstance(warning, dict)
-        ]
-        seen = {
-            self._make_external_context_warning_key(warning)
-            for warning in existing_warnings
-        }
-        appended = False
-        for warning in warnings:
-            key = self._make_external_context_warning_key(warning)
-            if key in seen:
-                continue
-            existing_warnings.append(warning)
-            seen.add(key)
-            appended = True
-
-        if not appended:
-            return False
-
-        spec["contextWarnings"] = existing_warnings
-        next_task_json["spec"] = spec
-        task_store.update_json(self.db, task=task, payload=next_task_json)
-        return True
-
-    @staticmethod
-    def _make_external_context_warning_key(warning: dict[str, Any]) -> str:
-        return ":".join(
-            [
-                str(warning.get("type") or ""),
-                str(warning.get("reason") or ""),
-                str(warning.get("provider") or ""),
-                str(warning.get("source") or ""),
-                str(warning.get("dingtalk_node_id") or ""),
-                str(warning.get("name") or ""),
-                str(warning.get("message") or ""),
-            ]
-        )
-
     @classmethod
     def _get_external_document_contexts(
         cls,
@@ -2268,7 +2211,15 @@ Response template:
         data = context.get("data") or {}
         provider = data.get("provider") or ""
         source = data.get("source") or ""
-        node_id = data.get("dingtalk_node_id") or data.get("id") or ""
+        metadata = (
+            data.get("metadata") if isinstance(data.get("metadata"), dict) else {}
+        )
+        node_id = (
+            data.get("external_id")
+            or data.get("id")
+            or metadata.get("external_id")
+            or ""
+        )
         if provider or source or node_id:
             return f"{provider}:{source}:{node_id}"
         return repr(context)

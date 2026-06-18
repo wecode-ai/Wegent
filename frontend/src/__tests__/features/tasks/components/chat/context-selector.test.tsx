@@ -203,7 +203,7 @@ describe('ContextSelector organization grouping', () => {
         selectedContexts={[]}
         onSelect={jest.fn()}
         onDeselect={jest.fn()}
-        allowedContextTypes={['knowledge_base', 'dingtalk_doc']}
+        allowedContextTypes={['knowledge_base', 'external_document']}
       >
         <button>trigger</button>
       </ContextSelector>

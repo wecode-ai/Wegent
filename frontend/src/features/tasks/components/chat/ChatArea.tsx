@@ -102,7 +102,7 @@ function getContextWarningKey(taskId: number | undefined, warning: TaskContextWa
     warning.reason,
     warning.provider ?? '',
     warning.source ?? '',
-    warning.dingtalk_node_id ?? '',
+    warning.external_id ?? '',
     warning.name ?? '',
     warning.message,
   ].join(':')
@@ -1685,7 +1685,7 @@ function ChatAreaContent({
               <ShieldX className="mt-0.5 h-4 w-4 flex-shrink-0" />
               <div className="min-w-0 flex-1 space-y-1">
                 {visibleContextWarnings.map((warning, index) => (
-                  <div key={`${warning.reason}:${warning.dingtalk_node_id || index}`}>
+                  <div key={`${warning.reason}:${warning.external_id || index}`}>
                     {warning.message}
                     {warning.name ? `${t('contextWarnings.nameSeparator')}${warning.name}` : ''}
                   </div>

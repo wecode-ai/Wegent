@@ -71,7 +71,10 @@ import {
 
 /** Agent types supported by the system */
 export type AgentType = 'ClaudeCode' | 'Agno' | 'Dify'
-const DEFAULT_CONTEXT_ALLOWED_TYPES: ContextType[] = ['knowledge_base', 'dingtalk_doc']
+const DEFAULT_CONTEXT_ALLOWED_TYPES: ContextType[] =
+  process.env.NEXT_PUBLIC_ENABLE_DINGTALK_CONTEXT === 'true'
+    ? ['knowledge_base', 'external_document']
+    : ['knowledge_base']
 
 function filterDefaultContextItems(items: ContextItem[]): ContextItem[] {
   const seen = new Set<string>()

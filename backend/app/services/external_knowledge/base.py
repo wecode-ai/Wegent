@@ -5,7 +5,7 @@
 """Shared contracts for external knowledge providers."""
 
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Protocol, TypeAlias
 
 from sqlalchemy.orm import Session
 
@@ -21,8 +21,8 @@ class ResolvedExternalKnowledge:
     warning: dict[str, Any] | None = None
 
 
-class ExternalKnowledgeProvider(Protocol):
-    """Provider contract for external knowledge default context refs."""
+class ExternalKnowledgeDefaultProvider(Protocol):
+    """Provider contract for saved external knowledge default context refs."""
 
     provider: str
 
@@ -56,6 +56,12 @@ class ExternalKnowledgeProvider(Protocol):
         """Validate whether a default ref can be saved."""
         ...
 
+
+class ExternalKnowledgeRuntimeProvider(Protocol):
+    """Provider contract for task-level external knowledge runtime context."""
+
+    provider: str
+
     def supports_task_context(self, context: dict[str, Any]) -> bool:
         """Return whether this provider can handle a task-level context."""
         ...
@@ -67,3 +73,8 @@ class ExternalKnowledgeProvider(Protocol):
     def build_runtime_guidance(self, contexts: list[dict[str, Any]]) -> str | None:
         """Build provider-specific runtime guidance for task-level contexts."""
         ...
+
+
+ExternalKnowledgeProvider: TypeAlias = (
+    ExternalKnowledgeDefaultProvider | ExternalKnowledgeRuntimeProvider
+)

@@ -159,20 +159,19 @@ class DefaultKnowledgeBaseContextRef(BaseModel):
     document_count: Optional[int] = None
 
 
-class DefaultDingTalkDocContextRef(BaseModel):
-    """DingTalk document or wikispace node used for Ghost-level defaults."""
+class DefaultExternalDocumentContextRef(BaseModel):
+    """External document or knowledge node used for Ghost-level defaults."""
 
-    type: Literal["dingtalk_doc"]
-    source: Literal["docs", "wikispace"]
+    type: Literal["external_document"]
+    provider: str
+    source: str
     id: str
-    dingtalk_node_id: str
     name: str
-    doc_url: str
-    node_type: Literal["folder", "doc", "file"]
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 DefaultContextRef = Annotated[
-    Union[DefaultKnowledgeBaseContextRef, DefaultDingTalkDocContextRef],
+    Union[DefaultKnowledgeBaseContextRef, DefaultExternalDocumentContextRef],
     Field(discriminator="type"),
 ]
 
@@ -618,8 +617,9 @@ class TaskContextWarning(BaseModel):
     message: str
     provider: Optional[str] = None
     source: Optional[str] = None
-    dingtalk_node_id: Optional[str] = None
+    external_id: Optional[str] = None
     name: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
 
 
 class TaskSpec(BaseModel):

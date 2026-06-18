@@ -387,13 +387,17 @@ describe('useChatStreamHandlers queue integration', () => {
     } as unknown as TaskDetail
     const selectedContexts: ContextItem[] = [
       {
-        type: 'dingtalk_doc',
+        type: 'external_document',
         id: 'wikispace:node-1',
         name: 'Roadmap',
+        provider: 'dingtalk',
         source: 'wikispace',
-        dingtalk_node_id: 'node-1',
-        doc_url: 'https://alidocs.dingtalk.com/i/nodes/node-1',
+        external_id: 'node-1',
+        url: 'https://alidocs.dingtalk.com/i/nodes/node-1',
         node_type: 'doc',
+        metadata: {
+          dingtalk_node_id: 'node-1',
+        },
       },
     ]
 
@@ -408,14 +412,18 @@ describe('useChatStreamHandlers queue integration', () => {
         message: expect.stringContaining('[Roadmap](https://alidocs.dingtalk.com/i/nodes/node-1)'),
         contexts: [
           {
-            type: 'dingtalk_doc',
+            type: 'external_document',
             data: {
               id: 'wikispace:node-1',
+              provider: 'dingtalk',
               source: 'wikispace',
-              dingtalk_node_id: 'node-1',
+              external_id: 'node-1',
               name: 'Roadmap',
-              doc_url: 'https://alidocs.dingtalk.com/i/nodes/node-1',
+              url: 'https://alidocs.dingtalk.com/i/nodes/node-1',
               node_type: 'doc',
+              metadata: {
+                dingtalk_node_id: 'node-1',
+              },
             },
           },
         ],

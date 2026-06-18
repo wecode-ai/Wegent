@@ -39,6 +39,7 @@ import { cn } from '@/lib/utils'
 import { formatDocumentCount } from '@/lib/i18n-helpers'
 import { getKnowledgeBaseGroup } from '@/utils/knowledge-base-grouping'
 import { getDingTalkSelectedIds, DingTalkDocContextSelector } from './DingTalkDocContextSelector'
+import { TableContextTab } from './TableContextTab'
 
 interface GroupedKnowledgeBases {
   personal: KnowledgeBase[]
@@ -46,7 +47,10 @@ interface GroupedKnowledgeBases {
   organization: KnowledgeBase[]
 }
 
-const DEFAULT_ALLOWED_CONTEXT_TYPES: ContextType[] = ['knowledge_base', 'table', 'dingtalk_doc']
+const DEFAULT_ALLOWED_CONTEXT_TYPES: ContextType[] =
+  process.env.NEXT_PUBLIC_ENABLE_DINGTALK_CONTEXT === 'true'
+    ? ['knowledge_base', 'table', 'external_document']
+    : ['knowledge_base', 'table']
 type KnowledgeBaseContextSource = 'personal' | 'group' | 'organization'
 
 interface ContextSelectorProps {
@@ -166,7 +170,7 @@ export default function ContextSelector({
   )
   const canSelectKnowledgeBase = allowedTypes.has('knowledge_base')
   const canSelectTable = allowedTypes.has('table')
-  const canSelectDingTalk = allowedTypes.has('dingtalk_doc')
+  const canSelectDingTalk = allowedTypes.has('external_document')
   const firstAllowedTab = canSelectKnowledgeBase
     ? 'knowledge'
     : canSelectTable
@@ -272,7 +276,7 @@ export default function ContextSelector({
         ? 'knowledge_base'
         : activeTab === 'table'
           ? 'table'
-          : 'dingtalk_doc'
+          : 'external_document'
     if (!allowedTypes.has(activeType)) {
       setActiveTab(firstAllowedTab)
     }
@@ -797,104 +801,17 @@ export default function ContextSelector({
           {/* Table Tab */}
           {canSelectTable && (
             <TabsContent value="table" className="m-0">
-              <Command className="border-0 flex flex-col">
-                <CommandInput
-                  placeholder={t('knowledge:search_placeholder')}
-                  value={searchValue}
-                  onValueChange={setSearchValue}
-                  className={cn(
-                    'h-9 rounded-none border-b border-border flex-shrink-0',
-                    'placeholder:text-text-muted text-sm'
-                  )}
-                />
-                <CommandList
-                  className="max-h-[300px] overflow-y-auto"
-                  onWheel={handleScrollableWheel}
-                >
-                  {tableLoading ? (
-                    <div className="py-4 px-3 text-center text-sm text-text-muted">
-                      {t('common:actions.loading')}
-                    </div>
-                  ) : tableError ? (
-                    <div className="py-4 px-3 text-center">
-                      <p className="text-sm text-red-500 mb-2">{tableError}</p>
-                      <button
-                        onClick={fetchTables}
-                        className="text-xs text-primary hover:underline"
-                      >
-                        {t('common:actions.retry')}
-                      </button>
-                    </div>
-                  ) : tables.length === 0 ? (
-                    <div className="py-6 px-4 text-center">
-                      <p className="text-sm text-text-muted mb-2">{t('knowledge:table.empty')}</p>
-                      <p className="text-xs text-text-muted">{t('knowledge:table.emptyHint')}</p>
-                    </div>
-                  ) : (
-                    <>
-                      <CommandEmpty className="py-4 text-center text-sm text-text-muted">
-                        {t('common:branches.no_match')}
-                      </CommandEmpty>
-
-                      <CommandGroup>
-                        {tables.map(doc => {
-                          const tableContextId = `table-${doc.id}`
-                          const selected = isSelected(tableContextId)
-
-                          return (
-                            <CommandItem
-                              key={`table-${doc.id}`}
-                              value={`${doc.name} ${doc.id}`}
-                              onSelect={() => handleTableSelect(doc)}
-                              className={cn(
-                                'group cursor-pointer select-none',
-                                'px-3 py-2 text-sm text-text-primary',
-                                'rounded-md mx-1 my-[2px]',
-                                'data-[selected=true]:bg-blue-500/10 data-[selected=true]:text-blue-600',
-                                'aria-selected:bg-hover',
-                                '!flex !flex-row !items-start !justify-between !gap-2'
-                              )}
-                            >
-                              <div className="flex items-start gap-2 min-w-0 flex-1">
-                                <Table2 className="w-4 h-4 text-blue-500 flex-shrink-0 mt-0.5" />
-                                <div className="flex flex-col min-w-0 flex-1">
-                                  <span
-                                    className="font-medium text-sm text-text-primary truncate"
-                                    title={doc.name}
-                                  >
-                                    {doc.name}
-                                  </span>
-                                  {doc.source_config?.url && (
-                                    <span
-                                      className="text-xs text-text-muted truncate"
-                                      title={doc.source_config.url}
-                                    >
-                                      {(() => {
-                                        try {
-                                          const url = new URL(doc.source_config.url)
-                                          return url.hostname
-                                        } catch {
-                                          return doc.source_config.url
-                                        }
-                                      })()}
-                                    </span>
-                                  )}
-                                </div>
-                              </div>
-                              <Check
-                                className={cn(
-                                  'h-3.5 w-3.5 shrink-0 mt-0.5',
-                                  selected ? 'opacity-100 text-blue-500' : 'opacity-0'
-                                )}
-                              />
-                            </CommandItem>
-                          )
-                        })}
-                      </CommandGroup>
-                    </>
-                  )}
-                </CommandList>
-              </Command>
+              <TableContextTab
+                tables={tables}
+                loading={tableLoading}
+                error={tableError}
+                searchValue={searchValue}
+                onSearchValueChange={setSearchValue}
+                onRetry={fetchTables}
+                onSelectTable={handleTableSelect}
+                isSelected={isSelected}
+                onWheel={handleScrollableWheel}
+              />
             </TabsContent>
           )}
 

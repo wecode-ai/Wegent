@@ -9,16 +9,15 @@ export interface DefaultKnowledgeBaseContextRef {
   document_count?: number
 }
 
-export interface DefaultDingTalkDocContextRef {
-  type: 'dingtalk_doc'
-  source: 'docs' | 'wikispace'
+export interface DefaultExternalDocumentContextRef {
+  type: 'external_document'
+  provider: string
+  source: string
   id: string
-  dingtalk_node_id: string
   name: string
-  doc_url: string
-  node_type: 'folder' | 'doc' | 'file'
+  metadata?: Record<string, unknown>
 }
 
-export type DefaultContextRef = DefaultKnowledgeBaseContextRef | DefaultDingTalkDocContextRef
+export type DefaultContextRef = DefaultKnowledgeBaseContextRef | DefaultExternalDocumentContextRef
 
 export type DefaultContextMode = 'use_defaults' | 'disable_defaults' | 'override'

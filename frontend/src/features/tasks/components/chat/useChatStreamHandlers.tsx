@@ -444,7 +444,7 @@ export function useChatStreamHandlers({
       }
 
       const contextItems: Array<{
-        type: 'knowledge_base' | 'table' | 'selected_documents' | 'dingtalk_doc'
+        type: 'knowledge_base' | 'table' | 'selected_documents' | 'external_document'
         data: Record<string, unknown>
       }> = snapshotContexts
         .filter(ctx => ctx.type !== 'queue_message')
@@ -459,16 +459,18 @@ export function useChatStreamHandlers({
               },
             }
           }
-          if (ctx.type === 'dingtalk_doc') {
+          if (ctx.type === 'external_document') {
             return {
-              type: 'dingtalk_doc' as const,
+              type: 'external_document' as const,
               data: {
                 id: ctx.id,
+                provider: ctx.provider,
                 source: ctx.source,
-                dingtalk_node_id: ctx.dingtalk_node_id,
+                external_id: ctx.external_id,
                 name: ctx.name,
-                doc_url: ctx.doc_url,
+                url: ctx.url,
                 node_type: ctx.node_type,
+                metadata: ctx.metadata,
               },
             }
           }
@@ -491,12 +493,14 @@ export function useChatStreamHandlers({
         messageWithQueueContent = `${queueContents}\n\n---\n\n${finalMessage}`
       }
 
-      const dingtalkDocContexts = snapshotContexts.filter(ctx => ctx.type === 'dingtalk_doc')
+      const dingtalkDocContexts = snapshotContexts.filter(
+        (ctx): ctx is import('@/types/context').DingTalkDocContext =>
+          ctx.type === 'external_document' && ctx.provider === 'dingtalk'
+      )
       if (dingtalkDocContexts.length > 0) {
         const docRefs = dingtalkDocContexts
           .map(ctx => {
-            const docCtx = ctx as import('@/types/context').DingTalkDocContext
-            return `- [${docCtx.name}](${docCtx.doc_url})`
+            return `- [${ctx.name}](${ctx.url || ''})`
           })
           .join('\n')
         const dingtalkPrefix = `**${t('chat:dingtalkDocs.referencedDocsLabel')}**\n${docRefs}\n\n---\n\n`

@@ -305,8 +305,9 @@ export interface TaskContextWarning {
   message: string
   provider?: string | null
   source?: string | null
-  dingtalk_node_id?: string | null
+  external_id?: string | null
   name?: string | null
+  metadata?: Record<string, unknown> | null
 }
 
 export interface TaskDetail {

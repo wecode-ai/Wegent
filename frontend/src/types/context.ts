@@ -8,7 +8,7 @@
  *
  * Future types to be added: 'person' | 'bot' | 'team'
  */
-export type ContextType = 'knowledge_base' | 'table' | 'queue_message' | 'dingtalk_doc'
+export type ContextType = 'knowledge_base' | 'table' | 'queue_message' | 'external_document'
 
 /**
  * Base interface for all context items
@@ -84,19 +84,22 @@ export interface QueueMessageContext extends BaseContextItem {
   inboxAttachments?: InboxAttachment[]
 }
 /**
- * DingTalk document context item
- * References a synced DingTalk document node by title and URL.
+ * External document context item.
  */
-export interface DingTalkDocContext extends BaseContextItem {
-  type: 'dingtalk_doc'
-  /** DingTalk document URL (e.g. https://alidocs.dingtalk.com/i/nodes/xxx) */
-  doc_url: string
-  /** Node type: folder, doc, or file */
-  node_type: 'folder' | 'doc' | 'file'
-  /** DingTalk node ID */
-  dingtalk_node_id: string
-  /** DingTalk node source to disambiguate docs and wikispace selections */
+export interface ExternalDocumentContext extends BaseContextItem {
+  type: 'external_document'
+  provider: string
+  source: string
+  external_id: string
+  url?: string
+  node_type?: string
+  metadata?: Record<string, unknown>
+}
+
+export type DingTalkDocContext = ExternalDocumentContext & {
+  provider: 'dingtalk'
   source: 'docs' | 'wikispace'
+  node_type: 'folder' | 'doc' | 'file'
 }
 
 /**
@@ -112,4 +115,4 @@ export type ContextItem =
   | KnowledgeBaseContext
   | TableContext
   | QueueMessageContext
-  | DingTalkDocContext
+  | ExternalDocumentContext

@@ -28,7 +28,10 @@ class DingTalkExternalKnowledgeProvider:
     provider = "dingtalk"
 
     def supports(self, ref: DefaultContextRef) -> bool:
-        return ref.type == "dingtalk_doc"
+        return (
+            ref.type == "external_document"
+            and getattr(ref, "provider", None) == self.provider
+        )
 
     def context_item_to_default_ref(
         self, raw: dict[str, Any]
@@ -38,24 +41,34 @@ class DingTalkExternalKnowledgeProvider:
             return None
 
         data = raw.get("data") or {}
-        if data.get("provider") not in {None, self.provider}:
+        provider = data.get("provider") or raw.get("provider")
+        if provider not in {None, self.provider}:
             return None
 
-        source = data.get("source")
-        node_id = data.get("dingtalk_node_id")
+        metadata = data.get("metadata") or {}
+        source = data.get("source") or raw.get("source")
+        node_id = (
+            data.get("external_id")
+            or data.get("dingtalk_node_id")
+            or metadata.get("dingtalk_node_id")
+        )
         if source not in {"docs", "wikispace"} or not node_id:
             return None
 
         try:
             return DEFAULT_CONTEXT_REF_ADAPTER.validate_python(
                 {
-                    "type": "dingtalk_doc",
+                    "type": "external_document",
+                    "provider": self.provider,
                     "source": source,
                     "id": data.get("id") or f"{source}:{node_id}",
-                    "dingtalk_node_id": node_id,
                     "name": data.get("name") or node_id,
-                    "doc_url": data.get("doc_url") or "",
-                    "node_type": data.get("node_type") or "doc",
+                    "metadata": {
+                        "external_id": node_id,
+                        "dingtalk_node_id": node_id,
+                        "url": data.get("url") or data.get("doc_url") or "",
+                        "node_type": data.get("node_type") or "doc",
+                    },
                 }
             )
         except (TypeError, ValueError, ValidationError):
@@ -70,6 +83,16 @@ class DingTalkExternalKnowledgeProvider:
     ) -> ResolvedExternalKnowledge:
         if not self.supports(ref):
             return ResolvedExternalKnowledge()
+
+        node_id = self._get_node_id(ref)
+        if not node_id:
+            return ResolvedExternalKnowledge(
+                warning=self._build_warning(
+                    ref,
+                    "invalid_ref",
+                    "该钉钉知识节点缺少外部标识, 无法读取",
+                )
+            )
 
         if not self._is_mcp_configured(user, ref.source):
             return ResolvedExternalKnowledge(
@@ -93,12 +116,15 @@ class DingTalkExternalKnowledgeProvider:
         data = {
             "provider": self.provider,
             "source": ref.source,
-            "dingtalk_node_id": ref.dingtalk_node_id,
+            "external_id": node_id,
             "name": node.name if node else ref.name,
-            "doc_url": node.doc_url if node else ref.doc_url,
-            "node_type": node.node_type if node else ref.node_type,
+            "url": node.doc_url if node else self._get_metadata_value(ref, "url"),
+            "node_type": (
+                node.node_type if node else self._get_metadata_value(ref, "node_type")
+            ),
             "boundBy": user.user_name,
             "boundAt": bound_at,
+            "metadata": {"external_id": node_id, "dingtalk_node_id": node_id},
         }
         return ResolvedExternalKnowledge(
             context_ref={"type": "external_document", "data": data}
@@ -131,11 +157,15 @@ class DingTalkExternalKnowledgeProvider:
         else:
             raise HTTPException(status_code=400, detail="Unsupported DingTalk source")
 
+        node_id = self._get_node_id(ref)
+        if not node_id:
+            raise HTTPException(status_code=400, detail="DingTalk node ID is required")
+
         node = (
             db.query(DingtalkSyncedNode)
             .filter(
                 DingtalkSyncedNode.user_id == user.id,
-                DingtalkSyncedNode.dingtalk_node_id == ref.dingtalk_node_id,
+                DingtalkSyncedNode.dingtalk_node_id == node_id,
                 DingtalkSyncedNode.source == expected_source,
                 DingtalkSyncedNode.is_active.is_(True),
             )
@@ -165,7 +195,9 @@ class DingTalkExternalKnowledgeProvider:
         for index, context in enumerate(contexts, start=1):
             data = context.get("data") or {}
             node_id = self._sanitize_external_context_value(
-                data.get("dingtalk_node_id") or ""
+                data.get("external_id")
+                or (data.get("metadata") or {}).get("dingtalk_node_id")
+                or ""
             )
             nodes.append(
                 {
@@ -181,7 +213,7 @@ class DingTalkExternalKnowledgeProvider:
                     ),
                     "dingtalk_node_id": node_id,
                     "url": self._sanitize_external_context_value(
-                        data.get("doc_url") or ""
+                        data.get("url") or data.get("doc_url") or ""
                     ),
                 }
             )
@@ -208,11 +240,14 @@ class DingTalkExternalKnowledgeProvider:
     def _get_synced_node(
         db: Session, user_id: int, ref: DefaultContextRef
     ) -> DingtalkSyncedNode | None:
+        node_id = DingTalkExternalKnowledgeProvider._get_node_id(ref)
+        if not node_id:
+            return None
         return (
             db.query(DingtalkSyncedNode)
             .filter(
                 DingtalkSyncedNode.user_id == user_id,
-                DingtalkSyncedNode.dingtalk_node_id == ref.dingtalk_node_id,
+                DingtalkSyncedNode.dingtalk_node_id == node_id,
                 DingtalkSyncedNode.source == ref.source,
             )
             .first()
@@ -239,7 +274,11 @@ class DingTalkExternalKnowledgeProvider:
             "name": ref.name,
             "provider": self.provider,
             "source": ref.source,
-            "dingtalk_node_id": ref.dingtalk_node_id,
+            "external_id": self._get_node_id(ref),
+            "metadata": {
+                "external_id": self._get_node_id(ref),
+                "dingtalk_node_id": self._get_node_id(ref),
+            },
         }
 
     @staticmethod
@@ -248,3 +287,15 @@ class DingTalkExternalKnowledgeProvider:
         if len(text) > max_length:
             return f"{text[:max_length]}..."
         return text
+
+    @staticmethod
+    def _get_metadata_value(ref: DefaultContextRef, key: str) -> Any:
+        metadata = getattr(ref, "metadata", None)
+        if not isinstance(metadata, dict):
+            return None
+        return metadata.get(key)
+
+    @classmethod
+    def _get_node_id(cls, ref: DefaultContextRef) -> str | None:
+        value = cls._get_metadata_value(ref, "dingtalk_node_id")
+        return str(value) if value else None

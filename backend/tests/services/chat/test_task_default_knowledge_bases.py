@@ -5,7 +5,28 @@
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+import pytest
+
+from app.core.config import settings
 from app.services.chat.storage.task_manager import TaskCreationParams, create_new_task
+
+DINGTALK_PROVIDER_IMPORT = (
+    "app.services.external_knowledge.providers.dingtalk:"
+    "DingTalkExternalKnowledgeProvider"
+)
+
+
+@pytest.fixture(autouse=True)
+def enable_dingtalk_external_provider(monkeypatch) -> None:
+    monkeypatch.setattr(
+        settings,
+        "EXTERNAL_KNOWLEDGE_PROVIDER_IMPORTS",
+        [DINGTALK_PROVIDER_IMPORT],
+    )
+    monkeypatch.setattr(
+        "app.services.external_knowledge.registry.settings.EXTERNAL_KNOWLEDGE_PROVIDER_IMPORTS",
+        [DINGTALK_PROVIDER_IMPORT],
+    )
 
 
 def _make_team():
@@ -284,12 +305,11 @@ def test_build_initial_task_context_refs_skips_invalid_explicit_contexts() -> No
     explicit_contexts = [
         {"type": "knowledge_base", "data": {"id": "not-a-number", "name": "Bad KB"}},
         {
-            "type": "dingtalk_doc",
+            "type": "external_document",
             "data": {
+                "provider": "dingtalk",
                 "source": "docs",
-                "dingtalk_node_id": "node-1",
                 "name": "Bad DingTalk",
-                "node_type": "unsupported",
             },
         },
         {"type": "knowledge_base", "data": {"id": 33, "name": "Release Notes"}},
@@ -327,13 +347,17 @@ def test_build_initial_task_context_refs_warns_when_dingtalk_mcp_not_configured(
     ghost = _make_ghost("ghost-one", [])
     ghost.json["spec"]["defaultContextRefs"] = [
         {
-            "type": "dingtalk_doc",
+            "type": "external_document",
+            "provider": "dingtalk",
             "source": "docs",
             "id": "docs:node-1",
-            "dingtalk_node_id": "node-1",
             "name": "Roadmap",
-            "doc_url": "https://example.com/doc",
-            "node_type": "doc",
+            "metadata": {
+                "external_id": "node-1",
+                "dingtalk_node_id": "node-1",
+                "url": "https://example.com/doc",
+                "node_type": "doc",
+            },
         }
     ]
 
@@ -370,7 +394,11 @@ def test_build_initial_task_context_refs_warns_when_dingtalk_mcp_not_configured(
             "name": "Roadmap",
             "provider": "dingtalk",
             "source": "docs",
-            "dingtalk_node_id": "node-1",
+            "external_id": "node-1",
+            "metadata": {
+                "external_id": "node-1",
+                "dingtalk_node_id": "node-1",
+            },
         }
     ]
 

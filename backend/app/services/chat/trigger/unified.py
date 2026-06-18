@@ -331,6 +331,9 @@ async def build_execution_request(
     Returns:
         ExecutionRequest ready for dispatch
     """
+    from app.services.chat.task_default_knowledge_bases import (
+        append_task_context_warnings,
+    )
     from app.services.execution import TaskRequestBuilder
     from shared.models import ExecutionRequest
     from shared.telemetry.context import get_request_id
@@ -395,7 +398,12 @@ async def build_execution_request(
             web_runtime_guidance=web_runtime_guidance,
             runtime_contexts=getattr(payload, "contexts", None),
         )
-        if builder.runtime_context_warnings_updated:
+        runtime_context_warnings_updated = append_task_context_warnings(
+            db,
+            task,
+            builder.runtime_context_warnings,
+        )
+        if runtime_context_warnings_updated:
             db.commit()
         request.device_id = device_id or request.device_id
 
