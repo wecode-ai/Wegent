@@ -33,6 +33,7 @@ from langchain_core.tools.base import BaseTool
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.errors import GraphRecursionError
+from langgraph.graph.message import add_messages
 from langgraph.prebuilt import create_react_agent
 from opentelemetry import trace as otel_trace
 
@@ -531,6 +532,35 @@ The research results are now available in the conversation above.
 4. Include all relevant findings, data points, and context from the research
 
 DO NOT request more research. DO NOT call any tools again. Just provide your final answer based on the research results above."""
+
+
+def _new_messages_from_state(
+    collected: list[BaseMessage],
+    input_ids: frozenset[str],
+) -> list[BaseMessage]:
+    """Return only messages generated this turn from the LangGraph final state.
+
+    The ``UnifiedContextGuard`` (registered as ``pre_model_hook``) can remove
+    input messages from LangGraph state mid-run via ``RemoveMessage``.  After
+    such removals the count-based slice ``collected[len(input_messages):]``
+    becomes incorrect: the offset now points past the first generated
+    AIMessage(tool_calls), making the first ToolMessage appear as index 0 and
+    breaking ``_validate_tool_message_sequence``.
+
+    Using message IDs avoids this: input messages keep their original IDs
+    regardless of whether the guard removed or compacted other inputs; all
+    LLM-generated messages have fresh IDs that are never in ``input_ids``.
+
+    Args:
+        collected: Final LangGraph state from the ``on_chain_end`` event.
+        input_ids: Frozenset of IDs from messages passed as input to the agent.
+
+    Returns:
+        Messages generated during the current turn only.
+    """
+    if not input_ids:
+        return list(collected)
+    return [msg for msg in collected if not msg.id or msg.id not in input_ids]
 
 
 class LangGraphAgentBuilder:
@@ -1300,6 +1330,17 @@ class LangGraphAgentBuilder:
         add_span_event(
             "convert_to_messages_completed", {"lc_message_count": len(lc_messages)}
         )
+        # Pre-assign stable LangGraph message IDs before the run starts.
+        # add_messages mutates in-place, assigning the same UUIDs that LangGraph
+        # will use when it initialises its state with {"messages": lc_messages}.
+        # We snapshot those IDs so we can correctly identify newly generated
+        # messages after the run, even when UnifiedContextGuard removes some
+        # input messages mid-run via RemoveMessage (which would break the old
+        # count-based slice ``collected[len(lc_messages):]``).
+        add_messages([], lc_messages)
+        _input_message_ids: frozenset[str] = frozenset(
+            msg.id for msg in lc_messages if msg.id
+        )
 
         exec_config = {"configurable": config} if config else None
 
@@ -1833,7 +1874,9 @@ class LangGraphAgentBuilder:
                             or []
                         ),
                     )
-                new_msgs = _collected_state_messages[len(lc_messages) :]
+                new_msgs = _new_messages_from_state(
+                    _collected_state_messages, _input_message_ids
+                )
                 self._last_messages_chain = _serialize_validated_messages_chain(
                     new_msgs,
                     provider=self._provider,
@@ -1920,7 +1963,9 @@ class LangGraphAgentBuilder:
                     _message_to_context_metrics_dict(msg)
                     for msg in _collected_state_messages
                 ]
-                new_msgs = _collected_state_messages[len(lc_messages) :]
+                new_msgs = _new_messages_from_state(
+                    _collected_state_messages, _input_message_ids
+                )
                 self._last_messages_chain = _serialize_validated_messages_chain(
                     new_msgs,
                     provider=self._provider,
@@ -1944,7 +1989,9 @@ class LangGraphAgentBuilder:
                     _message_to_context_metrics_dict(msg)
                     for msg in _collected_state_messages
                 ]
-                new_msgs = _collected_state_messages[len(lc_messages) :]
+                new_msgs = _new_messages_from_state(
+                    _collected_state_messages, _input_message_ids
+                )
                 self._last_messages_chain = _serialize_validated_messages_chain(
                     new_msgs,
                     provider=self._provider,

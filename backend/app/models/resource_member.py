@@ -322,14 +322,24 @@ from sqlalchemy import event
 
 
 def _sync_user_id_from_entity(target: ResourceMember) -> None:
-    """Sync user_id column from entity_id when entity_type is 'user'."""
+    """Keep legacy user_id valid while entity_type/entity_id remain authoritative."""
     if target.entity_type and target.entity_type == "user" and target.entity_id:
         try:
             target.user_id = int(target.entity_id)
         except (ValueError, TypeError):
             target.user_id = 0
+    elif (
+        target.resource_type in (ResourceType.TEAM.value, ResourceType.TEAM.name)
+        and target.entity_type == "namespace"
+    ):
+        target.user_id = (
+            target.user_id
+            or target.invited_by_user_id
+            or target.reviewed_by_user_id
+            or 0
+        )
     else:
-        target.user_id = 0
+        target.user_id = target.user_id or 0
 
 
 @event.listens_for(ResourceMember, "before_insert")
