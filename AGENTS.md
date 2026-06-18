@@ -455,7 +455,7 @@ uv run alembic downgrade -1                               # Rollback
 - `UserContext` - User auth state
 - `TaskContext` - Task list, pagination
 - `ChatStreamContext` - WebSocket streaming
-- `SocketContext` - Socket.IO connection
+- `SocketContext` - React wrapper around the shared SocketClient connection state
 - `ThemeContext` - Theme (light/dark)
 
 **Message Data Flow (Chat/Task Messages):**

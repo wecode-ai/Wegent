@@ -48,3 +48,15 @@ export type {
   TaskStatus as TaskStateStatus,
   UnifiedMessage,
 } from './task-state'
+export {
+  createAuthenticatedSocketClient,
+  createSocketClient,
+} from './socket'
+export type {
+  AuthenticatedSocketClient,
+  AuthenticatedSocketClientOptions,
+  SocketClientSocket,
+  SocketClientState,
+  SocketClientStateListener,
+  SocketReconnectCallback,
+} from './socket'

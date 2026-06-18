@@ -1,22 +1,22 @@
-import { io, type Socket } from 'socket.io-client'
+import {
+  createSocketClient as createCoreSocketClient,
+  type SocketClientSocket,
+} from '@wegent/chat-core'
 import { getRuntimeConfig } from '@/config/runtime'
 import { getToken } from '@/api/auth'
 
-export type WorkbenchSocket = Pick<Socket, 'emit' | 'on' | 'off' | 'disconnect' | 'connected'>
+export type WorkbenchSocket = SocketClientSocket
 
-export function createSocketClient(): Socket {
+export function createSocketClient(): WorkbenchSocket {
   const { socketBaseUrl, socketPath } = getRuntimeConfig()
-  const token = getToken()
-
-  return io(`${socketBaseUrl}/chat`, {
+  const client = createCoreSocketClient({
+    socketBaseUrl: () => socketBaseUrl,
     path: socketPath,
-    auth: { token },
-    autoConnect: true,
-    reconnection: true,
-    reconnectionAttempts: Infinity,
-    reconnectionDelay: 1000,
-    reconnectionDelayMax: 5000,
-    transports: ['websocket', 'polling'],
-    timeout: 20000,
+    namespace: '/chat',
+    getToken,
+    logger: console,
   })
+
+  void client.ensureConnected()
+  return client.socket
 }
