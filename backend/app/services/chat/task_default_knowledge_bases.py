@@ -233,11 +233,11 @@ def build_initial_task_context_refs(
             continue
 
         if ref.type == "dingtalk_doc":
-            context_ref, warning = dingtalk_resolver.resolve(user, ref, bound_at)
-            if context_ref:
-                context_refs.append(context_ref)
-            if warning:
-                context_warnings.append(warning)
+            resolved = dingtalk_resolver.resolve(user, ref, bound_at)
+            if resolved.context_ref:
+                context_refs.append(resolved.context_ref)
+            if resolved.warning:
+                context_warnings.append(resolved.warning)
 
     return {
         "context_refs": context_refs,

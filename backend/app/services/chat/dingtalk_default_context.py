@@ -4,6 +4,7 @@
 
 """Resolve DingTalk default knowledge refs into task context refs."""
 
+from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -13,6 +14,14 @@ from app.models.user import User
 from app.schemas.kind import DefaultContextRef
 from app.services.dingtalk_doc_service import DingTalkDocService
 from app.services.dingtalk_wikispace_service import DingTalkWikiSpaceService
+
+
+@dataclass(frozen=True)
+class ResolvedDefaultContext:
+    """Resolved task context data for a default knowledge ref."""
+
+    context_ref: dict[str, Any] | None = None
+    warning: dict[str, Any] | None = None
 
 
 class DingTalkDefaultContextResolver:
@@ -26,23 +35,27 @@ class DingTalkDefaultContextResolver:
         user: User,
         ref: DefaultContextRef,
         bound_at: str,
-    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    ) -> ResolvedDefaultContext:
         if ref.type != "dingtalk_doc":
-            return None, None
+            return ResolvedDefaultContext()
 
         if not self._is_mcp_configured(user, ref.source):
-            return None, self._build_warning(
-                ref,
-                "mcp_not_configured",
-                "未开启钉钉 MCP, 无法读取钉钉知识",
+            return ResolvedDefaultContext(
+                warning=self._build_warning(
+                    ref,
+                    "mcp_not_configured",
+                    "未开启钉钉 MCP, 无法读取钉钉知识",
+                )
             )
 
         node = self._get_synced_node(user.id, ref)
         if node and not node.is_active:
-            return None, self._build_warning(
-                ref,
-                "node_inactive",
-                "该钉钉文档已失效或未同步, 无法读取",
+            return ResolvedDefaultContext(
+                warning=self._build_warning(
+                    ref,
+                    "node_inactive",
+                    "该钉钉文档已失效或未同步, 无法读取",
+                )
             )
 
         data = {
@@ -55,7 +68,9 @@ class DingTalkDefaultContextResolver:
             "boundBy": user.user_name,
             "boundAt": bound_at,
         }
-        return {"type": "external_document", "data": data}, None
+        return ResolvedDefaultContext(
+            context_ref={"type": "external_document", "data": data}
+        )
 
     def _get_synced_node(
         self, user_id: int, ref: DefaultContextRef
