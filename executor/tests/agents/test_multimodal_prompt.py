@@ -131,6 +131,26 @@ class TestConvertOpenaiToAnthropicContent:
         assert result[1]["type"] == "image"
         assert result[1]["source"]["media_type"] == "image/png"
 
+    def test_omits_blank_input_text_for_image_only_prompt(self):
+        blocks = [
+            {"type": "input_text", "text": ""},
+            {"type": "input_image", "image_url": "data:image/png;base64,iVBOR"},
+        ]
+        result = convert_openai_to_anthropic_content(blocks)
+        assert len(result) == 1
+        assert result[0]["type"] == "image"
+        assert result[0]["source"]["media_type"] == "image/png"
+
+    def test_omits_blank_anthropic_text_for_image_only_prompt(self):
+        blocks = [
+            {"type": "text", "text": "   "},
+            {"type": "image", "source": {"type": "base64", "data": "iVBOR"}},
+        ]
+        result = convert_openai_to_anthropic_content(blocks)
+        assert result == [
+            {"type": "image", "source": {"type": "base64", "data": "iVBOR"}}
+        ]
+
     def test_passes_through_unknown_block_types(self):
         blocks = [{"type": "custom", "data": "foo"}]
         result = convert_openai_to_anthropic_content(blocks)
