@@ -215,7 +215,7 @@ export function TeamChildNamespaceAuthorizationDialog({
             onClick={() => onOpenChange(false)}
             data-testid="team-child-auth-close-button"
           >
-            {t('common.close')}
+            {t('actions.close')}
           </Button>
         </DialogFooter>
       </DialogContent>
