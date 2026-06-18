@@ -108,11 +108,17 @@ def convert_openai_to_anthropic_content(
     for block in content_blocks:
         block_type = block.get("type", "")
 
-        if block_type == "input_text":
+        if block_type in ("input_text", "text"):
+            text = block.get("text", "")
+            if not isinstance(text, str) or not text.strip():
+                continue
+            if block_type == "text":
+                anthropic_blocks.append(block)
+                continue
             anthropic_blocks.append(
                 {
                     "type": "text",
-                    "text": block.get("text", ""),
+                    "text": text,
                 }
             )
 
