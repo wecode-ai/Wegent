@@ -934,12 +934,18 @@ def check_due_subscriptions(self):
 
     Runs every FLOW_SCHEDULER_INTERVAL_SECONDS (default: 60 seconds).
     """
+    logger.info("[subscription_tasks] Starting check_due_subscriptions cycle")
+
+    if not settings.SUBSCRIPTION_SCHEDULER_ENABLED:
+        logger.info(
+            "[subscription_tasks] Subscription scheduler is disabled, skipping check_due_subscriptions"
+        )
+        return {"status": "skipped", "reason": "scheduler_disabled"}
+
     from app.core.distributed_lock import distributed_lock
     from app.db.session import get_db_session
     from app.schemas.subscription import Subscription, SubscriptionTriggerType
     from app.services.subscription import subscription_service
-
-    logger.info("[subscription_tasks] Starting check_due_subscriptions cycle")
 
     # Acquire distributed lock to prevent multiple instances from processing
     with distributed_lock.acquire_context(
@@ -1687,11 +1693,17 @@ def check_due_subscriptions_sync():
     - Used by APScheduler and XXL-JOB backends
     - Calls execute_subscription_task_sync instead of dispatching Celery tasks
     """
+    logger.info("[subscription_tasks] Starting check_due_subscriptions_sync cycle")
+
+    if not settings.SUBSCRIPTION_SCHEDULER_ENABLED:
+        logger.info(
+            "[subscription_tasks] Subscription scheduler is disabled, skipping check_due_subscriptions_sync"
+        )
+        return {"status": "skipped", "reason": "scheduler_disabled"}
+
     from app.db.session import get_db_session
     from app.schemas.subscription import Subscription, SubscriptionTriggerType
     from app.services.subscription import subscription_service
-
-    logger.info("[subscription_tasks] Starting check_due_subscriptions_sync cycle")
 
     with get_db_session() as db:
         try:
