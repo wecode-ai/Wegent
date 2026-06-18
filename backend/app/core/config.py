@@ -366,6 +366,7 @@ class Settings(BaseSettings):
     FLOW_DEFAULT_TIMEOUT_SECONDS: int = 600  # 10 minutes
     FLOW_DEFAULT_RETRY_COUNT: int = 1
     FLOW_EXECUTION_PAGE_LIMIT: int = 50
+    SUBSCRIPTION_SCHEDULER_ENABLED: bool = True
     # Subscription minimum interval configuration (minutes)
     SUBSCRIPTION_MIN_INTERVAL_MINUTES: int = 15
     # Stale execution cleanup thresholds (hours)

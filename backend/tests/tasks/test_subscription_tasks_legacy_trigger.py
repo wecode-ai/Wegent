@@ -8,6 +8,7 @@ import uuid
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
+import pytest
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -26,6 +27,45 @@ from app.tasks.subscription_tasks import (
     check_due_subscriptions,
     check_due_subscriptions_sync,
 )
+
+
+@pytest.fixture(autouse=True)
+def enable_subscription_scheduler(monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "SUBSCRIPTION_SCHEDULER_ENABLED", True)
+
+
+def test_check_due_subscriptions_skips_before_lock_when_scheduler_disabled(
+    monkeypatch,
+):
+    from app.core.config import settings
+
+    monkeypatch.setattr(
+        settings, "SUBSCRIPTION_SCHEDULER_ENABLED", False, raising=False
+    )
+
+    with patch("app.core.distributed_lock.distributed_lock.acquire_context") as acquire:
+        result = check_due_subscriptions.run()
+
+    assert result == {"status": "skipped", "reason": "scheduler_disabled"}
+    acquire.assert_not_called()
+
+
+def test_check_due_subscriptions_sync_skips_before_db_when_scheduler_disabled(
+    monkeypatch,
+):
+    from app.core.config import settings
+
+    monkeypatch.setattr(
+        settings, "SUBSCRIPTION_SCHEDULER_ENABLED", False, raising=False
+    )
+
+    with patch("app.db.session.get_db_session") as mock_session:
+        result = check_due_subscriptions_sync()
+
+    assert result == {"status": "skipped", "reason": "scheduler_disabled"}
+    mock_session.assert_not_called()
 
 
 def _create_team(db: Session, owner_user_id: int, name: str) -> Kind:
