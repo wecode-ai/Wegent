@@ -155,7 +155,23 @@ async def _create_provider_tools_for_skill(
 
     # Load provider from skill package if provider config is present.
     # SECURITY: Only public skills (user_id=0) can load code.
-    if provider_config and skill_id:
+    provider_names = {
+        tool_decl.get("provider")
+        for tool_decl in skill_config.get("tools", [])
+        if tool_decl.get("provider")
+    }
+    providers_already_loaded = bool(provider_names) and all(
+        registry.get_provider(provider_name) is not None
+        for provider_name in provider_names
+    )
+    if providers_already_loaded:
+        logger.info(
+            "[skill_factory] Skill '%s' provider(s) already registered, "
+            "skipping binary download: %s",
+            skill_name,
+            sorted(provider_names),
+        )
+    elif provider_config and skill_id:
         is_public = skill_user_id == 0
 
         if not is_public:
