@@ -7,6 +7,7 @@
 # -*- coding: utf-8 -*-
 
 import asyncio
+import contextlib
 import os
 import threading
 from pathlib import Path
@@ -76,6 +77,7 @@ class CodeXAgent(Agent):
         self._bot_id = self._resolve_bot_id(task_data)
         self._session_store = CodeXSessionStore()
         self._local_image_paths: list[str | None] = []
+        self._model_input_files: list[str] = []
         self._cancel_requested = False
         self._turn_interrupt_requested = False
         self.on_client_created_callback: Optional[Callable[[], Any]] = None
@@ -277,8 +279,15 @@ class CodeXAgent(Agent):
         self._codex = None
         self._thread = None
         self._turn = None
+        self._cleanup_model_input_files()
         self.__class__._active_task_ids.discard(self.task_id)
         self.__class__._active_agents.pop(self.task_id, None)
+
+    def _cleanup_model_input_files(self) -> None:
+        for path in self._model_input_files:
+            with contextlib.suppress(OSError):
+                os.unlink(path)
+        self._model_input_files = []
 
     async def _start_codex_client(self) -> None:
         from openai_codex import AsyncCodex, CodexConfig
@@ -360,6 +369,7 @@ class CodeXAgent(Agent):
         )
         self.prompt = result.prompt
         self._local_image_paths = result.local_image_paths
+        self._model_input_files = result.model_input_files
 
     def _build_turn_input(self) -> Any:
         from openai_codex import ImageInput, LocalImageInput, TextInput

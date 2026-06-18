@@ -17,7 +17,11 @@ from typing import Any, Dict, List
 logger = logging.getLogger(__name__)
 
 
-async def load_server_mcp_tools(task_id: int) -> Any:
+async def load_server_mcp_tools(
+    task_id: int,
+    *,
+    include_env_mcp_servers: bool = True,
+) -> Any:
     """
     Load server-side MCP tools from CHAT_MCP_SERVERS configuration.
 
@@ -26,6 +30,8 @@ async def load_server_mcp_tools(task_id: int) -> Any:
 
     Args:
         task_id: Task ID for session management and logging
+        include_env_mcp_servers: Whether to include CHAT_MCP_SERVERS entries.
+            System-owned agents should pass False so only declared agent MCPs load.
 
     Returns:
         MCPClient instance or None if no server MCP configured
@@ -34,6 +40,13 @@ async def load_server_mcp_tools(task_id: int) -> Any:
     import json
 
     from app.core.config import settings
+
+    if not include_env_mcp_servers:
+        logger.info(
+            "[OPENAPI_MCP] Skipping server-side MCP servers for system agent task %s",
+            task_id,
+        )
+        return None
 
     try:
         from chat_shell.tools.mcp import MCPClient
