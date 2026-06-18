@@ -459,18 +459,9 @@ class TaskOperationsMixin:
     ) -> Optional[Kind]:
         """Get team for a new task."""
         if obj_in.team_id:
-            team_by_id = kindReader.get_by_id(db, KindType.TEAM, obj_in.team_id)
-            if team_by_id:
-                team = kindReader.get_by_name_and_namespace(
-                    db,
-                    user.id,
-                    KindType.TEAM,
-                    team_by_id.namespace,
-                    team_by_id.name,
-                )
-                if team and team.id != obj_in.team_id:
-                    team = None
-                return team
+            from app.services.share.team_share_service import team_share_service
+
+            return team_share_service.get_resource(db, obj_in.team_id, user.id)
         elif obj_in.team_name and obj_in.team_namespace:
             return kindReader.get_by_name_and_namespace(
                 db, user.id, KindType.TEAM, obj_in.team_namespace, obj_in.team_name

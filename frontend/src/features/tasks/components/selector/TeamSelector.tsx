@@ -25,6 +25,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { useMediaQuery } from '@/hooks/useMediaQuery'
 import { paths } from '@/config/paths'
 import { getSharedTagStyle as getSharedBadgeStyle } from '@/utils/styles'
+import { isNamespaceAuthorizedTeam } from '@/utils/team-permissions'
 import { TeamIconDisplay } from '@/features/settings/components/teams/TeamIconDisplay'
 import { cn } from '@/lib/utils'
 import MobileTeamSelector from './MobileTeamSelector'
@@ -198,7 +199,8 @@ export default function TeamSelector({
     return filteredTeams.map(team => {
       const displayName = getTeamDisplayName(team)
       const isSystemTeam = team.user_id === 0
-      const isSharedTeam = team.share_status === 2 && team.user?.user_name
+      const isNamespaceAuthorized = isNamespaceAuthorizedTeam(team)
+      const isSharedTeam = team.share_status === 2 && team.user?.user_name && !isNamespaceAuthorized
       const isGroupTeam = team.namespace && team.namespace !== 'default'
       return {
         value: team.id.toString(),
@@ -230,6 +232,16 @@ export default function TeamSelector({
                 style={sharedBadgeStyle}
               >
                 {t('common:teams.shared_by', { author: team.user?.user_name })}
+              </Tag>
+            )}
+            {isNamespaceAuthorized && team.namespace && (
+              <Tag
+                className="ml-2 text-xs !m-0 flex-shrink-0 max-w-[160px] truncate"
+                variant="default"
+                style={sharedBadgeStyle}
+                title={t('common:teams.authorized_from_group', { group: team.namespace })}
+              >
+                {t('common:teams.authorized_from_group', { group: team.namespace })}
               </Tag>
             )}
           </div>
@@ -275,7 +287,8 @@ export default function TeamSelector({
     if (!item) return null
     const team = filteredTeams.find(t => t.id.toString() === item.value)
     const isSystemTeam = team?.user_id === 0
-    const isSharedTeam = team?.share_status === 2 && team?.user?.user_name
+    const isNamespaceAuthorized = team ? isNamespaceAuthorizedTeam(team) : false
+    const isSharedTeam = team?.share_status === 2 && team?.user?.user_name && !isNamespaceAuthorized
     const isGroupTeam = team?.namespace && team.namespace !== 'default'
     return (
       <div className="flex items-center gap-2 min-w-0">
@@ -295,6 +308,16 @@ export default function TeamSelector({
             style={sharedBadgeStyle}
           >
             {team.user?.user_name}
+          </Tag>
+        )}
+        {isNamespaceAuthorized && team?.namespace && (
+          <Tag
+            className="text-xs !m-0 flex-shrink-0 ml-2 max-w-[140px] truncate"
+            variant="default"
+            style={sharedBadgeStyle}
+            title={t('common:teams.authorized_from_group', { group: team.namespace })}
+          >
+            {t('common:teams.authorized_from_group', { group: team.namespace })}
           </Tag>
         )}
       </div>

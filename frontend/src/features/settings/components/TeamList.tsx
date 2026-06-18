@@ -17,6 +17,7 @@ import {
   CodeBracketIcon,
   CpuChipIcon,
   LinkSlashIcon,
+  UserGroupIcon,
 } from '@heroicons/react/24/outline'
 import { Bot, Team } from '@/types/api'
 import {
@@ -32,13 +33,19 @@ import { fetchBotsList } from '../services/bots'
 import TeamEditDialog from './TeamEditDialog'
 import { ForceDeleteTaskSummary } from './ForceDeleteTaskSummary'
 import TeamShareModal from './TeamShareModal'
+import { TeamChildNamespaceAuthorizationDialog } from './TeamChildNamespaceAuthorizationDialog'
 import TeamCreationWizard from './wizard/TeamCreationWizard'
 import { TeamApiCallButton } from './TeamApiCallButton'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useGroupPermissions } from '@/hooks/useGroupPermissions'
 import { useToast } from '@/hooks/use-toast'
 import { getTeamDisplayName } from '@/utils/team'
-import { isGroupTeam, isPublicTeam, isSharedTeam } from '@/utils/team-permissions'
+import {
+  isGroupTeam,
+  isNamespaceAuthorizedTeam,
+  isPublicTeam,
+  isSharedTeam,
+} from '@/utils/team-permissions'
 import type { BaseRole } from '@/types/base-role'
 import { sortBotsByUpdatedAt } from '@/utils/bot'
 import { useRouter } from 'next/navigation'
@@ -137,6 +144,7 @@ export default function TeamList({
   const [createTarget, setCreateTarget] = useState<ResourceCreateTarget>({ scope: 'personal' })
   const [wizardTarget, setWizardTarget] = useState<ResourceCreateTarget>({ scope: 'personal' })
   const [copyingTeamId, setCopyingTeamId] = useState<number | null>(null)
+  const [childAuthorizationTeam, setChildAuthorizationTeam] = useState<Team | null>(null)
   const [skillsDialogOpen, setSkillsDialogOpen] = useState(false)
   const [pendingCopy, setPendingCopy] = useState<{
     team: Team
@@ -526,6 +534,13 @@ export default function TeamList({
     return !team.share_status || team.share_status === 0 || team.share_status === 1
   }
 
+  const shouldShowChildAuthorization = (team: Team) => {
+    if (isPublicTeam(team)) return false
+    if (isSharedTeam(team)) return false
+    if (!isGroupTeam(team)) return false
+    return canEditGroupResource(team.namespace!)
+  }
+
   // Check if copy button should be shown (same permission as create)
   const shouldShowCopy = (team: Team) => {
     // Read-only teams (public or shared from others) cannot be copied
@@ -706,7 +721,20 @@ export default function TeamList({
                                 },
                               ]
                             : []),
-                          ...(team.share_status === 2 && team.user?.user_name
+                          ...(isNamespaceAuthorizedTeam(team) && team.namespace
+                            ? [
+                                {
+                                  key: 'namespace-authorization',
+                                  label: t('teams.authorized_from_group', {
+                                    group: team.namespace,
+                                  }),
+                                  variant: 'success' as const,
+                                },
+                              ]
+                            : []),
+                          ...(team.share_status === 2 &&
+                          team.user?.user_name &&
+                          !isNamespaceAuthorizedTeam(team)
                             ? [
                                 {
                                   key: 'shared',
@@ -769,6 +797,18 @@ export default function TeamList({
                             className="h-7 w-7 sm:h-8 sm:w-8"
                           >
                             <PencilIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                          </Button>
+                        )}
+                        {shouldShowChildAuthorization(team) && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => setChildAuthorizationTeam(team)}
+                            title={t('teams.child_authorization.action')}
+                            className="h-11 min-w-[44px] md:h-8 md:min-w-8"
+                            data-testid={`team-child-auth-button-${team.id}`}
+                          >
+                            <UserGroupIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                           </Button>
                         )}
                         {shouldShowCopy(team) && (
@@ -904,6 +944,14 @@ export default function TeamList({
         groupName={
           editingTeamId === 0 && createTarget.scope === 'group' ? createTarget.groupName : groupName
         }
+      />
+
+      <TeamChildNamespaceAuthorizationDialog
+        open={childAuthorizationTeam !== null}
+        team={childAuthorizationTeam}
+        onOpenChange={open => {
+          if (!open) setChildAuthorizationTeam(null)
+        }}
       />
 
       {/* Delete/Unbind confirmation dialog */}
