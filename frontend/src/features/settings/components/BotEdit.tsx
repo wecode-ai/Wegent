@@ -35,7 +35,7 @@ import PromptFineTuneDialog from '@/features/prompt-tune/components/PromptFineTu
 import ContextSelector from '@/features/tasks/components/chat/ContextSelector'
 
 import { Bot } from '@/types/api'
-import type { ContextItem, ContextType } from '@/types/context'
+import type { ContextItem } from '@/types/context'
 import type { DefaultContextRef } from '@/types/default-context'
 import {
   botApis,
@@ -66,35 +66,14 @@ import {
   contextItemsToDefaultContextRefs,
   contextItemsToDefaultKnowledgeRefs,
   defaultContextRefsToContextItems,
+  filterDefaultContextItems,
+  getDefaultContextAllowedTypes,
   knowledgeRefsToDefaultContextRefs,
+  mergeDefaultContextItems,
 } from '@/features/context-selector/adapters/defaultContextAdapters'
-import { getRuntimeConfigSync } from '@/lib/runtime-config'
 
 /** Agent types supported by the system */
 export type AgentType = 'ClaudeCode' | 'Agno' | 'Dify'
-function getDefaultContextAllowedTypes(): ContextType[] {
-  return getRuntimeConfigSync().enableDingTalkContext
-    ? ['knowledge_base', 'external_document']
-    : ['knowledge_base']
-}
-
-function filterDefaultContextItems(items: ContextItem[]): ContextItem[] {
-  const allowedTypes = getDefaultContextAllowedTypes()
-  const seen = new Set<string>()
-  const filtered: ContextItem[] = []
-  for (const item of items) {
-    if (!allowedTypes.includes(item.type)) {
-      continue
-    }
-    const key = `${item.type}:${item.id}`
-    if (seen.has(key)) {
-      continue
-    }
-    seen.add(key)
-    filtered.push(item)
-  }
-  return filtered
-}
 
 /** Interface for bot data returned by getBotData */
 export interface BotFormData {
@@ -1589,31 +1568,13 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                           scope === 'group' && groupName ? [groupName] : undefined
                         }
                         onSelect={context =>
-                          setDefaultContextItems(prev =>
-                            filterDefaultContextItems(
-                              prev.some(
-                                item => item.type === context.type && item.id === context.id
-                              )
-                                ? prev
-                                : [...prev, context]
-                            )
-                          )
+                          setDefaultContextItems(prev => mergeDefaultContextItems(prev, [context]))
                         }
                         onDeselect={id =>
                           setDefaultContextItems(prev => prev.filter(item => item.id !== id))
                         }
                         onSelectMultiple={contexts =>
-                          setDefaultContextItems(prev => {
-                            const existingKeys = new Set(
-                              prev.map(item => `${item.type}:${item.id}`)
-                            )
-                            return filterDefaultContextItems([
-                              ...prev,
-                              ...contexts.filter(
-                                context => !existingKeys.has(`${context.type}:${context.id}`)
-                              ),
-                            ])
-                          })
+                          setDefaultContextItems(prev => mergeDefaultContextItems(prev, contexts))
                         }
                         onDeselectMultiple={ids =>
                           setDefaultContextItems(prev =>

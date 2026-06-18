@@ -59,7 +59,7 @@ export function useKnowledgeBaseContextSelector({
     loading: organizationNamespaceLoading,
     error: organizationNamespaceError,
     reload: reloadOrganizationNamespace,
-  } = useOrganizationNamespace()
+  } = useOrganizationNamespace({ enabled })
 
   const fetchKnowledgeBases = useCallback(async () => {
     setLoading(true)

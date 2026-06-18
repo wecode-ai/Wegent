@@ -2,12 +2,52 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import type { ContextItem } from '@/types/context'
+import { getRuntimeConfigSync } from '@/lib/runtime-config'
+import type { ContextItem, ContextType } from '@/types/context'
 import type {
   DefaultContextRef,
   DefaultExternalDocumentContextRef,
   DefaultKnowledgeBaseContextRef,
 } from '@/types/default-context'
+
+export function getDefaultContextAllowedTypes(): ContextType[] {
+  return getRuntimeConfigSync().enableDingTalkContext
+    ? ['knowledge_base', 'external_document']
+    : ['knowledge_base']
+}
+
+export function filterDefaultContextItems(items: ContextItem[]): ContextItem[] {
+  const allowedTypes = getDefaultContextAllowedTypes()
+  const seen = new Set<string>()
+  const filtered: ContextItem[] = []
+
+  for (const item of items) {
+    if (!allowedTypes.includes(item.type)) {
+      continue
+    }
+
+    const key = `${item.type}:${item.id}`
+    if (seen.has(key)) {
+      continue
+    }
+
+    seen.add(key)
+    filtered.push(item)
+  }
+
+  return filtered
+}
+
+export function mergeDefaultContextItems(
+  existingItems: ContextItem[],
+  itemsToAdd: ContextItem[]
+): ContextItem[] {
+  const existingKeys = new Set(existingItems.map(item => `${item.type}:${item.id}`))
+  return filterDefaultContextItems([
+    ...existingItems,
+    ...itemsToAdd.filter(item => !existingKeys.has(`${item.type}:${item.id}`)),
+  ])
+}
 
 export function defaultContextRefsToContextItems(refs?: DefaultContextRef[]): ContextItem[] {
   return (refs || []).map(ref => {

@@ -29,14 +29,16 @@ import type { AgentType as McpAgentType } from '@/features/settings/utils/mcpTyp
 import ContextSelector from '@/features/tasks/components/chat/ContextSelector'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
-import type { ContextItem, ContextType } from '@/types/context'
+import type { ContextItem } from '@/types/context'
 import type { DefaultContextRef } from '@/types/default-context'
 import type { KnowledgeBaseDefaultRef, TaskType } from '@/types/api'
 import {
   contextItemsToDefaultContextRefs,
   defaultContextRefsToContextItems,
+  filterDefaultContextItems,
+  getDefaultContextAllowedTypes,
+  mergeDefaultContextItems,
 } from '@/features/context-selector/adapters/defaultContextAdapters'
-import { getRuntimeConfigSync } from '@/lib/runtime-config'
 
 import { TeamIconPicker } from '../teams/TeamIconPicker'
 import ExecutorModeSelector from './ExecutorModeSelector'
@@ -45,34 +47,6 @@ import QuickPhraseEditor from './QuickPhraseEditor'
 import TeamBindModeCards from './TeamBindModeCards'
 import { parseModelSelectValue, toModelSelectValue } from './model-select-utils'
 import type { SimpleExecutorMode } from './simple-team-edit-utils'
-
-function getDefaultContextAllowedTypes(): ContextType[] {
-  return getRuntimeConfigSync().enableDingTalkContext
-    ? ['knowledge_base', 'external_document']
-    : ['knowledge_base']
-}
-
-function filterDefaultContextItems(items: ContextItem[]): ContextItem[] {
-  const allowedTypes = getDefaultContextAllowedTypes()
-  const seen = new Set<string>()
-  const filtered: ContextItem[] = []
-
-  for (const item of items) {
-    if (!allowedTypes.includes(item.type)) {
-      continue
-    }
-
-    const key = `${item.type}:${item.id}`
-    if (seen.has(key)) {
-      continue
-    }
-
-    seen.add(key)
-    filtered.push(item)
-  }
-
-  return filtered
-}
 
 interface SimpleTeamEditFormProps {
   name: string
@@ -557,26 +531,14 @@ export default function SimpleTeamEditForm({
                 allowedGroupNamespaces={scope === 'group' && groupName ? [groupName] : undefined}
                 onSelect={context =>
                   updateDefaultContextItems(
-                    defaultContextItems.some(
-                      item => item.type === context.type && item.id === context.id
-                    )
-                      ? defaultContextItems
-                      : [...defaultContextItems, context]
+                    mergeDefaultContextItems(defaultContextItems, [context])
                   )
                 }
                 onDeselect={id =>
                   updateDefaultContextItems(defaultContextItems.filter(item => item.id !== id))
                 }
                 onSelectMultiple={contexts => {
-                  const existingKeys = new Set(
-                    defaultContextItems.map(item => `${item.type}:${item.id}`)
-                  )
-                  updateDefaultContextItems([
-                    ...defaultContextItems,
-                    ...contexts.filter(
-                      context => !existingKeys.has(`${context.type}:${context.id}`)
-                    ),
-                  ])
+                  updateDefaultContextItems(mergeDefaultContextItems(defaultContextItems, contexts))
                 }}
                 onDeselectMultiple={ids =>
                   updateDefaultContextItems(
