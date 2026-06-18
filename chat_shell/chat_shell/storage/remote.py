@@ -7,6 +7,7 @@ Used when chat_shell runs as HTTP service and needs to access Backend's data.
 
 import json
 import logging
+import time
 from typing import Any, Optional
 
 import httpx
@@ -92,7 +93,10 @@ class RemoteHistoryStore(HistoryStoreInterface):
         is_group_chat: bool = False,
     ) -> list[Message]:
         """Get chat history for a session."""
+        total_start = time.perf_counter()
+        client_start = time.perf_counter()
         client = await self._get_client()
+        client_ms = (time.perf_counter() - client_start) * 1000
         params = {}
         if limit:
             params["limit"] = limit
@@ -110,7 +114,9 @@ class RemoteHistoryStore(HistoryStoreInterface):
         )
 
         try:
+            request_start = time.perf_counter()
             response = await client.get(url, params=params)
+            request_ms = (time.perf_counter() - request_start) * 1000
 
             logger.debug(
                 "[RemoteHistoryStore] <<< Response status=%d, content_length=%s",
@@ -119,9 +125,29 @@ class RemoteHistoryStore(HistoryStoreInterface):
             )
 
             response.raise_for_status()
-            data = response.json()
 
+            parse_start = time.perf_counter()
+            data = response.json()
             messages = [Message.from_dict(m) for m in data.get("messages", [])]
+            parse_ms = (time.perf_counter() - parse_start) * 1000
+            total_ms = (time.perf_counter() - total_start) * 1000
+            logger.info(
+                "[RemoteHistoryStore_PERF] get_history session_id=%s "
+                "before_message_id=%s limit=%s is_group_chat=%s status=%d "
+                "message_count=%d client_ms=%.2f request_ms=%.2f parse_ms=%.2f "
+                "total_ms=%.2f content_length=%s",
+                session_id,
+                before_message_id,
+                limit,
+                is_group_chat,
+                response.status_code,
+                len(messages),
+                client_ms,
+                request_ms,
+                parse_ms,
+                total_ms,
+                response.headers.get("content-length", "unknown"),
+            )
             logger.debug(
                 "[RemoteHistoryStore] Loaded %d messages for session_id=%s",
                 len(messages),
@@ -130,9 +156,10 @@ class RemoteHistoryStore(HistoryStoreInterface):
             return messages
         except Exception as e:
             logger.error(
-                "[RemoteHistoryStore] Request failed: url=%s, error=%s",
+                "[RemoteHistoryStore] Request failed: url=%s, error=%s, total_ms=%.2f",
                 full_url,
                 e,
+                (time.perf_counter() - total_start) * 1000,
                 exc_info=True,
             )
             raise

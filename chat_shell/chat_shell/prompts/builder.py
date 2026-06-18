@@ -229,7 +229,8 @@ def build_system_prompt(
         1. Base prompt (caller should wrap Ghost systemPrompt in <base_prompt> tags if needed)
         2. Clarification mode instructions (if enabled) - now guides AI to use interactive_form_question tool
         3. Deep thinking mode instructions (if enabled)
-        4. Skill prompts (injected dynamically by LoadSkillTool via prompt_modifier)
+        4. Skill prompts are not added here; LoadSkillTool injects them dynamically
+           via prompt_modifier as separate model-call context.
     """
     system_prompt = base_prompt
 
@@ -249,5 +250,6 @@ def build_system_prompt(
     # via the prompt_modifier mechanism in LangGraphAgentBuilder. This ensures that:
     # 1. Available Skills and Loaded Skill Instructions are in the same <skill> block
     # 2. The skill prompt is always up-to-date with the current loaded skills state
+    # 3. The base system prompt remains stable for prompt caching
 
     return system_prompt
