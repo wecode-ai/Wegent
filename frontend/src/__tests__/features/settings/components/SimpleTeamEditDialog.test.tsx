@@ -519,6 +519,63 @@ describe('Simple TeamEditDialog', () => {
     })
   })
 
+  it('preserves hidden external default contexts when editing a simple agent', async () => {
+    const team = makeTeam()
+    const bot = makeBot({
+      default_context_refs: [
+        { type: 'knowledge_base', id: 10, name: 'Product Docs' },
+        {
+          type: 'external_document',
+          id: 'docs:node-1',
+          provider: 'dingtalk',
+          source: 'docs',
+          name: 'DingTalk Spec',
+          metadata: { external_id: 'node-1' },
+        },
+      ],
+      default_knowledge_base_refs: [{ id: 10, name: 'Product Docs' }],
+    })
+
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[team]}
+        setTeams={jest.fn()}
+        editingTeamId={team.id}
+        bots={[bot]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+      />
+    )
+
+    await waitFor(() => expect(mockedGetUnifiedModels).toHaveBeenCalled())
+
+    fireEvent.change(await screen.findByTestId('simple-prompt-textarea'), {
+      target: { value: 'Updated prompt.' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => {
+      expect(mockedUpdateBot).toHaveBeenCalledWith(
+        bot.id,
+        expect.objectContaining({
+          default_context_refs: [
+            { type: 'knowledge_base', id: 10, name: 'Product Docs' },
+            {
+              type: 'external_document',
+              id: 'docs:node-1',
+              provider: 'dingtalk',
+              source: 'docs',
+              name: 'DingTalk Spec',
+              metadata: { external_id: 'node-1' },
+            },
+          ],
+        })
+      )
+    })
+  })
+
   it('opens non-solo existing agents in the advanced path', async () => {
     const team = makeTeam({ workflow: { mode: 'pipeline' } })
 

@@ -63,12 +63,12 @@ import { buildSkillRefsFromSelection } from '../utils/skillRefResolver'
 import { filterVisibleSkills } from '@/utils/skillVisibility'
 import { shellSupportsPreloadSkills } from './team-edit/simple-team-edit-utils'
 import {
-  contextItemsToDefaultContextRefs,
   contextItemsToDefaultKnowledgeRefs,
   defaultContextRefsToContextItems,
   filterDefaultContextItems,
   getDefaultContextAllowedTypes,
   knowledgeRefsToDefaultContextRefs,
+  mergeEditableDefaultContextRefs,
   mergeDefaultContextItems,
 } from '@/features/context-selector/adapters/defaultContextAdapters'
 
@@ -210,8 +210,8 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     filterDefaultContextItems(defaultContextRefsToContextItems(initialDefaultContextRefs))
   )
   const defaultContextRefs = useMemo(
-    () => contextItemsToDefaultContextRefs(filterDefaultContextItems(defaultContextItems)),
-    [defaultContextItems]
+    () => mergeEditableDefaultContextRefs(initialDefaultContextRefs, defaultContextItems),
+    [defaultContextItems, initialDefaultContextRefs]
   )
   const defaultKnowledgeBaseRefs = useMemo(
     () => contextItemsToDefaultKnowledgeRefs(filterDefaultContextItems(defaultContextItems)),

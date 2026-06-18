@@ -622,4 +622,52 @@ describe('BotEdit default knowledge bases', () => {
       )
     })
   })
+
+  test('preserves hidden external default contexts when saving with DingTalk disabled', async () => {
+    renderBotEdit({
+      default_context_refs: [
+        {
+          type: 'knowledge_base',
+          id: 101,
+          name: 'Product Docs',
+        },
+        {
+          type: 'external_document',
+          id: 'docs:node-1',
+          provider: 'dingtalk',
+          source: 'docs',
+          name: 'DingTalk Spec',
+          metadata: { external_id: 'node-1' },
+        },
+      ],
+      default_knowledge_base_refs: [{ id: 101, name: 'Product Docs' }],
+    })
+    await waitFor(() => expect(mockedGetUnifiedModels).toHaveBeenCalled())
+
+    fireEvent.click(screen.getByTestId('save-button'))
+
+    await waitFor(() => {
+      expect(mockedUpdateBot).toHaveBeenCalledWith(
+        7,
+        expect.objectContaining({
+          default_context_refs: [
+            {
+              type: 'knowledge_base',
+              id: 101,
+              name: 'Product Docs',
+              document_count: undefined,
+            },
+            {
+              type: 'external_document',
+              id: 'docs:node-1',
+              provider: 'dingtalk',
+              source: 'docs',
+              name: 'DingTalk Spec',
+              metadata: { external_id: 'node-1' },
+            },
+          ],
+        })
+      )
+    })
+  })
 })

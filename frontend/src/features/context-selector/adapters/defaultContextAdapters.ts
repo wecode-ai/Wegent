@@ -124,6 +124,46 @@ export function contextItemsToDefaultContextRefs(items: ContextItem[]): DefaultC
     .filter((ref): ref is DefaultContextRef => ref !== null)
 }
 
+export function mergeEditableDefaultContextRefs(
+  originalRefs: DefaultContextRef[] | undefined,
+  editedItems: ContextItem[]
+): DefaultContextRef[] {
+  const editableTypes = new Set<ContextType>(getDefaultContextAllowedTypes())
+  const editedRefs = contextItemsToDefaultContextRefs(filterDefaultContextItems(editedItems))
+  const editedByKey = new Map(editedRefs.map(ref => [makeDefaultContextRefKey(ref), ref]))
+  const emittedKeys = new Set<string>()
+  const mergedRefs: DefaultContextRef[] = []
+
+  for (const originalRef of originalRefs || []) {
+    if (!editableTypes.has(originalRef.type)) {
+      mergedRefs.push(originalRef)
+      continue
+    }
+
+    const key = makeDefaultContextRefKey(originalRef)
+    const editedRef = editedByKey.get(key)
+    if (!editedRef) {
+      continue
+    }
+
+    mergedRefs.push(editedRef)
+    emittedKeys.add(key)
+  }
+
+  for (const editedRef of editedRefs) {
+    const key = makeDefaultContextRefKey(editedRef)
+    if (!emittedKeys.has(key)) {
+      mergedRefs.push(editedRef)
+    }
+  }
+
+  return mergedRefs
+}
+
+function makeDefaultContextRefKey(ref: DefaultContextRef): string {
+  return `${ref.type}:${ref.id}`
+}
+
 export function contextItemsToDefaultKnowledgeRefs(
   items: ContextItem[]
 ): DefaultKnowledgeBaseContextRef[] {

@@ -33,10 +33,10 @@ import type { ContextItem } from '@/types/context'
 import type { DefaultContextRef } from '@/types/default-context'
 import type { KnowledgeBaseDefaultRef, TaskType } from '@/types/api'
 import {
-  contextItemsToDefaultContextRefs,
   defaultContextRefsToContextItems,
   filterDefaultContextItems,
   getDefaultContextAllowedTypes,
+  mergeEditableDefaultContextRefs,
   mergeDefaultContextItems,
 } from '@/features/context-selector/adapters/defaultContextAdapters'
 
@@ -198,7 +198,7 @@ export default function SimpleTeamEditForm({
     [defaultContextRefs]
   )
   const updateDefaultContextItems = (items: ContextItem[]) => {
-    onDefaultContextRefsChange(contextItemsToDefaultContextRefs(filterDefaultContextItems(items)))
+    onDefaultContextRefsChange(mergeEditableDefaultContextRefs(defaultContextRefs, items))
   }
   const showRequiresWorkspace = bindMode.includes('code')
   const modelSelectValue = toModelSelectValue(modelName, modelType, modelNamespace)
