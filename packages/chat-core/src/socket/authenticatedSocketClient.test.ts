@@ -150,4 +150,50 @@ describe('createAuthenticatedSocketClient', () => {
     expect(secondSocket.socket.on).toHaveBeenCalledWith('chat:start', handler)
     expect(handler).toHaveBeenCalledWith({ message: 'ready' })
   })
+
+  test('does not create a socket when disconnected during pending connect resolution', async () => {
+    let resolveBaseUrl!: (value: string) => void
+    const socketBaseUrl = vi.fn(
+      () =>
+        new Promise<string>(resolve => {
+          resolveBaseUrl = resolve
+        })
+    )
+    const rawSocket = createMockSocket()
+    mockIo.mockReturnValue(rawSocket.socket)
+    const client = createAuthenticatedSocketClient({
+      socketBaseUrl,
+      path: '/socket.io',
+      namespace: '/chat',
+      getToken: () => 'token',
+    })
+
+    const pendingConnect = client.connect()
+    client.disconnect()
+    resolveBaseUrl('http://socket')
+    await pendingConnect
+
+    expect(mockIo).not.toHaveBeenCalled()
+    expect(rawSocket.socket.connect).not.toHaveBeenCalled()
+    expect(client.getState().socket).toBeNull()
+  })
+
+  test('clears stale connection errors on intentional disconnect', async () => {
+    const rawSocket = createMockSocket()
+    mockIo.mockReturnValue(rawSocket.socket)
+    const client = createAuthenticatedSocketClient({
+      socketBaseUrl: () => 'http://socket',
+      path: '/socket.io',
+      namespace: '/chat',
+      getToken: () => 'token',
+    })
+
+    await client.connect()
+    rawSocket.trigger('connect_error', new Error('timeout'))
+    expect(client.getState().connectionError?.message).toBe('timeout')
+
+    client.disconnect()
+
+    expect(client.getState().connectionError).toBeNull()
+  })
 })

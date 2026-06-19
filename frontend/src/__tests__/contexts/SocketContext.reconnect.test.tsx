@@ -97,7 +97,8 @@ describe('SocketProvider reconnect notification', () => {
       </SocketProvider>
     )
 
-    await waitFor(() => expect(socketApi?.socket).toBeDefined())
+    await waitFor(() => expect(socket.connect).toHaveBeenCalledTimes(1))
+    expect(socketApi).toBeDefined()
     expect(socket.connect).toHaveBeenCalledTimes(1)
     expect(mockIo.mock.calls[0][1]).toEqual(
       expect.objectContaining({
@@ -151,7 +152,8 @@ describe('SocketProvider reconnect notification', () => {
       </SocketProvider>
     )
 
-    await waitFor(() => expect(socketApi?.socket).toBeDefined())
+    await waitFor(() => expect(socket.connect).toHaveBeenCalledTimes(1))
+    expect(socketApi).toBeDefined()
     socketApi!.onReconnect(mockReconnectCallback)
 
     await act(async () => {
@@ -182,7 +184,8 @@ describe('SocketProvider reconnect notification', () => {
       </SocketProvider>
     )
 
-    await waitFor(() => expect(socketApi?.socket).toBeDefined())
+    await waitFor(() => expect(socket.connect).toHaveBeenCalledTimes(1))
+    expect(socketApi).toBeDefined()
     socketApi!.onReconnect(mockReconnectCallback)
 
     await act(async () => {
@@ -209,7 +212,8 @@ describe('SocketProvider reconnect notification', () => {
       </SocketProvider>
     )
 
-    await waitFor(() => expect(socketApi?.socket).toBeDefined())
+    await waitFor(() => expect(firstSocket.connect).toHaveBeenCalledTimes(1))
+    expect(socketApi).toBeDefined()
     socketApi!.onReconnect(mockReconnectCallback)
 
     await act(async () => {
@@ -266,7 +270,8 @@ describe('SocketProvider reconnect notification', () => {
       </SocketProvider>
     )
 
-    await waitFor(() => expect(socketApi?.socket).toBeDefined())
+    await waitFor(() => expect(firstSocket.connect).toHaveBeenCalledTimes(1))
+    expect(socketApi).toBeDefined()
 
     await act(async () => {
       firstSocket.triggerSocket('connect')
@@ -317,7 +322,8 @@ describe('SocketProvider reconnect notification', () => {
       </SocketProvider>
     )
 
-    await waitFor(() => expect(socketApi?.socket).toBeDefined())
+    await waitFor(() => expect(socket.connect).toHaveBeenCalledTimes(1))
+    expect(socketApi).toBeDefined()
 
     await act(async () => {
       socket.triggerSocket('connect')

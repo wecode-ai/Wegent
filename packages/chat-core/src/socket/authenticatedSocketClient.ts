@@ -105,6 +105,7 @@ class AuthenticatedSocketClientImpl implements AuthenticatedSocketClient {
   private readonly facade: SocketClientSocket
 
   private rawSocket: RawSocket | null = null
+  private connectGeneration = 0
   private isConnecting = false
   private connectRequestPending = false
   private reconnectTimer: ReturnType<typeof globalThis.setTimeout> | null = null
@@ -184,6 +185,7 @@ class AuthenticatedSocketClientImpl implements AuthenticatedSocketClient {
       return
     }
 
+    const generationAtStart = this.connectGeneration
     this.clearReconnectTimer()
     this.notifyOnNextConnect = this.notifyOnNextConnect || notifyReconnectOnConnect
     this.connectRequestPending = true
@@ -196,9 +198,17 @@ class AuthenticatedSocketClientImpl implements AuthenticatedSocketClient {
       }
 
       const socketBaseUrl = await this.options.socketBaseUrl()
+      if (generationAtStart !== this.connectGeneration) {
+        return
+      }
+
       this.connectRequestPending = false
       this.createSocketConnection(resolvedToken, socketBaseUrl)
     } catch (error) {
+      if (generationAtStart !== this.connectGeneration) {
+        return
+      }
+
       const connectionError = error instanceof Error ? error : new Error(String(error))
       this.options.logger?.error?.('[Socket.IO] Failed to connect:', connectionError)
       this.updateState({
@@ -218,6 +228,7 @@ class AuthenticatedSocketClientImpl implements AuthenticatedSocketClient {
   }
 
   disconnect(): void {
+    this.connectGeneration += 1
     this.intentionalDisconnect = true
     this.clearReconnectTimer()
     this.isConnecting = false
@@ -229,6 +240,7 @@ class AuthenticatedSocketClientImpl implements AuthenticatedSocketClient {
     this.updateState({
       socket: null,
       isConnected: false,
+      connectionError: null,
       reconnectAttempts: 0,
     })
   }
