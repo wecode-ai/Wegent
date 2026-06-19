@@ -76,7 +76,7 @@ def test_resolve_for_plain_task_returns_local_history(monkeypatch):
     )
     monkeypatch.setattr(
         "app.services.task_fork_history.subtask_store.list_by_task_ordered",
-        lambda db, task_id, user_id=None: local if task_id == 1 else [],
+        lambda db, task_id, owner_user_id=None: local if task_id == 1 else [],
     )
 
     items = task_fork_history_resolver.resolve_for_task(
@@ -112,7 +112,7 @@ def test_resolve_for_fork_uses_parent_cutoff(monkeypatch):
     )
     monkeypatch.setattr(
         "app.services.task_fork_history.subtask_store.list_by_task_ordered",
-        lambda db, task_id, user_id=None: subtasks[task_id],
+        lambda db, task_id, owner_user_id=None: subtasks[task_id],
     )
 
     items = task_fork_history_resolver.resolve_for_task(

@@ -58,7 +58,7 @@ class TaskForkHistoryResolver:
             subtasks = subtask_store.list_by_task_ordered(
                 db,
                 task_id=node.task.id,
-                user_id=node.task.user_id,
+                owner_user_id=node.task.user_id,
             )
             for subtask in subtasks:
                 if (
