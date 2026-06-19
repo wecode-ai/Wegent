@@ -340,3 +340,37 @@ async def test_device_terminal_exit_forwards_and_deletes_session(monkeypatch):
         namespace="/terminal",
     )
     service.delete.assert_awaited_once_with("terminal-1")
+
+
+@pytest.mark.asyncio
+async def test_device_terminal_exit_deletes_session_when_forwarding_fails(monkeypatch):
+    namespace = device_namespace.DeviceNamespace()
+    record = TerminalSessionRecord(
+        session_id="terminal-1",
+        user_id=7,
+        device_id="device-1",
+        socket_id="device-sid",
+        project_id=123,
+        path="/repo",
+        expires_at=None,
+    )
+    service = SimpleNamespace(
+        get=AsyncMock(return_value=record),
+        delete=AsyncMock(),
+    )
+    sio = SimpleNamespace(emit=AsyncMock(side_effect=RuntimeError("emit failed")))
+    monkeypatch.setattr(device_namespace, "terminal_session_service", service)
+    monkeypatch.setattr(device_namespace, "get_sio", lambda: sio, raising=False)
+    monkeypatch.setattr(
+        namespace,
+        "get_session",
+        AsyncMock(return_value={"user_id": 7, "device_id": "device-1"}),
+    )
+
+    with pytest.raises(RuntimeError, match="emit failed"):
+        await namespace.on_terminal_exit(
+            "device-sid",
+            {"session_id": "terminal-1", "exit_code": 0},
+        )
+
+    service.delete.assert_awaited_once_with("terminal-1")

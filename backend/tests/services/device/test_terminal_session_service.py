@@ -4,7 +4,7 @@
 
 """Tests for browser terminal session ownership records."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -39,7 +39,7 @@ async def test_terminal_session_service_preserves_owner_and_device_binding():
         socket_id="socket-123",
         project_id=123,
         path="/repo",
-        expires_at=datetime(2026, 6, 19, tzinfo=timezone.utc),
+        expires_at=datetime.now(timezone.utc) + timedelta(minutes=5),
     )
 
     await service.register(record, ttl_seconds=60)

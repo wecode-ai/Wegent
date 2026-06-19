@@ -1335,13 +1335,15 @@ class DeviceNamespace(socketio.AsyncNamespace):
 
         payload = dict(data)
         payload["session_id"] = record.session_id
-        await get_sio().emit(
-            "terminal:exit",
-            payload,
-            room=f"terminal:{record.session_id}",
-            namespace="/terminal",
-        )
-        await terminal_session_service.delete(record.session_id)
+        try:
+            await get_sio().emit(
+                "terminal:exit",
+                payload,
+                room=f"terminal:{record.session_id}",
+                namespace="/terminal",
+            )
+        finally:
+            await terminal_session_service.delete(record.session_id)
         return {"success": True}
 
     async def _authorize_terminal_event(

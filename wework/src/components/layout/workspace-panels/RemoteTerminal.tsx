@@ -38,7 +38,11 @@ export function RemoteTerminal({ sessionId, active }: RemoteTerminalProps) {
     let disposed = false
 
     const dataDisposable = terminal.onData(data => {
-      void client.write(data)
+      void client.write(data).catch(error => {
+        if (!disposed) {
+          console.error('Failed to write to remote terminal:', error)
+        }
+      })
     })
     const unsubscribeOutput = client.onOutput(payload => {
       if (!disposed && payload.session_id === sessionId) {
@@ -61,10 +65,15 @@ export function RemoteTerminal({ sessionId, active }: RemoteTerminalProps) {
       if (disposed || !container.isConnected) return
       try {
         fitAddon.fit()
-        void client.resize(terminal.rows, terminal.cols)
       } catch (error) {
         console.error('Failed to resize remote terminal:', error)
+        return
       }
+      void client.resize(terminal.rows, terminal.cols).catch(error => {
+        if (!disposed) {
+          console.error('Failed to resize remote terminal:', error)
+        }
+      })
     }
 
     const resizeObserver = new ResizeObserver(fitAndResize)
@@ -113,10 +122,13 @@ export function RemoteTerminal({ sessionId, active }: RemoteTerminalProps) {
       try {
         fitAddon.fit()
         terminal.focus()
-        void client.resize(terminal.rows, terminal.cols)
       } catch (error) {
         console.error('Failed to activate remote terminal:', error)
+        return
       }
+      void client.resize(terminal.rows, terminal.cols).catch(error => {
+        console.error('Failed to sync remote terminal size on activate:', error)
+      })
     })
 
     return () => {

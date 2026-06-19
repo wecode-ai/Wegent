@@ -6,6 +6,7 @@
 
 import logging
 import secrets
+from contextlib import suppress
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -80,8 +81,7 @@ class LocalDeviceSessionService:
             "ttl_seconds": normalized_ttl,
             "expires_at": expires_at.isoformat(),
         }
-        if session_type == "code_server":
-            payload["access_token"] = secrets.token_urlsafe(32)
+        payload["access_token"] = secrets.token_urlsafe(32)
 
         logger.info(
             "[LocalDeviceSessionService] Starting session: "
@@ -120,18 +120,30 @@ class LocalDeviceSessionService:
         result.setdefault("expires_at", expires_at)
 
         if session_type == "terminal":
-            await terminal_session_service.register(
-                TerminalSessionRecord(
-                    session_id=session_id,
-                    user_id=user_id,
-                    device_id=device_id,
-                    socket_id=socket_id,
-                    project_id=project_id,
-                    path=result.get("path") or path,
-                    expires_at=expires_at,
-                ),
-                ttl_seconds=normalized_ttl,
-            )
+            try:
+                await terminal_session_service.register(
+                    TerminalSessionRecord(
+                        session_id=session_id,
+                        user_id=user_id,
+                        device_id=device_id,
+                        socket_id=socket_id,
+                        project_id=project_id,
+                        path=result.get("path") or path,
+                        expires_at=expires_at,
+                    ),
+                    ttl_seconds=normalized_ttl,
+                )
+            except Exception as exc:
+                with suppress(Exception):
+                    await get_sio().emit(
+                        "terminal:close",
+                        {"session_id": session_id},
+                        to=socket_id,
+                        namespace="/local-executor",
+                    )
+                raise DeviceSessionError(
+                    "Failed to persist terminal session metadata"
+                ) from exc
             result["url"] = ""
             result["transport"] = "socketio"
             return result

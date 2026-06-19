@@ -102,7 +102,7 @@ The operation is repeatable. Skills with the same directory name are not overwri
 
 ### Building a Device Image
 
-The repository provides `docker/device/Dockerfile` for cloud device or local device base images. The image installs `code-server`, the `weiboplat.wecoder-agent` extension, Claude Code CLI, Node.js 22, Python, Git, and copies `executor/dist/wegent-executor` to `/app/executor` and `~/.wegent-executor/bin/wegent-executor`.
+The repository provides `docker/device/Dockerfile` for cloud device or local device base images. The image installs `code-server`, the `weiboplat.wecoder-agent` extension, Claude Code CLI, Node.js 22, Python, Git, and copies `executor/dist/wegent-executor` to `/app/executor` and `~/.wecode/wegent-executor/bin/wegent-executor`.
 
 The default user inside the image is `wegent`, and the default password is `wegent`. This account is intended for code-server and terminal shell access inside the container. For production deployments, restrict access through runtime configuration, access control, or upstream platform authentication.
 

@@ -104,7 +104,7 @@ Wegent 会根据用户设置在执行请求中显式标记 Codex 是否使用个
 
 ### 构建设备镜像
 
-仓库提供 `docker/device/Dockerfile` 用于构建云设备或本地设备基础镜像。该镜像会安装 `code-server`、`weiboplat.wecoder-agent` 扩展、Claude Code CLI、Node.js 22、Python、Git，并把 `executor/dist/wegent-executor` 放到 `/app/executor` 和 `~/.wegent-executor/bin/wegent-executor`。
+仓库提供 `docker/device/Dockerfile` 用于构建云设备或本地设备基础镜像。该镜像会安装 `code-server`、`weiboplat.wecoder-agent` 扩展、Claude Code CLI、Node.js 22、Python、Git，并把 `executor/dist/wegent-executor` 放到 `/app/executor` 和 `~/.wecode/wegent-executor/bin/wegent-executor`。
 
 镜像内默认用户为 `wegent`，默认密码为 `wegent`。该账号用于容器内 code-server 和终端 shell 场景；生产部署时建议通过运行时配置、访问控制或上游平台认证限制访问范围。
 

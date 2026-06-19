@@ -332,6 +332,64 @@ async def test_start_terminal_session_uses_embedded_pty(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_terminal_input_returns_error_when_pty_write_fails():
+    """Input handling should survive PTY teardown races."""
+    from executor.modes.local.session_handler import LocalSession, LocalSessionHandler
+
+    class FailingTerminal:
+        def write(self, data):
+            raise OSError("pty closed")
+
+    handler = LocalSessionHandler(public_base_url="http://localhost:17888")
+    handler.sessions["terminal-1"] = LocalSession(
+        session_id="terminal-1",
+        session_type="terminal",
+        access_token="secret",
+        project_id=123,
+        path="/workspace",
+        port=0,
+        process=None,
+        terminal=FailingTerminal(),
+        expires_at=9999999999,
+    )
+
+    result = await handler.handle_terminal_input(
+        {"session_id": "terminal-1", "data": "pwd\r"}
+    )
+
+    assert result == {"success": False, "error": "Terminal session is not writable"}
+
+
+@pytest.mark.asyncio
+async def test_terminal_resize_returns_error_when_pty_resize_fails():
+    """Resize handling should survive PTY teardown races."""
+    from executor.modes.local.session_handler import LocalSession, LocalSessionHandler
+
+    class FailingTerminal:
+        def resize(self, rows, cols):
+            raise OSError("pty closed")
+
+    handler = LocalSessionHandler(public_base_url="http://localhost:17888")
+    handler.sessions["terminal-1"] = LocalSession(
+        session_id="terminal-1",
+        session_type="terminal",
+        access_token="secret",
+        project_id=123,
+        path="/workspace",
+        port=0,
+        process=None,
+        terminal=FailingTerminal(),
+        expires_at=9999999999,
+    )
+
+    result = await handler.handle_terminal_resize(
+        {"session_id": "terminal-1", "rows": 30, "cols": 100}
+    )
+
+    assert result == {"success": False, "error": "Terminal session is not resizable"}
+
+
+@pytest.mark.asyncio
 async def test_start_code_server_session_returns_gateway_url(tmp_path):
     """Code server sessions should go through the authenticated gateway."""
     from executor.modes.local.session_handler import LocalSessionHandler

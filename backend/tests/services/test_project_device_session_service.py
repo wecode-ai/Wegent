@@ -423,6 +423,7 @@ async def test_local_device_session_service_calls_device_start_session(monkeypat
     """Device session service should send a start_session RPC to the online device."""
     from app.services.device import session_service
 
+    monkeypatch.setattr(session_service.secrets, "token_urlsafe", lambda size: "secret")
     mock_sio = AsyncMock()
     mock_sio.call.return_value = {
         "success": True,
@@ -469,7 +470,7 @@ async def test_local_device_session_service_calls_device_start_session(monkeypat
     assert payload["path"] == "/repo"
     assert payload["create_if_missing"] is False
     assert payload["session_id"].startswith("terminal-123-")
-    assert "access_token" not in payload
+    assert payload["access_token"] == "secret"
     assert mock_sio.call.await_args.args[0] == "device:start_terminal_session"
     mock_sio.call.assert_awaited_once()
     terminal_registry.register.assert_awaited_once()
@@ -480,6 +481,65 @@ async def test_local_device_session_service_calls_device_start_session(monkeypat
     assert record.socket_id == "socket-123"
     assert record.project_id == 123
     assert record.path == "/repo"
+
+
+@pytest.mark.asyncio
+async def test_local_device_session_service_maps_terminal_registry_failures(
+    monkeypatch,
+):
+    """Terminal registry failures should return a device session error and clean up."""
+    from app.services.device import session_service
+
+    mock_sio = AsyncMock()
+    mock_sio.call.return_value = {
+        "success": True,
+        "session_id": "session-123",
+        "url": "",
+        "path": "/repo",
+        "device_id": "device-abc",
+        "type": "terminal",
+    }
+    terminal_registry = SimpleNamespace(
+        register=AsyncMock(side_effect=RuntimeError("redis unavailable"))
+    )
+    monkeypatch.setattr(
+        session_service.device_service,
+        "get_device_online_info",
+        AsyncMock(return_value={"socket_id": "socket-123"}),
+    )
+    monkeypatch.setattr(
+        session_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: object(),
+    )
+    monkeypatch.setattr(session_service, "get_sio", lambda: mock_sio)
+    monkeypatch.setattr(
+        session_service,
+        "terminal_session_service",
+        terminal_registry,
+        raising=False,
+    )
+
+    with pytest.raises(
+        session_service.DeviceSessionError,
+        match="Failed to persist terminal session metadata",
+    ):
+        await session_service.local_device_session_service.start_session(
+            db=object(),
+            user_id=7,
+            device_id="device-abc",
+            project_id=123,
+            session_type="terminal",
+            path="/repo",
+        )
+
+    session_id = mock_sio.call.await_args.args[1]["session_id"]
+    mock_sio.emit.assert_awaited_once_with(
+        "terminal:close",
+        {"session_id": session_id},
+        to="socket-123",
+        namespace="/local-executor",
+    )
 
 
 @pytest.mark.asyncio

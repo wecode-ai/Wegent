@@ -609,7 +609,10 @@ class LocalSessionHandler:
         if not isinstance(text, str):
             return self._error("data is required")
 
-        session.terminal.write(text.encode("utf-8"))
+        try:
+            session.terminal.write(text.encode("utf-8"))
+        except Exception:
+            return self._error("Terminal session is not writable")
         return {"success": True}
 
     async def handle_terminal_resize(self, data: dict[str, Any]) -> dict[str, Any]:
@@ -619,7 +622,10 @@ class LocalSessionHandler:
             return self._error("Terminal session not found")
         rows = self._get_dimension(data, "rows", 24)
         cols = self._get_dimension(data, "cols", 80)
-        session.terminal.resize(rows, cols)
+        try:
+            session.terminal.resize(rows, cols)
+        except Exception:
+            return self._error("Terminal session is not resizable")
         return {"success": True}
 
     async def handle_terminal_close(self, data: dict[str, Any]) -> dict[str, Any]:

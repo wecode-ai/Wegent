@@ -125,6 +125,14 @@ class TerminalNamespace(socketio.AsyncNamespace):
         if not record:
             return {"error": "Terminal session not found or access denied"}
 
+        previous_session_id = session.get("terminal_session_id")
+        if (
+            isinstance(previous_session_id, str)
+            and previous_session_id
+            and previous_session_id != session_id
+        ):
+            await self.leave_room(sid, _terminal_room(previous_session_id))
+
         await self.enter_room(sid, _terminal_room(session_id))
         session["terminal_session_id"] = session_id
         await self.save_session(sid, session)
@@ -187,6 +195,11 @@ class TerminalNamespace(socketio.AsyncNamespace):
             namespace=DEVICE_NAMESPACE,
         )
         await terminal_session_service.delete(record.session_id)
+        await self.leave_room(sid, _terminal_room(record.session_id))
+        session = await self.get_session(sid)
+        if session.get("terminal_session_id") == record.session_id:
+            session["terminal_session_id"] = None
+            await self.save_session(sid, session)
         return {"success": True}
 
     async def _authorize_attached_session(
