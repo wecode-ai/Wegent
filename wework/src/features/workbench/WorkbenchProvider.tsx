@@ -57,6 +57,7 @@ import type {
   Subtask,
   Task,
   TaskDetail,
+  TaskForkRequest,
   TaskListResponse,
   TurnFileChangesSummary,
   UnifiedModel,
@@ -171,11 +172,15 @@ export interface WorkbenchServices {
   gitApi?: ReturnType<typeof createGitApi>
   taskApi: Omit<
     ReturnType<typeof createTaskApi>,
-    'searchTasks' | 'getTurnFileChangesDiff' | 'revertTurnFileChanges'
+    | 'searchTasks'
+    | 'getTurnFileChangesDiff'
+    | 'revertTurnFileChanges'
+    | 'forkTask'
   > & {
     searchTasks?: ReturnType<typeof createTaskApi>['searchTasks']
     getTurnFileChangesDiff?: ReturnType<typeof createTaskApi>['getTurnFileChangesDiff']
     revertTurnFileChanges?: ReturnType<typeof createTaskApi>['revertTurnFileChanges']
+    forkTask?: ReturnType<typeof createTaskApi>['forkTask']
   }
   deviceApi: Pick<
     ReturnType<typeof createDeviceApi>,
@@ -234,6 +239,7 @@ export interface WorkbenchContextValue {
   openTask: (taskId: number, projectId?: number) => Promise<void>
   searchTasks: (query: string) => Promise<TaskListResponse>
   searchTaskDetail: (taskId: number) => Promise<TaskDetail>
+  forkCurrentTask: (request: TaskForkRequest) => Promise<TaskDetail>
   rememberExecutionDevice: (deviceId: string) => void
   refreshWorkLists: () => Promise<void>
   refreshDevices: () => Promise<void>
@@ -1402,6 +1408,33 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     [resolvedServices]
   )
 
+  const forkCurrentTask = useCallback(
+    async (request: TaskForkRequest): Promise<TaskDetail> => {
+      if (!state.currentTask) {
+        const message = '当前没有可复制的任务'
+        dispatch({ type: 'error_set', error: message })
+        throw new Error(message)
+      }
+      if (!resolvedServices.taskApi.forkTask) {
+        const message = '当前版本不支持复制任务'
+        dispatch({ type: 'error_set', error: message })
+        throw new Error(message)
+      }
+
+      try {
+        const response = await resolvedServices.taskApi.forkTask(state.currentTask.id, request)
+        await openTask(response.task_id, response.task.project_id)
+        await refreshWorkLists()
+        return response.task
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '复制任务失败'
+        dispatch({ type: 'error_set', error: message })
+        throw error
+      }
+    },
+    [openTask, refreshWorkLists, resolvedServices.taskApi, state.currentTask]
+  )
+
   useEffect(() => {
     if (state.isBootstrapping) return
 
@@ -2324,6 +2357,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     openTask,
     searchTasks,
     searchTaskDetail,
+    forkCurrentTask,
     rememberExecutionDevice,
     refreshWorkLists,
     refreshDevices,

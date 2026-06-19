@@ -245,6 +245,25 @@ function TaskMessagesProbe() {
   )
 }
 
+function TaskForkProbe() {
+  const workbench = useWorkbench()
+
+  return (
+    <div>
+      <span data-testid="current-task-id">{workbench.state.currentTask?.id ?? 'no-task'}</span>
+      <button type="button" onClick={() => void workbench.openTask(8)}>
+        open source task
+      </button>
+      <button
+        type="button"
+        onClick={() => void workbench.forkCurrentTask({ target: { type: 'managed' } })}
+      >
+        fork to cloud
+      </button>
+    </div>
+  )
+}
+
 function DeviceListProbe() {
   const workbench = useWorkbench()
 
@@ -620,6 +639,98 @@ describe('WorkbenchProvider', () => {
     await waitFor(() => expect(getTaskDetail).toHaveBeenCalledWith(8))
     expect(await screen.findByTestId('current-task-title')).toHaveTextContent('Restored task')
     expect(joinTask).toHaveBeenCalledWith(8)
+  })
+
+  test('forks current task and opens the fork without starting execution', async () => {
+    const forkTask = vi.fn().mockResolvedValue({
+      task_id: 86,
+      task: {
+        id: 86,
+        title: 'Forked task',
+        status: 'PENDING',
+        task_type: 'code',
+        project_id: 0,
+        created_at: '2026-06-04T00:02:00.000Z',
+        subtasks: [],
+      },
+    })
+    const getTaskDetail = vi.fn(async (taskId: number) => ({
+      id: taskId,
+      title: taskId === 86 ? 'Forked task' : 'Source task',
+      status: taskId === 86 ? 'PENDING' : 'COMPLETED',
+      task_type: 'code',
+      project_id: 0,
+      created_at: '2026-06-04T00:00:00.000Z',
+      subtasks: [],
+    }))
+    const joinTask = vi.fn()
+    const sendMessage = vi.fn()
+
+    render(
+      <WorkbenchProvider
+        user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+        services={{
+          teamApi: {
+            getDefaultWorkbenchTeam: vi
+              .fn()
+              .mockResolvedValue({ id: 2, name: 'coder', is_active: true }),
+          },
+          modelApi: { listModels: vi.fn().mockResolvedValue({ data: [] }) },
+          skillApi: {
+            listSkills: vi.fn().mockResolvedValue([]),
+            getTeamSkills: vi.fn().mockResolvedValue({ skills: [], preload_skills: [] }),
+          },
+          projectApi: {
+            listProjects: vi.fn().mockResolvedValue({ items: [] }),
+            getProject: vi.fn(),
+            createProject: vi.fn(),
+            updateProject: vi.fn(),
+            deleteProject: vi.fn(),
+            archiveProjectChats: vi.fn(),
+            archiveAllProjectChats: vi.fn(),
+            createConversation: vi.fn(),
+          },
+          taskApi: {
+            listRecentTasks: vi.fn().mockResolvedValue({ total: 0, items: [] }),
+            getTaskDetail,
+            forkTask,
+            renameTask: vi.fn(),
+            archiveTask: vi.fn(),
+            archiveAllChats: vi.fn(),
+            listArchivedTasks: vi.fn(),
+            unarchiveTask: vi.fn(),
+            deleteTask: vi.fn(),
+            deleteArchivedTasks: vi.fn(),
+          },
+          deviceApi: {
+            listDevices: vi.fn().mockResolvedValue([]),
+            getHomeDirectory: vi.fn(),
+            getProjectWorkspaceRoot: vi.fn(),
+            listDirectories: vi.fn(),
+            listSkills: vi.fn().mockResolvedValue([]),
+          },
+          chatStream: {
+            joinTask,
+            leaveTask: vi.fn(),
+            sendMessage,
+            subscribe: vi.fn(() => vi.fn()),
+          },
+        }}
+      >
+        <TaskForkProbe />
+      </WorkbenchProvider>
+    )
+
+    await userEvent.click(await screen.findByText('open source task'))
+    await waitFor(() => expect(screen.getByTestId('current-task-id')).toHaveTextContent('8'))
+
+    await userEvent.click(screen.getByText('fork to cloud'))
+
+    await waitFor(() => expect(screen.getByTestId('current-task-id')).toHaveTextContent('86'))
+    expect(forkTask).toHaveBeenCalledWith(8, { target: { type: 'managed' } })
+    expect(getTaskDetail).toHaveBeenCalledWith(86)
+    expect(joinTask).toHaveBeenCalledWith(86)
+    expect(sendMessage).not.toHaveBeenCalled()
   })
 
   test('restores cached streaming content when opening a running task after refresh', async () => {
