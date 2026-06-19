@@ -22,7 +22,10 @@ import type {
 } from '@/types/device-events'
 import type { SocketClientSocket } from '@wegent/chat-core'
 
-export type WorkbenchSocket = SocketClientSocket
+export type WorkbenchSocket = SocketClientSocket & {
+  connectDevice?: (deviceId: string) => Promise<void>
+  isDeviceConnected?: (deviceId: string) => boolean
+}
 
 export interface ChatStreamHandlers {
   onChatStart?: (payload: ChatStartPayload) => void
@@ -63,20 +66,38 @@ function normalizeGuideAck(response: ChatGuideAck | undefined): ChatGuideAck {
   return { ...response, success: response.success ?? true }
 }
 
-export function createChatStream(socket: Pick<WorkbenchSocket, 'emit' | 'on' | 'off' | 'connected'>) {
+export function createChatStream(
+  socket: Pick<
+    WorkbenchSocket,
+    'emit' | 'on' | 'off' | 'connected' | 'connectDevice' | 'isDeviceConnected'
+  >
+) {
   return {
-    joinTask(taskId: number): Promise<TaskJoinResponse> {
+    connectDevice(deviceId: string): Promise<void> {
+      return socket.connectDevice?.(deviceId) ?? Promise.resolve()
+    },
+    isDeviceConnected(deviceId: string): boolean {
+      return socket.isDeviceConnected?.(deviceId) ?? socket.connected
+    },
+    joinTask(taskId: number, deviceId?: string | null): Promise<TaskJoinResponse> {
       return new Promise(resolve => {
-        socket.emit('task:join', { task_id: taskId }, (response: TaskJoinResponse) => {
-          resolve(response)
-        })
+        socket.emit(
+          'task:join',
+          {
+            task_id: taskId,
+            ...(deviceId ? { device_id: deviceId } : {}),
+          },
+          (response: unknown) => {
+            resolve((response ?? {}) as TaskJoinResponse)
+          }
+        )
       })
     },
     leaveTask(taskId: number) {
       socket.emit('task:leave', { task_id: taskId })
     },
     sendMessage(payload: ChatSendPayload): Promise<ChatSendAck> {
-      return new Promise((resolve) => {
+      return new Promise(resolve => {
         if (!socket.connected) {
           resolve({ success: false, error: '连接未建立，请刷新页面重试' })
           return
@@ -86,14 +107,14 @@ export function createChatStream(socket: Pick<WorkbenchSocket, 'emit' | 'on' | '
           resolve({ success: false, error: '发送超时，请重试' })
         }, SEND_TIMEOUT_MS)
 
-        socket.emit('chat:send', payload, (response: ChatSendAck) => {
+        socket.emit('chat:send', payload, (response: unknown) => {
           clearTimeout(timer)
-          resolve(normalizeSendAck(response))
+          resolve(normalizeSendAck(response as ChatSendAck | undefined))
         })
       })
     },
     sendGuidance(payload: ChatGuidePayload): Promise<ChatGuideAck> {
-      return new Promise((resolve) => {
+      return new Promise(resolve => {
         if (!socket.connected) {
           resolve({ success: false, error: '连接未建立，请刷新页面重试' })
           return
@@ -103,9 +124,9 @@ export function createChatStream(socket: Pick<WorkbenchSocket, 'emit' | 'on' | '
           resolve({ success: false, error: '引导发送超时，请重试' })
         }, SEND_TIMEOUT_MS)
 
-        socket.emit('chat:guide', payload, (response: ChatGuideAck) => {
+        socket.emit('chat:guide', payload, (response: unknown) => {
           clearTimeout(timer)
-          resolve(normalizeGuideAck(response))
+          resolve(normalizeGuideAck(response as ChatGuideAck | undefined))
         })
       })
     },
@@ -116,57 +137,85 @@ export function createChatStream(socket: Pick<WorkbenchSocket, 'emit' | 'on' | '
           return
         }
 
-        socket.emit('chat:cancel', payload, (response: ChatCancelAck) => {
-          if (!response) {
+        socket.emit('chat:cancel', payload, (response: unknown) => {
+          const ack = response as ChatCancelAck | undefined
+          if (!ack) {
             resolve({ success: false, error: '取消失败' })
             return
           }
           resolve({
-            ...response,
-            success: response.error ? false : response.success ?? true,
+            ...ack,
+            success: ack.error ? false : (ack.success ?? true),
           })
         })
       })
     },
     subscribe(handlers: ChatStreamHandlers): () => void {
-      if (handlers.onChatStart) socket.on('chat:start', handlers.onChatStart)
-      if (handlers.onChatChunk) socket.on('chat:chunk', handlers.onChatChunk)
-      if (handlers.onChatDone) socket.on('chat:done', handlers.onChatDone)
-      if (handlers.onChatError) socket.on('chat:error', handlers.onChatError)
-      if (handlers.onBlockCreated) socket.on('chat:block_created', handlers.onBlockCreated)
-      if (handlers.onBlockUpdated) socket.on('chat:block_updated', handlers.onBlockUpdated)
-      if (handlers.onGuidanceQueued) socket.on('chat:guidance_queued', handlers.onGuidanceQueued)
-      if (handlers.onGuidanceApplied) socket.on('chat:guidance_applied', handlers.onGuidanceApplied)
-      if (handlers.onGuidanceExpired) socket.on('chat:guidance_expired', handlers.onGuidanceExpired)
+      const onChatStart = handlers.onChatStart
+        ? (payload: unknown) => handlers.onChatStart?.(payload as ChatStartPayload)
+        : undefined
+      const onChatChunk = handlers.onChatChunk
+        ? (payload: unknown) => handlers.onChatChunk?.(payload as ChatChunkPayload)
+        : undefined
+      const onChatDone = handlers.onChatDone
+        ? (payload: unknown) => handlers.onChatDone?.(payload as ChatDonePayload)
+        : undefined
+      const onChatError = handlers.onChatError
+        ? (payload: unknown) => handlers.onChatError?.(payload as ChatErrorPayload)
+        : undefined
+      const onBlockCreated = handlers.onBlockCreated
+        ? (payload: unknown) => handlers.onBlockCreated?.(payload as ChatBlockCreatedPayload)
+        : undefined
+      const onBlockUpdated = handlers.onBlockUpdated
+        ? (payload: unknown) => handlers.onBlockUpdated?.(payload as ChatBlockUpdatedPayload)
+        : undefined
+      const onGuidanceQueued = handlers.onGuidanceQueued
+        ? (payload: unknown) => handlers.onGuidanceQueued?.(payload as ChatGuidanceQueuedPayload)
+        : undefined
+      const onGuidanceApplied = handlers.onGuidanceApplied
+        ? (payload: unknown) => handlers.onGuidanceApplied?.(payload as ChatGuidanceAppliedPayload)
+        : undefined
+      const onGuidanceExpired = handlers.onGuidanceExpired
+        ? (payload: unknown) => handlers.onGuidanceExpired?.(payload as ChatGuidanceExpiredPayload)
+        : undefined
+      const onDeviceSlotUpdate = handlers.onDeviceSlotUpdate
+        ? (payload: unknown) => handlers.onDeviceSlotUpdate?.(payload as DeviceSlotUpdatePayload)
+        : undefined
+      const onDeviceUpgradeStatus = handlers.onDeviceUpgradeStatus
+        ? (payload: unknown) =>
+            handlers.onDeviceUpgradeStatus?.(payload as DeviceUpgradeStatusPayload)
+        : undefined
+
+      if (onChatStart) socket.on('chat:start', onChatStart)
+      if (onChatChunk) socket.on('chat:chunk', onChatChunk)
+      if (onChatDone) socket.on('chat:done', onChatDone)
+      if (onChatError) socket.on('chat:error', onChatError)
+      if (onBlockCreated) socket.on('chat:block_created', onBlockCreated)
+      if (onBlockUpdated) socket.on('chat:block_updated', onBlockUpdated)
+      if (onGuidanceQueued) socket.on('chat:guidance_queued', onGuidanceQueued)
+      if (onGuidanceApplied) socket.on('chat:guidance_applied', onGuidanceApplied)
+      if (onGuidanceExpired) socket.on('chat:guidance_expired', onGuidanceExpired)
       if (handlers.onDeviceOnline) socket.on('device:online', handlers.onDeviceOnline)
       if (handlers.onDeviceOffline) socket.on('device:offline', handlers.onDeviceOffline)
       if (handlers.onDeviceStatus) socket.on('device:status', handlers.onDeviceStatus)
-      if (handlers.onDeviceSlotUpdate) {
-        socket.on('device:slot_update', handlers.onDeviceSlotUpdate)
-      }
-      if (handlers.onDeviceUpgradeStatus) {
-        socket.on('device:upgrade_status', handlers.onDeviceUpgradeStatus)
-      }
+      if (onDeviceSlotUpdate) socket.on('device:slot_update', onDeviceSlotUpdate)
+      if (onDeviceUpgradeStatus) socket.on('device:upgrade_status', onDeviceUpgradeStatus)
 
       return () => {
-        if (handlers.onChatStart) socket.off('chat:start', handlers.onChatStart)
-        if (handlers.onChatChunk) socket.off('chat:chunk', handlers.onChatChunk)
-        if (handlers.onChatDone) socket.off('chat:done', handlers.onChatDone)
-        if (handlers.onChatError) socket.off('chat:error', handlers.onChatError)
-        if (handlers.onBlockCreated) socket.off('chat:block_created', handlers.onBlockCreated)
-        if (handlers.onBlockUpdated) socket.off('chat:block_updated', handlers.onBlockUpdated)
-        if (handlers.onGuidanceQueued) socket.off('chat:guidance_queued', handlers.onGuidanceQueued)
-        if (handlers.onGuidanceApplied) socket.off('chat:guidance_applied', handlers.onGuidanceApplied)
-        if (handlers.onGuidanceExpired) socket.off('chat:guidance_expired', handlers.onGuidanceExpired)
+        if (onChatStart) socket.off('chat:start', onChatStart)
+        if (onChatChunk) socket.off('chat:chunk', onChatChunk)
+        if (onChatDone) socket.off('chat:done', onChatDone)
+        if (onChatError) socket.off('chat:error', onChatError)
+        if (onBlockCreated) socket.off('chat:block_created', onBlockCreated)
+        if (onBlockUpdated) socket.off('chat:block_updated', onBlockUpdated)
+        if (onGuidanceQueued) socket.off('chat:guidance_queued', onGuidanceQueued)
+        if (onGuidanceApplied) socket.off('chat:guidance_applied', onGuidanceApplied)
+        if (onGuidanceExpired) socket.off('chat:guidance_expired', onGuidanceExpired)
         if (handlers.onDeviceOnline) socket.off('device:online', handlers.onDeviceOnline)
         if (handlers.onDeviceOffline) socket.off('device:offline', handlers.onDeviceOffline)
         if (handlers.onDeviceStatus) socket.off('device:status', handlers.onDeviceStatus)
-        if (handlers.onDeviceSlotUpdate) {
-          socket.off('device:slot_update', handlers.onDeviceSlotUpdate)
-        }
-        if (handlers.onDeviceUpgradeStatus) {
-          socket.off('device:upgrade_status', handlers.onDeviceUpgradeStatus)
-        }
+        if (onDeviceSlotUpdate) socket.off('device:slot_update', onDeviceSlotUpdate)
+        if (onDeviceUpgradeStatus) socket.off('device:upgrade_status', onDeviceUpgradeStatus)
       }
     },
   }

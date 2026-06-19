@@ -43,6 +43,8 @@ Wegent is an open-source AI-native operating system for defining, organizing, an
 - English version: [`docs/en/developer-guide/sandbox-workspace-archive.md`](docs/en/developer-guide/sandbox-workspace-archive.md)
 - Shared skill directory (unify Claude and Codex local skills under `~/.agents/skills`): [`docs/zh/developer-guide/shared-skill-directory.md`](docs/zh/developer-guide/shared-skill-directory.md)
 - English version: [`docs/en/developer-guide/shared-skill-directory.md`](docs/en/developer-guide/shared-skill-directory.md)
+- Wework direct chat (desktop-to-executor direct streaming): [`docs/zh/developer-guide/wework-direct-chat.md`](docs/zh/developer-guide/wework-direct-chat.md)
+- English version: [`docs/en/developer-guide/wework-direct-chat.md`](docs/en/developer-guide/wework-direct-chat.md)
 
 **📚 Documentation Writing Rules:**
 - All documentation files MUST include frontmatter with `sidebar_position` for ordering:

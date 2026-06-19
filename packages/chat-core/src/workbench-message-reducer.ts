@@ -51,6 +51,7 @@ export interface WorkbenchMessage<TAttachment = unknown, TFileChanges = unknown>
   blocks?: WorkbenchProcessingBlock[]
   fileChanges?: TFileChanges
   createdAt: string
+  completedAt?: string
 }
 
 type ProcessingBlockUpdate = {
@@ -63,13 +64,20 @@ type ProcessingBlockUpdate = {
 export type WorkbenchMessageAction<TAttachment = unknown, TFileChanges = unknown> =
   | { type: 'reset'; messages: WorkbenchMessage<TAttachment, TFileChanges>[] }
   | { type: 'user_added'; message: WorkbenchMessage<TAttachment, TFileChanges> }
-  | { type: 'assistant_started'; taskId?: number; subtaskId: number; shellType?: string }
+  | {
+      type: 'assistant_started'
+      taskId?: number
+      subtaskId: number
+      shellType?: string
+      createdAt: string
+    }
   | {
       type: 'assistant_cached'
       taskId?: number
       subtaskId: number
       content: string
       blocks?: WorkbenchProcessingBlock[]
+      createdAt: string
     }
   | {
       type: 'assistant_chunk'
@@ -84,6 +92,7 @@ export type WorkbenchMessageAction<TAttachment = unknown, TFileChanges = unknown
       content?: string
       blocks?: WorkbenchProcessingBlock[]
       fileChanges?: TFileChanges
+      completedAt?: string
     }
   | {
       type: 'file_changes_updated'
@@ -112,10 +121,12 @@ export function reduceWorkbenchMessages<TAttachment = unknown, TFileChanges = un
                 taskId: action.taskId ?? message.taskId,
                 shellType: action.shellType ?? message.shellType,
                 status: 'streaming' as const,
+                createdAt: action.createdAt ?? message.createdAt,
               }
             : message
         )
       }
+      if (!action.createdAt) return state
       return [
         ...state,
         {
@@ -127,7 +138,7 @@ export function reduceWorkbenchMessages<TAttachment = unknown, TFileChanges = un
           content: '',
           status: 'streaming',
           blocks: [],
-          createdAt: new Date().toISOString(),
+          createdAt: action.createdAt,
         },
       ]
     case 'assistant_cached':
@@ -144,6 +155,7 @@ export function reduceWorkbenchMessages<TAttachment = unknown, TFileChanges = un
             : message
         )
       }
+      if (!action.createdAt) return state
       return [
         ...state,
         {
@@ -154,7 +166,7 @@ export function reduceWorkbenchMessages<TAttachment = unknown, TFileChanges = un
           content: action.content,
           status: 'streaming',
           blocks: action.blocks ?? [],
-          createdAt: new Date().toISOString(),
+          createdAt: action.createdAt,
         },
       ]
     case 'assistant_chunk':
@@ -177,6 +189,7 @@ export function reduceWorkbenchMessages<TAttachment = unknown, TFileChanges = un
               status: 'done' as const,
               blocks: finalizeProcessingBlocks(action.blocks ?? message.blocks, 'done'),
               fileChanges: action.fileChanges ?? message.fileChanges,
+              completedAt: action.completedAt ?? message.completedAt,
             }
           : message
       )
@@ -304,8 +317,12 @@ function getChunkBlocks<TAttachment, TFileChanges>(
     action.reasoningChunk
   )
 
-  if (!action.blocks) return withReasoning
-  return action.blocks.reduce(mergeProcessingBlock, withReasoning ?? [])
+  const withIncomingBlocks = action.blocks
+    ? action.blocks.reduce(mergeProcessingBlock, withReasoning ?? [])
+    : withReasoning
+
+  if (!action.content) return withIncomingBlocks
+  return finalizeStreamingThinkingBlocks(withIncomingBlocks)
 }
 
 function appendThinkingChunk(
@@ -384,6 +401,24 @@ function finalizeOpenNarrativeBlocks(
 
     return block
   })
+}
+
+function finalizeStreamingThinkingBlocks(
+  blocks: WorkbenchProcessingBlock[] | undefined
+): WorkbenchProcessingBlock[] | undefined {
+  if (!blocks) return undefined
+
+  let changed = false
+  const finalized = blocks.map(block => {
+    if (block.type === 'thinking' && block.status === 'streaming') {
+      changed = true
+      return { ...block, status: 'done' as const }
+    }
+
+    return block
+  })
+
+  return changed ? finalized : blocks
 }
 
 function finalizeBlocks(

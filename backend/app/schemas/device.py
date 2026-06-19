@@ -58,6 +58,19 @@ class DeviceConnectionMode(str, Enum):
 MAX_DEVICE_SLOTS = 0
 
 
+class DirectChatCapability(BaseModel):
+    """Executor-provided direct chat endpoint information."""
+
+    enabled: bool = Field(True, description="Whether direct chat is available")
+    transport: Literal["socket.io"] = Field(
+        "socket.io", description="Direct chat transport protocol"
+    )
+    base_url: str = Field(..., description="Browser-reachable executor base URL")
+    socket_path: str = Field("/socket.io", description="Socket.IO engine path")
+    namespace: str = Field("/wework-chat", description="Socket.IO namespace")
+    version: int = Field(1, description="Direct chat protocol version")
+
+
 class DeviceRunningTask(BaseModel):
     """Information about a task running on a device."""
 
@@ -112,6 +125,9 @@ class DeviceInfo(BaseModel):
     bind_shell: BindShell = Field(
         BindShell.CLAUDECODE,
         description="Shell runtime binding (claudecode or openclaw)",
+    )
+    direct_chat: Optional[DirectChatCapability] = Field(
+        None, description="Direct chat connection capability"
     )
 
     class Config:
@@ -277,6 +293,9 @@ class DeviceRegisterPayload(BaseModel):
     bind_shell: BindShell = Field(
         BindShell.CLAUDECODE,
         description="Shell runtime binding (claudecode or openclaw)",
+    )
+    direct_chat: Optional[DirectChatCapability] = Field(
+        None, description="Direct chat connection capability"
     )
 
 

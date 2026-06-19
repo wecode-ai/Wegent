@@ -67,6 +67,7 @@ export type WorkbenchAction =
       selection: ModelSelectionConfig
     }
   | { type: 'current_task_cleared' }
+  | { type: 'device_connection_changed'; deviceId: string; status: DeviceInfo['status'] }
   | { type: 'input_changed'; input: string }
   | { type: 'sending_started' }
   | { type: 'sending_finished' }
@@ -86,10 +87,7 @@ function collectProjectTaskIds(projects: ProjectWithTasks[]): Set<number> {
   return ids
 }
 
-function removeTaskFromProjects(
-  projects: ProjectWithTasks[],
-  taskId: number
-): ProjectWithTasks[] {
+function removeTaskFromProjects(projects: ProjectWithTasks[], taskId: number): ProjectWithTasks[] {
   return projects.map(project => {
     if (!project.tasks?.some(task => task.task_id === taskId)) return project
     return {
@@ -108,16 +106,14 @@ function removeTaskFromProjects(
 function normalizeListExclusivity(state: WorkbenchState): WorkbenchState {
   const projectTaskIds = collectProjectTaskIds(state.projects)
   if (projectTaskIds.size === 0) return state
-  const dedupedRecentTasks = state.recentTasks.filter(
-    task => !projectTaskIds.has(task.id)
-  )
+  const dedupedRecentTasks = state.recentTasks.filter(task => !projectTaskIds.has(task.id))
   if (dedupedRecentTasks.length === state.recentTasks.length) return state
   return { ...state, recentTasks: dedupedRecentTasks }
 }
 
 function keepDevicesOnTransientEmpty(
   currentDevices: DeviceInfo[],
-  nextDevices: DeviceInfo[],
+  nextDevices: DeviceInfo[]
 ): DeviceInfo[] {
   if (nextDevices.length > 0) return nextDevices
   if (currentDevices.length > 0) return currentDevices
@@ -193,19 +189,17 @@ function workListsIncludeTask(
   task: Task
 ): boolean {
   if (taskBelongsToProject(task)) {
-    return projects.some(project =>
-      project.id === task.project_id &&
-      (project.tasks ?? []).some(projectTask => projectTask.task_id === task.id)
+    return projects.some(
+      project =>
+        project.id === task.project_id &&
+        (project.tasks ?? []).some(projectTask => projectTask.task_id === task.id)
     )
   }
 
   return recentTasks.some(recentTask => recentTask.id === task.id)
 }
 
-export function workbenchReducer(
-  state: WorkbenchState,
-  action: WorkbenchAction
-): WorkbenchState {
+export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction): WorkbenchState {
   switch (action.type) {
     case 'bootstrapped':
       return normalizeListExclusivity({
@@ -216,9 +210,7 @@ export function workbenchReducer(
         devices: keepDevicesOnTransientEmpty(state.devices, action.devices),
         recentTasks: action.recentTasks,
         currentProject:
-          action.currentProject === undefined
-            ? state.currentProject
-            : action.currentProject,
+          action.currentProject === undefined ? state.currentProject : action.currentProject,
         standaloneDeviceId:
           action.standaloneDeviceId === undefined
             ? state.standaloneDeviceId
@@ -233,7 +225,7 @@ export function workbenchReducer(
         devices: keepDevicesOnTransientEmpty(state.devices, action.devices),
         recentTasks: action.recentTasks,
         currentProject: state.currentProject
-          ? action.projects.find(project => project.id === state.currentProject?.id) ?? null
+          ? (action.projects.find(project => project.id === state.currentProject?.id) ?? null)
           : null,
         standaloneDeviceId:
           action.standaloneDeviceId === undefined
@@ -244,9 +236,7 @@ export function workbenchReducer(
         state.currentTask &&
         !workListsIncludeTask(action.projects, action.recentTasks, state.currentTask)
       ) {
-        return normalizeListExclusivity(
-          upsertOpenedTask(refreshedState, state.currentTask)
-        )
+        return normalizeListExclusivity(upsertOpenedTask(refreshedState, state.currentTask))
       }
       return normalizeListExclusivity(refreshedState)
     }
@@ -267,9 +257,7 @@ export function workbenchReducer(
       return {
         ...state,
         currentProject:
-          state.currentProject?.id === action.project.id
-            ? action.project
-            : state.currentProject,
+          state.currentProject?.id === action.project.id ? action.project : state.currentProject,
         projects: state.projects.map(project =>
           project.id === action.project.id ? action.project : project
         ),
@@ -299,20 +287,18 @@ export function workbenchReducer(
         ...state,
         standaloneDeviceId: action.standaloneDeviceId,
       }
-    case 'task_opened':
-      {
-        const openedTask = normalizeOpenedTaskProject(action.task, action.project)
-        return {
-          ...upsertOpenedTask(state, openedTask),
-          currentProject:
-            action.project === undefined ? state.currentProject : action.project,
-          standaloneDeviceId:
-            action.project === null
-              ? action.standaloneDeviceId ?? openedTask.device_id ?? state.standaloneDeviceId
-              : state.standaloneDeviceId,
-          currentTask: openedTask,
-        }
+    case 'task_opened': {
+      const openedTask = normalizeOpenedTaskProject(action.task, action.project)
+      return {
+        ...upsertOpenedTask(state, openedTask),
+        currentProject: action.project === undefined ? state.currentProject : action.project,
+        standaloneDeviceId:
+          action.project === null
+            ? (action.standaloneDeviceId ?? openedTask.device_id ?? state.standaloneDeviceId)
+            : state.standaloneDeviceId,
+        currentTask: openedTask,
       }
+    }
     case 'task_upserted':
       return upsertOpenedTask(
         state,
@@ -348,6 +334,13 @@ export function workbenchReducer(
               model_options: action.selection.options ?? {},
             }
           : state.currentTask,
+      }
+    case 'device_connection_changed':
+      return {
+        ...state,
+        devices: state.devices.map(device =>
+          device.device_id === action.deviceId ? { ...device, status: action.status } : device
+        ),
       }
     case 'current_task_cleared':
       return { ...state, currentTask: null }

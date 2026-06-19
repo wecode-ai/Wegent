@@ -11,7 +11,7 @@ import signal
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import Any, Callable, Literal, Optional
 from urllib.parse import parse_qsl, urlencode
 
 from aiohttp import ClientSession, CookieJar, WSMsgType, web
@@ -62,10 +62,12 @@ class SessionGateway:
         sessions: dict[str, LocalSession],
         host: str = DEFAULT_GATEWAY_HOST,
         port: int = DEFAULT_GATEWAY_PORT,
+        app_configurators: Optional[list[Callable[[web.Application], None]]] = None,
     ):
         self.sessions = sessions
         self.host = host
         self.port = port
+        self.app_configurators = app_configurators or []
         self._runner: Optional[web.AppRunner] = None
         self._client_session: Optional[ClientSession] = None
 
@@ -75,6 +77,8 @@ class SessionGateway:
             return
 
         app = web.Application()
+        for configure_app in self.app_configurators:
+            configure_app(app)
         app.router.add_route("*", "/{tail:.*}", self._handle_request)
         self._client_session = ClientSession(cookie_jar=CookieJar(unsafe=True))
         self._runner = web.AppRunner(app)
@@ -453,6 +457,7 @@ class LocalSessionHandler:
         gateway_port: Optional[int] = None,
         gateway_enabled: Optional[bool] = None,
         terminal_event_emitter: Optional[Any] = None,
+        app_configurators: Optional[list[Callable[[web.Application], None]]] = None,
     ):
         self.gateway_enabled = (
             _env_bool("DEVICE_SESSION_GATEWAY_ENABLED", DEFAULT_GATEWAY_ENABLED)
@@ -479,6 +484,7 @@ class LocalSessionHandler:
                 self.sessions,
                 host=self.gateway_host,
                 port=self.gateway_port,
+                app_configurators=app_configurators,
             )
             if self.gateway_enabled
             else None

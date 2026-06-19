@@ -491,6 +491,7 @@ export interface ChatStartPayload {
   bot_name?: string
   shell_type?: string
   message_id?: number
+  started_at: string
 }
 
 export type ChatResultPayload = Record<string, unknown> & {
@@ -515,6 +516,7 @@ export interface ChatDonePayload {
   offset: number
   result: ChatResultPayload
   message_id?: number
+  completed_at: string
 }
 
 export interface ChatErrorPayload {
@@ -530,6 +532,7 @@ export interface TaskJoinResponse {
     subtask_id: number
     offset: number
     cached_content: string
+    started_at: string
     blocks?: ChatBlock[]
   }
   subtasks?: Array<Record<string, unknown>>

@@ -305,6 +305,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
             "update_available": update_available,
             "client_ip": spec.get("clientIp"),
             "bind_shell": spec.get("bindShell", "claudecode"),
+            "direct_chat": spec.get("directChat"),
         }
 
     async def _get_online_info(
@@ -437,6 +438,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
                     "update_available": update_available,
                     "client_ip": spec.get("clientIp"),
                     "bind_shell": spec.get("bindShell", "claudecode"),
+                    "direct_chat": spec.get("directChat"),
                 }
             )
 

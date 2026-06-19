@@ -187,6 +187,7 @@ def _register_device(
     client_ip: Optional[str] = None,
     device_type: Optional[str] = None,
     bind_shell: Optional[str] = None,
+    direct_chat: Optional[dict] = None,
 ) -> tuple[bool, Optional[str], Optional[str]]:
     """
     Register or update device CRD in database.
@@ -198,6 +199,7 @@ def _register_device(
         client_ip: Device's client IP address
         device_type: Device type ('local' or 'cloud')
         bind_shell: Shell runtime binding ('claudecode' or 'openclaw')
+        direct_chat: Direct chat endpoint/capability reported by executor.
 
     Returns (success, persisted_display_name, error_message).
     """
@@ -211,6 +213,7 @@ def _register_device(
                 client_ip=client_ip,
                 device_type=device_type,
                 bind_shell=bind_shell,
+                direct_chat=direct_chat,
             )
             persisted_display_name = (
                 device_kind.json.get("spec", {}).get("displayName") or name
@@ -377,6 +380,92 @@ def _update_cloud_device_id_sync(
         )
 
     return sandbox_id
+
+
+def _update_cloud_device_registration_sync(
+    user_id: int,
+    executor_device_id: str,
+    name: str,
+    client_ip: Optional[str],
+    bind_shell: Optional[str],
+    direct_chat: Optional[dict],
+) -> Optional[str]:
+    """Update runtime registration fields on a matched cloud Device CRD."""
+    import copy
+
+    from sqlalchemy import and_
+    from sqlalchemy.orm.attributes import flag_modified
+
+    from app.models.kind import Kind
+    from app.schemas.device import DeviceType
+    from app.services.device.display_name import (
+        resolve_device_display_name,
+        set_device_display_name,
+    )
+
+    with get_db_session() as db:
+        devices = (
+            db.query(Kind)
+            .filter(
+                and_(
+                    Kind.user_id == user_id,
+                    Kind.kind == "Device",
+                    Kind.namespace == "default",
+                    Kind.is_active == True,
+                )
+            )
+            .all()
+        )
+        for device in devices:
+            device_json = device.json or {}
+            spec = device_json.get("spec", {})
+            cloud_config = spec.get("cloudConfig", {})
+            if spec.get("deviceType") != DeviceType.CLOUD.value:
+                continue
+            if executor_device_id not in {
+                device.name,
+                spec.get("deviceId"),
+                cloud_config.get("deviceId"),
+            }:
+                continue
+
+            next_json = copy.deepcopy(device_json)
+            next_spec = next_json.setdefault("spec", {})
+            persisted_display_name = resolve_device_display_name(next_json, name)
+            set_device_display_name(next_json, persisted_display_name)
+            next_spec["deviceId"] = executor_device_id
+            next_spec["deviceType"] = DeviceType.CLOUD.value
+            next_spec["connectionMode"] = "websocket"
+            if client_ip is not None:
+                next_spec["clientIp"] = client_ip
+            if bind_shell is not None:
+                next_spec["bindShell"] = bind_shell
+            if direct_chat is not None:
+                next_spec["directChat"] = direct_chat
+            if isinstance(next_spec.get("cloudConfig"), dict):
+                next_spec["cloudConfig"]["deviceId"] = executor_device_id
+
+            device.json = next_json
+            flag_modified(device, "json")
+            device.updated_at = datetime.now()
+            db.add(device)
+            db.commit()
+            logger.info(
+                "[Device WS] Updated matched cloud device registration: "
+                "user_id=%s device_id=%s direct_chat=%s",
+                user_id,
+                executor_device_id,
+                bool(direct_chat),
+            )
+            return persisted_display_name
+
+    logger.warning(
+        "[Device WS] Matched cloud device CRD not found for registration update: "
+        "user_id=%s device_id=%s",
+        user_id,
+        executor_device_id,
+    )
+    return None
 
 
 def _verify_api_key_sync(token: str) -> Optional[tuple[int, str]]:
@@ -966,6 +1055,11 @@ class DeviceNamespace(socketio.AsyncNamespace):
                     payload.client_ip,
                     payload.device_type.value,
                     payload.bind_shell.value,
+                    (
+                        payload.direct_chat.model_dump(mode="json")
+                        if payload.direct_chat
+                        else None
+                    ),
                 )
                 if not success:
                     return {"error": f"Registration failed: {error}"}
@@ -973,7 +1067,19 @@ class DeviceNamespace(socketio.AsyncNamespace):
                     user_id, payload.device_id, persisted_display_name or payload.name
                 )
         else:
-            persisted_display_name = payload.name
+            persisted_display_name = await run_sync_in_executor(
+                _update_cloud_device_registration_sync,
+                user_id,
+                payload.device_id,
+                payload.name,
+                payload.client_ip,
+                payload.bind_shell.value,
+                (
+                    payload.direct_chat.model_dump(mode="json")
+                    if payload.direct_chat
+                    else None
+                ),
+            )
 
         effective_device_name = persisted_display_name or payload.name
 

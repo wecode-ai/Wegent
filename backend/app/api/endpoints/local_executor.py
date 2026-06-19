@@ -16,15 +16,55 @@ from app.schemas.device import (
     DeviceCapabilitySyncRequest,
     DeviceCapabilitySyncResponse,
 )
+from app.schemas.direct_chat import (
+    DirectChatConnectionResponse,
+    DirectChatTurnPrepareRequest,
+    DirectChatTurnPrepareResponse,
+)
 from app.services.device.capability_sync_service import (
     DeviceCapabilityResolutionError,
     DeviceCapabilitySyncError,
     device_capability_sync_service,
 )
+from app.services.direct_chat_service import direct_chat_service
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["local-executor"])
+
+
+@router.post(
+    "/devices/{device_id}/direct-chat/connections",
+    response_model=DirectChatConnectionResponse,
+)
+async def create_direct_chat_connection(
+    device_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+) -> DirectChatConnectionResponse:
+    """Authorize Wework to open a direct Socket.IO connection to one executor."""
+    return await direct_chat_service.create_connection(
+        db=db,
+        user=current_user,
+        device_id=device_id,
+    )
+
+
+@router.post(
+    "/direct-chat/turns/prepare",
+    response_model=DirectChatTurnPrepareResponse,
+)
+async def prepare_direct_chat_turn(
+    request: DirectChatTurnPrepareRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+) -> DirectChatTurnPrepareResponse:
+    """Persist a Wework direct-chat turn and return executor context."""
+    return await direct_chat_service.prepare_turn(
+        db=db,
+        user=current_user,
+        request=request,
+    )
 
 
 @router.post(

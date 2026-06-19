@@ -74,8 +74,9 @@ export function MessageList({
   )
 }
 
-function getTurnStartMs(createdAt: string): number | undefined {
-  const ms = new Date(createdAt).getTime()
+function getMessageTimeMs(value?: string): number | undefined {
+  if (!value) return undefined
+  const ms = new Date(value).getTime()
   return Number.isFinite(ms) ? ms : undefined
 }
 
@@ -379,14 +380,17 @@ function AssistantMessage({
   const hasVisibleContent = Boolean(visibleContent.trim())
   const isStreaming = message.status === 'streaming'
   const isThinking = isStreaming && !hasVisibleContent && !hasBlocks
+  const shouldShowProcessing = hasBlocks || isThinking
 
   return (
     <div className="group min-w-0 overflow-x-hidden text-[13px] leading-6 text-text-primary">
-      {hasBlocks && (
+      {shouldShowProcessing && (
         <ToolBlocksDisplay
           blocks={displayBlocks}
           isStreaming={isStreaming}
-          startedAt={getTurnStartMs(message.createdAt)}
+          showThinkingIndicator={!hasVisibleContent}
+          startedAt={getMessageTimeMs(message.createdAt)}
+          endedAt={getMessageTimeMs(message.completedAt)}
           onOpenWorkspaceFile={onOpenWorkspaceFile}
         />
       )}
@@ -456,10 +460,6 @@ function AssistantMessage({
             {visibleContent}
           </ReactMarkdown>
         </div>
-      )}
-      {isThinking && <span className="text-text-muted">正在思考</span>}
-      {isStreaming && hasVisibleContent && !hasBlocks && (
-        <span className="text-text-muted">正在思考</span>
       )}
       {message.status === 'failed' && message.error && (
         <AssistantErrorCard

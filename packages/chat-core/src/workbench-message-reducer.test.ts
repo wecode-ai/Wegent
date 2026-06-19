@@ -5,6 +5,9 @@ import {
   type WorkbenchMessage,
 } from './index'
 
+const STREAM_STARTED_AT = '2026-06-04T00:00:01.000Z'
+const STREAM_COMPLETED_AT = '2026-06-04T00:00:48.000Z'
+
 describe('reduceWorkbenchMessages', () => {
   test('adds user message and streams assistant chunks into one message', () => {
     const initial: WorkbenchMessage[] = []
@@ -23,6 +26,7 @@ describe('reduceWorkbenchMessages', () => {
       taskId: 1,
       subtaskId: 9,
       shellType: 'ClaudeCode',
+      createdAt: STREAM_STARTED_AT,
     })
     const withChunk = reduceWorkbenchMessages(withStart, {
       type: 'assistant_chunk',
@@ -40,12 +44,46 @@ describe('reduceWorkbenchMessages', () => {
     })
   })
 
+  test('uses recovered stream start time for cached assistant messages', () => {
+    const state = reduceWorkbenchMessages([], {
+      type: 'assistant_cached',
+      taskId: 1,
+      subtaskId: 9,
+      content: 'Recovered content',
+      createdAt: '2026-06-04T00:00:01.000Z',
+    })
+
+    expect(state[0]).toMatchObject({
+      id: 'assistant-9',
+      role: 'assistant',
+      content: 'Recovered content',
+      status: 'streaming',
+      createdAt: '2026-06-04T00:00:01.000Z',
+    })
+  })
+
+  test('uses explicit stream start time for assistant start events', () => {
+    const state = reduceWorkbenchMessages([], {
+      type: 'assistant_started',
+      taskId: 1,
+      subtaskId: 9,
+      createdAt: '2026-06-04T00:00:01.000Z',
+    })
+
+    expect(state[0]).toMatchObject({
+      id: 'assistant-9',
+      status: 'streaming',
+      createdAt: '2026-06-04T00:00:01.000Z',
+    })
+  })
+
   test('finalizes thinking blocks when a tool block is created', () => {
     const state = reduceWorkbenchMessages(
       reduceWorkbenchMessages([], {
         type: 'assistant_started',
         taskId: 1,
         subtaskId: 9,
+        createdAt: STREAM_STARTED_AT,
       }),
       {
         type: 'assistant_chunk',
@@ -75,12 +113,42 @@ describe('reduceWorkbenchMessages', () => {
     ])
   })
 
+  test('finalizes thinking blocks when assistant content starts streaming', () => {
+    const state = reduceWorkbenchMessages(
+      reduceWorkbenchMessages([], {
+        type: 'assistant_started',
+        taskId: 1,
+        subtaskId: 9,
+        createdAt: STREAM_STARTED_AT,
+      }),
+      {
+        type: 'assistant_chunk',
+        subtaskId: 9,
+        content: '',
+        reasoningChunk: 'Draft the answer plan.',
+      }
+    )
+
+    const withContent = reduceWorkbenchMessages(state, {
+      type: 'assistant_chunk',
+      subtaskId: 9,
+      content: 'Final answer starts here.',
+    })
+
+    expect(withContent[0]).toMatchObject({
+      content: 'Final answer starts here.',
+      status: 'streaming',
+      blocks: [{ type: 'thinking', content: 'Draft the answer plan.', status: 'done' }],
+    })
+  })
+
   test('moves streamed content into a text block before a tool block', () => {
     const state = reduceWorkbenchMessages(
       reduceWorkbenchMessages([], {
         type: 'assistant_started',
         taskId: 1,
         subtaskId: 9,
+        createdAt: STREAM_STARTED_AT,
       }),
       {
         type: 'assistant_chunk',
@@ -119,12 +187,14 @@ describe('reduceWorkbenchMessages', () => {
       type: 'assistant_started',
       taskId: 1,
       subtaskId: 9,
+      createdAt: STREAM_STARTED_AT,
     })
 
     const done = reduceWorkbenchMessages(state, {
       type: 'assistant_done',
       subtaskId: 9,
       content: 'Final',
+      completedAt: STREAM_COMPLETED_AT,
       blocks: [
         {
           id: 'thinking-real',
@@ -160,12 +230,33 @@ describe('reduceWorkbenchMessages', () => {
     ])
   })
 
+  test('stores explicit assistant completion time on done', () => {
+    const state = reduceWorkbenchMessages([], {
+      type: 'assistant_started',
+      taskId: 1,
+      subtaskId: 9,
+      createdAt: STREAM_STARTED_AT,
+    })
+
+    const done = reduceWorkbenchMessages(state, {
+      type: 'assistant_done',
+      subtaskId: 9,
+      completedAt: '2026-06-04T00:00:48.000Z',
+    })
+
+    expect(done[0]).toMatchObject({
+      status: 'done',
+      completedAt: '2026-06-04T00:00:48.000Z',
+    })
+  })
+
   test('clears stale stream error when an active block update arrives after disconnect', () => {
     const state = reduceWorkbenchMessages(
       reduceWorkbenchMessages([], {
         type: 'assistant_started',
         taskId: 1,
         subtaskId: 9,
+        createdAt: STREAM_STARTED_AT,
       }),
       {
         type: 'assistant_error',

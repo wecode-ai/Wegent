@@ -28,6 +28,7 @@ from executor.config import config
 from executor.config.device_config import DeviceConfig
 from executor.modes.local.capabilities import CapabilitySyncHandler
 from executor.modes.local.command_handler import CommandHandler
+from executor.modes.local.direct_chat import DirectChatServer
 from executor.modes.local.events import ChatEvents, DeviceEvents, TaskEvents
 from executor.modes.local.extension_handler import DeviceExtensionHandler
 from executor.modes.local.handlers import TaskHandler, UpgradeHandler
@@ -87,8 +88,10 @@ class LocalRunner:
             auth_token=self.websocket_client.auth_token,
             reporter=self.websocket_client.capability_reporter,
         )
+        self.direct_chat_server = DirectChatServer(self)
         self.session_handler = LocalSessionHandler(
-            terminal_event_emitter=self.websocket_client.emit
+            terminal_event_emitter=self.websocket_client.emit,
+            app_configurators=[self.direct_chat_server.attach],
         )
         self.upgrade_handler = UpgradeHandler(self)
         self.extension_handler = DeviceExtensionHandler(self)
@@ -98,6 +101,7 @@ class LocalRunner:
 
         # Running tasks tracking (task_id -> RunningTaskInfo)
         self._running_tasks: Dict[int, RunningTaskInfo] = {}
+        self._direct_task_transports: Dict[int, Any] = {}
         self._pending_cancel_task_ids: set[int] = set()
         self._pending_cancel_subtask_ids: set[int] = set()
 
@@ -162,6 +166,11 @@ class LocalRunner:
 
         try:
             await self.session_handler.start_gateway()
+            self.websocket_client.direct_chat_endpoint = (
+                self.direct_chat_server.build_registration_payload(
+                    self.session_handler.public_base_url
+                )
+            )
 
             # Register WebSocket event handlers
             self._register_handlers()
@@ -286,6 +295,10 @@ class LocalRunner:
             DeviceEvents.TERMINAL_CLOSE,
             self.session_handler.handle_terminal_close,
         )
+        self.websocket_client.on(
+            "direct_chat:authorize_connection",
+            self.direct_chat_server.handle_authorize_connection,
+        )
 
         # Upgrade handler
         self.websocket_client.on(
@@ -322,6 +335,15 @@ class LocalRunner:
 
         logger.info(f"Enqueuing task: task_id={task_id}")
         await self.task_queue.put(task_data)
+
+    async def enqueue_direct_task(
+        self,
+        task_data: ExecutionRequest,
+        transport: Any,
+    ) -> None:
+        """Add a direct-chat task to the execution queue."""
+        self._direct_task_transports[task_data.task_id] = transport
+        await self.enqueue_task(task_data)
 
     async def cancel_task(self, task_id: int, subtask_id: Optional[int] = None) -> None:
         """Cancel a running task.
@@ -516,6 +538,7 @@ class LocalRunner:
                 )
         finally:
             self._running_tasks.pop(task_id, None)
+            self._direct_task_transports.pop(task_id, None)
 
     async def _on_client_created(self, task_id: int) -> None:
         """Callback for when a code-agent client is created."""
@@ -560,16 +583,18 @@ class LocalRunner:
         """
         from shared.models import EmitterBuilder, WebSocketTransport
 
-        # Create WebSocket transport for local mode
-        # No event_mapping - use original OpenAI Responses API event types as Socket.IO event names
-        # This allows backend's DeviceNamespace to route events correctly to _handle_responses_api_event
-        ws_transport = WebSocketTransport(self.websocket_client)
+        transport = self._direct_task_transports.get(task_id)
+        if transport is None:
+            # Create WebSocket transport for local mode.
+            # No event_mapping: backend DeviceNamespace consumes original Responses
+            # API event names and maps them to frontend chat events.
+            transport = WebSocketTransport(self.websocket_client)
 
         # Create WebSocket emitter for local mode
         return (
             EmitterBuilder()
             .with_task(task_id, subtask_id)
-            .with_transport(ws_transport)
+            .with_transport(transport)
             .build()
         )
 

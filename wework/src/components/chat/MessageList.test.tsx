@@ -549,10 +549,36 @@ describe('MessageList', () => {
 
     expect(screen.queryByTestId('message-hover-time')).not.toBeInTheDocument()
     expect(screen.queryByTestId('copy-message-button')).not.toBeInTheDocument()
-    expect(screen.getByText('正在思考')).toBeInTheDocument()
+    expect(screen.queryByText('正在思考')).not.toBeInTheDocument()
   })
 
-  test('shows a single thinking indicator for streaming assistant messages with blocks', () => {
+  test('shows the processing timer before assistant content or blocks arrive', () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2026-05-25T18:46:02.000+08:00'))
+
+      render(
+        <MessageList
+          messages={[
+            {
+              id: '2',
+              role: 'assistant',
+              content: '',
+              status: 'streaming',
+              createdAt: '2026-05-25T18:46:00.000+08:00',
+            },
+          ]}
+        />
+      )
+
+      expect(screen.getByText('已处理 2 秒')).toBeInTheDocument()
+      expect(screen.getByTestId('thinking-indicator')).toHaveTextContent('正在思考')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  test('hides the generic thinking indicator once assistant content is visible with blocks', () => {
     const runningBlock: ProcessingBlock = {
       id: 'call-1',
       subtaskId: 1,
@@ -578,7 +604,37 @@ describe('MessageList', () => {
       />
     )
 
-    expect(screen.getAllByText('正在思考')).toHaveLength(1)
+    expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
+  })
+
+  test('does not show thinking placeholder after reasoning finishes and content streams', () => {
+    const thinkingBlock: ProcessingBlock = {
+      id: 'thinking-1',
+      subtaskId: 1,
+      type: 'thinking',
+      content: 'I will outline the article before writing.',
+      status: 'done',
+      createdAt: 1770000000000,
+    }
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: '2',
+            role: 'assistant',
+            content: '北京天气：四季流转中的古都气象',
+            status: 'streaming',
+            createdAt: '2026-05-25T18:46:00.000+08:00',
+            blocks: [thinkingBlock],
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByText(/思考过程/)).toBeInTheDocument()
+    expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
+    expect(screen.queryByText('正在思考')).not.toBeInTheDocument()
   })
 
   test('renders process text inside the processing timeline before the following tool', () => {

@@ -6,6 +6,8 @@ import { useWorkbench } from './useWorkbench'
 import type { Attachment, SkillRef, UnifiedModel } from '@/types/api'
 import type { CodeCommentContext } from '@/types/workspace-files'
 
+const STREAM_STARTED_AT = '2026-06-04T00:00:01.000Z'
+
 function Probe() {
   const { state } = useWorkbench()
   return <div data-testid="probe">{state.isBootstrapping ? 'loading' : state.user?.user_name}</div>
@@ -237,6 +239,12 @@ function TaskMessagesProbe() {
         {workbench.messages
           .map(message => `${message.role}:${message.status}:${message.content}`)
           .join('|')}
+      </span>
+      <span data-testid="message-created-at">
+        {workbench.messages.map(message => message.createdAt).join('|')}
+      </span>
+      <span data-testid="message-completed-at">
+        {workbench.messages.map(message => message.completedAt ?? '').join('|')}
       </span>
       <button type="button" onClick={() => void workbench.openTask(8)}>
         open task
@@ -619,7 +627,7 @@ describe('WorkbenchProvider', () => {
 
     await waitFor(() => expect(getTaskDetail).toHaveBeenCalledWith(8))
     expect(await screen.findByTestId('current-task-title')).toHaveTextContent('Restored task')
-    expect(joinTask).toHaveBeenCalledWith(8)
+    expect(joinTask).toHaveBeenCalledWith(8, 'local-online')
   })
 
   test('restores cached streaming content when opening a running task after refresh', async () => {
@@ -656,6 +664,7 @@ describe('WorkbenchProvider', () => {
         subtask_id: 21,
         offset: 9,
         cached_content: '已经输出的内容',
+        started_at: '2026-06-04T00:00:01.000Z',
       },
     })
 
@@ -727,10 +736,14 @@ describe('WorkbenchProvider', () => {
 
     await userEvent.click(await screen.findByText('open task'))
 
-    await waitFor(() => expect(joinTask).toHaveBeenCalledWith(8))
+    await waitFor(() => expect(joinTask).toHaveBeenCalledWith(8, 'local-online'))
     expect(screen.getByTestId('message-contents')).toHaveTextContent(
       'assistant:streaming:已经输出的内容'
     )
+    expect(screen.getByTestId('message-created-at')).toHaveTextContent(
+      '2026-06-04T00:00:01.000Z'
+    )
+    expect(screen.getByTestId('message-completed-at')).not.toHaveTextContent('2026-')
   })
 
   test('ignores stale cached streaming when opening a cancelled task', async () => {
@@ -838,7 +851,7 @@ describe('WorkbenchProvider', () => {
 
     await userEvent.click(await screen.findByText('open task'))
 
-    await waitFor(() => expect(joinTask).toHaveBeenCalledWith(8))
+    await waitFor(() => expect(joinTask).toHaveBeenCalledWith(8, 'local-online'))
     expect(screen.getByTestId('message-contents')).toHaveTextContent('assistant:done:')
     expect(screen.getByTestId('message-contents')).not.toHaveTextContent('assistant:streaming')
   })
@@ -1403,7 +1416,7 @@ describe('WorkbenchProvider', () => {
       expect(screen.getByTestId('current-project-name')).toHaveTextContent('no-project')
     )
     expect(screen.getByTestId('standalone-device-id')).toHaveTextContent('local-online')
-    expect(joinTask).toHaveBeenCalledWith(8)
+    expect(joinTask).toHaveBeenCalledWith(8, 'local-online')
     expect(window.location.pathname).toBe('/projects/0/tasks/8')
     expect(window.location.search).toBe('')
   })
@@ -1516,7 +1529,7 @@ describe('WorkbenchProvider', () => {
       expect(screen.getByTestId('current-task-title')).toHaveTextContent('restored chat')
     )
     expect(getTaskDetail).toHaveBeenCalledWith(8)
-    expect(joinTask).toHaveBeenCalledWith(8)
+    expect(joinTask).toHaveBeenCalledWith(8, 'local-online')
     expect(window.location.pathname).toBe('/projects/0/tasks/8')
     expect(window.location.search).toBe('')
   })
@@ -2786,7 +2799,12 @@ describe('WorkbenchProvider', () => {
 
   test('keeps later guidance queued while one guidance send is in progress', async () => {
     let streamHandlers: {
-      onChatStart?: (payload: { task_id: number; subtask_id: number; shell_type?: string }) => void
+      onChatStart?: (payload: {
+        task_id: number
+        subtask_id: number
+        shell_type?: string
+        started_at: string
+      }) => void
     } = {}
     let resolveCancel: ((value: { success: boolean }) => void) | undefined
     const cancelStream = vi.fn().mockImplementation(
@@ -2863,6 +2881,7 @@ describe('WorkbenchProvider', () => {
               task_id: 8,
               subtask_id: 101,
               shell_type: 'Chat',
+              started_at: STREAM_STARTED_AT,
             })
           }
         />
@@ -2896,7 +2915,12 @@ describe('WorkbenchProvider', () => {
 
   test('does not drain remaining queued messages before the guided response starts', async () => {
     let streamHandlers: {
-      onChatStart?: (payload: { task_id: number; subtask_id: number; shell_type?: string }) => void
+      onChatStart?: (payload: {
+        task_id: number
+        subtask_id: number
+        shell_type?: string
+        started_at: string
+      }) => void
     } = {}
     const cancelStream = vi.fn().mockResolvedValue({ success: true })
     const sendMessage = vi.fn().mockResolvedValue({ success: true, task_id: 8 })
@@ -2967,6 +2991,7 @@ describe('WorkbenchProvider', () => {
               task_id: 8,
               subtask_id: 101,
               shell_type: 'Chat',
+              started_at: STREAM_STARTED_AT,
             })
           }
         />
@@ -2991,7 +3016,12 @@ describe('WorkbenchProvider', () => {
 
   test('retries a failed assistant message using the previous user message', async () => {
     type StreamHandlers = {
-      onChatStart?: (payload: { task_id: number; subtask_id: number; shell_type?: string }) => void
+      onChatStart?: (payload: {
+        task_id: number
+        subtask_id: number
+        shell_type?: string
+        started_at: string
+      }) => void
       onChatError?: (payload: {
         task_id?: number
         subtask_id: number
@@ -3068,6 +3098,7 @@ describe('WorkbenchProvider', () => {
         task_id: 8,
         subtask_id: 101,
         shell_type: 'Chat',
+        started_at: STREAM_STARTED_AT,
       })
       streamHandlers?.onChatError?.({
         task_id: 8,
@@ -3245,9 +3276,12 @@ describe('WorkbenchProvider', () => {
                           text:{block.content}:{block.status}
                         </li>,
                       ]
-              )
+                )
             )}
           </ol>
+          <span data-testid="history-completed-at">
+            {workbench.messages.map(message => message.completedAt ?? '').join('|')}
+          </span>
         </div>
       )
     }
@@ -3364,6 +3398,9 @@ describe('WorkbenchProvider', () => {
     )
     expect(screen.getByTestId('tool-blocks')).toHaveTextContent(
       'text:Let me check the workspace.:done'
+    )
+    expect(screen.getByTestId('history-completed-at')).toHaveTextContent(
+      '2026-05-27T00:03:00.000Z'
     )
   })
 
@@ -3723,7 +3760,11 @@ describe('WorkbenchProvider', () => {
     // syncSelection effect then re-anchored the dropdown on the stale
     // currentTask.model_id (which had never been updated for existing tasks).
     type StreamHandlers = {
-      onChatStart?: (payload: { task_id: number; subtask_id: number }) => void
+      onChatStart?: (payload: {
+        task_id: number
+        subtask_id: number
+        started_at: string
+      }) => void
     }
     let streamHandlers: StreamHandlers | undefined
 
@@ -3861,7 +3902,11 @@ describe('WorkbenchProvider', () => {
     //    flips back.
     expect(streamHandlers?.onChatStart).toBeDefined()
     act(() => {
-      streamHandlers?.onChatStart?.({ task_id: 8, subtask_id: 99 })
+      streamHandlers?.onChatStart?.({
+        task_id: 8,
+        subtask_id: 99,
+        started_at: STREAM_STARTED_AT,
+      })
     })
 
     await waitFor(() =>
@@ -3872,7 +3917,11 @@ describe('WorkbenchProvider', () => {
 
   test('keeps a live running task indicator after switching to another task', async () => {
     type StreamHandlers = {
-      onChatStart?: (payload: { task_id: number; subtask_id: number }) => void
+      onChatStart?: (payload: {
+        task_id: number
+        subtask_id: number
+        started_at: string
+      }) => void
     }
     let streamHandlers: StreamHandlers | undefined
 
@@ -3970,7 +4019,11 @@ describe('WorkbenchProvider', () => {
     )
 
     act(() => {
-      streamHandlers?.onChatStart?.({ task_id: 8, subtask_id: 80 })
+      streamHandlers?.onChatStart?.({
+        task_id: 8,
+        subtask_id: 80,
+        started_at: STREAM_STARTED_AT,
+      })
     })
 
     await waitFor(() => expect(screen.getByTestId('running-task-ids')).toHaveTextContent('8'))

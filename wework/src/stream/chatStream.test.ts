@@ -83,25 +83,35 @@ describe('createChatStream', () => {
     }
 
     const cleanup = stream.subscribe(handlers)
+
+    const chunkWrapper = socket.on.mock.calls.find(([event]) => event === 'chat:chunk')?.[1]
+    const slotWrapper = socket.on.mock.calls.find(([event]) => event === 'device:slot_update')?.[1]
+    const upgradeWrapper = socket.on.mock.calls.find(
+      ([event]) => event === 'device:upgrade_status'
+    )?.[1]
+
+    expect(chunkWrapper).toEqual(expect.any(Function))
+    expect(slotWrapper).toEqual(expect.any(Function))
+    expect(upgradeWrapper).toEqual(expect.any(Function))
+
+    chunkWrapper?.({ subtask_id: 9, content: 'hi', offset: 2 })
+    slotWrapper?.({ device_id: 'device-1', total: 1, used: 0 })
+    upgradeWrapper?.({ device_id: 'device-1', status: 'running' })
+
     cleanup()
 
-    expect(socket.on).toHaveBeenCalledWith('chat:chunk', handlers.onChatChunk)
-    expect(socket.on).toHaveBeenCalledWith(
-      'device:slot_update',
-      handlers.onDeviceSlotUpdate,
-    )
-    expect(socket.on).toHaveBeenCalledWith(
-      'device:upgrade_status',
-      handlers.onDeviceUpgradeStatus,
-    )
-    expect(socket.off).toHaveBeenCalledWith('chat:chunk', handlers.onChatChunk)
-    expect(socket.off).toHaveBeenCalledWith(
-      'device:slot_update',
-      handlers.onDeviceSlotUpdate,
-    )
-    expect(socket.off).toHaveBeenCalledWith(
-      'device:upgrade_status',
-      handlers.onDeviceUpgradeStatus,
-    )
+    expect(handlers.onChatChunk).toHaveBeenCalledWith({ subtask_id: 9, content: 'hi', offset: 2 })
+    expect(handlers.onDeviceSlotUpdate).toHaveBeenCalledWith({
+      device_id: 'device-1',
+      total: 1,
+      used: 0,
+    })
+    expect(handlers.onDeviceUpgradeStatus).toHaveBeenCalledWith({
+      device_id: 'device-1',
+      status: 'running',
+    })
+    expect(socket.off).toHaveBeenCalledWith('chat:chunk', chunkWrapper)
+    expect(socket.off).toHaveBeenCalledWith('device:slot_update', slotWrapper)
+    expect(socket.off).toHaveBeenCalledWith('device:upgrade_status', upgradeWrapper)
   })
 })

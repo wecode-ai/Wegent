@@ -137,6 +137,8 @@ class WebSocketClient:
             self.device_type = "local"
             self.bind_shell = "claudecode"
 
+        self.direct_chat_endpoint: Optional[Dict[str, Any]] = None
+
         # Reconnection settings
         reconnection_delay = reconnection_delay or config.LOCAL_RECONNECT_DELAY
         reconnection_delay_max = (
@@ -499,6 +501,8 @@ class WebSocketClient:
                 "executor_version": get_version(),
                 "client_ip": self._get_client_ip(),
             }
+            if self.direct_chat_endpoint:
+                register_data["direct_chat"] = self.direct_chat_endpoint
             logger.info(f"Sending device:register to /local-executor: {register_data}")
 
             response = await self.sio.call(

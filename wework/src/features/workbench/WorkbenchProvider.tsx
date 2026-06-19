@@ -21,6 +21,7 @@ import { getToken } from '@/api/auth'
 import { getRuntimeConfig, stripAppBasePath } from '@/config/runtime'
 import i18n from '@/i18n'
 import { createChatStream } from '@/stream/chatStream'
+import { createDirectWorkbenchSocket } from '@/stream/directWorkbenchSocket'
 import { appendCodeCommentContexts } from '@/lib/code-comment-context'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
 import {
@@ -161,6 +162,10 @@ function getUpgradeStatusMessage(payload: DeviceUpgradeStatusPayload): string {
   return '设备升级中'
 }
 
+type WorkbenchChatStream = ReturnType<typeof createChatStream>
+type WorkbenchChatStreamService = Omit<WorkbenchChatStream, 'connectDevice' | 'isDeviceConnected'> &
+  Partial<Pick<WorkbenchChatStream, 'connectDevice' | 'isDeviceConnected'>>
+
 export interface WorkbenchServices {
   teamApi: ReturnType<typeof createTeamApi>
   modelApi: ReturnType<typeof createModelApi>
@@ -189,7 +194,7 @@ export interface WorkbenchServices {
     | 'listSkills'
   >
   userApi?: ReturnType<typeof createUserApi>
-  chatStream: ReturnType<typeof createChatStream>
+  chatStream: WorkbenchChatStreamService
 }
 
 export interface WorkbenchContextValue {
@@ -317,6 +322,10 @@ function createDefaultServices(): WorkbenchServices {
     logger: console,
   })
   void socketClient.ensureConnected()
+  const directSocket = createDirectWorkbenchSocket({
+    backendSocket: socketClient.socket,
+    client,
+  })
 
   return {
     teamApi: createTeamApi(client),
@@ -327,7 +336,7 @@ function createDefaultServices(): WorkbenchServices {
     taskApi: createTaskApi(client),
     deviceApi: createDeviceApi(client),
     userApi: createUserApi(client),
-    chatStream: createChatStream(socketClient.socket),
+    chatStream: createChatStream(directSocket),
   }
 }
 
@@ -534,6 +543,7 @@ function subtaskToMessage(subtask: Subtask): WorkbenchMessage {
     blocks: blocks.length > 0 ? blocks : undefined,
     fileChanges: result?.fileChanges,
     createdAt: subtask.created_at,
+    completedAt: subtask.completed_at ?? undefined,
   }
 }
 
@@ -732,6 +742,11 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     currentProject: activeProject,
     standaloneDeviceId: state.standaloneDeviceId,
   })
+
+  useEffect(() => {
+    if (!activeDeviceId) return
+    void resolvedServices.chatStream.connectDevice?.(activeDeviceId).catch(() => undefined)
+  }, [activeDeviceId, resolvedServices.chatStream])
 
   const markTaskRunning = useCallback((taskId: number | null | undefined) => {
     if (!taskId) return
@@ -1038,7 +1053,20 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
   )
 
   useEffect(() => {
-    const handleDeviceChanged = () => {
+    const handleDeviceChanged = (payload: unknown, fallbackStatus?: DeviceInfo['status']) => {
+      if (isRecord(payload) && typeof payload.device_id === 'string') {
+        const status =
+          payload.status === 'online' || payload.status === 'offline' || payload.status === 'busy'
+            ? payload.status
+            : fallbackStatus
+        if (status) {
+          dispatch({
+            type: 'device_connection_changed',
+            deviceId: payload.device_id,
+            status,
+          })
+        }
+      }
       void refreshDevices()
     }
     const handleDeviceUpgradeStatus = (payload: DeviceUpgradeStatusPayload) => {
@@ -1055,11 +1083,16 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
 
     return resolvedServices.chatStream.subscribe({
       onDeviceOnline: handleDeviceChanged,
-      onDeviceOffline: handleDeviceChanged,
-      onDeviceStatus: handleDeviceChanged,
-      onDeviceSlotUpdate: handleDeviceChanged,
+      onDeviceOffline: payload => handleDeviceChanged(payload, 'offline'),
+      onDeviceStatus: payload => handleDeviceChanged(payload),
+      onDeviceSlotUpdate: payload => handleDeviceChanged(payload),
       onDeviceUpgradeStatus: handleDeviceUpgradeStatus,
       onChatStart: payload => {
+        if (!payload.started_at) {
+          setIsAwaitingAssistantStart(false)
+          dispatch({ type: 'error_set', error: '会话开始事件缺少开始时间' })
+          return
+        }
         setIsAwaitingAssistantStart(false)
         markTaskRunning(payload.task_id)
         dispatch({
@@ -1072,6 +1105,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
           taskId: payload.task_id,
           subtaskId: payload.subtask_id,
           shellType: payload.shell_type,
+          createdAt: payload.started_at,
         })
       },
       onChatChunk: payload =>
@@ -1084,6 +1118,9 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         }),
       onChatDone: payload => {
         setIsAwaitingAssistantStart(false)
+        if (!payload.completed_at) {
+          dispatch({ type: 'error_set', error: '会话完成事件缺少完成时间' })
+        }
         const taskId = payload.task_id ?? state.currentTask?.id
         if (taskId) {
           markTaskNotRunning(taskId)
@@ -1099,6 +1136,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
           content: typeof payload.result.value === 'string' ? payload.result.value : undefined,
           blocks: getResultBlocks(payload.subtask_id, payload.result),
           fileChanges: normalizeTurnFileChanges(payload.result.file_changes),
+          completedAt: payload.completed_at ?? undefined,
         })
       },
       onChatError: payload => {
@@ -1353,10 +1391,22 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
       const resolvedProjectId = resolveOpenedTaskProjectId(detailTask, listTask, projectId)
       const project =
         resolvedProjectId === undefined
-          ? (findProjectForTask(state.projects, detailTask) ?? undefined)
+          ? (findProjectForTask(state.projects, detailTask) ?? null)
           : resolvedProjectId > 0
             ? (state.projects.find(item => item.id === resolvedProjectId) ?? null)
             : null
+      const openedStandaloneDeviceId =
+        project === null
+          ? getPreferredStandaloneDeviceId(
+              state.devices,
+              detailTask.device_id ?? listTask?.device_id ?? state.standaloneDeviceId
+            )
+          : undefined
+      const openedDeviceId = getActiveWorkbenchDeviceId({
+        currentTask: detailTask,
+        currentProject: project,
+        standaloneDeviceId: openedStandaloneDeviceId ?? state.standaloneDeviceId,
+      })
       if (project) {
         writeLastProjectId(user.id, project.id)
       }
@@ -1364,13 +1414,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         type: 'task_opened',
         task: detail as Task,
         project,
-        standaloneDeviceId:
-          project === null
-            ? getPreferredStandaloneDeviceId(
-                state.devices,
-                detailTask.device_id ?? listTask?.device_id ?? state.standaloneDeviceId
-              )
-            : undefined,
+        standaloneDeviceId: openedStandaloneDeviceId,
       })
       dispatchMessages({
         type: 'reset',
@@ -1379,22 +1423,30 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
       setQueuedSends([])
       setGuidanceMessages([])
       setCodeCommentContexts([])
-      const joinResponse = await resolvedServices.chatStream.joinTask(taskId)
+      if (openedDeviceId) {
+        await resolvedServices.chatStream.connectDevice?.(openedDeviceId).catch(() => undefined)
+      }
+      const joinResponse = await resolvedServices.chatStream.joinTask(taskId, openedDeviceId)
       if (
         joinResponse?.streaming &&
         shouldRestoreCachedStreaming(detailTask, detail.subtasks, joinResponse.streaming.subtask_id)
       ) {
-        const cachedBlocks = normalizeProcessingBlocks(
-          joinResponse.streaming.subtask_id,
-          joinResponse.streaming.blocks
-        )
-        dispatchMessages({
-          type: 'assistant_cached',
-          taskId,
-          subtaskId: joinResponse.streaming.subtask_id,
-          content: joinResponse.streaming.cached_content,
-          blocks: cachedBlocks.length > 0 ? cachedBlocks : undefined,
-        })
+        if (!joinResponse.streaming.started_at) {
+          dispatch({ type: 'error_set', error: '会话恢复事件缺少开始时间' })
+        } else {
+          const cachedBlocks = normalizeProcessingBlocks(
+            joinResponse.streaming.subtask_id,
+            joinResponse.streaming.blocks
+          )
+          dispatchMessages({
+            type: 'assistant_cached',
+            taskId,
+            subtaskId: joinResponse.streaming.subtask_id,
+            content: joinResponse.streaming.cached_content,
+            blocks: cachedBlocks.length > 0 ? cachedBlocks : undefined,
+            createdAt: joinResponse.streaming.started_at,
+          })
+        }
       }
       const routeProjectId = resolvedProjectId === undefined ? undefined : resolvedProjectId
       handledTaskRouteRef.current = getTaskRouteKey(taskId, routeProjectId)
@@ -1661,11 +1713,8 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
   )
 
   const commitEnvironmentChanges = useCallback(
-    (
-      project: ProjectWithTasks | null,
-      message: string,
-      workspaceTarget?: WorkspaceTarget | null
-    ) => commitProjectChanges(resolvedServices.deviceApi, project, message, workspaceTarget),
+    (project: ProjectWithTasks | null, message: string, workspaceTarget?: WorkspaceTarget | null) =>
+      commitProjectChanges(resolvedServices.deviceApi, project, message, workspaceTarget),
     [resolvedServices]
   )
 
@@ -1909,7 +1958,9 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     }
     if (prepared.activeDeviceId) {
       const activeDevice = findWorkbenchDevice(state.devices, prepared.activeDeviceId)
-      if (!isWorkbenchDeviceOnline(activeDevice)) {
+      const directDeviceConnected =
+        resolvedServices.chatStream.isDeviceConnected?.(prepared.activeDeviceId) ?? false
+      if (!directDeviceConnected && !isWorkbenchDeviceOnline(activeDevice)) {
         const deviceName = getWorkbenchDeviceDisplayName(activeDevice, prepared.activeDeviceId)
         const status = activeDevice
           ? (DEVICE_STATUS_LABELS[activeDevice.status] ?? activeDevice.status)
@@ -1980,6 +2031,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     clearCodeCommentContexts,
     codeCommentContexts,
     hasActiveTurn,
+    resolvedServices.chatStream,
     sendPreparedMessage,
     state.devices,
     state.currentProject,

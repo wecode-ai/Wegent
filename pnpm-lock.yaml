@@ -529,6 +529,9 @@ importers:
       remark-gfm:
         specifier: ^4.0.1
         version: 4.0.1
+      socket.io-client:
+        specifier: ^4.8.3
+        version: 4.8.3
       tailwind-merge:
         specifier: ^3.6.0
         version: 3.6.0

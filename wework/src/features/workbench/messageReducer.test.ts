@@ -2,6 +2,9 @@ import { describe, expect, test } from 'vitest'
 import { reduceWorkbenchMessages as messageReducer } from '@wegent/chat-core'
 import type { WorkbenchMessage } from '@/types/workbench'
 
+const STREAM_STARTED_AT = '2026-06-04T00:00:01.000Z'
+const STREAM_COMPLETED_AT = '2026-06-04T00:00:48.000Z'
+
 describe('messageReducer', () => {
   test('adds user message and streams assistant chunks into one message', () => {
     const initial: WorkbenchMessage[] = []
@@ -20,6 +23,7 @@ describe('messageReducer', () => {
       taskId: 1,
       subtaskId: 9,
       shellType: 'ClaudeCode',
+      createdAt: STREAM_STARTED_AT,
     })
     const withChunk = messageReducer(withStart, {
       type: 'assistant_chunk',
@@ -42,6 +46,7 @@ describe('messageReducer', () => {
       type: 'assistant_started',
       taskId: 1,
       subtaskId: 9,
+      createdAt: STREAM_STARTED_AT,
     })
 
     const failed = messageReducer(state, {
@@ -61,6 +66,7 @@ describe('messageReducer', () => {
       type: 'assistant_started',
       taskId: 1,
       subtaskId: 9,
+      createdAt: STREAM_STARTED_AT,
     })
 
     const failed = messageReducer(state, {
@@ -83,6 +89,7 @@ describe('messageReducer', () => {
       taskId: 8,
       subtaskId: 18,
       content: '已经输出的内容',
+      createdAt: '2026-06-04T00:00:01.000Z',
     })
 
     expect(state).toHaveLength(1)
@@ -93,6 +100,22 @@ describe('messageReducer', () => {
       role: 'assistant',
       content: '已经输出的内容',
       status: 'streaming',
+      createdAt: '2026-06-04T00:00:01.000Z',
+    })
+  })
+
+  test('uses explicit stream start time for assistant start events', () => {
+    const state = messageReducer([], {
+      type: 'assistant_started',
+      taskId: 8,
+      subtaskId: 18,
+      createdAt: '2026-06-04T00:00:01.000Z',
+    })
+
+    expect(state[0]).toMatchObject({
+      id: 'assistant-18',
+      status: 'streaming',
+      createdAt: '2026-06-04T00:00:01.000Z',
     })
   })
 
@@ -101,6 +124,7 @@ describe('messageReducer', () => {
       type: 'assistant_started',
       taskId: 1,
       subtaskId: 9,
+      createdAt: STREAM_STARTED_AT,
     })
 
     const withThinking = messageReducer(state, {
@@ -132,6 +156,7 @@ describe('messageReducer', () => {
         type: 'assistant_started',
         taskId: 1,
         subtaskId: 9,
+        createdAt: STREAM_STARTED_AT,
       }),
       {
         type: 'assistant_chunk',
@@ -161,12 +186,42 @@ describe('messageReducer', () => {
     ])
   })
 
+  test('finalizes thinking blocks when assistant content starts streaming', () => {
+    const state = messageReducer(
+      messageReducer([], {
+        type: 'assistant_started',
+        taskId: 1,
+        subtaskId: 9,
+        createdAt: STREAM_STARTED_AT,
+      }),
+      {
+        type: 'assistant_chunk',
+        subtaskId: 9,
+        content: '',
+        reasoningChunk: 'Draft the response plan.',
+      }
+    )
+
+    const withContent = messageReducer(state, {
+      type: 'assistant_chunk',
+      subtaskId: 9,
+      content: 'Final response starts here.',
+    })
+
+    expect(withContent[0]).toMatchObject({
+      content: 'Final response starts here.',
+      status: 'streaming',
+      blocks: [{ type: 'thinking', content: 'Draft the response plan.', status: 'done' }],
+    })
+  })
+
   test('places streamed process text before the following tool block', () => {
     const state = messageReducer(
       messageReducer([], {
         type: 'assistant_started',
         taskId: 1,
         subtaskId: 9,
+        createdAt: STREAM_STARTED_AT,
       }),
       {
         type: 'assistant_chunk',
@@ -206,6 +261,7 @@ describe('messageReducer', () => {
         type: 'assistant_started',
         taskId: 1,
         subtaskId: 9,
+        createdAt: STREAM_STARTED_AT,
       }),
       {
         type: 'assistant_chunk',
@@ -219,6 +275,7 @@ describe('messageReducer', () => {
       type: 'assistant_done',
       subtaskId: 9,
       content: 'Final',
+      completedAt: STREAM_COMPLETED_AT,
       blocks: [
         {
           id: 'thinking-real',
@@ -235,6 +292,26 @@ describe('messageReducer', () => {
       content: 'Final',
       status: 'done',
       blocks: [{ id: 'thinking-real', type: 'thinking', status: 'done' }],
+    })
+  })
+
+  test('stores explicit assistant completion time on done', () => {
+    const state = messageReducer([], {
+      type: 'assistant_started',
+      taskId: 1,
+      subtaskId: 9,
+      createdAt: STREAM_STARTED_AT,
+    })
+
+    const done = messageReducer(state, {
+      type: 'assistant_done',
+      subtaskId: 9,
+      completedAt: '2026-06-04T00:00:48.000Z',
+    })
+
+    expect(done[0]).toMatchObject({
+      status: 'done',
+      completedAt: '2026-06-04T00:00:48.000Z',
     })
   })
 
@@ -263,11 +340,13 @@ describe('messageReducer', () => {
         type: 'assistant_started',
         taskId: 1,
         subtaskId: 9,
+        createdAt: STREAM_STARTED_AT,
       }),
       {
         type: 'assistant_done',
         subtaskId: 9,
         fileChanges: activeFileChanges,
+        completedAt: STREAM_COMPLETED_AT,
       }
     )
     const reverted = messageReducer(state, {

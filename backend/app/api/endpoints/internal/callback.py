@@ -18,6 +18,7 @@ For terminal events (DONE, ERROR, CANCELLED), StatusUpdatingEmitter handles:
 """
 
 import logging
+from datetime import datetime
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -25,6 +26,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
+from app.db.session import SessionLocal
 from app.models.task import TaskResource
 
 # Import channel callback modules to ensure they register with
@@ -36,7 +38,8 @@ from app.services.chat.storage import session_manager
 from app.services.execution.dispatcher import ResponsesAPIEventParser
 from app.services.execution.emitters.status_updating import StatusUpdatingEmitter
 from app.services.execution.emitters.websocket import WebSocketResultEmitter
-from app.stores.tasks import task_store
+from app.stores.tasks import subtask_store, task_store
+from shared.models import EventType
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +109,49 @@ class CallbackResponse(BaseModel):
 
     status: str = "ok"
     message: Optional[str] = None
+    task_id: Optional[int] = None
+    subtask_id: Optional[int] = None
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+
+
+TERMINAL_EVENT_TYPES = {
+    EventType.DONE.value,
+    EventType.ERROR.value,
+    EventType.CANCELLED.value,
+}
+
+
+def _build_callback_response(
+    _db: Session,
+    request: CallbackRequest,
+    event_type: str,
+) -> CallbackResponse:
+    """Return persisted timing metadata for terminal callback events."""
+    if event_type not in TERMINAL_EVENT_TYPES:
+        return CallbackResponse(status="ok")
+
+    with SessionLocal() as timing_db:
+        subtask = subtask_store.get_by_id(timing_db, subtask_id=request.subtask_id)
+        started_at = subtask.created_at if subtask else None
+        completed_at = subtask.completed_at if subtask else None
+
+    if not subtask:
+        logger.error(
+            "[Callback] Terminal event persisted but subtask not found: "
+            "task_id=%s subtask_id=%s",
+            request.task_id,
+            request.subtask_id,
+        )
+        return CallbackResponse(status="ok")
+
+    return CallbackResponse(
+        status="ok",
+        task_id=request.task_id,
+        subtask_id=request.subtask_id,
+        started_at=started_at,
+        completed_at=completed_at,
+    )
 
 
 @router.post("", response_model=CallbackResponse)
@@ -199,7 +245,7 @@ async def handle_callback(
         # Note: TaskCompletedEvent is now published by StatusUpdatingEmitter
         # for unified handling across all execution modes
 
-        return CallbackResponse(status="ok")
+        return _build_callback_response(db, request, event.type)
 
     except HTTPException:
         raise

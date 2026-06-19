@@ -307,6 +307,7 @@ class DeviceService:
         client_ip: Optional[str] = None,
         device_type: Optional[str] = None,
         bind_shell: Optional[str] = None,
+        direct_chat: Optional[Dict[str, Any]] = None,
     ) -> Kind:
         """Create or update a Device CRD record.
 
@@ -324,6 +325,7 @@ class DeviceService:
             bind_shell: Shell runtime binding ('claudecode' or 'openclaw').
                         If None, defaults to 'claudecode' for new devices or
                         preserves existing value.
+            direct_chat: Direct chat endpoint/capability reported by executor.
 
         Returns:
             Kind model instance for the device
@@ -363,6 +365,8 @@ class DeviceService:
                 device_json["spec"]["bindShell"] = bind_shell
             elif "bindShell" not in device_json["spec"]:
                 device_json["spec"]["bindShell"] = "claudecode"
+            if direct_chat is not None:
+                device_json["spec"]["directChat"] = direct_chat
             device_kind.json = device_json
             flag_modified(device_kind, "json")
             device_kind.updated_at = datetime.now()
@@ -412,6 +416,7 @@ class DeviceService:
                     "isDefault": is_first_device,
                     "capabilities": None,
                     "clientIp": client_ip,
+                    "directChat": direct_chat,
                 },
                 "status": {
                     "state": "Available",
