@@ -6,12 +6,12 @@
 
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-STANDALONE_DOCKERFILE = REPO_ROOT / "docker" / "standalone" / "Dockerfile"
-STANDALONE_START = REPO_ROOT / "docker" / "standalone" / "start.sh"
-INSTALL_SCRIPT = REPO_ROOT / "install.sh"
-BUILD_STANDALONE_SCRIPT = REPO_ROOT / "scripts" / "build-standalone.sh"
-VERIFY_STANDALONE_SCRIPT = REPO_ROOT / "scripts" / "verify-standalone-image.sh"
+REPO_ROOT: Path = Path(__file__).resolve().parents[3]
+STANDALONE_DOCKERFILE: Path = REPO_ROOT / "docker" / "standalone" / "Dockerfile"
+STANDALONE_START: Path = REPO_ROOT / "docker" / "standalone" / "start.sh"
+INSTALL_SCRIPT: Path = REPO_ROOT / "install.sh"
+BUILD_STANDALONE_SCRIPT: Path = REPO_ROOT / "scripts" / "build-standalone.sh"
+VERIFY_STANDALONE_SCRIPT: Path = REPO_ROOT / "scripts" / "verify-standalone-image.sh"
 
 
 def test_standalone_image_includes_wework_web_ttyd_and_workspace_volume() -> None:
@@ -27,6 +27,7 @@ def test_standalone_image_includes_wework_web_ttyd_and_workspace_volume() -> Non
     assert "ENV WEGENT_WORKSPACE_ROOT=/workspace" in dockerfile
     assert "EXPOSE 3000 3001 8000 7681 17888" in dockerfile
     assert 'VOLUME ["/app/data", "/workspace"]' in dockerfile
+    assert 'curl -f -u "$TTYD_CREDENTIALS" http://localhost:7681' in dockerfile
 
 
 def test_standalone_start_registers_executor_as_admin_cloud_device() -> None:
@@ -56,9 +57,22 @@ def test_standalone_start_serves_wework_and_ttyd() -> None:
     assert "python3 -m http.server ${WEWORK_PORT}" in start_script
     assert "start_ttyd" in start_script
     assert "TTYD_PORT" in start_script
-    assert "ttyd --writable -p ${TTYD_PORT}" in start_script
+    assert "TTYD_CREDENTIALS is required for terminal auth" in start_script
+    assert 'ttyd --writable -c "${TTYD_CREDENTIALS}"' in start_script
     assert 'wait_for_http "Wework" "http://localhost:${WEWORK_PORT}"' in start_script
-    assert 'wait_for_http "Terminal" "http://localhost:${TTYD_PORT}"' in start_script
+    assert (
+        'wait_for_http "Terminal" "http://localhost:${TTYD_PORT}" 30 "$TTYD_PID" false "$TTYD_CREDENTIALS"'
+        in start_script
+    )
+
+
+def test_standalone_start_uses_hardened_readiness_and_exit_status() -> None:
+    """Startup should fail readiness on HTTP errors and preserve service exit code."""
+    start_script = STANDALONE_START.read_text(encoding="utf-8")
+
+    assert 'curl -fsS --connect-timeout 2 --max-time 5 "$url"' in start_script
+    assert 'shutdown "$EXIT_CODE"' in start_script
+    assert 'exit "$exit_code"' in start_script
 
 
 def test_standalone_start_writes_wework_runtime_config() -> None:
@@ -96,6 +110,17 @@ def test_installer_exposes_wework_terminal_gateway_and_workspace_volume() -> Non
         'docker_run_cmd+=" -e DEVICE_PUBLIC_BASE_URL=http://${ACCESS_HOST}:17888"'
         in install_script
     )
+    assert (
+        'docker_run_cmd+=" -e TTYD_CREDENTIALS=${STANDALONE_TTYD_CREDENTIALS}"'
+        in install_script
+    )
+    assert "WEGENT_TTYD_CREDENTIALS must use user:password format." in install_script
+    assert (
+        "Open ${BLUE}${BOLD}http://${ACCESS_HOST}:3001${NC} for Wework"
+        in install_script
+    )
+    assert 'if [[ "$DEPLOY_MODE" == "standalone" ]]; then' in install_script
+    assert 'ui_kv "Terminal login" "$STANDALONE_TTYD_CREDENTIALS"' in install_script
 
 
 def test_build_script_outputs_complete_standalone_run_command() -> None:
@@ -106,6 +131,7 @@ def test_build_script_outputs_complete_standalone_run_command() -> None:
     assert "-p 7681:7681 -p 17888:17888" in build_script
     assert "-v wegent-data:/app/data" in build_script
     assert "-v wegent-workspace:/workspace" in build_script
+    assert "-e TTYD_CREDENTIALS=admin:CHANGE_ME" in build_script
 
 
 def test_verify_script_checks_wework_and_ttyd_readiness() -> None:
@@ -115,8 +141,15 @@ def test_verify_script_checks_wework_and_ttyd_readiness() -> None:
     assert 'WEWORK_PORT="${WEWORK_PORT:-13001}"' in verify_script
     assert 'TTYD_PORT="${TTYD_PORT:-17681}"' in verify_script
     assert 'SESSION_GATEWAY_PORT="${SESSION_GATEWAY_PORT:-17888}"' in verify_script
+    assert (
+        'TTYD_CREDENTIALS="${TTYD_CREDENTIALS:-standalone:standalone}"' in verify_script
+    )
     assert '-p "127.0.0.1:${WEWORK_PORT}:3001"' in verify_script
     assert '-p "127.0.0.1:${TTYD_PORT}:7681"' in verify_script
     assert '-p "127.0.0.1:${SESSION_GATEWAY_PORT}:17888"' in verify_script
+    assert '-e "TTYD_CREDENTIALS=${TTYD_CREDENTIALS}"' in verify_script
     assert 'wait_for_url "Wework" "http://localhost:${WEWORK_PORT}/"' in verify_script
-    assert 'wait_for_url "Terminal" "http://localhost:${TTYD_PORT}/"' in verify_script
+    assert (
+        'wait_for_url "Terminal" "http://localhost:${TTYD_PORT}/" "$TTYD_CREDENTIALS"'
+        in verify_script
+    )

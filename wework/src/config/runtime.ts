@@ -36,6 +36,24 @@ function runtimeString(
   return typeof value === 'string' && value.length > 0 ? value : undefined
 }
 
+function isValidLoginMode(value: string): value is RuntimeConfig['loginMode'] {
+  return value === 'password' || value === 'oidc' || value === 'all'
+}
+
+function resolveLoginMode(overrides: RuntimeConfigOverrides): RuntimeConfig['loginMode'] {
+  const runtimeValue = runtimeString(overrides, 'loginMode')
+  if (runtimeValue && isValidLoginMode(runtimeValue)) {
+    return runtimeValue
+  }
+
+  const envValue = import.meta.env.VITE_LOGIN_MODE
+  if (envValue && isValidLoginMode(envValue)) {
+    return envValue
+  }
+
+  return 'all'
+}
+
 function normalizeBasePath(value: string | undefined): string {
   if (!value || value === '/') {
     return ''
@@ -98,10 +116,7 @@ export function getRuntimeConfig(): RuntimeConfig {
     apiBaseUrl: trimTrailingSlash(apiBaseUrl),
     socketBaseUrl: trimTrailingSlash(socketBaseUrl),
     socketPath,
-    loginMode:
-      (runtimeString(overrides, 'loginMode') as RuntimeConfig['loginMode'] | undefined) ||
-      (import.meta.env.VITE_LOGIN_MODE as RuntimeConfig['loginMode'] | undefined) ||
-      'all',
+    loginMode: resolveLoginMode(overrides),
     oidcLoginText:
       runtimeString(overrides, 'oidcLoginText') || import.meta.env.VITE_OIDC_LOGIN_TEXT || '',
     cloudDeviceScalingWikiUrl:

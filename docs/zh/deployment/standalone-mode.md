@@ -74,6 +74,7 @@ docker run -d \
   -e RUNTIME_SOCKET_DIRECT_URL=http://localhost:8000 \
   -e WEWORK_PUBLIC_BACKEND_URL=http://localhost:8000 \
   -e DEVICE_PUBLIC_BASE_URL=http://localhost:17888 \
+  -e TTYD_CREDENTIALS=admin:CHANGE_ME \
   ghcr.io/wecode-ai/wegent-standalone:latest
 ```
 
@@ -93,6 +94,7 @@ docker run -d \
   -e RUNTIME_SOCKET_DIRECT_URL=http://YOUR_SERVER_IP:8000 \
   -e WEWORK_PUBLIC_BACKEND_URL=http://YOUR_SERVER_IP:8000 \
   -e DEVICE_PUBLIC_BASE_URL=http://YOUR_SERVER_IP:17888 \
+  -e TTYD_CREDENTIALS=admin:CHANGE_ME \
   ghcr.io/wecode-ai/wegent-standalone:latest
 ```
 
@@ -106,7 +108,7 @@ docker run -d \
 4. 回到 Wework 工作台，直接发起一个编码请求。
 5. 未选择项目时，Wework 会把请求路由到 standalone 自动注册的云设备，并在 `/workspace/chats` 下创建独立聊天工作区。
 6. 创建 Git 项目后，新任务会使用 `/workspace/projects` 和 `/workspace/worktrees` 下的项目/任务工作区。
-7. 需要查看文件或打开终端时，使用 Wework 项目工具栏；终端会通过设备 session gateway 返回短期访问地址。
+7. 需要查看文件或打开终端时，使用 Wework 项目工具栏；通用 ttyd 终端使用 `TTYD_CREDENTIALS` 登录，项目终端会通过设备 session gateway 返回短期访问地址。
 
 Standalone 默认不内置 IDE/code-server 入口。正式使用时建议先将 Wework 编码、workspace 文件、项目终端作为主要能力；需要 IDE 或更强隔离时使用标准部署或单独云设备。
 
@@ -124,6 +126,7 @@ Standalone 默认不内置 IDE/code-server 入口。正式使用时建议先将 
 | `WEGENT_WORKSPACE_ROOT` | standalone workspace 根目录 | `/workspace` |
 | `WEWORK_PORT` | Wework Web 容器内端口 | `3001` |
 | `TTYD_PORT` | 通用 ttyd 终端容器内端口 | `7681` |
+| `TTYD_CREDENTIALS` | 通用 ttyd 终端登录凭据，格式为 `user:password` | 必填 |
 | `DEVICE_SESSION_GATEWAY_PORT` | 项目终端 session gateway 容器内端口 | `17888` |
 | `STANDALONE_MODE` | 启用 standalone 模式 | `true` |
 | `DATABASE_URL` | 数据库连接地址 | `sqlite:////app/data/wegent.db` |
@@ -192,6 +195,7 @@ docker run -d \
   -e RUNTIME_SOCKET_DIRECT_URL=http://localhost:8000 \
   -e WEWORK_PUBLIC_BACKEND_URL=http://localhost:8000 \
   -e DEVICE_PUBLIC_BASE_URL=http://localhost:17888 \
+  -e TTYD_CREDENTIALS=admin:CHANGE_ME \
   ghcr.io/wecode-ai/wegent-standalone:latest
 ```
 

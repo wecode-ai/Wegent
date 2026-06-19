@@ -74,6 +74,7 @@ docker run -d \
   -e RUNTIME_SOCKET_DIRECT_URL=http://localhost:8000 \
   -e WEWORK_PUBLIC_BACKEND_URL=http://localhost:8000 \
   -e DEVICE_PUBLIC_BASE_URL=http://localhost:17888 \
+  -e TTYD_CREDENTIALS=admin:CHANGE_ME \
   ghcr.io/wecode-ai/wegent-standalone:latest
 ```
 
@@ -93,6 +94,7 @@ docker run -d \
   -e RUNTIME_SOCKET_DIRECT_URL=http://YOUR_SERVER_IP:8000 \
   -e WEWORK_PUBLIC_BACKEND_URL=http://YOUR_SERVER_IP:8000 \
   -e DEVICE_PUBLIC_BASE_URL=http://YOUR_SERVER_IP:17888 \
+  -e TTYD_CREDENTIALS=admin:CHANGE_ME \
   ghcr.io/wecode-ai/wegent-standalone:latest
 ```
 
@@ -106,7 +108,7 @@ docker run -d \
 4. Return to the Wework workbench and send a coding request directly.
 5. If no project is selected, Wework routes the request to the automatically registered standalone cloud device and creates a standalone chat workspace under `/workspace/chats`.
 6. After creating a Git project, new tasks use project and task workspaces under `/workspace/projects` and `/workspace/worktrees`.
-7. To inspect files or open a terminal, use the Wework project toolbar. Project terminals are served through the device session gateway with short-lived access URLs.
+7. To inspect files or open a terminal, use the Wework project toolbar. The general ttyd terminal uses `TTYD_CREDENTIALS` for login, and project terminals are served through the device session gateway with short-lived access URLs.
 
 Standalone does not include the IDE/code-server entry by default. For the first standalone launch, treat Wework coding, workspace files, and project terminal as the primary capabilities. Use standard deployment or a separate cloud device when you need IDE access or stronger isolation.
 
@@ -124,6 +126,7 @@ Standalone does not include the IDE/code-server entry by default. For the first 
 | `WEGENT_WORKSPACE_ROOT` | Standalone workspace root | `/workspace` |
 | `WEWORK_PORT` | Wework Web container port | `3001` |
 | `TTYD_PORT` | General ttyd terminal container port | `7681` |
+| `TTYD_CREDENTIALS` | General ttyd terminal credentials in `user:password` format | Required |
 | `DEVICE_SESSION_GATEWAY_PORT` | Project terminal session gateway container port | `17888` |
 | `STANDALONE_MODE` | Enable standalone mode | `true` |
 | `DATABASE_URL` | Database connection URL | `sqlite:////app/data/wegent.db` |
@@ -192,6 +195,7 @@ docker run -d \
   -e RUNTIME_SOCKET_DIRECT_URL=http://localhost:8000 \
   -e WEWORK_PUBLIC_BACKEND_URL=http://localhost:8000 \
   -e DEVICE_PUBLIC_BASE_URL=http://localhost:17888 \
+  -e TTYD_CREDENTIALS=admin:CHANGE_ME \
   ghcr.io/wecode-ai/wegent-standalone:latest
 ```
 

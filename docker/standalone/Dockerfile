@@ -215,7 +215,11 @@ VOLUME ["/app/data", "/workspace"]
 
 # Health check - verify main services are running
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -f http://localhost:8000/health && curl -f http://localhost:3000 && curl -f http://localhost:3001 || exit 1
+    CMD curl -f http://localhost:8000/health \
+      && curl -f http://localhost:3000 \
+      && curl -f http://localhost:3001 \
+      && curl -f -u "$TTYD_CREDENTIALS" http://localhost:7681 \
+      || exit 1
 
 # Startup command
 CMD ["/app/start.sh"]

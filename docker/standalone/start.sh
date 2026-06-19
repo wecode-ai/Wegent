@@ -91,12 +91,20 @@ wait_for_http() {
     local retries="$3"
     local pid="$4"
     local fatal="${5:-true}"
+    local credentials="${6:-}"
 
     echo "      Waiting for ${service_name} to be ready..."
     for i in $(seq 1 "$retries"); do
-        if curl -s "$url" > /dev/null 2>&1; then
-            echo "      ${service_name} is ready (PID: ${pid})"
-            return
+        if [ -n "$credentials" ]; then
+            if curl -fsS --connect-timeout 2 --max-time 5 -u "$credentials" "$url" > /dev/null 2>&1; then
+                echo "      ${service_name} is ready (PID: ${pid})"
+                return
+            fi
+        else
+            if curl -fsS --connect-timeout 2 --max-time 5 "$url" > /dev/null 2>&1; then
+                echo "      ${service_name} is ready (PID: ${pid})"
+                return
+            fi
         fi
         if [ "$i" -eq "$retries" ]; then
             if [ "$fatal" = "true" ]; then
@@ -314,11 +322,16 @@ start_wework
 # ========================================
 start_ttyd() {
     echo "[7/8] Starting Terminal (port ${TTYD_PORT})..."
+    if [ -z "${TTYD_CREDENTIALS:-}" ]; then
+        echo "      ERROR: TTYD_CREDENTIALS is required for terminal auth"
+        exit 1
+    fi
 
-    ttyd --writable -p ${TTYD_PORT} -i 0.0.0.0 bash -lc 'cd /workspace && exec bash' &
+    ttyd --writable -c "${TTYD_CREDENTIALS}" -p "${TTYD_PORT}" -i 0.0.0.0 \
+        bash -lc 'cd /workspace && exec bash' &
     TTYD_PID=$!
 
-    wait_for_http "Terminal" "http://localhost:${TTYD_PORT}" 30 "$TTYD_PID" false
+    wait_for_http "Terminal" "http://localhost:${TTYD_PORT}" 30 "$TTYD_PID" false "$TTYD_CREDENTIALS"
 }
 
 start_ttyd
@@ -351,6 +364,8 @@ echo ""
 # Signal Handling for Graceful Shutdown
 # ========================================
 shutdown() {
+    local exit_code="${1:-0}"
+
     echo ""
     echo "Received shutdown signal, stopping services..."
 
@@ -374,7 +389,7 @@ shutdown() {
     wait "${REDIS_PID:-}" 2>/dev/null || true
 
     echo "  All services stopped"
-    exit 0
+    exit "$exit_code"
 }
 
 trap shutdown SIGTERM SIGINT SIGQUIT
@@ -397,4 +412,4 @@ report_process "Frontend" "$FRONTEND_PID"
 report_process "Wework" "$WEWORK_PID"
 report_process "Terminal" "$TTYD_PID"
 
-shutdown
+shutdown "$EXIT_CODE"

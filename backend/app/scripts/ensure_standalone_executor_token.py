@@ -8,6 +8,7 @@ import hashlib
 import os
 import secrets
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 from sqlalchemy.orm import Session
@@ -19,10 +20,16 @@ from app.models.user import User
 STANDALONE_EXECUTOR_KEY_NAME = "standalone-executor"
 STANDALONE_EXECUTOR_KEY_DESCRIPTION = "Standalone executor device registration key"
 DEFAULT_TOKEN_FILE = Path("/app/data/standalone_executor_token")
+TOKEN_BYTES = 32
+TOKEN_PREFIX_PREVIEW_LEN = 8
 
 
 def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
+
+
+def _utcnow() -> datetime:
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 def _read_token_file(token_file: Path) -> str | None:
@@ -48,18 +55,19 @@ def _find_active_token_key(db: Session, user_id: int, token: str) -> APIKey | No
             APIKey.key_type == KEY_TYPE_PERSONAL,
             APIKey.key_hash == _hash_token(token),
             APIKey.is_active.is_(True),
+            APIKey.expires_at > _utcnow(),
         )
         .first()
     )
 
 
 def _create_api_key(db: Session, user_id: int) -> tuple[str, APIKey]:
-    random_part = secrets.token_urlsafe(32)
+    random_part = secrets.token_urlsafe(TOKEN_BYTES)
     token = f"wg-{random_part}"
     key = APIKey(
         user_id=user_id,
         key_hash=_hash_token(token),
-        key_prefix=f"wg-{random_part[:8]}...",
+        key_prefix=f"wg-{random_part[:TOKEN_PREFIX_PREVIEW_LEN]}...",
         name=STANDALONE_EXECUTOR_KEY_NAME,
         key_type=KEY_TYPE_PERSONAL,
         description=STANDALONE_EXECUTOR_KEY_DESCRIPTION,

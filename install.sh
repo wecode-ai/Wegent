@@ -35,6 +35,9 @@ STANDALONE_IMAGE="${WEGENT_STANDALONE_IMAGE:-ghcr.io/wecode-ai/wegent-standalone
 STANDALONE_CONTAINER_NAME="wegent-standalone"
 STANDALONE_VOLUME_NAME="wegent-data"
 STANDALONE_WORKSPACE_VOLUME_NAME="wegent-workspace"
+STANDALONE_TTYD_USERNAME="${WEGENT_TTYD_USERNAME:-admin}"
+STANDALONE_TTYD_PASSWORD="${WEGENT_TTYD_PASSWORD:-}"
+STANDALONE_TTYD_CREDENTIALS="${WEGENT_TTYD_CREDENTIALS:-}"
 
 # Temporary files cleanup
 TMPFILES=()
@@ -124,6 +127,9 @@ Environment variables:
   WEGENT_VERBOSE        Set to '1' for verbose output
   WEGENT_DRY_RUN        Set to '1' for dry run
   WEGENT_STANDALONE_IMAGE  Custom standalone image (default: ghcr.io/wecode-ai/wegent-standalone:latest)
+  WEGENT_TTYD_CREDENTIALS  Standalone terminal credentials in user:password format
+  WEGENT_TTYD_USERNAME     Standalone terminal username when generating credentials (default: admin)
+  WEGENT_TTYD_PASSWORD     Standalone terminal password; generated automatically if omitted
 
 Examples:
   # Interactive installation (recommended)
@@ -316,6 +322,27 @@ ensure_internal_service_token() {
 
     export INTERNAL_SERVICE_TOKEN="$token"
     persist_internal_service_token "$token"
+}
+
+ensure_standalone_ttyd_credentials() {
+    if [[ -n "$STANDALONE_TTYD_CREDENTIALS" ]]; then
+        if [[ "$STANDALONE_TTYD_CREDENTIALS" != *:* ]]; then
+            ui_error "WEGENT_TTYD_CREDENTIALS must use user:password format."
+            exit 1
+        fi
+        return
+    fi
+
+    if [[ -z "$STANDALONE_TTYD_PASSWORD" ]]; then
+        STANDALONE_TTYD_PASSWORD="$(generate_internal_service_token)"
+        if [[ -z "$STANDALONE_TTYD_PASSWORD" ]]; then
+            ui_error "Unable to generate terminal password. Install openssl or python3, or set WEGENT_TTYD_PASSWORD manually."
+            exit 1
+        fi
+        ui_success "Generated standalone terminal credentials"
+    fi
+
+    STANDALONE_TTYD_CREDENTIALS="${STANDALONE_TTYD_USERNAME}:${STANDALONE_TTYD_PASSWORD}"
 }
 
 run_quiet_step() {
@@ -1073,6 +1100,8 @@ start_standalone_service() {
         ui_success "Workspace volume already exists"
     fi
 
+    ensure_standalone_ttyd_credentials
+
     # Build docker run command
     local docker_run_cmd="docker run -d"
     docker_run_cmd+=" --name ${STANDALONE_CONTAINER_NAME}"
@@ -1087,6 +1116,7 @@ start_standalone_service() {
     docker_run_cmd+=" -e RUNTIME_SOCKET_DIRECT_URL=${SOCKET_URL}"
     docker_run_cmd+=" -e WEWORK_PUBLIC_BACKEND_URL=${SOCKET_URL}"
     docker_run_cmd+=" -e DEVICE_PUBLIC_BASE_URL=http://${ACCESS_HOST}:17888"
+    docker_run_cmd+=" -e TTYD_CREDENTIALS=${STANDALONE_TTYD_CREDENTIALS}"
     docker_run_cmd+=" -e LITELLM_LOCAL_MODEL_COST_MAP=True"
     docker_run_cmd+=" ${STANDALONE_IMAGE}"
 
@@ -1181,7 +1211,7 @@ wait_for_standalone_service() {
 
     while [[ $phase4_elapsed -lt $phase4_max ]]; do
         if curl -fsSL --connect-timeout 2 --max-time 5 "$wework_url" >/dev/null 2>&1 \
-            && curl -fsSL --connect-timeout 2 --max-time 5 "$terminal_url" >/dev/null 2>&1; then
+            && curl -fsSL --connect-timeout 2 --max-time 5 -u "$STANDALONE_TTYD_CREDENTIALS" "$terminal_url" >/dev/null 2>&1; then
             echo -e "\r  ${GREEN}✓${NC} [4/4] Wework and terminal are ready          "
             echo ""
             ui_success "All services are ready!"
@@ -1300,7 +1330,9 @@ print_completion() {
     echo -e "${GREEN}${BOLD}========================================${NC}"
     echo ""
     echo -e "  Open ${BLUE}${BOLD}http://${ACCESS_HOST}:3000${NC} in your browser"
-    echo -e "  Open ${BLUE}${BOLD}http://${ACCESS_HOST}:3001${NC} for Wework"
+    if [[ "$DEPLOY_MODE" == "standalone" ]]; then
+        echo -e "  Open ${BLUE}${BOLD}http://${ACCESS_HOST}:3001${NC} for Wework"
+    fi
     echo ""
     ui_kv "Deployment mode" "$DEPLOY_MODE"
     ui_kv "Access URL" "http://${ACCESS_HOST}:3000"
@@ -1308,6 +1340,9 @@ print_completion() {
     if [[ "$DEPLOY_MODE" == "standalone" ]]; then
         ui_kv "Wework URL" "http://${ACCESS_HOST}:3001"
         ui_kv "Terminal URL" "http://${ACCESS_HOST}:7681"
+        if [[ -n "$STANDALONE_TTYD_CREDENTIALS" ]]; then
+            ui_kv "Terminal login" "$STANDALONE_TTYD_CREDENTIALS"
+        fi
         ui_kv "Container name" "$STANDALONE_CONTAINER_NAME"
         ui_kv "Data volume" "$STANDALONE_VOLUME_NAME"
         ui_kv "Workspace volume" "$STANDALONE_WORKSPACE_VOLUME_NAME"
@@ -1344,7 +1379,8 @@ print_completion() {
         echo -e "    -p 3000:3000 -p 3001:3001 -p 8000:8000 -p 7681:7681 -p 17888:17888 \\"
         echo -e "    -v ${STANDALONE_VOLUME_NAME}:/app/data -v ${STANDALONE_WORKSPACE_VOLUME_NAME}:/workspace \\"
         echo -e "    -e RUNTIME_SOCKET_DIRECT_URL=${SOCKET_URL} -e WEWORK_PUBLIC_BACKEND_URL=${SOCKET_URL} \\"
-        echo -e "    -e DEVICE_PUBLIC_BASE_URL=http://${ACCESS_HOST}:17888 ${STANDALONE_IMAGE}${NC}"
+        echo -e "    -e DEVICE_PUBLIC_BASE_URL=http://${ACCESS_HOST}:17888 -e TTYD_CREDENTIALS=${STANDALONE_TTYD_CREDENTIALS:-admin:CHANGE_ME} \\"
+        echo -e "    ${STANDALONE_IMAGE}${NC}"
     else
         local compose_args=""
         if [[ "$IS_SOURCE_BUILD" == "1" ]]; then
@@ -1404,7 +1440,7 @@ main() {
         echo "    -p 3000:3000 -p 3001:3001 -p 8000:8000 -p 7681:7681 -p 17888:17888 \\"
         echo "    -v wegent-data:/app/data -v wegent-workspace:/workspace \\"
         echo "    -e RUNTIME_SOCKET_DIRECT_URL=http://localhost:8000 -e WEWORK_PUBLIC_BACKEND_URL=http://localhost:8000 \\"
-        echo "    -e DEVICE_PUBLIC_BASE_URL=http://localhost:17888 \\"
+        echo "    -e DEVICE_PUBLIC_BASE_URL=http://localhost:17888 -e TTYD_CREDENTIALS=admin:CHANGE_ME \\"
         echo "    ghcr.io/wecode-ai/wegent-standalone:latest"
         exit 1
     fi
