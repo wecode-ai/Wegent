@@ -407,6 +407,24 @@ export interface TaskDetail extends Task {
   subtasks?: Subtask[]
 }
 
+export type TaskForkTarget =
+  | {
+      type: 'managed'
+    }
+  | {
+      type: 'device'
+      device_id: string
+    }
+
+export interface TaskForkRequest {
+  target: TaskForkTarget
+}
+
+export interface TaskForkResponse {
+  task_id: number
+  task: TaskDetail
+}
+
 export interface CreateProjectConversationRequest {
   prompt: string
   title?: string

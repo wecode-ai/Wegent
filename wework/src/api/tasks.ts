@@ -4,6 +4,8 @@ import type {
   TaskArchiveBatchResponse,
   TaskArchiveResponse,
   TaskDetail,
+  TaskForkRequest,
+  TaskForkResponse,
   TaskListResponse,
   TurnFileChangesDiffResponse,
   TurnFileChangesRevertResponse,
@@ -41,6 +43,12 @@ export function createTaskApi(client: HttpClient) {
     },
     getTaskDetail(taskId: number): Promise<TaskDetail> {
       return client.get(`/tasks/${taskId}?client_origin=${WEWORK_CLIENT_ORIGIN}`)
+    },
+    forkTask(taskId: number, request: TaskForkRequest): Promise<TaskForkResponse> {
+      return client.post(
+        `/tasks/${taskId}/fork?client_origin=${WEWORK_CLIENT_ORIGIN}`,
+        request
+      )
     },
     getTurnFileChangesDiff(
       subtaskId: number,
