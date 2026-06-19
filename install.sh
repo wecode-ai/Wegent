@@ -1083,6 +1083,7 @@ start_standalone_service() {
     docker_run_cmd+=" -v ${STANDALONE_VOLUME_NAME}:/app/data"
     docker_run_cmd+=" -v ${STANDALONE_WORKSPACE_VOLUME_NAME}:/workspace"
     docker_run_cmd+=" -e RUNTIME_SOCKET_DIRECT_URL=${SOCKET_URL}"
+    docker_run_cmd+=" -e RUNTIME_WEWORK_CODE_URL=http://${ACCESS_HOST}:3001"
     docker_run_cmd+=" -e WEWORK_PUBLIC_BACKEND_URL=${SOCKET_URL}"
     docker_run_cmd+=" -e LITELLM_LOCAL_MODEL_COST_MAP=True"
     docker_run_cmd+=" ${STANDALONE_IMAGE}"
@@ -1340,7 +1341,8 @@ print_completion() {
         echo -e "  docker run -d --name ${STANDALONE_CONTAINER_NAME} --restart unless-stopped \\"
         echo -e "    -p 3000:3000 -p 3001:3001 -p 8000:8000 \\"
         echo -e "    -v ${STANDALONE_VOLUME_NAME}:/app/data -v ${STANDALONE_WORKSPACE_VOLUME_NAME}:/workspace \\"
-        echo -e "    -e RUNTIME_SOCKET_DIRECT_URL=${SOCKET_URL} -e WEWORK_PUBLIC_BACKEND_URL=${SOCKET_URL} \\"
+        echo -e "    -e RUNTIME_SOCKET_DIRECT_URL=${SOCKET_URL} -e RUNTIME_WEWORK_CODE_URL=http://${ACCESS_HOST}:3001 \\"
+        echo -e "    -e WEWORK_PUBLIC_BACKEND_URL=${SOCKET_URL} \\"
         echo -e "    ${STANDALONE_IMAGE}${NC}"
     else
         local compose_args=""
@@ -1400,7 +1402,8 @@ main() {
         echo "  docker run -d --name wegent-standalone \\"
         echo "    -p 3000:3000 -p 3001:3001 -p 8000:8000 \\"
         echo "    -v wegent-data:/app/data -v wegent-workspace:/workspace \\"
-        echo "    -e RUNTIME_SOCKET_DIRECT_URL=http://localhost:8000 -e WEWORK_PUBLIC_BACKEND_URL=http://localhost:8000 \\"
+        echo "    -e RUNTIME_SOCKET_DIRECT_URL=http://localhost:8000 -e RUNTIME_WEWORK_CODE_URL=http://localhost:3001 \\"
+        echo "    -e WEWORK_PUBLIC_BACKEND_URL=http://localhost:8000 \\"
         echo "    ghcr.io/wecode-ai/wegent-standalone:latest"
         exit 1
     fi

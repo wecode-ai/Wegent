@@ -70,6 +70,7 @@ docker run -d \
   -v wegent-data:/app/data \
   -v wegent-workspace:/workspace \
   -e RUNTIME_SOCKET_DIRECT_URL=http://localhost:8000 \
+  -e RUNTIME_WEWORK_CODE_URL=http://localhost:3001 \
   -e WEWORK_PUBLIC_BACKEND_URL=http://localhost:8000 \
   ghcr.io/wecode-ai/wegent-standalone:latest
 ```
@@ -86,9 +87,12 @@ docker run -d \
   -v wegent-data:/app/data \
   -v wegent-workspace:/workspace \
   -e RUNTIME_SOCKET_DIRECT_URL=http://YOUR_SERVER_IP:8000 \
+  -e RUNTIME_WEWORK_CODE_URL=http://YOUR_SERVER_IP:3001 \
   -e WEWORK_PUBLIC_BACKEND_URL=http://YOUR_SERVER_IP:8000 \
   ghcr.io/wecode-ai/wegent-standalone:latest
 ```
+
+`RUNTIME_WEWORK_CODE_URL` is served through the main Frontend runtime config, so coding entry points in the main Frontend open the bundled standalone Wework by default.
 
 `WEWORK_PUBLIC_BACKEND_URL` is written into Wework's `runtime-config.js` during container startup, so a browser opening `http://YOUR_SERVER_IP:3001` connects to the server Backend instead of the user's local `localhost`.
 
@@ -111,6 +115,7 @@ Standalone does not include the IDE/code-server entry by default. For the first 
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `RUNTIME_SOCKET_DIRECT_URL` | Backend WebSocket URL used by the main Frontend | `http://localhost:8000` |
+| `RUNTIME_WEWORK_CODE_URL` | Wework URL opened by the main Frontend coding entry points | `http://localhost:3001` |
 | `WEWORK_PUBLIC_BACKEND_URL` | Runtime Backend URL for Wework Web; derives API and Socket URLs | `http://localhost:8000` |
 | `WEWORK_PUBLIC_API_URL` | Wework Web API URL; overrides `WEWORK_PUBLIC_BACKEND_URL/api` | `${WEWORK_PUBLIC_BACKEND_URL}/api` |
 | `WEWORK_PUBLIC_SOCKET_URL` | Wework Web Socket.IO URL; overrides `WEWORK_PUBLIC_BACKEND_URL` | `${WEWORK_PUBLIC_BACKEND_URL}` |
@@ -179,6 +184,7 @@ docker run -d \
   -v wegent-data:/app/data \
   -v wegent-workspace:/workspace \
   -e RUNTIME_SOCKET_DIRECT_URL=http://localhost:8000 \
+  -e RUNTIME_WEWORK_CODE_URL=http://localhost:3001 \
   -e WEWORK_PUBLIC_BACKEND_URL=http://localhost:8000 \
   ghcr.io/wecode-ai/wegent-standalone:latest
 ```
