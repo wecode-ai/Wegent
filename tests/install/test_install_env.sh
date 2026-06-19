@@ -210,6 +210,47 @@ test_executor_mode_rejects_invalid_value() {
     grep -q "Invalid standalone executor mode" /tmp/wegent-invalid-mode.out
 }
 
+test_standalone_dry_run_recreates_existing_container_for_host_mode() {
+    source_installer_without_main
+
+    DEPLOY_MODE="standalone"
+    STANDALONE_EXECUTOR_MODE="host"
+    DRY_RUN="1"
+    NO_PROMPT="1"
+    SOCKET_URL="http://localhost:8000"
+    ACCESS_HOST="localhost"
+
+    docker() {
+        case "$*" in
+            "ps -a --format {{.Names}}")
+                echo "wegent-standalone"
+                ;;
+            "ps --format {{.Names}}")
+                echo "wegent-standalone"
+                ;;
+            "inspect --format {{range .Config.Env}}{{println .}}{{end}} wegent-standalone")
+                echo "STANDALONE_EXECUTOR_ENABLED=true"
+                ;;
+            "volume ls --format {{.Name}}")
+                echo "wegent-data"
+                echo "wegent-workspace"
+                ;;
+            *)
+                echo "unexpected docker command: $*" >&2
+                return 1
+                ;;
+        esac
+    }
+
+    start_standalone_service >/tmp/wegent-host-recreate.out
+
+    grep -q "Selected executor mode changes container executor setting from true to false" \
+        /tmp/wegent-host-recreate.out
+    grep -q "\\[DRY RUN\\] Would remove existing container: wegent-standalone" \
+        /tmp/wegent-host-recreate.out
+    grep -q -- "-e STANDALONE_EXECUTOR_ENABLED=false" /tmp/wegent-host-recreate.out
+}
+
 run_test() {
     local name="$1"
     local test_fn="$2"
@@ -230,6 +271,8 @@ run_test "executor mode accepts explicit hybrid env" \
     test_executor_mode_accepts_explicit_hybrid_env
 run_test "executor mode rejects invalid value" \
     test_executor_mode_rejects_invalid_value
+run_test "standalone dry-run recreates existing container for host mode" \
+    test_standalone_dry_run_recreates_existing_container_for_host_mode
 run_test "new standard .env includes internal service token" \
     test_new_standard_env_includes_internal_service_token
 run_test "existing standard .env backfills internal service token" \

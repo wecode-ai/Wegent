@@ -943,6 +943,32 @@ standalone_container_executor_enabled() {
     esac
 }
 
+current_standalone_container_executor_enabled() {
+    local value
+    value="$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' \
+        "$STANDALONE_CONTAINER_NAME" 2>/dev/null \
+        | awk -F= '$1 == "STANDALONE_EXECUTOR_ENABLED" { print $2; exit }' \
+        || true)"
+
+    if [[ -z "$value" ]]; then
+        echo "true"
+        return
+    fi
+
+    echo "$value"
+}
+
+remove_existing_standalone_container() {
+    if [[ "$DRY_RUN" == "1" ]]; then
+        ui_info "[DRY RUN] Would remove existing container: ${STANDALONE_CONTAINER_NAME}"
+        return
+    fi
+
+    ui_info "Removing existing container..."
+    docker rm -f "${STANDALONE_CONTAINER_NAME}"
+    ui_success "Container removed"
+}
+
 needs_host_executor() {
     [[ "$DEPLOY_MODE" == "standalone" ]] || return 1
     [[ "$STANDALONE_EXECUTOR_MODE" == "host" || "$STANDALONE_EXECUTOR_MODE" == "hybrid" ]]
@@ -1292,7 +1318,29 @@ start_standalone_service() {
         # Check if it's running
         if docker ps --format '{{.Names}}' | grep -q "^${STANDALONE_CONTAINER_NAME}$"; then
             ui_info "Container is already running"
-            if is_promptable; then
+            local current_executor_enabled
+            local desired_executor_enabled
+            current_executor_enabled="$(current_standalone_container_executor_enabled)"
+            desired_executor_enabled="$(standalone_container_executor_enabled)"
+
+            if [[ "$current_executor_enabled" != "$desired_executor_enabled" ]]; then
+                ui_warn "Selected executor mode changes container executor setting from ${current_executor_enabled} to ${desired_executor_enabled}"
+                if is_promptable; then
+                    echo ""
+                    echo -e "${YELLOW}Recreate the container to apply executor mode '${STANDALONE_EXECUTOR_MODE}'?${NC}"
+                    echo -e "  ${GREEN}[1]${NC} Recreate container ${MUTED}(data volumes are preserved)${NC}"
+                    echo -e "  ${YELLOW}[2]${NC} Keep existing container"
+                    printf "Choose [1/2] (default: 1): "
+                    read -r recreate_choice < /dev/tty
+
+                    if [[ "$recreate_choice" == "2" ]]; then
+                        ui_success "Keeping existing container"
+                        return
+                    fi
+                fi
+
+                remove_existing_standalone_container
+            elif is_promptable; then
                 echo ""
                 echo -e "${YELLOW}What would you like to do?${NC}"
                 echo -e "  ${GREEN}[1]${NC} Keep running (do nothing)"
@@ -1309,9 +1357,7 @@ start_standalone_service() {
                         return
                         ;;
                     3)
-                        ui_info "Removing existing container..."
-                        docker rm -f "${STANDALONE_CONTAINER_NAME}"
-                        ui_success "Container removed"
+                        remove_existing_standalone_container
                         ;;
                     *)
                         ui_success "Keeping existing container"
