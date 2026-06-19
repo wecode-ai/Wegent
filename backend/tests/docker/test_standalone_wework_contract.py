@@ -88,6 +88,26 @@ def test_standalone_start_writes_wework_runtime_config() -> None:
     assert "/app/wework/dist/runtime-config.js" in start_script
 
 
+def test_standalone_frontend_defaults_to_wework_url() -> None:
+    """Standalone frontend should default coding entry points to bundled Wework."""
+    start_script = STANDALONE_START.read_text(encoding="utf-8")
+    install_script = INSTALL_SCRIPT.read_text(encoding="utf-8")
+
+    assert (
+        "export RUNTIME_WEWORK_CODE_URL="
+        '"${RUNTIME_WEWORK_CODE_URL:-http://localhost:${WEWORK_PORT}}"'
+        in start_script
+    )
+    assert (
+        'docker_run_cmd+=" -e RUNTIME_WEWORK_CODE_URL=http://${ACCESS_HOST}:3001"'
+        in install_script
+    )
+    assert (
+        "-e RUNTIME_WEWORK_CODE_URL=http://${ACCESS_HOST}:3001"
+        in install_script
+    )
+
+
 def test_installer_exposes_wework_backend_and_workspace_volume() -> None:
     """The public installer should expose only browser-facing standalone ports."""
     install_script = INSTALL_SCRIPT.read_text(encoding="utf-8")
