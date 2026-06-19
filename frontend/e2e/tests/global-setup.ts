@@ -4,6 +4,7 @@ import { promises as fsPromises } from 'fs'
 import { ADMIN_USER, BOOTSTRAP_ADMIN_USER, REGULAR_USER } from '../config/test-users'
 import type { TestUser } from '../config/test-users'
 import { buildStorageState, getJwtExpiryMs } from '../utils/auth-state'
+import { ensureBootstrapAdminPasswordInitialized } from '../utils/bootstrap-admin'
 
 const authFile = path.join(__dirname, '../.auth/user.json')
 const apiBaseUrl = process.env.E2E_API_URL || 'http://localhost:8000'
@@ -58,34 +59,6 @@ async function loginViaApi(request: APIRequestContext, user: TestUser): Promise<
   }
 
   throw lastError || new Error(`Login failed for ${user.username}`)
-}
-
-async function ensureBootstrapAdminPasswordInitialized(
-  request: APIRequestContext,
-  password: string
-): Promise<void> {
-  const statusResponse = await request.get(`${apiBaseUrl}/api/auth/admin-password/status`)
-  expect(
-    statusResponse.ok(),
-    `Failed to read admin password setup status: ${await statusResponse.text()}`
-  ).toBe(true)
-
-  const statusBody = (await statusResponse.json()) as { required?: boolean }
-  if (!statusBody.required) {
-    return
-  }
-
-  const setupResponse = await request.post(`${apiBaseUrl}/api/auth/admin-password/setup`, {
-    data: {
-      password,
-    },
-  })
-
-  if (setupResponse.ok() || setupResponse.status() === 409) {
-    return
-  }
-
-  expect(false, `Failed to set bootstrap admin password: ${await setupResponse.text()}`).toBe(true)
 }
 
 async function ensureUser(
@@ -195,7 +168,7 @@ setup('authenticate', async ({ request }) => {
     await fsPromises.mkdir(authDir, { recursive: true })
   }
 
-  await ensureBootstrapAdminPasswordInitialized(request, BOOTSTRAP_ADMIN_USER.password)
+  await ensureBootstrapAdminPasswordInitialized(request, apiBaseUrl, BOOTSTRAP_ADMIN_USER.password)
 
   const bootstrapToken = await loginViaApi(request, BOOTSTRAP_ADMIN_USER)
   await ensureUser(request, bootstrapToken, ADMIN_USER)

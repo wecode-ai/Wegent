@@ -45,7 +45,7 @@ This will automatically:
 1. Check and install Docker if needed
 2. Pull the latest Wegent standalone image
 3. Create the `wegent-data` data volume and `wegent-workspace` workspace volume
-4. Publish ports for the main frontend, Wework, and Backend
+4. Publish a single Nginx entry port
 5. Start the container and wait for Backend and Wework readiness
 
 After startup, open:
@@ -53,8 +53,8 @@ After startup, open:
 | Entry | URL | Purpose |
 |-------|-----|---------|
 | Main Frontend | `http://localhost:3000` | Wegent management and general features |
-| Wework | `http://localhost:3001` | Create and use coding tasks |
-| Backend API | `http://localhost:8000` | API and WebSocket |
+| Wework | `http://localhost:3000/wework` | Create and use coding tasks |
+| Backend API | `http://localhost:3000/api` | API and WebSocket |
 
 ## Executor Location
 
@@ -82,6 +82,30 @@ WEGENT_STANDALONE_EXECUTOR_MODE=hybrid \
 curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash
 ```
 
+### Subsequent Starts
+
+When installed through `curl | bash`, `install.sh` is not kept on the host. The installer writes
+`~/.wegent/standalone/config.env` and installs a local management command:
+
+```bash
+~/.local/bin/wegent-standalone start
+```
+
+Common commands:
+
+```bash
+~/.local/bin/wegent-standalone status
+~/.local/bin/wegent-standalone stop
+~/.local/bin/wegent-standalone restart
+~/.local/bin/wegent-standalone logs
+~/.local/bin/wegent-standalone logs host
+~/.local/bin/wegent-standalone update
+```
+
+`host` and `hybrid` modes need to manage both the Docker container and the host executor.
+Running only `docker start wegent-standalone` starts the container but does not restore the host
+executor, so subsequent starts should use `wegent-standalone start`.
+
 ### Running Container Directly
 
 For local access:
@@ -91,13 +115,14 @@ docker run -d \
   --name wegent-standalone \
   --restart unless-stopped \
   -p 3000:3000 \
-  -p 3001:3001 \
-  -p 8000:8000 \
   -v wegent-data:/app/data \
   -v wegent-workspace:/workspace \
-  -e RUNTIME_SOCKET_DIRECT_URL=http://localhost:8000 \
-  -e RUNTIME_WEWORK_CODE_URL=http://localhost:3001 \
-  -e WEWORK_PUBLIC_BACKEND_URL=http://localhost:8000 \
+  -e RUNTIME_SOCKET_DIRECT_URL=http://localhost:3000 \
+  -e RUNTIME_PUBLIC_API_URL=http://localhost:3000/api \
+  -e RUNTIME_WEWORK_CODE_URL=http://localhost:3000/wework \
+  -e WEWORK_PUBLIC_APP_BASE_PATH=/wework \
+  -e WEWORK_PUBLIC_API_URL=/wework/api \
+  -e WEWORK_PUBLIC_SOCKET_PATH=/wework/socket.io \
   ghcr.io/wecode-ai/wegent-standalone:latest
 ```
 
@@ -108,23 +133,24 @@ docker run -d \
   --name wegent-standalone \
   --restart unless-stopped \
   -p 3000:3000 \
-  -p 3001:3001 \
-  -p 8000:8000 \
   -v wegent-data:/app/data \
   -v wegent-workspace:/workspace \
-  -e RUNTIME_SOCKET_DIRECT_URL=http://YOUR_SERVER_IP:8000 \
-  -e RUNTIME_WEWORK_CODE_URL=http://YOUR_SERVER_IP:3001 \
-  -e WEWORK_PUBLIC_BACKEND_URL=http://YOUR_SERVER_IP:8000 \
+  -e RUNTIME_SOCKET_DIRECT_URL=http://YOUR_SERVER_IP:3000 \
+  -e RUNTIME_PUBLIC_API_URL=http://YOUR_SERVER_IP:3000/api \
+  -e RUNTIME_WEWORK_CODE_URL=http://YOUR_SERVER_IP:3000/wework \
+  -e WEWORK_PUBLIC_APP_BASE_PATH=/wework \
+  -e WEWORK_PUBLIC_API_URL=/wework/api \
+  -e WEWORK_PUBLIC_SOCKET_PATH=/wework/socket.io \
   ghcr.io/wecode-ai/wegent-standalone:latest
 ```
 
 `RUNTIME_WEWORK_CODE_URL` is served through the main Frontend runtime config, so coding entry points in the main Frontend open the bundled standalone Wework by default.
 
-`WEWORK_PUBLIC_BACKEND_URL` is written into Wework's `runtime-config.js` during container startup, so a browser opening `http://YOUR_SERVER_IP:3001` connects to the server Backend instead of the user's local `localhost`.
+The standalone image includes Nginx, so browsers only need port `3000`. Nginx proxies `/` to the main Frontend, serves Wework Web static assets at `/wework`, and forwards `/wework/api` and `/wework/socket.io` to the Backend.
 
 ## Using Wework for Coding Tasks
 
-1. Open `http://localhost:3001` (use the server address for remote deployments).
+1. Open `http://localhost:3000/wework` (use the server address for remote deployments).
 2. Sign in with the initialized account, or follow the page prompts to finish account setup.
 3. Configure an available model and provider token in settings.
 4. Return to the Wework workbench and send a coding request directly.
@@ -140,15 +166,18 @@ Standalone does not include the IDE/code-server entry by default. For the first 
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `RUNTIME_SOCKET_DIRECT_URL` | Backend WebSocket URL used by the main Frontend | `http://localhost:8000` |
-| `RUNTIME_WEWORK_CODE_URL` | Wework URL opened by the main Frontend coding entry points | `http://localhost:3001` |
-| `WEWORK_PUBLIC_BACKEND_URL` | Runtime Backend URL for Wework Web; derives API and Socket URLs | `http://localhost:8000` |
-| `WEWORK_PUBLIC_API_URL` | Wework Web API URL; overrides `WEWORK_PUBLIC_BACKEND_URL/api` | `${WEWORK_PUBLIC_BACKEND_URL}/api` |
-| `WEWORK_PUBLIC_SOCKET_URL` | Wework Web Socket.IO URL; overrides `WEWORK_PUBLIC_BACKEND_URL` | `${WEWORK_PUBLIC_BACKEND_URL}` |
+| `RUNTIME_SOCKET_DIRECT_URL` | Backend WebSocket URL used by the main Frontend; empty means same-origin `/socket.io` | empty |
+| `RUNTIME_PUBLIC_API_URL` | Public API URL displayed by the main Frontend | `/api` |
+| `RUNTIME_WEWORK_CODE_URL` | Wework URL opened by the main Frontend coding entry points | `/wework` |
+| `WEWORK_PUBLIC_APP_BASE_PATH` | Wework Web mount path | `/wework` |
+| `WEWORK_PUBLIC_API_URL` | Wework Web API URL | `/wework/api` |
+| `WEWORK_PUBLIC_SOCKET_URL` | Wework Web Socket.IO origin; empty means the current page origin | empty |
+| `WEWORK_PUBLIC_SOCKET_PATH` | Wework Web Socket.IO path | `/wework/socket.io` |
 | `WEGENT_WORKSPACE_ROOT` | Standalone workspace root | `/workspace` |
-| `WEWORK_PORT` | Wework Web container port | `3001` |
 | `WEGENT_STANDALONE_EXECUTOR_MODE` | Standalone executor mode: `host`, `container`, or `hybrid` | `host` for interactive macOS installs; `container` for non-interactive and Linux installs |
 | `STANDALONE_EXECUTOR_ENABLED` | In-container executor switch passed by the installer according to executor mode | `true` |
+| `WEGENT_BIN_DIR` | Directory where the installer writes the `wegent-standalone` management command | `~/.local/bin` |
+| `WEGENT_STANDALONE_STATE_FILE` | Persistent state file read by `wegent-standalone` | `~/.wegent/standalone/config.env` |
 | `STANDALONE_MODE` | Enable standalone mode | `true` |
 | `DATABASE_URL` | Database connection URL | `sqlite:////app/data/wegent.db` |
 | `REDIS_URL` | Redis connection URL | `redis://localhost:6379/0` |
@@ -209,13 +238,14 @@ docker run -d \
   --name wegent-standalone \
   --restart unless-stopped \
   -p 3000:3000 \
-  -p 3001:3001 \
-  -p 8000:8000 \
   -v wegent-data:/app/data \
   -v wegent-workspace:/workspace \
-  -e RUNTIME_SOCKET_DIRECT_URL=http://localhost:8000 \
-  -e RUNTIME_WEWORK_CODE_URL=http://localhost:3001 \
-  -e WEWORK_PUBLIC_BACKEND_URL=http://localhost:8000 \
+  -e RUNTIME_SOCKET_DIRECT_URL=http://localhost:3000 \
+  -e RUNTIME_PUBLIC_API_URL=http://localhost:3000/api \
+  -e RUNTIME_WEWORK_CODE_URL=http://localhost:3000/wework \
+  -e WEWORK_PUBLIC_APP_BASE_PATH=/wework \
+  -e WEWORK_PUBLIC_API_URL=/wework/api \
+  -e WEWORK_PUBLIC_SOCKET_PATH=/wework/socket.io \
   ghcr.io/wecode-ai/wegent-standalone:latest
 ```
 

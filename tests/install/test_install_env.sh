@@ -210,6 +210,33 @@ test_executor_mode_rejects_invalid_value() {
     grep -q "Invalid standalone executor mode" /tmp/wegent-invalid-mode.out
 }
 
+test_executor_mode_reuses_persisted_mode_for_non_interactive_start() {
+    source_installer_without_main
+
+    local tmp_state_dir
+    tmp_state_dir="$(mktemp -d)"
+    trap 'rm -rf "$tmp_state_dir"' RETURN
+
+    DEPLOY_MODE="standalone"
+    STANDALONE_EXECUTOR_MODE=""
+    WEGENT_STANDALONE_EXECUTOR_MODE=""
+    NO_PROMPT="1"
+    OS="macos"
+    STANDALONE_STATE_FILE="${tmp_state_dir}/standalone.env"
+
+    cat > "$STANDALONE_STATE_FILE" <<'EOF'
+STANDALONE_EXECUTOR_MODE=host
+STANDALONE_IMAGE=ghcr.io/wecode-ai/wegent-standalone:latest
+STANDALONE_CONTAINER_NAME=wegent-standalone
+EOF
+
+    select_standalone_executor_mode >/tmp/wegent-persisted-mode.out
+
+    [[ "$STANDALONE_EXECUTOR_MODE" == "host" ]]
+    grep -q "Using previously selected standalone executor mode: host" \
+        /tmp/wegent-persisted-mode.out
+}
+
 test_standalone_dry_run_recreates_existing_container_for_host_mode() {
     source_installer_without_main
 
@@ -251,6 +278,144 @@ test_standalone_dry_run_recreates_existing_container_for_host_mode() {
     grep -q -- "-e STANDALONE_EXECUTOR_ENABLED=false" /tmp/wegent-host-recreate.out
 }
 
+test_standalone_starts_existing_stopped_container_without_recreating() {
+    source_installer_without_main
+
+    DEPLOY_MODE="standalone"
+    STANDALONE_EXECUTOR_MODE="host"
+    DRY_RUN="0"
+    NO_PROMPT="1"
+    SOCKET_URL="http://localhost:8000"
+    ACCESS_HOST="localhost"
+
+    docker() {
+        case "$*" in
+            "ps -a --format {{.Names}}")
+                echo "wegent-standalone"
+                ;;
+            "ps --format {{.Names}}")
+                ;;
+            "inspect --format {{range .Config.Env}}{{println .}}{{end}} wegent-standalone")
+                echo "STANDALONE_EXECUTOR_ENABLED=false"
+                ;;
+            "start wegent-standalone")
+                echo "wegent-standalone"
+                ;;
+            *)
+                echo "unexpected docker command: $*" >&2
+                return 1
+                ;;
+        esac
+    }
+
+    start_standalone_service >/tmp/wegent-start-existing.out
+
+    grep -q "Starting existing container" /tmp/wegent-start-existing.out
+    grep -q "Container started" /tmp/wegent-start-existing.out
+}
+
+test_standalone_installs_management_command() {
+    source_installer_without_main
+
+    local tmp_state_dir tmp_bin_dir
+    tmp_state_dir="$(mktemp -d)"
+    tmp_bin_dir="$(mktemp -d)"
+    trap 'rm -rf "$tmp_state_dir" "$tmp_bin_dir"' RETURN
+
+    DEPLOY_MODE="standalone"
+    STANDALONE_EXECUTOR_MODE="host"
+    STANDALONE_IMAGE="example.test/wegent:latest"
+    STANDALONE_CONTAINER_NAME="wegent-standalone"
+    STANDALONE_VOLUME_NAME="wegent-data"
+    STANDALONE_WORKSPACE_VOLUME_NAME="wegent-workspace"
+    STANDALONE_STATE_FILE="${tmp_state_dir}/config.env"
+    STANDALONE_COMMAND_PATH="${tmp_bin_dir}/wegent-standalone"
+    HOST_EXECUTOR_HOME="${tmp_state_dir}/executor"
+    HOST_EXECUTOR_BINARY="${HOST_EXECUTOR_HOME}/bin/wegent-executor"
+    HOST_EXECUTOR_PID_FILE="${HOST_EXECUTOR_HOME}/wegent-executor.pid"
+    HOST_EXECUTOR_LOG_FILE="${HOST_EXECUTOR_HOME}/logs/standalone-host-executor.log"
+    HOST_EXECUTOR_INSTALL_URL="https://example.test/local_executor_install.sh"
+    ACCESS_HOST="localhost"
+    DRY_RUN="0"
+
+    write_standalone_state >/tmp/wegent-write-state.out
+    install_standalone_command >/tmp/wegent-install-command.out
+
+    grep -q '^STANDALONE_EXECUTOR_MODE=host$' "$STANDALONE_STATE_FILE"
+    grep -Fq 'STANDALONE_IMAGE=example.test/wegent:latest' "$STANDALONE_STATE_FILE"
+    [[ -x "$STANDALONE_COMMAND_PATH" ]]
+    grep -q "STATE_FILE=" "$STANDALONE_COMMAND_PATH"
+    grep -q "start_host_executor" "$STANDALONE_COMMAND_PATH"
+    grep -Fq 'case "${1:-start}"' "$STANDALONE_COMMAND_PATH"
+    bash -n "$STANDALONE_COMMAND_PATH"
+}
+
+test_standalone_completion_mentions_management_command() {
+    source_installer_without_main
+
+    DEPLOY_MODE="standalone"
+    STANDALONE_EXECUTOR_MODE="host"
+    STANDALONE_COMMAND_PATH="/tmp/wegent-standalone-test"
+    STANDALONE_CONTAINER_NAME="wegent-standalone"
+    STANDALONE_VOLUME_NAME="wegent-data"
+    STANDALONE_WORKSPACE_VOLUME_NAME="wegent-workspace"
+    HOST_EXECUTOR_BINARY="/tmp/wegent-executor"
+    ACCESS_HOST="localhost"
+
+    print_completion >/tmp/wegent-completion.out
+
+    grep -q "Management command" /tmp/wegent-completion.out
+    grep -q "/tmp/wegent-standalone-test status" /tmp/wegent-completion.out
+    grep -q "/tmp/wegent-standalone-test start" /tmp/wegent-completion.out
+    grep -q "/tmp/wegent-standalone-test logs host" /tmp/wegent-completion.out
+    if grep -q "docker start wegent-standalone" /tmp/wegent-completion.out; then
+        echo "standalone completion should prefer the management command over docker start"
+        return 1
+    fi
+}
+
+test_standalone_uses_nginx_single_browser_port() {
+    local dockerfile="$REPO_ROOT/docker/standalone/Dockerfile"
+    local startup="$REPO_ROOT/docker/standalone/start.sh"
+    local installer="$REPO_ROOT/install.sh"
+    local build_script="$REPO_ROOT/scripts/build-standalone.sh"
+
+    grep -q "nginx" "$dockerfile"
+    grep -q "docker/standalone/nginx.conf" "$dockerfile"
+    grep -q "^EXPOSE 3000$" "$dockerfile"
+
+    grep -q "WEWORK_PUBLIC_APP_BASE_PATH=.*:-/wework" "$startup"
+    grep -q "WEWORK_PUBLIC_API_URL=.*:-/wework/api" "$startup"
+    grep -q "WEWORK_PUBLIC_SOCKET_PATH=.*:-/wework/socket.io" "$startup"
+    grep -q "RUNTIME_WEWORK_CODE_URL=.*:-/wework" "$startup"
+    grep -q "nginx" "$startup"
+
+    grep -q -- "-p 3000:3000" "$installer"
+    if grep -q -- "-p 3001:3001" "$installer"; then
+        echo "standalone installer must not expose Wework on a separate port"
+        return 1
+    fi
+    if grep -q -- "-p 8000:8000" "$installer"; then
+        echo "standalone installer must not expose Backend on a separate browser port"
+        return 1
+    fi
+    grep -q "RUNTIME_SOCKET_DIRECT_URL=http://\${ACCESS_HOST}:3000" "$installer"
+    grep -q "RUNTIME_WEWORK_CODE_URL=http://\${ACCESS_HOST}:3000/wework" "$installer"
+    grep -q "WEWORK_PUBLIC_APP_BASE_PATH=/wework" "$installer"
+    grep -q "WEWORK_PUBLIC_API_URL=/wework/api" "$installer"
+    grep -q "WEWORK_PUBLIC_SOCKET_PATH=/wework/socket.io" "$installer"
+
+    if grep -q -- "-p 3001:3001" "$build_script"; then
+        echo "standalone build script must not print the old Wework port"
+        return 1
+    fi
+    if grep -q -- "-p 8000:8000" "$build_script"; then
+        echo "standalone build script must not print the old Backend port"
+        return 1
+    fi
+    grep -q "RUNTIME_WEWORK_CODE_URL=http://localhost:3000/wework" "$build_script"
+}
+
 run_test() {
     local name="$1"
     local test_fn="$2"
@@ -271,8 +436,16 @@ run_test "executor mode accepts explicit hybrid env" \
     test_executor_mode_accepts_explicit_hybrid_env
 run_test "executor mode rejects invalid value" \
     test_executor_mode_rejects_invalid_value
+run_test "executor mode reuses persisted mode for non-interactive start" \
+    test_executor_mode_reuses_persisted_mode_for_non_interactive_start
 run_test "standalone dry-run recreates existing container for host mode" \
     test_standalone_dry_run_recreates_existing_container_for_host_mode
+run_test "standalone starts existing stopped container without recreating" \
+    test_standalone_starts_existing_stopped_container_without_recreating
+run_test "standalone installs management command" \
+    test_standalone_installs_management_command
+run_test "standalone completion mentions management command" \
+    test_standalone_completion_mentions_management_command
 run_test "new standard .env includes internal service token" \
     test_new_standard_env_includes_internal_service_token
 run_test "existing standard .env backfills internal service token" \
@@ -283,3 +456,5 @@ run_test "default standard compose keeps RAG services optional" \
     test_default_standard_compose_keeps_rag_services_optional
 run_test "knowledge service images are published" \
     test_knowledge_service_images_are_published
+run_test "standalone uses nginx single browser port" \
+    test_standalone_uses_nginx_single_browser_port

@@ -68,10 +68,10 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages ./packages
 COPY wework ./wework
 
-ARG WEWORK_API_BASE_URL="http://localhost:8000/api"
-ARG WEWORK_SOCKET_BASE_URL="http://localhost:8000"
-ARG WEWORK_SOCKET_PATH="/socket.io"
-ARG WEWORK_APP_BASE_PATH="/"
+ARG WEWORK_API_BASE_URL="/wework/api"
+ARG WEWORK_SOCKET_BASE_URL=""
+ARG WEWORK_SOCKET_PATH="/wework/socket.io"
+ARG WEWORK_APP_BASE_PATH="/wework"
 ENV VITE_API_BASE_URL=${WEWORK_API_BASE_URL}
 ENV VITE_SOCKET_BASE_URL=${WEWORK_SOCKET_BASE_URL}
 ENV VITE_SOCKET_PATH=${WEWORK_SOCKET_PATH}
@@ -101,6 +101,8 @@ RUN dnf install -y \
     atk at-spi2-atk libXcomposite libXdamage libXfixes libXrandr libxkbcommon \
     # Skill-creator dependencies (JSON parsing and packaging)
     jq zip \
+    # Public reverse proxy for the bundled frontend applications
+    nginx \
     # Development environment and runtime diagnostics
     procps-ng iproute lsof less tree unzip ripgrep \
     # Redis server for standalone mode (embedded)
@@ -178,6 +180,9 @@ COPY --from=frontend-builder /app/frontend/public /app/frontend/public
 # Copy Wework web build
 COPY --from=wework-builder /app/wework/dist /app/wework/dist
 
+# Copy Nginx reverse proxy configuration
+COPY docker/standalone/nginx.conf /etc/nginx/conf.d/default.conf
+
 # Copy init_data directory with default resources and skills
 COPY backend/init_data /app/init_data
 
@@ -200,13 +205,12 @@ ENV REDIS_DATA_DIR=/app/data/redis
 
 # Server configuration
 ENV BACKEND_PORT=8000
-ENV FRONTEND_PORT=3000
-ENV WEWORK_PORT=3001
+ENV FRONTEND_PORT=3002
 ENV GRACEFUL_SHUTDOWN_TIMEOUT=600
 ENV WEGENT_WORKSPACE_ROOT=/workspace
 
-# Expose browser-facing standalone ports
-EXPOSE 3000 3001 8000
+# Expose the single browser-facing standalone port
+EXPOSE 3000
 
 # Data volume for service state and workspace artifacts
 VOLUME ["/app/data", "/workspace"]
@@ -215,7 +219,7 @@ VOLUME ["/app/data", "/workspace"]
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:8000/health \
       && curl -f http://localhost:3000 \
-      && curl -f http://localhost:3001 \
+      && curl -f http://localhost:3000/wework/ \
       || exit 1
 
 # Startup command
