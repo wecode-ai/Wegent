@@ -10,7 +10,7 @@ function createJwt(expSeconds: number) {
 
 function Probe() {
   const { user, isLoading } = useAuth()
-  return <div data-testid="auth-probe">{isLoading ? 'loading' : user?.user_name ?? 'none'}</div>
+  return <div data-testid="auth-probe">{isLoading ? 'loading' : (user?.user_name ?? 'none')}</div>
 }
 
 describe('AuthProvider', () => {
@@ -27,12 +27,14 @@ describe('AuthProvider', () => {
       login: vi.fn(),
       logout: vi.fn(),
       loginWithOidcToken: vi.fn(),
+      getAdminPasswordSetupStatus: vi.fn().mockResolvedValue({ required: false }),
+      setupAdminPassword: vi.fn(),
     }
 
     render(
       <AuthProvider authApi={authApi}>
         <Probe />
-      </AuthProvider>,
+      </AuthProvider>
     )
 
     await waitFor(() => expect(screen.getByTestId('auth-probe')).toHaveTextContent('alice'))
@@ -42,7 +44,7 @@ describe('AuthProvider', () => {
     render(
       <AuthProvider>
         <Probe />
-      </AuthProvider>,
+      </AuthProvider>
     )
 
     await waitFor(() => expect(screen.getByTestId('auth-probe')).toHaveTextContent('none'))

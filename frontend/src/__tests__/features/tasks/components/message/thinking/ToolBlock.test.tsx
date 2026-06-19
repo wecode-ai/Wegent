@@ -75,4 +75,21 @@ describe('ToolBlock', () => {
     expect(screen.getByText('加载技能 weibo-tools')).toBeInTheDocument()
     expect(screen.queryByText('load_skill')).not.toBeInTheDocument()
   })
+
+  it('shows the skill name for Claude Code Skill tool calls', () => {
+    render(<ToolBlock tool={createTool({ skill: 'weibo-tools' }, 'Skill')} />)
+
+    expect(screen.getByText('加载技能 weibo-tools')).toBeInTheDocument()
+    expect(screen.queryByText('Skill')).not.toBeInTheDocument()
+  })
+
+  it('shows the skill name when load_skill input is serialized JSON', () => {
+    render(
+      <ToolBlock
+        tool={createTool(JSON.stringify({ skill_name: 'weibo-tools' }), 'load_skill')}
+      />
+    )
+
+    expect(screen.getByText('加载技能 weibo-tools')).toBeInTheDocument()
+  })
 })

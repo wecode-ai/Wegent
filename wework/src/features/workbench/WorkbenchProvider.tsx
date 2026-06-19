@@ -17,10 +17,10 @@ import { createSkillApi } from '@/api/skills'
 import { createTaskApi } from '@/api/tasks'
 import { createTeamApi } from '@/api/teams'
 import { createUserApi } from '@/api/users'
+import { getToken } from '@/api/auth'
 import { getRuntimeConfig, stripAppBasePath } from '@/config/runtime'
 import i18n from '@/i18n'
 import { createChatStream } from '@/stream/chatStream'
-import { createSocketClient } from '@/stream/socketClient'
 import { appendCodeCommentContexts } from '@/lib/code-comment-context'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
 import {
@@ -73,7 +73,11 @@ import type {
   WorkbenchMessage,
   WorkbenchState,
 } from '@/types/workbench'
-import { normalizeWorkbenchBlockStatus, reduceWorkbenchMessages } from '@wegent/chat-core'
+import {
+  createSocketClient,
+  normalizeWorkbenchBlockStatus,
+  reduceWorkbenchMessages,
+} from '@wegent/chat-core'
 import { useWorkbenchAttachments } from './useWorkbenchAttachments'
 import { useWorkbenchModels } from './useWorkbenchModels'
 import { useWorkbenchSkills } from './useWorkbenchSkills'
@@ -303,9 +307,16 @@ interface WorkbenchProviderProps {
 }
 
 function createDefaultServices(): WorkbenchServices {
-  const { apiBaseUrl } = getRuntimeConfig()
+  const { apiBaseUrl, socketBaseUrl, socketPath } = getRuntimeConfig()
   const client = createHttpClient({ baseUrl: apiBaseUrl })
-  const socket = createSocketClient()
+  const socketClient = createSocketClient({
+    socketBaseUrl: () => socketBaseUrl,
+    path: socketPath,
+    namespace: '/chat',
+    getToken,
+    logger: console,
+  })
+  void socketClient.ensureConnected()
 
   return {
     teamApi: createTeamApi(client),
@@ -316,7 +327,7 @@ function createDefaultServices(): WorkbenchServices {
     taskApi: createTaskApi(client),
     deviceApi: createDeviceApi(client),
     userApi: createUserApi(client),
-    chatStream: createChatStream(socket),
+    chatStream: createChatStream(socketClient.socket),
   }
 }
 

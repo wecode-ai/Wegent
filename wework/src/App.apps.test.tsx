@@ -16,6 +16,8 @@ vi.mock('@/features/auth/useAuth', () => ({
     logout: vi.fn(),
     refresh: vi.fn(),
     loginWithOidcToken: vi.fn(),
+    getAdminPasswordSetupStatus: vi.fn(),
+    setupAdminPassword: vi.fn(),
   }),
 }))
 

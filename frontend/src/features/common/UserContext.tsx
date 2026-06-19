@@ -17,6 +17,7 @@ interface UserContextType {
   logout: () => void
   refresh: () => Promise<void>
   login: (data: { user_name: string; password: string }) => Promise<void>
+  setupAdminPassword: (password: string) => Promise<void>
   /** Update user preferences (partial update) */
   updatePreferences: (preferences: Partial<User['preferences']>) => Promise<void>
 }
@@ -26,6 +27,7 @@ const UserContext = createContext<UserContextType>({
   logout: () => {},
   refresh: async () => {},
   login: async () => {},
+  setupAdminPassword: async () => {},
   updatePreferences: async () => {},
 })
 
@@ -167,6 +169,23 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
     }
   }
 
+  const setupAdminPassword = async (password: string) => {
+    setIsLoading(true)
+    try {
+      const userData = await userApis.setupAdminPassword(password)
+      setUser(userData)
+    } catch (error) {
+      toast({
+        variant: 'destructive',
+        title: (error as Error)?.message || 'Failed to set admin password',
+      })
+      setUser(null)
+      throw error
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
   const updatePreferences = async (preferences: Partial<User['preferences']>) => {
     if (!user) return
 
@@ -189,7 +208,15 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
 
   return (
     <UserContext.Provider
-      value={{ user, isLoading, logout, refresh: fetchUser, login, updatePreferences }}
+      value={{
+        user,
+        isLoading,
+        logout,
+        refresh: fetchUser,
+        login,
+        setupAdminPassword,
+        updatePreferences,
+      }}
     >
       {children}
     </UserContext.Provider>

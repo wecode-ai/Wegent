@@ -168,6 +168,19 @@ class LoginResponse(BaseModel):
     token_type: str
 
 
+class AdminPasswordSetupStatusResponse(BaseModel):
+    """Initial admin password setup status."""
+
+    required: bool
+    admin_username: str
+
+
+class AdminPasswordSetupRequest(BaseModel):
+    """Request body for setting the initial admin password."""
+
+    password: str = Field(..., min_length=6)
+
+
 class UserInfo(BaseModel):
     """User info model for admin list"""
 
