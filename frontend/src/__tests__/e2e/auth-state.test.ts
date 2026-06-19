@@ -1,4 +1,9 @@
-import { buildE2EAdminUser, buildStorageState, getJwtExpiryMs } from '../../../e2e/utils/auth-state'
+import {
+  buildBootstrapAdminUser,
+  buildE2EAdminUser,
+  buildStorageState,
+  getJwtExpiryMs,
+} from '../../../e2e/utils/auth-state'
 
 function createJwt(exp: number): string {
   const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url')
@@ -10,11 +15,12 @@ describe('E2E auth state helpers', () => {
   it('builds an isolated admin user from the shard index', () => {
     const user = buildE2EAdminUser({
       E2E_SHARD_INDEX: '4',
+      E2E_ADMIN_PASSWORD: 'secure-shard-admin',
     })
 
     expect(user).toEqual({
       username: 'e2e-admin-shard-4',
-      password: 'Wegent2025!',
+      password: 'secure-shard-admin',
       role: 'admin',
       description: 'Isolated admin user for E2E shard 4',
     })
@@ -24,10 +30,24 @@ describe('E2E auth state helpers', () => {
     const user = buildE2EAdminUser({
       E2E_USE_ISOLATED_USERS: 'false',
       E2E_SHARD_INDEX: '2',
+      E2E_BOOTSTRAP_ADMIN_PASSWORD: 'secure-bootstrap-admin',
     })
 
     expect(user.username).toBe('admin')
+    expect(user.password).toBe('secure-bootstrap-admin')
     expect(user.role).toBe('admin')
+  })
+
+  it('requires explicit bootstrap admin password env', () => {
+    expect(() => buildBootstrapAdminUser({})).toThrow(
+      'Missing required environment variable: E2E_BOOTSTRAP_ADMIN_PASSWORD'
+    )
+  })
+
+  it('requires explicit isolated admin password env', () => {
+    expect(() => buildE2EAdminUser({ E2E_SHARD_INDEX: '1' })).toThrow(
+      'Missing required environment variable: E2E_ADMIN_PASSWORD'
+    )
   })
 
   it('writes auth token, expiry, and cookie into Playwright storage state', () => {

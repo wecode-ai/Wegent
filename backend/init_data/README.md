@@ -45,15 +45,16 @@ INIT_DATA_ENABLED=True
 INIT_DATA_DIR=/app/init_data
 ```
 
-### Default Admin User
+### Initial Admin User
 
-The system automatically creates a default admin user if it doesn't exist:
+The system automatically creates an initial admin user if it doesn't exist:
 
 - **Username**: `admin`
-- **Password**: `Wegent2025!`
+- **Password**: must be set through the first-run administrator password setup flow
 - **Email**: `admin@example.com`
 
-**⚠️ IMPORTANT**: Change the default password after first login!
+The initial user is created with a random unusable password hash so there is no
+default password to log in with.
 
 ## YAML Format
 

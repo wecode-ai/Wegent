@@ -17,18 +17,30 @@ import { ThemeToggle } from '@/features/theme/ThemeToggle'
 import { POST_LOGIN_REDIRECT_KEY, sanitizeRedirectPath } from '@/features/login/constants'
 import Image from 'next/image'
 import { getRuntimeConfigSync } from '@/lib/runtime-config'
+import { userApis } from '@/apis/user'
 
 export default function LoginForm() {
   const { t } = useTranslation()
   const router = useRouter()
   const searchParams = useSearchParams()
   const [formData, setFormData] = useState({
-    user_name: 'admin',
-    password: 'Wegent2025!',
+    user_name: '',
+    password: '',
+  })
+  const [adminPasswordFormData, setAdminPasswordFormData] = useState({
+    password: '',
+    confirmPassword: '',
   })
   const [showPassword, setShowPassword] = useState(false)
+  const [showAdminPassword, setShowAdminPassword] = useState(false)
+  const [showAdminPasswordConfirm, setShowAdminPasswordConfirm] = useState(false)
+  const [adminPasswordSetupRequired, setAdminPasswordSetupRequired] = useState<boolean | null>(null)
+  const [adminPasswordSetupStatusError, setAdminPasswordSetupStatusError] = useState(false)
+  const [adminUsername, setAdminUsername] = useState('')
+  const [adminPasswordError, setAdminPasswordError] = useState<string | null>(null)
   // Used antd message.error for unified error prompt, no need for local error state
   const [isLoading, setIsLoading] = useState(false)
+  const [isAdminPasswordSubmitting, setIsAdminPasswordSubmitting] = useState(false)
 
   // Get login mode configuration from runtime config
   const runtimeConfig = getRuntimeConfigSync()
@@ -51,7 +63,40 @@ export default function LoginForm() {
     // Used antd message.error for unified error prompt, no need for local error state
   }
 
-  const { user, isLoading: userLoading, login } = useUser()
+  const { user, isLoading: userLoading, login, setupAdminPassword } = useUser()
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadAdminPasswordSetupStatus() {
+      if (!showPasswordLogin) {
+        setAdminPasswordSetupRequired(false)
+        setAdminPasswordSetupStatusError(false)
+        return
+      }
+
+      try {
+        const status = await userApis.getAdminPasswordSetupStatus()
+        if (!cancelled) {
+          setAdminPasswordSetupRequired(status.required)
+          setAdminUsername(status.admin_username)
+          setAdminPasswordSetupStatusError(false)
+        }
+      } catch (error) {
+        console.error('Failed to load admin password setup status:', error)
+        if (!cancelled) {
+          setAdminPasswordSetupRequired(null)
+          setAdminPasswordSetupStatusError(true)
+        }
+      }
+    }
+
+    loadAdminPasswordSetupStatus()
+
+    return () => {
+      cancelled = true
+    }
+  }, [showPasswordLogin])
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -129,6 +174,41 @@ export default function LoginForm() {
     }
   }
 
+  const handleAdminPasswordInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const { name, value } = e.target
+    setAdminPasswordFormData(prev => ({
+      ...prev,
+      [name]: value,
+    }))
+    setAdminPasswordError(null)
+  }
+
+  const handleAdminPasswordSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setAdminPasswordError(null)
+
+    if (adminPasswordFormData.password !== adminPasswordFormData.confirmPassword) {
+      setAdminPasswordError(t('common:login.admin_password_mismatch'))
+      return
+    }
+
+    setIsAdminPasswordSubmitting(true)
+    try {
+      await setupAdminPassword(adminPasswordFormData.password)
+      if (typeof window !== 'undefined') {
+        sessionStorage.removeItem(POST_LOGIN_REDIRECT_KEY)
+      }
+      handleRedirect(redirectPath)
+    } catch {
+      setAdminPasswordError(t('common:login.admin_password_setup_failed'))
+    } finally {
+      setIsAdminPasswordSubmitting(false)
+    }
+  }
+
+  const isCheckingAdminPasswordSetup =
+    showPasswordLogin && adminPasswordSetupRequired === null && !adminPasswordSetupStatusError
+
   return (
     <div className="space-y-6">
       {/* Language switcher */}
@@ -136,9 +216,151 @@ export default function LoginForm() {
         <ThemeToggle />
         <LanguageSwitcher />
       </div>
+      {isCheckingAdminPasswordSetup && (
+        <div className="py-8 text-center text-sm text-text-muted" data-testid="login-loading">
+          {t('common:login.loading_setup_status')}
+        </div>
+      )}
+
+      {showPasswordLogin && adminPasswordSetupStatusError && (
+        <div
+          className="py-8 text-center text-sm text-red-600"
+          data-testid="login-setup-status-error"
+        >
+          {t('common:login.admin_password_setup_status_failed')}
+        </div>
+      )}
+
+      {showPasswordLogin && adminPasswordSetupRequired === true && (
+        <form
+          className="space-y-6"
+          data-testid="admin-password-setup-form"
+          onSubmit={handleAdminPasswordSubmit}
+        >
+          <div>
+            <h2 className="text-lg font-semibold text-text-primary">
+              {t('common:login.admin_password_setup_title')}
+            </h2>
+            <p className="mt-2 text-sm text-text-muted">
+              {t('common:login.admin_password_setup_description')}
+            </p>
+          </div>
+
+          <div
+            className="rounded-lg border border-border bg-surface px-4 py-3"
+            data-testid="admin-username-summary"
+          >
+            <div className="text-xs font-medium text-text-muted">
+              {t('common:login.admin_username_label')}
+            </div>
+            <div
+              className="mt-1 font-mono text-sm font-semibold text-text-primary"
+              data-testid="admin-username-value"
+            >
+              {adminUsername}
+            </div>
+            <p className="mt-1 text-xs text-text-muted">
+              {t('common:login.admin_username_description')}
+            </p>
+          </div>
+
+          <div>
+            <label
+              htmlFor="admin-password"
+              className="block text-sm font-medium text-text-secondary"
+            >
+              {t('common:login.admin_password')}
+            </label>
+            <div className="mt-1 relative">
+              <Input
+                id="admin-password"
+                name="password"
+                data-testid="admin-password-input"
+                type={showAdminPassword ? 'text' : 'password'}
+                autoComplete="new-password"
+                required
+                minLength={6}
+                value={adminPasswordFormData.password}
+                onChange={handleAdminPasswordInputChange}
+                className="pr-10 shadow-sm"
+                placeholder={t('common:login.admin_password_placeholder')}
+              />
+              <button
+                type="button"
+                data-testid="admin-password-visibility-button"
+                className="absolute inset-y-0 right-0 flex h-11 min-w-[44px] items-center justify-center pr-3"
+                onClick={() => setShowAdminPassword(current => !current)}
+                aria-label={t('common:login.toggle_admin_password_visibility')}
+              >
+                {showAdminPassword ? (
+                  <EyeIcon className="h-5 w-5 text-text-muted hover:text-text-secondary" />
+                ) : (
+                  <EyeSlashIcon className="h-5 w-5 text-text-muted hover:text-text-secondary" />
+                )}
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <label
+              htmlFor="admin-password-confirm"
+              className="block text-sm font-medium text-text-secondary"
+            >
+              {t('common:login.admin_password_confirm')}
+            </label>
+            <div className="mt-1 relative">
+              <Input
+                id="admin-password-confirm"
+                name="confirmPassword"
+                data-testid="admin-password-confirm-input"
+                type={showAdminPasswordConfirm ? 'text' : 'password'}
+                autoComplete="new-password"
+                required
+                minLength={6}
+                value={adminPasswordFormData.confirmPassword}
+                onChange={handleAdminPasswordInputChange}
+                className="pr-10 shadow-sm"
+                placeholder={t('common:login.admin_password_confirm_placeholder')}
+              />
+              <button
+                type="button"
+                data-testid="admin-password-confirm-visibility-button"
+                className="absolute inset-y-0 right-0 flex h-11 min-w-[44px] items-center justify-center pr-3"
+                onClick={() => setShowAdminPasswordConfirm(current => !current)}
+                aria-label={t('common:login.toggle_admin_password_visibility')}
+              >
+                {showAdminPasswordConfirm ? (
+                  <EyeIcon className="h-5 w-5 text-text-muted hover:text-text-secondary" />
+                ) : (
+                  <EyeSlashIcon className="h-5 w-5 text-text-muted hover:text-text-secondary" />
+                )}
+              </button>
+            </div>
+          </div>
+
+          {adminPasswordError && (
+            <div className="text-sm text-red-600" data-testid="admin-password-error">
+              {adminPasswordError}
+            </div>
+          )}
+
+          <Button
+            variant="default"
+            type="submit"
+            data-testid="admin-password-submit-button"
+            disabled={isAdminPasswordSubmitting}
+            style={{ width: '100%' }}
+          >
+            {isAdminPasswordSubmitting
+              ? t('common:login.admin_password_setting')
+              : t('common:login.admin_password_submit')}
+          </Button>
+        </form>
+      )}
+
       {/* Password login form */}
-      {showPasswordLogin && (
-        <form className="space-y-6" onSubmit={handleSubmit}>
+      {showPasswordLogin && adminPasswordSetupRequired === false && (
+        <form className="space-y-6" data-testid="login-form" onSubmit={handleSubmit}>
           <div>
             <label htmlFor="user_name" className="block text-sm font-medium text-text-secondary">
               {t('common:login.username')}
@@ -147,6 +369,7 @@ export default function LoginForm() {
               <Input
                 id="user_name"
                 name="user_name"
+                data-testid="login-username-input"
                 type="text"
                 autoComplete="username"
                 required
@@ -166,6 +389,7 @@ export default function LoginForm() {
               <Input
                 id="password"
                 name="password"
+                data-testid="login-password-input"
                 type={showPassword ? 'text' : 'password'}
                 autoComplete="current-password"
                 required
@@ -176,8 +400,10 @@ export default function LoginForm() {
               />
               <button
                 type="button"
+                data-testid="toggle-password-visibility-button"
                 className="absolute inset-y-0 right-0 pr-3 flex items-center"
                 onClick={() => setShowPassword(!showPassword)}
+                aria-label={t('common:login.toggle_password_visibility')}
               >
                 {showPassword ? (
                   <EyeIcon className="h-5 w-5 text-text-muted hover:text-text-secondary" />
@@ -191,7 +417,13 @@ export default function LoginForm() {
           {/* Error prompts are unified with antd message, no longer rendered locally */}
 
           <div>
-            <Button variant="default" type="submit" disabled={isLoading} style={{ width: '100%' }}>
+            <Button
+              variant="default"
+              type="submit"
+              data-testid="login-submit-button"
+              disabled={isLoading}
+              style={{ width: '100%' }}
+            >
               {isLoading ? (
                 <div className="flex items-center">
                   <svg
@@ -221,16 +453,11 @@ export default function LoginForm() {
               )}
             </Button>
           </div>
-
-          {/* Show test account info */}
-          <div className="mt-6 text-center text-xs text-text-muted">
-            {t('common:login.test_account')}
-          </div>
         </form>
       )}
 
       {/* Divider and third-party login - only shown when both login modes are displayed */}
-      {showPasswordLogin && showOidcLogin && (
+      {showPasswordLogin && adminPasswordSetupRequired === false && showOidcLogin && (
         <div className="mt-6">
           <div className="relative">
             <div className="absolute inset-0 flex items-center">
@@ -246,11 +473,12 @@ export default function LoginForm() {
       )}
 
       {/* OIDC login */}
-      {showOidcLogin && (
+      {showOidcLogin && (!showPasswordLogin || adminPasswordSetupRequired === false) && (
         <div className={showPasswordLogin ? 'mt-6' : ''}>
           <div className="grid grid-cols-1 gap-3">
             <Button
               variant="outline"
+              data-testid="oidc-login-button"
               onClick={() => {
                 // Include redirect parameter for OIDC login if exists
                 const redirectUrl = sessionStorage.getItem(POST_LOGIN_REDIRECT_KEY)

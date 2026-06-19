@@ -12,12 +12,12 @@ sidebar_position: 2
 
 ### 硬件要求
 
-| 组件 | 最低要求 | 推荐配置 |
-|------|----------|----------|
-| **CPU** | 2 核 | 4 核或更多 |
-| **内存** | 4 GB | 8 GB 或更多 |
-| **存储** | 20 GB | 50 GB 或更多 |
-| **网络** | 稳定的互联网连接 | - |
+| 组件     | 最低要求         | 推荐配置     |
+| -------- | ---------------- | ------------ |
+| **CPU**  | 2 核             | 4 核或更多   |
+| **内存** | 4 GB             | 8 GB 或更多  |
+| **存储** | 20 GB            | 50 GB 或更多 |
+| **网络** | 稳定的互联网连接 | -            |
 
 ### 软件要求
 
@@ -244,6 +244,8 @@ mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS task_manager CHARACTER SET ut
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
+> **管理员密码**: 首次启动会自动创建 `admin` 管理员账号，但不会写入默认密码。第一次打开登录页时，系统会强制进入管理员密码设置流程；完成设置后才能登录和继续使用系统。
+
 ### 步骤 5: 安装前端
 
 在新终端中：
@@ -281,10 +283,10 @@ pnpm run dev
 services:
   frontend:
     ports:
-      - "3001:3000"  # 改为 3001
+      - "3001:3000" # 改为 3001
   backend:
     ports:
-      - "8001:8000"  # 改为 8001
+      - "8001:8000" # 改为 8001
 ```
 
 ### 配置 HTTPS
@@ -376,6 +378,7 @@ curl http://localhost:8000/api/health
 **错误**: `Error: Port 3000 is already in use`
 
 **解决方案**:
+
 ```bash
 # 查找占用端口的进程
 lsof -i :3000
@@ -391,6 +394,7 @@ kill -9 <PID>
 **错误**: `Can't connect to MySQL server`
 
 **解决方案**:
+
 ```bash
 # 确保 MySQL 正在运行
 docker-compose ps mysql
@@ -406,6 +410,7 @@ mysql -u task_user -p -h localhost task_manager
 **错误**: `Error connecting to Redis`
 
 **解决方案**:
+
 ```bash
 # 确保 Redis 正在运行
 redis-cli ping
@@ -419,6 +424,7 @@ docker-compose logs redis
 **错误**: `Error pulling image`
 
 **解决方案**:
+
 ```bash
 # 使用国内镜像源
 # 编辑 /etc/docker/daemon.json

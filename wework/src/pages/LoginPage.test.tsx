@@ -5,6 +5,18 @@ import { AuthProvider } from '@/features/auth/AuthProvider'
 import { LoginPage } from './LoginPage'
 
 describe('LoginPage', () => {
+  function createAuthApi(overrides: Record<string, unknown> = {}) {
+    return {
+      getCurrentUser: vi.fn(),
+      login: vi.fn(),
+      logout: vi.fn(),
+      loginWithOidcToken: vi.fn(),
+      getAdminPasswordSetupStatus: vi.fn().mockResolvedValue({ required: false }),
+      setupAdminPassword: vi.fn(),
+      ...overrides,
+    }
+  }
+
   beforeEach(() => {
     localStorage.clear()
     sessionStorage.clear()
@@ -12,19 +24,17 @@ describe('LoginPage', () => {
   })
 
   test('logs in with password credentials and redirects to the workbench', async () => {
-    const authApi = {
-      getCurrentUser: vi.fn(),
+    const authApi = createAuthApi({
       login: vi.fn().mockResolvedValue({ id: 1, user_name: 'alice', email: 'a@b.c' }),
-      logout: vi.fn(),
-      loginWithOidcToken: vi.fn(),
-    }
+    })
 
     render(
       <AuthProvider authApi={authApi}>
         <LoginPage />
-      </AuthProvider>,
+      </AuthProvider>
     )
 
+    await screen.findByTestId('login-username-input')
     await userEvent.clear(screen.getByTestId('login-username-input'))
     await userEvent.type(screen.getByTestId('login-username-input'), 'alice')
     await userEvent.clear(screen.getByTestId('login-password-input'))
@@ -32,23 +42,81 @@ describe('LoginPage', () => {
     await userEvent.click(screen.getByTestId('login-submit-button'))
 
     await waitFor(() =>
-      expect(authApi.login).toHaveBeenCalledWith({ user_name: 'alice', password: 'secret' }),
+      expect(authApi.login).toHaveBeenCalledWith({ user_name: 'alice', password: 'secret' })
     )
     expect(window.location.pathname).toBe('/')
   })
 
-  test('uses the OIDC outlined button standard for the password login action', () => {
-    const authApi = {
-      getCurrentUser: vi.fn(),
-      login: vi.fn(),
-      logout: vi.fn(),
-      loginWithOidcToken: vi.fn(),
-    }
+  test('does not prefill the removed default admin password', async () => {
+    const authApi = createAuthApi()
 
     render(
       <AuthProvider authApi={authApi}>
         <LoginPage />
-      </AuthProvider>,
+      </AuthProvider>
+    )
+
+    expect(await screen.findByTestId('login-username-input')).toHaveValue('')
+    expect(screen.getByTestId('login-password-input')).toHaveValue('')
+    expect(screen.queryByDisplayValue('Wegent2025!')).not.toBeInTheDocument()
+  })
+
+  test('sets the first-run admin password before showing normal login', async () => {
+    const authApi = createAuthApi({
+      getAdminPasswordSetupStatus: vi.fn().mockResolvedValue({
+        required: true,
+        admin_username: 'root-admin',
+      }),
+      setupAdminPassword: vi.fn().mockResolvedValue({ id: 1, user_name: 'admin', email: null }),
+    })
+
+    render(
+      <AuthProvider authApi={authApi}>
+        <LoginPage />
+      </AuthProvider>
+    )
+
+    expect(await screen.findByTestId('admin-password-setup-form')).toBeInTheDocument()
+    expect(screen.queryByTestId('login-form')).not.toBeInTheDocument()
+    expect(screen.getByTestId('admin-username-value')).toHaveTextContent('root-admin')
+
+    await userEvent.type(screen.getByTestId('admin-password-input'), 'new-secure-password')
+    await userEvent.type(screen.getByTestId('admin-password-confirm-input'), 'new-secure-password')
+    await userEvent.click(screen.getByTestId('admin-password-submit-button'))
+
+    await waitFor(() => {
+      expect(authApi.setupAdminPassword).toHaveBeenCalledWith('new-secure-password')
+    })
+    expect(authApi.login).not.toHaveBeenCalled()
+  })
+
+  test('blocks password and OIDC login when setup status cannot be confirmed', async () => {
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const authApi = createAuthApi({
+      getAdminPasswordSetupStatus: vi.fn().mockRejectedValue(new Error('network unavailable')),
+    })
+
+    render(
+      <AuthProvider authApi={authApi}>
+        <LoginPage />
+      </AuthProvider>
+    )
+
+    expect(await screen.findByTestId('login-setup-status-error')).toBeInTheDocument()
+    expect(screen.queryByTestId('login-form')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('admin-password-setup-form')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('oidc-login-button')).not.toBeInTheDocument()
+
+    consoleErrorSpy.mockRestore()
+  })
+
+  test('uses the OIDC outlined button standard for the password login action', async () => {
+    const authApi = createAuthApi()
+
+    render(
+      <AuthProvider authApi={authApi}>
+        <LoginPage />
+      </AuthProvider>
     )
 
     const standardClasses = [
@@ -64,7 +132,7 @@ describe('LoginPage', () => {
       'hover:bg-muted',
     ]
 
-    expect(screen.getByTestId('login-submit-button')).toHaveClass(...standardClasses)
+    expect(await screen.findByTestId('login-submit-button')).toHaveClass(...standardClasses)
     expect(screen.getByTestId('oidc-login-button')).toHaveClass(...standardClasses)
   })
 })

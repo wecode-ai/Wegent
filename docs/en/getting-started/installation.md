@@ -12,12 +12,12 @@ This guide provides detailed installation and configuration instructions for the
 
 ### Hardware Requirements
 
-| Component | Minimum | Recommended |
-|-----------|---------|-------------|
-| **CPU** | 2 cores | 4 cores or more |
-| **Memory** | 4 GB | 8 GB or more |
-| **Storage** | 20 GB | 50 GB or more |
-| **Network** | Stable internet connection | - |
+| Component   | Minimum                    | Recommended     |
+| ----------- | -------------------------- | --------------- |
+| **CPU**     | 2 cores                    | 4 cores or more |
+| **Memory**  | 4 GB                       | 8 GB or more    |
+| **Storage** | 20 GB                      | 50 GB or more   |
+| **Network** | Stable internet connection | -               |
 
 ### Software Requirements
 
@@ -244,6 +244,8 @@ mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS task_manager CHARACTER SET ut
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
+> **Administrator password**: First startup automatically creates the `admin` administrator account, but it does not assign a default password. The first visit to the login page forces the administrator password setup flow; complete that flow before logging in and using the system.
+
 ### Step 5: Install Frontend
 
 In a new terminal:
@@ -281,10 +283,10 @@ Modify `docker-compose.yml` or environment variables to customize ports:
 services:
   frontend:
     ports:
-      - "3001:3000"  # Change to 3001
+      - "3001:3000" # Change to 3001
   backend:
     ports:
-      - "8001:8000"  # Change to 8001
+      - "8001:8000" # Change to 8001
 ```
 
 ### Configure HTTPS
@@ -376,6 +378,7 @@ Visit http://localhost:3000 in your browser, you should see the Wegent login pag
 **Error**: `Error: Port 3000 is already in use`
 
 **Solution**:
+
 ```bash
 # Find process using the port
 lsof -i :3000
@@ -391,6 +394,7 @@ kill -9 <PID>
 **Error**: `Can't connect to MySQL server`
 
 **Solution**:
+
 ```bash
 # Ensure MySQL is running
 docker-compose ps mysql
@@ -406,6 +410,7 @@ mysql -u task_user -p -h localhost task_manager
 **Error**: `Error connecting to Redis`
 
 **Solution**:
+
 ```bash
 # Ensure Redis is running
 redis-cli ping
@@ -419,6 +424,7 @@ docker-compose logs redis
 **Error**: `Error pulling image`
 
 **Solution**:
+
 ```bash
 # Use mirror registry
 # Edit /etc/docker/daemon.json

@@ -46,6 +46,7 @@ docker-compose up -d
 ```
 
 这将启动所有必需的服务:
+
 - **Frontend**: http://localhost:3000
 - **Backend API**: http://localhost:8000
 - **API 文档**: http://localhost:8000/api/docs
@@ -91,7 +92,7 @@ GRANT ALL PRIVILEGES ON task_manager.* TO 'task_user'@'localhost';
 FLUSH PRIVILEGES;
 ```
 
-> **注意**: 数据库表和初始数据会在后端服务首次启动时自动创建，无需手动执行SQL脚本。
+> **注意**: 数据库表和初始数据会在后端服务首次启动时自动创建，无需手动执行SQL脚本。初始化会创建 `admin` 管理员账号，但不会设置默认密码；首次访问登录页时必须先完成管理员密码设置流程。
 
 ---
 
@@ -168,6 +169,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 访问 API 文档:
+
 - Swagger UI: http://localhost:8000/api/docs
 - ReDoc: http://localhost:8000/api/redoc
 
@@ -359,6 +361,7 @@ pytest tests/ --cov=utils
 ### 完整测试指南
 
 详细的测试框架说明、最佳实践和 CI/CD 配置，请参阅：
+
 - 📖 [完整测试指南](./testing.md) - 测试框架文档、Fixtures、Mocking 策略等
 
 ---
@@ -376,6 +379,7 @@ uvicorn app.main:app --reload --log-level debug
 ### Frontend 调试
 
 在浏览器开发者工具中查看:
+
 - Console: JavaScript 错误和日志
 - Network: API 请求和响应
 - React DevTools: 组件状态和性能

@@ -221,6 +221,9 @@ isolated E2E admin and regular user to reduce cross-shard data interference:
 through the backend API, and writes Playwright `storageState` for browser tests.
 Set `E2E_USE_ISOLATED_USERS=false` to fall back to the bootstrap admin user when
 debugging against an environment where creating users is not desirable.
+Set `E2E_BOOTSTRAP_ADMIN_PASSWORD` explicitly before running E2E tests locally.
+When isolated users are enabled, also set `E2E_ADMIN_PASSWORD`. CI generates
+random values for each job.
 
 ## Troubleshooting
 
