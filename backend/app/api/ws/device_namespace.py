@@ -40,6 +40,7 @@ from app.api.ws.connection_utils import enter_connect_room, save_connect_session
 from app.api.ws.decorators import trace_websocket_event
 from app.core.auth_utils import is_api_key, verify_api_key
 from app.core.events import TaskCompletedEvent, get_event_bus
+from app.core.socketio import get_sio
 from app.db.session import SessionLocal
 from app.models.subtask import SubtaskStatus
 from app.models.user import User
@@ -56,6 +57,10 @@ from app.services.chat.access import get_token_expiry, verify_jwt_token
 from app.services.chat.storage.db import get_db_session, run_sync_in_executor
 from app.services.chat.webpage_ws_chat_emitter import get_extended_emitter
 from app.services.device.capability_sync_service import device_capability_sync_service
+from app.services.device.terminal_session_service import (
+    TerminalSessionRecord,
+    terminal_session_service,
+)
 from app.services.device_service import device_service
 from app.services.execution.dispatcher import ResponsesAPIEventParser
 from app.services.execution.emitters.status_updating import StatusUpdatingEmitter
@@ -465,6 +470,8 @@ class DeviceNamespace(socketio.AsyncNamespace):
             "device:heartbeat": "on_device_heartbeat",
             "device:status": "on_device_status",
             "device:upgrade_status": "on_device_upgrade_status",
+            "terminal:output": "on_terminal_output",
+            "terminal:exit": "on_terminal_exit",
         }
 
         # Shared event parser for OpenAI Responses API events
@@ -1303,6 +1310,66 @@ class DeviceNamespace(socketio.AsyncNamespace):
             )
 
         return {"success": True}
+
+    async def on_terminal_output(self, sid: str, data: dict) -> dict:
+        """Forward executor PTY output to the browser terminal namespace."""
+        record, error = await self._authorize_terminal_event(sid, data)
+        if error:
+            return error
+
+        payload = dict(data)
+        payload["session_id"] = record.session_id
+        await get_sio().emit(
+            "terminal:output",
+            payload,
+            room=f"terminal:{record.session_id}",
+            namespace="/terminal",
+        )
+        return {"success": True}
+
+    async def on_terminal_exit(self, sid: str, data: dict) -> dict:
+        """Forward executor PTY exit and remove the terminal session record."""
+        record, error = await self._authorize_terminal_event(sid, data)
+        if error:
+            return error
+
+        payload = dict(data)
+        payload["session_id"] = record.session_id
+        await get_sio().emit(
+            "terminal:exit",
+            payload,
+            room=f"terminal:{record.session_id}",
+            namespace="/terminal",
+        )
+        await terminal_session_service.delete(record.session_id)
+        return {"success": True}
+
+    async def _authorize_terminal_event(
+        self,
+        sid: str,
+        data: dict,
+    ) -> tuple[Optional[TerminalSessionRecord], Optional[dict]]:
+        """Verify that a terminal event came from the registered executor socket."""
+        session = await self.get_session(sid)
+        user_id = session.get("user_id")
+        device_id = session.get("device_id")
+        if not user_id or not device_id:
+            return None, {"error": "Not authenticated or not registered"}
+
+        session_id = data.get("session_id") if isinstance(data, dict) else None
+        if not isinstance(session_id, str) or not session_id.strip():
+            return None, {"error": "Missing session_id"}
+
+        record = await terminal_session_service.get(session_id.strip())
+        if not record:
+            return None, {"error": "Terminal session not found"}
+        if (
+            record.user_id != user_id
+            or record.device_id != device_id
+            or record.socket_id != sid
+        ):
+            return None, {"error": "Terminal session does not belong to this device"}
+        return record, None
 
     # ============================================================
     # OpenAI Responses API Event Handler

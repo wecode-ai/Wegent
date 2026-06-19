@@ -12,6 +12,10 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from app.core.socketio import get_sio
 from app.schemas.device import DeviceType
+from app.services.device.terminal_session_service import (
+    TerminalSessionRecord,
+    terminal_session_service,
+)
 from app.services.device_service import device_service
 
 logger = logging.getLogger(__name__)
@@ -65,19 +69,19 @@ class LocalDeviceSessionService:
 
         normalized_ttl = self._normalize_ttl(ttl_seconds)
         session_id = self._build_session_id(session_type, project_id)
-        access_token = secrets.token_urlsafe(32)
         expires_at = datetime.now(timezone.utc) + timedelta(seconds=normalized_ttl)
 
         payload = {
             "type": session_type,
             "session_id": session_id,
-            "access_token": access_token,
             "project_id": project_id,
             "path": path,
             "create_if_missing": create_if_missing,
             "ttl_seconds": normalized_ttl,
             "expires_at": expires_at.isoformat(),
         }
+        if session_type == "code_server":
+            payload["access_token"] = secrets.token_urlsafe(32)
 
         logger.info(
             "[LocalDeviceSessionService] Starting session: "
@@ -107,14 +111,35 @@ class LocalDeviceSessionService:
             error = result.get("error") or "Device failed to start session"
             raise DeviceSessionError(str(error))
 
-        result = _ensure_session_url_token(result, access_token)
-        result = await _rewrite_cloud_localhost_url(result, device_kind)
-        result.setdefault("session_id", session_id)
+        result = dict(result)
+        result["session_id"] = session_id
         result.setdefault("project_id", project_id)
         result.setdefault("device_id", device_id)
         result.setdefault("type", session_type)
         result.setdefault("path", path)
         result.setdefault("expires_at", expires_at)
+
+        if session_type == "terminal":
+            await terminal_session_service.register(
+                TerminalSessionRecord(
+                    session_id=session_id,
+                    user_id=user_id,
+                    device_id=device_id,
+                    socket_id=socket_id,
+                    project_id=project_id,
+                    path=result.get("path") or path,
+                    expires_at=expires_at,
+                ),
+                ttl_seconds=normalized_ttl,
+            )
+            result["url"] = ""
+            result["transport"] = "socketio"
+            return result
+
+        access_token = payload["access_token"]
+        result = _ensure_session_url_token(result, access_token)
+        result = await _rewrite_cloud_localhost_url(result, device_kind)
+        result.setdefault("transport", "url")
         return result
 
     def _build_session_id(

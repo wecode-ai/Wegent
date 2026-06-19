@@ -558,6 +558,10 @@ class DeviceSessionResponse(BaseModel):
     type: str = Field(..., description="Session type (terminal or code_server)")
     path: str = Field(..., description="Working directory path")
     url: str = Field(default="", description="Browser-accessible session URL")
+    transport: str = Field(
+        default="url",
+        description="Browser transport for the interactive session",
+    )
 
 
 @router.post("/{device_id}/terminal", response_model=DeviceSessionResponse)
@@ -568,8 +572,8 @@ async def start_device_terminal(
 ):
     """Start a terminal session on a device.
 
-    Sends a Socket.IO RPC to the online device executor to start a ttyd
-    terminal session. Requires the device to be online.
+    Sends a Socket.IO RPC to the online device executor to start an embedded
+    PTY session. Requires the device to be online.
     """
     from app.services.device.session_service import (
         DeviceSessionError,
@@ -598,6 +602,7 @@ async def start_device_terminal(
         type="terminal",
         path=result.get("path", DEFAULT_DEVICE_SESSION_PATH),
         url=result.get("url", ""),
+        transport=result.get("transport", "socketio"),
     )
 
 
@@ -639,4 +644,5 @@ async def start_device_code_server(
         type="code_server",
         path=result.get("path", DEFAULT_DEVICE_SESSION_PATH),
         url=result.get("url", ""),
+        transport=result.get("transport", "url"),
     )

@@ -1,5 +1,5 @@
 import { createContext, useContext } from 'react'
-import type { LoginRequest } from '@/api/auth'
+import type { AdminPasswordSetupStatusResponse, LoginRequest } from '@/api/auth'
 import type { User } from '@/types/api'
 
 export interface AuthContextValue {
@@ -9,7 +9,7 @@ export interface AuthContextValue {
   logout: () => void
   refresh: () => Promise<void>
   loginWithOidcToken: (accessToken: string) => Promise<void>
-  getAdminPasswordSetupStatus: () => Promise<{ required: boolean }>
+  getAdminPasswordSetupStatus: () => Promise<AdminPasswordSetupStatusResponse>
   setupAdminPassword: (password: string) => Promise<User>
 }
 
