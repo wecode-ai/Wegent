@@ -48,6 +48,8 @@ This will automatically:
 4. Publish a single Nginx entry port
 5. Start the container and wait for Backend and Wework readiness
 
+The default installer uses the latest stable image. To test main branch snapshots, see [Container Image Tags](./container-image-tags.md).
+
 After startup, open:
 
 | Entry | URL | Purpose |
