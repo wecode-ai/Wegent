@@ -929,6 +929,20 @@ select_standalone_executor_mode() {
     ui_success "Selected standalone executor mode: $STANDALONE_EXECUTOR_MODE"
 }
 
+standalone_container_executor_enabled() {
+    case "$STANDALONE_EXECUTOR_MODE" in
+        host)
+            echo "false"
+            ;;
+        container|hybrid)
+            echo "true"
+            ;;
+        *)
+            echo "true"
+            ;;
+    esac
+}
+
 # ============================================================================
 # Configuration
 # ============================================================================
@@ -1196,6 +1210,7 @@ start_standalone_service() {
     docker_run_cmd+=" -e RUNTIME_SOCKET_DIRECT_URL=${SOCKET_URL}"
     docker_run_cmd+=" -e RUNTIME_WEWORK_CODE_URL=http://${ACCESS_HOST}:3001"
     docker_run_cmd+=" -e WEWORK_PUBLIC_BACKEND_URL=${SOCKET_URL}"
+    docker_run_cmd+=" -e STANDALONE_EXECUTOR_ENABLED=$(standalone_container_executor_enabled)"
     docker_run_cmd+=" -e LITELLM_LOCAL_MODEL_COST_MAP=True"
     docker_run_cmd+=" ${STANDALONE_IMAGE}"
 
@@ -1417,6 +1432,10 @@ print_completion() {
     if [[ "$DEPLOY_MODE" == "standalone" ]]; then
         ui_kv "Wework URL" "http://${ACCESS_HOST}:3001"
         ui_kv "Terminal access" "Wework workspace terminal"
+        ui_kv "Executor mode" "$STANDALONE_EXECUTOR_MODE"
+        if [[ "$STANDALONE_EXECUTOR_MODE" == "host" || "$STANDALONE_EXECUTOR_MODE" == "hybrid" ]]; then
+            ui_kv "Host executor" "$HOST_EXECUTOR_BINARY"
+        fi
         ui_kv "Container name" "$STANDALONE_CONTAINER_NAME"
         ui_kv "Data volume" "$STANDALONE_VOLUME_NAME"
         ui_kv "Workspace volume" "$STANDALONE_WORKSPACE_VOLUME_NAME"
@@ -1454,6 +1473,7 @@ print_completion() {
         echo -e "    -v ${STANDALONE_VOLUME_NAME}:/app/data -v ${STANDALONE_WORKSPACE_VOLUME_NAME}:/workspace \\"
         echo -e "    -e RUNTIME_SOCKET_DIRECT_URL=${SOCKET_URL} -e RUNTIME_WEWORK_CODE_URL=http://${ACCESS_HOST}:3001 \\"
         echo -e "    -e WEWORK_PUBLIC_BACKEND_URL=${SOCKET_URL} \\"
+        echo -e "    -e STANDALONE_EXECUTOR_ENABLED=$(standalone_container_executor_enabled) \\"
         echo -e "    ${STANDALONE_IMAGE}${NC}"
     else
         local compose_args=""

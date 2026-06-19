@@ -152,6 +152,19 @@ def test_installer_exposes_wework_backend_and_workspace_volume() -> None:
     assert 'ui_kv "Terminal URL"' not in install_script
 
 
+def test_installer_maps_executor_mode_to_container_env() -> None:
+    """Installer should pass the correct container executor switch."""
+    install_script = INSTALL_SCRIPT.read_text(encoding="utf-8")
+
+    assert "standalone_container_executor_enabled()" in install_script
+    assert (
+        'docker_run_cmd+=" -e STANDALONE_EXECUTOR_ENABLED=$(standalone_container_executor_enabled)"'
+        in install_script
+    )
+    assert 'ui_kv "Executor mode" "$STANDALONE_EXECUTOR_MODE"' in install_script
+    assert 'ui_kv "Host executor" "$HOST_EXECUTOR_BINARY"' in install_script
+
+
 def test_build_script_outputs_complete_standalone_run_command() -> None:
     """The standalone build helper should print a runnable Wework-enabled command."""
     build_script = BUILD_STANDALONE_SCRIPT.read_text(encoding="utf-8")
