@@ -14,7 +14,10 @@ import {
   getActiveWorkbenchDeviceId,
   isWorkbenchDeviceOnline,
 } from '@/lib/workbench-device'
-import { isDeviceBelowWeWorkVersion, isWeWorkCompatibleDevice } from '@/lib/device-capabilities'
+import {
+  isDeviceUpgradeRequiredForWeWork,
+  isWeWorkCompatibleDevice,
+} from '@/lib/device-capabilities'
 import type { DeviceInfo, ProjectWithTasks, Task, TurnFileChangesSummary } from '@/types/api'
 import type { DeviceUpgradeState } from '@/types/device-events'
 import type { EnvironmentInfo } from '@/types/environment'
@@ -229,8 +232,8 @@ export function DesktopWorkbenchMain({
   const activeDeviceUnavailable = Boolean(activeDeviceId) && !isWorkbenchDeviceOnline(activeDevice)
   const showConversationDeviceBanner =
     Boolean(activeDeviceId) && (!activeDevice || activeDevice.status === 'offline')
-  const activeDeviceVersionUnsupported = Boolean(
-    activeDevice && isDeviceBelowWeWorkVersion(activeDevice)
+  const activeDeviceUpgradeRequired = Boolean(
+    activeDevice && isDeviceUpgradeRequiredForWeWork(activeDevice)
   )
   const noStandaloneCompatibleDevice =
     !currentProject &&
@@ -239,7 +242,7 @@ export function DesktopWorkbenchMain({
   const composerDisabled =
     isSending ||
     activeDeviceUnavailable ||
-    activeDeviceVersionUnsupported ||
+    activeDeviceUpgradeRequired ||
     noStandaloneCompatibleDevice
   const projectChatWithModelSelectorSignal: ProjectChatControls = {
     ...projectChat,

@@ -23,7 +23,7 @@ Backend exposes two direct chat APIs:
 - `POST /api/local-executor/devices/{device_id}/direct-chat/connections`
   - Verifies that the user owns the target device.
   - Reads the `directChat` capability reported during device registration.
-  - Sends a short-lived connection authorization to Executor over the existing Backend-to-Executor `/local-executor` Socket.IO channel.
+  - Signs a short-lived direct chat ticket with the device's registered `directChatSecret`.
   - Returns the direct chat endpoint, `connection_id`, `token`, and expiration time to Wework.
 
 - `POST /api/local-executor/direct-chat/turns/prepare`
@@ -58,19 +58,25 @@ Executor reports the direct chat capability during device registration:
 }
 ```
 
-After receiving Backend's `direct_chat:authorize_connection` event, Executor stores a short-lived in-memory authorization. Wework must provide both `connection_id` and `token` when connecting to `/wework-chat`. Expired or mismatched credentials are rejected.
+Backend returns `direct_chat_secret` and `direct_chat_allowed_origins` in the device registration response. Executor keeps those values only in the local process and starts the direct Socket.IO server only after registration succeeds. Wework must provide both `connection_id` and the Backend-issued `token` when connecting to `/wework-chat`. Executor verifies the ticket signature, device ID, and expiration locally. Direct ticket issuance does not depend on Redis online state and does not pre-authorize over the Backend-to-Executor `/local-executor` Socket.IO channel.
+
+Executor direct Socket.IO validates the request `Origin`. Allowed origins are configured on Backend through the comma-separated `WEWORK_DIRECT_CHAT_ALLOWED_ORIGINS` environment variable and sent to Executor in the successful device registration response. When it is not set, Backend uses local development origins by default: `http://127.0.0.1:1420`, `http://localhost:1420`, `tauri://127.0.0.1`, and `tauri://localhost`. Enterprise deployments should override the Backend environment variable with the actual Wework frontend origin.
+
+The direct ticket TTL is configured on Backend through `WEWORK_DIRECT_CHAT_TICKET_TTL_SECONDS` and defaults to 12 hours. If it is configured below 300 seconds, Backend uses 300 seconds. The TTL only applies to the handshake ticket used when opening a new direct socket; established sockets are not disconnected when the TTL expires.
 
 When Executor receives Wework's `chat:send`, it calls Backend to prepare the turn. After receiving the `ExecutionRequest`, it enqueues local execution directly. During execution, Executor emits the existing chat events directly to Wework's task room. When execution completes, is cancelled, or fails, Executor calls the Backend internal callback to persist the terminal state.
+Executor also sends `device:upgrade_status` directly to Wework over the direct socket. The existing Backend report path remains available for global device management.
 
 ### Wework
 
 The Wework page and message rendering layers stay unchanged. The stream layer adds direct socket routing:
 
-1. When the workbench opens or the active device changes, Wework requests a direct chat connection from Backend.
+1. When the workbench opens, Wework opens or maintains direct sockets for all direct-capable devices.
 2. Wework connects to Executor's `/wework-chat` namespace with the returned endpoint.
-3. `chat:send`, `chat:cancel`, `task:join`, and `task:leave` prefer the direct socket for the target device.
-4. Wework keeps the Backend `/chat` socket for device-status events, preserving existing device-list and upgrade-notice behavior.
-5. Direct socket connect and disconnect events update local device status, so sending no longer depends only on Redis-backed device status.
+3. `chat:send`, `chat:cancel`, `task:join`, and `task:leave` route to the direct socket for the target device.
+4. Wework no longer opens the Backend `/chat` Socket.IO connection. Backend HTTP requests remain for authentication, device inventory, attachments, tasks, and direct ticket issuance.
+5. Direct socket connect, disconnect, and probe results update local device status, so sending does not depend on Redis-backed device status.
+6. Direct tickets are used only for establishing sockets. Wework caches `expires_at` and requests a new ticket from Backend only when a new socket is needed and the remaining TTL is below one minute.
 
 ## Protocol
 
@@ -82,7 +88,7 @@ direct chat uses Socket.IO over WebSocket:
 
 ## State and Persistence
 
-- Online status: Wework's send path trusts the direct socket connection. Backend device-status events remain for device-list display and existing device-management flows.
+- Online status: Wework's send path trusts the direct socket connection and probe results. Backend global device status remains for device management and non-Wework flows.
 - Mid-turn state: no low-frequency checkpoint is stored. Refresh recovery can only use Executor's current in-memory active stream; completed content comes from Backend's terminal callback.
 - Attachments: Backend still owns upload, storage, linking, and context conversion. Executor reads the prepared context from `ExecutionRequest`.
 - Terminal state: Executor calls Backend callback on completed, cancelled, or error, and Backend persists the Subtask result and clears streaming state.

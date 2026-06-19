@@ -17,7 +17,6 @@ import { createSkillApi } from '@/api/skills'
 import { createTaskApi } from '@/api/tasks'
 import { createTeamApi } from '@/api/teams'
 import { createUserApi } from '@/api/users'
-import { getToken } from '@/api/auth'
 import { getRuntimeConfig, stripAppBasePath } from '@/config/runtime'
 import i18n from '@/i18n'
 import { createChatStream } from '@/stream/chatStream'
@@ -25,9 +24,8 @@ import { createDirectWorkbenchSocket } from '@/stream/directWorkbenchSocket'
 import { appendCodeCommentContexts } from '@/lib/code-comment-context'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
 import {
-  WEWORK_MIN_EXECUTOR_VERSION,
   canRequestDeviceUpgrade,
-  isDeviceBelowWeWorkVersion,
+  isDeviceUpgradeRequiredForWeWork,
   isWeWorkCompatibleDevice,
 } from '@/lib/device-capabilities'
 import { buildTaskRoute, navigateTo, parseTaskRoute } from '@/lib/navigation'
@@ -37,7 +35,6 @@ import {
   findWorkbenchDevice,
   getActiveWorkbenchDeviceId,
   getWorkbenchDeviceDisplayName,
-  isWorkbenchDeviceOnline,
 } from '@/lib/workbench-device'
 import type {
   Attachment,
@@ -74,11 +71,7 @@ import type {
   WorkbenchMessage,
   WorkbenchState,
 } from '@/types/workbench'
-import {
-  createSocketClient,
-  normalizeWorkbenchBlockStatus,
-  reduceWorkbenchMessages,
-} from '@wegent/chat-core'
+import { normalizeWorkbenchBlockStatus, reduceWorkbenchMessages } from '@wegent/chat-core'
 import { useWorkbenchAttachments } from './useWorkbenchAttachments'
 import { useWorkbenchModels } from './useWorkbenchModels'
 import { useWorkbenchSkills } from './useWorkbenchSkills'
@@ -90,11 +83,6 @@ const WEWORK_CLIENT_ORIGIN = 'wework'
 const LOCAL_SKILLS_CACHE_TTL_MS = 60_000
 const STANDALONE_PROJECT_ID = 0
 const EMPTY_MESSAGE_TASK_TITLE = '新对话'
-const DEVICE_STATUS_LABELS: Record<string, string> = {
-  online: '在线',
-  busy: '忙碌',
-  offline: '离线',
-}
 const TERMINAL_UPGRADE_STATUSES = new Set(['success', 'error', 'skipped', 'busy'])
 const UPGRADE_STATE_CLEAR_DELAY_MS = 5000
 const UPGRADE_REFRESH_INTERVAL_MS = 3000
@@ -163,8 +151,11 @@ function getUpgradeStatusMessage(payload: DeviceUpgradeStatusPayload): string {
 }
 
 type WorkbenchChatStream = ReturnType<typeof createChatStream>
-type WorkbenchChatStreamService = Omit<WorkbenchChatStream, 'connectDevice' | 'isDeviceConnected'> &
-  Partial<Pick<WorkbenchChatStream, 'connectDevice' | 'isDeviceConnected'>>
+type WorkbenchChatStreamService = Omit<
+  WorkbenchChatStream,
+  'connectDevice' | 'setActiveDevice' | 'isDeviceConnected'
+> &
+  Partial<Pick<WorkbenchChatStream, 'connectDevice' | 'setActiveDevice' | 'isDeviceConnected'>>
 
 export interface WorkbenchServices {
   teamApi: ReturnType<typeof createTeamApi>
@@ -312,18 +303,9 @@ interface WorkbenchProviderProps {
 }
 
 function createDefaultServices(): WorkbenchServices {
-  const { apiBaseUrl, socketBaseUrl, socketPath } = getRuntimeConfig()
+  const { apiBaseUrl } = getRuntimeConfig()
   const client = createHttpClient({ baseUrl: apiBaseUrl })
-  const socketClient = createSocketClient({
-    socketBaseUrl: () => socketBaseUrl,
-    path: socketPath,
-    namespace: '/chat',
-    getToken,
-    logger: console,
-  })
-  void socketClient.ensureConnected()
   const directSocket = createDirectWorkbenchSocket({
-    backendSocket: socketClient.socket,
     client,
   })
 
@@ -707,6 +689,10 @@ function getRememberedStandaloneDeviceId(
   )
 }
 
+function isDirectChatCapableDevice(device: DeviceInfo): boolean {
+  return Boolean(device.direct_chat && device.direct_chat.enabled !== false)
+}
+
 export function WorkbenchProvider({ children, user, services }: WorkbenchProviderProps) {
   const resolvedServices = useMemo(() => services ?? createDefaultServices(), [services])
   const [state, dispatch] = useReducer(workbenchReducer, initialWorkbenchState)
@@ -731,6 +717,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
   const localSkillsCacheRef = useRef<
     Map<string, { expiresAt: number; skills: LocalDeviceSkill[] }>
   >(new Map())
+  const directDeviceStatusesRef = useRef<Map<string, DeviceInfo['status']>>(new Map())
   const handledTaskRouteRef = useRef<string | null>(null)
   const urlTaskOpenAttemptRef = useRef<number | null>(null)
   const isOptionsLocked = Boolean(state.currentTask)
@@ -743,10 +730,27 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     standaloneDeviceId: state.standaloneDeviceId,
   })
 
+  const applyDirectDeviceStatuses = useCallback((devices: DeviceInfo[]): DeviceInfo[] => {
+    const directStatuses = directDeviceStatusesRef.current
+    if (directStatuses.size === 0) return devices
+    return devices.map(device => {
+      const directStatus = directStatuses.get(device.device_id)
+      return directStatus ? { ...device, status: directStatus } : device
+    })
+  }, [])
+
   useEffect(() => {
+    resolvedServices.chatStream.setActiveDevice?.(activeDeviceId ?? null)
     if (!activeDeviceId) return
     void resolvedServices.chatStream.connectDevice?.(activeDeviceId).catch(() => undefined)
   }, [activeDeviceId, resolvedServices.chatStream])
+
+  useEffect(() => {
+    for (const device of state.devices) {
+      if (!isDirectChatCapableDevice(device)) continue
+      void resolvedServices.chatStream.connectDevice?.(device.device_id).catch(() => undefined)
+    }
+  }, [resolvedServices.chatStream, state.devices])
 
   const markTaskRunning = useCallback((taskId: number | null | undefined) => {
     if (!taskId) return
@@ -899,7 +903,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
 
       const projects = projectsResult.status === 'fulfilled' ? projectsResult.value.items : []
       const rawDevices = devicesResult.status === 'fulfilled' ? devicesResult.value : []
-      const devices = resolveDeviceListWithCache(rawDevices)
+      const devices = applyDirectDeviceStatuses(resolveDeviceListWithCache(rawDevices))
       const lastProjectId = readLastProjectId(user.id)
       const currentProject =
         lastProjectId === null
@@ -931,7 +935,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     return () => {
       cancelled = true
     }
-  }, [resolvedServices, user])
+  }, [applyDirectDeviceStatuses, resolvedServices, user])
 
   const refreshWorkLists = useCallback(async () => {
     const [projectsResult, recentTasksResult, devicesResult] = await Promise.all([
@@ -943,7 +947,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         return cachedDevices
       }),
     ])
-    const devices = resolveDeviceListWithCache(devicesResult)
+    const devices = applyDirectDeviceStatuses(resolveDeviceListWithCache(devicesResult))
     dispatch({
       type: 'lists_refreshed',
       projects: projectsResult.items,
@@ -951,7 +955,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
       devices,
       standaloneDeviceId: getPreferredStandaloneDeviceId(devices, state.standaloneDeviceId),
     })
-  }, [resolvedServices, state.standaloneDeviceId])
+  }, [applyDirectDeviceStatuses, resolvedServices, state.standaloneDeviceId])
 
   const refreshDevices = useCallback(async () => {
     let devices: DeviceInfo[]
@@ -965,13 +969,13 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         throw error
       }
     }
-    devices = resolveDeviceListWithCache(devices)
+    devices = applyDirectDeviceStatuses(resolveDeviceListWithCache(devices))
     dispatch({
       type: 'devices_refreshed',
       devices,
       standaloneDeviceId: getPreferredStandaloneDeviceId(devices, state.standaloneDeviceId),
     })
-  }, [resolvedServices, state.standaloneDeviceId])
+  }, [applyDirectDeviceStatuses, resolvedServices, state.standaloneDeviceId])
 
   const clearUpgradeStateTimer = useCallback((deviceId: string) => {
     const timer = upgradeClearTimersRef.current[deviceId]
@@ -1060,6 +1064,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
             ? payload.status
             : fallbackStatus
         if (status) {
+          directDeviceStatusesRef.current.set(payload.device_id, status)
           dispatch({
             type: 'device_connection_changed',
             deviceId: payload.device_id,
@@ -1067,7 +1072,6 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
           })
         }
       }
-      void refreshDevices()
     }
     const handleDeviceUpgradeStatus = (payload: DeviceUpgradeStatusPayload) => {
       setDeviceUpgradeState(payload.device_id, {
@@ -1212,7 +1216,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     markTaskNotRunning,
     markTaskRunning,
     refreshDevices,
-    resolvedServices,
+    resolvedServices.chatStream,
     setDeviceUpgradeState,
     state.currentTask?.id,
   ])
@@ -1960,33 +1964,32 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
       const activeDevice = findWorkbenchDevice(state.devices, prepared.activeDeviceId)
       const directDeviceConnected =
         resolvedServices.chatStream.isDeviceConnected?.(prepared.activeDeviceId) ?? false
-      if (!directDeviceConnected && !isWorkbenchDeviceOnline(activeDevice)) {
+      if (!directDeviceConnected) {
         const deviceName = getWorkbenchDeviceDisplayName(activeDevice, prepared.activeDeviceId)
-        const status = activeDevice
-          ? (DEVICE_STATUS_LABELS[activeDevice.status] ?? activeDevice.status)
-          : '不可用'
         dispatch({
           type: 'error_set',
-          error: `${deviceName} ${status}，恢复在线后可继续对话`,
+          error: `${deviceName} 不可用，恢复连接后可继续对话`,
         })
         return
       }
-      if (activeDevice && isDeviceBelowWeWorkVersion(activeDevice)) {
+      if (activeDevice && isDeviceUpgradeRequiredForWeWork(activeDevice)) {
         const deviceName = getWorkbenchDeviceDisplayName(activeDevice, prepared.activeDeviceId)
         dispatch({
           type: 'error_set',
-          error: `${deviceName} 版本低于 ${WEWORK_MIN_EXECUTOR_VERSION}，升级后可继续对话`,
+          error: `${deviceName} 需要升级，升级后可继续对话`,
         })
         return
       }
     } else if (!state.currentProject && !state.currentTask) {
       const hasOnlineCompatibleDevice = state.devices.some(
-        device => device.status === 'online' && isWeWorkCompatibleDevice(device)
+        device =>
+          isWeWorkCompatibleDevice(device) &&
+          (resolvedServices.chatStream.isDeviceConnected?.(device.device_id) ?? false)
       )
       if (!hasOnlineCompatibleDevice) {
         dispatch({
           type: 'error_set',
-          error: `暂无满足 ${WEWORK_MIN_EXECUTOR_VERSION} 的在线设备，请连接或升级设备`,
+          error: '暂无可用在线设备，请连接或升级设备',
         })
         return
       }

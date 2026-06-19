@@ -1,46 +1,26 @@
 import type { DeviceInfo } from '@/types/api'
 
-export const WEWORK_MIN_EXECUTOR_VERSION = '1.8.5'
-
-type DeviceLike = Pick<DeviceInfo, 'device_type' | 'bind_shell' | 'status'> &
-  Partial<
-    Pick<
-      DeviceInfo,
-      'executor_version' | 'update_available' | 'slot_used' | 'running_tasks' | 'running_task_ids'
-    >
-  >
-
-export function isVersionAtLeast(version: string, targetVersion: string): boolean {
-  const parseVersion = (value: string): number[] | null => {
-    const baseVersion = value.trim().replace(/^v/i, '').split('-')[0]
-    const parts = baseVersion.split('.').map(Number)
-    if (parts.length === 0 || parts.some(Number.isNaN)) return null
-    return parts
-  }
-
-  const current = parseVersion(version)
-  const target = parseVersion(targetVersion)
-  if (!current || !target) return false
-
-  for (let index = 0; index < Math.max(current.length, target.length); index += 1) {
-    const currentPart = current[index] ?? 0
-    const targetPart = target[index] ?? 0
-    if (currentPart > targetPart) return true
-    if (currentPart < targetPart) return false
-  }
-
-  return true
+type DeviceLike = {
+  device_type?: DeviceInfo['device_type'] | string | null
+  bind_shell?: DeviceInfo['bind_shell'] | string | null
+  status?: DeviceInfo['status'] | string | null
+  direct_chat?: { enabled?: boolean | null } | null
+  executor_version?: string | null
+  update_available?: boolean
+  slot_used?: number
+  running_tasks?: DeviceInfo['running_tasks']
+  running_task_ids?: number[]
 }
 
 export function isClaudeCodeDevice(device: DeviceLike): boolean {
   return (device.bind_shell ?? 'claudecode').toLowerCase() === 'claudecode'
 }
 
-export function isCloudDevice(device: Pick<DeviceInfo, 'device_type'>): boolean {
+export function isCloudDevice(device: { device_type?: string | null }): boolean {
   return device.device_type === 'cloud'
 }
 
-export function isUsableDevice(device: Pick<DeviceInfo, 'status'>): boolean {
+export function isUsableDevice(device: { status?: string | null }): boolean {
   return device.status === 'online' || device.status === 'busy'
 }
 
@@ -56,17 +36,12 @@ export function isDeviceRunningTask(device: DeviceLike): boolean {
   )
 }
 
-export function isWeWorkExecutorVersionCompatible(version?: string | null): boolean {
-  if (!version) return false
-  return isVersionAtLeast(version, WEWORK_MIN_EXECUTOR_VERSION)
-}
-
-export function isDeviceBelowWeWorkVersion(device: DeviceLike): boolean {
-  return !isWeWorkExecutorVersionCompatible(device.executor_version)
+export function isDeviceUpgradeRequiredForWeWork(device: DeviceLike): boolean {
+  return isClaudeCodeDevice(device) && device.direct_chat?.enabled !== true
 }
 
 export function isWeWorkCompatibleDevice(device: DeviceLike): boolean {
-  return isClaudeCodeDevice(device) && isWeWorkExecutorVersionCompatible(device.executor_version)
+  return isClaudeCodeDevice(device) && !isDeviceUpgradeRequiredForWeWork(device)
 }
 
 export function hasWeWorkUpdateAvailable(device: DeviceLike): boolean {
@@ -81,7 +56,7 @@ export function canUseForProjectCreation(device: DeviceLike): boolean {
   return (
     isClaudeCodeDevice(device) &&
     isUsableDevice(device) &&
-    isWeWorkExecutorVersionCompatible(device.executor_version)
+    !isDeviceUpgradeRequiredForWeWork(device)
   )
 }
 
@@ -97,10 +72,10 @@ export function supportsLocalTerminalLaunch(device: DeviceLike): boolean {
   return !isCloudDevice(device) && isClaudeCodeDevice(device)
 }
 
-export function supportsDeviceMetrics(device: Pick<DeviceInfo, 'device_type'>): boolean {
+export function supportsDeviceMetrics(device: { device_type?: string | null }): boolean {
   return isCloudDevice(device)
 }
 
-export function supportsCloudLifecycleActions(device: Pick<DeviceInfo, 'device_type'>): boolean {
+export function supportsCloudLifecycleActions(device: { device_type?: string | null }): boolean {
   return isCloudDevice(device)
 }

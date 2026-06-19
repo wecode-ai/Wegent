@@ -71,6 +71,14 @@ const createQuotaApiMock = vi.mocked(createQuotaApi)
 const fetchQuotaMock = vi.fn()
 const startTerminalSessionMock = vi.fn()
 const startCodeServerSessionMock = vi.fn()
+const directChat = {
+  enabled: true,
+  transport: 'socket.io' as const,
+  base_url: 'http://127.0.0.1:17889',
+  socket_path: '/socket.io',
+  namespace: '/wework-chat',
+  version: 1,
+}
 
 describe('DesktopWorkbenchLayout', () => {
   function createDeferred<T>() {
@@ -298,6 +306,7 @@ describe('DesktopWorkbenchLayout', () => {
       device_type: 'cloud' as const,
       bind_shell: 'claudecode',
       executor_version: '1.8.5',
+              direct_chat: directChat,
     }
     const workspaceProject = {
       id: 12,
@@ -691,6 +700,7 @@ describe('DesktopWorkbenchLayout', () => {
               device_type: 'cloud',
               bind_shell: 'claudecode',
               executor_version: '1.8.5',
+              direct_chat: directChat,
             },
           ],
         }}
@@ -822,6 +832,7 @@ describe('DesktopWorkbenchLayout', () => {
               device_type: 'local',
               bind_shell: 'claudecode',
               executor_version: '1.8.5',
+              direct_chat: directChat,
             },
           ],
         }}
@@ -873,6 +884,7 @@ describe('DesktopWorkbenchLayout', () => {
               device_type: 'cloud',
               bind_shell: 'claudecode',
               executor_version: '1.8.5',
+              direct_chat: directChat,
             },
           ],
         }}
@@ -1228,6 +1240,7 @@ describe('DesktopWorkbenchLayout', () => {
               is_default: true,
               bind_shell: 'claudecode',
               executor_version: '1.8.5',
+              direct_chat: directChat,
             },
             {
               id: 2,
@@ -1238,6 +1251,7 @@ describe('DesktopWorkbenchLayout', () => {
               device_type: 'cloud',
               bind_shell: 'claudecode',
               executor_version: '1.8.5',
+              direct_chat: directChat,
             },
           ],
         }}
@@ -1320,6 +1334,7 @@ describe('DesktopWorkbenchLayout', () => {
               is_default: true,
               bind_shell: 'claudecode',
               executor_version: '1.8.5',
+              direct_chat: directChat,
             },
           ],
         }}
@@ -1382,6 +1397,7 @@ describe('DesktopWorkbenchLayout', () => {
               is_default: true,
               bind_shell: 'claudecode',
               executor_version: '1.8.5',
+              direct_chat: directChat,
             },
           ],
         }}
@@ -1431,7 +1447,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(screen.getByTestId('project-create-dialog')).toBeInTheDocument()
     expect(screen.getByTestId('project-device-unavailable-old-device')).toHaveTextContent(
-      '当前 v1.8.4，需要 1.8.5 或以上'
+      '当前设备需要升级后才能继续使用'
     )
 
     const upgradeButton = screen.getByTestId('upgrade-project-device-old-device')
@@ -1635,6 +1651,7 @@ describe('DesktopWorkbenchLayout', () => {
               is_default: true,
               bind_shell: 'claudecode',
               executor_version: '1.8.5',
+              direct_chat: directChat,
             },
           ],
         }}
@@ -1797,6 +1814,7 @@ describe('DesktopWorkbenchLayout', () => {
               device_type: 'cloud',
               bind_shell: 'claudecode',
               executor_version: '1.8.5',
+              direct_chat: directChat,
             },
           ],
           recentTasks: [
@@ -1883,6 +1901,7 @@ describe('DesktopWorkbenchLayout', () => {
       device_type: 'cloud' as const,
       bind_shell: 'claudecode',
       executor_version: '1.8.5',
+              direct_chat: directChat,
     }
     const busyDevice = {
       id: 2,
@@ -2041,6 +2060,7 @@ describe('DesktopWorkbenchLayout', () => {
       device_type: 'cloud' as const,
       bind_shell: 'claudecode',
       executor_version: '1.8.5',
+              direct_chat: directChat,
     }
     const project = {
       id: 7,
@@ -2112,6 +2132,7 @@ describe('DesktopWorkbenchLayout', () => {
       device_type: 'cloud' as const,
       bind_shell: 'claudecode',
       executor_version: '1.8.5',
+              direct_chat: directChat,
     }
     const onlineTaskDevice = {
       id: 2,
@@ -2122,6 +2143,7 @@ describe('DesktopWorkbenchLayout', () => {
       device_type: 'cloud' as const,
       bind_shell: 'claudecode',
       executor_version: '1.8.5',
+              direct_chat: directChat,
     }
     const project = {
       id: 7,
@@ -2261,6 +2283,7 @@ describe('DesktopWorkbenchLayout', () => {
       device_type: 'cloud' as const,
       bind_shell: 'claudecode',
       executor_version: '1.8.5',
+              direct_chat: directChat,
     }
     const standaloneOnlineDevice = {
       id: 2,
@@ -2271,6 +2294,7 @@ describe('DesktopWorkbenchLayout', () => {
       device_type: 'cloud' as const,
       bind_shell: 'claudecode',
       executor_version: '1.8.5',
+              direct_chat: directChat,
     }
     const project = {
       id: 7,
@@ -2353,6 +2377,7 @@ describe('DesktopWorkbenchLayout', () => {
       device_type: 'cloud' as const,
       bind_shell: 'claudecode',
       executor_version: '1.8.5',
+              direct_chat: directChat,
     }
     const project = {
       id: 7,
@@ -2388,7 +2413,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(screen.queryByTestId('composer-disabled-reason')).not.toBeInTheDocument()
     expect(screen.getByTestId('device-status-prompt')).toHaveTextContent(
-      'Old Device 版本低于 1.8.5，升级后可继续对话'
+      'Old Device 需要升级，升级后可继续对话'
     )
     expect(screen.getByTestId('send-message-button')).toBeDisabled()
 
@@ -2915,6 +2940,7 @@ describe('DesktopWorkbenchLayout', () => {
               device_type: 'cloud',
               bind_shell: 'claudecode',
               executor_version: '1.8.5',
+              direct_chat: directChat,
             },
           ],
         }}
@@ -2952,6 +2978,7 @@ describe('DesktopWorkbenchLayout', () => {
               device_type: 'cloud',
               bind_shell: 'claudecode',
               executor_version: '1.8.5',
+              direct_chat: directChat,
             },
           ],
           currentProjectId: workspaceProject.id,

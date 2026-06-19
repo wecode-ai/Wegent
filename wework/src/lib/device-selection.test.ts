@@ -5,7 +5,7 @@ import {
 } from './device-selection'
 
 describe('device-selection', () => {
-  test('does not select an online standalone device below the WeWork executor version', () => {
+  test('does not select an online standalone device that requires an upgrade', () => {
     const devices = [
       {
         device_id: 'old-device',
@@ -22,6 +22,7 @@ describe('device-selection', () => {
         device_type: 'local',
         bind_shell: 'claudecode',
         executor_version: '1.8.5',
+        direct_chat: { enabled: true },
       },
     ]
 

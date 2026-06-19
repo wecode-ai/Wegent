@@ -106,6 +106,13 @@ class Settings(BaseSettings):
     MCP_ENABLE_DNS_REBINDING_PROTECTION: bool = False
     MCP_ALLOWED_HOSTS: list[str] = []
     MCP_ALLOWED_ORIGINS: list[str] = []
+    WEWORK_DIRECT_CHAT_ALLOWED_ORIGINS: list[str] = [
+        "http://127.0.0.1:1420",
+        "http://localhost:1420",
+        "tauri://127.0.0.1",
+        "tauri://localhost",
+    ]
+    WEWORK_DIRECT_CHAT_TICKET_TTL_SECONDS: int = 12 * 60 * 60
 
     # Standalone mode configuration
     # When enabled, Backend runs in a simplified single-process mode suitable for local development
@@ -293,11 +300,12 @@ class Settings(BaseSettings):
     @field_validator(
         "MCP_ALLOWED_HOSTS",
         "MCP_ALLOWED_ORIGINS",
+        "WEWORK_DIRECT_CHAT_ALLOWED_ORIGINS",
         mode="before",
     )
     @classmethod
-    def parse_mcp_list(cls, v: Any) -> list[str]:
-        """Parse MCP allowlist values from JSON or comma-separated strings."""
+    def parse_allowlist(cls, v: Any) -> list[str]:
+        """Parse allowlist values from JSON or comma-separated strings."""
         if v is None:
             return []
         if isinstance(v, list):
@@ -317,6 +325,12 @@ class Settings(BaseSettings):
                     pass
             return [item.strip() for item in raw.split(",") if item.strip()]
         return v
+
+    @field_validator("WEWORK_DIRECT_CHAT_TICKET_TTL_SECONDS")
+    @classmethod
+    def validate_direct_chat_ticket_ttl(cls, v: int) -> int:
+        """Validate direct chat ticket TTL."""
+        return max(v, 300)
 
     @field_validator("LOCAL_DEVICE_COMMANDS", mode="before")
     @classmethod

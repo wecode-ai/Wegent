@@ -3,11 +3,10 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
-  WEWORK_MIN_EXECUTOR_VERSION,
   canRequestDeviceUpgrade,
   hasWeWorkUpdateAvailable,
   isClaudeCodeDevice,
-  isDeviceBelowWeWorkVersion,
+  isDeviceUpgradeRequiredForWeWork,
   isDeviceRunningTask,
   isWeWorkCompatibleDevice,
 } from '@/lib/device-capabilities'
@@ -147,7 +146,7 @@ export function DeviceStatusPrompt({
     ? claudeCodeDevices.find(device => device.device_id === activeDeviceId) ?? null
     : null
   const compatibleDevices = claudeCodeDevices.filter(isWeWorkCompatibleDevice)
-  const outdatedDevices = claudeCodeDevices.filter(isDeviceBelowWeWorkVersion)
+  const upgradeRequiredDevices = claudeCodeDevices.filter(isDeviceUpgradeRequiredForWeWork)
   const updateCandidates = claudeCodeDevices.filter(
     device => device.status !== 'offline' && hasWeWorkUpdateAvailable(device),
   )
@@ -164,8 +163,8 @@ export function DeviceStatusPrompt({
       isUpgradeActive(upgradingDevices[device.device_id])
     )
   })()
-  const lowVersionUpgradeCandidates = outdatedDevices.filter(canRequestDeviceUpgrade)
-  const lowVersionBlockedDevices = outdatedDevices.filter(
+  const upgradeCandidates = upgradeRequiredDevices.filter(canRequestDeviceUpgrade)
+  const upgradeBlockedDevices = upgradeRequiredDevices.filter(
     device => !canRequestDeviceUpgrade(device),
   )
 
@@ -357,18 +356,16 @@ export function DeviceStatusPrompt({
     )
   }
 
-  if (activeDevice && isDeviceBelowWeWorkVersion(activeDevice)) {
+  if (activeDevice && isDeviceUpgradeRequiredForWeWork(activeDevice)) {
     const canUpgrade = canRequestDeviceUpgrade(activeDevice)
     const upgradeDeviceIds = canUpgrade ? [activeDevice.device_id] : []
     const message = canUpgrade
       ? t('workbench.device_status_active_upgrade_required', {
           device: getDeviceName(activeDevice),
-          version: WEWORK_MIN_EXECUTOR_VERSION,
         })
       : t('workbench.device_status_active_upgrade_waiting', {
           device: getDeviceName(activeDevice),
           reason: getBlockedReason(activeDevice, t),
-          version: WEWORK_MIN_EXECUTOR_VERSION,
         })
 
     if (presentation === 'sidebar-action') {
@@ -441,25 +438,22 @@ export function DeviceStatusPrompt({
     )
   }
 
-  if (compatibleDevices.length === 0 && outdatedDevices.length > 0) {
-    const upgradeDevices = lowVersionUpgradeCandidates
+  if (compatibleDevices.length === 0 && upgradeRequiredDevices.length > 0) {
+    const upgradeDevices = upgradeCandidates
     const upgradeDeviceIds = upgradeDevices.map(device => device.device_id)
-    const blockedDevice = lowVersionBlockedDevices[0]
+    const blockedDevice = upgradeBlockedDevices[0]
     const upgradeDevice = upgradeDevices[0]
     const message = blockedDevice && upgradeDeviceIds.length === 0
       ? t('workbench.device_status_upgrade_waiting', {
           device: getDeviceName(blockedDevice),
           reason: getBlockedReason(blockedDevice, t),
-          version: WEWORK_MIN_EXECUTOR_VERSION,
         })
       : upgradeDevices.length === 1 && upgradeDevice
         ? t('workbench.device_status_upgrade_required_device', {
             device: getDeviceName(upgradeDevice),
-            version: WEWORK_MIN_EXECUTOR_VERSION,
           })
         : t('workbench.device_status_upgrade_required_devices', {
             count: upgradeDevices.length,
-            version: WEWORK_MIN_EXECUTOR_VERSION,
           })
 
     if (presentation === 'sidebar-action') {

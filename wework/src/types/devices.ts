@@ -14,6 +14,7 @@ export interface DeviceInfo {
   executor_version?: string | null
   latest_version?: string | null
   update_available?: boolean
+  direct_chat?: DirectChatCapability | null
   cloud_config?: {
     sandboxId?: string
     imageId?: string
@@ -23,6 +24,15 @@ export interface DeviceInfo {
     ubuntuPassword?: string
     createdAt?: string
   }
+}
+
+export interface DirectChatCapability {
+  enabled: boolean
+  transport: 'socket.io'
+  base_url: string
+  socket_path: string
+  namespace: string
+  version: number
 }
 
 export interface DeviceRunningTask {

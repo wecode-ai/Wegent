@@ -7,6 +7,14 @@ import { MobileWorkbenchLayout } from './MobileWorkbenchLayout'
 import '@/i18n'
 
 const originalInnerWidth = window.innerWidth
+const directChat = {
+  enabled: true,
+  transport: 'socket.io' as const,
+  base_url: 'http://127.0.0.1:17889',
+  socket_path: '/socket.io',
+  namespace: '/wework-chat',
+  version: 1,
+}
 
 const baseState = {
   user: { id: 1, user_name: 'MI', email: 'mi@example.com' },
@@ -162,6 +170,7 @@ describe('MobileWorkbenchLayout', () => {
       device_type: 'cloud' as const,
       bind_shell: 'claudecode',
       executor_version: '1.8.5',
+      direct_chat: directChat,
     }
     const project = {
       id: 1,

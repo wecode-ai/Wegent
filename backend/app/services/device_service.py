@@ -19,6 +19,7 @@ different device types (local, cloud, etc.) in the future.
 
 import copy
 import logging
+import secrets
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -367,6 +368,8 @@ class DeviceService:
                 device_json["spec"]["bindShell"] = "claudecode"
             if direct_chat is not None:
                 device_json["spec"]["directChat"] = direct_chat
+                if not device_json["spec"].get("directChatSecret"):
+                    device_json["spec"]["directChatSecret"] = secrets.token_urlsafe(32)
             device_kind.json = device_json
             flag_modified(device_kind, "json")
             device_kind.updated_at = datetime.now()
@@ -417,6 +420,9 @@ class DeviceService:
                     "capabilities": None,
                     "clientIp": client_ip,
                     "directChat": direct_chat,
+                    "directChatSecret": (
+                        secrets.token_urlsafe(32) if direct_chat is not None else None
+                    ),
                 },
                 "status": {
                     "state": "Available",

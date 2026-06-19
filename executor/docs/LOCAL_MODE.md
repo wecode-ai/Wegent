@@ -111,6 +111,9 @@ Local Executor 的配置优先级是：环境变量、`~/.wegent-executor/device
 | `WEGENT_EXECUTOR_LOG_BACKUP_COUNT` | `5` | 保留历史日志数量 |
 | `LOG_LEVEL` | `INFO` | 日志级别 (`DEBUG` / `INFO`) |
 
+Wework 直连 Executor Socket.IO 的 Origin 白名单由 Backend 的 `WEWORK_DIRECT_CHAT_ALLOWED_ORIGINS` 环境变量配置，并在 Executor 注册成功响应中下发。Executor 本地不再读取 direct chat CORS 环境变量。
+direct ticket TTL 由 Backend 的 `WEWORK_DIRECT_CHAT_TICKET_TTL_SECONDS` 配置；如果配置低于 300 秒，Backend 会按 300 秒生效。Executor 只校验 ticket 中的过期时间。
+
 ### 心跳配置
 
 | 环境变量 | 默认值 | 说明 |

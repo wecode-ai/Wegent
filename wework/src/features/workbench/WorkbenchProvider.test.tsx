@@ -3,10 +3,34 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { WorkbenchProvider } from './WorkbenchProvider'
 import { useWorkbench } from './useWorkbench'
-import type { Attachment, SkillRef, UnifiedModel } from '@/types/api'
+import type { Attachment, DeviceInfo, SkillRef, UnifiedModel } from '@/types/api'
 import type { CodeCommentContext } from '@/types/workspace-files'
 
 const STREAM_STARTED_AT = '2026-06-04T00:00:01.000Z'
+
+const directChat = {
+  enabled: true,
+  transport: 'socket.io' as const,
+  base_url: 'http://127.0.0.1:17889',
+  socket_path: '/socket.io',
+  namespace: '/wework-chat',
+  version: 1,
+}
+
+function createDirectTestDevice(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
+  return {
+    id: 1,
+    device_id: 'device-1',
+    name: 'Direct Device',
+    status: 'online',
+    is_default: true,
+    device_type: 'local',
+    bind_shell: 'claudecode',
+    executor_version: '1.8.5',
+    direct_chat: directChat,
+    ...overrides,
+  }
+}
 
 function Probe() {
   const { state } = useWorkbench()
@@ -258,7 +282,7 @@ function DeviceListProbe() {
 
   return (
     <div data-testid="device-list">
-      {workbench.state.devices.map(device => device.name).join(',')}
+      {workbench.state.devices.map(device => `${device.name}:${device.status}`).join(',')}
     </div>
   )
 }
@@ -445,6 +469,7 @@ describe('WorkbenchProvider', () => {
                 device_type: 'cloud',
                 bind_shell: 'claudecode',
                 executor_version: '1.8.5',
+                direct_chat: directChat,
               },
             ]),
             getHomeDirectory: vi.fn(),
@@ -457,6 +482,9 @@ describe('WorkbenchProvider', () => {
             leaveTask: vi.fn(),
             sendMessage: vi.fn(),
             subscribe: vi.fn(() => vi.fn()),
+            connectDevice: vi.fn().mockResolvedValue(undefined),
+            setActiveDevice: vi.fn(),
+            isDeviceConnected: vi.fn(() => true),
           },
         }}
       >
@@ -532,6 +560,9 @@ describe('WorkbenchProvider', () => {
             leaveTask: vi.fn(),
             sendMessage: vi.fn(),
             subscribe: vi.fn(() => vi.fn()),
+            connectDevice: vi.fn().mockResolvedValue(undefined),
+            setActiveDevice: vi.fn(),
+            isDeviceConnected: vi.fn(() => true),
           },
         }}
       >
@@ -617,6 +648,9 @@ describe('WorkbenchProvider', () => {
             sendGuidance: vi.fn(),
             cancelStream: vi.fn(),
             subscribe: vi.fn(() => vi.fn()),
+            connectDevice: vi.fn().mockResolvedValue(undefined),
+            setActiveDevice: vi.fn(),
+            isDeviceConnected: vi.fn(() => true),
             connect: vi.fn(),
           },
         }}
@@ -727,6 +761,9 @@ describe('WorkbenchProvider', () => {
             sendGuidance: vi.fn(),
             cancelStream: vi.fn(),
             subscribe: vi.fn(() => vi.fn()),
+            connectDevice: vi.fn().mockResolvedValue(undefined),
+            setActiveDevice: vi.fn(),
+            isDeviceConnected: vi.fn(() => true),
           },
         }}
       >
@@ -842,6 +879,9 @@ describe('WorkbenchProvider', () => {
             sendGuidance: vi.fn(),
             cancelStream: vi.fn(),
             subscribe: vi.fn(() => vi.fn()),
+            connectDevice: vi.fn().mockResolvedValue(undefined),
+            setActiveDevice: vi.fn(),
+            isDeviceConnected: vi.fn(() => true),
           },
         }}
       >
@@ -931,6 +971,7 @@ describe('WorkbenchProvider', () => {
                 device_type: 'cloud',
                 bind_shell: 'claudecode',
                 executor_version: '1.8.5',
+                direct_chat: directChat,
               },
             ]),
             getHomeDirectory: vi.fn(),
@@ -943,6 +984,9 @@ describe('WorkbenchProvider', () => {
             leaveTask: vi.fn(),
             sendMessage: vi.fn(),
             subscribe: vi.fn(() => vi.fn()),
+            connectDevice: vi.fn().mockResolvedValue(undefined),
+            setActiveDevice: vi.fn(),
+            isDeviceConnected: vi.fn(() => true),
           },
         }}
       >
@@ -1062,16 +1106,14 @@ describe('WorkbenchProvider', () => {
       expect(screen.getByTestId('device-list')).toHaveTextContent('Linux-Device-0b18648b2e82')
     )
 
-    handlers.onDeviceOnline?.({
-      device_id: 'c78d176b-3f32-4598-9758-cb8262d8f25a',
-      name: 'macOS-Device-cb8262d8f25a',
-      status: 'online',
-    })
+    handlers.onDeviceOnline?.({ device_id: 'linux-device', status: 'online' })
 
     await waitFor(() =>
-      expect(screen.getByTestId('device-list')).toHaveTextContent('macOS-Device-cb8262d8f25a')
+      expect(screen.getByTestId('device-list')).toHaveTextContent(
+        'Linux-Device-0b18648b2e82:online'
+      )
     )
-    expect(listDevices).toHaveBeenCalledTimes(2)
+    expect(listDevices).toHaveBeenCalledTimes(1)
   })
 
   test('starts new chat as standalone project zero even with a remembered project', async () => {
@@ -1135,6 +1177,7 @@ describe('WorkbenchProvider', () => {
                 device_type: 'cloud',
                 bind_shell: 'claudecode',
                 executor_version: '1.8.5',
+                direct_chat: directChat,
               },
             ]),
             getHomeDirectory: vi.fn(),
@@ -1147,6 +1190,9 @@ describe('WorkbenchProvider', () => {
             leaveTask: vi.fn(),
             sendMessage: vi.fn(),
             subscribe: vi.fn(() => vi.fn()),
+            connectDevice: vi.fn().mockResolvedValue(undefined),
+            setActiveDevice: vi.fn(),
+            isDeviceConnected: vi.fn(() => true),
           },
         }}
       >
@@ -1239,6 +1285,7 @@ describe('WorkbenchProvider', () => {
                 device_type: 'cloud',
                 bind_shell: 'claudecode',
                 executor_version: '1.8.5',
+                direct_chat: directChat,
               },
               {
                 id: 2,
@@ -1249,6 +1296,7 @@ describe('WorkbenchProvider', () => {
                 device_type: 'local',
                 bind_shell: 'claudecode',
                 executor_version: '1.8.5',
+                direct_chat: directChat,
               },
             ]),
             getHomeDirectory: vi.fn(),
@@ -1264,6 +1312,9 @@ describe('WorkbenchProvider', () => {
             leaveTask: vi.fn(),
             sendMessage: vi.fn(),
             subscribe: vi.fn(() => vi.fn()),
+            connectDevice: vi.fn().mockResolvedValue(undefined),
+            setActiveDevice: vi.fn(),
+            isDeviceConnected: vi.fn(() => true),
           },
         }}
       >
@@ -1376,6 +1427,7 @@ describe('WorkbenchProvider', () => {
                 device_type: 'cloud',
                 bind_shell: 'claudecode',
                 executor_version: '1.8.5',
+                direct_chat: directChat,
               },
               {
                 id: 2,
@@ -1386,6 +1438,7 @@ describe('WorkbenchProvider', () => {
                 device_type: 'local',
                 bind_shell: 'claudecode',
                 executor_version: '1.8.5',
+                direct_chat: directChat,
               },
             ]),
             getHomeDirectory: vi.fn(),
@@ -1398,6 +1451,9 @@ describe('WorkbenchProvider', () => {
             leaveTask: vi.fn(),
             sendMessage: vi.fn(),
             subscribe: vi.fn(() => vi.fn()),
+            connectDevice: vi.fn().mockResolvedValue(undefined),
+            setActiveDevice: vi.fn(),
+            isDeviceConnected: vi.fn(() => true),
           },
         }}
       >
@@ -1506,6 +1562,7 @@ describe('WorkbenchProvider', () => {
                 device_type: 'local',
                 bind_shell: 'claudecode',
                 executor_version: '1.8.5',
+                direct_chat: directChat,
               },
             ]),
             getHomeDirectory: vi.fn(),
@@ -1518,6 +1575,9 @@ describe('WorkbenchProvider', () => {
             leaveTask: vi.fn(),
             sendMessage: vi.fn(),
             subscribe: vi.fn(() => vi.fn()),
+            connectDevice: vi.fn().mockResolvedValue(undefined),
+            setActiveDevice: vi.fn(),
+            isDeviceConnected: vi.fn(() => true),
           },
         }}
       >
@@ -1604,6 +1664,7 @@ describe('WorkbenchProvider', () => {
                 device_type: 'local',
                 bind_shell: 'claudecode',
                 executor_version: '1.8.5',
+                direct_chat: directChat,
               },
             ]),
             getHomeDirectory: vi.fn(),
@@ -1619,6 +1680,9 @@ describe('WorkbenchProvider', () => {
             leaveTask: vi.fn(),
             sendMessage: vi.fn(),
             subscribe: vi.fn(() => vi.fn()),
+            connectDevice: vi.fn().mockResolvedValue(undefined),
+            setActiveDevice: vi.fn(),
+            isDeviceConnected: vi.fn(() => true),
           },
         }}
       >
@@ -1743,6 +1807,7 @@ describe('WorkbenchProvider', () => {
                 device_type: 'cloud',
                 bind_shell: 'claudecode',
                 executor_version: '1.8.5',
+                direct_chat: directChat,
               },
             ]),
             getHomeDirectory: vi.fn(),
@@ -1758,6 +1823,9 @@ describe('WorkbenchProvider', () => {
             leaveTask: vi.fn(),
             sendMessage,
             subscribe: vi.fn(() => vi.fn()),
+            connectDevice: vi.fn().mockResolvedValue(undefined),
+            setActiveDevice: vi.fn(),
+            isDeviceConnected: vi.fn(() => true),
           },
         }}
       >
@@ -2055,6 +2123,7 @@ describe('WorkbenchProvider', () => {
                 device_type: 'local',
                 bind_shell: 'claudecode',
                 executor_version: '1.8.5',
+                direct_chat: directChat,
               },
             ]),
             getHomeDirectory: vi.fn(),
@@ -2067,6 +2136,9 @@ describe('WorkbenchProvider', () => {
             leaveTask: vi.fn(),
             sendMessage,
             subscribe: vi.fn(() => vi.fn()),
+            connectDevice: vi.fn().mockResolvedValue(undefined),
+            setActiveDevice: vi.fn(),
+            isDeviceConnected: vi.fn(() => true),
           },
         }}
       >
@@ -2182,6 +2254,9 @@ describe('WorkbenchProvider', () => {
             leaveTask: vi.fn(),
             sendMessage,
             subscribe: vi.fn(() => vi.fn()),
+            connectDevice: vi.fn().mockResolvedValue(undefined),
+            setActiveDevice: vi.fn(),
+            isDeviceConnected: vi.fn(() => false),
           },
         }}
       >
@@ -2198,7 +2273,7 @@ describe('WorkbenchProvider', () => {
     expect(sendMessage).not.toHaveBeenCalled()
     expect(screen.getByTestId('workbench-input')).toHaveTextContent('build it')
     expect(screen.getByTestId('workbench-error')).toHaveTextContent(
-      'Offline Device 离线，恢复在线后可继续对话'
+      'Offline Device 不可用，恢复连接后可继续对话'
     )
   })
 
@@ -2280,6 +2355,7 @@ describe('WorkbenchProvider', () => {
                 device_type: 'cloud',
                 bind_shell: 'claudecode',
                 executor_version: '1.8.5',
+                direct_chat: directChat,
               },
             ]),
             getHomeDirectory: vi.fn(),
@@ -2293,6 +2369,9 @@ describe('WorkbenchProvider', () => {
             leaveTask: vi.fn(),
             sendMessage,
             subscribe: vi.fn(() => vi.fn()),
+            connectDevice: vi.fn().mockResolvedValue(undefined),
+            setActiveDevice: vi.fn(),
+            isDeviceConnected: vi.fn(() => false),
           },
         }}
       >
@@ -2311,7 +2390,7 @@ describe('WorkbenchProvider', () => {
     expect(sendMessage).not.toHaveBeenCalled()
     expect(screen.getByTestId('workbench-input')).toHaveTextContent('continue')
     expect(screen.getByTestId('workbench-error')).toHaveTextContent(
-      'missing-device 不可用，恢复在线后可继续对话'
+      'missing-device 不可用，恢复连接后可继续对话'
     )
   })
 
@@ -2389,6 +2468,7 @@ describe('WorkbenchProvider', () => {
                 device_type: 'cloud',
                 bind_shell: 'claudecode',
                 executor_version: '1.8.5',
+                direct_chat: directChat,
               },
             ]),
             getHomeDirectory: vi.fn(),
@@ -2401,6 +2481,9 @@ describe('WorkbenchProvider', () => {
             leaveTask: vi.fn(),
             sendMessage,
             subscribe: vi.fn(() => vi.fn()),
+            connectDevice: vi.fn().mockResolvedValue(undefined),
+            setActiveDevice: vi.fn(),
+            isDeviceConnected: vi.fn(() => true),
           },
           userApi: { updateCurrentUser },
         }}
@@ -2531,6 +2614,7 @@ describe('WorkbenchProvider', () => {
                 device_type: 'cloud',
                 bind_shell: 'claudecode',
                 executor_version: '1.8.5',
+                direct_chat: directChat,
               },
             ]),
             getHomeDirectory: vi.fn(),
@@ -2543,6 +2627,9 @@ describe('WorkbenchProvider', () => {
             leaveTask: vi.fn(),
             sendMessage,
             subscribe: vi.fn(() => vi.fn()),
+            connectDevice: vi.fn().mockResolvedValue(undefined),
+            setActiveDevice: vi.fn(),
+            isDeviceConnected: vi.fn(() => true),
           },
         }}
       >
@@ -2643,6 +2730,7 @@ describe('WorkbenchProvider', () => {
                 device_type: 'local',
                 bind_shell: 'claudecode',
                 executor_version: '1.8.5',
+                direct_chat: directChat,
               },
               {
                 id: 2,
@@ -2653,6 +2741,7 @@ describe('WorkbenchProvider', () => {
                 device_type: 'cloud',
                 bind_shell: 'claudecode',
                 executor_version: '1.8.5',
+                direct_chat: directChat,
               },
             ]),
             getHomeDirectory: vi.fn(),
@@ -2665,6 +2754,9 @@ describe('WorkbenchProvider', () => {
             leaveTask: vi.fn(),
             sendMessage,
             subscribe: vi.fn(() => vi.fn()),
+            connectDevice: vi.fn().mockResolvedValue(undefined),
+            setActiveDevice: vi.fn(),
+            isDeviceConnected: vi.fn(() => true),
           },
         }}
       >
@@ -2770,6 +2862,9 @@ describe('WorkbenchProvider', () => {
             leaveTask: vi.fn(),
             sendMessage,
             subscribe: vi.fn(() => vi.fn()),
+            connectDevice: vi.fn().mockResolvedValue(undefined),
+            setActiveDevice: vi.fn(),
+            isDeviceConnected: vi.fn(() => true),
           },
         }}
       >
@@ -2847,6 +2942,7 @@ describe('WorkbenchProvider', () => {
               status: 'RUNNING',
               task_type: 'code',
               created_at: '2026-05-27T00:00:00.000Z',
+              device_id: 'device-1',
               subtasks: [],
             }),
             renameTask: vi.fn(),
@@ -2858,7 +2954,7 @@ describe('WorkbenchProvider', () => {
             deleteArchivedTasks: vi.fn(),
           },
           deviceApi: {
-            listDevices: vi.fn().mockResolvedValue([]),
+            listDevices: vi.fn().mockResolvedValue([createDirectTestDevice()]),
             getHomeDirectory: vi.fn(),
             getProjectWorkspaceRoot: vi.fn(),
             listDirectories: vi.fn(),
@@ -2872,6 +2968,9 @@ describe('WorkbenchProvider', () => {
               streamHandlers = handlers
               return vi.fn()
             }),
+            connectDevice: vi.fn().mockResolvedValue(undefined),
+            setActiveDevice: vi.fn(),
+            isDeviceConnected: vi.fn(() => true),
           },
         }}
       >
@@ -2957,6 +3056,7 @@ describe('WorkbenchProvider', () => {
               status: 'RUNNING',
               task_type: 'code',
               created_at: '2026-05-27T00:00:00.000Z',
+              device_id: 'device-1',
               subtasks: [],
             }),
             renameTask: vi.fn(),
@@ -2968,7 +3068,7 @@ describe('WorkbenchProvider', () => {
             deleteArchivedTasks: vi.fn(),
           },
           deviceApi: {
-            listDevices: vi.fn().mockResolvedValue([]),
+            listDevices: vi.fn().mockResolvedValue([createDirectTestDevice()]),
             getHomeDirectory: vi.fn(),
             getProjectWorkspaceRoot: vi.fn(),
             listDirectories: vi.fn(),
@@ -2982,6 +3082,9 @@ describe('WorkbenchProvider', () => {
               streamHandlers = handlers
               return vi.fn()
             }),
+            connectDevice: vi.fn().mockResolvedValue(undefined),
+            setActiveDevice: vi.fn(),
+            isDeviceConnected: vi.fn(() => true),
           },
         }}
       >
@@ -3068,7 +3171,7 @@ describe('WorkbenchProvider', () => {
             deleteArchivedTasks: vi.fn(),
           },
           deviceApi: {
-            listDevices: vi.fn().mockResolvedValue([]),
+            listDevices: vi.fn().mockResolvedValue([createDirectTestDevice()]),
             getHomeDirectory: vi.fn(),
             getProjectWorkspaceRoot: vi.fn(),
             listDirectories: vi.fn(),
@@ -3082,6 +3185,9 @@ describe('WorkbenchProvider', () => {
               streamHandlers = handlers as StreamHandlers
               return vi.fn()
             }),
+            connectDevice: vi.fn().mockResolvedValue(undefined),
+            setActiveDevice: vi.fn(),
+            isDeviceConnected: vi.fn(() => true),
           },
         }}
       >
@@ -3230,6 +3336,9 @@ describe('WorkbenchProvider', () => {
             leaveTask: vi.fn(),
             sendMessage: vi.fn(),
             subscribe: vi.fn(() => vi.fn()),
+            connectDevice: vi.fn().mockResolvedValue(undefined),
+            setActiveDevice: vi.fn(),
+            isDeviceConnected: vi.fn(() => true),
           },
         }}
       >
@@ -3379,6 +3488,9 @@ describe('WorkbenchProvider', () => {
             leaveTask: vi.fn(),
             sendMessage: vi.fn(),
             subscribe: vi.fn(() => vi.fn()),
+            connectDevice: vi.fn().mockResolvedValue(undefined),
+            setActiveDevice: vi.fn(),
+            isDeviceConnected: vi.fn(() => true),
           },
         }}
       >
@@ -3516,6 +3628,9 @@ describe('WorkbenchProvider', () => {
             leaveTask: vi.fn(),
             sendMessage,
             subscribe: vi.fn(() => vi.fn()),
+            connectDevice: vi.fn().mockResolvedValue(undefined),
+            setActiveDevice: vi.fn(),
+            isDeviceConnected: vi.fn(() => true),
           },
         }}
       >
@@ -3629,6 +3744,7 @@ describe('WorkbenchProvider', () => {
                 device_type: 'local',
                 bind_shell: 'claudecode',
                 executor_version: '1.8.5',
+                direct_chat: directChat,
               },
             ]),
             getHomeDirectory: vi.fn(),
@@ -3641,6 +3757,9 @@ describe('WorkbenchProvider', () => {
             leaveTask: vi.fn(),
             sendMessage,
             subscribe: vi.fn(() => vi.fn()),
+            connectDevice: vi.fn().mockResolvedValue(undefined),
+            setActiveDevice: vi.fn(),
+            isDeviceConnected: vi.fn(() => true),
           },
         }}
       >
@@ -3733,6 +3852,9 @@ describe('WorkbenchProvider', () => {
             leaveTask: vi.fn(),
             sendMessage: vi.fn(),
             subscribe: vi.fn(() => vi.fn()),
+            connectDevice: vi.fn().mockResolvedValue(undefined),
+            setActiveDevice: vi.fn(),
+            isDeviceConnected: vi.fn(() => true),
           },
         }}
       >

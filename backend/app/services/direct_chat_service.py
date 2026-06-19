@@ -6,23 +6,26 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
+import json
 import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
-from fastapi import HTTPException, status
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 import app.stores.tasks as task_stores
 from app.api.ws.events import ChatSendPayload
-from app.core.socketio import get_sio
+from app.core.config import settings
 from app.models.kind import Kind
 from app.models.subtask import SubtaskStatus
 from app.models.user import User
 from app.schemas.device import DirectChatCapability
 from app.schemas.direct_chat import (
-    DirectChatAuthorizeConnectionPayload,
     DirectChatConnectionResponse,
     DirectChatTurnPrepareRequest,
     DirectChatTurnPrepareResponse,
@@ -38,9 +41,6 @@ from app.services.device_service import device_service
 from app.stores.tasks import subtask_store
 
 logger = logging.getLogger(__name__)
-
-DIRECT_CHAT_CONNECTION_TTL_SECONDS = 12 * 60 * 60
-DIRECT_CHAT_AUTHORIZE_TIMEOUT_SECONDS = 10
 
 
 class DirectChatService:
@@ -66,51 +66,22 @@ class DirectChatService:
                 detail="Device does not expose direct chat",
             )
 
-        online_info = await device_service.get_device_online_info(user.id, device_id)
-        if not online_info or not online_info.get("socket_id"):
-            raise HTTPException(status_code=409, detail="Device is offline")
+        direct_chat_secret = self._get_direct_chat_secret(device)
 
         connection_id = f"dc_{secrets.token_urlsafe(16)}"
-        token = secrets.token_urlsafe(32)
         expires_at = datetime.now(timezone.utc) + timedelta(
-            seconds=DIRECT_CHAT_CONNECTION_TTL_SECONDS
+            seconds=settings.WEWORK_DIRECT_CHAT_TICKET_TTL_SECONDS
         )
-        auth_payload = DirectChatAuthorizeConnectionPayload(
-            connection_id=connection_id,
-            token=token,
-            user_id=user.id,
-            user_name=user.user_name,
-            device_id=device_id,
-            expires_at=expires_at,
+        token = self._sign_direct_chat_token(
+            secret=direct_chat_secret,
+            payload={
+                "connection_id": connection_id,
+                "user_id": user.id,
+                "user_name": user.user_name,
+                "device_id": device_id,
+                "exp": int(expires_at.timestamp()),
+            },
         )
-
-        try:
-            response = await get_sio().call(
-                "direct_chat:authorize_connection",
-                auth_payload.model_dump(mode="json"),
-                to=online_info["socket_id"],
-                namespace="/local-executor",
-                timeout=DIRECT_CHAT_AUTHORIZE_TIMEOUT_SECONDS,
-            )
-        except Exception as exc:
-            logger.warning(
-                "[DirectChat] Failed to authorize executor connection: "
-                "user_id=%s device_id=%s error=%s",
-                user.id,
-                device_id,
-                exc,
-            )
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=f"Direct chat authorization failed: {exc}",
-            ) from exc
-
-        if not isinstance(response, dict) or not response.get("success"):
-            error = response.get("error") if isinstance(response, dict) else None
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=error or "Executor rejected direct chat authorization",
-            )
 
         return DirectChatConnectionResponse(
             connection_id=connection_id,
@@ -270,6 +241,31 @@ class DirectChatService:
                 detail="Device does not expose direct chat",
             )
         return DirectChatCapability.model_validate(direct_chat)
+
+    def _get_direct_chat_secret(self, device: Kind) -> str:
+        spec = (device.json or {}).get("spec", {})
+        value = spec.get("directChatSecret")
+        if not isinstance(value, str) or not value:
+            raise HTTPException(
+                status_code=409,
+                detail="Device direct chat secret is missing; restart executor",
+            )
+        return value
+
+    def _sign_direct_chat_token(self, *, secret: str, payload: dict[str, Any]) -> str:
+        payload_segment = self._base64url_encode(
+            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        )
+        signature = hmac.new(
+            secret.encode("utf-8"),
+            payload_segment.encode("ascii"),
+            hashlib.sha256,
+        ).digest()
+        return f"{payload_segment}.{self._base64url_encode(signature)}"
+
+    @staticmethod
+    def _base64url_encode(value: bytes) -> str:
+        return base64.urlsafe_b64encode(value).decode("ascii").rstrip("=")
 
     def _build_task_creation_params(
         self, payload: ChatSendPayload

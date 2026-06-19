@@ -7,6 +7,9 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
+import hmac
 import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -39,7 +42,6 @@ class DirectConnection:
     """Authorized Wework direct connection state."""
 
     connection_id: str
-    token: str
     user_id: int
     user_name: str
     device_id: str
@@ -566,16 +568,15 @@ class DirectChatTransport(EventTransport):
 class DirectChatServer:
     """Socket.IO server mounted on the local executor gateway."""
 
-    def __init__(self, runner: "LocalRunner"):
+    def __init__(self, runner: "LocalRunner", *, allowed_origins: list[str]):
         self.runner = runner
         self.sio = socketio.AsyncServer(
             async_mode="aiohttp",
-            cors_allowed_origins="*",
+            cors_allowed_origins=allowed_origins,
             ping_interval=25,
-            ping_timeout=60,
+            ping_timeout=20,
         )
         self.namespace = DIRECT_CHAT_NAMESPACE
-        self._authorized: dict[str, DirectConnection] = {}
         self._sid_connections: dict[str, DirectConnection] = {}
         self._task_sids: dict[int, set[str]] = {}
         self._subtask_task: dict[int, int] = {}
@@ -589,33 +590,17 @@ class DirectChatServer:
         """Attach the Socket.IO server to the shared aiohttp gateway."""
         self.sio.attach(app, socketio_path=DIRECT_CHAT_SOCKET_PATH)
 
-    def build_registration_payload(self, public_base_url: str) -> dict[str, Any]:
+    @staticmethod
+    def build_registration_payload(public_base_url: str) -> dict[str, Any]:
         """Return the static direct-chat endpoint reported during registration."""
         return {
             "enabled": True,
             "transport": "socket.io",
             "base_url": public_base_url.rstrip("/"),
             "socket_path": DIRECT_CHAT_SOCKET_PATH,
-            "namespace": self.namespace,
+            "namespace": DIRECT_CHAT_NAMESPACE,
             "version": DIRECT_CHAT_PROTOCOL_VERSION,
         }
-
-    async def handle_authorize_connection(self, data: dict[str, Any]) -> dict[str, Any]:
-        """Handle backend RPC authorizing one Wework direct socket connection."""
-        try:
-            connection = DirectConnection(
-                connection_id=self._required_str(data, "connection_id"),
-                token=self._required_str(data, "token"),
-                user_id=int(data["user_id"]),
-                user_name=self._required_str(data, "user_name"),
-                device_id=self._required_str(data, "device_id"),
-                expires_at=self._parse_datetime(self._required_str(data, "expires_at")),
-            )
-        except Exception as exc:
-            return {"success": False, "error": str(exc)}
-        self._authorized[connection.connection_id] = connection
-        self._cleanup_expired_connections()
-        return {"success": True}
 
     async def emit_to_task(
         self,
@@ -629,6 +614,10 @@ class DirectChatServer:
             room=self._task_room(task_id),
             namespace=self.namespace,
         )
+
+    async def emit_device_event(self, event: str, payload: dict[str, Any]) -> None:
+        """Broadcast a device-scoped event to connected Wework clients."""
+        await self.sio.emit(event, payload, namespace=self.namespace)
 
     async def ensure_stream_started(
         self,
@@ -872,6 +861,17 @@ class DirectChatServer:
                 "error": "Direct chat guidance is not supported yet",
             }
 
+        @self.sio.on("connection:probe", namespace=self.namespace)
+        async def connection_probe(sid: str) -> dict[str, Any]:
+            connection = self._sid_connections.get(sid)
+            if not connection:
+                return {"success": False, "error": "Not authenticated"}
+            return {
+                "success": True,
+                "device_id": connection.device_id,
+                "server_time_ms": self._now_ms(),
+            }
+
     async def _handle_chat_send(self, sid: str, data: dict) -> dict[str, Any]:
         connection = self._sid_connections.get(sid)
         if not connection:
@@ -982,37 +982,66 @@ class DirectChatServer:
     def _validate_socket_auth(self, auth: dict[str, Any]) -> Optional[DirectConnection]:
         connection_id = auth.get("connection_id")
         token = auth.get("token")
-        if not connection_id or not token:
+        if not isinstance(connection_id, str) or not isinstance(token, str):
             return None
-        connection = self._authorized.get(str(connection_id))
-        if not connection or connection.token != token:
+        direct_secret = self.runner.websocket_client.direct_chat_secret
+        if not direct_secret:
+            logger.warning("[DirectChat] Missing direct chat secret")
             return None
-        if datetime.now(timezone.utc) >= connection.expires_at:
-            self._authorized.pop(connection.connection_id, None)
+        payload = self._verify_direct_chat_token(token, direct_secret)
+        if not payload:
             return None
-        return connection
+        if payload.get("connection_id") != connection_id:
+            return None
+        if payload.get("device_id") != self.runner.websocket_client.device_id:
+            return None
+        expires_at = self._parse_epoch_seconds(payload.get("exp"))
+        if not expires_at or datetime.now(timezone.utc) >= expires_at:
+            return None
+        user_id = payload.get("user_id")
+        user_name = payload.get("user_name")
+        if not isinstance(user_id, int) or not isinstance(user_name, str):
+            return None
+        return DirectConnection(
+            connection_id=connection_id,
+            user_id=user_id,
+            user_name=user_name,
+            device_id=self.runner.websocket_client.device_id,
+            expires_at=expires_at,
+        )
 
-    def _cleanup_expired_connections(self) -> None:
-        now = datetime.now(timezone.utc)
-        expired = [
-            connection_id
-            for connection_id, connection in self._authorized.items()
-            if connection.expires_at <= now
-        ]
-        for connection_id in expired:
-            self._authorized.pop(connection_id, None)
+    def _verify_direct_chat_token(
+        self,
+        token: str,
+        secret: str,
+    ) -> Optional[dict[str, Any]]:
+        try:
+            payload_segment, signature_segment = token.split(".", 1)
+            expected_signature = hmac.new(
+                secret.encode("utf-8"),
+                payload_segment.encode("ascii"),
+                hashlib.sha256,
+            ).digest()
+            actual_signature = self._base64url_decode(signature_segment)
+            if not hmac.compare_digest(expected_signature, actual_signature):
+                return None
+            payload = json.loads(
+                self._base64url_decode(payload_segment).decode("utf-8")
+            )
+        except Exception:
+            return None
+        return payload if isinstance(payload, dict) else None
+
+    @staticmethod
+    def _base64url_decode(value: str) -> bytes:
+        padding = "=" * (-len(value) % 4)
+        return base64.urlsafe_b64decode(f"{value}{padding}".encode("ascii"))
+
+    @staticmethod
+    def _parse_epoch_seconds(value: Any) -> Optional[datetime]:
+        if not isinstance(value, int):
+            return None
+        return datetime.fromtimestamp(value, tz=timezone.utc)
 
     def _task_room(self, task_id: int) -> str:
         return f"task:{task_id}"
-
-    def _required_str(self, data: dict[str, Any], key: str) -> str:
-        value = data.get(key)
-        if not isinstance(value, str) or not value.strip():
-            raise ValueError(f"{key} is required")
-        return value.strip()
-
-    def _parse_datetime(self, value: str) -> datetime:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=timezone.utc)
-        return parsed.astimezone(timezone.utc)

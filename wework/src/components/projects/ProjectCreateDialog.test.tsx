@@ -6,6 +6,15 @@ import type { DeviceInfo, GitBranch, GitRepoInfo, ProjectWithTasks } from '@/typ
 import '@/i18n'
 import { ProjectCreateDialog } from './ProjectCreateDialog'
 
+const directChat = {
+  enabled: true,
+  transport: 'socket.io' as const,
+  base_url: 'http://127.0.0.1:17889',
+  socket_path: '/socket.io',
+  namespace: '/wework-chat',
+  version: 1,
+}
+
 const devices: DeviceInfo[] = [
   {
     id: 1,
@@ -16,6 +25,7 @@ const devices: DeviceInfo[] = [
     device_type: 'cloud',
     bind_shell: 'claudecode',
     executor_version: '1.8.5',
+    direct_chat: directChat,
   },
   {
     id: 2,
@@ -26,6 +36,7 @@ const devices: DeviceInfo[] = [
     device_type: 'local',
     bind_shell: 'claudecode',
     executor_version: '1.8.5',
+    direct_chat: directChat,
   },
 ]
 
@@ -167,7 +178,7 @@ describe('ProjectCreateDialog', () => {
     expect(screen.getByTestId('create-project-button')).toBeDisabled()
     expect(onGetProjectWorkspaceRoot).not.toHaveBeenCalled()
     expect(screen.getByTestId('project-device-unavailable-old-device')).toHaveTextContent(
-      '当前 v1.8.4，需要 1.8.5 或以上',
+      '当前设备需要升级后才能继续使用',
     )
 
     await userEvent.click(screen.getByTestId('upgrade-project-device-old-device'))
@@ -231,7 +242,7 @@ describe('ProjectCreateDialog', () => {
 
     expect(deviceSelect).toHaveValue('old-device')
     expect(screen.getByTestId('project-device-unavailable-old-device')).toHaveTextContent(
-      '当前 v1.8.4，需要 1.8.5 或以上',
+      '当前设备需要升级后才能继续使用',
     )
     expect(
       screen.queryByTestId('project-device-unavailable-second-old-device'),

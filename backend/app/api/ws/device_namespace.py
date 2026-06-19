@@ -39,6 +39,7 @@ from sqlalchemy.orm import Session
 from app.api.ws.connection_utils import enter_connect_room, save_connect_session
 from app.api.ws.decorators import trace_websocket_event
 from app.core.auth_utils import is_api_key, verify_api_key
+from app.core.config import settings
 from app.core.events import TaskCompletedEvent, get_event_bus
 from app.core.socketio import get_sio
 from app.db.session import SessionLocal
@@ -188,7 +189,7 @@ def _register_device(
     device_type: Optional[str] = None,
     bind_shell: Optional[str] = None,
     direct_chat: Optional[dict] = None,
-) -> tuple[bool, Optional[str], Optional[str]]:
+) -> tuple[bool, Optional[str], Optional[str], Optional[str]]:
     """
     Register or update device CRD in database.
 
@@ -201,7 +202,7 @@ def _register_device(
         bind_shell: Shell runtime binding ('claudecode' or 'openclaw')
         direct_chat: Direct chat endpoint/capability reported by executor.
 
-    Returns (success, persisted_display_name, error_message).
+    Returns (success, persisted_display_name, direct_chat_secret, error_message).
     """
     try:
         with _db_session() as db:
@@ -218,10 +219,41 @@ def _register_device(
             persisted_display_name = (
                 device_kind.json.get("spec", {}).get("displayName") or name
             )
-        return True, persisted_display_name, None
+            direct_chat_secret = device_kind.json.get("spec", {}).get(
+                "directChatSecret"
+            )
+        return True, persisted_display_name, direct_chat_secret, None
     except Exception as e:
         logger.error(f"[Device WS] Error registering device: {e}")
-        return False, None, str(e)
+        return False, None, None, str(e)
+
+
+def _get_device_direct_chat_secret_sync(
+    user_id: int,
+    device_id: str,
+) -> Optional[str]:
+    """Read the persisted direct chat secret for a registered device."""
+    from sqlalchemy import and_
+
+    from app.models.kind import Kind
+
+    with get_db_session() as db:
+        device = (
+            db.query(Kind)
+            .filter(
+                and_(
+                    Kind.user_id == user_id,
+                    Kind.kind == "Device",
+                    Kind.namespace == "default",
+                    Kind.name == device_id,
+                    Kind.is_active == True,
+                )
+            )
+            .first()
+        )
+        if not device:
+            return None
+        return (device.json or {}).get("spec", {}).get("directChatSecret")
 
 
 def _update_device_heartbeat(user_id: int, device_id: str) -> None:
@@ -389,7 +421,7 @@ def _update_cloud_device_registration_sync(
     client_ip: Optional[str],
     bind_shell: Optional[str],
     direct_chat: Optional[dict],
-) -> Optional[str]:
+) -> tuple[Optional[str], Optional[str]]:
     """Update runtime registration fields on a matched cloud Device CRD."""
     import copy
 
@@ -442,6 +474,10 @@ def _update_cloud_device_registration_sync(
                 next_spec["bindShell"] = bind_shell
             if direct_chat is not None:
                 next_spec["directChat"] = direct_chat
+                if not next_spec.get("directChatSecret"):
+                    import secrets
+
+                    next_spec["directChatSecret"] = secrets.token_urlsafe(32)
             if isinstance(next_spec.get("cloudConfig"), dict):
                 next_spec["cloudConfig"]["deviceId"] = executor_device_id
 
@@ -457,7 +493,7 @@ def _update_cloud_device_registration_sync(
                 executor_device_id,
                 bool(direct_chat),
             )
-            return persisted_display_name
+            return persisted_display_name, next_spec.get("directChatSecret")
 
     logger.warning(
         "[Device WS] Matched cloud device CRD not found for registration update: "
@@ -465,7 +501,7 @@ def _update_cloud_device_registration_sync(
         user_id,
         executor_device_id,
     )
-    return None
+    return None, None
 
 
 def _verify_api_key_sync(token: str) -> Optional[tuple[int, str]]:
@@ -1024,6 +1060,16 @@ class DeviceNamespace(socketio.AsyncNamespace):
             f"name={payload.name}, executor_version={payload.executor_version}, client_ip={payload.client_ip}"
         )
 
+        direct_chat_allowed_origins = settings.WEWORK_DIRECT_CHAT_ALLOWED_ORIGINS
+        if payload.direct_chat and not direct_chat_allowed_origins:
+            logger.error(
+                "[Device WS] Direct chat registration rejected because CORS allowlist is empty: "
+                "user=%s device_id=%s",
+                user_id,
+                payload.device_id,
+            )
+            return {"error": "Direct chat CORS allowlist is not configured"}
+
         # Check if this is a cloud device registration (by IP matching)
         # Prefer self-reported IP from executor, fall back to WebSocket client IP
         client_ip = payload.client_ip or session.get("client_ip")
@@ -1046,8 +1092,14 @@ class DeviceNamespace(socketio.AsyncNamespace):
             persisted_display_name = self._get_recent_registration_display_name(
                 user_id, payload.device_id
             )
+            direct_chat_secret = None
             if persisted_display_name is None:
-                success, persisted_display_name, error = await run_sync_in_executor(
+                (
+                    success,
+                    persisted_display_name,
+                    direct_chat_secret,
+                    error,
+                ) = await run_sync_in_executor(
                     _register_device,
                     user_id,
                     payload.device_id,
@@ -1066,8 +1118,14 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 self._remember_registration(
                     user_id, payload.device_id, persisted_display_name or payload.name
                 )
+            elif payload.direct_chat:
+                direct_chat_secret = await run_sync_in_executor(
+                    _get_device_direct_chat_secret_sync,
+                    user_id,
+                    payload.device_id,
+                )
         else:
-            persisted_display_name = await run_sync_in_executor(
+            persisted_display_name, direct_chat_secret = await run_sync_in_executor(
                 _update_cloud_device_registration_sync,
                 user_id,
                 payload.device_id,
@@ -1118,7 +1176,12 @@ class DeviceNamespace(socketio.AsyncNamespace):
             f"[Device WS] Device registered: user={user_id}, device={payload.device_id}"
         )
 
-        return {"success": True, "device_id": payload.device_id}
+        response = {"success": True, "device_id": payload.device_id}
+        if direct_chat_secret:
+            response["direct_chat_secret"] = direct_chat_secret
+        if payload.direct_chat:
+            response["direct_chat_allowed_origins"] = direct_chat_allowed_origins
+        return response
 
     async def _sync_global_capabilities_to_registered_device(
         self,

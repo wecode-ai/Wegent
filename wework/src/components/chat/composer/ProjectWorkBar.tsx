@@ -25,7 +25,10 @@ import {
   isOnlineDevice,
   sortStandaloneDevices,
 } from '@/lib/device-selection'
-import { isWeWorkExecutorVersionCompatible } from '@/lib/device-capabilities'
+import {
+  isDeviceUpgradeRequiredForWeWork,
+  isWeWorkCompatibleDevice,
+} from '@/lib/device-capabilities'
 import { supportsGitWorktreeExecution } from '@/lib/projectClassification'
 import { cn } from '@/lib/utils'
 import type { DeviceInfo, ProjectExecutionMode, ProjectWithTasks } from '@/types/api'
@@ -356,11 +359,7 @@ export function ProjectWorkBar({
       if (!deviceId) return true
 
       const device = getDeviceForProject(project)
-      return Boolean(
-        device &&
-        isOnlineDevice(device) &&
-        isWeWorkExecutorVersionCompatible(device.executor_version)
-      )
+      return Boolean(device && isOnlineDevice(device) && isWeWorkCompatibleDevice(device))
     },
     [getDeviceForProject]
   )
@@ -504,7 +503,7 @@ export function ProjectWorkBar({
   )
 
   const getCompactDeviceStatusLabel = (device: DeviceInfo) => {
-    if (!isWeWorkExecutorVersionCompatible(device.executor_version)) {
+    if (isDeviceUpgradeRequiredForWeWork(device)) {
       return t('workbench.project_device_upgrade_required_short')
     }
     if (device.status === 'online') {
@@ -732,7 +731,7 @@ export function ProjectWorkBar({
                   <div data-testid="standalone-device-list" className="shrink-0 space-y-0.5">
                     {standaloneDevices.map(device => {
                       const online = isOnlineDevice(device)
-                      const compatible = isWeWorkExecutorVersionCompatible(device.executor_version)
+                      const compatible = isWeWorkCompatibleDevice(device)
                       const selected =
                         isStandaloneMode && device.device_id === selectedStandaloneDeviceId
                       const DeviceIcon = isCloudDevice(device) ? Cloud : HardDrive

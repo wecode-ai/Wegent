@@ -106,6 +106,16 @@ export interface DeviceInfo {
   latest_version?: string | null
   update_available?: boolean
   bind_shell?: 'claudecode' | 'openclaw' | string
+  direct_chat?: DirectChatCapability | null
+}
+
+export interface DirectChatCapability {
+  enabled: boolean
+  transport: 'socket.io'
+  base_url: string
+  socket_path: string
+  namespace: string
+  version: number
 }
 
 export interface DeviceRunningTask {

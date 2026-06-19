@@ -88,10 +88,9 @@ class LocalRunner:
             auth_token=self.websocket_client.auth_token,
             reporter=self.websocket_client.capability_reporter,
         )
-        self.direct_chat_server = DirectChatServer(self)
+        self.direct_chat_server: Optional[DirectChatServer] = None
         self.session_handler = LocalSessionHandler(
             terminal_event_emitter=self.websocket_client.emit,
-            app_configurators=[self.direct_chat_server.attach],
         )
         self.upgrade_handler = UpgradeHandler(self)
         self.extension_handler = DeviceExtensionHandler(self)
@@ -165,9 +164,8 @@ class LocalRunner:
                 signal.signal(sig, self._handle_signal)
 
         try:
-            await self.session_handler.start_gateway()
             self.websocket_client.direct_chat_endpoint = (
-                self.direct_chat_server.build_registration_payload(
+                DirectChatServer.build_registration_payload(
                     self.session_handler.public_base_url
                 )
             )
@@ -200,7 +198,7 @@ class LocalRunner:
             logger.info("WebSocket connected to Backend")
 
             # Register device with Backend (using call for acknowledgment)
-            registered = await self.websocket_client.register_device()
+            registered = await self._register_device_with_retry()
             if not registered:
                 logger.error("Failed to register device with Backend")
                 return
@@ -209,6 +207,8 @@ class LocalRunner:
                 f"Device registered: id={self.websocket_client.device_id}, "
                 f"name={self.websocket_client.device_name}"
             )
+
+            await self._start_direct_chat_gateway()
 
             # Start heartbeat service
             await self.heartbeat_service.start()
@@ -220,6 +220,57 @@ class LocalRunner:
             logger.exception(f"Error in local runner: {e}")
         finally:
             await self._shutdown()
+
+    async def _register_device_with_retry(self) -> bool:
+        """Register the device, retrying only when Backend did not respond."""
+        retry_delay = config.LOCAL_RECONNECT_DELAY
+        retry_max = config.LOCAL_RECONNECT_MAX_DELAY
+
+        while self._running:
+            result = await self.websocket_client.register_device()
+            if result.success:
+                return True
+
+            if result.backend_responded:
+                logger.error(
+                    "Device registration rejected by Backend: %s",
+                    result.error or "Unknown error",
+                )
+                return False
+
+            logger.warning(
+                "Device registration did not receive a Backend response: %s. "
+                "Retrying in %ss...",
+                result.error or "Unknown error",
+                retry_delay,
+            )
+            slept = 0.0
+            while self._running and slept < retry_delay:
+                await asyncio.sleep(0.5)
+                slept += 0.5
+            retry_delay = min(retry_delay * 2, retry_max)
+
+        return False
+
+    async def _start_direct_chat_gateway(self) -> None:
+        """Start the local gateway after Backend has provided direct-chat config."""
+        if self.direct_chat_server is not None:
+            return
+
+        allowed_origins = self.websocket_client.direct_chat_allowed_origins
+        if not allowed_origins:
+            raise RuntimeError("Direct chat CORS allowlist is not configured")
+
+        self.direct_chat_server = DirectChatServer(
+            self,
+            allowed_origins=allowed_origins,
+        )
+        self.session_handler.add_app_configurator(self.direct_chat_server.attach)
+        await self.session_handler.start_gateway()
+        logger.info(
+            "Direct chat gateway started with %s allowed origin(s)",
+            len(allowed_origins),
+        )
 
     async def _shutdown(self) -> None:
         """Perform graceful shutdown."""
@@ -295,11 +346,6 @@ class LocalRunner:
             DeviceEvents.TERMINAL_CLOSE,
             self.session_handler.handle_terminal_close,
         )
-        self.websocket_client.on(
-            "direct_chat:authorize_connection",
-            self.direct_chat_server.handle_authorize_connection,
-        )
-
         # Upgrade handler
         self.websocket_client.on(
             "device:upgrade", self.upgrade_handler.handle_upgrade_command

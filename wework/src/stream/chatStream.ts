@@ -24,6 +24,7 @@ import type { SocketClientSocket } from '@wegent/chat-core'
 
 export type WorkbenchSocket = SocketClientSocket & {
   connectDevice?: (deviceId: string) => Promise<void>
+  setActiveDevice?: (deviceId: string | null) => void
   isDeviceConnected?: (deviceId: string) => boolean
 }
 
@@ -70,11 +71,15 @@ export function createChatStream(
   socket: Pick<
     WorkbenchSocket,
     'emit' | 'on' | 'off' | 'connected' | 'connectDevice' | 'isDeviceConnected'
+    | 'setActiveDevice'
   >
 ) {
   return {
     connectDevice(deviceId: string): Promise<void> {
       return socket.connectDevice?.(deviceId) ?? Promise.resolve()
+    },
+    setActiveDevice(deviceId: string | null): void {
+      socket.setActiveDevice?.(deviceId)
     },
     isDeviceConnected(deviceId: string): boolean {
       return socket.isDeviceConnected?.(deviceId) ?? socket.connected

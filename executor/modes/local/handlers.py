@@ -347,6 +347,14 @@ class UpgradeHandler:
             status_data["error"] = error
 
         try:
+            if self.runner.direct_chat_server is not None:
+                await self.runner.direct_chat_server.emit_device_event(
+                    "device:upgrade_status", status_data
+                )
+        except Exception as e:
+            logger.error(f"[UpgradeHandler] Failed to emit direct status: {e}")
+
+        try:
             await self.runner.websocket_client.emit(
                 "device:upgrade_status", status_data
             )

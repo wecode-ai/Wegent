@@ -23,17 +23,6 @@ class DirectChatConnectionResponse(BaseModel):
     endpoint: DirectChatCapability
 
 
-class DirectChatAuthorizeConnectionPayload(BaseModel):
-    """Backend-to-executor authorization payload."""
-
-    connection_id: str
-    token: str
-    user_id: int
-    user_name: str
-    device_id: str
-    expires_at: datetime
-
-
 class DirectChatTurnPrepareRequest(BaseModel):
     """Executor request to persist one user turn and build execution context."""
 

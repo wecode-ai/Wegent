@@ -15,7 +15,10 @@ import {
   getActiveWorkbenchDeviceId,
   isWorkbenchDeviceOnline,
 } from '@/lib/workbench-device'
-import { isDeviceBelowWeWorkVersion, isWeWorkCompatibleDevice } from '@/lib/device-capabilities'
+import {
+  isDeviceUpgradeRequiredForWeWork,
+  isWeWorkCompatibleDevice,
+} from '@/lib/device-capabilities'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
 import type {
   ArchivedTaskListResponse,
@@ -307,8 +310,8 @@ export function MobileWorkbenchLayout({
   const activeDeviceUnavailable = Boolean(activeDeviceId) && !isWorkbenchDeviceOnline(activeDevice)
   const showConversationDeviceBanner =
     Boolean(activeDeviceId) && (!activeDevice || activeDevice.status === 'offline')
-  const activeDeviceVersionUnsupported = Boolean(
-    activeDevice && isDeviceBelowWeWorkVersion(activeDevice)
+  const activeDeviceUpgradeRequired = Boolean(
+    activeDevice && isDeviceUpgradeRequiredForWeWork(activeDevice)
   )
   const noStandaloneCompatibleDevice =
     !activeConversationProject &&
@@ -317,7 +320,7 @@ export function MobileWorkbenchLayout({
   const composerDisabled =
     state.isSending ||
     activeDeviceUnavailable ||
-    activeDeviceVersionUnsupported ||
+    activeDeviceUpgradeRequired ||
     noStandaloneCompatibleDevice
 
   useEffect(() => {

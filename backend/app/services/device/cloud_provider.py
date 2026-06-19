@@ -193,6 +193,7 @@ class CloudDeviceProvider(LocalDeviceProvider):
                     "client_ip": spec.get("clientIp"),
                     "cloud_config": spec.get("cloudConfig"),
                     "bind_shell": spec.get("bindShell", "claudecode"),
+                    "direct_chat": spec.get("directChat"),
                 }
             )
 

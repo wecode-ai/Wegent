@@ -71,6 +71,11 @@ class SessionGateway:
         self._runner: Optional[web.AppRunner] = None
         self._client_session: Optional[ClientSession] = None
 
+    @property
+    def is_running(self) -> bool:
+        """Return whether the gateway has already been started."""
+        return self._runner is not None
+
     async def start(self) -> None:
         """Start the gateway if it is not already running."""
         if self._runner:
@@ -489,6 +494,14 @@ class LocalSessionHandler:
             if self.gateway_enabled
             else None
         )
+
+    def add_app_configurator(
+        self, configurator: Callable[[web.Application], None]
+    ) -> None:
+        """Add a gateway configurator before the gateway starts."""
+        if self.gateway.is_running:
+            raise RuntimeError("Cannot add gateway configurator after startup")
+        self.gateway.app_configurators.append(configurator)
 
     async def start_gateway(self) -> None:
         """Start the shared session gateway."""

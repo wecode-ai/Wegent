@@ -4,6 +4,15 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import '@/i18n'
 import { DeviceStatusPrompt } from './DeviceStatusPrompt'
 
+const directChat = {
+  enabled: true,
+  transport: 'socket.io' as const,
+  base_url: 'http://127.0.0.1:17889',
+  socket_path: '/socket.io',
+  namespace: '/wework-chat',
+  version: 1,
+}
+
 describe('DeviceStatusPrompt', () => {
   beforeEach(() => {
     window.sessionStorage.clear()
@@ -30,7 +39,7 @@ describe('DeviceStatusPrompt', () => {
     expect(onOpenCloudDeviceSettings).toHaveBeenCalledTimes(1)
   })
 
-  test('offers upgrade for an online idle device below the WeWork executor version', async () => {
+  test('offers upgrade for an online idle device that requires an upgrade', async () => {
     const onUpgradeDevice = vi.fn().mockResolvedValue(undefined)
 
     render(
@@ -55,7 +64,7 @@ describe('DeviceStatusPrompt', () => {
     )
 
     expect(screen.getByTestId('device-status-prompt')).toHaveTextContent(
-      'Old Device 版本低于 1.8.5，升级后可继续使用',
+      'Old Device 需要升级，升级后可继续使用',
     )
     expect(screen.getByTestId('device-status-upgrade-button')).toHaveTextContent(
       '升级该设备',
@@ -66,7 +75,7 @@ describe('DeviceStatusPrompt', () => {
     expect(onUpgradeDevice).toHaveBeenCalledWith('old-device')
   })
 
-  test('prioritizes upgrade for the active low-version device even when another device is compatible', async () => {
+  test('prioritizes upgrade for the active device when another device is compatible', async () => {
     const onUpgradeDevice = vi.fn().mockResolvedValue(undefined)
 
     render(
@@ -92,6 +101,7 @@ describe('DeviceStatusPrompt', () => {
             device_type: 'cloud',
             bind_shell: 'claudecode',
             executor_version: '1.8.5',
+            direct_chat: directChat,
           },
         ]}
         activeDeviceId="old-device"
@@ -102,7 +112,7 @@ describe('DeviceStatusPrompt', () => {
     )
 
     expect(screen.getByTestId('device-status-prompt')).toHaveTextContent(
-      'Old Device 版本低于 1.8.5，升级后可继续对话',
+      'Old Device 需要升级，升级后可继续对话',
     )
 
     await userEvent.click(screen.getByTestId('device-status-upgrade-button'))
@@ -126,6 +136,7 @@ describe('DeviceStatusPrompt', () => {
             bind_shell: 'claudecode',
             executor_version: '1.8.5',
             update_available: true,
+            direct_chat: directChat,
           },
         ]}
         upgradingDevices={{}}
@@ -198,6 +209,7 @@ describe('DeviceStatusPrompt', () => {
             update_available: false,
             slot_used: 0,
             running_tasks: [],
+            direct_chat: directChat,
           },
         ]}
         upgradingDevices={{}}
@@ -213,7 +225,7 @@ describe('DeviceStatusPrompt', () => {
     expect(onUpgradeDevice).not.toHaveBeenCalled()
   })
 
-  test('renders a red sidebar action for below-minimum device upgrades', async () => {
+  test('renders a red sidebar action for required device upgrades', async () => {
     const onUpgradeDevice = vi.fn().mockResolvedValue(undefined)
 
     render(
@@ -243,7 +255,7 @@ describe('DeviceStatusPrompt', () => {
     expect(action).toHaveClass('text-red-600')
     expect(action).not.toHaveAttribute('title')
     expect(screen.getByTestId('device-status-sidebar-tooltip')).toHaveTextContent(
-      'Old Device 版本低于 1.8.5，升级后可继续使用',
+      'Old Device 需要升级，升级后可继续使用',
     )
 
     await userEvent.click(action)
@@ -265,6 +277,7 @@ describe('DeviceStatusPrompt', () => {
             bind_shell: 'claudecode',
             executor_version: '1.8.5',
             update_available: true,
+            direct_chat: directChat,
           },
         ]}
         upgradingDevices={{}}
@@ -288,6 +301,7 @@ describe('DeviceStatusPrompt', () => {
       bind_shell: 'claudecode',
       executor_version: '1.8.5',
       update_available: true,
+      direct_chat: directChat,
     }
     const { rerender } = render(
       <DeviceStatusPrompt
@@ -329,6 +343,7 @@ describe('DeviceStatusPrompt', () => {
       bind_shell: 'claudecode',
       executor_version: '1.8.5',
       update_available: true,
+      direct_chat: directChat,
     }
     const { unmount } = render(
       <DeviceStatusPrompt

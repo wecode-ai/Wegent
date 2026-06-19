@@ -37,6 +37,7 @@ import re
 import socket
 import subprocess
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, Optional
 
@@ -52,6 +53,16 @@ if TYPE_CHECKING:
     from executor.config.device_config import DeviceConfig
 
 logger = setup_logger("websocket_client")
+
+
+@dataclass(frozen=True)
+class DeviceRegistrationResult:
+    """Result of a device registration attempt."""
+
+    success: bool
+    backend_responded: bool = True
+    error: Optional[str] = None
+
 
 # Device ID cache file location
 DEVICE_ID_CACHE_FILE = Path.home() / ".wegent-executor" / "device_id"
@@ -138,6 +149,8 @@ class WebSocketClient:
             self.bind_shell = "claudecode"
 
         self.direct_chat_endpoint: Optional[Dict[str, Any]] = None
+        self.direct_chat_secret: Optional[str] = None
+        self.direct_chat_allowed_origins: list[str] = []
 
         # Reconnection settings
         reconnection_delay = reconnection_delay or config.LOCAL_RECONNECT_DELAY
@@ -391,11 +404,14 @@ class WebSocketClient:
             if self._was_registered and not self._registered:
                 logger.info("Reconnected, auto re-registering device...")
                 try:
-                    success = await self.register_device()
-                    if success:
+                    result = await self.register_device()
+                    if result.success:
                         logger.info("Device re-registered successfully")
                     else:
-                        logger.error("Device re-registration failed")
+                        logger.error(
+                            "Device re-registration failed: %s",
+                            result.error or "Unknown error",
+                        )
                 except Exception as e:
                     logger.error(f"Auto re-register failed: {e}")
 
@@ -480,14 +496,15 @@ class WebSocketClient:
             logger.error(f"Failed to connect to WebSocket: {e}")
             return False
 
-    async def register_device(self, timeout: float = 10.0) -> bool:
+    async def register_device(self, timeout: float = 10.0) -> DeviceRegistrationResult:
         """Register device with Backend using call (request-response).
 
         Args:
             timeout: Timeout for registration response.
 
         Returns:
-            True if registered successfully, False otherwise.
+            Registration result. ``backend_responded`` is false for timeout or
+            transport-level failures.
         """
         if not self._connected:
             raise ConnectionError("WebSocket not connected")
@@ -514,27 +531,73 @@ class WebSocketClient:
             logger.info(f"device:register response: {response}")
 
             if response and response.get("success"):
+                direct_chat_secret = response.get("direct_chat_secret")
+                if isinstance(direct_chat_secret, str) and direct_chat_secret:
+                    self.direct_chat_secret = direct_chat_secret
+                direct_chat_allowed_origins = response.get(
+                    "direct_chat_allowed_origins"
+                )
+                if isinstance(direct_chat_allowed_origins, list):
+                    self.direct_chat_allowed_origins = [
+                        str(origin).strip()
+                        for origin in direct_chat_allowed_origins
+                        if str(origin).strip()
+                    ]
+                if self.direct_chat_endpoint and not self.direct_chat_secret:
+                    error = "Direct chat secret missing from registration response"
+                    logger.error(error)
+                    return DeviceRegistrationResult(
+                        success=False,
+                        backend_responded=True,
+                        error=error,
+                    )
+                if self.direct_chat_endpoint and not self.direct_chat_allowed_origins:
+                    error = (
+                        "Direct chat CORS allowlist missing from registration response"
+                    )
+                    logger.error(error)
+                    return DeviceRegistrationResult(
+                        success=False,
+                        backend_responded=True,
+                        error=error,
+                    )
                 self._registered = True
                 self._was_registered = (
                     True  # Mark that we were registered at least once
                 )
                 logger.info(f"Device registered successfully: {self.device_id}")
-                return True
-            else:
-                error = (
-                    response.get("error", "Unknown error")
-                    if response
-                    else "No response"
-                )
+                return DeviceRegistrationResult(success=True)
+
+            if response:
+                error = response.get("error", "Unknown error")
                 logger.error(f"Device registration failed: {error}")
-                return False
+                return DeviceRegistrationResult(
+                    success=False,
+                    backend_responded=True,
+                    error=str(error),
+                )
+
+            logger.error("Device registration failed: no response")
+            return DeviceRegistrationResult(
+                success=False,
+                backend_responded=False,
+                error="No response",
+            )
 
         except asyncio.TimeoutError:
             logger.error("Device registration timeout")
-            return False
+            return DeviceRegistrationResult(
+                success=False,
+                backend_responded=False,
+                error="Device registration timeout",
+            )
         except Exception as e:
             logger.error(f"Device registration error: {e}")
-            return False
+            return DeviceRegistrationResult(
+                success=False,
+                backend_responded=False,
+                error=str(e),
+            )
 
     async def send_heartbeat(self, timeout: float = 5.0) -> bool:
         """Send heartbeat to Backend using call (request-response).

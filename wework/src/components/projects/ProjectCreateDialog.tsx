@@ -8,12 +8,11 @@ import {
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
-  WEWORK_MIN_EXECUTOR_VERSION,
   canRequestDeviceUpgrade,
   canUseForProjectCreation,
   isCloudDevice,
   isClaudeCodeDevice,
-  isDeviceBelowWeWorkVersion,
+  isDeviceUpgradeRequiredForWeWork,
   isUsableDevice,
 } from '@/lib/device-capabilities'
 import type {
@@ -642,7 +641,7 @@ function ProjectCreateDialogContent({
       : t('workbench.project_create_progress', '正在创建项目，请稍候')
   const isMobileSheet = presentation === 'mobileSheet'
   const getDeviceOptionLabel = (device: DeviceInfo) => {
-    const statusLabel = isDeviceBelowWeWorkVersion(device)
+    const statusLabel = isDeviceUpgradeRequiredForWeWork(device)
       ? t('workbench.project_device_upgrade_required_option', '（需升级）')
       : t(
           device.status === 'busy'
@@ -657,9 +656,10 @@ function ProjectCreateDialogContent({
       isCloudDevice(device) ? ` ${t('workbench.project_cloud_device', '(云设备)')}` : ''
     } ${statusLabel}`
   }
-  const directoryDeviceUnavailableMessage = selectedDevice && isDeviceBelowWeWorkVersion(selectedDevice)
-    ? t('workbench.project_directory_upgrade_device_hint', '升级当前设备后可选择目录')
-    : t('workbench.project_directory_unavailable_device_hint', '设备恢复在线后可选择目录')
+  const directoryDeviceUnavailableMessage =
+    selectedDevice && isDeviceUpgradeRequiredForWeWork(selectedDevice)
+      ? t('workbench.project_directory_upgrade_device_hint', '升级当前设备后可选择目录')
+      : t('workbench.project_directory_unavailable_device_hint', '设备恢复在线后可选择目录')
 
   return createPortal(
     <div
@@ -748,31 +748,26 @@ function ProjectCreateDialogContent({
             className="mt-3 space-y-2"
           >
             <p className="text-xs font-medium text-[#6b6f76]">
-              {isDeviceBelowWeWorkVersion(selectedUnavailableDevice)
+              {isDeviceUpgradeRequiredForWeWork(selectedUnavailableDevice)
                 ? t('workbench.project_selected_device_upgrade_title')
                 : t('workbench.project_selected_device_unavailable_title')}
             </p>
             {(() => {
               const device = selectedUnavailableDevice
-              const belowVersion = isDeviceBelowWeWorkVersion(device)
+              const upgradeRequired = isDeviceUpgradeRequiredForWeWork(device)
               const upgradeState = upgradingDevices[device.device_id]
               const upgrading = isProjectDeviceUpgradeActive(upgradeState)
               const canUpgrade = Boolean(
                 onUpgradeDevice &&
-                  belowVersion &&
+                  upgradeRequired &&
                   canRequestDeviceUpgrade(device) &&
                   !upgrading,
               )
-              const currentVersion = device.executor_version
-                ? `v${device.executor_version}`
-                : t('workbench.project_device_version_unknown')
               const reason =
                 device.status !== 'online'
                   ? t('workbench.device_status_offline_reason')
-                  : belowVersion
-                    ? t('workbench.project_device_upgrade_requirement', {
-                        version: WEWORK_MIN_EXECUTOR_VERSION,
-                      })
+                  : upgradeRequired
+                    ? t('workbench.project_device_upgrade_requirement')
                     : t('workbench.device_status_busy_reason')
 
               return (
@@ -797,15 +792,12 @@ function ProjectCreateDialogContent({
                         ? t('workbench.project_device_upgrading', {
                             message: upgradeState?.message ?? t('workbench.device_status_checking'),
                           })
-                        : belowVersion
-                          ? t('workbench.project_device_upgrade_detail', {
-                              current: currentVersion,
-                              required: WEWORK_MIN_EXECUTOR_VERSION,
-                            })
+                        : upgradeRequired
+                          ? t('workbench.project_device_upgrade_detail')
                           : reason}
                     </p>
                   </div>
-                  {belowVersion && (
+                  {upgradeRequired && (
                     <button
                       type="button"
                       data-testid={`upgrade-project-device-${device.device_id}`}

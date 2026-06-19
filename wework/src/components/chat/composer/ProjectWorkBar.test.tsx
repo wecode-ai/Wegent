@@ -48,6 +48,14 @@ const device: DeviceInfo = {
   device_type: 'cloud',
   bind_shell: 'claudecode',
   executor_version: '1.8.5',
+  direct_chat: {
+    enabled: true,
+    transport: 'socket.io',
+    base_url: 'http://127.0.0.1:17889',
+    socket_path: '/socket.io',
+    namespace: '/wework-chat',
+    version: 1,
+  },
 }
 
 describe('ProjectWorkBar', () => {

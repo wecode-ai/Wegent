@@ -1,4 +1,7 @@
-import { isWeWorkExecutorVersionCompatible } from './device-capabilities'
+import {
+  isDeviceUpgradeRequiredForWeWork,
+  isWeWorkCompatibleDevice,
+} from './device-capabilities'
 
 export interface SelectableDevice {
   device_id: string
@@ -7,6 +10,7 @@ export interface SelectableDevice {
   device_type?: string | null
   bind_shell?: string | null
   executor_version?: string | null
+  direct_chat?: { enabled?: boolean } | null
 }
 
 export function isClaudeCodeDevice(device: SelectableDevice): boolean {
@@ -22,9 +26,7 @@ export function isCloudDevice(device: SelectableDevice): boolean {
 }
 
 export function isWeWorkSelectableStandaloneDevice(device: SelectableDevice): boolean {
-  return isClaudeCodeDevice(device) &&
-    isOnlineDevice(device) &&
-    isWeWorkExecutorVersionCompatible(device.executor_version)
+  return isOnlineDevice(device) && isWeWorkCompatibleDevice(device)
 }
 
 export function sortStandaloneDevices<T extends SelectableDevice>(devices: T[]): T[] {
@@ -33,8 +35,8 @@ export function sortStandaloneDevices<T extends SelectableDevice>(devices: T[]):
     const rightOnline = isOnlineDevice(right) ? 0 : 1
     if (leftOnline !== rightOnline) return leftOnline - rightOnline
 
-    const leftCompatible = isWeWorkExecutorVersionCompatible(left.executor_version) ? 0 : 1
-    const rightCompatible = isWeWorkExecutorVersionCompatible(right.executor_version) ? 0 : 1
+    const leftCompatible = isDeviceUpgradeRequiredForWeWork(left) ? 1 : 0
+    const rightCompatible = isDeviceUpgradeRequiredForWeWork(right) ? 1 : 0
     if (leftCompatible !== rightCompatible) return leftCompatible - rightCompatible
 
     const leftCloud = isOnlineDevice(left) && isCloudDevice(left) ? 0 : 1
