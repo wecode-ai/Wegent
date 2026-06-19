@@ -198,6 +198,7 @@
     "model_disabled_missing_target_runtime_family": "This model is missing runtime.family",
     "model_disabled_runtime_family_mismatch": "Incompatible with the current model protocol",
     "enter_project_work": "Enter project work",
+    "project_work_trigger_device_aria": "{{action}}, current device {{device}}",
     "select_project": "Select project",
     "no_project": "No project",
     "user_fallback": "Me",

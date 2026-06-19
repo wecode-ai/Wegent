@@ -198,6 +198,7 @@
     "model_disabled_missing_target_runtime_family": "该模型缺少 runtime.family",
     "model_disabled_runtime_family_mismatch": "与当前模型协议不兼容",
     "enter_project_work": "进入项目工作",
+    "project_work_trigger_device_aria": "{{action}}，当前设备 {{device}}",
     "select_project": "选择项目",
     "no_project": "不使用项目",
     "user_fallback": "我",

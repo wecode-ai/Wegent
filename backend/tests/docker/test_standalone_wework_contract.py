@@ -9,13 +9,14 @@ from pathlib import Path
 REPO_ROOT: Path = Path(__file__).resolve().parents[3]
 STANDALONE_DOCKERFILE: Path = REPO_ROOT / "docker" / "standalone" / "Dockerfile"
 STANDALONE_START: Path = REPO_ROOT / "docker" / "standalone" / "start.sh"
+STANDALONE_NGINX_CONFIG: Path = REPO_ROOT / "docker" / "standalone" / "nginx.conf"
 INSTALL_SCRIPT: Path = REPO_ROOT / "install.sh"
 BUILD_STANDALONE_SCRIPT: Path = REPO_ROOT / "scripts" / "build-standalone.sh"
 VERIFY_STANDALONE_SCRIPT: Path = REPO_ROOT / "scripts" / "verify-standalone-image.sh"
 
 
 def test_standalone_image_includes_wework_executor_and_workspace_volume() -> None:
-    """Standalone image should expose Wework, Backend, and workspace paths."""
+    """Standalone image should include Wework, executor, Nginx, and workspace paths."""
     dockerfile = STANDALONE_DOCKERFILE.read_text(encoding="utf-8")
 
     assert "AS wework-builder" in dockerfile
@@ -72,12 +73,39 @@ def test_standalone_start_can_skip_container_executor() -> None:
     assert 'if [ -n "${EXECUTOR_PID:-}" ]; then' in start_script
 
 
+def test_standalone_nginx_routes_frontend_backend_and_wework() -> None:
+    """Nginx should expose Frontend, Backend, and Wework through one public port."""
+    nginx_config = STANDALONE_NGINX_CONFIG.read_text(encoding="utf-8")
+
+    assert "listen 3000;" in nginx_config
+    assert "listen 3001" not in nginx_config
+    assert "listen 8000" not in nginx_config
+    assert "upstream wegent_frontend" in nginx_config
+    assert "server 127.0.0.1:3002;" in nginx_config
+    assert "upstream wegent_backend" in nginx_config
+    assert "server 127.0.0.1:8000;" in nginx_config
+    assert "location = /health" in nginx_config
+    assert "proxy_pass http://wegent_backend/health;" in nginx_config
+    assert "location ^~ /wework/api/" in nginx_config
+    assert "proxy_pass http://wegent_backend/api/;" in nginx_config
+    assert "location ^~ /wework/socket.io/" in nginx_config
+    assert "proxy_set_header Upgrade $http_upgrade;" in nginx_config
+    assert "location ^~ /wework/" in nginx_config
+    assert "alias /app/wework/dist/;" in nginx_config
+    assert "try_files $uri $uri/ /wework/index.html;" in nginx_config
+    assert "location / {" in nginx_config
+    assert "proxy_pass http://wegent_frontend;" in nginx_config
+
+
 def test_standalone_start_serves_wework_without_public_ttyd() -> None:
-    """Startup should serve Wework Web without a fixed public shell service."""
+    """Startup should serve Wework through Nginx without a fixed public shell service."""
     start_script = STANDALONE_START.read_text(encoding="utf-8")
 
     assert "start_nginx" in start_script
     assert "start_wework" not in start_script
+    assert "write_wework_runtime_config" in start_script
+    assert "nginx -t" in start_script
+    assert 'nginx -g "daemon off;"' in start_script
     assert "WEWORK_PORT" not in start_script
     assert "python3 -m http.server" not in start_script
     assert "DEVICE_SESSION_GATEWAY_ENABLED=false" in start_script
@@ -131,7 +159,7 @@ def test_standalone_frontend_defaults_to_wework_url() -> None:
 
 
 def test_installer_exposes_wework_backend_and_workspace_volume() -> None:
-    """The public installer should expose only browser-facing standalone ports."""
+    """The public installer should expose one browser-facing standalone port."""
     install_script = INSTALL_SCRIPT.read_text(encoding="utf-8")
 
     assert 'STANDALONE_WORKSPACE_VOLUME_NAME="wegent-workspace"' in install_script
@@ -210,6 +238,7 @@ def test_build_script_outputs_complete_standalone_run_command() -> None:
     assert "-v wegent-data:/app/data" in build_script
     assert "-v wegent-workspace:/workspace" in build_script
     assert "RUNTIME_WEWORK_CODE_URL=http://localhost:3000/wework" in build_script
+    assert "WEWORK_PUBLIC_API_URL=/wework/api" in build_script
 
 
 def test_verify_script_checks_wework_readiness_without_terminal_ports() -> None:
@@ -217,10 +246,13 @@ def test_verify_script_checks_wework_readiness_without_terminal_ports() -> None:
     verify_script = VERIFY_STANDALONE_SCRIPT.read_text(encoding="utf-8")
 
     assert 'STANDALONE_PORT="${STANDALONE_PORT:-13000}"' in verify_script
+    assert "WEWORK_PORT" not in verify_script
     assert "TTYD_PORT" not in verify_script
     assert "SESSION_GATEWAY_PORT" not in verify_script
     assert "TTYD_CREDENTIALS" not in verify_script
     assert '-p "127.0.0.1:${STANDALONE_PORT}:3000"' in verify_script
+    assert ":3001" not in verify_script
+    assert ":8000" not in verify_script
     assert ":7681" not in verify_script
     assert ":17888" not in verify_script
     assert (
