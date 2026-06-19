@@ -71,6 +71,7 @@ from app.services.chat.rag import process_context_and_rag
 from app.services.chat.storage import session_manager
 from app.services.chat.storage.db import get_db_session, run_sync_in_executor
 from app.services.chat.trigger import trigger_ai_response_unified
+from app.services.task_fork_history import task_fork_history_resolver
 from app.utils.prompt_utils import extract_display_prompt
 from shared.telemetry.context import (
     set_request_context,
@@ -1505,7 +1506,7 @@ class ChatNamespace(socketio.AsyncNamespace):
 
         # Fetch messages - run in executor to avoid blocking
         messages = await run_sync_in_executor(
-            _fetch_history_messages, payload.task_id, payload.after_message_id
+            _fetch_history_messages, payload.task_id, user_id, payload.after_message_id
         )
 
         return {"messages": messages}
@@ -1818,11 +1819,13 @@ def _fetch_subtasks_for_task_join(
             # Incremental sync: only fetch messages after the cursor
             from app.services.context import context_service
 
-            subtasks = task_stores.subtask_store.list_after_message_id(
+            items = task_fork_history_resolver.resolve_for_task(
                 db,
                 task_id=task_id,
+                user_id=user_id,
                 after_message_id=after_message_id,
             )
+            subtasks = [item.subtask for item in items]
 
             # Convert to dict format matching task detail API
             subtasks_dict = []
@@ -1978,23 +1981,26 @@ def _get_device_info_for_close_session(task_id: int, user_id: int) -> Optional[d
         return {"device_id": device_id, "user_id": task.user_id}
 
 
-def _fetch_history_messages(task_id: int, after_message_id: int) -> list:
+def _fetch_history_messages(task_id: int, user_id: int, after_message_id: int) -> list:
     """
     Fetch history messages for history:sync event.
 
     Args:
         task_id: Task ID
+        user_id: User ID
         after_message_id: Message ID cursor
 
     Returns:
         List of message dicts
     """
     with get_db_session() as db:
-        subtasks = task_stores.subtask_store.list_after_message_id(
+        items = task_fork_history_resolver.resolve_for_task(
             db,
             task_id=task_id,
+            user_id=user_id,
             after_message_id=after_message_id,
         )
+        subtasks = [item.subtask for item in items]
 
         messages = []
         for st in subtasks:

@@ -35,7 +35,8 @@ from app.models.subtask_context import (
 from app.models.user import User
 from app.services.chat.guidance_queue import guidance_queue
 from app.services.chat.webpage_ws_chat_emitter import get_webpage_ws_emitter
-from app.stores.tasks import subtask_store
+from app.services.task_fork_history import task_fork_history_resolver
+from app.stores.tasks import subtask_store, task_store
 from shared.prompts.constants import parse_prompt_blocks
 from shared.telemetry.decorators import trace_sync
 
@@ -865,13 +866,21 @@ async def get_chat_history(
         [status.value for status in history_statuses],
     )
 
-    subtasks = subtask_store.list_history_by_task_statuses(
+    task = task_store.get_by_id(db, task_id=task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    items = task_fork_history_resolver.resolve_for_task(
         db,
         task_id=task_id,
-        statuses=history_statuses,
+        user_id=task.user_id,
         before_message_id=before_message_id,
-        limit=limit,
     )
+    subtasks = [
+        item.subtask for item in items if item.subtask.status in history_statuses
+    ]
+    if limit is not None and limit > 0:
+        subtasks = subtasks[-limit:]
 
     # Convert to message format with full context loading
     messages = [
