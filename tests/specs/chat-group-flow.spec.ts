@@ -17,6 +17,8 @@ import { test, expect } from '@playwright/test'
 const TEST_ID = Math.random().toString(36).substring(2, 8)
 const TEST_GROUP_NAME = `Test-Group-${TEST_ID}-${Date.now()}`
 const TEST_MESSAGE = 'Hello, this is a test message in group chat!'
+const TEST_ADMIN_USERNAME = process.env.E2E_BOOTSTRAP_ADMIN_USER || 'admin'
+const TEST_ADMIN_PASSWORD = process.env.E2E_BOOTSTRAP_ADMIN_PASSWORD || 'E2EAdmin@12345'
 
 // ==================== Helper Functions ====================
 
@@ -41,8 +43,8 @@ async function setupChatGroupPage(page: any) {
     const usernameInput = page.locator('input[placeholder*="username"]').first()
     const passwordInput = page.locator('input[placeholder*="password"]').first()
 
-    await usernameInput.fill('admin')
-    await passwordInput.fill('Wegent2025!')
+    await usernameInput.fill(TEST_ADMIN_USERNAME)
+    await passwordInput.fill(TEST_ADMIN_PASSWORD)
 
     const loginButton = page.locator('button:has-text("Login")').first()
     await loginButton.click()

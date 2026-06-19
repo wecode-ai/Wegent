@@ -11,6 +11,11 @@ export interface LoginResponse {
   token_type: string
 }
 
+export interface AdminPasswordSetupStatusResponse {
+  required: boolean
+  admin_username: string
+}
+
 const TOKEN_KEY = 'auth_token'
 const TOKEN_EXPIRE_KEY = 'auth_token_expire'
 const TOKEN_COOKIE_NAME = 'auth_token'
@@ -70,6 +75,14 @@ export function createAuthApi(client: HttpClient) {
   return {
     async login(data: LoginRequest): Promise<User> {
       const res = await client.post<LoginResponse>('/auth/login', data)
+      setToken(res.access_token)
+      return client.get('/users/me')
+    },
+    getAdminPasswordSetupStatus(): Promise<AdminPasswordSetupStatusResponse> {
+      return client.get('/auth/admin-password/status')
+    },
+    async setupAdminPassword(password: string): Promise<User> {
+      const res = await client.post<LoginResponse>('/auth/admin-password/setup', { password })
       setToken(res.access_token)
       return client.get('/users/me')
     },

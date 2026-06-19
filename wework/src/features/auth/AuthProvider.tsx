@@ -1,19 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import {
-  createAuthApi,
-  isAuthenticated,
-  removeToken,
-  type LoginRequest,
-} from '@/api/auth'
+import { createAuthApi, isAuthenticated, removeToken, type LoginRequest } from '@/api/auth'
 import { createHttpClient } from '@/api/http'
 import { getRuntimeConfig, stripAppBasePath } from '@/config/runtime'
 import type { User } from '@/types/api'
-import {
-  LOGIN_PATH,
-  OIDC_CALLBACK_PATH,
-  redirectToLogin,
-} from './redirect'
+import { LOGIN_PATH, OIDC_CALLBACK_PATH, redirectToLogin } from './redirect'
 import { AuthContext, type AuthContextValue } from './useAuth'
 
 type AuthApi = ReturnType<typeof createAuthApi>
@@ -92,7 +83,7 @@ export function AuthProvider({ children, authApi }: AuthProviderProps) {
         setIsLoading(false)
       }
     },
-    [resolvedAuthApi],
+    [resolvedAuthApi]
   )
 
   const logout = useCallback(() => {
@@ -105,7 +96,26 @@ export function AuthProvider({ children, authApi }: AuthProviderProps) {
     async (accessToken: string) => {
       await resolvedAuthApi.loginWithOidcToken(accessToken)
     },
-    [resolvedAuthApi],
+    [resolvedAuthApi]
+  )
+
+  const getAdminPasswordSetupStatus = useCallback(
+    () => resolvedAuthApi.getAdminPasswordSetupStatus(),
+    [resolvedAuthApi]
+  )
+
+  const setupAdminPassword = useCallback(
+    async (password: string) => {
+      setIsLoading(true)
+      try {
+        const adminUser = await resolvedAuthApi.setupAdminPassword(password)
+        setUser(adminUser)
+        return adminUser
+      } finally {
+        setIsLoading(false)
+      }
+    },
+    [resolvedAuthApi]
   )
 
   const value: AuthContextValue = {
@@ -115,6 +125,8 @@ export function AuthProvider({ children, authApi }: AuthProviderProps) {
     logout,
     refresh,
     loginWithOidcToken,
+    getAdminPasswordSetupStatus,
+    setupAdminPassword,
   }
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

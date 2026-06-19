@@ -9,6 +9,8 @@ export interface AuthContextValue {
   logout: () => void
   refresh: () => Promise<void>
   loginWithOidcToken: (accessToken: string) => Promise<void>
+  getAdminPasswordSetupStatus: () => Promise<{ required: boolean }>
+  setupAdminPassword: (password: string) => Promise<User>
 }
 
 export const AuthContext = createContext<AuthContextValue | null>(null)
