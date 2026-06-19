@@ -84,26 +84,11 @@ def test_session_gateway_strips_code_server_prefix_per_session():
     )
 
 
-def test_session_gateway_keeps_terminal_prefix_for_ttyd():
-    """Terminal sessions keep the ttyd base path when proxying."""
+def test_session_gateway_does_not_redirect_embedded_code_server_requests():
+    """Embedded code-server iframes must keep token auth in the URL."""
     from executor.modes.local.session_handler import SessionGateway
 
     gateway = SessionGateway({})
-    request = SimpleNamespace(path="/s/terminal-1/ws", query_string="token=secret")
-    session = _local_session("terminal-1", "terminal")
-
-    assert (
-        gateway._build_upstream_url(request, session, "ws")
-        == "ws://127.0.0.1:45678/s/terminal-1/ws"
-    )
-
-
-def test_session_gateway_does_not_redirect_terminal_token_requests():
-    """Embedded terminal iframes must keep token auth in the URL."""
-    from executor.modes.local.session_handler import SessionGateway
-
-    gateway = SessionGateway({})
-    terminal_session = _local_session("terminal-1", "terminal")
     code_session = _local_session("code-1", "code_server")
     request = SimpleNamespace(
         query={"token": "secret"},
@@ -114,13 +99,6 @@ def test_session_gateway_does_not_redirect_terminal_token_requests():
         headers={},
     )
 
-    assert (
-        gateway._should_redirect_authenticated_request(
-            request,
-            terminal_session,
-        )
-        is False
-    )
     assert (
         gateway._should_redirect_authenticated_request(
             embedded_code_request,
@@ -137,25 +115,18 @@ def test_session_gateway_does_not_redirect_terminal_token_requests():
     )
 
 
-def test_session_gateway_authorizes_terminal_session_path_without_cookies():
-    """Terminal iframe resources authenticate through the session path."""
+def test_session_gateway_rejects_code_server_session_path_without_cookies():
+    """Code-server iframe resources require token or cookie authentication."""
     from executor.modes.local.session_handler import SessionGateway
 
     gateway = SessionGateway({})
-    terminal_session = _local_session("terminal-1", "terminal")
     code_session = _local_session("code-1", "code_server")
-    terminal_request = SimpleNamespace(
-        path="/s/terminal-1/js/app.js",
-        query={},
-        cookies={},
-    )
     code_request = SimpleNamespace(
         path="/s/code-1/",
         query={},
         cookies={},
     )
 
-    assert gateway._is_authorized(terminal_request, terminal_session) is True
     assert gateway._is_authorized(code_request, code_session) is False
 
 
@@ -247,33 +218,81 @@ async def test_session_gateway_logs_in_to_code_server_with_configured_password(
 
 
 @pytest.mark.asyncio
-async def test_start_terminal_session_uses_writable_once_ttyd(tmp_path, monkeypatch):
-    """Terminal sessions should start a writable ttyd that exits on disconnect."""
+async def test_start_terminal_session_uses_embedded_pty(tmp_path, monkeypatch):
+    """Terminal sessions should start an embedded PTY instead of ttyd."""
     from executor.modes.local import session_handler
 
-    created = []
-    waited_ports = []
+    class FakePtyProcess:
+        pid = 1234
+        returncode = None
+        fd = -1
+
+        def __init__(self):
+            self.writes = []
+            self.resizes = []
+            self.closed = False
+            self.terminated = False
+
+        def read(self, size=4096):
+            return b""
+
+        def write(self, data):
+            self.writes.append(data)
+            return len(data)
+
+        def resize(self, rows, cols):
+            self.resizes.append((rows, cols))
+
+        def poll(self):
+            return 0 if self.closed else None
+
+        def terminate(self, force=False):
+            self.terminated = True
+            self.closed = True
+
+        def wait(self, timeout=None):
+            self.closed = True
+            return 0
+
+        def close(self):
+            self.closed = True
+
+    class FakePtyManager:
+        def __init__(self):
+            self.spawned = []
+            self.process = FakePtyProcess()
+
+        def is_available(self):
+            return True
+
+        def spawn(self, cmd, cwd=None, env=None, rows=24, cols=80):
+            self.spawned.append(
+                {
+                    "cmd": cmd,
+                    "cwd": cwd,
+                    "env": env,
+                    "rows": rows,
+                    "cols": cols,
+                }
+            )
+            return self.process
+
+        def read_available(self, fd, timeout=0.5):
+            return None
+
+    fake_pty_manager = FakePtyManager()
+    monkeypatch.setenv("SHELL", "/bin/bash")
 
     async def fake_create_process(*argv, **kwargs):
-        created.append((argv, kwargs))
-        return AsyncMock(pid=1234)
-
-    async def fake_wait_for_session_port(host, port, process):
-        waited_ports.append((host, port, process.pid))
-        return True
+        raise AssertionError(f"terminal should not spawn ttyd: {argv}")
 
     monkeypatch.setattr(
         "executor.modes.local.session_handler.asyncio.create_subprocess_exec",
         fake_create_process,
     )
     monkeypatch.setattr(
-        "executor.modes.local.session_handler._find_free_port", lambda: 45678
-    )
-    monkeypatch.setattr(
-        session_handler,
-        "_wait_for_session_port",
-        fake_wait_for_session_port,
-        raising=False,
+        "executor.modes.local.session_handler.get_pty_manager",
+        lambda: fake_pty_manager,
     )
     handler = session_handler.LocalSessionHandler(
         public_base_url="http://localhost:17888"
@@ -286,19 +305,30 @@ async def test_start_terminal_session_uses_writable_once_ttyd(tmp_path, monkeypa
             "project_id": 123,
             "path": str(tmp_path),
             "access_token": "secret",
+            "rows": 40,
+            "cols": 120,
         }
     )
 
     assert result["success"] is True
-    assert result["url"] == "http://localhost:17888/s/terminal-1/?token=secret"
-    assert waited_ports == [("127.0.0.1", 45678, 1234)]
-    argv = created[0][0]
-    assert argv[:2] == ("ttyd", "-i")
-    assert "-o" in argv
-    assert "-m" in argv
-    assert "-W" in argv
-    assert "-R" not in argv
-    assert str(tmp_path) in argv
+    assert result["url"] == ""
+    assert result["transport"] == "socketio"
+    assert len(fake_pty_manager.spawned) == 1
+    assert fake_pty_manager.spawned[0]["cmd"] == ["/bin/bash"]
+    assert fake_pty_manager.spawned[0]["cwd"] == str(tmp_path)
+    assert isinstance(fake_pty_manager.spawned[0]["env"], dict)
+    assert fake_pty_manager.spawned[0]["rows"] == 40
+    assert fake_pty_manager.spawned[0]["cols"] == 120
+
+    await handler.handle_terminal_input({"session_id": "terminal-1", "data": "pwd\r"})
+    await handler.handle_terminal_resize(
+        {"session_id": "terminal-1", "rows": 30, "cols": 100}
+    )
+    await handler.handle_terminal_close({"session_id": "terminal-1"})
+
+    assert fake_pty_manager.process.writes == [b"pwd\r"]
+    assert fake_pty_manager.process.resizes == [(30, 100)]
+    assert fake_pty_manager.process.terminated is True
 
 
 @pytest.mark.asyncio
@@ -356,24 +386,48 @@ async def test_start_session_resolves_relative_default_path(
     """Relative default project paths should resolve under LOCAL_WORKSPACE_ROOT."""
     from executor.modes.local.session_handler import LocalSessionHandler
 
-    created = []
+    spawned = []
+    monkeypatch.setenv("SHELL", "/bin/bash")
     monkeypatch.setattr(
         "executor.modes.local.session_handler.config.get_workspace_root",
         lambda: str(tmp_path),
     )
 
-    async def fake_create_process(*argv, **kwargs):
-        created.append((argv, kwargs))
-        return AsyncMock(pid=1234)
+    class FakePtyProcess:
+        fd = -1
+
+        def read(self, size=4096):
+            return b""
+
+        def write(self, data):
+            return len(data)
+
+        def resize(self, rows, cols):
+            pass
+
+        def poll(self):
+            return 0
+
+        def terminate(self, force=False):
+            pass
+
+        def wait(self, timeout=None):
+            return 0
+
+        def close(self):
+            pass
+
+    class FakePtyManager:
+        def is_available(self):
+            return True
+
+        def spawn(self, cmd, cwd=None, env=None, rows=24, cols=80):
+            spawned.append({"cmd": cmd, "cwd": cwd})
+            return FakePtyProcess()
 
     monkeypatch.setattr(
-        "executor.modes.local.session_handler.asyncio.create_subprocess_exec",
-        fake_create_process,
-    )
-    monkeypatch.setattr(
-        "executor.modes.local.session_handler._wait_for_session_port",
-        AsyncMock(return_value=True),
-        raising=False,
+        "executor.modes.local.session_handler.get_pty_manager",
+        lambda: FakePtyManager(),
     )
     handler = LocalSessionHandler(public_base_url="http://localhost:17888")
 
@@ -391,4 +445,4 @@ async def test_start_session_resolves_relative_default_path(
     expected_path = str(tmp_path / "project17")
     assert result["success"] is True
     assert (tmp_path / "project17").is_dir()
-    assert expected_path in created[0][0]
+    assert spawned == [{"cmd": ["/bin/bash"], "cwd": expected_path}]

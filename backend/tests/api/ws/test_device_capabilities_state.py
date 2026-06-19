@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from app.api.ws import device_namespace
+from app.services.device.terminal_session_service import TerminalSessionRecord
 
 
 @pytest.mark.asyncio
@@ -235,3 +236,107 @@ async def test_responses_api_terminal_event_logs_callback_summary(monkeypatch):
         for message in messages
     )
     assert all("done" not in message for message in messages)
+
+
+@pytest.mark.asyncio
+async def test_device_terminal_output_forwards_to_browser_terminal_room(monkeypatch):
+    namespace = device_namespace.DeviceNamespace()
+    record = TerminalSessionRecord(
+        session_id="terminal-1",
+        user_id=7,
+        device_id="device-1",
+        socket_id="device-sid",
+        project_id=123,
+        path="/repo",
+        expires_at=None,
+    )
+    service = SimpleNamespace(get=AsyncMock(return_value=record))
+    sio = SimpleNamespace(emit=AsyncMock())
+    monkeypatch.setattr(device_namespace, "terminal_session_service", service)
+    monkeypatch.setattr(device_namespace, "get_sio", lambda: sio, raising=False)
+    monkeypatch.setattr(
+        namespace,
+        "get_session",
+        AsyncMock(return_value={"user_id": 7, "device_id": "device-1"}),
+    )
+
+    result = await namespace.on_terminal_output(
+        "device-sid",
+        {"session_id": "terminal-1", "data": "hello"},
+    )
+
+    assert result == {"success": True}
+    sio.emit.assert_awaited_once_with(
+        "terminal:output",
+        {"session_id": "terminal-1", "data": "hello"},
+        room="terminal:terminal-1",
+        namespace="/terminal",
+    )
+
+
+@pytest.mark.asyncio
+async def test_device_terminal_output_rejects_mismatched_device(monkeypatch):
+    namespace = device_namespace.DeviceNamespace()
+    record = TerminalSessionRecord(
+        session_id="terminal-1",
+        user_id=7,
+        device_id="device-1",
+        socket_id="device-sid",
+        project_id=123,
+        path="/repo",
+        expires_at=None,
+    )
+    service = SimpleNamespace(get=AsyncMock(return_value=record))
+    monkeypatch.setattr(device_namespace, "terminal_session_service", service)
+    monkeypatch.setattr(
+        namespace,
+        "get_session",
+        AsyncMock(return_value={"user_id": 7, "device_id": "other-device"}),
+    )
+
+    result = await namespace.on_terminal_output(
+        "device-sid",
+        {"session_id": "terminal-1", "data": "hello"},
+    )
+
+    assert result == {"error": "Terminal session does not belong to this device"}
+
+
+@pytest.mark.asyncio
+async def test_device_terminal_exit_forwards_and_deletes_session(monkeypatch):
+    namespace = device_namespace.DeviceNamespace()
+    record = TerminalSessionRecord(
+        session_id="terminal-1",
+        user_id=7,
+        device_id="device-1",
+        socket_id="device-sid",
+        project_id=123,
+        path="/repo",
+        expires_at=None,
+    )
+    service = SimpleNamespace(
+        get=AsyncMock(return_value=record),
+        delete=AsyncMock(),
+    )
+    sio = SimpleNamespace(emit=AsyncMock())
+    monkeypatch.setattr(device_namespace, "terminal_session_service", service)
+    monkeypatch.setattr(device_namespace, "get_sio", lambda: sio, raising=False)
+    monkeypatch.setattr(
+        namespace,
+        "get_session",
+        AsyncMock(return_value={"user_id": 7, "device_id": "device-1"}),
+    )
+
+    result = await namespace.on_terminal_exit(
+        "device-sid",
+        {"session_id": "terminal-1", "exit_code": 0},
+    )
+
+    assert result == {"success": True}
+    sio.emit.assert_awaited_once_with(
+        "terminal:exit",
+        {"session_id": "terminal-1", "exit_code": 0},
+        room="terminal:terminal-1",
+        namespace="/terminal",
+    )
+    service.delete.assert_awaited_once_with("terminal-1")

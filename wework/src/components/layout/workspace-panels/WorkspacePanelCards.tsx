@@ -5,7 +5,11 @@ import { createHttpClient } from '@/api/http'
 import { createProjectApi } from '@/api/projects'
 import { getRuntimeConfig } from '@/config/runtime'
 import { useTranslation } from '@/hooks/useTranslation'
-import { supportsCloudSessions, supportsLocalTerminalLaunch } from '@/lib/device-capabilities'
+import {
+  supportsCloudSessions,
+  supportsLocalTerminalLaunch,
+  supportsRemoteTerminalSessions,
+} from '@/lib/device-capabilities'
 import { openExternalUrl } from '@/lib/external-links'
 import {
   closeLocalTerminal,
@@ -18,6 +22,7 @@ import { buildVncPageUrl } from '@/lib/vnc'
 import type { DeviceInfo, ProjectDeviceSessionResponse, ProjectWithTasks } from '@/types/api'
 import type { WorkspaceTarget } from '@/types/workspace-files'
 import { EmbeddedLocalTerminal } from './EmbeddedLocalTerminal'
+import { RemoteTerminal } from './RemoteTerminal'
 
 interface WorkspacePanelCardsProps {
   currentProject: ProjectWithTasks | null
@@ -48,7 +53,7 @@ interface LocalTerminalCheckState {
 }
 
 type WorkspaceTerminalSession = ProjectDeviceSessionResponse & {
-  terminal_kind?: 'cloud' | 'local'
+  terminal_kind?: 'remote' | 'local'
   cwd?: string
 }
 
@@ -128,6 +133,9 @@ export function WorkspacePanelCards({
   const projectLocalPathExists =
     localTerminalCheck.key === localTerminalCheckKey ? localTerminalCheck.pathExists : false
   const cloudToolsAvailable = Boolean(projectDevice && supportsCloudSessions(projectDevice))
+  const remoteTerminalAvailable = Boolean(
+    projectDevice && supportsRemoteTerminalSessions(projectDevice)
+  )
   const sameExecutorDevice = Boolean(
     projectDevice && localExecutorDeviceId === projectDevice.device_id
   )
@@ -137,9 +145,9 @@ export function WorkspacePanelCards({
     localTerminalRuntimeAvailable &&
     (sameExecutorDevice || projectLocalPathExists)
   )
-  const projectTerminalAvailable = cloudToolsAvailable || localTerminalAvailable
+  const projectTerminalAvailable = remoteTerminalAvailable || localTerminalAvailable
   const hasLimitedProjectTools = Boolean(
-    currentProject && activeWorkspaceDeviceId && !cloudToolsAvailable && !localTerminalAvailable
+    currentProject && activeWorkspaceDeviceId && !cloudToolsAvailable && !projectTerminalAvailable
   )
   const projectKey = currentProject
     ? [
@@ -196,22 +204,28 @@ export function WorkspacePanelCards({
     activeWorkspacePath,
   ])
 
-  const markToolUnavailable = useCallback((tool: WorkspaceTool) => {
-    setToolAvailability(state => {
-      const tools = state.projectKey === projectKey ? state.tools : createAvailableTools()
-      if (!tools[tool]) {
-        return state.projectKey === projectKey ? state : { projectKey, tools }
-      }
-      return {
-        projectKey,
-        tools: { ...tools, [tool]: false },
-      }
-    })
-  }, [projectKey])
+  const markToolUnavailable = useCallback(
+    (tool: WorkspaceTool) => {
+      setToolAvailability(state => {
+        const tools = state.projectKey === projectKey ? state.tools : createAvailableTools()
+        if (!tools[tool]) {
+          return state.projectKey === projectKey ? state : { projectKey, tools }
+        }
+        return {
+          projectKey,
+          tools: { ...tools, [tool]: false },
+        }
+      })
+    },
+    [projectKey]
+  )
 
-  const setProjectError = useCallback((message: string | null) => {
-    setToolError({ projectKey, message })
-  }, [projectKey])
+  const setProjectError = useCallback(
+    (message: string | null) => {
+      setToolError({ projectKey, message })
+    },
+    [projectKey]
+  )
 
   const getSessionStartErrorMessage = useCallback(
     () => t('workbench.project_tool_start_failed', '启动失败'),
@@ -235,6 +249,7 @@ export function WorkspacePanelCards({
             type: 'terminal',
             path: activeWorkspacePath ?? '',
             url: '',
+            transport: 'socketio',
             cwd: activeWorkspacePath,
           },
         ])
@@ -247,10 +262,10 @@ export function WorkspacePanelCards({
       const session = activeSessionTaskId
         ? await projectApi.startTerminalSession(currentProject.id, { taskId: activeSessionTaskId })
         : await projectApi.startTerminalSession(currentProject.id)
-      if (!session.url) {
-        throw new Error('Terminal session URL is missing')
+      if (session.transport !== 'socketio') {
+        throw new Error('Terminal session transport is not supported')
       }
-      setTerminalSessions(sessions => [...sessions, session])
+      setTerminalSessions(sessions => [...sessions, { ...session, terminal_kind: 'remote' }])
       setActiveTerminalSessionId(session.session_id)
       setShowToolLauncher(false)
     } catch (e) {
@@ -443,13 +458,10 @@ export function WorkspacePanelCards({
             active={isActive}
           />
         ) : (
-          <iframe
+          <RemoteTerminal
             key={session.session_id}
-            data-testid="workspace-terminal-frame"
-            title={t('workbench.project_terminal_frame_title', '项目终端')}
-            src={session.url}
-            hidden={!isActive}
-            className="h-full min-h-0 w-full flex-1 border-0"
+            sessionId={session.session_id}
+            active={isActive}
           />
         )
       })}

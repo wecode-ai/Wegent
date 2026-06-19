@@ -102,9 +102,9 @@ The operation is repeatable. Skills with the same directory name are not overwri
 
 ### Building a Device Image
 
-The repository provides `docker/device/Dockerfile` for cloud device or local device base images. The image installs `code-server`, the `weiboplat.wecoder-agent` extension, Claude Code CLI, `ttyd`, Node.js 22, Python, Git, and copies `executor/dist/wegent-executor` to `/app/executor` and `~/.wegent-executor/bin/wegent-executor`.
+The repository provides `docker/device/Dockerfile` for cloud device or local device base images. The image installs `code-server`, the `weiboplat.wecoder-agent` extension, Claude Code CLI, Node.js 22, Python, Git, and copies `executor/dist/wegent-executor` to `/app/executor` and `~/.wegent-executor/bin/wegent-executor`.
 
-The default user inside the image is `wegent`, and the default password is `wegent`. This account is intended for interactive terminal, code-server, or ttyd access inside the container. For production deployments, restrict access through runtime configuration, access control, or upstream platform authentication.
+The default user inside the image is `wegent`, and the default password is `wegent`. This account is intended for code-server and terminal shell access inside the container. For production deployments, restrict access through runtime configuration, access control, or upstream platform authentication.
 
 Before building, prepare a Linux executor binary that matches the target platform, and confirm the base image supports the same platform. For example, when building a Linux AMD64 image, `executor/dist/wegent-executor` must be a Linux x86-64 ELF file, not a macOS Mach-O binary. When building a Linux ARM64 image, the base Ubuntu image rootfs must also be arm64.
 
@@ -135,12 +135,12 @@ docker run -d --platform linux/amd64 \
   wegent-device:linux-amd64
 ```
 
-By default, the device image only starts `wegent-executor` and the interactive session gateway. Note that Wework currently exposes project connection tools only for cloud devices. Local devices can be bound to projects and execute AI tasks, but they do not support the project toolbar Terminal, IDE/code-server, or Desktop VNC/VPN entries.
+By default, the device image only starts `wegent-executor` and the code-server session gateway. Wework project terminals are relayed through the existing Socket.IO connection between Backend and Executor, so devices do not need a public address. IDE/code-server and Desktop VNC/VPN entries remain cloud-device-only.
 
-- `POST /api/projects/{project_id}/terminal`: starts a writable ttyd in the project path and returns a short-token URL.
+- `POST /api/projects/{project_id}/terminal`: starts a writable PTY in the project path and returns a `transport=socketio` terminal session ID. The browser connects through Backend's `/terminal` Socket.IO namespace.
 - `POST /api/projects/{project_id}/code-server`: returns a short-token code-server URL. The code-server process inside the device image runs with a fixed password, and the session gateway logs in server-side so the browser does not see the code-server login page or password.
 
-These project session APIs are for cloud-device project connections. If the project is bound to a local device, Backend rejects terminal and code-server session startup. Cloud-device URLs include a short-lived session token and are exposed through the device-side session gateway. Each terminal or code-server session has an isolated path, so a user can open multiple projects at the same time or open multiple terminal/code-server sessions for one project. Terminal sessions are created dynamically on the device and the matching ttyd process is cleaned up when the browser disconnects. Code-server is a persistent in-container process, and the gateway opens the requested project path through it. To keep the legacy fixed `8080` code-server and `7681` ttyd entrypoints, add `-e START_DEVICE_UI=1` and map those ports at container runtime.
+Terminal sessions work for local and cloud devices. Backend records the `session_id`, user, device, and executor socket binding; the frontend connects to the `/terminal` namespace with the existing login JWT; Backend then relays input, resize, and close events to the device through the `/local-executor` namespace, while Executor manages the PTY directly. Code-server is a persistent in-container process, and the gateway opens the requested project path through it. Local devices do not support code-server project sessions.
 
 When a project configures `workspace.localPath` or `workspace.checkoutPath`, the device creates that directory before starting terminal or code-server. If the request includes a task ID and that task records an execution workspace path, such as a Git worktree, terminal or code-server starts directly in the task workspace path and does not fall back to the project directory.
 
@@ -288,10 +288,10 @@ Online cloud devices can open interactive sessions directly:
 
 | Action | Backend API | Description |
 |--------|-------------|-------------|
-| **Terminal** | `POST /api/devices/{device_id}/terminal` | Starts ttyd in the default working directory `/home/ubuntu/.wegent-executor/workspace` |
+| **Terminal** | `POST /api/devices/{device_id}/terminal` | Starts a PTY in the default working directory `/home/ubuntu/.wegent-executor/workspace` and relays it through Backend Socket.IO |
 | **IDE** | `POST /api/devices/{device_id}/code-server` | Opens a code-server session |
 
-The returned URL includes a short-lived session token and is exposed through the device-side session gateway. Terminal and IDE buttons are disabled while the device is offline.
+Terminal sessions do not expose device ports. IDE sessions return a short-lived session-token URL exposed through the device-side session gateway. Terminal and IDE buttons are disabled while the device is offline.
 
 The more menu contains lower-frequency management actions:
 

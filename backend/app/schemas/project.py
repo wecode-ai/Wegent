@@ -390,7 +390,11 @@ class ProjectDeviceSessionResponse(BaseModel):
     device_id: str = Field(..., description="Bound local device ID")
     type: Literal["terminal", "code_server"] = Field(..., description="Session type")
     path: str = Field(..., description="Project path on the local device")
-    url: str = Field(..., description="Browser URL for the interactive session")
+    url: str = Field(default="", description="Browser URL for URL-backed sessions")
+    transport: Literal["url", "socketio"] = Field(
+        default="url",
+        description="Browser transport for the interactive session",
+    )
     expires_at: Optional[datetime] = Field(
         None,
         description="Session expiration timestamp, if provided by the device",

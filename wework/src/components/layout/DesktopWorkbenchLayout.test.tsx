@@ -54,6 +54,17 @@ vi.mock('@/api/quota', () => ({
   createQuotaApi: vi.fn(),
 }))
 
+vi.mock('./workspace-panels/RemoteTerminal', () => ({
+  RemoteTerminal: ({ active, sessionId }: { active: boolean; sessionId: string }) => (
+    <div
+      data-testid="remote-terminal"
+      data-session-id={sessionId}
+      className="h-full w-full"
+      hidden={!active}
+    />
+  ),
+}))
+
 const createDeviceApiMock = vi.mocked(createDeviceApi)
 const createProjectApiMock = vi.mocked(createProjectApi)
 const createQuotaApiMock = vi.mocked(createQuotaApi)
@@ -153,7 +164,8 @@ describe('DesktopWorkbenchLayout', () => {
     })
     startTerminalSessionMock.mockResolvedValue({
       session_id: 'terminal-1',
-      url: 'http://localhost/terminal-1',
+      url: '',
+      transport: 'socketio',
       device_id: 'workspace-cloud-device',
       path: '/workspace/project',
     })
@@ -831,7 +843,7 @@ describe('DesktopWorkbenchLayout', () => {
       value: {},
     })
     startCodeServerSessionMock.mockRejectedValueOnce(
-      new Error('Local devices do not support terminal or code-server sessions')
+      new Error('Local devices do not support code-server sessions')
     )
 
     render(
@@ -870,7 +882,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('open-code-server-titlebar-button'))
 
     expect(await screen.findByTestId('code-server-error-dialog')).toHaveTextContent(
-      'Local devices do not support terminal or code-server sessions'
+      'Local devices do not support code-server sessions'
     )
   })
 
@@ -4079,11 +4091,15 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('environment-confirm-new-branch-button'))
 
     await waitFor(() =>
-      expect(onCreateEnvironmentBranch).toHaveBeenCalledWith(expect.anything(), 'human/new-branch', {
-        deviceId: 'device-1',
-        path: '/workspace/github_wegent',
-        source: 'project',
-      })
+      expect(onCreateEnvironmentBranch).toHaveBeenCalledWith(
+        expect.anything(),
+        'human/new-branch',
+        {
+          deviceId: 'device-1',
+          path: '/workspace/github_wegent',
+          source: 'project',
+        }
+      )
     )
   })
 
@@ -4429,10 +4445,8 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('toggle-bottom-workspace-panel-button'))
 
     await waitFor(() => expect(startTerminalSessionMock).toHaveBeenCalledWith(12))
-    expect(screen.getByTestId('workspace-terminal-frame')).toHaveAttribute(
-      'src',
-      'http://localhost/terminal-1'
-    )
+    expect(screen.getByTestId('remote-terminal')).toHaveAttribute('data-session-id', 'terminal-1')
+    expect(screen.queryByTestId('workspace-terminal-frame')).not.toBeInTheDocument()
     expect(screen.getByTestId('workspace-terminal-window')).toBeInTheDocument()
     expect(screen.queryByTestId('workspace-tool-launcher')).not.toBeInTheDocument()
   })
