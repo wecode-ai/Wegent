@@ -49,6 +49,18 @@ def test_standalone_start_registers_executor_as_admin_cloud_device() -> None:
     assert "python -m executor.main" in start_script
 
 
+def test_standalone_start_can_skip_container_executor() -> None:
+    """Standalone startup should support host-only executor mode."""
+    start_script = STANDALONE_START.read_text(encoding="utf-8")
+
+    assert 'STANDALONE_EXECUTOR_ENABLED="${STANDALONE_EXECUTOR_ENABLED:-true}"' in start_script
+    assert 'if [ "$STANDALONE_EXECUTOR_ENABLED" != "false" ]; then' in start_script
+    assert 'echo "[4/8] Skipping Standalone Executor' in start_script
+    assert '${EXECUTOR_PID:-}' in start_script
+    assert 'WAIT_PIDS=("$REDIS_PID" "$BACKEND_PID" "$FRONTEND_PID" "$WEWORK_PID")' in start_script
+    assert 'if [ -n "${EXECUTOR_PID:-}" ]; then' in start_script
+
+
 def test_standalone_start_serves_wework_without_public_ttyd() -> None:
     """Startup should serve Wework Web without a fixed public shell service."""
     start_script = STANDALONE_START.read_text(encoding="utf-8")
