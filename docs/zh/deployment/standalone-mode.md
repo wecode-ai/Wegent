@@ -6,11 +6,11 @@ sidebar_position: 3
 
 ## 概述
 
-Standalone 模式是一种单机部署方案，将 Backend、主 Frontend、Wework Web、Chat Shell、Executor 和 Redis 打包在一个 Docker 镜像中运行，使用 SQLite 作为数据库。它适合快速体验和小规模可信环境，只需要 Docker 即可启动。
+Standalone 模式是一种单机部署方案，将 Backend、主 Frontend、Wework Web、Chat Shell 和 Redis 打包在一个 Docker 镜像中运行，使用 SQLite 作为数据库。它适合快速体验和小规模可信环境，只需要 Docker 即可启动。macOS 交互式安装默认使用宿主机 executor，以便 Claude Code 或 Codex 能执行 macOS 系统命令；Linux 和非交互安装默认沿用容器内 executor。
 
-Standalone 启动后会自动为 `admin` 用户创建一个云设备：容器内 executor 通过 Backend 的设备 WebSocket 注册，Wework 创建编码任务时可以直接使用该设备执行任务。默认 workspace 挂载在 `/workspace`，用于保存项目目录、独立聊天工作区和 Git worktree。
+Standalone 启动后会自动为 `admin` 用户创建 executor API key，并按所选 executor 模式注册设备：容器 executor 注册为内置云设备，宿主机 executor 注册为本地设备，Wework 创建编码任务时可以直接使用可用设备执行任务。默认容器 workspace 挂载在 `/workspace`，用于保存项目目录、独立聊天工作区和 Git worktree；宿主机 executor 使用 `~/.wegent-executor/workspace`。
 
-由于编码任务直接在同一个 standalone 容器内执行，镜像按轻量开发环境而不是最小运行时来设计，默认包含 `ps`、`top`、`free`、`ip`、`ss`、`lsof`、`tree`、`rg` 等基础开发和排障工具。
+使用容器 executor 时，编码任务直接在同一个 standalone 容器内执行，因此镜像按轻量开发环境而不是最小运行时来设计，默认包含 `ps`、`top`、`free`、`ip`、`ss`、`lsof`、`tree`、`rg` 等基础开发和排障工具。使用宿主机 executor 时，任务使用宿主机上的 Claude Code、Codex 和系统命令。
 
 ### 适用场景
 
@@ -26,7 +26,7 @@ Standalone 启动后会自动为 `admin` 用户创建一个云设备：容器内
 | 部署复杂度 | 高（多容器） | 低（单容器） |
 | 资源占用 | 高 | 中 |
 | 扩展性 | 好 | 有限 |
-| 任务隔离 | Sandbox/云设备 | 同一 standalone 容器内执行 |
+| 任务隔离 | Sandbox/云设备 | 按 executor 模式在容器或宿主机执行 |
 | 数据库 | MySQL | SQLite |
 | Redis | 外部依赖 | 内嵌 |
 | Wework | 独立桌面端或 Web | 内置 Wework Web |
@@ -55,6 +55,32 @@ curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | 
 | 主前端 | `http://localhost:3000` | Wegent 管理和通用功能 |
 | Wework | `http://localhost:3001` | 创建和使用编码任务 |
 | Backend API | `http://localhost:8000` | API 与 WebSocket |
+
+## Executor 运行位置
+
+Standalone 支持三种 executor 模式：
+
+| 模式 | 行为 | 适用场景 |
+|------|------|----------|
+| `host` | Backend、Frontend 和 Wework 在 Docker 中运行，executor 从 GitHub Release 下载并在宿主机运行 | macOS 默认推荐；需要执行 `open`、`osascript`、系统 Terminal、Keychain 等宿主机命令 |
+| `container` | executor 在 standalone 容器内运行 | Linux 快速体验和现有单容器行为 |
+| `hybrid` | 容器内 executor 和宿主机 executor 同时运行 | 需要保留容器设备，同时使用宿主机能力 |
+
+macOS 上 Docker Desktop 容器运行的是 Linux 进程，容器内的 Claude Code 或 Codex 不能直接执行 macOS 系统命令。因此交互式 macOS 安装默认选择 `host`。非交互安装默认仍为 `container`，以保持自动化脚本兼容。
+
+显式选择模式：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | \
+  bash -s -- --standalone --executor-mode host
+```
+
+也可以使用环境变量：
+
+```bash
+WEGENT_STANDALONE_EXECUTOR_MODE=hybrid \
+curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash
+```
 
 ### 手动运行容器
 
@@ -102,9 +128,9 @@ docker run -d \
 2. 使用初始化账号登录，或按页面提示完成账号配置。
 3. 在设置中配置可用模型和 provider token。
 4. 回到 Wework 工作台，直接发起一个编码请求。
-5. 未选择项目时，Wework 会把请求路由到 standalone 自动注册的云设备，并在 `/workspace/chats` 下创建独立聊天工作区。
-6. 创建 Git 项目后，新任务会使用 `/workspace/projects` 和 `/workspace/worktrees` 下的项目/任务工作区。
-7. 需要查看文件或打开终端时，使用 Wework 项目工具栏；终端会通过登录后的 Backend Socket.IO 通道转发到容器内 executor，由 executor 直接管理 PTY。
+5. 未选择项目时，Wework 会把请求路由到 standalone 自动注册的 executor 设备，并创建独立聊天工作区。
+6. 创建 Git 项目后，新任务会使用所选 executor 的 workspace。容器 executor 使用 `/workspace/projects` 和 `/workspace/worktrees`，宿主机 executor 使用 `~/.wegent-executor/workspace`。
+7. 需要查看文件或打开终端时，使用 Wework 项目工具栏；终端会通过登录后的 Backend Socket.IO 通道转发到对应 executor，由 executor 直接管理 PTY。
 
 Standalone 默认不内置 IDE/code-server 入口。正式使用时建议先将 Wework 编码、workspace 文件、项目终端作为主要能力；需要 IDE 或更强隔离时使用标准部署或单独云设备。
 
@@ -121,6 +147,8 @@ Standalone 默认不内置 IDE/code-server 入口。正式使用时建议先将 
 | `WEWORK_PUBLIC_SOCKET_URL` | Wework Web Socket.IO 地址；设置后覆盖 `WEWORK_PUBLIC_BACKEND_URL` | `${WEWORK_PUBLIC_BACKEND_URL}` |
 | `WEGENT_WORKSPACE_ROOT` | standalone workspace 根目录 | `/workspace` |
 | `WEWORK_PORT` | Wework Web 容器内端口 | `3001` |
+| `WEGENT_STANDALONE_EXECUTOR_MODE` | standalone executor 模式：`host`、`container` 或 `hybrid` | macOS 交互安装为 `host`，非交互和 Linux 为 `container` |
+| `STANDALONE_EXECUTOR_ENABLED` | 容器内 executor 开关，由安装脚本按 executor 模式传入 | `true` |
 | `STANDALONE_MODE` | 启用 standalone 模式 | `true` |
 | `DATABASE_URL` | 数据库连接地址 | `sqlite:////app/data/wegent.db` |
 | `REDIS_URL` | Redis 连接地址 | `redis://localhost:6379/0` |
@@ -134,13 +162,15 @@ Standalone 默认不内置 IDE/code-server 入口。正式使用时建议先将 
 - `wegent.db`：SQLite 数据库文件
 - `redis/`：Redis 持久化数据（AOF 和 RDB）
 - `standalone_executor_token`：standalone executor 注册用的 admin API key
-- `standalone-executor/`：executor 本地状态
+- `standalone-executor/`：容器 executor 本地状态
 
 workspace 存储在 `/workspace`：
 
 - `projects/`：Wework Git 项目目录
 - `chats/`：未选择项目的独立聊天工作区
 - `worktrees/`：按任务创建的 Git worktree
+
+宿主机 executor 的二进制、配置、日志和 workspace 存储在 `~/.wegent-executor`。
 
 使用 Docker volume 持久化：
 
@@ -221,7 +251,7 @@ Standalone 镜像包含内嵌 Redis：
 
 ### Standalone Executor 限制
 
-1. **资源隔离**：编码任务在同一 standalone 容器内执行，不具备每任务 Docker sandbox 隔离
+1. **资源隔离**：编码任务在所选 executor 位置执行；容器模式不具备每任务 Docker sandbox 隔离，宿主机模式会直接访问宿主机环境
 2. **安全性**：适合可信环境，不建议执行不可信代码
 3. **能力范围**：默认支持 Wework 编码任务和终端；IDE/code-server 不作为 standalone 默认能力
 
