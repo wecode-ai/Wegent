@@ -6,14 +6,18 @@ sidebar_position: 3
 
 ## Overview
 
-Standalone mode is a single-machine deployment solution that packages Backend, Frontend, Chat Shell, Executor, and Redis into a single Docker image, using SQLite for the database. No external dependencies required - just Docker.
+Standalone mode is a single-machine deployment that packages Backend, the main Frontend, Wework Web, Chat Shell, Executor, and Redis into one Docker image, using SQLite as the database. It is intended for quick evaluation and small trusted environments, and only requires Docker.
+
+After startup, standalone automatically creates a cloud device for the `admin` user: the in-container executor registers through the Backend device WebSocket, and Wework can use that device directly for coding tasks. The default workspace is mounted at `/workspace` and stores project directories, standalone chat workspaces, and Git worktrees.
+
+Because coding tasks execute directly inside the same standalone container, the image is designed as a lightweight development environment rather than a minimal runtime. It includes basic development and diagnostics tools such as `ps`, `top`, `free`, `ip`, `ss`, `lsof`, `tree`, and `rg` by default.
 
 ### Use Cases
 
 - Single-machine deployment
 - Development and testing
-- Small-scale usage
-- Quick evaluation
+- Small trusted usage
+- Quick evaluation of Wework coding tasks
 
 ### Architecture Comparison
 
@@ -22,9 +26,10 @@ Standalone mode is a single-machine deployment solution that packages Backend, F
 | Deployment Complexity | High (multi-container) | Low (single container) |
 | Resource Usage | High | Medium |
 | Scalability | Good | Limited |
-| Isolation | Good (Docker) | None |
+| Task Isolation | Sandbox/cloud device | Same standalone container |
 | Database | MySQL | SQLite |
 | Redis | External | Embedded |
+| Wework | Separate desktop app or Web | Built-in Wework Web |
 | Use Case | Production | Dev/Test/Small-scale |
 
 ## Quick Start
@@ -36,37 +41,68 @@ curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | 
 ```
 
 This will automatically:
+
 1. Check and install Docker if needed
 2. Pull the latest Wegent standalone image
-3. Create a data volume for persistence
-4. Start the container
+3. Create the `wegent-data` data volume and `wegent-workspace` workspace volume
+4. Publish ports for the main frontend, Wework, and Backend
+5. Start the container and wait for Backend and Wework readiness
+
+After startup, open:
+
+| Entry | URL | Purpose |
+|-------|-----|---------|
+| Main Frontend | `http://localhost:3000` | Wegent management and general features |
+| Wework | `http://localhost:3001` | Create and use coding tasks |
+| Backend API | `http://localhost:8000` | API and WebSocket |
 
 ### Running Container Directly
 
-If you prefer to run the container manually:
+For local access:
 
 ```bash
 docker run -d \
   --name wegent-standalone \
   --restart unless-stopped \
   -p 3000:3000 \
+  -p 3001:3001 \
   -p 8000:8000 \
   -v wegent-data:/app/data \
+  -v wegent-workspace:/workspace \
+  -e RUNTIME_SOCKET_DIRECT_URL=http://localhost:8000 \
+  -e WEWORK_PUBLIC_BACKEND_URL=http://localhost:8000 \
   ghcr.io/wecode-ai/wegent-standalone:latest
 ```
 
-For remote access (replace `YOUR_SERVER_IP` with your actual IP):
+For remote access, replace `YOUR_SERVER_IP` with your server IP or domain:
 
 ```bash
 docker run -d \
   --name wegent-standalone \
   --restart unless-stopped \
   -p 3000:3000 \
+  -p 3001:3001 \
   -p 8000:8000 \
   -v wegent-data:/app/data \
+  -v wegent-workspace:/workspace \
   -e RUNTIME_SOCKET_DIRECT_URL=http://YOUR_SERVER_IP:8000 \
+  -e WEWORK_PUBLIC_BACKEND_URL=http://YOUR_SERVER_IP:8000 \
   ghcr.io/wecode-ai/wegent-standalone:latest
 ```
+
+`WEWORK_PUBLIC_BACKEND_URL` is written into Wework's `runtime-config.js` during container startup, so a browser opening `http://YOUR_SERVER_IP:3001` connects to the server Backend instead of the user's local `localhost`.
+
+## Using Wework for Coding Tasks
+
+1. Open `http://localhost:3001` (use the server address for remote deployments).
+2. Sign in with the initialized account, or follow the page prompts to finish account setup.
+3. Configure an available model and provider token in settings.
+4. Return to the Wework workbench and send a coding request directly.
+5. If no project is selected, Wework routes the request to the automatically registered standalone cloud device and creates a standalone chat workspace under `/workspace/chats`.
+6. After creating a Git project, new tasks use project and task workspaces under `/workspace/projects` and `/workspace/worktrees`.
+7. To inspect files or open a terminal, use the Wework project toolbar. Terminals are relayed through the authenticated Backend Socket.IO channel to the in-container executor, which manages the PTY directly.
+
+Standalone does not include the IDE/code-server entry by default. For the first standalone launch, treat Wework coding, workspace files, and project terminal as the primary capabilities. Use standard deployment or a separate cloud device when you need IDE access or stronger isolation.
 
 ## Configuration
 
@@ -74,7 +110,12 @@ docker run -d \
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `RUNTIME_SOCKET_DIRECT_URL` | WebSocket URL for frontend | `http://localhost:8000` |
+| `RUNTIME_SOCKET_DIRECT_URL` | Backend WebSocket URL used by the main Frontend | `http://localhost:8000` |
+| `WEWORK_PUBLIC_BACKEND_URL` | Runtime Backend URL for Wework Web; derives API and Socket URLs | `http://localhost:8000` |
+| `WEWORK_PUBLIC_API_URL` | Wework Web API URL; overrides `WEWORK_PUBLIC_BACKEND_URL/api` | `${WEWORK_PUBLIC_BACKEND_URL}/api` |
+| `WEWORK_PUBLIC_SOCKET_URL` | Wework Web Socket.IO URL; overrides `WEWORK_PUBLIC_BACKEND_URL` | `${WEWORK_PUBLIC_BACKEND_URL}` |
+| `WEGENT_WORKSPACE_ROOT` | Standalone workspace root | `/workspace` |
+| `WEWORK_PORT` | Wework Web container port | `3001` |
 | `STANDALONE_MODE` | Enable standalone mode | `true` |
 | `DATABASE_URL` | Database connection URL | `sqlite:////app/data/wegent.db` |
 | `REDIS_URL` | Redis connection URL | `redis://localhost:6379/0` |
@@ -83,19 +124,29 @@ docker run -d \
 
 ### Data Persistence
 
-Data is stored in the `/app/data` directory, including:
-- `wegent.db` - SQLite database file
-- `redis/` - Redis persistence data (AOF and RDB)
-- Other runtime data
+Service state is stored in `/app/data`:
 
-Use Docker volume for persistence:
+- `wegent.db`: SQLite database file
+- `redis/`: Redis persistence data (AOF and RDB)
+- `standalone_executor_token`: admin API key used by the standalone executor registration
+- `standalone-executor/`: executor local state
+
+Workspace data is stored in `/workspace`:
+
+- `projects/`: Wework Git project directories
+- `chats/`: standalone chat workspaces without a selected project
+- `worktrees/`: per-task Git worktrees
+
+Use Docker volumes for persistence:
 
 ```bash
-# Create a named volume
 docker volume create wegent-data
+docker volume create wegent-workspace
 
-# Run with the volume
-docker run -v wegent-data:/app/data ...
+docker run \
+  -v wegent-data:/app/data \
+  -v wegent-workspace:/workspace \
+  ...
 ```
 
 ## Common Commands
@@ -113,7 +164,7 @@ docker start wegent-standalone
 # Restart the container
 docker restart wegent-standalone
 
-# Remove the container (data is preserved in volume)
+# Remove the container (data and workspace remain in volumes)
 docker rm -f wegent-standalone
 
 # Update to latest version
@@ -123,8 +174,12 @@ docker run -d \
   --name wegent-standalone \
   --restart unless-stopped \
   -p 3000:3000 \
+  -p 3001:3001 \
   -p 8000:8000 \
   -v wegent-data:/app/data \
+  -v wegent-workspace:/workspace \
+  -e RUNTIME_SOCKET_DIRECT_URL=http://localhost:8000 \
+  -e WEWORK_PUBLIC_BACKEND_URL=http://localhost:8000 \
   ghcr.io/wecode-ai/wegent-standalone:latest
 ```
 
@@ -136,7 +191,7 @@ If you need to build the image yourself:
 # Use the build script
 ./scripts/build-standalone.sh
 
-# Or specify a tag
+# Specify a tag
 ./scripts/build-standalone.sh -t my-registry/wegent:v1.0
 
 # Specify platform
@@ -147,28 +202,28 @@ If you need to build the image yourself:
 
 ### SQLite Limitations
 
-1. **Concurrent Writes**: SQLite doesn't support high-concurrency writes, suitable for single-user or small-scale usage
-2. **Data Backup**: Regularly backup the `/app/data/wegent.db` file
+1. **Concurrent Writes**: SQLite is not suitable for high-concurrency writes; use it for single-user or small-scale usage
+2. **Data Backup**: Regularly back up `/app/data/wegent.db` and `/workspace`
 
 ### Embedded Redis
 
-The standalone image includes an embedded Redis server:
+The standalone image includes embedded Redis:
+
 - Data is persisted to `/app/data/redis/`
 - Uses AOF (Append Only File) for durability
-- Memory limit: 256MB with LRU eviction policy
+- Memory is limited to 256MB with LRU eviction
 
-### In-Process Executor Limitations
+### Standalone Executor Limitations
 
-1. **Resource Isolation**: No Docker container isolation, tasks share process resources
-2. **Security**: Code execution has no sandbox protection
-3. **Use Case**: Only suitable for trusted environments and development/testing
+1. **Resource Isolation**: Coding tasks execute in the same standalone container and do not get per-task Docker sandbox isolation
+2. **Security**: Use in trusted environments; do not execute untrusted code
+3. **Capability Scope**: Wework coding tasks and terminal are supported by default; IDE/code-server is not a default standalone capability
 
 ## Migrating from Standalone to Standard Mode
 
 If you need to migrate to standard mode:
 
 1. Export SQLite data
-2. Import to MySQL
-3. Modify configuration for standard deployment
-
-For detailed migration guide, see [Data Migration Documentation](./data-migration.md).
+2. Back up projects and worktrees under `/workspace`
+3. Import data into MySQL
+4. Update configuration to use standard deployment or separate cloud devices

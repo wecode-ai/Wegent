@@ -104,9 +104,9 @@ Wegent 会根据用户设置在执行请求中显式标记 Codex 是否使用个
 
 ### 构建设备镜像
 
-仓库提供 `docker/device/Dockerfile` 用于构建云设备或本地设备基础镜像。该镜像会安装 `code-server`、`weiboplat.wecoder-agent` 扩展、Claude Code CLI、`ttyd`、Node.js 22、Python、Git，并把 `executor/dist/wegent-executor` 放到 `/app/executor` 和 `~/.wegent-executor/bin/wegent-executor`。
+仓库提供 `docker/device/Dockerfile` 用于构建云设备或本地设备基础镜像。该镜像会安装 `code-server`、`weiboplat.wecoder-agent` 扩展、Claude Code CLI、Node.js 22、Python、Git，并把 `executor/dist/wegent-executor` 放到 `/app/executor` 和 `~/.wecode/wegent-executor/bin/wegent-executor`。
 
-镜像内默认用户为 `wegent`，默认密码为 `wegent`。该账号用于容器内交互式终端或 code-server/ttyd 场景；生产部署时建议通过运行时配置、访问控制或上游平台认证限制访问范围。
+镜像内默认用户为 `wegent`，默认密码为 `wegent`。该账号用于容器内 code-server 和终端 shell 场景；生产部署时建议通过运行时配置、访问控制或上游平台认证限制访问范围。
 
 构建前请先准备与目标平台匹配的 Linux executor 二进制，并确认基础镜像也支持同一平台。例如构建 Linux AMD64 镜像时，`executor/dist/wegent-executor` 必须是 Linux x86-64 ELF 文件，不能使用 macOS 的 Mach-O 二进制；构建 Linux ARM64 镜像时，基础 Ubuntu 镜像的 rootfs 也必须是 arm64。
 
@@ -137,12 +137,12 @@ docker run -d --platform linux/amd64 \
   wegent-device:linux-amd64
 ```
 
-设备镜像默认只启动 `wegent-executor` 和交互式 session gateway。需要注意的是，Wework 当前只对云设备开放项目连接工具；本地设备可以绑定到项目并执行 AI 任务，但不支持项目工具栏中的终端、IDE/code-server、桌面 VNC/VPN 入口。
+设备镜像默认只启动 `wegent-executor` 和 code-server session gateway。Wework 项目终端通过 Backend 和 Executor 之间已有的 Socket.IO 连接中转，不要求设备有公网地址；IDE/code-server 和桌面 VNC/VPN 入口仍然只对云设备开放。
 
-- `POST /api/projects/{project_id}/terminal`：在项目路径中启动可写 ttyd，返回带短期 token 的访问 URL。
+- `POST /api/projects/{project_id}/terminal`：在项目路径中启动可写 PTY，返回 `transport=socketio` 的终端会话 ID；浏览器通过 Backend `/terminal` Socket.IO namespace 连接。
 - `POST /api/projects/{project_id}/code-server`：返回带短期 token 的 code-server 访问 URL。设备镜像内的 code-server 使用固定密码运行，session gateway 会在服务端自动登录，浏览器不会看到 code-server 登录页或固定密码。
 
-上述项目会话接口用于云设备项目连接；如果项目绑定的是本地设备，Backend 会拒绝启动 terminal 或 code-server 会话。云设备返回的访问地址带有短期 session token，并通过设备侧 session gateway 暴露。每个 terminal 或 code-server session 都有独立路径，因此同一用户可以同时打开多个项目，或在同一项目中打开多个 terminal/code-server。terminal 会话由设备侧动态创建，浏览器连接关闭后会销毁对应 ttyd 进程；code-server 是容器内持久进程，通过 gateway 按项目路径打开目录。若需要保留旧的固定 `8080` code-server 和 `7681` ttyd 入口，可在运行容器时添加 `-e START_DEVICE_UI=1` 并额外映射对应端口。
+Terminal 会话适用于本地设备和云设备：Backend 记录 `session_id`、用户、设备和 executor socket 绑定关系，前端使用登录 JWT 连接 `/terminal` namespace，Backend 再通过 `/local-executor` namespace 把输入、resize、关闭事件转发给设备，设备上的 Executor 直接管理 PTY。code-server 是容器内持久进程，通过 gateway 按项目路径打开目录；本地设备不支持 code-server 项目会话。
 
 如果项目配置了 `workspace.localPath` 或 `workspace.checkoutPath`，设备会在启动 terminal 或 code-server 前自动创建该目录。若请求携带任务 ID 且该任务记录了执行工作区路径（例如 Git 新工作树），terminal 或 code-server 会直接在任务工作区路径中启动，不会回退到项目目录。
 
@@ -290,10 +290,10 @@ wegent-executor
 
 | 操作 | 后端接口 | 说明 |
 |------|----------|------|
-| **终端** | `POST /api/devices/{device_id}/terminal` | 在默认工作目录 `/home/ubuntu/.wegent-executor/workspace` 启动 ttyd |
+| **终端** | `POST /api/devices/{device_id}/terminal` | 在默认工作目录 `/home/ubuntu/.wegent-executor/workspace` 启动 PTY，并通过 Backend Socket.IO 中转 |
 | **IDE** | `POST /api/devices/{device_id}/code-server` | 打开 code-server 会话 |
 
-返回的访问地址带有短期 session token，并通过设备侧 session gateway 暴露。设备离线时，终端和 IDE 按钮不可用。
+终端会话不暴露设备端口；IDE 返回的访问地址带有短期 session token，并通过设备侧 session gateway 暴露。设备离线时，终端和 IDE 按钮不可用。
 
 更多菜单提供低频管理操作：
 

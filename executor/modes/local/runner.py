@@ -87,7 +87,9 @@ class LocalRunner:
             auth_token=self.websocket_client.auth_token,
             reporter=self.websocket_client.capability_reporter,
         )
-        self.session_handler = LocalSessionHandler()
+        self.session_handler = LocalSessionHandler(
+            terminal_event_emitter=self.websocket_client.emit
+        )
         self.upgrade_handler = UpgradeHandler(self)
         self.extension_handler = DeviceExtensionHandler(self)
 
@@ -271,6 +273,18 @@ class LocalRunner:
         self.websocket_client.on(
             DeviceEvents.START_CODE_SERVER_SESSION,
             self.session_handler.handle_start_session,
+        )
+        self.websocket_client.on(
+            DeviceEvents.TERMINAL_INPUT,
+            self.session_handler.handle_terminal_input,
+        )
+        self.websocket_client.on(
+            DeviceEvents.TERMINAL_RESIZE,
+            self.session_handler.handle_terminal_resize,
+        )
+        self.websocket_client.on(
+            DeviceEvents.TERMINAL_CLOSE,
+            self.session_handler.handle_terminal_close,
         )
 
         # Upgrade handler

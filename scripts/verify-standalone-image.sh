@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Start a Wegent standalone image and verify Backend and Frontend are reachable.
+# Start a Wegent standalone image and verify Backend, Frontend, and Wework are reachable.
 
 set -euo pipefail
 
@@ -12,6 +12,7 @@ fi
 
 BACKEND_PORT="${BACKEND_PORT:-18000}"
 FRONTEND_PORT="${FRONTEND_PORT:-13000}"
+WEWORK_PORT="${WEWORK_PORT:-13001}"
 CONTAINER_NAME="${CONTAINER_NAME:-wegent-standalone-verify-$$}"
 TIMEOUT_SECONDS="${STANDALONE_VERIFY_TIMEOUT_SECONDS:-180}"
 INTERVAL_SECONDS="${STANDALONE_VERIFY_INTERVAL_SECONDS:-2}"
@@ -50,11 +51,17 @@ is_container_running() {
 wait_for_url() {
     local label="$1"
     local url="$2"
+    local credentials="${3:-}"
     local deadline=$((SECONDS + TIMEOUT_SECONDS))
 
     echo "Waiting for ${label}: ${url}"
     while true; do
-        if curl -fsS "$url" >/dev/null 2>&1; then
+        if [ -n "$credentials" ]; then
+            if curl -fsS -u "$credentials" "$url" >/dev/null 2>&1; then
+                echo "${label} is reachable"
+                return 0
+            fi
+        elif curl -fsS "$url" >/dev/null 2>&1; then
             echo "${label} is reachable"
             return 0
         fi
@@ -78,9 +85,11 @@ docker run -d \
     --name "$CONTAINER_NAME" \
     -p "127.0.0.1:${BACKEND_PORT}:8000" \
     -p "127.0.0.1:${FRONTEND_PORT}:3000" \
+    -p "127.0.0.1:${WEWORK_PORT}:3001" \
     "$IMAGE"
 
 wait_for_url "Backend" "http://localhost:${BACKEND_PORT}/health"
 wait_for_url "Frontend" "http://localhost:${FRONTEND_PORT}/"
+wait_for_url "Wework" "http://localhost:${WEWORK_PORT}/"
 
 echo "Standalone image verification succeeded for ${IMAGE}"

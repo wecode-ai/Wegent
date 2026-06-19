@@ -34,6 +34,7 @@ import { openExternalUrl } from '@/lib/external-links'
 import { navigateTo } from '@/lib/navigation'
 import { cn } from '@/lib/utils'
 import { DesktopTopBar } from '@/components/layout/DesktopTopBar'
+import { RemoteTerminal } from '@/components/layout/workspace-panels/RemoteTerminal'
 import { useResizableSidebar } from '@/components/layout/useResizableSidebar'
 import { buildVncPageUrl } from '@/lib/vnc'
 import {
@@ -46,7 +47,7 @@ import {
 } from '@/lib/device-capabilities'
 import { getLocalExecutorDeviceId, isLocalTerminalAvailable } from '@/lib/local-terminal'
 import type { ArchivedTask } from '@/types/api'
-import type { CloudDeviceMetricsResponse, DeviceInfo } from '@/types/devices'
+import type { CloudDeviceMetricsResponse, DeviceInfo, DeviceSessionResponse } from '@/types/devices'
 import { AppearanceSettingsPage } from '@/features/appearance/AppearanceSettingsPage'
 import { AddCloudDeviceDialog } from './AddCloudDeviceDialog'
 import { ProxySettingsPage } from './ProxySettingsPage'
@@ -519,6 +520,7 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
   const [actionMenuOpen, setActionMenuOpen] = useState(false)
   const [confirmAction, setConfirmAction] = useState<ConfirmDeviceAction | null>(null)
   const [connectionInfoOpen, setConnectionInfoOpen] = useState(false)
+  const [terminalSession, setTerminalSession] = useState<DeviceSessionResponse | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const actionMenuRef = useRef<HTMLDivElement>(null)
 
@@ -534,7 +536,9 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
       const result = await createSettingsDeviceApi().startTerminal(device.device_id)
       if (result.url) {
         window.open(result.url, '_blank', 'noopener')
+        return
       }
+      setTerminalSession(result)
     } catch (e) {
       console.error('Failed to start terminal:', e)
     } finally {
@@ -835,6 +839,35 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
 
         {supportsDeviceMetrics(device) && <DeviceMetrics deviceId={device.device_id} />}
       </div>
+
+      {terminalSession && (
+        <section
+          data-testid="settings-device-terminal-panel"
+          className="mt-3 flex h-[360px] min-h-0 flex-col overflow-hidden rounded-lg border border-border bg-background"
+        >
+          <div className="flex h-10 shrink-0 items-center justify-between border-b border-border px-3">
+            <div className="flex min-w-0 items-center gap-2">
+              <Terminal className="h-4 w-4 shrink-0 text-text-secondary" />
+              <span className="truncate text-sm font-medium text-text-primary">{device.name}</span>
+              {terminalSession.path && (
+                <span className="truncate text-xs text-text-muted">{terminalSession.path}</span>
+              )}
+            </div>
+            <button
+              type="button"
+              data-testid="settings-device-terminal-close-button"
+              onClick={() => setTerminalSession(null)}
+              className="flex h-7 w-7 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary"
+              aria-label="关闭终端"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="min-h-0 flex-1">
+            <RemoteTerminal sessionId={terminalSession.session_id} active />
+          </div>
+        </section>
+      )}
 
       {confirmAction && (
         <ConfirmDeviceActionDialog

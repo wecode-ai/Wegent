@@ -746,6 +746,7 @@ def create_socketio_asgi_app():
     """
     from app.api.ws import register_chat_namespace
     from app.api.ws.device_namespace import register_device_namespace
+    from app.api.ws.terminal_namespace import register_terminal_namespace
     from app.core.socketio import create_socketio_app, get_sio
 
     sio = get_sio()
@@ -758,6 +759,10 @@ def create_socketio_asgi_app():
     # Register device namespace for local device connections
     register_device_namespace(sio)
     _logger.info("Device namespace registered during ASGI app creation")
+
+    # Register terminal namespace for browser terminal clients
+    register_terminal_namespace(sio)
+    _logger.info("Terminal namespace registered during ASGI app creation")
 
     socketio_app = create_socketio_app(sio)
 

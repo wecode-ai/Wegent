@@ -34,6 +34,7 @@ COMPOSE_URL="https://raw.githubusercontent.com/wecode-ai/Wegent/main/docker-comp
 STANDALONE_IMAGE="${WEGENT_STANDALONE_IMAGE:-ghcr.io/wecode-ai/wegent-standalone:latest}"
 STANDALONE_CONTAINER_NAME="wegent-standalone"
 STANDALONE_VOLUME_NAME="wegent-data"
+STANDALONE_WORKSPACE_VOLUME_NAME="wegent-workspace"
 
 # Temporary files cleanup
 TMPFILES=()
@@ -1061,14 +1062,28 @@ start_standalone_service() {
         ui_success "Data volume already exists"
     fi
 
+    # Create workspace volume if it doesn't exist
+    if ! docker volume ls --format '{{.Name}}' | grep -q "^${STANDALONE_WORKSPACE_VOLUME_NAME}$"; then
+        ui_info "Creating workspace volume..."
+        if [[ "$DRY_RUN" != "1" ]]; then
+            docker volume create "${STANDALONE_WORKSPACE_VOLUME_NAME}"
+        fi
+        ui_success "Workspace volume created"
+    else
+        ui_success "Workspace volume already exists"
+    fi
+
     # Build docker run command
     local docker_run_cmd="docker run -d"
     docker_run_cmd+=" --name ${STANDALONE_CONTAINER_NAME}"
     docker_run_cmd+=" --restart unless-stopped"
     docker_run_cmd+=" -p 3000:3000"
+    docker_run_cmd+=" -p 3001:3001"
     docker_run_cmd+=" -p 8000:8000"
     docker_run_cmd+=" -v ${STANDALONE_VOLUME_NAME}:/app/data"
+    docker_run_cmd+=" -v ${STANDALONE_WORKSPACE_VOLUME_NAME}:/workspace"
     docker_run_cmd+=" -e RUNTIME_SOCKET_DIRECT_URL=${SOCKET_URL}"
+    docker_run_cmd+=" -e WEWORK_PUBLIC_BACKEND_URL=${SOCKET_URL}"
     docker_run_cmd+=" -e LITELLM_LOCAL_MODEL_COST_MAP=True"
     docker_run_cmd+=" ${STANDALONE_IMAGE}"
 
@@ -1096,19 +1111,20 @@ start_standalone_service() {
 wait_for_standalone_service() {
     local max_wait=120
     local health_url="http://localhost:8000/health"
+    local wework_url="http://localhost:3001/"
 
     echo ""
-    ui_info "Waiting for services to be ready (this may take 30-60 seconds)..."
+    ui_info "Waiting for services to be ready (this may take 30-90 seconds)..."
     echo ""
 
     # Phase 1: Wait for container to be running
-    echo -ne "  ${MUTED}[1/3]${NC} Starting container..."
+    echo -ne "  ${MUTED}[1/4]${NC} Starting container..."
     local phase1_max=30
     local phase1_elapsed=0
 
     while [[ $phase1_elapsed -lt $phase1_max ]]; do
         if docker ps --format '{{.Names}}' | grep -q "^${STANDALONE_CONTAINER_NAME}$"; then
-            echo -e "\r  ${GREEN}✓${NC} [1/3] Container started                      "
+            echo -e "\r  ${GREEN}✓${NC} [1/4] Container started                      "
             break
         fi
         sleep 2
@@ -1116,27 +1132,25 @@ wait_for_standalone_service() {
         local dots=$(( (phase1_elapsed / 2) % 4 ))
         local dot_str=""
         for ((i=0; i<dots; i++)); do dot_str+="."; done
-        echo -ne "\r  ${MUTED}[1/3]${NC} Starting container${dot_str}   "
+        echo -ne "\r  ${MUTED}[1/4]${NC} Starting container${dot_str}   "
     done
 
     if [[ $phase1_elapsed -ge $phase1_max ]]; then
-        echo -e "\r  ${YELLOW}!${NC} [1/3] Container starting (continuing...)     "
+        echo -e "\r  ${YELLOW}!${NC} [1/4] Container starting (continuing...)     "
     fi
 
     # Phase 2: Database initialization
-    echo -e "  ${GREEN}✓${NC} [2/3] Database initialized (SQLite + Redis)  "
+    echo -e "  ${GREEN}✓${NC} [2/4] Database initialized (SQLite + Redis)  "
 
     # Phase 3: Wait for health endpoint
-    echo -ne "  ${MUTED}[3/3]${NC} Checking service health..."
+    echo -ne "  ${MUTED}[3/4]${NC} Checking backend health..."
     local phase3_max=60
     local phase3_elapsed=0
 
     while [[ $phase3_elapsed -lt $phase3_max ]]; do
         if curl -fsSL --connect-timeout 2 --max-time 5 "$health_url" >/dev/null 2>&1; then
-            echo -e "\r  ${GREEN}✓${NC} [3/3] Service health check passed            "
-            echo ""
-            ui_success "All services are ready!"
-            return 0
+            echo -e "\r  ${GREEN}✓${NC} [3/4] Backend health check passed            "
+            break
         fi
 
         sleep 3
@@ -1144,10 +1158,40 @@ wait_for_standalone_service() {
         local dots=$(( (phase3_elapsed / 3) % 4 ))
         local dot_str=""
         for ((i=0; i<dots; i++)); do dot_str+="."; done
-        echo -ne "\r  ${MUTED}[3/3]${NC} Checking service health${dot_str}   "
+        echo -ne "\r  ${MUTED}[3/4]${NC} Checking backend health${dot_str}   "
     done
 
-    echo -e "\r  ${YELLOW}!${NC} [3/3] Health check pending                   "
+    if [[ $phase3_elapsed -ge $phase3_max ]]; then
+        echo -e "\r  ${YELLOW}!${NC} [3/4] Backend health check pending          "
+        echo ""
+        ui_warn "Services may not be fully ready yet (timeout after ${max_wait}s)"
+        ui_info "The services are still starting in the background."
+        ui_info "You can check the status with: docker logs ${STANDALONE_CONTAINER_NAME}"
+        return 0
+    fi
+
+    # Phase 4: Wait for Wework endpoint
+    echo -ne "  ${MUTED}[4/4]${NC} Checking Wework..."
+    local phase4_max=60
+    local phase4_elapsed=0
+
+    while [[ $phase4_elapsed -lt $phase4_max ]]; do
+        if curl -fsSL --connect-timeout 2 --max-time 5 "$wework_url" >/dev/null 2>&1; then
+            echo -e "\r  ${GREEN}✓${NC} [4/4] Wework is ready                    "
+            echo ""
+            ui_success "All services are ready!"
+            return 0
+        fi
+
+        sleep 3
+        phase4_elapsed=$((phase4_elapsed + 3))
+        local dots=$(( (phase4_elapsed / 3) % 4 ))
+        local dot_str=""
+        for ((i=0; i<dots; i++)); do dot_str+="."; done
+        echo -ne "\r  ${MUTED}[4/4]${NC} Checking Wework${dot_str}   "
+    done
+
+    echo -e "\r  ${YELLOW}!${NC} [4/4] Wework or terminal check pending        "
     echo ""
     ui_warn "Services may not be fully ready yet (timeout after ${max_wait}s)"
     ui_info "The services are still starting in the background."
@@ -1251,13 +1295,19 @@ print_completion() {
     echo -e "${GREEN}${BOLD}========================================${NC}"
     echo ""
     echo -e "  Open ${BLUE}${BOLD}http://${ACCESS_HOST}:3000${NC} in your browser"
+    if [[ "$DEPLOY_MODE" == "standalone" ]]; then
+        echo -e "  Open ${BLUE}${BOLD}http://${ACCESS_HOST}:3001${NC} for Wework"
+    fi
     echo ""
     ui_kv "Deployment mode" "$DEPLOY_MODE"
     ui_kv "Access URL" "http://${ACCESS_HOST}:3000"
 
     if [[ "$DEPLOY_MODE" == "standalone" ]]; then
+        ui_kv "Wework URL" "http://${ACCESS_HOST}:3001"
+        ui_kv "Terminal access" "Wework workspace terminal"
         ui_kv "Container name" "$STANDALONE_CONTAINER_NAME"
         ui_kv "Data volume" "$STANDALONE_VOLUME_NAME"
+        ui_kv "Workspace volume" "$STANDALONE_WORKSPACE_VOLUME_NAME"
     else
         ui_kv "Installation directory" "$(pwd)"
         if [[ "$IS_SOURCE_BUILD" == "1" ]]; then
@@ -1288,8 +1338,10 @@ print_completion() {
         echo -e "  ${MUTED}# Update to latest version${NC}"
         echo -e "  ${YELLOW}docker pull ${STANDALONE_IMAGE} && docker rm -f ${STANDALONE_CONTAINER_NAME} && \\"
         echo -e "  docker run -d --name ${STANDALONE_CONTAINER_NAME} --restart unless-stopped \\"
-        echo -e "    -p 3000:3000 -p 8000:8000 -v ${STANDALONE_VOLUME_NAME}:/app/data \\"
-        echo -e "    -e RUNTIME_SOCKET_DIRECT_URL=${SOCKET_URL} ${STANDALONE_IMAGE}${NC}"
+        echo -e "    -p 3000:3000 -p 3001:3001 -p 8000:8000 \\"
+        echo -e "    -v ${STANDALONE_VOLUME_NAME}:/app/data -v ${STANDALONE_WORKSPACE_VOLUME_NAME}:/workspace \\"
+        echo -e "    -e RUNTIME_SOCKET_DIRECT_URL=${SOCKET_URL} -e WEWORK_PUBLIC_BACKEND_URL=${SOCKET_URL} \\"
+        echo -e "    ${STANDALONE_IMAGE}${NC}"
     else
         local compose_args=""
         if [[ "$IS_SOURCE_BUILD" == "1" ]]; then
@@ -1345,8 +1397,11 @@ main() {
         ui_error "Unsupported operating system"
         echo "This installer supports macOS and Linux."
         echo "For Windows, please use Docker Desktop and run:"
-        echo "  docker run -d --name wegent-standalone -p 3000:3000 -p 8000:8000 \\"
-        echo "    -v wegent-data:/app/data ghcr.io/wecode-ai/wegent-standalone:latest"
+        echo "  docker run -d --name wegent-standalone \\"
+        echo "    -p 3000:3000 -p 3001:3001 -p 8000:8000 \\"
+        echo "    -v wegent-data:/app/data -v wegent-workspace:/workspace \\"
+        echo "    -e RUNTIME_SOCKET_DIRECT_URL=http://localhost:8000 -e WEWORK_PUBLIC_BACKEND_URL=http://localhost:8000 \\"
+        echo "    ghcr.io/wecode-ai/wegent-standalone:latest"
         exit 1
     fi
     ui_success "Detected: $OS ($ARCH)"

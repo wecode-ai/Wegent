@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Standalone Dockerfile - All services in one container
-# This builds a single image containing Backend, Frontend, Chat Shell, and Executor
+# This builds a single image containing Backend, Frontend, Wework, Chat Shell, and Executor
 
 # ========== Stage 1: Build Frontend ==========
 FROM node:22-slim AS frontend-builder
@@ -49,7 +49,41 @@ RUN corepack enable \
     && corepack prepare pnpm@10.34.3 --activate \
     && pnpm run build
 
-# ========== Stage 2: Build Python Base with Tools ==========
+# ========== Stage 2: Build Wework ==========
+FROM node:22-slim AS wework-builder
+
+WORKDIR /app
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY packages/chat-core/package.json ./packages/chat-core/package.json
+COPY wework/package.json ./wework/package.json
+
+ENV HUSKY=0
+
+RUN corepack enable \
+    && corepack prepare pnpm@10.34.3 --activate \
+    && pnpm install --frozen-lockfile --filter wework...
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY packages ./packages
+COPY wework ./wework
+
+ARG WEWORK_API_BASE_URL="http://localhost:8000/api"
+ARG WEWORK_SOCKET_BASE_URL="http://localhost:8000"
+ARG WEWORK_SOCKET_PATH="/socket.io"
+ARG WEWORK_APP_BASE_PATH="/"
+ENV VITE_API_BASE_URL=${WEWORK_API_BASE_URL}
+ENV VITE_SOCKET_BASE_URL=${WEWORK_SOCKET_BASE_URL}
+ENV VITE_SOCKET_PATH=${WEWORK_SOCKET_PATH}
+ENV VITE_APP_BASE_PATH=${WEWORK_APP_BASE_PATH}
+ENV HUSKY=0
+
+WORKDIR /app/wework
+RUN corepack enable \
+    && corepack prepare pnpm@10.34.3 --activate \
+    && pnpm run build
+
+# ========== Stage 3: Build Python Base with Tools ==========
 FROM ghcr.io/wecode-ai/wegent-base-python3.12:latest AS python-base
 
 WORKDIR /app
@@ -67,6 +101,8 @@ RUN dnf install -y \
     atk at-spi2-atk libXcomposite libXdamage libXfixes libXrandr libxkbcommon \
     # Skill-creator dependencies (JSON parsing and packaging)
     jq zip \
+    # Development environment and runtime diagnostics
+    procps-ng iproute lsof less tree unzip ripgrep \
     # Redis server for standalone mode (embedded)
     redis \
     && npm install -g @anthropic-ai/claude-code@2.1.142 \
@@ -96,7 +132,7 @@ RUN mkdir -p /usr/share/fonts/truetype/noto && \
         -o /usr/share/fonts/truetype/noto/NotoSansSC.ttf) && \
     fc-cache -f -v
 
-# ========== Stage 3: Runtime ==========
+# ========== Stage 4: Runtime ==========
 FROM python-base AS runtime
 
 WORKDIR /app
@@ -139,6 +175,9 @@ COPY --from=frontend-builder /app/frontend/.next/standalone /app
 COPY --from=frontend-builder /app/frontend/.next/static /app/frontend/.next/static
 COPY --from=frontend-builder /app/frontend/public /app/frontend/public
 
+# Copy Wework web build
+COPY --from=wework-builder /app/wework/dist /app/wework/dist
+
 # Copy init_data directory with default resources and skills
 COPY backend/init_data /app/init_data
 
@@ -162,17 +201,22 @@ ENV REDIS_DATA_DIR=/app/data/redis
 # Server configuration
 ENV BACKEND_PORT=8000
 ENV FRONTEND_PORT=3000
+ENV WEWORK_PORT=3001
 ENV GRACEFUL_SHUTDOWN_TIMEOUT=600
+ENV WEGENT_WORKSPACE_ROOT=/workspace
 
-# Expose ports
-EXPOSE 3000 8000
+# Expose browser-facing standalone ports
+EXPOSE 3000 3001 8000
 
-# Data volume for SQLite database, Redis data, and other persistent data
-VOLUME ["/app/data"]
+# Data volume for service state and workspace artifacts
+VOLUME ["/app/data", "/workspace"]
 
-# Health check - verify both services are running
+# Health check - verify main services are running
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -f http://localhost:8000/health && curl -f http://localhost:3000 || exit 1
+    CMD curl -f http://localhost:8000/health \
+      && curl -f http://localhost:3000 \
+      && curl -f http://localhost:3001 \
+      || exit 1
 
 # Startup command
 CMD ["/app/start.sh"]

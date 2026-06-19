@@ -426,6 +426,7 @@ export interface ProjectDeviceSessionResponse {
   type: 'terminal' | 'code_server'
   path: string
   url: string
+  transport?: 'url' | 'socketio'
   expires_at?: string | null
 }
 
