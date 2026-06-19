@@ -402,6 +402,24 @@ export function ProjectWorkBar({
     [currentStandaloneDeviceId, devices]
   )
   const selectedStandaloneDeviceId = defaultStandaloneDeviceId
+  const selectedStandaloneDevice = useMemo(
+    () =>
+      selectedStandaloneDeviceId
+        ? standaloneDevices.find(device => device.device_id === selectedStandaloneDeviceId)
+        : undefined,
+    [selectedStandaloneDeviceId, standaloneDevices]
+  )
+  const selectedStandaloneDeviceLabel = selectedStandaloneDevice
+    ? selectedStandaloneDevice.name || selectedStandaloneDevice.device_id
+    : null
+  const projectWorkTriggerLabel = emptyLabel ?? t('workbench.enter_project_work', '进入项目工作')
+  const projectWorkTriggerAriaLabel =
+    !currentProject && isStandaloneMode && selectedStandaloneDeviceLabel
+      ? t('workbench.project_work_trigger_device_aria', {
+          action: projectWorkTriggerLabel,
+          device: selectedStandaloneDeviceLabel,
+        })
+      : (currentProject?.name ?? projectWorkTriggerLabel)
 
   const handleSelectProject = (projectId: number) => {
     onSelectProject(projectId)
@@ -764,7 +782,7 @@ export function ProjectWorkBar({
             buttonClassName
           )}
           aria-expanded={open}
-          aria-label={t('workbench.enter_project_work', '进入项目工作')}
+          aria-label={projectWorkTriggerAriaLabel}
         >
           {currentProject ? (
             <>
@@ -774,7 +792,21 @@ export function ProjectWorkBar({
           ) : (
             <>
               <FolderPlus className="h-5 w-5" />
-              <span>{emptyLabel ?? t('workbench.enter_project_work', '进入项目工作')}</span>
+              <span className="shrink-0">{projectWorkTriggerLabel}</span>
+              {isStandaloneMode && selectedStandaloneDevice && selectedStandaloneDeviceLabel && (
+                <>
+                  <span className="text-text-muted">·</span>
+                  <span
+                    className={`h-1.5 w-1.5 shrink-0 rounded-full ${getDeviceStatusDotClass(selectedStandaloneDevice)}`}
+                  />
+                  <span
+                    className="max-w-[8rem] truncate text-text-secondary"
+                    title={selectedStandaloneDeviceLabel}
+                  >
+                    {selectedStandaloneDeviceLabel}
+                  </span>
+                </>
+              )}
             </>
           )}
           <ChevronDown className="h-4 w-4" />
