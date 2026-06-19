@@ -18,6 +18,7 @@ import type {
   GitRepoInfo,
   ProjectWithTasks,
   TaskDetail,
+  TaskForkRequest,
   TaskListResponse,
   TurnFileChangesSummary,
 } from '@/types/api'
@@ -108,6 +109,7 @@ interface DesktopWorkbenchLayoutProps {
   onRetryFailedMessage?: (messageId: string) => void
   isResponseStreaming?: boolean
   onPauseResponse?: () => void
+  onForkCurrentTask?: (request: TaskForkRequest) => Promise<unknown>
   onCancelQueuedMessage?: (id: string) => void
   onSendQueuedAsGuidance?: (id: string) => void
   onEditQueuedMessage?: (id: string) => void
@@ -172,6 +174,7 @@ export function DesktopWorkbenchLayout({
   onRetryFailedMessage,
   isResponseStreaming = false,
   onPauseResponse = () => {},
+  onForkCurrentTask,
   onCancelQueuedMessage = () => {},
   onSendQueuedAsGuidance = () => {},
   onEditQueuedMessage = () => {},
@@ -468,6 +471,9 @@ export function DesktopWorkbenchLayout({
           projectWork={projectWorkWithCreation}
           input={state.input}
           isSending={state.isSending}
+          currentTaskRunning={Boolean(
+            state.currentTask && runningTaskIds.has(state.currentTask.id)
+          )}
           environmentInfo={environmentInfo}
           onRefreshEnvironmentInfo={refreshEnvironmentInfo}
           onCommitEnvironmentChanges={handleCommitEnvironmentChanges}
@@ -495,6 +501,7 @@ export function DesktopWorkbenchLayout({
           onRetryFailedMessage={onRetryFailedMessage}
           isResponseStreaming={isResponseStreaming}
           onPauseResponse={onPauseResponse}
+          onForkCurrentTask={onForkCurrentTask}
           onCancelQueuedMessage={onCancelQueuedMessage}
           onSendQueuedAsGuidance={onSendQueuedAsGuidance}
           onEditQueuedMessage={onEditQueuedMessage}

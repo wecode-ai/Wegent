@@ -45,19 +45,12 @@ export function createTaskApi(client: HttpClient) {
       return client.get(`/tasks/${taskId}?client_origin=${WEWORK_CLIENT_ORIGIN}`)
     },
     forkTask(taskId: number, request: TaskForkRequest): Promise<TaskForkResponse> {
-      return client.post(
-        `/tasks/${taskId}/fork?client_origin=${WEWORK_CLIENT_ORIGIN}`,
-        request
-      )
+      return client.post(`/tasks/${taskId}/fork?client_origin=${WEWORK_CLIENT_ORIGIN}`, request)
     },
-    getTurnFileChangesDiff(
-      subtaskId: number,
-    ): Promise<TurnFileChangesDiffResponse> {
+    getTurnFileChangesDiff(subtaskId: number): Promise<TurnFileChangesDiffResponse> {
       return client.get(`/subtasks/${subtaskId}/file-changes/diff`)
     },
-    revertTurnFileChanges(
-      subtaskId: number,
-    ): Promise<TurnFileChangesRevertResponse> {
+    revertTurnFileChanges(subtaskId: number): Promise<TurnFileChangesRevertResponse> {
       return client.post(`/subtasks/${subtaskId}/file-changes/revert`)
     },
     renameTask(taskId: number, title: string): Promise<Task> {
@@ -66,24 +59,16 @@ export function createTaskApi(client: HttpClient) {
       })
     },
     archiveTask(taskId: number): Promise<TaskArchiveResponse> {
-      return client.post(
-        `/tasks/${taskId}/archive?client_origin=${WEWORK_CLIENT_ORIGIN}`,
-      )
+      return client.post(`/tasks/${taskId}/archive?client_origin=${WEWORK_CLIENT_ORIGIN}`)
     },
     archiveAllChats(): Promise<TaskArchiveBatchResponse> {
-      return client.post(
-        `/tasks/archive?scope=standalone&client_origin=${WEWORK_CLIENT_ORIGIN}`,
-      )
+      return client.post(`/tasks/archive?scope=standalone&client_origin=${WEWORK_CLIENT_ORIGIN}`)
     },
     listArchivedTasks(): Promise<ArchivedTaskListResponse> {
-      return client.get(
-        `/tasks/archived?limit=200&page=1&client_origin=${WEWORK_CLIENT_ORIGIN}`,
-      )
+      return client.get(`/tasks/archived?limit=200&page=1&client_origin=${WEWORK_CLIENT_ORIGIN}`)
     },
     unarchiveTask(taskId: number): Promise<TaskArchiveResponse> {
-      return client.post(
-        `/tasks/${taskId}/unarchive?client_origin=${WEWORK_CLIENT_ORIGIN}`,
-      )
+      return client.post(`/tasks/${taskId}/unarchive?client_origin=${WEWORK_CLIENT_ORIGIN}`)
     },
     deleteTask(taskId: number): Promise<{ message: string }> {
       return client.delete(`/tasks/${taskId}?client_origin=${WEWORK_CLIENT_ORIGIN}`)

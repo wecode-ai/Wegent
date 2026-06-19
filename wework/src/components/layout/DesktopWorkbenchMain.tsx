@@ -1,10 +1,5 @@
-import {
-  useCallback,
-  useLayoutEffect,
-  useRef,
-  useState,
-  type ReactNode,
-} from 'react'
+import { useCallback, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { Copy } from 'lucide-react'
 import { ChatInput } from '@/components/chat/ChatInput'
 import type { ProjectChatControls, ProjectWorkControls } from '@/components/chat/ChatInput'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
@@ -15,7 +10,13 @@ import {
   isWorkbenchDeviceOnline,
 } from '@/lib/workbench-device'
 import { isDeviceBelowWeWorkVersion, isWeWorkCompatibleDevice } from '@/lib/device-capabilities'
-import type { DeviceInfo, ProjectWithTasks, Task, TurnFileChangesSummary } from '@/types/api'
+import type {
+  DeviceInfo,
+  ProjectWithTasks,
+  Task,
+  TaskForkRequest,
+  TurnFileChangesSummary,
+} from '@/types/api'
 import type { DeviceUpgradeState } from '@/types/device-events'
 import type { EnvironmentInfo } from '@/types/environment'
 import type {
@@ -40,8 +41,9 @@ import { useResizableRightSplitChat } from './workspace-panels/useResizableWorks
 import { ConversationDeviceOfflineBanner } from './ConversationDeviceOfflineBanner'
 import { DeviceStatusPrompt } from './DeviceStatusPrompt'
 import { TitlebarActionsPortal } from '@/components/topnav/TitlebarActionsPortal'
-import { DesktopTopBar } from './DesktopTopBar'
+import { DESKTOP_TOP_BAR_BUTTON_CLASS, DesktopTopBar } from './DesktopTopBar'
 import { isTauriRuntime } from '@/lib/runtime-environment'
+import { TaskForkDialog } from './TaskForkDialog'
 
 const DESKTOP_COMPOSER_FRAME_CLASS =
   'mx-auto w-[min(58vw,62rem)] min-w-[32rem] max-w-[calc(100vw-4rem)] -translate-y-12'
@@ -131,6 +133,7 @@ interface DesktopWorkbenchMainProps {
   projectWork: ProjectWorkControls
   input: string
   isSending: boolean
+  currentTaskRunning?: boolean
   environmentInfo: EnvironmentInfo
   onRefreshEnvironmentInfo: () => Promise<void>
   onCommitEnvironmentChanges: (message: string) => Promise<void>
@@ -145,6 +148,7 @@ interface DesktopWorkbenchMainProps {
   onRetryFailedMessage?: (messageId: string) => void
   isResponseStreaming: boolean
   onPauseResponse: () => void
+  onForkCurrentTask?: (request: TaskForkRequest) => Promise<unknown>
   onCancelQueuedMessage: (id: string) => void
   onSendQueuedAsGuidance: (id: string) => void
   onEditQueuedMessage: (id: string) => void
@@ -173,6 +177,7 @@ export function DesktopWorkbenchMain({
   projectWork,
   input,
   isSending,
+  currentTaskRunning = false,
   environmentInfo,
   onRefreshEnvironmentInfo,
   onCommitEnvironmentChanges,
@@ -187,6 +192,7 @@ export function DesktopWorkbenchMain({
   onRetryFailedMessage,
   isResponseStreaming,
   onPauseResponse,
+  onForkCurrentTask,
   onCancelQueuedMessage,
   onSendQueuedAsGuidance,
   onEditQueuedMessage,
@@ -209,6 +215,7 @@ export function DesktopWorkbenchMain({
     error: undefined,
     reloadDiff: undefined,
   })
+  const [forkDialogOpen, setForkDialogOpen] = useState(false)
   const { width: rightSplitChatWidth, handleResizeStart: handleRightSplitResizeStart } =
     useResizableRightSplitChat()
   const chatColumnWidth = rightPanelOpen ? rightSplitChatWidth : '100%'
@@ -390,7 +397,25 @@ export function DesktopWorkbenchMain({
       onToggleBottomPanel={toggleBottomPanel}
     />
   )
-  const workspacePanelActions = renderWorkspacePanelActions('all')
+  const canForkCurrentTask = Boolean(currentTask && onForkCurrentTask)
+  const forkTaskButton = canForkCurrentTask ? (
+    <button
+      type="button"
+      data-testid="fork-task-button"
+      onClick={() => setForkDialogOpen(true)}
+      className={DESKTOP_TOP_BAR_BUTTON_CLASS}
+      aria-label={t('workbench.task_fork_button', '复制到其他执行器')}
+      title={t('workbench.task_fork_button', '复制到其他执行器')}
+    >
+      <Copy />
+    </button>
+  ) : null
+  const workspacePanelActions = (
+    <>
+      {forkTaskButton}
+      {renderWorkspacePanelActions('all')}
+    </>
+  )
   const showPageTopBar = !isTauri || Boolean(topBarLeftActions)
 
   useLayoutEffect(() => {
@@ -607,6 +632,20 @@ export function DesktopWorkbenchMain({
           />
         )}
       </div>
+      <TaskForkDialog
+        key={forkDialogOpen ? `open-${currentTask?.id ?? 'none'}` : 'closed'}
+        open={forkDialogOpen}
+        task={currentTask}
+        devices={devices}
+        activeDeviceId={activeDeviceId}
+        requiresStop={currentTaskRunning}
+        onOpenChange={setForkDialogOpen}
+        onStopCurrentResponse={onPauseResponse}
+        onFork={async request => {
+          if (!onForkCurrentTask) return
+          await onForkCurrentTask(request)
+        }}
+      />
     </main>
   )
 }

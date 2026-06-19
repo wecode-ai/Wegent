@@ -1,4 +1,4 @@
-import { Bot, Menu } from 'lucide-react'
+import { Bot, Copy, Menu } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ChatInput } from '@/components/chat/ChatInput'
 import type { ProjectChatControls, ProjectWorkControls } from '@/components/chat/ChatInput'
@@ -24,6 +24,7 @@ import type {
   GitBranch,
   GitRepoInfo,
   ProjectWithTasks,
+  TaskForkRequest,
   TurnFileChangesSummary,
 } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
@@ -38,6 +39,7 @@ import type {
 import { ConversationDeviceOfflineBanner } from './ConversationDeviceOfflineBanner'
 import { DeviceStatusPrompt } from './DeviceStatusPrompt'
 import { MobileDrawer } from './MobileDrawer'
+import { TaskForkDialog } from './TaskForkDialog'
 
 interface MobileWorkbenchLayoutProps {
   state: WorkbenchState
@@ -110,6 +112,7 @@ interface MobileWorkbenchLayoutProps {
   onRetryFailedMessage?: (messageId: string) => void
   isResponseStreaming?: boolean
   onPauseResponse?: () => void
+  onForkCurrentTask?: (request: TaskForkRequest) => Promise<unknown>
   onCancelQueuedMessage?: (id: string) => void
   onSendQueuedAsGuidance?: (id: string) => void
   onEditQueuedMessage?: (id: string) => void
@@ -161,6 +164,7 @@ export function MobileWorkbenchLayout({
   onRetryFailedMessage,
   isResponseStreaming = false,
   onPauseResponse = () => {},
+  onForkCurrentTask,
   onCancelQueuedMessage = () => {},
   onSendQueuedAsGuidance = () => {},
   onEditQueuedMessage = () => {},
@@ -173,6 +177,7 @@ export function MobileWorkbenchLayout({
   const { t } = useTranslation('common')
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [modelSelectorOpenSignal, setModelSelectorOpenSignal] = useState(0)
+  const [forkDialogOpen, setForkDialogOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(() =>
     isSettingsRoute(stripAppBasePath(window.location.pathname))
   )
@@ -286,7 +291,11 @@ export function MobileWorkbenchLayout({
     onCheckoutBranch:
       activeConversationProject && onCheckoutEnvironmentBranch && workspaceTarget
         ? async branchName => {
-            await onCheckoutEnvironmentBranch(activeConversationProject, branchName, workspaceTarget)
+            await onCheckoutEnvironmentBranch(
+              activeConversationProject,
+              branchName,
+              workspaceTarget
+            )
             await refreshEnvironmentInfo()
           }
         : undefined,
@@ -319,6 +328,8 @@ export function MobileWorkbenchLayout({
     activeDeviceUnavailable ||
     activeDeviceVersionUnsupported ||
     noStandaloneCompatibleDevice
+  const canForkCurrentTask = Boolean(state.currentTask && onForkCurrentTask)
+  const currentTaskRunning = Boolean(state.currentTask && runningTaskIds?.has(state.currentTask.id))
 
   useEffect(() => {
     const handlePopState = () => {
@@ -431,7 +442,20 @@ export function MobileWorkbenchLayout({
                   <div className="h-10 w-32" data-testid="model-selector-loading" />
                 )}
               </div>
-              <div className="h-11 min-w-[44px]" />
+              {canForkCurrentTask ? (
+                <button
+                  type="button"
+                  data-testid="mobile-fork-task-button"
+                  onClick={() => setForkDialogOpen(true)}
+                  className="pointer-events-auto flex h-11 min-w-[44px] items-center justify-center rounded-full text-text-primary hover:bg-surface"
+                  aria-label={t('workbench.task_fork_button', '复制到其他执行器')}
+                  title={t('workbench.task_fork_button', '复制到其他执行器')}
+                >
+                  <Copy className="h-5 w-5" />
+                </button>
+              ) : (
+                <div className="h-11 min-w-[44px]" />
+              )}
             </header>
             <ScrollableMessageArea
               messages={messages}
@@ -609,6 +633,20 @@ export function MobileWorkbenchLayout({
         onSelectProject={onSelectProject}
         onOpenTask={onOpenTask}
         onRefreshWorkLists={onRefreshWorkLists}
+      />
+      <TaskForkDialog
+        key={forkDialogOpen ? `open-${state.currentTask?.id ?? 'none'}` : 'closed'}
+        open={forkDialogOpen}
+        task={state.currentTask}
+        devices={state.devices}
+        activeDeviceId={activeDeviceId}
+        requiresStop={currentTaskRunning}
+        onOpenChange={setForkDialogOpen}
+        onStopCurrentResponse={onPauseResponse}
+        onFork={async request => {
+          if (!onForkCurrentTask) return
+          await onForkCurrentTask(request)
+        }}
       />
     </div>
   )

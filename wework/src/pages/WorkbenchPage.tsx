@@ -29,6 +29,7 @@ export function WorkbenchPage() {
     openTask,
     searchTasks,
     searchTaskDetail,
+    forkCurrentTask,
     rememberExecutionDevice,
     refreshDevices,
     refreshWorkLists,
@@ -106,6 +107,7 @@ export function WorkbenchPage() {
       onOpenTask={openTask}
       onSearchTasks={searchTasks}
       onSearchTaskDetail={searchTaskDetail}
+      onForkCurrentTask={forkCurrentTask}
       onRememberExecutionDevice={rememberExecutionDevice}
       onRefreshDevices={refreshDevices}
       onUpgradeDevice={upgradeDevice}

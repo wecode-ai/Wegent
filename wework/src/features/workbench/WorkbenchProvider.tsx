@@ -172,10 +172,7 @@ export interface WorkbenchServices {
   gitApi?: ReturnType<typeof createGitApi>
   taskApi: Omit<
     ReturnType<typeof createTaskApi>,
-    | 'searchTasks'
-    | 'getTurnFileChangesDiff'
-    | 'revertTurnFileChanges'
-    | 'forkTask'
+    'searchTasks' | 'getTurnFileChangesDiff' | 'revertTurnFileChanges' | 'forkTask'
   > & {
     searchTasks?: ReturnType<typeof createTaskApi>['searchTasks']
     getTurnFileChangesDiff?: ReturnType<typeof createTaskApi>['getTurnFileChangesDiff']
@@ -1681,11 +1678,8 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
   )
 
   const commitEnvironmentChanges = useCallback(
-    (
-      project: ProjectWithTasks | null,
-      message: string,
-      workspaceTarget?: WorkspaceTarget | null
-    ) => commitProjectChanges(resolvedServices.deviceApi, project, message, workspaceTarget),
+    (project: ProjectWithTasks | null, message: string, workspaceTarget?: WorkspaceTarget | null) =>
+      commitProjectChanges(resolvedServices.deviceApi, project, message, workspaceTarget),
     [resolvedServices]
   )
 
