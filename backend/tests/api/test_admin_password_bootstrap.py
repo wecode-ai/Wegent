@@ -40,7 +40,11 @@ def test_new_bootstrap_admin_cannot_login_with_default_password(
     )
 
     assert response.status_code == 400
-    assert response.json()["detail"] == "Invalid username or password"
+    assert response.json()["error_code"] == "ADMIN_PASSWORD_SETUP_REQUIRED"
+    assert response.json()["detail"] == {
+        "error_code": "ADMIN_PASSWORD_SETUP_REQUIRED",
+        "admin_username": "admin",
+    }
 
 
 def test_bootstrap_admin_password_setup_succeeds_once(

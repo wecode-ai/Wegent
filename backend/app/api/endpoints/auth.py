@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
+from app.core.exceptions import CustomHTTPException
 from app.core.security import authenticate_user, create_access_token
 from app.schemas.user import (
     AdminPasswordSetupRequest,
@@ -17,6 +18,7 @@ from app.schemas.user import (
     Token,
 )
 from app.services.admin_password_bootstrap import (
+    ADMIN_PASSWORD_SETUP_REQUIRED_ERROR_CODE,
     INITIAL_ADMIN_USERNAME,
     is_admin_password_setup_required,
     setup_initial_admin_password,
@@ -55,6 +57,18 @@ def login(db: Session = Depends(get_db), login_data: LoginRequest = Body(...)):
     """
     user = authenticate_user(db, login_data.user_name, login_data.password)
     if not user:
+        if (
+            login_data.user_name == INITIAL_ADMIN_USERNAME
+            and is_admin_password_setup_required(db)
+        ):
+            raise CustomHTTPException(
+                status_code=400,
+                detail={
+                    "error_code": ADMIN_PASSWORD_SETUP_REQUIRED_ERROR_CODE,
+                    "admin_username": INITIAL_ADMIN_USERNAME,
+                },
+                error_code=ADMIN_PASSWORD_SETUP_REQUIRED_ERROR_CODE,
+            )
         raise HTTPException(status_code=400, detail="Invalid username or password")
 
     # Update auth_source if it was unknown

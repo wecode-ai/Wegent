@@ -72,7 +72,6 @@
     "enter_password": "请输入密码",
     "logging_in": "登录中...",
     "toggle_password_visibility": "切换密码可见性",
-    "loading_setup_status": "正在检查首次初始化状态...",
     "admin_password_setup_title": "设置管理员密码",
     "admin_password_setup_description": "当前系统尚未配置初始管理员密码。请先设置密码后继续使用。",
     "admin_username_label": "初始管理员账号",
@@ -86,7 +85,6 @@
     "admin_password_setting": "正在设置密码...",
     "admin_password_mismatch": "两次输入的密码不一致",
     "admin_password_setup_failed": "设置管理员密码失败",
-    "admin_password_setup_status_failed": "无法确认首次初始化状态，请稍后重试。",
     "or_continue_with": "或继续使用",
     "oidc_login": "使用 OpenID Connect 登录"
   },

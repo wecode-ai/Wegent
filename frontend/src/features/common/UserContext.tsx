@@ -5,10 +5,15 @@
 'use client'
 import React, { createContext, useContext, useEffect, useState, ReactNode, useRef } from 'react'
 import { userApis } from '@/apis/user'
+import { ApiError } from '@/apis/client'
 import { User } from '@/types/api'
 import { useRouter } from 'next/navigation'
 import { paths } from '@/config/paths'
-import { POST_LOGIN_REDIRECT_KEY, sanitizeRedirectPath } from '@/features/login/constants'
+import {
+  ADMIN_PASSWORD_SETUP_REQUIRED_ERROR_CODE,
+  POST_LOGIN_REDIRECT_KEY,
+  sanitizeRedirectPath,
+} from '@/features/login/constants'
 import { useToast } from '@/hooks/use-toast'
 
 interface UserContextType {
@@ -30,6 +35,10 @@ const UserContext = createContext<UserContextType>({
   setupAdminPassword: async () => {},
   updatePreferences: async () => {},
 })
+
+function isAdminPasswordSetupRequiredError(error: unknown): boolean {
+  return error instanceof ApiError && error.errorCode === ADMIN_PASSWORD_SETUP_REQUIRED_ERROR_CODE
+}
 
 type RuntimeUserPreferences = NonNullable<User['preferences']> & {
   quick_access?: unknown
@@ -158,10 +167,12 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
       const userData = await userApis.login(data)
       setUser(userData)
     } catch (error) {
-      toast({
-        variant: 'destructive',
-        title: (error as Error)?.message || 'Login failed',
-      })
+      if (!isAdminPasswordSetupRequiredError(error)) {
+        toast({
+          variant: 'destructive',
+          title: (error as Error)?.message || 'Login failed',
+        })
+      }
       setUser(null)
       throw error
     } finally {

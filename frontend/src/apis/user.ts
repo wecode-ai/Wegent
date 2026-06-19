@@ -31,11 +31,6 @@ export interface LoginResponse {
   token_type: string
 }
 
-export interface AdminPasswordSetupStatusResponse {
-  required: boolean
-  admin_username: string
-}
-
 export interface UpdateUserRequest {
   user_name?: string
   email?: string
@@ -164,10 +159,6 @@ export const userApis = {
     setToken(res.access_token)
     // Get user information after login
     return await apiClient.get('/users/me')
-  },
-
-  async getAdminPasswordSetupStatus(): Promise<AdminPasswordSetupStatusResponse> {
-    return apiClient.get('/auth/admin-password/status')
   },
 
   async setupAdminPassword(password: string): Promise<User> {

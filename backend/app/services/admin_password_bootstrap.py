@@ -15,6 +15,7 @@ from app.models.user import User
 from shared.telemetry.decorators import add_span_event, set_span_attribute, trace_sync
 
 ADMIN_PASSWORD_SETUP_CONFIG_KEY = "admin_password_initialized"
+ADMIN_PASSWORD_SETUP_REQUIRED_ERROR_CODE = "ADMIN_PASSWORD_SETUP_REQUIRED"
 INITIAL_ADMIN_USERNAME = "admin"
 
 

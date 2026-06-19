@@ -72,7 +72,6 @@
     "enter_password": "Enter password",
     "logging_in": "Logging in...",
     "toggle_password_visibility": "Toggle password visibility",
-    "loading_setup_status": "Checking first-run setup...",
     "admin_password_setup_title": "Set administrator password",
     "admin_password_setup_description": "This installation has not configured the initial administrator password yet. Set it now to continue.",
     "admin_username_label": "Initial administrator account",
@@ -86,7 +85,6 @@
     "admin_password_setting": "Setting password...",
     "admin_password_mismatch": "Passwords do not match",
     "admin_password_setup_failed": "Failed to set administrator password",
-    "admin_password_setup_status_failed": "Unable to confirm first-run setup status. Try again later.",
     "or_continue_with": "Or continue with",
     "oidc_login": "Login with OpenID Connect"
   },

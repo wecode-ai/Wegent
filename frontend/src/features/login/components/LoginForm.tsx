@@ -14,10 +14,15 @@ import { paths } from '@/config/paths'
 import { useTranslation } from '@/hooks/useTranslation'
 import LanguageSwitcher from '@/components/LanguageSwitcher'
 import { ThemeToggle } from '@/features/theme/ThemeToggle'
-import { POST_LOGIN_REDIRECT_KEY, sanitizeRedirectPath } from '@/features/login/constants'
+import {
+  ADMIN_PASSWORD_SETUP_REQUIRED_ERROR_CODE,
+  INITIAL_ADMIN_USERNAME,
+  POST_LOGIN_REDIRECT_KEY,
+  sanitizeRedirectPath,
+} from '@/features/login/constants'
 import Image from 'next/image'
 import { getRuntimeConfigSync } from '@/lib/runtime-config'
-import { userApis } from '@/apis/user'
+import { ApiError } from '@/apis/client'
 
 export default function LoginForm() {
   const { t } = useTranslation()
@@ -34,9 +39,8 @@ export default function LoginForm() {
   const [showPassword, setShowPassword] = useState(false)
   const [showAdminPassword, setShowAdminPassword] = useState(false)
   const [showAdminPasswordConfirm, setShowAdminPasswordConfirm] = useState(false)
-  const [adminPasswordSetupRequired, setAdminPasswordSetupRequired] = useState<boolean | null>(null)
-  const [adminPasswordSetupStatusError, setAdminPasswordSetupStatusError] = useState(false)
-  const [adminUsername, setAdminUsername] = useState('')
+  const [adminPasswordSetupRequired, setAdminPasswordSetupRequired] = useState(false)
+  const [adminUsername, setAdminUsername] = useState(INITIAL_ADMIN_USERNAME)
   const [adminPasswordError, setAdminPasswordError] = useState<string | null>(null)
   // Used antd message.error for unified error prompt, no need for local error state
   const [isLoading, setIsLoading] = useState(false)
@@ -64,39 +68,6 @@ export default function LoginForm() {
   }
 
   const { user, isLoading: userLoading, login, setupAdminPassword } = useUser()
-
-  useEffect(() => {
-    let cancelled = false
-
-    async function loadAdminPasswordSetupStatus() {
-      if (!showPasswordLogin) {
-        setAdminPasswordSetupRequired(false)
-        setAdminPasswordSetupStatusError(false)
-        return
-      }
-
-      try {
-        const status = await userApis.getAdminPasswordSetupStatus()
-        if (!cancelled) {
-          setAdminPasswordSetupRequired(status.required)
-          setAdminUsername(status.admin_username)
-          setAdminPasswordSetupStatusError(false)
-        }
-      } catch (error) {
-        console.error('Failed to load admin password setup status:', error)
-        if (!cancelled) {
-          setAdminPasswordSetupRequired(null)
-          setAdminPasswordSetupStatusError(true)
-        }
-      }
-    }
-
-    loadAdminPasswordSetupStatus()
-
-    return () => {
-      cancelled = true
-    }
-  }, [showPasswordLogin])
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -167,8 +138,15 @@ export default function LoginForm() {
       // Force an immediate redirect after successful login
       // This ensures redirect happens even if useEffect timing is delayed
       handleRedirect(redirectPath)
-    } catch {
-      // Error handling is already done in UserContext.login, no need to show error message here
+    } catch (error) {
+      if (
+        error instanceof ApiError &&
+        error.errorCode === ADMIN_PASSWORD_SETUP_REQUIRED_ERROR_CODE
+      ) {
+        setAdminUsername(INITIAL_ADMIN_USERNAME)
+        setAdminPasswordSetupRequired(true)
+      }
+      // Other login errors are already handled in UserContext.login.
     } finally {
       setIsLoading(false)
     }
@@ -206,9 +184,6 @@ export default function LoginForm() {
     }
   }
 
-  const isCheckingAdminPasswordSetup =
-    showPasswordLogin && adminPasswordSetupRequired === null && !adminPasswordSetupStatusError
-
   return (
     <div className="space-y-6">
       {/* Language switcher */}
@@ -216,22 +191,8 @@ export default function LoginForm() {
         <ThemeToggle />
         <LanguageSwitcher />
       </div>
-      {isCheckingAdminPasswordSetup && (
-        <div className="py-8 text-center text-sm text-text-muted" data-testid="login-loading">
-          {t('common:login.loading_setup_status')}
-        </div>
-      )}
 
-      {showPasswordLogin && adminPasswordSetupStatusError && (
-        <div
-          className="py-8 text-center text-sm text-red-600"
-          data-testid="login-setup-status-error"
-        >
-          {t('common:login.admin_password_setup_status_failed')}
-        </div>
-      )}
-
-      {showPasswordLogin && adminPasswordSetupRequired === true && (
+      {showPasswordLogin && adminPasswordSetupRequired && (
         <form
           className="space-y-6"
           data-testid="admin-password-setup-form"
@@ -359,7 +320,7 @@ export default function LoginForm() {
       )}
 
       {/* Password login form */}
-      {showPasswordLogin && adminPasswordSetupRequired === false && (
+      {showPasswordLogin && !adminPasswordSetupRequired && (
         <form className="space-y-6" data-testid="login-form" onSubmit={handleSubmit}>
           <div>
             <label htmlFor="user_name" className="block text-sm font-medium text-text-secondary">
@@ -457,7 +418,7 @@ export default function LoginForm() {
       )}
 
       {/* Divider and third-party login - only shown when both login modes are displayed */}
-      {showPasswordLogin && adminPasswordSetupRequired === false && showOidcLogin && (
+      {showPasswordLogin && !adminPasswordSetupRequired && showOidcLogin && (
         <div className="mt-6">
           <div className="relative">
             <div className="absolute inset-0 flex items-center">
@@ -473,7 +434,7 @@ export default function LoginForm() {
       )}
 
       {/* OIDC login */}
-      {showOidcLogin && (!showPasswordLogin || adminPasswordSetupRequired === false) && (
+      {showOidcLogin && (!showPasswordLogin || !adminPasswordSetupRequired) && (
         <div className={showPasswordLogin ? 'mt-6' : ''}>
           <div className="grid grid-cols-1 gap-3">
             <Button

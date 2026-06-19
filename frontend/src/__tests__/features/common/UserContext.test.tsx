@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { render, act, waitFor, fireEvent } from '@testing-library/react'
+import { ApiError } from '@/apis/client'
 import { UserProvider, useUser } from '@/features/common/UserContext'
 import { userApis } from '@/apis/user'
 import { useRouter } from 'next/navigation'
@@ -19,14 +20,17 @@ jest.mock('@/apis/user', () => ({
     getCurrentUser: jest.fn(),
     login: jest.fn(),
     logout: jest.fn(),
+    setupAdminPassword: jest.fn(),
     updateUser: jest.fn(),
   },
 }))
 
+const mockToast = jest.fn()
+
 // Mock useToast
 jest.mock('@/hooks/use-toast', () => ({
   useToast: () => ({
-    toast: jest.fn(),
+    toast: mockToast,
   }),
 }))
 
@@ -62,6 +66,20 @@ function PreferenceUpdateComponent() {
       onClick={() => updatePreferences({ default_execution_target: 'cloud' })}
     >
       Update preferences
+    </button>
+  )
+}
+
+function LoginActionComponent() {
+  const { login } = useUser()
+
+  return (
+    <button
+      onClick={() => {
+        void login({ user_name: 'admin', password: 'unused-password' }).catch(() => undefined)
+      }}
+    >
+      Login
     </button>
   )
 }
@@ -220,6 +238,33 @@ describe('UserContext', () => {
       await waitFor(() => {
         expect(getByText('No user')).toBeInTheDocument()
       })
+    })
+
+    it('should not show a login failure toast for admin password setup transition', async () => {
+      ;(userApis.isAuthenticated as jest.Mock).mockReturnValue(false)
+      ;(userApis.login as jest.Mock).mockRejectedValue(
+        new ApiError('ADMIN_PASSWORD_SETUP_REQUIRED', 400, 'ADMIN_PASSWORD_SETUP_REQUIRED')
+      )
+
+      const { getByText } = render(
+        <UserProvider>
+          <LoginActionComponent />
+        </UserProvider>
+      )
+
+      await waitFor(() => {
+        expect(userApis.isAuthenticated).toHaveBeenCalled()
+      })
+
+      fireEvent.click(getByText('Login'))
+
+      await waitFor(() => {
+        expect(userApis.login).toHaveBeenCalledWith({
+          user_name: 'admin',
+          password: 'unused-password',
+        })
+      })
+      expect(mockToast).not.toHaveBeenCalled()
     })
   })
 
