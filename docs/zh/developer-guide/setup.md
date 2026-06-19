@@ -157,9 +157,12 @@ cp .env.example .env
 # 主要配置项:
 # DATABASE_URL=mysql+pymysql://task_user:task_password@localhost:3306/task_manager
 # REDIS_URL=redis://127.0.0.1:6379/0
+# CHECK_SYSTEM_INITIALIZATION_STATUS=True
 # PASSWORD_KEY=your-password-key-here
 # EXECUTOR_DELETE_TASK_URL=http://localhost:8001/executor-manager/executor/delete
 ```
+
+`CHECK_SYSTEM_INITIALIZATION_STATUS` 默认开启。开启时,后端启动会把首次管理员密码初始化状态加载到内存,登录页通过 `/users/me` 握手获取 `ADMIN_PASSWORD_SETUP_REQUIRED` 错误码。特殊部署需要跳过该检查时可设置为 `False`。
 
 #### 运行开发服务器
 

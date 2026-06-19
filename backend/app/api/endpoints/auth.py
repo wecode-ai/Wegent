@@ -11,14 +11,11 @@ from app.api.dependencies import get_db
 from app.core.security import authenticate_user, create_access_token
 from app.schemas.user import (
     AdminPasswordSetupRequest,
-    AdminPasswordSetupStatusResponse,
     LoginRequest,
     LoginResponse,
     Token,
 )
 from app.services.admin_password_bootstrap import (
-    INITIAL_ADMIN_USERNAME,
-    is_admin_password_setup_required,
     setup_initial_admin_password,
 )
 from shared.telemetry.decorators import add_span_event, set_span_attribute, trace_sync
@@ -65,23 +62,6 @@ def login(db: Session = Depends(get_db), login_data: LoginRequest = Body(...)):
     access_token = create_access_token(data={"sub": user.user_name, "user_id": user.id})
 
     return LoginResponse(access_token=access_token, token_type="bearer")
-
-
-@router.get(
-    "/admin-password/status",
-    response_model=AdminPasswordSetupStatusResponse,
-)
-@trace_sync("auth.admin_password_setup_status", "backend.auth")
-def get_admin_password_setup_status(
-    db: Session = Depends(get_db),
-) -> AdminPasswordSetupStatusResponse:
-    """Return whether first-run admin password setup is required."""
-    add_span_event("admin_password_setup_status_checked")
-    set_span_attribute("auth.bootstrap.status_check", True)
-    return AdminPasswordSetupStatusResponse(
-        required=is_admin_password_setup_required(db),
-        admin_username=INITIAL_ADMIN_USERNAME,
-    )
 
 
 @router.post("/admin-password/setup", response_model=LoginResponse)

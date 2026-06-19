@@ -35,6 +35,10 @@ from app.schemas.quick_launch import (
 from app.schemas.subscription import NotificationChannelInfo
 from app.schemas.subtask_context import AttachmentDetailResponse
 from app.schemas.user import UserCreate, UserInDB, UserUpdate
+from app.services.admin_password_bootstrap import (
+    get_cached_admin_password_setup_required,
+    raise_admin_password_setup_required,
+)
 from app.services.context import context_service
 from app.services.kind import kind_service
 from app.services.subscription.notification_service import (
@@ -153,12 +157,21 @@ async def get_feature_flags(
 @router.get("/me", response_model=UserInDB)
 async def read_current_user(
     db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
+    current_user: Optional[User] = Depends(security.get_current_user_optional),
 ):
     """Get current user information.
 
     For the initial 'admin' user, also returns admin_setup_completed status.
     """
+    if current_user is None:
+        if get_cached_admin_password_setup_required():
+            raise_admin_password_setup_required()
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing authentication credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     # Check admin setup status only for the initial 'admin' user
     # This is used by GlobalAdminSetupWizard to show setup wizard on first login
     admin_setup_completed = None

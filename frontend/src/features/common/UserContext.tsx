@@ -5,15 +5,21 @@
 'use client'
 import React, { createContext, useContext, useEffect, useState, ReactNode, useRef } from 'react'
 import { userApis } from '@/apis/user'
+import { ApiError } from '@/apis/client'
 import { User } from '@/types/api'
 import { useRouter } from 'next/navigation'
 import { paths } from '@/config/paths'
-import { POST_LOGIN_REDIRECT_KEY, sanitizeRedirectPath } from '@/features/login/constants'
+import {
+  ADMIN_PASSWORD_SETUP_REQUIRED_ERROR_CODE,
+  POST_LOGIN_REDIRECT_KEY,
+  sanitizeRedirectPath,
+} from '@/features/login/constants'
 import { useToast } from '@/hooks/use-toast'
 
 interface UserContextType {
   user: User | null
   isLoading: boolean
+  adminPasswordSetupRequired: boolean
   logout: () => void
   refresh: () => Promise<void>
   login: (data: { user_name: string; password: string }) => Promise<void>
@@ -24,12 +30,17 @@ interface UserContextType {
 const UserContext = createContext<UserContextType>({
   user: null,
   isLoading: true,
+  adminPasswordSetupRequired: false,
   logout: () => {},
   refresh: async () => {},
   login: async () => {},
   setupAdminPassword: async () => {},
   updatePreferences: async () => {},
 })
+
+function isAdminPasswordSetupRequiredError(error: unknown): boolean {
+  return error instanceof ApiError && error.errorCode === ADMIN_PASSWORD_SETUP_REQUIRED_ERROR_CODE
+}
 
 type RuntimeUserPreferences = NonNullable<User['preferences']> & {
   quick_access?: unknown
@@ -59,6 +70,7 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
   const router = useRouter()
   const [user, setUser] = useState<User | null>(null)
   const [isLoading, setIsLoading] = useState(true)
+  const [adminPasswordSetupRequired, setAdminPasswordSetupRequired] = useState(false)
   // Use ref to avoid closure issues in setInterval callback
   const userRef = useRef<User | null>(null)
   // Using antd message.error for unified error handling, no local error state needed
@@ -91,6 +103,30 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
     router.replace(loginPath)
   }
 
+  const isOnLoginPage = () => {
+    return typeof window !== 'undefined' && window.location.pathname === paths.auth.login.getHref()
+  }
+
+  const fetchAnonymousLoginHandshake = async () => {
+    setAdminPasswordSetupRequired(false)
+    try {
+      await userApis.getCurrentUserWithoutAuthRedirect()
+    } catch (error) {
+      if (isAdminPasswordSetupRequiredError(error)) {
+        setAdminPasswordSetupRequired(true)
+        return
+      }
+      if (error instanceof ApiError && error.status === 401) {
+        return
+      }
+      console.error('UserContext: Failed to fetch anonymous user handshake:', error as Error)
+      toast({
+        variant: 'destructive',
+        title: 'Failed to load user',
+      })
+    }
+  }
+
   const fetchUser = async () => {
     setIsLoading(true)
 
@@ -99,15 +135,25 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
 
       if (!isAuth) {
         setUser(null)
-        setIsLoading(false)
+        if (isOnLoginPage()) {
+          await fetchAnonymousLoginHandshake()
+          return
+        }
+        setAdminPasswordSetupRequired(false)
         redirectToLogin()
         return
       }
 
       const userData = await userApis.getCurrentUser()
       setUser(userData)
+      setAdminPasswordSetupRequired(false)
     } catch (error) {
       console.error('UserContext: Failed to fetch user information:', error as Error)
+      if (isAdminPasswordSetupRequiredError(error)) {
+        setUser(null)
+        setAdminPasswordSetupRequired(true)
+        return
+      }
       toast({
         variant: 'destructive',
         title: 'Failed to load user',
@@ -149,6 +195,7 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
   const logout = () => {
     userApis.logout()
     setUser(null)
+    setAdminPasswordSetupRequired(false)
     redirectToLogin()
   }
 
@@ -158,10 +205,14 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
       const userData = await userApis.login(data)
       setUser(userData)
     } catch (error) {
-      toast({
-        variant: 'destructive',
-        title: (error as Error)?.message || 'Login failed',
-      })
+      if (isAdminPasswordSetupRequiredError(error)) {
+        setAdminPasswordSetupRequired(true)
+      } else {
+        toast({
+          variant: 'destructive',
+          title: (error as Error)?.message || 'Login failed',
+        })
+      }
       setUser(null)
       throw error
     } finally {
@@ -174,6 +225,7 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
     try {
       const userData = await userApis.setupAdminPassword(password)
       setUser(userData)
+      setAdminPasswordSetupRequired(false)
     } catch (error) {
       toast({
         variant: 'destructive',
@@ -211,6 +263,7 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
       value={{
         user,
         isLoading,
+        adminPasswordSetupRequired,
         logout,
         refresh: fetchUser,
         login,

@@ -5,17 +5,77 @@
 """Bootstrap flow for the initial administrator password."""
 
 import secrets
+from typing import NoReturn
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
+from app.core.exceptions import CustomHTTPException
 from app.core.security import get_password_hash
 from app.models.system_config import SystemConfig
 from app.models.user import User
 from shared.telemetry.decorators import add_span_event, set_span_attribute, trace_sync
 
 ADMIN_PASSWORD_SETUP_CONFIG_KEY = "admin_password_initialized"
+ADMIN_PASSWORD_SETUP_REQUIRED_ERROR_CODE = "ADMIN_PASSWORD_SETUP_REQUIRED"
 INITIAL_ADMIN_USERNAME = "admin"
+_admin_password_setup_required_cache = False
+_admin_password_setup_state_loaded = False
+
+
+def _read_admin_password_setup_required(db: Session) -> bool:
+    config = (
+        db.query(SystemConfig)
+        .filter(SystemConfig.config_key == ADMIN_PASSWORD_SETUP_CONFIG_KEY)
+        .first()
+    )
+    return bool(config and config.config_value.get("completed") is False)
+
+
+def load_admin_password_setup_state(db: Session) -> bool:
+    """Load first-run admin password setup state into process memory."""
+    if not settings.CHECK_SYSTEM_INITIALIZATION_STATUS:
+        set_admin_password_setup_required_cache(False)
+        return False
+
+    required = _read_admin_password_setup_required(db)
+    set_admin_password_setup_required_cache(required)
+    return required
+
+
+def set_admin_password_setup_required_cache(required: bool) -> None:
+    """Update the in-memory first-run admin password setup state."""
+    global _admin_password_setup_required_cache, _admin_password_setup_state_loaded
+    _admin_password_setup_required_cache = required
+    _admin_password_setup_state_loaded = True
+    set_span_attribute("auth.bootstrap.setup_required_cache", required)
+
+
+def reset_admin_password_setup_state_cache() -> None:
+    """Reset cached state for tests and controlled reinitialization."""
+    global _admin_password_setup_required_cache, _admin_password_setup_state_loaded
+    _admin_password_setup_required_cache = False
+    _admin_password_setup_state_loaded = False
+
+
+def get_cached_admin_password_setup_required() -> bool:
+    """Return the cached first-run admin password setup state."""
+    if not settings.CHECK_SYSTEM_INITIALIZATION_STATUS:
+        return False
+    return _admin_password_setup_state_loaded and _admin_password_setup_required_cache
+
+
+def raise_admin_password_setup_required() -> NoReturn:
+    """Raise the structured API error used by the frontend bootstrap handshake."""
+    raise CustomHTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail={
+            "error_code": ADMIN_PASSWORD_SETUP_REQUIRED_ERROR_CODE,
+            "admin_username": INITIAL_ADMIN_USERNAME,
+        },
+        error_code=ADMIN_PASSWORD_SETUP_REQUIRED_ERROR_CODE,
+    )
 
 
 @trace_sync("auth.bootstrap.create_unusable_password_hash", "backend.auth")
@@ -36,19 +96,7 @@ def mark_admin_password_setup_required(db: Session, *, admin_user_id: int) -> No
     )
     config.config_value = {"completed": False}
     db.add(config)
-
-
-@trace_sync("auth.bootstrap.is_setup_required", "backend.auth")
-def is_admin_password_setup_required(db: Session) -> bool:
-    """Return whether the public one-time admin password setup is open."""
-    config = (
-        db.query(SystemConfig)
-        .filter(SystemConfig.config_key == ADMIN_PASSWORD_SETUP_CONFIG_KEY)
-        .first()
-    )
-    required = bool(config and config.config_value.get("completed") is False)
-    set_span_attribute("auth.bootstrap.setup_required", required)
-    return required
+    set_admin_password_setup_required_cache(True)
 
 
 @trace_sync("auth.bootstrap.setup_initial_admin_password", "backend.auth")
@@ -88,6 +136,7 @@ def setup_initial_admin_password(db: Session, *, password: str) -> User:
     config.version += 1
     db.commit()
     db.refresh(admin_user)
+    set_admin_password_setup_required_cache(False)
     set_span_attribute("auth.bootstrap.setup_allowed", True)
     set_span_attribute("auth.bootstrap.admin_user_id", admin_user.id)
     add_span_event("admin_password.initial_setup_completed")

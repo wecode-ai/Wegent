@@ -31,11 +31,6 @@ export interface LoginResponse {
   token_type: string
 }
 
-export interface AdminPasswordSetupStatusResponse {
-  required: boolean
-  admin_username: string
-}
-
 export interface UpdateUserRequest {
   user_name?: string
   email?: string
@@ -166,10 +161,6 @@ export const userApis = {
     return await apiClient.get('/users/me')
   },
 
-  async getAdminPasswordSetupStatus(): Promise<AdminPasswordSetupStatusResponse> {
-    return apiClient.get('/auth/admin-password/status')
-  },
-
   async setupAdminPassword(password: string): Promise<User> {
     const res: LoginResponse = await apiClient.post('/auth/admin-password/setup', { password })
     setToken(res.access_token)
@@ -185,6 +176,10 @@ export const userApis = {
 
   async getCurrentUser(): Promise<User> {
     return apiClient.get('/users/me')
+  },
+
+  async getCurrentUserWithoutAuthRedirect(): Promise<User> {
+    return apiClient.get('/users/me', { redirectOnUnauthorized: false })
   },
 
   async updateUser(data: UpdateUserRequest): Promise<User> {

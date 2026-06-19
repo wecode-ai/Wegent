@@ -87,6 +87,7 @@ services:
       LITELLM_LOCAL_MODEL_COST_MAP: "True"
       ENVIRONMENT: ${BACKEND_ENVIRONMENT:-development}
       DB_AUTO_MIGRATE: "${DB_AUTO_MIGRATE:-True}"
+      CHECK_SYSTEM_INITIALIZATION_STATUS: "${CHECK_SYSTEM_INITIALIZATION_STATUS:-True}"
       DATABASE_URL: mysql+pymysql://${MYSQL_USER:-task_user}:${MYSQL_PASSWORD:-task_password}@mysql:3306/${MYSQL_DATABASE:-task_manager}
       EXECUTOR_CANCEL_TASK_URL: ${EXECUTOR_CANCEL_TASK_URL:-http://executor_manager:8001/executor-manager/tasks/cancel}
       EXECUTOR_DELETE_TASK_URL: ${EXECUTOR_DELETE_TASK_URL:-http://executor_manager:8001/executor-manager/executor/delete}

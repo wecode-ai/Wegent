@@ -157,9 +157,12 @@ cp .env.example .env
 # Main configuration items:
 # DATABASE_URL=mysql+pymysql://task_user:task_password@localhost:3306/task_manager
 # REDIS_URL=redis://127.0.0.1:6379/0
+# CHECK_SYSTEM_INITIALIZATION_STATUS=True
 # PASSWORD_KEY=your-password-key-here
 # EXECUTOR_DELETE_TASK_URL=http://localhost:8001/executor-manager/executor/delete
 ```
+
+`CHECK_SYSTEM_INITIALIZATION_STATUS` is enabled by default. When enabled, the backend loads the first-run administrator password setup state into memory at startup, and the login page receives the `ADMIN_PASSWORD_SETUP_REQUIRED` error code through the `/users/me` handshake. Set it to `False` for deployments that must skip this check.
 
 #### Run Development Server
 
