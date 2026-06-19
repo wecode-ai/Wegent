@@ -2,13 +2,17 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { userApis } from '@/apis/user'
-import type { QuickLaunchInputPreset, QuickLaunchResponse, TaskType, Team } from '@/types/api'
-import { filterTeamsByMode, getTeamTargetPage } from '../../selector/team-selector-utils'
+import type { QuickLaunchInputPreset, QuickLaunchResponse, Team } from '@/types/api'
+import {
+  filterTeamsByMode,
+  getTeamTargetPage,
+  type TeamModeFilter,
+} from '../../selector/team-selector-utils'
 import type { QuickInputPreset, QuickLauncher } from './types'
 
 interface UseQuickLaunchersOptions {
   teams: Team[]
-  currentMode: TaskType
+  currentMode: TeamModeFilter
   defaultTeam?: Team | null
 }
 

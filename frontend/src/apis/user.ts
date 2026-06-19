@@ -178,6 +178,10 @@ export const userApis = {
     return apiClient.get('/users/me')
   },
 
+  async getCurrentUserWithoutAuthRedirect(): Promise<User> {
+    return apiClient.get('/users/me', { redirectOnUnauthorized: false })
+  },
+
   async updateUser(data: UpdateUserRequest): Promise<User> {
     return apiClient.put('/users/me', data)
   },

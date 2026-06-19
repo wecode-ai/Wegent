@@ -39,7 +39,7 @@ export default function LoginForm() {
   const [showPassword, setShowPassword] = useState(false)
   const [showAdminPassword, setShowAdminPassword] = useState(false)
   const [showAdminPasswordConfirm, setShowAdminPasswordConfirm] = useState(false)
-  const [adminPasswordSetupRequired, setAdminPasswordSetupRequired] = useState(false)
+  const [loginAdminPasswordSetupRequired, setLoginAdminPasswordSetupRequired] = useState(false)
   const [adminUsername, setAdminUsername] = useState(INITIAL_ADMIN_USERNAME)
   const [adminPasswordError, setAdminPasswordError] = useState<string | null>(null)
   // Used antd message.error for unified error prompt, no need for local error state
@@ -67,7 +67,15 @@ export default function LoginForm() {
     // Used antd message.error for unified error prompt, no need for local error state
   }
 
-  const { user, isLoading: userLoading, login, setupAdminPassword } = useUser()
+  const {
+    user,
+    isLoading: userLoading,
+    adminPasswordSetupRequired,
+    login,
+    setupAdminPassword,
+  } = useUser()
+  const isAdminPasswordSetupRequired = adminPasswordSetupRequired || loginAdminPasswordSetupRequired
+  const isResolvingInitialUserState = userLoading && !user
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -144,7 +152,7 @@ export default function LoginForm() {
         error.errorCode === ADMIN_PASSWORD_SETUP_REQUIRED_ERROR_CODE
       ) {
         setAdminUsername(INITIAL_ADMIN_USERNAME)
-        setAdminPasswordSetupRequired(true)
+        setLoginAdminPasswordSetupRequired(true)
       }
       // Other login errors are already handled in UserContext.login.
     } finally {
@@ -192,7 +200,7 @@ export default function LoginForm() {
         <LanguageSwitcher />
       </div>
 
-      {showPasswordLogin && adminPasswordSetupRequired && (
+      {!isResolvingInitialUserState && isAdminPasswordSetupRequired && (
         <form
           className="space-y-6"
           data-testid="admin-password-setup-form"
@@ -320,7 +328,7 @@ export default function LoginForm() {
       )}
 
       {/* Password login form */}
-      {showPasswordLogin && !adminPasswordSetupRequired && (
+      {showPasswordLogin && !isResolvingInitialUserState && !isAdminPasswordSetupRequired && (
         <form className="space-y-6" data-testid="login-form" onSubmit={handleSubmit}>
           <div>
             <label htmlFor="user_name" className="block text-sm font-medium text-text-secondary">
@@ -418,23 +426,26 @@ export default function LoginForm() {
       )}
 
       {/* Divider and third-party login - only shown when both login modes are displayed */}
-      {showPasswordLogin && !adminPasswordSetupRequired && showOidcLogin && (
-        <div className="mt-6">
-          <div className="relative">
-            <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-border" />
-            </div>
-            <div className="relative flex justify-center text-sm">
-              <span className="px-2 bg-surface text-text-muted">
-                {t('common:login.or_continue_with')}
-              </span>
+      {showPasswordLogin &&
+        !isResolvingInitialUserState &&
+        !isAdminPasswordSetupRequired &&
+        showOidcLogin && (
+          <div className="mt-6">
+            <div className="relative">
+              <div className="absolute inset-0 flex items-center">
+                <div className="w-full border-t border-border" />
+              </div>
+              <div className="relative flex justify-center text-sm">
+                <span className="px-2 bg-surface text-text-muted">
+                  {t('common:login.or_continue_with')}
+                </span>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
 
       {/* OIDC login */}
-      {showOidcLogin && (!showPasswordLogin || !adminPasswordSetupRequired) && (
+      {showOidcLogin && !isResolvingInitialUserState && !isAdminPasswordSetupRequired && (
         <div className={showPasswordLogin ? 'mt-6' : ''}>
           <div className="grid grid-cols-1 gap-3">
             <Button

@@ -1,5 +1,6 @@
 import type { TeamTargetPage } from '../../selector/team-selector-utils'
 import type { QuickLauncher } from './types'
+import { buildChatCodeHref } from '@/config/coding-route'
 
 export const QUICK_LAUNCH_QUERY = {
   teamId: 'teamId',
@@ -33,6 +34,10 @@ export function buildQuickLaunchHref(
 
   if (options.showPresets) {
     params.set(QUICK_LAUNCH_QUERY.showPresets, '1')
+  }
+
+  if (launcher.targetPage === 'code') {
+    return buildChatCodeHref(params)
   }
 
   return `/${launcher.targetPage}?${params.toString()}`

@@ -134,7 +134,7 @@ export function notifyTaskCompletion(
   // Build target URL based on task type
   let targetUrl: string
   if (taskType === 'code') {
-    targetUrl = `${window.location.origin}/code?taskId=${taskId}`
+    targetUrl = `${window.location.origin}/chat?taskId=${taskId}`
   } else if (taskType === 'knowledge') {
     targetUrl = `${window.location.origin}/knowledge?taskId=${taskId}`
   } else if (taskType === 'task') {

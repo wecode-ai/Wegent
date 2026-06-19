@@ -69,6 +69,8 @@ import {
 import { shouldClearDeviceSelectionForQuickLauncher } from './quick-launch/execution-target'
 import type { QuickPresetSelection } from './quick-launch/types'
 import { useDevices } from '@/contexts/DeviceContext'
+import { filterTeamsByMode, type TeamModeFilter } from '../selector/team-selector-utils'
+import type { UnifiedMessage } from '@wegent/chat-core'
 
 /**
  * Threshold in pixels for determining when to collapse selectors.
@@ -142,6 +144,7 @@ interface ChatAreaProps {
   selectedTeamForNewTask?: Team | null
   showRepositorySelector?: boolean
   taskType?: TaskType
+  teamModeFilter?: TeamModeFilter
   onShareButtonRender?: (button: React.ReactNode) => void
   onRefreshTeams?: () => Promise<Team[]>
   /** Initial knowledge base to pre-select when starting a new chat from knowledge page */
@@ -183,6 +186,7 @@ function ChatAreaContent({
   selectedTeamForNewTask,
   showRepositorySelector = true,
   taskType = 'chat',
+  teamModeFilter = taskType,
   onShareButtonRender,
   onRefreshTeams,
   initialKnowledgeBase,
@@ -292,10 +296,26 @@ function ChatAreaContent({
   const chatState = useChatAreaState({
     teams,
     taskType,
+    teamModeFilter,
     selectedTeamForNewTask,
     initialKnowledgeBase,
     maxAttachments: maxAttachmentsFromModel,
   })
+
+  const effectiveTaskType = useMemo<TaskType>(() => {
+    if (
+      taskType === 'chat' &&
+      teamModeFilter === 'all' &&
+      chatState.selectedTeam?.bind_mode?.includes('code') &&
+      !chatState.selectedTeam.bind_mode.includes('chat')
+    ) {
+      return 'code'
+    }
+
+    return taskType
+  }, [chatState.selectedTeam?.bind_mode, taskType, teamModeFilter])
+
+  const effectiveShowRepositorySelector = showRepositorySelector && effectiveTaskType === 'code'
 
   // Compute initial selected skills from task detail (for page refresh recovery)
   const initialSelectedSkills = useMemo(() => {
@@ -440,20 +460,11 @@ function ChatAreaContent({
   const hasInitializedTeamRef = useRef(false)
   const lastSyncedTaskIdRef = useRef<number | null>(null)
 
-  // Filter teams by bind_mode based on current mode
-  const filteredTeams = useMemo(() => {
-    const teamsWithValidBindMode = teams.filter(team => {
-      if (Array.isArray(team.bind_mode) && team.bind_mode.length === 0) return false
-      return true
-    })
-    const result = teamsWithValidBindMode.filter(team => {
-      if (!team.bind_mode) return true
-      const included = team.bind_mode.includes(taskType)
-      return included
-    })
-
-    return result
-  }, [teams, taskType])
+  // Filter teams by bind_mode based on current visible agent mode.
+  const filteredTeams = useMemo(
+    () => filterTeamsByMode(teams, teamModeFilter),
+    [teams, teamModeFilter]
+  )
 
   // Extract values for dependency array
   const selectedTeam = chatState.selectedTeam
@@ -573,12 +584,12 @@ function ChatAreaContent({
   // Handle team selection from QuickAccessCards
   const handleTeamSelect = useCallback(
     (team: Team) => {
-      if (taskType === 'task' && shouldClearDeviceSelectionForQuickLauncher(team)) {
+      if (effectiveTaskType === 'task' && shouldClearDeviceSelectionForQuickLauncher(team)) {
         setSelectedDeviceId(null)
       }
       handleTeamChange(team)
     },
-    [handleTeamChange, setSelectedDeviceId, taskType]
+    [effectiveTaskType, handleTeamChange, setSelectedDeviceId]
   )
 
   // Use scroll management hook - consolidates 4 useEffect calls
@@ -611,11 +622,11 @@ function ChatAreaContent({
   // For video/image mode, use respective model selection; otherwise use regular model selection
   // This ensures the correct model is passed to the backend for routing
   const effectiveSelectedModel = useMemo(() => {
-    if (taskType === 'video') return videoModelSelection.selectedModel
-    if (taskType === 'image') return imageModelSelection.selectedModel
+    if (effectiveTaskType === 'video') return videoModelSelection.selectedModel
+    if (effectiveTaskType === 'image') return imageModelSelection.selectedModel
     return chatState.selectedModel
   }, [
-    taskType,
+    effectiveTaskType,
     videoModelSelection.selectedModel,
     imageModelSelection.selectedModel,
     chatState.selectedModel,
@@ -624,7 +635,7 @@ function ChatAreaContent({
   // Build generate params for video/image generation tasks
   // Include model name for display in user message bubble
   const generateParams = useMemo(() => {
-    if (taskType === 'video') {
+    if (effectiveTaskType === 'video') {
       return {
         resolution: selectedResolution,
         ratio: selectedRatio,
@@ -632,7 +643,7 @@ function ChatAreaContent({
         model: videoModelSelection.selectedModel?.name,
       }
     }
-    if (taskType === 'image') {
+    if (effectiveTaskType === 'image') {
       return {
         size: selectedImageSize,
         model: imageModelSelection.selectedModel?.name,
@@ -640,7 +651,7 @@ function ChatAreaContent({
     }
     return undefined
   }, [
-    taskType,
+    effectiveTaskType,
     selectedResolution,
     selectedRatio,
     selectedDuration,
@@ -658,7 +669,7 @@ function ChatAreaContent({
     setForceOverride: chatState.setForceOverride,
     selectedRepo: chatState.selectedRepo,
     selectedBranch: chatState.selectedBranch,
-    showRepositorySelector,
+    showRepositorySelector: effectiveShowRepositorySelector,
     effectiveRequiresWorkspace: chatState.effectiveRequiresWorkspace,
     taskInputMessage: chatState.taskInputMessage,
     setTaskInputMessage: chatState.setTaskInputMessage,
@@ -668,7 +679,7 @@ function ChatAreaContent({
     attachments: chatState.attachmentState.attachments,
     resetAttachment: chatState.resetAttachment,
     isAttachmentReadyToSend: chatState.isAttachmentReadyToSend,
-    taskType,
+    taskType: effectiveTaskType,
     knowledgeBaseId,
     shouldHideChatInput: chatState.shouldHideChatInput,
     scrollToBottom,
@@ -733,7 +744,8 @@ function ChatAreaContent({
   const pipelineNextStepMessages = useMemo<PipelineNextStepMessage[]>(() => {
     if (!taskState?.messages) return []
 
-    return Array.from(taskState.messages.values()).map(message => ({
+    const messages: UnifiedMessage[] = Array.from(taskState.messages.values())
+    return messages.map(message => ({
       id: message.id,
       type: message.type,
       status: message.status,
@@ -772,12 +784,12 @@ function ChatAreaContent({
     // OpenClaw devices handle model on device side, no model selection required
     if (hideSelectors) return false
     // Video mode uses video model selection, not regular model selection
-    if (taskType === 'video') {
+    if (effectiveTaskType === 'video') {
       // In video mode, we need a video model selected
       return !videoModelSelection.selectedModel
     }
     // Image mode uses image model selection
-    if (taskType === 'image') {
+    if (effectiveTaskType === 'image') {
       // In image mode, we need an image model selected
       return !imageModelSelection.selectedModel
     }
@@ -788,7 +800,7 @@ function ChatAreaContent({
   }, [
     chatState.selectedTeam,
     chatState.selectedModel,
-    taskType,
+    effectiveTaskType,
     hideSelectors,
     videoModelSelection.selectedModel,
     imageModelSelection.selectedModel,
@@ -1472,7 +1484,8 @@ function ChatAreaContent({
     // Only enable restore when default team exists
     onRestoreDefaultTeam: chatState.defaultTeam ? chatState.restoreDefaultTeam : undefined,
     isUsingDefaultTeam: chatState.isUsingDefaultTeam,
-    taskType,
+    taskType: effectiveTaskType,
+    teamModeFilter,
     tipText: chatState.randomTip,
     isGroupChat: selectedTaskDetail?.is_group_chat || false,
     isDragging: chatState.isDragging,
@@ -1518,7 +1531,7 @@ function ChatAreaContent({
     setForceOverride: chatState.setForceOverride,
     teamId: chatState.selectedTeam?.id,
     taskId: selectedTaskDetail?.id,
-    showRepositorySelector,
+    showRepositorySelector: effectiveShowRepositorySelector,
     selectedRepo: chatState.selectedRepo,
     setSelectedRepo: chatState.setSelectedRepo,
     selectedBranch: chatState.selectedBranch,
@@ -1604,7 +1617,7 @@ function ChatAreaContent({
   }
 
   const shouldMountQueueMessageHandler =
-    taskType === 'chat' || taskType === 'task' || taskType === 'code'
+    effectiveTaskType === 'chat' || effectiveTaskType === 'task' || effectiveTaskType === 'code'
 
   return (
     <div
@@ -1732,12 +1745,12 @@ function ChatAreaContent({
                   onTeamSelect={handleTeamSelect}
                   onPhraseSelect={handleQuickPhraseSelect}
                   onPresetSelect={handleQuickPresetSelect}
-                  currentMode={taskType}
+                  currentMode={teamModeFilter}
                   isLoading={isTeamsLoading}
                   isTeamsLoading={isTeamsLoading}
                   hideSelected={true}
                   onRefreshTeams={onRefreshTeams}
-                  showWizardButton={taskType === 'chat'}
+                  showWizardButton={effectiveTaskType === 'chat'}
                   defaultTeam={chatState.defaultTeam}
                   launchIntent={quickLaunchIntent}
                   onLaunchIntentConsumed={() => setQuickLaunchIntent(null)}

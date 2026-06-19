@@ -8,19 +8,14 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
-from app.core.exceptions import CustomHTTPException
 from app.core.security import authenticate_user, create_access_token
 from app.schemas.user import (
     AdminPasswordSetupRequest,
-    AdminPasswordSetupStatusResponse,
     LoginRequest,
     LoginResponse,
     Token,
 )
 from app.services.admin_password_bootstrap import (
-    ADMIN_PASSWORD_SETUP_REQUIRED_ERROR_CODE,
-    INITIAL_ADMIN_USERNAME,
-    is_admin_password_setup_required,
     setup_initial_admin_password,
 )
 from shared.telemetry.decorators import add_span_event, set_span_attribute, trace_sync
@@ -57,18 +52,6 @@ def login(db: Session = Depends(get_db), login_data: LoginRequest = Body(...)):
     """
     user = authenticate_user(db, login_data.user_name, login_data.password)
     if not user:
-        if (
-            login_data.user_name == INITIAL_ADMIN_USERNAME
-            and is_admin_password_setup_required(db)
-        ):
-            raise CustomHTTPException(
-                status_code=400,
-                detail={
-                    "error_code": ADMIN_PASSWORD_SETUP_REQUIRED_ERROR_CODE,
-                    "admin_username": INITIAL_ADMIN_USERNAME,
-                },
-                error_code=ADMIN_PASSWORD_SETUP_REQUIRED_ERROR_CODE,
-            )
         raise HTTPException(status_code=400, detail="Invalid username or password")
 
     # Update auth_source if it was unknown
@@ -79,23 +62,6 @@ def login(db: Session = Depends(get_db), login_data: LoginRequest = Body(...)):
     access_token = create_access_token(data={"sub": user.user_name, "user_id": user.id})
 
     return LoginResponse(access_token=access_token, token_type="bearer")
-
-
-@router.get(
-    "/admin-password/status",
-    response_model=AdminPasswordSetupStatusResponse,
-)
-@trace_sync("auth.admin_password_setup_status", "backend.auth")
-def get_admin_password_setup_status(
-    db: Session = Depends(get_db),
-) -> AdminPasswordSetupStatusResponse:
-    """Return whether first-run admin password setup is required."""
-    add_span_event("admin_password_setup_status_checked")
-    set_span_attribute("auth.bootstrap.status_check", True)
-    return AdminPasswordSetupStatusResponse(
-        required=is_admin_password_setup_required(db),
-        admin_username=INITIAL_ADMIN_USERNAME,
-    )
 
 
 @router.post("/admin-password/setup", response_model=LoginResponse)

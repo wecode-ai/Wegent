@@ -88,6 +88,7 @@ REDIS_PROTOCOL=2  # Default RESP2, compatible with Redis-compatible servers with
 # Backend Configuration
 PASSWORD_KEY=your-password-key-here
 DATABASE_URL=mysql+pymysql://task_user:your_password@mysql:3306/task_manager
+CHECK_SYSTEM_INITIALIZATION_STATUS=True
 
 # Attachment Storage Configuration (Optional)
 # Default: mysql (stores files in database)
@@ -107,6 +108,7 @@ ATTACHMENT_STORAGE_BACKEND=mysql
 # Set via docker-compose.yml environment section
 # RUNTIME_INTERNAL_API_URL=http://backend:8000
 # RUNTIME_SOCKET_DIRECT_URL=http://backend:8000
+# RUNTIME_WEWORK_CODE_URL=https://wework.example.com/coding  # Optional: route coding entry points to Wework
 # Legacy (deprecated): NEXT_PUBLIC_API_URL=http://localhost:8000
 
 # Wework frontend build configuration (optional)
@@ -117,6 +119,8 @@ ATTACHMENT_STORAGE_BACKEND=mysql
 EXECUTOR_IMAGE=ghcr.io/wecode-ai/wegent-executor:latest
 EXECUTOR_WORKSPACE=/path/to/workspace
 ```
+
+When `RUNTIME_WEWORK_CODE_URL` is empty, Wegent Web opens coding entry points at `/chat?agent=code` and filters to coding agents. When it is configured, the sidebar shows **WeWork** instead of **Code** and opens that runtime URL. This setting is delivered only through `/runtime-config`; there is no `NEXT_PUBLIC_*` fallback.
 
 ### Step 3: Start Services
 
@@ -244,7 +248,7 @@ mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS task_manager CHARACTER SET ut
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-> **Administrator password**: First startup automatically creates the `admin` administrator account, but it does not assign a default password. The first visit to the login page forces the administrator password setup flow; complete that flow before logging in and using the system.
+> **Administrator password**: First startup automatically creates the `admin` administrator account, but it does not assign a default password. By default, `CHECK_SYSTEM_INITIALIZATION_STATUS=True` makes the backend load the initialization state into memory at startup, and the first visit to the login page forces the administrator password setup flow. Complete that flow before logging in and using the system. Set `CHECK_SYSTEM_INITIALIZATION_STATUS=False` only for deployments that must skip this check.
 
 ### Step 5: Install Frontend
 

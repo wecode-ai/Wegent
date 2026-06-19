@@ -157,9 +157,12 @@ cp .env.example .env
 # 主要配置项:
 # DATABASE_URL=mysql+pymysql://task_user:task_password@localhost:3306/task_manager
 # REDIS_URL=redis://127.0.0.1:6379/0
+# CHECK_SYSTEM_INITIALIZATION_STATUS=True
 # PASSWORD_KEY=your-password-key-here
 # EXECUTOR_DELETE_TASK_URL=http://localhost:8001/executor-manager/executor/delete
 ```
+
+`CHECK_SYSTEM_INITIALIZATION_STATUS` 默认开启。开启时,后端启动会把首次管理员密码初始化状态加载到内存,登录页通过 `/users/me` 握手获取 `ADMIN_PASSWORD_SETUP_REQUIRED` 错误码。特殊部署需要跳过该检查时可设置为 `False`。
 
 #### 运行开发服务器
 
@@ -214,6 +217,7 @@ cp .env.local.example .env.local
 # 主要配置项（运行时变量，可在不重新构建的情况下更改）:
 # RUNTIME_INTERNAL_API_URL=http://localhost:8000  # 服务端代理 URL
 # RUNTIME_SOCKET_DIRECT_URL=http://localhost:8000 # WebSocket 连接 URL
+# RUNTIME_WEWORK_CODE_URL=https://wework.example.com/coding  # 可选：编码入口跳转到 Wework
 # RUNTIME_ENABLE_PROJECT_WORKSPACE=false          # 是否启用项目工作区 UI
 # RUNTIME_PROJECT_WORKSPACE_WHITELIST=admin       # 允许使用项目工作区的用户, 为空表示全部用户
 # 旧版（已弃用）: NEXT_PUBLIC_API_URL=http://localhost:8000
@@ -222,7 +226,7 @@ cp .env.local.example .env.local
 # I18N_LNG=zh-CN
 ```
 
-> **注意**: 前端现在使用 `RUNTIME_INTERNAL_API_URL` 和 `RUNTIME_SOCKET_DIRECT_URL` 替代 `NEXT_PUBLIC_API_URL`。运行时变量可以在不重新构建应用的情况下更改。
+> **注意**: 前端现在使用 `RUNTIME_INTERNAL_API_URL` 和 `RUNTIME_SOCKET_DIRECT_URL` 替代 `NEXT_PUBLIC_API_URL`。运行时变量可以在不重新构建应用的情况下更改。`RUNTIME_WEWORK_CODE_URL` 为空时编码入口进入 `/chat?agent=code`；配置后菜单显示 **WeWork** 并跳转到该 URL。该变量不支持 `NEXT_PUBLIC_*` 回退。
 
 #### 运行开发服务器
 

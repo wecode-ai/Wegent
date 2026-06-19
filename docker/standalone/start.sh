@@ -284,6 +284,8 @@ export RUNTIME_INTERNAL_API_URL=http://localhost:${BACKEND_PORT}
 export RUNTIME_PUBLIC_API_URL=${RUNTIME_PUBLIC_API_URL:-http://localhost:${BACKEND_PORT}}
 # RUNTIME_SOCKET_DIRECT_URL can be overridden via docker-compose for remote access.
 export RUNTIME_SOCKET_DIRECT_URL=${RUNTIME_SOCKET_DIRECT_URL:-http://localhost:${BACKEND_PORT}}
+# Point frontend coding entry points at bundled Wework by default.
+export RUNTIME_WEWORK_CODE_URL="${RUNTIME_WEWORK_CODE_URL:-http://localhost:${WEWORK_PORT}}"
 export NODE_ENV=production
 export PORT=${FRONTEND_PORT}
 export HOSTNAME="0.0.0.0"

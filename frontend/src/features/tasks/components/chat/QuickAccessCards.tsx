@@ -20,6 +20,7 @@ import {
   filterTeamsByMode,
   getTeamDisplayName,
   type SelectableTeam,
+  type TeamModeFilter,
 } from '../selector/team-selector-utils'
 import { useTeamFavorites } from '../selector/useTeamFavorites'
 import type { QuickLaunchIntent } from './quick-launch/launch-intent'
@@ -35,7 +36,7 @@ interface QuickAccessCardsProps {
   onTeamSelect: (team: Team) => void
   onPhraseSelect?: (phrase: string) => void
   onPresetSelect?: (selection: QuickPresetSelection) => void
-  currentMode: 'chat' | 'code' | 'knowledge' | 'task' | 'video' | 'image'
+  currentMode: TeamModeFilter
   isLoading?: boolean
   isTeamsLoading?: boolean
   hideSelected?: boolean

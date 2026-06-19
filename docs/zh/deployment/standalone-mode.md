@@ -70,6 +70,7 @@ docker run -d \
   -v wegent-data:/app/data \
   -v wegent-workspace:/workspace \
   -e RUNTIME_SOCKET_DIRECT_URL=http://localhost:8000 \
+  -e RUNTIME_WEWORK_CODE_URL=http://localhost:3001 \
   -e WEWORK_PUBLIC_BACKEND_URL=http://localhost:8000 \
   ghcr.io/wecode-ai/wegent-standalone:latest
 ```
@@ -86,9 +87,12 @@ docker run -d \
   -v wegent-data:/app/data \
   -v wegent-workspace:/workspace \
   -e RUNTIME_SOCKET_DIRECT_URL=http://YOUR_SERVER_IP:8000 \
+  -e RUNTIME_WEWORK_CODE_URL=http://YOUR_SERVER_IP:3001 \
   -e WEWORK_PUBLIC_BACKEND_URL=http://YOUR_SERVER_IP:8000 \
   ghcr.io/wecode-ai/wegent-standalone:latest
 ```
+
+`RUNTIME_WEWORK_CODE_URL` 会提供给主 Frontend 的运行时配置，让主前端中的编码入口默认打开 standalone 内置 Wework。
 
 `WEWORK_PUBLIC_BACKEND_URL` 会在容器启动时写入 Wework 的 `runtime-config.js`，确保浏览器远程访问 `http://YOUR_SERVER_IP:3001` 时仍然连接服务器上的 Backend，而不是用户本机的 `localhost`。
 
@@ -111,6 +115,7 @@ Standalone 默认不内置 IDE/code-server 入口。正式使用时建议先将 
 | 变量名 | 说明 | 默认值 |
 |--------|------|--------|
 | `RUNTIME_SOCKET_DIRECT_URL` | 主 Frontend 使用的 Backend WebSocket 地址 | `http://localhost:8000` |
+| `RUNTIME_WEWORK_CODE_URL` | 主 Frontend 编码入口打开的 Wework 地址 | `http://localhost:3001` |
 | `WEWORK_PUBLIC_BACKEND_URL` | Wework Web 运行时 Backend 地址，会派生 API 和 Socket 地址 | `http://localhost:8000` |
 | `WEWORK_PUBLIC_API_URL` | Wework Web API 地址；设置后覆盖 `WEWORK_PUBLIC_BACKEND_URL/api` | `${WEWORK_PUBLIC_BACKEND_URL}/api` |
 | `WEWORK_PUBLIC_SOCKET_URL` | Wework Web Socket.IO 地址；设置后覆盖 `WEWORK_PUBLIC_BACKEND_URL` | `${WEWORK_PUBLIC_BACKEND_URL}` |
@@ -179,6 +184,7 @@ docker run -d \
   -v wegent-data:/app/data \
   -v wegent-workspace:/workspace \
   -e RUNTIME_SOCKET_DIRECT_URL=http://localhost:8000 \
+  -e RUNTIME_WEWORK_CODE_URL=http://localhost:3001 \
   -e WEWORK_PUBLIC_BACKEND_URL=http://localhost:8000 \
   ghcr.io/wecode-ai/wegent-standalone:latest
 ```

@@ -61,15 +61,47 @@ describe('LoginForm admin password setup', () => {
     ;(useUser as jest.Mock).mockReturnValue({
       user: null,
       isLoading: false,
+      adminPasswordSetupRequired: false,
       login,
       setupAdminPassword,
     })
   })
 
-  it('shows password login immediately without checking setup status first', () => {
+  it('shows admin password setup immediately when the user handshake requires it', () => {
+    ;(useUser as jest.Mock).mockReturnValue({
+      user: null,
+      isLoading: false,
+      adminPasswordSetupRequired: true,
+      login,
+      setupAdminPassword,
+    })
+
+    render(<LoginForm />)
+
+    expect(screen.getByTestId('admin-password-setup-form')).toBeInTheDocument()
+    expect(screen.queryByTestId('login-form')).not.toBeInTheDocument()
+    expect(screen.getByTestId('admin-username-value')).toHaveTextContent('admin')
+  })
+
+  it('does not flash the login form while the user handshake is loading', () => {
+    ;(useUser as jest.Mock).mockReturnValue({
+      user: null,
+      isLoading: true,
+      adminPasswordSetupRequired: false,
+      login,
+      setupAdminPassword,
+    })
+
     render(<LoginForm />)
 
     expect(screen.queryByTestId('login-loading')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('login-form')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('admin-password-setup-form')).not.toBeInTheDocument()
+  })
+
+  it('shows password login after the user handshake confirms setup is not required', () => {
+    render(<LoginForm />)
+
     expect(screen.getByTestId('login-form')).toBeInTheDocument()
     expect(screen.getByTestId('login-username-input')).toHaveValue('')
     expect(screen.getByTestId('login-password-input')).toHaveValue('')
@@ -121,7 +153,7 @@ describe('LoginForm admin password setup', () => {
     expect(screen.queryByDisplayValue('Wegent2025!')).not.toBeInTheDocument()
   })
 
-  it('shows password and OIDC login without blocking on setup status confirmation', () => {
+  it('shows password and OIDC login after setup is not required', () => {
     mockRuntimeConfig.loginMode = 'all'
 
     render(<LoginForm />)

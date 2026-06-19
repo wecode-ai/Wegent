@@ -37,6 +37,7 @@ describe('runtime config caching', () => {
         bindGroupDesc: '',
         bindGroupSteps: '{"variables":{"botName":"机器人"},"steps":[]}',
         appVersion: 'dev',
+        weworkCodeUrl: '',
       }),
     }) as typeof fetch
   })
@@ -64,6 +65,40 @@ describe('runtime config caching', () => {
     expect(response.headers.get('Cache-Control')).toBe('max-age=60, stale-while-revalidate=300')
   })
 
+  test('runtime config route exposes Wework code URL from runtime env only', async () => {
+    const previousRuntimeUrl = process.env.RUNTIME_WEWORK_CODE_URL
+    const previousPublicUrl = process.env.NEXT_PUBLIC_WEWORK_CODE_URL
+
+    try {
+      process.env.RUNTIME_WEWORK_CODE_URL = 'https://wework.example.com/coding'
+      process.env.NEXT_PUBLIC_WEWORK_CODE_URL = 'https://public.example.com/ignored'
+
+      const response = await GET()
+      const body = await response.json()
+
+      expect(body.weworkCodeUrl).toBe('https://wework.example.com/coding')
+
+      delete process.env.RUNTIME_WEWORK_CODE_URL
+
+      const fallbackResponse = await GET()
+      const fallbackBody = await fallbackResponse.json()
+
+      expect(fallbackBody.weworkCodeUrl).toBe('')
+    } finally {
+      if (previousRuntimeUrl === undefined) {
+        delete process.env.RUNTIME_WEWORK_CODE_URL
+      } else {
+        process.env.RUNTIME_WEWORK_CODE_URL = previousRuntimeUrl
+      }
+
+      if (previousPublicUrl === undefined) {
+        delete process.env.NEXT_PUBLIC_WEWORK_CODE_URL
+      } else {
+        process.env.NEXT_PUBLIC_WEWORK_CODE_URL = previousPublicUrl
+      }
+    }
+  })
+
   test('getPublicApiBaseUrl uses the public backend URL from runtime config', async () => {
     global.fetch = jest.fn().mockResolvedValue({
       ok: true,
@@ -86,6 +121,7 @@ describe('runtime config caching', () => {
         bindGroupDesc: '',
         bindGroupSteps: '{"variables":{"botName":"机器人"},"steps":[]}',
         appVersion: 'dev',
+        weworkCodeUrl: '',
       }),
     }) as typeof fetch
 

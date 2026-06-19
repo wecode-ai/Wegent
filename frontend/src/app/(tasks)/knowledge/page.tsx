@@ -166,7 +166,7 @@ function KnowledgePageContent() {
   }
 
   const navigateToTask = (taskId: number) => {
-    router.push(`/code?taskId=${taskId}`)
+    router.push(`/chat?taskId=${taskId}`)
   }
 
   // Filter projects to show only those with user's generations
