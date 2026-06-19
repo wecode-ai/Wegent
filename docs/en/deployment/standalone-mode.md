@@ -10,6 +10,8 @@ Standalone mode is a single-machine deployment that packages Backend, the main F
 
 After startup, standalone automatically creates a cloud device for the `admin` user: the in-container executor registers through the Backend device WebSocket, and Wework can use that device directly for coding tasks. The default workspace is mounted at `/workspace` and stores project directories, standalone chat workspaces, and Git worktrees.
 
+Because coding tasks execute directly inside the same standalone container, the image is designed as a lightweight development environment rather than a minimal runtime. It includes basic development and diagnostics tools such as `ps`, `top`, `free`, `ip`, `ss`, `lsof`, `tree`, and `rg` by default.
+
 ### Use Cases
 
 - Single-machine deployment

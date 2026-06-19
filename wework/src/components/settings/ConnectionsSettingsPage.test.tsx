@@ -44,6 +44,16 @@ vi.mock('@/lib/local-terminal', () => ({
   isLocalTerminalAvailable: vi.fn(),
 }))
 
+vi.mock('@/components/layout/workspace-panels/RemoteTerminal', () => ({
+  RemoteTerminal: ({ sessionId, active }: { sessionId: string; active: boolean }) => (
+    <div
+      data-testid="settings-device-remote-terminal"
+      data-session-id={sessionId}
+      hidden={!active}
+    />
+  ),
+}))
+
 const createDeviceApiMock = vi.mocked(createDeviceApi)
 const createProjectApiMock = vi.mocked(createProjectApi)
 const createUserApiMock = vi.mocked(createUserApi)
@@ -771,6 +781,31 @@ describe('ConnectionsSettingsPage', () => {
     expect(screen.queryByTestId('device-metrics')).not.toBeInTheDocument()
     expect(screen.queryByTestId('connection-scale-wiki')).not.toBeInTheDocument()
     expect(api.getMetrics).not.toHaveBeenCalled()
+  })
+
+  test('embeds a remote terminal for socketio cloud device terminal sessions', async () => {
+    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null)
+    api.getAllDevices.mockResolvedValue([cloudDevice()])
+    api.startTerminal.mockResolvedValue({
+      session_id: 'terminal-1',
+      device_id: 'device-1',
+      type: 'terminal',
+      path: '/workspace',
+      url: '',
+      transport: 'socketio',
+    })
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    await userEvent.click(await screen.findByTestId('connection-terminal-button-device-1'))
+
+    await waitFor(() => expect(api.startTerminal).toHaveBeenCalledWith('device-1'))
+    expect(openSpy).not.toHaveBeenCalled()
+    expect(screen.getByTestId('settings-device-terminal-panel')).toBeInTheDocument()
+    expect(screen.getByTestId('settings-device-remote-terminal')).toHaveAttribute(
+      'data-session-id',
+      'terminal-1'
+    )
   })
 
   test('keeps local device terminal hidden outside the WeWork macOS app', async () => {

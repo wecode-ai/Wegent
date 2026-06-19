@@ -101,6 +101,8 @@ RUN dnf install -y \
     atk at-spi2-atk libXcomposite libXdamage libXfixes libXrandr libxkbcommon \
     # Skill-creator dependencies (JSON parsing and packaging)
     jq zip \
+    # Development environment and runtime diagnostics
+    procps-ng iproute lsof less tree unzip ripgrep \
     # Redis server for standalone mode (embedded)
     redis \
     && npm install -g @anthropic-ai/claude-code@2.1.142 \

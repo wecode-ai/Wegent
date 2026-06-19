@@ -10,6 +10,8 @@ Standalone 模式是一种单机部署方案，将 Backend、主 Frontend、Wewo
 
 Standalone 启动后会自动为 `admin` 用户创建一个云设备：容器内 executor 通过 Backend 的设备 WebSocket 注册，Wework 创建编码任务时可以直接使用该设备执行任务。默认 workspace 挂载在 `/workspace`，用于保存项目目录、独立聊天工作区和 Git worktree。
 
+由于编码任务直接在同一个 standalone 容器内执行，镜像按轻量开发环境而不是最小运行时来设计，默认包含 `ps`、`top`、`free`、`ip`、`ss`、`lsof`、`tree`、`rg` 等基础开发和排障工具。
+
 ### 适用场景
 
 - 单机部署
