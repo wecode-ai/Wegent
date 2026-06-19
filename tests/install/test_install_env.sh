@@ -157,6 +157,59 @@ test_knowledge_service_images_are_published() {
         "$REPO_ROOT/.github/workflows/publish-image.yml"
 }
 
+test_executor_mode_default_function_prefers_host_for_interactive_macos() {
+    source_installer_without_main
+
+    NO_PROMPT="0"
+    OS="macos"
+
+    [[ "$(default_standalone_executor_mode)" == "host" ]]
+}
+
+test_executor_mode_defaults_to_container_for_non_interactive() {
+    source_installer_without_main
+
+    DEPLOY_MODE="standalone"
+    STANDALONE_EXECUTOR_MODE=""
+    WEGENT_STANDALONE_EXECUTOR_MODE=""
+    NO_PROMPT="1"
+    OS="macos"
+
+    select_standalone_executor_mode >/dev/null
+
+    [[ "$STANDALONE_EXECUTOR_MODE" == "container" ]]
+}
+
+test_executor_mode_accepts_explicit_hybrid_env() {
+    source_installer_without_main
+
+    DEPLOY_MODE="standalone"
+    STANDALONE_EXECUTOR_MODE=""
+    WEGENT_STANDALONE_EXECUTOR_MODE="hybrid"
+    NO_PROMPT="1"
+    OS="linux"
+
+    select_standalone_executor_mode >/dev/null
+
+    [[ "$STANDALONE_EXECUTOR_MODE" == "hybrid" ]]
+}
+
+test_executor_mode_rejects_invalid_value() {
+    source_installer_without_main
+
+    DEPLOY_MODE="standalone"
+    STANDALONE_EXECUTOR_MODE="invalid"
+    NO_PROMPT="1"
+    OS="linux"
+
+    if select_standalone_executor_mode >/tmp/wegent-invalid-mode.out 2>&1; then
+        cat /tmp/wegent-invalid-mode.out
+        return 1
+    fi
+
+    grep -q "Invalid standalone executor mode" /tmp/wegent-invalid-mode.out
+}
+
 run_test() {
     local name="$1"
     local test_fn="$2"
@@ -169,6 +222,14 @@ run_test() {
     fi
 }
 
+run_test "executor mode default function prefers host for interactive macOS" \
+    test_executor_mode_default_function_prefers_host_for_interactive_macos
+run_test "executor mode defaults to container for non-interactive" \
+    test_executor_mode_defaults_to_container_for_non_interactive
+run_test "executor mode accepts explicit hybrid env" \
+    test_executor_mode_accepts_explicit_hybrid_env
+run_test "executor mode rejects invalid value" \
+    test_executor_mode_rejects_invalid_value
 run_test "new standard .env includes internal service token" \
     test_new_standard_env_includes_internal_service_token
 run_test "existing standard .env backfills internal service token" \

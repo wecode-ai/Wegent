@@ -35,6 +35,12 @@ STANDALONE_IMAGE="${WEGENT_STANDALONE_IMAGE:-ghcr.io/wecode-ai/wegent-standalone
 STANDALONE_CONTAINER_NAME="wegent-standalone"
 STANDALONE_VOLUME_NAME="wegent-data"
 STANDALONE_WORKSPACE_VOLUME_NAME="wegent-workspace"
+STANDALONE_EXECUTOR_MODE="${WEGENT_STANDALONE_EXECUTOR_MODE:-}"
+HOST_EXECUTOR_INSTALL_URL="${WEGENT_HOST_EXECUTOR_INSTALL_URL:-https://github.com/wecode-ai/Wegent/releases/latest/download/local_executor_install.sh}"
+HOST_EXECUTOR_BINARY="${WEGENT_HOST_EXECUTOR_BINARY:-$HOME/.wegent-executor/bin/wegent-executor}"
+HOST_EXECUTOR_HOME="${WEGENT_HOST_EXECUTOR_HOME:-$HOME/.wegent-executor}"
+HOST_EXECUTOR_PID_FILE="${HOST_EXECUTOR_HOME}/wegent-executor.pid"
+HOST_EXECUTOR_LOG_FILE="${HOST_EXECUTOR_HOME}/logs/standalone-host-executor.log"
 
 # Temporary files cleanup
 TMPFILES=()
@@ -111,6 +117,7 @@ Usage:
 Options:
   --standalone          Install in standalone mode (single container, recommended)
   --standard            Install in standard mode (multi-container with MySQL)
+  --executor-mode MODE  Standalone executor mode: container, host, or hybrid
   --no-prompt           Disable interactive prompts (for CI/automation)
   --dry-run             Print what would happen without making changes
   --verbose             Enable verbose output
@@ -124,6 +131,7 @@ Environment variables:
   WEGENT_VERBOSE        Set to '1' for verbose output
   WEGENT_DRY_RUN        Set to '1' for dry run
   WEGENT_STANDALONE_IMAGE  Custom standalone image (default: ghcr.io/wecode-ai/wegent-standalone:latest)
+  WEGENT_STANDALONE_EXECUTOR_MODE  Set standalone executor mode: container, host, or hybrid
 
 Examples:
   # Interactive installation (recommended)
@@ -151,6 +159,14 @@ parse_args() {
             --standard)
                 DEPLOY_MODE="standard"
                 shift
+                ;;
+            --executor-mode)
+                if [[ $# -lt 2 ]]; then
+                    ui_error "--executor-mode requires a value: container, host, or hybrid"
+                    exit 1
+                fi
+                STANDALONE_EXECUTOR_MODE="$2"
+                shift 2
                 ;;
             --no-prompt)
                 NO_PROMPT=1
@@ -818,6 +834,101 @@ select_deploy_mode() {
     esac
 }
 
+is_valid_standalone_executor_mode() {
+    case "$1" in
+        container|host|hybrid)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+default_standalone_executor_mode() {
+    if [[ "$NO_PROMPT" == "1" ]]; then
+        echo "container"
+        return
+    fi
+
+    if [[ "$OS" == "macos" ]]; then
+        echo "host"
+        return
+    fi
+
+    echo "container"
+}
+
+select_standalone_executor_mode() {
+    if [[ "$DEPLOY_MODE" != "standalone" ]]; then
+        if [[ -n "$STANDALONE_EXECUTOR_MODE" ]]; then
+            ui_warn "--executor-mode applies only to standalone mode; ignoring '$STANDALONE_EXECUTOR_MODE'"
+        fi
+        return
+    fi
+
+    if [[ -z "$STANDALONE_EXECUTOR_MODE" && -n "${WEGENT_STANDALONE_EXECUTOR_MODE:-}" ]]; then
+        STANDALONE_EXECUTOR_MODE="$WEGENT_STANDALONE_EXECUTOR_MODE"
+    fi
+
+    if [[ -n "$STANDALONE_EXECUTOR_MODE" ]]; then
+        if ! is_valid_standalone_executor_mode "$STANDALONE_EXECUTOR_MODE"; then
+            ui_error "Invalid standalone executor mode: $STANDALONE_EXECUTOR_MODE"
+            ui_info "Accepted values: container, host, hybrid"
+            return 1
+        fi
+        ui_success "Using standalone executor mode: $STANDALONE_EXECUTOR_MODE"
+        return
+    fi
+
+    if ! is_promptable; then
+        STANDALONE_EXECUTOR_MODE="container"
+        ui_info "Non-interactive mode, using standalone executor mode: $STANDALONE_EXECUTOR_MODE"
+        return
+    fi
+
+    local default_mode
+    default_mode="$(default_standalone_executor_mode)"
+
+    echo ""
+    echo -e "${YELLOW}Select standalone executor mode:${NC}"
+    echo -e "  ${GREEN}[1]${NC} Host executor ${MUTED}(recommended on macOS)${NC}"
+    echo -e "      Runs coding agents on this machine; required for macOS system commands"
+    echo ""
+    echo -e "  ${BLUE}[2]${NC} Container executor"
+    echo -e "      Current standalone behavior; everything runs inside Docker"
+    echo ""
+    echo -e "  ${CYAN}[3]${NC} Hybrid"
+    echo -e "      Start both container and host executors"
+    echo ""
+
+    local default_choice="2"
+    if [[ "$default_mode" == "host" ]]; then
+        default_choice="1"
+    elif [[ "$default_mode" == "hybrid" ]]; then
+        default_choice="3"
+    fi
+
+    printf "Choose [1/2/3] (default: %s): " "$default_choice"
+    local executor_choice
+    read -r executor_choice < /dev/tty
+    executor_choice="${executor_choice:-$default_choice}"
+
+    case "$executor_choice" in
+        1)
+            STANDALONE_EXECUTOR_MODE="host"
+            ;;
+        3)
+            STANDALONE_EXECUTOR_MODE="hybrid"
+            ;;
+        *)
+            STANDALONE_EXECUTOR_MODE="container"
+            ;;
+    esac
+
+    ui_success "Selected standalone executor mode: $STANDALONE_EXECUTOR_MODE"
+}
+
 # ============================================================================
 # Configuration
 # ============================================================================
@@ -1443,6 +1554,7 @@ main() {
     # Main installation steps
     # Step 2: Select deployment mode (before ensure_docker so we know if compose is needed)
     select_deploy_mode
+    select_standalone_executor_mode
     
     # Step 1: Ensure Docker is available
     ensure_docker
