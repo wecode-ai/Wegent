@@ -37,11 +37,20 @@ export function reduceChatStartEvent({
 }: ChatEventReducerParams<Extract<Event, { type: 'CHAT_START' }>>): TaskMachineInternalState {
   const aiMessageId = generateMessageId('ai', event.subtaskId)
   const existingMessage = state.messages.get(aiMessageId)
+  const isTerminalRuntime = isTerminalTaskStatus(state.runtime.taskStatus)
+  const isRetryingTerminalMessage =
+    isTerminalRuntime &&
+    existingMessage &&
+    (existingMessage.status === 'error' ||
+      existingMessage.subtaskStatus === 'FAILED' ||
+      existingMessage.subtaskStatus === 'CANCELLED')
   const isRestartingAfterTerminal =
-    isTerminalTaskStatus(state.runtime.taskStatus) && !existingMessage
+    isTerminalRuntime && (!existingMessage || isRetryingTerminalMessage)
 
-  if (isTerminalTaskStatus(state.runtime.taskStatus) && existingMessage) return state
-  if (existingMessage && existingMessage.status !== 'streaming') return state
+  if (isTerminalRuntime && existingMessage && !isRetryingTerminalMessage) return state
+  if (existingMessage && existingMessage.status !== 'streaming' && !isRetryingTerminalMessage) {
+    return state
+  }
 
   const initialResult = event.shellType ? { shell_type: event.shellType } : undefined
   const newMessages = new Map(state.messages)
