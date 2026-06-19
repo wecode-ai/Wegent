@@ -740,6 +740,51 @@ describe('TaskStateMachine', () => {
     expect(state.messages.get('ai-42')?.status).toBe('completed')
   })
 
+  it('reopens a failed same-id subtask when retry emits chat start', () => {
+    const machine = new TaskStateMachine(100, {
+      joinTask: vi.fn(),
+      isConnected: () => true,
+    })
+
+    machine.handleTaskStatus('RUNNING')
+    machine.handleChatStart(42, 'Chat', 7)
+    machine.handleChatChunk(42, 'stale partial')
+    machine.handleChatError(42, 'model unavailable', 7, 'model_unavailable')
+
+    const failedMessage = machine.getState().messages.get('ai-42')
+    expect(failedMessage?.status).toBe('error')
+    expect(failedMessage?.content).toBe('stale partial')
+    expect(failedMessage?.error).toBe('model unavailable')
+
+    machine.handleChatStart(42, 'Chat', 7)
+
+    const retryingState = machine.getState()
+    const retryingMessage = retryingState.messages.get('ai-42')
+    expect(retryingState.phase).toBe('streaming')
+    expect(retryingState.runtime.taskStatus).toBe('RUNNING')
+    expect(retryingState.runtime.activeStreamSubtaskId).toBe(42)
+    expect(retryingState.derived.isTerminal).toBe(false)
+    expect(retryingState.derived.isStreaming).toBe(true)
+    expect(retryingMessage).toMatchObject({
+      status: 'streaming',
+      content: '',
+      subtaskId: 42,
+      messageId: 7,
+      result: { shell_type: 'Chat' },
+    })
+    expect(retryingMessage?.error).toBeUndefined()
+    expect(retryingMessage?.errorType).toBeUndefined()
+    expect(retryingMessage?.subtaskStatus).toBeUndefined()
+
+    machine.handleChatChunk(42, 'Hi')
+    machine.handleChatDone(42, 'Hi there!')
+
+    const completedMessage = machine.getState().messages.get('ai-42')
+    expect(completedMessage?.status).toBe('completed')
+    expect(completedMessage?.content).toBe('Hi there!')
+    expect(completedMessage?.error).toBeUndefined()
+  })
+
   it('allows a new chat start after terminal lifecycle status for follow-up sends', () => {
     const machine = new TaskStateMachine(100, {
       joinTask: vi.fn(),
