@@ -943,6 +943,169 @@ standalone_container_executor_enabled() {
     esac
 }
 
+needs_host_executor() {
+    [[ "$DEPLOY_MODE" == "standalone" ]] || return 1
+    [[ "$STANDALONE_EXECUTOR_MODE" == "host" || "$STANDALONE_EXECUTOR_MODE" == "hybrid" ]]
+}
+
+install_host_executor_from_release() {
+    ui_section "Installing Host Executor"
+
+    if [[ "$DRY_RUN" == "1" ]]; then
+        ui_info "[DRY RUN] Would download and run: ${HOST_EXECUTOR_INSTALL_URL}"
+        return
+    fi
+
+    ui_info "Downloading executor release installer..."
+    if ! curl -fsSL "$HOST_EXECUTOR_INSTALL_URL" | bash; then
+        ui_error "Failed to install host executor from release"
+        ui_info "Retry manually:"
+        ui_info "  curl -fsSL ${HOST_EXECUTOR_INSTALL_URL} | bash"
+        return 1
+    fi
+}
+
+read_standalone_executor_token() {
+    docker exec "$STANDALONE_CONTAINER_NAME" sh -lc 'cat /app/data/standalone_executor_token'
+}
+
+redact_token() {
+    local token="$1"
+    if [[ ${#token} -le 10 ]]; then
+        echo "redacted"
+        return
+    fi
+    printf '%s...\n' "${token:0:10}"
+}
+
+host_executor_device_name() {
+    local os_label="Host"
+    case "$OS" in
+        macos)
+            os_label="macOS"
+            ;;
+        linux)
+            os_label="Linux"
+            ;;
+    esac
+
+    printf '%s-%s\n' "$(hostname)" "$os_label"
+}
+
+configure_host_executor() {
+    local token="$1"
+    local config_path="${HOST_EXECUTOR_HOME}/device-config.json"
+
+    mkdir -p "$HOST_EXECUTOR_HOME"
+    umask 077
+    cat > "$config_path" <<EOF
+{
+  "mode": "local",
+  "device_type": "local",
+  "bind_shell": "claudecode",
+  "device_id": "",
+  "device_name": "$(host_executor_device_name)",
+  "capabilities": [],
+  "max_concurrent_tasks": 5,
+  "connection": {
+    "backend_url": "http://127.0.0.1:8000",
+    "auth_token": "$token"
+  },
+  "logging": {
+    "level": "info",
+    "max_size_mb": 10,
+    "backup_count": 5
+  },
+  "update": {
+    "registry": "",
+    "registry_token": ""
+  }
+}
+EOF
+    chmod 600 "$config_path"
+    ui_success "Host executor configured at ${config_path}"
+}
+
+stop_host_executor_if_running() {
+    if [[ ! -f "$HOST_EXECUTOR_PID_FILE" ]]; then
+        return
+    fi
+
+    local pid
+    pid="$(cat "$HOST_EXECUTOR_PID_FILE" 2>/dev/null || true)"
+    if [[ -n "$pid" ]] && kill -0 "$pid" >/dev/null 2>&1; then
+        ui_info "Stopping existing host executor (PID: $pid)"
+        kill "$pid" >/dev/null 2>&1 || true
+        for _ in {1..20}; do
+            if ! kill -0 "$pid" >/dev/null 2>&1; then
+                break
+            fi
+            sleep 0.5
+        done
+    fi
+    rm -f "$HOST_EXECUTOR_PID_FILE"
+}
+
+start_host_executor() {
+    if [[ "$DRY_RUN" == "1" ]]; then
+        ui_info "[DRY RUN] Would start host executor: ${HOST_EXECUTOR_BINARY}"
+        return
+    fi
+
+    if [[ ! -x "$HOST_EXECUTOR_BINARY" ]]; then
+        ui_error "Host executor binary is missing or not executable: ${HOST_EXECUTOR_BINARY}"
+        return 1
+    fi
+
+    mkdir -p "$(dirname "$HOST_EXECUTOR_LOG_FILE")"
+    stop_host_executor_if_running
+
+    ui_info "Starting host executor..."
+    WEGENT_EXECUTOR_HOME="$HOST_EXECUTOR_HOME" \
+        LOCAL_WORKSPACE_ROOT="${HOST_EXECUTOR_HOME}/workspace" \
+        nohup "$HOST_EXECUTOR_BINARY" >> "$HOST_EXECUTOR_LOG_FILE" 2>&1 &
+    echo $! > "$HOST_EXECUTOR_PID_FILE"
+    sleep 1
+
+    if ! kill -0 "$(cat "$HOST_EXECUTOR_PID_FILE")" >/dev/null 2>&1; then
+        ui_error "Host executor failed to start"
+        ui_info "Recent log:"
+        tail -n 80 "$HOST_EXECUTOR_LOG_FILE" || true
+        return 1
+    fi
+
+    ui_success "Host executor started with PID $(cat "$HOST_EXECUTOR_PID_FILE")"
+}
+
+setup_host_executor_if_needed() {
+    if ! needs_host_executor; then
+        return
+    fi
+
+    install_host_executor_from_release
+
+    if [[ "$DRY_RUN" == "1" ]]; then
+        return
+    fi
+
+    local token
+    if ! token="$(read_standalone_executor_token)"; then
+        ui_error "Failed to read standalone executor token"
+        ui_info "Check container logs: docker logs ${STANDALONE_CONTAINER_NAME}"
+        return 1
+    fi
+
+    if [[ -z "$token" ]]; then
+        ui_error "Standalone executor token is empty"
+        ui_info "Check container logs: docker logs ${STANDALONE_CONTAINER_NAME}"
+        return 1
+    fi
+
+    ui_info "Using standalone executor token: $(redact_token "$token")"
+    configure_host_executor "$token"
+    start_host_executor
+}
+
 # ============================================================================
 # Configuration
 # ============================================================================
@@ -1589,6 +1752,9 @@ main() {
         # Wait for services to be ready
         if [[ "$DRY_RUN" != "1" ]]; then
             wait_for_standalone_service
+            setup_host_executor_if_needed
+        else
+            setup_host_executor_if_needed
         fi
     else
         ui_section "[4/4] Starting Wegent (Standard)"

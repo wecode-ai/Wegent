@@ -165,6 +165,21 @@ def test_installer_maps_executor_mode_to_container_env() -> None:
     assert 'ui_kv "Host executor" "$HOST_EXECUTOR_BINARY"' in install_script
 
 
+def test_installer_uses_release_installer_for_host_executor() -> None:
+    """Host executor setup should download release artifacts, not build locally."""
+    install_script = INSTALL_SCRIPT.read_text(encoding="utf-8")
+
+    assert "install_host_executor_from_release()" in install_script
+    assert "HOST_EXECUTOR_INSTALL_URL" in install_script
+    assert "local_executor_install.sh" in install_script
+    assert 'curl -fsSL "$HOST_EXECUTOR_INSTALL_URL" | bash' in install_script
+    assert "configure_host_executor()" in install_script
+    assert "start_host_executor()" in install_script
+    assert "setup_host_executor_if_needed()" in install_script
+    assert "executor/.venv/bin/python executor/main.py" not in install_script
+    assert "./local.sh all" not in install_script
+
+
 def test_build_script_outputs_complete_standalone_run_command() -> None:
     """The standalone build helper should print a runnable Wework-enabled command."""
     build_script = BUILD_STANDALONE_SCRIPT.read_text(encoding="utf-8")
