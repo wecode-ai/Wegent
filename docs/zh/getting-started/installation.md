@@ -115,8 +115,13 @@ ATTACHMENT_STORAGE_BACKEND=mysql
 # 用于设置“设置 → 连接”云设备资源说明卡中的扩容 Wiki 链接
 # VITE_CLOUD_DEVICE_SCALING_WIKI_URL=https://wiki.example.com/cloud-device-scaling
 
+# 镜像配置
+# 使用 CI 发布的 edge 镜像时改为 edge
+WEGENT_IMAGE_TAG=latest
+
 # Executor Manager 配置
-EXECUTOR_IMAGE=ghcr.io/wecode-ai/wegent-executor:latest
+# 可选：显式覆盖 executor 镜像；未设置时跟随 WEGENT_IMAGE_TAG
+# EXECUTOR_IMAGE=ghcr.io/wecode-ai/wegent-executor:latest
 EXECUTOR_WORKSPACE=/path/to/workspace
 ```
 
@@ -133,6 +138,18 @@ docker-compose ps
 
 # 查看日志
 docker-compose logs -f
+```
+
+如需测试 CI 发布的 edge 镜像，可以设置统一镜像 tag：
+
+```bash
+WEGENT_IMAGE_TAG=edge docker compose up -d
+```
+
+使用 `install.sh` 时也可以直接传入 edge 快捷参数：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash -s -- --edge
 ```
 
 ### 步骤 4: 验证安装
