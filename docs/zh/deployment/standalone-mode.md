@@ -48,6 +48,8 @@ curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | 
 4. 映射单个 Nginx 入口端口
 5. 启动容器并等待 Backend 和 Wework 就绪
 
+默认安装命令使用最新稳定镜像。需要测试 main 分支快照时，请参考 [容器镜像标签](./container-image-tags.md)。
+
 启动完成后访问：
 
 | 入口 | 地址 | 用途 |
