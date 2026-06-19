@@ -24,8 +24,11 @@ def test_standalone_image_includes_wework_executor_and_workspace_volume() -> Non
     assert "pnpm run build" in dockerfile
     assert "COPY --from=wework-builder /app/wework/dist /app/wework/dist" in dockerfile
     assert "nginx" in dockerfile
-    assert "COPY docker/standalone/nginx.conf /etc/nginx/conf.d/default.conf" in dockerfile
+    assert (
+        "COPY docker/standalone/nginx.conf /etc/nginx/conf.d/default.conf" in dockerfile
+    )
     assert "ttyd" not in dockerfile
+    assert "ENV WEWORK_PORT=3001" not in dockerfile
     assert "ENV WEGENT_WORKSPACE_ROOT=/workspace" in dockerfile
     assert "DEVICE_SESSION_GATEWAY_PORT" not in dockerfile
     assert "EXPOSE 3000" in dockerfile
@@ -50,6 +53,24 @@ def test_standalone_start_registers_executor_as_admin_cloud_device() -> None:
     assert "WEGENT_EXECUTOR_PROJECTS_DIR=/workspace/projects" in start_script
     assert "WEGENT_EXECUTOR_CHATS_DIR=/workspace/chats" in start_script
     assert "python -m executor.main" in start_script
+
+
+def test_standalone_start_can_skip_container_executor() -> None:
+    """Standalone startup should support host-only executor mode."""
+    start_script = STANDALONE_START.read_text(encoding="utf-8")
+
+    assert (
+        'STANDALONE_EXECUTOR_ENABLED="${STANDALONE_EXECUTOR_ENABLED:-true}"'
+        in start_script
+    )
+    assert 'if [ "$STANDALONE_EXECUTOR_ENABLED" != "false" ]; then' in start_script
+    assert 'echo "[4/8] Skipping Standalone Executor' in start_script
+    assert "${EXECUTOR_PID:-}" in start_script
+    assert (
+        'WAIT_PIDS=("$REDIS_PID" "$BACKEND_PID" "$FRONTEND_PID" "$NGINX_PID")'
+        in start_script
+    )
+    assert 'if [ -n "${EXECUTOR_PID:-}" ]; then' in start_script
 
 
 def test_standalone_nginx_routes_frontend_backend_and_wework() -> None:
@@ -81,6 +102,7 @@ def test_standalone_start_serves_wework_without_public_ttyd() -> None:
     start_script = STANDALONE_START.read_text(encoding="utf-8")
 
     assert "start_nginx" in start_script
+    assert "start_wework" not in start_script
     assert "write_wework_runtime_config" in start_script
     assert "nginx -t" in start_script
     assert 'nginx -g "daemon off;"' in start_script
@@ -125,16 +147,14 @@ def test_standalone_frontend_defaults_to_wework_url() -> None:
 
     assert (
         "export RUNTIME_WEWORK_CODE_URL="
-        '"${RUNTIME_WEWORK_CODE_URL:-/wework}"'
-        in start_script
+        '"${RUNTIME_WEWORK_CODE_URL:-/wework}"' in start_script
     )
     assert (
         'docker_run_cmd+=" -e RUNTIME_WEWORK_CODE_URL=http://${ACCESS_HOST}:3000/wework"'
         in install_script
     )
     assert (
-        "-e RUNTIME_WEWORK_CODE_URL=http://${ACCESS_HOST}:3000/wework"
-        in install_script
+        "-e RUNTIME_WEWORK_CODE_URL=http://${ACCESS_HOST}:3000/wework" in install_script
     )
 
 
@@ -157,13 +177,11 @@ def test_installer_exposes_wework_backend_and_workspace_volume() -> None:
         'ui_kv "Workspace volume" "$STANDALONE_WORKSPACE_VOLUME_NAME"' in install_script
     )
     assert (
-        'docker_run_cmd+=" -e WEWORK_PUBLIC_APP_BASE_PATH=/wework"'
+        'docker_run_cmd+=" -e RUNTIME_PUBLIC_API_URL=http://${ACCESS_HOST}:3000/api"'
         in install_script
     )
-    assert (
-        'docker_run_cmd+=" -e WEWORK_PUBLIC_API_URL=/wework/api"'
-        in install_script
-    )
+    assert 'docker_run_cmd+=" -e WEWORK_PUBLIC_APP_BASE_PATH=/wework"' in install_script
+    assert 'docker_run_cmd+=" -e WEWORK_PUBLIC_API_URL=/wework/api"' in install_script
     assert (
         'docker_run_cmd+=" -e WEWORK_PUBLIC_SOCKET_PATH=/wework/socket.io"'
         in install_script
@@ -177,6 +195,35 @@ def test_installer_exposes_wework_backend_and_workspace_volume() -> None:
     )
     assert 'if [[ "$DEPLOY_MODE" == "standalone" ]]; then' in install_script
     assert 'ui_kv "Terminal URL"' not in install_script
+
+
+def test_installer_maps_executor_mode_to_container_env() -> None:
+    """Installer should pass the correct container executor switch."""
+    install_script = INSTALL_SCRIPT.read_text(encoding="utf-8")
+
+    assert "standalone_container_executor_enabled()" in install_script
+    assert (
+        'docker_run_cmd+=" -e STANDALONE_EXECUTOR_ENABLED=$(standalone_container_executor_enabled)"'
+        in install_script
+    )
+    assert 'ui_kv "Executor mode" "$STANDALONE_EXECUTOR_MODE"' in install_script
+    assert 'ui_kv "Host executor" "$HOST_EXECUTOR_BINARY"' in install_script
+
+
+def test_installer_uses_release_installer_for_host_executor() -> None:
+    """Host executor setup should download release artifacts, not build locally."""
+    install_script = INSTALL_SCRIPT.read_text(encoding="utf-8")
+
+    assert "install_host_executor_from_release()" in install_script
+    assert "HOST_EXECUTOR_INSTALL_URL" in install_script
+    assert "local_executor_install.sh" in install_script
+    assert 'curl -fsSL "$HOST_EXECUTOR_INSTALL_URL" | bash' in install_script
+    assert "configure_host_executor()" in install_script
+    assert '"backend_url": "http://127.0.0.1:3000"' in install_script
+    assert "start_host_executor()" in install_script
+    assert "setup_host_executor_if_needed()" in install_script
+    assert "executor/.venv/bin/python executor/main.py" not in install_script
+    assert "./local.sh all" not in install_script
 
 
 def test_build_script_outputs_complete_standalone_run_command() -> None:
@@ -208,4 +255,7 @@ def test_verify_script_checks_wework_readiness_without_terminal_ports() -> None:
     assert ":8000" not in verify_script
     assert ":7681" not in verify_script
     assert ":17888" not in verify_script
-    assert 'wait_for_url "Wework" "http://localhost:${STANDALONE_PORT}/wework/"' in verify_script
+    assert (
+        'wait_for_url "Wework" "http://localhost:${STANDALONE_PORT}/wework/"'
+        in verify_script
+    )

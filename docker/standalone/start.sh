@@ -26,6 +26,7 @@ export DATABASE_URL="sqlite:////app/data/wegent.db"
 # Set default ports if not specified.
 BACKEND_PORT=${BACKEND_PORT:-8000}
 FRONTEND_PORT=${FRONTEND_PORT:-3002}
+STANDALONE_EXECUTOR_ENABLED="${STANDALONE_EXECUTOR_ENABLED:-true}"
 
 # Set Redis URL to localhost (embedded Redis).
 export REDIS_URL="${REDIS_URL:-redis://localhost:6379/0}"
@@ -276,7 +277,11 @@ start_executor() {
     echo "      Standalone Executor started (PID: ${EXECUTOR_PID})"
 }
 
-start_executor
+if [ "$STANDALONE_EXECUTOR_ENABLED" != "false" ]; then
+    start_executor
+else
+    echo "[4/8] Skipping Standalone Executor (STANDALONE_EXECUTOR_ENABLED=false)"
+fi
 
 # ========================================
 # Step 5: Start Frontend
@@ -382,7 +387,11 @@ trap shutdown SIGTERM SIGINT SIGQUIT
 # Keep Container Running
 # ========================================
 set +e
-wait -n "$REDIS_PID" "$BACKEND_PID" "$EXECUTOR_PID" "$FRONTEND_PID" "$NGINX_PID"
+WAIT_PIDS=("$REDIS_PID" "$BACKEND_PID" "$FRONTEND_PID" "$NGINX_PID")
+if [ -n "${EXECUTOR_PID:-}" ]; then
+    WAIT_PIDS+=("$EXECUTOR_PID")
+fi
+wait -n "${WAIT_PIDS[@]}"
 EXIT_CODE=$?
 set -e
 

@@ -6,11 +6,11 @@ sidebar_position: 3
 
 ## Overview
 
-Standalone mode is a single-machine deployment that packages Backend, the main Frontend, Wework Web, Chat Shell, Executor, and Redis into one Docker image, using SQLite as the database. It is intended for quick evaluation and small trusted environments, and only requires Docker.
+Standalone mode is a single-machine deployment that packages Backend, the main Frontend, Wework Web, Chat Shell, and Redis into one Docker image, using SQLite as the database. It is intended for quick evaluation and small trusted environments, and only requires Docker. Interactive macOS installs default to a host executor so Claude Code or Codex can execute macOS system commands; Linux and non-interactive installs default to the in-container executor.
 
-After startup, standalone automatically creates a cloud device for the `admin` user: the in-container executor registers through the Backend device WebSocket, and Wework can use that device directly for coding tasks. The default workspace is mounted at `/workspace` and stores project directories, standalone chat workspaces, and Git worktrees.
+After startup, standalone automatically creates an executor API key for the `admin` user and registers devices according to the selected executor mode: the container executor registers as a built-in cloud device, the host executor registers as a local device, and Wework can use available devices directly for coding tasks. The default container workspace is mounted at `/workspace` and stores project directories, standalone chat workspaces, and Git worktrees; the host executor uses `~/.wegent-executor/workspace`.
 
-Because coding tasks execute directly inside the same standalone container, the image is designed as a lightweight development environment rather than a minimal runtime. It includes basic development and diagnostics tools such as `ps`, `top`, `free`, `ip`, `ss`, `lsof`, `tree`, and `rg` by default.
+When using the container executor, coding tasks execute directly inside the same standalone container, so the image is designed as a lightweight development environment rather than a minimal runtime. It includes basic development and diagnostics tools such as `ps`, `top`, `free`, `ip`, `ss`, `lsof`, `tree`, and `rg` by default. When using the host executor, tasks use Claude Code, Codex, and system commands from the host.
 
 ### Use Cases
 
@@ -26,7 +26,7 @@ Because coding tasks execute directly inside the same standalone container, the 
 | Deployment Complexity | High (multi-container) | Low (single container) |
 | Resource Usage | High | Medium |
 | Scalability | Good | Limited |
-| Task Isolation | Sandbox/cloud device | Same standalone container |
+| Task Isolation | Sandbox/cloud device | Container or host, depending on executor mode |
 | Database | MySQL | SQLite |
 | Redis | External | Embedded |
 | Wework | Separate desktop app or Web | Built-in Wework Web |
@@ -57,6 +57,56 @@ After startup, open:
 | Main Frontend | `http://localhost:3000` | Wegent management and general features |
 | Wework | `http://localhost:3000/wework` | Create and use coding tasks |
 | Backend API | `http://localhost:3000/api` | API and WebSocket |
+
+## Executor Location
+
+Standalone supports three executor modes:
+
+| Mode | Behavior | Use Case |
+|------|----------|----------|
+| `host` | Backend, Frontend, and Wework run in Docker; the executor is downloaded from GitHub Releases and runs on the host | Default recommendation for macOS; required for `open`, `osascript`, system Terminal, Keychain-backed tools, and other host commands |
+| `container` | The executor runs inside the standalone container | Linux quick start and existing single-container behavior |
+| `hybrid` | Both the container executor and host executor run | Keep the container device while also using host-native capabilities |
+
+On macOS, Docker Desktop containers run Linux processes, so Claude Code or Codex inside the container cannot directly execute macOS system commands. For that reason, interactive macOS installs default to `host`. Non-interactive installs still default to `container` for automation compatibility.
+
+Explicit mode selection:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | \
+  bash -s -- --standalone --executor-mode host
+```
+
+Environment variable form:
+
+```bash
+WEGENT_STANDALONE_EXECUTOR_MODE=hybrid \
+curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash
+```
+
+### Subsequent Starts
+
+When installed through `curl | bash`, `install.sh` is not kept on the host. The installer writes
+`~/.wegent/standalone/config.env` and installs a local management command:
+
+```bash
+~/.local/bin/wegent-standalone start
+```
+
+Common commands:
+
+```bash
+~/.local/bin/wegent-standalone status
+~/.local/bin/wegent-standalone stop
+~/.local/bin/wegent-standalone restart
+~/.local/bin/wegent-standalone logs
+~/.local/bin/wegent-standalone logs host
+~/.local/bin/wegent-standalone update
+```
+
+`host` and `hybrid` modes need to manage both the Docker container and the host executor.
+Running only `docker start wegent-standalone` starts the container but does not restore the host
+executor, so subsequent starts should use `wegent-standalone start`.
 
 ### Running Container Directly
 
@@ -106,9 +156,9 @@ The standalone image includes Nginx, so browsers only need port `3000`. Nginx pr
 2. Sign in with the initialized account, or follow the page prompts to finish account setup.
 3. Configure an available model and provider token in settings.
 4. Return to the Wework workbench and send a coding request directly.
-5. If no project is selected, Wework routes the request to the automatically registered standalone cloud device and creates a standalone chat workspace under `/workspace/chats`.
-6. After creating a Git project, new tasks use project and task workspaces under `/workspace/projects` and `/workspace/worktrees`.
-7. To inspect files or open a terminal, use the Wework project toolbar. Terminals are relayed through the authenticated Backend Socket.IO channel to the in-container executor, which manages the PTY directly.
+5. If no project is selected, Wework routes the request to an automatically registered standalone executor device and creates a standalone chat workspace.
+6. After creating a Git project, new tasks use the selected executor's workspace. The container executor uses `/workspace/projects` and `/workspace/worktrees`; the host executor uses `~/.wegent-executor/workspace`.
+7. To inspect files or open a terminal, use the Wework project toolbar. Terminals are relayed through the authenticated Backend Socket.IO channel to the matching executor, which manages the PTY directly.
 
 Standalone does not include the IDE/code-server entry by default. For the first standalone launch, treat Wework coding, workspace files, and project terminal as the primary capabilities. Use standard deployment or a separate cloud device when you need IDE access or stronger isolation.
 
@@ -126,6 +176,10 @@ Standalone does not include the IDE/code-server entry by default. For the first 
 | `WEWORK_PUBLIC_SOCKET_URL` | Wework Web Socket.IO origin; empty means the current page origin | empty |
 | `WEWORK_PUBLIC_SOCKET_PATH` | Wework Web Socket.IO path | `/wework/socket.io` |
 | `WEGENT_WORKSPACE_ROOT` | Standalone workspace root | `/workspace` |
+| `WEGENT_STANDALONE_EXECUTOR_MODE` | Standalone executor mode: `host`, `container`, or `hybrid` | `host` for interactive macOS installs; `container` for non-interactive and Linux installs |
+| `STANDALONE_EXECUTOR_ENABLED` | In-container executor switch passed by the installer according to executor mode | `true` |
+| `WEGENT_BIN_DIR` | Directory where the installer writes the `wegent-standalone` management command | `~/.local/bin` |
+| `WEGENT_STANDALONE_STATE_FILE` | Persistent state file read by `wegent-standalone` | `~/.wegent/standalone/config.env` |
 | `STANDALONE_MODE` | Enable standalone mode | `true` |
 | `DATABASE_URL` | Database connection URL | `sqlite:////app/data/wegent.db` |
 | `REDIS_URL` | Redis connection URL | `redis://localhost:6379/0` |
@@ -139,13 +193,15 @@ Service state is stored in `/app/data`:
 - `wegent.db`: SQLite database file
 - `redis/`: Redis persistence data (AOF and RDB)
 - `standalone_executor_token`: admin API key used by the standalone executor registration
-- `standalone-executor/`: executor local state
+- `standalone-executor/`: container executor local state
 
 Workspace data is stored in `/workspace`:
 
 - `projects/`: Wework Git project directories
 - `chats/`: standalone chat workspaces without a selected project
 - `worktrees/`: per-task Git worktrees
+
+The host executor binary, config, logs, and workspace are stored in `~/.wegent-executor`.
 
 Use Docker volumes for persistence:
 
@@ -227,7 +283,7 @@ The standalone image includes embedded Redis:
 
 ### Standalone Executor Limitations
 
-1. **Resource Isolation**: Coding tasks execute in the same standalone container and do not get per-task Docker sandbox isolation
+1. **Resource Isolation**: Coding tasks execute where the selected executor runs; container mode does not provide per-task Docker sandbox isolation, and host mode directly accesses the host environment
 2. **Security**: Use in trusted environments; do not execute untrusted code
 3. **Capability Scope**: Wework coding tasks and terminal are supported by default; IDE/code-server is not a default standalone capability
 
