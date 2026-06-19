@@ -20,7 +20,9 @@ import type {
   DeviceSlotUpdatePayload,
   DeviceUpgradeStatusPayload,
 } from '@/types/device-events'
-import type { WorkbenchSocket } from './socketClient'
+import type { SocketClientSocket } from '@wegent/chat-core'
+
+export type WorkbenchSocket = SocketClientSocket
 
 export interface ChatStreamHandlers {
   onChatStart?: (payload: ChatStartPayload) => void
