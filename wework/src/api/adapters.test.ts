@@ -121,7 +121,7 @@ describe('REST adapters', () => {
     )
   })
 
-  test('picks default team for wework first, then code and chat', async () => {
+  test('picks the configured wework default team', async () => {
     const client = mockClient()
     vi.mocked(client.get).mockResolvedValueOnce({
       total: 3,
@@ -135,6 +135,21 @@ describe('REST adapters', () => {
     const team = await createTeamApi(client).getDefaultWorkbenchTeam()
 
     expect(team.id).toBe(3)
+  })
+
+  test('does not fallback to code or chat when the wework default team is missing', async () => {
+    const client = mockClient()
+    vi.mocked(client.get).mockResolvedValueOnce({
+      total: 2,
+      items: [
+        { id: 1, name: 'general', default_for_modes: ['chat'], is_active: true },
+        { id: 2, name: 'coder', default_for_modes: ['code'], is_active: true },
+      ],
+    })
+
+    await expect(createTeamApi(client).getDefaultWorkbenchTeam()).rejects.toThrow(
+      'Wework default team is not configured'
+    )
   })
 
   test('loads system skills with search params', async () => {

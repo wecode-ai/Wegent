@@ -616,6 +616,10 @@ function getNewChatModelSelection(user: User | null): ModelSelectionConfig | nul
   return user?.preferences?.wework_new_chat_model_selection ?? null
 }
 
+function resolveAutomaticModel(models: UnifiedModel[]): UnifiedModel | null {
+  return models.find(model => !model.compatibilityDisabled) ?? null
+}
+
 function isRunningTaskStatus(status?: string) {
   return ['PENDING', 'RUNNING', 'STARTED', 'PROCESSING', 'IN_PROGRESS'].includes(
     String(status ?? '').toUpperCase()
@@ -897,6 +901,15 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         currentProject,
         standaloneDeviceId: getRememberedStandaloneDeviceId(user, devices),
       })
+      if (defaultTeamResult.status === 'rejected') {
+        dispatch({
+          type: 'error_set',
+          error:
+            defaultTeamResult.reason instanceof Error
+              ? defaultTeamResult.reason.message
+              : 'Wework default team is not configured',
+        })
+      }
     }
 
     bootstrap()
@@ -1726,6 +1739,9 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         message,
       }
 
+      const selectedModel =
+        modelSelection.selectedModel ?? resolveAutomaticModel(modelSelection.models)
+
       if (
         !state.currentTask &&
         activeProject &&
@@ -1741,10 +1757,13 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         }
       }
 
-      if (modelSelection.selectedModel) {
-        payload.force_override_bot_model = modelSelection.selectedModel.name
-        payload.force_override_bot_model_type = modelSelection.selectedModel.type
-        if (Object.keys(modelSelection.selectedModelOptions).length > 0) {
+      if (selectedModel) {
+        payload.force_override_bot_model = selectedModel.name
+        payload.force_override_bot_model_type = selectedModel.type
+        if (
+          modelSelection.selectedModel &&
+          Object.keys(modelSelection.selectedModelOptions).length > 0
+        ) {
           payload.model_options = modelSelection.selectedModelOptions
         }
       }
@@ -1766,6 +1785,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     [
       attachmentSelection.attachments,
       isOptionsLocked,
+      modelSelection.models,
       modelSelection.selectedModel,
       modelSelection.selectedModelOptions,
       skillSelection.selectedSkills,
@@ -1880,7 +1900,13 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
       trimmedMessage || (hasCodeComments ? i18n.t('workbench.code_comment_fallback') : '')
     const payloadMessage = appendCodeCommentContexts(message, codeCommentContexts)
     const prepared = buildSendPayload(payloadMessage)
-    if (!prepared) return
+    if (!prepared) {
+      dispatch({
+        type: 'error_set',
+        error: 'Wework default team is not configured',
+      })
+      return
+    }
     if (prepared.activeDeviceId) {
       const activeDevice = findWorkbenchDevice(state.devices, prepared.activeDeviceId)
       if (!isWorkbenchDeviceOnline(activeDevice)) {
