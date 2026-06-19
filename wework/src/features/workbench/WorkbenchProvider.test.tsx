@@ -497,6 +497,7 @@ describe('WorkbenchProvider', () => {
 
   test('does not automatically upgrade old online devices during bootstrap', async () => {
     const upgradeDevice = vi.fn().mockResolvedValue(undefined)
+    const connectDevice = vi.fn().mockResolvedValue(undefined)
 
     render(
       <WorkbenchProvider
@@ -560,7 +561,7 @@ describe('WorkbenchProvider', () => {
             leaveTask: vi.fn(),
             sendMessage: vi.fn(),
             subscribe: vi.fn(() => vi.fn()),
-            connectDevice: vi.fn().mockResolvedValue(undefined),
+            connectDevice,
             setActiveDevice: vi.fn(),
             isDeviceConnected: vi.fn(() => true),
           },
@@ -572,6 +573,107 @@ describe('WorkbenchProvider', () => {
 
     await waitFor(() => expect(screen.getByTestId('device-list')).toHaveTextContent('Old Device'))
     expect(upgradeDevice).not.toHaveBeenCalled()
+    expect(connectDevice).not.toHaveBeenCalled()
+  })
+
+  test('prompts upgrade instead of direct offline for old online devices when sending', async () => {
+    const sendMessage = vi.fn().mockResolvedValue({ success: true, task_id: 12 })
+    const connectDevice = vi.fn().mockResolvedValue(undefined)
+    const getTaskDetail = vi.fn().mockResolvedValue({
+      id: 71,
+      title: 'Legacy executor task',
+      status: 'RUNNING',
+      task_type: 'code',
+      project_id: 0,
+      device_id: 'old-device',
+      created_at: '2026-06-04T00:00:00.000Z',
+      updated_at: '2026-06-04T00:01:00.000Z',
+      subtasks: [],
+    })
+
+    render(
+      <WorkbenchProvider
+        user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+        services={{
+          teamApi: {
+            getDefaultWorkbenchTeam: vi
+              .fn()
+              .mockResolvedValue({ id: 2, name: 'coder', is_active: true }),
+          },
+          modelApi: {
+            listModels: vi.fn().mockResolvedValue({ data: [] }),
+          },
+          skillApi: {
+            listSkills: vi.fn().mockResolvedValue([]),
+            getTeamSkills: vi.fn().mockResolvedValue({ skills: [], preload_skills: [] }),
+          },
+          projectApi: {
+            listProjects: vi.fn().mockResolvedValue({ items: [] }),
+            getProject: vi.fn(),
+            createProject: vi.fn(),
+            updateProject: vi.fn(),
+            deleteProject: vi.fn(),
+            archiveProjectChats: vi.fn(),
+            archiveAllProjectChats: vi.fn(),
+            createConversation: vi.fn(),
+          },
+          taskApi: {
+            listRecentTasks: vi.fn().mockResolvedValue({ total: 0, items: [] }),
+            getTaskDetail,
+            renameTask: vi.fn(),
+            archiveTask: vi.fn(),
+            archiveAllChats: vi.fn(),
+            listArchivedTasks: vi.fn(),
+            unarchiveTask: vi.fn(),
+            deleteTask: vi.fn(),
+            deleteArchivedTasks: vi.fn(),
+          },
+          deviceApi: {
+            listDevices: vi.fn().mockResolvedValue([
+              {
+                id: 1,
+                device_id: 'old-device',
+                name: 'Old Device',
+                status: 'online',
+                is_default: false,
+                device_type: 'cloud',
+                bind_shell: 'claudecode',
+                executor_version: '1.8.4',
+                slot_used: 0,
+              },
+            ]),
+            getHomeDirectory: vi.fn(),
+            getProjectWorkspaceRoot: vi.fn(),
+            listDirectories: vi.fn(),
+            listSkills: vi.fn().mockResolvedValue([]),
+          },
+          chatStream: {
+            joinTask: vi.fn().mockResolvedValue({}),
+            leaveTask: vi.fn(),
+            sendMessage,
+            subscribe: vi.fn(() => vi.fn()),
+            connectDevice,
+            setActiveDevice: vi.fn(),
+            isDeviceConnected: vi.fn(() => false),
+          },
+        }}
+      >
+        <ProjectTaskSendProbe />
+      </WorkbenchProvider>
+    )
+
+    await waitFor(() => expect(screen.getByText('open project task')).toBeInTheDocument())
+
+    await userEvent.click(screen.getByText('open project task'))
+    await waitFor(() => expect(screen.getByTestId('current-task-id')).toHaveTextContent('71'))
+    await userEvent.click(screen.getByText('set input'))
+    await userEvent.click(screen.getByText('send'))
+
+    expect(connectDevice).not.toHaveBeenCalled()
+    expect(sendMessage).not.toHaveBeenCalled()
+    expect(screen.getByTestId('workbench-error')).toHaveTextContent(
+      'Old Device 需要升级，升级后可继续对话'
+    )
   })
 
   test('opens task from the browser path after bootstrap', async () => {
@@ -777,9 +879,7 @@ describe('WorkbenchProvider', () => {
     expect(screen.getByTestId('message-contents')).toHaveTextContent(
       'assistant:streaming:已经输出的内容'
     )
-    expect(screen.getByTestId('message-created-at')).toHaveTextContent(
-      '2026-06-04T00:00:01.000Z'
-    )
+    expect(screen.getByTestId('message-created-at')).toHaveTextContent('2026-06-04T00:00:01.000Z')
     expect(screen.getByTestId('message-completed-at')).not.toHaveTextContent('2026-')
   })
 
@@ -3385,7 +3485,7 @@ describe('WorkbenchProvider', () => {
                           text:{block.content}:{block.status}
                         </li>,
                       ]
-                )
+              )
             )}
           </ol>
           <span data-testid="history-completed-at">
@@ -3511,9 +3611,7 @@ describe('WorkbenchProvider', () => {
     expect(screen.getByTestId('tool-blocks')).toHaveTextContent(
       'text:Let me check the workspace.:done'
     )
-    expect(screen.getByTestId('history-completed-at')).toHaveTextContent(
-      '2026-05-27T00:03:00.000Z'
-    )
+    expect(screen.getByTestId('history-completed-at')).toHaveTextContent('2026-05-27T00:03:00.000Z')
   })
 
   test('sends current-task model override but not skill overrides after a task is open', async () => {
@@ -3882,11 +3980,7 @@ describe('WorkbenchProvider', () => {
     // syncSelection effect then re-anchored the dropdown on the stale
     // currentTask.model_id (which had never been updated for existing tasks).
     type StreamHandlers = {
-      onChatStart?: (payload: {
-        task_id: number
-        subtask_id: number
-        started_at: string
-      }) => void
+      onChatStart?: (payload: { task_id: number; subtask_id: number; started_at: string }) => void
     }
     let streamHandlers: StreamHandlers | undefined
 
@@ -4039,11 +4133,7 @@ describe('WorkbenchProvider', () => {
 
   test('keeps a live running task indicator after switching to another task', async () => {
     type StreamHandlers = {
-      onChatStart?: (payload: {
-        task_id: number
-        subtask_id: number
-        started_at: string
-      }) => void
+      onChatStart?: (payload: { task_id: number; subtask_id: number; started_at: string }) => void
     }
     let streamHandlers: StreamHandlers | undefined
 

@@ -28,6 +28,7 @@ interface DirectChatConnectionResponse {
 
 export interface DirectWorkbenchSocket extends SocketClientSocket {
   connectDevice(deviceId: string): Promise<void>
+  disconnectDevice(deviceId: string): void
   setActiveDevice(deviceId: string | null): void
   isDeviceConnected(deviceId: string): boolean
 }
@@ -138,6 +139,34 @@ class DirectWorkbenchSocketImpl implements DirectWorkbenchSocket {
       this.markDeviceStale(deviceId)
       this.scheduleReconnect(deviceId)
       throw error
+    }
+  }
+
+  disconnectDevice(deviceId: string): void {
+    this.desiredDevices.delete(deviceId)
+    this.clearProbe(deviceId)
+    this.clearReconnect(deviceId)
+    this.directConnections.delete(deviceId)
+    this.staleDevices.delete(deviceId)
+    this.lastActivityAt.delete(deviceId)
+    this.pendingSockets.delete(deviceId)
+    this.wrappers.delete(deviceId)
+
+    for (const [taskId, mappedDeviceId] of this.taskDevices) {
+      if (mappedDeviceId === deviceId) {
+        this.taskDevices.delete(taskId)
+      }
+    }
+    for (const [subtaskId, mappedDeviceId] of this.subtaskDevices) {
+      if (mappedDeviceId === deviceId) {
+        this.subtaskDevices.delete(subtaskId)
+      }
+    }
+
+    const socket = this.sockets.get(deviceId)
+    if (socket) {
+      socket.disconnect()
+      this.sockets.delete(deviceId)
     }
   }
 

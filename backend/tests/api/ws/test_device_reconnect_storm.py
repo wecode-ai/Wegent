@@ -25,7 +25,7 @@ async def test_device_register_does_not_wait_for_capability_sync(monkeypatch):
         }
 
     async def fake_run_sync_in_executor(func, *args):
-        return True, "MacBook", None
+        return True, "MacBook", None, None
 
     async def slow_capability_sync(*, user_id, device_id):
         sync_started.set()
@@ -84,7 +84,7 @@ async def test_device_register_debounces_repeated_db_upserts(monkeypatch):
     async def fake_run_sync_in_executor(func, *args):
         nonlocal upsert_calls
         upsert_calls += 1
-        return True, "MacBook", None
+        return True, "MacBook", None, None
 
     monkeypatch.setattr(namespace, "get_session", fake_get_session)
     monkeypatch.setattr(namespace, "save_session", AsyncMock())

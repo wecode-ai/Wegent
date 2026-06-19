@@ -16,14 +16,12 @@ import type {
   ChatStartPayload,
   TaskJoinResponse,
 } from '@/types/api'
-import type {
-  DeviceSlotUpdatePayload,
-  DeviceUpgradeStatusPayload,
-} from '@/types/device-events'
+import type { DeviceSlotUpdatePayload, DeviceUpgradeStatusPayload } from '@/types/device-events'
 import type { SocketClientSocket } from '@wegent/chat-core'
 
 export type WorkbenchSocket = SocketClientSocket & {
   connectDevice?: (deviceId: string) => Promise<void>
+  disconnectDevice?: (deviceId: string) => void
   setActiveDevice?: (deviceId: string | null) => void
   isDeviceConnected?: (deviceId: string) => boolean
 }
@@ -70,13 +68,22 @@ function normalizeGuideAck(response: ChatGuideAck | undefined): ChatGuideAck {
 export function createChatStream(
   socket: Pick<
     WorkbenchSocket,
-    'emit' | 'on' | 'off' | 'connected' | 'connectDevice' | 'isDeviceConnected'
+    | 'emit'
+    | 'on'
+    | 'off'
+    | 'connected'
+    | 'connectDevice'
+    | 'disconnectDevice'
+    | 'isDeviceConnected'
     | 'setActiveDevice'
   >
 ) {
   return {
     connectDevice(deviceId: string): Promise<void> {
       return socket.connectDevice?.(deviceId) ?? Promise.resolve()
+    },
+    disconnectDevice(deviceId: string): void {
+      socket.disconnectDevice?.(deviceId)
     },
     setActiveDevice(deviceId: string | null): void {
       socket.setActiveDevice?.(deviceId)

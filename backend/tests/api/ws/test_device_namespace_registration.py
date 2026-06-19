@@ -27,7 +27,12 @@ def test_register_device_reads_display_name_before_session_closes(
     device_id = "device-detached-registration"
 
     try:
-        success, persisted_display_name, error = device_namespace._register_device(
+        (
+            success,
+            persisted_display_name,
+            direct_chat_secret,
+            error,
+        ) = device_namespace._register_device(
             user_id=user_id,
             device_id=device_id,
             name="Windows-Device-detached",
@@ -51,3 +56,4 @@ def test_register_device_reads_display_name_before_session_closes(
     assert error is None
     assert success is True
     assert persisted_display_name == "Windows-Device-detached"
+    assert direct_chat_secret is None
