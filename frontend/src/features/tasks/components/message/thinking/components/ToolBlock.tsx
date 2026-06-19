@@ -31,6 +31,13 @@ function getToolInputPreview(
 
   const toolName = tool.toolName
 
+  if (isSkillLoaderTool(toolName)) {
+    const skillName = getSkillNameFromInput(input)
+    if (skillName) {
+      return truncateText(skillName, maxLength)
+    }
+  }
+
   // Handle different tool types
   switch (toolName) {
     case 'Bash': {
@@ -83,13 +90,6 @@ function getToolInputPreview(
       }
       break
     }
-    case 'load_skill': {
-      const skillName = typeof input === 'object' ? (input.skill_name as string) : null
-      if (skillName) {
-        return truncateText(skillName, maxLength)
-      }
-      break
-    }
     default: {
       // For generic tools, try to extract a meaningful preview
       if (typeof input === 'string') {
@@ -108,6 +108,43 @@ function getToolInputPreview(
           return truncateText(preview, maxLength)
         }
       }
+    }
+  }
+
+  return null
+}
+
+function isSkillLoaderTool(toolName: string): boolean {
+  return toolName === 'load_skill' || toolName === 'Skill' || toolName === '加载技能'
+}
+
+function getSkillNameFromInput(input: Record<string, unknown> | string | undefined): string | null {
+  if (!input) return null
+
+  if (typeof input === 'string') {
+    const trimmed = input.trim()
+    if (!trimmed || trimmed === '{}' || trimmed === '[]') return null
+
+    try {
+      const parsed = JSON.parse(trimmed)
+      if (typeof parsed === 'string') {
+        return parsed.trim() || null
+      }
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return getSkillNameFromInput(parsed as Record<string, unknown>)
+      }
+    } catch {
+      return trimmed
+    }
+
+    return null
+  }
+
+  const fields = ['skill_name', 'skill', 'name']
+  for (const field of fields) {
+    const value = input[field]
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim()
     }
   }
 
@@ -368,6 +405,7 @@ function getToolDisplayName(tool: ToolRendererProps['tool'], t: (key: string) =>
     knowledge_base_search: t('thinking.tools.kb_search') || 'Search Knowledge Base',
     web_search: t('thinking.tools.web_search') || 'Web Search',
     load_skill: t('thinking.tools.load_skill') || 'Load Skill',
+    Skill: t('thinking.tools.load_skill') || 'Load Skill',
   }
 
   // Priority 1: If we have a known tool name, use it
