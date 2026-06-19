@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-# Standalone startup script - starts Redis, Backend, Frontend, Wework, Executor, and terminal services in a single container
+# Standalone startup script - starts Redis, Backend, Frontend, Nginx, Executor, and terminal services in a single container
 
 set -e
 
@@ -25,8 +25,7 @@ export DATABASE_URL="sqlite:////app/data/wegent.db"
 
 # Set default ports if not specified.
 BACKEND_PORT=${BACKEND_PORT:-8000}
-FRONTEND_PORT=${FRONTEND_PORT:-3000}
-WEWORK_PORT=${WEWORK_PORT:-3001}
+FRONTEND_PORT=${FRONTEND_PORT:-3002}
 
 # Set Redis URL to localhost (embedded Redis).
 export REDIS_URL="${REDIS_URL:-redis://localhost:6379/0}"
@@ -118,12 +117,20 @@ wait_for_http() {
 }
 
 write_wework_runtime_config() {
-    local public_backend_url="${WEWORK_PUBLIC_BACKEND_URL:-http://localhost:${BACKEND_PORT}}"
+    local app_base_path="${WEWORK_PUBLIC_APP_BASE_PATH:-/wework}"
+    local public_backend_url="${WEWORK_PUBLIC_BACKEND_URL:-}"
+
+    export WEWORK_PUBLIC_APP_BASE_PATH="$app_base_path"
     export WEWORK_PUBLIC_BACKEND_URL="$public_backend_url"
-    export WEWORK_PUBLIC_API_URL="${WEWORK_PUBLIC_API_URL:-${public_backend_url%/}/api}"
-    export WEWORK_PUBLIC_SOCKET_URL="${WEWORK_PUBLIC_SOCKET_URL:-$public_backend_url}"
-    export WEWORK_PUBLIC_SOCKET_PATH="${WEWORK_PUBLIC_SOCKET_PATH:-/socket.io}"
-    export WEWORK_PUBLIC_APP_BASE_PATH="${WEWORK_PUBLIC_APP_BASE_PATH:-/}"
+    if [ -n "${WEWORK_PUBLIC_API_URL:-}" ]; then
+        export WEWORK_PUBLIC_API_URL
+    elif [ -n "$public_backend_url" ]; then
+        export WEWORK_PUBLIC_API_URL="${public_backend_url%/}/api"
+    else
+        export WEWORK_PUBLIC_API_URL="${app_base_path}/api"
+    fi
+    export WEWORK_PUBLIC_SOCKET_URL="${WEWORK_PUBLIC_SOCKET_URL:-${public_backend_url%/}}"
+    export WEWORK_PUBLIC_SOCKET_PATH="${WEWORK_PUBLIC_SOCKET_PATH:-${app_base_path}/socket.io}"
 
     python3 - << 'PY'
 import json
@@ -281,11 +288,11 @@ cd /app/frontend
 # RUNTIME_INTERNAL_API_URL is always localhost (internal container communication).
 export RUNTIME_INTERNAL_API_URL=http://localhost:${BACKEND_PORT}
 # RUNTIME_PUBLIC_API_URL is used in generated external API examples.
-export RUNTIME_PUBLIC_API_URL=${RUNTIME_PUBLIC_API_URL:-http://localhost:${BACKEND_PORT}}
-# RUNTIME_SOCKET_DIRECT_URL can be overridden via docker-compose for remote access.
-export RUNTIME_SOCKET_DIRECT_URL=${RUNTIME_SOCKET_DIRECT_URL:-http://localhost:${BACKEND_PORT}}
+export RUNTIME_PUBLIC_API_URL=${RUNTIME_PUBLIC_API_URL:-/api}
+# RUNTIME_SOCKET_DIRECT_URL can be overridden for remote access; empty means same-origin proxy mode.
+export RUNTIME_SOCKET_DIRECT_URL=${RUNTIME_SOCKET_DIRECT_URL:-}
 # Point frontend coding entry points at bundled Wework by default.
-export RUNTIME_WEWORK_CODE_URL="${RUNTIME_WEWORK_CODE_URL:-http://localhost:${WEWORK_PORT}}"
+export RUNTIME_WEWORK_CODE_URL="${RUNTIME_WEWORK_CODE_URL:-/wework}"
 export NODE_ENV=production
 export PORT=${FRONTEND_PORT}
 export HOSTNAME="0.0.0.0"
@@ -300,20 +307,21 @@ FRONTEND_PID=$!
 wait_for_http "Frontend" "http://localhost:${FRONTEND_PORT}" 30 "$FRONTEND_PID" false
 
 # ========================================
-# Step 6: Start Wework
+# Step 6: Start Nginx
 # ========================================
-start_wework() {
-    echo "[6/8] Starting Wework (port ${WEWORK_PORT})..."
+start_nginx() {
+    echo "[6/8] Starting Nginx reverse proxy (port 3000)..."
     write_wework_runtime_config
-    cd /app/wework/dist
 
-    python3 -m http.server ${WEWORK_PORT} --bind 0.0.0.0 &
-    WEWORK_PID=$!
+    nginx -t
+    nginx -g "daemon off;" &
+    NGINX_PID=$!
 
-    wait_for_http "Wework" "http://localhost:${WEWORK_PORT}" 30 "$WEWORK_PID" false
+    wait_for_http "Nginx" "http://localhost:3000/health" 30 "$NGINX_PID" true
+    wait_for_http "Wework" "http://localhost:3000/wework/" 30 "$NGINX_PID" false
 }
 
-start_wework
+start_nginx
 
 # ========================================
 # Step 7: All Services Started
@@ -324,9 +332,9 @@ echo "=========================================="
 echo "  Wegent Standalone is running!"
 echo "=========================================="
 echo ""
-echo "  Frontend:        http://localhost:${FRONTEND_PORT}"
-echo "  Wework:          http://localhost:${WEWORK_PORT}"
-echo "  Backend:         http://localhost:${BACKEND_PORT}"
+echo "  Frontend:        http://localhost:3000"
+echo "  Wework:          http://localhost:3000/wework"
+echo "  Backend:         http://localhost:3000/api"
 echo "  Workspace shell: Wework uses Backend Socket.IO terminal relay"
 echo "  Redis:           localhost:6379 (embedded)"
 echo ""
@@ -347,7 +355,7 @@ shutdown() {
     echo ""
     echo "Received shutdown signal, stopping services..."
 
-    stop_pid "Wework" "${WEWORK_PID:-}"
+    stop_pid "Nginx" "${NGINX_PID:-}"
     stop_pid "Frontend" "${FRONTEND_PID:-}"
     stop_pid "Standalone Executor" "${EXECUTOR_PID:-}"
     stop_pid "Backend" "${BACKEND_PID:-}"
@@ -358,7 +366,7 @@ shutdown() {
     fi
 
     echo "  Waiting for services to stop..."
-    wait "${WEWORK_PID:-}" 2>/dev/null || true
+    wait "${NGINX_PID:-}" 2>/dev/null || true
     wait "${FRONTEND_PID:-}" 2>/dev/null || true
     wait "${EXECUTOR_PID:-}" 2>/dev/null || true
     wait "${BACKEND_PID:-}" 2>/dev/null || true
@@ -374,7 +382,7 @@ trap shutdown SIGTERM SIGINT SIGQUIT
 # Keep Container Running
 # ========================================
 set +e
-wait -n "$REDIS_PID" "$BACKEND_PID" "$EXECUTOR_PID" "$FRONTEND_PID" "$WEWORK_PID"
+wait -n "$REDIS_PID" "$BACKEND_PID" "$EXECUTOR_PID" "$FRONTEND_PID" "$NGINX_PID"
 EXIT_CODE=$?
 set -e
 
@@ -385,5 +393,5 @@ report_process "Redis" "$REDIS_PID"
 report_process "Backend" "$BACKEND_PID"
 report_process "Standalone Executor" "$EXECUTOR_PID"
 report_process "Frontend" "$FRONTEND_PID"
-report_process "Wework" "$WEWORK_PID"
+report_process "Nginx" "$NGINX_PID"
 shutdown "$EXIT_CODE"

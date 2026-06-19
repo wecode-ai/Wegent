@@ -1078,13 +1078,14 @@ start_standalone_service() {
     docker_run_cmd+=" --name ${STANDALONE_CONTAINER_NAME}"
     docker_run_cmd+=" --restart unless-stopped"
     docker_run_cmd+=" -p 3000:3000"
-    docker_run_cmd+=" -p 3001:3001"
-    docker_run_cmd+=" -p 8000:8000"
     docker_run_cmd+=" -v ${STANDALONE_VOLUME_NAME}:/app/data"
     docker_run_cmd+=" -v ${STANDALONE_WORKSPACE_VOLUME_NAME}:/workspace"
-    docker_run_cmd+=" -e RUNTIME_SOCKET_DIRECT_URL=${SOCKET_URL}"
-    docker_run_cmd+=" -e RUNTIME_WEWORK_CODE_URL=http://${ACCESS_HOST}:3001"
-    docker_run_cmd+=" -e WEWORK_PUBLIC_BACKEND_URL=${SOCKET_URL}"
+    docker_run_cmd+=" -e RUNTIME_SOCKET_DIRECT_URL=http://${ACCESS_HOST}:3000"
+    docker_run_cmd+=" -e RUNTIME_PUBLIC_API_URL=http://${ACCESS_HOST}:3000/api"
+    docker_run_cmd+=" -e RUNTIME_WEWORK_CODE_URL=http://${ACCESS_HOST}:3000/wework"
+    docker_run_cmd+=" -e WEWORK_PUBLIC_APP_BASE_PATH=/wework"
+    docker_run_cmd+=" -e WEWORK_PUBLIC_API_URL=/wework/api"
+    docker_run_cmd+=" -e WEWORK_PUBLIC_SOCKET_PATH=/wework/socket.io"
     docker_run_cmd+=" -e LITELLM_LOCAL_MODEL_COST_MAP=True"
     docker_run_cmd+=" ${STANDALONE_IMAGE}"
 
@@ -1111,8 +1112,8 @@ start_standalone_service() {
 
 wait_for_standalone_service() {
     local max_wait=120
-    local health_url="http://localhost:8000/health"
-    local wework_url="http://localhost:3001/"
+    local health_url="http://localhost:3000/health"
+    local wework_url="http://localhost:3000/wework/"
 
     echo ""
     ui_info "Waiting for services to be ready (this may take 30-90 seconds)..."
@@ -1297,14 +1298,14 @@ print_completion() {
     echo ""
     echo -e "  Open ${BLUE}${BOLD}http://${ACCESS_HOST}:3000${NC} in your browser"
     if [[ "$DEPLOY_MODE" == "standalone" ]]; then
-        echo -e "  Open ${BLUE}${BOLD}http://${ACCESS_HOST}:3001${NC} for Wework"
+        echo -e "  Open ${BLUE}${BOLD}http://${ACCESS_HOST}:3000/wework${NC} for Wework"
     fi
     echo ""
     ui_kv "Deployment mode" "$DEPLOY_MODE"
     ui_kv "Access URL" "http://${ACCESS_HOST}:3000"
 
     if [[ "$DEPLOY_MODE" == "standalone" ]]; then
-        ui_kv "Wework URL" "http://${ACCESS_HOST}:3001"
+        ui_kv "Wework URL" "http://${ACCESS_HOST}:3000/wework"
         ui_kv "Terminal access" "Wework workspace terminal"
         ui_kv "Container name" "$STANDALONE_CONTAINER_NAME"
         ui_kv "Data volume" "$STANDALONE_VOLUME_NAME"
@@ -1339,10 +1340,12 @@ print_completion() {
         echo -e "  ${MUTED}# Update to latest version${NC}"
         echo -e "  ${YELLOW}docker pull ${STANDALONE_IMAGE} && docker rm -f ${STANDALONE_CONTAINER_NAME} && \\"
         echo -e "  docker run -d --name ${STANDALONE_CONTAINER_NAME} --restart unless-stopped \\"
-        echo -e "    -p 3000:3000 -p 3001:3001 -p 8000:8000 \\"
+        echo -e "    -p 3000:3000 \\"
         echo -e "    -v ${STANDALONE_VOLUME_NAME}:/app/data -v ${STANDALONE_WORKSPACE_VOLUME_NAME}:/workspace \\"
-        echo -e "    -e RUNTIME_SOCKET_DIRECT_URL=${SOCKET_URL} -e RUNTIME_WEWORK_CODE_URL=http://${ACCESS_HOST}:3001 \\"
-        echo -e "    -e WEWORK_PUBLIC_BACKEND_URL=${SOCKET_URL} \\"
+        echo -e "    -e RUNTIME_SOCKET_DIRECT_URL=http://${ACCESS_HOST}:3000 -e RUNTIME_PUBLIC_API_URL=http://${ACCESS_HOST}:3000/api \\"
+        echo -e "    -e RUNTIME_WEWORK_CODE_URL=http://${ACCESS_HOST}:3000/wework \\"
+        echo -e "    -e WEWORK_PUBLIC_APP_BASE_PATH=/wework -e WEWORK_PUBLIC_API_URL=/wework/api \\"
+        echo -e "    -e WEWORK_PUBLIC_SOCKET_PATH=/wework/socket.io \\"
         echo -e "    ${STANDALONE_IMAGE}${NC}"
     else
         local compose_args=""
@@ -1400,10 +1403,12 @@ main() {
         echo "This installer supports macOS and Linux."
         echo "For Windows, please use Docker Desktop and run:"
         echo "  docker run -d --name wegent-standalone \\"
-        echo "    -p 3000:3000 -p 3001:3001 -p 8000:8000 \\"
+        echo "    -p 3000:3000 \\"
         echo "    -v wegent-data:/app/data -v wegent-workspace:/workspace \\"
-        echo "    -e RUNTIME_SOCKET_DIRECT_URL=http://localhost:8000 -e RUNTIME_WEWORK_CODE_URL=http://localhost:3001 \\"
-        echo "    -e WEWORK_PUBLIC_BACKEND_URL=http://localhost:8000 \\"
+        echo "    -e RUNTIME_SOCKET_DIRECT_URL=http://localhost:3000 -e RUNTIME_PUBLIC_API_URL=http://localhost:3000/api \\"
+        echo "    -e RUNTIME_WEWORK_CODE_URL=http://localhost:3000/wework \\"
+        echo "    -e WEWORK_PUBLIC_APP_BASE_PATH=/wework -e WEWORK_PUBLIC_API_URL=/wework/api \\"
+        echo "    -e WEWORK_PUBLIC_SOCKET_PATH=/wework/socket.io \\"
         echo "    ghcr.io/wecode-ai/wegent-standalone:latest"
         exit 1
     fi

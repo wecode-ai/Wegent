@@ -45,7 +45,7 @@ curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | 
 1. 检查并安装 Docker（如果需要）
 2. 拉取最新的 Wegent standalone 镜像
 3. 创建 `wegent-data` 数据卷和 `wegent-workspace` 工作区卷
-4. 映射主前端、Wework 和 Backend 端口
+4. 映射单个 Nginx 入口端口
 5. 启动容器并等待 Backend 和 Wework 就绪
 
 启动完成后访问：
@@ -53,8 +53,8 @@ curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | 
 | 入口 | 地址 | 用途 |
 |------|------|------|
 | 主前端 | `http://localhost:3000` | Wegent 管理和通用功能 |
-| Wework | `http://localhost:3001` | 创建和使用编码任务 |
-| Backend API | `http://localhost:8000` | API 与 WebSocket |
+| Wework | `http://localhost:3000/wework` | 创建和使用编码任务 |
+| Backend API | `http://localhost:3000/api` | API 与 WebSocket |
 
 ### 手动运行容器
 
@@ -65,13 +65,14 @@ docker run -d \
   --name wegent-standalone \
   --restart unless-stopped \
   -p 3000:3000 \
-  -p 3001:3001 \
-  -p 8000:8000 \
   -v wegent-data:/app/data \
   -v wegent-workspace:/workspace \
-  -e RUNTIME_SOCKET_DIRECT_URL=http://localhost:8000 \
-  -e RUNTIME_WEWORK_CODE_URL=http://localhost:3001 \
-  -e WEWORK_PUBLIC_BACKEND_URL=http://localhost:8000 \
+  -e RUNTIME_SOCKET_DIRECT_URL=http://localhost:3000 \
+  -e RUNTIME_PUBLIC_API_URL=http://localhost:3000/api \
+  -e RUNTIME_WEWORK_CODE_URL=http://localhost:3000/wework \
+  -e WEWORK_PUBLIC_APP_BASE_PATH=/wework \
+  -e WEWORK_PUBLIC_API_URL=/wework/api \
+  -e WEWORK_PUBLIC_SOCKET_PATH=/wework/socket.io \
   ghcr.io/wecode-ai/wegent-standalone:latest
 ```
 
@@ -82,23 +83,24 @@ docker run -d \
   --name wegent-standalone \
   --restart unless-stopped \
   -p 3000:3000 \
-  -p 3001:3001 \
-  -p 8000:8000 \
   -v wegent-data:/app/data \
   -v wegent-workspace:/workspace \
-  -e RUNTIME_SOCKET_DIRECT_URL=http://YOUR_SERVER_IP:8000 \
-  -e RUNTIME_WEWORK_CODE_URL=http://YOUR_SERVER_IP:3001 \
-  -e WEWORK_PUBLIC_BACKEND_URL=http://YOUR_SERVER_IP:8000 \
+  -e RUNTIME_SOCKET_DIRECT_URL=http://YOUR_SERVER_IP:3000 \
+  -e RUNTIME_PUBLIC_API_URL=http://YOUR_SERVER_IP:3000/api \
+  -e RUNTIME_WEWORK_CODE_URL=http://YOUR_SERVER_IP:3000/wework \
+  -e WEWORK_PUBLIC_APP_BASE_PATH=/wework \
+  -e WEWORK_PUBLIC_API_URL=/wework/api \
+  -e WEWORK_PUBLIC_SOCKET_PATH=/wework/socket.io \
   ghcr.io/wecode-ai/wegent-standalone:latest
 ```
 
 `RUNTIME_WEWORK_CODE_URL` 会提供给主 Frontend 的运行时配置，让主前端中的编码入口默认打开 standalone 内置 Wework。
 
-`WEWORK_PUBLIC_BACKEND_URL` 会在容器启动时写入 Wework 的 `runtime-config.js`，确保浏览器远程访问 `http://YOUR_SERVER_IP:3001` 时仍然连接服务器上的 Backend，而不是用户本机的 `localhost`。
+Standalone 镜像内置 Nginx，浏览器只需要访问 `3000` 端口。Nginx 将 `/` 转发给主 Frontend，将 `/wework` 直接映射到 Wework Web 静态资源，并将 `/wework/api`、`/wework/socket.io` 转发到 Backend。
 
 ## 使用 Wework 创建编码任务
 
-1. 打开 `http://localhost:3001`（远程部署使用服务器地址）。
+1. 打开 `http://localhost:3000/wework`（远程部署使用服务器地址）。
 2. 使用初始化账号登录，或按页面提示完成账号配置。
 3. 在设置中配置可用模型和 provider token。
 4. 回到 Wework 工作台，直接发起一个编码请求。
@@ -114,13 +116,14 @@ Standalone 默认不内置 IDE/code-server 入口。正式使用时建议先将 
 
 | 变量名 | 说明 | 默认值 |
 |--------|------|--------|
-| `RUNTIME_SOCKET_DIRECT_URL` | 主 Frontend 使用的 Backend WebSocket 地址 | `http://localhost:8000` |
-| `RUNTIME_WEWORK_CODE_URL` | 主 Frontend 编码入口打开的 Wework 地址 | `http://localhost:3001` |
-| `WEWORK_PUBLIC_BACKEND_URL` | Wework Web 运行时 Backend 地址，会派生 API 和 Socket 地址 | `http://localhost:8000` |
-| `WEWORK_PUBLIC_API_URL` | Wework Web API 地址；设置后覆盖 `WEWORK_PUBLIC_BACKEND_URL/api` | `${WEWORK_PUBLIC_BACKEND_URL}/api` |
-| `WEWORK_PUBLIC_SOCKET_URL` | Wework Web Socket.IO 地址；设置后覆盖 `WEWORK_PUBLIC_BACKEND_URL` | `${WEWORK_PUBLIC_BACKEND_URL}` |
+| `RUNTIME_SOCKET_DIRECT_URL` | 主 Frontend 使用的 Backend WebSocket 地址；为空时使用同源 `/socket.io` | 空 |
+| `RUNTIME_PUBLIC_API_URL` | 主 Frontend 对外展示的 API 地址 | `/api` |
+| `RUNTIME_WEWORK_CODE_URL` | 主 Frontend 编码入口打开的 Wework 地址 | `/wework` |
+| `WEWORK_PUBLIC_APP_BASE_PATH` | Wework Web 挂载路径 | `/wework` |
+| `WEWORK_PUBLIC_API_URL` | Wework Web API 地址 | `/wework/api` |
+| `WEWORK_PUBLIC_SOCKET_URL` | Wework Web Socket.IO origin；为空时使用当前页面 origin | 空 |
+| `WEWORK_PUBLIC_SOCKET_PATH` | Wework Web Socket.IO path | `/wework/socket.io` |
 | `WEGENT_WORKSPACE_ROOT` | standalone workspace 根目录 | `/workspace` |
-| `WEWORK_PORT` | Wework Web 容器内端口 | `3001` |
 | `STANDALONE_MODE` | 启用 standalone 模式 | `true` |
 | `DATABASE_URL` | 数据库连接地址 | `sqlite:////app/data/wegent.db` |
 | `REDIS_URL` | Redis 连接地址 | `redis://localhost:6379/0` |
@@ -179,13 +182,14 @@ docker run -d \
   --name wegent-standalone \
   --restart unless-stopped \
   -p 3000:3000 \
-  -p 3001:3001 \
-  -p 8000:8000 \
   -v wegent-data:/app/data \
   -v wegent-workspace:/workspace \
-  -e RUNTIME_SOCKET_DIRECT_URL=http://localhost:8000 \
-  -e RUNTIME_WEWORK_CODE_URL=http://localhost:3001 \
-  -e WEWORK_PUBLIC_BACKEND_URL=http://localhost:8000 \
+  -e RUNTIME_SOCKET_DIRECT_URL=http://localhost:3000 \
+  -e RUNTIME_PUBLIC_API_URL=http://localhost:3000/api \
+  -e RUNTIME_WEWORK_CODE_URL=http://localhost:3000/wework \
+  -e WEWORK_PUBLIC_APP_BASE_PATH=/wework \
+  -e WEWORK_PUBLIC_API_URL=/wework/api \
+  -e WEWORK_PUBLIC_SOCKET_PATH=/wework/socket.io \
   ghcr.io/wecode-ai/wegent-standalone:latest
 ```
 

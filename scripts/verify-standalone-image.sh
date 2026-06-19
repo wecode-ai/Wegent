@@ -10,9 +10,7 @@ if [ -z "$IMAGE" ]; then
     exit 2
 fi
 
-BACKEND_PORT="${BACKEND_PORT:-18000}"
-FRONTEND_PORT="${FRONTEND_PORT:-13000}"
-WEWORK_PORT="${WEWORK_PORT:-13001}"
+STANDALONE_PORT="${STANDALONE_PORT:-13000}"
 CONTAINER_NAME="${CONTAINER_NAME:-wegent-standalone-verify-$$}"
 TIMEOUT_SECONDS="${STANDALONE_VERIFY_TIMEOUT_SECONDS:-180}"
 INTERVAL_SECONDS="${STANDALONE_VERIFY_INTERVAL_SECONDS:-2}"
@@ -83,13 +81,11 @@ wait_for_url() {
 echo "Starting standalone verification container ${CONTAINER_NAME} from ${IMAGE}"
 docker run -d \
     --name "$CONTAINER_NAME" \
-    -p "127.0.0.1:${BACKEND_PORT}:8000" \
-    -p "127.0.0.1:${FRONTEND_PORT}:3000" \
-    -p "127.0.0.1:${WEWORK_PORT}:3001" \
+    -p "127.0.0.1:${STANDALONE_PORT}:3000" \
     "$IMAGE"
 
-wait_for_url "Backend" "http://localhost:${BACKEND_PORT}/health"
-wait_for_url "Frontend" "http://localhost:${FRONTEND_PORT}/"
-wait_for_url "Wework" "http://localhost:${WEWORK_PORT}/"
+wait_for_url "Backend" "http://localhost:${STANDALONE_PORT}/health"
+wait_for_url "Frontend" "http://localhost:${STANDALONE_PORT}/"
+wait_for_url "Wework" "http://localhost:${STANDALONE_PORT}/wework/"
 
 echo "Standalone image verification succeeded for ${IMAGE}"

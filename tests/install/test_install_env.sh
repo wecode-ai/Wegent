@@ -157,6 +157,48 @@ test_knowledge_service_images_are_published() {
         "$REPO_ROOT/.github/workflows/publish-image.yml"
 }
 
+test_standalone_uses_nginx_single_browser_port() {
+    local dockerfile="$REPO_ROOT/docker/standalone/Dockerfile"
+    local startup="$REPO_ROOT/docker/standalone/start.sh"
+    local installer="$REPO_ROOT/install.sh"
+    local build_script="$REPO_ROOT/scripts/build-standalone.sh"
+
+    grep -q "nginx" "$dockerfile"
+    grep -q "docker/standalone/nginx.conf" "$dockerfile"
+    grep -q "^EXPOSE 3000$" "$dockerfile"
+
+    grep -q "WEWORK_PUBLIC_APP_BASE_PATH=.*:-/wework" "$startup"
+    grep -q "WEWORK_PUBLIC_API_URL=.*:-/wework/api" "$startup"
+    grep -q "WEWORK_PUBLIC_SOCKET_PATH=.*:-/wework/socket.io" "$startup"
+    grep -q "RUNTIME_WEWORK_CODE_URL=.*:-/wework" "$startup"
+    grep -q "nginx" "$startup"
+
+    grep -q -- "-p 3000:3000" "$installer"
+    if grep -q -- "-p 3001:3001" "$installer"; then
+        echo "standalone installer must not expose Wework on a separate port"
+        return 1
+    fi
+    if grep -q -- "-p 8000:8000" "$installer"; then
+        echo "standalone installer must not expose Backend on a separate browser port"
+        return 1
+    fi
+    grep -q "RUNTIME_SOCKET_DIRECT_URL=http://\${ACCESS_HOST}:3000" "$installer"
+    grep -q "RUNTIME_WEWORK_CODE_URL=http://\${ACCESS_HOST}:3000/wework" "$installer"
+    grep -q "WEWORK_PUBLIC_APP_BASE_PATH=/wework" "$installer"
+    grep -q "WEWORK_PUBLIC_API_URL=/wework/api" "$installer"
+    grep -q "WEWORK_PUBLIC_SOCKET_PATH=/wework/socket.io" "$installer"
+
+    if grep -q -- "-p 3001:3001" "$build_script"; then
+        echo "standalone build script must not print the old Wework port"
+        return 1
+    fi
+    if grep -q -- "-p 8000:8000" "$build_script"; then
+        echo "standalone build script must not print the old Backend port"
+        return 1
+    fi
+    grep -q "RUNTIME_WEWORK_CODE_URL=http://localhost:3000/wework" "$build_script"
+}
+
 run_test() {
     local name="$1"
     local test_fn="$2"
@@ -179,3 +221,5 @@ run_test "default standard compose keeps RAG services optional" \
     test_default_standard_compose_keeps_rag_services_optional
 run_test "knowledge service images are published" \
     test_knowledge_service_images_are_published
+run_test "standalone uses nginx single browser port" \
+    test_standalone_uses_nginx_single_browser_port
