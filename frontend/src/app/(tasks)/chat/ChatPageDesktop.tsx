@@ -16,7 +16,9 @@ import {
   CollapsedSidebarButtons,
 } from '@/features/tasks/components/sidebar'
 import { GithubStarButton } from '@/features/layout/GithubStarButton'
-import { Team } from '@/types/api'
+import WorkbenchToggle from '@/features/layout/WorkbenchToggle'
+import { OpenMenu } from '@/features/tasks/components/input'
+import type { Team, TaskType, WorkbenchData } from '@/types/api'
 import { saveLastTab } from '@/utils/userPreferences'
 import { useUser } from '@/features/common/UserContext'
 import { useTaskSession } from '@/features/tasks/session/TaskSession'
@@ -34,8 +36,16 @@ import { fetchBotsList } from '@/features/settings/services/bots'
 import type { BaseRole } from '@/types/base-role'
 import { RemoteWorkspaceEntry } from '@/features/tasks/components/remote-workspace'
 import { useIsDesktop } from '@/features/layout/hooks/useMediaQuery'
+import { getRuntimeConfigSync } from '@/lib/runtime-config'
+import { calculateOpenLinks } from '@/utils/openLinks'
+import type { MessageBlock } from '@/features/tasks/components/message/thinking/types'
+import type { UnifiedMessage } from '@wegent/chat-core'
 
 const SearchDialog = dynamic(() => import('@/features/tasks/components/sidebar/SearchDialog'), {
+  ssr: false,
+})
+
+const Workbench = dynamic(() => import('@/features/tasks/components/workbench/Workbench'), {
   ssr: false,
 })
 
@@ -69,23 +79,18 @@ export function ChatPageDesktop() {
   const { teams, isTeamsLoading, refreshTeams } = useTeamContext()
 
   // Task context for refreshing task list
-  const { refreshTasks, selectedTask, selectedTaskDetail, selectTask, refreshSelectedTaskDetail } =
-    useTaskSession()
+  const {
+    refreshTasks,
+    selectedTask,
+    selectedTaskDetail,
+    selectTask,
+    refreshSelectedTaskDetail,
+    taskState: sessionTaskState,
+  } = useTaskSession()
 
   // Device context - when a device is selected, switch to 'task' mode
   const { selectedDeviceId, devices } = useDevices()
   const selectedDevice = devices.find(d => d.device_id === selectedDeviceId)
-
-  // Determine taskType based on device selection
-  // When a device is selected, use 'task' mode (same as /devices/chat)
-  // Otherwise, use 'chat' mode
-  const taskType = selectedDeviceId ? 'task' : 'chat'
-
-  // Compute disabled reason for device mode
-  const disabledReason =
-    selectedDeviceId && (!selectedDevice || selectedDevice.status === 'offline')
-      ? t('devices:device_offline_cannot_send')
-      : undefined
 
   // Get current task title for top navigation
   const currentTaskTitle = selectedTaskDetail?.title
@@ -108,11 +113,40 @@ export function ChatPageDesktop() {
   // Check for share_id in URL
   const searchParams = useSearchParams()
   const _hasShareId = !!searchParams.get('share_id')
+  const hasWeworkCodeUrl = getRuntimeConfigSync().weworkCodeUrl.trim().length > 0
+  const isCodeAgentMode = searchParams.get('agent') === 'code'
+  const isCodeTaskOpen = selectedTaskDetail?.task_type === 'code'
 
   // Check if a task is currently open (support multiple parameter formats)
   const taskId =
     searchParams.get('task_id') || searchParams.get('taskid') || searchParams.get('taskId')
   const hasOpenTask = !!taskId
+
+  // Determine taskType based on device selection, URL agent filter, and selected task.
+  // When Wework URL is configured, default chat shows both chat and code agents but
+  // remains chat-first until a code-only agent is selected inside ChatArea.
+  const taskType: TaskType =
+    selectedDeviceId || selectedTaskDetail?.task_type === 'task'
+      ? 'task'
+      : isCodeAgentMode || isCodeTaskOpen
+        ? 'code'
+        : 'chat'
+  const teamModeFilter: 'chat' | 'code' | 'task' | 'all' =
+    selectedDeviceId || selectedTaskDetail?.task_type === 'task'
+      ? 'task'
+      : isCodeAgentMode || isCodeTaskOpen
+        ? 'code'
+        : hasWeworkCodeUrl
+          ? 'all'
+          : 'chat'
+  const showRepositorySelector =
+    !selectedDeviceId && selectedTaskDetail?.task_type !== 'task' && teamModeFilter !== 'chat'
+
+  // Compute disabled reason for device mode
+  const disabledReason =
+    selectedDeviceId && (!selectedDevice || selectedDevice.status === 'offline')
+      ? t('devices:device_offline_cannot_send')
+      : undefined
 
   // Redirect device tasks to /devices/chat page for proper layout
   useEffect(() => {
@@ -148,6 +182,9 @@ export function ChatPageDesktop() {
 
   // Create group chat dialog state
   const [isCreateGroupChatOpen, setIsCreateGroupChatOpen] = useState(false)
+
+  // Workbench state for code tasks opened inside chat.
+  const [isWorkbenchOpen, setIsWorkbenchOpen] = useState(false)
 
   // Search dialog state (controlled from page level for global shortcut support)
   const [isSearchDialogOpen, setIsSearchDialogOpen] = useState(false)
@@ -260,6 +297,52 @@ export function ChatPageDesktop() {
     saveLastTab('chat')
   }, [])
 
+  // Auto-open workbench for code tasks.
+  useEffect(() => {
+    if (hasOpenTask && isCodeTaskOpen) {
+      setIsWorkbenchOpen(true)
+    }
+  }, [hasOpenTask, isCodeTaskOpen])
+
+  // Calculate open links from task detail for code task toolbar.
+  const openLinks = useMemo(() => {
+    return calculateOpenLinks(selectedTaskDetail)
+  }, [selectedTaskDetail])
+
+  const taskState =
+    sessionTaskState && sessionTaskState.taskId === selectedTaskDetail?.id ? sessionTaskState : null
+
+  const { blocksData, workbenchData } = useMemo(() => {
+    if (taskState?.messages && taskState.messages.size > 0) {
+      const allBlocks: MessageBlock[] = []
+      let latestWorkbench: WorkbenchData | null = null
+      const messages: UnifiedMessage[] = Array.from(taskState.messages.values())
+
+      for (const msg of messages) {
+        if (msg.type === 'ai' && msg.result) {
+          const result = msg.result as { blocks?: MessageBlock[]; workbench?: WorkbenchData }
+          if (result.blocks && Array.isArray(result.blocks)) {
+            allBlocks.push(...result.blocks)
+          }
+          if (msg.status === 'streaming' && result.workbench) {
+            latestWorkbench = result.workbench
+          } else if (!latestWorkbench && result.workbench) {
+            latestWorkbench = result.workbench
+          }
+        }
+      }
+
+      if (allBlocks.length > 0 || latestWorkbench) {
+        return {
+          blocksData: allBlocks.length > 0 ? allBlocks : null,
+          workbenchData: latestWorkbench || selectedTaskDetail?.workbench || null,
+        }
+      }
+    }
+
+    return { blocksData: null, workbenchData: selectedTaskDetail?.workbench || null }
+  }, [taskState, selectedTaskDetail])
+
   const handleRefreshTeams = async (): Promise<Team[]> => {
     return await refreshTeams()
   }
@@ -346,19 +429,56 @@ export function ChatPageDesktop() {
           )}
           {shareButton}
           <GithubStarButton />
+          {hasOpenTask && isCodeTaskOpen && <OpenMenu openLinks={openLinks} />}
+          {hasOpenTask && isCodeTaskOpen && (
+            <WorkbenchToggle
+              isOpen={isWorkbenchOpen}
+              onOpen={() => setIsWorkbenchOpen(true)}
+              onClose={() => setIsWorkbenchOpen(false)}
+            />
+          )}
         </TopNavigation>
-        {/* Chat area - taskType switches based on device selection */}
-        <ChatArea
-          teams={teams}
-          isTeamsLoading={isTeamsLoading}
-          selectedTeamForNewTask={_selectedTeamForNewTask}
-          showRepositorySelector={false}
-          taskType={taskType}
-          onShareButtonRender={handleShareButtonRender}
-          onRefreshTeams={handleRefreshTeams}
-          disabledReason={disabledReason}
-          extension={{ teamEdit: teamEditExtension }}
-        />
+        <div className="flex flex-1 min-h-0">
+          <div
+            className="transition-all duration-300 ease-in-out flex flex-col min-h-0"
+            style={{
+              width: hasOpenTask && isCodeTaskOpen && isWorkbenchOpen ? '60%' : '100%',
+            }}
+          >
+            <ChatArea
+              teams={teams}
+              isTeamsLoading={isTeamsLoading}
+              selectedTeamForNewTask={_selectedTeamForNewTask}
+              showRepositorySelector={showRepositorySelector}
+              taskType={taskType}
+              teamModeFilter={teamModeFilter}
+              onShareButtonRender={handleShareButtonRender}
+              onRefreshTeams={handleRefreshTeams}
+              disabledReason={disabledReason}
+              extension={{ teamEdit: teamEditExtension }}
+            />
+          </div>
+
+          {hasOpenTask && isCodeTaskOpen && (
+            <Workbench
+              isOpen={isWorkbenchOpen}
+              onClose={() => setIsWorkbenchOpen(false)}
+              onOpen={() => setIsWorkbenchOpen(true)}
+              workbenchData={workbenchData}
+              isLoading={
+                !workbenchData &&
+                selectedTaskDetail?.status !== 'COMPLETED' &&
+                selectedTaskDetail?.status !== 'FAILED' &&
+                selectedTaskDetail?.status !== 'CANCELLED'
+              }
+              taskTitle={selectedTaskDetail?.title}
+              taskNumber={selectedTaskDetail ? `#${selectedTaskDetail.id}` : undefined}
+              blocks={blocksData}
+              app={selectedTaskDetail?.app}
+              taskStatus={selectedTaskDetail?.status}
+            />
+          )}
+        </div>
       </div>
       {/* Create Group Chat Dialog */}
       {isCreateGroupChatOpen && (

@@ -214,6 +214,7 @@ cp .env.local.example .env.local
 # Main configuration items (runtime variables, can be changed without rebuilding):
 # RUNTIME_INTERNAL_API_URL=http://localhost:8000  # Server-side proxy URL
 # RUNTIME_SOCKET_DIRECT_URL=http://localhost:8000 # WebSocket connection URL
+# RUNTIME_WEWORK_CODE_URL=https://wework.example.com/coding  # Optional: route coding entry points to Wework
 # RUNTIME_ENABLE_PROJECT_WORKSPACE=false          # Enable project workspace UI
 # RUNTIME_PROJECT_WORKSPACE_WHITELIST=admin       # Allowed user_names, empty means all users
 # Legacy (deprecated): NEXT_PUBLIC_API_URL=http://localhost:8000
@@ -222,7 +223,7 @@ cp .env.local.example .env.local
 # I18N_LNG=en
 ```
 
-> **Note**: The frontend now uses `RUNTIME_INTERNAL_API_URL` and `RUNTIME_SOCKET_DIRECT_URL` instead of `NEXT_PUBLIC_API_URL`. Runtime variables can be changed without rebuilding the application.
+> **Note**: The frontend now uses `RUNTIME_INTERNAL_API_URL` and `RUNTIME_SOCKET_DIRECT_URL` instead of `NEXT_PUBLIC_API_URL`. Runtime variables can be changed without rebuilding the application. When `RUNTIME_WEWORK_CODE_URL` is empty, coding entry points open `/chat?agent=code`; when configured, the menu shows **WeWork** and opens that URL. This variable has no `NEXT_PUBLIC_*` fallback.
 
 #### Run Development Server
 

@@ -107,6 +107,7 @@ ATTACHMENT_STORAGE_BACKEND=mysql
 # Set via docker-compose.yml environment section
 # RUNTIME_INTERNAL_API_URL=http://backend:8000
 # RUNTIME_SOCKET_DIRECT_URL=http://backend:8000
+# RUNTIME_WEWORK_CODE_URL=https://wework.example.com/coding  # Optional: route coding entry points to Wework
 # Legacy (deprecated): NEXT_PUBLIC_API_URL=http://localhost:8000
 
 # Wework frontend build configuration (optional)
@@ -117,6 +118,8 @@ ATTACHMENT_STORAGE_BACKEND=mysql
 EXECUTOR_IMAGE=ghcr.io/wecode-ai/wegent-executor:latest
 EXECUTOR_WORKSPACE=/path/to/workspace
 ```
+
+When `RUNTIME_WEWORK_CODE_URL` is empty, Wegent Web opens coding entry points at `/chat?agent=code` and filters to coding agents. When it is configured, the sidebar shows **WeWork** instead of **Code** and opens that runtime URL. This setting is delivered only through `/runtime-config`; there is no `NEXT_PUBLIC_*` fallback.
 
 ### Step 3: Start Services
 

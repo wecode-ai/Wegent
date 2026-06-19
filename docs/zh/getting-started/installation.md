@@ -107,6 +107,7 @@ ATTACHMENT_STORAGE_BACKEND=mysql
 # 通过 docker-compose.yml 的 environment 部分设置
 # RUNTIME_INTERNAL_API_URL=http://backend:8000
 # RUNTIME_SOCKET_DIRECT_URL=http://backend:8000
+# RUNTIME_WEWORK_CODE_URL=https://wework.example.com/coding  # 可选：编码入口跳转到 Wework
 # 旧版（已弃用）: NEXT_PUBLIC_API_URL=http://localhost:8000
 
 # Wework 前端构建配置（可选）
@@ -117,6 +118,8 @@ ATTACHMENT_STORAGE_BACKEND=mysql
 EXECUTOR_IMAGE=ghcr.io/wecode-ai/wegent-executor:latest
 EXECUTOR_WORKSPACE=/path/to/workspace
 ```
+
+`RUNTIME_WEWORK_CODE_URL` 为空时，Wegent Web 的编码入口会进入 `/chat?agent=code`，并只显示编码智能体；配置后，左侧菜单显示 **WeWork** 而不是 **编码**，并打开该运行时 URL。该配置只通过 `/runtime-config` 下发，不支持 `NEXT_PUBLIC_*` 回退。
 
 ### 步骤 3: 启动服务
 

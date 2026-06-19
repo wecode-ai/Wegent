@@ -181,7 +181,7 @@ export default function TaskListSection({
         // Task type tasks navigate to device chat page
         targetPath = '/devices/chat'
       } else if (task.task_type === 'code') {
-        targetPath = paths.code.getHref()
+        targetPath = paths.chat.getHref()
       } else if (task.task_type === 'video' || task.task_type === 'image') {
         // Video and image generation tasks navigate to generate page
         targetPath = paths.generate.getHref()
@@ -191,7 +191,7 @@ export default function TaskListSection({
         // For backward compatibility: infer type from git information
         // If task has git repo info, assume it's a code task
         if (task.git_repo && task.git_repo.trim() !== '') {
-          targetPath = paths.code.getHref()
+          targetPath = paths.chat.getHref()
         } else {
           targetPath = paths.chat.getHref()
         }

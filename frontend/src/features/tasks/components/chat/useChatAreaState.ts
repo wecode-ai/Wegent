@@ -15,6 +15,7 @@ import type {
 } from '@/types/api'
 import type { ContextItem } from '@/types/context'
 import type { Model } from '../selector/ModelSelector'
+import type { TeamModeFilter } from '../selector/team-selector-utils'
 import { useMultiAttachment } from '@/hooks/useMultiAttachment'
 import { userApis } from '@/apis/user'
 import { correctionApis } from '@/apis/correction'
@@ -56,6 +57,7 @@ function getWelcomeItemsForMode<T extends WelcomeItemWithMode>(
 export interface UseChatAreaStateOptions {
   teams: Team[]
   taskType: TaskType
+  teamModeFilter?: TeamModeFilter
   selectedTeamForNewTask?: Team | null
   /**
    * Initial knowledge base to pre-select when starting a new chat from knowledge page.
@@ -194,6 +196,7 @@ export interface ChatAreaState {
 export function useChatAreaState({
   teams: _teams,
   taskType,
+  teamModeFilter = taskType,
   selectedTeamForNewTask,
   initialKnowledgeBase,
   maxAttachments: externalMaxAttachments,
@@ -389,9 +392,10 @@ export function useChatAreaState({
   const isTeamCompatibleWithMode = useCallback(
     (team: Team): boolean => {
       if (!team.bind_mode || team.bind_mode.length === 0) return false
-      return team.bind_mode.includes(taskType)
+      if (teamModeFilter === 'all') return true
+      return team.bind_mode.includes(teamModeFilter)
     },
-    [taskType]
+    [teamModeFilter]
   )
 
   // Get teams compatible with current mode

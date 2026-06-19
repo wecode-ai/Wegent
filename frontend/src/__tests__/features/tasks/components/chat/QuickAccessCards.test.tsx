@@ -521,10 +521,12 @@ describe('QuickAccessCards', () => {
     fireEvent.click(await screen.findByText('Code Review'))
 
     expect(onTeamSelect).not.toHaveBeenCalled()
-    expect(routerPush).toHaveBeenCalledWith('/code?teamId=7&quickLauncher=system%3Acode_review')
+    expect(routerPush).toHaveBeenCalledWith(
+      '/chat?teamId=7&quickLauncher=system%3Acode_review&agent=code'
+    )
   })
 
-  test('routes code-only system function quick phrases to the code page with prefilled input', async () => {
+  test('routes code-only system function quick phrases to chat code-agent mode with prefilled input', async () => {
     const onTeamSelect = jest.fn()
     const onPhraseSelect = jest.fn()
     mockGetQuickLaunch.mockResolvedValueOnce({
@@ -562,7 +564,7 @@ describe('QuickAccessCards', () => {
     expect(onPhraseSelect).not.toHaveBeenCalled()
     expect(sessionStorage.getItem('pendingTaskPrompt')).toBeNull()
     expect(routerPush).toHaveBeenCalledWith(
-      '/code?teamId=7&quickLauncher=system%3Acode_review&showPresets=1'
+      '/chat?teamId=7&quickLauncher=system%3Acode_review&showPresets=1&agent=code'
     )
   })
 

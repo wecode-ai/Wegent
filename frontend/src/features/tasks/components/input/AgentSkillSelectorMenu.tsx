@@ -6,6 +6,7 @@
 
 import TeamSelectorButton from '../selector/TeamSelectorButton'
 import type { Team, TaskDetail, TaskType } from '@/types/api'
+import type { TeamModeFilter } from '../selector/team-selector-utils'
 
 interface AgentSkillSelectorMenuProps {
   selectedTeam: Team | null
@@ -14,6 +15,7 @@ interface AgentSkillSelectorMenuProps {
   onTeamsRefresh?: () => Promise<void>
   selectedTaskDetail: TaskDetail | null
   taskType?: TaskType
+  teamModeFilter?: TeamModeFilter
   hasMessages: boolean
   isLoading: boolean
   isStreaming: boolean
@@ -27,6 +29,7 @@ export function AgentSkillSelectorMenu({
   onTeamsRefresh,
   selectedTaskDetail,
   taskType,
+  teamModeFilter = taskType ?? 'chat',
   hasMessages,
   isLoading,
   isStreaming,
@@ -50,7 +53,7 @@ export function AgentSkillSelectorMenu({
       disabled={hasNoTeams || isLoading || isStreaming}
       taskDetail={selectedTaskDetail}
       hideSettingsLink={false}
-      currentMode={taskType}
+      currentMode={teamModeFilter}
       onTeamsRefresh={onTeamsRefresh}
       iconOnly
       triggerTestId="agent-skill-selector-button"
