@@ -27,8 +27,6 @@ export DATABASE_URL="sqlite:////app/data/wegent.db"
 BACKEND_PORT=${BACKEND_PORT:-8000}
 FRONTEND_PORT=${FRONTEND_PORT:-3000}
 WEWORK_PORT=${WEWORK_PORT:-3001}
-TTYD_PORT=${TTYD_PORT:-7681}
-DEVICE_SESSION_GATEWAY_PORT=${DEVICE_SESSION_GATEWAY_PORT:-17888}
 
 # Set Redis URL to localhost (embedded Redis).
 export REDIS_URL="${REDIS_URL:-redis://localhost:6379/0}"
@@ -261,9 +259,7 @@ start_executor() {
     export WEGENT_EXECUTOR_PROJECTS_DIR=/workspace/projects
     export WEGENT_EXECUTOR_CHATS_DIR=/workspace/chats
     export WEGENT_EXECUTOR_HOME=/app/data/standalone-executor
-    export DEVICE_SESSION_GATEWAY_HOST=0.0.0.0
-    export DEVICE_SESSION_GATEWAY_PORT=${DEVICE_SESSION_GATEWAY_PORT}
-    export DEVICE_PUBLIC_BASE_URL=${DEVICE_PUBLIC_BASE_URL:-http://localhost:${DEVICE_SESSION_GATEWAY_PORT}}
+    export DEVICE_SESSION_GATEWAY_ENABLED=false
 
     mkdir -p "$WEGENT_EXECUTOR_PROJECTS_DIR" "$WEGENT_EXECUTOR_CHATS_DIR" "$WEGENT_EXECUTOR_HOME"
 
@@ -318,28 +314,9 @@ start_wework() {
 start_wework
 
 # ========================================
-# Step 7: Start ttyd
+# Step 7: All Services Started
 # ========================================
-start_ttyd() {
-    echo "[7/8] Starting Terminal (port ${TTYD_PORT})..."
-    if [ -z "${TTYD_CREDENTIALS:-}" ]; then
-        echo "      ERROR: TTYD_CREDENTIALS is required for terminal auth"
-        exit 1
-    fi
-
-    ttyd --writable -c "${TTYD_CREDENTIALS}" -p "${TTYD_PORT}" -i 0.0.0.0 \
-        bash -lc 'cd /workspace && exec bash' &
-    TTYD_PID=$!
-
-    wait_for_http "Terminal" "http://localhost:${TTYD_PORT}" 30 "$TTYD_PID" false "$TTYD_CREDENTIALS"
-}
-
-start_ttyd
-
-# ========================================
-# Step 8: All Services Started
-# ========================================
-echo "[8/8] All services started!"
+echo "[7/8] All services started!"
 echo ""
 echo "=========================================="
 echo "  Wegent Standalone is running!"
@@ -348,8 +325,7 @@ echo ""
 echo "  Frontend:        http://localhost:${FRONTEND_PORT}"
 echo "  Wework:          http://localhost:${WEWORK_PORT}"
 echo "  Backend:         http://localhost:${BACKEND_PORT}"
-echo "  Terminal:        http://localhost:${TTYD_PORT}"
-echo "  Session Gateway: http://localhost:${DEVICE_SESSION_GATEWAY_PORT}"
+echo "  Workspace shell: Wework uses Backend Socket.IO terminal relay"
 echo "  Redis:           localhost:6379 (embedded)"
 echo ""
 echo "  Data directory:      /app/data"
@@ -369,7 +345,6 @@ shutdown() {
     echo ""
     echo "Received shutdown signal, stopping services..."
 
-    stop_pid "Terminal" "${TTYD_PID:-}"
     stop_pid "Wework" "${WEWORK_PID:-}"
     stop_pid "Frontend" "${FRONTEND_PID:-}"
     stop_pid "Standalone Executor" "${EXECUTOR_PID:-}"
@@ -381,7 +356,6 @@ shutdown() {
     fi
 
     echo "  Waiting for services to stop..."
-    wait "${TTYD_PID:-}" 2>/dev/null || true
     wait "${WEWORK_PID:-}" 2>/dev/null || true
     wait "${FRONTEND_PID:-}" 2>/dev/null || true
     wait "${EXECUTOR_PID:-}" 2>/dev/null || true
@@ -398,7 +372,7 @@ trap shutdown SIGTERM SIGINT SIGQUIT
 # Keep Container Running
 # ========================================
 set +e
-wait -n "$REDIS_PID" "$BACKEND_PID" "$EXECUTOR_PID" "$FRONTEND_PID" "$WEWORK_PID" "$TTYD_PID"
+wait -n "$REDIS_PID" "$BACKEND_PID" "$EXECUTOR_PID" "$FRONTEND_PID" "$WEWORK_PID"
 EXIT_CODE=$?
 set -e
 
@@ -410,6 +384,4 @@ report_process "Backend" "$BACKEND_PID"
 report_process "Standalone Executor" "$EXECUTOR_PID"
 report_process "Frontend" "$FRONTEND_PID"
 report_process "Wework" "$WEWORK_PID"
-report_process "Terminal" "$TTYD_PID"
-
 shutdown "$EXIT_CODE"

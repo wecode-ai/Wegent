@@ -103,8 +103,6 @@ RUN dnf install -y \
     jq zip \
     # Redis server for standalone mode (embedded)
     redis \
-    # Terminal server for Wework workspace sessions
-    ttyd \
     && npm install -g @anthropic-ai/claude-code@2.1.142 \
     && dnf clean all \
     && rm -rf /var/cache/dnf/*
@@ -202,13 +200,11 @@ ENV REDIS_DATA_DIR=/app/data/redis
 ENV BACKEND_PORT=8000
 ENV FRONTEND_PORT=3000
 ENV WEWORK_PORT=3001
-ENV TTYD_PORT=7681
-ENV DEVICE_SESSION_GATEWAY_PORT=17888
 ENV GRACEFUL_SHUTDOWN_TIMEOUT=600
 ENV WEGENT_WORKSPACE_ROOT=/workspace
 
-# Expose ports
-EXPOSE 3000 3001 8000 7681 17888
+# Expose browser-facing standalone ports
+EXPOSE 3000 3001 8000
 
 # Data volume for service state and workspace artifacts
 VOLUME ["/app/data", "/workspace"]
@@ -218,7 +214,6 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:8000/health \
       && curl -f http://localhost:3000 \
       && curl -f http://localhost:3001 \
-      && curl -f -u "$TTYD_CREDENTIALS" http://localhost:7681 \
       || exit 1
 
 # Startup command

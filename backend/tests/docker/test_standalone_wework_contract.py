@@ -14,20 +14,21 @@ BUILD_STANDALONE_SCRIPT: Path = REPO_ROOT / "scripts" / "build-standalone.sh"
 VERIFY_STANDALONE_SCRIPT: Path = REPO_ROOT / "scripts" / "verify-standalone-image.sh"
 
 
-def test_standalone_image_includes_wework_web_ttyd_and_workspace_volume() -> None:
-    """Standalone image should expose Wework and terminal-ready workspace paths."""
+def test_standalone_image_includes_wework_executor_and_workspace_volume() -> None:
+    """Standalone image should expose Wework, Backend, and workspace paths."""
     dockerfile = STANDALONE_DOCKERFILE.read_text(encoding="utf-8")
 
     assert "AS wework-builder" in dockerfile
     assert "pnpm install --frozen-lockfile --filter wework..." in dockerfile
     assert "pnpm run build" in dockerfile
     assert "COPY --from=wework-builder /app/wework/dist /app/wework/dist" in dockerfile
-    assert "ttyd" in dockerfile
+    assert "ttyd" not in dockerfile
     assert "ENV WEWORK_PORT=3001" in dockerfile
     assert "ENV WEGENT_WORKSPACE_ROOT=/workspace" in dockerfile
-    assert "EXPOSE 3000 3001 8000 7681 17888" in dockerfile
+    assert "DEVICE_SESSION_GATEWAY_PORT" not in dockerfile
+    assert "EXPOSE 3000 3001 8000" in dockerfile
     assert 'VOLUME ["/app/data", "/workspace"]' in dockerfile
-    assert 'curl -f -u "$TTYD_CREDENTIALS" http://localhost:7681' in dockerfile
+    assert "http://localhost:7681" not in dockerfile
 
 
 def test_standalone_start_registers_executor_as_admin_cloud_device() -> None:
@@ -48,22 +49,23 @@ def test_standalone_start_registers_executor_as_admin_cloud_device() -> None:
     assert "python -m executor.main" in start_script
 
 
-def test_standalone_start_serves_wework_and_ttyd() -> None:
-    """Startup should serve Wework Web and provide terminal access in standalone."""
+def test_standalone_start_serves_wework_without_public_ttyd() -> None:
+    """Startup should serve Wework Web without a fixed public shell service."""
     start_script = STANDALONE_START.read_text(encoding="utf-8")
 
     assert "start_wework" in start_script
     assert "WEWORK_PORT" in start_script
     assert "python3 -m http.server ${WEWORK_PORT}" in start_script
-    assert "start_ttyd" in start_script
-    assert "TTYD_PORT" in start_script
-    assert "TTYD_CREDENTIALS is required for terminal auth" in start_script
-    assert 'ttyd --writable -c "${TTYD_CREDENTIALS}"' in start_script
+    assert "DEVICE_SESSION_GATEWAY_ENABLED=false" in start_script
+    assert "DEVICE_SESSION_GATEWAY_HOST" not in start_script
+    assert "DEVICE_SESSION_GATEWAY_PORT" not in start_script
+    assert "DEVICE_PUBLIC_BASE_URL" not in start_script
+    assert "start_ttyd" not in start_script
+    assert "TTYD_PORT" not in start_script
+    assert "TTYD_CREDENTIALS" not in start_script
+    assert "ttyd --writable" not in start_script
     assert 'wait_for_http "Wework" "http://localhost:${WEWORK_PORT}"' in start_script
-    assert (
-        'wait_for_http "Terminal" "http://localhost:${TTYD_PORT}" 30 "$TTYD_PID" false "$TTYD_CREDENTIALS"'
-        in start_script
-    )
+    assert "Terminal:" not in start_script
 
 
 def test_standalone_start_uses_hardened_readiness_and_exit_status() -> None:
@@ -86,14 +88,15 @@ def test_standalone_start_writes_wework_runtime_config() -> None:
     assert "/app/wework/dist/runtime-config.js" in start_script
 
 
-def test_installer_exposes_wework_terminal_gateway_and_workspace_volume() -> None:
-    """The public installer should start standalone with all user-facing ports."""
+def test_installer_exposes_wework_backend_and_workspace_volume() -> None:
+    """The public installer should expose only browser-facing standalone ports."""
     install_script = INSTALL_SCRIPT.read_text(encoding="utf-8")
 
     assert 'STANDALONE_WORKSPACE_VOLUME_NAME="wegent-workspace"' in install_script
     assert 'docker_run_cmd+=" -p 3001:3001"' in install_script
-    assert 'docker_run_cmd+=" -p 7681:7681"' in install_script
-    assert 'docker_run_cmd+=" -p 17888:17888"' in install_script
+    assert 'docker_run_cmd+=" -p 8000:8000"' in install_script
+    assert 'docker_run_cmd+=" -p 7681:7681"' not in install_script
+    assert 'docker_run_cmd+=" -p 17888:17888"' not in install_script
     assert (
         'docker_run_cmd+=" -v ${STANDALONE_WORKSPACE_VOLUME_NAME}:/workspace"'
         in install_script
@@ -106,21 +109,15 @@ def test_installer_exposes_wework_terminal_gateway_and_workspace_volume() -> Non
         'docker_run_cmd+=" -e WEWORK_PUBLIC_BACKEND_URL=${SOCKET_URL}"'
         in install_script
     )
-    assert (
-        'docker_run_cmd+=" -e DEVICE_PUBLIC_BASE_URL=http://${ACCESS_HOST}:17888"'
-        in install_script
-    )
-    assert (
-        'docker_run_cmd+=" -e TTYD_CREDENTIALS=${STANDALONE_TTYD_CREDENTIALS}"'
-        in install_script
-    )
-    assert "WEGENT_TTYD_CREDENTIALS must use user:password format." in install_script
+    assert "DEVICE_PUBLIC_BASE_URL=http://${ACCESS_HOST}:17888" not in install_script
+    assert "TTYD_CREDENTIALS" not in install_script
+    assert "WEGENT_TTYD_CREDENTIALS" not in install_script
     assert (
         "Open ${BLUE}${BOLD}http://${ACCESS_HOST}:3001${NC} for Wework"
         in install_script
     )
     assert 'if [[ "$DEPLOY_MODE" == "standalone" ]]; then' in install_script
-    assert 'ui_kv "Terminal login" "$STANDALONE_TTYD_CREDENTIALS"' in install_script
+    assert 'ui_kv "Terminal URL"' not in install_script
 
 
 def test_build_script_outputs_complete_standalone_run_command() -> None:
@@ -128,28 +125,21 @@ def test_build_script_outputs_complete_standalone_run_command() -> None:
     build_script = BUILD_STANDALONE_SCRIPT.read_text(encoding="utf-8")
 
     assert "-p 3000:3000 -p 3001:3001 -p 8000:8000" in build_script
-    assert "-p 7681:7681 -p 17888:17888" in build_script
+    assert "-p 7681:7681" not in build_script
+    assert "-p 17888:17888" not in build_script
     assert "-v wegent-data:/app/data" in build_script
     assert "-v wegent-workspace:/workspace" in build_script
-    assert "-e TTYD_CREDENTIALS=admin:CHANGE_ME" in build_script
 
 
-def test_verify_script_checks_wework_and_ttyd_readiness() -> None:
-    """Published standalone images should be gated on Wework and terminal startup."""
+def test_verify_script_checks_wework_readiness_without_terminal_ports() -> None:
+    """Published standalone images should not expose direct terminal ports."""
     verify_script = VERIFY_STANDALONE_SCRIPT.read_text(encoding="utf-8")
 
     assert 'WEWORK_PORT="${WEWORK_PORT:-13001}"' in verify_script
-    assert 'TTYD_PORT="${TTYD_PORT:-17681}"' in verify_script
-    assert 'SESSION_GATEWAY_PORT="${SESSION_GATEWAY_PORT:-17888}"' in verify_script
-    assert (
-        'TTYD_CREDENTIALS="${TTYD_CREDENTIALS:-standalone:standalone}"' in verify_script
-    )
+    assert "TTYD_PORT" not in verify_script
+    assert "SESSION_GATEWAY_PORT" not in verify_script
+    assert "TTYD_CREDENTIALS" not in verify_script
     assert '-p "127.0.0.1:${WEWORK_PORT}:3001"' in verify_script
-    assert '-p "127.0.0.1:${TTYD_PORT}:7681"' in verify_script
-    assert '-p "127.0.0.1:${SESSION_GATEWAY_PORT}:17888"' in verify_script
-    assert '-e "TTYD_CREDENTIALS=${TTYD_CREDENTIALS}"' in verify_script
+    assert ":7681" not in verify_script
+    assert ":17888" not in verify_script
     assert 'wait_for_url "Wework" "http://localhost:${WEWORK_PORT}/"' in verify_script
-    assert (
-        'wait_for_url "Terminal" "http://localhost:${TTYD_PORT}/" "$TTYD_CREDENTIALS"'
-        in verify_script
-    )

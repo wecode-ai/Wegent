@@ -358,6 +358,31 @@ async def test_start_code_server_session_returns_gateway_url(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_disabled_session_gateway_rejects_code_server_session(
+    tmp_path, monkeypatch
+):
+    """Terminal-only deployments should not return dead code-server gateway URLs."""
+    from executor.modes.local.session_handler import LocalSessionHandler
+
+    monkeypatch.setenv("DEVICE_SESSION_GATEWAY_ENABLED", "false")
+    handler = LocalSessionHandler(public_base_url="http://localhost:17888")
+
+    result = await handler.handle_start_session(
+        {
+            "type": "code_server",
+            "session_id": "code-1",
+            "project_id": 123,
+            "path": str(tmp_path),
+            "access_token": "secret",
+        }
+    )
+
+    assert result["success"] is False
+    assert "Session gateway is disabled" in result["error"]
+    assert "code-1" not in handler.sessions
+
+
+@pytest.mark.asyncio
 async def test_start_session_rejects_missing_project_path(tmp_path):
     """Session startup should fail when the project path does not exist."""
     from executor.modes.local.session_handler import LocalSessionHandler

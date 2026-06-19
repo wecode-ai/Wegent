@@ -6,7 +6,7 @@ sidebar_position: 3
 
 ## Overview
 
-Standalone mode is a single-machine deployment that packages Backend, the main Frontend, Wework Web, Chat Shell, Executor, ttyd, and Redis into one Docker image, using SQLite as the database. It is intended for quick evaluation and small trusted environments, and only requires Docker.
+Standalone mode is a single-machine deployment that packages Backend, the main Frontend, Wework Web, Chat Shell, Executor, and Redis into one Docker image, using SQLite as the database. It is intended for quick evaluation and small trusted environments, and only requires Docker.
 
 After startup, standalone automatically creates a cloud device for the `admin` user: the in-container executor registers through the Backend device WebSocket, and Wework can use that device directly for coding tasks. The default workspace is mounted at `/workspace` and stores project directories, standalone chat workspaces, and Git worktrees.
 
@@ -43,8 +43,8 @@ This will automatically:
 1. Check and install Docker if needed
 2. Pull the latest Wegent standalone image
 3. Create the `wegent-data` data volume and `wegent-workspace` workspace volume
-4. Publish ports for the main frontend, Wework, Backend, terminal, and session gateway
-5. Start the container and wait for Backend, Wework, and terminal readiness
+4. Publish ports for the main frontend, Wework, and Backend
+5. Start the container and wait for Backend and Wework readiness
 
 After startup, open:
 
@@ -53,8 +53,6 @@ After startup, open:
 | Main Frontend | `http://localhost:3000` | Wegent management and general features |
 | Wework | `http://localhost:3001` | Create and use coding tasks |
 | Backend API | `http://localhost:8000` | API and WebSocket |
-| Terminal | `http://localhost:7681` | General terminal rooted at `/workspace` |
-| Session Gateway | `http://localhost:17888` | Used by Wework project terminals; you do not open it directly |
 
 ### Running Container Directly
 
@@ -67,14 +65,10 @@ docker run -d \
   -p 3000:3000 \
   -p 3001:3001 \
   -p 8000:8000 \
-  -p 7681:7681 \
-  -p 17888:17888 \
   -v wegent-data:/app/data \
   -v wegent-workspace:/workspace \
   -e RUNTIME_SOCKET_DIRECT_URL=http://localhost:8000 \
   -e WEWORK_PUBLIC_BACKEND_URL=http://localhost:8000 \
-  -e DEVICE_PUBLIC_BASE_URL=http://localhost:17888 \
-  -e TTYD_CREDENTIALS=admin:CHANGE_ME \
   ghcr.io/wecode-ai/wegent-standalone:latest
 ```
 
@@ -87,14 +81,10 @@ docker run -d \
   -p 3000:3000 \
   -p 3001:3001 \
   -p 8000:8000 \
-  -p 7681:7681 \
-  -p 17888:17888 \
   -v wegent-data:/app/data \
   -v wegent-workspace:/workspace \
   -e RUNTIME_SOCKET_DIRECT_URL=http://YOUR_SERVER_IP:8000 \
   -e WEWORK_PUBLIC_BACKEND_URL=http://YOUR_SERVER_IP:8000 \
-  -e DEVICE_PUBLIC_BASE_URL=http://YOUR_SERVER_IP:17888 \
-  -e TTYD_CREDENTIALS=admin:CHANGE_ME \
   ghcr.io/wecode-ai/wegent-standalone:latest
 ```
 
@@ -108,7 +98,7 @@ docker run -d \
 4. Return to the Wework workbench and send a coding request directly.
 5. If no project is selected, Wework routes the request to the automatically registered standalone cloud device and creates a standalone chat workspace under `/workspace/chats`.
 6. After creating a Git project, new tasks use project and task workspaces under `/workspace/projects` and `/workspace/worktrees`.
-7. To inspect files or open a terminal, use the Wework project toolbar. The general ttyd terminal uses `TTYD_CREDENTIALS` for login, and project terminals are served through the device session gateway with short-lived access URLs.
+7. To inspect files or open a terminal, use the Wework project toolbar. Terminals are relayed through the authenticated Backend Socket.IO channel to the in-container executor, which manages the PTY directly.
 
 Standalone does not include the IDE/code-server entry by default. For the first standalone launch, treat Wework coding, workspace files, and project terminal as the primary capabilities. Use standard deployment or a separate cloud device when you need IDE access or stronger isolation.
 
@@ -122,12 +112,8 @@ Standalone does not include the IDE/code-server entry by default. For the first 
 | `WEWORK_PUBLIC_BACKEND_URL` | Runtime Backend URL for Wework Web; derives API and Socket URLs | `http://localhost:8000` |
 | `WEWORK_PUBLIC_API_URL` | Wework Web API URL; overrides `WEWORK_PUBLIC_BACKEND_URL/api` | `${WEWORK_PUBLIC_BACKEND_URL}/api` |
 | `WEWORK_PUBLIC_SOCKET_URL` | Wework Web Socket.IO URL; overrides `WEWORK_PUBLIC_BACKEND_URL` | `${WEWORK_PUBLIC_BACKEND_URL}` |
-| `DEVICE_PUBLIC_BASE_URL` | Browser-facing URL for the device session gateway | `http://localhost:17888` |
 | `WEGENT_WORKSPACE_ROOT` | Standalone workspace root | `/workspace` |
 | `WEWORK_PORT` | Wework Web container port | `3001` |
-| `TTYD_PORT` | General ttyd terminal container port | `7681` |
-| `TTYD_CREDENTIALS` | General ttyd terminal credentials in `user:password` format | Required |
-| `DEVICE_SESSION_GATEWAY_PORT` | Project terminal session gateway container port | `17888` |
 | `STANDALONE_MODE` | Enable standalone mode | `true` |
 | `DATABASE_URL` | Database connection URL | `sqlite:////app/data/wegent.db` |
 | `REDIS_URL` | Redis connection URL | `redis://localhost:6379/0` |
@@ -188,14 +174,10 @@ docker run -d \
   -p 3000:3000 \
   -p 3001:3001 \
   -p 8000:8000 \
-  -p 7681:7681 \
-  -p 17888:17888 \
   -v wegent-data:/app/data \
   -v wegent-workspace:/workspace \
   -e RUNTIME_SOCKET_DIRECT_URL=http://localhost:8000 \
   -e WEWORK_PUBLIC_BACKEND_URL=http://localhost:8000 \
-  -e DEVICE_PUBLIC_BASE_URL=http://localhost:17888 \
-  -e TTYD_CREDENTIALS=admin:CHANGE_ME \
   ghcr.io/wecode-ai/wegent-standalone:latest
 ```
 

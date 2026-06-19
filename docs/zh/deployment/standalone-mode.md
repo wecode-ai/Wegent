@@ -6,7 +6,7 @@ sidebar_position: 3
 
 ## 概述
 
-Standalone 模式是一种单机部署方案，将 Backend、主 Frontend、Wework Web、Chat Shell、Executor、ttyd 和 Redis 打包在一个 Docker 镜像中运行，使用 SQLite 作为数据库。它适合快速体验和小规模可信环境，只需要 Docker 即可启动。
+Standalone 模式是一种单机部署方案，将 Backend、主 Frontend、Wework Web、Chat Shell、Executor 和 Redis 打包在一个 Docker 镜像中运行，使用 SQLite 作为数据库。它适合快速体验和小规模可信环境，只需要 Docker 即可启动。
 
 Standalone 启动后会自动为 `admin` 用户创建一个云设备：容器内 executor 通过 Backend 的设备 WebSocket 注册，Wework 创建编码任务时可以直接使用该设备执行任务。默认 workspace 挂载在 `/workspace`，用于保存项目目录、独立聊天工作区和 Git worktree。
 
@@ -43,8 +43,8 @@ curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | 
 1. 检查并安装 Docker（如果需要）
 2. 拉取最新的 Wegent standalone 镜像
 3. 创建 `wegent-data` 数据卷和 `wegent-workspace` 工作区卷
-4. 映射主前端、Wework、Backend、终端和 session gateway 端口
-5. 启动容器并等待 Backend、Wework 和终端就绪
+4. 映射主前端、Wework 和 Backend 端口
+5. 启动容器并等待 Backend 和 Wework 就绪
 
 启动完成后访问：
 
@@ -53,8 +53,6 @@ curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | 
 | 主前端 | `http://localhost:3000` | Wegent 管理和通用功能 |
 | Wework | `http://localhost:3001` | 创建和使用编码任务 |
 | Backend API | `http://localhost:8000` | API 与 WebSocket |
-| 终端 | `http://localhost:7681` | 直接进入 `/workspace` 的通用终端 |
-| Session Gateway | `http://localhost:17888` | Wework 打开项目终端时使用，不需要直接访问 |
 
 ### 手动运行容器
 
@@ -67,14 +65,10 @@ docker run -d \
   -p 3000:3000 \
   -p 3001:3001 \
   -p 8000:8000 \
-  -p 7681:7681 \
-  -p 17888:17888 \
   -v wegent-data:/app/data \
   -v wegent-workspace:/workspace \
   -e RUNTIME_SOCKET_DIRECT_URL=http://localhost:8000 \
   -e WEWORK_PUBLIC_BACKEND_URL=http://localhost:8000 \
-  -e DEVICE_PUBLIC_BASE_URL=http://localhost:17888 \
-  -e TTYD_CREDENTIALS=admin:CHANGE_ME \
   ghcr.io/wecode-ai/wegent-standalone:latest
 ```
 
@@ -87,14 +81,10 @@ docker run -d \
   -p 3000:3000 \
   -p 3001:3001 \
   -p 8000:8000 \
-  -p 7681:7681 \
-  -p 17888:17888 \
   -v wegent-data:/app/data \
   -v wegent-workspace:/workspace \
   -e RUNTIME_SOCKET_DIRECT_URL=http://YOUR_SERVER_IP:8000 \
   -e WEWORK_PUBLIC_BACKEND_URL=http://YOUR_SERVER_IP:8000 \
-  -e DEVICE_PUBLIC_BASE_URL=http://YOUR_SERVER_IP:17888 \
-  -e TTYD_CREDENTIALS=admin:CHANGE_ME \
   ghcr.io/wecode-ai/wegent-standalone:latest
 ```
 
@@ -108,7 +98,7 @@ docker run -d \
 4. 回到 Wework 工作台，直接发起一个编码请求。
 5. 未选择项目时，Wework 会把请求路由到 standalone 自动注册的云设备，并在 `/workspace/chats` 下创建独立聊天工作区。
 6. 创建 Git 项目后，新任务会使用 `/workspace/projects` 和 `/workspace/worktrees` 下的项目/任务工作区。
-7. 需要查看文件或打开终端时，使用 Wework 项目工具栏；通用 ttyd 终端使用 `TTYD_CREDENTIALS` 登录，项目终端会通过设备 session gateway 返回短期访问地址。
+7. 需要查看文件或打开终端时，使用 Wework 项目工具栏；终端会通过登录后的 Backend Socket.IO 通道转发到容器内 executor，由 executor 直接管理 PTY。
 
 Standalone 默认不内置 IDE/code-server 入口。正式使用时建议先将 Wework 编码、workspace 文件、项目终端作为主要能力；需要 IDE 或更强隔离时使用标准部署或单独云设备。
 
@@ -122,12 +112,8 @@ Standalone 默认不内置 IDE/code-server 入口。正式使用时建议先将 
 | `WEWORK_PUBLIC_BACKEND_URL` | Wework Web 运行时 Backend 地址，会派生 API 和 Socket 地址 | `http://localhost:8000` |
 | `WEWORK_PUBLIC_API_URL` | Wework Web API 地址；设置后覆盖 `WEWORK_PUBLIC_BACKEND_URL/api` | `${WEWORK_PUBLIC_BACKEND_URL}/api` |
 | `WEWORK_PUBLIC_SOCKET_URL` | Wework Web Socket.IO 地址；设置后覆盖 `WEWORK_PUBLIC_BACKEND_URL` | `${WEWORK_PUBLIC_BACKEND_URL}` |
-| `DEVICE_PUBLIC_BASE_URL` | 设备 session gateway 对浏览器暴露的地址 | `http://localhost:17888` |
 | `WEGENT_WORKSPACE_ROOT` | standalone workspace 根目录 | `/workspace` |
 | `WEWORK_PORT` | Wework Web 容器内端口 | `3001` |
-| `TTYD_PORT` | 通用 ttyd 终端容器内端口 | `7681` |
-| `TTYD_CREDENTIALS` | 通用 ttyd 终端登录凭据，格式为 `user:password` | 必填 |
-| `DEVICE_SESSION_GATEWAY_PORT` | 项目终端 session gateway 容器内端口 | `17888` |
 | `STANDALONE_MODE` | 启用 standalone 模式 | `true` |
 | `DATABASE_URL` | 数据库连接地址 | `sqlite:////app/data/wegent.db` |
 | `REDIS_URL` | Redis 连接地址 | `redis://localhost:6379/0` |
@@ -188,14 +174,10 @@ docker run -d \
   -p 3000:3000 \
   -p 3001:3001 \
   -p 8000:8000 \
-  -p 7681:7681 \
-  -p 17888:17888 \
   -v wegent-data:/app/data \
   -v wegent-workspace:/workspace \
   -e RUNTIME_SOCKET_DIRECT_URL=http://localhost:8000 \
   -e WEWORK_PUBLIC_BACKEND_URL=http://localhost:8000 \
-  -e DEVICE_PUBLIC_BASE_URL=http://localhost:17888 \
-  -e TTYD_CREDENTIALS=admin:CHANGE_ME \
   ghcr.io/wecode-ai/wegent-standalone:latest
 ```
 

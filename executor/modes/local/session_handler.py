@@ -26,6 +26,7 @@ DEFAULT_GATEWAY_HOST = "0.0.0.0"
 DEFAULT_GATEWAY_PORT = 17888
 DEFAULT_PUBLIC_BASE_URL = "http://localhost:17888"
 DEFAULT_SESSION_TTL_SECONDS = 60 * 60
+DEFAULT_GATEWAY_ENABLED = True
 SESSION_IDLE_GRACE_SECONDS = 3
 SESSION_PROBE_QUERY_KEY = "__wegent_probe"
 
@@ -450,8 +451,14 @@ class LocalSessionHandler:
         public_base_url: Optional[str] = None,
         gateway_host: Optional[str] = None,
         gateway_port: Optional[int] = None,
+        gateway_enabled: Optional[bool] = None,
         terminal_event_emitter: Optional[Any] = None,
     ):
+        self.gateway_enabled = (
+            _env_bool("DEVICE_SESSION_GATEWAY_ENABLED", DEFAULT_GATEWAY_ENABLED)
+            if gateway_enabled is None
+            else gateway_enabled
+        )
         self.public_base_url = (
             public_base_url
             or os.getenv("DEVICE_PUBLIC_BASE_URL")
@@ -467,19 +474,27 @@ class LocalSessionHandler:
         self.code_server_port = int(os.getenv("DEVICE_CODE_SERVER_PORT", "18080"))
         self.sessions: dict[str, LocalSession] = {}
         self.terminal_event_emitter = terminal_event_emitter
-        self.gateway = SessionGateway(
-            self.sessions,
-            host=self.gateway_host,
-            port=self.gateway_port,
+        self.gateway = (
+            SessionGateway(
+                self.sessions,
+                host=self.gateway_host,
+                port=self.gateway_port,
+            )
+            if self.gateway_enabled
+            else None
         )
 
     async def start_gateway(self) -> None:
         """Start the shared session gateway."""
+        if not self.gateway:
+            logger.info("[LocalSessionHandler] Session gateway is disabled")
+            return
         await self.gateway.start()
 
     async def stop(self) -> None:
         """Stop all sessions and the gateway."""
-        await self.gateway.stop()
+        if self.gateway:
+            await self.gateway.stop()
         sessions = list(self.sessions.values())
         self.sessions.clear()
         await asyncio.gather(
@@ -513,6 +528,8 @@ class LocalSessionHandler:
                 await terminate_session_process(existing.process)
 
         if session_type == "code_server":
+            if not self.gateway_enabled:
+                return self._error("Session gateway is disabled")
             session = LocalSession(
                 session_id=session_id,
                 session_type=session_type,
@@ -767,6 +784,13 @@ class LocalSessionHandler:
 
     def _error(self, error: str) -> dict[str, Any]:
         return {"success": False, "error": error}
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() not in {"", "0", "false", "no", "off"}
 
 
 async def terminate_session_process(process: asyncio.subprocess.Process) -> None:
