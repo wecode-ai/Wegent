@@ -153,6 +153,10 @@ export async function GET() {
       // Application version (injected at Docker build time)
       // Priority: RUNTIME_APP_VERSION > NEXT_PUBLIC_APP_VERSION > 'dev'
       appVersion: process.env.RUNTIME_APP_VERSION || process.env.NEXT_PUBLIC_APP_VERSION || 'dev',
+
+      // External Wework URL for coding entry points.
+      // Runtime-only by design; no NEXT_PUBLIC_* fallback.
+      weworkCodeUrl: process.env.RUNTIME_WEWORK_CODE_URL || '',
     },
     {
       headers: {

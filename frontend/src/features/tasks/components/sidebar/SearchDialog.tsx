@@ -124,7 +124,7 @@ export default function SearchDialog({
     // Navigate to task with taskId parameter
     let targetPath = paths.chat.getHref() // default to chat
     if (task.task_type === 'code') {
-      targetPath = paths.code.getHref()
+      targetPath = paths.chat.getHref()
     } else if (task.task_type === 'video' || task.task_type === 'image') {
       targetPath = paths.generate.getHref()
     }
@@ -136,7 +136,7 @@ export default function SearchDialog({
     handleCloseSearchDialog()
     selectTask(null)
     // Navigate to appropriate page based on pageType
-    const targetPath = pageType === 'code' ? paths.code.getHref() : paths.chat.getHref()
+    const targetPath = pageType === 'code' ? paths.chat.getCodeHref() : paths.chat.getHref()
     router.replace(targetPath)
   }
 
