@@ -9,24 +9,27 @@ from pathlib import Path
 REPO_ROOT: Path = Path(__file__).resolve().parents[3]
 STANDALONE_DOCKERFILE: Path = REPO_ROOT / "docker" / "standalone" / "Dockerfile"
 STANDALONE_START: Path = REPO_ROOT / "docker" / "standalone" / "start.sh"
+STANDALONE_NGINX_CONFIG: Path = REPO_ROOT / "docker" / "standalone" / "nginx.conf"
 INSTALL_SCRIPT: Path = REPO_ROOT / "install.sh"
 BUILD_STANDALONE_SCRIPT: Path = REPO_ROOT / "scripts" / "build-standalone.sh"
 VERIFY_STANDALONE_SCRIPT: Path = REPO_ROOT / "scripts" / "verify-standalone-image.sh"
 
 
 def test_standalone_image_includes_wework_executor_and_workspace_volume() -> None:
-    """Standalone image should expose Wework, Backend, and workspace paths."""
+    """Standalone image should include Wework, executor, Nginx, and workspace paths."""
     dockerfile = STANDALONE_DOCKERFILE.read_text(encoding="utf-8")
 
     assert "AS wework-builder" in dockerfile
     assert "pnpm install --frozen-lockfile --filter wework..." in dockerfile
     assert "pnpm run build" in dockerfile
     assert "COPY --from=wework-builder /app/wework/dist /app/wework/dist" in dockerfile
+    assert "nginx" in dockerfile
+    assert "COPY docker/standalone/nginx.conf /etc/nginx/conf.d/default.conf" in dockerfile
     assert "ttyd" not in dockerfile
-    assert "ENV WEWORK_PORT=3001" in dockerfile
     assert "ENV WEGENT_WORKSPACE_ROOT=/workspace" in dockerfile
     assert "DEVICE_SESSION_GATEWAY_PORT" not in dockerfile
-    assert "EXPOSE 3000 3001 8000" in dockerfile
+    assert "EXPOSE 3000" in dockerfile
+    assert "EXPOSE 3000 3001 8000" not in dockerfile
     assert 'VOLUME ["/app/data", "/workspace"]' in dockerfile
     assert "http://localhost:7681" not in dockerfile
 
@@ -49,13 +52,40 @@ def test_standalone_start_registers_executor_as_admin_cloud_device() -> None:
     assert "python -m executor.main" in start_script
 
 
+def test_standalone_nginx_routes_frontend_backend_and_wework() -> None:
+    """Nginx should expose Frontend, Backend, and Wework through one public port."""
+    nginx_config = STANDALONE_NGINX_CONFIG.read_text(encoding="utf-8")
+
+    assert "listen 3000;" in nginx_config
+    assert "listen 3001" not in nginx_config
+    assert "listen 8000" not in nginx_config
+    assert "upstream wegent_frontend" in nginx_config
+    assert "server 127.0.0.1:3002;" in nginx_config
+    assert "upstream wegent_backend" in nginx_config
+    assert "server 127.0.0.1:8000;" in nginx_config
+    assert "location = /health" in nginx_config
+    assert "proxy_pass http://wegent_backend/health;" in nginx_config
+    assert "location ^~ /wework/api/" in nginx_config
+    assert "proxy_pass http://wegent_backend/api/;" in nginx_config
+    assert "location ^~ /wework/socket.io/" in nginx_config
+    assert "proxy_set_header Upgrade $http_upgrade;" in nginx_config
+    assert "location ^~ /wework/" in nginx_config
+    assert "alias /app/wework/dist/;" in nginx_config
+    assert "try_files $uri $uri/ /wework/index.html;" in nginx_config
+    assert "location / {" in nginx_config
+    assert "proxy_pass http://wegent_frontend;" in nginx_config
+
+
 def test_standalone_start_serves_wework_without_public_ttyd() -> None:
-    """Startup should serve Wework Web without a fixed public shell service."""
+    """Startup should serve Wework through Nginx without a fixed public shell service."""
     start_script = STANDALONE_START.read_text(encoding="utf-8")
 
-    assert "start_wework" in start_script
-    assert "WEWORK_PORT" in start_script
-    assert "python3 -m http.server ${WEWORK_PORT}" in start_script
+    assert "start_nginx" in start_script
+    assert "write_wework_runtime_config" in start_script
+    assert "nginx -t" in start_script
+    assert 'nginx -g "daemon off;"' in start_script
+    assert "WEWORK_PORT" not in start_script
+    assert "python3 -m http.server" not in start_script
     assert "DEVICE_SESSION_GATEWAY_ENABLED=false" in start_script
     assert "DEVICE_SESSION_GATEWAY_HOST" not in start_script
     assert "DEVICE_SESSION_GATEWAY_PORT" not in start_script
@@ -64,7 +94,7 @@ def test_standalone_start_serves_wework_without_public_ttyd() -> None:
     assert "TTYD_PORT" not in start_script
     assert "TTYD_CREDENTIALS" not in start_script
     assert "ttyd --writable" not in start_script
-    assert 'wait_for_http "Wework" "http://localhost:${WEWORK_PORT}"' in start_script
+    assert 'wait_for_http "Wework" "http://localhost:3000/wework/"' in start_script
     assert "Terminal:" not in start_script
 
 
@@ -95,45 +125,54 @@ def test_standalone_frontend_defaults_to_wework_url() -> None:
 
     assert (
         "export RUNTIME_WEWORK_CODE_URL="
-        '"${RUNTIME_WEWORK_CODE_URL:-http://localhost:${WEWORK_PORT}}"'
+        '"${RUNTIME_WEWORK_CODE_URL:-/wework}"'
         in start_script
     )
     assert (
-        'docker_run_cmd+=" -e RUNTIME_WEWORK_CODE_URL=http://${ACCESS_HOST}:3001"'
+        'docker_run_cmd+=" -e RUNTIME_WEWORK_CODE_URL=http://${ACCESS_HOST}:3000/wework"'
         in install_script
     )
     assert (
-        "-e RUNTIME_WEWORK_CODE_URL=http://${ACCESS_HOST}:3001"
+        "-e RUNTIME_WEWORK_CODE_URL=http://${ACCESS_HOST}:3000/wework"
         in install_script
     )
 
 
 def test_installer_exposes_wework_backend_and_workspace_volume() -> None:
-    """The public installer should expose only browser-facing standalone ports."""
+    """The public installer should expose one browser-facing standalone port."""
     install_script = INSTALL_SCRIPT.read_text(encoding="utf-8")
 
     assert 'STANDALONE_WORKSPACE_VOLUME_NAME="wegent-workspace"' in install_script
-    assert 'docker_run_cmd+=" -p 3001:3001"' in install_script
-    assert 'docker_run_cmd+=" -p 8000:8000"' in install_script
+    assert 'docker_run_cmd+=" -p 3000:3000"' in install_script
+    assert 'docker_run_cmd+=" -p 3001:3001"' not in install_script
+    assert 'docker_run_cmd+=" -p 8000:8000"' not in install_script
     assert 'docker_run_cmd+=" -p 7681:7681"' not in install_script
     assert 'docker_run_cmd+=" -p 17888:17888"' not in install_script
     assert (
         'docker_run_cmd+=" -v ${STANDALONE_WORKSPACE_VOLUME_NAME}:/workspace"'
         in install_script
     )
-    assert 'ui_kv "Wework URL" "http://${ACCESS_HOST}:3001"' in install_script
+    assert 'ui_kv "Wework URL" "http://${ACCESS_HOST}:3000/wework"' in install_script
     assert (
         'ui_kv "Workspace volume" "$STANDALONE_WORKSPACE_VOLUME_NAME"' in install_script
     )
     assert (
-        'docker_run_cmd+=" -e WEWORK_PUBLIC_BACKEND_URL=${SOCKET_URL}"'
+        'docker_run_cmd+=" -e WEWORK_PUBLIC_APP_BASE_PATH=/wework"'
+        in install_script
+    )
+    assert (
+        'docker_run_cmd+=" -e WEWORK_PUBLIC_API_URL=/wework/api"'
+        in install_script
+    )
+    assert (
+        'docker_run_cmd+=" -e WEWORK_PUBLIC_SOCKET_PATH=/wework/socket.io"'
         in install_script
     )
     assert "DEVICE_PUBLIC_BASE_URL=http://${ACCESS_HOST}:17888" not in install_script
     assert "TTYD_CREDENTIALS" not in install_script
     assert "WEGENT_TTYD_CREDENTIALS" not in install_script
     assert (
-        "Open ${BLUE}${BOLD}http://${ACCESS_HOST}:3001${NC} for Wework"
+        "Open ${BLUE}${BOLD}http://${ACCESS_HOST}:3000/wework${NC} for Wework"
         in install_script
     )
     assert 'if [[ "$DEPLOY_MODE" == "standalone" ]]; then' in install_script
@@ -144,22 +183,29 @@ def test_build_script_outputs_complete_standalone_run_command() -> None:
     """The standalone build helper should print a runnable Wework-enabled command."""
     build_script = BUILD_STANDALONE_SCRIPT.read_text(encoding="utf-8")
 
-    assert "-p 3000:3000 -p 3001:3001 -p 8000:8000" in build_script
+    assert "-p 3000:3000" in build_script
+    assert "-p 3001:3001" not in build_script
+    assert "-p 8000:8000" not in build_script
     assert "-p 7681:7681" not in build_script
     assert "-p 17888:17888" not in build_script
     assert "-v wegent-data:/app/data" in build_script
     assert "-v wegent-workspace:/workspace" in build_script
+    assert "RUNTIME_WEWORK_CODE_URL=http://localhost:3000/wework" in build_script
+    assert "WEWORK_PUBLIC_API_URL=/wework/api" in build_script
 
 
 def test_verify_script_checks_wework_readiness_without_terminal_ports() -> None:
     """Published standalone images should not expose direct terminal ports."""
     verify_script = VERIFY_STANDALONE_SCRIPT.read_text(encoding="utf-8")
 
-    assert 'WEWORK_PORT="${WEWORK_PORT:-13001}"' in verify_script
+    assert 'STANDALONE_PORT="${STANDALONE_PORT:-13000}"' in verify_script
+    assert "WEWORK_PORT" not in verify_script
     assert "TTYD_PORT" not in verify_script
     assert "SESSION_GATEWAY_PORT" not in verify_script
     assert "TTYD_CREDENTIALS" not in verify_script
-    assert '-p "127.0.0.1:${WEWORK_PORT}:3001"' in verify_script
+    assert '-p "127.0.0.1:${STANDALONE_PORT}:3000"' in verify_script
+    assert ":3001" not in verify_script
+    assert ":8000" not in verify_script
     assert ":7681" not in verify_script
     assert ":17888" not in verify_script
-    assert 'wait_for_url "Wework" "http://localhost:${WEWORK_PORT}/"' in verify_script
+    assert 'wait_for_url "Wework" "http://localhost:${STANDALONE_PORT}/wework/"' in verify_script
