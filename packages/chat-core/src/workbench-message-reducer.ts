@@ -94,6 +94,10 @@ export type WorkbenchMessageAction<TAttachment = unknown, TFileChanges = unknown
   | { type: 'block_created'; subtaskId: number; block: WorkbenchProcessingBlock }
   | { type: 'block_updated'; subtaskId: number; blockId: string; updates: ProcessingBlockUpdate }
 
+function isGenericTaskStatusError(error?: string): boolean {
+  return /^Task failed with status:\s*\w+$/i.test(String(error ?? '').trim())
+}
+
 export function reduceWorkbenchMessages<TAttachment = unknown, TFileChanges = unknown>(
   state: WorkbenchMessage<TAttachment, TFileChanges>[],
   action: WorkbenchMessageAction<TAttachment, TFileChanges>
@@ -192,8 +196,14 @@ export function reduceWorkbenchMessages<TAttachment = unknown, TFileChanges = un
           ? {
               ...message,
               status: 'failed' as const,
-              error: action.error,
-              errorType: action.errorType,
+              error:
+                message.error && isGenericTaskStatusError(action.error)
+                  ? message.error
+                  : action.error,
+              errorType:
+                message.error && isGenericTaskStatusError(action.error)
+                  ? message.errorType
+                  : action.errorType,
               blocks: finalizeProcessingBlocks(message.blocks, 'error'),
             }
           : message
