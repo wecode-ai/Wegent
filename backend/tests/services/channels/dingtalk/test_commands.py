@@ -84,6 +84,24 @@ class TestParseCommand:
         assert result.command == CommandType.HELP
         assert result.argument is None
 
+    @pytest.mark.parametrize(
+        ("raw_command", "expected_type"),
+        [
+            ("/bind", CommandType.BIND),
+            ("/mode", CommandType.MODE),
+            ("/chat", CommandType.CHAT),
+            ("/task", CommandType.TASK),
+            ("/switch", CommandType.SWITCH),
+            ("/cancel", CommandType.CANCEL),
+        ],
+    )
+    def test_parse_private_im_session_commands(self, raw_command, expected_type):
+        """Test parsing private IM task/chat commands."""
+        result = parse_command(raw_command)
+        assert result is not None
+        assert result.command == expected_type
+        assert result.argument is None
+
     def test_parse_command_case_insensitive(self):
         """Test that command parsing is case insensitive."""
         result = parse_command("/DEVICES")
@@ -179,6 +197,12 @@ class TestHelpMessage:
         assert "/status" in HELP_MESSAGE
         assert "/new" in HELP_MESSAGE
         assert "/help" in HELP_MESSAGE
+        assert "/bind" in HELP_MESSAGE
+        assert "/mode" in HELP_MESSAGE
+        assert "/chat" in HELP_MESSAGE
+        assert "/task" in HELP_MESSAGE
+        assert "/switch" in HELP_MESSAGE
+        assert "/cancel" in HELP_MESSAGE
 
     def test_help_message_mentions_index_support(self):
         """Test that help message mentions device index support."""

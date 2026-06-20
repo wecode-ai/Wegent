@@ -735,6 +735,19 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 db, user, command.argument, message_context
             )
 
+        elif command.command in {
+            CommandType.BIND,
+            CommandType.MODE,
+            CommandType.CHAT,
+            CommandType.TASK,
+            CommandType.SWITCH,
+            CommandType.CANCEL,
+        }:
+            await self.send_text_reply(
+                message_context,
+                "已识别会话命令，私聊任务模式将在后续版本启用。",
+            )
+
     async def _handle_devices_command(
         self,
         db: Session,
