@@ -91,7 +91,7 @@ wait_for_api_proxy() {
             "$url" 2>/dev/null || true)"
 
         case "$status" in
-            200|401|403)
+            200|400|401|403)
                 echo "API proxy is reachable (HTTP ${status})"
                 return 0
                 ;;
