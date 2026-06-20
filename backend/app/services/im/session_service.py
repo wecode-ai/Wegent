@@ -7,6 +7,7 @@
 from datetime import datetime, timedelta
 from typing import Any
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.im_session import IMPrivateSession, IMSessionMode, IMSessionState
@@ -36,17 +37,14 @@ class IMSessionService:
         sender_id: str,
         display_name: str = "",
     ) -> IMPrivateSession:
-        session = (
-            db.query(IMPrivateSession)
-            .filter(
-                IMPrivateSession.user_id == user_id,
-                IMPrivateSession.channel_type == channel_type,
-                IMPrivateSession.channel_id == channel_id,
-                IMPrivateSession.conversation_id == conversation_id,
-            )
-            .first()
-        )
         now = datetime.now()
+        session = self._find_private_session(
+            db,
+            user_id=user_id,
+            channel_type=channel_type,
+            channel_id=channel_id,
+            conversation_id=conversation_id,
+        )
         if session is None:
             session = IMPrivateSession(
                 user_id=user_id,
@@ -58,13 +56,68 @@ class IMSessionService:
                 last_seen_at=now,
             )
             db.add(session)
+            try:
+                db.commit()
+            except IntegrityError:
+                db.rollback()
+                session = self._find_private_session(
+                    db,
+                    user_id=user_id,
+                    channel_type=channel_type,
+                    channel_id=channel_id,
+                    conversation_id=conversation_id,
+                )
+                if session is None:
+                    raise
+                self._mark_private_session_seen(
+                    session,
+                    sender_id=sender_id,
+                    display_name=display_name,
+                    last_seen_at=now,
+                )
+                db.commit()
         else:
-            session.sender_id = sender_id
-            session.display_name = display_name
-            session.last_seen_at = now
-        db.commit()
+            self._mark_private_session_seen(
+                session,
+                sender_id=sender_id,
+                display_name=display_name,
+                last_seen_at=now,
+            )
+            db.commit()
         db.refresh(session)
         return session
+
+    def _find_private_session(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        channel_type: str,
+        channel_id: int,
+        conversation_id: str,
+    ) -> IMPrivateSession | None:
+        return (
+            db.query(IMPrivateSession)
+            .filter(
+                IMPrivateSession.user_id == user_id,
+                IMPrivateSession.channel_type == channel_type,
+                IMPrivateSession.channel_id == channel_id,
+                IMPrivateSession.conversation_id == conversation_id,
+            )
+            .first()
+        )
+
+    def _mark_private_session_seen(
+        self,
+        session: IMPrivateSession,
+        *,
+        sender_id: str,
+        display_name: str,
+        last_seen_at: datetime,
+    ) -> None:
+        session.sender_id = sender_id
+        session.display_name = display_name
+        session.last_seen_at = last_seen_at
 
     def list_user_sessions(self, db: Session, *, user_id: int) -> list[IMPrivateSession]:
         return (
