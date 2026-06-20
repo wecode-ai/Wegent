@@ -48,7 +48,7 @@ cat > "$TMP_DIR/curl" <<'EOF'
 set -euo pipefail
 
 url="${@: -1}"
-echo "$url" >> "$FAKE_CURL_LOG"
+echo "$*" >> "$FAKE_CURL_LOG"
 
 case "$url" in
     *:13000/health)
@@ -58,7 +58,11 @@ case "$url" in
         exit 0
         ;;
     *:13000/wework/)
-        exit 22
+        exit 0
+        ;;
+    *:13000/api/users/me)
+        echo "404"
+        exit 0
         ;;
     *)
         echo "unexpected curl URL: $url" >&2
@@ -76,19 +80,31 @@ export STANDALONE_VERIFY_TIMEOUT_SECONDS=0
 export STANDALONE_VERIFY_INTERVAL_SECONDS=1
 
 if "$VERIFY_SCRIPT" "ghcr.io/wecode-ai/wegent-standalone:test" > "$TMP_DIR/output.log" 2>&1; then
-    echo "Expected standalone verification to fail when Wework is unreachable."
+    echo "Expected standalone verification to fail when the API proxy returns 404."
     cat "$TMP_DIR/output.log"
     exit 1
 fi
 
-if ! grep -q "Wework failed readiness check" "$TMP_DIR/output.log"; then
-    echo "Expected Wework readiness failure message."
+if ! grep -q "API proxy failed readiness check" "$TMP_DIR/output.log"; then
+    echo "Expected API proxy readiness failure message."
     cat "$TMP_DIR/output.log"
     exit 1
 fi
 
 if ! grep -q "http://localhost:13000/wework/" "$FAKE_CURL_LOG"; then
     echo "Expected Wework to be checked through the frontend standalone port."
+    cat "$FAKE_CURL_LOG"
+    exit 1
+fi
+
+if ! grep -q "http://localhost:13000/api/users/me" "$FAKE_CURL_LOG"; then
+    echo "Expected API proxy to be checked through the standalone port."
+    cat "$FAKE_CURL_LOG"
+    exit 1
+fi
+
+if ! grep -q "Referer: http://localhost:13000/" "$FAKE_CURL_LOG"; then
+    echo "Expected API proxy check to include a same-origin Referer header."
     cat "$FAKE_CURL_LOG"
     exit 1
 fi
