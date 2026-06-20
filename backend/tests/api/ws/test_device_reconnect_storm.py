@@ -135,7 +135,7 @@ async def test_local_device_register_does_not_match_cloud_device_by_ip(monkeypat
 
     async def fake_run_sync_in_executor(func, *args):
         upsert_calls.append((func, args))
-        return True, "MacBook", None
+        return True, "MacBook", None, None
 
     monkeypatch.setattr(namespace, "get_session", fake_get_session)
     monkeypatch.setattr(namespace, "save_session", AsyncMock())
@@ -179,7 +179,7 @@ async def test_local_device_register_does_not_match_cloud_device_by_ip(monkeypat
 async def test_cloud_device_register_matches_cloud_device(monkeypatch):
     namespace = DeviceNamespace()
     match_cloud_device = AsyncMock(return_value="standalone-admin-device")
-    run_sync_in_executor = AsyncMock()
+    run_sync_in_executor = AsyncMock(return_value=("Standalone Device", None))
 
     async def fake_get_session(sid):
         return {
@@ -222,7 +222,7 @@ async def test_cloud_device_register_matches_cloud_device(monkeypatch):
     match_cloud_device.assert_awaited_once_with(
         7, "198.18.0.1", "standalone-admin-device"
     )
-    run_sync_in_executor.assert_not_awaited()
+    run_sync_in_executor.assert_awaited_once()
     set_device_online.assert_awaited_once()
 
 

@@ -2057,6 +2057,7 @@ describe('WorkbenchProvider', () => {
                 device_type: 'cloud',
                 bind_shell: 'claudecode',
                 executor_version: '1.8.5',
+                direct_chat: directChat,
               },
             ]),
             getHomeDirectory: vi.fn(),
@@ -2069,6 +2070,7 @@ describe('WorkbenchProvider', () => {
             leaveTask: vi.fn(),
             sendMessage,
             subscribe: vi.fn(() => vi.fn()),
+            isDeviceConnected: vi.fn(() => true),
           },
         }}
       >
