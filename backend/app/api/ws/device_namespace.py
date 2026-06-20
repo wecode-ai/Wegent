@@ -33,6 +33,7 @@ from datetime import datetime
 from typing import Any, Dict, Generator, Optional
 
 import socketio
+from socketio.exceptions import ConnectionRefusedError
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -779,7 +780,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
             # Extract token expiry for JWT
             token_exp = get_token_expiry(token)
 
-        session_saved = await save_connect_session(
+        await save_connect_session(
             self,
             sid,
             session_data={
@@ -796,22 +797,18 @@ class DeviceNamespace(socketio.AsyncNamespace):
             logger=logger,
             log_prefix="[Device WS]",
         )
-        if not session_saved:
-            return False
 
         set_user_context(user_id=str(user_id), user_name=user_name)
 
         # Join user room for device-related notifications
         user_room = f"user:{user_id}"
-        room_entered = await enter_connect_room(
+        await enter_connect_room(
             self,
             sid,
             user_room,
             logger=logger,
             log_prefix="[Device WS]",
         )
-        if not room_entered:
-            return False
 
         logger.info(
             f"[Device WS] Connected user={user_id} ({user_name}) via {auth_type} "

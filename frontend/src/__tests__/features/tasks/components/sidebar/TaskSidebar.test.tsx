@@ -85,7 +85,7 @@ jest.mock('next/navigation', () => ({
 jest.mock('@/config/paths', () => ({
   paths: {
     feed: { getHref: () => '/feed' },
-    code: { getHref: () => '/code' },
+    code: { getHref: () => '/chat?agent=code' },
     wiki: { getHref: () => '/knowledge' },
     devices: { getHref: () => '/devices' },
     inbox: { getHref: () => '/inbox' },

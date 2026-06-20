@@ -488,7 +488,7 @@ describe('QuickAccessCards', () => {
     )
   })
 
-  test('routes code-only system functions to the code page with the target team selected', async () => {
+  test('routes code-only system functions to code mode with the target team selected', async () => {
     const onTeamSelect = jest.fn()
     mockGetQuickLaunch.mockResolvedValueOnce({
       system_functions: [
