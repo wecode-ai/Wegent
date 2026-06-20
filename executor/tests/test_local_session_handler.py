@@ -440,6 +440,17 @@ async def test_disabled_session_gateway_rejects_code_server_session(
     assert "code-1" not in handler.sessions
 
 
+def test_disabled_session_gateway_rejects_app_configurator(monkeypatch):
+    """Direct app configurators require the session gateway."""
+    from executor.modes.local.session_handler import LocalSessionHandler
+
+    monkeypatch.setenv("DEVICE_SESSION_GATEWAY_ENABLED", "false")
+    handler = LocalSessionHandler(public_base_url="http://localhost:17888")
+
+    with pytest.raises(RuntimeError, match="Session gateway is disabled"):
+        handler.add_app_configurator(lambda app: None)
+
+
 @pytest.mark.asyncio
 async def test_start_session_rejects_missing_project_path(tmp_path):
     """Session startup should fail when the project path does not exist."""

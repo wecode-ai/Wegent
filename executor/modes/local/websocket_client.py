@@ -67,6 +67,17 @@ class DeviceRegistrationResult:
 # Device ID cache file location
 DEVICE_ID_CACHE_FILE = Path.home() / ".wegent-executor" / "device_id"
 CODEX_AUTH_TARGET_PATH = "~/.codex/auth.json"
+REGISTRATION_RESPONSE_SECRET_FIELDS = frozenset({"direct_chat_secret"})
+
+
+def redact_registration_response(response: Any) -> Any:
+    """Return a log-safe copy of a device registration response."""
+    if not isinstance(response, dict):
+        return response
+    return {
+        key: "***" if key in REGISTRATION_RESPONSE_SECRET_FIELDS else value
+        for key, value in response.items()
+    }
 
 
 def build_runtime_auth_file_report(
@@ -389,6 +400,29 @@ class WebSocketClient:
         # Fallback to localhost
         return "127.0.0.1"
 
+    def _extract_direct_chat_registration_state(
+        self, response: dict[str, Any]
+    ) -> tuple[Optional[str], list[str]]:
+        direct_chat_secret = response.get("direct_chat_secret")
+        next_secret = (
+            direct_chat_secret
+            if isinstance(direct_chat_secret, str) and direct_chat_secret
+            else None
+        )
+        direct_chat_allowed_origins = response.get("direct_chat_allowed_origins")
+        next_allowed_origins: list[str] = []
+        if isinstance(direct_chat_allowed_origins, list):
+            next_allowed_origins = [
+                str(origin).strip()
+                for origin in direct_chat_allowed_origins
+                if str(origin).strip()
+            ]
+        return next_secret, next_allowed_origins
+
+    def _clear_direct_chat_registration_state(self) -> None:
+        self.direct_chat_secret = None
+        self.direct_chat_allowed_origins = []
+
     def _setup_internal_handlers(self) -> None:
         """Setup internal event handlers for connection lifecycle."""
 
@@ -528,22 +562,17 @@ class WebSocketClient:
                 namespace="/local-executor",
                 timeout=timeout,
             )
-            logger.info(f"device:register response: {response}")
+            logger.info(
+                "device:register response: %s",
+                redact_registration_response(response),
+            )
 
             if response and response.get("success"):
-                direct_chat_secret = response.get("direct_chat_secret")
-                if isinstance(direct_chat_secret, str) and direct_chat_secret:
-                    self.direct_chat_secret = direct_chat_secret
-                direct_chat_allowed_origins = response.get(
-                    "direct_chat_allowed_origins"
+                next_secret, next_allowed_origins = (
+                    self._extract_direct_chat_registration_state(response)
                 )
-                if isinstance(direct_chat_allowed_origins, list):
-                    self.direct_chat_allowed_origins = [
-                        str(origin).strip()
-                        for origin in direct_chat_allowed_origins
-                        if str(origin).strip()
-                    ]
-                if self.direct_chat_endpoint and not self.direct_chat_secret:
+                if self.direct_chat_endpoint and not next_secret:
+                    self._clear_direct_chat_registration_state()
                     error = "Direct chat secret missing from registration response"
                     logger.error(error)
                     return DeviceRegistrationResult(
@@ -551,7 +580,8 @@ class WebSocketClient:
                         backend_responded=True,
                         error=error,
                     )
-                if self.direct_chat_endpoint and not self.direct_chat_allowed_origins:
+                if self.direct_chat_endpoint and not next_allowed_origins:
+                    self._clear_direct_chat_registration_state()
                     error = (
                         "Direct chat CORS allowlist missing from registration response"
                     )
@@ -561,6 +591,8 @@ class WebSocketClient:
                         backend_responded=True,
                         error=error,
                     )
+                self.direct_chat_secret = next_secret
+                self.direct_chat_allowed_origins = next_allowed_origins
                 self._registered = True
                 self._was_registered = (
                     True  # Mark that we were registered at least once
@@ -569,6 +601,8 @@ class WebSocketClient:
                 return DeviceRegistrationResult(success=True)
 
             if response:
+                if self.direct_chat_endpoint:
+                    self._clear_direct_chat_registration_state()
                 error = response.get("error", "Unknown error")
                 logger.error(f"Device registration failed: {error}")
                 return DeviceRegistrationResult(

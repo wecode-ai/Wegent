@@ -499,6 +499,8 @@ class LocalSessionHandler:
         self, configurator: Callable[[web.Application], None]
     ) -> None:
         """Add a gateway configurator before the gateway starts."""
+        if not self.gateway:
+            raise RuntimeError("Session gateway is disabled")
         if self.gateway.is_running:
             raise RuntimeError("Cannot add gateway configurator after startup")
         self.gateway.app_configurators.append(configurator)
