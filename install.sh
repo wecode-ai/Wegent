@@ -1110,7 +1110,8 @@ install_host_executor_from_release() {
 }
 
 read_standalone_executor_token() {
-    docker exec "$STANDALONE_CONTAINER_NAME" sh -lc 'cat /app/data/standalone_executor_token'
+    docker exec "$STANDALONE_CONTAINER_NAME" sh -lc \
+        'cd /app/backend && python -m app.scripts.ensure_standalone_executor_token'
 }
 
 redact_token() {
@@ -1415,7 +1416,8 @@ start_container() {
 }
 
 read_standalone_executor_token() {
-    docker exec "\$STANDALONE_CONTAINER_NAME" sh -lc 'cat /app/data/standalone_executor_token'
+    docker exec "\$STANDALONE_CONTAINER_NAME" sh -lc \\
+        'cd /app/backend && python -m app.scripts.ensure_standalone_executor_token'
 }
 
 host_executor_device_name() {
