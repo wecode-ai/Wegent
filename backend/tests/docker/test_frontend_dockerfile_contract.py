@@ -14,7 +14,9 @@ def test_frontend_builder_includes_chat_core_workspace_dependencies() -> None:
     """Frontend builds import chat-core source and need its workspace dependencies."""
     dockerfile = FRONTEND_DOCKERFILE.read_text(encoding="utf-8")
 
-    assert "pnpm install --frozen-lockfile --filter wecode-ai-assistant..." in dockerfile
+    assert (
+        "pnpm install --frozen-lockfile --filter wecode-ai-assistant..." in dockerfile
+    )
     assert (
         "COPY --from=deps /app/packages/chat-core/node_modules "
         "./packages/chat-core/node_modules"

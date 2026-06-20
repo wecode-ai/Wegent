@@ -1,4 +1,11 @@
-import { useCallback, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import {
+  useCallback,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
+import { MessageCircle } from 'lucide-react'
 import { ChatInput } from '@/components/chat/ChatInput'
 import type { ProjectChatControls, ProjectWorkControls } from '@/components/chat/ChatInput'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
@@ -38,7 +45,7 @@ import { useResizableRightSplitChat } from './workspace-panels/useResizableWorks
 import { ConversationDeviceOfflineBanner } from './ConversationDeviceOfflineBanner'
 import { DeviceStatusPrompt } from './DeviceStatusPrompt'
 import { TitlebarActionsPortal } from '@/components/topnav/TitlebarActionsPortal'
-import { DesktopTopBar } from './DesktopTopBar'
+import { DESKTOP_TOP_BAR_BUTTON_CLASS, DesktopTopBar } from './DesktopTopBar'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 
 const DESKTOP_COMPOSER_FRAME_CLASS =
@@ -153,6 +160,7 @@ interface DesktopWorkbenchMainProps {
   onAddCodeComment?: (context: CodeCommentContext) => void
   onClearCodeComments?: () => void
   topBarLeftActions?: ReactNode
+  onContinueInIm?: () => void
 }
 
 export function DesktopWorkbenchMain({
@@ -196,6 +204,7 @@ export function DesktopWorkbenchMain({
   onAddCodeComment = () => {},
   onClearCodeComments,
   topBarLeftActions,
+  onContinueInIm,
 }: DesktopWorkbenchMainProps) {
   const { t } = useTranslation('common')
   const [rightPanelOpen, setRightPanelOpen] = useState(false)
@@ -406,6 +415,26 @@ export function DesktopWorkbenchMain({
   )
   const workspacePanelActions = renderWorkspacePanelActions('all')
   const showPageTopBar = !isTauri || Boolean(topBarLeftActions)
+  const canContinueInIm = Boolean(currentTask && !currentTask.is_group_chat)
+  const continueInImButton =
+    canContinueInIm && onContinueInIm ? (
+      <button
+        type="button"
+        data-testid="continue-in-im-button"
+        className={DESKTOP_TOP_BAR_BUTTON_CLASS}
+        aria-label={t('workbench.continue_im_title')}
+        title={t('workbench.continue_im_title')}
+        onClick={onContinueInIm}
+      >
+        <MessageCircle />
+      </button>
+    ) : undefined
+  const topRightActions = (
+    <>
+      {continueInImButton}
+      {workspacePanelActions}
+    </>
+  )
 
   useLayoutEffect(() => {
     if (previousRightPanelSessionKey.current === rightPanelSessionKey) {
@@ -433,13 +462,13 @@ export function DesktopWorkbenchMain({
         sidebarCollapsed && 'ml-1.5'
       )}
     >
-      {isTauri && <TitlebarActionsPortal>{workspacePanelActions}</TitlebarActionsPortal>}
+      {isTauri && <TitlebarActionsPortal>{topRightActions}</TitlebarActionsPortal>}
       {!isTauri && (
         <div
           data-testid="workspace-panel-floating-actions"
           className="pointer-events-auto absolute right-7 top-3 z-popover flex shrink-0 items-center gap-2"
         >
-          {workspacePanelActions}
+          {topRightActions}
         </div>
       )}
       {showPageTopBar && (
@@ -448,8 +477,6 @@ export function DesktopWorkbenchMain({
           className="absolute left-0 top-0 z-chrome overflow-hidden bg-transparent pl-2 pr-7 transition-[width] duration-300 ease-out"
           style={{ width: chatColumnWidth }}
           left={topBarLeftActions}
-          right={undefined}
-          rightClassName="gap-2"
         />
       )}
       <div

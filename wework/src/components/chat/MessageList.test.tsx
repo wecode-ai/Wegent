@@ -120,6 +120,94 @@ describe('MessageList', () => {
     expect(container.firstElementChild).toHaveClass('min-w-0', 'overflow-x-hidden')
   })
 
+  test('renders IM source badge for user messages with channel label', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: '1',
+            role: 'user',
+            content: '来自 IM 的消息',
+            status: 'done',
+            createdAt: '2026-05-25T00:00:00.000Z',
+            source: {
+              source: 'im',
+              channel_type: 'dingtalk',
+              channel_label: '钉钉',
+            },
+          },
+        ]}
+      />
+    )
+
+    const badge = screen.getByTestId('message-source-badge')
+    expect(badge).toHaveTextContent('钉钉')
+    expect(badge.closest('.opacity-0')).toBeNull()
+    expect(screen.getByTestId('message-source-row')).toContainElement(badge)
+  })
+
+  test('renders Discord IM source badge from channel type', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: '1',
+            role: 'user',
+            content: 'Message from Discord',
+            status: 'done',
+            createdAt: '2026-05-25T00:00:00.000Z',
+            source: {
+              source: 'im',
+              channel_type: 'discord',
+            },
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('message-source-badge')).toHaveTextContent('Discord')
+  })
+
+  test('does not render IM source badge for assistant or non-IM messages', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: '1',
+            role: 'assistant',
+            content: '助手消息',
+            status: 'done',
+            createdAt: '2026-05-25T00:00:00.000Z',
+            source: {
+              source: 'im',
+              channel_type: 'dingtalk',
+              channel_label: '钉钉',
+            },
+          },
+          {
+            id: '2',
+            role: 'user',
+            content: '网页消息',
+            status: 'done',
+            createdAt: '2026-05-25T00:00:01.000Z',
+            source: {
+              source: 'web',
+            },
+          },
+        ]}
+      />
+    )
+
+    expect(screen.queryByTestId('message-source-badge')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('message-source-row')).not.toBeInTheDocument()
+    expect(
+      screen
+        .getByText('网页消息')
+        .closest('[data-testid="message-user"]')
+        ?.querySelector('div.flex.min-h-5.items-center.justify-end.gap-1:not(.opacity-0)')
+    ).toBeNull()
+  })
+
   test('renders sent local skill mentions as polished inline tokens', () => {
     render(
       <MessageList

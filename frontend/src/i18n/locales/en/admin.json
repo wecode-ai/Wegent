@@ -875,7 +875,7 @@
   },
   "im_channels": {
     "title": "IM Channel Management",
-    "description": "Manage IM platform integrations (DingTalk, Feishu)",
+    "description": "Manage IM platform integrations (DingTalk, Telegram, Discord)",
     "create_description": "Create a new IM channel integration. Configure platform credentials and default agent.",
     "loading": "Loading channels...",
     "no_channels": "No IM channels configured",
@@ -889,6 +889,7 @@
       "dingtalk": "DingTalk",
       "feishu": "Feishu",
       "telegram": "Telegram",
+      "discord": "Discord",
       "not_supported": "Not supported"
     },
     "status": {
@@ -912,7 +913,7 @@
       "card_template_id_placeholder": "Enter DingTalk AI Card Template ID (optional)",
       "card_template_id_help": "When configured, subscription notifications will be sent as AI Cards",
       "bot_token": "Bot Token",
-      "bot_token_placeholder": "Enter Telegram Bot Token",
+      "bot_token_placeholder": "Enter Bot Token",
       "bot_token_edit_placeholder": "Enter new Bot Token (leave empty to keep existing)",
       "leave_empty_to_keep": "Leave empty to keep existing",
       "default_team": "Default Agent",
@@ -920,8 +921,8 @@
       "no_default_team": "No default agent",
       "default_model": "Default Model",
       "default_model_placeholder": "Select default model",
-      "no_default_model": "Use agent's default model",
-      "team_no_model_warning": "The selected agent has no model configured. You must select a default model.",
+      "no_default_model": "Use agent/runtime default model",
+      "team_no_model_warning": "The selected agent has no Wegent model configured. If no default model is selected, the agent or runtime default model will be used.",
       "is_enabled": "Enable Channel",
       "user_mapping_mode": "User Mapping Mode",
       "user_mapping_mode_description": "Choose how to map IM users to system users",
@@ -957,7 +958,7 @@
       "config_required": "Client ID and Client Secret are required",
       "bot_token_required": "Bot Token is required",
       "team_required": "A default agent must be selected",
-      "model_required_for_team": "The selected agent has no model configured. You must select a default model.",
+      "model_required_for_team": "The selected agent has no Wegent model configured. Select a default model or use the runtime default model.",
       "target_user_required": "A target user must be selected when using Specific User mode"
     }
   },

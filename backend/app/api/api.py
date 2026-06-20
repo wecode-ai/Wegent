@@ -12,6 +12,7 @@ from app.api.endpoints import (
     dingtalk_docs,
     groups,
     health,
+    im_sessions,
     installed_mcps,
     installed_plugins,
     knowledge,
@@ -97,6 +98,7 @@ api_router.include_router(users.router, prefix="/users", tags=["users"])
 api_router.include_router(pet.router, prefix="/users/me/pet", tags=["pet"])
 api_router.include_router(admin.router, prefix="/admin", tags=["admin"])
 api_router.include_router(groups.router, prefix="/groups", tags=["groups"])
+api_router.include_router(im_sessions.im_router, prefix="/im", tags=["im"])
 api_router.include_router(projects.router, prefix="/projects", tags=["projects"])
 api_router.include_router(api_keys.router, prefix="/api-keys", tags=["api-keys"])
 api_router.include_router(devices.router, prefix="/devices", tags=["devices"])
@@ -125,6 +127,9 @@ api_router.include_router(
     subscription_market.router, prefix="/market", tags=["subscription-market"]
 )
 api_router.include_router(tasks.router, prefix="/tasks", tags=["tasks"])
+api_router.include_router(
+    im_sessions.tasks_router, prefix="/tasks", tags=["im-sessions"]
+)
 api_router.include_router(subtasks.router, prefix="/subtasks", tags=["subtasks"])
 api_router.include_router(task_members.router, prefix="/tasks", tags=["task-members"])
 api_router.include_router(

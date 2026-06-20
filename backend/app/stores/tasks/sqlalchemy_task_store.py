@@ -9,7 +9,7 @@ from datetime import datetime
 from time import perf_counter
 from typing import Any, Callable, Literal, Optional, Sequence
 
-from sqlalchemy import func, text, tuple_
+from sqlalchemy import exists, func, text, tuple_
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -752,6 +752,34 @@ class SqlAlchemyTaskStore:
         if limit is not None:
             query = query.limit(limit)
         return query.all()
+
+    def list_recent_owner_only_tasks(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        limit: int,
+        client_origin: Optional[str] = None,
+    ) -> list[TaskResource]:
+        approved_member_exists = exists().where(
+            ResourceMember.resource_type == ResourceType.TASK,
+            ResourceMember.resource_id == TaskResource.id,
+            ResourceMember.status == MemberStatus.APPROVED,
+        )
+        query = db.query(TaskResource).filter(
+            TaskResource.kind == "Task",
+            TaskResource.user_id == user_id,
+            TaskResource.is_active == TaskResource.STATE_ACTIVE,
+            TaskResource.is_group_chat.is_(False),
+            ~approved_member_exists,
+        )
+        if client_origin:
+            query = query.filter(TaskResource.client_origin == client_origin)
+        return (
+            query.order_by(TaskResource.updated_at.desc(), TaskResource.id.desc())
+            .limit(limit)
+            .all()
+        )
 
     def list_owned_tasks_by_states(
         self,
