@@ -17,6 +17,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent, ReactNode } from 'react'
 import { ActionMenu } from '@/components/common/ActionMenu'
+import { ImSourceBadge } from '@/components/common/ImSourceBadge'
 import { TextInputDialog } from '@/components/common/TextInputDialog'
 import { ProjectCreateDialog } from '@/components/projects/ProjectCreateDialog'
 import { ProjectFolderIcon } from '@/components/projects/ProjectFolderIcon'
@@ -443,6 +444,7 @@ function ProjectTaskRow({
   const handleOpen = () => onOpenTask(task.task_id, projectId)
   const gitWorktreeSession = isGitWorktreeSession(task)
   const gitWorktreeTitle = t('workbench.git_worktree_session', 'Git worktree')
+  const imSource = task.source === 'im'
   return (
     <div
       data-testid={`project-chat-row-${task.task_id}`}
@@ -464,7 +466,12 @@ function ProjectTaskRow({
       >
         {title}
       </span>
-      <div className="relative ml-2 flex h-7 w-12 shrink-0 items-center justify-end">
+      <div
+        className={cn(
+          'relative ml-2 flex h-7 shrink-0 items-center justify-end',
+          imSource ? 'w-24' : 'w-12'
+        )}
+      >
         {running ? (
           <span className="flex h-7 w-7 items-center justify-center group-hover/task:invisible group-focus-within/task:invisible">
             <Loader2
@@ -483,6 +490,11 @@ function ProjectTaskRow({
                 title={gitWorktreeTitle}
               />
             )}
+            <ImSourceBadge
+              source={task.source}
+              testId={`task-source-badge-project-${task.task_id}`}
+              className="max-w-[54px]"
+            />
             <span
               data-testid={`project-chat-time-value-${task.task_id}`}
               className="flex h-7 w-7 items-center justify-center"
@@ -702,6 +714,7 @@ function RecentTaskRow({
   const gitWorktreeTitle = t('workbench.git_worktree_session', 'Git worktree')
   const deviceState = getSidebarDeviceState(task.device_id, devices)
   const visibleDeviceState = deviceState?.status === 'online' ? null : deviceState
+  const imSource = task.source === 'im'
   return (
     <div
       data-testid={`history-task-row-${task.id}`}
@@ -726,7 +739,7 @@ function RecentTaskRow({
       <div
         className={[
           'relative ml-2 flex h-7 shrink-0 items-center justify-end',
-          visibleDeviceState ? 'w-20' : 'w-12',
+          visibleDeviceState ? (imSource ? 'w-32' : 'w-20') : imSource ? 'w-24' : 'w-12',
         ].join(' ')}
       >
         {running ? (
@@ -753,6 +766,11 @@ function RecentTaskRow({
                 testId={`history-task-device-status-${task.id}`}
               />
             )}
+            <ImSourceBadge
+              source={task.source}
+              testId={`task-source-badge-recent-${task.id}`}
+              className="max-w-[54px]"
+            />
             <span
               data-testid={`history-task-time-value-${task.id}`}
               className="flex h-7 w-7 items-center justify-center"

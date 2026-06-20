@@ -114,6 +114,45 @@ describe('MobileWorkbenchLayout', () => {
     expect(onSelectProject).toHaveBeenCalledWith(1)
   })
 
+  test('renders mobile drawer IM source badges for project and recent tasks', async () => {
+    renderAtMobileWidth(
+      <MobileWorkbenchLayout
+        state={{
+          ...baseState,
+          projects: [
+            {
+              ...baseState.projects[0],
+              tasks: [
+                {
+                  ...baseState.projects[0].tasks[0],
+                  source: 'im',
+                },
+              ],
+            },
+          ],
+          recentTasks: [
+            {
+              ...baseState.recentTasks[0],
+              source: 'im',
+            },
+          ],
+        }}
+        messages={[]}
+        projectChat={baseProjectChat}
+        onSelectProject={vi.fn()}
+        onOpenTask={vi.fn()}
+        onInputChange={vi.fn()}
+        onSend={vi.fn()}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('open-mobile-drawer-button'))
+    await userEvent.click(screen.getByText('github_wegent'))
+
+    expect(await screen.findByTestId('task-source-badge-mobile-project-7')).toBeInTheDocument()
+    expect(screen.getByTestId('task-source-badge-mobile-recent-3')).toBeInTheDocument()
+  })
+
   test('does not show the user avatar on the mobile empty chat page', () => {
     renderAtMobileWidth(
       <MobileWorkbenchLayout

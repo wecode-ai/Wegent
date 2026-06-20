@@ -123,6 +123,7 @@ export interface ProjectTask {
   task_status?: string
   title?: string
   status?: string
+  source?: string | null
   device_id?: string | null
   execution_workspace_source?: string | null
   execution_workspace_path?: string | null
@@ -233,6 +234,7 @@ export interface Task {
   team_id?: number
   project_id?: number
   client_origin?: string
+  source?: string | null
   device_id?: string | null
   execution_workspace_source?: string | null
   execution_workspace_path?: string | null

@@ -353,6 +353,50 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('automation-button')).not.toBeInTheDocument()
   })
 
+  test('renders sidebar IM source badges for project and recent tasks', async () => {
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          projects: [
+            {
+              id: 1,
+              name: 'github_wegent',
+              tasks: [
+                {
+                  id: 11,
+                  task_id: 11,
+                  task_title: '项目 IM 任务',
+                  task_status: 'COMPLETED',
+                  source: 'im',
+                  created_at: '2026-05-25T00:00:00.000Z',
+                  updated_at: '2026-05-25T08:00:00.000Z',
+                },
+              ],
+            },
+          ],
+          recentTasks: [
+            {
+              id: 3,
+              title: '独立 IM 任务',
+              status: 'COMPLETED',
+              task_type: 'chat' as const,
+              source: 'im',
+              created_at: '2026-05-25T00:00:00.000Z',
+              updated_at: '2026-05-25T08:30:00.000Z',
+            },
+          ],
+        }}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('project-item-button'))
+
+    expect(await screen.findByTestId('task-source-badge-project-11')).toBeInTheDocument()
+    expect(screen.getByTestId('task-source-badge-recent-3')).toBeInTheDocument()
+  })
+
   test('collapses and expands project and chat sections from the sidebar headers', async () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 

@@ -8,6 +8,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import type { ProcessingBlock, WorkbenchMessage } from '@/types/workbench'
 import { getAttachmentTypeLabel, isImageAttachment } from '@/lib/attachments'
 import { parseChatError } from '@/lib/chat-error'
+import { ImSourceBadge } from '@/components/common/ImSourceBadge'
 import { AttachmentImagePreview } from './AttachmentImagePreview'
 import { ToolBlocksDisplay } from './blocks/ToolBlocksDisplay'
 import { FileChangesCard } from './FileChangesCard'
@@ -173,7 +174,13 @@ function UserMessage({ message }: { message: WorkbenchMessage }) {
           )}
         </div>
       )}
-      <MessageHoverActions message={message} align="right" />
+      <MessageHoverActions
+        message={message}
+        align="right"
+        leadingContent={
+          <ImSourceBadge source={message.source} testId="message-source-badge" />
+        }
+      />
     </div>
   )
 }
@@ -215,9 +222,11 @@ function MessageImageAttachmentPreview({ attachment }: { attachment: Attachment 
 function MessageHoverActions({
   message,
   align,
+  leadingContent,
 }: {
   message: WorkbenchMessage
   align: 'left' | 'right'
+  leadingContent?: ReactNode
 }) {
   const [copied, setCopied] = useState(false)
   const time = formatMessageTime(message.createdAt)
@@ -236,6 +245,7 @@ function MessageHoverActions({
         align === 'right' ? 'justify-end' : 'justify-start',
       ].join(' ')}
     >
+      {leadingContent}
       {time && (
         <span data-testid="message-hover-time" className="px-1">
           {time}

@@ -120,6 +120,62 @@ describe('MessageList', () => {
     expect(container.firstElementChild).toHaveClass('min-w-0', 'overflow-x-hidden')
   })
 
+  test('renders IM source badge for user messages with channel label', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: '1',
+            role: 'user',
+            content: '来自 IM 的消息',
+            status: 'done',
+            createdAt: '2026-05-25T00:00:00.000Z',
+            source: {
+              source: 'im',
+              channel_type: 'dingtalk',
+              channel_label: '钉钉',
+            },
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('message-source-badge')).toHaveTextContent('钉钉')
+  })
+
+  test('does not render IM source badge for assistant or non-IM messages', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: '1',
+            role: 'assistant',
+            content: '助手消息',
+            status: 'done',
+            createdAt: '2026-05-25T00:00:00.000Z',
+            source: {
+              source: 'im',
+              channel_type: 'dingtalk',
+              channel_label: '钉钉',
+            },
+          },
+          {
+            id: '2',
+            role: 'user',
+            content: '网页消息',
+            status: 'done',
+            createdAt: '2026-05-25T00:00:01.000Z',
+            source: {
+              source: 'web',
+            },
+          },
+        ]}
+      />
+    )
+
+    expect(screen.queryByTestId('message-source-badge')).not.toBeInTheDocument()
+  })
+
   test('renders sent local skill mentions as polished inline tokens', () => {
     render(
       <MessageList
