@@ -208,7 +208,6 @@ class IMCommandRouter:
                 reply="请输入任务序号，回复 new 新建任务，或发送 /cancel 取消。",
             )
 
-        im_session_service.cancel_pending(db, session=session)
         return IMCommandResult(
             handled=True,
             action=IMCommandAction.BIND_TASK,
@@ -224,6 +223,20 @@ class IMCommandRouter:
         text: str,
         payload: dict[str, Any],
     ) -> IMCommandResult:
+        if "selected_project_id" in payload:
+            if parse_command(text) is not None:
+                return IMCommandResult(
+                    handled=True,
+                    reply="请发送任务内容，或发送 /cancel 取消。",
+                )
+            return IMCommandResult(
+                handled=True,
+                action=IMCommandAction.CREATE_TASK,
+                reply="已开始创建任务。",
+                project_id=self._coerce_int(payload.get("selected_project_id")),
+                message=text,
+            )
+
         project_ids = self._normalize_ids(payload.get("project_ids"))
         if not text.isdigit():
             return IMCommandResult(
@@ -243,7 +256,19 @@ class IMCommandRouter:
                 )
 
         message = str(payload.get("first_message") or "").strip()
-        im_session_service.cancel_pending(db, session=session)
+        if not message:
+            updated_payload = {**payload, "selected_project_id": project_id}
+            im_session_service.set_pending_state(
+                db=db,
+                session=session,
+                state=IMSessionState.PENDING_TASK_CREATION,
+                payload=updated_payload,
+            )
+            return IMCommandResult(
+                handled=True,
+                reply="请发送任务内容，或发送 /cancel 取消。",
+            )
+
         return IMCommandResult(
             handled=True,
             action=IMCommandAction.CREATE_TASK,

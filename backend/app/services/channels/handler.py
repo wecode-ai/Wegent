@@ -745,7 +745,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         }:
             await self.send_text_reply(
                 message_context,
-                "已识别会话命令，私聊任务模式将在后续版本启用。",
+                "请在私聊会话中使用该命令；任务模式正在初始化，请稍后重试。",
             )
 
     async def _handle_devices_command(

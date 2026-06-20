@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import pytest
 from sqlalchemy.orm import Session
 
 from app.models.im_session import IMSessionMode, IMSessionState
@@ -151,8 +152,9 @@ def test_pending_switch_accepts_number_and_returns_bind_task(
     assert result.handled is True
     assert result.action == IMCommandAction.BIND_TASK
     assert result.task_id == 102
-    assert session.state == IMSessionState.IDLE
-    assert session.pending_payload == {}
+    assert result.reply == "已选择任务 102。"
+    assert session.state == IMSessionState.PENDING_TASK_SWITCH
+    assert session.pending_payload == {"task_ids": [101, 102]}
 
 
 def test_pending_switch_new_begins_task_creation(
@@ -236,6 +238,75 @@ def test_new_command_in_task_mode_enters_pending_task_creation(
     assert "2. Wegent Docs（202）" in result.reply
 
 
+@pytest.mark.parametrize(
+    ("choice", "expected_project_id"),
+    [
+        ("0", None),
+        ("2", 202),
+    ],
+)
+def test_new_task_empty_prompt_waits_for_content_before_create_task(
+    test_db: Session,
+    test_user: User,
+    choice: str,
+    expected_project_id: int | None,
+) -> None:
+    session = _create_session(test_db, test_user)
+    im_session_service.set_mode(test_db, session=session, mode=IMSessionMode.TASK)
+
+    start_result = im_command_router.route(
+        test_db,
+        session,
+        "/new",
+        recent_tasks=[],
+        projects=_projects(),
+    )
+
+    assert start_result.handled is True
+    assert start_result.action == IMCommandAction.NONE
+    assert session.state == IMSessionState.PENDING_TASK_CREATION
+    assert session.pending_payload == {"first_message": "", "project_ids": [201, 202]}
+
+    choice_result = im_command_router.route(
+        test_db,
+        session,
+        choice,
+        recent_tasks=[],
+        projects=_projects(),
+    )
+
+    assert choice_result.handled is True
+    assert choice_result.action == IMCommandAction.NONE
+    assert choice_result.project_id is None
+    assert choice_result.message is None
+    assert "任务内容" in choice_result.reply
+    assert session.state == IMSessionState.PENDING_TASK_CREATION
+    assert session.pending_payload == {
+        "first_message": "",
+        "project_ids": [201, 202],
+        "selected_project_id": expected_project_id,
+    }
+
+    content_result = im_command_router.route(
+        test_db,
+        session,
+        "实现私聊任务创建",
+        recent_tasks=[],
+        projects=_projects(),
+    )
+
+    assert content_result.handled is True
+    assert content_result.action == IMCommandAction.CREATE_TASK
+    assert content_result.project_id == expected_project_id
+    assert content_result.message == "实现私聊任务创建"
+    assert session.state == IMSessionState.PENDING_TASK_CREATION
+    assert session.pending_payload == {
+        "first_message": "",
+        "project_ids": [201, 202],
+        "selected_project_id": expected_project_id,
+    }
+
+
 def test_pending_creation_standalone_choice_returns_create_task(
     test_db: Session,
     test_user: User,
@@ -260,8 +331,12 @@ def test_pending_creation_standalone_choice_returns_create_task(
     assert result.action == IMCommandAction.CREATE_TASK
     assert result.project_id is None
     assert result.message == "创建独立任务"
-    assert session.state == IMSessionState.IDLE
-    assert session.pending_payload == {}
+    assert result.reply == "已开始创建任务。"
+    assert session.state == IMSessionState.PENDING_TASK_CREATION
+    assert session.pending_payload == {
+        "first_message": "创建独立任务",
+        "project_ids": [201, 202],
+    }
 
 
 def test_pending_creation_project_choice_returns_create_task_with_project(
@@ -289,8 +364,11 @@ def test_pending_creation_project_choice_returns_create_task_with_project(
     assert result.project_id == 202
     assert result.message == "创建项目任务"
     assert result.reply == "已开始创建任务。"
-    assert session.state == IMSessionState.IDLE
-    assert session.pending_payload == {}
+    assert session.state == IMSessionState.PENDING_TASK_CREATION
+    assert session.pending_payload == {
+        "first_message": "创建项目任务",
+        "project_ids": [201, 202],
+    }
 
 
 def test_chat_command_clears_active_task_and_switches_to_chat(
