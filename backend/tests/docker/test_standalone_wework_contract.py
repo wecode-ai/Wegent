@@ -73,6 +73,21 @@ def test_standalone_start_can_skip_container_executor() -> None:
     assert 'if [ -n "${EXECUTOR_PID:-}" ]; then' in start_script
 
 
+def test_standalone_start_ensures_token_before_optional_executor() -> None:
+    """Host-only mode still needs the standalone executor token for host setup."""
+    start_script = STANDALONE_START.read_text(encoding="utf-8")
+
+    backend_ready_index = start_script.index(
+        'wait_for_http "Backend" "http://localhost:${BACKEND_PORT}/health"'
+    )
+    token_ensure_index = start_script.index("\nensure_standalone_executor_token\n")
+    executor_branch_index = start_script.index(
+        'if [ "$STANDALONE_EXECUTOR_ENABLED" != "false" ]; then'
+    )
+
+    assert backend_ready_index < token_ensure_index < executor_branch_index
+
+
 def test_standalone_nginx_routes_frontend_backend_and_wework() -> None:
     """Nginx should expose Frontend, Backend, and Wework through one public port."""
     nginx_config = STANDALONE_NGINX_CONFIG.read_text(encoding="utf-8")
@@ -218,6 +233,16 @@ def test_installer_uses_release_installer_for_host_executor() -> None:
     assert "HOST_EXECUTOR_INSTALL_URL" in install_script
     assert "local_executor_install.sh" in install_script
     assert 'curl -fsSL "$HOST_EXECUTOR_INSTALL_URL" | bash' in install_script
+
+
+def test_installer_ensures_standalone_executor_token_when_reading_it() -> None:
+    """Host executor setup should not depend on the container executor being enabled."""
+    install_script = INSTALL_SCRIPT.read_text(encoding="utf-8")
+
+    assert (
+        install_script.count("python -m app.scripts.ensure_standalone_executor_token")
+        >= 2
+    )
     assert "configure_host_executor()" in install_script
     assert '"backend_url": "http://127.0.0.1:3000"' in install_script
     assert "start_host_executor()" in install_script
