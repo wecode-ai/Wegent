@@ -8,7 +8,9 @@ export function sortRuntimeTasks(tasks: LocalTaskSummary[] = []) {
   return [...tasks].sort((left, right) => {
     const leftTime = new Date(getRuntimeTaskTime(left) || 0).getTime()
     const rightTime = new Date(getRuntimeTaskTime(right) || 0).getTime()
-    return rightTime - leftTime
+    const normalizedLeftTime = Number.isNaN(leftTime) ? 0 : leftTime
+    const normalizedRightTime = Number.isNaN(rightTime) ? 0 : rightTime
+    return normalizedRightTime - normalizedLeftTime
   })
 }
 

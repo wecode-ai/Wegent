@@ -2006,13 +2006,14 @@ describe('DesktopWorkbenchLayout', () => {
 
     await userEvent.click(screen.getByTestId('project-item-button'))
 
-    expect(baseProps.onSelectProject).toHaveBeenCalledWith(1)
+    expect(baseProps.onSelectProject).toHaveBeenNthCalledWith(1, 1)
     expect(screen.getByText('暂无会话')).toBeInTheDocument()
     expect(screen.getByTestId('project-row-1')).not.toHaveClass('bg-white')
 
     await userEvent.click(screen.getByTestId('project-item-button'))
 
     expect(screen.queryByText('暂无会话')).not.toBeInTheDocument()
+    expect(baseProps.onSelectProject).toHaveBeenNthCalledWith(2, 1)
     expect(baseProps.onSelectProject).toHaveBeenCalledTimes(2)
   })
 

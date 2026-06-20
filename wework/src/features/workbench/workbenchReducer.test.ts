@@ -274,6 +274,7 @@ describe('workbenchReducer', () => {
     })
 
     expect(opened.currentProject).toBeNull()
+    expect(opened.currentTask).toBeNull()
     expect(opened.currentRuntimeTask?.localTaskId).toBe('runtime-1')
   })
 
