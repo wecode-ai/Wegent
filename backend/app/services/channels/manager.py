@@ -14,6 +14,7 @@ The ChannelManager is a singleton that handles:
 IM channels are stored as Messager CRD in the kinds table.
 """
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Protocol
 
@@ -60,6 +61,7 @@ class ChannelManager:
     _instance: Optional["ChannelManager"] = None
     _channels: Dict[int, "BaseChannelProvider"]  # channel_id -> provider instance
     _provider_factories: Dict[str, ProviderFactory]  # channel_type -> factory function
+    _channel_locks: Dict[int, asyncio.Lock]  # channel_id -> lifecycle lock
 
     def __new__(cls) -> "ChannelManager":
         """Ensure singleton pattern."""
@@ -67,6 +69,7 @@ class ChannelManager:
             cls._instance = super().__new__(cls)
             cls._instance._channels = {}
             cls._instance._provider_factories = {}
+            cls._instance._channel_locks = {}
             cls._instance._register_default_providers()
         return cls._instance
 
@@ -83,6 +86,7 @@ class ChannelManager:
         if cls._instance is not None:
             cls._instance._channels = {}
             cls._instance._provider_factories = {}
+            cls._instance._channel_locks = {}
         cls._instance = None
 
     def _register_default_providers(self) -> None:
@@ -96,6 +100,11 @@ class ChannelManager:
         self.register_provider_factory(
             ChannelType.TELEGRAM.value,
             self._create_telegram_provider,
+        )
+        # Register Discord provider
+        self.register_provider_factory(
+            ChannelType.DISCORD.value,
+            self._create_discord_provider,
         )
         # Future providers can be registered here or via register_provider_factory()
 
@@ -141,6 +150,14 @@ class ChannelManager:
         """
         return list(self._provider_factories.keys())
 
+    def _get_channel_lock(self, channel_id: int) -> asyncio.Lock:
+        """Get or create the lifecycle lock for a channel."""
+        lock = self._channel_locks.get(channel_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._channel_locks[channel_id] = lock
+        return lock
+
     @staticmethod
     def _create_dingtalk_provider(channel: ChannelLike) -> "BaseChannelProvider":
         """Create a DingTalk provider instance."""
@@ -154,6 +171,13 @@ class ChannelManager:
         from app.services.channels.telegram.service import TelegramChannelProvider
 
         return TelegramChannelProvider(channel)
+
+    @staticmethod
+    def _create_discord_provider(channel: ChannelLike) -> "BaseChannelProvider":
+        """Create a Discord provider instance."""
+        from app.services.channels.discord.service import DiscordChannelProvider
+
+        return DiscordChannelProvider(channel)
 
     async def start_all_enabled(self, db: Session) -> int:
         """
@@ -220,13 +244,28 @@ class ChannelManager:
         Returns:
             True if started successfully, False otherwise
         """
-        if channel.id in self._channels:
+        async with self._get_channel_lock(channel.id):
+            return await self._start_channel_locked(channel)
+
+    async def _start_channel_locked(self, channel: ChannelLike) -> bool:
+        """Start a single channel while holding its lifecycle lock."""
+        existing_provider = self._channels.get(channel.id)
+        if existing_provider is not None and existing_provider.is_running:
             logger.warning(
                 "[ChannelManager] Channel %s (id=%d) is already running",
                 channel.name,
                 channel.id,
             )
             return True
+
+        if existing_provider is not None:
+            logger.warning(
+                "[ChannelManager] Channel %s (id=%d) has a stale stopped provider; "
+                "cleaning it before restart",
+                channel.name,
+                channel.id,
+            )
+            await self._stop_channel_locked(channel.id)
 
         provider = self._create_provider(channel)
         if provider is None:
@@ -239,7 +278,7 @@ class ChannelManager:
 
         try:
             success = await provider.start()
-            if success:
+            if success and provider.is_running:
                 self._channels[channel.id] = provider
                 logger.info(
                     "[ChannelManager] Started channel %s (id=%d, type=%s)",
@@ -247,7 +286,18 @@ class ChannelManager:
                     channel.id,
                     channel.channel_type,
                 )
-            return success
+                return True
+
+            if success:
+                logger.warning(
+                    "[ChannelManager] Channel %s (id=%d, type=%s) reported start "
+                    "success but is not running",
+                    channel.name,
+                    channel.id,
+                    channel.channel_type,
+                )
+                await provider.stop()
+            return False
         except Exception as e:
             logger.exception(
                 "[ChannelManager] Error starting channel %s (id=%d): %s",
@@ -264,6 +314,11 @@ class ChannelManager:
         Args:
             channel_id: ID of the channel to stop
         """
+        async with self._get_channel_lock(channel_id):
+            await self._stop_channel_locked(channel_id)
+
+    async def _stop_channel_locked(self, channel_id: int) -> None:
+        """Stop a single channel while holding its lifecycle lock."""
         if channel_id not in self._channels:
             logger.debug(
                 "[ChannelManager] Channel id=%d is not running, skipping stop",
@@ -284,7 +339,7 @@ class ChannelManager:
                 "[ChannelManager] Error stopping channel id=%d: %s", channel_id, e
             )
         finally:
-            del self._channels[channel_id]
+            self._channels.pop(channel_id, None)
 
     async def restart_channel(self, channel: ChannelLike) -> bool:
         """
@@ -301,8 +356,9 @@ class ChannelManager:
             channel.name,
             channel.id,
         )
-        await self.stop_channel(channel.id)
-        return await self.start_channel(channel)
+        async with self._get_channel_lock(channel.id):
+            await self._stop_channel_locked(channel.id)
+            return await self._start_channel_locked(channel)
 
     def _create_provider(self, channel: ChannelLike) -> Optional["BaseChannelProvider"]:
         """
@@ -321,6 +377,34 @@ class ChannelManager:
             return factory(channel)
         return None
 
+    def _get_running_provider(
+        self, channel_id: int
+    ) -> Optional["BaseChannelProvider"]:
+        """Get a running provider and clean stale stopped entries."""
+        provider = self._channels.get(channel_id)
+        if provider is None:
+            return None
+
+        if provider.is_running:
+            return provider
+
+        logger.warning(
+            "[ChannelManager] Channel %s (id=%d) has stopped; removing stale provider",
+            provider.channel_name,
+            channel_id,
+        )
+        self._channels.pop(channel_id, None)
+        return None
+
+    def _get_running_providers(self) -> List["BaseChannelProvider"]:
+        """Get all running providers and clean stale stopped entries."""
+        running_providers = []
+        for channel_id in list(self._channels.keys()):
+            provider = self._get_running_provider(channel_id)
+            if provider is not None:
+                running_providers.append(provider)
+        return running_providers
+
     def get_channel(self, channel_id: int) -> Optional["BaseChannelProvider"]:
         """
         Get a running channel provider by ID.
@@ -331,7 +415,7 @@ class ChannelManager:
         Returns:
             Channel provider instance or None if not running
         """
-        return self._channels.get(channel_id)
+        return self._get_running_provider(channel_id)
 
     def get_channel_by_type(self, channel_type: str) -> List["BaseChannelProvider"]:
         """
@@ -345,7 +429,7 @@ class ChannelManager:
         """
         return [
             provider
-            for provider in self._channels.values()
+            for provider in self._get_running_providers()
             if provider.channel_type == channel_type
         ]
 
@@ -359,9 +443,10 @@ class ChannelManager:
         Returns:
             Status dictionary or None if channel is not running
         """
-        if channel_id in self._channels:
-            return self._channels[channel_id].get_status()
-        return None
+        provider = self._get_running_provider(channel_id)
+        if provider is None:
+            return None
+        return provider.get_status()
 
     def get_all_statuses(self) -> List[Dict[str, Any]]:
         """
@@ -370,7 +455,7 @@ class ChannelManager:
         Returns:
             List of status dictionaries
         """
-        return [provider.get_status() for provider in self._channels.values()]
+        return [provider.get_status() for provider in self._get_running_providers()]
 
     def is_channel_running(self, channel_id: int) -> bool:
         """
@@ -382,7 +467,7 @@ class ChannelManager:
         Returns:
             True if channel is running, False otherwise
         """
-        return channel_id in self._channels
+        return self._get_running_provider(channel_id) is not None
 
     async def stop_all(self) -> int:
         """

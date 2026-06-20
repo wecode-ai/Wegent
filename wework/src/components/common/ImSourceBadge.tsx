@@ -11,6 +11,7 @@ interface ImSourceBadgeProps {
 const CHANNEL_LABEL_KEYS: Record<string, string> = {
   dingtalk: 'workbench.im_channel_dingtalk',
   telegram: 'workbench.im_channel_telegram',
+  discord: 'workbench.im_channel_discord',
 }
 
 export function ImSourceBadge({ source, className, testId }: ImSourceBadgeProps) {

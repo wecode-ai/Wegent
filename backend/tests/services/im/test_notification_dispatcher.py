@@ -160,3 +160,49 @@ async def test_telegram_notification_decrypts_bot_token(
     assert result["success"] is True
     assert calls[0] == {"bot_token": "telegram-token"}
     assert calls[1] == {"chat_id": 100200300, "text": "已切换"}
+
+
+@pytest.mark.asyncio
+async def test_discord_notification_decrypts_bot_token(
+    test_db: Session,
+    test_user,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _create_channel(
+        test_db,
+        channel_id=9403,
+        channel_type="discord",
+        config={"botToken": encrypt_sensitive_data("discord-token")},
+    )
+    session = _create_session(
+        test_db,
+        user_id=test_user.id,
+        channel_id=9403,
+        channel_type="discord",
+        sender_id="123456",
+    )
+    test_db.commit()
+    calls: list[dict[str, Any]] = []
+
+    class FakeDiscordBotSender:
+        def __init__(self, bot_token: str):
+            calls.append({"bot_token": bot_token})
+
+        async def send_text_message(self, user_id: str, text: str):
+            calls.append({"user_id": user_id, "text": text})
+            return {"success": True}
+
+    monkeypatch.setattr(
+        "app.services.channels.discord.sender.DiscordBotSender",
+        FakeDiscordBotSender,
+    )
+
+    result = await im_notification_dispatcher.send_text(
+        test_db,
+        session,
+        "已切换",
+    )
+
+    assert result["success"] is True
+    assert calls[0] == {"bot_token": "discord-token"}
+    assert calls[1] == {"user_id": "123456", "text": "已切换"}

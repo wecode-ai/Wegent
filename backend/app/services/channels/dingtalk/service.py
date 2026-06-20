@@ -19,130 +19,13 @@ import dingtalk_stream
 
 from app.services.channels.base import BaseChannelProvider
 from app.services.channels.dingtalk.handler import WegentChatbotHandler
+from app.services.channels.messager_config import (
+    get_channel_default_model_name,
+    get_channel_default_team_id,
+    get_channel_user_mapping_config,
+)
 
 logger = logging.getLogger(__name__)
-
-# CRD kind for IM channels
-MESSAGER_KIND = "Messager"
-MESSAGER_USER_ID = 0
-
-
-def _get_channel_default_team_id(channel_id: int) -> Optional[int]:
-    """
-    Get the current default_team_id for a channel from database.
-
-    This function is used by the handler to dynamically get the latest
-    default_team_id, allowing configuration updates without restart.
-    IM channels are stored as Messager CRD in the kinds table.
-
-    Args:
-        channel_id: The IM channel ID (Kind.id)
-
-    Returns:
-        The default team ID or None
-    """
-    from app.db.session import SessionLocal
-    from app.models.kind import Kind
-
-    db = SessionLocal()
-    try:
-        channel = (
-            db.query(Kind)
-            .filter(
-                Kind.id == channel_id,
-                Kind.kind == MESSAGER_KIND,
-                Kind.user_id == MESSAGER_USER_ID,
-                Kind.is_active == True,
-            )
-            .first()
-        )
-        if channel:
-            spec = channel.json.get("spec", {})
-            return spec.get("defaultTeamId", 0)
-        return None
-    finally:
-        db.close()
-
-
-def _get_channel_default_model_name(channel_id: int) -> Optional[str]:
-    """
-    Get the current default_model_name for a channel from database.
-
-    This function is used by the handler to dynamically get the latest
-    default_model_name, allowing configuration updates without restart.
-    IM channels are stored as Messager CRD in the kinds table.
-
-    Args:
-        channel_id: The IM channel ID (Kind.id)
-
-    Returns:
-        The default model name or None (returns None if empty string)
-    """
-    from app.db.session import SessionLocal
-    from app.models.kind import Kind
-
-    db = SessionLocal()
-    try:
-        channel = (
-            db.query(Kind)
-            .filter(
-                Kind.id == channel_id,
-                Kind.kind == MESSAGER_KIND,
-                Kind.user_id == MESSAGER_USER_ID,
-                Kind.is_active == True,
-            )
-            .first()
-        )
-        if channel:
-            spec = channel.json.get("spec", {})
-            model_name = spec.get("defaultModelName", "")
-            # Return None if empty string, otherwise return the model name
-            return model_name if model_name else None
-        return None
-    finally:
-        db.close()
-
-
-def _get_channel_user_mapping_config(channel_id: int) -> Dict[str, Any]:
-    """
-    Get the user mapping configuration for a channel from database.
-
-    This function is used by the handler to dynamically get the latest
-    user mapping configuration, allowing configuration updates without restart.
-
-    Args:
-        channel_id: The IM channel ID (Kind.id)
-
-    Returns:
-        Dict with user_mapping_mode and user_mapping_config.
-        Defaults to {"mode": "select_user", "config": None}
-    """
-    from app.db.session import SessionLocal
-    from app.models.kind import Kind
-
-    db = SessionLocal()
-    try:
-        channel = (
-            db.query(Kind)
-            .filter(
-                Kind.id == channel_id,
-                Kind.kind == MESSAGER_KIND,
-                Kind.user_id == MESSAGER_USER_ID,
-                Kind.is_active == True,
-            )
-            .first()
-        )
-        if channel:
-            spec = channel.json.get("spec", {})
-            config = spec.get("config", {})
-            return {
-                "mode": config.get("user_mapping_mode", "select_user"),
-                "config": config.get("user_mapping_config"),
-            }
-        return {"mode": "select_user", "config": None}
-    finally:
-        db.close()
-
 
 class DingTalkChannelProvider(BaseChannelProvider):
     """
@@ -228,11 +111,11 @@ class DingTalkChannelProvider(BaseChannelProvider):
             handler = WegentChatbotHandler(
                 dingtalk_client=self._client,
                 use_ai_card=self.use_ai_card,
-                get_default_team_id=lambda: _get_channel_default_team_id(channel_id),
-                get_default_model_name=lambda: _get_channel_default_model_name(
+                get_default_team_id=lambda: get_channel_default_team_id(channel_id),
+                get_default_model_name=lambda: get_channel_default_model_name(
                     channel_id
                 ),
-                get_user_mapping_config=lambda: _get_channel_user_mapping_config(
+                get_user_mapping_config=lambda: get_channel_user_mapping_config(
                     channel_id
                 ),
                 channel_id=channel_id,  # Pass channel_id for IM binding and callback purposes

@@ -26,6 +26,10 @@ from app.services.chat.storage.task_manager import (
     TaskCreationResult,
     create_chat_task,
 )
+from app.services.chat.wework_task_defaults import (
+    apply_existing_wework_task_defaults,
+    apply_wework_task_defaults,
+)
 from app.services.im.session_service import im_session_service
 from app.stores.tasks import task_store
 
@@ -243,7 +247,7 @@ def build_existing_task_params(
 ) -> TaskCreationParams:
     """Build TaskCreationParams for appending an IM message to an existing task."""
 
-    return TaskCreationParams(
+    params = TaskCreationParams(
         message=message,
         title=get_task_title(task),
         task_type=_get_task_type(task),
@@ -253,10 +257,31 @@ def build_existing_task_params(
         source=IM_SOURCE,
         message_source=deepcopy(message_source) if message_source is not None else None,
     )
+    return apply_existing_wework_task_defaults(params=params, task=task)
 
 
-def build_new_task_params(
+async def resolve_existing_task_params(
+    db: Session,
     *,
+    user: User,
+    task: TaskResource,
+    message: str,
+    message_source: dict[str, Any] | None,
+) -> TaskCreationParams:
+    """Build and enrich TaskCreationParams for an existing Wework IM task."""
+
+    params = build_existing_task_params(
+        task,
+        message=message,
+        message_source=message_source,
+    )
+    return await apply_wework_task_defaults(db, user=user, params=params, task=task)
+
+
+async def build_new_task_params(
+    db: Session,
+    *,
+    user: User,
     message: str,
     title: str | None = None,
     project_id: int | None = None,
@@ -265,7 +290,7 @@ def build_new_task_params(
 ) -> TaskCreationParams:
     """Build TaskCreationParams for creating a personal WeWork task from IM."""
 
-    return TaskCreationParams(
+    params = TaskCreationParams(
         message=message,
         title=title,
         task_type=task_type or DEFAULT_TASK_TYPE,
@@ -275,6 +300,7 @@ def build_new_task_params(
         source=IM_SOURCE,
         message_source=deepcopy(message_source) if message_source is not None else None,
     )
+    return await apply_wework_task_defaults(db, user=user, params=params)
 
 
 async def append_message_to_task(
@@ -289,21 +315,25 @@ async def append_message_to_task(
 
     task = validate_personal_wework_task(db, user.id, task_id)
     team = get_task_team(db, task)
-    params = build_existing_task_params(
-        task,
+    task_params = await resolve_existing_task_params(
+        db,
+        user=user,
+        task=task,
         message=message,
         message_source=message_source,
     )
-    return await create_chat_task(
+    result = await create_chat_task(
         db=db,
         user=user,
         team=team,
         message=message,
-        params=params,
+        params=task_params,
         task_id=task.id,
         should_trigger_ai=True,
         source=IM_SOURCE,
     )
+    setattr(result, "task_params", task_params)
+    return result
 
 
 def _has_approved_task_members(db: Session, task_id: int) -> bool:

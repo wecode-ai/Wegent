@@ -19,6 +19,7 @@ class IMCommandAction(str, Enum):
     """Deferred action requested by the private IM command router."""
 
     NONE = "none"
+    START_CHAT = "start_chat"
     BIND_TASK = "bind_task"
     CONTINUE_TASK = "continue_task"
     CREATE_TASK = "create_task"
@@ -64,6 +65,7 @@ class IMCommandRouter:
                 session=session,
                 text=text,
                 payload=pending_payload,
+                recent_tasks=recent_tasks,
                 projects=projects,
             )
 
@@ -73,6 +75,7 @@ class IMCommandRouter:
                 db=db,
                 session=session,
                 command=command.command,
+                argument=command.argument,
                 recent_tasks=recent_tasks,
                 projects=projects,
             )
@@ -100,6 +103,7 @@ class IMCommandRouter:
         db: Session,
         session: IMPrivateSession,
         command: CommandType,
+        argument: str | None,
         recent_tasks: Sequence[Any],
         projects: Sequence[Any],
     ) -> IMCommandResult:
@@ -110,6 +114,26 @@ class IMCommandRouter:
             )
 
         if command == CommandType.MODE:
+            mode = (argument or "").strip().lower()
+            if mode in {"chat", "task"}:
+                if mode == "chat":
+                    im_session_service.set_mode(
+                        db, session=session, mode=IMSessionMode.CHAT
+                    )
+                    return IMCommandResult(handled=True, reply="已切换到 Chat 模式。")
+
+                im_session_service.set_mode(db, session=session, mode=IMSessionMode.TASK)
+                if session.active_task_id:
+                    return IMCommandResult(
+                        handled=True,
+                        reply=f"当前为 Task 模式，任务 ID：{session.active_task_id}。",
+                    )
+                return self._begin_task_switch(
+                    db=db,
+                    session=session,
+                    recent_tasks=recent_tasks,
+                )
+
             return IMCommandResult(handled=True, reply=self._format_mode_reply(session))
 
         if command == CommandType.CHAT:
@@ -137,13 +161,8 @@ class IMCommandRouter:
                 recent_tasks=recent_tasks,
             )
 
-        if command == CommandType.NEW and session.mode == IMSessionMode.TASK:
-            return self._begin_task_creation(
-                db=db,
-                session=session,
-                projects=projects,
-                first_message="",
-            )
+        if command == CommandType.NEW:
+            return self._begin_new_flow(db=db, session=session)
 
         if command == CommandType.CANCEL:
             im_session_service.cancel_pending(db, session=session)
@@ -158,12 +177,22 @@ class IMCommandRouter:
         session: IMPrivateSession,
         text: str,
         payload: dict[str, Any],
+        recent_tasks: Sequence[Any],
         projects: Sequence[Any],
     ) -> IMCommandResult:
         command = parse_command(text)
         if command is not None and command.command == CommandType.CANCEL:
             im_session_service.cancel_pending(db, session=session)
             return IMCommandResult(handled=True, reply="已取消。")
+
+        if session.state == IMSessionState.PENDING_NEW_FLOW:
+            return self._route_pending_new_flow(
+                db=db,
+                session=session,
+                text=text,
+                recent_tasks=recent_tasks,
+                projects=projects,
+            )
 
         if session.state == IMSessionState.PENDING_TASK_SWITCH:
             return self._route_pending_task_switch(
@@ -277,6 +306,61 @@ class IMCommandRouter:
             message=message,
         )
 
+    def _begin_new_flow(
+        self,
+        *,
+        db: Session,
+        session: IMPrivateSession,
+    ) -> IMCommandResult:
+        im_session_service.set_pending_state(
+            db=db,
+            session=session,
+            state=IMSessionState.PENDING_NEW_FLOW,
+            payload={},
+            force_task_mode=False,
+        )
+        return IMCommandResult(handled=True, reply=self._format_new_flow_reply())
+
+    def _route_pending_new_flow(
+        self,
+        *,
+        db: Session,
+        session: IMPrivateSession,
+        text: str,
+        recent_tasks: Sequence[Any],
+        projects: Sequence[Any],
+    ) -> IMCommandResult:
+        normalized = text.strip().lower()
+        if normalized in {"1", "chat"}:
+            im_session_service.set_mode(db, session=session, mode=IMSessionMode.CHAT)
+            return IMCommandResult(
+                handled=True,
+                action=IMCommandAction.START_CHAT,
+                reply="已开始新 Chat，请发送消息。",
+            )
+
+        if normalized in {"2", "task"}:
+            im_session_service.set_mode(db, session=session, mode=IMSessionMode.TASK)
+            return self._begin_task_creation(
+                db=db,
+                session=session,
+                projects=projects,
+                first_message="",
+            )
+
+        if normalized in {"3", "switch", "recent"}:
+            im_session_service.set_mode(db, session=session, mode=IMSessionMode.TASK)
+            return self._begin_task_switch(
+                db=db,
+                session=session,
+                recent_tasks=recent_tasks,
+            )
+
+        return IMCommandResult(
+            handled=True,
+            reply="请输入 1、2 或 3，或发送 /cancel 取消。",
+        )
+
     def _begin_task_switch(
         self,
         *,
@@ -324,6 +408,18 @@ class IMCommandRouter:
         if session.active_task_id:
             return f"当前模式：{mode_name}，任务 ID：{session.active_task_id}。"
         return f"当前模式：{mode_name}。"
+
+    def _format_new_flow_reply(self) -> str:
+        return "\n".join(
+            [
+                "请选择新建类型：",
+                "1. 新建 Chat",
+                "2. 新建 Task",
+                "3. 继续最近 Task",
+                "",
+                "回复序号选择，发送 /cancel 取消。",
+            ]
+        )
 
     def _format_task_switch_reply(self, task_options: list[_ChoiceOption]) -> str:
         if not task_options:

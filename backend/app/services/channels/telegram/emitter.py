@@ -332,9 +332,25 @@ class StreamingResponseEmitter(ResultEmitter):
             )
             return
 
+        final_content = self._full_content
+        if self._pending_content:
+            final_content += self._pending_content
+            self._pending_content = ""
+
+        if result and isinstance(result, dict):
+            result_value = result.get("value", "") or result.get("output", "") or ""
+            if result_value and not isinstance(result_value, str):
+                result_value = str(result_value)
+            if result_value and len(result_value) > len(final_content):
+                final_content = result_value
+                logger.info(
+                    f"[TelegramStreamingEmitter] Using result.value ({len(result_value)} chars) "
+                    f"instead of accumulated content ({len(self._full_content)} chars)"
+                )
+
         logger.info(
             f"[TelegramStreamingEmitter] done task={task_id} subtask={subtask_id} "
-            f"full_content_len={len(self._full_content)}, pending_len={len(self._pending_content)}"
+            f"final_content_len={len(final_content)}"
         )
 
         try:
@@ -345,14 +361,11 @@ class StreamingResponseEmitter(ResultEmitter):
                 )
                 return
 
-            # Send any remaining pending content
-            if self._pending_content:
-                self._full_content += self._pending_content
-                self._pending_content = ""
+            self._full_content = final_content
 
             # Final update with complete content
-            if self._full_content:
-                display_content = self._full_content
+            if final_content:
+                display_content = final_content
                 if len(display_content) > self.MAX_MESSAGE_LENGTH - 50:
                     display_content = (
                         display_content[: self.MAX_MESSAGE_LENGTH - 50] + "\n\n..."

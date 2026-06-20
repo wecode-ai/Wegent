@@ -151,6 +151,18 @@ class TestParseCommand:
         assert result.command == CommandType.USE
         assert result.argument == "my-device"
 
+    def test_parse_telegram_bot_command_suffix(self):
+        """Test parsing Telegram commands that include the bot username suffix."""
+        result = parse_command("/task@wegent_bot")
+        assert result is not None
+        assert result.command == CommandType.TASK
+        assert result.argument is None
+
+        result = parse_command("/mode@wegent_bot task")
+        assert result is not None
+        assert result.command == CommandType.MODE
+        assert result.argument == "task"
+
 
 class TestIsCommand:
     """Tests for the is_command function."""

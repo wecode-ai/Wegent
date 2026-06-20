@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import json
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 
@@ -17,6 +18,7 @@ from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.task import TaskResource
 from app.models.user import User
+from app.services.channels.device_selection import DeviceSelection, DeviceType
 from app.services.im.session_service import im_session_service
 from app.services.im.task_continuation_service import (
     append_message_to_task,
@@ -340,9 +342,17 @@ def test_build_existing_task_params_uses_task_labels_and_im_source_metadata(
         task_id=9151,
         user_id=test_user.id,
         title="继续代码任务",
-        labels={"taskType": "code", "source": "web"},
+        labels={
+            "taskType": "code",
+            "source": "web",
+            "modelId": "codex-gpt-5.5",
+            "forceOverrideBotModel": "true",
+            "forceOverrideBotModelType": "runtime",
+            "modelOptions": '{"reasoning": "high", "speed": "standard"}',
+        },
     )
     task.project_id = 312
+    task.json["spec"]["device_id"] = "device-task"
     test_db.commit()
     message_source = {"source": "im", "session_id": "session-1"}
 
@@ -355,16 +365,49 @@ def test_build_existing_task_params_uses_task_labels_and_im_source_metadata(
     assert params.message == "继续处理"
     assert params.title == "继续代码任务"
     assert params.task_type == "code"
+    assert params.model_id == "codex-gpt-5.5"
+    assert params.force_override_bot_model is True
+    assert params.force_override_bot_model_type == "runtime"
+    assert params.model_options == {"reasoning": "high", "speed": "standard"}
+    assert params.device_id == "device-task"
     assert params.project_id == 312
     assert params.client_origin == CLIENT_ORIGIN_WEWORK
     assert params.source == "im"
     assert params.message_source == message_source
 
 
-def test_build_new_task_params_uses_wework_im_defaults_and_source_metadata() -> None:
+@pytest.mark.asyncio
+async def test_build_new_task_params_uses_wework_im_defaults_and_source_metadata(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     message_source = {"source": "im", "session_id": "session-1"}
+    test_user.preferences = json.dumps(
+        {
+            "wework_new_chat_model_selection": {
+                "modelName": "kimi",
+                "modelType": "user",
+                "options": {"reasoning": "medium"},
+            }
+        }
+    )
 
-    params = build_new_task_params(
+    async def fake_get_selection(user_id: int) -> DeviceSelection:
+        return DeviceSelection(
+            device_type=DeviceType.LOCAL,
+            device_id="device-default",
+            device_name="MacBook",
+        )
+
+    monkeypatch.setattr(
+        "app.services.channels.device_selection.device_selection_manager.get_selection",
+        fake_get_selection,
+    )
+
+    params = await build_new_task_params(
+        test_db,
+        user=test_user,
         message="创建一个新任务",
         title="新 IM 任务",
         project_id=456,
@@ -375,11 +418,46 @@ def test_build_new_task_params_uses_wework_im_defaults_and_source_metadata() -> 
     assert params.title == "新 IM 任务"
     assert params.task_type == "chat"
     assert params.is_group_chat is False
+    assert params.model_id == "kimi"
+    assert params.force_override_bot_model is True
+    assert params.force_override_bot_model_type == "user"
+    assert params.model_options == {"reasoning": "medium"}
+    assert params.device_id == "device-default"
     assert params.project_id == 456
     assert params.client_origin == CLIENT_ORIGIN_WEWORK
     assert params.source == "im"
     assert params.message_source == message_source
     assert params.message_source is not message_source
+
+
+@pytest.mark.asyncio
+async def test_build_new_task_params_uses_default_execution_target_when_im_device_is_chat(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    test_user.preferences = json.dumps(
+        {
+            "default_execution_target": "device-from-preferences",
+            "wework_new_chat_model_selection": {"modelName": "kimi"},
+        }
+    )
+
+    async def fake_get_selection(user_id: int) -> DeviceSelection:
+        return DeviceSelection(device_type=DeviceType.CHAT)
+
+    monkeypatch.setattr(
+        "app.services.channels.device_selection.device_selection_manager.get_selection",
+        fake_get_selection,
+    )
+
+    params = await build_new_task_params(
+        test_db,
+        user=test_user,
+        message="创建一个新任务",
+    )
+
+    assert params.device_id == "device-from-preferences"
 
 
 def test_build_im_message_source_includes_session_identity_and_extra_metadata(

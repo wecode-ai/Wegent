@@ -17,6 +17,7 @@ PENDING_STATE_TTL_MINUTES = 15
 CHANNEL_LABELS = {
     "dingtalk": "钉钉",
     "telegram": "Telegram",
+    "discord": "Discord",
 }
 
 
@@ -168,8 +169,10 @@ class IMSessionService:
         state: str,
         payload: dict[str, Any],
         expires_at: datetime | None = None,
+        force_task_mode: bool = True,
     ) -> None:
-        session.mode = IMSessionMode.TASK
+        if force_task_mode:
+            session.mode = IMSessionMode.TASK
         session.state = state
         session.pending_payload = payload
         session.state_expires_at = expires_at or (

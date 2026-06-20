@@ -158,6 +158,27 @@ class TestStreamingResponseEmitter:
         mock_bot.edit_message_text.assert_called()
 
     @pytest.mark.asyncio
+    async def test_emit_done_uses_result_value_without_streamed_content(
+        self, emitter, mock_bot
+    ):
+        """Test emit_done uses result content when no chunks were streamed."""
+        mock_message = MagicMock()
+        mock_message.message_id = 999
+        mock_bot.send_message.return_value = mock_message
+        await emitter.emit_start(task_id=1, subtask_id=2)
+        mock_bot.edit_message_text.reset_mock()
+
+        await emitter.emit_done(
+            task_id=1,
+            subtask_id=2,
+            result={"value": "Final answer"},
+        )
+
+        assert emitter._finished is True
+        mock_bot.edit_message_text.assert_called_once()
+        assert mock_bot.edit_message_text.call_args.kwargs["text"] == "Final answer"
+
+    @pytest.mark.asyncio
     async def test_emit_done_already_finished(self, emitter, mock_bot):
         """Test emit_done when already finished."""
         emitter._finished = True

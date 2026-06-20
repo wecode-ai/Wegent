@@ -599,6 +599,79 @@ describe('DesktopWorkbenchLayout', () => {
     expect(await screen.findByTestId('continue-im-session-1')).toHaveTextContent('Alice')
   })
 
+  test('keeps continue-in-im action with workspace panel actions on web', () => {
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          currentTask: {
+            id: 7,
+            title: 'Active task',
+            status: 'COMPLETED',
+            task_type: 'code',
+            created_at: '2026-06-20T00:00:00.000Z',
+          },
+        }}
+        messages={[
+          {
+            id: 'message-1',
+            role: 'assistant',
+            content: 'Ready',
+            status: 'done',
+            createdAt: '2026-06-20T00:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    const floatingActions = screen.getByTestId('workspace-panel-floating-actions')
+    expect(floatingActions).toContainElement(screen.getByTestId('continue-in-im-button'))
+    expect(floatingActions).toContainElement(
+      screen.getByTestId('toggle-right-workspace-panel-button')
+    )
+    expect(screen.queryByTestId('workbench-topbar-right-actions')).not.toBeInTheDocument()
+  })
+
+  test('keeps continue-in-im action with titlebar actions in Tauri', () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          currentTask: {
+            id: 7,
+            title: 'Active task',
+            status: 'COMPLETED',
+            task_type: 'code',
+            created_at: '2026-06-20T00:00:00.000Z',
+          },
+        }}
+        messages={[
+          {
+            id: 'message-1',
+            role: 'assistant',
+            content: 'Ready',
+            status: 'done',
+            createdAt: '2026-06-20T00:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    const titlebarActions = screen.getByTestId('titlebar-actions')
+    expect(titlebarActions).toContainElement(screen.getByTestId('continue-in-im-button'))
+    expect(titlebarActions).toContainElement(
+      screen.getByTestId('toggle-right-workspace-panel-button')
+    )
+    expect(screen.queryByTestId('workbench-topbar-right-actions')).not.toBeInTheDocument()
+  })
+
   test('hides continue-in-im action for group chat tasks', () => {
     const onListImPrivateSessions = vi.fn().mockResolvedValue({ total: 0, items: [] })
 

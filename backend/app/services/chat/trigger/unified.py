@@ -28,6 +28,10 @@ from app.models.subtask import Subtask
 from app.models.task import TaskResource
 from app.models.user import User
 from app.services.context import context_service
+from app.services.runtime_codex_model import (
+    CODEX_RUNTIME_MODEL_ID,
+    CODEX_RUNTIME_MODEL_NAME,
+)
 from app.services.user_runtime_config import (
     UserRuntimeConfigError,
     user_runtime_config_service,
@@ -43,6 +47,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 SELECTED_KB_PRELOAD_SKILL = "wegent-knowledge"
 CODEX_RUNTIME = "codex"
+RUNTIME_MODEL_TYPE = "runtime"
 SERVICE_TIER_ALIASES = {
     "fast": "priority",
     "priority": "priority",
@@ -97,6 +102,42 @@ def _service_tier_from_model_options(payload: Any) -> Optional[str]:
         return None
 
     return SERVICE_TIER_ALIASES.get(str(speed).strip().lower())
+
+
+def _should_ignore_unavailable_task_model_override(payload: Any) -> bool:
+    """Return whether a caller can fall back when task model labels are stale."""
+    return bool(
+        payload is not None
+        and getattr(payload, "ignore_unavailable_task_model_override", False)
+    )
+
+
+def _task_model_override_available(
+    db: "Session",
+    *,
+    model_name: str,
+    user_id: int,
+) -> bool:
+    """Return whether the task-level model override resolves as a Model CRD."""
+    from app.services.chat.config.model_resolver import _find_model_with_namespace
+
+    _model_kind, model_spec = _find_model_with_namespace(db, model_name, user_id)
+    return model_spec is not None
+
+
+def _build_codex_runtime_model_config(model_name: str) -> Dict[str, Any]:
+    """Build a minimal Codex-compatible model config for Wework runtime models."""
+    model_id = (
+        CODEX_RUNTIME_MODEL_ID
+        if model_name == CODEX_RUNTIME_MODEL_NAME
+        else model_name
+    )
+    return {
+        "model": "openai",
+        "model_id": model_id,
+        "api_format": "responses",
+        "protocol": "openai-responses",
+    }
 
 
 def _is_codex_model_config(model_config: Dict[str, Any]) -> bool:
@@ -363,18 +404,53 @@ async def build_execution_request(
         # Extract model override from task metadata labels
         # This is where force_override_bot_model is stored when task is created
         override_model_name = None
+        override_model_type = None
         force_override = False
+        runtime_model_config = None
         task_json = task.json or {}
         task_labels = task_json.get("metadata", {}).get("labels", {})
         if task_labels:
             override_model_name = task_labels.get("modelId")
+            override_model_type = task_labels.get("forceOverrideBotModelType")
             force_override = task_labels.get("forceOverrideBotModel") == "true"
             logger.info(
                 "[build_execution_request] Extracted model override from task labels: "
-                "modelId=%s, forceOverrideBotModel=%s",
+                "modelId=%s, forceOverrideBotModel=%s, forceOverrideBotModelType=%s",
                 override_model_name,
                 force_override,
+                override_model_type,
             )
+            if force_override and override_model_name and (
+                override_model_type == RUNTIME_MODEL_TYPE
+            ):
+                runtime_model_config = _build_codex_runtime_model_config(
+                    override_model_name
+                )
+                logger.info(
+                    "[build_execution_request] Using runtime model config: "
+                    "selectedModel=%s, executorModel=%s",
+                    override_model_name,
+                    runtime_model_config.get("model_id"),
+                )
+                override_model_name = None
+                force_override = False
+            elif (
+                force_override
+                and override_model_name
+                and _should_ignore_unavailable_task_model_override(payload)
+                and not _task_model_override_available(
+                    db,
+                    model_name=override_model_name,
+                    user_id=user.id,
+                )
+            ):
+                logger.info(
+                    "[build_execution_request] Ignoring unavailable task model "
+                    "override for payload fallback: modelId=%s",
+                    override_model_name,
+                )
+                override_model_name = None
+                force_override = False
 
         request = builder.build(
             subtask=assistant_subtask,
@@ -393,6 +469,7 @@ async def build_execution_request(
             force_override=force_override,
             previous_bot_id=previous_bot_id,
             web_runtime_guidance=web_runtime_guidance,
+            runtime_model_config=runtime_model_config,
         )
         request.device_id = device_id or request.device_id
 

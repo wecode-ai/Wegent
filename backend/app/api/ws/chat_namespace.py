@@ -46,6 +46,7 @@ from app.api.ws.events import (
     TaskJoinPayload,
     TaskLeavePayload,
 )
+from app.core.constants import CLIENT_ORIGIN_WEWORK
 from app.db.session import SessionLocal
 from app.models.kind import Kind
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
@@ -72,6 +73,7 @@ from app.services.chat.rag import process_context_and_rag
 from app.services.chat.storage import session_manager
 from app.services.chat.storage.db import get_db_session, run_sync_in_executor
 from app.services.chat.trigger import trigger_ai_response_unified
+from app.services.chat.wework_task_defaults import apply_wework_task_defaults
 from app.utils.prompt_utils import extract_display_prompt
 from shared.telemetry.context import (
     set_request_context,
@@ -800,6 +802,12 @@ class ChatNamespace(socketio.AsyncNamespace):
                 client_origin=payload.client_origin,
                 generate_params=generate_params_dict,
             )
+            if payload.client_origin == CLIENT_ORIGIN_WEWORK and not payload.task_id:
+                params = await apply_wework_task_defaults(
+                    db,
+                    user=user,
+                    params=params,
+                )
 
             result = await create_chat_task(
                 db=db,

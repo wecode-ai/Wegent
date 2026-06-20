@@ -8,7 +8,9 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import HTTPException
 
+from app.models.subtask import SubtaskStatus
 from app.services.channels.callback import ChannelType
 from app.services.channels.handler import MessageContext
 from app.services.channels.telegram.handler import TelegramChannelHandler
@@ -478,3 +480,133 @@ class TestTelegramChannelHandler:
         assert result is None
         schedule_dispatch.assert_called_once_with(creation_result.task.id)
         _assert_message_source(create_task_mock)
+
+    @pytest.mark.asyncio
+    async def test_private_im_task_response_failure_marks_task_failed(self, handler):
+        message_context = _message_context()
+        task = SimpleNamespace(id=33, json={"status": {"status": "PENDING"}})
+        assistant_subtask = SimpleNamespace(
+            id=52,
+            status=SubtaskStatus.PENDING,
+            progress=0,
+            error_message="",
+            completed_at=None,
+        )
+        db = MagicMock()
+
+        with (
+            patch.object(
+                handler,
+                "create_streaming_emitter",
+                new=AsyncMock(return_value=None),
+            ),
+            patch.object(handler, "_register_streaming_emitter", new=AsyncMock()),
+            patch.object(handler, "send_text_reply", new=AsyncMock()) as send_reply,
+            patch(
+                "app.services.chat.trigger.trigger_ai_response_unified",
+                new=AsyncMock(side_effect=ValueError("Model codex-gpt-5.5 not found")),
+            ),
+        ):
+            await handler._trigger_private_im_task_response(
+                db=db,
+                task=task,
+                assistant_subtask=assistant_subtask,
+                team=SimpleNamespace(id=38),
+                user=SimpleNamespace(id=1),
+                user_subtask_id=51,
+                message="我刚才说的啥",
+                message_context=message_context,
+                params=SimpleNamespace(is_group_chat=False),
+            )
+
+        assert task.json["status"]["status"] == "FAILED"
+        assert "Model codex-gpt-5.5 not found" in task.json["status"]["errorMessage"]
+        assert assistant_subtask.status == SubtaskStatus.FAILED
+        assert assistant_subtask.progress == 100
+        assert "Model codex-gpt-5.5 not found" in assistant_subtask.error_message
+        db.commit.assert_called_once()
+        send_reply.assert_awaited_once()
+        assert "任务执行失败" in send_reply.await_args.args[1]
+
+    @pytest.mark.asyncio
+    async def test_private_im_task_response_routes_existing_device_task_to_device(
+        self, handler
+    ):
+        message_context = _message_context()
+        task = SimpleNamespace(
+            id=33,
+            json={"spec": {"device_id": "hw-4e4bfa88fa25"}},
+        )
+        assistant_subtask = SimpleNamespace(id=54)
+        streaming_emitter = _streaming_emitter()
+
+        with (
+            patch.object(
+                handler,
+                "create_streaming_emitter",
+                new=AsyncMock(return_value=streaming_emitter),
+            ),
+            patch.object(handler, "_register_streaming_emitter", new=AsyncMock()),
+            patch(
+                "app.services.chat.trigger.trigger_ai_response_unified",
+                new=AsyncMock(),
+            ) as trigger_mock,
+        ):
+            await handler._trigger_private_im_task_response(
+                db=MagicMock(),
+                task=task,
+                assistant_subtask=assistant_subtask,
+                team=SimpleNamespace(id=38),
+                user=SimpleNamespace(id=1),
+                user_subtask_id=53,
+                message="继续",
+                message_context=message_context,
+                params=SimpleNamespace(is_group_chat=False),
+            )
+
+        assert trigger_mock.await_args.kwargs["device_id"] == "hw-4e4bfa88fa25"
+
+    @pytest.mark.asyncio
+    async def test_private_im_continue_task_reports_running_task(self, handler):
+        message_context = _message_context()
+        db = MagicMock()
+        user = SimpleNamespace(id=1)
+        im_session = SimpleNamespace(active_task_id=33)
+        task = SimpleNamespace(id=33)
+
+        with (
+            patch(
+                "app.services.channels.handler.im_task_continuation_service.validate_personal_wework_task",
+                return_value=task,
+            ),
+            patch(
+                "app.services.channels.handler.im_task_continuation_service.get_task_team",
+                return_value=SimpleNamespace(id=38),
+            ),
+            patch.object(
+                handler,
+                "_build_private_im_message_source",
+                return_value=EXPECTED_IM_SOURCE,
+            ),
+            patch(
+                "app.services.channels.handler.im_task_continuation_service.append_message_to_task",
+                new=AsyncMock(
+                    side_effect=HTTPException(
+                        status_code=400,
+                        detail="Task is still running",
+                    )
+                ),
+            ),
+            patch.object(handler, "send_text_reply", new=AsyncMock()) as send_reply,
+        ):
+            await handler._execute_private_im_continue_task(
+                db=db,
+                user=user,
+                im_session=im_session,
+                task_id=33,
+                message="我刚才说的啥",
+                message_context=message_context,
+            )
+
+        send_reply.assert_awaited_once()
+        assert "当前任务仍在执行" in send_reply.await_args.args[1]

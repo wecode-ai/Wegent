@@ -105,6 +105,50 @@ def test_mode_command_returns_current_task_mode_and_active_task_id(
     assert result.reply == "当前模式：Task，任务 ID：7001。"
 
 
+def test_mode_task_argument_enters_pending_switch(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    session = _create_session(test_db, test_user)
+
+    result = im_command_router.route(
+        test_db,
+        session,
+        "/mode task",
+        recent_tasks=_recent_tasks(),
+        projects=[],
+    )
+
+    assert result.handled is True
+    assert result.action == IMCommandAction.NONE
+    assert session.mode == IMSessionMode.TASK
+    assert session.state == IMSessionState.PENDING_TASK_SWITCH
+    assert session.pending_payload == {"task_ids": [101, 102]}
+    assert "最近任务" in result.reply
+
+
+def test_mode_chat_argument_switches_to_chat(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    session = _create_session(test_db, test_user)
+    im_session_service.bind_active_task(test_db, session=session, task_id=7001)
+
+    result = im_command_router.route(
+        test_db,
+        session,
+        "/mode chat",
+        recent_tasks=[],
+        projects=[],
+    )
+
+    assert result.handled is True
+    assert result.action == IMCommandAction.NONE
+    assert session.mode == IMSessionMode.CHAT
+    assert session.active_task_id is None
+    assert result.reply == "已切换到 Chat 模式。"
+
+
 def test_switch_command_enters_pending_switch_and_lists_recent_tasks(
     test_db: Session,
     test_user: User,
@@ -213,7 +257,7 @@ def test_task_mode_without_active_task_stores_first_message_and_lists_projects(
     assert "Wegent Backend" in result.reply
 
 
-def test_new_command_in_task_mode_enters_pending_task_creation(
+def test_new_command_in_task_mode_enters_new_flow(
     test_db: Session,
     test_user: User,
 ) -> None:
@@ -231,11 +275,177 @@ def test_new_command_in_task_mode_enters_pending_task_creation(
     assert result.handled is True
     assert result.action == IMCommandAction.NONE
     assert session.mode == IMSessionMode.TASK
+    assert session.state == IMSessionState.PENDING_NEW_FLOW
+    assert session.pending_payload == {}
+    assert "请选择新建类型" in result.reply
+    assert "1. 新建 Chat" in result.reply
+    assert "2. 新建 Task" in result.reply
+    assert "3. 继续最近 Task" in result.reply
+
+
+def test_new_command_in_chat_mode_enters_new_flow(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    session = _create_session(test_db, test_user)
+
+    result = im_command_router.route(
+        test_db,
+        session,
+        "/new",
+        recent_tasks=_recent_tasks(),
+        projects=_projects(),
+    )
+
+    assert result.handled is True
+    assert result.action == IMCommandAction.NONE
+    assert session.mode == IMSessionMode.CHAT
+    assert session.state == IMSessionState.PENDING_NEW_FLOW
+    assert "请选择新建类型" in result.reply
+    assert "1. 新建 Chat" in result.reply
+    assert "2. 新建 Task" in result.reply
+    assert "3. 继续最近 Task" in result.reply
+
+
+def test_new_command_then_cancel_from_chat_mode_keeps_chat_mode(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    session = _create_session(test_db, test_user)
+
+    start_result = im_command_router.route(
+        test_db,
+        session,
+        "/new",
+        recent_tasks=_recent_tasks(),
+        projects=_projects(),
+    )
+    cancel_result = im_command_router.route(
+        test_db,
+        session,
+        "/cancel",
+        recent_tasks=[],
+        projects=[],
+    )
+
+    assert start_result.handled is True
+    assert cancel_result.handled is True
+    assert cancel_result.reply == "已取消。"
+    assert session.mode == IMSessionMode.CHAT
+    assert session.state == IMSessionState.IDLE
+    assert session.pending_payload == {}
+
+
+def test_new_flow_choice_chat_returns_start_chat_action(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    session = _create_session(test_db, test_user)
+    im_session_service.set_pending_state(
+        test_db,
+        session=session,
+        state=IMSessionState.PENDING_NEW_FLOW,
+        payload={},
+    )
+
+    result = im_command_router.route(
+        test_db,
+        session,
+        "1",
+        recent_tasks=[],
+        projects=[],
+    )
+
+    assert result.handled is True
+    assert result.action == IMCommandAction.START_CHAT
+    assert session.mode == IMSessionMode.CHAT
+    assert result.reply == "已开始新 Chat，请发送消息。"
+
+
+def test_new_flow_choice_task_enters_project_selection(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    session = _create_session(test_db, test_user)
+    im_session_service.set_pending_state(
+        test_db,
+        session=session,
+        state=IMSessionState.PENDING_NEW_FLOW,
+        payload={},
+    )
+
+    result = im_command_router.route(
+        test_db,
+        session,
+        "2",
+        recent_tasks=[],
+        projects=_projects(),
+    )
+
+    assert result.handled is True
+    assert result.action == IMCommandAction.NONE
+    assert session.mode == IMSessionMode.TASK
     assert session.state == IMSessionState.PENDING_TASK_CREATION
     assert session.pending_payload == {"first_message": "", "project_ids": [201, 202]}
-    assert result.reply.startswith("选择项目：")
-    assert "0. 不关联项目" in result.reply
-    assert "2. Wegent Docs（202）" in result.reply
+    assert "选择项目" in result.reply
+
+
+def test_new_flow_choice_recent_tasks_enters_task_switch(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    session = _create_session(test_db, test_user)
+    im_session_service.set_pending_state(
+        test_db,
+        session=session,
+        state=IMSessionState.PENDING_NEW_FLOW,
+        payload={},
+    )
+
+    result = im_command_router.route(
+        test_db,
+        session,
+        "3",
+        recent_tasks=_recent_tasks(),
+        projects=[],
+    )
+
+    assert result.handled is True
+    assert result.action == IMCommandAction.NONE
+    assert session.mode == IMSessionMode.TASK
+    assert session.state == IMSessionState.PENDING_TASK_SWITCH
+    assert session.pending_payload == {"task_ids": [101, 102]}
+    assert "最近任务" in result.reply
+
+
+def test_new_flow_invalid_choice_keeps_pending_state_and_returns_guidance(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    session = _create_session(test_db, test_user)
+
+    start_result = im_command_router.route(
+        test_db,
+        session,
+        "/new",
+        recent_tasks=[],
+        projects=[],
+    )
+    result = im_command_router.route(
+        test_db,
+        session,
+        "bad choice",
+        recent_tasks=[],
+        projects=[],
+    )
+
+    assert start_result.handled is True
+    assert result.handled is True
+    assert result.action == IMCommandAction.NONE
+    assert result.reply == "请输入 1、2 或 3，或发送 /cancel 取消。"
+    assert session.mode == IMSessionMode.CHAT
+    assert session.state == IMSessionState.PENDING_NEW_FLOW
+    assert session.pending_payload == {}
 
 
 @pytest.mark.parametrize(
@@ -264,6 +474,19 @@ def test_new_task_empty_prompt_waits_for_content_before_create_task(
 
     assert start_result.handled is True
     assert start_result.action == IMCommandAction.NONE
+    assert session.state == IMSessionState.PENDING_NEW_FLOW
+    assert session.pending_payload == {}
+
+    task_result = im_command_router.route(
+        test_db,
+        session,
+        "2",
+        recent_tasks=[],
+        projects=_projects(),
+    )
+
+    assert task_result.handled is True
+    assert task_result.action == IMCommandAction.NONE
     assert session.state == IMSessionState.PENDING_TASK_CREATION
     assert session.pending_payload == {"first_message": "", "project_ids": [201, 202]}
 

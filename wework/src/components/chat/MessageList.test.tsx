@@ -146,6 +146,28 @@ describe('MessageList', () => {
     expect(screen.getByTestId('message-source-row')).toContainElement(badge)
   })
 
+  test('renders Discord IM source badge from channel type', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: '1',
+            role: 'user',
+            content: 'Message from Discord',
+            status: 'done',
+            createdAt: '2026-05-25T00:00:00.000Z',
+            source: {
+              source: 'im',
+              channel_type: 'discord',
+            },
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('message-source-badge')).toHaveTextContent('Discord')
+  })
+
   test('does not render IM source badge for assistant or non-IM messages', () => {
     render(
       <MessageList

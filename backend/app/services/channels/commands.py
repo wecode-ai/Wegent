@@ -85,7 +85,7 @@ def parse_command(content: str) -> Optional[ParsedCommand]:
         return None
 
     parts = content.split(maxsplit=1)
-    cmd_str = parts[0].lower()
+    cmd_str = parts[0].lower().split("@", 1)[0]
     argument = parts[1].strip() if len(parts) > 1 else None
 
     # Map command string to CommandType

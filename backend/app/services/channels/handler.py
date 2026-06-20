@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Callable, Dict, Generic, List, Optional, TypeVar
 
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.cache import cache_manager
@@ -62,8 +63,8 @@ from app.services.channels.model_selection import (
     is_claude_provider,
     model_selection_manager,
 )
+from app.services.chat.wework_task_defaults import extract_task_device_id
 from app.services.im import task_continuation_service as im_task_continuation_service
-from app.services.im.command_router import IMCommandAction, im_command_router
 from app.services.im.session_service import im_session_service
 from app.services.readers.kinds import KindType, kindReader
 from app.stores.tasks import task_store
@@ -406,6 +407,11 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             return
         key = f"{CHANNEL_CONV_TASK_PREFIX}{self._channel_type.value}:{conversation_id}:{user_id}"
         await cache_manager.delete(key)
+
+    async def delete_conversation_task_id(
+        self, conversation_id: str, user_id: int
+    ) -> None:
+        await self._delete_conversation_task_id(conversation_id, user_id)
 
     def _get_default_team(self, db: Session, user_id: int) -> Optional[Kind]:
         """Get the default team for this channel.
@@ -781,85 +787,30 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         im_session: Any,
         message_context: MessageContext,
     ) -> bool:
-        if self._should_continue_private_task_media_message(
-            im_session, message_context
-        ):
-            await self._execute_private_im_continue_task(
-                db=db,
-                user=user,
-                im_session=im_session,
-                task_id=im_session.active_task_id,
-                message="",
-                message_context=message_context,
-            )
-            return True
+        from app.services.im.interaction_service import im_interaction_service
 
-        recent_tasks = im_task_continuation_service.list_recent_wework_tasks(
-            db, user.id, limit=5
-        )
-        projects = im_task_continuation_service.list_wework_projects(
-            db, user.id, limit=8
-        )
-        result = im_command_router.route(
+        return await im_interaction_service.route_private_message(
             db=db,
-            session=im_session,
-            content=message_context.content,
-            recent_tasks=recent_tasks,
-            projects=projects,
+            user=user,
+            im_session=im_session,
+            message_context=message_context,
+            port=self,
         )
 
-        if not result.handled:
-            return False
-
-        if result.action == IMCommandAction.NONE:
-            if result.reply:
-                await self.send_text_reply(message_context, result.reply)
-            return True
-
-        if result.action == IMCommandAction.BIND_TASK:
-            await self._execute_private_im_bind_task(
-                db=db,
-                user=user,
-                im_session=im_session,
-                task_id=result.task_id,
-                message_context=message_context,
-            )
-            return True
-
-        if result.action == IMCommandAction.CONTINUE_TASK:
-            await self._execute_private_im_continue_task(
-                db=db,
-                user=user,
-                im_session=im_session,
-                task_id=result.task_id,
-                message=result.message or message_context.content,
-                message_context=message_context,
-            )
-            return True
-
-        if result.action == IMCommandAction.CREATE_TASK:
-            await self._execute_private_im_create_task(
-                db=db,
-                user=user,
-                im_session=im_session,
-                project_id=result.project_id,
-                message=result.message or "",
-                message_context=message_context,
-            )
-            return True
-
-        return False
-
-    def _should_continue_private_task_media_message(
+    async def execute_private_im_bind_task(
         self,
+        db: Session,
+        user: User,
         im_session: Any,
+        task_id: Optional[int],
         message_context: MessageContext,
-    ) -> bool:
-        return (
-            im_session.mode == "task"
-            and im_session.active_task_id is not None
-            and not (message_context.content or "").strip()
-            and bool(message_context.images or message_context.files)
+    ) -> None:
+        await self._execute_private_im_bind_task(
+            db=db,
+            user=user,
+            im_session=im_session,
+            task_id=task_id,
+            message_context=message_context,
         )
 
     async def _execute_private_im_bind_task(
@@ -897,6 +848,24 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         title = im_task_continuation_service.get_task_title(task)
         await self.send_text_reply(message_context, f"已切换到任务：{title}。")
 
+    async def execute_private_im_continue_task(
+        self,
+        db: Session,
+        user: User,
+        im_session: Any,
+        task_id: Optional[int],
+        message: str,
+        message_context: MessageContext,
+    ) -> None:
+        await self._execute_private_im_continue_task(
+            db=db,
+            user=user,
+            im_session=im_session,
+            task_id=task_id,
+            message=message,
+            message_context=message_context,
+        )
+
     async def _execute_private_im_continue_task(
         self,
         *,
@@ -930,13 +899,31 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             return
 
         message_source = self._build_private_im_message_source(im_session)
-        result = await im_task_continuation_service.append_message_to_task(
-            db=db,
-            user=user,
-            task_id=task.id,
-            message=message,
-            message_source=message_source,
-        )
+        try:
+            result = await im_task_continuation_service.append_message_to_task(
+                db=db,
+                user=user,
+                task_id=task.id,
+                message=message,
+                message_source=message_source,
+            )
+        except HTTPException as exc:
+            if exc.status_code == 400 and exc.detail == "Task is still running":
+                await self.send_text_reply(
+                    message_context,
+                    "当前任务仍在执行，请稍后再试，或使用 /status 查看当前状态。",
+                )
+                return
+            raise
+        params = getattr(result, "task_params", None)
+        if params is None:
+            params = await im_task_continuation_service.resolve_existing_task_params(
+                db,
+                user=user,
+                task=task,
+                message=message,
+                message_source=message_source,
+            )
         await self._persist_private_im_task_media(
             db=db,
             user_id=user.id,
@@ -944,6 +931,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             message_context=message_context,
         )
         await self._trigger_private_im_task_response(
+            db=db,
             task=result.task,
             assistant_subtask=result.assistant_subtask,
             team=team,
@@ -951,11 +939,25 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             user_subtask_id=result.user_subtask.id,
             message=message,
             message_context=message_context,
-            params=im_task_continuation_service.build_existing_task_params(
-                task,
-                message=message,
-                message_source=message_source,
-            ),
+            params=params,
+        )
+
+    async def execute_private_im_create_task(
+        self,
+        db: Session,
+        user: User,
+        im_session: Any,
+        project_id: Optional[int],
+        message: str,
+        message_context: MessageContext,
+    ) -> None:
+        await self._execute_private_im_create_task(
+            db=db,
+            user=user,
+            im_session=im_session,
+            project_id=project_id,
+            message=message,
+            message_context=message_context,
         )
 
     async def _execute_private_im_create_task(
@@ -976,7 +978,9 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             return
 
         message_source = self._build_private_im_message_source(im_session)
-        params = im_task_continuation_service.build_new_task_params(
+        params = await im_task_continuation_service.build_new_task_params(
+            db,
+            user=user,
             message=message,
             project_id=project_id,
             task_type="task",
@@ -1009,6 +1013,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             message_context=message_context,
         )
         await self._trigger_private_im_task_response(
+            db=db,
             task=result.task,
             assistant_subtask=result.assistant_subtask,
             team=team,
@@ -1058,6 +1063,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
     async def _trigger_private_im_task_response(
         self,
         *,
+        db: Session,
         task: Any,
         assistant_subtask: Any,
         team: Kind,
@@ -1071,6 +1077,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             return
 
         task_id = task.id
+        device_id = extract_task_device_id(task) or getattr(params, "device_id", None)
         streaming_emitter = await self.create_streaming_emitter(message_context)
         if streaming_emitter:
             response_emitter = streaming_emitter
@@ -1093,18 +1100,42 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
         from app.services.chat.trigger import trigger_ai_response_unified
 
-        await trigger_ai_response_unified(
-            task=task,
-            assistant_subtask=assistant_subtask,
-            team=team,
-            user=user,
-            message=(message or "") + IM_CHANNEL_CONTEXT_HINT,
-            payload=self._build_chat_payload(params),
-            task_room=f"task_{task_id}",
-            namespace=None,
-            user_subtask_id=user_subtask_id,
-            result_emitter=response_emitter,
-        )
+        try:
+            await trigger_ai_response_unified(
+                task=task,
+                assistant_subtask=assistant_subtask,
+                team=team,
+                user=user,
+                message=(message or "") + IM_CHANNEL_CONTEXT_HINT,
+                payload=self._build_chat_payload(
+                    params,
+                    ignore_unavailable_task_model_override=True,
+                ),
+                task_room=f"task_{task_id}",
+                device_id=device_id,
+                namespace=None,
+                user_subtask_id=user_subtask_id,
+                result_emitter=response_emitter,
+            )
+        except Exception as exc:
+            self.logger.exception(
+                "[%sHandler] Failed to trigger private IM task response: "
+                "task_id=%s, subtask_id=%s",
+                self._channel_type.value,
+                task_id,
+                assistant_subtask.id,
+            )
+            self._mark_private_im_task_response_failed(
+                db,
+                task=task,
+                assistant_subtask=assistant_subtask,
+                error_message=str(exc),
+            )
+            await self.send_text_reply(
+                message_context,
+                f"任务执行失败：{exc}。任务状态已恢复，可以继续发送消息重试。",
+            )
+            return
 
         if streaming_emitter:
             return
@@ -1122,6 +1153,24 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
         if response:
             await self.send_text_reply(message_context, response)
+
+    def _mark_private_im_task_response_failed(
+        self,
+        db: Session,
+        *,
+        task: Any,
+        assistant_subtask: Any,
+        error_message: str,
+    ) -> None:
+        from app.models.subtask import SubtaskStatus
+        from app.services.task_status import mark_task_failed
+
+        mark_task_failed(task, error_message)
+        assistant_subtask.status = SubtaskStatus.FAILED
+        assistant_subtask.progress = 100
+        assistant_subtask.error_message = error_message
+        assistant_subtask.completed_at = datetime.now()
+        db.commit()
 
     async def _handle_devices_command(
         self,
@@ -2470,13 +2519,19 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             return "Response timeout, please try again later"
 
     def _build_chat_payload(
-        self, params: Any, override_model_name: Optional[str] = None
+        self,
+        params: Any,
+        override_model_name: Optional[str] = None,
+        *,
+        ignore_unavailable_task_model_override: bool = False,
     ) -> Any:
         """Build a chat payload object for trigger_ai_response.
 
         Args:
             params: Task creation params
             override_model_name: Optional model name to use (from user selection)
+            ignore_unavailable_task_model_override: Whether to fall back to the
+                agent/runtime default when a persisted task model label is stale.
         """
         from dataclasses import dataclass
 
@@ -2486,12 +2541,18 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             enable_web_search: bool = False
             search_engine: Optional[str] = None
             force_override_bot_model: Optional[str] = None
+            model_options: Optional[Dict[str, Any]] = None
             enable_clarification: bool = False
             preload_skills: Optional[list] = None
+            ignore_unavailable_task_model_override: bool = False
 
         return ChatPayload(
             is_group_chat=params.is_group_chat,
             force_override_bot_model=override_model_name,
+            model_options=getattr(params, "model_options", None),
+            ignore_unavailable_task_model_override=(
+                ignore_unavailable_task_model_override
+            ),
         )
 
     async def _create_and_process_device_task(

@@ -138,6 +138,32 @@ def test_list_private_sessions_returns_current_user_sessions_with_channel_label(
     assert labels_by_id[telegram.id] == "Telegram"
 
 
+def test_list_private_sessions_returns_discord_channel_label(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+) -> None:
+    session = _create_session(
+        test_db,
+        user_id=test_user.id,
+        channel_type="discord",
+        channel_id=88,
+        conversation_id="discord-dm",
+    )
+    test_db.commit()
+
+    response = test_client.get(
+        "/api/im/private-sessions",
+        headers=_auth_header(test_token),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    labels_by_id = {item["id"]: item["channel_label"] for item in payload["items"]}
+    assert labels_by_id[session.id] == "Discord"
+
+
 def test_bind_task_private_sessions_returns_bound_ids_and_notified_count(
     test_client: TestClient,
     test_db: Session,

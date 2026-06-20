@@ -22,7 +22,7 @@ class GithubVersionChecker(VersionChecker):
 
     # Embedded github repo for PyInstaller builds (set by build script)
     # This will be replaced during the build process
-    _EMBEDDED_GITHUB_REPO: Optional[str] = None
+    _EMBEDDED_GITHUB_REPO: Optional[str] = "wecode-ai/Wegent"
 
     # Default repo (fallback)
     DEFAULT_GITHUB_REPO = "wecode-ai/Wegent"

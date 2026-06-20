@@ -31,6 +31,7 @@ class IMSessionState:
     """Private IM session transient states."""
 
     IDLE = "idle"
+    PENDING_NEW_FLOW = "pending_new_flow"
     PENDING_TASK_SWITCH = "pending_task_switch"
     PENDING_TASK_CREATION = "pending_task_creation"
 

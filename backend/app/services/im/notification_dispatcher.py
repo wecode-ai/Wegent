@@ -77,6 +77,8 @@ class IMNotificationDispatcher:
                 return await self._send_dingtalk(session, config, text)
             if session.channel_type == "telegram":
                 return await self._send_telegram(session, config, text)
+            if session.channel_type == "discord":
+                return await self._send_discord(session, config, text)
 
             return {
                 "success": False,
@@ -159,6 +161,34 @@ class IMNotificationDispatcher:
         sender = TelegramBotSender(bot_token)
         result = await sender.send_text_message(
             chat_id=int(session.sender_id),
+            text=text,
+        )
+        return {
+            "channel_id": session.channel_id,
+            "channel_type": session.channel_type,
+            **result,
+        }
+
+    async def _send_discord(
+        self,
+        session: IMPrivateSession,
+        config: dict[str, Any],
+        text: str,
+    ) -> dict[str, Any]:
+        from app.services.channels.discord.sender import DiscordBotSender
+
+        bot_token = _config_value(config, "bot_token", "botToken")
+        if not bot_token:
+            return {
+                "success": False,
+                "channel_id": session.channel_id,
+                "channel_type": session.channel_type,
+                "error": "Missing Discord bot token",
+            }
+
+        sender = DiscordBotSender(bot_token)
+        result = await sender.send_text_message(
+            user_id=session.sender_id,
             text=text,
         )
         return {

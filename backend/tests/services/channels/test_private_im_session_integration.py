@@ -297,6 +297,58 @@ async def test_private_task_then_numeric_choice_binds_recent_task_and_clears_pen
 
 
 @pytest.mark.asyncio
+async def test_private_new_choice_chat_is_consumed_and_clears_cached_task(
+    monkeypatch: pytest.MonkeyPatch,
+    test_db: Session,
+    test_user: User,
+    channel_sessionlocal,
+) -> None:
+    handler = FakeChannelHandler(test_user)
+    calls: dict[str, Any] = {}
+
+    async def fake_delete_conversation_task_id(
+        conversation_id: str,
+        user_id: int,
+    ) -> None:
+        calls["delete_cache"] = {
+            "conversation_id": conversation_id,
+            "user_id": user_id,
+        }
+
+    async def fake_process_chat_message(
+        user: User,
+        message_context: MessageContext,
+    ) -> None:
+        calls["fallthrough"] = message_context.content
+
+    monkeypatch.setattr(
+        handler,
+        "_delete_conversation_task_id",
+        fake_delete_conversation_task_id,
+    )
+    monkeypatch.setattr(handler, "_process_chat_message", fake_process_chat_message)
+
+    first_handled = await handler.handle_message(_message("/new"))
+    second_handled = await handler.handle_message(_message("1"))
+
+    test_db.expire_all()
+    session = _private_session(test_db, test_user)
+    assert first_handled is True
+    assert second_handled is True
+    assert session is not None
+    assert session.mode == IMSessionMode.CHAT
+    assert session.state == IMSessionState.IDLE
+    assert session.pending_payload == {}
+    assert calls == {
+        "delete_cache": {
+            "conversation_id": "conv-private",
+            "user_id": test_user.id,
+        }
+    }
+    assert handler.replies[-1] == "已开始新 Chat，请发送消息。"
+
+
+@pytest.mark.asyncio
 async def test_task_mode_plain_text_appends_to_active_task_with_im_source_metadata(
     monkeypatch: pytest.MonkeyPatch,
     test_db: Session,
