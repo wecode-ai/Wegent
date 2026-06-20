@@ -257,6 +257,14 @@ function TaskMessagesProbe() {
           .map(message => `${message.role}:${message.status}:${message.content}`)
           .join('|')}
       </span>
+      <span data-testid="message-errors">
+        {workbench.messages
+          .map(
+            message =>
+              `${message.role}:${message.status}:${message.error ?? ''}:${message.errorType ?? ''}`
+          )
+          .join('|')}
+      </span>
       <button type="button" onClick={() => void workbench.openTask(8)}>
         open task
       </button>
@@ -786,6 +794,112 @@ describe('WorkbenchProvider', () => {
     await waitFor(() => expect(joinTask).toHaveBeenCalledWith(8))
     expect(screen.getByTestId('message-contents')).toHaveTextContent(
       'assistant:streaming:已经输出的内容'
+    )
+  })
+
+  test('restores persisted failure with specific result error before generic task status error', async () => {
+    const specificError = 'Codex CLI failed to resume thread: session not found'
+    const getTaskDetail = vi.fn().mockResolvedValue({
+      id: 8,
+      title: 'Failed task',
+      status: 'FAILED',
+      task_type: 'code',
+      project_id: 0,
+      device_id: 'local-online',
+      created_at: '2026-06-04T00:00:00.000Z',
+      updated_at: '2026-06-04T00:01:00.000Z',
+      subtasks: [
+        {
+          id: 21,
+          task_id: 8,
+          role: 'assistant',
+          result: {
+            value: '',
+            error: specificError,
+            error_type: 'execution_error',
+          },
+          error_message: 'Task failed with status: FAILED',
+          status: 'FAILED',
+          created_at: '2026-06-04T00:00:01.000Z',
+        },
+      ],
+    })
+
+    render(
+      <WorkbenchProvider
+        user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+        services={{
+          teamApi: {
+            getDefaultWorkbenchTeam: vi
+              .fn()
+              .mockResolvedValue({ id: 2, name: 'coder', is_active: true }),
+          },
+          modelApi: { listModels: vi.fn().mockResolvedValue({ data: [] }) },
+          skillApi: {
+            listSkills: vi.fn().mockResolvedValue([]),
+            getTeamSkills: vi.fn().mockResolvedValue({ skills: [], preload_skills: [] }),
+          },
+          projectApi: {
+            listProjects: vi.fn().mockResolvedValue({ items: [] }),
+            getProject: vi.fn(),
+            createProject: vi.fn(),
+            updateProject: vi.fn(),
+            deleteProject: vi.fn(),
+            archiveProjectChats: vi.fn(),
+            archiveAllProjectChats: vi.fn(),
+            createConversation: vi.fn(),
+          },
+          taskApi: {
+            listRecentTasks: vi.fn().mockResolvedValue({ total: 0, items: [] }),
+            getTaskDetail,
+            renameTask: vi.fn(),
+            archiveTask: vi.fn(),
+            archiveAllChats: vi.fn(),
+            listArchivedTasks: vi.fn(),
+            unarchiveTask: vi.fn(),
+            deleteTask: vi.fn(),
+            deleteArchivedTasks: vi.fn(),
+          },
+          deviceApi: {
+            listDevices: vi.fn().mockResolvedValue([
+              {
+                id: 1,
+                device_id: 'local-online',
+                name: 'Local Device',
+                status: 'online',
+                is_default: false,
+                device_type: 'local',
+                bind_shell: 'claudecode',
+              },
+            ]),
+            getHomeDirectory: vi.fn(),
+            getProjectWorkspaceRoot: vi.fn(),
+            listDirectories: vi.fn(),
+            listSkills: vi.fn().mockResolvedValue([]),
+          },
+          chatStream: {
+            joinTask: vi.fn(),
+            leaveTask: vi.fn(),
+            sendMessage: vi.fn(),
+            sendGuidance: vi.fn(),
+            cancelStream: vi.fn(),
+            subscribe: vi.fn(() => vi.fn()),
+          },
+        }}
+      >
+        <TaskMessagesProbe />
+      </WorkbenchProvider>
+    )
+
+    await userEvent.click(await screen.findByText('open task'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('message-errors')).toHaveTextContent(
+        `assistant:failed:${specificError}:execution_error`
+      )
+    )
+    expect(screen.getByTestId('message-errors')).not.toHaveTextContent(
+      'Task failed with status: FAILED'
     )
   })
 

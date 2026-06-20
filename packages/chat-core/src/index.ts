@@ -10,6 +10,7 @@ export type {
 } from './api-types'
 export type { MessageBlock, MessageBlockStatus } from './message-blocks'
 export {
+  isGenericTaskStatusError,
   normalizeWorkbenchBlockStatus,
   reduceWorkbenchMessages,
 } from './workbench-message-reducer'
