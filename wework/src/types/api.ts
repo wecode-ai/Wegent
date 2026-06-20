@@ -253,7 +253,7 @@ export interface TaskListResponse {
 }
 
 export interface IMPrivateSession {
-  id: number
+  session_key: string
   channel_type: string
   channel_label: string
   channel_id: number
@@ -273,7 +273,7 @@ export interface IMPrivateSessionListResponse {
 
 export interface BindTaskIMSessionsResponse {
   task_id: number
-  bound_session_ids: number[]
+  bound_session_keys: string[]
   notified_count: number
 }
 

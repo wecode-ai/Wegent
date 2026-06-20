@@ -74,56 +74,38 @@ def validate_personal_wework_task(
     return task
 
 
-def bind_task_to_sessions(
+async def bind_task_to_sessions(
     db: Session,
     user_id: int,
     task_id: int,
-    session_ids: Sequence[int],
-) -> list[int]:
+    session_keys: Sequence[str],
+) -> list[str]:
     """Bind current user's private IM sessions to a validated WeWork task."""
 
     task = validate_personal_wework_task(db, user_id, task_id)
-    sessions = load_user_private_sessions_by_ids(
+    sessions = await load_user_private_sessions_by_keys(
         db,
         user_id=user_id,
-        session_ids=session_ids,
+        session_keys=session_keys,
     )
     for session in sessions:
-        im_session_service.bind_active_task(db, session=session, task_id=task.id)
-    return [int(session_id) for session_id in session_ids]
+        await im_session_service.bind_active_task(db, session=session, task_id=task.id)
+    return [str(session_key) for session_key in session_keys]
 
 
-def load_user_private_sessions_by_ids(
+async def load_user_private_sessions_by_keys(
     db: Session,
     *,
     user_id: int,
-    session_ids: Sequence[int],
+    session_keys: Sequence[str],
 ) -> list[IMPrivateSession]:
     """Load current user's private sessions and preserve caller order."""
 
-    ordered_ids = [int(session_id) for session_id in session_ids]
-    if not ordered_ids:
-        return []
-
-    unique_ids = list(dict.fromkeys(ordered_ids))
-    sessions = (
-        db.query(IMPrivateSession)
-        .filter(
-            IMPrivateSession.user_id == user_id,
-            IMPrivateSession.id.in_(unique_ids),
-        )
-        .all()
+    return await im_session_service.load_user_sessions_by_keys(
+        db,
+        user_id=user_id,
+        session_keys=session_keys,
     )
-    sessions_by_id = {session.id: session for session in sessions}
-    missing_ids = [
-        session_id for session_id in unique_ids if session_id not in sessions_by_id
-    ]
-    if missing_ids:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="IM private session not found",
-        )
-    return [sessions_by_id[session_id] for session_id in ordered_ids]
 
 
 def list_recent_wework_tasks(
@@ -216,7 +198,7 @@ def build_im_message_source(
 
     source: dict[str, Any] = {
         "source": IM_SOURCE,
-        "session_id": str(session.id),
+        "session_key": session.session_key,
         "channel_type": session.channel_type,
         "channel_id": session.channel_id,
         "conversation_id": session.conversation_id,

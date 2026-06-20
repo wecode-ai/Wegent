@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.models.im_session import IMPrivateSession
 from app.models.kind import Kind
 from app.services.im.notification_dispatcher import im_notification_dispatcher
+from app.services.im.session_service import im_session_service
 from shared.utils.crypto import encrypt_sensitive_data
 
 
@@ -44,14 +45,19 @@ def _create_channel(
 
 
 def _create_session(
-    db: Session,
     *,
     user_id: int,
     channel_id: int,
     channel_type: str,
     sender_id: str,
 ) -> IMPrivateSession:
-    session = IMPrivateSession(
+    return IMPrivateSession(
+        session_key=im_session_service.build_session_key(
+            user_id=user_id,
+            channel_type=channel_type,
+            channel_id=channel_id,
+            conversation_id=f"conv-{channel_id}",
+        ),
         user_id=user_id,
         channel_type=channel_type,
         channel_id=channel_id,
@@ -60,8 +66,6 @@ def _create_session(
         display_name=f"sender-{sender_id}",
         last_seen_at=datetime.now(),
     )
-    db.add(session)
-    return session
 
 
 @pytest.mark.asyncio
@@ -80,7 +84,6 @@ async def test_dingtalk_notification_decrypts_channel_secret(
         },
     )
     session = _create_session(
-        test_db,
         user_id=test_user.id,
         channel_id=9401,
         channel_type="dingtalk",
@@ -129,7 +132,6 @@ async def test_telegram_notification_decrypts_bot_token(
         config={"botToken": encrypt_sensitive_data("telegram-token")},
     )
     session = _create_session(
-        test_db,
         user_id=test_user.id,
         channel_id=9402,
         channel_type="telegram",
@@ -175,7 +177,6 @@ async def test_discord_notification_decrypts_bot_token(
         config={"botToken": encrypt_sensitive_data("discord-token")},
     )
     session = _create_session(
-        test_db,
         user_id=test_user.id,
         channel_id=9403,
         channel_type="discord",

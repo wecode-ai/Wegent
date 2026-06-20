@@ -31,6 +31,8 @@ from app.services.im.task_continuation_service import (
     validate_personal_wework_task,
 )
 
+pytestmark = pytest.mark.asyncio
+
 
 def _task_json(
     task_id: int,
@@ -104,13 +106,13 @@ def _add_approved_member(db: Session, task_id: int, user_id: int) -> None:
     )
 
 
-def _create_session(
+async def _create_session(
     db: Session,
     user_id: int,
     *,
     conversation_id: str,
 ) -> IMPrivateSession:
-    return im_session_service.get_or_create_private_session(
+    return await im_session_service.get_or_create_private_session(
         db=db,
         user_id=user_id,
         channel_type="dingtalk",
@@ -121,7 +123,7 @@ def _create_session(
     )
 
 
-def test_validate_accepts_owner_wework_personal_task(
+async def test_validate_accepts_owner_wework_personal_task(
     test_db: Session,
     test_user: User,
 ) -> None:
@@ -139,7 +141,7 @@ def test_validate_accepts_owner_wework_personal_task(
     assert result.client_origin == CLIENT_ORIGIN_WEWORK
 
 
-def test_validate_rejects_frontend_origin_and_wework_group_task(
+async def test_validate_rejects_frontend_origin_and_wework_group_task(
     test_db: Session,
     test_user: User,
 ) -> None:
@@ -168,7 +170,7 @@ def test_validate_rejects_frontend_origin_and_wework_group_task(
     assert group_error.value.status_code == 400
 
 
-def test_validate_rejects_shared_member_task_if_approved_member_exists(
+async def test_validate_rejects_shared_member_task_if_approved_member_exists(
     test_db: Session,
     test_user: User,
 ) -> None:
@@ -187,7 +189,7 @@ def test_validate_rejects_shared_member_task_if_approved_member_exists(
     assert exc_info.value.status_code == 400
 
 
-def test_bind_task_to_sessions_sets_task_mode_and_returns_ids_in_request_order(
+async def test_bind_task_to_sessions_sets_task_mode_and_returns_keys_in_request_order(
     test_db: Session,
     test_user: User,
 ) -> None:
@@ -197,25 +199,29 @@ def test_bind_task_to_sessions_sets_task_mode_and_returns_ids_in_request_order(
         user_id=test_user.id,
         title="绑定会话任务",
     )
-    first = _create_session(test_db, test_user.id, conversation_id="conv-a")
-    second = _create_session(test_db, test_user.id, conversation_id="conv-b")
+    first = await _create_session(test_db, test_user.id, conversation_id="conv-a")
+    second = await _create_session(test_db, test_user.id, conversation_id="conv-b")
     test_db.commit()
 
-    result = bind_task_to_sessions(
+    result = await bind_task_to_sessions(
         test_db,
         test_user.id,
         task.id,
-        [second.id, first.id],
+        [second.session_key, first.session_key],
     )
 
-    assert result == [second.id, first.id]
-    assert first.mode == IMSessionMode.TASK
-    assert first.active_task_id == task.id
-    assert second.mode == IMSessionMode.TASK
-    assert second.active_task_id == task.id
+    assert result == [second.session_key, first.session_key]
+    bound_first = await im_session_service.get_session(first.session_key)
+    bound_second = await im_session_service.get_session(second.session_key)
+    assert bound_first is not None
+    assert bound_second is not None
+    assert bound_first.mode == IMSessionMode.TASK
+    assert bound_first.active_task_id == task.id
+    assert bound_second.mode == IMSessionMode.TASK
+    assert bound_second.active_task_id == task.id
 
 
-def test_list_recent_wework_tasks_filters_origin_group_shared_and_orders(
+async def test_list_recent_wework_tasks_filters_origin_group_shared_and_orders(
     test_db: Session,
     test_user: User,
 ) -> None:
@@ -276,7 +282,7 @@ def test_list_recent_wework_tasks_filters_origin_group_shared_and_orders(
     ]
 
 
-def test_list_wework_projects_filters_origin_active_and_orders(
+async def test_list_wework_projects_filters_origin_active_and_orders(
     test_db: Session,
     test_user: User,
 ) -> None:
@@ -333,7 +339,7 @@ def test_list_wework_projects_filters_origin_active_and_orders(
     ]
 
 
-def test_build_existing_task_params_uses_task_labels_and_im_source_metadata(
+async def test_build_existing_task_params_uses_task_labels_and_im_source_metadata(
     test_db: Session,
     test_user: User,
 ) -> None:
@@ -354,7 +360,7 @@ def test_build_existing_task_params_uses_task_labels_and_im_source_metadata(
     task.project_id = 312
     task.json["spec"]["device_id"] = "device-task"
     test_db.commit()
-    message_source = {"source": "im", "session_id": "session-1"}
+    message_source = {"source": "im", "session_key": "session-1"}
 
     params = build_existing_task_params(
         task,
@@ -382,7 +388,7 @@ async def test_build_new_task_params_uses_wework_im_defaults_and_source_metadata
     test_user: User,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    message_source = {"source": "im", "session_id": "session-1"}
+    message_source = {"source": "im", "session_key": "session-1"}
     test_user.preferences = json.dumps(
         {
             "wework_new_chat_model_selection": {
@@ -460,11 +466,11 @@ async def test_build_new_task_params_uses_default_execution_target_when_im_devic
     assert params.device_id == "device-from-preferences"
 
 
-def test_build_im_message_source_includes_session_identity_and_extra_metadata(
+async def test_build_im_message_source_includes_session_identity_and_extra_metadata(
     test_db: Session,
     test_user: User,
 ) -> None:
-    session = _create_session(
+    session = await _create_session(
         test_db,
         test_user.id,
         conversation_id="source-conv",
@@ -479,7 +485,7 @@ def test_build_im_message_source_includes_session_identity_and_extra_metadata(
 
     assert source == {
         "source": "im",
-        "session_id": str(session.id),
+        "session_key": session.session_key,
         "channel_type": "dingtalk",
         "channel_id": 12,
         "conversation_id": "source-conv",
@@ -532,7 +538,7 @@ async def test_append_message_to_task_preserves_task_id_and_triggers_ai(
         user=test_user,
         task_id=task.id,
         message="继续",
-        message_source={"source": "im", "session_id": "session-1"},
+        message_source={"source": "im", "session_key": "session-1"},
     )
 
     assert result.task.id == task.id

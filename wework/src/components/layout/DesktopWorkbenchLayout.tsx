@@ -63,20 +63,15 @@ interface DesktopWorkbenchLayoutProps {
   onOpenTask: (taskId: number, projectId?: number) => void
   onSearchTasks?: (query: string) => Promise<TaskListResponse>
   onSearchTaskDetail?: (taskId: number) => Promise<TaskDetail>
-  onListLocalCodexThreads?: (
-    deviceId: string,
-    limit?: number,
-  ) => Promise<LocalCodexThreadSummary[]>
-  onBindLocalCodexThread?: (
-    request: LocalCodexBindRequest,
-  ) => Promise<LocalCodexBindResponse>
+  onListLocalCodexThreads?: (deviceId: string, limit?: number) => Promise<LocalCodexThreadSummary[]>
+  onBindLocalCodexThread?: (request: LocalCodexBindRequest) => Promise<LocalCodexBindResponse>
   onRememberExecutionDevice?: (deviceId: string) => void
   onRefreshDevices?: () => Promise<void>
   onUpgradeDevice?: (deviceId: string) => Promise<void>
   onListImPrivateSessions?: () => Promise<IMPrivateSessionListResponse>
   onBindTaskToImSessions?: (
     taskId: number,
-    sessionIds: number[]
+    sessionKeys: string[]
   ) => Promise<BindTaskIMSessionsResponse>
   onCreateProject: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
   onCreateGitWorkspaceProject: (data: CreateGitWorkspaceProjectRequest) => Promise<ProjectWithTasks>
@@ -435,7 +430,7 @@ export function DesktopWorkbenchLayout({
   }, [])
 
   const submitContinueInIm = useCallback(
-    async (sessionIds: number[]) => {
+    async (sessionKeys: string[]) => {
       if (!state.currentTask || state.currentTask.is_group_chat) return
 
       setImSessionsSubmitting(true)
@@ -443,7 +438,7 @@ export function DesktopWorkbenchLayout({
         if (!onBindTaskToImSessions) {
           throw new Error('IM bind handler is not available')
         }
-        await onBindTaskToImSessions(state.currentTask.id, sessionIds)
+        await onBindTaskToImSessions(state.currentTask.id, sessionKeys)
         setContinueInImOpen(false)
         setNotice({ message: t('workbench.continue_im_success'), tone: 'success' })
       } catch {

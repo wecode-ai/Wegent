@@ -2,22 +2,11 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Persistent private IM session state."""
+"""Private IM runtime session state."""
 
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
-
-from sqlalchemy import (
-    JSON,
-    BigInteger,
-    Column,
-    DateTime,
-    Integer,
-    String,
-    UniqueConstraint,
-)
-from sqlalchemy.sql import func
-
-from app.db.base import Base
+from typing import Any
 
 
 class IMSessionMode:
@@ -36,56 +25,50 @@ class IMSessionState:
     PENDING_TASK_CREATION = "pending_task_creation"
 
 
-class IMPrivateSession(Base):
-    """A user-owned private conversation with one IM provider channel."""
+@dataclass
+class IMPrivateSession:
+    """A user-owned private IM conversation runtime state."""
 
-    __tablename__ = "im_private_sessions"
+    session_key: str
+    user_id: int
+    channel_type: str
+    channel_id: int
+    conversation_id: str
+    sender_id: str
+    display_name: str = ""
+    mode: str = IMSessionMode.CHAT
+    state: str = IMSessionState.IDLE
+    active_task_id: int | None = None
+    pending_payload: dict[str, Any] = field(default_factory=dict)
+    state_expires_at: datetime | None = None
+    last_seen_at: datetime = field(default_factory=datetime.now)
+    created_at: datetime = field(default_factory=datetime.now)
+    updated_at: datetime = field(default_factory=datetime.now)
 
-    id = Column(
-        BigInteger().with_variant(Integer, "sqlite"),
-        primary_key=True,
-        autoincrement=True,
-    )
-    user_id = Column(Integer, nullable=False, index=True)
-    channel_type = Column(String(32), nullable=False)
-    channel_id = Column(
-        BigInteger().with_variant(Integer, "sqlite"),
-        nullable=False,
-        index=True,
-    )
-    conversation_id = Column(String(255), nullable=False)
-    sender_id = Column(String(255), nullable=False, default="")
-    display_name = Column(String(255), nullable=False, default="")
-    mode = Column(String(16), nullable=False, default=IMSessionMode.CHAT)
-    state = Column(String(32), nullable=False, default=IMSessionState.IDLE)
-    active_task_id = Column(
-        BigInteger().with_variant(Integer, "sqlite"),
-        nullable=True,
-        index=True,
-    )
-    pending_payload = Column(JSON, nullable=False, default=dict)
-    state_expires_at = Column(DateTime, nullable=True)
-    last_seen_at = Column(DateTime, nullable=False, default=datetime.now)
-    created_at = Column(DateTime, nullable=False, server_default=func.now())
-    updated_at = Column(
-        DateTime,
-        nullable=False,
-        server_default=func.now(),
-        onupdate=func.now(),
-    )
+    def to_dict(self) -> dict[str, Any]:
+        """Convert the session to a Redis-serializable dictionary."""
 
-    __table_args__ = (
-        UniqueConstraint(
-            "channel_type",
-            "channel_id",
-            "conversation_id",
-            "user_id",
-            name="uniq_im_private_session_identity",
-        ),
-        {
-            "sqlite_autoincrement": True,
-            "mysql_engine": "InnoDB",
-            "mysql_charset": "utf8mb4",
-            "mysql_collate": "utf8mb4_unicode_ci",
-        },
-    )
+        data = asdict(self)
+        for key in ("state_expires_at", "last_seen_at", "created_at", "updated_at"):
+            value = data.get(key)
+            data[key] = value.isoformat() if isinstance(value, datetime) else None
+        return data
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "IMPrivateSession":
+        """Create a session from Redis data."""
+
+        values = dict(data)
+        for key in ("state_expires_at", "last_seen_at", "created_at", "updated_at"):
+            values[key] = _parse_datetime(values.get(key))
+        payload = values.get("pending_payload")
+        values["pending_payload"] = payload if isinstance(payload, dict) else {}
+        return cls(**values)
+
+
+def _parse_datetime(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str) and value:
+        return datetime.fromisoformat(value)
+    return None

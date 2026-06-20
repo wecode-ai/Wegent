@@ -407,7 +407,7 @@ function ImSessionProbe() {
       <button
         type="button"
         onClick={() => {
-          void workbench.bindTaskToImSessions(42, [7, 9])
+          void workbench.bindTaskToImSessions(42, ['session-7', 'session-9'])
         }}
       >
         bind IM sessions
@@ -544,7 +544,7 @@ describe('WorkbenchProvider', () => {
     const listPrivateSessions = vi.fn().mockResolvedValue({ total: 0, items: [] })
     const bindTaskSessions = vi.fn().mockResolvedValue({
       task_id: 42,
-      bound_session_ids: [7, 9],
+      bound_session_keys: ['session-7', 'session-9'],
       notified_count: 2,
     })
 
@@ -612,7 +612,7 @@ describe('WorkbenchProvider', () => {
     await userEvent.click(screen.getByText('bind IM sessions'))
 
     expect(listPrivateSessions).toHaveBeenCalledWith()
-    expect(bindTaskSessions).toHaveBeenCalledWith(42, [7, 9])
+    expect(bindTaskSessions).toHaveBeenCalledWith(42, ['session-7', 'session-9'])
   })
 
   test('does not automatically upgrade old online devices during bootstrap', async () => {

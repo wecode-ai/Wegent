@@ -168,34 +168,21 @@ describe('MobileWorkbenchLayout', () => {
 
     expect(screen.queryByText('MI')).not.toBeInTheDocument()
     expect(screen.getByTestId('mobile-empty-header')).toHaveClass('bg-background/95')
-    expect(screen.getByTestId('open-mobile-drawer-button')).toHaveClass(
-      'h-11',
-      'text-text-primary',
-    )
-    expect(screen.getByTestId('open-mobile-drawer-button')).not.toHaveClass(
-      'bg-surface',
-    )
-    expect(screen.getByTestId('model-selector-button')).toHaveTextContent(
-      'kimi-for-coding',
-    )
-    expect(screen.getByTestId('mobile-empty-chat-input-dock')).toHaveClass(
-      'px-4',
-      'pt-3',
-    )
+    expect(screen.getByTestId('open-mobile-drawer-button')).toHaveClass('h-11', 'text-text-primary')
+    expect(screen.getByTestId('open-mobile-drawer-button')).not.toHaveClass('bg-surface')
+    expect(screen.getByTestId('model-selector-button')).toHaveTextContent('kimi-for-coding')
+    expect(screen.getByTestId('mobile-empty-chat-input-dock')).toHaveClass('px-4', 'pt-3')
     expect(screen.getByTestId('mobile-empty-chat-input-dock').className).not.toMatch(
-      /\bz-(?:modal|critical)\b/,
+      /\bz-(?:modal|critical)\b/
     )
-    expect(screen.getByTestId('mobile-empty-state-content')).toHaveClass(
-      'items-center',
-      'gap-6',
-    )
+    expect(screen.getByTestId('mobile-empty-state-content')).toHaveClass('items-center', 'gap-6')
     expect(screen.getByTestId('project-work-button').parentElement?.parentElement).toHaveClass(
       'flex-col',
-      'gap-1',
+      'gap-1'
     )
     expect(screen.getByTestId('mobile-empty-state-content').parentElement).toHaveClass(
       'items-center',
-      'justify-center',
+      'justify-center'
     )
     expect(screen.getByTestId('compact-input-pill')).toHaveClass('min-h-[52px]')
     expect(screen.getByTestId('add-context-button')).toHaveClass('h-[52px]')
@@ -262,16 +249,16 @@ describe('MobileWorkbenchLayout', () => {
         onOpenTask={vi.fn()}
         onInputChange={vi.fn()}
         onSend={vi.fn()}
-      />,
+      />
     )
 
     expect(screen.getByTestId('conversation-device-offline-banner')).toHaveTextContent(
-      'Offline Device 已离线，恢复在线后可继续对话',
+      'Offline Device 已离线，恢复在线后可继续对话'
     )
     expect(
       within(screen.getByTestId('mobile-chat-input-dock')).getByTestId(
-        'conversation-device-offline-banner',
-      ),
+        'conversation-device-offline-banner'
+      )
     ).toBeInTheDocument()
     expect(screen.getByTestId('chat-message-scroll-area')).not.toHaveClass('pt-28')
     expect(screen.getByTestId('send-message-button')).toBeDisabled()
@@ -328,46 +315,29 @@ describe('MobileWorkbenchLayout', () => {
 
     await userEvent.click(screen.getByTestId('model-selector-button'))
 
-    expect(screen.getByTestId('model-selector-menu')).toHaveAttribute(
-      'data-mobile',
-      'true',
-    )
-    expect(screen.getByTestId('model-selector-menu')).toHaveAttribute(
-      'aria-modal',
-      'true',
-    )
+    expect(screen.getByTestId('model-selector-menu')).toHaveAttribute('data-mobile', 'true')
+    expect(screen.getByTestId('model-selector-menu')).toHaveAttribute('aria-modal', 'true')
     expect(screen.getByTestId('model-selector-menu')).toHaveAttribute(
       'aria-labelledby',
-      'model-selector-mobile-title',
+      'model-selector-mobile-title'
     )
     expect(screen.getByTestId('model-selector-menu')).toHaveClass('h-[82dvh]')
-    expect(screen.getByTestId('model-selector-menu').closest('.fixed')).toHaveClass(
-      'z-modal',
-    )
+    expect(screen.getByTestId('model-selector-menu').closest('.fixed')).toHaveClass('z-modal')
     expect(screen.getByTestId('model-selector-confirm-button').parentElement).toHaveClass(
-      'shrink-0',
+      'shrink-0'
     )
     expect(screen.getByTestId('model-selector-confirm-button').parentElement).not.toHaveClass(
-      'absolute',
+      'absolute'
     )
-    expect(screen.getByTestId('model-selector-search-input')).toHaveClass(
-      'text-base',
-      'leading-5',
-    )
+    expect(screen.getByTestId('model-selector-search-input')).toHaveClass('text-base', 'leading-5')
     expect(screen.getByTestId('model-selector-model-list')).toHaveClass(
       'overflow-y-auto',
-      'scrollbar-none',
+      'scrollbar-none'
     )
     expect(screen.getByTestId('model-control-reasoning-high')).toBeInTheDocument()
-    expect(screen.getByTestId('model-control-reasoning-high')).toHaveClass(
-      'h-11',
-      'min-w-[44px]',
-    )
+    expect(screen.getByTestId('model-control-reasoning-high')).toHaveClass('h-11', 'min-w-[44px]')
     expect(screen.getByTestId('model-control-speed-fast')).toBeInTheDocument()
-    expect(screen.getByTestId('model-family-claude')).toHaveClass(
-      'h-11',
-      'min-w-[44px]',
-    )
+    expect(screen.getByTestId('model-family-claude')).toHaveClass('h-11', 'min-w-[44px]')
 
     await userEvent.click(screen.getByTestId('model-family-claude'))
     await userEvent.click(screen.getByTestId('model-option-claude-sonnet'))
@@ -429,12 +399,8 @@ describe('MobileWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('model-control-reasoning-medium'))
 
     expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
-    expect(screen.getByTestId('model-control-reasoning-medium')).toHaveClass(
-      'bg-[#1f2933]',
-    )
-    expect(screen.getByTestId('model-control-reasoning-high')).toHaveClass(
-      'bg-surface',
-    )
+    expect(screen.getByTestId('model-control-reasoning-medium')).toHaveClass('bg-[#1f2933]')
+    expect(screen.getByTestId('model-control-reasoning-high')).toHaveClass('bg-surface')
   })
 
   test('shows the selected project in the mobile empty project selector', () => {
@@ -452,9 +418,7 @@ describe('MobileWorkbenchLayout', () => {
       />
     )
 
-    expect(screen.getByTestId('project-work-button')).toHaveTextContent(
-      'github_wegent',
-    )
+    expect(screen.getByTestId('project-work-button')).toHaveTextContent('github_wegent')
   })
 
   test('shows and switches branches in the mobile empty project controls', async () => {
@@ -503,61 +467,39 @@ describe('MobileWorkbenchLayout', () => {
         onCreateEnvironmentBranch={vi.fn().mockResolvedValue(undefined)}
         onInputChange={vi.fn()}
         onSend={vi.fn()}
-      />,
+      />
     )
 
     await waitFor(() =>
-      expect(screen.getByTestId('project-branch-button')).toHaveTextContent('main'),
+      expect(screen.getByTestId('project-branch-button')).toHaveTextContent('main')
     )
     const controls = screen.getByTestId('project-work-button').parentElement?.parentElement
     expect(controls).toHaveClass('flex-col')
     expect(screen.getByTestId('execution-mode-button')).toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('project-work-button'))
-    expect(screen.getByTestId('project-work-menu')).toHaveAttribute(
-      'data-mobile',
-      'true',
-    )
-    expect(screen.getByTestId('project-work-menu')).toHaveClass(
-      'fixed',
-      'max-h-[45dvh]',
-    )
+    expect(screen.getByTestId('project-work-menu')).toHaveAttribute('data-mobile', 'true')
+    expect(screen.getByTestId('project-work-menu')).toHaveClass('fixed', 'max-h-[45dvh]')
     expect(screen.getByTestId('project-search-input')).not.toHaveFocus()
     await userEvent.click(screen.getByTestId('project-work-mobile-close-button'))
 
     await userEvent.click(screen.getByTestId('execution-mode-button'))
-    expect(screen.getByTestId('project-execution-mode-menu')).toHaveAttribute(
-      'data-mobile',
-      'true',
-    )
-    expect(screen.getByTestId('project-execution-mode-menu')).toHaveClass(
-      'fixed',
-      'max-h-[45dvh]',
-    )
+    expect(screen.getByTestId('project-execution-mode-menu')).toHaveAttribute('data-mobile', 'true')
+    expect(screen.getByTestId('project-execution-mode-menu')).toHaveClass('fixed', 'max-h-[45dvh]')
     await userEvent.click(screen.getByTestId('project-work-mobile-close-button'))
 
     await userEvent.click(screen.getByTestId('project-branch-button'))
-    expect(await screen.findByTestId('project-branch-menu')).toHaveAttribute(
-      'data-mobile',
-      'true',
-    )
-    expect(screen.getByTestId('project-branch-menu')).toHaveClass(
-      'fixed',
-      'max-h-[56dvh]',
-    )
+    expect(await screen.findByTestId('project-branch-menu')).toHaveAttribute('data-mobile', 'true')
+    expect(screen.getByTestId('project-branch-menu')).toHaveClass('fixed', 'max-h-[56dvh]')
     expect(screen.getByTestId('project-branch-search-input')).not.toHaveFocus()
     const options = await screen.findAllByTestId('project-branch-option')
     await userEvent.click(options[0])
 
-    expect(onCheckoutEnvironmentBranch).toHaveBeenCalledWith(
-      currentProject,
-      'feature/mobile',
-      {
-        deviceId: 'device-1',
-        path: '/workspace/github_wegent',
-        source: 'project',
-      },
-    )
+    expect(onCheckoutEnvironmentBranch).toHaveBeenCalledWith(currentProject, 'feature/mobile', {
+      deviceId: 'device-1',
+      path: '/workspace/github_wegent',
+      source: 'project',
+    })
   })
 
   test('keeps the conversation chrome fixed while only messages scroll', () => {
@@ -595,34 +537,28 @@ describe('MobileWorkbenchLayout', () => {
     expect(screen.getByTestId('chat-message-scroll-area')).toHaveClass(
       'overflow-y-auto',
       'pb-28',
-      'pt-16',
+      'pt-16'
     )
     expect(screen.getByTestId('mobile-chat-input-dock')).toHaveClass(
       'absolute',
       'bottom-0',
       'pointer-events-none',
-      'z-chrome',
+      'z-chrome'
     )
     expect(screen.getByTestId('mobile-conversation-header')).toHaveClass(
       'absolute',
       'bg-background/95',
       'backdrop-blur',
-      'z-chrome',
+      'z-chrome'
     )
     expect(screen.getByTestId('mobile-conversation-header')).toHaveClass('gap-2')
     expect(screen.getByTestId('open-mobile-drawer-button').closest('header')).toHaveClass(
       'absolute',
-      'pointer-events-none',
+      'pointer-events-none'
     )
-    expect(screen.getByTestId('open-mobile-drawer-button')).toHaveClass(
-      'pointer-events-auto',
-    )
-    expect(screen.getByTestId('open-mobile-drawer-button')).not.toHaveClass(
-      'bg-surface',
-    )
-    expect(screen.getByTestId('model-selector-button')).toHaveTextContent(
-      'kimi-for-coding',
-    )
+    expect(screen.getByTestId('open-mobile-drawer-button')).toHaveClass('pointer-events-auto')
+    expect(screen.getByTestId('open-mobile-drawer-button')).not.toHaveClass('bg-surface')
+    expect(screen.getByTestId('model-selector-button')).toHaveTextContent('kimi-for-coding')
   })
 
   test('opens continue-in-im dialog from the active task header button', async () => {
@@ -630,7 +566,7 @@ describe('MobileWorkbenchLayout', () => {
       total: 1,
       items: [
         {
-          id: 1,
+          session_key: 'session-1',
           channel_type: 'wecom',
           channel_label: 'WeCom',
           channel_id: 101,
@@ -671,18 +607,15 @@ describe('MobileWorkbenchLayout', () => {
         onInputChange={vi.fn()}
         onSend={vi.fn()}
         onListImPrivateSessions={onListImPrivateSessions}
-      />,
+      />
     )
 
     await userEvent.click(screen.getByTestId('mobile-continue-in-im-button'))
 
-    expect(screen.getByTestId('mobile-continue-in-im-button')).toHaveClass(
-      'h-11',
-      'min-w-[44px]',
-    )
+    expect(screen.getByTestId('mobile-continue-in-im-button')).toHaveClass('h-11', 'min-w-[44px]')
     expect(onListImPrivateSessions).toHaveBeenCalledTimes(1)
     expect(await screen.findByRole('dialog')).toBeInTheDocument()
-    expect(await screen.findByTestId('continue-im-session-1')).toHaveTextContent('Alice')
+    expect(await screen.findByTestId('continue-im-session-session-1')).toHaveTextContent('Alice')
   })
 
   test('hides continue-in-im action for mobile group chat tasks', () => {
@@ -715,7 +648,7 @@ describe('MobileWorkbenchLayout', () => {
         onInputChange={vi.fn()}
         onSend={vi.fn()}
         onListImPrivateSessions={onListImPrivateSessions}
-      />,
+      />
     )
 
     expect(screen.queryByTestId('mobile-continue-in-im-button')).not.toBeInTheDocument()
@@ -727,7 +660,7 @@ describe('MobileWorkbenchLayout', () => {
     type PrivateSessionResponse = {
       total: number
       items: Array<{
-        id: number
+        session_key: string
         channel_type: string
         channel_label: string
         channel_id: number
@@ -773,7 +706,7 @@ describe('MobileWorkbenchLayout', () => {
         onInputChange={vi.fn()}
         onSend={vi.fn()}
         onListImPrivateSessions={onListImPrivateSessions}
-      />,
+      />
     )
 
     await userEvent.click(screen.getByTestId('mobile-continue-in-im-button'))
@@ -784,7 +717,7 @@ describe('MobileWorkbenchLayout', () => {
       total: 1,
       items: [
         {
-          id: 2,
+          session_key: 'session-2',
           channel_type: 'wecom',
           channel_label: 'WeCom',
           channel_id: 102,
@@ -799,13 +732,15 @@ describe('MobileWorkbenchLayout', () => {
       ],
     })
 
-    expect(await screen.findByTestId('continue-im-session-2')).toHaveTextContent('Fresh session')
+    expect(await screen.findByTestId('continue-im-session-session-2')).toHaveTextContent(
+      'Fresh session'
+    )
 
     firstRequest.resolve({
       total: 1,
       items: [
         {
-          id: 1,
+          session_key: 'session-1',
           channel_type: 'wecom',
           channel_label: 'WeCom',
           channel_id: 101,
@@ -854,7 +789,7 @@ describe('MobileWorkbenchLayout', () => {
           total: 1,
           items: [
             {
-              id: 1,
+              session_key: 'session-1',
               channel_type: 'wecom',
               channel_label: 'WeCom',
               channel_id: 101,
@@ -868,11 +803,11 @@ describe('MobileWorkbenchLayout', () => {
             },
           ],
         })}
-      />,
+      />
     )
 
     await userEvent.click(screen.getByTestId('mobile-continue-in-im-button'))
-    await userEvent.click(await screen.findByTestId('continue-im-session-1'))
+    await userEvent.click(await screen.findByTestId('continue-im-session-session-1'))
     await userEvent.click(screen.getByTestId('continue-im-submit-button'))
 
     expect(await screen.findByTestId('transient-notice')).toHaveTextContent('继续到私聊失败')
@@ -909,16 +844,12 @@ describe('MobileWorkbenchLayout', () => {
     expect(screen.queryByText('项目任务')).not.toBeInTheDocument()
     expect(screen.getByTestId('mobile-project-item-button')).toHaveAttribute(
       'aria-expanded',
-      'false',
+      'false'
     )
-    expect(screen.getByTestId('mobile-project-item-button')).toHaveClass(
-      'text-[#111111]',
-    )
+    expect(screen.getByTestId('mobile-project-item-button')).toHaveClass('text-[#111111]')
     expect(screen.getByText('对话')).toBeInTheDocument()
     expect(screen.getByText('远程连接 Claude Code')).toBeInTheDocument()
-    expect(screen.getByTestId('mobile-recent-task-button')).toHaveClass(
-      'text-[#111111]',
-    )
+    expect(screen.getByTestId('mobile-recent-task-button')).toHaveClass('text-[#111111]')
     expect(screen.queryByText('4d')).not.toBeInTheDocument()
     expect(screen.getByTestId('mobile-new-chat-button')).toHaveTextContent('聊天')
     expect(screen.getByTestId('mobile-new-chat-button')).toHaveClass('bg-[#1F1F1F]')
@@ -951,7 +882,7 @@ describe('MobileWorkbenchLayout', () => {
     expect(onSelectProject).toHaveBeenCalledWith(1)
     expect(screen.getByTestId('mobile-project-item-button')).toHaveAttribute(
       'aria-expanded',
-      'true',
+      'true'
     )
 
     await userEvent.click(screen.getByText('项目任务'))
@@ -1048,25 +979,17 @@ describe('MobileWorkbenchLayout', () => {
     expect(screen.getByText('使用现有目录')).toBeInTheDocument()
     expect(screen.getByText('从 Git 克隆')).toBeInTheDocument()
 
-    await userEvent.click(
-      screen.getByTestId('mobile-project-create-menu-backdrop'),
-    )
-    expect(
-      screen.queryByTestId('mobile-project-create-menu'),
-    ).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('mobile-project-create-menu-backdrop'))
+    expect(screen.queryByTestId('mobile-project-create-menu')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('mobile-new-project-button'))
-    await userEvent.click(
-      screen.getByTestId('mobile-project-start-from-scratch-button'),
-    )
+    await userEvent.click(screen.getByTestId('mobile-project-start-from-scratch-button'))
 
     expect(screen.getByTestId('project-create-dialog')).toHaveClass(
       'rounded-t-[28px]',
-      'max-h-[88dvh]',
+      'max-h-[88dvh]'
     )
-    expect(screen.getByTestId('project-create-dialog').parentElement).toHaveClass(
-      'items-end',
-    )
+    expect(screen.getByTestId('project-create-dialog').parentElement).toHaveClass('items-end')
   })
 
   test('opens project actions on long press without expanding the project', async () => {
@@ -1101,17 +1024,11 @@ describe('MobileWorkbenchLayout', () => {
     expect(await screen.findByTestId('mobile-project-actions-menu')).toBeInTheDocument()
     expect(screen.getByTestId('mobile-project-actions-menu')).toHaveClass(
       'w-[240px]',
-      'rounded-2xl',
+      'rounded-2xl'
     )
-    expect(screen.getByTestId('mobile-rename-project-button')).toHaveTextContent(
-      '重命名项目',
-    )
-    expect(
-      screen.getByTestId('mobile-archive-project-chats-button'),
-    ).toHaveTextContent('归档会话')
-    expect(screen.getByTestId('mobile-remove-project-button')).toHaveTextContent(
-      '移除',
-    )
+    expect(screen.getByTestId('mobile-rename-project-button')).toHaveTextContent('重命名项目')
+    expect(screen.getByTestId('mobile-archive-project-chats-button')).toHaveTextContent('归档会话')
+    expect(screen.getByTestId('mobile-remove-project-button')).toHaveTextContent('移除')
     expect(onSelectProject).not.toHaveBeenCalled()
 
     await userEvent.click(screen.getByTestId('mobile-rename-project-button'))
@@ -1119,7 +1036,7 @@ describe('MobileWorkbenchLayout', () => {
     await userEvent.clear(screen.getByTestId('mobile-inline-project-name-input'))
     await userEvent.type(
       screen.getByTestId('mobile-inline-project-name-input'),
-      'renamed-project{enter}',
+      'renamed-project{enter}'
     )
     expect(onUpdateProjectName).toHaveBeenCalledWith(1, 'renamed-project')
   })
@@ -1153,25 +1070,15 @@ describe('MobileWorkbenchLayout', () => {
     await new Promise(resolve => setTimeout(resolve, 550))
     fireEvent.pointerUp(chatButton, { pointerType: 'touch' })
 
-    expect(screen.getByTestId('mobile-chat-actions-menu')).toHaveClass(
-      'w-[240px]',
-      'rounded-2xl',
-    )
-    expect(screen.getByTestId('mobile-rename-chat-button')).toHaveTextContent(
-      '重命名会话',
-    )
-    expect(screen.getByTestId('mobile-archive-chat-button')).toHaveTextContent(
-      '归档会话',
-    )
+    expect(screen.getByTestId('mobile-chat-actions-menu')).toHaveClass('w-[240px]', 'rounded-2xl')
+    expect(screen.getByTestId('mobile-rename-chat-button')).toHaveTextContent('重命名会话')
+    expect(screen.getByTestId('mobile-archive-chat-button')).toHaveTextContent('归档会话')
     expect(onOpenTask).not.toHaveBeenCalled()
 
     await userEvent.click(screen.getByTestId('mobile-rename-chat-button'))
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     await userEvent.clear(screen.getByTestId('mobile-inline-chat-name-input'))
-    await userEvent.type(
-      screen.getByTestId('mobile-inline-chat-name-input'),
-      'renamed-chat{enter}',
-    )
+    await userEvent.type(screen.getByTestId('mobile-inline-chat-name-input'), 'renamed-chat{enter}')
     expect(onRenameTask).toHaveBeenCalledWith(3, 'renamed-chat')
   })
 

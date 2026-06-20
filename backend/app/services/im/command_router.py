@@ -46,7 +46,7 @@ class _ChoiceOption:
 class IMCommandRouter:
     """Route private IM commands without depending on a provider SDK."""
 
-    def route(
+    async def route(
         self,
         db: Session,
         session: IMPrivateSession,
@@ -58,9 +58,11 @@ class IMCommandRouter:
         if not text:
             return IMCommandResult(handled=False)
 
-        pending_payload = im_session_service.get_active_pending_payload(db, session)
+        pending_payload = await im_session_service.get_active_pending_payload(
+            db, session
+        )
         if pending_payload is not None:
-            return self._route_pending(
+            return await self._route_pending(
                 db=db,
                 session=session,
                 text=text,
@@ -71,7 +73,7 @@ class IMCommandRouter:
 
         command = parse_command(text)
         if command is not None:
-            return self._route_command(
+            return await self._route_command(
                 db=db,
                 session=session,
                 command=command.command,
@@ -88,7 +90,7 @@ class IMCommandRouter:
                     task_id=session.active_task_id,
                     message=text,
                 )
-            return self._begin_task_creation(
+            return await self._begin_task_creation(
                 db=db,
                 session=session,
                 projects=projects,
@@ -97,7 +99,7 @@ class IMCommandRouter:
 
         return IMCommandResult(handled=False)
 
-    def _route_command(
+    async def _route_command(
         self,
         *,
         db: Session,
@@ -117,12 +119,12 @@ class IMCommandRouter:
             mode = (argument or "").strip().lower()
             if mode in {"chat", "task"}:
                 if mode == "chat":
-                    im_session_service.set_mode(
+                    await im_session_service.set_mode(
                         db, session=session, mode=IMSessionMode.CHAT
                     )
                     return IMCommandResult(handled=True, reply="已切换到 Chat 模式。")
 
-                im_session_service.set_mode(
+                await im_session_service.set_mode(
                     db, session=session, mode=IMSessionMode.TASK
                 )
                 if session.active_task_id:
@@ -130,7 +132,7 @@ class IMCommandRouter:
                         handled=True,
                         reply=f"当前为 Task 模式，任务 ID：{session.active_task_id}。",
                     )
-                return self._begin_task_switch(
+                return await self._begin_task_switch(
                     db=db,
                     session=session,
                     recent_tasks=recent_tasks,
@@ -139,40 +141,46 @@ class IMCommandRouter:
             return IMCommandResult(handled=True, reply=self._format_mode_reply(session))
 
         if command == CommandType.CHAT:
-            im_session_service.set_mode(db, session=session, mode=IMSessionMode.CHAT)
+            await im_session_service.set_mode(
+                db, session=session, mode=IMSessionMode.CHAT
+            )
             return IMCommandResult(handled=True, reply="已切换到 Chat 模式。")
 
         if command == CommandType.TASK:
-            im_session_service.set_mode(db, session=session, mode=IMSessionMode.TASK)
+            await im_session_service.set_mode(
+                db, session=session, mode=IMSessionMode.TASK
+            )
             if session.active_task_id:
                 return IMCommandResult(
                     handled=True,
                     reply=f"当前为 Task 模式，任务 ID：{session.active_task_id}。",
                 )
-            return self._begin_task_switch(
+            return await self._begin_task_switch(
                 db=db,
                 session=session,
                 recent_tasks=recent_tasks,
             )
 
         if command == CommandType.SWITCH:
-            im_session_service.set_mode(db, session=session, mode=IMSessionMode.TASK)
-            return self._begin_task_switch(
+            await im_session_service.set_mode(
+                db, session=session, mode=IMSessionMode.TASK
+            )
+            return await self._begin_task_switch(
                 db=db,
                 session=session,
                 recent_tasks=recent_tasks,
             )
 
         if command == CommandType.NEW:
-            return self._begin_new_flow(db=db, session=session)
+            return await self._begin_new_flow(db=db, session=session)
 
         if command == CommandType.CANCEL:
-            im_session_service.cancel_pending(db, session=session)
+            await im_session_service.cancel_pending(db, session=session)
             return IMCommandResult(handled=True, reply="已取消。")
 
         return IMCommandResult(handled=False)
 
-    def _route_pending(
+    async def _route_pending(
         self,
         *,
         db: Session,
@@ -184,11 +192,11 @@ class IMCommandRouter:
     ) -> IMCommandResult:
         command = parse_command(text)
         if command is not None and command.command == CommandType.CANCEL:
-            im_session_service.cancel_pending(db, session=session)
+            await im_session_service.cancel_pending(db, session=session)
             return IMCommandResult(handled=True, reply="已取消。")
 
         if session.state == IMSessionState.PENDING_NEW_FLOW:
-            return self._route_pending_new_flow(
+            return await self._route_pending_new_flow(
                 db=db,
                 session=session,
                 text=text,
@@ -197,7 +205,7 @@ class IMCommandRouter:
             )
 
         if session.state == IMSessionState.PENDING_TASK_SWITCH:
-            return self._route_pending_task_switch(
+            return await self._route_pending_task_switch(
                 db=db,
                 session=session,
                 text=text,
@@ -206,7 +214,7 @@ class IMCommandRouter:
             )
 
         if session.state == IMSessionState.PENDING_TASK_CREATION:
-            return self._route_pending_task_creation(
+            return await self._route_pending_task_creation(
                 db=db,
                 session=session,
                 text=text,
@@ -215,7 +223,7 @@ class IMCommandRouter:
 
         return IMCommandResult(handled=True, reply="请输入序号，或发送 /cancel 取消。")
 
-    def _route_pending_task_switch(
+    async def _route_pending_task_switch(
         self,
         *,
         db: Session,
@@ -225,7 +233,7 @@ class IMCommandRouter:
         projects: Sequence[Any],
     ) -> IMCommandResult:
         if text.lower() == "new":
-            return self._begin_task_creation(
+            return await self._begin_task_creation(
                 db=db,
                 session=session,
                 projects=projects,
@@ -246,7 +254,7 @@ class IMCommandRouter:
             task_id=task_id,
         )
 
-    def _route_pending_task_creation(
+    async def _route_pending_task_creation(
         self,
         *,
         db: Session,
@@ -289,7 +297,7 @@ class IMCommandRouter:
         message = str(payload.get("first_message") or "").strip()
         if not message:
             updated_payload = {**payload, "selected_project_id": project_id}
-            im_session_service.set_pending_state(
+            await im_session_service.set_pending_state(
                 db=db,
                 session=session,
                 state=IMSessionState.PENDING_TASK_CREATION,
@@ -308,13 +316,13 @@ class IMCommandRouter:
             message=message,
         )
 
-    def _begin_new_flow(
+    async def _begin_new_flow(
         self,
         *,
         db: Session,
         session: IMPrivateSession,
     ) -> IMCommandResult:
-        im_session_service.set_pending_state(
+        await im_session_service.set_pending_state(
             db=db,
             session=session,
             state=IMSessionState.PENDING_NEW_FLOW,
@@ -323,7 +331,7 @@ class IMCommandRouter:
         )
         return IMCommandResult(handled=True, reply=self._format_new_flow_reply())
 
-    def _route_pending_new_flow(
+    async def _route_pending_new_flow(
         self,
         *,
         db: Session,
@@ -334,7 +342,9 @@ class IMCommandRouter:
     ) -> IMCommandResult:
         normalized = text.strip().lower()
         if normalized in {"1", "chat"}:
-            im_session_service.set_mode(db, session=session, mode=IMSessionMode.CHAT)
+            await im_session_service.set_mode(
+                db, session=session, mode=IMSessionMode.CHAT
+            )
             return IMCommandResult(
                 handled=True,
                 action=IMCommandAction.START_CHAT,
@@ -342,8 +352,10 @@ class IMCommandRouter:
             )
 
         if normalized in {"2", "task"}:
-            im_session_service.set_mode(db, session=session, mode=IMSessionMode.TASK)
-            return self._begin_task_creation(
+            await im_session_service.set_mode(
+                db, session=session, mode=IMSessionMode.TASK
+            )
+            return await self._begin_task_creation(
                 db=db,
                 session=session,
                 projects=projects,
@@ -351,8 +363,10 @@ class IMCommandRouter:
             )
 
         if normalized in {"3", "switch", "recent"}:
-            im_session_service.set_mode(db, session=session, mode=IMSessionMode.TASK)
-            return self._begin_task_switch(
+            await im_session_service.set_mode(
+                db, session=session, mode=IMSessionMode.TASK
+            )
+            return await self._begin_task_switch(
                 db=db,
                 session=session,
                 recent_tasks=recent_tasks,
@@ -363,7 +377,7 @@ class IMCommandRouter:
             reply="请输入 1、2 或 3，或发送 /cancel 取消。",
         )
 
-    def _begin_task_switch(
+    async def _begin_task_switch(
         self,
         *,
         db: Session,
@@ -371,7 +385,7 @@ class IMCommandRouter:
         recent_tasks: Sequence[Any],
     ) -> IMCommandResult:
         task_options = self._build_options(recent_tasks, fallback_prefix="任务")
-        im_session_service.set_pending_state(
+        await im_session_service.set_pending_state(
             db=db,
             session=session,
             state=IMSessionState.PENDING_TASK_SWITCH,
@@ -382,7 +396,7 @@ class IMCommandRouter:
             reply=self._format_task_switch_reply(task_options),
         )
 
-    def _begin_task_creation(
+    async def _begin_task_creation(
         self,
         *,
         db: Session,
@@ -391,7 +405,7 @@ class IMCommandRouter:
         first_message: str,
     ) -> IMCommandResult:
         project_options = self._build_options(projects, fallback_prefix="项目")
-        im_session_service.set_pending_state(
+        await im_session_service.set_pending_state(
             db=db,
             session=session,
             state=IMSessionState.PENDING_TASK_CREATION,

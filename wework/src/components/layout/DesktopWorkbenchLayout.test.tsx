@@ -551,7 +551,7 @@ describe('DesktopWorkbenchLayout', () => {
       total: 1,
       items: [
         {
-          id: 1,
+          session_key: 'session-1',
           channel_type: 'wecom',
           channel_label: 'WeCom',
           channel_id: 101,
@@ -596,7 +596,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(onListImPrivateSessions).toHaveBeenCalledTimes(1)
     expect(await screen.findByRole('dialog')).toBeInTheDocument()
-    expect(await screen.findByTestId('continue-im-session-1')).toHaveTextContent('Alice')
+    expect(await screen.findByTestId('continue-im-session-session-1')).toHaveTextContent('Alice')
   })
 
   test('keeps continue-in-im action with workspace panel actions on web', () => {
@@ -724,7 +724,7 @@ describe('DesktopWorkbenchLayout', () => {
     type PrivateSessionResponse = {
       total: number
       items: Array<{
-        id: number
+        session_key: string
         channel_type: string
         channel_label: string
         channel_id: number
@@ -778,7 +778,7 @@ describe('DesktopWorkbenchLayout', () => {
       total: 1,
       items: [
         {
-          id: 2,
+          session_key: 'session-2',
           channel_type: 'wecom',
           channel_label: 'WeCom',
           channel_id: 102,
@@ -793,13 +793,15 @@ describe('DesktopWorkbenchLayout', () => {
       ],
     })
 
-    expect(await screen.findByTestId('continue-im-session-2')).toHaveTextContent('Fresh session')
+    expect(await screen.findByTestId('continue-im-session-session-2')).toHaveTextContent(
+      'Fresh session'
+    )
 
     firstRequest.resolve({
       total: 1,
       items: [
         {
-          id: 1,
+          session_key: 'session-1',
           channel_type: 'wecom',
           channel_label: 'WeCom',
           channel_id: 101,
@@ -845,7 +847,7 @@ describe('DesktopWorkbenchLayout', () => {
           total: 1,
           items: [
             {
-              id: 1,
+              session_key: 'session-1',
               channel_type: 'wecom',
               channel_label: 'WeCom',
               channel_id: 101,
@@ -863,7 +865,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await userEvent.click(screen.getByTestId('continue-in-im-button'))
-    await userEvent.click(await screen.findByTestId('continue-im-session-1'))
+    await userEvent.click(await screen.findByTestId('continue-im-session-session-1'))
     await userEvent.click(screen.getByTestId('continue-im-submit-button'))
 
     expect(await screen.findByTestId('transient-notice')).toHaveTextContent('继续到私聊失败')

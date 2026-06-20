@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
 from datetime import datetime
 
 import pytest
@@ -14,6 +15,11 @@ from app.models.im_session import IMPrivateSession, IMSessionMode
 from app.models.task import TaskResource
 from app.models.user import User
 from app.services.im.session_service import im_session_service
+
+
+@pytest.fixture(autouse=True)
+def use_fake_im_session_cache(fake_im_session_cache):
+    return fake_im_session_cache
 
 
 def _auth_header(token: str) -> dict[str, str]:
@@ -72,15 +78,23 @@ def _create_session(
     channel_id: int = 12,
     conversation_id: str,
 ) -> IMPrivateSession:
-    return im_session_service.get_or_create_private_session(
-        db=db,
-        user_id=user_id,
-        channel_type=channel_type,
-        channel_id=channel_id,
-        conversation_id=conversation_id,
-        sender_id=f"sender-{conversation_id}",
-        display_name=f"User {conversation_id}",
+    return asyncio.run(
+        im_session_service.get_or_create_private_session(
+            db=db,
+            user_id=user_id,
+            channel_type=channel_type,
+            channel_id=channel_id,
+            conversation_id=conversation_id,
+            sender_id=f"sender-{conversation_id}",
+            display_name=f"User {conversation_id}",
+        )
     )
+
+
+def _get_session(session_key: str) -> IMPrivateSession:
+    session = asyncio.run(im_session_service.get_session(session_key))
+    assert session is not None
+    return session
 
 
 def _create_other_user(db: Session) -> User:
@@ -130,12 +144,14 @@ def test_list_private_sessions_returns_current_user_sessions_with_channel_label(
 
     assert response.status_code == 200
     payload = response.json()
-    item_ids = {item["id"] for item in payload["items"]}
+    item_keys = {item["session_key"] for item in payload["items"]}
     assert payload["total"] == 2
-    assert item_ids == {mine.id, telegram.id}
-    labels_by_id = {item["id"]: item["channel_label"] for item in payload["items"]}
-    assert labels_by_id[mine.id] == "钉钉"
-    assert labels_by_id[telegram.id] == "Telegram"
+    assert item_keys == {mine.session_key, telegram.session_key}
+    labels_by_key = {
+        item["session_key"]: item["channel_label"] for item in payload["items"]
+    }
+    assert labels_by_key[mine.session_key] == "钉钉"
+    assert labels_by_key[telegram.session_key] == "Telegram"
 
 
 def test_list_private_sessions_returns_discord_channel_label(
@@ -160,11 +176,13 @@ def test_list_private_sessions_returns_discord_channel_label(
 
     assert response.status_code == 200
     payload = response.json()
-    labels_by_id = {item["id"]: item["channel_label"] for item in payload["items"]}
-    assert labels_by_id[session.id] == "Discord"
+    labels_by_key = {
+        item["session_key"]: item["channel_label"] for item in payload["items"]
+    }
+    assert labels_by_key[session.session_key] == "Discord"
 
 
-def test_bind_task_private_sessions_returns_bound_ids_and_notified_count(
+def test_bind_task_private_sessions_returns_bound_keys_and_notified_count(
     test_client: TestClient,
     test_db: Session,
     test_user: User,
@@ -193,7 +211,7 @@ def test_bind_task_private_sessions_returns_bound_ids_and_notified_count(
     async def fake_send_task_switched(db, sessions, task_title):
         calls.append(
             {
-                "session_ids": [session.id for session in sessions],
+                "session_keys": [session.session_key for session in sessions],
                 "task_title": task_title,
             }
         )
@@ -207,25 +225,27 @@ def test_bind_task_private_sessions_returns_bound_ids_and_notified_count(
     response = test_client.post(
         f"/api/tasks/{task.id}/im-sessions",
         headers=_auth_header(test_token),
-        json={"session_ids": [second.id, first.id]},
+        json={"session_keys": [second.session_key, first.session_key]},
     )
 
     assert response.status_code == 200
     assert response.json() == {
         "task_id": task.id,
-        "bound_session_ids": [second.id, first.id],
+        "bound_session_keys": [second.session_key, first.session_key],
         "notified_count": 2,
     }
     assert calls == [
         {
-            "session_ids": [second.id, first.id],
+            "session_keys": [second.session_key, first.session_key],
             "task_title": "绑定 IM 会话",
         }
     ]
-    assert first.mode == IMSessionMode.TASK
-    assert first.active_task_id == task.id
-    assert second.mode == IMSessionMode.TASK
-    assert second.active_task_id == task.id
+    bound_first = _get_session(first.session_key)
+    bound_second = _get_session(second.session_key)
+    assert bound_first.mode == IMSessionMode.TASK
+    assert bound_first.active_task_id == task.id
+    assert bound_second.mode == IMSessionMode.TASK
+    assert bound_second.active_task_id == task.id
 
 
 def test_bind_task_private_sessions_rejects_wrong_origin_task(
@@ -251,7 +271,7 @@ def test_bind_task_private_sessions_rejects_wrong_origin_task(
     response = test_client.post(
         f"/api/tasks/{task.id}/im-sessions",
         headers=_auth_header(test_token),
-        json={"session_ids": [session.id]},
+        json={"session_keys": [session.session_key]},
     )
 
     assert response.status_code == 404
@@ -274,7 +294,7 @@ def test_bind_task_private_sessions_rejects_missing_session(
     response = test_client.post(
         f"/api/tasks/{task.id}/im-sessions",
         headers=_auth_header(test_token),
-        json={"session_ids": [987654321]},
+        json={"session_keys": ["missing-session-key"]},
     )
 
     assert response.status_code == 404

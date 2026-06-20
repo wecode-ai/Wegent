@@ -664,7 +664,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
             im_session = None
             if self._is_private_conversation(message_context):
-                im_session = im_session_service.get_or_create_private_session(
+                im_session = await im_session_service.get_or_create_private_session(
                     db=db,
                     user_id=user.id,
                     channel_type=self._channel_type.value,
@@ -852,7 +852,9 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             )
             raise
 
-        im_session_service.bind_active_task(db, session=im_session, task_id=task.id)
+        await im_session_service.bind_active_task(
+            db, session=im_session, task_id=task.id
+        )
         title = im_task_continuation_service.get_task_title(task)
         await self.send_text_reply(message_context, f"已切换到任务：{title}。")
 
@@ -900,7 +902,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 user.id,
                 task_id,
             )
-            im_session_service.clear_active_task(db, session=im_session)
+            await im_session_service.clear_active_task(db, session=im_session)
             await self.send_text_reply(
                 message_context, "当前任务不可用，请使用 /switch 重新选择任务。"
             )
@@ -1012,7 +1014,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             should_trigger_ai=bool(message.strip()),
             source="im",
         )
-        im_session_service.bind_active_task(
+        await im_session_service.bind_active_task(
             db, session=im_session, task_id=result.task.id
         )
 

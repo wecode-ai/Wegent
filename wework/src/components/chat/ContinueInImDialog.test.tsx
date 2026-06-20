@@ -6,19 +6,19 @@ import type { IMPrivateSession } from '@/types/api'
 import { ContinueInImDialog } from './ContinueInImDialog'
 
 function createSession(
-  id: number,
+  index: number,
   displayName: string,
-  channelLabel = 'WeCom',
+  channelLabel = 'WeCom'
 ): IMPrivateSession {
   return {
-    id,
+    session_key: `session-${index}`,
     channel_type: 'wecom',
     channel_label: channelLabel,
-    channel_id: 100 + id,
-    conversation_id: `conversation-${id}`,
-    sender_id: `sender-${id}`,
+    channel_id: 100 + index,
+    conversation_id: `conversation-${index}`,
+    sender_id: `sender-${index}`,
     display_name: displayName,
-    mode: id % 2 === 0 ? 'task' : 'chat',
+    mode: index % 2 === 0 ? 'task' : 'chat',
     state: 'idle',
     active_task_id: null,
     last_seen_at: '2026-06-20T00:00:00.000Z',
@@ -42,7 +42,7 @@ describe('ContinueInImDialog', () => {
     expect(screen.getByTestId('continue-im-empty-guide')).toHaveTextContent('/bind')
   })
 
-  test('submits selected session ids', async () => {
+  test('submits selected session keys', async () => {
     const onSubmit = vi.fn().mockResolvedValue(undefined)
 
     render(
@@ -56,11 +56,11 @@ describe('ContinueInImDialog', () => {
       />
     )
 
-    await userEvent.click(screen.getByTestId('continue-im-session-1'))
-    await userEvent.click(screen.getByTestId('continue-im-session-2'))
+    await userEvent.click(screen.getByTestId('continue-im-session-session-1'))
+    await userEvent.click(screen.getByTestId('continue-im-session-session-2'))
     await userEvent.click(screen.getByTestId('continue-im-submit-button'))
 
-    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith([1, 2]))
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(['session-1', 'session-2']))
   })
 
   test('shows channel labels in session rows', () => {
@@ -75,7 +75,7 @@ describe('ContinueInImDialog', () => {
       />
     )
 
-    const session = screen.getByTestId('continue-im-session-1')
+    const session = screen.getByTestId('continue-im-session-session-1')
     expect(session).toHaveTextContent('Alice')
     expect(session).toHaveTextContent('Telegram')
   })
@@ -114,7 +114,7 @@ describe('ContinueInImDialog', () => {
 
     expect(screen.getByTestId('continue-im-close-button')).toHaveFocus()
 
-    await userEvent.click(screen.getByTestId('continue-im-session-1'))
+    await userEvent.click(screen.getByTestId('continue-im-session-session-1'))
     screen.getByTestId('continue-im-close-button').focus()
     await userEvent.tab({ shift: true })
     expect(screen.getByTestId('continue-im-submit-button')).toHaveFocus()

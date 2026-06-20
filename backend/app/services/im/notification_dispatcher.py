@@ -47,7 +47,7 @@ class IMNotificationDispatcher:
 
         for session in sessions:
             result = await self.send_text(db, session, message)
-            result.setdefault("session_id", session.id)
+            result.setdefault("session_key", session.session_key)
             results.append(result)
             if result.get("success"):
                 sent += 1
@@ -89,8 +89,8 @@ class IMNotificationDispatcher:
         except Exception as exc:
             logger.exception(
                 "[IMNotificationDispatcher] Failed to send notification: "
-                "session_id=%s channel_type=%s",
-                session.id,
+                "session_key=%s channel_type=%s",
+                session.session_key,
                 session.channel_type,
             )
             return {

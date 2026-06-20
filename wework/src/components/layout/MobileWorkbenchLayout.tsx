@@ -116,7 +116,7 @@ interface MobileWorkbenchLayoutProps {
   onListImPrivateSessions?: () => Promise<IMPrivateSessionListResponse>
   onBindTaskToImSessions?: (
     taskId: number,
-    sessionIds: number[]
+    sessionKeys: string[]
   ) => Promise<BindTaskIMSessionsResponse>
   onUpgradeDevice?: (deviceId: string) => Promise<void>
   onInputChange: (value: string) => void
@@ -449,7 +449,7 @@ export function MobileWorkbenchLayout({
   }, [])
 
   const submitContinueInIm = useCallback(
-    async (sessionIds: number[]) => {
+    async (sessionKeys: string[]) => {
       if (!state.currentTask || state.currentTask.is_group_chat) return
 
       setImSessionsSubmitting(true)
@@ -457,7 +457,7 @@ export function MobileWorkbenchLayout({
         if (!onBindTaskToImSessions) {
           throw new Error('IM bind handler is not available')
         }
-        await onBindTaskToImSessions(state.currentTask.id, sessionIds)
+        await onBindTaskToImSessions(state.currentTask.id, sessionKeys)
         setContinueInImOpen(false)
         setNotice({ message: t('workbench.continue_im_success'), tone: 'success' })
       } catch {

@@ -22,10 +22,10 @@ from app.services.im.session_service import im_session_service
 from app.services.im.task_continuation_service import (
     bind_task_to_sessions,
     get_task_title,
-    load_user_private_sessions_by_ids,
+    load_user_private_sessions_by_keys,
     validate_personal_wework_task,
 )
-from shared.telemetry.decorators import trace_async, trace_sync
+from shared.telemetry.decorators import trace_async
 
 im_router = APIRouter()
 tasks_router = APIRouter()
@@ -35,14 +35,14 @@ tasks_router = APIRouter()
     "/private-sessions",
     response_model=IMPrivateSessionListResponse,
 )
-@trace_sync("list_private_im_sessions", "im.api")
-def list_private_sessions(
+@trace_async("list_private_im_sessions", "im.api")
+async def list_private_sessions(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> IMPrivateSessionListResponse:
     """List the current user's private IM sessions."""
 
-    sessions = im_session_service.list_user_sessions(db, user_id=current_user.id)
+    sessions = await im_session_service.list_user_sessions(db, user_id=current_user.id)
     return IMPrivateSessionListResponse(
         total=len(sessions),
         items=[_private_session_out(session) for session in sessions],
@@ -63,16 +63,16 @@ async def bind_task_private_sessions(
     """Bind private IM sessions to a personal WeWork task."""
 
     task = validate_personal_wework_task(db, current_user.id, task_id)
-    bound_session_ids = bind_task_to_sessions(
+    bound_session_keys = await bind_task_to_sessions(
         db,
         current_user.id,
         task.id,
-        payload.session_ids,
+        payload.session_keys,
     )
-    sessions = load_user_private_sessions_by_ids(
+    sessions = await load_user_private_sessions_by_keys(
         db,
         user_id=current_user.id,
-        session_ids=bound_session_ids,
+        session_keys=bound_session_keys,
     )
     notification = await im_notification_dispatcher.send_task_switched(
         db,
@@ -81,14 +81,14 @@ async def bind_task_private_sessions(
     )
     return BindTaskIMSessionsResponse(
         task_id=task.id,
-        bound_session_ids=bound_session_ids,
+        bound_session_keys=bound_session_keys,
         notified_count=int(notification.get("sent") or 0),
     )
 
 
 def _private_session_out(session: IMPrivateSession) -> IMPrivateSessionOut:
     return IMPrivateSessionOut(
-        id=session.id,
+        session_key=session.session_key,
         channel_type=session.channel_type,
         channel_label=im_session_service.get_channel_label(session.channel_type),
         channel_id=session.channel_id,

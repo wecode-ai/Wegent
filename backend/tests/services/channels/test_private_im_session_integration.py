@@ -111,16 +111,16 @@ def _message(
     }
 
 
-def _private_session(test_db: Session, test_user: User) -> IMPrivateSession | None:
-    return (
-        test_db.query(IMPrivateSession)
-        .filter(
-            IMPrivateSession.user_id == test_user.id,
-            IMPrivateSession.channel_type == "dingtalk",
-            IMPrivateSession.channel_id == 77,
-            IMPrivateSession.conversation_id == "conv-private",
+async def _private_session(
+    test_db: Session, test_user: User
+) -> IMPrivateSession | None:
+    return await im_session_service.get_session(
+        im_session_service.build_session_key(
+            user_id=test_user.id,
+            channel_type="dingtalk",
+            channel_id=77,
+            conversation_id="conv-private",
         )
-        .first()
     )
 
 
@@ -197,7 +197,7 @@ async def test_private_bind_creates_session_and_replies_bound(
     handled = await handler.handle_message(_message("/bind"))
 
     test_db.expire_all()
-    session = _private_session(test_db, test_user)
+    session = await _private_session(test_db, test_user)
     assert handled is True
     assert session is not None
     assert session.sender_id == "staff-a"
@@ -218,7 +218,10 @@ async def test_group_bind_does_not_create_private_session_and_uses_fallback(
     )
 
     assert handled is True
-    assert test_db.query(IMPrivateSession).count() == 0
+    sessions = await im_session_service.list_user_sessions(
+        test_db, user_id=test_user.id
+    )
+    assert sessions == []
     assert handler.replies == [
         "请在私聊会话中使用该命令；任务模式正在初始化，请稍后重试。"
     ]
@@ -240,7 +243,7 @@ async def test_private_chat_mode_plain_text_fallthrough_keeps_user_fields_usable
         im_session: IMPrivateSession,
         message_context: MessageContext,
     ) -> bool:
-        calls["session_id"] = im_session.id
+        calls["session_key"] = im_session.session_key
         return False
 
     async def fake_process_chat_message(
@@ -258,12 +261,12 @@ async def test_private_chat_mode_plain_text_fallthrough_keeps_user_fields_usable
     handled = await handler.handle_message(_message("普通私聊消息"))
 
     test_db.expire_all()
-    session = _private_session(test_db, test_user)
+    session = await _private_session(test_db, test_user)
     assert handled is True
     assert session is not None
-    assert calls["session_id"] == session.id
+    assert calls["session_key"] == session.session_key
     assert calls == {
-        "session_id": session.id,
+        "session_key": session.session_key,
         "user_email": test_user.email,
         "content": "普通私聊消息",
     }
@@ -282,7 +285,7 @@ async def test_private_task_then_numeric_choice_binds_recent_task_and_clears_pen
     second_handled = await handler.handle_message(_message("1"))
 
     test_db.expire_all()
-    session = _private_session(test_db, test_user)
+    session = await _private_session(test_db, test_user)
     assert first_handled is True
     assert second_handled is True
     assert session is not None
@@ -332,7 +335,7 @@ async def test_private_new_choice_chat_is_consumed_and_clears_cached_task(
     second_handled = await handler.handle_message(_message("1"))
 
     test_db.expire_all()
-    session = _private_session(test_db, test_user)
+    session = await _private_session(test_db, test_user)
     assert first_handled is True
     assert second_handled is True
     assert session is not None
@@ -358,8 +361,8 @@ async def test_task_mode_plain_text_appends_to_active_task_with_im_source_metada
     _create_team(test_db, test_user)
     task = _create_wework_task(test_db, test_user, title="继续私聊任务")
     handler = FakeChannelHandler(test_user)
-    session = im_session_service.get_or_create_private_session(
-        test_db,
+    session = await im_session_service.get_or_create_private_session(
+        db=test_db,
         user_id=test_user.id,
         channel_type="dingtalk",
         channel_id=77,
@@ -367,7 +370,7 @@ async def test_task_mode_plain_text_appends_to_active_task_with_im_source_metada
         sender_id="staff-a",
         display_name="Alice",
     )
-    im_session_service.bind_active_task(test_db, session=session, task_id=task.id)
+    await im_session_service.bind_active_task(test_db, session=session, task_id=task.id)
 
     calls: dict[str, Any] = {}
 
@@ -423,7 +426,7 @@ async def test_task_mode_plain_text_appends_to_active_task_with_im_source_metada
     assert calls["append"]["task_id"] == task.id
     assert calls["append"]["message"] == "继续处理这个任务"
     assert calls["append"]["message_source"]["source"] == "im"
-    assert calls["append"]["message_source"]["session_id"] == str(session.id)
+    assert calls["append"]["message_source"]["session_key"] == session.session_key
     assert calls["append"]["message_source"]["channel_label"] == "钉钉"
     assert calls["trigger"]["task"].id == task.id
     assert calls["trigger"]["user_subtask_id"] == 501
@@ -439,8 +442,8 @@ async def test_task_mode_media_only_message_appends_to_active_task_and_persists_
     _create_team(test_db, test_user)
     task = _create_wework_task(test_db, test_user, title="继续图片任务")
     handler = FakeChannelHandler(test_user)
-    session = im_session_service.get_or_create_private_session(
-        test_db,
+    session = await im_session_service.get_or_create_private_session(
+        db=test_db,
         user_id=test_user.id,
         channel_type="dingtalk",
         channel_id=77,
@@ -448,7 +451,7 @@ async def test_task_mode_media_only_message_appends_to_active_task_and_persists_
         sender_id="staff-a",
         display_name="Alice",
     )
-    im_session_service.bind_active_task(test_db, session=session, task_id=task.id)
+    await im_session_service.bind_active_task(test_db, session=session, task_id=task.id)
 
     calls: dict[str, Any] = {}
 
@@ -604,7 +607,7 @@ async def test_private_task_creation_uses_task_type_task_and_binds_new_task(
     handled = await handler.handle_message(_message("创建新的任务需求"))
 
     test_db.expire_all()
-    session = _private_session(test_db, test_user)
+    session = await _private_session(test_db, test_user)
     assert handled is True
     assert calls["create"]["message"] == "创建新的任务需求"
     assert calls["create"]["params"].task_type == "task"

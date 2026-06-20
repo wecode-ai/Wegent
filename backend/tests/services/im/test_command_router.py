@@ -10,14 +10,16 @@ from app.models.user import User
 from app.services.im.command_router import IMCommandAction, im_command_router
 from app.services.im.session_service import im_session_service
 
+pytestmark = pytest.mark.asyncio
 
-def _create_session(
+
+async def _create_session(
     db: Session,
     user: User,
     *,
     conversation_id: str = "conv-router",
 ):
-    return im_session_service.get_or_create_private_session(
+    return await im_session_service.get_or_create_private_session(
         db=db,
         user_id=user.id,
         channel_type="dingtalk",
@@ -42,13 +44,13 @@ def _projects() -> list[dict[str, object]]:
     ]
 
 
-def test_bind_command_is_handled_with_bound_reply(
+async def test_bind_command_is_handled_with_bound_reply(
     test_db: Session,
     test_user: User,
 ) -> None:
-    session = _create_session(test_db, test_user)
+    session = await _create_session(test_db, test_user)
 
-    result = im_command_router.route(
+    result = await im_command_router.route(
         test_db,
         session,
         "/bind",
@@ -61,13 +63,13 @@ def test_bind_command_is_handled_with_bound_reply(
     assert "已绑定" in result.reply
 
 
-def test_task_without_active_task_enters_pending_switch_and_lists_recent_tasks(
+async def test_task_without_active_task_enters_pending_switch_and_lists_recent_tasks(
     test_db: Session,
     test_user: User,
 ) -> None:
-    session = _create_session(test_db, test_user)
+    session = await _create_session(test_db, test_user)
 
-    result = im_command_router.route(
+    result = await im_command_router.route(
         test_db,
         session,
         "/task",
@@ -84,14 +86,14 @@ def test_task_without_active_task_enters_pending_switch_and_lists_recent_tasks(
     assert "修复登录问题" in result.reply
 
 
-def test_mode_command_returns_current_task_mode_and_active_task_id(
+async def test_mode_command_returns_current_task_mode_and_active_task_id(
     test_db: Session,
     test_user: User,
 ) -> None:
-    session = _create_session(test_db, test_user)
-    im_session_service.bind_active_task(test_db, session=session, task_id=7001)
+    session = await _create_session(test_db, test_user)
+    await im_session_service.bind_active_task(test_db, session=session, task_id=7001)
 
-    result = im_command_router.route(
+    result = await im_command_router.route(
         test_db,
         session,
         "/mode",
@@ -105,13 +107,13 @@ def test_mode_command_returns_current_task_mode_and_active_task_id(
     assert result.reply == "当前模式：Task，任务 ID：7001。"
 
 
-def test_mode_task_argument_enters_pending_switch(
+async def test_mode_task_argument_enters_pending_switch(
     test_db: Session,
     test_user: User,
 ) -> None:
-    session = _create_session(test_db, test_user)
+    session = await _create_session(test_db, test_user)
 
-    result = im_command_router.route(
+    result = await im_command_router.route(
         test_db,
         session,
         "/mode task",
@@ -127,14 +129,14 @@ def test_mode_task_argument_enters_pending_switch(
     assert "最近任务" in result.reply
 
 
-def test_mode_chat_argument_switches_to_chat(
+async def test_mode_chat_argument_switches_to_chat(
     test_db: Session,
     test_user: User,
 ) -> None:
-    session = _create_session(test_db, test_user)
-    im_session_service.bind_active_task(test_db, session=session, task_id=7001)
+    session = await _create_session(test_db, test_user)
+    await im_session_service.bind_active_task(test_db, session=session, task_id=7001)
 
-    result = im_command_router.route(
+    result = await im_command_router.route(
         test_db,
         session,
         "/mode chat",
@@ -149,13 +151,13 @@ def test_mode_chat_argument_switches_to_chat(
     assert result.reply == "已切换到 Chat 模式。"
 
 
-def test_switch_command_enters_pending_switch_and_lists_recent_tasks(
+async def test_switch_command_enters_pending_switch_and_lists_recent_tasks(
     test_db: Session,
     test_user: User,
 ) -> None:
-    session = _create_session(test_db, test_user)
+    session = await _create_session(test_db, test_user)
 
-    result = im_command_router.route(
+    result = await im_command_router.route(
         test_db,
         session,
         "/switch",
@@ -173,19 +175,19 @@ def test_switch_command_enters_pending_switch_and_lists_recent_tasks(
     assert "2. 整理任务文档（102）" in result.reply
 
 
-def test_pending_switch_accepts_number_and_returns_bind_task(
+async def test_pending_switch_accepts_number_and_returns_bind_task(
     test_db: Session,
     test_user: User,
 ) -> None:
-    session = _create_session(test_db, test_user)
-    im_session_service.set_pending_state(
+    session = await _create_session(test_db, test_user)
+    await im_session_service.set_pending_state(
         test_db,
         session=session,
         state=IMSessionState.PENDING_TASK_SWITCH,
         payload={"task_ids": [101, 102]},
     )
 
-    result = im_command_router.route(
+    result = await im_command_router.route(
         test_db,
         session,
         "2",
@@ -201,19 +203,19 @@ def test_pending_switch_accepts_number_and_returns_bind_task(
     assert session.pending_payload == {"task_ids": [101, 102]}
 
 
-def test_pending_switch_new_begins_task_creation(
+async def test_pending_switch_new_begins_task_creation(
     test_db: Session,
     test_user: User,
 ) -> None:
-    session = _create_session(test_db, test_user)
-    im_session_service.set_pending_state(
+    session = await _create_session(test_db, test_user)
+    await im_session_service.set_pending_state(
         test_db,
         session=session,
         state=IMSessionState.PENDING_TASK_SWITCH,
         payload={"task_ids": [101, 102], "first_message": "从切换流程新建任务"},
     )
 
-    result = im_command_router.route(
+    result = await im_command_router.route(
         test_db,
         session,
         "new",
@@ -233,14 +235,14 @@ def test_pending_switch_new_begins_task_creation(
     assert "1. Wegent Backend（201）" in result.reply
 
 
-def test_task_mode_without_active_task_stores_first_message_and_lists_projects(
+async def test_task_mode_without_active_task_stores_first_message_and_lists_projects(
     test_db: Session,
     test_user: User,
 ) -> None:
-    session = _create_session(test_db, test_user)
-    im_session_service.set_mode(test_db, session=session, mode=IMSessionMode.TASK)
+    session = await _create_session(test_db, test_user)
+    await im_session_service.set_mode(test_db, session=session, mode=IMSessionMode.TASK)
 
-    result = im_command_router.route(
+    result = await im_command_router.route(
         test_db,
         session,
         "修复 IM 私聊任务创建",
@@ -257,14 +259,14 @@ def test_task_mode_without_active_task_stores_first_message_and_lists_projects(
     assert "Wegent Backend" in result.reply
 
 
-def test_new_command_in_task_mode_enters_new_flow(
+async def test_new_command_in_task_mode_enters_new_flow(
     test_db: Session,
     test_user: User,
 ) -> None:
-    session = _create_session(test_db, test_user)
-    im_session_service.set_mode(test_db, session=session, mode=IMSessionMode.TASK)
+    session = await _create_session(test_db, test_user)
+    await im_session_service.set_mode(test_db, session=session, mode=IMSessionMode.TASK)
 
-    result = im_command_router.route(
+    result = await im_command_router.route(
         test_db,
         session,
         "/new",
@@ -283,13 +285,13 @@ def test_new_command_in_task_mode_enters_new_flow(
     assert "3. 继续最近 Task" in result.reply
 
 
-def test_new_command_in_chat_mode_enters_new_flow(
+async def test_new_command_in_chat_mode_enters_new_flow(
     test_db: Session,
     test_user: User,
 ) -> None:
-    session = _create_session(test_db, test_user)
+    session = await _create_session(test_db, test_user)
 
-    result = im_command_router.route(
+    result = await im_command_router.route(
         test_db,
         session,
         "/new",
@@ -307,20 +309,20 @@ def test_new_command_in_chat_mode_enters_new_flow(
     assert "3. 继续最近 Task" in result.reply
 
 
-def test_new_command_then_cancel_from_chat_mode_keeps_chat_mode(
+async def test_new_command_then_cancel_from_chat_mode_keeps_chat_mode(
     test_db: Session,
     test_user: User,
 ) -> None:
-    session = _create_session(test_db, test_user)
+    session = await _create_session(test_db, test_user)
 
-    start_result = im_command_router.route(
+    start_result = await im_command_router.route(
         test_db,
         session,
         "/new",
         recent_tasks=_recent_tasks(),
         projects=_projects(),
     )
-    cancel_result = im_command_router.route(
+    cancel_result = await im_command_router.route(
         test_db,
         session,
         "/cancel",
@@ -336,19 +338,19 @@ def test_new_command_then_cancel_from_chat_mode_keeps_chat_mode(
     assert session.pending_payload == {}
 
 
-def test_new_flow_choice_chat_returns_start_chat_action(
+async def test_new_flow_choice_chat_returns_start_chat_action(
     test_db: Session,
     test_user: User,
 ) -> None:
-    session = _create_session(test_db, test_user)
-    im_session_service.set_pending_state(
+    session = await _create_session(test_db, test_user)
+    await im_session_service.set_pending_state(
         test_db,
         session=session,
         state=IMSessionState.PENDING_NEW_FLOW,
         payload={},
     )
 
-    result = im_command_router.route(
+    result = await im_command_router.route(
         test_db,
         session,
         "1",
@@ -362,19 +364,19 @@ def test_new_flow_choice_chat_returns_start_chat_action(
     assert result.reply == "已开始新 Chat，请发送消息。"
 
 
-def test_new_flow_choice_task_enters_project_selection(
+async def test_new_flow_choice_task_enters_project_selection(
     test_db: Session,
     test_user: User,
 ) -> None:
-    session = _create_session(test_db, test_user)
-    im_session_service.set_pending_state(
+    session = await _create_session(test_db, test_user)
+    await im_session_service.set_pending_state(
         test_db,
         session=session,
         state=IMSessionState.PENDING_NEW_FLOW,
         payload={},
     )
 
-    result = im_command_router.route(
+    result = await im_command_router.route(
         test_db,
         session,
         "2",
@@ -390,19 +392,19 @@ def test_new_flow_choice_task_enters_project_selection(
     assert "选择项目" in result.reply
 
 
-def test_new_flow_choice_recent_tasks_enters_task_switch(
+async def test_new_flow_choice_recent_tasks_enters_task_switch(
     test_db: Session,
     test_user: User,
 ) -> None:
-    session = _create_session(test_db, test_user)
-    im_session_service.set_pending_state(
+    session = await _create_session(test_db, test_user)
+    await im_session_service.set_pending_state(
         test_db,
         session=session,
         state=IMSessionState.PENDING_NEW_FLOW,
         payload={},
     )
 
-    result = im_command_router.route(
+    result = await im_command_router.route(
         test_db,
         session,
         "3",
@@ -418,20 +420,20 @@ def test_new_flow_choice_recent_tasks_enters_task_switch(
     assert "最近任务" in result.reply
 
 
-def test_new_flow_invalid_choice_keeps_pending_state_and_returns_guidance(
+async def test_new_flow_invalid_choice_keeps_pending_state_and_returns_guidance(
     test_db: Session,
     test_user: User,
 ) -> None:
-    session = _create_session(test_db, test_user)
+    session = await _create_session(test_db, test_user)
 
-    start_result = im_command_router.route(
+    start_result = await im_command_router.route(
         test_db,
         session,
         "/new",
         recent_tasks=[],
         projects=[],
     )
-    result = im_command_router.route(
+    result = await im_command_router.route(
         test_db,
         session,
         "bad choice",
@@ -455,16 +457,16 @@ def test_new_flow_invalid_choice_keeps_pending_state_and_returns_guidance(
         ("2", 202),
     ],
 )
-def test_new_task_empty_prompt_waits_for_content_before_create_task(
+async def test_new_task_empty_prompt_waits_for_content_before_create_task(
     test_db: Session,
     test_user: User,
     choice: str,
     expected_project_id: int | None,
 ) -> None:
-    session = _create_session(test_db, test_user)
-    im_session_service.set_mode(test_db, session=session, mode=IMSessionMode.TASK)
+    session = await _create_session(test_db, test_user)
+    await im_session_service.set_mode(test_db, session=session, mode=IMSessionMode.TASK)
 
-    start_result = im_command_router.route(
+    start_result = await im_command_router.route(
         test_db,
         session,
         "/new",
@@ -477,7 +479,7 @@ def test_new_task_empty_prompt_waits_for_content_before_create_task(
     assert session.state == IMSessionState.PENDING_NEW_FLOW
     assert session.pending_payload == {}
 
-    task_result = im_command_router.route(
+    task_result = await im_command_router.route(
         test_db,
         session,
         "2",
@@ -490,7 +492,7 @@ def test_new_task_empty_prompt_waits_for_content_before_create_task(
     assert session.state == IMSessionState.PENDING_TASK_CREATION
     assert session.pending_payload == {"first_message": "", "project_ids": [201, 202]}
 
-    choice_result = im_command_router.route(
+    choice_result = await im_command_router.route(
         test_db,
         session,
         choice,
@@ -510,7 +512,7 @@ def test_new_task_empty_prompt_waits_for_content_before_create_task(
         "selected_project_id": expected_project_id,
     }
 
-    content_result = im_command_router.route(
+    content_result = await im_command_router.route(
         test_db,
         session,
         "实现私聊任务创建",
@@ -530,19 +532,19 @@ def test_new_task_empty_prompt_waits_for_content_before_create_task(
     }
 
 
-def test_pending_creation_standalone_choice_returns_create_task(
+async def test_pending_creation_standalone_choice_returns_create_task(
     test_db: Session,
     test_user: User,
 ) -> None:
-    session = _create_session(test_db, test_user)
-    im_session_service.set_pending_state(
+    session = await _create_session(test_db, test_user)
+    await im_session_service.set_pending_state(
         test_db,
         session=session,
         state=IMSessionState.PENDING_TASK_CREATION,
         payload={"first_message": "创建独立任务", "project_ids": [201, 202]},
     )
 
-    result = im_command_router.route(
+    result = await im_command_router.route(
         test_db,
         session,
         "0",
@@ -562,19 +564,19 @@ def test_pending_creation_standalone_choice_returns_create_task(
     }
 
 
-def test_pending_creation_project_choice_returns_create_task_with_project(
+async def test_pending_creation_project_choice_returns_create_task_with_project(
     test_db: Session,
     test_user: User,
 ) -> None:
-    session = _create_session(test_db, test_user)
-    im_session_service.set_pending_state(
+    session = await _create_session(test_db, test_user)
+    await im_session_service.set_pending_state(
         test_db,
         session=session,
         state=IMSessionState.PENDING_TASK_CREATION,
         payload={"first_message": "创建项目任务", "project_ids": [201, 202]},
     )
 
-    result = im_command_router.route(
+    result = await im_command_router.route(
         test_db,
         session,
         "2",
@@ -594,14 +596,14 @@ def test_pending_creation_project_choice_returns_create_task_with_project(
     }
 
 
-def test_chat_command_clears_active_task_and_switches_to_chat(
+async def test_chat_command_clears_active_task_and_switches_to_chat(
     test_db: Session,
     test_user: User,
 ) -> None:
-    session = _create_session(test_db, test_user)
-    im_session_service.bind_active_task(test_db, session=session, task_id=7001)
+    session = await _create_session(test_db, test_user)
+    await im_session_service.bind_active_task(test_db, session=session, task_id=7001)
 
-    result = im_command_router.route(
+    result = await im_command_router.route(
         test_db,
         session,
         "/chat",
@@ -616,19 +618,19 @@ def test_chat_command_clears_active_task_and_switches_to_chat(
     assert "Chat" in result.reply
 
 
-def test_cancel_command_clears_pending_state_and_payload(
+async def test_cancel_command_clears_pending_state_and_payload(
     test_db: Session,
     test_user: User,
 ) -> None:
-    session = _create_session(test_db, test_user)
-    im_session_service.set_pending_state(
+    session = await _create_session(test_db, test_user)
+    await im_session_service.set_pending_state(
         test_db,
         session=session,
         state=IMSessionState.PENDING_TASK_CREATION,
         payload={"first_message": "待取消任务", "project_ids": [201]},
     )
 
-    result = im_command_router.route(
+    result = await im_command_router.route(
         test_db,
         session,
         "/cancel",
@@ -644,14 +646,14 @@ def test_cancel_command_clears_pending_state_and_payload(
     assert session.state_expires_at is None
 
 
-def test_task_mode_normal_message_with_active_task_returns_continue_task(
+async def test_task_mode_normal_message_with_active_task_returns_continue_task(
     test_db: Session,
     test_user: User,
 ) -> None:
-    session = _create_session(test_db, test_user)
-    im_session_service.bind_active_task(test_db, session=session, task_id=7001)
+    session = await _create_session(test_db, test_user)
+    await im_session_service.bind_active_task(test_db, session=session, task_id=7001)
 
-    result = im_command_router.route(
+    result = await im_command_router.route(
         test_db,
         session,
         "继续修复登录问题",
@@ -668,13 +670,13 @@ def test_task_mode_normal_message_with_active_task_returns_continue_task(
     assert session.state == IMSessionState.IDLE
 
 
-def test_chat_mode_non_command_returns_unhandled(
+async def test_chat_mode_non_command_returns_unhandled(
     test_db: Session,
     test_user: User,
 ) -> None:
-    session = _create_session(test_db, test_user)
+    session = await _create_session(test_db, test_user)
 
-    result = im_command_router.route(
+    result = await im_command_router.route(
         test_db,
         session,
         "普通聊天消息",
@@ -686,19 +688,19 @@ def test_chat_mode_non_command_returns_unhandled(
     assert result.action == IMCommandAction.NONE
 
 
-def test_invalid_pending_input_keeps_pending_state_and_returns_guidance(
+async def test_invalid_pending_input_keeps_pending_state_and_returns_guidance(
     test_db: Session,
     test_user: User,
 ) -> None:
-    session = _create_session(test_db, test_user)
-    im_session_service.set_pending_state(
+    session = await _create_session(test_db, test_user)
+    await im_session_service.set_pending_state(
         test_db,
         session=session,
         state=IMSessionState.PENDING_TASK_SWITCH,
         payload={"task_ids": [101, 102]},
     )
 
-    result = im_command_router.route(
+    result = await im_command_router.route(
         test_db,
         session,
         "不是序号",

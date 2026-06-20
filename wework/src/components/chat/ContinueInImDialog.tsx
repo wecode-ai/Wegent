@@ -11,7 +11,7 @@ interface ContinueInImDialogProps {
   submitting: boolean
   sessions: IMPrivateSession[]
   onClose: () => void
-  onSubmit: (sessionIds: number[]) => Promise<void>
+  onSubmit: (sessionKeys: string[]) => Promise<void>
 }
 
 export function ContinueInImDialog({
@@ -49,31 +49,34 @@ function ContinueInImDialogContent({
   const { t } = useTranslation('common')
   const dialogRef = useRef<HTMLElement | null>(null)
   const closeButtonRef = useRef<HTMLButtonElement | null>(null)
-  const [selectedSessionIds, setSelectedSessionIds] = useState<Set<number>>(new Set())
-  const validSessionIds = useMemo(() => new Set(sessions.map(session => session.id)), [sessions])
-  const selectedIds = useMemo(
-    () => Array.from(selectedSessionIds).filter(id => validSessionIds.has(id)),
-    [selectedSessionIds, validSessionIds]
+  const [selectedSessionKeys, setSelectedSessionKeys] = useState<Set<string>>(new Set())
+  const validSessionKeys = useMemo(
+    () => new Set(sessions.map(session => session.session_key)),
+    [sessions]
+  )
+  const selectedKeys = useMemo(
+    () => Array.from(selectedSessionKeys).filter(sessionKey => validSessionKeys.has(sessionKey)),
+    [selectedSessionKeys, validSessionKeys]
   )
 
   useEffect(() => {
     closeButtonRef.current?.focus()
   }, [])
 
-  const toggleSession = (sessionId: number) => {
-    setSelectedSessionIds(current => {
+  const toggleSession = (sessionKey: string) => {
+    setSelectedSessionKeys(current => {
       const next = new Set(current)
-      if (next.has(sessionId)) {
-        next.delete(sessionId)
+      if (next.has(sessionKey)) {
+        next.delete(sessionKey)
       } else {
-        next.add(sessionId)
+        next.add(sessionKey)
       }
       return next
     })
   }
 
   const handleSubmit = () => {
-    void onSubmit(selectedIds)
+    void onSubmit(selectedKeys)
   }
 
   const closeIfAllowed = () => {
@@ -171,12 +174,12 @@ function ContinueInImDialogContent({
           ) : (
             <div className="space-y-2">
               {sessions.map(session => {
-                const selected = selectedSessionIds.has(session.id)
+                const selected = selectedSessionKeys.has(session.session_key)
                 return (
                   <button
-                    key={session.id}
+                    key={session.session_key}
                     type="button"
-                    data-testid={`continue-im-session-${session.id}`}
+                    data-testid={`continue-im-session-${session.session_key}`}
                     className={cn(
                       'flex min-h-11 w-full items-center gap-3 rounded-lg border px-3 py-2 text-left transition-colors',
                       selected
@@ -184,7 +187,7 @@ function ContinueInImDialogContent({
                         : 'border-border bg-surface hover:border-primary/60'
                     )}
                     aria-pressed={selected}
-                    onClick={() => toggleSession(session.id)}
+                    onClick={() => toggleSession(session.session_key)}
                     disabled={submitting}
                   >
                     <span
@@ -235,7 +238,7 @@ function ContinueInImDialogContent({
             data-testid="continue-im-submit-button"
             className="h-11 min-w-[44px] rounded-lg bg-primary px-4 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
             onClick={handleSubmit}
-            disabled={loading || submitting || selectedIds.length === 0}
+            disabled={loading || submitting || selectedKeys.length === 0}
           >
             {submitting ? t('workbench.continue_im_submitting') : t('workbench.continue_im_submit')}
           </button>

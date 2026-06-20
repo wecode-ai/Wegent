@@ -276,7 +276,7 @@ export interface WorkbenchContextValue {
   listImPrivateSessions: () => Promise<IMPrivateSessionListResponse>
   bindTaskToImSessions: (
     taskId: number,
-    sessionIds: number[]
+    sessionKeys: string[]
   ) => Promise<BindTaskIMSessionsResponse>
   listLocalCodexThreads: (deviceId: string, limit?: number) => Promise<LocalCodexThreadSummary[]>
   bindLocalCodexThread: (request: LocalCodexBindRequest) => Promise<LocalCodexBindResponse>
@@ -1614,11 +1614,11 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
   )
 
   const bindTaskToImSessions = useCallback(
-    (taskId: number, sessionIds: number[]) => {
+    (taskId: number, sessionKeys: string[]) => {
       if (!resolvedServices.imSessionApi) {
         return Promise.reject(new Error('IM session API is unavailable'))
       }
-      return resolvedServices.imSessionApi.bindTaskSessions(taskId, sessionIds)
+      return resolvedServices.imSessionApi.bindTaskSessions(taskId, sessionKeys)
     },
     [resolvedServices]
   )

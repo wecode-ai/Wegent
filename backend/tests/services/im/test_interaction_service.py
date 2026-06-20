@@ -15,6 +15,8 @@ from app.services.channels.handler import MessageContext
 from app.services.im.interaction_service import im_interaction_service
 from app.services.im.session_service import im_session_service
 
+pytestmark = pytest.mark.asyncio
+
 
 class FakeInteractionPort:
     channel_type = ChannelType.TELEGRAM
@@ -95,8 +97,8 @@ def _context(
     )
 
 
-def _session(test_db: Session, test_user: User) -> IMPrivateSession:
-    return im_session_service.get_or_create_private_session(
+async def _session(test_db: Session, test_user: User) -> IMPrivateSession:
+    return await im_session_service.get_or_create_private_session(
         db=test_db,
         user_id=test_user.id,
         channel_type="telegram",
@@ -125,7 +127,7 @@ async def test_new_chat_choice_deletes_cached_chat_and_replies(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     port = FakeInteractionPort()
-    session = _session(test_db, test_user)
+    session = await _session(test_db, test_user)
     _stub_task_lists(monkeypatch)
 
     first = await im_interaction_service.route_private_message(
@@ -156,7 +158,7 @@ async def test_pending_switch_choice_binds_selected_task(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     port = FakeInteractionPort()
-    session = _session(test_db, test_user)
+    session = await _session(test_db, test_user)
     monkeypatch.setattr(
         "app.services.im.interaction_service.im_task_continuation_service.list_recent_wework_tasks",
         lambda db, user_id, limit=5: [
@@ -195,8 +197,8 @@ async def test_task_mode_text_continues_active_task(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     port = FakeInteractionPort()
-    session = _session(test_db, test_user)
-    im_session_service.bind_active_task(test_db, session=session, task_id=7001)
+    session = await _session(test_db, test_user)
+    await im_session_service.bind_active_task(test_db, session=session, task_id=7001)
     _stub_task_lists(monkeypatch)
 
     handled = await im_interaction_service.route_private_message(
@@ -217,8 +219,8 @@ async def test_task_mode_media_only_continues_active_task_with_empty_message(
     test_user: User,
 ) -> None:
     port = FakeInteractionPort()
-    session = _session(test_db, test_user)
-    im_session_service.bind_active_task(test_db, session=session, task_id=7001)
+    session = await _session(test_db, test_user)
+    await im_session_service.bind_active_task(test_db, session=session, task_id=7001)
 
     handled = await im_interaction_service.route_private_message(
         db=test_db,
@@ -242,7 +244,7 @@ async def test_pending_task_creation_creates_selected_project_task(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     port = FakeInteractionPort()
-    session = _session(test_db, test_user)
+    session = await _session(test_db, test_user)
     monkeypatch.setattr(
         "app.services.im.interaction_service.im_task_continuation_service.list_recent_wework_tasks",
         lambda db, user_id, limit=5: [],
@@ -296,7 +298,7 @@ async def test_none_action_sends_router_reply(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     port = FakeInteractionPort()
-    session = _session(test_db, test_user)
+    session = await _session(test_db, test_user)
     _stub_task_lists(monkeypatch)
 
     handled = await im_interaction_service.route_private_message(
@@ -318,7 +320,7 @@ async def test_unhandled_plain_chat_message_falls_through(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     port = FakeInteractionPort()
-    session = _session(test_db, test_user)
+    session = await _session(test_db, test_user)
     _stub_task_lists(monkeypatch)
 
     handled = await im_interaction_service.route_private_message(
@@ -340,12 +342,15 @@ async def test_unhandled_router_action_falls_through(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     port = FakeInteractionPort()
-    session = _session(test_db, test_user)
+    session = await _session(test_db, test_user)
     _stub_task_lists(monkeypatch)
+
+    async def fake_route(**kwargs):
+        return SimpleNamespace(handled=True, action="unknown")
 
     monkeypatch.setattr(
         "app.services.im.interaction_service.im_command_router.route",
-        lambda **kwargs: SimpleNamespace(handled=True, action="unknown"),
+        fake_route,
     )
 
     handled = await im_interaction_service.route_private_message(

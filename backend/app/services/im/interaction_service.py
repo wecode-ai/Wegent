@@ -89,7 +89,7 @@ class IMInteractionService:
         projects = im_task_continuation_service.list_wework_projects(
             db, user.id, limit=8
         )
-        result = im_command_router.route(
+        result = await im_command_router.route(
             db=db,
             session=im_session,
             content=message_context.content,
