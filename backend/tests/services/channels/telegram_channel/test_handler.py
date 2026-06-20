@@ -4,11 +4,13 @@
 
 """Unit tests for TelegramChannelHandler."""
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from app.services.channels.callback import ChannelType
+from app.services.channels.handler import MessageContext
 from app.services.channels.telegram.handler import TelegramChannelHandler
 
 
@@ -264,3 +266,86 @@ class TestTelegramChannelHandler:
         emitter = await handler.create_streaming_emitter(mock_context)
 
         assert emitter is None
+
+    @pytest.mark.asyncio
+    async def test_create_and_process_chat_attaches_im_source_metadata(self, handler):
+        """Chat task creation should tag tasks with provider-level IM metadata."""
+        message_context = MessageContext(
+            content="Hello from Telegram",
+            sender_id="12345",
+            sender_name="Test",
+            conversation_id="67890",
+            conversation_type="private",
+            is_mention=False,
+            raw_message=MagicMock(),
+            extra_data={},
+        )
+        user = SimpleNamespace(id=1)
+        team = SimpleNamespace(id=100)
+        task = SimpleNamespace(id=200)
+        user_subtask = SimpleNamespace(id=300)
+        assistant_subtask = SimpleNamespace(id=301)
+        creation_result = SimpleNamespace(
+            task=task,
+            user_subtask=user_subtask,
+            assistant_subtask=assistant_subtask,
+        )
+        db = MagicMock()
+        streaming_emitter = SimpleNamespace(
+            emit_start=AsyncMock(),
+            set_shared_content_key=MagicMock(),
+        )
+
+        with (
+            patch(
+                "app.services.channels.handler.SessionLocal",
+                return_value=db,
+            ),
+            patch.object(
+                handler,
+                "_get_user_model_override",
+                new=AsyncMock(return_value=(None, None)),
+            ),
+            patch.object(
+                handler,
+                "_get_conversation_task_id",
+                new=AsyncMock(return_value=(None, False)),
+            ),
+            patch.object(
+                handler,
+                "_set_conversation_task_id",
+                new=AsyncMock(),
+            ),
+            patch.object(
+                handler,
+                "_get_selected_or_default_team",
+                new=AsyncMock(return_value=team),
+            ),
+            patch.object(
+                handler,
+                "create_streaming_emitter",
+                new=AsyncMock(return_value=streaming_emitter),
+            ),
+            patch.object(
+                handler,
+                "_register_streaming_emitter",
+                new=AsyncMock(),
+            ),
+            patch(
+                "app.services.chat.storage.task_manager.create_task_and_subtasks",
+                new=AsyncMock(return_value=creation_result),
+            ) as create_task_mock,
+            patch(
+                "app.services.chat.trigger.trigger_ai_response_unified",
+                new=AsyncMock(),
+            ),
+        ):
+            result = await handler._create_and_process_chat(user, message_context)
+
+        assert result is None
+        params = create_task_mock.await_args.kwargs["params"]
+        assert params.message_source == {
+            "source": "im",
+            "channel_type": "telegram",
+            "channel_label": "Telegram",
+        }

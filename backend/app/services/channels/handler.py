@@ -62,6 +62,7 @@ from app.services.channels.model_selection import (
     is_claude_provider,
     model_selection_manager,
 )
+from app.services.im.session_service import im_session_service
 from app.services.readers.kinds import KindType, kindReader
 from app.stores.tasks import task_store
 
@@ -180,6 +181,15 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 config=config.get("config"),
             )
         return UserMappingConfig(mode="select_user")
+
+    def _build_message_source_metadata(self) -> Dict[str, Any]:
+        """Build provider-level source metadata for messages from IM channels."""
+        channel_type = self._channel_type.value
+        return {
+            "source": "im",
+            "channel_type": channel_type,
+            "channel_label": im_session_service.get_channel_label(channel_type),
+        }
 
     # ==================== Abstract Methods ====================
 
@@ -1897,6 +1907,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             task_type="chat",
             model_id=override_model_name,
             force_override_bot_model=override_model_name is not None,
+            message_source=self._build_message_source_metadata(),
         )
 
         # Try to reuse existing task
@@ -2132,6 +2143,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             force_override_bot_model=override_model_name is not None,
             force_override_bot_model_type=override_model_type,
             model_id=override_model_name,
+            message_source=self._build_message_source_metadata(),
         )
 
         existing_task_id = None
@@ -2289,6 +2301,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             force_override_bot_model=override_model_name is not None,
             force_override_bot_model_type=override_model_type,
             model_id=override_model_name,
+            message_source=self._build_message_source_metadata(),
         )
 
         existing_task_id = None
