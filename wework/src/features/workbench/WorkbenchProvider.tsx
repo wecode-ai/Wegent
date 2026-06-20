@@ -49,6 +49,7 @@ import type {
   GitRepoInfo,
   DeviceInfo,
   LocalDeviceSkill,
+  ModelCompatibilityDisabledReason,
   ModelOptions,
   ModelSelectionConfig,
   ProjectExecutionMode,
@@ -99,6 +100,27 @@ const UPGRADE_STATE_CLEAR_DELAY_MS = 5000
 const UPGRADE_REFRESH_INTERVAL_MS = 3000
 const DEVICE_LIST_CACHE_KEY = 'wework.workbench.lastNonEmptyDevices'
 const DEVICE_LIST_CACHE_TTL_MS = 5 * 60 * 1000
+
+function getModelLabel(model?: UnifiedModel | null): string {
+  return model?.displayName || model?.modelId || model?.name || '该模型'
+}
+
+function getBlockedModelSelectionMessage(
+  reason: ModelCompatibilityDisabledReason | 'locked',
+  model?: UnifiedModel | null
+): string {
+  const modelLabel = getModelLabel(model)
+  if (reason === 'locked') {
+    return '当前任务的模型选择已锁定'
+  }
+  if (reason === 'missing_current_runtime_family') {
+    return '当前对话缺少模型运行时信息，不能切换模型'
+  }
+  if (reason === 'missing_target_runtime_family') {
+    return `${modelLabel} 缺少运行时信息，不能用于当前对话`
+  }
+  return `${modelLabel} 与当前对话的模型协议不兼容，请新建对话后使用该模型`
+}
 
 function readCachedDeviceList(): DeviceInfo[] {
   try {
@@ -212,6 +234,7 @@ export interface WorkbenchContextValue {
     isAttachmentReadyToSend: boolean
     setSelectedModel: (model: UnifiedModel | null) => void
     setSelectedModelOption: (optionId: string, value: string) => void
+    onBlockedModelSelect: (model: UnifiedModel, message?: string) => void
     setSelectedSkills: (skills: SkillRef[]) => void
     toggleSkill: (skill: SkillRef) => void
     handleFileSelect: (files: File | File[]) => Promise<void>
@@ -838,6 +861,25 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     },
     [currentUser.preferences, resolvedServices.userApi, state.currentTask]
   )
+  const handleBlockedModelSelection = useCallback(
+    (reason: ModelCompatibilityDisabledReason | 'locked', model?: UnifiedModel | null) => {
+      dispatch({
+        type: 'error_set',
+        error: getBlockedModelSelectionMessage(reason, model),
+      })
+    },
+    []
+  )
+  const handleBlockedModelSelect = useCallback((model: UnifiedModel, message?: string) => {
+    dispatch({
+      type: 'error_set',
+      error: message || getBlockedModelSelectionMessage('runtime_family_mismatch', model),
+    })
+  }, [])
+  const reportSendBlocked = useCallback((error: string, details?: Record<string, unknown>) => {
+    console.warn('[Wework] send blocked:', error, details ?? {})
+    dispatch({ type: 'error_set', error })
+  }, [])
   useEffect(() => {
     const handlePopState = () => setRoutePath(getCurrentAppPath())
     window.addEventListener('popstate', handlePopState)
@@ -851,6 +893,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     compatibilityConfig: modelCompatibilityConfig,
     selectionReady: !state.isBootstrapping,
     onSelectionChange: persistNewChatModelSelection,
+    onSelectionBlocked: handleBlockedModelSelection,
   })
   const skillSelection = useWorkbenchSkills({
     api: resolvedServices.skillApi,
@@ -1661,11 +1704,8 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
   )
 
   const commitEnvironmentChanges = useCallback(
-    (
-      project: ProjectWithTasks | null,
-      message: string,
-      workspaceTarget?: WorkspaceTarget | null
-    ) => commitProjectChanges(resolvedServices.deviceApi, project, message, workspaceTarget),
+    (project: ProjectWithTasks | null, message: string, workspaceTarget?: WorkspaceTarget | null) =>
+      commitProjectChanges(resolvedServices.deviceApi, project, message, workspaceTarget),
     [resolvedServices]
   )
 
@@ -1895,15 +1935,17 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     const trimmedMessage = state.input.trim()
     const hasAttachments = attachmentSelection.attachments.length > 0
     const hasCodeComments = codeCommentContexts.length > 0
-    if (!trimmedMessage && !hasAttachments && !hasCodeComments) return
+    if (!trimmedMessage && !hasAttachments && !hasCodeComments) {
+      reportSendBlocked('请输入内容或添加附件后再发送')
+      return
+    }
     const message =
       trimmedMessage || (hasCodeComments ? i18n.t('workbench.code_comment_fallback') : '')
     const payloadMessage = appendCodeCommentContexts(message, codeCommentContexts)
     const prepared = buildSendPayload(payloadMessage)
     if (!prepared) {
-      dispatch({
-        type: 'error_set',
-        error: 'Wework default team is not configured',
+      reportSendBlocked('Wework default team is not configured', {
+        hasDefaultTeam: Boolean(state.defaultTeam),
       })
       return
     }
@@ -1914,18 +1956,21 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         const status = activeDevice
           ? (DEVICE_STATUS_LABELS[activeDevice.status] ?? activeDevice.status)
           : '不可用'
-        dispatch({
-          type: 'error_set',
-          error: `${deviceName} ${status}，恢复在线后可继续对话`,
+        reportSendBlocked(`${deviceName} ${status}，恢复在线后可继续对话`, {
+          activeDeviceId: prepared.activeDeviceId,
+          deviceStatus: activeDevice?.status ?? null,
         })
         return
       }
       if (activeDevice && isDeviceBelowWeWorkVersion(activeDevice)) {
         const deviceName = getWorkbenchDeviceDisplayName(activeDevice, prepared.activeDeviceId)
-        dispatch({
-          type: 'error_set',
-          error: `${deviceName} 版本低于 ${WEWORK_MIN_EXECUTOR_VERSION}，升级后可继续对话`,
-        })
+        reportSendBlocked(
+          `${deviceName} 版本低于 ${WEWORK_MIN_EXECUTOR_VERSION}，升级后可继续对话`,
+          {
+            activeDeviceId: prepared.activeDeviceId,
+            executorVersion: activeDevice.executor_version ?? null,
+          }
+        )
         return
       }
     } else if (!state.currentProject && !state.currentTask) {
@@ -1933,9 +1978,8 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         device => device.status === 'online' && isWeWorkCompatibleDevice(device)
       )
       if (!hasOnlineCompatibleDevice) {
-        dispatch({
-          type: 'error_set',
-          error: `暂无满足 ${WEWORK_MIN_EXECUTOR_VERSION} 的在线设备，请连接或升级设备`,
+        reportSendBlocked(`暂无满足 ${WEWORK_MIN_EXECUTOR_VERSION} 的在线设备，请连接或升级设备`, {
+          deviceCount: state.devices.length,
         })
         return
       }
@@ -1980,10 +2024,12 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     clearCodeCommentContexts,
     codeCommentContexts,
     hasActiveTurn,
+    reportSendBlocked,
     sendPreparedMessage,
     state.devices,
     state.currentProject,
     state.currentTask,
+    state.defaultTeam,
     state.input,
   ])
 
@@ -2334,6 +2380,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
       isAttachmentReadyToSend: attachmentSelection.isAttachmentReadyToSend,
       setSelectedModel: modelSelection.setSelectedModel,
       setSelectedModelOption: modelSelection.setSelectedModelOption,
+      onBlockedModelSelect: handleBlockedModelSelect,
       setSelectedSkills: skillSelection.setSelectedSkills,
       toggleSkill: skillSelection.toggleSkill,
       handleFileSelect: attachmentSelection.handleFileSelect,

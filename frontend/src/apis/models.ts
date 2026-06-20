@@ -154,11 +154,11 @@ export interface ModelNamesResponse {
 }
 
 // Unified Model Types (new API with type differentiation)
-export type ModelTypeEnum = 'public' | 'user' | 'group'
+export type ModelTypeEnum = 'public' | 'user' | 'group' | 'runtime'
 
 export interface UnifiedModel {
   name: string
-  type: ModelTypeEnum // 'public' or 'user' or 'group' - identifies model source
+  type: ModelTypeEnum // identifies model source
   displayName?: string | null
   provider?: string | null // 'openai' | 'claude'
   modelId?: string | null
