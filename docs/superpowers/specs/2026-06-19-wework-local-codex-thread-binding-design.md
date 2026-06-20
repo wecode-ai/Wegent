@@ -117,10 +117,14 @@ Codex.
 ## Continue Flow
 
 When the user sends a follow-up in a bound task, the normal Wework chat send path
-detects `source=local_codex_thread` and routes execution to a local Codex thread
-resume path instead of starting a fresh Codex task.
+keeps using the existing Wegent execution pipeline. Backend detects
+`source=local_codex_thread`, copies the stored Codex thread id into
+`ExecutionRequest.local_codex_thread_id`, and schedules the local executor as it
+does for other Wework tasks.
 
-Backend sends a device command such as `codex_thread_turn` with:
+The local executor's `CodeXAgent` sees `local_codex_thread_id` and resumes that
+exact Codex thread with Codex SDK/app-server `thread_resume` instead of starting
+a new Wegent-owned Codex session. The execution request carries:
 
 - `codex_thread_id`
 - user message text
@@ -128,10 +132,10 @@ Backend sends a device command such as `codex_thread_turn` with:
 - `cwd`, if stored on the binding
 - model/options when compatible with the current Wework selection
 
-The local executor resumes the Codex thread id through Codex app-server or SDK,
-starts a new turn, and streams normalized progress back through the existing
-Wegent task/subtask update path. Wework-origin turns are stored as normal
-Wegent subtasks, so mobile clients can see messages sent after binding.
+The local executor starts a new turn and streams normalized progress back
+through the existing Wegent task/subtask update path. Wework-origin turns are
+stored as normal Wegent subtasks, so mobile clients can see messages sent after
+binding.
 
 ## UI Design
 
@@ -180,15 +184,16 @@ user's device into another user's task.
 
 ## Testing
 
-- Backend command registry resolves `codex_threads_list` and `codex_thread_turn`
-  as narrow built-in commands.
+- Backend command registry resolves `codex_threads_list` as a narrow built-in
+  discovery command.
 - Binding the same `(device_id, codex_thread_id)` twice returns the existing
   active Wework task.
 - Bound tasks appear in `/tasks/lite/personal?client_origin=wework`.
 - Opening a bound task shows the binding summary and uses the normal Wework task
   detail path.
-- Sending a message to a bound task calls the Codex thread resume path, not the
-  fresh task execution path.
+- Sending a message to a bound task sets
+  `ExecutionRequest.local_codex_thread_id` and the executor calls the Codex
+  thread resume path, not the fresh thread start path.
 - A missing local thread produces a failed subtask without deleting the Wework
   task.
 - Offline devices block discovery and continue actions.

@@ -5,6 +5,20 @@
   "common": {
     "loading": "加载中..."
   },
+  "localCodex": {
+    "importAction": "导入本地 Codex 任务",
+    "dialogTitle": "本地 Codex 任务",
+    "deviceLabel": "本地设备",
+    "empty": "没有发现本地 Codex 任务",
+    "offline": "需要在线的本地设备",
+    "bind": "导入",
+    "openExisting": "打开",
+    "updatedAt": "更新于 {{time}}",
+    "threadMissing": "这个 Codex 任务在当前设备上不存在",
+    "loadFailed": "无法读取本地 Codex 任务",
+    "threadUnavailable": "已归档或运行中的 Codex 任务暂不能导入",
+    "indicator": "本地 Codex 任务"
+  },
   "workbench": {
     "brand": "Wework",
     "new_chat": "新对话",

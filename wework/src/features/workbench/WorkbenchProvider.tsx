@@ -18,6 +18,7 @@ import { createTaskApi } from '@/api/tasks'
 import { createTeamApi } from '@/api/teams'
 import { createUserApi } from '@/api/users'
 import { getToken } from '@/api/auth'
+import { createLocalCodexApi } from '@/api/localCodex'
 import { getRuntimeConfig, stripAppBasePath } from '@/config/runtime'
 import i18n from '@/i18n'
 import { createChatStream } from '@/stream/chatStream'
@@ -48,6 +49,9 @@ import type {
   GitBranch,
   GitRepoInfo,
   DeviceInfo,
+  LocalCodexBindRequest,
+  LocalCodexBindResponse,
+  LocalCodexThreadSummary,
   LocalDeviceSkill,
   ModelOptions,
   ModelSelectionConfig,
@@ -188,6 +192,7 @@ export interface WorkbenchServices {
     | 'upgradeDevice'
     | 'listSkills'
   >
+  localCodexApi?: ReturnType<typeof createLocalCodexApi>
   userApi?: ReturnType<typeof createUserApi>
   chatStream: ReturnType<typeof createChatStream>
 }
@@ -234,6 +239,13 @@ export interface WorkbenchContextValue {
   openTask: (taskId: number, projectId?: number) => Promise<void>
   searchTasks: (query: string) => Promise<TaskListResponse>
   searchTaskDetail: (taskId: number) => Promise<TaskDetail>
+  listLocalCodexThreads: (
+    deviceId: string,
+    limit?: number,
+  ) => Promise<LocalCodexThreadSummary[]>
+  bindLocalCodexThread: (
+    request: LocalCodexBindRequest,
+  ) => Promise<LocalCodexBindResponse>
   rememberExecutionDevice: (deviceId: string) => void
   refreshWorkLists: () => Promise<void>
   refreshDevices: () => Promise<void>
@@ -326,6 +338,7 @@ function createDefaultServices(): WorkbenchServices {
     gitApi: createGitApi(client),
     taskApi: createTaskApi(client),
     deviceApi: createDeviceApi(client),
+    localCodexApi: createLocalCodexApi(client),
     userApi: createUserApi(client),
     chatStream: createChatStream(socketClient.socket),
   }
@@ -1402,6 +1415,40 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     [resolvedServices]
   )
 
+  const listLocalCodexThreads = useCallback(
+    (deviceId: string, limit?: number) =>
+      resolvedServices.localCodexApi?.listLocalCodexThreads(deviceId, limit) ??
+      Promise.resolve([]),
+    [resolvedServices]
+  )
+
+  const bindLocalCodexThread = useCallback(
+    async (request: LocalCodexBindRequest) => {
+      if (!resolvedServices.localCodexApi) {
+        throw new Error('Local Codex import is unavailable')
+      }
+      if (!state.defaultTeam) {
+        throw new Error('Default team is unavailable')
+      }
+
+      const response = await resolvedServices.localCodexApi.bindLocalCodexThread({
+        ...request,
+        teamId: request.teamId ?? state.defaultTeam.id,
+      })
+      rememberExecutionDevice(request.deviceId)
+      await refreshWorkLists()
+      await openTask(response.taskId, response.task.project_id)
+      return response
+    },
+    [
+      openTask,
+      refreshWorkLists,
+      rememberExecutionDevice,
+      resolvedServices.localCodexApi,
+      state.defaultTeam,
+    ]
+  )
+
   useEffect(() => {
     if (state.isBootstrapping) return
 
@@ -2324,6 +2371,8 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     openTask,
     searchTasks,
     searchTaskDetail,
+    listLocalCodexThreads,
+    bindLocalCodexThread,
     rememberExecutionDevice,
     refreshWorkLists,
     refreshDevices,

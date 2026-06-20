@@ -702,6 +702,96 @@ READ_RUNTIME_AUTH_FILE_COMMAND = (
     f"python3 -c {shlex.quote(READ_RUNTIME_AUTH_FILE_SCRIPT)}"
 )
 
+CODEX_THREADS_LIST_SCRIPT = """
+import json
+import os
+from datetime import datetime, timezone
+from pathlib import Path
+
+
+def parse_limit():
+    try:
+        value = int(os.environ.get("WEGENT_CODEX_THREADS_LIMIT", "100"))
+    except ValueError:
+        value = 100
+    return min(max(value, 1), 100)
+
+
+def iter_json_lines(path):
+    if not path.is_file():
+        return
+
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(record, dict):
+                    yield record
+    except OSError:
+        return
+
+
+def first_text(record, *keys):
+    for key in keys:
+        value = record.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def normalize_record(record):
+    thread_id = first_text(record, "id", "thread_id", "threadId", "conversation_id")
+    if not thread_id:
+        return None
+    title = first_text(record, "title", "thread_name", "summary", "name") or thread_id
+    return {
+        "threadId": thread_id,
+        "title": title,
+        "cwd": first_text(record, "cwd", "workingDirectory", "working_directory"),
+        "updatedAt": first_text(record, "updatedAt", "updated_at", "mtime"),
+        "archived": bool(record.get("archived", False)),
+        "running": bool(record.get("running", False)),
+    }
+
+
+def sort_key(record):
+    value = record.get("updatedAt") or ""
+    if not isinstance(value, str) or not value:
+        return datetime.min.replace(tzinfo=timezone.utc)
+    normalized = value.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return datetime.min.replace(tzinfo=timezone.utc)
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+codex_home = Path(
+    os.environ.get("CODEX_HOME") or (Path.home() / ".codex")
+).expanduser()
+records = []
+limit = parse_limit()
+for raw in iter_json_lines(codex_home / "session_index.jsonl"):
+    normalized = normalize_record(raw)
+    if normalized:
+        records.append(normalized)
+        if len(records) >= limit:
+            break
+
+records.sort(key=sort_key, reverse=True)
+print(json.dumps({"threads": records}, ensure_ascii=False))
+""".strip()
+
+CODEX_THREADS_LIST_COMMAND = f"python3 -c {shlex.quote(CODEX_THREADS_LIST_SCRIPT)}"
+
 TURN_FILE_CHANGES_SCRIPT = """
 import gzip
 import hashlib
@@ -958,6 +1048,10 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
     "git_commit": LocalDeviceCommandDefinition(command="git commit"),
     "ls_skills": LocalDeviceCommandDefinition(
         command=LS_SKILLS_COMMAND,
+        post_processor="json",
+    ),
+    "codex_threads_list": LocalDeviceCommandDefinition(
+        command=CODEX_THREADS_LIST_COMMAND,
         post_processor="json",
     ),
     "setup_shared_skills": LocalDeviceCommandDefinition(

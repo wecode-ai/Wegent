@@ -5,6 +5,7 @@ import {
   Folder,
   FolderGit2,
   FolderPlus,
+  Import,
   Loader2,
   MessageSquarePlus,
   Plus,
@@ -12,6 +13,7 @@ import {
   Search,
   Settings,
   Sparkles,
+  Terminal,
   X,
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -30,6 +32,9 @@ import type {
   DeviceInfo,
   GitBranch,
   GitRepoInfo,
+  LocalCodexBindRequest,
+  LocalCodexBindResponse,
+  LocalCodexThreadSummary,
   ProjectTask,
   ProjectWithTasks,
   Task,
@@ -42,6 +47,7 @@ import { DesktopSettingsMenu } from './DesktopSettingsMenu'
 import { DesktopSearchDialog } from './DesktopSearchDialog'
 import { DesktopTopBar } from './DesktopTopBar'
 import { DesktopWindowControls } from './DesktopWindowControls'
+import { LocalCodexThreadImportDialog } from './LocalCodexThreadImportDialog'
 import { useResizableSidebar } from './useResizableSidebar'
 
 interface DesktopSidebarProps {
@@ -63,6 +69,13 @@ interface DesktopSidebarProps {
   onOpenTask: (taskId: number, projectId?: number) => void
   onSearchTasks?: (query: string) => Promise<TaskListResponse>
   onSearchTaskDetail?: (taskId: number) => Promise<TaskDetail>
+  onListLocalCodexThreads?: (
+    deviceId: string,
+    limit?: number,
+  ) => Promise<LocalCodexThreadSummary[]>
+  onBindLocalCodexThread?: (
+    request: LocalCodexBindRequest,
+  ) => Promise<LocalCodexBindResponse>
   onRememberExecutionDevice?: (deviceId: string) => void
   onOpenPlugins: () => void
   onRefreshDevices?: () => Promise<void>
@@ -284,6 +297,12 @@ function isGitWorktreeSession(
   return task.execution_workspace_source === 'git_worktree'
 }
 
+function isLocalCodexThreadSession(
+  task: Pick<ProjectTask | Task, 'execution_workspace_source'>,
+): boolean {
+  return task.execution_workspace_source === 'local_codex_thread'
+}
+
 function GitWorktreeSidebarIcon({
   testId,
   title,
@@ -312,6 +331,25 @@ function GitWorktreeSidebarIcon({
           strokeWidth="1.45"
         />
       </svg>
+    </span>
+  )
+}
+
+function LocalCodexSidebarIcon({
+  testId,
+  title,
+}: {
+  testId: string
+  title: string
+}) {
+  return (
+    <span
+      data-testid={testId}
+      title={title}
+      aria-label={title}
+      className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-[4px] border border-[rgb(var(--color-sidebar-text-muted))] text-[rgb(var(--color-sidebar-text-secondary))]"
+    >
+      <Terminal className="h-3 w-3" />
     </span>
   )
 }
@@ -442,7 +480,9 @@ function ProjectTaskRow({
   const title = getProjectTaskTitle(task)
   const handleOpen = () => onOpenTask(task.task_id, projectId)
   const gitWorktreeSession = isGitWorktreeSession(task)
+  const localCodexThreadSession = isLocalCodexThreadSession(task)
   const gitWorktreeTitle = t('workbench.git_worktree_session', 'Git worktree')
+  const localCodexThreadTitle = t('localCodex.indicator', 'Local Codex thread')
   return (
     <div
       data-testid={`project-chat-row-${task.task_id}`}
@@ -481,6 +521,12 @@ function ProjectTaskRow({
               <GitWorktreeSidebarIcon
                 testId={`project-chat-git-worktree-icon-${task.task_id}`}
                 title={gitWorktreeTitle}
+              />
+            )}
+            {localCodexThreadSession && (
+              <LocalCodexSidebarIcon
+                testId={`project-chat-local-codex-icon-${task.task_id}`}
+                title={localCodexThreadTitle}
               />
             )}
             <span
@@ -699,7 +745,9 @@ function RecentTaskRow({
   const { t } = useTranslation('common')
   const handleOpen = () => onOpenTask(task.id, task.project_id ?? 0)
   const gitWorktreeSession = isGitWorktreeSession(task)
+  const localCodexThreadSession = isLocalCodexThreadSession(task)
   const gitWorktreeTitle = t('workbench.git_worktree_session', 'Git worktree')
+  const localCodexThreadTitle = t('localCodex.indicator', 'Local Codex thread')
   const deviceState = getSidebarDeviceState(task.device_id, devices)
   const visibleDeviceState = deviceState?.status === 'online' ? null : deviceState
   return (
@@ -745,6 +793,12 @@ function RecentTaskRow({
               <GitWorktreeSidebarIcon
                 testId={`history-task-git-worktree-icon-${task.id}`}
                 title={gitWorktreeTitle}
+              />
+            )}
+            {localCodexThreadSession && (
+              <LocalCodexSidebarIcon
+                testId={`history-task-local-codex-icon-${task.id}`}
+                title={localCodexThreadTitle}
               />
             )}
             {visibleDeviceState && (
@@ -808,6 +862,8 @@ export function DesktopSidebar({
   onOpenTask,
   onSearchTasks,
   onSearchTaskDetail,
+  onListLocalCodexThreads,
+  onBindLocalCodexThread,
   onRememberExecutionDevice,
   onOpenPlugins,
   onRefreshDevices,
@@ -865,6 +921,7 @@ export function DesktopSidebar({
     readStoredBoolean(chatsExpandedStorageKey, true),
   )
   const [searchDialogOpen, setSearchDialogOpen] = useState(false)
+  const [localCodexDialogOpen, setLocalCodexDialogOpen] = useState(false)
   const [expandedProjectIds, setExpandedProjectIds] = useState<Set<number>>(() =>
     readStoredNumberSet(expandedProjectIdsStorageKey),
   )
@@ -909,6 +966,7 @@ export function DesktopSidebar({
         'workbench.standalone_chat_device_unavailable',
         '暂无在线设备，无法新建对话',
       )
+  const canImportLocalCodex = Boolean(onListLocalCodexThreads && onBindLocalCodexThread)
 
   const handleToggleProject = (projectId: number) => {
     setExpandedProjectIds(previous => {
@@ -1169,6 +1227,18 @@ export function DesktopSidebar({
             iconTestId="chats-section-chevron-right"
             onToggle={() => setChatsExpanded(expanded => !expanded)}
           >
+            {canImportLocalCodex && (
+              <button
+                type="button"
+                data-testid="local-codex-import-button"
+                onClick={() => setLocalCodexDialogOpen(true)}
+                className="flex h-7 w-7 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
+                title={t('localCodex.importAction')}
+                aria-label={t('localCodex.importAction')}
+              >
+                <Import className="h-4 w-4" />
+              </button>
+            )}
             <ActionMenu
               ariaLabel={t('workbench.chat_list_actions', '对话列表操作')}
               testId="chats-more-button"
@@ -1276,6 +1346,16 @@ export function DesktopSidebar({
         onSearchTasks={onSearchTasks}
         onSearchTaskDetail={onSearchTaskDetail}
       />
+
+      {onListLocalCodexThreads && onBindLocalCodexThread && (
+        <LocalCodexThreadImportDialog
+          open={localCodexDialogOpen}
+          devices={devices}
+          onClose={() => setLocalCodexDialogOpen(false)}
+          onListLocalCodexThreads={onListLocalCodexThreads}
+          onBindLocalCodexThread={onBindLocalCodexThread}
+        />
+      )}
 
       <ProjectCreateDialog
         open={projectCreateMode !== null}

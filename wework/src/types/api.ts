@@ -250,6 +250,35 @@ export interface TaskListResponse {
   items: Task[]
 }
 
+export interface LocalCodexThreadSummary {
+  threadId: string
+  title: string
+  cwd?: string
+  updatedAt?: string
+  archived?: boolean
+  running?: boolean
+}
+
+export interface LocalCodexThreadListResponse {
+  threads: LocalCodexThreadSummary[]
+}
+
+export interface LocalCodexBindRequest {
+  deviceId: string
+  threadId: string
+  teamId?: number
+  title?: string
+  cwd?: string
+}
+
+export interface LocalCodexBindResponse {
+  taskId: number
+  task: Task
+  created: boolean
+  threadId: string
+  deviceId: string
+}
+
 export interface ArchivedTask {
   id: number
   title: string
