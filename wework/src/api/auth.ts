@@ -11,11 +11,6 @@ export interface LoginResponse {
   token_type: string
 }
 
-export interface AdminPasswordSetupStatusResponse {
-  required: boolean
-  admin_username: string
-}
-
 const TOKEN_KEY = 'auth_token'
 const TOKEN_EXPIRE_KEY = 'auth_token_expire'
 const TOKEN_COOKIE_NAME = 'auth_token'
@@ -78,9 +73,6 @@ export function createAuthApi(client: HttpClient) {
       setToken(res.access_token)
       return client.get('/users/me')
     },
-    getAdminPasswordSetupStatus(): Promise<AdminPasswordSetupStatusResponse> {
-      return client.get('/auth/admin-password/status')
-    },
     async setupAdminPassword(password: string): Promise<User> {
       const res = await client.post<LoginResponse>('/auth/admin-password/setup', { password })
       setToken(res.access_token)
@@ -91,6 +83,9 @@ export function createAuthApi(client: HttpClient) {
     },
     getCurrentUser(): Promise<User> {
       return client.get('/users/me')
+    },
+    getCurrentUserWithoutAuthRedirect(): Promise<User> {
+      return client.get('/users/me', { redirectOnUnauthorized: false })
     },
     async loginWithOidcToken(accessToken: string): Promise<void> {
       setToken(accessToken)

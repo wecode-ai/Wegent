@@ -26,8 +26,9 @@ test.describe('Code Page - Enhanced Tests', () => {
   })
 
   test('should display code page layout correctly', async ({ page }) => {
-    // Check URL
-    expect(page.url()).toContain('/code')
+    const currentUrl = new URL(page.url())
+    expect(currentUrl.pathname).toBe('/chat')
+    expect(currentUrl.searchParams.get('agent')).toBe('code')
 
     // Check main layout elements - use flexible check
     const sidebar = page.locator('[data-testid="task-sidebar"], aside').first()
@@ -37,7 +38,7 @@ test.describe('Code Page - Enhanced Tests', () => {
     const topNav = page.locator('nav, header').first()
     const hasNav = await topNav.isVisible({ timeout: 5000 }).catch(() => false)
 
-    expect(hasSidebar || hasNav || true).toBe(true)
+    expect(hasSidebar || hasNav).toBe(true)
   })
 
   test('should display team selector in code page', async ({ page }) => {

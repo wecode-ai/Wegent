@@ -198,6 +198,7 @@
     "collapse_input": "Collapse input",
     "fullscreen_input_title": "Edit message",
     "send_message": "Send message",
+    "sending_message": "Sending...",
     "custom_mode": "Custom",
     "model_selector": "Model selector",
     "model_family": "Model",

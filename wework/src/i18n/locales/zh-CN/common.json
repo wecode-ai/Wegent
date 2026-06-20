@@ -198,6 +198,7 @@
     "collapse_input": "折叠输入框",
     "fullscreen_input_title": "编辑消息",
     "send_message": "发送消息",
+    "sending_message": "正在发送...",
     "custom_mode": "自定义",
     "model_selector": "模型选择",
     "model_family": "模型",

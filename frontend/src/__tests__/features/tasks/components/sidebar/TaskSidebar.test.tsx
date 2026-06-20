@@ -261,7 +261,16 @@ describe('TaskSidebar scroll structure', () => {
     expect(
       within(fixedSection).queryByTestId('task-sidebar-nav-code-button')
     ).not.toBeInTheDocument()
-    expect(within(fixedSection).getByTestId('task-sidebar-nav-wework-button')).toBeInTheDocument()
+    const weworkButton = within(fixedSection).getByTestId('task-sidebar-nav-wework-button')
+    const weworkIcon = weworkButton.querySelector('svg')
+
+    if (!weworkIcon) {
+      throw new Error('Expected WeWork sidebar button to render an icon')
+    }
+
+    expect(weworkButton).toBeInTheDocument()
+    expect(weworkIcon).toHaveClass('lucide-zap')
+    expect(weworkIcon).not.toHaveClass('lucide-layout-grid')
   })
 
   it('does not keep Code highlighted on plain chat after leaving code agent mode', () => {

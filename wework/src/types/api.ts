@@ -72,7 +72,7 @@ export interface GitBranch {
   default?: boolean
 }
 
-export type ModelType = 'public' | 'user' | 'group'
+export type ModelType = 'public' | 'user' | 'group' | 'runtime'
 
 export interface ModelSelectionConfig {
   modelName: string

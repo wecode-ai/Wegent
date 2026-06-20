@@ -32,6 +32,7 @@ export interface ProjectChatControls {
   modelSelectorOpenSignal?: number
   setSelectedModel: (model: UnifiedModel | null) => void
   setSelectedModelOption: (optionId: string, value: string) => void
+  onBlockedModelSelect?: (model: UnifiedModel, message?: string) => void
   toggleSkill: (skill: SkillRef) => void
   handleFileSelect: (files: File | File[]) => Promise<void>
   removeAttachment: (attachmentId: number) => Promise<void>
@@ -64,6 +65,7 @@ interface ChatInputProps {
   onChange: (value: string) => void
   onSubmit: () => void
   disabled: boolean
+  error?: string | null
   disabledReason?: string
   placeholder?: string
   variant?: 'compact' | 'desktop'
@@ -87,6 +89,7 @@ export function ChatInput({
   onChange,
   onSubmit,
   disabled,
+  error,
   disabledReason,
   placeholder,
   variant = 'compact',
@@ -120,6 +123,7 @@ export function ChatInput({
     modelSelectorOpenSignal: undefined,
     setSelectedModel: () => {},
     setSelectedModelOption: () => {},
+    onBlockedModelSelect: () => {},
     toggleSkill: () => {},
     handleFileSelect: async () => {},
     removeAttachment: async () => {},
@@ -134,6 +138,15 @@ export function ChatInput({
     disabledReason,
     placeholder: disabledReason ? '' : inputPlaceholder,
   }
+  const errorBanner = error ? (
+    <div
+      className="mb-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
+      data-testid="chat-input-error"
+      role="alert"
+    >
+      {error}
+    </div>
+  ) : null
   const queuePanel = (
     <ConversationQueuePanel
       queuedMessages={queuedMessages}
@@ -149,6 +162,7 @@ export function ChatInput({
     return (
       <div className="w-full">
         {queuePanel}
+        {errorBanner}
         <ProjectChatComposer
           {...composerProps}
           models={controls.models}
@@ -162,6 +176,7 @@ export function ChatInput({
           attachmentErrors={controls.errors}
           onSelectModel={controls.setSelectedModel}
           onSelectModelOption={controls.setSelectedModelOption}
+          onBlockedModelSelect={controls.onBlockedModelSelect}
           onFileSelect={files => {
             void controls.handleFileSelect(files)
           }}
@@ -195,6 +210,7 @@ export function ChatInput({
   return (
     <div className="w-full">
       {queuePanel}
+      {errorBanner}
       <CompactChatComposer
         {...composerProps}
         attachments={controls.attachments}

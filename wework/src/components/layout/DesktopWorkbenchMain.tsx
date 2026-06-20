@@ -1,10 +1,4 @@
-import {
-  useCallback,
-  useLayoutEffect,
-  useRef,
-  useState,
-  type ReactNode,
-} from 'react'
+import { useCallback, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { ChatInput } from '@/components/chat/ChatInput'
 import type { ProjectChatControls, ProjectWorkControls } from '@/components/chat/ChatInput'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
@@ -14,7 +8,11 @@ import {
   getActiveWorkbenchDeviceId,
   isWorkbenchDeviceOnline,
 } from '@/lib/workbench-device'
-import { isDeviceBelowWeWorkVersion, isWeWorkCompatibleDevice } from '@/lib/device-capabilities'
+import {
+  WEWORK_MIN_EXECUTOR_VERSION,
+  isDeviceBelowWeWorkVersion,
+  isWeWorkCompatibleDevice,
+} from '@/lib/device-capabilities'
 import type { DeviceInfo, ProjectWithTasks, Task, TurnFileChangesSummary } from '@/types/api'
 import type { DeviceUpgradeState } from '@/types/device-events'
 import type { EnvironmentInfo } from '@/types/environment'
@@ -131,6 +129,7 @@ interface DesktopWorkbenchMainProps {
   projectWork: ProjectWorkControls
   input: string
   isSending: boolean
+  error?: string | null
   environmentInfo: EnvironmentInfo
   onRefreshEnvironmentInfo: () => Promise<void>
   onCommitEnvironmentChanges: (message: string) => Promise<void>
@@ -173,6 +172,7 @@ export function DesktopWorkbenchMain({
   projectWork,
   input,
   isSending,
+  error,
   environmentInfo,
   onRefreshEnvironmentInfo,
   onCommitEnvironmentChanges,
@@ -241,6 +241,20 @@ export function DesktopWorkbenchMain({
     activeDeviceUnavailable ||
     activeDeviceVersionUnsupported ||
     noStandaloneCompatibleDevice
+  const composerDisabledReason = isSending
+    ? t('workbench.sending_message')
+    : activeDeviceUnavailable
+      ? t('workbench.device_status_active_unavailable', {
+          device: activeDevice?.name || activeDeviceId || t('workbench.project_device'),
+        })
+      : activeDeviceVersionUnsupported
+        ? t('workbench.device_status_active_upgrade_required', {
+            device: activeDevice?.name || activeDeviceId || t('workbench.project_device'),
+            version: WEWORK_MIN_EXECUTOR_VERSION,
+          })
+        : noStandaloneCompatibleDevice
+          ? t('workbench.device_status_no_online_device')
+          : undefined
   const projectChatWithModelSelectorSignal: ProjectChatControls = {
     ...projectChat,
     modelSelectorOpenSignal,
@@ -508,6 +522,8 @@ export function DesktopWorkbenchMain({
                   onChange={onInputChange}
                   onSubmit={onSend}
                   disabled={composerDisabled}
+                  error={error}
+                  disabledReason={composerDisabledReason}
                   placeholder={t('workbench.input_placeholder', '尽管问')}
                   variant="desktop"
                   projectChat={projectChatWithModelSelectorSignal}
@@ -553,6 +569,8 @@ export function DesktopWorkbenchMain({
                 onChange={onInputChange}
                 onSubmit={onSend}
                 disabled={composerDisabled}
+                error={error}
+                disabledReason={composerDisabledReason}
                 placeholder={t('workbench.input_placeholder', '尽管问')}
                 variant="desktop"
                 projectChat={projectChatWithModelSelectorSignal}

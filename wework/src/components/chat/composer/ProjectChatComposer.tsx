@@ -30,6 +30,7 @@ interface ProjectChatComposerProps {
   attachmentErrors: Map<string, string>
   onSelectModel: (model: UnifiedModel | null) => void
   onSelectModelOption: (optionId: string, value: string) => void
+  onBlockedModelSelect?: (model: UnifiedModel, message?: string) => void
   onFileSelect: (files: File | File[]) => void
   onRemoveAttachment: (attachmentId: number) => void
   onClearCodeComments?: () => void
@@ -72,6 +73,7 @@ export function ProjectChatComposer({
   attachmentErrors,
   onSelectModel,
   onSelectModelOption,
+  onBlockedModelSelect,
   onFileSelect,
   onRemoveAttachment,
   onClearCodeComments,
@@ -190,6 +192,7 @@ export function ProjectChatComposer({
           isModelSelectionReady={isModelSelectionReady}
           onSelectModel={onSelectModel}
           onSelectModelOption={onSelectModelOption}
+          onBlockedModelSelect={onBlockedModelSelect}
           onFileSelect={onFileSelect}
           isStreaming={isStreaming}
           onPause={onPause}

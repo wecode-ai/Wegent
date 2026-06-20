@@ -21,6 +21,21 @@ function ProjectChatProbe() {
     type: 'user',
     displayName: 'GPT 5.5 Medium',
   }
+  const runtimeModel: UnifiedModel = {
+    name: 'codex-gpt-5.5',
+    type: 'runtime',
+    displayName: 'GPT-5.5 (Codex)',
+    provider: 'openai',
+    modelId: 'gpt-5.5',
+    config: {
+      protocol: 'openai-responses',
+      apiFormat: 'responses',
+    },
+    runtime: {
+      family: 'openai.openai-responses',
+      provider: 'openai',
+    },
+  }
   const selectedSkill: SkillRef = {
     name: 'project-summary',
     namespace: 'default',
@@ -57,6 +72,9 @@ function ProjectChatProbe() {
       </button>
       <button type="button" onClick={() => projectChat.setSelectedModel(selectedModel)}>
         select model
+      </button>
+      <button type="button" onClick={() => projectChat.setSelectedModel(runtimeModel)}>
+        select runtime model
       </button>
       <button type="button" onClick={() => projectChat.setSelectedSkills([selectedSkill])}>
         select skill
@@ -1838,6 +1856,147 @@ describe('WorkbenchProvider', () => {
     })
     expect(updateProject).not.toHaveBeenCalled()
     expect(listProjects).toHaveBeenCalledTimes(2)
+  })
+
+  test('sends runtime GPT model selection for a new project conversation', async () => {
+    const sendMessage = vi.fn().mockResolvedValue({ success: true, task_id: 99 })
+    const updateCurrentUser = vi.fn().mockResolvedValue(undefined)
+
+    render(
+      <WorkbenchProvider
+        user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+        services={{
+          teamApi: {
+            getDefaultWorkbenchTeam: vi
+              .fn()
+              .mockResolvedValue({ id: 2, name: 'coder', is_active: true }),
+          },
+          modelApi: {
+            listModels: vi.fn().mockResolvedValue({
+              data: [
+                {
+                  name: 'codex-gpt-5.5',
+                  type: 'runtime',
+                  displayName: 'GPT-5.5 (Codex)',
+                  provider: 'openai',
+                  modelId: 'gpt-5.5',
+                  config: {
+                    protocol: 'openai-responses',
+                    apiFormat: 'responses',
+                  },
+                  runtime: {
+                    family: 'openai.openai-responses',
+                    provider: 'openai',
+                  },
+                },
+              ],
+            }),
+          },
+          skillApi: {
+            listSkills: vi.fn().mockResolvedValue([]),
+            getTeamSkills: vi.fn().mockResolvedValue({ skills: [], preload_skills: [] }),
+          },
+          projectApi: {
+            listProjects: vi.fn().mockResolvedValue({
+              items: [
+                {
+                  id: 7,
+                  name: 'Wegent',
+                  tasks: [],
+                  config: {
+                    mode: 'workspace',
+                    execution: {
+                      targetType: 'local',
+                      deviceId: 'device-1',
+                    },
+                  },
+                },
+              ],
+            }),
+            getProject: vi.fn(),
+            createProject: vi.fn(),
+            updateProject: vi.fn(),
+            deleteProject: vi.fn(),
+            archiveProjectChats: vi.fn(),
+            archiveAllProjectChats: vi.fn(),
+            createConversation: vi.fn(),
+          },
+          taskApi: {
+            listRecentTasks: vi.fn().mockResolvedValue({ total: 0, items: [] }),
+            getTaskDetail: vi.fn(),
+            renameTask: vi.fn(),
+            archiveTask: vi.fn(),
+            archiveAllChats: vi.fn(),
+            listArchivedTasks: vi.fn(),
+            unarchiveTask: vi.fn(),
+            deleteTask: vi.fn(),
+            deleteArchivedTasks: vi.fn(),
+          },
+          deviceApi: {
+            listDevices: vi.fn().mockResolvedValue([
+              {
+                id: 1,
+                device_id: 'device-1',
+                name: 'Project Device',
+                status: 'online',
+                is_default: false,
+                device_type: 'cloud',
+                bind_shell: 'claudecode',
+                executor_version: '1.8.5',
+              },
+            ]),
+            getHomeDirectory: vi.fn(),
+            getProjectWorkspaceRoot: vi.fn(),
+            listDirectories: vi.fn(),
+            listSkills: vi.fn().mockResolvedValue([]),
+          },
+          userApi: {
+            updateCurrentUser,
+          },
+          chatStream: {
+            joinTask: vi.fn(),
+            leaveTask: vi.fn(),
+            sendMessage,
+            subscribe: vi.fn(() => vi.fn()),
+          },
+        }}
+      >
+        <ProjectChatProbe />
+      </WorkbenchProvider>
+    )
+
+    await waitFor(() => expect(screen.getByText('select project')).toBeInTheDocument())
+
+    await userEvent.click(screen.getByText('select project'))
+    await userEvent.click(screen.getByText('select runtime model'))
+    await userEvent.click(screen.getByText('set input'))
+    await userEvent.click(screen.getByText('send'))
+
+    await waitFor(() =>
+      expect(sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          team_id: 2,
+          project_id: 7,
+          client_origin: 'wework',
+          device_id: 'device-1',
+          task_type: 'code',
+          message: 'build it',
+          force_override_bot_model: 'codex-gpt-5.5',
+          force_override_bot_model_type: 'runtime',
+        })
+      )
+    )
+    expect(updateCurrentUser).toHaveBeenCalledWith({
+      preferences: {
+        wework_new_chat_model_selection: {
+          modelName: 'codex-gpt-5.5',
+          modelType: 'runtime',
+          options: {
+            reasoning: 'high',
+          },
+        },
+      },
+    })
   })
 
   test('resolves automatic model selection when sending a new project conversation', async () => {

@@ -482,6 +482,7 @@ export function DesktopWorkbenchLayout({
           projectWork={projectWorkWithCreation}
           input={state.input}
           isSending={state.isSending}
+          error={state.error}
           environmentInfo={environmentInfo}
           onRefreshEnvironmentInfo={refreshEnvironmentInfo}
           onCommitEnvironmentChanges={handleCommitEnvironmentChanges}

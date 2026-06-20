@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Eye, EyeOff } from 'lucide-react'
 import { getRuntimeConfig } from '@/config/runtime'
+import { isAdminPasswordSetupRequiredError } from '@/features/auth/adminPasswordSetup'
 import { POST_LOGIN_REDIRECT_KEY, sanitizeRedirectPath } from '@/features/auth/redirect'
 import { useAuth } from '@/features/auth/useAuth'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -35,7 +36,8 @@ export function LoginPage() {
     login,
     user,
     isLoading: authLoading,
-    getAdminPasswordSetupStatus,
+    adminPasswordSetupRequired,
+    adminUsername,
     setupAdminPassword,
   } = useAuth()
   const config = useMemo(() => getRuntimeConfig(), [])
@@ -50,9 +52,6 @@ export function LoginPage() {
   const [showPassword, setShowPassword] = useState(false)
   const [showAdminPassword, setShowAdminPassword] = useState(false)
   const [showAdminPasswordConfirm, setShowAdminPasswordConfirm] = useState(false)
-  const [adminPasswordSetupRequired, setAdminPasswordSetupRequired] = useState<boolean | null>(null)
-  const [adminPasswordSetupStatusError, setAdminPasswordSetupStatusError] = useState(false)
-  const [adminUsername, setAdminUsername] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isAdminPasswordSubmitting, setIsAdminPasswordSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -60,6 +59,7 @@ export function LoginPage() {
   const redirectTarget = getRedirectTarget()
   const showPasswordLogin = config.loginMode === 'password' || config.loginMode === 'all'
   const showOidcLogin = config.loginMode === 'oidc' || config.loginMode === 'all'
+  const isResolvingInitialUserState = authLoading && !user
 
   useEffect(() => {
     if (!authLoading && user) {
@@ -67,39 +67,6 @@ export function LoginPage() {
       navigateTo(redirectTarget)
     }
   }, [authLoading, redirectTarget, user])
-
-  useEffect(() => {
-    let cancelled = false
-
-    async function loadAdminPasswordSetupStatus() {
-      if (!showPasswordLogin) {
-        setAdminPasswordSetupRequired(false)
-        setAdminPasswordSetupStatusError(false)
-        return
-      }
-
-      try {
-        const status = await getAdminPasswordSetupStatus()
-        if (!cancelled) {
-          setAdminPasswordSetupRequired(status.required)
-          setAdminUsername(status.admin_username)
-          setAdminPasswordSetupStatusError(false)
-        }
-      } catch (err) {
-        console.error('Failed to load admin password setup status:', err)
-        if (!cancelled) {
-          setAdminPasswordSetupRequired(null)
-          setAdminPasswordSetupStatusError(true)
-        }
-      }
-    }
-
-    void loadAdminPasswordSetupStatus()
-
-    return () => {
-      cancelled = true
-    }
-  }, [getAdminPasswordSetupStatus, showPasswordLogin])
 
   useEffect(() => {
     if (config.loginMode === 'oidc') {
@@ -121,6 +88,9 @@ export function LoginPage() {
       sessionStorage.removeItem(POST_LOGIN_REDIRECT_KEY)
       navigateTo(redirectTarget)
     } catch (err) {
+      if (isAdminPasswordSetupRequiredError(err)) {
+        return
+      }
       setError(err instanceof Error ? err.message : t('workbench.login_failed'))
     } finally {
       setIsSubmitting(false)
@@ -167,22 +137,12 @@ export function LoginPage() {
           <p className="mt-2 text-sm text-text-muted">{t('workbench.login_subtitle')}</p>
         </div>
         <div className="rounded-2xl border border-border bg-surface px-8 py-8 shadow-[0_16px_44px_rgba(0,0,0,0.08)]">
-          {showPasswordLogin &&
-            adminPasswordSetupRequired === null &&
-            !adminPasswordSetupStatusError && (
-              <div className="py-8 text-center text-sm text-text-muted" data-testid="login-loading">
-                {t('workbench.loading_setup_status')}
-              </div>
-            )}
-          {showPasswordLogin && adminPasswordSetupStatusError && (
-            <div
-              className="py-8 text-center text-sm text-red-600"
-              data-testid="login-setup-status-error"
-            >
-              {t('workbench.admin_password_setup_status_failed')}
+          {showPasswordLogin && isResolvingInitialUserState && (
+            <div className="py-8 text-center text-sm text-text-muted" data-testid="login-loading">
+              {t('workbench.loading_setup_status')}
             </div>
           )}
-          {showPasswordLogin && adminPasswordSetupRequired === true && (
+          {showPasswordLogin && !isResolvingInitialUserState && adminPasswordSetupRequired && (
             <form
               data-testid="admin-password-setup-form"
               className="space-y-5"
@@ -309,7 +269,7 @@ export function LoginPage() {
               </button>
             </form>
           )}
-          {showPasswordLogin && adminPasswordSetupRequired === false && (
+          {showPasswordLogin && !isResolvingInitialUserState && !adminPasswordSetupRequired && (
             <form data-testid="login-form" className="space-y-5" onSubmit={handleSubmit}>
               <div>
                 <label htmlFor="user_name" className="text-sm font-medium text-text-secondary">
@@ -366,23 +326,28 @@ export function LoginPage() {
               </button>
             </form>
           )}
-          {showPasswordLogin && adminPasswordSetupRequired === false && showOidcLogin && (
-            <div className="my-6 flex items-center gap-3">
-              <div className="h-px flex-1 bg-border" />
-              <span className="text-xs text-text-muted">{t('workbench.login_or_continue')}</span>
-              <div className="h-px flex-1 bg-border" />
-            </div>
-          )}
-          {showOidcLogin && (!showPasswordLogin || adminPasswordSetupRequired === false) && (
-            <button
-              type="button"
-              data-testid="oidc-login-button"
-              className={OUTLINED_LOGIN_BUTTON_CLASS}
-              onClick={handleOidcLogin}
-            >
-              {config.oidcLoginText || t('workbench.oidc_login')}
-            </button>
-          )}
+          {showPasswordLogin &&
+            !isResolvingInitialUserState &&
+            !adminPasswordSetupRequired &&
+            showOidcLogin && (
+              <div className="my-6 flex items-center gap-3">
+                <div className="h-px flex-1 bg-border" />
+                <span className="text-xs text-text-muted">{t('workbench.login_or_continue')}</span>
+                <div className="h-px flex-1 bg-border" />
+              </div>
+            )}
+          {showOidcLogin &&
+            (!showPasswordLogin ||
+              (!isResolvingInitialUserState && !adminPasswordSetupRequired)) && (
+              <button
+                type="button"
+                data-testid="oidc-login-button"
+                className={OUTLINED_LOGIN_BUTTON_CLASS}
+                onClick={handleOidcLogin}
+              >
+                {config.oidcLoginText || t('workbench.oidc_login')}
+              </button>
+            )}
         </div>
       </div>
     </div>
