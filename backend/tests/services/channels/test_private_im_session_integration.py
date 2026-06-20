@@ -77,6 +77,21 @@ def channel_sessionlocal(
     return factory
 
 
+@pytest.fixture()
+def expiring_channel_sessionlocal(
+    monkeypatch: pytest.MonkeyPatch,
+    test_db: Session,
+):
+    factory = sessionmaker(
+        bind=test_db.get_bind(),
+        autocommit=False,
+        autoflush=False,
+        expire_on_commit=True,
+    )
+    monkeypatch.setattr("app.services.channels.handler.SessionLocal", factory)
+    return factory
+
+
 def _message(
     content: str,
     *,
@@ -207,6 +222,51 @@ async def test_group_bind_does_not_create_private_session_and_uses_fallback(
     assert handler.replies == [
         "请在私聊会话中使用该命令；任务模式正在初始化，请稍后重试。"
     ]
+
+
+@pytest.mark.asyncio
+async def test_private_chat_mode_plain_text_fallthrough_keeps_user_fields_usable(
+    monkeypatch: pytest.MonkeyPatch,
+    test_db: Session,
+    test_user: User,
+    expiring_channel_sessionlocal,
+) -> None:
+    handler = FakeChannelHandler(test_user)
+    calls: dict[str, Any] = {}
+
+    async def fake_route_private_im_session(
+        db: Session,
+        user: User,
+        im_session: IMPrivateSession,
+        message_context: MessageContext,
+    ) -> bool:
+        calls["session_id"] = im_session.id
+        return False
+
+    async def fake_process_chat_message(
+        user: User,
+        message_context: MessageContext,
+    ) -> None:
+        calls["user_email"] = user.email
+        calls["content"] = message_context.content
+
+    monkeypatch.setattr(
+        handler, "_route_private_im_session", fake_route_private_im_session
+    )
+    monkeypatch.setattr(handler, "_process_chat_message", fake_process_chat_message)
+
+    handled = await handler.handle_message(_message("普通私聊消息"))
+
+    test_db.expire_all()
+    session = _private_session(test_db, test_user)
+    assert handled is True
+    assert session is not None
+    assert calls["session_id"] == session.id
+    assert calls == {
+        "session_id": session.id,
+        "user_email": test_user.email,
+        "content": "普通私聊消息",
+    }
 
 
 @pytest.mark.asyncio

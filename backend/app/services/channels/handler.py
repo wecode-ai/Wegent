@@ -644,6 +644,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
         # Resolve user with a short-lived db session
         db = SessionLocal()
+        db.expire_on_commit = False
         try:
             user = await self.resolve_user(db, message_context)
             if not user:
