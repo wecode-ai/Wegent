@@ -164,6 +164,27 @@ def test_build_lite_task_list_uses_batch_related_data_and_avoids_per_task_sql():
 
 
 @pytest.mark.unit
+def test_build_lite_task_list_normalizes_missing_and_empty_source_labels():
+    db = Mock(spec=Session)
+    tasks = [
+        _build_task(1, "Empty Labels"),
+        _build_task(2, "Absent Labels"),
+        _build_task(3, "Missing Labels"),
+    ]
+    tasks[0].json["metadata"]["labels"] = {}
+    tasks[1].json["metadata"]["labels"].pop("source", None)
+    tasks[2].json["metadata"].pop("labels")
+
+    with patch(
+        "app.services.adapters.task_kinds.helpers.get_tasks_related_data_batch",
+        return_value={},
+    ):
+        result = build_lite_task_list(db, tasks, user_id=7)
+
+    assert [item["source"] for item in result] == [None, None, None]
+
+
+@pytest.mark.unit
 def test_task_lite_schema_preserves_source():
     now = datetime.now()
 
