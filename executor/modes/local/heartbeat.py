@@ -116,6 +116,12 @@ class LocalHeartbeatService:
                     logger.error(
                         f"Heartbeat failed {self._consecutive_failures} consecutive times"
                     )
+                    recovered = await self.client.reconnect()
+                    if recovered:
+                        self._consecutive_failures = 0
+                        logger.info("Heartbeat reconnect recovery succeeded")
+                    else:
+                        logger.warning("Heartbeat reconnect recovery failed")
 
             except Exception as e:
                 self._consecutive_failures += 1

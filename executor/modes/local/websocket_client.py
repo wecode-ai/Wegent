@@ -413,7 +413,14 @@ class WebSocketClient:
     @property
     def connected(self) -> bool:
         """Check if WebSocket is connected."""
-        return self._connected
+        return self._connected and self._socketio_connected()
+
+    def _socketio_connected(self) -> bool:
+        """Check whether Socket.IO has an active transport or namespace."""
+        namespaces = getattr(self.sio, "namespaces", {})
+        return bool(getattr(self.sio, "connected", False)) or (
+            "/local-executor" in namespaces
+        )
 
     @property
     def registered(self) -> bool:
@@ -443,9 +450,14 @@ class WebSocketClient:
                 "Auth token not configured. Set WEGENT_AUTH_TOKEN environment variable."
             )
 
-        if self._connected:
+        if self.connected:
             logger.info("Already connected to WebSocket")
             return True
+
+        if self._connected:
+            logger.warning("WebSocket local state was stale; resetting before connect")
+            self._connected = False
+            self._registered = False
 
         if self._connecting:
             logger.info("Connection already in progress")
@@ -478,6 +490,29 @@ class WebSocketClient:
             logger.error(f"Failed to connect to WebSocket: {e}")
             return False
 
+    async def reconnect(self, wait_timeout: float = 30.0) -> bool:
+        """Force a fresh WebSocket connection and re-register the device."""
+        logger.info("Forcing WebSocket reconnect")
+
+        try:
+            if self._connected or self._socketio_connected():
+                await self.sio.disconnect()
+        except Exception as e:
+            logger.warning(f"Error while disconnecting stale WebSocket: {e}")
+
+        self._connected = False
+        self._registered = False
+        self._connecting = False
+
+        connected = await self.connect(wait_timeout=wait_timeout)
+        if not connected:
+            return False
+
+        if self._was_registered and not self._registered:
+            return await self.register_device()
+
+        return True
+
     async def register_device(self, timeout: float = 10.0) -> bool:
         """Register device with Backend using call (request-response).
 
@@ -487,7 +522,7 @@ class WebSocketClient:
         Returns:
             True if registered successfully, False otherwise.
         """
-        if not self._connected:
+        if not self.connected:
             raise ConnectionError("WebSocket not connected")
 
         try:
@@ -541,7 +576,7 @@ class WebSocketClient:
         Returns:
             True if heartbeat acknowledged, False otherwise.
         """
-        if not self._connected:
+        if not self.connected:
             raise ConnectionError("WebSocket not connected")
 
         try:
@@ -589,7 +624,7 @@ class WebSocketClient:
 
     async def disconnect(self) -> None:
         """Disconnect from the WebSocket server."""
-        if self._connected:
+        if self._connected or self._socketio_connected():
             try:
                 await self.sio.disconnect()
                 logger.info("WebSocket disconnected gracefully")
@@ -608,7 +643,7 @@ class WebSocketClient:
             data: Event data payload.
             callback: Optional callback for acknowledgment.
         """
-        if not self._connected:
+        if not self.connected:
             raise ConnectionError("WebSocket not connected")
 
         try:
@@ -636,7 +671,7 @@ class WebSocketClient:
         Returns:
             Response data or None if failed.
         """
-        if not self._connected:
+        if not self.connected:
             raise ConnectionError("WebSocket not connected")
 
         try:
