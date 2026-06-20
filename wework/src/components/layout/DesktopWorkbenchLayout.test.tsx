@@ -502,6 +502,59 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('project-work-button')).not.toBeInTheDocument()
   })
 
+  test('opens continue-in-im dialog from the active task topbar button', async () => {
+    const onListImPrivateSessions = vi.fn().mockResolvedValue({
+      total: 1,
+      items: [
+        {
+          id: 1,
+          channel_type: 'wecom',
+          channel_label: 'WeCom',
+          channel_id: 101,
+          conversation_id: 'conversation-1',
+          sender_id: 'sender-1',
+          display_name: 'Alice',
+          mode: 'chat',
+          state: 'idle',
+          active_task_id: null,
+          last_seen_at: '2026-06-20T00:00:00.000Z',
+        },
+      ],
+    })
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          currentTask: {
+            id: 7,
+            title: 'Active task',
+            status: 'COMPLETED',
+            task_type: 'code',
+            created_at: '2026-06-20T00:00:00.000Z',
+          },
+        }}
+        messages={[
+          {
+            id: 'message-1',
+            role: 'assistant',
+            content: 'Ready',
+            status: 'done',
+            createdAt: '2026-06-20T00:00:00.000Z',
+          },
+        ]}
+        onListImPrivateSessions={onListImPrivateSessions}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('continue-in-im-button'))
+
+    expect(onListImPrivateSessions).toHaveBeenCalledTimes(1)
+    expect(await screen.findByRole('dialog')).toBeInTheDocument()
+    expect(await screen.findByTestId('continue-im-session-1')).toHaveTextContent('Alice')
+  })
+
   test('positions the scroll-to-bottom button above the floating composer', () => {
     render(
       <DesktopWorkbenchLayout

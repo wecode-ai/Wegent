@@ -576,6 +576,66 @@ describe('MobileWorkbenchLayout', () => {
     )
   })
 
+  test('opens continue-in-im dialog from the active task header button', async () => {
+    const onListImPrivateSessions = vi.fn().mockResolvedValue({
+      total: 1,
+      items: [
+        {
+          id: 1,
+          channel_type: 'wecom',
+          channel_label: 'WeCom',
+          channel_id: 101,
+          conversation_id: 'conversation-1',
+          sender_id: 'sender-1',
+          display_name: 'Alice',
+          mode: 'chat',
+          state: 'idle',
+          active_task_id: null,
+          last_seen_at: '2026-06-20T00:00:00.000Z',
+        },
+      ],
+    })
+
+    renderAtMobileWidth(
+      <MobileWorkbenchLayout
+        state={{
+          ...baseState,
+          currentTask: {
+            id: 7,
+            title: 'Active task',
+            status: 'COMPLETED',
+            task_type: 'code',
+            created_at: '2026-06-20T00:00:00.000Z',
+          },
+        }}
+        messages={[
+          {
+            id: 'assistant-1',
+            role: 'assistant',
+            content: 'Ready',
+            status: 'done',
+          },
+        ]}
+        projectChat={baseProjectChat}
+        onSelectProject={vi.fn()}
+        onOpenTask={vi.fn()}
+        onInputChange={vi.fn()}
+        onSend={vi.fn()}
+        onListImPrivateSessions={onListImPrivateSessions}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('mobile-continue-in-im-button'))
+
+    expect(screen.getByTestId('mobile-continue-in-im-button')).toHaveClass(
+      'h-11',
+      'min-w-[44px]',
+    )
+    expect(onListImPrivateSessions).toHaveBeenCalledTimes(1)
+    expect(await screen.findByRole('dialog')).toBeInTheDocument()
+    expect(await screen.findByTestId('continue-im-session-1')).toHaveTextContent('Alice')
+  })
+
   test('opens drawer with projects and recent tasks', async () => {
     render(
       <MobileWorkbenchLayout
