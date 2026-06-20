@@ -24,6 +24,7 @@ interface UseWorkbenchModelsOptions {
   locked: boolean
   selectionConfig?: ModelSelectionConfig | null
   compatibilityConfig?: ModelSelectionConfig | null
+  defaultSelectionConfig?: (models: UnifiedModel[]) => ModelSelectionConfig | null
   selectionReady?: boolean
   onSelectionChange?: (selection: ModelSelectionConfig) => void
   onSelectionBlocked?: (
@@ -120,6 +121,7 @@ export function useWorkbenchModels({
   locked,
   selectionConfig,
   compatibilityConfig,
+  defaultSelectionConfig,
   selectionReady = true,
   onSelectionChange,
   onSelectionBlocked,
@@ -134,15 +136,22 @@ export function useWorkbenchModels({
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<Error | null>(null)
   const [restoredSelectionKey, setRestoredSelectionKey] = useState<string | null>(null)
+  const effectiveSelectionConfig = useMemo(() => {
+    if (selectionConfig?.modelName) {
+      return selectionConfig
+    }
+    return defaultSelectionConfig?.(models) ?? selectionConfig ?? null
+  }, [defaultSelectionConfig, models, selectionConfig])
   const selectionKey = useMemo(
-    () => getSelectionKey(models, selectionConfig),
-    [models, selectionConfig]
+    () => getSelectionKey(models, effectiveSelectionConfig),
+    [models, effectiveSelectionConfig]
   )
   const selectionMatchesConfig = Boolean(
-    selectionConfig?.modelName &&
+    effectiveSelectionConfig?.modelName &&
     selectedModel &&
-    selectedModel.name === selectionConfig.modelName &&
-    (!selectionConfig.modelType || selectedModel.type === selectionConfig.modelType)
+    selectedModel.name === effectiveSelectionConfig.modelName &&
+    (!effectiveSelectionConfig.modelType ||
+      selectedModel.type === effectiveSelectionConfig.modelType)
   )
   const isSelectionReady = useMemo(
     () =>
@@ -205,7 +214,7 @@ export function useWorkbenchModels({
     async function syncSelection() {
       await Promise.resolve()
       if (!cancelled) {
-        restoreSelection(models, selectionConfig)
+        restoreSelection(models, effectiveSelectionConfig)
         setRestoredSelectionKey(selectionKey)
       }
     }
@@ -214,7 +223,7 @@ export function useWorkbenchModels({
     return () => {
       cancelled = true
     }
-  }, [models, restoreSelection, selectionConfig, selectionKey, selectionReady])
+  }, [models, restoreSelection, effectiveSelectionConfig, selectionKey, selectionReady])
 
   const setSelectedModel = useCallback(
     (model: UnifiedModel | null) => {

@@ -3970,6 +3970,157 @@ describe('WorkbenchProvider', () => {
     expect(updateCurrentUser).not.toHaveBeenCalled()
   })
 
+  test('defaults local Codex task replies to the Codex runtime model', async () => {
+    const sendMessage = vi.fn().mockResolvedValue({ success: true, task_id: 8 })
+    const updateCurrentUser = vi.fn()
+
+    function LocalCodexTaskProbe() {
+      const workbench = useWorkbench()
+      return (
+        <div>
+          <span data-testid="selected-model">
+            {workbench.projectChat.selectedModel?.name ?? 'none'}
+          </span>
+          <span data-testid="model-count">{workbench.projectChat.models.length}</span>
+          <button type="button" onClick={() => workbench.setInput('continue')}>
+            set input
+          </button>
+          <button type="button" onClick={() => void workbench.openTask(8)}>
+            open local codex task
+          </button>
+          <button type="button" onClick={() => void workbench.sendCurrentInput()}>
+            send
+          </button>
+        </div>
+      )
+    }
+
+    render(
+      <WorkbenchProvider
+        user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+        services={{
+          teamApi: {
+            getDefaultWorkbenchTeam: vi
+              .fn()
+              .mockResolvedValue({ id: 2, name: 'coder', is_active: true }),
+          },
+          modelApi: {
+            listModels: vi.fn().mockResolvedValue({
+              data: [
+                {
+                  name: 'kimi',
+                  type: 'public',
+                  displayName: 'Kimi',
+                  runtime: { family: 'claude.claude' },
+                },
+                {
+                  name: 'codex-gpt-5.5',
+                  type: 'runtime',
+                  displayName: 'GPT-5.5 (Codex)',
+                  provider: 'openai',
+                  modelId: 'gpt-5.5',
+                  config: {
+                    protocol: 'openai-responses',
+                    apiFormat: 'responses',
+                  },
+                  runtime: {
+                    family: 'openai.openai-responses',
+                    provider: 'openai',
+                  },
+                },
+              ],
+            }),
+          },
+          skillApi: {
+            listSkills: vi.fn().mockResolvedValue([]),
+            getTeamSkills: vi.fn().mockResolvedValue({ skills: [], preload_skills: [] }),
+          },
+          projectApi: {
+            listProjects: vi.fn().mockResolvedValue({ items: [] }),
+            getProject: vi.fn(),
+            createProject: vi.fn(),
+            updateProject: vi.fn(),
+            deleteProject: vi.fn(),
+            archiveProjectChats: vi.fn(),
+            archiveAllProjectChats: vi.fn(),
+            createConversation: vi.fn(),
+          },
+          taskApi: {
+            listRecentTasks: vi.fn().mockResolvedValue({ total: 0, items: [] }),
+            getTaskDetail: vi.fn().mockResolvedValue({
+              id: 8,
+              title: 'Imported Codex task',
+              status: 'SUCCESS',
+              task_type: 'code',
+              project_id: 7,
+              device_id: 'device-1',
+              execution_workspace_source: 'local_codex_thread',
+              created_at: '2026-06-20T00:00:00.000Z',
+              updated_at: '2026-06-20T00:01:00.000Z',
+              subtasks: [],
+            }),
+            renameTask: vi.fn(),
+            archiveTask: vi.fn(),
+            archiveAllChats: vi.fn(),
+            listArchivedTasks: vi.fn(),
+            unarchiveTask: vi.fn(),
+            deleteTask: vi.fn(),
+            deleteArchivedTasks: vi.fn(),
+          },
+          deviceApi: {
+            listDevices: vi.fn().mockResolvedValue([
+              {
+                id: 1,
+                device_id: 'device-1',
+                name: 'Local Codex',
+                status: 'online',
+                is_default: false,
+                device_type: 'local',
+                bind_shell: 'claudecode',
+                executor_version: '1.8.5',
+              },
+            ]),
+            getHomeDirectory: vi.fn(),
+            getProjectWorkspaceRoot: vi.fn(),
+            listDirectories: vi.fn(),
+            listSkills: vi.fn().mockResolvedValue([]),
+          },
+          userApi: {
+            updateCurrentUser,
+          },
+          chatStream: {
+            joinTask: vi.fn(),
+            leaveTask: vi.fn(),
+            sendMessage,
+            subscribe: vi.fn(() => vi.fn()),
+          },
+        }}
+      >
+        <LocalCodexTaskProbe />
+      </WorkbenchProvider>
+    )
+
+    await waitFor(() => expect(screen.getByTestId('model-count')).toHaveTextContent('2'))
+    await userEvent.click(screen.getByText('open local codex task'))
+    await userEvent.click(screen.getByText('set input'))
+    await waitFor(() =>
+      expect(screen.getByTestId('selected-model')).toHaveTextContent('codex-gpt-5.5')
+    )
+    await userEvent.click(screen.getByText('send'))
+
+    await waitFor(() =>
+      expect(sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          task_id: 8,
+          message: 'continue',
+          force_override_bot_model: 'codex-gpt-5.5',
+          force_override_bot_model_type: 'runtime',
+        })
+      )
+    )
+    expect(updateCurrentUser).not.toHaveBeenCalled()
+  })
+
   test('sends an attachment-only project message without echoing fallback text', async () => {
     const sendMessage = vi.fn().mockResolvedValue({ success: true, task_id: 100 })
 

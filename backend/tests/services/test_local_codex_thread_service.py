@@ -159,6 +159,73 @@ def test_bind_local_codex_thread_reuses_existing_local_path_project(
     assert result.task.project_id == project.id
 
 
+def test_bind_local_codex_thread_attaches_worktree_cwd_to_source_project(
+    test_db,
+    test_user,
+) -> None:
+    _add_device(test_db, user_id=test_user.id, device_id="device-abc")
+    team = _add_team(test_db, user_id=test_user.id)
+    project = Project(
+        user_id=test_user.id,
+        name="Wegent",
+        client_origin=CLIENT_ORIGIN_WEWORK,
+        is_active=True,
+        config={
+            "mode": "workspace",
+            "execution": {"targetType": "local", "deviceId": "device-abc"},
+            "workspace": {
+                "source": "local_path",
+                "localPath": "/Users/alice/dev/Wegent",
+            },
+        },
+    )
+    test_db.add(project)
+    test_db.commit()
+
+    result = bind_local_codex_thread(
+        db=test_db,
+        user=test_user,
+        team=team,
+        device_id="device-abc",
+        thread_id="018f2d6b-8c7a-7abc-9def-0123456789ac",
+        title="Continue worktree task",
+        cwd="/Users/alice/.codex/worktrees/2381/Wegent",
+    )
+
+    assert result.task.project_id == project.id
+    spec = result.task.json["spec"]
+    assert spec["execution"]["workspace"]["path"] == (
+        "/Users/alice/.codex/worktrees/2381/Wegent"
+    )
+
+
+def test_bind_local_codex_thread_falls_back_to_local_path_project_for_unknown_worktree(
+    test_db,
+    test_user,
+) -> None:
+    _add_device(test_db, user_id=test_user.id, device_id="device-abc")
+    team = _add_team(test_db, user_id=test_user.id)
+
+    result = bind_local_codex_thread(
+        db=test_db,
+        user=test_user,
+        team=team,
+        device_id="device-abc",
+        thread_id="018f2d6b-8c7a-7abc-9def-0123456789ad",
+        title="Unknown worktree task",
+        cwd="/Users/alice/.codex/worktrees/2381/UnknownProject",
+    )
+
+    project = test_db.get(Project, result.task.project_id)
+    assert project is not None
+    assert project.name == "UnknownProject"
+    assert project.config["workspace"]["source"] == "local_path"
+    assert (
+        project.config["workspace"]["localPath"]
+        == "/Users/alice/.codex/worktrees/2381/UnknownProject"
+    )
+
+
 def test_bind_local_codex_thread_keeps_no_cwd_bindings_standalone(
     test_db,
     test_user,

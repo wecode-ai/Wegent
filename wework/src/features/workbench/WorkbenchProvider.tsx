@@ -30,6 +30,7 @@ import {
   isDeviceBelowWeWorkVersion,
   isWeWorkCompatibleDevice,
 } from '@/lib/device-capabilities'
+import { getModelCompatibilityFamily } from '@/lib/model-ui'
 import { buildTaskRoute, navigateTo, parseTaskRoute } from '@/lib/navigation'
 import { supportsGitWorktreeExecution } from '@/lib/projectClassification'
 import {
@@ -91,6 +92,11 @@ import { initialWorkbenchState, workbenchReducer } from './workbenchReducer'
 import { WorkbenchContext } from './useWorkbench'
 
 const WEWORK_CLIENT_ORIGIN = 'wework'
+const LOCAL_CODEX_THREAD_WORKSPACE_SOURCE = 'local_codex_thread'
+const CODEX_RUNTIME_MODEL_NAME = 'codex-gpt-5.5'
+const OPENAI_RESPONSES_RUNTIME_FAMILY = 'openai.openai-responses'
+const OPENAI_RESPONSES_PROTOCOL = 'openai-responses'
+const RESPONSES_API_FORMAT = 'responses'
 const LOCAL_SKILLS_CACHE_TTL_MS = 60_000
 const STANDALONE_PROJECT_ID = 0
 const EMPTY_MESSAGE_TASK_TITLE = '新对话'
@@ -647,6 +653,41 @@ function getNewChatModelSelection(user: User | null): ModelSelectionConfig | nul
   return user?.preferences?.wework_new_chat_model_selection ?? null
 }
 
+function isLocalCodexThreadTask(task: Task | null): boolean {
+  return task?.execution_workspace_source === LOCAL_CODEX_THREAD_WORKSPACE_SOURCE
+}
+
+function getStringConfigValue(
+  config: Record<string, unknown> | null | undefined,
+  key: string
+): string {
+  const value = config?.[key]
+  return typeof value === 'string' ? value.trim().toLowerCase() : ''
+}
+
+function isCodexCompatibleModel(model: UnifiedModel): boolean {
+  if (model.name === CODEX_RUNTIME_MODEL_NAME) return true
+  return (
+    getModelCompatibilityFamily(model) === OPENAI_RESPONSES_RUNTIME_FAMILY ||
+    getStringConfigValue(model.config, 'protocol') === OPENAI_RESPONSES_PROTOCOL ||
+    getStringConfigValue(model.config, 'apiFormat') === RESPONSES_API_FORMAT ||
+    getStringConfigValue(model.config, 'api_format') === RESPONSES_API_FORMAT
+  )
+}
+
+function getLocalCodexDefaultModelSelection(models: UnifiedModel[]): ModelSelectionConfig | null {
+  const availableModels = models.filter(model => !model.compatibilityDisabled)
+  const model =
+    availableModels.find(
+      item => item.name === CODEX_RUNTIME_MODEL_NAME && item.type === 'runtime'
+    ) ?? availableModels.find(isCodexCompatibleModel)
+  if (!model) return null
+  return {
+    modelName: model.name,
+    modelType: model.type,
+  }
+}
+
 function resolveAutomaticModel(models: UnifiedModel[]): UnifiedModel | null {
   return models.find(model => !model.compatibilityDisabled) ?? null
 }
@@ -835,12 +876,21 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
       setProjectWorktreeBaseBranchState(null)
     }
   }, [projectExecutionMode])
-  const modelSelectionConfig = useMemo(
-    () => getTaskModelSelection(state.currentTask) ?? getNewChatModelSelection(currentUser) ?? null,
-    [currentUser, state.currentTask]
-  )
+  const modelSelectionConfig = useMemo(() => {
+    const taskSelection = getTaskModelSelection(state.currentTask)
+    if (taskSelection) return taskSelection
+    if (isLocalCodexThreadTask(state.currentTask)) return null
+    return getNewChatModelSelection(currentUser) ?? null
+  }, [currentUser, state.currentTask])
   const modelCompatibilityConfig = useMemo(
     () => getTaskModelSelection(state.currentTask),
+    [state.currentTask]
+  )
+  const defaultModelSelectionConfig = useCallback(
+    (models: UnifiedModel[]) => {
+      if (!isLocalCodexThreadTask(state.currentTask)) return null
+      return getLocalCodexDefaultModelSelection(models)
+    },
     [state.currentTask]
   )
   const persistNewChatModelSelection = useCallback(
@@ -899,6 +949,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     locked: false,
     selectionConfig: modelSelectionConfig,
     compatibilityConfig: modelCompatibilityConfig,
+    defaultSelectionConfig: defaultModelSelectionConfig,
     selectionReady: !state.isBootstrapping,
     onSelectionChange: persistNewChatModelSelection,
     onSelectionBlocked: handleBlockedModelSelection,

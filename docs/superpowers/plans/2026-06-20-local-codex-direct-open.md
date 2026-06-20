@@ -6,9 +6,9 @@ sidebar_position: 1
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace the local Codex "import" flow with a direct-open takeover flow that hides subagent/running threads and keeps one local Codex thread bound to one Wework Task alias.
+**Goal:** Replace the local Codex "import" flow with a direct-open takeover flow that hides subagent/running threads, keeps one local Codex thread bound to one Wework Task alias, preserves source project grouping for managed worktrees, and defaults local Codex replies to a Codex-compatible runtime model.
 
-**Architecture:** Backend filters local Codex discovery at both the local command and API-normalization layers. Wework renders visible local Codex threads as an open/connect entry in the left conversation area, then calls the existing bind endpoint to create or reuse the one-to-one Task alias and navigate to it.
+**Architecture:** Backend filters local Codex discovery at both the local command and API-normalization layers. Wework renders visible local Codex threads as an open/connect entry in the left conversation area, then calls the existing bind endpoint to create or reuse the one-to-one Task alias and navigate to it. Binding resolves `~/.codex/worktrees/<id>/<project-dir>` paths back to the matching source project on the same local device, falling back to `local_path` when no match exists. Wework restores `codex-gpt-5.5` or another OpenAI responses-compatible runtime model for local Codex Task replies unless the Task has an explicit saved model.
 
 **Tech Stack:** FastAPI, local device command registry, Pydantic schemas, pytest, Vite React TypeScript, Vitest, Testing Library, lucide-react.
 
@@ -30,10 +30,16 @@ Modify:
 - `wework/src/i18n/locales/en/common.json` updates local Codex copy.
 - `wework/src/i18n/locales/zh-CN/common.json` updates local Codex copy.
 - `wework/src/features/workbench/WorkbenchProvider.test.tsx` updates "import" naming in tests while keeping provider bind behavior.
+- `backend/app/services/project_service.py` resolves managed worktree cwd values to existing source Wework projects.
+- `backend/app/services/local_codex_thread_service.py` uses the worktree resolver before creating a local-path project.
+- `backend/tests/services/test_local_codex_thread_service.py` covers source-project matching and local-path fallback for managed worktree cwd values.
+- `wework/src/features/workbench/useWorkbenchModels.ts` supports a default model-selection resolver when no explicit selection exists.
+- `wework/src/features/workbench/WorkbenchProvider.tsx` provides the local Codex default model resolver and avoids applying new-chat model preferences to local Codex Tasks.
+- `wework/src/features/workbench/WorkbenchProvider.test.tsx` covers local Codex Task replies selecting the Codex runtime model.
 
 Do not change:
 
-- `backend/app/services/local_codex_thread_service.py` one-to-one binding behavior, except tests may assert it remains one-to-one.
+- `backend/app/services/local_codex_thread_service.py` one-to-one binding behavior.
 - `executor/agents/codex/codex_agent.py`; current resume behavior is the intended takeover behavior.
 
 ## Task 1: Filter Local Codex Discovery At The Command Source

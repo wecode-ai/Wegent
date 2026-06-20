@@ -314,6 +314,16 @@ def _resolve_local_path_project_id(
     if not normalized_cwd:
         return 0
 
+    worktree_project = project_service.find_wework_project_for_worktree_path(
+        db=db,
+        user_id=user.id,
+        client_origin=CLIENT_ORIGIN_WEWORK,
+        device_id=device_id,
+        worktree_path=normalized_cwd,
+    )
+    if worktree_project:
+        return worktree_project.id
+
     project = project_service.create_project(
         db,
         ProjectCreate(
