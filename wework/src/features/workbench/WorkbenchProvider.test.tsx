@@ -1,5 +1,6 @@
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { useState } from 'react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { WorkbenchProvider } from './WorkbenchProvider'
 import { useWorkbench } from './useWorkbench'
@@ -367,6 +368,34 @@ function ProjectCreationProbe() {
         }
       >
         create project
+      </button>
+    </div>
+  )
+}
+
+function LocalCodexImportProbe() {
+  const workbench = useWorkbench()
+  const [result, setResult] = useState('')
+
+  return (
+    <div>
+      <span data-testid="local-codex-import-result">{result}</span>
+      <span data-testid="workbench-error">{workbench.state.error ?? ''}</span>
+      <button
+        type="button"
+        onClick={() =>
+          void workbench
+            .bindLocalCodexThread({
+              deviceId: 'device-1',
+              threadId: 'thread-1',
+              title: 'Imported Codex thread',
+              cwd: '/workspace/imported',
+            })
+            .then(response => setResult(String(response.taskId)))
+            .catch(error => setResult(error instanceof Error ? error.message : 'import failed'))
+        }
+      >
+        import codex
       </button>
     </div>
   )
@@ -1976,6 +2005,145 @@ describe('WorkbenchProvider', () => {
         'Wework default team is not configured'
       )
     )
+  })
+
+  test('imports a local Codex thread through the backend default team when bootstrap default team is missing', async () => {
+    const bindLocalCodexThread = vi.fn().mockResolvedValue({
+      taskId: 55,
+      task: {
+        id: 55,
+        title: 'Imported Codex thread',
+        status: 'COMPLETED',
+        task_type: 'code',
+        project_id: 7,
+        created_at: '2026-06-20T00:00:00.000Z',
+      },
+      created: true,
+      threadId: 'thread-1',
+      deviceId: 'device-1',
+    })
+
+    render(
+      <WorkbenchProvider
+        user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+        services={{
+          teamApi: {
+            getDefaultWorkbenchTeam: vi
+              .fn()
+              .mockRejectedValue(new Error('Wework default team is not configured')),
+          },
+          modelApi: { listModels: vi.fn().mockResolvedValue({ data: [] }) },
+          skillApi: {
+            listSkills: vi.fn().mockResolvedValue([]),
+            getTeamSkills: vi.fn().mockResolvedValue({ skills: [], preload_skills: [] }),
+          },
+          projectApi: {
+            listProjects: vi.fn().mockResolvedValue({
+              items: [
+                {
+                  id: 7,
+                  name: 'Imported',
+                  tasks: [],
+                  config: {
+                    mode: 'workspace',
+                    execution: { targetType: 'local', deviceId: 'device-1' },
+                    workspace: { source: 'local_path', localPath: '/workspace/imported' },
+                  },
+                },
+              ],
+            }),
+            getProject: vi.fn(),
+            createProject: vi.fn(),
+            updateProject: vi.fn(),
+            deleteProject: vi.fn(),
+            archiveProjectChats: vi.fn(),
+            archiveAllProjectChats: vi.fn(),
+            createConversation: vi.fn(),
+          },
+          taskApi: {
+            listRecentTasks: vi.fn().mockResolvedValue({
+              total: 1,
+              items: [
+                {
+                  id: 55,
+                  title: 'Imported Codex thread',
+                  status: 'COMPLETED',
+                  task_type: 'code',
+                  project_id: 7,
+                  device_id: 'device-1',
+                  created_at: '2026-06-20T00:00:00.000Z',
+                },
+              ],
+            }),
+            getTaskDetail: vi.fn().mockResolvedValue({
+              id: 55,
+              title: 'Imported Codex thread',
+              status: 'COMPLETED',
+              task_type: 'code',
+              project_id: 7,
+              device_id: 'device-1',
+              created_at: '2026-06-20T00:00:00.000Z',
+              subtasks: [],
+            }),
+            renameTask: vi.fn(),
+            archiveTask: vi.fn(),
+            archiveAllChats: vi.fn(),
+            listArchivedTasks: vi.fn(),
+            unarchiveTask: vi.fn(),
+            deleteTask: vi.fn(),
+            deleteArchivedTasks: vi.fn(),
+          },
+          deviceApi: {
+            listDevices: vi.fn().mockResolvedValue([
+              {
+                id: 1,
+                device_id: 'device-1',
+                name: 'Local Mac',
+                status: 'online',
+                is_default: true,
+                device_type: 'local',
+                bind_shell: 'claudecode',
+                executor_version: '1.8.5',
+              },
+            ]),
+            getHomeDirectory: vi.fn(),
+            getProjectWorkspaceRoot: vi.fn(),
+            listDirectories: vi.fn(),
+            listSkills: vi.fn().mockResolvedValue([]),
+          },
+          localCodexApi: {
+            listLocalCodexThreads: vi.fn().mockResolvedValue([]),
+            bindLocalCodexThread,
+          },
+          chatStream: {
+            joinTask: vi.fn().mockResolvedValue({}),
+            leaveTask: vi.fn(),
+            sendMessage: vi.fn(),
+            subscribe: vi.fn(() => vi.fn()),
+          },
+        }}
+      >
+        <LocalCodexImportProbe />
+      </WorkbenchProvider>
+    )
+
+    await waitFor(() =>
+      expect(screen.getByTestId('workbench-error')).toHaveTextContent(
+        'Wework default team is not configured'
+      )
+    )
+
+    await userEvent.click(screen.getByText('import codex'))
+
+    await waitFor(() =>
+      expect(bindLocalCodexThread).toHaveBeenCalledWith({
+        deviceId: 'device-1',
+        threadId: 'thread-1',
+        title: 'Imported Codex thread',
+        cwd: '/workspace/imported',
+      })
+    )
+    expect(screen.getByTestId('local-codex-import-result')).toHaveTextContent('55')
   })
 
   test('sends pending code comments as formatted message context', async () => {

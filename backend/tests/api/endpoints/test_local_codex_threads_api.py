@@ -33,6 +33,48 @@ def test_get_user_team_allows_public_team(test_db) -> None:
     assert _get_user_team_or_404(test_db, user_id=7, team_id=team.id).id == team.id
 
 
+def test_local_codex_bind_request_allows_backend_default_team() -> None:
+    from app.schemas.local_codex import LocalCodexBindRequest
+
+    request = LocalCodexBindRequest(
+        deviceId="device-abc",
+        threadId="018f2d6b-8c7a-7abc-9def-0123456789ab",
+    )
+
+    assert request.team_id is None
+
+
+def test_get_user_team_uses_configured_wework_default_when_team_id_missing(
+    test_db,
+    monkeypatch,
+) -> None:
+    from app.api.endpoints.local_codex import _get_user_team_or_404
+    from app.core.config import settings
+    from app.models.kind import Kind
+
+    monkeypatch.setattr(
+        settings,
+        "DEFAULT_TEAM_WEWORK",
+        "wegent-wework#default",
+    )
+    team = Kind(
+        user_id=0,
+        kind="Team",
+        name="wegent-wework",
+        namespace="default",
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Team",
+            "metadata": {"name": "wegent-wework", "namespace": "default"},
+            "spec": {"members": [], "collaborationModel": "solo"},
+        },
+    )
+    test_db.add(team)
+    test_db.commit()
+
+    assert _get_user_team_or_404(test_db, user_id=7, team_id=None).id == team.id
+
+
 @pytest.mark.asyncio
 async def test_list_local_codex_threads_dispatches_capped_discovery(
     monkeypatch,

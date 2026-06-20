@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core import security
+from app.core.config import settings
 from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.local_codex import (
@@ -20,6 +21,7 @@ from app.schemas.local_codex import (
     LocalCodexThreadSummary,
 )
 from app.services.adapters.task_kinds.converters import convert_to_task_dict
+from app.services.adapters.team_kinds import team_kinds_service
 from app.services.device.command_service import (
     DeviceCommandError,
     DeviceCommandNotFoundError,
@@ -111,16 +113,52 @@ async def bind_local_codex_thread_endpoint(
     )
 
 
-def _get_user_team_or_404(db: Session, user_id: int, team_id: int) -> Kind:
+def _get_user_team_or_404(db: Session, user_id: int, team_id: int | None) -> Kind:
     from app.services.share.team_share_service import team_share_service
 
-    team = team_share_service.get_resource(db, team_id, user_id)
-    if not team:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid teamId or team is not accessible",
-        )
-    return team
+    if team_id:
+        team = team_share_service.get_resource(db, team_id, user_id)
+        if not team:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid teamId or team is not accessible",
+            )
+        return team
+
+    team = _get_configured_default_wework_team(db, user_id)
+    if team:
+        return team
+
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Default team is unavailable",
+    )
+
+
+def _get_configured_default_wework_team(db: Session, user_id: int) -> Kind | None:
+    config = _parse_default_team_setting(settings.DEFAULT_TEAM_WEWORK)
+    if not config:
+        return None
+
+    return team_kinds_service.get_team_by_name_and_namespace(
+        db=db,
+        team_name=config["name"],
+        team_namespace=config["namespace"],
+        user_id=user_id,
+    )
+
+
+def _parse_default_team_setting(value: str) -> dict[str, str] | None:
+    if not value or not value.strip():
+        return None
+
+    parts = value.strip().split("#", 1)
+    name = parts[0].strip()
+    namespace = parts[1].strip() if len(parts) > 1 else "default"
+    if not name:
+        return None
+
+    return {"name": name, "namespace": namespace}
 
 
 async def _discover_device_codex_threads(

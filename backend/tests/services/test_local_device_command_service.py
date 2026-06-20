@@ -458,8 +458,8 @@ def test_codex_threads_list_command_stops_after_limit(tmp_path):
 
     payload = json.loads(result.stdout)
     assert [thread["title"] for thread in payload["threads"]] == [
+        "Thread 2",
         "Thread 1",
-        "Thread 0",
     ]
 
 

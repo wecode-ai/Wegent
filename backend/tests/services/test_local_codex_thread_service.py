@@ -13,6 +13,7 @@ from app.core.constants import (
     WORKSPACE_SOURCE_LOCAL_CODEX_THREAD,
 )
 from app.models.kind import Kind
+from app.models.project import Project
 from app.models.task import TaskResource
 from app.services.local_codex_thread_service import (
     bind_local_codex_thread,
@@ -102,6 +103,7 @@ def test_bind_local_codex_thread_creates_task_with_binding_metadata(
     assert result.task_id == result.task.id
     assert result.task.name.startswith("local-codex-")
     assert result.task.client_origin == CLIENT_ORIGIN_WEWORK
+    assert result.task.project_id > 0
     spec = result.task.json["spec"]
     labels = result.task.json["metadata"]["labels"]
     assert result.task.json["metadata"]["name"] == result.task.name
@@ -114,6 +116,66 @@ def test_bind_local_codex_thread_creates_task_with_binding_metadata(
     assert result.task.json["status"]["status"] == "COMPLETED"
     assert labels[LABEL_LOCAL_CODEX_THREAD_ID] == "018f2d6b-8c7a-7abc-9def-0123456789ab"
     assert labels[LABEL_LOCAL_CODEX_DEVICE_ID] == "device-abc"
+
+    project = test_db.get(Project, result.task.project_id)
+    assert project is not None
+    assert project.name == "project"
+    assert project.client_origin == CLIENT_ORIGIN_WEWORK
+    assert project.config["execution"]["deviceId"] == "device-abc"
+    assert project.config["workspace"]["source"] == "local_path"
+    assert project.config["workspace"]["localPath"] == "/tmp/project"
+
+
+def test_bind_local_codex_thread_reuses_existing_local_path_project(
+    test_db,
+    test_user,
+) -> None:
+    _add_device(test_db, user_id=test_user.id, device_id="device-abc")
+    team = _add_team(test_db, user_id=test_user.id)
+    project = Project(
+        user_id=test_user.id,
+        name="Existing Project",
+        client_origin=CLIENT_ORIGIN_WEWORK,
+        is_active=True,
+        config={
+            "mode": "workspace",
+            "execution": {"targetType": "local", "deviceId": "device-abc"},
+            "workspace": {"source": "local_path", "localPath": "/tmp/project"},
+        },
+    )
+    test_db.add(project)
+    test_db.commit()
+
+    result = bind_local_codex_thread(
+        db=test_db,
+        user=test_user,
+        team=team,
+        device_id="device-abc",
+        thread_id="018f2d6b-8c7a-7abc-9def-0123456789ab",
+        title="Investigate API failure",
+        cwd="/tmp/project/",
+    )
+
+    assert result.task.project_id == project.id
+
+
+def test_bind_local_codex_thread_keeps_no_cwd_bindings_standalone(
+    test_db,
+    test_user,
+) -> None:
+    _add_device(test_db, user_id=test_user.id, device_id="device-abc")
+    team = _add_team(test_db, user_id=test_user.id)
+
+    result = bind_local_codex_thread(
+        db=test_db,
+        user=test_user,
+        team=team,
+        device_id="device-abc",
+        thread_id="018f2d6b-8c7a-7abc-9def-0123456789ab",
+        title="No cwd thread",
+    )
+
+    assert result.task.project_id == 0
 
 
 def test_bind_local_codex_thread_reuses_existing_task_for_same_binding(

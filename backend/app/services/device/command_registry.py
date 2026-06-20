@@ -717,21 +717,51 @@ def parse_limit():
     return min(max(value, 1), 100)
 
 
-def iter_json_lines(path):
+def parse_json_line(raw_line):
+    line = raw_line.decode("utf-8", errors="replace").strip()
+    if not line:
+        return None
+    try:
+        record = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+    return record if isinstance(record, dict) else None
+
+
+def iter_recent_json_lines(path, limit):
     if not path.is_file():
         return
 
     try:
-        with path.open("r", encoding="utf-8", errors="replace") as handle:
-            for line in handle:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    record = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(record, dict):
+        with path.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            position = handle.tell()
+            pending = b""
+            remaining = limit
+            while position > 0 and remaining > 0:
+                read_size = min(8192, position)
+                position -= read_size
+                handle.seek(position)
+                parts = (handle.read(read_size) + pending).split(b"\\n")
+                if position > 0:
+                    pending = parts[0]
+                    lines = parts[1:]
+                else:
+                    pending = b""
+                    lines = parts
+
+                for raw_line in reversed(lines):
+                    record = parse_json_line(raw_line)
+                    if record is None:
+                        continue
+                    yield record
+                    remaining -= 1
+                    if remaining <= 0:
+                        return
+
+            if pending and remaining > 0:
+                record = parse_json_line(pending)
+                if record is not None:
                     yield record
     except OSError:
         return
@@ -779,12 +809,10 @@ codex_home = Path(
 ).expanduser()
 records = []
 limit = parse_limit()
-for raw in iter_json_lines(codex_home / "session_index.jsonl"):
+for raw in iter_recent_json_lines(codex_home / "session_index.jsonl", limit):
     normalized = normalize_record(raw)
     if normalized:
         records.append(normalized)
-        if len(records) >= limit:
-            break
 
 records.sort(key=sort_key, reverse=True)
 print(json.dumps({"threads": records}, ensure_ascii=False))

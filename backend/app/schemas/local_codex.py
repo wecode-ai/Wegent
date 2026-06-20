@@ -29,7 +29,7 @@ class LocalCodexBindRequest(BaseModel):
 
     device_id: str = Field(..., alias="deviceId", min_length=1)
     thread_id: str = Field(..., alias="threadId", min_length=1)
-    team_id: int = Field(..., alias="teamId")
+    team_id: Optional[int] = Field(default=None, alias="teamId")
     title: Optional[str] = None
     cwd: Optional[str] = None
 

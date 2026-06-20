@@ -239,13 +239,8 @@ export interface WorkbenchContextValue {
   openTask: (taskId: number, projectId?: number) => Promise<void>
   searchTasks: (query: string) => Promise<TaskListResponse>
   searchTaskDetail: (taskId: number) => Promise<TaskDetail>
-  listLocalCodexThreads: (
-    deviceId: string,
-    limit?: number,
-  ) => Promise<LocalCodexThreadSummary[]>
-  bindLocalCodexThread: (
-    request: LocalCodexBindRequest,
-  ) => Promise<LocalCodexBindResponse>
+  listLocalCodexThreads: (deviceId: string, limit?: number) => Promise<LocalCodexThreadSummary[]>
+  bindLocalCodexThread: (request: LocalCodexBindRequest) => Promise<LocalCodexBindResponse>
   rememberExecutionDevice: (deviceId: string) => void
   refreshWorkLists: () => Promise<void>
   refreshDevices: () => Promise<void>
@@ -1430,8 +1425,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
 
   const listLocalCodexThreads = useCallback(
     (deviceId: string, limit?: number) =>
-      resolvedServices.localCodexApi?.listLocalCodexThreads(deviceId, limit) ??
-      Promise.resolve([]),
+      resolvedServices.localCodexApi?.listLocalCodexThreads(deviceId, limit) ?? Promise.resolve([]),
     [resolvedServices]
   )
 
@@ -1440,13 +1434,13 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
       if (!resolvedServices.localCodexApi) {
         throw new Error('Local Codex import is unavailable')
       }
-      if (!state.defaultTeam) {
-        throw new Error('Default team is unavailable')
-      }
 
+      const bindRequest =
+        request.teamId !== undefined || !state.defaultTeam
+          ? request
+          : { ...request, teamId: state.defaultTeam.id }
       const response = await resolvedServices.localCodexApi.bindLocalCodexThread({
-        ...request,
-        teamId: request.teamId ?? state.defaultTeam.id,
+        ...bindRequest,
       })
       rememberExecutionDevice(request.deviceId)
       await refreshWorkLists()
@@ -1708,11 +1702,8 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
   )
 
   const commitEnvironmentChanges = useCallback(
-    (
-      project: ProjectWithTasks | null,
-      message: string,
-      workspaceTarget?: WorkspaceTarget | null
-    ) => commitProjectChanges(resolvedServices.deviceApi, project, message, workspaceTarget),
+    (project: ProjectWithTasks | null, message: string, workspaceTarget?: WorkspaceTarget | null) =>
+      commitProjectChanges(resolvedServices.deviceApi, project, message, workspaceTarget),
     [resolvedServices]
   )
 
