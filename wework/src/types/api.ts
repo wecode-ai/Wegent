@@ -250,6 +250,31 @@ export interface TaskListResponse {
   items: Task[]
 }
 
+export interface IMPrivateSession {
+  id: number
+  channel_type: string
+  channel_label: string
+  channel_id: string
+  conversation_id: string
+  sender_id: string
+  display_name: string
+  mode: 'chat' | 'task'
+  state: 'idle' | 'pending_task_switch' | 'pending_task_creation'
+  active_task_id?: number | null
+  last_seen_at: string
+}
+
+export interface IMPrivateSessionListResponse {
+  total: number
+  items: IMPrivateSession[]
+}
+
+export interface BindTaskIMSessionsResponse {
+  task_id: number
+  bound_session_ids: number[]
+  notified_count: number
+}
+
 export interface ArchivedTask {
   id: number
   title: string

@@ -11,6 +11,7 @@ import {
 } from '@/api/environment'
 import { createGitApi } from '@/api/git'
 import { ApiError, createHttpClient } from '@/api/http'
+import { createImSessionApi } from '@/api/imSessions'
 import { createModelApi } from '@/api/models'
 import { createProjectApi } from '@/api/projects'
 import { createSkillApi } from '@/api/skills'
@@ -41,6 +42,7 @@ import {
 import type {
   Attachment,
   ArchivedTaskListResponse,
+  BindTaskIMSessionsResponse,
   ChatSendPayload,
   ChatBlock,
   CreateProjectRequest,
@@ -48,6 +50,7 @@ import type {
   GitBranch,
   GitRepoInfo,
   DeviceInfo,
+  IMPrivateSessionListResponse,
   LocalDeviceSkill,
   ModelOptions,
   ModelSelectionConfig,
@@ -189,6 +192,7 @@ export interface WorkbenchServices {
     | 'upgradeDevice'
     | 'listSkills'
   >
+  imSessionApi?: ReturnType<typeof createImSessionApi>
   userApi?: ReturnType<typeof createUserApi>
   chatStream: ReturnType<typeof createChatStream>
 }
@@ -235,6 +239,11 @@ export interface WorkbenchContextValue {
   openTask: (taskId: number, projectId?: number) => Promise<void>
   searchTasks: (query: string) => Promise<TaskListResponse>
   searchTaskDetail: (taskId: number) => Promise<TaskDetail>
+  listImPrivateSessions: () => Promise<IMPrivateSessionListResponse>
+  bindTaskToImSessions: (
+    taskId: number,
+    sessionIds: number[]
+  ) => Promise<BindTaskIMSessionsResponse>
   rememberExecutionDevice: (deviceId: string) => void
   refreshWorkLists: () => Promise<void>
   refreshDevices: () => Promise<void>
@@ -327,6 +336,7 @@ function createDefaultServices(): WorkbenchServices {
     gitApi: createGitApi(client),
     taskApi: createTaskApi(client),
     deviceApi: createDeviceApi(client),
+    imSessionApi: createImSessionApi(client),
     userApi: createUserApi(client),
     chatStream: createChatStream(socketClient.socket),
   }
@@ -1459,6 +1469,23 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     [resolvedServices]
   )
 
+  const listImPrivateSessions = useCallback(
+    () =>
+      resolvedServices.imSessionApi?.listPrivateSessions() ??
+      Promise.resolve({ total: 0, items: [] }),
+    [resolvedServices]
+  )
+
+  const bindTaskToImSessions = useCallback(
+    (taskId: number, sessionIds: number[]) => {
+      if (!resolvedServices.imSessionApi) {
+        return Promise.reject(new Error('IM session API is unavailable'))
+      }
+      return resolvedServices.imSessionApi.bindTaskSessions(taskId, sessionIds)
+    },
+    [resolvedServices]
+  )
+
   useEffect(() => {
     if (state.isBootstrapping) return
     const taskId = readTaskIdFromUrl()
@@ -2360,6 +2387,8 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     openTask,
     searchTasks,
     searchTaskDetail,
+    listImPrivateSessions,
+    bindTaskToImSessions,
     rememberExecutionDevice,
     refreshWorkLists,
     refreshDevices,

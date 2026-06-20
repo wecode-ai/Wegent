@@ -372,6 +372,31 @@ function ProjectCreationProbe() {
   )
 }
 
+function ImSessionProbe() {
+  const workbench = useWorkbench()
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          void workbench.listImPrivateSessions()
+        }}
+      >
+        list IM sessions
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          void workbench.bindTaskToImSessions(42, [7, 9])
+        }}
+      >
+        bind IM sessions
+      </button>
+    </div>
+  )
+}
+
 describe('WorkbenchProvider', () => {
   beforeEach(() => {
     window.history.pushState({}, '', '/')
@@ -457,6 +482,81 @@ describe('WorkbenchProvider', () => {
     )
 
     await waitFor(() => expect(screen.getByTestId('probe')).toHaveTextContent('alice'))
+  })
+
+  test('exposes IM private session APIs through context', async () => {
+    const listPrivateSessions = vi.fn().mockResolvedValue({ total: 0, items: [] })
+    const bindTaskSessions = vi.fn().mockResolvedValue({
+      task_id: 42,
+      bound_session_ids: [7, 9],
+      notified_count: 2,
+    })
+
+    render(
+      <WorkbenchProvider
+        user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+        services={{
+          teamApi: {
+            getDefaultWorkbenchTeam: vi
+              .fn()
+              .mockResolvedValue({ id: 2, name: 'coder', is_active: true }),
+          },
+          modelApi: {
+            listModels: vi.fn().mockResolvedValue({ data: [] }),
+          },
+          skillApi: {
+            listSkills: vi.fn().mockResolvedValue([]),
+            getTeamSkills: vi.fn().mockResolvedValue({ skills: [], preload_skills: [] }),
+          },
+          projectApi: {
+            listProjects: vi.fn().mockResolvedValue({ items: [] }),
+            getProject: vi.fn(),
+            createProject: vi.fn(),
+            updateProject: vi.fn(),
+            deleteProject: vi.fn(),
+            archiveProjectChats: vi.fn(),
+            archiveAllProjectChats: vi.fn(),
+            createConversation: vi.fn(),
+          },
+          taskApi: {
+            listRecentTasks: vi.fn().mockResolvedValue({ total: 0, items: [] }),
+            getTaskDetail: vi.fn(),
+            renameTask: vi.fn(),
+            archiveTask: vi.fn(),
+            archiveAllChats: vi.fn(),
+            listArchivedTasks: vi.fn(),
+            unarchiveTask: vi.fn(),
+            deleteTask: vi.fn(),
+            deleteArchivedTasks: vi.fn(),
+          },
+          deviceApi: {
+            listDevices: vi.fn().mockResolvedValue([]),
+            getHomeDirectory: vi.fn(),
+            getProjectWorkspaceRoot: vi.fn(),
+            listDirectories: vi.fn(),
+            listSkills: vi.fn().mockResolvedValue([]),
+          },
+          imSessionApi: {
+            listPrivateSessions,
+            bindTaskSessions,
+          },
+          chatStream: {
+            joinTask: vi.fn(),
+            leaveTask: vi.fn(),
+            sendMessage: vi.fn(),
+            subscribe: vi.fn(() => vi.fn()),
+          },
+        }}
+      >
+        <ImSessionProbe />
+      </WorkbenchProvider>
+    )
+
+    await userEvent.click(screen.getByText('list IM sessions'))
+    await userEvent.click(screen.getByText('bind IM sessions'))
+
+    expect(listPrivateSessions).toHaveBeenCalledWith()
+    expect(bindTaskSessions).toHaveBeenCalledWith(42, [7, 9])
   })
 
   test('does not automatically upgrade old online devices during bootstrap', async () => {
