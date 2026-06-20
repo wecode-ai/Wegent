@@ -1363,10 +1363,12 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         resolvedProjectId === undefined
           ? (findProjectForTask(state.projects, detailTask) ?? undefined)
           : resolvedProjectId > 0
-            ? (state.projects.find(item => item.id === resolvedProjectId) ?? null)
+            ? (state.projects.find(item => item.id === resolvedProjectId) ?? undefined)
             : null
       if (project) {
         writeLastProjectId(user.id, project.id)
+      } else if (resolvedProjectId && resolvedProjectId > 0) {
+        writeLastProjectId(user.id, resolvedProjectId)
       }
       dispatch({
         type: 'task_opened',

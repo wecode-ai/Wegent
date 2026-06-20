@@ -376,11 +376,20 @@ function ProjectCreationProbe() {
 function LocalCodexImportProbe() {
   const workbench = useWorkbench()
   const [result, setResult] = useState('')
+  const recentTaskTitles = workbench.state.recentTasks.map(task => task.title).join('|')
+  const projectTaskTitles = workbench.state.projects
+    .flatMap(project => project.tasks.map(task => task.task_title))
+    .join('|')
 
   return (
     <div>
       <span data-testid="local-codex-import-result">{result}</span>
       <span data-testid="workbench-error">{workbench.state.error ?? ''}</span>
+      <span data-testid="local-codex-recent-tasks">{recentTaskTitles}</span>
+      <span data-testid="local-codex-project-tasks">{projectTaskTitles}</span>
+      <span data-testid="local-codex-current-task-project">
+        {workbench.state.currentTask?.project_id ?? 'none'}
+      </span>
       <button
         type="button"
         onClick={() =>
@@ -2144,6 +2153,135 @@ describe('WorkbenchProvider', () => {
       })
     )
     expect(screen.getByTestId('local-codex-import-result')).toHaveTextContent('55')
+  })
+
+  test('keeps an imported local Codex thread in its refreshed project immediately', async () => {
+    const importedTask = {
+      id: 55,
+      title: 'Imported Codex thread',
+      status: 'COMPLETED',
+      task_type: 'code',
+      project_id: 7,
+      device_id: 'device-1',
+      created_at: '2026-06-20T00:00:00.000Z',
+    }
+    const importedProject = {
+      id: 7,
+      name: 'Imported',
+      tasks: [
+        {
+          id: 55,
+          task_id: 55,
+          task_title: 'Imported Codex thread',
+          task_status: 'COMPLETED',
+          title: 'Imported Codex thread',
+          status: 'COMPLETED',
+          task_type: 'code',
+          created_at: '2026-06-20T00:00:00.000Z',
+          updated_at: '2026-06-20T00:00:00.000Z',
+        },
+      ],
+      config: {
+        mode: 'workspace',
+        execution: { targetType: 'local', deviceId: 'device-1' },
+        workspace: { source: 'local_path', localPath: '/workspace/imported' },
+      },
+    }
+    const listProjects = vi
+      .fn()
+      .mockResolvedValueOnce({ items: [] })
+      .mockResolvedValueOnce({ items: [importedProject] })
+
+    render(
+      <WorkbenchProvider
+        user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+        services={{
+          teamApi: {
+            getDefaultWorkbenchTeam: vi
+              .fn()
+              .mockResolvedValue({ id: 2, name: 'coder', is_active: true }),
+          },
+          modelApi: { listModels: vi.fn().mockResolvedValue({ data: [] }) },
+          skillApi: {
+            listSkills: vi.fn().mockResolvedValue([]),
+            getTeamSkills: vi.fn().mockResolvedValue({ skills: [], preload_skills: [] }),
+          },
+          projectApi: {
+            listProjects,
+            getProject: vi.fn(),
+            createProject: vi.fn(),
+            updateProject: vi.fn(),
+            deleteProject: vi.fn(),
+            archiveProjectChats: vi.fn(),
+            archiveAllProjectChats: vi.fn(),
+            createConversation: vi.fn(),
+          },
+          taskApi: {
+            listRecentTasks: vi
+              .fn()
+              .mockResolvedValueOnce({ total: 0, items: [] })
+              .mockResolvedValueOnce({ total: 0, items: [] }),
+            getTaskDetail: vi.fn().mockResolvedValue({
+              ...importedTask,
+              subtasks: [],
+            }),
+            renameTask: vi.fn(),
+            archiveTask: vi.fn(),
+            archiveAllChats: vi.fn(),
+            listArchivedTasks: vi.fn(),
+            unarchiveTask: vi.fn(),
+            deleteTask: vi.fn(),
+            deleteArchivedTasks: vi.fn(),
+          },
+          deviceApi: {
+            listDevices: vi.fn().mockResolvedValue([
+              {
+                id: 1,
+                device_id: 'device-1',
+                name: 'Local Mac',
+                status: 'online',
+                is_default: true,
+                device_type: 'local',
+                bind_shell: 'claudecode',
+                executor_version: '1.8.5',
+              },
+            ]),
+            getHomeDirectory: vi.fn(),
+            getProjectWorkspaceRoot: vi.fn(),
+            listDirectories: vi.fn(),
+            listSkills: vi.fn().mockResolvedValue([]),
+          },
+          localCodexApi: {
+            listLocalCodexThreads: vi.fn().mockResolvedValue([]),
+            bindLocalCodexThread: vi.fn().mockResolvedValue({
+              taskId: 55,
+              task: importedTask,
+              created: true,
+              threadId: 'thread-1',
+              deviceId: 'device-1',
+            }),
+          },
+          chatStream: {
+            joinTask: vi.fn().mockResolvedValue({}),
+            leaveTask: vi.fn(),
+            sendMessage: vi.fn(),
+            subscribe: vi.fn(() => vi.fn()),
+          },
+        }}
+      >
+        <LocalCodexImportProbe />
+      </WorkbenchProvider>
+    )
+
+    await userEvent.click(screen.getByText('import codex'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('local-codex-current-task-project')).toHaveTextContent('7')
+    )
+    expect(screen.getByTestId('local-codex-project-tasks')).toHaveTextContent(
+      'Imported Codex thread'
+    )
+    expect(screen.getByTestId('local-codex-recent-tasks')).toHaveTextContent('')
   })
 
   test('sends pending code comments as formatted message context', async () => {
