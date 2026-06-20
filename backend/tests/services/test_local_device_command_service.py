@@ -423,6 +423,57 @@ def test_codex_threads_list_command_parses_session_index_only(tmp_path):
     assert "transcript" not in json.dumps(payload)
 
 
+def test_codex_threads_list_command_reads_cwd_from_session_metadata(tmp_path):
+    """codex_threads_list should enrich index-only records from Codex session files."""
+    from app.services.device.command_registry import CODEX_THREADS_LIST_SCRIPT
+
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
+    thread_id = "018f2d6b-8c7a-7abc-9def-0123456789ad"
+    (codex_home / "session_index.jsonl").write_text(
+        json.dumps(
+            {
+                "id": thread_id,
+                "thread_name": "Thread from index",
+                "updated_at": "2026-06-20T05:52:31Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+    session_dir = codex_home / "sessions" / "2026" / "06" / "20"
+    session_dir.mkdir(parents=True)
+    (session_dir / f"rollout-2026-06-20T13-52-19-{thread_id}.jsonl").write_text(
+        json.dumps(
+            {
+                "type": "session_meta",
+                "payload": {
+                    "id": thread_id,
+                    "cwd": "/tmp/project-from-session",
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        ["python3", "-c", CODEX_THREADS_LIST_SCRIPT],
+        env={
+            **os.environ,
+            "CODEX_HOME": str(codex_home),
+            "WEGENT_CODEX_THREADS_LIMIT": "100",
+        },
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(result.stdout)
+    assert payload["threads"][0]["threadId"] == thread_id
+    assert payload["threads"][0]["title"] == "Thread from index"
+    assert payload["threads"][0]["cwd"] == "/tmp/project-from-session"
+
+
 def test_codex_threads_list_command_stops_after_limit(tmp_path):
     """codex_threads_list should avoid processing unbounded session indexes."""
     from app.services.device.command_registry import CODEX_THREADS_LIST_SCRIPT

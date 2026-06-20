@@ -775,16 +775,136 @@ def first_text(record, *keys):
     return None
 
 
-def normalize_record(record):
+def first_nested_text(value, *keys):
+    if isinstance(value, dict):
+        for key in keys:
+            direct = value.get(key)
+            if isinstance(direct, str) and direct.strip():
+                return direct.strip()
+        for child in value.values():
+            found = first_nested_text(child, *keys)
+            if found:
+                return found
+    elif isinstance(value, list):
+        for child in value:
+            found = first_nested_text(child, *keys)
+            if found:
+                return found
+    return None
+
+
+def parse_datetime(value):
+    if not isinstance(value, str) or not value:
+        return None
+    normalized = value.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def iter_unique_matches(root, pattern, seen):
+    if not root.is_dir():
+        return
+    try:
+        matches = root.glob(pattern)
+    except OSError:
+        return
+    for path in matches:
+        try:
+            key = str(path.resolve())
+        except OSError:
+            key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        if path.is_file():
+            yield path
+
+
+def iter_session_files(codex_home, thread_id, updated_at):
+    seen = set()
+    sessions_root = codex_home / "sessions"
+    parsed = parse_datetime(updated_at)
+    date_values = []
+    if parsed:
+        date_values.append(parsed)
+        try:
+            local_date = parsed.astimezone()
+        except ValueError:
+            local_date = None
+        if local_date:
+            date_values.append(local_date)
+
+    for value in date_values:
+        date_root = (
+            sessions_root
+            / f"{value.year:04d}"
+            / f"{value.month:02d}"
+            / f"{value.day:02d}"
+        )
+        yield from iter_unique_matches(date_root, f"*{thread_id}*.jsonl", seen)
+
+    archived_root = codex_home / "archived_sessions"
+    yield from iter_unique_matches(archived_root, f"*{thread_id}*.jsonl", seen)
+    yield from iter_unique_matches(archived_root, f"*/*/*/*{thread_id}*.jsonl", seen)
+    yield from iter_unique_matches(sessions_root, f"*/*/*/*{thread_id}*.jsonl", seen)
+
+
+def read_session_cwd(path):
+    cwd_keys = (
+        "cwd",
+        "workdir",
+        "workingDirectory",
+        "working_directory",
+        "currentWorkingDirectory",
+        "current_working_directory",
+    )
+    try:
+        with path.open("rb") as handle:
+            for line_number, raw_line in enumerate(handle):
+                if line_number >= 80:
+                    break
+                record = parse_json_line(raw_line)
+                if record is None:
+                    continue
+                cwd = first_nested_text(record, *cwd_keys)
+                if cwd:
+                    return cwd
+    except OSError:
+        return None
+    return None
+
+
+def find_session_cwd(codex_home, thread_id, updated_at):
+    for path in iter_session_files(codex_home, thread_id, updated_at):
+        cwd = read_session_cwd(path)
+        if cwd:
+            return cwd
+    return None
+
+
+def normalize_record(record, codex_home):
     thread_id = first_text(record, "id", "thread_id", "threadId", "conversation_id")
     if not thread_id:
         return None
     title = first_text(record, "title", "thread_name", "summary", "name") or thread_id
+    updated_at = first_text(record, "updatedAt", "updated_at", "mtime")
+    cwd = first_text(
+        record,
+        "cwd",
+        "workdir",
+        "workingDirectory",
+        "working_directory",
+    ) or find_session_cwd(codex_home, thread_id, updated_at)
     return {
         "threadId": thread_id,
         "title": title,
-        "cwd": first_text(record, "cwd", "workingDirectory", "working_directory"),
-        "updatedAt": first_text(record, "updatedAt", "updated_at", "mtime"),
+        "cwd": cwd,
+        "updatedAt": updated_at,
         "archived": bool(record.get("archived", False)),
         "running": bool(record.get("running", False)),
     }
@@ -792,16 +912,7 @@ def normalize_record(record):
 
 def sort_key(record):
     value = record.get("updatedAt") or ""
-    if not isinstance(value, str) or not value:
-        return datetime.min.replace(tzinfo=timezone.utc)
-    normalized = value.replace("Z", "+00:00")
-    try:
-        parsed = datetime.fromisoformat(normalized)
-    except ValueError:
-        return datetime.min.replace(tzinfo=timezone.utc)
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=timezone.utc)
-    return parsed
+    return parse_datetime(value) or datetime.min.replace(tzinfo=timezone.utc)
 
 
 codex_home = Path(
@@ -810,7 +921,7 @@ codex_home = Path(
 records = []
 limit = parse_limit()
 for raw in iter_recent_json_lines(codex_home / "session_index.jsonl", limit):
-    normalized = normalize_record(raw)
+    normalized = normalize_record(raw, codex_home)
     if normalized:
         records.append(normalized)
 
