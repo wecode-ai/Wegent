@@ -1,5 +1,5 @@
 import { X } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
@@ -23,8 +23,16 @@ export function ContinueInImDialog({
   onSubmit,
 }: ContinueInImDialogProps) {
   const { t } = useTranslation('common')
+  const dialogRef = useRef<HTMLElement | null>(null)
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null)
   const [selectedSessionIds, setSelectedSessionIds] = useState<Set<number>>(new Set())
   const selectedIds = useMemo(() => Array.from(selectedSessionIds), [selectedSessionIds])
+
+  useEffect(() => {
+    if (open) {
+      closeButtonRef.current?.focus()
+    }
+  }, [open])
 
   if (!open) {
     return null
@@ -46,24 +54,72 @@ export function ContinueInImDialog({
     void onSubmit(selectedIds)
   }
 
+  const closeIfAllowed = () => {
+    if (!submitting) {
+      onClose()
+    }
+  }
+
+  const getFocusableElements = () => {
+    if (!dialogRef.current) return []
+
+    return Array.from(
+      dialogRef.current.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      )
+    ).filter(element => !element.hasAttribute('aria-hidden'))
+  }
+
+  const handleKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+    if (event.key === 'Escape') {
+      event.stopPropagation()
+      closeIfAllowed()
+      return
+    }
+
+    if (event.key !== 'Tab') {
+      return
+    }
+
+    const focusableElements = getFocusableElements()
+    if (focusableElements.length === 0) {
+      event.preventDefault()
+      return
+    }
+
+    const firstElement = focusableElements[0]
+    const lastElement = focusableElements[focusableElements.length - 1]
+
+    if (event.shiftKey && document.activeElement === firstElement) {
+      event.preventDefault()
+      lastElement.focus()
+    } else if (!event.shiftKey && document.activeElement === lastElement) {
+      event.preventDefault()
+      firstElement.focus()
+    }
+  }
+
   return createPortal(
     <div
       data-testid="continue-im-dialog-overlay"
       className="fixed inset-0 z-modal flex items-center justify-center bg-black/30 px-4 py-6"
-      onClick={onClose}
+      onClick={closeIfAllowed}
     >
       <section
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="continue-im-dialog-title"
         className="flex max-h-[min(82dvh,40rem)] w-full max-w-lg flex-col overflow-hidden rounded-lg border border-border bg-background text-text-primary shadow-[0_18px_60px_rgba(0,0,0,0.22)]"
         onClick={event => event.stopPropagation()}
+        onKeyDown={handleKeyDown}
       >
         <header className="flex min-h-14 items-center gap-3 border-b border-border px-4">
           <h2 id="continue-im-dialog-title" className="min-w-0 flex-1 text-lg font-semibold">
             {t('workbench.continue_im_title')}
           </h2>
           <button
+            ref={closeButtonRef}
             type="button"
             data-testid="continue-im-close-button"
             className="flex h-11 min-w-[44px] items-center justify-center rounded-lg text-text-secondary hover:bg-surface hover:text-text-primary"

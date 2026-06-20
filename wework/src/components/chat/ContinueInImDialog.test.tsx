@@ -58,4 +58,47 @@ describe('ContinueInImDialog', () => {
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith([1, 2]))
   })
+
+  test('does not close from backdrop or Escape while submitting', async () => {
+    const onClose = vi.fn()
+
+    render(
+      <ContinueInImDialog
+        open
+        loading={false}
+        submitting
+        sessions={[createSession(1, 'Alice')]}
+        onClose={onClose}
+        onSubmit={vi.fn()}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('continue-im-dialog-overlay'))
+    await userEvent.keyboard('{Escape}')
+
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  test('focuses the close button and traps tab focus while open', async () => {
+    render(
+      <ContinueInImDialog
+        open
+        loading={false}
+        submitting={false}
+        sessions={[createSession(1, 'Alice')]}
+        onClose={vi.fn()}
+        onSubmit={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('continue-im-close-button')).toHaveFocus()
+
+    await userEvent.click(screen.getByTestId('continue-im-session-1'))
+    screen.getByTestId('continue-im-close-button').focus()
+    await userEvent.tab({ shift: true })
+    expect(screen.getByTestId('continue-im-submit-button')).toHaveFocus()
+
+    await userEvent.tab()
+    expect(screen.getByTestId('continue-im-close-button')).toHaveFocus()
+  })
 })

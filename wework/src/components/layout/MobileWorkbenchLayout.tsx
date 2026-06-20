@@ -1,5 +1,5 @@
 import { Bot, Menu, MessageCircle } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ChatInput } from '@/components/chat/ChatInput'
 import type { ProjectChatControls, ProjectWorkControls } from '@/components/chat/ChatInput'
 import { ModelSelector } from '@/components/chat/composer/ModelSelector'
@@ -204,6 +204,7 @@ export function MobileWorkbenchLayout({
     message: string
     tone: 'success' | 'error'
   } | null>(null)
+  const imSessionsRequestSequence = useRef(0)
   const hasConversation = messages.length > 0 || state.currentTask
   const currentTaskProject = useMemo(
     () => findProjectForTask(state.projects, state.currentTask),
@@ -395,20 +396,35 @@ export function MobileWorkbenchLayout({
   const openContinueInImDialog = useCallback(() => {
     if (!state.currentTask) return
 
+    const requestId = imSessionsRequestSequence.current + 1
+    imSessionsRequestSequence.current = requestId
     setContinueInImOpen(true)
     setImSessionsLoading(true)
+    setImSessions([])
     void (onListImPrivateSessions?.() ?? Promise.resolve({ total: 0, items: [] }))
       .then(response => {
-        setImSessions(response.items)
+        if (imSessionsRequestSequence.current === requestId) {
+          setImSessions(response.items)
+        }
       })
       .catch(() => {
-        setImSessions([])
-        setNotice({ message: t('workbench.continue_im_failed'), tone: 'error' })
+        if (imSessionsRequestSequence.current === requestId) {
+          setImSessions([])
+          setNotice({ message: t('workbench.continue_im_failed'), tone: 'error' })
+        }
       })
       .finally(() => {
-        setImSessionsLoading(false)
+        if (imSessionsRequestSequence.current === requestId) {
+          setImSessionsLoading(false)
+        }
       })
   }, [onListImPrivateSessions, state.currentTask, t])
+
+  const closeContinueInImDialog = useCallback(() => {
+    imSessionsRequestSequence.current += 1
+    setContinueInImOpen(false)
+    setImSessionsLoading(false)
+  }, [])
 
   const submitContinueInIm = useCallback(
     async (sessionIds: number[]) => {
@@ -416,7 +432,10 @@ export function MobileWorkbenchLayout({
 
       setImSessionsSubmitting(true)
       try {
-        await onBindTaskToImSessions?.(state.currentTask.id, sessionIds)
+        if (!onBindTaskToImSessions) {
+          throw new Error('IM bind handler is not available')
+        }
+        await onBindTaskToImSessions(state.currentTask.id, sessionIds)
         setContinueInImOpen(false)
         setNotice({ message: t('workbench.continue_im_success'), tone: 'success' })
       } catch {
@@ -684,7 +703,7 @@ export function MobileWorkbenchLayout({
         loading={imSessionsLoading}
         submitting={imSessionsSubmitting}
         sessions={imSessions}
-        onClose={() => setContinueInImOpen(false)}
+        onClose={closeContinueInImDialog}
         onSubmit={submitContinueInIm}
       />
       <TransientNotice

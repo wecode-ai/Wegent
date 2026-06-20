@@ -63,6 +63,16 @@ const baseProjectChat = {
 }
 
 describe('MobileWorkbenchLayout', () => {
+  function createDeferred<T>() {
+    let resolve!: (value: T) => void
+    let reject!: (error: unknown) => void
+    const promise = new Promise<T>((promiseResolve, promiseReject) => {
+      resolve = promiseResolve
+      reject = promiseReject
+    })
+    return { promise, resolve, reject }
+  }
+
   afterEach(() => {
     Object.defineProperty(window, 'innerWidth', {
       configurable: true,
@@ -634,6 +644,162 @@ describe('MobileWorkbenchLayout', () => {
     expect(onListImPrivateSessions).toHaveBeenCalledTimes(1)
     expect(await screen.findByRole('dialog')).toBeInTheDocument()
     expect(await screen.findByTestId('continue-im-session-1')).toHaveTextContent('Alice')
+  })
+
+  test('ignores stale private session responses when reopening the mobile dialog', async () => {
+    type PrivateSessionResponse = {
+      total: number
+      items: Array<{
+        id: number
+        channel_type: string
+        channel_label: string
+        channel_id: number
+        conversation_id: string
+        sender_id: string
+        display_name: string
+        mode: 'chat' | 'task'
+        state: 'idle'
+        active_task_id: null
+        last_seen_at: string
+      }>
+    }
+    const firstRequest = createDeferred<PrivateSessionResponse>()
+    const secondRequest = createDeferred<PrivateSessionResponse>()
+    const onListImPrivateSessions = vi
+      .fn()
+      .mockReturnValueOnce(firstRequest.promise)
+      .mockReturnValueOnce(secondRequest.promise)
+
+    renderAtMobileWidth(
+      <MobileWorkbenchLayout
+        state={{
+          ...baseState,
+          currentTask: {
+            id: 7,
+            title: 'Active task',
+            status: 'COMPLETED',
+            task_type: 'code',
+            created_at: '2026-06-20T00:00:00.000Z',
+          },
+        }}
+        messages={[
+          {
+            id: 'assistant-1',
+            role: 'assistant',
+            content: 'Ready',
+            status: 'done',
+          },
+        ]}
+        projectChat={baseProjectChat}
+        onSelectProject={vi.fn()}
+        onOpenTask={vi.fn()}
+        onInputChange={vi.fn()}
+        onSend={vi.fn()}
+        onListImPrivateSessions={onListImPrivateSessions}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('mobile-continue-in-im-button'))
+    await userEvent.click(screen.getByTestId('continue-im-cancel-button'))
+    await userEvent.click(screen.getByTestId('mobile-continue-in-im-button'))
+
+    secondRequest.resolve({
+      total: 1,
+      items: [
+        {
+          id: 2,
+          channel_type: 'wecom',
+          channel_label: 'WeCom',
+          channel_id: 102,
+          conversation_id: 'conversation-2',
+          sender_id: 'sender-2',
+          display_name: 'Fresh session',
+          mode: 'task',
+          state: 'idle',
+          active_task_id: null,
+          last_seen_at: '2026-06-20T00:00:00.000Z',
+        },
+      ],
+    })
+
+    expect(await screen.findByTestId('continue-im-session-2')).toHaveTextContent('Fresh session')
+
+    firstRequest.resolve({
+      total: 1,
+      items: [
+        {
+          id: 1,
+          channel_type: 'wecom',
+          channel_label: 'WeCom',
+          channel_id: 101,
+          conversation_id: 'conversation-1',
+          sender_id: 'sender-1',
+          display_name: 'Stale session',
+          mode: 'chat',
+          state: 'idle',
+          active_task_id: null,
+          last_seen_at: '2026-06-20T00:00:00.000Z',
+        },
+      ],
+    })
+
+    await waitFor(() => expect(screen.queryByText('Stale session')).not.toBeInTheDocument())
+    expect(screen.getByText('Fresh session')).toBeInTheDocument()
+  })
+
+  test('shows a failure notice when mobile bind handler is missing', async () => {
+    renderAtMobileWidth(
+      <MobileWorkbenchLayout
+        state={{
+          ...baseState,
+          currentTask: {
+            id: 7,
+            title: 'Active task',
+            status: 'COMPLETED',
+            task_type: 'code',
+            created_at: '2026-06-20T00:00:00.000Z',
+          },
+        }}
+        messages={[
+          {
+            id: 'assistant-1',
+            role: 'assistant',
+            content: 'Ready',
+            status: 'done',
+          },
+        ]}
+        projectChat={baseProjectChat}
+        onSelectProject={vi.fn()}
+        onOpenTask={vi.fn()}
+        onInputChange={vi.fn()}
+        onSend={vi.fn()}
+        onListImPrivateSessions={vi.fn().mockResolvedValue({
+          total: 1,
+          items: [
+            {
+              id: 1,
+              channel_type: 'wecom',
+              channel_label: 'WeCom',
+              channel_id: 101,
+              conversation_id: 'conversation-1',
+              sender_id: 'sender-1',
+              display_name: 'Alice',
+              mode: 'chat',
+              state: 'idle',
+              active_task_id: null,
+              last_seen_at: '2026-06-20T00:00:00.000Z',
+            },
+          ],
+        })}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('mobile-continue-in-im-button'))
+    await userEvent.click(await screen.findByTestId('continue-im-session-1'))
+    await userEvent.click(screen.getByTestId('continue-im-submit-button'))
+
+    expect(await screen.findByTestId('transient-notice')).toHaveTextContent('继续到私聊失败')
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
   })
 
   test('opens drawer with projects and recent tasks', async () => {
