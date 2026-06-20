@@ -474,6 +474,85 @@ def test_codex_threads_list_command_reads_cwd_from_session_metadata(tmp_path):
     assert payload["threads"][0]["cwd"] == "/tmp/project-from-session"
 
 
+def test_codex_threads_list_command_filters_subagent_threads(tmp_path):
+    """codex_threads_list should not expose Codex subagent sessions."""
+    from app.services.device.command_registry import CODEX_THREADS_LIST_SCRIPT
+
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
+    user_thread_id = "018f2d6b-8c7a-7abc-9def-0123456789ae"
+    subagent_thread_id = "018f2d6b-8c7a-7abc-9def-0123456789af"
+    (codex_home / "session_index.jsonl").write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "id": user_thread_id,
+                        "thread_name": "User thread",
+                        "updated_at": "2026-06-20T05:52:31Z",
+                    }
+                ),
+                json.dumps(
+                    {
+                        "id": subagent_thread_id,
+                        "thread_name": "Subagent thread",
+                        "updated_at": "2026-06-20T05:53:31Z",
+                    }
+                ),
+            ]
+        ),
+        encoding="utf-8",
+    )
+    session_dir = codex_home / "sessions" / "2026" / "06" / "20"
+    session_dir.mkdir(parents=True)
+    (session_dir / f"rollout-2026-06-20T13-52-19-{user_thread_id}.jsonl").write_text(
+        json.dumps(
+            {
+                "type": "session_meta",
+                "payload": {
+                    "id": user_thread_id,
+                    "cwd": "/tmp/user-project",
+                    "thread_source": "user",
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (
+        session_dir / f"rollout-2026-06-20T13-53-19-{subagent_thread_id}.jsonl"
+    ).write_text(
+        json.dumps(
+            {
+                "type": "session_meta",
+                "payload": {
+                    "id": subagent_thread_id,
+                    "cwd": "/tmp/subagent-project",
+                    "thread_source": "subagent",
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        ["python3", "-c", CODEX_THREADS_LIST_SCRIPT],
+        env={
+            **os.environ,
+            "CODEX_HOME": str(codex_home),
+            "WEGENT_CODEX_THREADS_LIMIT": "100",
+        },
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(result.stdout)
+    assert [thread["threadId"] for thread in payload["threads"]] == [user_thread_id]
+    assert payload["threads"][0]["cwd"] == "/tmp/user-project"
+
+
 def test_codex_threads_list_command_stops_after_limit(tmp_path):
     """codex_threads_list should avoid processing unbounded session indexes."""
     from app.services.device.command_registry import CODEX_THREADS_LIST_SCRIPT

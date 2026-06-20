@@ -854,7 +854,7 @@ def iter_session_files(codex_home, thread_id, updated_at):
     yield from iter_unique_matches(sessions_root, f"*/*/*/*{thread_id}*.jsonl", seen)
 
 
-def read_session_cwd(path):
+def read_session_metadata(path):
     cwd_keys = (
         "cwd",
         "workdir",
@@ -871,20 +871,36 @@ def read_session_cwd(path):
                 record = parse_json_line(raw_line)
                 if record is None:
                     continue
+                thread_source = first_nested_text(
+                    record, "thread_source", "threadSource"
+                )
                 cwd = first_nested_text(record, *cwd_keys)
-                if cwd:
-                    return cwd
+                if cwd or thread_source:
+                    return {"cwd": cwd, "threadSource": thread_source}
     except OSError:
-        return None
-    return None
+        return {}
+    return {}
 
 
-def find_session_cwd(codex_home, thread_id, updated_at):
+def find_session_metadata(codex_home, thread_id, updated_at):
     for path in iter_session_files(codex_home, thread_id, updated_at):
-        cwd = read_session_cwd(path)
-        if cwd:
-            return cwd
-    return None
+        metadata = read_session_metadata(path)
+        if metadata:
+            return metadata
+    return {}
+
+
+def normalized_thread_source(value):
+    if isinstance(value, str):
+        return value.strip().lower()
+    return ""
+
+
+def is_visible_thread(record):
+    if bool(record.get("archived", False)):
+        return False
+    thread_source = normalized_thread_source(record.get("threadSource"))
+    return thread_source in ("", "user")
 
 
 def normalize_record(record, codex_home):
@@ -893,21 +909,30 @@ def normalize_record(record, codex_home):
         return None
     title = first_text(record, "title", "thread_name", "summary", "name") or thread_id
     updated_at = first_text(record, "updatedAt", "updated_at", "mtime")
+    metadata = find_session_metadata(codex_home, thread_id, updated_at)
     cwd = first_text(
         record,
         "cwd",
         "workdir",
         "workingDirectory",
         "working_directory",
-    ) or find_session_cwd(codex_home, thread_id, updated_at)
-    return {
+    ) or metadata.get("cwd")
+    thread_source = first_text(record, "threadSource", "thread_source") or metadata.get(
+        "threadSource"
+    )
+    normalized = {
         "threadId": thread_id,
         "title": title,
         "cwd": cwd,
         "updatedAt": updated_at,
         "archived": bool(record.get("archived", False)),
         "running": bool(record.get("running", False)),
+        "threadSource": thread_source,
     }
+    if not is_visible_thread(normalized):
+        return None
+    normalized.pop("threadSource", None)
+    return normalized
 
 
 def sort_key(record):

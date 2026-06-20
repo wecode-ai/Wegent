@@ -124,6 +124,53 @@ async def test_list_local_codex_threads_dispatches_capped_discovery(
 
 
 @pytest.mark.asyncio
+async def test_list_local_codex_threads_filters_subagent_but_keeps_running(
+    monkeypatch,
+) -> None:
+    from app.api.endpoints import local_codex
+
+    service_mock = AsyncMock(
+        return_value={
+            "success": True,
+            "stdout": {
+                "threads": [
+                    {
+                        "threadId": "018f2d6b-8c7a-7abc-9def-0123456789aa",
+                        "title": "User stopped",
+                        "threadSource": "user",
+                    },
+                    {
+                        "threadId": "018f2d6b-8c7a-7abc-9def-0123456789ab",
+                        "title": "User running",
+                        "threadSource": "user",
+                        "running": True,
+                    },
+                    {
+                        "threadId": "018f2d6b-8c7a-7abc-9def-0123456789ac",
+                        "title": "Subagent",
+                        "threadSource": "subagent",
+                    },
+                ]
+            },
+        }
+    )
+    monkeypatch.setattr(local_codex, "execute_configured_device_command", service_mock)
+
+    response = await local_codex.list_device_codex_threads(
+        device_id="device-abc",
+        limit=50,
+        db=object(),
+        current_user=SimpleNamespace(id=7),
+    )
+
+    assert [thread.thread_id for thread in response.threads] == [
+        "018f2d6b-8c7a-7abc-9def-0123456789aa",
+        "018f2d6b-8c7a-7abc-9def-0123456789ab",
+    ]
+    assert response.threads[1].running is True
+
+
+@pytest.mark.asyncio
 async def test_bind_local_codex_thread_refreshes_discovery_and_rejects_missing(
     monkeypatch,
 ) -> None:
@@ -149,6 +196,45 @@ async def test_bind_local_codex_thread_refreshes_discovery_and_rejects_missing(
     service_mock.assert_awaited_once()
     _, kwargs = service_mock.await_args
     assert kwargs["command_key"] == "codex_threads_list"
+
+
+@pytest.mark.asyncio
+async def test_bind_local_codex_thread_rejects_running_thread(monkeypatch) -> None:
+    from app.api.endpoints import local_codex
+    from app.schemas.local_codex import LocalCodexBindRequest
+
+    service_mock = AsyncMock(
+        return_value={
+            "success": True,
+            "stdout": {
+                "threads": [
+                    {
+                        "threadId": "018f2d6b-8c7a-7abc-9def-0123456789ab",
+                        "title": "Running thread",
+                        "running": True,
+                    }
+                ]
+            },
+        }
+    )
+    bind_mock = MagicMock()
+    monkeypatch.setattr(local_codex, "execute_configured_device_command", service_mock)
+    monkeypatch.setattr(local_codex, "bind_local_codex_thread", bind_mock)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await local_codex.bind_local_codex_thread_endpoint(
+            request=LocalCodexBindRequest(
+                deviceId="device-abc",
+                threadId="018f2d6b-8c7a-7abc-9def-0123456789ab",
+                teamId=11,
+            ),
+            db=object(),
+            current_user=SimpleNamespace(id=7),
+        )
+
+    assert exc_info.value.status_code == 409
+    assert "running" in exc_info.value.detail.lower()
+    bind_mock.assert_not_called()
 
 
 @pytest.mark.asyncio

@@ -89,6 +89,16 @@ async def bind_local_codex_thread_endpoint(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Codex thread not found on device",
         )
+    if thread.running:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Codex thread is still running",
+        )
+    if thread.archived:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Codex thread is archived",
+        )
 
     team = _get_user_team_or_404(db, current_user.id, request.team_id)
     try:
@@ -205,8 +215,19 @@ async def _discover_device_codex_threads(
     return [
         LocalCodexThreadSummary.model_validate(_normalize_thread_summary(item))
         for item in raw_threads[:capped_limit]
-        if isinstance(item, dict)
+        if isinstance(item, dict) and _is_visible_thread_summary(item)
     ]
+
+
+def _normalized_thread_source(item: dict[str, Any]) -> str:
+    value = item.get("threadSource") or item.get("thread_source")
+    return value.strip().lower() if isinstance(value, str) else ""
+
+
+def _is_visible_thread_summary(item: dict[str, Any]) -> bool:
+    if bool(item.get("archived", False)):
+        return False
+    return _normalized_thread_source(item) in ("", "user")
 
 
 def _normalize_thread_summary(item: dict[str, Any]) -> dict[str, Any]:

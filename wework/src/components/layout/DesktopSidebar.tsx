@@ -5,7 +5,6 @@ import {
   Folder,
   FolderGit2,
   FolderPlus,
-  Import,
   Loader2,
   MessageSquarePlus,
   Plus,
@@ -1143,6 +1142,27 @@ export function DesktopSidebar({
         data-testid="sidebar-worklists-scroll"
         className="scrollbar-none mt-8 min-h-0 flex-1 overflow-y-auto"
       >
+        {canImportLocalCodex && (
+          <section data-testid="local-codex-section" className="mb-8">
+            <div className="mb-2 px-2.5 text-[13px] font-semibold leading-[18px] text-[rgb(var(--color-sidebar-text-muted))]">
+              {t('localCodex.sidebarTitle')}
+            </div>
+            <button
+              type="button"
+              data-testid="local-codex-open-button"
+              onClick={() => setLocalCodexDialogOpen(true)}
+              className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[13px] font-medium leading-[18px] text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]"
+              title={t('localCodex.importAction')}
+              aria-label={t('localCodex.importAction')}
+            >
+              <Terminal className="h-4 w-4 shrink-0 text-[rgb(var(--color-sidebar-text-secondary))]" />
+              <span className="min-w-0 flex-1 truncate">
+                {t('localCodex.sidebarEntry')}
+              </span>
+            </button>
+          </section>
+        )}
+
         <section>
           <SidebarSectionHeader
             title={t('workbench.projects', '项目')}
@@ -1227,18 +1247,6 @@ export function DesktopSidebar({
             iconTestId="chats-section-chevron-right"
             onToggle={() => setChatsExpanded(expanded => !expanded)}
           >
-            {canImportLocalCodex && (
-              <button
-                type="button"
-                data-testid="local-codex-import-button"
-                onClick={() => setLocalCodexDialogOpen(true)}
-                className="flex h-7 w-7 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
-                title={t('localCodex.importAction')}
-                aria-label={t('localCodex.importAction')}
-              >
-                <Import className="h-4 w-4" />
-              </button>
-            )}
             <ActionMenu
               ariaLabel={t('workbench.chat_list_actions', '对话列表操作')}
               testId="chats-more-button"
@@ -1351,6 +1359,7 @@ export function DesktopSidebar({
         <LocalCodexThreadImportDialog
           open={localCodexDialogOpen}
           devices={devices}
+          projects={projects}
           onClose={() => setLocalCodexDialogOpen(false)}
           onListLocalCodexThreads={onListLocalCodexThreads}
           onBindLocalCodexThread={onBindLocalCodexThread}

@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, test, vi } from 'vitest'
 import '@/i18n'
 import { LocalCodexThreadImportDialog } from './LocalCodexThreadImportDialog'
-import type { DeviceInfo, LocalCodexThreadSummary } from '@/types/api'
+import type { DeviceInfo, LocalCodexThreadSummary, ProjectWithTasks } from '@/types/api'
 
 function localDevice(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
   return {
@@ -20,6 +20,7 @@ function localDevice(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
 
 function renderDialog({
   devices = [localDevice()],
+  projects = [],
   threads = [],
   onListLocalCodexThreads = vi.fn().mockResolvedValue(threads),
   onBindLocalCodexThread = vi.fn().mockResolvedValue({
@@ -34,6 +35,7 @@ function renderDialog({
   }),
 }: {
   devices?: DeviceInfo[]
+  projects?: ProjectWithTasks[]
   threads?: LocalCodexThreadSummary[]
   onListLocalCodexThreads?: (deviceId: string) => Promise<LocalCodexThreadSummary[]>
   onBindLocalCodexThread?: Parameters<typeof LocalCodexThreadImportDialog>[0]['onBindLocalCodexThread']
@@ -42,6 +44,7 @@ function renderDialog({
     <LocalCodexThreadImportDialog
       open
       devices={devices}
+      projects={projects}
       onClose={vi.fn()}
       onListLocalCodexThreads={onListLocalCodexThreads}
       onBindLocalCodexThread={onBindLocalCodexThread}
@@ -154,5 +157,50 @@ describe('LocalCodexThreadImportDialog', () => {
     expect(buttons).toHaveLength(2)
     expect(buttons[0]).toBeDisabled()
     expect(buttons[1]).toBeDisabled()
+  })
+
+  test('groups local Codex threads by matching project', async () => {
+    renderDialog({
+      projects: [
+        {
+          id: 7,
+          name: 'Wegent',
+          config: {
+            mode: 'workspace',
+            execution: { targetType: 'local', deviceId: 'local-device' },
+            workspace: {
+              source: 'local_path',
+              localPath: '/Users/alice/dev/Wegent',
+            },
+          },
+          tasks: [],
+        },
+      ],
+      threads: [
+        {
+          threadId: 'thread-1',
+          title: 'Source checkout task',
+          cwd: '/Users/alice/dev/Wegent',
+        },
+        {
+          threadId: 'thread-2',
+          title: 'Worktree task',
+          cwd: '/Users/alice/.codex/worktrees/2381/Wegent',
+        },
+        {
+          threadId: 'thread-3',
+          title: 'Unknown task',
+          cwd: '/tmp/unknown',
+        },
+      ],
+    })
+
+    expect(await screen.findByTestId('local-codex-project-group-7')).toHaveTextContent('Wegent')
+    const wegentGroup = screen.getByTestId('local-codex-project-group-7')
+    expect(wegentGroup).toHaveTextContent('Source checkout task')
+    expect(wegentGroup).toHaveTextContent('Worktree task')
+    expect(screen.getByTestId('local-codex-project-group-unmatched')).toHaveTextContent(
+      'Unknown task',
+    )
   })
 })

@@ -6,18 +6,22 @@
     "loading": "Loading..."
   },
   "localCodex": {
-    "importAction": "Import local Codex task",
-    "dialogTitle": "Local Codex tasks",
+    "sidebarTitle": "Codex",
+    "sidebarEntry": "Local Codex sessions",
+    "importAction": "Open local Codex sessions",
+    "dialogTitle": "Local Codex sessions",
     "deviceLabel": "Local device",
-    "empty": "No local Codex tasks found",
+    "empty": "No local Codex sessions found",
     "offline": "An online local device is required",
-    "bind": "Import",
+    "bind": "Take over",
     "openExisting": "Open",
+    "running": "Running",
+    "unmatchedProject": "Unmatched project",
     "updatedAt": "Updated {{time}}",
-    "threadMissing": "This Codex task does not exist on the current device",
-    "loadFailed": "Unable to read local Codex tasks",
-    "threadUnavailable": "Archived or running Codex tasks cannot be imported yet",
-    "indicator": "Local Codex task"
+    "threadMissing": "This Codex session does not exist on the current device",
+    "loadFailed": "Unable to read local Codex sessions",
+    "threadUnavailable": "Archived or running Codex sessions cannot be taken over yet",
+    "indicator": "Local Codex session"
   },
   "workbench": {
     "brand": "Wework",

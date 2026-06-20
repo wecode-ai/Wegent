@@ -2,24 +2,24 @@
 sidebar_position: 1
 ---
 
-# 绑定本地 Codex 任务
+# 绑定本地 Codex 会话
 
-Wework 可以把一条已经存在的本地 Codex 任务绑定成 Wework 对话。绑定后，Wework 保存的是本地 Codex thread id；后续从 Wework 发送的消息会继续使用同一个本地 Codex 线程执行。
+Wework 可以把一条已经存在的本地 Codex 会话绑定成 Wework 对话。绑定后，Wework 保存的是本地 Codex thread id；后续从 Wework 发送的消息会继续使用同一个本地 Codex 线程执行。
 
 ## 使用前提
 
 - 本地设备必须在线，并且能被当前 Wework 账号访问。
 - 本地执行器和你已有的 Codex App 或 Codex CLI 需要使用同一个 `CODEX_HOME`。如果 `CODEX_HOME` 不一致，Wework 可能看不到你想绑定的本地线程。
-- 第一版只读取本地线程摘要，例如标题、目录和更新时间；不会导入绑定前的完整 Codex 历史记录。
+- Wework 只读取本地线程摘要，例如标题、目录和更新时间；不会导入绑定前的完整 Codex 历史记录。
 
-## 在桌面端导入
+## 在桌面端接管
 
-1. 在 Wework 桌面端打开近期对话列表旁的本地 Codex 导入按钮。
+1. 在 Wework 桌面端左侧边栏打开 **Codex** 区域里的“本地 Codex 会话”。
 2. 选择一台在线的本地设备。
-3. 从列表中选择要导入的 Codex 任务。
-4. 点击“导入”。Wework 会创建或打开对应的 Wework 任务。
+3. 在弹层中按项目分组查看本地 Codex 会话。Wework 会优先用会话工作目录匹配项目；如果会话来自 Codex worktree，会按 worktree 目录名匹配原项目；无法匹配的会话会显示在“未匹配项目”分组。
+4. 选择要接管的 Codex 会话，点击“接管”。Wework 会创建或打开对应的 Wework 任务。
 
-已归档或正在运行的本地 Codex 任务暂不能导入。你可以在本地 Codex 中恢复或等待任务结束后再试。
+子 agent 会话不会显示。正在运行的本地 Codex 会话会显示为“运行中”，但暂不能接管；你可以等待会话结束后再试。
 
 ## 在移动端继续
 

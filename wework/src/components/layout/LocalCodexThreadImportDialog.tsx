@@ -1,4 +1,4 @@
-import { Clock3, Download, FolderOpen, RotateCw, X } from 'lucide-react'
+import { ArrowRight, Clock3, FolderOpen, RotateCw, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
@@ -9,11 +9,13 @@ import type {
   LocalCodexBindRequest,
   LocalCodexBindResponse,
   LocalCodexThreadSummary,
+  ProjectWithTasks,
 } from '@/types/api'
 
 interface LocalCodexThreadImportDialogProps {
   open: boolean
   devices: DeviceInfo[]
+  projects: ProjectWithTasks[]
   onClose: () => void
   onListLocalCodexThreads: (
     deviceId: string,
@@ -37,9 +39,102 @@ function formatUpdatedTime(value: string | undefined) {
   return date.toLocaleString()
 }
 
+function normalizeWorkspacePath(value: string | undefined | null): string {
+  return (value ?? '').trim().replace(/\/+$/, '')
+}
+
+function getPathBaseName(value: string | undefined | null): string {
+  const normalized = normalizeWorkspacePath(value)
+  if (!normalized) return ''
+  const parts = normalized.split('/').filter(Boolean)
+  return parts[parts.length - 1] ?? ''
+}
+
+function getProjectWorkspacePath(project: ProjectWithTasks): string {
+  const workspace = project.config?.workspace
+  return normalizeWorkspacePath(
+    workspace?.localPath || workspace?.checkoutPath || project.config?.path,
+  )
+}
+
+function findProjectForLocalCodexThread(
+  thread: LocalCodexThreadSummary,
+  projects: ProjectWithTasks[],
+): ProjectWithTasks | null {
+  const threadPath = normalizeWorkspacePath(thread.cwd)
+  if (!threadPath) return null
+
+  const projectMatches = projects
+    .map(project => ({
+      project,
+      path: getProjectWorkspacePath(project),
+      pathBaseName: getPathBaseName(getProjectWorkspacePath(project)),
+    }))
+    .filter(match => match.path || match.pathBaseName)
+
+  const exactMatch = projectMatches.find(match => match.path === threadPath)
+  if (exactMatch) return exactMatch.project
+
+  const threadBaseName = getPathBaseName(threadPath)
+  if (!threadBaseName) return null
+
+  const basenameMatches = projectMatches.filter(
+    match => match.pathBaseName === threadBaseName,
+  )
+  return basenameMatches.length === 1 ? basenameMatches[0].project : null
+}
+
+interface LocalCodexThreadGroup {
+  key: string
+  title: string
+  testId: string
+  threads: LocalCodexThreadSummary[]
+}
+
+function groupLocalCodexThreadsByProject(
+  threads: LocalCodexThreadSummary[],
+  projects: ProjectWithTasks[],
+  unmatchedTitle: string,
+): LocalCodexThreadGroup[] {
+  const groupedByProjectId = new Map<number, LocalCodexThreadSummary[]>()
+  const unmatchedThreads: LocalCodexThreadSummary[] = []
+
+  for (const thread of threads) {
+    const project = findProjectForLocalCodexThread(thread, projects)
+    if (!project) {
+      unmatchedThreads.push(thread)
+      continue
+    }
+    const projectThreads = groupedByProjectId.get(project.id) ?? []
+    projectThreads.push(thread)
+    groupedByProjectId.set(project.id, projectThreads)
+  }
+
+  const groups = projects
+    .map(project => ({
+      key: String(project.id),
+      title: project.name,
+      testId: `local-codex-project-group-${project.id}`,
+      threads: groupedByProjectId.get(project.id) ?? [],
+    }))
+    .filter(group => group.threads.length > 0)
+
+  if (unmatchedThreads.length > 0) {
+    groups.push({
+      key: 'unmatched',
+      title: unmatchedTitle,
+      testId: 'local-codex-project-group-unmatched',
+      threads: unmatchedThreads,
+    })
+  }
+
+  return groups
+}
+
 export function LocalCodexThreadImportDialog({
   open,
   devices,
+  projects,
   onClose,
   onListLocalCodexThreads,
   onBindLocalCodexThread,
@@ -49,6 +144,7 @@ export function LocalCodexThreadImportDialog({
   return (
     <LocalCodexThreadImportDialogContent
       devices={devices}
+      projects={projects}
       onClose={onClose}
       onListLocalCodexThreads={onListLocalCodexThreads}
       onBindLocalCodexThread={onBindLocalCodexThread}
@@ -56,8 +152,69 @@ export function LocalCodexThreadImportDialog({
   )
 }
 
+function LocalCodexThreadRow({
+  thread,
+  bindingThreadId,
+  onBindThread,
+}: {
+  thread: LocalCodexThreadSummary
+  bindingThreadId: string | null
+  onBindThread: (thread: LocalCodexThreadSummary) => void
+}) {
+  const { t } = useTranslation('common')
+  const unavailable = Boolean(thread.archived || thread.running)
+  const updatedTime = formatUpdatedTime(thread.updatedAt)
+  const bindLabel = t('localCodex.bind')
+
+  return (
+    <div
+      data-testid="local-codex-thread-row"
+      className="flex min-h-[76px] items-center gap-3 px-3 py-3"
+    >
+      <div className="min-w-0 flex-1">
+        <div className="flex min-w-0 items-center gap-2">
+          <div className="truncate text-sm font-medium text-[#202124]">
+            {thread.title || thread.threadId}
+          </div>
+          {thread.running && (
+            <span className="shrink-0 rounded-full bg-[#eef2ff] px-2 py-0.5 text-[11px] font-medium leading-4 text-[#4f46e5]">
+              {t('localCodex.running')}
+            </span>
+          )}
+        </div>
+        <div className="mt-1 flex min-w-0 items-center gap-3 text-xs leading-5 text-[#606368]">
+          {thread.cwd && (
+            <span className="flex min-w-0 items-center gap-1">
+              <FolderOpen className="h-3.5 w-3.5 shrink-0" />
+              <span className="truncate">{thread.cwd}</span>
+            </span>
+          )}
+          {updatedTime && (
+            <span className="flex shrink-0 items-center gap-1">
+              <Clock3 className="h-3.5 w-3.5" />
+              {t('localCodex.updatedAt', { time: updatedTime })}
+            </span>
+          )}
+        </div>
+      </div>
+      <button
+        type="button"
+        data-testid="local-codex-bind-button"
+        disabled={unavailable || bindingThreadId !== null}
+        onClick={() => onBindThread(thread)}
+        className="flex h-9 min-w-[72px] shrink-0 items-center justify-center gap-1.5 rounded-md bg-text-primary px-3 text-[13px] font-medium leading-[18px] text-background hover:bg-text-primary/90 disabled:cursor-not-allowed disabled:opacity-45"
+        title={unavailable ? t('localCodex.threadUnavailable') : bindLabel}
+      >
+        <ArrowRight className="h-4 w-4" />
+        {bindingThreadId === thread.threadId ? t('common.loading') : bindLabel}
+      </button>
+    </div>
+  )
+}
+
 function LocalCodexThreadImportDialogContent({
   devices,
+  projects,
   onClose,
   onListLocalCodexThreads,
   onBindLocalCodexThread,
@@ -71,6 +228,15 @@ function LocalCodexThreadImportDialogContent({
   const [loading, setLoading] = useState(false)
   const [bindingThreadId, setBindingThreadId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const threadGroups = useMemo(
+    () =>
+      groupLocalCodexThreadsByProject(
+        threads,
+        projects,
+        t('localCodex.unmatchedProject'),
+      ),
+    [projects, threads, t],
+  )
   const effectiveDeviceId = onlineLocalDevices.some(device => device.device_id === selectedDeviceId)
     ? selectedDeviceId
     : onlineLocalDevices[0]?.device_id ?? ''
@@ -224,49 +390,27 @@ function LocalCodexThreadImportDialogContent({
                 </div>
               ) : (
                 <div className="divide-y divide-[#ededed]">
-                  {threads.map(thread => {
-                    const disabled = Boolean(thread.archived || thread.running)
-                    const updatedTime = formatUpdatedTime(thread.updatedAt)
-                    const bindLabel = t('localCodex.bind')
-                    return (
-                      <div
-                        key={thread.threadId}
-                        data-testid="local-codex-thread-row"
-                        className="flex min-h-[76px] items-center gap-3 px-3 py-3"
-                      >
-                        <div className="min-w-0 flex-1">
-                          <div className="truncate text-sm font-medium text-[#202124]">
-                            {thread.title || thread.threadId}
-                          </div>
-                          <div className="mt-1 flex min-w-0 items-center gap-3 text-xs leading-5 text-[#606368]">
-                            {thread.cwd && (
-                              <span className="flex min-w-0 items-center gap-1">
-                                <FolderOpen className="h-3.5 w-3.5 shrink-0" />
-                                <span className="truncate">{thread.cwd}</span>
-                              </span>
-                            )}
-                            {updatedTime && (
-                              <span className="flex shrink-0 items-center gap-1">
-                                <Clock3 className="h-3.5 w-3.5" />
-                                {t('localCodex.updatedAt', { time: updatedTime })}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          data-testid="local-codex-bind-button"
-                          disabled={disabled || bindingThreadId !== null}
-                          onClick={() => bindThread(thread)}
-                          className="flex h-9 min-w-[72px] shrink-0 items-center justify-center gap-1.5 rounded-md bg-text-primary px-3 text-[13px] font-medium leading-[18px] text-background hover:bg-text-primary/90 disabled:cursor-not-allowed disabled:opacity-45"
-                          title={disabled ? t('localCodex.threadUnavailable') : bindLabel}
-                        >
-                          <Download className="h-4 w-4" />
-                          {bindingThreadId === thread.threadId ? t('common.loading') : bindLabel}
-                        </button>
+                  {threadGroups.map(group => (
+                    <section
+                      key={group.key}
+                      data-testid={group.testId}
+                      className="min-w-0"
+                    >
+                      <div className="sticky top-0 z-10 border-b border-[#ededed] bg-[#f7f7f8] px-3 py-2 text-xs font-semibold leading-5 text-[#3c4043]">
+                        {group.title}
                       </div>
-                    )
-                  })}
+                      <div className="divide-y divide-[#ededed]">
+                        {group.threads.map(thread => (
+                          <LocalCodexThreadRow
+                            key={thread.threadId}
+                            thread={thread}
+                            bindingThreadId={bindingThreadId}
+                            onBindThread={bindThread}
+                          />
+                        ))}
+                      </div>
+                    </section>
+                  ))}
                 </div>
               )}
             </div>
