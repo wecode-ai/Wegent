@@ -390,7 +390,7 @@ export function DesktopWorkbenchLayout({
   )
 
   const openContinueInImDialog = useCallback(() => {
-    if (!state.currentTask) return
+    if (!state.currentTask || state.currentTask.is_group_chat) return
 
     const requestId = imSessionsRequestSequence.current + 1
     imSessionsRequestSequence.current = requestId
@@ -424,7 +424,7 @@ export function DesktopWorkbenchLayout({
 
   const submitContinueInIm = useCallback(
     async (sessionIds: number[]) => {
-      if (!state.currentTask) return
+      if (!state.currentTask || state.currentTask.is_group_chat) return
 
       setImSessionsSubmitting(true)
       try {

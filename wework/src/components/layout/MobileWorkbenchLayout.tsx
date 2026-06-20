@@ -394,7 +394,7 @@ export function MobileWorkbenchLayout({
   ])
 
   const openContinueInImDialog = useCallback(() => {
-    if (!state.currentTask) return
+    if (!state.currentTask || state.currentTask.is_group_chat) return
 
     const requestId = imSessionsRequestSequence.current + 1
     imSessionsRequestSequence.current = requestId
@@ -428,7 +428,7 @@ export function MobileWorkbenchLayout({
 
   const submitContinueInIm = useCallback(
     async (sessionIds: number[]) => {
-      if (!state.currentTask) return
+      if (!state.currentTask || state.currentTask.is_group_chat) return
 
       setImSessionsSubmitting(true)
       try {
@@ -506,7 +506,7 @@ export function MobileWorkbenchLayout({
                   <div className="h-10 w-32" data-testid="model-selector-loading" />
                 )}
               </div>
-              {state.currentTask ? (
+              {state.currentTask && !state.currentTask.is_group_chat ? (
                 <button
                   type="button"
                   data-testid="mobile-continue-in-im-button"

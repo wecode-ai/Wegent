@@ -599,6 +599,41 @@ describe('DesktopWorkbenchLayout', () => {
     expect(await screen.findByTestId('continue-im-session-1')).toHaveTextContent('Alice')
   })
 
+  test('hides continue-in-im action for group chat tasks', () => {
+    const onListImPrivateSessions = vi.fn().mockResolvedValue({ total: 0, items: [] })
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          currentTask: {
+            id: 7,
+            title: 'Group task',
+            status: 'COMPLETED',
+            task_type: 'code',
+            is_group_chat: true,
+            created_at: '2026-06-20T00:00:00.000Z',
+          },
+        }}
+        messages={[
+          {
+            id: 'message-1',
+            role: 'assistant',
+            content: 'Ready',
+            status: 'done',
+            createdAt: '2026-06-20T00:00:00.000Z',
+          },
+        ]}
+        onListImPrivateSessions={onListImPrivateSessions}
+      />
+    )
+
+    expect(screen.queryByTestId('continue-in-im-button')).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(onListImPrivateSessions).not.toHaveBeenCalled()
+  })
+
   test('ignores stale private session responses when reopening the dialog', async () => {
     type PrivateSessionResponse = {
       total: number

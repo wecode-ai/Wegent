@@ -175,8 +175,15 @@ export function ContinueInImDialog({
                       {selected && <span className="h-2 w-2 rounded-full bg-white" />}
                     </span>
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm font-medium text-text-primary">
-                        {session.display_name}
+                      <span className="flex min-w-0 items-center gap-2">
+                        <span className="truncate text-sm font-medium text-text-primary">
+                          {session.display_name}
+                        </span>
+                        {session.channel_label && (
+                          <span className="shrink-0 rounded border border-border/70 bg-base px-1.5 py-0.5 text-[10px] font-medium leading-none text-text-muted">
+                            {session.channel_label}
+                          </span>
+                        )}
                       </span>
                       <span className="block truncate text-xs text-text-muted">
                         {session.mode === 'task'

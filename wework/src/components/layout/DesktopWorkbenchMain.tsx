@@ -395,8 +395,9 @@ export function DesktopWorkbenchMain({
   )
   const workspacePanelActions = renderWorkspacePanelActions('all')
   const showPageTopBar = !isTauri || Boolean(topBarLeftActions)
+  const canContinueInIm = Boolean(currentTask && !currentTask.is_group_chat)
   const continueInImButton =
-    currentTask && onContinueInIm ? (
+    canContinueInIm && onContinueInIm ? (
       <button
         type="button"
         data-testid="continue-in-im-button"

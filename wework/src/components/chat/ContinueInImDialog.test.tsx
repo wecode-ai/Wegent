@@ -5,11 +5,15 @@ import '@/i18n'
 import type { IMPrivateSession } from '@/types/api'
 import { ContinueInImDialog } from './ContinueInImDialog'
 
-function createSession(id: number, displayName: string): IMPrivateSession {
+function createSession(
+  id: number,
+  displayName: string,
+  channelLabel = 'WeCom',
+): IMPrivateSession {
   return {
     id,
     channel_type: 'wecom',
-    channel_label: 'WeCom',
+    channel_label: channelLabel,
     channel_id: 100 + id,
     conversation_id: `conversation-${id}`,
     sender_id: `sender-${id}`,
@@ -57,6 +61,23 @@ describe('ContinueInImDialog', () => {
     await userEvent.click(screen.getByTestId('continue-im-submit-button'))
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith([1, 2]))
+  })
+
+  test('shows channel labels in session rows', () => {
+    render(
+      <ContinueInImDialog
+        open
+        loading={false}
+        submitting={false}
+        sessions={[createSession(1, 'Alice', 'Telegram')]}
+        onClose={vi.fn()}
+        onSubmit={vi.fn()}
+      />
+    )
+
+    const session = screen.getByTestId('continue-im-session-1')
+    expect(session).toHaveTextContent('Alice')
+    expect(session).toHaveTextContent('Telegram')
   })
 
   test('does not close from backdrop or Escape while submitting', async () => {

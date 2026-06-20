@@ -685,6 +685,44 @@ describe('MobileWorkbenchLayout', () => {
     expect(await screen.findByTestId('continue-im-session-1')).toHaveTextContent('Alice')
   })
 
+  test('hides continue-in-im action for mobile group chat tasks', () => {
+    const onListImPrivateSessions = vi.fn().mockResolvedValue({ total: 0, items: [] })
+
+    renderAtMobileWidth(
+      <MobileWorkbenchLayout
+        state={{
+          ...baseState,
+          currentTask: {
+            id: 7,
+            title: 'Group task',
+            status: 'COMPLETED',
+            task_type: 'code',
+            is_group_chat: true,
+            created_at: '2026-06-20T00:00:00.000Z',
+          },
+        }}
+        messages={[
+          {
+            id: 'assistant-1',
+            role: 'assistant',
+            content: 'Ready',
+            status: 'done',
+          },
+        ]}
+        projectChat={baseProjectChat}
+        onSelectProject={vi.fn()}
+        onOpenTask={vi.fn()}
+        onInputChange={vi.fn()}
+        onSend={vi.fn()}
+        onListImPrivateSessions={onListImPrivateSessions}
+      />,
+    )
+
+    expect(screen.queryByTestId('mobile-continue-in-im-button')).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(onListImPrivateSessions).not.toHaveBeenCalled()
+  })
+
   test('ignores stale private session responses when reopening the mobile dialog', async () => {
     type PrivateSessionResponse = {
       total: number
