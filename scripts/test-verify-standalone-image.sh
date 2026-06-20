@@ -61,7 +61,7 @@ case "$url" in
         exit 0
         ;;
     *:13000/api/users/me)
-        echo "404"
+        echo "${FAKE_API_STATUS:-404}"
         exit 0
         ;;
     *)
@@ -79,7 +79,21 @@ export CONTAINER_NAME="wegent-standalone-test"
 export STANDALONE_VERIFY_TIMEOUT_SECONDS=0
 export STANDALONE_VERIFY_INTERVAL_SECONDS=1
 
-if "$VERIFY_SCRIPT" "ghcr.io/wecode-ai/wegent-standalone:test" > "$TMP_DIR/output.log" 2>&1; then
+export FAKE_API_STATUS=400
+if ! bash "$VERIFY_SCRIPT" "ghcr.io/wecode-ai/wegent-standalone:test" > "$TMP_DIR/output-success.log" 2>&1; then
+    echo "Expected standalone verification to pass when the API proxy reaches backend setup-required response."
+    cat "$TMP_DIR/output-success.log"
+    exit 1
+fi
+
+if ! grep -q "API proxy is reachable (HTTP 400)" "$TMP_DIR/output-success.log"; then
+    echo "Expected API proxy success message for HTTP 400 setup-required response."
+    cat "$TMP_DIR/output-success.log"
+    exit 1
+fi
+
+export FAKE_API_STATUS=404
+if bash "$VERIFY_SCRIPT" "ghcr.io/wecode-ai/wegent-standalone:test" > "$TMP_DIR/output.log" 2>&1; then
     echo "Expected standalone verification to fail when the API proxy returns 404."
     cat "$TMP_DIR/output.log"
     exit 1
