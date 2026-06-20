@@ -132,6 +132,7 @@ function toProjectTask(task: Task): ProjectTask {
     task_status: task.status,
     title: task.title,
     status: task.status,
+    source: task.source,
     task_type: task.task_type,
     created_at: task.created_at,
     updated_at: task.updated_at,

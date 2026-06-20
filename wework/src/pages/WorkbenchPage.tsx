@@ -60,6 +60,8 @@ export function WorkbenchPage() {
     listEnvironmentBranches,
     checkoutEnvironmentBranch,
     createEnvironmentBranch,
+    listImPrivateSessions,
+    bindTaskToImSessions,
     setInput,
     addCodeCommentContext,
     clearCodeCommentContexts,
@@ -138,6 +140,8 @@ export function WorkbenchPage() {
       onListEnvironmentBranches={listEnvironmentBranches}
       onCheckoutEnvironmentBranch={checkoutEnvironmentBranch}
       onCreateEnvironmentBranch={createEnvironmentBranch}
+      onListImPrivateSessions={listImPrivateSessions}
+      onBindTaskToImSessions={bindTaskToImSessions}
       onInputChange={setInput}
       onSend={sendCurrentInput}
       onRetryFailedMessage={retryFailedMessage}

@@ -64,6 +64,8 @@ import UnifiedAddButton from '@/components/common/UnifiedAddButton'
 // User mapping mode type
 type UserMappingMode = 'staff_id' | 'email' | 'select_user'
 
+const BOT_TOKEN_CHANNEL_TYPES = new Set<IMChannelType>(['telegram', 'discord'])
+
 const IMChannelList: React.FC = () => {
   const { t } = useTranslation()
   const { toast } = useToast()
@@ -247,7 +249,7 @@ const IMChannelList: React.FC = () => {
     }
 
     // Validate config based on channel type
-    if (formData.channel_type === 'telegram') {
+    if (BOT_TOKEN_CHANNEL_TYPES.has(formData.channel_type)) {
       if (!formData.bot_token.trim()) {
         toast({
           variant: 'destructive',
@@ -275,15 +277,6 @@ const IMChannelList: React.FC = () => {
       return
     }
 
-    // Validate: if team has no model, must select a default model
-    if (!teamHasModel(formData.default_team_id) && !formData.default_model_name) {
-      toast({
-        variant: 'destructive',
-        title: t('admin:im_channels.errors.model_required_for_team'),
-      })
-      return
-    }
-
     // Validate: if select_user mode, must select a target user
     if (formData.user_mapping_mode === 'select_user' && !formData.target_user_id) {
       toast({
@@ -300,7 +293,7 @@ const IMChannelList: React.FC = () => {
         user_mapping_mode: formData.user_mapping_mode,
       }
 
-      if (formData.channel_type === 'telegram') {
+      if (BOT_TOKEN_CHANNEL_TYPES.has(formData.channel_type)) {
         config.bot_token = formData.bot_token.trim()
       } else {
         config.client_id = formData.client_id.trim()
@@ -355,15 +348,6 @@ const IMChannelList: React.FC = () => {
       return
     }
 
-    // Validate: if team has no model, must select a default model
-    if (!teamHasModel(formData.default_team_id) && !formData.default_model_name) {
-      toast({
-        variant: 'destructive',
-        title: t('admin:im_channels.errors.model_required_for_team'),
-      })
-      return
-    }
-
     // Validate: if select_user mode, must select a target user
     if (formData.user_mapping_mode === 'select_user' && !formData.target_user_id) {
       toast({
@@ -394,7 +378,7 @@ const IMChannelList: React.FC = () => {
         user_mapping_mode: formData.user_mapping_mode,
       }
 
-      if (selectedChannel.channel_type === 'telegram') {
+      if (BOT_TOKEN_CHANNEL_TYPES.has(selectedChannel.channel_type)) {
         if (formData.bot_token.trim()) {
           newConfig.bot_token = formData.bot_token.trim()
         }
@@ -548,6 +532,8 @@ const IMChannelList: React.FC = () => {
         return t('admin:im_channels.types.wechat')
       case 'telegram':
         return t('admin:im_channels.types.telegram')
+      case 'discord':
+        return t('admin:im_channels.types.discord')
       default:
         return type
     }
@@ -733,6 +719,7 @@ const IMChannelList: React.FC = () => {
                 <SelectContent>
                   <SelectItem value="dingtalk">{t('admin:im_channels.types.dingtalk')}</SelectItem>
                   <SelectItem value="telegram">{t('admin:im_channels.types.telegram')}</SelectItem>
+                  <SelectItem value="discord">{t('admin:im_channels.types.discord')}</SelectItem>
                   <SelectItem value="feishu" disabled>
                     {t('admin:im_channels.types.feishu')} (
                     {t('admin:im_channels.types.not_supported')})
@@ -740,8 +727,8 @@ const IMChannelList: React.FC = () => {
                 </SelectContent>
               </Select>
             </div>
-            {/* Telegram uses bot_token, other channels use client_id/client_secret */}
-            {formData.channel_type === 'telegram' ? (
+            {/* Bot-token channels use bot_token, other channels use client_id/client_secret */}
+            {BOT_TOKEN_CHANNEL_TYPES.has(formData.channel_type) ? (
               <div className="space-y-2">
                 <Label htmlFor="bot_token">{t('admin:im_channels.form.bot_token')} *</Label>
                 <Input
@@ -819,9 +806,6 @@ const IMChannelList: React.FC = () => {
             <div className="space-y-2">
               <Label htmlFor="default_model">
                 {t('admin:im_channels.form.default_model')}
-                {formData.default_team_id > 0 && !teamHasModel(formData.default_team_id) && (
-                  <span className="text-red-500 ml-1">*</span>
-                )}
               </Label>
               <Select
                 value={formData.default_model_name || '__none__'}
@@ -952,8 +936,8 @@ const IMChannelList: React.FC = () => {
                 className="bg-muted"
               />
             </div>
-            {/* Telegram uses bot_token, other channels use client_id/client_secret */}
-            {formData.channel_type === 'telegram' ? (
+            {/* Bot-token channels use bot_token, other channels use client_id/client_secret */}
+            {BOT_TOKEN_CHANNEL_TYPES.has(formData.channel_type) ? (
               <div className="space-y-2">
                 <Label htmlFor="edit-bot_token">
                   {t('admin:im_channels.form.bot_token')}
@@ -1041,9 +1025,6 @@ const IMChannelList: React.FC = () => {
             <div className="space-y-2">
               <Label htmlFor="edit-default_model">
                 {t('admin:im_channels.form.default_model')}
-                {formData.default_team_id > 0 && !teamHasModel(formData.default_team_id) && (
-                  <span className="text-red-500 ml-1">*</span>
-                )}
               </Label>
               <Select
                 value={formData.default_model_name || '__none__'}

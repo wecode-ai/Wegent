@@ -11,6 +11,7 @@ import {
 } from '@/api/environment'
 import { createGitApi } from '@/api/git'
 import { ApiError, createHttpClient } from '@/api/http'
+import { createImSessionApi } from '@/api/imSessions'
 import { createModelApi } from '@/api/models'
 import { createProjectApi } from '@/api/projects'
 import { createSkillApi } from '@/api/skills'
@@ -43,6 +44,7 @@ import {
 import type {
   Attachment,
   ArchivedTaskListResponse,
+  BindTaskIMSessionsResponse,
   ChatSendPayload,
   ChatBlock,
   CreateProjectRequest,
@@ -50,6 +52,7 @@ import type {
   GitBranch,
   GitRepoInfo,
   DeviceInfo,
+  IMPrivateSessionListResponse,
   LocalCodexBindRequest,
   LocalCodexBindResponse,
   LocalCodexThreadSummary,
@@ -74,6 +77,7 @@ import type { EnvironmentInfo } from '@/types/environment'
 import type { CodeCommentContext, WorkspaceTarget } from '@/types/workspace-files'
 import type {
   GuidanceWorkbenchMessage,
+  MessageSource,
   ProcessingBlock,
   QueuedWorkbenchMessage,
   WorkbenchMessage,
@@ -81,6 +85,7 @@ import type {
 } from '@/types/workbench'
 import {
   createSocketClient,
+  isGenericTaskStatusError,
   normalizeWorkbenchBlockStatus,
   reduceWorkbenchMessages,
 } from '@wegent/chat-core'
@@ -220,6 +225,7 @@ export interface WorkbenchServices {
     | 'upgradeDevice'
     | 'listSkills'
   >
+  imSessionApi?: ReturnType<typeof createImSessionApi>
   localCodexApi?: ReturnType<typeof createLocalCodexApi>
   userApi?: ReturnType<typeof createUserApi>
   chatStream: ReturnType<typeof createChatStream>
@@ -268,6 +274,11 @@ export interface WorkbenchContextValue {
   openTask: (taskId: number, projectId?: number) => Promise<void>
   searchTasks: (query: string) => Promise<TaskListResponse>
   searchTaskDetail: (taskId: number) => Promise<TaskDetail>
+  listImPrivateSessions: () => Promise<IMPrivateSessionListResponse>
+  bindTaskToImSessions: (
+    taskId: number,
+    sessionKeys: string[]
+  ) => Promise<BindTaskIMSessionsResponse>
   listLocalCodexThreads: (deviceId: string, limit?: number) => Promise<LocalCodexThreadSummary[]>
   bindLocalCodexThread: (request: LocalCodexBindRequest) => Promise<LocalCodexBindResponse>
   rememberExecutionDevice: (deviceId: string) => void
@@ -362,6 +373,7 @@ function createDefaultServices(): WorkbenchServices {
     gitApi: createGitApi(client),
     taskApi: createTaskApi(client),
     deviceApi: createDeviceApi(client),
+    imSessionApi: createImSessionApi(client),
     localCodexApi: createLocalCodexApi(client),
     userApi: createUserApi(client),
     chatStream: createChatStream(socketClient.socket),
@@ -402,6 +414,13 @@ function getSubtaskResult(result: unknown): SubtaskResult | undefined {
     blocks: Array.isArray(result.blocks) ? result.blocks : undefined,
     fileChanges: normalizeTurnFileChanges(result.file_changes),
   }
+}
+
+function getIMMessageSource(result: unknown): MessageSource | undefined {
+  if (!isRecord(result)) return undefined
+  const source = result.source
+  if (!isRecord(source) || source.source !== 'im') return undefined
+  return { ...source, source: 'im' }
 }
 
 function parseTimestampMs(value?: string | null): number | undefined {
@@ -547,9 +566,24 @@ function getSubtaskAttachments(subtask: Subtask): Attachment[] | undefined {
   return attachments.length > 0 ? attachments : undefined
 }
 
+function getSubtaskDisplayError(subtaskError?: string | null, resultError?: string): string | undefined {
+  const normalizedSubtaskError = subtaskError?.trim() ? subtaskError : undefined
+  const normalizedResultError = resultError?.trim() ? resultError : undefined
+
+  if (
+    normalizedResultError &&
+    (!normalizedSubtaskError || isGenericTaskStatusError(normalizedSubtaskError))
+  ) {
+    return normalizedResultError
+  }
+
+  return normalizedSubtaskError ?? normalizedResultError
+}
+
 function subtaskToMessage(subtask: Subtask): WorkbenchMessage {
   const result = getSubtaskResult(subtask.result)
   const role = subtask.role.toLowerCase() === 'user' ? 'user' : 'assistant'
+  const source = role === 'user' ? getIMMessageSource(subtask.result) : undefined
   const blockFallbackTimestamp =
     parseTimestampMs(subtask.completed_at) ??
     parseTimestampMs(subtask.updated_at) ??
@@ -565,11 +599,12 @@ function subtaskToMessage(subtask: Subtask): WorkbenchMessage {
     role,
     content: subtask.prompt || result?.value || '',
     status: subtask.status === 'FAILED' ? 'failed' : 'done',
-    error: subtask.error_message || result?.error,
+    error: getSubtaskDisplayError(subtask.error_message, result?.error),
     errorType: result?.errorType,
     attachments: getSubtaskAttachments(subtask),
     blocks: blocks.length > 0 ? blocks : undefined,
     fileChanges: result?.fileChanges,
+    source,
     createdAt: subtask.created_at,
   }
 }
@@ -1586,6 +1621,23 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     [resolvedServices]
   )
 
+  const listImPrivateSessions = useCallback(
+    () =>
+      resolvedServices.imSessionApi?.listPrivateSessions() ??
+      Promise.resolve({ total: 0, items: [] }),
+    [resolvedServices]
+  )
+
+  const bindTaskToImSessions = useCallback(
+    (taskId: number, sessionKeys: string[]) => {
+      if (!resolvedServices.imSessionApi) {
+        return Promise.reject(new Error('IM session API is unavailable'))
+      }
+      return resolvedServices.imSessionApi.bindTaskSessions(taskId, sessionKeys)
+    },
+    [resolvedServices]
+  )
+
   useEffect(() => {
     if (state.isBootstrapping) return
     const taskId = readTaskIdFromUrl()
@@ -2491,6 +2543,8 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     openTask,
     searchTasks,
     searchTaskDetail,
+    listImPrivateSessions,
+    bindTaskToImSessions,
     listLocalCodexThreads,
     bindLocalCodexThread,
     rememberExecutionDevice,

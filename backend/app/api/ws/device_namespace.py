@@ -55,6 +55,7 @@ from app.schemas.device import (
     DeviceStatusPayload,
     DeviceType,
 )
+from app.services.channels.callback import forward_event_to_channel_callbacks
 from app.services.chat.access import get_token_expiry, verify_jwt_token
 from app.services.chat.storage.db import get_db_session, run_sync_in_executor
 from app.services.chat.webpage_ws_chat_emitter import get_extended_emitter
@@ -1461,6 +1462,13 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 )
                 await emitter.emit(event)
                 await emitter.close()
+
+                await forward_event_to_channel_callbacks(
+                    task_id=task_id,
+                    subtask_id=subtask_id,
+                    event=event,
+                    source="Device WS",
+                )
 
                 # Handle terminal events
                 is_terminal = event.type in (

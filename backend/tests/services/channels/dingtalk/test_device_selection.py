@@ -4,6 +4,7 @@
 
 """Tests for DingTalk device selection manager."""
 
+import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -120,6 +121,42 @@ class TestDeviceSelectionManager:
             assert selection.device_type == DeviceType.LOCAL
             assert selection.device_id == "device-123"
             assert selection.device_name == "My Mac"
+
+    @pytest.mark.asyncio
+    async def test_get_selection_from_user_preference_parses_json_string(
+        self,
+        test_db,
+        test_user,
+        monkeypatch,
+    ):
+        """Test user preference lookup handles stored JSON strings."""
+        test_user.preferences = json.dumps({"default_execution_target": "device-123"})
+        test_db.commit()
+
+        class SessionProxy:
+            def query(self, *args, **kwargs):
+                return test_db.query(*args, **kwargs)
+
+            def close(self):
+                pass
+
+        async def fake_get_device_online_info(user_id, device_id):
+            return {"name": "My Mac"}
+
+        monkeypatch.setattr("app.db.session.SessionLocal", lambda: SessionProxy())
+        monkeypatch.setattr(
+            "app.services.device_service.device_service.get_device_online_info",
+            fake_get_device_online_info,
+        )
+
+        selection = await DeviceSelectionManager.get_selection_from_user_preference(
+            test_user.id
+        )
+
+        assert selection is not None
+        assert selection.device_type == DeviceType.LOCAL
+        assert selection.device_id == "device-123"
+        assert selection.device_name == "My Mac"
 
     @pytest.mark.asyncio
     async def test_set_selection(self):

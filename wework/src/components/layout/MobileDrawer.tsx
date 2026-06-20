@@ -12,6 +12,7 @@ import {
   X,
 } from 'lucide-react'
 import { useMemo, useRef, useState } from 'react'
+import { ImSourceBadge } from '@/components/common/ImSourceBadge'
 import { ProjectCreateDialog } from '@/components/projects/ProjectCreateDialog'
 import { useTranslation } from '@/hooks/useTranslation'
 import { usePullToRefresh } from '@/hooks/usePullToRefresh'
@@ -596,8 +597,12 @@ export function MobileDrawer({
                             {running ? (
                               <Loader2 className={MOBILE_RUNNING_SPINNER_CLASS} />
                             ) : (
-                              <span className="ml-2 shrink-0 text-sm text-[#6B7280]">
-                                {formatRelativeTime(getProjectTaskTime(task))}
+                              <span className="ml-2 flex shrink-0 items-center gap-1 text-sm text-[#6B7280]">
+                                <ImSourceBadge
+                                  source={task.source}
+                                  testId={`task-source-badge-mobile-project-${task.task_id}`}
+                                />
+                                <span>{formatRelativeTime(getProjectTaskTime(task))}</span>
                               </span>
                             )}
                           </button>
@@ -706,6 +711,11 @@ export function MobileDrawer({
                   ) : (
                     <span className="min-w-0 flex-1 truncate">{task.title}</span>
                   )}
+                  <ImSourceBadge
+                    source={task.source}
+                    testId={`task-source-badge-mobile-recent-${task.id}`}
+                    className="ml-2"
+                  />
                 </button>
               )
             })}

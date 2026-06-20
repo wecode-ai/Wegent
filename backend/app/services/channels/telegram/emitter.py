@@ -14,7 +14,7 @@ import time
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from app.services.execution.emitters import ResultEmitter
-from shared.models import ExecutionEvent
+from shared.models import EventType, ExecutionEvent
 
 if TYPE_CHECKING:
     from telegram import Bot
@@ -50,6 +50,7 @@ class StreamingResponseEmitter(ResultEmitter):
 
     # Maximum message length for Telegram
     MAX_MESSAGE_LENGTH = 4096
+    TRUNCATION_SUFFIX = "\n\n..."
 
     # Thinking status prefixes that should be replaced, not accumulated
     THINKING_PREFIXES = (
@@ -82,6 +83,7 @@ class StreamingResponseEmitter(ResultEmitter):
         self._current_thinking = (
             ""  # Current thinking status (replaced, not accumulated)
         )
+        self._reasoning_content = ""
         self._last_update_time = 0.0
         self._pending_content = ""
         self._started = False
@@ -177,6 +179,46 @@ class StreamingResponseEmitter(ResultEmitter):
         content = "\n".join(content_lines).strip()
         return thinking, content
 
+    def _format_reasoning_summary(self) -> str:
+        """Format accumulated model reasoning summary for display."""
+        reasoning = self._reasoning_content.strip()
+        if not reasoning:
+            return ""
+        return f"💭 思考摘要\n{reasoning}"
+
+    def _build_display_content(
+        self,
+        answer_content: str,
+        *,
+        include_status: bool = True,
+    ) -> str:
+        """Build Telegram text with separate reasoning and answer blocks."""
+        answer = answer_content.strip()
+        reasoning_summary = self._format_reasoning_summary()
+        display_parts = []
+
+        if reasoning_summary:
+            display_parts.append(reasoning_summary)
+        elif include_status and self._current_thinking and not answer:
+            display_parts.append(self._current_thinking)
+
+        if answer:
+            if reasoning_summary:
+                display_parts.append(f"回复\n{answer}")
+            else:
+                display_parts.append(answer)
+
+        return "\n\n".join(display_parts)
+
+    def _truncate_message(self, content: str) -> str:
+        """Truncate content to Telegram's message length limit."""
+        if len(content) <= self.MAX_MESSAGE_LENGTH - len(self.TRUNCATION_SUFFIX):
+            return content
+        return (
+            content[: self.MAX_MESSAGE_LENGTH - len(self.TRUNCATION_SUFFIX)]
+            + self.TRUNCATION_SUFFIX
+        )
+
     async def _send_streaming_update(self, content: str, force: bool = False) -> None:
         """Send a streaming update by editing the message.
 
@@ -215,24 +257,12 @@ class StreamingResponseEmitter(ResultEmitter):
                 self._full_content += self._pending_content
                 self._pending_content = ""
 
-            # Build display content: thinking status (if any) + actual content
-            display_parts = []
-            if self._current_thinking and not self._full_content:
-                # Only show thinking status if no actual content yet
-                display_parts.append(self._current_thinking)
-            if self._full_content:
-                display_parts.append(self._full_content)
-
-            display_content = "\n\n".join(display_parts) if display_parts else ""
+            display_content = self._build_display_content(self._full_content)
 
             if not display_content:
                 return
 
-            # Truncate if too long
-            if len(display_content) > self.MAX_MESSAGE_LENGTH - 50:
-                display_content = (
-                    display_content[: self.MAX_MESSAGE_LENGTH - 50] + "\n\n..."
-                )
+            display_content = self._truncate_message(display_content)
 
             logger.debug(
                 f"[TelegramStreamingEmitter] Editing message {self._message_id}, "
@@ -258,28 +288,36 @@ class StreamingResponseEmitter(ResultEmitter):
         Args:
             event: Execution event to emit
         """
-        from shared.models import EventType
-
-        if event.type == EventType.START:
+        event_type = (
+            event.type.value if isinstance(event.type, EventType) else event.type
+        )
+        if event_type == EventType.START.value:
             await self.emit_start(
                 task_id=event.task_id,
                 subtask_id=event.subtask_id,
                 message_id=event.message_id,
             )
-        elif event.type == EventType.CHUNK:
+        elif event_type == EventType.CHUNK.value:
             await self.emit_chunk(
                 task_id=event.task_id,
                 subtask_id=event.subtask_id,
                 content=event.content or "",
                 offset=event.offset,
             )
-        elif event.type == EventType.DONE:
+        elif event_type == EventType.THINKING.value:
+            await self.emit_thinking(
+                task_id=event.task_id,
+                subtask_id=event.subtask_id,
+                content=event.content or "",
+                offset=event.offset,
+            )
+        elif event_type == EventType.DONE.value:
             await self.emit_done(
                 task_id=event.task_id,
                 subtask_id=event.subtask_id,
                 result=event.result,
             )
-        elif event.type == EventType.ERROR:
+        elif event_type == EventType.ERROR.value:
             await self.emit_error(
                 task_id=event.task_id,
                 subtask_id=event.subtask_id,
@@ -318,6 +356,25 @@ class StreamingResponseEmitter(ResultEmitter):
         # Use throttling to reduce API calls
         await self._send_streaming_update(content)
 
+    async def emit_thinking(
+        self,
+        task_id: int,
+        subtask_id: int,
+        content: str,
+        offset: int = 0,
+        **kwargs,
+    ) -> None:
+        """Emit reasoning content as a temporary Telegram thinking status."""
+        if not content:
+            return
+
+        # Ensure message is created
+        if not await self._ensure_message_created():
+            return
+
+        self._reasoning_content += content
+        await self._send_streaming_update("")
+
     async def emit_done(
         self,
         task_id: int,
@@ -332,9 +389,25 @@ class StreamingResponseEmitter(ResultEmitter):
             )
             return
 
+        final_content = self._full_content
+        if self._pending_content:
+            final_content += self._pending_content
+            self._pending_content = ""
+
+        if result and isinstance(result, dict):
+            result_value = result.get("value", "") or result.get("output", "") or ""
+            if result_value and not isinstance(result_value, str):
+                result_value = str(result_value)
+            if result_value and len(result_value) > len(final_content):
+                final_content = result_value
+                logger.info(
+                    f"[TelegramStreamingEmitter] Using result.value ({len(result_value)} chars) "
+                    f"instead of accumulated content ({len(self._full_content)} chars)"
+                )
+
         logger.info(
             f"[TelegramStreamingEmitter] done task={task_id} subtask={subtask_id} "
-            f"full_content_len={len(self._full_content)}, pending_len={len(self._pending_content)}"
+            f"final_content_len={len(final_content)}"
         )
 
         try:
@@ -345,18 +418,15 @@ class StreamingResponseEmitter(ResultEmitter):
                 )
                 return
 
-            # Send any remaining pending content
-            if self._pending_content:
-                self._full_content += self._pending_content
-                self._pending_content = ""
+            self._full_content = final_content
 
             # Final update with complete content
-            if self._full_content:
-                display_content = self._full_content
-                if len(display_content) > self.MAX_MESSAGE_LENGTH - 50:
-                    display_content = (
-                        display_content[: self.MAX_MESSAGE_LENGTH - 50] + "\n\n..."
-                    )
+            display_content = self._build_display_content(
+                final_content,
+                include_status=False,
+            )
+            if display_content:
+                display_content = self._truncate_message(display_content)
 
                 try:
                     await self._bot.edit_message_text(

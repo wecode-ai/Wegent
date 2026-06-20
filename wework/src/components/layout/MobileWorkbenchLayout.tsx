@@ -1,5 +1,5 @@
-import { Bot, Menu } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Bot, Menu, MessageCircle } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ChatInput } from '@/components/chat/ChatInput'
 import type { ProjectChatControls, ProjectWorkControls } from '@/components/chat/ChatInput'
 import { ModelSelector } from '@/components/chat/composer/ModelSelector'
@@ -23,10 +23,13 @@ import {
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
 import type {
   ArchivedTaskListResponse,
+  BindTaskIMSessionsResponse,
   CreateGitWorkspaceProjectRequest,
   CreateProjectRequest,
   GitBranch,
   GitRepoInfo,
+  IMPrivateSession,
+  IMPrivateSessionListResponse,
   ProjectWithTasks,
   TurnFileChangesSummary,
 } from '@/types/api'
@@ -42,6 +45,8 @@ import type {
 import { ConversationDeviceOfflineBanner } from './ConversationDeviceOfflineBanner'
 import { DeviceStatusPrompt } from './DeviceStatusPrompt'
 import { MobileDrawer } from './MobileDrawer'
+import { ContinueInImDialog } from '@/components/chat/ContinueInImDialog'
+import { TransientNotice } from '@/components/common/TransientNotice'
 
 interface MobileWorkbenchLayoutProps {
   state: WorkbenchState
@@ -108,6 +113,11 @@ interface MobileWorkbenchLayoutProps {
     branchName: string,
     workspaceTarget?: WorkspaceTarget | null
   ) => Promise<void>
+  onListImPrivateSessions?: () => Promise<IMPrivateSessionListResponse>
+  onBindTaskToImSessions?: (
+    taskId: number,
+    sessionKeys: string[]
+  ) => Promise<BindTaskIMSessionsResponse>
   onUpgradeDevice?: (deviceId: string) => Promise<void>
   onInputChange: (value: string) => void
   onSend: () => void
@@ -159,6 +169,8 @@ export function MobileWorkbenchLayout({
   onListEnvironmentBranches,
   onCheckoutEnvironmentBranch,
   onCreateEnvironmentBranch,
+  onListImPrivateSessions,
+  onBindTaskToImSessions,
   onUpgradeDevice = async () => {},
   onInputChange,
   onSend,
@@ -188,6 +200,15 @@ export function MobileWorkbenchLayout({
   const [workspaceTarget, setWorkspaceTarget] = useState<WorkspaceTarget | null>(null)
   const [workspaceTargetError, setWorkspaceTargetError] = useState<string | null>(null)
   const [workspaceTargetResolving, setWorkspaceTargetResolving] = useState(true)
+  const [continueInImOpen, setContinueInImOpen] = useState(false)
+  const [imSessions, setImSessions] = useState<IMPrivateSession[]>([])
+  const [imSessionsLoading, setImSessionsLoading] = useState(false)
+  const [imSessionsSubmitting, setImSessionsSubmitting] = useState(false)
+  const [notice, setNotice] = useState<{
+    message: string
+    tone: 'success' | 'error'
+  } | null>(null)
+  const imSessionsRequestSequence = useRef(0)
   const hasConversation = messages.length > 0 || state.currentTask
   const currentTaskProject = useMemo(
     () => findProjectForTask(state.projects, state.currentTask),
@@ -394,6 +415,60 @@ export function MobileWorkbenchLayout({
     workspaceTargetResolverApi,
   ])
 
+  const openContinueInImDialog = useCallback(() => {
+    if (!state.currentTask || state.currentTask.is_group_chat) return
+
+    const requestId = imSessionsRequestSequence.current + 1
+    imSessionsRequestSequence.current = requestId
+    setContinueInImOpen(true)
+    setImSessionsLoading(true)
+    setImSessions([])
+    void (onListImPrivateSessions?.() ?? Promise.resolve({ total: 0, items: [] }))
+      .then(response => {
+        if (imSessionsRequestSequence.current === requestId) {
+          setImSessions(response.items)
+        }
+      })
+      .catch(() => {
+        if (imSessionsRequestSequence.current === requestId) {
+          setImSessions([])
+          setNotice({ message: t('workbench.continue_im_failed'), tone: 'error' })
+        }
+      })
+      .finally(() => {
+        if (imSessionsRequestSequence.current === requestId) {
+          setImSessionsLoading(false)
+        }
+      })
+  }, [onListImPrivateSessions, state.currentTask, t])
+
+  const closeContinueInImDialog = useCallback(() => {
+    imSessionsRequestSequence.current += 1
+    setContinueInImOpen(false)
+    setImSessionsLoading(false)
+  }, [])
+
+  const submitContinueInIm = useCallback(
+    async (sessionKeys: string[]) => {
+      if (!state.currentTask || state.currentTask.is_group_chat) return
+
+      setImSessionsSubmitting(true)
+      try {
+        if (!onBindTaskToImSessions) {
+          throw new Error('IM bind handler is not available')
+        }
+        await onBindTaskToImSessions(state.currentTask.id, sessionKeys)
+        setContinueInImOpen(false)
+        setNotice({ message: t('workbench.continue_im_success'), tone: 'success' })
+      } catch {
+        setNotice({ message: t('workbench.continue_im_failed'), tone: 'error' })
+      } finally {
+        setImSessionsSubmitting(false)
+      }
+    },
+    [onBindTaskToImSessions, state.currentTask, t]
+  )
+
   if (settingsOpen) {
     return (
       <MobileSettingsPage
@@ -454,7 +529,19 @@ export function MobileWorkbenchLayout({
                   <div className="h-10 w-32" data-testid="model-selector-loading" />
                 )}
               </div>
-              <div className="h-11 min-w-[44px]" />
+              {state.currentTask && !state.currentTask.is_group_chat ? (
+                <button
+                  type="button"
+                  data-testid="mobile-continue-in-im-button"
+                  className="pointer-events-auto flex h-11 min-w-[44px] items-center justify-center rounded-full text-text-primary hover:bg-surface"
+                  aria-label={t('workbench.continue_im_title')}
+                  onClick={openContinueInImDialog}
+                >
+                  <MessageCircle className="h-5 w-5" />
+                </button>
+              ) : (
+                <div className="h-11 min-w-[44px]" />
+              )}
             </header>
             <ScrollableMessageArea
               messages={messages}
@@ -637,6 +724,20 @@ export function MobileWorkbenchLayout({
         onSelectProject={onSelectProject}
         onOpenTask={onOpenTask}
         onRefreshWorkLists={onRefreshWorkLists}
+      />
+      <ContinueInImDialog
+        key={continueInImOpen ? 'continue-im-open' : 'continue-im-closed'}
+        open={continueInImOpen}
+        loading={imSessionsLoading}
+        submitting={imSessionsSubmitting}
+        sessions={imSessions}
+        onClose={closeContinueInImDialog}
+        onSubmit={submitContinueInIm}
+      />
+      <TransientNotice
+        message={notice?.message ?? null}
+        tone={notice?.tone}
+        onClear={() => setNotice(null)}
       />
     </div>
   )

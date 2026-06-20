@@ -123,6 +123,7 @@ export interface ProjectTask {
   task_status?: string
   title?: string
   status?: string
+  source?: string | null
   device_id?: string | null
   execution_workspace_source?: string | null
   execution_workspace_path?: string | null
@@ -233,6 +234,7 @@ export interface Task {
   team_id?: number
   project_id?: number
   client_origin?: string
+  source?: string | null
   device_id?: string | null
   execution_workspace_source?: string | null
   execution_workspace_path?: string | null
@@ -248,6 +250,31 @@ export interface Task {
 export interface TaskListResponse {
   total: number
   items: Task[]
+}
+
+export interface IMPrivateSession {
+  session_key: string
+  channel_type: string
+  channel_label: string
+  channel_id: number
+  conversation_id: string
+  sender_id: string
+  display_name: string
+  mode: 'chat' | 'task'
+  state: 'idle' | 'pending_new_flow' | 'pending_task_switch' | 'pending_task_creation'
+  active_task_id?: number | null
+  last_seen_at: string
+}
+
+export interface IMPrivateSessionListResponse {
+  total: number
+  items: IMPrivateSession[]
+}
+
+export interface BindTaskIMSessionsResponse {
+  task_id: number
+  bound_session_keys: string[]
+  notified_count: number
 }
 
 export interface LocalCodexThreadSummary {

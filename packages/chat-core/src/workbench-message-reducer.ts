@@ -11,6 +11,11 @@ export type WorkbenchToolBlockStatus =
   | 'done'
   | 'error'
 
+export interface MessageSource {
+  source: string
+  [key: string]: unknown
+}
+
 export interface BaseWorkbenchProcessingBlock {
   id: string
   subtaskId: number
@@ -50,6 +55,7 @@ export interface WorkbenchMessage<TAttachment = unknown, TFileChanges = unknown>
   attachments?: TAttachment[]
   blocks?: WorkbenchProcessingBlock[]
   fileChanges?: TFileChanges
+  source?: MessageSource
   createdAt: string
 }
 
@@ -94,7 +100,7 @@ export type WorkbenchMessageAction<TAttachment = unknown, TFileChanges = unknown
   | { type: 'block_created'; subtaskId: number; block: WorkbenchProcessingBlock }
   | { type: 'block_updated'; subtaskId: number; blockId: string; updates: ProcessingBlockUpdate }
 
-function isGenericTaskStatusError(error?: string): boolean {
+export function isGenericTaskStatusError(error?: string): boolean {
   return /^Task failed with status:\s*\w+$/i.test(String(error ?? '').trim())
 }
 

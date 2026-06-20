@@ -34,6 +34,8 @@ export type TextBlock = WorkbenchTextBlock
 
 export type ProcessingBlock = WorkbenchProcessingBlock
 
+export type MessageSource = NonNullable<CoreWorkbenchMessage['source']>
+
 export type WorkbenchMessage = CoreWorkbenchMessage<Attachment, TurnFileChangesSummary>
 
 export type QueuedMessageStatus = 'queued' | 'sending' | 'failed'

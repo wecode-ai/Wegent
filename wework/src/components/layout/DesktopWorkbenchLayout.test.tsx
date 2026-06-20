@@ -353,6 +353,50 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('automation-button')).not.toBeInTheDocument()
   })
 
+  test('renders sidebar IM source badges for project and recent tasks', async () => {
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          projects: [
+            {
+              id: 1,
+              name: 'github_wegent',
+              tasks: [
+                {
+                  id: 11,
+                  task_id: 11,
+                  task_title: '项目 IM 任务',
+                  task_status: 'COMPLETED',
+                  source: 'im',
+                  created_at: '2026-05-25T00:00:00.000Z',
+                  updated_at: '2026-05-25T08:00:00.000Z',
+                },
+              ],
+            },
+          ],
+          recentTasks: [
+            {
+              id: 3,
+              title: '独立 IM 任务',
+              status: 'COMPLETED',
+              task_type: 'chat' as const,
+              source: 'im',
+              created_at: '2026-05-25T00:00:00.000Z',
+              updated_at: '2026-05-25T08:30:00.000Z',
+            },
+          ],
+        }}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('project-item-button'))
+
+    expect(await screen.findByTestId('task-source-badge-project-11')).toBeInTheDocument()
+    expect(screen.getByTestId('task-source-badge-recent-3')).toBeInTheDocument()
+  })
+
   test('collapses and expands project and chat sections from the sidebar headers', async () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
@@ -500,6 +544,332 @@ describe('DesktopWorkbenchLayout', () => {
     )
     expect(screen.getByTestId('desktop-floating-composer-card')).toHaveClass('pointer-events-auto')
     expect(screen.queryByTestId('project-work-button')).not.toBeInTheDocument()
+  })
+
+  test('opens continue-in-im dialog from the active task topbar button', async () => {
+    const onListImPrivateSessions = vi.fn().mockResolvedValue({
+      total: 1,
+      items: [
+        {
+          session_key: 'session-1',
+          channel_type: 'wecom',
+          channel_label: 'WeCom',
+          channel_id: 101,
+          conversation_id: 'conversation-1',
+          sender_id: 'sender-1',
+          display_name: 'Alice',
+          mode: 'chat',
+          state: 'idle',
+          active_task_id: null,
+          last_seen_at: '2026-06-20T00:00:00.000Z',
+        },
+      ],
+    })
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          currentTask: {
+            id: 7,
+            title: 'Active task',
+            status: 'COMPLETED',
+            task_type: 'code',
+            created_at: '2026-06-20T00:00:00.000Z',
+          },
+        }}
+        messages={[
+          {
+            id: 'message-1',
+            role: 'assistant',
+            content: 'Ready',
+            status: 'done',
+            createdAt: '2026-06-20T00:00:00.000Z',
+          },
+        ]}
+        onListImPrivateSessions={onListImPrivateSessions}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('continue-in-im-button'))
+
+    expect(onListImPrivateSessions).toHaveBeenCalledTimes(1)
+    expect(await screen.findByRole('dialog')).toBeInTheDocument()
+    expect(await screen.findByTestId('continue-im-session-session-1')).toHaveTextContent('Alice')
+  })
+
+  test('keeps continue-in-im action with workspace panel actions on web', () => {
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          currentTask: {
+            id: 7,
+            title: 'Active task',
+            status: 'COMPLETED',
+            task_type: 'code',
+            created_at: '2026-06-20T00:00:00.000Z',
+          },
+        }}
+        messages={[
+          {
+            id: 'message-1',
+            role: 'assistant',
+            content: 'Ready',
+            status: 'done',
+            createdAt: '2026-06-20T00:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    const floatingActions = screen.getByTestId('workspace-panel-floating-actions')
+    expect(floatingActions).toContainElement(screen.getByTestId('continue-in-im-button'))
+    expect(floatingActions).toContainElement(
+      screen.getByTestId('toggle-right-workspace-panel-button')
+    )
+    expect(screen.queryByTestId('workbench-topbar-right-actions')).not.toBeInTheDocument()
+  })
+
+  test('keeps continue-in-im action with titlebar actions in Tauri', () => {
+    const previousTauriInternals = (window as typeof window & { __TAURI_INTERNALS__?: unknown })
+      .__TAURI_INTERNALS__
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+
+    try {
+      render(
+        <DesktopWorkbenchLayout
+          {...baseProps}
+          state={{
+            ...baseProps.state,
+            currentTask: {
+              id: 7,
+              title: 'Active task',
+              status: 'COMPLETED',
+              task_type: 'code',
+              created_at: '2026-06-20T00:00:00.000Z',
+            },
+          }}
+          messages={[
+            {
+              id: 'message-1',
+              role: 'assistant',
+              content: 'Ready',
+              status: 'done',
+              createdAt: '2026-06-20T00:00:00.000Z',
+            },
+          ]}
+        />
+      )
+
+      const titlebarActions = screen.getByTestId('titlebar-actions')
+      expect(titlebarActions).toContainElement(screen.getByTestId('continue-in-im-button'))
+      expect(titlebarActions).toContainElement(
+        screen.getByTestId('toggle-right-workspace-panel-button')
+      )
+      expect(screen.queryByTestId('workbench-topbar-right-actions')).not.toBeInTheDocument()
+    } finally {
+      if (previousTauriInternals === undefined) {
+        delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
+      } else {
+        Object.defineProperty(window, '__TAURI_INTERNALS__', {
+          configurable: true,
+          value: previousTauriInternals,
+        })
+      }
+    }
+  })
+
+  test('hides continue-in-im action for group chat tasks', () => {
+    const onListImPrivateSessions = vi.fn().mockResolvedValue({ total: 0, items: [] })
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          currentTask: {
+            id: 7,
+            title: 'Group task',
+            status: 'COMPLETED',
+            task_type: 'code',
+            is_group_chat: true,
+            created_at: '2026-06-20T00:00:00.000Z',
+          },
+        }}
+        messages={[
+          {
+            id: 'message-1',
+            role: 'assistant',
+            content: 'Ready',
+            status: 'done',
+            createdAt: '2026-06-20T00:00:00.000Z',
+          },
+        ]}
+        onListImPrivateSessions={onListImPrivateSessions}
+      />
+    )
+
+    expect(screen.queryByTestId('continue-in-im-button')).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(onListImPrivateSessions).not.toHaveBeenCalled()
+  })
+
+  test('ignores stale private session responses when reopening the dialog', async () => {
+    type PrivateSessionResponse = {
+      total: number
+      items: Array<{
+        session_key: string
+        channel_type: string
+        channel_label: string
+        channel_id: number
+        conversation_id: string
+        sender_id: string
+        display_name: string
+        mode: 'chat' | 'task'
+        state: 'idle'
+        active_task_id: null
+        last_seen_at: string
+      }>
+    }
+    const firstRequest = createDeferred<PrivateSessionResponse>()
+    const secondRequest = createDeferred<PrivateSessionResponse>()
+    const onListImPrivateSessions = vi
+      .fn()
+      .mockReturnValueOnce(firstRequest.promise)
+      .mockReturnValueOnce(secondRequest.promise)
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          currentTask: {
+            id: 7,
+            title: 'Active task',
+            status: 'COMPLETED',
+            task_type: 'code',
+            created_at: '2026-06-20T00:00:00.000Z',
+          },
+        }}
+        messages={[
+          {
+            id: 'message-1',
+            role: 'assistant',
+            content: 'Ready',
+            status: 'done',
+            createdAt: '2026-06-20T00:00:00.000Z',
+          },
+        ]}
+        onListImPrivateSessions={onListImPrivateSessions}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('continue-in-im-button'))
+    await userEvent.click(screen.getByTestId('continue-im-cancel-button'))
+    await userEvent.click(screen.getByTestId('continue-in-im-button'))
+
+    secondRequest.resolve({
+      total: 1,
+      items: [
+        {
+          session_key: 'session-2',
+          channel_type: 'wecom',
+          channel_label: 'WeCom',
+          channel_id: 102,
+          conversation_id: 'conversation-2',
+          sender_id: 'sender-2',
+          display_name: 'Fresh session',
+          mode: 'task',
+          state: 'idle',
+          active_task_id: null,
+          last_seen_at: '2026-06-20T00:00:00.000Z',
+        },
+      ],
+    })
+
+    expect(await screen.findByTestId('continue-im-session-session-2')).toHaveTextContent(
+      'Fresh session'
+    )
+
+    firstRequest.resolve({
+      total: 1,
+      items: [
+        {
+          session_key: 'session-1',
+          channel_type: 'wecom',
+          channel_label: 'WeCom',
+          channel_id: 101,
+          conversation_id: 'conversation-1',
+          sender_id: 'sender-1',
+          display_name: 'Stale session',
+          mode: 'chat',
+          state: 'idle',
+          active_task_id: null,
+          last_seen_at: '2026-06-20T00:00:00.000Z',
+        },
+      ],
+    })
+
+    await waitFor(() => expect(screen.queryByText('Stale session')).not.toBeInTheDocument())
+    expect(screen.getByText('Fresh session')).toBeInTheDocument()
+  })
+
+  test('shows a failure notice when bind handler is missing', async () => {
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          currentTask: {
+            id: 7,
+            title: 'Active task',
+            status: 'COMPLETED',
+            task_type: 'code',
+            created_at: '2026-06-20T00:00:00.000Z',
+          },
+        }}
+        messages={[
+          {
+            id: 'message-1',
+            role: 'assistant',
+            content: 'Ready',
+            status: 'done',
+            createdAt: '2026-06-20T00:00:00.000Z',
+          },
+        ]}
+        onListImPrivateSessions={vi.fn().mockResolvedValue({
+          total: 1,
+          items: [
+            {
+              session_key: 'session-1',
+              channel_type: 'wecom',
+              channel_label: 'WeCom',
+              channel_id: 101,
+              conversation_id: 'conversation-1',
+              sender_id: 'sender-1',
+              display_name: 'Alice',
+              mode: 'chat',
+              state: 'idle',
+              active_task_id: null,
+              last_seen_at: '2026-06-20T00:00:00.000Z',
+            },
+          ],
+        })}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('continue-in-im-button'))
+    await userEvent.click(await screen.findByTestId('continue-im-session-session-1'))
+    await userEvent.click(screen.getByTestId('continue-im-submit-button'))
+
+    expect(await screen.findByTestId('transient-notice')).toHaveTextContent('继续到私聊失败')
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
   })
 
   test('positions the scroll-to-bottom button above the floating composer', () => {
