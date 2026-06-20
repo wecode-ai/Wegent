@@ -38,6 +38,9 @@ with_temp_dir() {
 
     (
         cd "$tmp_dir"
+        export WEGENT_BIN_DIR="$tmp_dir/bin"
+        export WEGENT_HOST_EXECUTOR_HOME="$tmp_dir/host-executor"
+        export WEGENT_STANDALONE_STATE_FILE="$tmp_dir/standalone/config.env"
         "$test_fn"
     )
     status=$?
@@ -314,6 +317,51 @@ test_standalone_starts_existing_stopped_container_without_recreating() {
     grep -q "Container started" /tmp/wegent-start-existing.out
 }
 
+test_standalone_pull_progress_is_visible() {
+    source_installer_without_main
+
+    DEPLOY_MODE="standalone"
+    STANDALONE_EXECUTOR_MODE="container"
+    STANDALONE_IMAGE="example.test/wegent:latest"
+    STANDALONE_CONTAINER_NAME="wegent-standalone"
+    STANDALONE_VOLUME_NAME="wegent-data"
+    STANDALONE_WORKSPACE_VOLUME_NAME="wegent-workspace"
+    DRY_RUN="0"
+    NO_PROMPT="1"
+    SOCKET_URL="http://localhost:8000"
+    ACCESS_HOST="localhost"
+
+    docker() {
+        case "$*" in
+            "ps -a --format {{.Names}}")
+                ;;
+            "pull example.test/wegent:latest")
+                echo "layer-a: Downloading [====>      ] 12.3MB/45.6MB"
+                ;;
+            "volume ls --format {{.Name}}")
+                ;;
+            "volume create wegent-data")
+                echo "wegent-data"
+                ;;
+            "volume create wegent-workspace")
+                echo "wegent-workspace"
+                ;;
+            "run -d --name wegent-standalone "*)
+                echo "container-id"
+                ;;
+            *)
+                echo "unexpected docker command: $*" >&2
+                return 1
+                ;;
+        esac
+    }
+
+    start_standalone_service >/tmp/wegent-pull-progress.out
+
+    grep -Fq "layer-a: Downloading [====>      ] 12.3MB/45.6MB" \
+        /tmp/wegent-pull-progress.out
+}
+
 test_standalone_installs_management_command() {
     source_installer_without_main
 
@@ -442,6 +490,8 @@ run_test "standalone dry-run recreates existing container for host mode" \
     test_standalone_dry_run_recreates_existing_container_for_host_mode
 run_test "standalone starts existing stopped container without recreating" \
     test_standalone_starts_existing_stopped_container_without_recreating
+run_test "standalone pull progress is visible" \
+    test_standalone_pull_progress_is_visible
 run_test "standalone installs management command" \
     test_standalone_installs_management_command
 run_test "standalone completion mentions management command" \
