@@ -2,7 +2,7 @@
 sidebar_position: 1
 ---
 
-# Runtime Session WorkItems
+# Runtime LocalTask Directory Model
 
 ## Context
 
@@ -10,127 +10,177 @@ Wework currently treats a Wegent Task as the main conversation object. That
 works for Wegent-created tasks, but it does not fit the desired Codex and
 Claude Code workflow:
 
-- Users already create native Codex and Claude Code sessions outside Wework.
-- Those sessions should be visible and continuable in Wework without importing
-  historical messages into `subtasks`.
-- Local devices should not expose public HTTP endpoints. Backend must reach
-  executor through the existing outbound device WebSocket.
-- Future "fork to remote" should let a user continue the same work on another
-  device or runtime while keeping source and forked sessions related.
+- Users already create native Codex and Claude Code work outside Wework.
+- Native runtime work should be visible and continuable in Wework without
+  importing historical messages into `subtasks`.
+- Local devices should not expose public HTTP endpoints. Backend reaches local
+  executors through the existing outbound device WebSocket.
+- Future "fork to remote" should let a user continue related work on another
+  device or runtime without pretending the center DB owns the runtime lifecycle.
+- PR #1501 adds private IM task continuation. Runtime work must be compatible
+  with that IM layer, but the IM active target storage has moved to Redis in a
+  separate PR and is out of scope for this design.
 
-The new model separates product identity from runtime storage. Wegent stores
-projects, work items, and runtime branch references. Codex and Claude Code keep
-their native transcript history.
+The model has exactly three user-visible levels:
+
+```text
+Cross-device Project
+  Device Workspace
+    LocalTask
+```
+
+The first two levels are central Wegent state. `LocalTask` is device-local
+executor metadata.
 
 ## Goals
 
-- Let Wework list online Codex and Claude Code native sessions through executor
-  WebSocket RPC.
-- Open and render native session transcripts without reading or creating
+- Store cross-device Project configuration centrally.
+- Store per-device workspace mapping centrally.
+- Store LocalTasks only in executor/device-local metadata.
+- List online Codex and Claude Code work through executor WebSocket RPC.
+- Open and render native runtime transcripts without reading or creating
   `tasks/subtasks`.
-- Continue a native session through the same device WebSocket path.
-- Introduce a lightweight `WorkItem` as the stable product object for a piece
-  of work inside a Project.
-- Attach one or more runtime session branches to a WorkItem.
-- Support "fork to remote" as a semantic fork into a new runtime session on a
-  target device/runtime/path.
-- Keep user, device, authentication, Project, ProjectLocation, WorkItem, and
-  SessionBranch state in Backend DB.
+- Continue native runtime tasks through the same device WebSocket path.
+- Support fork-to-remote by creating a related LocalTask on the target device.
+- Keep Wegent-native Task/Subtask flows unchanged.
+- Keep PR #1501 task IM continuation unchanged.
 
 ## Non-Goals
 
-- Do not remove the existing Task/Subtask pipeline for Wegent-native chats in
-  this POC.
-- Do not import full Codex or Claude Code history into `subtasks`.
+- Do not model native Codex or Claude Code work as Wegent-owned `TaskResource`
+  rows.
+- Do not store LocalTasks, runtime handles, or transcript paths in the central
+  DB.
+- Do not introduce a separate SessionBranch entity or UI level.
+- Do not add a central short-term runtime task cache.
+- Do not implement IM active target persistence. That belongs to the Redis work
+  in the other PR.
 - Do not require local executors to expose public addresses.
 - Do not implement native cross-device session migration. Forking creates a new
-  runtime session with transferred context.
-- Do not build full statistics, branch compare, or merge workflows in the first
-  pass.
+  runtime task with transferred context.
+- Do not build full statistics, compare, or merge workflows in the first pass.
 
 ## Core Concepts
 
 ### Project
 
-A Project is a logical Wegent project. It may span multiple devices and
-runtimes.
+Project is the cross-device directory. It is user-managed, central Wegent state
+and should be stored as a central resource, preferably a `Kind` resource.
 
-### ProjectLocation
+Project owns configuration such as:
 
-A ProjectLocation maps a Project to one concrete runtime working directory:
+- display name
+- repository identity or logical workspace identity
+- default runtime preferences
+- access control and sharing metadata
+- ordering or pinning in the Project list
+
+Project does not own runtime tasks. Deleting or renaming a Project does not
+delete Codex or Claude Code sessions on a user's machine.
+
+### Device Workspace
+
+Device Workspace is the device-level directory mapping. It is central Wegent
+state because users need consistent cross-device Project organization.
+
+It answers one question:
+
+```text
+For this user and device, which local directory belongs to which Project?
+```
+
+Suggested central DB shape:
 
 ```ts
-interface ProjectLocation {
+interface DeviceWorkspace {
   id: number
+  userId: number
   projectId: number
   deviceId: string
-  runtime: 'codex' | 'claude_code'
-  path: string
+  workspacePath: string
+  repoUrl?: string
+  repoRootFingerprint?: string
   label?: string
-  isPrimary: boolean
-}
-```
-
-The tuple `(project_id, device_id, runtime, path)` should be unique.
-
-### WorkItem
-
-A WorkItem is the stable product identity for a piece of work under a Project.
-It is not a transcript store.
-
-```ts
-interface WorkItem {
-  id: number
-  projectId: number
-  title: string
-  status: 'active' | 'archived' | 'completed'
-  activeBranchId?: number
   createdAt: string
   updatedAt: string
+  lastSeenAt?: string
 }
 ```
 
-### SessionBranch
+This is not a task table. It has no `local_task_id`, transcript path, resume
+token, or runtime handle.
 
-A SessionBranch connects a WorkItem to one native runtime session.
+### LocalTask
+
+LocalTask is the task level under a Device Workspace shown by Wework. It is
+executor-local metadata, scoped under that local directory.
+
+```text
+Project: Wegent
+  Device Workspace: MacBook /repo/Wegent
+    LocalTask: Fix websocket reconnect
+```
+
+LocalTask metadata lives on the device, for example in executor local SQLite:
+
+```text
+~/.wegent/runtime-work/index.sqlite
+```
+
+Suggested local shape:
 
 ```ts
-interface SessionBranch {
-  id: number
-  workItemId: number
-  deviceId: string
+interface LocalTask {
+  localTaskId: string
+  workspacePath: string
+  title: string
   runtime: 'codex' | 'claude_code'
-  sessionId: string
-  path: string
-  parentBranchId?: number
-  relation: 'origin' | 'fork'
+  runtimeHandle: unknown
+  parent?: RuntimeTaskAddress
+  children?: RuntimeTaskAddress[]
   createdAt: string
   updatedAt: string
-}
-```
-
-SessionBranch stores identity and lineage. Message bodies remain in Codex or
-Claude Code transcript files.
-
-### RuntimeSession
-
-RuntimeSession is the online executor's view of a native session:
-
-```ts
-interface RuntimeSession {
-  deviceId: string
-  runtime: 'codex' | 'claude_code'
-  sessionId: string
-  title: string
-  cwd?: string
-  updatedAt?: string
   running: boolean
-  transcriptAvailable: boolean
+  status?: 'active' | 'archived'
 }
 ```
 
-RuntimeSession is not persisted as the source of truth. Backend can match it to
-SessionBranch by `(device_id, runtime, session_id)`.
+`runtimeHandle` is opaque outside the owning executor. For Codex it may contain
+a Codex native thread/session locator. For Claude Code it may contain a Claude
+session locator. Backend and Wework pass it back to the owning executor and do
+not infer lifecycle from it.
+
+Fork and migration relationship metadata is stored inline on LocalTask:
+
+- The target device creates a new LocalTask with `parent` pointing to the source.
+- If the source device is online, it may record the target in `children`.
+- Parent/child metadata is local executor metadata, not central DB state.
+
+LocalTask must not contain:
+
+- central `project_id`
+- transcript path
+- IM active target
+
+Project grouping is inferred by matching the LocalTask's Device Workspace to the
+central Device Workspace mapping.
+
+### Runtime Task Address
+
+Backend and Wework need a transport address for operations, but this address is
+not persisted centrally as task state.
+
+```ts
+interface RuntimeTaskAddress {
+  deviceId: string
+  workspacePath: string
+  localTaskId: string
+}
+```
+
+The address comes from executor list results. It can be placed in transient UI
+state or in Redis IM active target state owned by the IM PR, but it is not a
+central DB task record.
 
 ## Communication Model
 
@@ -140,173 +190,152 @@ channel:
 
 ```ts
 type RuntimeRpc =
-  | 'runtime.sessions.list'
-  | 'runtime.sessions.transcript'
-  | 'runtime.sessions.create'
-  | 'runtime.sessions.send'
-  | 'runtime.sessions.cancel'
-  | 'runtime.sessions.status'
-  | 'runtime.sessions.fork_package'
+  | 'runtime.tasks.list'
+  | 'runtime.tasks.transcript'
+  | 'runtime.tasks.create'
+  | 'runtime.tasks.send'
+  | 'runtime.tasks.cancel'
+  | 'runtime.tasks.status'
+  | 'runtime.tasks.fork_package'
 ```
 
-The browser only talks to Backend through Wework's normal REST and Socket.IO
+The browser talks only to Backend through Wework's normal REST and Socket.IO
 surface.
 
-```text
-Wework Frontend
-  -> Backend REST / Socket.IO
-    -> Device WebSocket RPC
-      -> Local Executor
-        -> Codex / Claude Code files and CLI/SDK
+For IM continuation, the existing IM Redis active-target flow should store a
+runtime target payload equivalent to `RuntimeTaskAddress`. Runtime providers do
+not talk to IM providers directly. They receive normalized source metadata from
+Backend when an IM message is routed to `runtime.tasks.send`.
+
+```ts
+interface MessageSource {
+  source: 'im'
+  external_id: string
+  channel_type: string
+  channel_id: number
+  conversation_id: string
+  sender_id: string
+  message_id?: string
+}
 ```
 
-## Runtime Feasibility
-
-### Codex
-
-Codex already has a local discovery command in the codebase
-(`codex_threads_list`). The POC should generalize this into the runtime session
-RPC shape instead of binding Codex threads to Wegent Tasks.
-
-### Claude Code
-
-Claude Code is feasible for the same model:
-
-- `claude --resume <session-id>` resumes a specific session.
-- `claude --continue` continues the latest session in the current directory.
-- `claude -p --resume <session-id> --output-format=stream-json` can stream a
-  non-interactive turn.
-- Local transcript files are JSONL under the Claude Code home/project session
-  storage.
-- Session metadata includes session id and working directory.
-- The existing Wegent Claude Code executor already carries a `resume` option
-  into Claude SDK options and saves returned session ids.
-
-The POC needs to add Claude Code session listing and transcript normalization.
+Executor may store source metadata in its local runtime metadata store so that
+transcript responses can overlay IM source badges onto normalized messages.
+Native Codex and Claude Code transcript files remain authoritative for message
+bodies.
 
 ## Frontend Interaction
 
-The primary UI model is:
-
-```text
-Project
-  WorkItem
-    SessionBranch
-```
-
-The sidebar should be project-first, with a local-session fallback:
+The sidebar renders the exact three-level model:
 
 ```text
 Projects
   Wegent
-    Fix websocket reconnect
-      MacBook · Codex
-      Linux · Claude Code · fork
-    Refactor runtime RPC
-      MacBook · Claude Code
+    MacBook /repo/Wegent
+      Fix websocket reconnect
+      Refactor runtime RPC
+    Linux /workspace/Wegent
+      Fork: websocket reconnect
 
-Local Sessions
-  MacBook
-    Unmatched
-      Codex · untitled session
-      Claude Code · investigate history
+Unmapped Device Workspaces
+  MacBook /tmp/spike
+    Untitled Codex work
 ```
 
 Rules:
 
-- Matched sessions appear under Project -> WorkItem.
-- Unmatched native sessions appear under Local Sessions.
-- Opening an unmatched session does not require creating a WorkItem first.
-- The open view offers `Attach to Project` and `Fork to...`.
-- Attaching creates a WorkItem and an origin SessionBranch.
-- Forking creates a new SessionBranch under the same WorkItem.
-- Forking from an unmatched session first asks the user to create or choose the
-  WorkItem that will own the source and target branches.
-
-The main header should show the work identity and active runtime branch:
-
-```text
-Fix websocket reconnect
-Wegent · MacBook · Codex · ~/repo/Wegent
-[Fork to...] [Attach] [Open terminal] [Refresh]
-```
-
-For a fork:
-
-```text
-Fix websocket reconnect
-Wegent · Linux · Claude Code · /workspace/Wegent
-Forked from MacBook · Codex
-[Switch branch] [Fork to...] [Compare]
-```
+- Projects come from central Project resources.
+- Device Workspaces come from the central Device Workspace mapping.
+- LocalTasks come from online executors only.
+- If a Device Workspace is offline, Wework can show the workspace as offline but
+  must not invent or keep central LocalTasks.
+- Unmapped local directories can be shown from executor discovery, then mapped
+  to a Project by creating a central Device Workspace row.
+- Opening a LocalTask opens that task's native runtime transcript.
+- Runtime and parent/child information is shown in the LocalTask details, not as
+  another tree level.
 
 ## Data Flows
 
-### List Sessions
+### List Work
 
 1. Wework asks Backend for runtime workbench data.
-2. Backend reads user devices and Project/ProjectLocation/WorkItem/SessionBranch
-   data from DB.
-3. Backend sends `runtime.sessions.list` to each online executor device.
-4. Executor returns Codex and Claude Code RuntimeSession summaries from its
-   local cache.
-5. Backend matches RuntimeSessions to SessionBranches and ProjectLocations.
-6. Wework renders matched sessions under Projects and unmatched sessions under
-   Local Sessions.
+2. Backend reads central Projects and Device Workspaces for the user.
+3. Backend sends `runtime.tasks.list` to each online owned device.
+4. Executor reads local metadata and native runtime discovery, then returns
+   Device Workspace summaries and LocalTasks.
+5. Backend groups returned LocalTasks under central Device Workspaces by
+   `deviceId + workspacePath`.
+6. Wework renders Projects -> Device Workspaces -> LocalTasks.
 
-Offline devices do not contribute RuntimeSessions. Persisted WorkItems and
-SessionBranches can still be shown as unavailable if useful.
+Offline devices do not contribute LocalTasks. There is no central runtime task
+cache.
 
-### Open Session
+### Map A Device Workspace
 
-1. User selects a RuntimeSession or SessionBranch.
-2. Backend sends `runtime.sessions.transcript` to the owning device.
-3. Executor reads the local runtime transcript and returns normalized messages.
+1. User chooses an unmapped local directory returned by an executor.
+2. User selects or creates a Project.
+3. Backend creates or updates the central Device Workspace mapping.
+4. Existing LocalTasks under that directory now appear under the Project.
+
+No LocalTask metadata is modified for this operation.
+
+### Open A LocalTask
+
+1. User selects a LocalTask.
+2. Backend sends `runtime.tasks.transcript` to the owning device with the
+   `RuntimeTaskAddress`.
+3. Executor resolves the LocalTask, reads the native runtime transcript, and
+   returns normalized messages.
 4. Wework renders messages from the transcript response.
 
 No `TaskDetail.subtasks` call is used for this path.
 
-### Continue Session
+### Continue A LocalTask
 
-1. User sends a message in an open RuntimeSession.
-2. Backend sends `runtime.sessions.send` with `device_id`, `runtime`,
-   `session_id`, `path`, and message.
-3. Executor resumes the native runtime session:
-   - Codex resumes the Codex thread id.
-   - Claude Code resumes the Claude session id.
+1. User sends a message in an open LocalTask.
+2. Backend sends `runtime.tasks.send` with the `RuntimeTaskAddress`, message, and
+   optional source metadata.
+3. Executor resolves the LocalTask and resumes the native runtime session using
+   its opaque runtime handle.
 4. Executor streams normalized events back through the device WebSocket.
 5. Backend forwards those events to the Wework client.
 
 No Task or Subtask is created for this runtime-native turn.
 
-### Attach Session To Project
+### Continue In IM
 
-1. User opens an unmatched local session.
-2. User chooses Project and optionally an existing WorkItem.
-3. Backend creates a WorkItem if needed.
-4. Backend creates an origin SessionBranch for the runtime session.
-5. The session moves from Local Sessions into Project -> WorkItem.
+This design does not implement IM active target storage. The other PR owns the
+Redis state.
+
+Compatibility requirement:
+
+- Wework can pass a runtime target payload equivalent to `RuntimeTaskAddress` to
+  the IM active-target API from that PR.
+- When a private IM message targets runtime work, Backend routes it through
+  `runtime.tasks.send`.
+- Executor receives normalized IM source metadata and stores any source overlay
+  locally.
+- Legacy PR #1501 task continuation remains unchanged.
 
 ### Fork To Remote
 
 Forking is a semantic fork, not native session migration.
 
-1. User clicks `Fork to...` on a SessionBranch or RuntimeSession.
-2. User selects target device, runtime, and ProjectLocation/path.
-3. Backend requests `runtime.sessions.fork_package` from the source executor.
+1. User clicks `Fork to...` on a LocalTask.
+2. User selects target device and target Device Workspace.
+3. Backend requests `runtime.tasks.fork_package` from the source executor.
 4. Source executor returns a bounded package:
 
 ```ts
 interface ForkPackage {
   sourceRuntime: 'codex' | 'claude_code'
-  sourceSessionId: string
   title: string
-  projectPath?: string
   summary: string
   recentMessages: NormalizedMessage[]
   workspaceState?: {
     gitRemote?: string
-    branch?: string
+    gitBranch?: string
     baseCommit?: string
     diffPatch?: string
     includeUntracked?: boolean
@@ -314,28 +343,27 @@ interface ForkPackage {
 }
 ```
 
-5. Backend sends `runtime.sessions.create` to the target executor with the fork
-   package.
-6. Target executor prepares the target directory/worktree, applies requested
-   workspace state when possible, and creates a new native runtime session.
-7. Backend ensures the source session has an origin SessionBranch. If the fork
-   started from an unmatched session, Backend creates the selected WorkItem and
-   origin branch first.
-8. Backend creates a fork SessionBranch with `parent_branch_id` pointing to the
-   source branch.
-9. Wework opens the new branch.
+5. Backend sends `runtime.tasks.create` to the target executor with the package
+   and source `RuntimeTaskAddress`.
+6. Target executor creates a new LocalTask with a local runtime handle and
+   inline `parent` metadata.
+7. If the source executor is online, Backend may ask it to record a child hint in
+   the source LocalTask. This is best-effort local metadata, not central DB
+   state.
+8. Wework opens the new LocalTask.
 
 ## Error Handling
 
-- Device offline: disable open/send/fork for sessions on that device.
-- Session missing: show a missing-session state and refresh runtime sessions.
+- Device offline: show the Device Workspace as offline and disable open/send/fork
+  for LocalTasks on that device.
+- LocalTask missing: refresh that device's runtime work list.
 - Transcript parse failure: show a partial transcript if possible and record the
   parse error in the UI.
-- Runtime send failure: keep the current session open and display the runtime
+- Runtime send failure: keep the current LocalTask open and display the runtime
   error without creating a failed Subtask.
-- Fork target unavailable: keep the source branch active and let the user pick a
-  different target.
-- ProjectLocation path missing on target: prompt for another path or create the
+- Fork target unavailable: keep the source LocalTask active and let the user pick
+  a different target.
+- Device Workspace path missing on target: prompt for another path or create the
   directory through an explicit device action.
 
 ## Security
@@ -343,34 +371,51 @@ interface ForkPackage {
 - The browser never sends shell commands.
 - Backend dispatches only typed runtime RPC over an authenticated device
   WebSocket.
-- Runtime RPC validates `runtime`, `session_id`, and path inputs.
+- Runtime RPC validates device ownership and workspace membership.
+- Executor validates that `localTaskId` belongs to the requested workspace before
+  using a runtime handle.
 - Transcript responses should be size-limited and paginated for large sessions.
 - Fork packages should cap recent message count and diff size.
-- Backend must verify device ownership for every runtime RPC.
+- IM provider handlers must not call runtime providers directly. DingTalk,
+  Telegram, Discord, and future IM providers continue through the shared IM
+  interaction layer.
 
 ## Testing
 
-- Backend tests cover ProjectLocation matching by device/runtime/path.
-- Backend tests cover WorkItem and SessionBranch creation for attach.
-- Backend tests cover fork SessionBranch lineage.
+- Backend tests cover central Project listing.
+- Backend tests cover Device Workspace create/update/list by
+  `userId + deviceId + workspacePath`.
+- Backend tests cover grouping executor-returned LocalTasks under Device
+  Workspaces without central LocalTask rows.
 - Backend tests cover runtime RPC dispatch only to online owned devices.
-- Executor tests cover Codex session listing through the unified RuntimeSession
-  schema.
-- Executor tests cover Claude Code session listing from local session metadata.
-- Executor tests cover transcript normalization for Codex and Claude Code JSONL.
-- Wework tests cover Project -> WorkItem -> SessionBranch sidebar rendering.
-- Wework tests cover Local Sessions fallback for unmatched sessions.
+- Backend tests verify no TaskResource/Subtask is created for runtime-native
+  open/send flows.
+- Executor tests cover local LocalTask metadata persistence.
+- Executor tests cover Codex list/transcript/send through the unified RPC.
+- Executor tests cover Claude Code list/transcript/send through the unified RPC.
+- Executor tests cover fork package creation and local parent/child metadata.
+- Executor tests cover local source metadata overlay onto normalized runtime
+  transcript messages.
+- Wework tests cover Project -> Device Workspace -> LocalTask rendering.
+- Wework tests cover unmapped local directory mapping into a Project.
 - Wework tests cover opening a runtime transcript without calling task detail.
 - Wework tests cover disabled actions for offline devices.
+- Wework tests cover rendering IM source badges for runtime transcript messages
+  when source metadata is present.
 
 ## POC Sequence
 
-1. Add runtime session RPC over the existing device WebSocket.
-2. Implement Codex RuntimeSession list/transcript/send through the new RPC.
-3. Implement Claude Code RuntimeSession list/transcript/send through the same
-   RPC.
-4. Add DB tables for ProjectLocation, WorkItem, and SessionBranch.
-5. Add Backend aggregation APIs for project-first runtime workbench data.
-6. Update Wework sidebar and open-session state to use runtime sessions.
-7. Add attach-to-project.
-8. Add fork-to-remote.
+1. Add central Project resource support if the existing product Project resource
+   is not sufficient.
+2. Add central Device Workspace mapping APIs.
+3. Add executor local metadata store for LocalTask.
+4. Add runtime task RPC over the existing device WebSocket.
+5. Implement Codex list/transcript/send through the new RPC.
+6. Implement Claude Code list/transcript/send through the same RPC.
+7. Add Backend aggregation APIs for Project -> Device Workspace -> LocalTask
+   data.
+8. Update Wework sidebar and open-task state to use runtime task data.
+9. Add map-device-workspace-to-Project.
+10. Add fork-to-remote.
+11. Add runtime target payload compatibility for the Redis-based IM active-target
+    flow from the other PR.
