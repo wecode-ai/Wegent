@@ -34,7 +34,7 @@ class IMSessionService:
         channel_id: int,
         conversation_id: str,
         sender_id: str,
-        display_name: str | None = None,
+        display_name: str = "",
     ) -> IMPrivateSession:
         session = (
             db.query(IMPrivateSession)
@@ -53,14 +53,14 @@ class IMSessionService:
                 channel_type=channel_type,
                 channel_id=channel_id,
                 conversation_id=conversation_id,
-                sender_id=sender_id or "",
-                display_name=display_name or "",
+                sender_id=sender_id,
+                display_name=display_name,
                 last_seen_at=now,
             )
             db.add(session)
         else:
-            session.sender_id = sender_id or session.sender_id or ""
-            session.display_name = display_name or session.display_name or ""
+            session.sender_id = sender_id
+            session.display_name = display_name
             session.last_seen_at = now
         db.commit()
         db.refresh(session)

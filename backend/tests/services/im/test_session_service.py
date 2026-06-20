@@ -32,12 +32,13 @@ def test_get_or_create_private_session_refreshes_existing_session(
         channel_type="dingtalk",
         channel_id=12,
         conversation_id="conv-1",
-        sender_id="staff-a",
-        display_name="New name",
+        sender_id="",
+        display_name="",
     )
 
     assert refreshed.id == first.id
-    assert refreshed.display_name == "New name"
+    assert refreshed.sender_id == ""
+    assert refreshed.display_name == ""
     assert refreshed.last_seen_at >= old_seen_at
 
 
