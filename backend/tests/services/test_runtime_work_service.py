@@ -434,6 +434,7 @@ async def test_create_runtime_task_dispatches_to_project_device_without_task_row
 
     assert response.accepted is True
     assert response.local_task_id == "runtime-1"
+    assert response.device_id == "device-1"
     rpc.assert_awaited_once_with(
         user_id=test_user.id,
         device_id="device-1",

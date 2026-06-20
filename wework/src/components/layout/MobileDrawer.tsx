@@ -22,12 +22,17 @@ import type {
   GitBranch,
   GitRepoInfo,
   ProjectWithTasks,
-  LocalTaskSummary,
   RuntimeDeviceWorkspace,
   RuntimeTaskAddress,
   RuntimeWorkListResponse,
   User,
 } from '@/types/api'
+import {
+  getRuntimeTaskRuntimeLabel,
+  getRuntimeTaskTime,
+  isRuntimeTaskSelected,
+  sortRuntimeTasks,
+} from './runtimeTaskSidebarHelpers'
 
 const MOBILE_RUNNING_SPINNER_CLASS = 'ml-2 h-3.5 w-3.5 shrink-0 animate-spin text-[#6B7280]'
 type ProjectCreateMode = 'scratch' | 'existing' | 'git'
@@ -80,39 +85,9 @@ function formatRelativeTime(value?: string) {
   return `${Math.floor(days / 7)}w`
 }
 
-function getRuntimeTaskTime(task: LocalTaskSummary) {
-  return task.updatedAt || task.createdAt || undefined
-}
-
-function sortRuntimeTasks(tasks: LocalTaskSummary[] = []) {
-  return [...tasks].sort((left, right) => {
-    const leftTime = new Date(getRuntimeTaskTime(left) || 0).getTime()
-    const rightTime = new Date(getRuntimeTaskTime(right) || 0).getTime()
-    return rightTime - leftTime
-  })
-}
-
 function getRuntimeWorkspaceLabel(workspace: RuntimeDeviceWorkspace) {
   const pathLabel = workspace.label || workspace.workspacePath
   return `${workspace.deviceName} · ${pathLabel}`
-}
-
-function getRuntimeTaskRuntimeLabel(runtime: string) {
-  if (runtime === 'claude_code') return 'Claude Code'
-  if (runtime === 'codex') return 'Codex'
-  return runtime
-}
-
-function isRuntimeTaskSelected(
-  currentRuntimeTask: RuntimeTaskAddress | null | undefined,
-  workspace: RuntimeDeviceWorkspace,
-  task: LocalTaskSummary
-) {
-  return (
-    currentRuntimeTask?.deviceId === workspace.deviceId &&
-    currentRuntimeTask.workspacePath === workspace.workspacePath &&
-    currentRuntimeTask.localTaskId === task.localTaskId
-  )
 }
 
 export function MobileDrawer({

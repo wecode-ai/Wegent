@@ -811,10 +811,11 @@ function findRuntimeWorkspaceForDevice(
     ...(runtimeWork?.unmappedDeviceWorkspaces ?? []),
     ...(runtimeWork?.projects ?? []).flatMap(project => project.deviceWorkspaces),
   ]
-  const workspace = workspaces.find(
+  const matches = workspaces.filter(
     item => item.deviceId === deviceId && item.available && item.workspacePath
   )
-  return workspace?.workspacePath ?? null
+  const workspacePaths = [...new Set(matches.map(item => item.workspacePath))]
+  return workspacePaths.length === 1 ? workspacePaths[0] : null
 }
 
 function inferRuntimeName(model: UnifiedModel | null): 'codex' | 'claude_code' {
@@ -853,6 +854,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
   >(new Map())
   const handledTaskRouteRef = useRef<string | null>(null)
   const urlTaskOpenAttemptRef = useRef<number | null>(null)
+  const runtimeOpenRequestIdRef = useRef(0)
   const isOptionsLocked = Boolean(state.currentTask || state.currentRuntimeTask)
   const currentUser = state.user ?? user
   const activeProject =
@@ -1080,8 +1082,8 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         if (cachedDevices.length === 0) throw error
         return cachedDevices
       }),
-      resolvedServices.runtimeWorkApi?.listRuntimeWork().catch(() => EMPTY_RUNTIME_WORK) ??
-        Promise.resolve(EMPTY_RUNTIME_WORK),
+      resolvedServices.runtimeWorkApi?.listRuntimeWork().catch(() => undefined) ??
+        Promise.resolve(undefined),
     ])
     const devices = resolveDeviceListWithCache(devicesResult)
     dispatch({
@@ -1587,7 +1589,10 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         return
       }
 
+      const requestId = runtimeOpenRequestIdRef.current + 1
+      runtimeOpenRequestIdRef.current = requestId
       const transcript = await resolvedServices.runtimeWorkApi.getRuntimeTranscript(address)
+      if (runtimeOpenRequestIdRef.current !== requestId) return
       const runtimeProjectWork = state.runtimeWork?.projects.find(item =>
         item.deviceWorkspaces.some(
           workspace =>
@@ -1595,14 +1600,14 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
             workspace.workspacePath === address.workspacePath
         )
       )
-      const project =
-        runtimeProjectWork &&
-        (state.projects.find(item => item.id === runtimeProjectWork.project.id) ?? {
-          id: runtimeProjectWork.project.id,
-          name: runtimeProjectWork.project.name,
-          color: runtimeProjectWork.project.color,
-          tasks: [],
-        })
+      const project = runtimeProjectWork
+        ? (state.projects.find(item => item.id === runtimeProjectWork.project.id) ?? {
+            id: runtimeProjectWork.project.id,
+            name: runtimeProjectWork.project.name,
+            color: runtimeProjectWork.project.color,
+            tasks: [],
+          })
+        : null
 
       if (project) {
         writeLastProjectId(user.id, project.id)
@@ -1629,9 +1634,10 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
   )
 
   const refreshRuntimeTranscript = useCallback(
-    async (address: RuntimeTaskAddress) => {
+    async (address: RuntimeTaskAddress, shouldApply: () => boolean = () => true) => {
       if (!resolvedServices.runtimeWorkApi) return
       const transcript = await resolvedServices.runtimeWorkApi.getRuntimeTranscript(address)
+      if (!shouldApply()) return
       dispatchMessages({
         type: 'reset',
         messages: transcript.messages.map(message =>
@@ -1649,7 +1655,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     const address = state.currentRuntimeTask
     const pollTranscript = () => {
       if (cancelled || document.visibilityState === 'hidden') return
-      void refreshRuntimeTranscript(address).catch(() => {
+      void refreshRuntimeTranscript(address, () => !cancelled).catch(() => {
         // Keep the last transcript snapshot when a poll fails.
       })
     }
@@ -2117,16 +2123,19 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
           throw new Error(response.error || '发送失败')
         }
         const address: RuntimeTaskAddress = {
-          deviceId: activeDeviceId || createRequest.deviceId || '',
+          deviceId: response.deviceId,
           workspacePath: response.workspacePath,
           localTaskId: response.localTaskId,
         }
+        const runtimeProject = projectId
+          ? (state.projects.find(project => project.id === projectId) ?? state.currentProject)
+          : null
         if (address.deviceId) rememberExecutionDevice(address.deviceId)
         writeTaskIdToUrl(null)
         dispatch({
           type: 'runtime_task_opened',
           address,
-          project: state.currentProject,
+          project: runtimeProject,
         })
         await refreshWorkLists()
         await refreshRuntimeTranscript(address)
@@ -2151,6 +2160,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
       reportSendBlocked,
       resolvedServices.runtimeWorkApi,
       state.currentProject,
+      state.projects,
       state.runtimeWork,
     ]
   )

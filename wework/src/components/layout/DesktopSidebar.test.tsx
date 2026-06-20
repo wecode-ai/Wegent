@@ -155,4 +155,14 @@ describe('DesktopSidebar', () => {
       localTaskId: 'codex-1',
     })
   })
+
+  test('selects a project when its sidebar row is clicked', async () => {
+    const onSelectProject = vi.fn()
+
+    renderSidebar({ onSelectProject })
+
+    await userEvent.click(screen.getByTestId('project-item-button'))
+
+    expect(onSelectProject).toHaveBeenCalledWith(7)
+  })
 })

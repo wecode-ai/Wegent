@@ -121,10 +121,10 @@ Project: Wegent
     LocalTask: Fix websocket reconnect
 ```
 
-LocalTask metadata lives on the device, for example in executor local SQLite:
+LocalTask metadata lives on the device in the executor local JSON index:
 
 ```text
-~/.wegent/runtime-work/index.sqlite
+~/.wegent/runtime-work/index.json
 ```
 
 Suggested local shape:

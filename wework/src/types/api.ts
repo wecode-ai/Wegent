@@ -327,6 +327,7 @@ export interface RuntimeTranscriptResponse {
 export interface RuntimeSendRequest {
   address: RuntimeTaskAddress
   message: string
+  source?: RuntimeMessageSource | null
 }
 
 export interface RuntimeSendResponse {
@@ -353,6 +354,7 @@ export interface RuntimeTaskCreateRequest {
 
 export interface RuntimeTaskCreateResponse {
   accepted: boolean
+  deviceId: string
   localTaskId: string
   workspacePath: string
   runtime: RuntimeName

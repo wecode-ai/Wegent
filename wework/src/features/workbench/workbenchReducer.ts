@@ -66,7 +66,7 @@ export type WorkbenchAction =
   | {
       type: 'runtime_task_opened'
       address: RuntimeTaskAddress
-      project?: ProjectWithTasks | null
+      project: ProjectWithTasks | null
     }
   | { type: 'task_upserted'; task: Task }
   | { type: 'task_status_changed'; taskId: number; status: string }
@@ -282,7 +282,7 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
     case 'runtime_task_opened':
       return {
         ...state,
-        currentProject: action.project === undefined ? state.currentProject : action.project,
+        currentProject: action.project,
         currentTask: null,
         currentRuntimeTask: action.address,
       }

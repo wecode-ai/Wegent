@@ -1998,7 +1998,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('settings-button')).toHaveClass('h-9', 'w-full')
   })
 
-  test('toggles an empty project chat list without selecting the project chat context', async () => {
+  test('selects a project while toggling an empty project chat list', async () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
     expect(screen.queryByText('暂无会话')).not.toBeInTheDocument()
@@ -2006,14 +2006,14 @@ describe('DesktopWorkbenchLayout', () => {
 
     await userEvent.click(screen.getByTestId('project-item-button'))
 
-    expect(baseProps.onSelectProject).not.toHaveBeenCalled()
+    expect(baseProps.onSelectProject).toHaveBeenCalledWith(1)
     expect(screen.getByText('暂无会话')).toBeInTheDocument()
     expect(screen.getByTestId('project-row-1')).not.toHaveClass('bg-white')
 
     await userEvent.click(screen.getByTestId('project-item-button'))
 
     expect(screen.queryByText('暂无会话')).not.toBeInTheDocument()
-    expect(baseProps.onSelectProject).not.toHaveBeenCalled()
+    expect(baseProps.onSelectProject).toHaveBeenCalledTimes(2)
   })
 
   test('opens the independent connection settings page from the settings menu', async () => {

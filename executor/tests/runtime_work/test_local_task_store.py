@@ -44,6 +44,33 @@ def test_local_task_store_persists_tasks_and_validates_workspace(tmp_path):
         reopened.get_task("codex-1", workspace_path="/other")
 
 
+def test_local_task_store_update_keeps_original_primary_key(tmp_path):
+    from dataclasses import replace
+
+    from executor.runtime_work.local_task_store import LocalTaskRecord, LocalTaskStore
+
+    store = LocalTaskStore(tmp_path / "index.json")
+    store.upsert_task(
+        LocalTaskRecord(
+            local_task_id="runtime-1",
+            workspace_path="/repo/Wegent",
+            title="Original",
+            runtime="claude_code",
+            runtime_handle={},
+        )
+    )
+
+    updated = store.update_task(
+        "runtime-1",
+        lambda task: replace(task, local_task_id="runtime-2", title="Updated"),
+    )
+
+    assert updated.local_task_id == "runtime-1"
+    assert store.get_task("runtime-1").title == "Updated"
+    with pytest.raises(KeyError):
+        store.get_task("runtime-2")
+
+
 @pytest.mark.asyncio
 async def test_runtime_work_handler_lists_tasks_by_workspace(tmp_path):
     from executor.runtime_work.local_task_store import LocalTaskRecord, LocalTaskStore
@@ -83,6 +110,78 @@ async def test_runtime_work_handler_lists_tasks_by_workspace(tmp_path):
     workspaces = {item["workspacePath"]: item for item in result["workspaces"]}
     assert workspaces["/repo/Wegent"]["localTasks"][0]["localTaskId"] == "codex-1"
     assert workspaces["/repo/Other"]["localTasks"][0]["runtime"] == "claude_code"
+
+
+@pytest.mark.asyncio
+async def test_runtime_work_handler_normalizes_content_payload_before_send(tmp_path):
+    from executor.runtime_work.local_task_store import LocalTaskRecord, LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    class EmptyDiscovery:
+        def discover(self):
+            return []
+
+    class SendAdapter:
+        def __init__(self):
+            self.payload = None
+
+        async def send(self, task, payload):
+            self.payload = payload
+            return {"accepted": True, "localTaskId": task.local_task_id}
+
+    store = LocalTaskStore(tmp_path / "index.json")
+    store.upsert_task(
+        LocalTaskRecord(
+            local_task_id="runtime-1",
+            workspace_path="/repo/Wegent",
+            title="Continue",
+            runtime="claude_code",
+            runtime_handle={},
+        )
+    )
+    adapter = SendAdapter()
+
+    result = await RuntimeWorkRpcHandler(
+        store=store,
+        adapters={"claude_code": adapter},
+        codex_discovery=EmptyDiscovery(),
+    ).handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.send",
+            "payload": {
+                "workspacePath": "/repo/Wegent",
+                "localTaskId": "runtime-1",
+                "content": "continue from content",
+            },
+        }
+    )
+
+    assert result["success"] is True
+    assert adapter.payload["message"] == "continue from content"
+
+
+@pytest.mark.asyncio
+async def test_runtime_agent_adapter_rejects_blank_workspace_before_store_write(
+    tmp_path,
+):
+    from executor.runtime_work.agent_adapter import RuntimeAgentAdapter
+    from executor.runtime_work.local_task_store import LocalTaskStore
+
+    async def execute_agent(_request, _emitter):
+        raise AssertionError("agent execution should not start")
+
+    store = LocalTaskStore(tmp_path / "index.json")
+    adapter = RuntimeAgentAdapter(
+        runtime="claude_code",
+        store=store,
+        execute_agent=execute_agent,
+        run_background=False,
+    )
+
+    with pytest.raises(ValueError, match="workspacePath is required"):
+        await adapter.create({"workspacePath": " ", "message": "hello"})
+
+    assert store.list_tasks(include_archived=True) == []
 
 
 def test_codex_discovery_indexes_external_codex_sessions_by_cwd(tmp_path):

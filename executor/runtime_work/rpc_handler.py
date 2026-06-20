@@ -157,7 +157,9 @@ class RuntimeWorkRpcHandler:
                 code="unsupported_runtime",
             )
 
-        result = await self._maybe_await(adapter.send(task, payload))
+        normalized_payload = dict(payload)
+        normalized_payload["message"] = content
+        result = await self._maybe_await(adapter.send(task, normalized_payload))
         if isinstance(result, dict):
             return {"success": True, **result}
         return {"success": True, "result": result}

@@ -38,6 +38,12 @@ import type { DeviceUpgradeState } from '@/types/device-events'
 import { DesktopSettingsMenu } from './DesktopSettingsMenu'
 import { DesktopTopBar } from './DesktopTopBar'
 import { DesktopWindowControls } from './DesktopWindowControls'
+import {
+  getRuntimeTaskRuntimeLabel,
+  getRuntimeTaskTime,
+  isRuntimeTaskSelected,
+  sortRuntimeTasks,
+} from './runtimeTaskSidebarHelpers'
 import { useResizableSidebar } from './useResizableSidebar'
 
 interface DesktopSidebarProps {
@@ -235,18 +241,6 @@ function formatRelativeSidebarTime(value?: string) {
   return `${Math.floor(days / 7)}w`
 }
 
-function getRuntimeTaskTime(task: LocalTaskSummary) {
-  return task.updatedAt || task.createdAt || undefined
-}
-
-function sortRuntimeTasks(tasks: LocalTaskSummary[] = []) {
-  return [...tasks].sort((left, right) => {
-    const leftTime = new Date(getRuntimeTaskTime(left) || 0).getTime()
-    const rightTime = new Date(getRuntimeTaskTime(right) || 0).getTime()
-    return rightTime - leftTime
-  })
-}
-
 type SidebarDeviceStatus = DeviceInfo['status'] | 'unavailable'
 
 interface SidebarDeviceState {
@@ -302,24 +296,6 @@ function getRuntimeWorkspaceLabel(workspace: RuntimeDeviceWorkspace) {
     workspace.label ||
     workspace.workspacePath.split('/').filter(Boolean).at(-1) ||
     workspace.workspacePath
-  )
-}
-
-function getRuntimeTaskRuntimeLabel(runtime: string) {
-  if (runtime === 'claude_code') return 'Claude Code'
-  if (runtime === 'codex') return 'Codex'
-  return runtime
-}
-
-function isRuntimeTaskSelected(
-  currentRuntimeTask: RuntimeTaskAddress | null | undefined,
-  workspace: RuntimeDeviceWorkspace,
-  task: LocalTaskSummary
-) {
-  return (
-    currentRuntimeTask?.deviceId === workspace.deviceId &&
-    currentRuntimeTask.workspacePath === workspace.workspacePath &&
-    currentRuntimeTask.localTaskId === task.localTaskId
   )
 }
 
@@ -490,6 +466,7 @@ function ProjectItem({
   project,
   expanded,
   onToggleProject,
+  onSelectProject,
   devices,
   runtimeProjectWork,
   currentRuntimeTask,
@@ -501,6 +478,7 @@ function ProjectItem({
   project: ProjectWithTasks
   expanded: boolean
   onToggleProject: (projectId: number) => void
+  onSelectProject: (projectId: number) => void
   devices: DeviceInfo[]
   runtimeProjectWork?: RuntimeProjectWork
   currentRuntimeTask?: RuntimeTaskAddress | null
@@ -527,7 +505,10 @@ function ProjectItem({
         <button
           type="button"
           data-testid="project-item-button"
-          onClick={() => onToggleProject(project.id)}
+          onClick={() => {
+            onSelectProject(project.id)
+            onToggleProject(project.id)
+          }}
           aria-expanded={expanded}
           className="flex min-w-0 flex-1 items-center gap-2.5 pr-16 text-left"
         >
@@ -616,6 +597,7 @@ export function DesktopSidebar({
   activeItem = 'chat',
   onCollapse,
   onNewChat,
+  onSelectProject,
   onStartNewProjectChat,
   onOpenRuntimeLocalTask,
   onRememberExecutionDevice,
@@ -861,6 +843,7 @@ export function DesktopSidebar({
                   runtimeProjectWork={runtimeWorkByProjectId.get(project.id)}
                   currentRuntimeTask={currentRuntimeTask}
                   onToggleProject={handleToggleProject}
+                  onSelectProject={onSelectProject}
                   onStartNewProjectChat={onStartNewProjectChat}
                   onRemoveProject={onRemoveProject}
                   onRenameProject={setRenamingProject}

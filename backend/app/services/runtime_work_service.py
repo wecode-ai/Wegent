@@ -304,7 +304,12 @@ async def create_runtime_task(
         )
     except RuntimeRpcError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
-    return _runtime_create_response(result, request.runtime, target.workspace_path)
+    return _runtime_create_response(
+        result,
+        request.runtime,
+        target.device_id,
+        target.workspace_path,
+    )
 
 
 def _get_active_project(
@@ -349,11 +354,13 @@ def _runtime_send_response(
 def _runtime_create_response(
     result: dict[str, Any],
     runtime: str,
+    device_id: str,
     workspace_path: str,
 ) -> RuntimeTaskCreateResponse:
     if result.get("success") is False:
         return RuntimeTaskCreateResponse(
             accepted=False,
+            deviceId=str(result.get("deviceId") or device_id),
             localTaskId=str(result.get("localTaskId") or ""),
             workspacePath=str(result.get("workspacePath") or workspace_path),
             runtime=result.get("runtime") or runtime,
@@ -361,6 +368,7 @@ def _runtime_create_response(
         )
     return RuntimeTaskCreateResponse(
         accepted=bool(result.get("accepted", True)),
+        deviceId=str(result.get("deviceId") or device_id),
         localTaskId=str(result.get("localTaskId") or ""),
         workspacePath=str(result.get("workspacePath") or workspace_path),
         runtime=result.get("runtime") or runtime,

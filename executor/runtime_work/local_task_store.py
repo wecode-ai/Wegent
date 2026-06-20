@@ -146,7 +146,7 @@ class LocalTaskStore:
 
             updated = updater(current)
             normalized = LocalTaskRecord(
-                local_task_id=updated.local_task_id,
+                local_task_id=current.local_task_id,
                 workspace_path=normalize_workspace_path(updated.workspace_path),
                 title=updated.title,
                 runtime=updated.runtime,
@@ -158,7 +158,7 @@ class LocalTaskStore:
                 running=updated.running,
                 status=updated.status or "active",
             )
-            index["tasks"][normalized.local_task_id] = asdict(normalized)
+            index["tasks"][current.local_task_id] = asdict(normalized)
             self._write_index(index)
             return normalized
 

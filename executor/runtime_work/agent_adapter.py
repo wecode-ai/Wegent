@@ -122,9 +122,7 @@ class RuntimeAgentAdapter:
         self._running_tasks: set[asyncio.Task] = set()
 
     async def create(self, payload: dict[str, Any]) -> dict[str, Any]:
-        workspace_path = normalize_workspace_path(
-            str(payload.get("workspacePath") or "")
-        )
+        workspace_path = _required_workspace_path(payload)
         message = _required_text(payload, "message")
         title = str(payload.get("title") or message).strip()[:100] or "New task"
         local_task_id = str(payload.get("localTaskId") or f"runtime-{uuid.uuid4()}")
@@ -267,9 +265,7 @@ class RuntimeAgentAdapter:
             raise ValueError("executionRequest is required")
 
         request_data = copy.deepcopy(raw_request)
-        workspace_path = normalize_workspace_path(
-            str(payload.get("workspacePath") or "")
-        )
+        workspace_path = _required_workspace_path(payload)
         request_data["prompt"] = message
         request_data["workspace_source"] = "local_path"
         request_data["project_workspace_path"] = workspace_path
@@ -314,6 +310,13 @@ def _required_text(payload: dict[str, Any], key: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{key} is required")
     return value.strip()
+
+
+def _required_workspace_path(payload: dict[str, Any]) -> str:
+    value = payload.get("workspacePath")
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("workspacePath is required")
+    return normalize_workspace_path(value)
 
 
 def _user_message(

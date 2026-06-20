@@ -236,6 +236,7 @@ class RuntimeTaskCreateResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     accepted: bool
+    device_id: str = Field(..., alias="deviceId")
     local_task_id: str = Field(..., alias="localTaskId")
     workspace_path: str = Field(..., alias="workspacePath")
     runtime: RuntimeName

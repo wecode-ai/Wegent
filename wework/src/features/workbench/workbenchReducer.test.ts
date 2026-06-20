@@ -258,6 +258,25 @@ describe('workbenchReducer', () => {
     expect(cleared.currentTask).toBeNull()
   })
 
+  test('clears selected project when opening a standalone runtime task', () => {
+    const selected = workbenchReducer(initialWorkbenchState, {
+      type: 'project_selected',
+      project: { id: 7, name: 'Repo', tasks: [] },
+    })
+    const opened = workbenchReducer(selected, {
+      type: 'runtime_task_opened',
+      address: {
+        deviceId: 'device-1',
+        workspacePath: '/workspace/default',
+        localTaskId: 'runtime-1',
+      },
+      project: null,
+    })
+
+    expect(opened.currentProject).toBeNull()
+    expect(opened.currentRuntimeTask?.localTaskId).toBe('runtime-1')
+  })
+
   test('keeps project tasks only in the project list returned by the server', () => {
     const refreshed = workbenchReducer(initialWorkbenchState, {
       type: 'lists_refreshed',

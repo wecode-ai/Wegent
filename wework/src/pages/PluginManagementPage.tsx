@@ -130,6 +130,7 @@ export function PluginManagementPage() {
           <MobileDrawer
             open={drawerOpen}
             user={state.user}
+            devices={state.devices}
             projects={state.projects}
             runtimeWork={state.runtimeWork}
             currentProjectId={state.currentProject?.id}
