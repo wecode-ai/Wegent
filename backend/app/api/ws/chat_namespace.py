@@ -1065,6 +1065,11 @@ class ChatNamespace(socketio.AsyncNamespace):
         # Note: attachments field is kept for backward compatibility but set to empty
         # All context data should be read from the 'contexts' field
         attachment_info = None
+        source = None
+        if isinstance(user_subtask.result, dict):
+            result_source = user_subtask.result.get("source")
+            if isinstance(result_source, dict):
+                source = result_source
 
         logger.info(
             f"[WS] Broadcasting user message to room: room={task_room}, "
@@ -1089,6 +1094,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                 "attachment": attachment_info,  # Keep for backward compatibility
                 "attachments": [],  # Legacy array format - empty, use contexts instead
                 "contexts": contexts_list,  # New contexts format
+                "source": source,
             },
             room=task_room,
             skip_sid=skip_sid,

@@ -3113,6 +3113,16 @@ describe('WorkbenchProvider', () => {
               )
               .join(',')}
           </span>
+          <span data-testid="history-message-sources">
+            {workbench.messages
+              .map(
+                message =>
+                  `${message.role}:${message.source?.source ?? 'none'}:${
+                    message.source?.session_id ?? 'none'
+                  }`
+              )
+              .join('|')}
+          </span>
         </div>
       )
     }
@@ -3154,7 +3164,13 @@ describe('WorkbenchProvider', () => {
                   role: 'ASSISTANT',
                   message_id: 2,
                   prompt: '',
-                  result: { value: '你好，胡云鹏！' },
+                  result: {
+                    value: '你好，胡云鹏！',
+                    source: {
+                      source: 'im',
+                      session_id: 'assistant-session',
+                    },
+                  },
                   status: 'COMPLETED',
                   created_at: '2026-05-27T00:02:00.000Z',
                 },
@@ -3163,6 +3179,13 @@ describe('WorkbenchProvider', () => {
                   role: 'USER',
                   message_id: 1,
                   prompt: '我叫胡云鹏',
+                  result: {
+                    source: {
+                      source: 'im',
+                      session_id: 'session-1',
+                      message_id: 'im-message-1',
+                    },
+                  },
                   status: 'COMPLETED',
                   contexts: [
                     {
@@ -3176,6 +3199,20 @@ describe('WorkbenchProvider', () => {
                     },
                   ],
                   created_at: '2026-05-27T00:01:00.000Z',
+                },
+                {
+                  id: 13,
+                  role: 'USER',
+                  message_id: 3,
+                  prompt: 'from unsupported source',
+                  result: {
+                    source: {
+                      source: 'web',
+                      session_id: 'web-session',
+                    },
+                  },
+                  status: 'COMPLETED',
+                  created_at: '2026-05-27T00:03:00.000Z',
                 },
               ],
             }),
@@ -3210,10 +3247,13 @@ describe('WorkbenchProvider', () => {
 
     await waitFor(() =>
       expect(screen.getByTestId('messages')).toHaveTextContent(
-        'user:我叫胡云鹏assistant:你好，胡云鹏！'
+        'user:我叫胡云鹏assistant:你好，胡云鹏！user:from unsupported source'
       )
     )
     expect(screen.getByTestId('history-attachment-filenames')).toHaveTextContent('diagram.png')
+    expect(screen.getByTestId('history-message-sources')).toHaveTextContent(
+      'user:im:session-1|assistant:none:none|user:none:none'
+    )
   })
 
   test('restores persisted tool blocks when opening task history', async () => {

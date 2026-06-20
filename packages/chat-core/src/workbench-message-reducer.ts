@@ -11,6 +11,11 @@ export type WorkbenchToolBlockStatus =
   | 'done'
   | 'error'
 
+export interface MessageSource {
+  source: string
+  [key: string]: unknown
+}
+
 export interface BaseWorkbenchProcessingBlock {
   id: string
   subtaskId: number
@@ -50,6 +55,7 @@ export interface WorkbenchMessage<TAttachment = unknown, TFileChanges = unknown>
   attachments?: TAttachment[]
   blocks?: WorkbenchProcessingBlock[]
   fileChanges?: TFileChanges
+  source?: MessageSource
   createdAt: string
 }
 

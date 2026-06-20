@@ -68,6 +68,7 @@ import type { EnvironmentInfo } from '@/types/environment'
 import type { CodeCommentContext, WorkspaceTarget } from '@/types/workspace-files'
 import type {
   GuidanceWorkbenchMessage,
+  MessageSource,
   ProcessingBlock,
   QueuedWorkbenchMessage,
   WorkbenchMessage,
@@ -367,6 +368,13 @@ function getSubtaskResult(result: unknown): SubtaskResult | undefined {
   }
 }
 
+function getIMMessageSource(result: unknown): MessageSource | undefined {
+  if (!isRecord(result)) return undefined
+  const source = result.source
+  if (!isRecord(source) || source.source !== 'im') return undefined
+  return { ...source, source: 'im' }
+}
+
 function parseTimestampMs(value?: string | null): number | undefined {
   if (!value) return undefined
   const timestamp = new Date(value).getTime()
@@ -513,6 +521,7 @@ function getSubtaskAttachments(subtask: Subtask): Attachment[] | undefined {
 function subtaskToMessage(subtask: Subtask): WorkbenchMessage {
   const result = getSubtaskResult(subtask.result)
   const role = subtask.role.toLowerCase() === 'user' ? 'user' : 'assistant'
+  const source = role === 'user' ? getIMMessageSource(subtask.result) : undefined
   const blockFallbackTimestamp =
     parseTimestampMs(subtask.completed_at) ??
     parseTimestampMs(subtask.updated_at) ??
@@ -533,6 +542,7 @@ function subtaskToMessage(subtask: Subtask): WorkbenchMessage {
     attachments: getSubtaskAttachments(subtask),
     blocks: blocks.length > 0 ? blocks : undefined,
     fileChanges: result?.fileChanges,
+    source,
     createdAt: subtask.created_at,
   }
 }
