@@ -35,6 +35,12 @@ def upgrade() -> None:
             comment="Absolute workspace path on the local device",
         ),
         sa.Column(
+            "workspace_path_hash",
+            sa.String(length=64),
+            nullable=False,
+            comment="SHA-256 hash of workspace_path for MySQL-safe uniqueness",
+        ),
+        sa.Column(
             "repo_url", sa.Text(), nullable=True, comment="Optional repository URL"
         ),
         sa.Column(
@@ -73,7 +79,7 @@ def upgrade() -> None:
         sa.UniqueConstraint(
             "user_id",
             "device_id",
-            "workspace_path",
+            "workspace_path_hash",
             name="uq_device_workspace_user_device_path",
         ),
         mysql_charset="utf8mb4",

@@ -6,6 +6,7 @@
 
 from dataclasses import dataclass, replace
 from datetime import datetime
+from hashlib import sha256
 from types import SimpleNamespace
 from typing import Any, Optional
 from uuid import uuid4
@@ -17,9 +18,7 @@ from app.core.constants import CLIENT_ORIGIN_WEWORK
 from app.models.device_workspace import DeviceWorkspace
 from app.models.kind import Kind
 from app.models.project import Project
-from app.models.subtask import Subtask
 from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
-from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.project import ProjectConfig
 from app.schemas.runtime_work import (
@@ -68,6 +67,12 @@ def normalize_workspace_path(path: str) -> str:
     return normalized.rstrip("/") or "/"
 
 
+def workspace_path_hash(path: str) -> str:
+    """Return a stable uniqueness key for a normalized device path."""
+
+    return sha256(normalize_workspace_path(path).encode("utf-8")).hexdigest()
+
+
 def upsert_device_workspace(
     *,
     db: Session,
@@ -78,12 +83,13 @@ def upsert_device_workspace(
 
     project = _get_active_project(db, user_id, payload.project_id, None)
     workspace_path = normalize_workspace_path(payload.workspace_path)
+    path_hash = workspace_path_hash(workspace_path)
     row = (
         db.query(DeviceWorkspace)
         .filter(
             DeviceWorkspace.user_id == user_id,
             DeviceWorkspace.device_id == payload.device_id,
-            DeviceWorkspace.workspace_path == workspace_path,
+            DeviceWorkspace.workspace_path_hash == path_hash,
         )
         .first()
     )
@@ -93,10 +99,13 @@ def upsert_device_workspace(
             project_id=project.id,
             device_id=payload.device_id,
             workspace_path=workspace_path,
+            workspace_path_hash=path_hash,
         )
         db.add(row)
 
     row.project_id = project.id
+    row.workspace_path = workspace_path
+    row.workspace_path_hash = path_hash
     row.repo_url = payload.repo_url
     row.repo_root_fingerprint = payload.repo_root_fingerprint
     row.label = payload.label
@@ -654,14 +663,14 @@ def _build_runtime_execution_request(
     user = _get_user(db, user_id)
     team = _get_team(db, user_id, request.team_id)
     task_id, subtask_id = _runtime_execution_ids()
-    task = _runtime_task_resource(
+    task = _runtime_task_context(
         user_id=user_id,
         task_id=task_id,
         request=request,
         target=target,
         team=team,
     )
-    subtask = _runtime_assistant_subtask(
+    subtask = _runtime_assistant_context(
         user_id=user_id,
         task_id=task_id,
         subtask_id=subtask_id,
@@ -695,17 +704,17 @@ def _runtime_execution_ids() -> tuple[int, int]:
     return base_id, base_id + 1
 
 
-def _runtime_task_resource(
+def _runtime_task_context(
     *,
     user_id: int,
     task_id: int,
     request: RuntimeTaskCreateRequest,
     target: RuntimeTaskTarget,
     team: Kind,
-) -> TaskResource:
+) -> SimpleNamespace:
     title = _runtime_task_title(request)
     workspace_spec = _runtime_workspace_spec(request, target)
-    return TaskResource(
+    return SimpleNamespace(
         id=task_id,
         user_id=user_id,
         kind="Task",
@@ -739,15 +748,15 @@ def _runtime_task_resource(
     )
 
 
-def _runtime_assistant_subtask(
+def _runtime_assistant_context(
     *,
     user_id: int,
     task_id: int,
     subtask_id: int,
     request: RuntimeTaskCreateRequest,
     team: Kind,
-) -> Subtask:
-    return Subtask(
+) -> SimpleNamespace:
+    return SimpleNamespace(
         id=subtask_id,
         user_id=user_id,
         task_id=task_id,
@@ -755,6 +764,8 @@ def _runtime_assistant_subtask(
         title=f"{_runtime_task_title(request)} - Assistant",
         bot_ids=[],
         prompt=request.message,
+        message_id=None,
+        executor_name=None,
     )
 
 
@@ -941,12 +952,13 @@ def _touch_workspace_mapping(
     user_id: int,
     address: RuntimeTaskAddress,
 ) -> Optional[DeviceWorkspace]:
+    path_hash = workspace_path_hash(address.workspace_path)
     row = (
         db.query(DeviceWorkspace)
         .filter(
             DeviceWorkspace.user_id == user_id,
             DeviceWorkspace.device_id == address.device_id,
-            DeviceWorkspace.workspace_path == address.workspace_path,
+            DeviceWorkspace.workspace_path_hash == path_hash,
         )
         .first()
     )

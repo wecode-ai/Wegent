@@ -24,6 +24,11 @@ class DeviceWorkspace(Base):
         nullable=False,
         comment="Absolute workspace path on the local device",
     )
+    workspace_path_hash = Column(
+        String(64),
+        nullable=False,
+        comment="SHA-256 hash of workspace_path for MySQL-safe uniqueness",
+    )
     repo_url = Column(Text, nullable=True, comment="Optional repository URL")
     repo_root_fingerprint = Column(
         String(128),
@@ -54,7 +59,7 @@ class DeviceWorkspace(Base):
         UniqueConstraint(
             "user_id",
             "device_id",
-            "workspace_path",
+            "workspace_path_hash",
             name="uq_device_workspace_user_device_path",
         ),
         {
