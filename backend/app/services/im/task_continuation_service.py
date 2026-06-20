@@ -9,7 +9,6 @@ from copy import deepcopy
 from typing import Any, Sequence
 
 from fastapi import HTTPException, status
-from sqlalchemy import exists
 from sqlalchemy.orm import Session
 
 from app.core.constants import CLIENT_ORIGIN_WEWORK, KIND_TEAM
@@ -134,20 +133,11 @@ def list_recent_wework_tasks(
 ) -> list[dict[str, Any]]:
     """List recent active personal WeWork tasks for private IM switching."""
 
-    approved_member_exists = _approved_member_exists_clause(TaskResource.id)
-    tasks = (
-        db.query(TaskResource)
-        .filter(
-            TaskResource.kind == "Task",
-            TaskResource.user_id == user_id,
-            TaskResource.client_origin == CLIENT_ORIGIN_WEWORK,
-            TaskResource.is_active == TaskResource.STATE_ACTIVE,
-            TaskResource.is_group_chat == False,
-            ~approved_member_exists,
-        )
-        .order_by(TaskResource.updated_at.desc(), TaskResource.id.desc())
-        .limit(limit)
-        .all()
+    tasks = task_store.list_recent_owner_only_tasks(
+        db,
+        user_id=user_id,
+        client_origin=CLIENT_ORIGIN_WEWORK,
+        limit=limit,
     )
     return [{"id": task.id, "title": get_task_title(task)} for task in tasks]
 
@@ -346,14 +336,6 @@ def _has_approved_task_members(db: Session, task_id: int) -> bool:
         )
         .first()
         is not None
-    )
-
-
-def _approved_member_exists_clause(task_id_column: Any):
-    return exists().where(
-        ResourceMember.resource_type == ResourceType.TASK.value,
-        ResourceMember.resource_id == task_id_column,
-        ResourceMember.status == MemberStatus.APPROVED.value,
     )
 
 

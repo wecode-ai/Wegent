@@ -20,6 +20,7 @@ from app.services.channels.messager_config import (
 
 logger = logging.getLogger(__name__)
 
+
 class DiscordChannelProvider(BaseChannelProvider):
     """Discord channel provider for DM-only bot integration."""
 

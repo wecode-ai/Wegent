@@ -120,7 +120,9 @@ class IMSessionService:
         session.display_name = display_name
         session.last_seen_at = last_seen_at
 
-    def list_user_sessions(self, db: Session, *, user_id: int) -> list[IMPrivateSession]:
+    def list_user_sessions(
+        self, db: Session, *, user_id: int
+    ) -> list[IMPrivateSession]:
         return (
             db.query(IMPrivateSession)
             .filter(IMPrivateSession.user_id == user_id)

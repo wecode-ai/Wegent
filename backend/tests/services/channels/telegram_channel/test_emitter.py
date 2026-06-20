@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.services.channels.telegram.emitter import StreamingResponseEmitter
+from shared.models import EventType, ExecutionEvent
 
 
 class TestStreamingResponseEmitter:
@@ -140,6 +141,31 @@ class TestStreamingResponseEmitter:
 
         # Should not send anything
         mock_bot.edit_message_text.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_emit_thinking_event_edits_message(self, emitter, mock_bot):
+        """Test THINKING events are displayed as temporary thinking status."""
+        mock_message = MagicMock()
+        mock_message.message_id = 999
+        mock_bot.send_message.return_value = mock_message
+        await emitter.emit_start(task_id=1, subtask_id=2)
+        mock_bot.edit_message_text.reset_mock()
+        emitter._last_update_time = 0
+
+        await emitter.emit(
+            ExecutionEvent.create(
+                EventType.THINKING,
+                task_id=1,
+                subtask_id=2,
+                content="Checking the workspace",
+                offset=0,
+            )
+        )
+
+        mock_bot.edit_message_text.assert_called_once()
+        text = mock_bot.edit_message_text.call_args.kwargs["text"]
+        assert "💭 Checking the workspace" in text
+        assert emitter._full_content == ""
 
     @pytest.mark.asyncio
     async def test_emit_done(self, emitter, mock_bot):

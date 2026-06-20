@@ -239,6 +239,75 @@ async def test_responses_api_terminal_event_logs_callback_summary(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_responses_api_delta_event_forwards_to_channel_callbacks(monkeypatch):
+    namespace = device_namespace.DeviceNamespace()
+    event = SimpleNamespace(
+        type=device_namespace.EventType.CHUNK.value,
+        content="hi",
+        offset=2,
+    )
+    payload = {
+        "task_id": 101,
+        "subtask_id": 202,
+        "message_id": 303,
+        "data": {"delta": "hi"},
+    }
+    forwarded_events = []
+
+    async def fake_get_session(sid):
+        return {"user_id": 7, "device_id": "device-1"}
+
+    def fake_parse(**kwargs):
+        return event
+
+    class FakeWebSocketResultEmitter:
+        def __init__(self, **kwargs):
+            assert kwargs["user_id"] == 7
+
+    class FakeStatusUpdatingEmitter:
+        def __init__(self, **kwargs):
+            pass
+
+        async def emit(self, emitted_event):
+            assert emitted_event is event
+
+        async def close(self):
+            pass
+
+    async def fake_forward_event_to_channel_callbacks(
+        *, task_id, subtask_id, event, source
+    ):
+        assert source == "Device WS"
+        forwarded_events.append((task_id, subtask_id, event))
+
+    monkeypatch.setattr(namespace, "get_session", fake_get_session)
+    monkeypatch.setattr(namespace._event_parser, "parse", fake_parse)
+    monkeypatch.setattr(
+        device_namespace,
+        "WebSocketResultEmitter",
+        FakeWebSocketResultEmitter,
+    )
+    monkeypatch.setattr(
+        device_namespace,
+        "StatusUpdatingEmitter",
+        FakeStatusUpdatingEmitter,
+    )
+    monkeypatch.setattr(
+        device_namespace,
+        "forward_event_to_channel_callbacks",
+        fake_forward_event_to_channel_callbacks,
+        raising=False,
+    )
+
+    result = await namespace._handle_responses_api_event(
+        "sid-1", "response.output_text.delta", payload
+    )
+
+    assert result == {"success": True}
+    assert forwarded_events == [(101, 202, event)]
+
+
+@pytest.mark.asyncio
 async def test_device_terminal_output_forwards_to_browser_terminal_room(monkeypatch):
     namespace = device_namespace.DeviceNamespace()
     record = TerminalSessionRecord(

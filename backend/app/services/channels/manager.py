@@ -377,9 +377,7 @@ class ChannelManager:
             return factory(channel)
         return None
 
-    def _get_running_provider(
-        self, channel_id: int
-    ) -> Optional["BaseChannelProvider"]:
+    def _get_running_provider(self, channel_id: int) -> Optional["BaseChannelProvider"]:
         """Get a running provider and clean stale stopped entries."""
         provider = self._channels.get(channel_id)
         if provider is None:

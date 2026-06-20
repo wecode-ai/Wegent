@@ -14,7 +14,7 @@ import time
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from app.services.execution.emitters import ResultEmitter
-from shared.models import ExecutionEvent
+from shared.models import EventType, ExecutionEvent
 
 if TYPE_CHECKING:
     from telegram import Bot
@@ -82,6 +82,7 @@ class StreamingResponseEmitter(ResultEmitter):
         self._current_thinking = (
             ""  # Current thinking status (replaced, not accumulated)
         )
+        self._reasoning_content = ""
         self._last_update_time = 0.0
         self._pending_content = ""
         self._started = False
@@ -258,28 +259,36 @@ class StreamingResponseEmitter(ResultEmitter):
         Args:
             event: Execution event to emit
         """
-        from shared.models import EventType
-
-        if event.type == EventType.START:
+        event_type = (
+            event.type.value if isinstance(event.type, EventType) else event.type
+        )
+        if event_type == EventType.START.value:
             await self.emit_start(
                 task_id=event.task_id,
                 subtask_id=event.subtask_id,
                 message_id=event.message_id,
             )
-        elif event.type == EventType.CHUNK:
+        elif event_type == EventType.CHUNK.value:
             await self.emit_chunk(
                 task_id=event.task_id,
                 subtask_id=event.subtask_id,
                 content=event.content or "",
                 offset=event.offset,
             )
-        elif event.type == EventType.DONE:
+        elif event_type == EventType.THINKING.value:
+            await self.emit_thinking(
+                task_id=event.task_id,
+                subtask_id=event.subtask_id,
+                content=event.content or "",
+                offset=event.offset,
+            )
+        elif event_type == EventType.DONE.value:
             await self.emit_done(
                 task_id=event.task_id,
                 subtask_id=event.subtask_id,
                 result=event.result,
             )
-        elif event.type == EventType.ERROR:
+        elif event_type == EventType.ERROR.value:
             await self.emit_error(
                 task_id=event.task_id,
                 subtask_id=event.subtask_id,
@@ -317,6 +326,25 @@ class StreamingResponseEmitter(ResultEmitter):
 
         # Use throttling to reduce API calls
         await self._send_streaming_update(content)
+
+    async def emit_thinking(
+        self,
+        task_id: int,
+        subtask_id: int,
+        content: str,
+        offset: int = 0,
+        **kwargs,
+    ) -> None:
+        """Emit reasoning content as a temporary Telegram thinking status."""
+        if not content:
+            return
+
+        # Ensure message is created
+        if not await self._ensure_message_created():
+            return
+
+        self._reasoning_content += content
+        await self._send_streaming_update(f"💭 {self._reasoning_content}")
 
     async def emit_done(
         self,

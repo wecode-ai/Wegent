@@ -22,15 +22,13 @@ class PrivateIMInteractionPort(Protocol):
         self,
         message_context: MessageContext,
         text: str,
-    ) -> bool:
-        ...
+    ) -> bool: ...
 
     async def delete_conversation_task_id(
         self,
         conversation_id: str,
         user_id: int,
-    ) -> None:
-        ...
+    ) -> None: ...
 
     async def execute_private_im_bind_task(
         self,
@@ -39,8 +37,7 @@ class PrivateIMInteractionPort(Protocol):
         im_session: IMPrivateSession,
         task_id: int | None,
         message_context: MessageContext,
-    ) -> None:
-        ...
+    ) -> None: ...
 
     async def execute_private_im_continue_task(
         self,
@@ -50,8 +47,7 @@ class PrivateIMInteractionPort(Protocol):
         task_id: int | None,
         message: str,
         message_context: MessageContext,
-    ) -> None:
-        ...
+    ) -> None: ...
 
     async def execute_private_im_create_task(
         self,
@@ -61,8 +57,7 @@ class PrivateIMInteractionPort(Protocol):
         project_id: int | None,
         message: str,
         message_context: MessageContext,
-    ) -> None:
-        ...
+    ) -> None: ...
 
 
 class IMInteractionService:

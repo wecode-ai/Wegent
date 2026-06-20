@@ -122,7 +122,9 @@ class IMCommandRouter:
                     )
                     return IMCommandResult(handled=True, reply="已切换到 Chat 模式。")
 
-                im_session_service.set_mode(db, session=session, mode=IMSessionMode.TASK)
+                im_session_service.set_mode(
+                    db, session=session, mode=IMSessionMode.TASK
+                )
                 if session.active_task_id:
                     return IMCommandResult(
                         handled=True,

@@ -20,6 +20,7 @@ from app.services.channels.handler import BaseChannelHandler, MessageContext
 
 if TYPE_CHECKING:
     import discord
+
     from app.services.execution.emitters import ResultEmitter
 
 logger = logging.getLogger(__name__)
@@ -53,9 +54,7 @@ class DiscordChannelHandler(BaseChannelHandler[Any, BaseCallbackInfo]):
         author_id = self._extract_author_id(author)
         username = getattr(author, "name", None)
         global_name = getattr(author, "global_name", None)
-        sender_name = (
-            getattr(author, "display_name", None) or global_name or username
-        )
+        sender_name = getattr(author, "display_name", None) or global_name or username
         channel_id = getattr(channel, "id", "")
 
         return MessageContext(

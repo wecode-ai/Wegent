@@ -128,9 +128,7 @@ def _task_model_override_available(
 def _build_codex_runtime_model_config(model_name: str) -> Dict[str, Any]:
     """Build a minimal Codex-compatible model config for Wework runtime models."""
     model_id = (
-        CODEX_RUNTIME_MODEL_ID
-        if model_name == CODEX_RUNTIME_MODEL_NAME
-        else model_name
+        CODEX_RUNTIME_MODEL_ID if model_name == CODEX_RUNTIME_MODEL_NAME else model_name
     )
     return {
         "model": "openai",
@@ -420,8 +418,10 @@ async def build_execution_request(
                 force_override,
                 override_model_type,
             )
-            if force_override and override_model_name and (
-                override_model_type == RUNTIME_MODEL_TYPE
+            if (
+                force_override
+                and override_model_name
+                and (override_model_type == RUNTIME_MODEL_TYPE)
             ):
                 runtime_model_config = _build_codex_runtime_model_config(
                     override_model_name
