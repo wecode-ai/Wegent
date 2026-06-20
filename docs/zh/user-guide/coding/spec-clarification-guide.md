@@ -20,7 +20,7 @@ sidebar_position: 3
 
 ### 2. 在前端选择团队
 
-1. 进入 Code 页面
+1. 进入编码入口（`/chat?agent=code`）
 2. 在 Team 选择器中选择 **spec-clarification-team**
 3. 输入模糊需求，例如："我想添加一个用户登录功能"
 

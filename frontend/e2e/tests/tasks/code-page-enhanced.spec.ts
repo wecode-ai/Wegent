@@ -3,7 +3,7 @@ import { createApiClient, ApiClient } from '../../utils/api-client'
 import { DataBuilders } from '../../fixtures/data-builders'
 import { ADMIN_USER } from '../../config/test-users'
 
-test.describe('Code Page - Enhanced Tests', () => {
+test.describe('Code Mode - Enhanced Tests', () => {
   let apiClient: ApiClient
   let testTeamName: string
 
@@ -13,7 +13,7 @@ test.describe('Code Page - Enhanced Tests', () => {
     await apiClient.login(ADMIN_USER.username, ADMIN_USER.password)
     // Page is already authenticated via global setup storageState
 
-    await page.goto('/code')
+    await page.goto('/chat?agent=code')
     await page.waitForLoadState('domcontentloaded')
     await page.waitForTimeout(2000)
   })
@@ -25,7 +25,7 @@ test.describe('Code Page - Enhanced Tests', () => {
     }
   })
 
-  test('should display code page layout correctly', async ({ page }) => {
+  test('should display code mode layout correctly', async ({ page }) => {
     const currentUrl = new URL(page.url())
     expect(currentUrl.pathname).toBe('/chat')
     expect(currentUrl.searchParams.get('agent')).toBe('code')
@@ -41,7 +41,7 @@ test.describe('Code Page - Enhanced Tests', () => {
     expect(hasSidebar || hasNav).toBe(true)
   })
 
-  test('should display team selector in code page', async ({ page }) => {
+  test('should display team selector in code mode', async ({ page }) => {
     const teamSelector = page.locator('[data-testid="team-selector"], [role="combobox"], select')
 
     const count = await teamSelector.count()
@@ -270,7 +270,7 @@ test.describe('Code Page - Enhanced Tests', () => {
   })
 })
 
-test.describe('Code Page - Workbench Tests', () => {
+test.describe('Code Mode - Workbench Tests', () => {
   let apiClient: ApiClient
 
   test.beforeEach(async ({ request }) => {
@@ -281,8 +281,8 @@ test.describe('Code Page - Workbench Tests', () => {
   })
 
   test('should display workbench when task has workbench data', async ({ page }) => {
-    // Navigate to code page with a task that has workbench data
-    await page.goto('/code')
+    // Navigate to code mode with a task that has workbench data
+    await page.goto('/chat?agent=code')
     await page.waitForLoadState('domcontentloaded')
 
     // Check if any task exists
@@ -302,7 +302,7 @@ test.describe('Code Page - Workbench Tests', () => {
   })
 
   test('should toggle workbench visibility', async ({ page }) => {
-    await page.goto('/code')
+    await page.goto('/chat?agent=code')
     await page.waitForLoadState('domcontentloaded')
 
     const taskItem = page.locator('[data-testid="task-item"], .task-item').first()
