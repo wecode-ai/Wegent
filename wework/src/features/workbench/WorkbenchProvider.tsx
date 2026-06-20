@@ -81,6 +81,7 @@ import type {
 } from '@/types/workbench'
 import {
   createSocketClient,
+  isGenericTaskStatusError,
   normalizeWorkbenchBlockStatus,
   reduceWorkbenchMessages,
 } from '@wegent/chat-core'
@@ -547,6 +548,20 @@ function getSubtaskAttachments(subtask: Subtask): Attachment[] | undefined {
   return attachments.length > 0 ? attachments : undefined
 }
 
+function getSubtaskDisplayError(subtaskError?: string | null, resultError?: string): string | undefined {
+  const normalizedSubtaskError = subtaskError?.trim() ? subtaskError : undefined
+  const normalizedResultError = resultError?.trim() ? resultError : undefined
+
+  if (
+    normalizedResultError &&
+    (!normalizedSubtaskError || isGenericTaskStatusError(normalizedSubtaskError))
+  ) {
+    return normalizedResultError
+  }
+
+  return normalizedSubtaskError ?? normalizedResultError
+}
+
 function subtaskToMessage(subtask: Subtask): WorkbenchMessage {
   const result = getSubtaskResult(subtask.result)
   const role = subtask.role.toLowerCase() === 'user' ? 'user' : 'assistant'
@@ -565,7 +580,7 @@ function subtaskToMessage(subtask: Subtask): WorkbenchMessage {
     role,
     content: subtask.prompt || result?.value || '',
     status: subtask.status === 'FAILED' ? 'failed' : 'done',
-    error: subtask.error_message || result?.error,
+    error: getSubtaskDisplayError(subtask.error_message, result?.error),
     errorType: result?.errorType,
     attachments: getSubtaskAttachments(subtask),
     blocks: blocks.length > 0 ? blocks : undefined,

@@ -686,10 +686,16 @@ class LocalRunner:
         if result == TaskStatus.CANCELLED and not ws_emitter.terminal_event_emitted:
             await ws_emitter.incomplete(reason="cancelled")
         elif result != TaskStatus.COMPLETED and not ws_emitter.terminal_event_emitted:
-            error_msg = execution_result.get(
-                "error", f"Task failed with status: {result.value}"
-            )
-            await ws_emitter.error(error_msg, "execution_error")
+            error_msg = execution_result.get("error")
+            if error_msg:
+                await ws_emitter.error(error_msg, "execution_error")
+            else:
+                logger.warning(
+                    "Task ended without a terminal event or explicit error: "
+                    "task_id=%s, status=%s",
+                    task_id,
+                    result.value,
+                )
 
         # Send heartbeat immediately to reflect freed slot after task completion
         try:

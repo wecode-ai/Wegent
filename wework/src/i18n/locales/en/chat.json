@@ -127,7 +127,8 @@
       },
       "generic_error": {
         "title": "Message generation failed",
-        "description": "The request could not be completed. Try again later, or view the error details."
+        "description": "The request could not be completed. Try again later, or view the error details.",
+        "description_without_details": "The request could not be completed. Try again later."
       }
     }
   }
