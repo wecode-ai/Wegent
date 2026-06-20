@@ -5,6 +5,26 @@
   "common": {
     "loading": "加载中..."
   },
+  "localCodex": {
+    "sidebarTitle": "Codex",
+    "sidebarEntry": "本地 Codex 会话",
+    "importAction": "打开本地 Codex 会话",
+    "dialogTitle": "本地 Codex 会话",
+    "deviceLabel": "本地设备",
+    "deviceOnline": "在线",
+    "threadCount": "{{count}} 个会话",
+    "empty": "没有发现本地 Codex 会话",
+    "offline": "需要在线的本地设备",
+    "bind": "接管",
+    "openExisting": "打开",
+    "running": "运行中",
+    "unmatchedProject": "未匹配项目",
+    "updatedAt": "更新于 {{time}}",
+    "threadMissing": "这个 Codex 会话在当前设备上不存在",
+    "loadFailed": "无法读取本地 Codex 会话",
+    "threadUnavailable": "已归档或运行中的 Codex 会话暂不能接管",
+    "indicator": "本地 Codex 会话"
+  },
   "workbench": {
     "brand": "Wework",
     "new_chat": "新对话",
@@ -184,6 +204,7 @@
     "collapse_input": "折叠输入框",
     "fullscreen_input_title": "编辑消息",
     "send_message": "发送消息",
+    "sending_message": "正在发送...",
     "custom_mode": "自定义",
     "model_selector": "模型选择",
     "model_family": "模型",

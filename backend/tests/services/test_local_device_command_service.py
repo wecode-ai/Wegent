@@ -249,6 +249,9 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     read_runtime_auth_file_definition = resolve_local_device_command(
         "read_runtime_auth_file", settings.LOCAL_DEVICE_COMMANDS
     )
+    codex_threads_list_definition = resolve_local_device_command(
+        "codex_threads_list", settings.LOCAL_DEVICE_COMMANDS
+    )
 
     assert pwd_definition is not None
     assert pwd_definition.command == "pwd"
@@ -352,6 +355,242 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
         "WEGENT_RUNTIME_CONFIG_TARGET_PATH" in read_runtime_auth_file_definition.command
     )
     assert read_runtime_auth_file_definition.post_processor == "json"
+    assert codex_threads_list_definition is not None
+    assert "session_index.jsonl" in codex_threads_list_definition.command
+    assert "transcript" not in codex_threads_list_definition.command
+    assert codex_threads_list_definition.post_processor == "json"
+
+
+def test_codex_threads_list_command_parses_session_index_only(tmp_path):
+    """codex_threads_list should expose recent thread summaries without transcripts."""
+    from app.services.device.command_registry import CODEX_THREADS_LIST_SCRIPT
+
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
+    (codex_home / "session_index.jsonl").write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "id": "018f2d6b-8c7a-7abc-9def-0123456789ab",
+                        "title": "Older",
+                        "updatedAt": "2026-06-19T01:00:00Z",
+                        "transcript": "hidden",
+                    }
+                ),
+                json.dumps(
+                    {
+                        "thread_id": "018f2d6b-8c7a-7abc-9def-0123456789ac",
+                        "title": "Newer",
+                        "updated_at": "2026-06-20T01:00:00Z",
+                        "cwd": "/tmp/project",
+                        "running": True,
+                    }
+                ),
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (codex_home / "transcript.jsonl").write_text("must not be read", encoding="utf-8")
+
+    result = subprocess.run(
+        ["python3", "-c", CODEX_THREADS_LIST_SCRIPT],
+        env={
+            **os.environ,
+            "CODEX_HOME": str(codex_home),
+            "WEGENT_CODEX_THREADS_LIMIT": "1000",
+        },
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(result.stdout)
+    assert [thread["title"] for thread in payload["threads"]] == ["Newer", "Older"]
+    assert len(payload["threads"]) == 2
+    assert set(payload["threads"][0]) == {
+        "threadId",
+        "title",
+        "cwd",
+        "updatedAt",
+        "archived",
+        "running",
+    }
+    assert payload["threads"][0]["threadId"] == "018f2d6b-8c7a-7abc-9def-0123456789ac"
+    assert payload["threads"][0]["cwd"] == "/tmp/project"
+    assert payload["threads"][0]["archived"] is False
+    assert payload["threads"][0]["running"] is True
+    assert "transcript" not in json.dumps(payload)
+
+
+def test_codex_threads_list_command_reads_cwd_from_session_metadata(tmp_path):
+    """codex_threads_list should enrich index-only records from Codex session files."""
+    from app.services.device.command_registry import CODEX_THREADS_LIST_SCRIPT
+
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
+    thread_id = "018f2d6b-8c7a-7abc-9def-0123456789ad"
+    (codex_home / "session_index.jsonl").write_text(
+        json.dumps(
+            {
+                "id": thread_id,
+                "thread_name": "Thread from index",
+                "updated_at": "2026-06-20T05:52:31Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+    session_dir = codex_home / "sessions" / "2026" / "06" / "20"
+    session_dir.mkdir(parents=True)
+    (session_dir / f"rollout-2026-06-20T13-52-19-{thread_id}.jsonl").write_text(
+        json.dumps(
+            {
+                "type": "session_meta",
+                "payload": {
+                    "id": thread_id,
+                    "cwd": "/tmp/project-from-session",
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        ["python3", "-c", CODEX_THREADS_LIST_SCRIPT],
+        env={
+            **os.environ,
+            "CODEX_HOME": str(codex_home),
+            "WEGENT_CODEX_THREADS_LIMIT": "100",
+        },
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(result.stdout)
+    assert payload["threads"][0]["threadId"] == thread_id
+    assert payload["threads"][0]["title"] == "Thread from index"
+    assert payload["threads"][0]["cwd"] == "/tmp/project-from-session"
+
+
+def test_codex_threads_list_command_filters_subagent_threads(tmp_path):
+    """codex_threads_list should not expose Codex subagent sessions."""
+    from app.services.device.command_registry import CODEX_THREADS_LIST_SCRIPT
+
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
+    user_thread_id = "018f2d6b-8c7a-7abc-9def-0123456789ae"
+    subagent_thread_id = "018f2d6b-8c7a-7abc-9def-0123456789af"
+    (codex_home / "session_index.jsonl").write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "id": user_thread_id,
+                        "thread_name": "User thread",
+                        "updated_at": "2026-06-20T05:52:31Z",
+                    }
+                ),
+                json.dumps(
+                    {
+                        "id": subagent_thread_id,
+                        "thread_name": "Subagent thread",
+                        "updated_at": "2026-06-20T05:53:31Z",
+                    }
+                ),
+            ]
+        ),
+        encoding="utf-8",
+    )
+    session_dir = codex_home / "sessions" / "2026" / "06" / "20"
+    session_dir.mkdir(parents=True)
+    (session_dir / f"rollout-2026-06-20T13-52-19-{user_thread_id}.jsonl").write_text(
+        json.dumps(
+            {
+                "type": "session_meta",
+                "payload": {
+                    "id": user_thread_id,
+                    "cwd": "/tmp/user-project",
+                    "thread_source": "user",
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (
+        session_dir / f"rollout-2026-06-20T13-53-19-{subagent_thread_id}.jsonl"
+    ).write_text(
+        json.dumps(
+            {
+                "type": "session_meta",
+                "payload": {
+                    "id": subagent_thread_id,
+                    "cwd": "/tmp/subagent-project",
+                    "thread_source": "subagent",
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        ["python3", "-c", CODEX_THREADS_LIST_SCRIPT],
+        env={
+            **os.environ,
+            "CODEX_HOME": str(codex_home),
+            "WEGENT_CODEX_THREADS_LIMIT": "100",
+        },
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(result.stdout)
+    assert [thread["threadId"] for thread in payload["threads"]] == [user_thread_id]
+    assert payload["threads"][0]["cwd"] == "/tmp/user-project"
+
+
+def test_codex_threads_list_command_stops_after_limit(tmp_path):
+    """codex_threads_list should avoid processing unbounded session indexes."""
+    from app.services.device.command_registry import CODEX_THREADS_LIST_SCRIPT
+
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
+    records = [
+        json.dumps(
+            {
+                "id": f"018f2d6b-8c7a-7abc-9def-0123456789{i:02x}",
+                "title": f"Thread {i}",
+                "updatedAt": f"2026-06-20T00:{i:02d}:00Z",
+            }
+        )
+        for i in range(3)
+    ]
+    (codex_home / "session_index.jsonl").write_text(
+        "\n".join(records),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        ["python3", "-c", CODEX_THREADS_LIST_SCRIPT],
+        env={
+            **os.environ,
+            "CODEX_HOME": str(codex_home),
+            "WEGENT_CODEX_THREADS_LIMIT": "2",
+        },
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(result.stdout)
+    assert [thread["title"] for thread in payload["threads"]] == [
+        "Thread 2",
+        "Thread 1",
+    ]
 
 
 def test_local_device_command_registry_default_includes_workspace_file_commands():

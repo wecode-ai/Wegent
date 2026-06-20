@@ -17,6 +17,7 @@ from app.api.endpoints import (
     knowledge,
     knowledge_open,
     knowledge_transfer,
+    local_codex,
     local_executor,
     mcp_providers,
     oidc,
@@ -222,6 +223,9 @@ api_router.include_router(installed_mcps.router, prefix="/mcps", tags=["mcps"])
 api_router.include_router(installed_plugins.router, prefix="/plugins", tags=["plugins"])
 api_router.include_router(
     local_executor.router, prefix="/local-executor", tags=["local-executor"]
+)
+api_router.include_router(
+    local_codex.router, prefix="/local-codex", tags=["local-codex"]
 )
 
 api_router.include_router(utils.router, prefix="/utils", tags=["utils"])

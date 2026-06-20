@@ -16,6 +16,9 @@ import type {
   CreateProjectRequest,
   GitBranch,
   GitRepoInfo,
+  LocalCodexBindRequest,
+  LocalCodexBindResponse,
+  LocalCodexThreadSummary,
   ProjectWithTasks,
   TaskDetail,
   TaskListResponse,
@@ -54,6 +57,13 @@ interface DesktopWorkbenchLayoutProps {
   onOpenTask: (taskId: number, projectId?: number) => void
   onSearchTasks?: (query: string) => Promise<TaskListResponse>
   onSearchTaskDetail?: (taskId: number) => Promise<TaskDetail>
+  onListLocalCodexThreads?: (
+    deviceId: string,
+    limit?: number,
+  ) => Promise<LocalCodexThreadSummary[]>
+  onBindLocalCodexThread?: (
+    request: LocalCodexBindRequest,
+  ) => Promise<LocalCodexBindResponse>
   onRememberExecutionDevice?: (deviceId: string) => void
   onRefreshDevices?: () => Promise<void>
   onUpgradeDevice?: (deviceId: string) => Promise<void>
@@ -139,6 +149,8 @@ export function DesktopWorkbenchLayout({
   onOpenTask,
   onSearchTasks,
   onSearchTaskDetail,
+  onListLocalCodexThreads,
+  onBindLocalCodexThread,
   onRememberExecutionDevice,
   onRefreshDevices,
   onUpgradeDevice = async () => {},
@@ -409,6 +421,8 @@ export function DesktopWorkbenchLayout({
           onOpenTask={onOpenTask}
           onSearchTasks={onSearchTasks}
           onSearchTaskDetail={onSearchTaskDetail}
+          onListLocalCodexThreads={onListLocalCodexThreads}
+          onBindLocalCodexThread={onBindLocalCodexThread}
           onRememberExecutionDevice={onRememberExecutionDevice}
           onOpenPlugins={onOpenPlugins}
           onRefreshDevices={onRefreshDevices}
@@ -468,6 +482,7 @@ export function DesktopWorkbenchLayout({
           projectWork={projectWorkWithCreation}
           input={state.input}
           isSending={state.isSending}
+          error={state.error}
           environmentInfo={environmentInfo}
           onRefreshEnvironmentInfo={refreshEnvironmentInfo}
           onCommitEnvironmentChanges={handleCommitEnvironmentChanges}

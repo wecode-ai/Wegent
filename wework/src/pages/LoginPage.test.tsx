@@ -1,17 +1,20 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { ApiError } from '@/api/http'
 import { AuthProvider } from '@/features/auth/AuthProvider'
 import { LoginPage } from './LoginPage'
 
 describe('LoginPage', () => {
   function createAuthApi(overrides: Record<string, unknown> = {}) {
     return {
-      getCurrentUser: vi.fn(),
+      getCurrentUser: vi.fn().mockRejectedValue(new ApiError('Unauthorized', 401)),
+      getCurrentUserWithoutAuthRedirect: vi
+        .fn()
+        .mockRejectedValue(new ApiError('Unauthorized', 401)),
       login: vi.fn(),
       logout: vi.fn(),
       loginWithOidcToken: vi.fn(),
-      getAdminPasswordSetupStatus: vi.fn().mockResolvedValue({ required: false }),
       setupAdminPassword: vi.fn(),
       ...overrides,
     }
@@ -63,10 +66,12 @@ describe('LoginPage', () => {
 
   test('sets the first-run admin password before showing normal login', async () => {
     const authApi = createAuthApi({
-      getAdminPasswordSetupStatus: vi.fn().mockResolvedValue({
-        required: true,
-        admin_username: 'root-admin',
-      }),
+      getCurrentUserWithoutAuthRedirect: vi.fn().mockRejectedValue(
+        new ApiError('ADMIN_PASSWORD_SETUP_REQUIRED', 400, 'ADMIN_PASSWORD_SETUP_REQUIRED', {
+          error_code: 'ADMIN_PASSWORD_SETUP_REQUIRED',
+          admin_username: 'root-admin',
+        })
+      ),
       setupAdminPassword: vi.fn().mockResolvedValue({ id: 1, user_name: 'admin', email: null }),
     })
 
@@ -77,6 +82,7 @@ describe('LoginPage', () => {
     )
 
     expect(await screen.findByTestId('admin-password-setup-form')).toBeInTheDocument()
+    expect(authApi.getCurrentUserWithoutAuthRedirect).toHaveBeenCalled()
     expect(screen.queryByTestId('login-form')).not.toBeInTheDocument()
     expect(screen.getByTestId('admin-username-value')).toHaveTextContent('root-admin')
 
@@ -90,10 +96,12 @@ describe('LoginPage', () => {
     expect(authApi.login).not.toHaveBeenCalled()
   })
 
-  test('blocks password and OIDC login when setup status cannot be confirmed', async () => {
+  test('continues to normal login when anonymous setup handshake is unavailable', async () => {
     const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     const authApi = createAuthApi({
-      getAdminPasswordSetupStatus: vi.fn().mockRejectedValue(new Error('network unavailable')),
+      getCurrentUserWithoutAuthRedirect: vi
+        .fn()
+        .mockRejectedValue(new Error('network unavailable')),
     })
 
     render(
@@ -102,10 +110,8 @@ describe('LoginPage', () => {
       </AuthProvider>
     )
 
-    expect(await screen.findByTestId('login-setup-status-error')).toBeInTheDocument()
-    expect(screen.queryByTestId('login-form')).not.toBeInTheDocument()
+    expect(await screen.findByTestId('login-form')).toBeInTheDocument()
     expect(screen.queryByTestId('admin-password-setup-form')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('oidc-login-button')).not.toBeInTheDocument()
 
     consoleErrorSpy.mockRestore()
   })

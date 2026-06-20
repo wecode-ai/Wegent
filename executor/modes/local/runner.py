@@ -54,6 +54,32 @@ class RunningTaskInfo:
     cancel_requested: bool = False
 
 
+class TerminalEventTrackingEmitter:
+    """Proxy an emitter and track whether a terminal event was emitted."""
+
+    def __init__(self, wrapped: Any):
+        self._wrapped = wrapped
+        self.terminal_event_emitted = False
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._wrapped, name)
+
+    async def done(self, *args: Any, **kwargs: Any) -> Any:
+        result = await self._wrapped.done(*args, **kwargs)
+        self.terminal_event_emitted = True
+        return result
+
+    async def incomplete(self, *args: Any, **kwargs: Any) -> Any:
+        result = await self._wrapped.incomplete(*args, **kwargs)
+        self.terminal_event_emitted = True
+        return result
+
+    async def error(self, *args: Any, **kwargs: Any) -> Any:
+        result = await self._wrapped.error(*args, **kwargs)
+        self.terminal_event_emitted = True
+        return result
+
+
 class LocalRunner:
     """Main runner for local executor mode.
 
@@ -582,7 +608,9 @@ class LocalRunner:
         from executor.agents.factory import AgentFactory
 
         # Create WebSocket emitter for local mode
-        ws_emitter = self._create_emitter(task_id, subtask_id)
+        ws_emitter = TerminalEventTrackingEmitter(
+            self._create_emitter(task_id, subtask_id)
+        )
 
         info = self._running_tasks.get(task_id)
         if info and info.cancel_requested:
@@ -655,9 +683,9 @@ class LocalRunner:
         # event with correct content via emitter -> WebSocket transport.
         # Sending another response.completed here would overwrite the DB with
         # empty content (since get_current_state() doesn't include "value").
-        if result == TaskStatus.CANCELLED:
+        if result == TaskStatus.CANCELLED and not ws_emitter.terminal_event_emitted:
             await ws_emitter.incomplete(reason="cancelled")
-        elif result != TaskStatus.COMPLETED:
+        elif result != TaskStatus.COMPLETED and not ws_emitter.terminal_event_emitted:
             error_msg = execution_result.get(
                 "error", f"Task failed with status: {result.value}"
             )
