@@ -7,6 +7,8 @@
 import logging
 from typing import Any
 
+from socketio.exceptions import ConnectionRefusedError
+
 
 def _is_missing_socket_session_error(error: Exception) -> bool:
     if isinstance(error, KeyError):

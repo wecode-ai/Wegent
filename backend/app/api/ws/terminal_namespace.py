@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Any, Dict, Optional
 
 import socketio
+from socketio.exceptions import ConnectionRefusedError
 
 from app.api.ws.connection_utils import enter_connect_room, save_connect_session
 from app.api.ws.decorators import trace_websocket_event

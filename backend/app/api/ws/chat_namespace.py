@@ -21,6 +21,7 @@ from datetime import datetime
 from typing import Any, Dict, Optional
 
 import socketio
+from socketio.exceptions import ConnectionRefusedError
 from sqlalchemy.orm import Session
 
 import app.stores.tasks as task_stores

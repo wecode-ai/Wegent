@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from socketio.exceptions import ConnectionRefusedError
 from sqlalchemy.exc import OperationalError
 
 from app.api.ws import device_namespace

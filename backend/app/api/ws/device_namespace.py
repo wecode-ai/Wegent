@@ -33,6 +33,7 @@ from datetime import datetime
 from typing import Any, Dict, Generator, Optional
 
 import socketio
+from socketio.exceptions import ConnectionRefusedError
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 

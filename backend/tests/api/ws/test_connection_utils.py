@@ -5,6 +5,7 @@
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from socketio.exceptions import ConnectionRefusedError
 
 from app.api.ws.connection_utils import enter_connect_room, save_connect_session
 

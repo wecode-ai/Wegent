@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from socketio.exceptions import ConnectionRefusedError
 
 from app.api.ws import chat_namespace, device_namespace
 from app.api.ws.chat_namespace import ChatNamespace
