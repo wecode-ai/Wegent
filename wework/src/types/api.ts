@@ -72,7 +72,7 @@ export interface GitBranch {
   default?: boolean
 }
 
-export type ModelType = 'public' | 'user' | 'group'
+export type ModelType = 'public' | 'user' | 'group' | 'runtime'
 
 export interface ModelSelectionConfig {
   modelName: string
@@ -275,6 +275,35 @@ export interface BindTaskIMSessionsResponse {
   task_id: number
   bound_session_ids: number[]
   notified_count: number
+}
+
+export interface LocalCodexThreadSummary {
+  threadId: string
+  title: string
+  cwd?: string
+  updatedAt?: string
+  archived?: boolean
+  running?: boolean
+}
+
+export interface LocalCodexThreadListResponse {
+  threads: LocalCodexThreadSummary[]
+}
+
+export interface LocalCodexBindRequest {
+  deviceId: string
+  threadId: string
+  teamId?: number
+  title?: string
+  cwd?: string
+}
+
+export interface LocalCodexBindResponse {
+  taskId: number
+  task: Task
+  created: boolean
+  threadId: string
+  deviceId: string
 }
 
 export interface ArchivedTask {

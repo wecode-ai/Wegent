@@ -24,8 +24,13 @@ interface UseWorkbenchModelsOptions {
   locked: boolean
   selectionConfig?: ModelSelectionConfig | null
   compatibilityConfig?: ModelSelectionConfig | null
+  defaultSelectionConfig?: (models: UnifiedModel[]) => ModelSelectionConfig | null
   selectionReady?: boolean
   onSelectionChange?: (selection: ModelSelectionConfig) => void
+  onSelectionBlocked?: (
+    reason: ModelCompatibilityDisabledReason | 'locked',
+    model?: UnifiedModel | null
+  ) => void
 }
 
 function findConfiguredModel(
@@ -42,10 +47,7 @@ function findConfiguredModel(
   )
 }
 
-function toSelectionConfig(
-  model: UnifiedModel,
-  options: ModelOptions
-): ModelSelectionConfig {
+function toSelectionConfig(model: UnifiedModel, options: ModelOptions): ModelSelectionConfig {
   return {
     modelName: model.name,
     modelType: model.type,
@@ -94,9 +96,7 @@ function getCompatibilityDisabledReason(
   const nextFamily = getModelCompatibilityFamily(nextModel)
   if (!nextFamily) return 'missing_target_runtime_family'
 
-  return areModelsProtocolCompatible(currentModel, nextModel)
-    ? null
-    : 'runtime_family_mismatch'
+  return areModelsProtocolCompatible(currentModel, nextModel) ? null : 'runtime_family_mismatch'
 }
 
 function annotateModelsByCompatibility(
@@ -121,49 +121,48 @@ export function useWorkbenchModels({
   locked,
   selectionConfig,
   compatibilityConfig,
+  defaultSelectionConfig,
   selectionReady = true,
   onSelectionChange,
+  onSelectionBlocked,
 }: UseWorkbenchModelsOptions) {
   const [availableModels, setAvailableModels] = useState<UnifiedModel[]>([])
   const models = useMemo(
     () => annotateModelsByCompatibility(availableModels, compatibilityConfig),
-    [availableModels, compatibilityConfig],
+    [availableModels, compatibilityConfig]
   )
   const [selectedModel, setSelectedModelState] = useState<UnifiedModel | null>(null)
   const [selectedModelOptions, setSelectedModelOptions] = useState<ModelOptions>({})
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<Error | null>(null)
   const [restoredSelectionKey, setRestoredSelectionKey] = useState<string | null>(null)
+  const effectiveSelectionConfig = useMemo(() => {
+    if (selectionConfig?.modelName) {
+      return selectionConfig
+    }
+    return defaultSelectionConfig?.(models) ?? selectionConfig ?? null
+  }, [defaultSelectionConfig, models, selectionConfig])
   const selectionKey = useMemo(
-    () => getSelectionKey(models, selectionConfig),
-    [models, selectionConfig],
+    () => getSelectionKey(models, effectiveSelectionConfig),
+    [models, effectiveSelectionConfig]
   )
-  const selectionMatchesConfig =
-    Boolean(
-      selectionConfig?.modelName &&
-        selectedModel &&
-        selectedModel.name === selectionConfig.modelName &&
-        (!selectionConfig.modelType || selectedModel.type === selectionConfig.modelType)
-    )
+  const selectionMatchesConfig = Boolean(
+    effectiveSelectionConfig?.modelName &&
+    selectedModel &&
+    selectedModel.name === effectiveSelectionConfig.modelName &&
+    (!effectiveSelectionConfig.modelType ||
+      selectedModel.type === effectiveSelectionConfig.modelType)
+  )
   const isSelectionReady = useMemo(
     () =>
       selectionReady &&
       !isLoading &&
       (restoredSelectionKey === selectionKey || selectionMatchesConfig),
-    [
-      isLoading,
-      restoredSelectionKey,
-      selectionMatchesConfig,
-      selectionKey,
-      selectionReady,
-    ],
+    [isLoading, restoredSelectionKey, selectionMatchesConfig, selectionKey, selectionReady]
   )
 
   const restoreSelection = useCallback(
-    (
-      availableModels: UnifiedModel[],
-      nextSelectionConfig?: ModelSelectionConfig | null
-    ) => {
+    (availableModels: UnifiedModel[], nextSelectionConfig?: ModelSelectionConfig | null) => {
       const model = findConfiguredModel(availableModels, nextSelectionConfig)
       const nextOptions = model
         ? normalizeModelOptions(model, nextSelectionConfig?.options ?? {})
@@ -215,7 +214,7 @@ export function useWorkbenchModels({
     async function syncSelection() {
       await Promise.resolve()
       if (!cancelled) {
-        restoreSelection(models, selectionConfig)
+        restoreSelection(models, effectiveSelectionConfig)
         setRestoredSelectionKey(selectionKey)
       }
     }
@@ -224,11 +223,18 @@ export function useWorkbenchModels({
     return () => {
       cancelled = true
     }
-  }, [models, restoreSelection, selectionConfig, selectionKey, selectionReady])
+  }, [models, restoreSelection, effectiveSelectionConfig, selectionKey, selectionReady])
 
   const setSelectedModel = useCallback(
     (model: UnifiedModel | null) => {
-      if (locked || model?.compatibilityDisabled) return
+      if (locked) {
+        onSelectionBlocked?.('locked', model)
+        return
+      }
+      if (model?.compatibilityDisabled) {
+        onSelectionBlocked?.(model.compatibilityDisabledReason ?? 'runtime_family_mismatch', model)
+        return
+      }
       const currentFamily = selectedModel ? inferModelFamily(selectedModel) : null
       const nextFamily = model ? inferModelFamily(model) : null
       setSelectedModelState(model)
@@ -243,7 +249,7 @@ export function useWorkbenchModels({
         return nextOptions
       })
     },
-    [locked, onSelectionChange, selectedModel]
+    [locked, onSelectionBlocked, onSelectionChange, selectedModel]
   )
 
   const setSelectedModelOption = useCallback(

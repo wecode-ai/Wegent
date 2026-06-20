@@ -15,7 +15,11 @@ import {
   getActiveWorkbenchDeviceId,
   isWorkbenchDeviceOnline,
 } from '@/lib/workbench-device'
-import { isDeviceBelowWeWorkVersion, isWeWorkCompatibleDevice } from '@/lib/device-capabilities'
+import {
+  WEWORK_MIN_EXECUTOR_VERSION,
+  isDeviceBelowWeWorkVersion,
+  isWeWorkCompatibleDevice,
+} from '@/lib/device-capabilities'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
 import type {
   ArchivedTaskListResponse,
@@ -307,7 +311,11 @@ export function MobileWorkbenchLayout({
     onCheckoutBranch:
       activeConversationProject && onCheckoutEnvironmentBranch && workspaceTarget
         ? async branchName => {
-            await onCheckoutEnvironmentBranch(activeConversationProject, branchName, workspaceTarget)
+            await onCheckoutEnvironmentBranch(
+              activeConversationProject,
+              branchName,
+              workspaceTarget
+            )
             await refreshEnvironmentInfo()
           }
         : undefined,
@@ -340,6 +348,20 @@ export function MobileWorkbenchLayout({
     activeDeviceUnavailable ||
     activeDeviceVersionUnsupported ||
     noStandaloneCompatibleDevice
+  const composerDisabledReason = state.isSending
+    ? t('workbench.sending_message')
+    : activeDeviceUnavailable
+      ? t('workbench.device_status_active_unavailable', {
+          device: activeDevice?.name || activeDeviceId || t('workbench.project_device'),
+        })
+      : activeDeviceVersionUnsupported
+        ? t('workbench.device_status_active_upgrade_required', {
+            device: activeDevice?.name || activeDeviceId || t('workbench.project_device'),
+            version: WEWORK_MIN_EXECUTOR_VERSION,
+          })
+        : noStandaloneCompatibleDevice
+          ? t('workbench.device_status_no_online_device')
+          : undefined
 
   useEffect(() => {
     const handlePopState = () => {
@@ -498,6 +520,7 @@ export function MobileWorkbenchLayout({
                     disabled={false}
                     onSelectModel={effectiveProjectChat.setSelectedModel}
                     onSelectModelOption={effectiveProjectChat.setSelectedModelOption}
+                    onBlockedModelSelect={effectiveProjectChat.onBlockedModelSelect}
                     menuPlacement="below"
                     buttonClassName="max-w-[min(14rem,calc(100vw-6rem))] bg-surface px-3"
                     menuClassName="left-0 right-auto w-[min(34rem,calc(100vw-2rem))]"
@@ -559,6 +582,8 @@ export function MobileWorkbenchLayout({
                   onChange={onInputChange}
                   onSubmit={onSend}
                   disabled={composerDisabled}
+                  error={state.error}
+                  disabledReason={composerDisabledReason}
                   placeholder={t('workbench.mobile_input_placeholder', '询问 Wework')}
                   projectChat={projectChatWithModelSelectorSignal}
                   projectWork={projectWork}
@@ -601,6 +626,7 @@ export function MobileWorkbenchLayout({
                     disabled={false}
                     onSelectModel={effectiveProjectChat.setSelectedModel}
                     onSelectModelOption={effectiveProjectChat.setSelectedModelOption}
+                    onBlockedModelSelect={effectiveProjectChat.onBlockedModelSelect}
                     menuPlacement="below"
                     buttonClassName="max-w-[min(14rem,calc(100vw-6rem))] bg-surface px-3"
                     menuClassName="left-0 right-auto w-[min(34rem,calc(100vw-2rem))]"
@@ -644,6 +670,8 @@ export function MobileWorkbenchLayout({
                 onChange={onInputChange}
                 onSubmit={onSend}
                 disabled={composerDisabled}
+                error={state.error}
+                disabledReason={composerDisabledReason}
                 placeholder={t('workbench.mobile_input_placeholder', '询问 Wework')}
                 projectChat={projectChatWithModelSelectorSignal}
                 projectWork={projectWork}

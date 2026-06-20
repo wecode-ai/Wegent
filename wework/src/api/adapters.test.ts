@@ -224,7 +224,7 @@ describe('REST adapters', () => {
     await createModelApi(client).listModels()
 
     expect(client.get).toHaveBeenCalledWith(
-      '/models/unified?include_config=true&scope=all&model_category_type=llm'
+      '/models/unified?include_config=true&scope=all&model_category_type=llm&client_origin=wework'
     )
   })
 

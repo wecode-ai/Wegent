@@ -19,6 +19,7 @@ import { createTaskApi } from '@/api/tasks'
 import { createTeamApi } from '@/api/teams'
 import { createUserApi } from '@/api/users'
 import { getToken } from '@/api/auth'
+import { createLocalCodexApi } from '@/api/localCodex'
 import { getRuntimeConfig, stripAppBasePath } from '@/config/runtime'
 import i18n from '@/i18n'
 import { createChatStream } from '@/stream/chatStream'
@@ -30,6 +31,7 @@ import {
   isDeviceBelowWeWorkVersion,
   isWeWorkCompatibleDevice,
 } from '@/lib/device-capabilities'
+import { getModelCompatibilityFamily } from '@/lib/model-ui'
 import { buildTaskRoute, navigateTo, parseTaskRoute } from '@/lib/navigation'
 import { supportsGitWorktreeExecution } from '@/lib/projectClassification'
 import {
@@ -51,7 +53,11 @@ import type {
   GitRepoInfo,
   DeviceInfo,
   IMPrivateSessionListResponse,
+  LocalCodexBindRequest,
+  LocalCodexBindResponse,
+  LocalCodexThreadSummary,
   LocalDeviceSkill,
+  ModelCompatibilityDisabledReason,
   ModelOptions,
   ModelSelectionConfig,
   ProjectExecutionMode,
@@ -90,6 +96,11 @@ import { initialWorkbenchState, workbenchReducer } from './workbenchReducer'
 import { WorkbenchContext } from './useWorkbench'
 
 const WEWORK_CLIENT_ORIGIN = 'wework'
+const LOCAL_CODEX_THREAD_WORKSPACE_SOURCE = 'local_codex_thread'
+const CODEX_RUNTIME_MODEL_NAME = 'codex-gpt-5.5'
+const OPENAI_RESPONSES_RUNTIME_FAMILY = 'openai.openai-responses'
+const OPENAI_RESPONSES_PROTOCOL = 'openai-responses'
+const RESPONSES_API_FORMAT = 'responses'
 const LOCAL_SKILLS_CACHE_TTL_MS = 60_000
 const STANDALONE_PROJECT_ID = 0
 const EMPTY_MESSAGE_TASK_TITLE = '新对话'
@@ -103,6 +114,27 @@ const UPGRADE_STATE_CLEAR_DELAY_MS = 5000
 const UPGRADE_REFRESH_INTERVAL_MS = 3000
 const DEVICE_LIST_CACHE_KEY = 'wework.workbench.lastNonEmptyDevices'
 const DEVICE_LIST_CACHE_TTL_MS = 5 * 60 * 1000
+
+function getModelLabel(model?: UnifiedModel | null): string {
+  return model?.displayName || model?.modelId || model?.name || '该模型'
+}
+
+function getBlockedModelSelectionMessage(
+  reason: ModelCompatibilityDisabledReason | 'locked',
+  model?: UnifiedModel | null
+): string {
+  const modelLabel = getModelLabel(model)
+  if (reason === 'locked') {
+    return '当前任务的模型选择已锁定'
+  }
+  if (reason === 'missing_current_runtime_family') {
+    return '当前对话缺少模型运行时信息，不能切换模型'
+  }
+  if (reason === 'missing_target_runtime_family') {
+    return `${modelLabel} 缺少运行时信息，不能用于当前对话`
+  }
+  return `${modelLabel} 与当前对话的模型协议不兼容，请新建对话后使用该模型`
+}
 
 function readCachedDeviceList(): DeviceInfo[] {
   try {
@@ -193,6 +225,7 @@ export interface WorkbenchServices {
     | 'listSkills'
   >
   imSessionApi?: ReturnType<typeof createImSessionApi>
+  localCodexApi?: ReturnType<typeof createLocalCodexApi>
   userApi?: ReturnType<typeof createUserApi>
   chatStream: ReturnType<typeof createChatStream>
 }
@@ -217,6 +250,7 @@ export interface WorkbenchContextValue {
     isAttachmentReadyToSend: boolean
     setSelectedModel: (model: UnifiedModel | null) => void
     setSelectedModelOption: (optionId: string, value: string) => void
+    onBlockedModelSelect: (model: UnifiedModel, message?: string) => void
     setSelectedSkills: (skills: SkillRef[]) => void
     toggleSkill: (skill: SkillRef) => void
     handleFileSelect: (files: File | File[]) => Promise<void>
@@ -244,6 +278,8 @@ export interface WorkbenchContextValue {
     taskId: number,
     sessionIds: number[]
   ) => Promise<BindTaskIMSessionsResponse>
+  listLocalCodexThreads: (deviceId: string, limit?: number) => Promise<LocalCodexThreadSummary[]>
+  bindLocalCodexThread: (request: LocalCodexBindRequest) => Promise<LocalCodexBindResponse>
   rememberExecutionDevice: (deviceId: string) => void
   refreshWorkLists: () => Promise<void>
   refreshDevices: () => Promise<void>
@@ -337,6 +373,7 @@ function createDefaultServices(): WorkbenchServices {
     taskApi: createTaskApi(client),
     deviceApi: createDeviceApi(client),
     imSessionApi: createImSessionApi(client),
+    localCodexApi: createLocalCodexApi(client),
     userApi: createUserApi(client),
     chatStream: createChatStream(socketClient.socket),
   }
@@ -636,6 +673,41 @@ function getNewChatModelSelection(user: User | null): ModelSelectionConfig | nul
   return user?.preferences?.wework_new_chat_model_selection ?? null
 }
 
+function isLocalCodexThreadTask(task: Task | null): boolean {
+  return task?.execution_workspace_source === LOCAL_CODEX_THREAD_WORKSPACE_SOURCE
+}
+
+function getStringConfigValue(
+  config: Record<string, unknown> | null | undefined,
+  key: string
+): string {
+  const value = config?.[key]
+  return typeof value === 'string' ? value.trim().toLowerCase() : ''
+}
+
+function isCodexCompatibleModel(model: UnifiedModel): boolean {
+  if (model.name === CODEX_RUNTIME_MODEL_NAME) return true
+  return (
+    getModelCompatibilityFamily(model) === OPENAI_RESPONSES_RUNTIME_FAMILY ||
+    getStringConfigValue(model.config, 'protocol') === OPENAI_RESPONSES_PROTOCOL ||
+    getStringConfigValue(model.config, 'apiFormat') === RESPONSES_API_FORMAT ||
+    getStringConfigValue(model.config, 'api_format') === RESPONSES_API_FORMAT
+  )
+}
+
+function getLocalCodexDefaultModelSelection(models: UnifiedModel[]): ModelSelectionConfig | null {
+  const availableModels = models.filter(model => !model.compatibilityDisabled)
+  const model =
+    availableModels.find(
+      item => item.name === CODEX_RUNTIME_MODEL_NAME && item.type === 'runtime'
+    ) ?? availableModels.find(isCodexCompatibleModel)
+  if (!model) return null
+  return {
+    modelName: model.name,
+    modelType: model.type,
+  }
+}
+
 function resolveAutomaticModel(models: UnifiedModel[]): UnifiedModel | null {
   return models.find(model => !model.compatibilityDisabled) ?? null
 }
@@ -824,12 +896,21 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
       setProjectWorktreeBaseBranchState(null)
     }
   }, [projectExecutionMode])
-  const modelSelectionConfig = useMemo(
-    () => getTaskModelSelection(state.currentTask) ?? getNewChatModelSelection(currentUser) ?? null,
-    [currentUser, state.currentTask]
-  )
+  const modelSelectionConfig = useMemo(() => {
+    const taskSelection = getTaskModelSelection(state.currentTask)
+    if (taskSelection) return taskSelection
+    if (isLocalCodexThreadTask(state.currentTask)) return null
+    return getNewChatModelSelection(currentUser) ?? null
+  }, [currentUser, state.currentTask])
   const modelCompatibilityConfig = useMemo(
     () => getTaskModelSelection(state.currentTask),
+    [state.currentTask]
+  )
+  const defaultModelSelectionConfig = useCallback(
+    (models: UnifiedModel[]) => {
+      if (!isLocalCodexThreadTask(state.currentTask)) return null
+      return getLocalCodexDefaultModelSelection(models)
+    },
     [state.currentTask]
   )
   const persistNewChatModelSelection = useCallback(
@@ -858,6 +939,25 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     },
     [currentUser.preferences, resolvedServices.userApi, state.currentTask]
   )
+  const handleBlockedModelSelection = useCallback(
+    (reason: ModelCompatibilityDisabledReason | 'locked', model?: UnifiedModel | null) => {
+      dispatch({
+        type: 'error_set',
+        error: getBlockedModelSelectionMessage(reason, model),
+      })
+    },
+    []
+  )
+  const handleBlockedModelSelect = useCallback((model: UnifiedModel, message?: string) => {
+    dispatch({
+      type: 'error_set',
+      error: message || getBlockedModelSelectionMessage('runtime_family_mismatch', model),
+    })
+  }, [])
+  const reportSendBlocked = useCallback((error: string, details?: Record<string, unknown>) => {
+    console.warn('[Wework] send blocked:', error, details ?? {})
+    dispatch({ type: 'error_set', error })
+  }, [])
   useEffect(() => {
     const handlePopState = () => setRoutePath(getCurrentAppPath())
     window.addEventListener('popstate', handlePopState)
@@ -869,8 +969,10 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     locked: false,
     selectionConfig: modelSelectionConfig,
     compatibilityConfig: modelCompatibilityConfig,
+    defaultSelectionConfig: defaultModelSelectionConfig,
     selectionReady: !state.isBootstrapping,
     onSelectionChange: persistNewChatModelSelection,
+    onSelectionBlocked: handleBlockedModelSelection,
   })
   const skillSelection = useWorkbenchSkills({
     api: resolvedServices.skillApi,
@@ -1375,10 +1477,12 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         resolvedProjectId === undefined
           ? (findProjectForTask(state.projects, detailTask) ?? undefined)
           : resolvedProjectId > 0
-            ? (state.projects.find(item => item.id === resolvedProjectId) ?? null)
+            ? (state.projects.find(item => item.id === resolvedProjectId) ?? undefined)
             : null
       if (project) {
         writeLastProjectId(user.id, project.id)
+      } else if (resolvedProjectId && resolvedProjectId > 0) {
+        writeLastProjectId(user.id, resolvedProjectId)
       }
       dispatch({
         type: 'task_opened',
@@ -1433,6 +1537,39 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
   const searchTaskDetail = useCallback(
     (taskId: number) => resolvedServices.taskApi.getTaskDetail(taskId),
     [resolvedServices]
+  )
+
+  const listLocalCodexThreads = useCallback(
+    (deviceId: string, limit?: number) =>
+      resolvedServices.localCodexApi?.listLocalCodexThreads(deviceId, limit) ?? Promise.resolve([]),
+    [resolvedServices]
+  )
+
+  const bindLocalCodexThread = useCallback(
+    async (request: LocalCodexBindRequest) => {
+      if (!resolvedServices.localCodexApi) {
+        throw new Error('Local Codex import is unavailable')
+      }
+
+      const bindRequest =
+        request.teamId !== undefined || !state.defaultTeam
+          ? request
+          : { ...request, teamId: state.defaultTeam.id }
+      const response = await resolvedServices.localCodexApi.bindLocalCodexThread({
+        ...bindRequest,
+      })
+      rememberExecutionDevice(request.deviceId)
+      await refreshWorkLists()
+      await openTask(response.taskId, response.task.project_id)
+      return response
+    },
+    [
+      openTask,
+      refreshWorkLists,
+      rememberExecutionDevice,
+      resolvedServices.localCodexApi,
+      state.defaultTeam,
+    ]
   )
 
   useEffect(() => {
@@ -1698,11 +1835,8 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
   )
 
   const commitEnvironmentChanges = useCallback(
-    (
-      project: ProjectWithTasks | null,
-      message: string,
-      workspaceTarget?: WorkspaceTarget | null
-    ) => commitProjectChanges(resolvedServices.deviceApi, project, message, workspaceTarget),
+    (project: ProjectWithTasks | null, message: string, workspaceTarget?: WorkspaceTarget | null) =>
+      commitProjectChanges(resolvedServices.deviceApi, project, message, workspaceTarget),
     [resolvedServices]
   )
 
@@ -1932,15 +2066,17 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     const trimmedMessage = state.input.trim()
     const hasAttachments = attachmentSelection.attachments.length > 0
     const hasCodeComments = codeCommentContexts.length > 0
-    if (!trimmedMessage && !hasAttachments && !hasCodeComments) return
+    if (!trimmedMessage && !hasAttachments && !hasCodeComments) {
+      reportSendBlocked('请输入内容或添加附件后再发送')
+      return
+    }
     const message =
       trimmedMessage || (hasCodeComments ? i18n.t('workbench.code_comment_fallback') : '')
     const payloadMessage = appendCodeCommentContexts(message, codeCommentContexts)
     const prepared = buildSendPayload(payloadMessage)
     if (!prepared) {
-      dispatch({
-        type: 'error_set',
-        error: 'Wework default team is not configured',
+      reportSendBlocked('Wework default team is not configured', {
+        hasDefaultTeam: Boolean(state.defaultTeam),
       })
       return
     }
@@ -1951,18 +2087,21 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         const status = activeDevice
           ? (DEVICE_STATUS_LABELS[activeDevice.status] ?? activeDevice.status)
           : '不可用'
-        dispatch({
-          type: 'error_set',
-          error: `${deviceName} ${status}，恢复在线后可继续对话`,
+        reportSendBlocked(`${deviceName} ${status}，恢复在线后可继续对话`, {
+          activeDeviceId: prepared.activeDeviceId,
+          deviceStatus: activeDevice?.status ?? null,
         })
         return
       }
       if (activeDevice && isDeviceBelowWeWorkVersion(activeDevice)) {
         const deviceName = getWorkbenchDeviceDisplayName(activeDevice, prepared.activeDeviceId)
-        dispatch({
-          type: 'error_set',
-          error: `${deviceName} 版本低于 ${WEWORK_MIN_EXECUTOR_VERSION}，升级后可继续对话`,
-        })
+        reportSendBlocked(
+          `${deviceName} 版本低于 ${WEWORK_MIN_EXECUTOR_VERSION}，升级后可继续对话`,
+          {
+            activeDeviceId: prepared.activeDeviceId,
+            executorVersion: activeDevice.executor_version ?? null,
+          }
+        )
         return
       }
     } else if (!state.currentProject && !state.currentTask) {
@@ -1970,9 +2109,8 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         device => device.status === 'online' && isWeWorkCompatibleDevice(device)
       )
       if (!hasOnlineCompatibleDevice) {
-        dispatch({
-          type: 'error_set',
-          error: `暂无满足 ${WEWORK_MIN_EXECUTOR_VERSION} 的在线设备，请连接或升级设备`,
+        reportSendBlocked(`暂无满足 ${WEWORK_MIN_EXECUTOR_VERSION} 的在线设备，请连接或升级设备`, {
+          deviceCount: state.devices.length,
         })
         return
       }
@@ -2017,10 +2155,12 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     clearCodeCommentContexts,
     codeCommentContexts,
     hasActiveTurn,
+    reportSendBlocked,
     sendPreparedMessage,
     state.devices,
     state.currentProject,
     state.currentTask,
+    state.defaultTeam,
     state.input,
   ])
 
@@ -2371,6 +2511,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
       isAttachmentReadyToSend: attachmentSelection.isAttachmentReadyToSend,
       setSelectedModel: modelSelection.setSelectedModel,
       setSelectedModelOption: modelSelection.setSelectedModelOption,
+      onBlockedModelSelect: handleBlockedModelSelect,
       setSelectedSkills: skillSelection.setSelectedSkills,
       toggleSkill: skillSelection.toggleSkill,
       handleFileSelect: attachmentSelection.handleFileSelect,
@@ -2389,6 +2530,8 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     searchTaskDetail,
     listImPrivateSessions,
     bindTaskToImSessions,
+    listLocalCodexThreads,
+    bindLocalCodexThread,
     rememberExecutionDevice,
     refreshWorkLists,
     refreshDevices,

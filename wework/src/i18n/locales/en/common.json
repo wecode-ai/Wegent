@@ -5,6 +5,26 @@
   "common": {
     "loading": "Loading..."
   },
+  "localCodex": {
+    "sidebarTitle": "Codex",
+    "sidebarEntry": "Local Codex sessions",
+    "importAction": "Open local Codex sessions",
+    "dialogTitle": "Local Codex sessions",
+    "deviceLabel": "Local device",
+    "deviceOnline": "Online",
+    "threadCount": "{{count}} sessions",
+    "empty": "No local Codex sessions found",
+    "offline": "An online local device is required",
+    "bind": "Take over",
+    "openExisting": "Open",
+    "running": "Running",
+    "unmatchedProject": "Unmatched project",
+    "updatedAt": "Updated {{time}}",
+    "threadMissing": "This Codex session does not exist on the current device",
+    "loadFailed": "Unable to read local Codex sessions",
+    "threadUnavailable": "Archived or running Codex sessions cannot be taken over yet",
+    "indicator": "Local Codex session"
+  },
   "workbench": {
     "brand": "Wework",
     "new_chat": "New chat",
@@ -198,6 +218,7 @@
     "collapse_input": "Collapse input",
     "fullscreen_input_title": "Edit message",
     "send_message": "Send message",
+    "sending_message": "Sending...",
     "custom_mode": "Custom",
     "model_selector": "Model selector",
     "model_family": "Model",

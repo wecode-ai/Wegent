@@ -29,6 +29,8 @@ export function WorkbenchPage() {
     openTask,
     searchTasks,
     searchTaskDetail,
+    listLocalCodexThreads,
+    bindLocalCodexThread,
     rememberExecutionDevice,
     refreshDevices,
     refreshWorkLists,
@@ -108,6 +110,8 @@ export function WorkbenchPage() {
       onOpenTask={openTask}
       onSearchTasks={searchTasks}
       onSearchTaskDetail={searchTaskDetail}
+      onListLocalCodexThreads={listLocalCodexThreads}
+      onBindLocalCodexThread={bindLocalCodexThread}
       onRememberExecutionDevice={rememberExecutionDevice}
       onRefreshDevices={refreshDevices}
       onUpgradeDevice={upgradeDevice}

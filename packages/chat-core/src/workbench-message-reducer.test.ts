@@ -205,6 +205,35 @@ describe('reduceWorkbenchMessages', () => {
     ])
   })
 
+  test('keeps a specific assistant error when a later generic task status error arrives', () => {
+    const state = reduceWorkbenchMessages(
+      reduceWorkbenchMessages([], {
+        type: 'assistant_started',
+        taskId: 1,
+        subtaskId: 9,
+      }),
+      {
+        type: 'assistant_error',
+        subtaskId: 9,
+        error: 'Codex CLI failed to resume thread: session not found',
+        errorType: 'execution_error',
+      }
+    )
+
+    const next = reduceWorkbenchMessages(state, {
+      type: 'assistant_error',
+      subtaskId: 9,
+      error: 'Task failed with status: FAILED',
+      errorType: 'execution_error',
+    })
+
+    expect(next[0]).toMatchObject({
+      status: 'failed',
+      error: 'Codex CLI failed to resume thread: session not found',
+      errorType: 'execution_error',
+    })
+  })
+
   test('preserves state for unknown runtime actions', () => {
     const state: WorkbenchMessage[] = [
       {

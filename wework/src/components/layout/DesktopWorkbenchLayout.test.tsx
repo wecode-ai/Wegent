@@ -2373,7 +2373,9 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     expect(screen.getByTestId('desktop-chat-scroll')).toHaveTextContent('hello')
-    expect(screen.queryByTestId('composer-disabled-reason')).not.toBeInTheDocument()
+    expect(screen.getByTestId('composer-disabled-reason')).toHaveTextContent(
+      'Offline Device 暂不可用，恢复后可继续对话'
+    )
     expect(screen.getByTestId('conversation-device-offline-banner')).toHaveTextContent(
       'Offline Device 已离线，恢复在线后可继续对话'
     )
@@ -2668,7 +2670,9 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
-    expect(screen.queryByTestId('composer-disabled-reason')).not.toBeInTheDocument()
+    expect(screen.getByTestId('composer-disabled-reason')).toHaveTextContent(
+      'Old Device 版本低于 1.8.5，升级后可继续对话'
+    )
     expect(screen.getByTestId('device-status-prompt')).toHaveTextContent(
       'Old Device 版本低于 1.8.5，升级后可继续对话'
     )

@@ -91,6 +91,8 @@ class TaskCreationParams:
     project_id: Optional[int] = None
     # Task-specific execution workspace metadata.
     execution_workspace: Optional[Dict[str, str]] = None
+    # Optional stable Task resource name for workflows requiring DB-level uniqueness.
+    task_name: Optional[str] = None
     # Client surface that owns the task
     client_origin: str = CLIENT_ORIGIN_FRONTEND
     # Task source label (e.g. chat_shell, responses_api)
@@ -297,6 +299,7 @@ def create_new_task(
         knowledge_base_id=params.knowledge_base_id,
     )
     task_execution = _build_task_execution(params.execution_workspace)
+    task_name = params.task_name or f"task-{new_task_id}"
 
     task_json = {
         "kind": "Task",
@@ -329,7 +332,7 @@ def create_new_task(
             "completedAt": None,
         },
         "metadata": {
-            "name": f"task-{new_task_id}",
+            "name": task_name,
             "namespace": "default",
             "labels": {
                 "type": "online",
@@ -365,7 +368,7 @@ def create_new_task(
     task_stores.task_store.update_fields(
         db,
         task=task,
-        name=f"task-{new_task_id}",
+        name=task_name,
         is_active=TaskResource.STATE_ACTIVE,
         is_group_chat=params.is_group_chat,
         client_origin=params.client_origin,

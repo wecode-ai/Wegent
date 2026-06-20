@@ -702,6 +702,260 @@ READ_RUNTIME_AUTH_FILE_COMMAND = (
     f"python3 -c {shlex.quote(READ_RUNTIME_AUTH_FILE_SCRIPT)}"
 )
 
+CODEX_THREADS_LIST_SCRIPT = """
+import json
+import os
+from datetime import datetime, timezone
+from pathlib import Path
+
+
+def parse_limit():
+    try:
+        value = int(os.environ.get("WEGENT_CODEX_THREADS_LIMIT", "100"))
+    except ValueError:
+        value = 100
+    return min(max(value, 1), 100)
+
+
+def parse_json_line(raw_line):
+    line = raw_line.decode("utf-8", errors="replace").strip()
+    if not line:
+        return None
+    try:
+        record = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+    return record if isinstance(record, dict) else None
+
+
+def iter_recent_json_lines(path, limit):
+    if not path.is_file():
+        return
+
+    try:
+        with path.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            position = handle.tell()
+            pending = b""
+            remaining = limit
+            while position > 0 and remaining > 0:
+                read_size = min(8192, position)
+                position -= read_size
+                handle.seek(position)
+                parts = (handle.read(read_size) + pending).split(b"\\n")
+                if position > 0:
+                    pending = parts[0]
+                    lines = parts[1:]
+                else:
+                    pending = b""
+                    lines = parts
+
+                for raw_line in reversed(lines):
+                    record = parse_json_line(raw_line)
+                    if record is None:
+                        continue
+                    yield record
+                    remaining -= 1
+                    if remaining <= 0:
+                        return
+
+            if pending and remaining > 0:
+                record = parse_json_line(pending)
+                if record is not None:
+                    yield record
+    except OSError:
+        return
+
+
+def first_text(record, *keys):
+    for key in keys:
+        value = record.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def first_nested_text(value, *keys):
+    if isinstance(value, dict):
+        for key in keys:
+            direct = value.get(key)
+            if isinstance(direct, str) and direct.strip():
+                return direct.strip()
+        for child in value.values():
+            found = first_nested_text(child, *keys)
+            if found:
+                return found
+    elif isinstance(value, list):
+        for child in value:
+            found = first_nested_text(child, *keys)
+            if found:
+                return found
+    return None
+
+
+def parse_datetime(value):
+    if not isinstance(value, str) or not value:
+        return None
+    normalized = value.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def iter_unique_matches(root, pattern, seen):
+    if not root.is_dir():
+        return
+    try:
+        matches = root.glob(pattern)
+    except OSError:
+        return
+    for path in matches:
+        try:
+            key = str(path.resolve())
+        except OSError:
+            key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        if path.is_file():
+            yield path
+
+
+def iter_session_files(codex_home, thread_id, updated_at):
+    seen = set()
+    sessions_root = codex_home / "sessions"
+    parsed = parse_datetime(updated_at)
+    date_values = []
+    if parsed:
+        date_values.append(parsed)
+        try:
+            local_date = parsed.astimezone()
+        except ValueError:
+            local_date = None
+        if local_date:
+            date_values.append(local_date)
+
+    for value in date_values:
+        date_root = (
+            sessions_root
+            / f"{value.year:04d}"
+            / f"{value.month:02d}"
+            / f"{value.day:02d}"
+        )
+        yield from iter_unique_matches(date_root, f"*{thread_id}*.jsonl", seen)
+
+    archived_root = codex_home / "archived_sessions"
+    yield from iter_unique_matches(archived_root, f"*{thread_id}*.jsonl", seen)
+    yield from iter_unique_matches(archived_root, f"*/*/*/*{thread_id}*.jsonl", seen)
+    yield from iter_unique_matches(sessions_root, f"*/*/*/*{thread_id}*.jsonl", seen)
+
+
+def read_session_metadata(path):
+    cwd_keys = (
+        "cwd",
+        "workdir",
+        "workingDirectory",
+        "working_directory",
+        "currentWorkingDirectory",
+        "current_working_directory",
+    )
+    try:
+        with path.open("rb") as handle:
+            for line_number, raw_line in enumerate(handle):
+                if line_number >= 80:
+                    break
+                record = parse_json_line(raw_line)
+                if record is None:
+                    continue
+                thread_source = first_nested_text(
+                    record, "thread_source", "threadSource"
+                )
+                cwd = first_nested_text(record, *cwd_keys)
+                if cwd or thread_source:
+                    return {"cwd": cwd, "threadSource": thread_source}
+    except OSError:
+        return {}
+    return {}
+
+
+def find_session_metadata(codex_home, thread_id, updated_at):
+    for path in iter_session_files(codex_home, thread_id, updated_at):
+        metadata = read_session_metadata(path)
+        if metadata:
+            return metadata
+    return {}
+
+
+def normalized_thread_source(value):
+    if isinstance(value, str):
+        return value.strip().lower()
+    return ""
+
+
+def is_visible_thread(record):
+    if bool(record.get("archived", False)):
+        return False
+    thread_source = normalized_thread_source(record.get("threadSource"))
+    return thread_source in ("", "user")
+
+
+def normalize_record(record, codex_home):
+    thread_id = first_text(record, "id", "thread_id", "threadId", "conversation_id")
+    if not thread_id:
+        return None
+    title = first_text(record, "title", "thread_name", "summary", "name") or thread_id
+    updated_at = first_text(record, "updatedAt", "updated_at", "mtime")
+    metadata = find_session_metadata(codex_home, thread_id, updated_at)
+    cwd = first_text(
+        record,
+        "cwd",
+        "workdir",
+        "workingDirectory",
+        "working_directory",
+    ) or metadata.get("cwd")
+    thread_source = first_text(record, "threadSource", "thread_source") or metadata.get(
+        "threadSource"
+    )
+    normalized = {
+        "threadId": thread_id,
+        "title": title,
+        "cwd": cwd,
+        "updatedAt": updated_at,
+        "archived": bool(record.get("archived", False)),
+        "running": bool(record.get("running", False)),
+        "threadSource": thread_source,
+    }
+    if not is_visible_thread(normalized):
+        return None
+    normalized.pop("threadSource", None)
+    return normalized
+
+
+def sort_key(record):
+    value = record.get("updatedAt") or ""
+    return parse_datetime(value) or datetime.min.replace(tzinfo=timezone.utc)
+
+
+codex_home = Path(
+    os.environ.get("CODEX_HOME") or (Path.home() / ".codex")
+).expanduser()
+records = []
+limit = parse_limit()
+for raw in iter_recent_json_lines(codex_home / "session_index.jsonl", limit):
+    normalized = normalize_record(raw, codex_home)
+    if normalized:
+        records.append(normalized)
+
+records.sort(key=sort_key, reverse=True)
+print(json.dumps({"threads": records}, ensure_ascii=False))
+""".strip()
+
+CODEX_THREADS_LIST_COMMAND = f"python3 -c {shlex.quote(CODEX_THREADS_LIST_SCRIPT)}"
+
 TURN_FILE_CHANGES_SCRIPT = """
 import gzip
 import hashlib
@@ -958,6 +1212,10 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
     "git_commit": LocalDeviceCommandDefinition(command="git commit"),
     "ls_skills": LocalDeviceCommandDefinition(
         command=LS_SKILLS_COMMAND,
+        post_processor="json",
+    ),
+    "codex_threads_list": LocalDeviceCommandDefinition(
+        command=CODEX_THREADS_LIST_COMMAND,
         post_processor="json",
     ),
     "setup_shared_skills": LocalDeviceCommandDefinition(

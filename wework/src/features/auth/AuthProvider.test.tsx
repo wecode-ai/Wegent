@@ -24,10 +24,10 @@ describe('AuthProvider', () => {
     setToken(createJwt(Math.floor(Date.now() / 1000) + 3600))
     const authApi = {
       getCurrentUser: vi.fn().mockResolvedValue({ id: 1, user_name: 'alice', email: 'a@b.c' }),
+      getCurrentUserWithoutAuthRedirect: vi.fn(),
       login: vi.fn(),
       logout: vi.fn(),
       loginWithOidcToken: vi.fn(),
-      getAdminPasswordSetupStatus: vi.fn().mockResolvedValue({ required: false }),
       setupAdminPassword: vi.fn(),
     }
 
