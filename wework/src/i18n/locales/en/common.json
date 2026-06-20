@@ -11,6 +11,8 @@
     "importAction": "Open local Codex sessions",
     "dialogTitle": "Local Codex sessions",
     "deviceLabel": "Local device",
+    "deviceOnline": "Online",
+    "threadCount": "{{count}} sessions",
     "empty": "No local Codex sessions found",
     "offline": "An online local device is required",
     "bind": "Take over",

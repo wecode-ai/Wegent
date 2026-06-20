@@ -15,8 +15,8 @@ Wework can bind an existing local Codex session as a Wework conversation. After 
 ## Take Over On Desktop
 
 1. In Wework desktop, open **Local Codex sessions** from the dedicated **Codex** area in the left sidebar.
-2. Select an online local device.
-3. Review local Codex sessions grouped by project. Wework first matches the session working directory to a project; when the session comes from a Codex worktree, it matches the worktree directory name back to the source project; unmatched sessions appear under **Unmatched project**.
+2. Choose an online local device from the device cards. When multiple devices are online, the dialog reads the local Codex session count for each device, but does not merge sessions across devices.
+3. Review local Codex sessions grouped by project under the selected device. Wework first matches the session working directory to a project; when the session comes from a Codex worktree, it matches the worktree directory name back to the source project; unmatched sessions appear under **Unmatched project**.
 4. Choose the Codex session to take over and click **Take over**. Wework creates or opens the matching Wework task.
 
 Subagent sessions are hidden. Running local Codex sessions remain visible with a **Running** state, but cannot be taken over until they finish.

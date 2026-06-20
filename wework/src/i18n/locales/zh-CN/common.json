@@ -11,6 +11,8 @@
     "importAction": "打开本地 Codex 会话",
     "dialogTitle": "本地 Codex 会话",
     "deviceLabel": "本地设备",
+    "deviceOnline": "在线",
+    "threadCount": "{{count}} 个会话",
     "empty": "没有发现本地 Codex 会话",
     "offline": "需要在线的本地设备",
     "bind": "接管",

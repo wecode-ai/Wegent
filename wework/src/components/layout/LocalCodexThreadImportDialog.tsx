@@ -1,5 +1,5 @@
 import { ArrowRight, Clock3, FolderOpen, RotateCw, X } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -26,10 +26,17 @@ interface LocalCodexThreadImportDialogProps {
   ) => Promise<LocalCodexBindResponse>
 }
 
+const EMPTY_LOCAL_CODEX_THREADS: LocalCodexThreadSummary[] = []
+
 function getOnlineLocalDevices(devices: DeviceInfo[]): DeviceInfo[] {
   return devices
     .filter(device => device.device_type === 'local' && device.status === 'online')
-    .sort((left, right) => (left.name || left.device_id).localeCompare(right.name || right.device_id))
+    .sort((left, right) => {
+      if (left.is_default !== right.is_default) {
+        return left.is_default ? -1 : 1
+      }
+      return (left.name || left.device_id).localeCompare(right.name || right.device_id)
+    })
 }
 
 function formatUpdatedTime(value: string | undefined) {
@@ -224,75 +231,98 @@ function LocalCodexThreadImportDialogContent({
   const [selectedDeviceId, setSelectedDeviceId] = useState(
     () => onlineLocalDevices[0]?.device_id ?? '',
   )
-  const [threads, setThreads] = useState<LocalCodexThreadSummary[]>([])
-  const [loading, setLoading] = useState(false)
+  const [threadsByDeviceId, setThreadsByDeviceId] = useState<
+    Record<string, LocalCodexThreadSummary[]>
+  >({})
+  const [loadingDeviceIds, setLoadingDeviceIds] = useState<Set<string>>(() => new Set())
+  const [errorsByDeviceId, setErrorsByDeviceId] = useState<Record<string, string>>({})
   const [bindingThreadId, setBindingThreadId] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const threadGroups = useMemo(
-    () =>
-      groupLocalCodexThreadsByProject(
-        threads,
-        projects,
-        t('localCodex.unmatchedProject'),
-      ),
-    [projects, threads, t],
-  )
   const effectiveDeviceId = onlineLocalDevices.some(device => device.device_id === selectedDeviceId)
     ? selectedDeviceId
     : onlineLocalDevices[0]?.device_id ?? ''
+  const selectedThreads = effectiveDeviceId
+    ? threadsByDeviceId[effectiveDeviceId] ?? EMPTY_LOCAL_CODEX_THREADS
+    : EMPTY_LOCAL_CODEX_THREADS
+  const selectedLoading = effectiveDeviceId
+    ? loadingDeviceIds.has(effectiveDeviceId)
+    : false
+  const selectedError = effectiveDeviceId
+    ? errorsByDeviceId[effectiveDeviceId] ?? null
+    : null
+  const threadGroups = useMemo(
+    () =>
+      groupLocalCodexThreadsByProject(
+        selectedThreads,
+        projects,
+        t('localCodex.unmatchedProject'),
+      ),
+    [projects, selectedThreads, t],
+  )
 
   useEscapeKey(onClose)
 
-  useEffect(() => {
-    if (!effectiveDeviceId) return
+  const loadDeviceThreads = useCallback(
+    async (deviceId: string, isCancelled: () => boolean = () => false) => {
+      setLoadingDeviceIds(previous => new Set(previous).add(deviceId))
+      setErrorsByDeviceId(previous => {
+        const next = { ...previous }
+        delete next[deviceId]
+        return next
+      })
 
-    let cancelled = false
-    async function loadThreads() {
-      setLoading(true)
-      setError(null)
       try {
-        const items = await onListLocalCodexThreads(effectiveDeviceId)
-        if (!cancelled) {
-          setThreads(items)
+        const items = await onListLocalCodexThreads(deviceId)
+        if (!isCancelled()) {
+          setThreadsByDeviceId(previous => ({ ...previous, [deviceId]: items }))
         }
       } catch {
-        if (!cancelled) {
-          setThreads([])
-          setError(t('localCodex.loadFailed'))
+        if (!isCancelled()) {
+          setThreadsByDeviceId(previous => ({ ...previous, [deviceId]: [] }))
+          setErrorsByDeviceId(previous => ({
+            ...previous,
+            [deviceId]: t('localCodex.loadFailed'),
+          }))
         }
       } finally {
-        if (!cancelled) {
-          setLoading(false)
+        if (!isCancelled()) {
+          setLoadingDeviceIds(previous => {
+            const next = new Set(previous)
+            next.delete(deviceId)
+            return next
+          })
         }
       }
-    }
+    },
+    [onListLocalCodexThreads, t],
+  )
 
-    void loadThreads()
+  useEffect(() => {
+    if (onlineLocalDevices.length === 0) return
+
+    let cancelled = false
+    onlineLocalDevices.forEach(device => {
+      void loadDeviceThreads(device.device_id, () => cancelled)
+    })
 
     return () => {
       cancelled = true
     }
-  }, [effectiveDeviceId, onListLocalCodexThreads, t])
+  }, [loadDeviceThreads, onlineLocalDevices])
 
   async function refreshThreads() {
-    if (!effectiveDeviceId || loading) return
-    setLoading(true)
-    setError(null)
-    try {
-      setThreads(await onListLocalCodexThreads(effectiveDeviceId))
-    } catch {
-      setThreads([])
-      setError(t('localCodex.loadFailed'))
-    } finally {
-      setLoading(false)
-    }
+    if (!effectiveDeviceId || selectedLoading) return
+    await loadDeviceThreads(effectiveDeviceId)
   }
 
   async function bindThread(thread: LocalCodexThreadSummary) {
     if (!effectiveDeviceId || thread.archived || thread.running || bindingThreadId) return
 
     setBindingThreadId(thread.threadId)
-    setError(null)
+    setErrorsByDeviceId(previous => {
+      const next = { ...previous }
+      delete next[effectiveDeviceId]
+      return next
+    })
     try {
       await onBindLocalCodexThread({
         deviceId: effectiveDeviceId,
@@ -302,7 +332,12 @@ function LocalCodexThreadImportDialogContent({
       })
       onClose()
     } catch (bindError) {
-      setError(bindError instanceof Error ? bindError.message : t('localCodex.threadMissing'))
+      setErrorsByDeviceId(previous => ({
+        ...previous,
+        [effectiveDeviceId]: bindError instanceof Error
+          ? bindError.message
+          : t('localCodex.threadMissing'),
+      }))
     } finally {
       setBindingThreadId(null)
     }
@@ -346,45 +381,76 @@ function LocalCodexThreadImportDialogContent({
           </div>
         ) : (
           <>
-            <div className="mt-2 flex items-center gap-2">
-              <select
-                data-testid="local-codex-device-select"
-                value={effectiveDeviceId}
-                onChange={event => setSelectedDeviceId(event.target.value)}
-                disabled={loading || bindingThreadId !== null}
-                className="h-10 min-w-0 flex-1 rounded-lg border border-[#d8d8d8] bg-white px-3 text-[13px] outline-none focus:border-[#14b8a6] focus:ring-2 focus:ring-[#14b8a6]/20 disabled:opacity-60"
+            <div className="mt-2 flex items-start gap-2">
+              <div
+                data-testid="local-codex-device-list"
+                className="grid min-w-0 flex-1 grid-cols-1 gap-2 sm:grid-cols-2"
               >
-                {onlineLocalDevices.map(device => (
-                  <option key={device.device_id} value={device.device_id}>
-                    {device.name || device.device_id}
-                  </option>
-                ))}
-              </select>
+                {onlineLocalDevices.map(device => {
+                  const deviceId = device.device_id
+                  const selected = deviceId === effectiveDeviceId
+                  const deviceLoading = loadingDeviceIds.has(deviceId)
+                  const threadCount = threadsByDeviceId[deviceId]?.length ?? 0
+                  return (
+                    <button
+                      key={deviceId}
+                      type="button"
+                      data-testid={`local-codex-device-card-${deviceId}`}
+                      onClick={() => setSelectedDeviceId(deviceId)}
+                      disabled={bindingThreadId !== null}
+                      className={cn(
+                        'min-w-0 rounded-lg border px-3 py-2 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60',
+                        selected
+                          ? 'border-[#14b8a6] bg-[#ecfdfb] text-[#202124]'
+                          : 'border-[#d8d8d8] bg-white text-[#3c4043] hover:bg-[#f7f7f8]',
+                      )}
+                    >
+                      <div className="truncate text-[13px] font-medium leading-5">
+                        {device.name || deviceId}
+                      </div>
+                      {device.name && device.name !== deviceId && (
+                        <div className="mt-0.5 truncate text-xs leading-4 text-[#7a7d82]">
+                          {deviceId}
+                        </div>
+                      )}
+                      <div className="mt-1 flex items-center gap-2 text-xs leading-4 text-[#606368]">
+                        <span>{t('localCodex.deviceOnline')}</span>
+                        <span aria-hidden="true">·</span>
+                        <span>
+                          {deviceLoading
+                            ? t('common.loading')
+                            : t('localCodex.threadCount', { count: threadCount })}
+                        </span>
+                      </div>
+                    </button>
+                  )
+                })}
+              </div>
               <button
                 type="button"
                 data-testid="local-codex-refresh-button"
-                disabled={loading || bindingThreadId !== null}
+                disabled={selectedLoading || bindingThreadId !== null}
                 onClick={refreshThreads}
                 className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-[#d8d8d8] text-[#606368] hover:bg-[#f7f7f8] hover:text-[#202124] disabled:cursor-not-allowed disabled:opacity-50"
                 title={t('workbench.refresh_worklists', '刷新')}
                 aria-label={t('workbench.refresh_worklists', '刷新')}
               >
-                <RotateCw className={cn('h-4 w-4', loading && 'animate-spin')} />
+                <RotateCw className={cn('h-4 w-4', selectedLoading && 'animate-spin')} />
               </button>
             </div>
 
-            {error && (
+            {selectedError && (
               <div className="mt-3 rounded-md bg-red-50 px-3 py-2 text-xs leading-5 text-red-600">
-                {error}
+                {selectedError}
               </div>
             )}
 
             <div className="mt-4 min-h-0 flex-1 overflow-y-auto rounded-lg border border-[#ededed]">
-              {loading ? (
+              {selectedLoading ? (
                 <div className="flex h-28 items-center justify-center text-sm text-[#606368]">
                   {t('common.loading')}
                 </div>
-              ) : threads.length === 0 ? (
+              ) : selectedThreads.length === 0 ? (
                 <div className="flex h-28 items-center justify-center text-sm text-[#606368]">
                   {t('localCodex.empty')}
                 </div>
