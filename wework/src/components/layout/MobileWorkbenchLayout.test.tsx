@@ -27,16 +27,9 @@ const baseState = {
     },
   ],
   devices: [],
-  recentTasks: [
-    {
-      id: 3,
-      title: '远程连接 Claude Code',
-      status: 'COMPLETED',
-      task_type: 'code' as const,
-      created_at: '2026-05-25T00:00:00.000Z',
-    },
-  ],
+  runtimeWork: null,
   currentProject: null,
+  currentRuntimeTask: null,
   standaloneDeviceId: null,
   currentTask: null,
   input: '',
@@ -99,7 +92,6 @@ describe('MobileWorkbenchLayout', () => {
         state={baseState}
         messages={[]}
         onSelectProject={onSelectProject}
-        onOpenTask={vi.fn()}
         onInputChange={vi.fn()}
         onSend={vi.fn()}
       />
@@ -114,45 +106,6 @@ describe('MobileWorkbenchLayout', () => {
     expect(onSelectProject).toHaveBeenCalledWith(1)
   })
 
-  test('renders mobile drawer IM source badges for project and recent tasks', async () => {
-    renderAtMobileWidth(
-      <MobileWorkbenchLayout
-        state={{
-          ...baseState,
-          projects: [
-            {
-              ...baseState.projects[0],
-              tasks: [
-                {
-                  ...baseState.projects[0].tasks[0],
-                  source: 'im',
-                },
-              ],
-            },
-          ],
-          recentTasks: [
-            {
-              ...baseState.recentTasks[0],
-              source: 'im',
-            },
-          ],
-        }}
-        messages={[]}
-        projectChat={baseProjectChat}
-        onSelectProject={vi.fn()}
-        onOpenTask={vi.fn()}
-        onInputChange={vi.fn()}
-        onSend={vi.fn()}
-      />
-    )
-
-    await userEvent.click(screen.getByTestId('open-mobile-drawer-button'))
-    await userEvent.click(screen.getByText('github_wegent'))
-
-    expect(await screen.findByTestId('task-source-badge-mobile-project-7')).toBeInTheDocument()
-    expect(screen.getByTestId('task-source-badge-mobile-recent-3')).toBeInTheDocument()
-  })
-
   test('does not show the user avatar on the mobile empty chat page', () => {
     renderAtMobileWidth(
       <MobileWorkbenchLayout
@@ -160,7 +113,6 @@ describe('MobileWorkbenchLayout', () => {
         messages={[]}
         projectChat={baseProjectChat}
         onSelectProject={vi.fn()}
-        onOpenTask={vi.fn()}
         onInputChange={vi.fn()}
         onSend={vi.fn()}
       />
@@ -246,7 +198,6 @@ describe('MobileWorkbenchLayout', () => {
         ]}
         projectChat={baseProjectChat}
         onSelectProject={vi.fn()}
-        onOpenTask={vi.fn()}
         onInputChange={vi.fn()}
         onSend={vi.fn()}
       />
@@ -307,7 +258,6 @@ describe('MobileWorkbenchLayout', () => {
           setSelectedModel,
         }}
         onSelectProject={vi.fn()}
-        onOpenTask={vi.fn()}
         onInputChange={vi.fn()}
         onSend={vi.fn()}
       />
@@ -386,7 +336,6 @@ describe('MobileWorkbenchLayout', () => {
               })),
           }}
           onSelectProject={vi.fn()}
-          onOpenTask={vi.fn()}
           onInputChange={vi.fn()}
           onSend={vi.fn()}
         />
@@ -412,7 +361,6 @@ describe('MobileWorkbenchLayout', () => {
         }}
         messages={[]}
         onSelectProject={vi.fn()}
-        onOpenTask={vi.fn()}
         onInputChange={vi.fn()}
         onSend={vi.fn()}
       />
@@ -460,7 +408,6 @@ describe('MobileWorkbenchLayout', () => {
           onExecutionModeChange: vi.fn(),
         }}
         onSelectProject={vi.fn()}
-        onOpenTask={vi.fn()}
         onLoadEnvironmentInfo={onLoadEnvironmentInfo}
         onListEnvironmentBranches={vi.fn().mockResolvedValue(['feature/mobile', 'main'])}
         onCheckoutEnvironmentBranch={onCheckoutEnvironmentBranch}
@@ -527,7 +474,6 @@ describe('MobileWorkbenchLayout', () => {
         ]}
         projectChat={baseProjectChat}
         onSelectProject={vi.fn()}
-        onOpenTask={vi.fn()}
         onInputChange={vi.fn()}
         onSend={vi.fn()}
       />
@@ -603,7 +549,6 @@ describe('MobileWorkbenchLayout', () => {
         ]}
         projectChat={baseProjectChat}
         onSelectProject={vi.fn()}
-        onOpenTask={vi.fn()}
         onInputChange={vi.fn()}
         onSend={vi.fn()}
         onListImPrivateSessions={onListImPrivateSessions}
@@ -644,7 +589,6 @@ describe('MobileWorkbenchLayout', () => {
         ]}
         projectChat={baseProjectChat}
         onSelectProject={vi.fn()}
-        onOpenTask={vi.fn()}
         onInputChange={vi.fn()}
         onSend={vi.fn()}
         onListImPrivateSessions={onListImPrivateSessions}
@@ -702,7 +646,6 @@ describe('MobileWorkbenchLayout', () => {
         ]}
         projectChat={baseProjectChat}
         onSelectProject={vi.fn()}
-        onOpenTask={vi.fn()}
         onInputChange={vi.fn()}
         onSend={vi.fn()}
         onListImPrivateSessions={onListImPrivateSessions}
@@ -782,7 +725,6 @@ describe('MobileWorkbenchLayout', () => {
         ]}
         projectChat={baseProjectChat}
         onSelectProject={vi.fn()}
-        onOpenTask={vi.fn()}
         onInputChange={vi.fn()}
         onSend={vi.fn()}
         onListImPrivateSessions={vi.fn().mockResolvedValue({
@@ -814,137 +756,6 @@ describe('MobileWorkbenchLayout', () => {
     expect(screen.getByRole('dialog')).toBeInTheDocument()
   })
 
-  test('opens drawer with projects and recent tasks', async () => {
-    render(
-      <MobileWorkbenchLayout
-        state={baseState}
-        messages={[]}
-        onSelectProject={vi.fn()}
-        onOpenTask={vi.fn()}
-        onInputChange={vi.fn()}
-        onSend={vi.fn()}
-      />
-    )
-
-    await userEvent.click(screen.getByTestId('open-mobile-drawer-button'))
-
-    const mobileDrawer = screen.getByText('Wework').closest('.fixed')
-    expect(mobileDrawer).toHaveClass('z-critical', 'bg-white')
-    expect(mobileDrawer).not.toHaveClass('rounded-r-[28px]')
-    expect(screen.getByTestId('mobile-new-project-button')).toHaveTextContent('新建项目')
-    expect(screen.queryByText('项目')).not.toBeInTheDocument()
-    expect(screen.queryByText('图片')).not.toBeInTheDocument()
-    expect(screen.queryByText('编码')).not.toBeInTheDocument()
-    expect(screen.queryByText('更多')).not.toBeInTheDocument()
-    expect(screen.queryByText('自动化')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('mobile-plugins-nav-button')).not.toBeInTheDocument()
-    expect(screen.getByTestId('mobile-search-icon-button')).toBeInTheDocument()
-    expect(screen.queryByTestId('mobile-search-input')).not.toBeInTheDocument()
-    expect(screen.getByText('github_wegent')).toBeInTheDocument()
-    expect(screen.queryByText('项目任务')).not.toBeInTheDocument()
-    expect(screen.getByTestId('mobile-project-item-button')).toHaveAttribute(
-      'aria-expanded',
-      'false'
-    )
-    expect(screen.getByTestId('mobile-project-item-button')).toHaveClass('text-[#111111]')
-    expect(screen.getByText('对话')).toBeInTheDocument()
-    expect(screen.getByText('远程连接 Claude Code')).toBeInTheDocument()
-    expect(screen.getByTestId('mobile-recent-task-button')).toHaveClass('text-[#111111]')
-    expect(screen.queryByText('4d')).not.toBeInTheDocument()
-    expect(screen.getByTestId('mobile-new-chat-button')).toHaveTextContent('聊天')
-    expect(screen.getByTestId('mobile-new-chat-button')).toHaveClass('bg-[#1F1F1F]')
-    expect(screen.getByTestId('mobile-drawer-scroll')).toHaveClass('overflow-y-auto')
-  })
-
-  test('collapses project groups and opens project tasks and standalone chats from the drawer', async () => {
-    const onSelectProject = vi.fn()
-    const onOpenTask = vi.fn()
-    const onOpenPlugins = vi.fn()
-    const onNewChat = vi.fn()
-    const onStartStandaloneChat = vi.fn()
-
-    render(
-      <MobileWorkbenchLayout
-        state={baseState}
-        messages={[]}
-        onNewChat={onNewChat}
-        onStartStandaloneChat={onStartStandaloneChat}
-        onOpenPlugins={onOpenPlugins}
-        onSelectProject={onSelectProject}
-        onOpenTask={onOpenTask}
-        onInputChange={vi.fn()}
-        onSend={vi.fn()}
-      />
-    )
-
-    await userEvent.click(screen.getByTestId('open-mobile-drawer-button'))
-    await userEvent.click(screen.getByText('github_wegent'))
-    expect(onSelectProject).toHaveBeenCalledWith(1)
-    expect(screen.getByTestId('mobile-project-item-button')).toHaveAttribute(
-      'aria-expanded',
-      'true'
-    )
-
-    await userEvent.click(screen.getByText('项目任务'))
-    expect(onOpenTask).toHaveBeenCalledWith(7, 1)
-
-    await userEvent.click(screen.getByTestId('open-mobile-drawer-button'))
-    await userEvent.click(screen.getByText('远程连接 Claude Code'))
-    expect(onOpenTask).toHaveBeenCalledWith(3, undefined)
-
-    await userEvent.click(screen.getByTestId('open-mobile-drawer-button'))
-    await userEvent.click(screen.getByTestId('mobile-new-chat-button'))
-    expect(onNewChat).toHaveBeenCalled()
-    expect(screen.queryByTestId('mobile-standalone-new-chat-button')).not.toBeInTheDocument()
-    expect(onStartStandaloneChat).not.toHaveBeenCalled()
-    expect(onOpenPlugins).not.toHaveBeenCalled()
-  })
-
-  test('shows more project tasks from the mobile drawer', async () => {
-    const stateWithManyProjectTasks = {
-      ...baseState,
-      projects: [
-        {
-          ...baseState.projects[0],
-          tasks: Array.from({ length: 5 }, (_, index) => ({
-            id: index + 1,
-            task_id: index + 1,
-            task_title: `项目任务 ${index + 1}`,
-            task_status: 'COMPLETED',
-            created_at: `2026-05-2${index}T00:00:00.000Z`,
-          })),
-        },
-      ],
-    }
-
-    render(
-      <MobileWorkbenchLayout
-        state={stateWithManyProjectTasks}
-        messages={[]}
-        onSelectProject={vi.fn()}
-        onOpenTask={vi.fn()}
-        onInputChange={vi.fn()}
-        onSend={vi.fn()}
-      />
-    )
-
-    await userEvent.click(screen.getByTestId('open-mobile-drawer-button'))
-    await userEvent.click(screen.getByText('github_wegent'))
-
-    expect(screen.getAllByTestId('mobile-project-task-button')).toHaveLength(4)
-    expect(screen.queryByText('项目任务 1')).not.toBeInTheDocument()
-
-    await userEvent.click(screen.getByTestId('mobile-project-task-limit-toggle-1'))
-
-    expect(screen.getAllByTestId('mobile-project-task-button')).toHaveLength(5)
-    expect(screen.getByText('项目任务 1')).toBeInTheDocument()
-
-    await userEvent.click(screen.getByTestId('mobile-project-task-limit-toggle-1'))
-
-    expect(screen.getAllByTestId('mobile-project-task-button')).toHaveLength(4)
-    expect(screen.queryByText('项目任务 1')).not.toBeInTheDocument()
-  })
-
   test('opens project creation as a mobile bottom sheet from the drawer', async () => {
     render(
       <MobileWorkbenchLayout
@@ -965,7 +776,6 @@ describe('MobileWorkbenchLayout', () => {
         onListDeviceDirectories={vi.fn().mockResolvedValue([])}
         onCreateDeviceDirectory={vi.fn().mockResolvedValue(undefined)}
         onSelectProject={vi.fn()}
-        onOpenTask={vi.fn()}
         onInputChange={vi.fn()}
         onSend={vi.fn()}
       />
@@ -992,19 +802,74 @@ describe('MobileWorkbenchLayout', () => {
     expect(screen.getByTestId('project-create-dialog').parentElement).toHaveClass('items-end')
   })
 
+  test('opens runtime local tasks from the mobile project drawer', async () => {
+    const onOpenRuntimeLocalTask = vi.fn()
+
+    render(
+      <MobileWorkbenchLayout
+        state={{
+          ...baseState,
+          runtimeWork: {
+            projects: [
+              {
+                project: { id: 1, name: 'github_wegent' },
+                totalLocalTasks: 1,
+                deviceWorkspaces: [
+                  {
+                    id: 91,
+                    deviceId: 'local-device',
+                    deviceName: 'Local Mac',
+                    deviceStatus: 'online',
+                    available: true,
+                    workspacePath: '/repo/Wegent',
+                    label: 'Wegent local',
+                    localTasks: [
+                      {
+                        localTaskId: 'codex-1',
+                        workspacePath: '/repo/Wegent',
+                        title: 'Fix reconnect',
+                        runtime: 'codex',
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+            unmappedDeviceWorkspaces: [],
+            totalLocalTasks: 1,
+          },
+        }}
+        messages={[]}
+        onOpenRuntimeLocalTask={onOpenRuntimeLocalTask}
+        onSelectProject={vi.fn()}
+        onInputChange={vi.fn()}
+        onSend={vi.fn()}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('open-mobile-drawer-button'))
+    await userEvent.click(screen.getByText('github_wegent'))
+
+    expect(screen.getByText('Local Mac · Wegent local')).toBeInTheDocument()
+    await userEvent.click(screen.getByText('Fix reconnect'))
+
+    expect(onOpenRuntimeLocalTask).toHaveBeenCalledWith({
+      deviceId: 'local-device',
+      workspacePath: '/repo/Wegent',
+      localTaskId: 'codex-1',
+    })
+  })
+
   test('opens project actions on long press without expanding the project', async () => {
     const onSelectProject = vi.fn()
-    const onArchiveProjectChats = vi.fn().mockResolvedValue(undefined)
     const onUpdateProjectName = vi.fn().mockResolvedValue(undefined)
 
     render(
       <MobileWorkbenchLayout
         state={baseState}
         messages={[]}
-        onArchiveProjectChats={onArchiveProjectChats}
         onUpdateProjectName={onUpdateProjectName}
         onSelectProject={onSelectProject}
-        onOpenTask={vi.fn()}
         onInputChange={vi.fn()}
         onSend={vi.fn()}
       />
@@ -1027,7 +892,7 @@ describe('MobileWorkbenchLayout', () => {
       'rounded-2xl'
     )
     expect(screen.getByTestId('mobile-rename-project-button')).toHaveTextContent('重命名项目')
-    expect(screen.getByTestId('mobile-archive-project-chats-button')).toHaveTextContent('归档会话')
+    expect(screen.queryByTestId('mobile-archive-project-chats-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('mobile-remove-project-button')).toHaveTextContent('移除')
     expect(onSelectProject).not.toHaveBeenCalled()
 
@@ -1041,47 +906,6 @@ describe('MobileWorkbenchLayout', () => {
     expect(onUpdateProjectName).toHaveBeenCalledWith(1, 'renamed-project')
   })
 
-  test('opens lightweight chat actions on long press without opening the chat', async () => {
-    const onOpenTask = vi.fn()
-    const onArchiveTask = vi.fn().mockResolvedValue(undefined)
-    const onRenameTask = vi.fn().mockResolvedValue(undefined)
-
-    render(
-      <MobileWorkbenchLayout
-        state={baseState}
-        messages={[]}
-        onArchiveTask={onArchiveTask}
-        onRenameTask={onRenameTask}
-        onSelectProject={vi.fn()}
-        onOpenTask={onOpenTask}
-        onInputChange={vi.fn()}
-        onSend={vi.fn()}
-      />
-    )
-
-    await userEvent.click(screen.getByTestId('open-mobile-drawer-button'))
-    const chatButton = screen.getByTestId('mobile-recent-task-button')
-
-    fireEvent.pointerDown(chatButton, {
-      pointerType: 'touch',
-      clientX: 90,
-      clientY: 420,
-    })
-    await new Promise(resolve => setTimeout(resolve, 550))
-    fireEvent.pointerUp(chatButton, { pointerType: 'touch' })
-
-    expect(screen.getByTestId('mobile-chat-actions-menu')).toHaveClass('w-[240px]', 'rounded-2xl')
-    expect(screen.getByTestId('mobile-rename-chat-button')).toHaveTextContent('重命名会话')
-    expect(screen.getByTestId('mobile-archive-chat-button')).toHaveTextContent('归档会话')
-    expect(onOpenTask).not.toHaveBeenCalled()
-
-    await userEvent.click(screen.getByTestId('mobile-rename-chat-button'))
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-    await userEvent.clear(screen.getByTestId('mobile-inline-chat-name-input'))
-    await userEvent.type(screen.getByTestId('mobile-inline-chat-name-input'), 'renamed-chat{enter}')
-    expect(onRenameTask).toHaveBeenCalledWith(3, 'renamed-chat')
-  })
-
   test('opens a mobile-specific settings page with plugins inside settings', async () => {
     const onOpenPlugins = vi.fn()
 
@@ -1091,7 +915,6 @@ describe('MobileWorkbenchLayout', () => {
         messages={[]}
         onOpenPlugins={onOpenPlugins}
         onSelectProject={vi.fn()}
-        onOpenTask={vi.fn()}
         onInputChange={vi.fn()}
         onSend={vi.fn()}
       />

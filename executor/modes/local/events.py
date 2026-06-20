@@ -29,6 +29,12 @@ class DeviceEvents:
     TERMINAL_CLOSE = "terminal:close"
 
 
+class RuntimeEvents:
+    """Native runtime session RPC events."""
+
+    RPC = "runtime:rpc"
+
+
 class TaskEvents:
     """Task execution events (Socket.IO event names).
 

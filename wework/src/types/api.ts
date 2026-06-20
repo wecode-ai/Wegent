@@ -219,6 +219,146 @@ export interface DeleteProjectWorktreeResponse {
   deleted_task_ids: number[]
 }
 
+export type RuntimeName = 'codex' | 'claude_code' | 'claude' | string
+
+export interface RuntimeTaskAddress {
+  deviceId: string
+  workspacePath: string
+  localTaskId: string
+}
+
+export interface RuntimeMessageSource {
+  source: 'im' | 'manual' | string
+  external_id?: string | null
+  channel_type?: string | null
+  channel_id?: number | null
+  conversation_id?: string | null
+  sender_id?: string | null
+}
+
+export interface NormalizedRuntimeMessage {
+  id: string
+  role: 'user' | 'assistant' | 'system' | string
+  content: string
+  status?: string | null
+  createdAt?: string | null
+  source?: RuntimeMessageSource | null
+  attachments?: Attachment[]
+}
+
+export interface LocalTaskSummary {
+  localTaskId: string
+  workspacePath: string
+  title: string
+  runtime: RuntimeName
+  createdAt?: string | null
+  updatedAt?: string | null
+  running?: boolean
+  status?: string | null
+  parent?: Record<string, unknown> | null
+  children?: Record<string, unknown>[]
+}
+
+export interface DeviceWorkspaceUpsert {
+  projectId: number
+  deviceId: string
+  workspacePath: string
+  repoUrl?: string | null
+  repoRootFingerprint?: string | null
+  label?: string | null
+}
+
+export interface DeviceWorkspaceResponse {
+  id: number
+  userId: number
+  projectId: number
+  deviceId: string
+  workspacePath: string
+  repoUrl?: string | null
+  repoRootFingerprint?: string | null
+  label?: string | null
+  lastSeenAt?: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface RuntimeProjectRef {
+  id: number
+  name: string
+  description?: string | null
+  color?: string | null
+}
+
+export interface RuntimeDeviceWorkspace {
+  id?: number | null
+  deviceId: string
+  deviceName?: string | null
+  deviceStatus?: DeviceInfo['status'] | string | null
+  available: boolean
+  workspacePath: string
+  label?: string | null
+  repoUrl?: string | null
+  repoRootFingerprint?: string | null
+  mapped?: boolean
+  localTasks: LocalTaskSummary[]
+  error?: string | null
+}
+
+export interface RuntimeProjectWork {
+  project: RuntimeProjectRef
+  deviceWorkspaces: RuntimeDeviceWorkspace[]
+  totalLocalTasks?: number
+}
+
+export interface RuntimeWorkListResponse {
+  projects: RuntimeProjectWork[]
+  unmappedDeviceWorkspaces: RuntimeDeviceWorkspace[]
+  totalLocalTasks: number
+}
+
+export interface RuntimeTranscriptResponse {
+  localTaskId: string
+  workspacePath: string
+  runtime: RuntimeName
+  title?: string | null
+  messages: NormalizedRuntimeMessage[]
+}
+
+export interface RuntimeSendRequest {
+  address: RuntimeTaskAddress
+  message: string
+}
+
+export interface RuntimeSendResponse {
+  accepted: boolean
+  localTaskId: string
+  error?: string | null
+}
+
+export interface RuntimeTaskCreateRequest {
+  projectId?: number
+  deviceId?: string
+  workspacePath?: string
+  teamId: number
+  runtime: RuntimeName
+  message: string
+  title?: string
+  modelId?: string
+  modelType?: ModelType | null
+  modelOptions?: Record<string, string>
+  additionalSkills?: SkillRef[]
+  attachmentIds?: number[]
+  execution?: ChatSendPayload['execution']
+}
+
+export interface RuntimeTaskCreateResponse {
+  accepted: boolean
+  localTaskId: string
+  workspacePath: string
+  runtime: RuntimeName
+  error?: string | null
+}
+
 export interface UpdateProjectRequest {
   name?: string
   description?: string
@@ -275,35 +415,6 @@ export interface BindTaskIMSessionsResponse {
   task_id: number
   bound_session_keys: string[]
   notified_count: number
-}
-
-export interface LocalCodexThreadSummary {
-  threadId: string
-  title: string
-  cwd?: string
-  updatedAt?: string
-  archived?: boolean
-  running?: boolean
-}
-
-export interface LocalCodexThreadListResponse {
-  threads: LocalCodexThreadSummary[]
-}
-
-export interface LocalCodexBindRequest {
-  deviceId: string
-  threadId: string
-  teamId?: number
-  title?: string
-  cwd?: string
-}
-
-export interface LocalCodexBindResponse {
-  taskId: number
-  task: Task
-  created: boolean
-  threadId: string
-  deviceId: string
 }
 
 export interface ArchivedTask {

@@ -11,7 +11,6 @@ import type {
   ProjectWorkControls,
 } from '@/components/chat/ChatInput'
 import type {
-  ArchivedTaskListResponse,
   BindTaskIMSessionsResponse,
   CreateGitWorkspaceProjectRequest,
   CreateProjectRequest,
@@ -19,12 +18,8 @@ import type {
   GitRepoInfo,
   IMPrivateSession,
   IMPrivateSessionListResponse,
-  LocalCodexBindRequest,
-  LocalCodexBindResponse,
-  LocalCodexThreadSummary,
   ProjectWithTasks,
-  TaskDetail,
-  TaskListResponse,
+  RuntimeTaskAddress,
   TurnFileChangesSummary,
 } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
@@ -50,7 +45,6 @@ interface DesktopWorkbenchLayoutProps {
   queuedMessages?: QueuedWorkbenchMessage[]
   guidanceMessages?: GuidanceWorkbenchMessage[]
   codeCommentContexts?: CodeCommentContext[]
-  runningTaskIds: Set<number>
   upgradingDevices?: Record<string, DeviceUpgradeState>
   activeItem?: 'chat' | 'plugins' | 'automation'
   onNewChat: () => void
@@ -60,11 +54,7 @@ interface DesktopWorkbenchLayoutProps {
   projectWork: ProjectWorkControls
   onSelectProject: (projectId: number | null) => void
   onStartNewProjectChat: (projectId: number) => void
-  onOpenTask: (taskId: number, projectId?: number) => void
-  onSearchTasks?: (query: string) => Promise<TaskListResponse>
-  onSearchTaskDetail?: (taskId: number) => Promise<TaskDetail>
-  onListLocalCodexThreads?: (deviceId: string, limit?: number) => Promise<LocalCodexThreadSummary[]>
-  onBindLocalCodexThread?: (request: LocalCodexBindRequest) => Promise<LocalCodexBindResponse>
+  onOpenRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void>
   onRememberExecutionDevice?: (deviceId: string) => void
   onRefreshDevices?: () => Promise<void>
   onUpgradeDevice?: (deviceId: string) => Promise<void>
@@ -79,15 +69,6 @@ interface DesktopWorkbenchLayoutProps {
   onListGitBranches: (repo: GitRepoInfo) => Promise<GitBranch[]>
   onUpdateProjectName: (projectId: number, name: string) => Promise<void>
   onRemoveProject: (projectId: number) => Promise<void>
-  onArchiveAllChats: () => Promise<void>
-  onArchiveAllProjectChats: () => Promise<void>
-  onArchiveProjectChats: (projectId: number) => Promise<void>
-  onArchiveTask: (taskId: number) => Promise<void>
-  onRenameTask: (taskId: number, title: string) => Promise<void>
-  onListArchivedTasks: () => Promise<ArchivedTaskListResponse>
-  onUnarchiveTask: (taskId: number) => Promise<void>
-  onDeleteTask: (taskId: number) => Promise<void>
-  onDeleteArchivedTasks: () => Promise<void>
   onGetDeviceHomeDirectory: (deviceId: string) => Promise<string>
   onGetProjectWorkspaceRoot: (deviceId: string) => Promise<string>
   onListDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
@@ -142,21 +123,15 @@ export function DesktopWorkbenchLayout({
   queuedMessages = [],
   guidanceMessages = [],
   codeCommentContexts = [],
-  runningTaskIds,
   upgradingDevices = {},
   activeItem = 'chat',
   onNewChat,
-  onStartStandaloneChat,
   onOpenPlugins,
   projectChat,
   projectWork,
   onSelectProject,
   onStartNewProjectChat,
-  onOpenTask,
-  onSearchTasks,
-  onSearchTaskDetail,
-  onListLocalCodexThreads,
-  onBindLocalCodexThread,
+  onOpenRuntimeLocalTask,
   onRememberExecutionDevice,
   onRefreshDevices,
   onUpgradeDevice = async () => {},
@@ -168,15 +143,6 @@ export function DesktopWorkbenchLayout({
   onListGitBranches,
   onUpdateProjectName,
   onRemoveProject,
-  onArchiveAllChats,
-  onArchiveAllProjectChats,
-  onArchiveProjectChats,
-  onArchiveTask,
-  onRenameTask,
-  onListArchivedTasks,
-  onUnarchiveTask,
-  onDeleteTask,
-  onDeleteArchivedTasks,
   onGetDeviceHomeDirectory,
   onGetProjectWorkspaceRoot,
   onListDeviceDirectories,
@@ -476,10 +442,8 @@ export function DesktopWorkbenchLayout({
           user={state.user}
           projects={state.projects}
           devices={state.devices}
-          recentTasks={state.recentTasks}
-          runningTaskIds={runningTaskIds}
-          currentProjectId={state.currentProject?.id}
-          currentTaskId={state.currentTask?.id}
+          runtimeWork={state.runtimeWork}
+          currentRuntimeTask={state.currentRuntimeTask}
           preferredDeviceId={
             state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
           }
@@ -487,14 +451,9 @@ export function DesktopWorkbenchLayout({
           activeItem={activeItem}
           onCollapse={() => setSidebarCollapsed(true)}
           onNewChat={onNewChat}
-          onStartStandaloneChat={onStartStandaloneChat}
           onSelectProject={onSelectProject}
           onStartNewProjectChat={onStartNewProjectChat}
-          onOpenTask={onOpenTask}
-          onSearchTasks={onSearchTasks}
-          onSearchTaskDetail={onSearchTaskDetail}
-          onListLocalCodexThreads={onListLocalCodexThreads}
-          onBindLocalCodexThread={onBindLocalCodexThread}
+          onOpenRuntimeLocalTask={onOpenRuntimeLocalTask}
           onRememberExecutionDevice={onRememberExecutionDevice}
           onOpenPlugins={onOpenPlugins}
           onRefreshDevices={onRefreshDevices}
@@ -505,11 +464,6 @@ export function DesktopWorkbenchLayout({
           onListGitBranches={onListGitBranches}
           onUpdateProjectName={onUpdateProjectName}
           onRemoveProject={onRemoveProject}
-          onArchiveAllChats={onArchiveAllChats}
-          onArchiveAllProjectChats={onArchiveAllProjectChats}
-          onArchiveProjectChats={onArchiveProjectChats}
-          onArchiveTask={onArchiveTask}
-          onRenameTask={onRenameTask}
           onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
           onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot}
           onListDeviceDirectories={onListDeviceDirectories}
@@ -531,10 +485,6 @@ export function DesktopWorkbenchLayout({
             setAutoOpenAddCloudDeviceDialog(false)
             navigateTo('/')
           }}
-          onListArchivedTasks={onListArchivedTasks}
-          onUnarchiveTask={onUnarchiveTask}
-          onDeleteTask={onDeleteTask}
-          onDeleteArchivedTasks={onDeleteArchivedTasks}
         />
       ) : (
         <DesktopWorkbenchMain

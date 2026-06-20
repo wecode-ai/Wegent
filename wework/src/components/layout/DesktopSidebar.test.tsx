@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import '@/i18n'
@@ -33,16 +33,10 @@ function renderSidebar(overrides: Partial<Parameters<typeof DesktopSidebar>[0]> 
     user: { id: 1, user_name: 'alice', email: 'alice@example.com' },
     projects: [project()],
     devices: [localDevice()],
-    recentTasks: [],
-    runningTaskIds: new Set(),
     onCollapse: vi.fn(),
     onNewChat: vi.fn(),
-    onStartStandaloneChat: vi.fn(),
     onSelectProject: vi.fn(),
     onStartNewProjectChat: vi.fn(),
-    onOpenTask: vi.fn(),
-    onListLocalCodexThreads: vi.fn().mockResolvedValue([]),
-    onBindLocalCodexThread: vi.fn(),
     onOpenPlugins: vi.fn(),
     onCreateProject: vi.fn(),
     onCreateGitWorkspaceProject: vi.fn(),
@@ -50,11 +44,6 @@ function renderSidebar(overrides: Partial<Parameters<typeof DesktopSidebar>[0]> 
     onListGitBranches: vi.fn().mockResolvedValue([]),
     onUpdateProjectName: vi.fn(),
     onRemoveProject: vi.fn(),
-    onArchiveAllChats: vi.fn(),
-    onArchiveAllProjectChats: vi.fn(),
-    onArchiveProjectChats: vi.fn(),
-    onArchiveTask: vi.fn(),
-    onRenameTask: vi.fn(),
     onGetDeviceHomeDirectory: vi.fn().mockResolvedValue('/Users/alice'),
     onGetProjectWorkspaceRoot: vi.fn().mockResolvedValue('/Users/alice/dev'),
     onListDeviceDirectories: vi.fn().mockResolvedValue([]),
@@ -73,17 +62,97 @@ describe('DesktopSidebar', () => {
     localStorage.clear()
   })
 
-  test('opens local Codex dialog from a dedicated sidebar area', async () => {
-    const onListLocalCodexThreads = vi.fn().mockResolvedValue([])
+  test('renders unmapped device runtime tasks without local Codex import UI', async () => {
+    const onOpenRuntimeLocalTask = vi.fn()
 
-    renderSidebar({ onListLocalCodexThreads })
+    renderSidebar({
+      projects: [],
+      runtimeWork: {
+        projects: [],
+        unmappedDeviceWorkspaces: [
+          {
+            deviceId: 'local-device',
+            deviceName: 'Local Mac',
+            deviceStatus: 'online',
+            available: true,
+            workspacePath: '/tmp/spike',
+            localTasks: [
+              {
+                localTaskId: 'claude-1',
+                workspacePath: '/tmp/spike',
+                title: 'Spike runtime task',
+                runtime: 'claude_code',
+              },
+            ],
+          },
+        ],
+        totalLocalTasks: 1,
+      },
+      onOpenRuntimeLocalTask,
+    })
 
-    expect(screen.getByTestId('local-codex-section')).toHaveTextContent('Codex')
-    expect(screen.queryByTestId('local-codex-import-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('runtime-workspace-row-/tmp/spike')).toHaveTextContent('spike')
+    expect(screen.getByTestId('runtime-local-task-row-claude-1')).toHaveTextContent(
+      'Spike runtime task'
+    )
 
-    await userEvent.click(screen.getByTestId('local-codex-open-button'))
+    await userEvent.click(screen.getByTestId('runtime-local-task-row-claude-1'))
 
-    expect(await screen.findByTestId('local-codex-import-dialog')).toBeInTheDocument()
-    await waitFor(() => expect(onListLocalCodexThreads).toHaveBeenCalledWith('local-device'))
+    expect(onOpenRuntimeLocalTask).toHaveBeenCalledWith({
+      deviceId: 'local-device',
+      workspacePath: '/tmp/spike',
+      localTaskId: 'claude-1',
+    })
+  })
+
+  test('renders runtime workspaces under projects and opens local tasks by address', async () => {
+    const onOpenRuntimeLocalTask = vi.fn()
+
+    renderSidebar({
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, name: 'Wegent' },
+            totalLocalTasks: 1,
+            deviceWorkspaces: [
+              {
+                id: 91,
+                deviceId: 'local-device',
+                deviceName: 'Local Mac',
+                deviceStatus: 'online',
+                available: true,
+                workspacePath: '/repo/Wegent',
+                label: 'Wegent local',
+                localTasks: [
+                  {
+                    localTaskId: 'codex-1',
+                    workspacePath: '/repo/Wegent',
+                    title: 'Fix reconnect',
+                    runtime: 'codex',
+                    updatedAt: '2026-06-20T02:00:00Z',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        unmappedDeviceWorkspaces: [],
+        totalLocalTasks: 1,
+      },
+      onOpenRuntimeLocalTask,
+    })
+
+    await userEvent.click(screen.getByTestId('project-item-button'))
+
+    expect(screen.getByTestId('runtime-workspace-row-91')).toHaveTextContent('Wegent local')
+    expect(screen.getByTestId('runtime-local-task-row-codex-1')).toHaveTextContent('Fix reconnect')
+
+    await userEvent.click(screen.getByTestId('runtime-local-task-row-codex-1'))
+
+    expect(onOpenRuntimeLocalTask).toHaveBeenCalledWith({
+      deviceId: 'local-device',
+      workspacePath: '/repo/Wegent',
+      localTaskId: 'codex-1',
+    })
   })
 })

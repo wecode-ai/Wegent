@@ -28,12 +28,18 @@ from executor.config import config
 from executor.config.device_config import DeviceConfig
 from executor.modes.local.capabilities import CapabilitySyncHandler
 from executor.modes.local.command_handler import CommandHandler
-from executor.modes.local.events import ChatEvents, DeviceEvents, TaskEvents
+from executor.modes.local.events import (
+    ChatEvents,
+    DeviceEvents,
+    RuntimeEvents,
+    TaskEvents,
+)
 from executor.modes.local.extension_handler import DeviceExtensionHandler
 from executor.modes.local.handlers import TaskHandler, UpgradeHandler
 from executor.modes.local.heartbeat import LocalHeartbeatService
 from executor.modes.local.session_handler import LocalSessionHandler
 from executor.modes.local.websocket_client import WebSocketClient
+from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
 from executor.services.updater.process_manager import ProcessManager
 from executor.version import get_version
 from shared.logger import setup_logger
@@ -118,6 +124,7 @@ class LocalRunner:
         )
         self.upgrade_handler = UpgradeHandler(self)
         self.extension_handler = DeviceExtensionHandler(self)
+        self.runtime_work_handler = RuntimeWorkRpcHandler()
 
         # Task queue for execution
         self.task_queue: asyncio.Queue = asyncio.Queue()
@@ -311,6 +318,10 @@ class LocalRunner:
         self.websocket_client.on(
             DeviceEvents.TERMINAL_CLOSE,
             self.session_handler.handle_terminal_close,
+        )
+        self.websocket_client.on(
+            RuntimeEvents.RPC,
+            self.runtime_work_handler.handle_runtime_rpc,
         )
 
         # Upgrade handler

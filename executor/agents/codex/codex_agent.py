@@ -92,7 +92,6 @@ class CodeXAgent(Agent):
         self._turn = None
         self._bot_id = self._resolve_bot_id(task_data)
         self._session_store = CodeXSessionStore()
-        self.local_codex_thread_id = getattr(task_data, "local_codex_thread_id", None)
         self.thread_id: Optional[str] = None
         self._local_image_paths: list[str | None] = []
         self._model_input_files: list[str] = []
@@ -119,7 +118,7 @@ class CodeXAgent(Agent):
             self._prepare_standalone_chat_workspace()
             if self.project_path is None:
                 self.prepare_project_workspace_path()
-            if self.project_path is None and not self._workspace_is_optional():
+            if self.project_path is None:
                 self.project_path = self._default_workspace_path()
                 Path(self.project_path).mkdir(parents=True, exist_ok=True)
             return TaskStatus.SUCCESS, None
@@ -324,15 +323,6 @@ class CodeXAgent(Agent):
         assert self.codex_config is not None
         developer_instructions = self._build_developer_instructions()
         thread_kwargs = self._build_thread_kwargs(developer_instructions)
-        if self.local_codex_thread_id:
-            self._thread = await self._codex.thread_resume(
-                self.local_codex_thread_id,
-                **thread_kwargs,
-            )
-            self.thread_id = self.local_codex_thread_id
-            self._session_store.save(self.task_id, self._bot_id, self.thread_id)
-            return
-
         thread_id = self._session_store.load(
             self.task_id,
             self._bot_id,
@@ -550,6 +540,3 @@ class CodeXAgent(Agent):
 
     def _default_workspace_path(self) -> str:
         return os.path.join(config.get_workspace_root(), str(self.task_id))
-
-    def _workspace_is_optional(self) -> bool:
-        return getattr(self.task_data, "workspace_source", None) == "local_codex_thread"

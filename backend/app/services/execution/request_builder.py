@@ -18,12 +18,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.constants import (
-    CLIENT_ORIGIN_WEWORK,
-    LABEL_LOCAL_CODEX_DEVICE_ID,
-    LABEL_LOCAL_CODEX_THREAD_ID,
-    WORKSPACE_SOURCE_LOCAL_CODEX_THREAD,
-)
+from app.core.constants import CLIENT_ORIGIN_WEWORK
 from app.models.project import Project
 from app.models.subtask import Subtask
 from app.models.task import TaskResource
@@ -388,7 +383,6 @@ class TaskRequestBuilder:
             bot_config[0].get("name", "") if bot_config else ""
         )
         resolved_bot_namespace = getattr(bot, "namespace", None) or "default"
-        local_codex_binding = self._extract_local_codex_binding_metadata(task)
 
         return ExecutionRequest(
             task_id=task.id,
@@ -429,8 +423,6 @@ class TaskRequestBuilder:
             workspace_source=project_workspace.get("workspace_source"),
             project_workspace_path=project_workspace.get("project_workspace_path"),
             execution_target_type=project_workspace.get("execution_target_type"),
-            local_codex_thread_id=local_codex_binding["local_codex_thread_id"],
-            local_codex_device_id=local_codex_binding["local_codex_device_id"],
             # Git fields extracted from workspace for executor compatibility
             git_url=git_url,
             git_domain=git_domain,
@@ -685,46 +677,6 @@ class TaskRequestBuilder:
         if isinstance(device_id, str) and device_id.strip():
             return device_id.strip()
         return None
-
-    @staticmethod
-    def _extract_local_codex_binding_metadata(
-        task: TaskResource,
-    ) -> dict[str, str | None]:
-        """Extract local Codex binding metadata from task labels."""
-
-        task_json = task.json if isinstance(task.json, dict) else {}
-        spec = task_json.get("spec", {})
-        if not isinstance(spec, dict):
-            return {"local_codex_thread_id": None, "local_codex_device_id": None}
-        execution = spec.get("execution", {})
-        if not isinstance(execution, dict):
-            return {"local_codex_thread_id": None, "local_codex_device_id": None}
-        workspace = execution.get("workspace", {})
-        if (
-            not isinstance(workspace, dict)
-            or workspace.get("source") != WORKSPACE_SOURCE_LOCAL_CODEX_THREAD
-        ):
-            return {"local_codex_thread_id": None, "local_codex_device_id": None}
-
-        metadata = task_json.get("metadata", {})
-        labels = metadata.get("labels", {}) if isinstance(metadata, dict) else {}
-        if not isinstance(labels, dict):
-            labels = {}
-
-        thread_id = labels.get(LABEL_LOCAL_CODEX_THREAD_ID)
-        device_id = labels.get(LABEL_LOCAL_CODEX_DEVICE_ID)
-        return {
-            "local_codex_thread_id": (
-                thread_id.strip()
-                if isinstance(thread_id, str) and thread_id.strip()
-                else None
-            ),
-            "local_codex_device_id": (
-                device_id.strip()
-                if isinstance(device_id, str) and device_id.strip()
-                else None
-            ),
-        }
 
     def _get_device_type(self, user_id: int, device_id: str | None) -> str | None:
         """Resolve a Device CRD type without making request building depend on it."""
@@ -2652,21 +2604,6 @@ Response template:
                 task=task,
                 project_workspace=existing_project,
             )
-
-        if (
-            not isinstance(workspace_path, str) or not workspace_path.strip()
-        ) and workspace_source == WORKSPACE_SOURCE_LOCAL_CODEX_THREAD:
-            workspace_data["project"] = {
-                "project_id": project_id,
-                "workspace_source": workspace_source,
-                "project_workspace_path": None,
-                "execution_target_type": existing_project.get("execution_target_type")
-                or "local",
-                "device_id": device_id,
-                "checkout_path": None,
-                "local_path": None,
-            }
-            return True
 
         if not isinstance(workspace_path, str) or not workspace_path.strip():
             return False

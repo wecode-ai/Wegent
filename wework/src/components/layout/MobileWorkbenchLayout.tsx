@@ -22,7 +22,6 @@ import {
 } from '@/lib/device-capabilities'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
 import type {
-  ArchivedTaskListResponse,
   BindTaskIMSessionsResponse,
   CreateGitWorkspaceProjectRequest,
   CreateProjectRequest,
@@ -31,6 +30,7 @@ import type {
   IMPrivateSession,
   IMPrivateSessionListResponse,
   ProjectWithTasks,
+  RuntimeTaskAddress,
   TurnFileChangesSummary,
 } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
@@ -54,7 +54,6 @@ interface MobileWorkbenchLayoutProps {
   queuedMessages?: QueuedWorkbenchMessage[]
   guidanceMessages?: GuidanceWorkbenchMessage[]
   codeCommentContexts?: CodeCommentContext[]
-  runningTaskIds?: Set<number>
   upgradingDevices?: Record<string, DeviceUpgradeState>
   activeItem?: 'chat' | 'plugins' | 'automation'
   onNewChat?: () => void
@@ -64,7 +63,7 @@ interface MobileWorkbenchLayoutProps {
   projectWork: ProjectWorkControls
   onSelectProject: (projectId: number | null) => void
   onStartNewProjectChat?: (projectId: number) => void
-  onOpenTask: (taskId: number, projectId?: number) => void
+  onOpenRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void>
   onCreateProject?: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
   onCreateGitWorkspaceProject?: (
     data: CreateGitWorkspaceProjectRequest
@@ -73,15 +72,6 @@ interface MobileWorkbenchLayoutProps {
   onListGitBranches?: (repo: GitRepoInfo) => Promise<GitBranch[]>
   onUpdateProjectName?: (projectId: number, name: string) => Promise<void>
   onRemoveProject?: (projectId: number) => Promise<void>
-  onArchiveAllChats?: () => Promise<void>
-  onArchiveAllProjectChats?: () => Promise<void>
-  onArchiveProjectChats?: (projectId: number) => Promise<void>
-  onArchiveTask?: (taskId: number) => Promise<void>
-  onRenameTask?: (taskId: number, title: string) => Promise<void>
-  onListArchivedTasks?: () => Promise<ArchivedTaskListResponse>
-  onUnarchiveTask?: (taskId: number) => Promise<void>
-  onDeleteTask?: (taskId: number) => Promise<void>
-  onDeleteArchivedTasks?: () => Promise<void>
   onGetDeviceHomeDirectory?: (deviceId: string) => Promise<string>
   onGetProjectWorkspaceRoot?: (deviceId: string) => Promise<string>
   onListDeviceDirectories?: (deviceId: string, path: string) => Promise<string[]>
@@ -142,7 +132,6 @@ export function MobileWorkbenchLayout({
   queuedMessages = [],
   guidanceMessages = [],
   codeCommentContexts = [],
-  runningTaskIds,
   upgradingDevices = {},
   activeItem,
   onNewChat,
@@ -151,16 +140,13 @@ export function MobileWorkbenchLayout({
   projectChat,
   projectWork,
   onSelectProject,
-  onOpenTask,
+  onOpenRuntimeLocalTask,
   onCreateProject,
   onCreateGitWorkspaceProject,
   onListGitRepositories,
   onListGitBranches,
   onUpdateProjectName,
   onRemoveProject,
-  onArchiveProjectChats,
-  onArchiveTask,
-  onRenameTask,
   onGetDeviceHomeDirectory,
   onGetProjectWorkspaceRoot,
   onListDeviceDirectories,
@@ -696,10 +682,9 @@ export function MobileWorkbenchLayout({
         user={state.user}
         devices={state.devices}
         projects={state.projects}
-        recentTasks={state.recentTasks}
-        runningTaskIds={runningTaskIds}
+        runtimeWork={state.runtimeWork}
         currentProjectId={state.currentProject?.id}
-        currentTaskId={state.currentTask?.id}
+        currentRuntimeTask={state.currentRuntimeTask}
         activeItem={activeItem}
         onClose={() => setDrawerOpen(false)}
         onNewChat={onNewChat}
@@ -718,11 +703,8 @@ export function MobileWorkbenchLayout({
         onCreateDeviceDirectory={onCreateDeviceDirectory}
         onUpdateProjectName={onUpdateProjectName}
         onRemoveProject={onRemoveProject}
-        onArchiveProjectChats={onArchiveProjectChats}
-        onArchiveTask={onArchiveTask}
-        onRenameTask={onRenameTask}
         onSelectProject={onSelectProject}
-        onOpenTask={onOpenTask}
+        onOpenRuntimeLocalTask={onOpenRuntimeLocalTask}
         onRefreshWorkLists={onRefreshWorkLists}
       />
       <ContinueInImDialog

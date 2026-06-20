@@ -14,7 +14,6 @@ export function WorkbenchPage() {
     queuedMessages,
     guidanceMessages,
     codeCommentContexts,
-    runningTaskIds,
     upgradingDevices,
     projectExecutionMode,
     setProjectExecutionMode,
@@ -26,11 +25,7 @@ export function WorkbenchPage() {
     startNewChat,
     startStandaloneChat,
     startNewProjectChat,
-    openTask,
-    searchTasks,
-    searchTaskDetail,
-    listLocalCodexThreads,
-    bindLocalCodexThread,
+    openRuntimeLocalTask,
     rememberExecutionDevice,
     refreshDevices,
     refreshWorkLists,
@@ -41,15 +36,6 @@ export function WorkbenchPage() {
     listGitBranches,
     updateProjectName,
     removeProject,
-    archiveAllChats,
-    archiveAllProjectChats,
-    archiveProjectChats,
-    archiveTask,
-    renameTask,
-    listArchivedTasks,
-    unarchiveTask,
-    deleteTask,
-    deleteArchivedTasks,
     getDeviceHomeDirectory,
     getProjectWorkspaceRoot,
     listDeviceDirectories,
@@ -98,7 +84,6 @@ export function WorkbenchPage() {
       queuedMessages={queuedMessages}
       guidanceMessages={guidanceMessages}
       codeCommentContexts={codeCommentContexts}
-      runningTaskIds={runningTaskIds}
       upgradingDevices={upgradingDevices}
       onNewChat={startNewChat}
       onStartStandaloneChat={startStandaloneChat}
@@ -107,11 +92,7 @@ export function WorkbenchPage() {
       projectWork={projectWork}
       onSelectProject={selectProject}
       onStartNewProjectChat={startNewProjectChat}
-      onOpenTask={openTask}
-      onSearchTasks={searchTasks}
-      onSearchTaskDetail={searchTaskDetail}
-      onListLocalCodexThreads={listLocalCodexThreads}
-      onBindLocalCodexThread={bindLocalCodexThread}
+      onOpenRuntimeLocalTask={openRuntimeLocalTask}
       onRememberExecutionDevice={rememberExecutionDevice}
       onRefreshDevices={refreshDevices}
       onUpgradeDevice={upgradeDevice}
@@ -121,15 +102,6 @@ export function WorkbenchPage() {
       onListGitBranches={listGitBranches}
       onUpdateProjectName={updateProjectName}
       onRemoveProject={removeProject}
-      onArchiveAllChats={archiveAllChats}
-      onArchiveAllProjectChats={archiveAllProjectChats}
-      onArchiveProjectChats={archiveProjectChats}
-      onArchiveTask={archiveTask}
-      onRenameTask={renameTask}
-      onListArchivedTasks={listArchivedTasks}
-      onUnarchiveTask={unarchiveTask}
-      onDeleteTask={deleteTask}
-      onDeleteArchivedTasks={deleteArchivedTasks}
       onGetDeviceHomeDirectory={getDeviceHomeDirectory}
       onGetProjectWorkspaceRoot={getProjectWorkspaceRoot}
       onListDeviceDirectories={listDeviceDirectories}
