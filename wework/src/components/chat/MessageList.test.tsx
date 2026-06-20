@@ -140,7 +140,9 @@ describe('MessageList', () => {
       />
     )
 
-    expect(screen.getByTestId('message-source-badge')).toHaveTextContent('钉钉')
+    const badge = screen.getByTestId('message-source-badge')
+    expect(badge).toHaveTextContent('钉钉')
+    expect(badge.closest('.opacity-0')).toBeNull()
   })
 
   test('does not render IM source badge for assistant or non-IM messages', () => {

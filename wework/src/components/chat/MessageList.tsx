@@ -174,13 +174,10 @@ function UserMessage({ message }: { message: WorkbenchMessage }) {
           )}
         </div>
       )}
-      <MessageHoverActions
-        message={message}
-        align="right"
-        leadingContent={
-          <ImSourceBadge source={message.source} testId="message-source-badge" />
-        }
-      />
+      <div className="flex min-h-5 items-center justify-end gap-1">
+        <ImSourceBadge source={message.source} testId="message-source-badge" />
+      </div>
+      <MessageHoverActions message={message} align="right" />
     </div>
   )
 }
@@ -222,11 +219,9 @@ function MessageImageAttachmentPreview({ attachment }: { attachment: Attachment 
 function MessageHoverActions({
   message,
   align,
-  leadingContent,
 }: {
   message: WorkbenchMessage
   align: 'left' | 'right'
-  leadingContent?: ReactNode
 }) {
   const [copied, setCopied] = useState(false)
   const time = formatMessageTime(message.createdAt)
@@ -245,7 +240,6 @@ function MessageHoverActions({
         align === 'right' ? 'justify-end' : 'justify-start',
       ].join(' ')}
     >
-      {leadingContent}
       {time && (
         <span data-testid="message-hover-time" className="px-1">
           {time}
