@@ -2,7 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from types import SimpleNamespace
+import sys
+from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -105,6 +106,16 @@ async def test_bound_thread_resume_omits_cwd_when_project_path_is_empty(tmp_path
 
     resume_kwargs = agent._codex.thread_resume.await_args.kwargs
     assert "cwd" not in resume_kwargs
+
+
+def test_thread_kwargs_accepts_sdk_without_thread_option_enums(tmp_path, monkeypatch):
+    monkeypatch.setitem(sys.modules, "openai_codex", ModuleType("openai_codex"))
+    agent = _agent(tmp_path)
+
+    kwargs = agent._build_thread_kwargs()
+
+    assert kwargs["approval_mode"] == "deny_all"
+    assert kwargs["sandbox"] == "full-access"
 
 
 @pytest.mark.asyncio

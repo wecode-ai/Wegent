@@ -753,6 +753,25 @@ class SqlAlchemyTaskStore:
             query = query.limit(limit)
         return query.all()
 
+    def list_owned_tasks_by_states(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        states: Sequence[int],
+        client_origin: Optional[str] = None,
+    ) -> list[TaskResource]:
+        if not states:
+            return []
+        query = db.query(TaskResource).filter(
+            TaskResource.user_id == user_id,
+            TaskResource.kind == "Task",
+            TaskResource.is_active.in_(list(states)),
+        )
+        if client_origin:
+            query = query.filter(TaskResource.client_origin == client_origin)
+        return query.all()
+
     def list_kind_resources(
         self,
         db: Session,

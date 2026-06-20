@@ -32,6 +32,22 @@ from shared.status import TaskStatus
 logger = setup_logger("codex_agent")
 
 
+def _deny_all_approval_mode() -> Any:
+    try:
+        from openai_codex import ApprovalMode
+    except ImportError:
+        return "deny_all"
+    return getattr(ApprovalMode, "deny_all", "deny_all")
+
+
+def _full_access_sandbox() -> Any:
+    try:
+        from openai_codex import Sandbox
+    except ImportError:
+        return "full-access"
+    return getattr(Sandbox, "full_access", "full-access")
+
+
 class CodeXAgent(Agent):
     """Codex runtime backed by the Python SDK and a preinstalled Codex binary."""
 
@@ -349,11 +365,9 @@ class CodeXAgent(Agent):
     def _build_thread_kwargs(
         self, developer_instructions: Optional[str] = None
     ) -> dict[str, Any]:
-        from openai_codex import ApprovalMode
-
         assert self.codex_config is not None
         kwargs = {
-            "approval_mode": ApprovalMode.deny_all,
+            "approval_mode": _deny_all_approval_mode(),
             "config": self.codex_config.thread_config,
             "developer_instructions": developer_instructions,
             "model": self.codex_config.model,
@@ -525,9 +539,7 @@ class CodeXAgent(Agent):
 
     @staticmethod
     def _sandbox_full_access() -> Any:
-        from openai_codex import Sandbox
-
-        return Sandbox.full_access
+        return _full_access_sandbox()
 
     @staticmethod
     def _resolve_bot_id(task_data: ExecutionRequest) -> Optional[int]:

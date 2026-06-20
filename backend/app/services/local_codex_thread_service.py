@@ -32,6 +32,7 @@ from app.services.chat.storage.task_manager import (
 )
 from app.services.device_service import device_service
 from app.services.task_status import mark_task_completed
+from app.stores.tasks import task_store
 
 CODEX_THREAD_ID_PATTERN = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-" r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
@@ -96,17 +97,12 @@ def find_bound_local_codex_task(
 ) -> Optional[TaskResource]:
     """Find an active Wework task already bound to the device/thread pair."""
 
-    query = db.query(TaskResource).filter(
-        TaskResource.user_id == user_id,
-        TaskResource.kind == "Task",
-        TaskResource.client_origin == CLIENT_ORIGIN_WEWORK,
+    tasks = task_store.list_owned_tasks_by_states(
+        db,
+        user_id=user_id,
+        states=TaskResource.is_active_query() if states is None else states,
+        client_origin=CLIENT_ORIGIN_WEWORK,
     )
-    if states is None:
-        query = query.filter(TaskResource.is_active.in_(TaskResource.is_active_query()))
-    else:
-        query = query.filter(TaskResource.is_active.in_(list(states)))
-
-    tasks = query.all()
     for task in tasks:
         binding = get_local_codex_binding(task)
         if not binding:
@@ -384,15 +380,11 @@ def _release_deleted_binding_task_names(
     device_id: str,
     thread_id: str,
 ) -> None:
-    deleted_tasks = (
-        db.query(TaskResource)
-        .filter(
-            TaskResource.user_id == user_id,
-            TaskResource.kind == "Task",
-            TaskResource.client_origin == CLIENT_ORIGIN_WEWORK,
-            TaskResource.is_active == TaskResource.STATE_DELETED,
-        )
-        .all()
+    deleted_tasks = task_store.list_owned_tasks_by_states(
+        db,
+        user_id=user_id,
+        states=[TaskResource.STATE_DELETED],
+        client_origin=CLIENT_ORIGIN_WEWORK,
     )
 
     released_any = False
