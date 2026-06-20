@@ -780,6 +780,19 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         im_session: Any,
         message_context: MessageContext,
     ) -> bool:
+        if self._should_continue_private_task_media_message(
+            im_session, message_context
+        ):
+            await self._execute_private_im_continue_task(
+                db=db,
+                user=user,
+                im_session=im_session,
+                task_id=im_session.active_task_id,
+                message="",
+                message_context=message_context,
+            )
+            return True
+
         recent_tasks = im_task_continuation_service.list_recent_wework_tasks(
             db, user.id, limit=5
         )
@@ -835,6 +848,18 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             return True
 
         return False
+
+    def _should_continue_private_task_media_message(
+        self,
+        im_session: Any,
+        message_context: MessageContext,
+    ) -> bool:
+        return (
+            im_session.mode == "task"
+            and im_session.active_task_id is not None
+            and not (message_context.content or "").strip()
+            and bool(message_context.images or message_context.files)
+        )
 
     async def _execute_private_im_bind_task(
         self,
@@ -953,6 +978,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         params = im_task_continuation_service.build_new_task_params(
             message=message,
             project_id=project_id,
+            task_type="task",
             message_source=message_source,
         )
         result = await create_chat_task(
