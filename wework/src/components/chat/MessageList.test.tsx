@@ -143,6 +143,7 @@ describe('MessageList', () => {
     const badge = screen.getByTestId('message-source-badge')
     expect(badge).toHaveTextContent('钉钉')
     expect(badge.closest('.opacity-0')).toBeNull()
+    expect(screen.getByTestId('message-source-row')).toContainElement(badge)
   })
 
   test('does not render IM source badge for assistant or non-IM messages', () => {
@@ -176,6 +177,13 @@ describe('MessageList', () => {
     )
 
     expect(screen.queryByTestId('message-source-badge')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('message-source-row')).not.toBeInTheDocument()
+    expect(
+      screen
+        .getByText('网页消息')
+        .closest('[data-testid="message-user"]')
+        ?.querySelector('div.flex.min-h-5.items-center.justify-end.gap-1:not(.opacity-0)')
+    ).toBeNull()
   })
 
   test('renders sent local skill mentions as polished inline tokens', () => {

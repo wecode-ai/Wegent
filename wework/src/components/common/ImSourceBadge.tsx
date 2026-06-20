@@ -1,13 +1,6 @@
 import { useTranslation } from '@/hooks/useTranslation'
+import { getTrimmedString, isIMSource, isRecord, type ImSourceLike } from '@/lib/im-source'
 import { cn } from '@/lib/utils'
-
-type ImSourceRecord = {
-  source?: unknown
-  channel_label?: unknown
-  channel_type?: unknown
-}
-
-type ImSourceLike = string | ImSourceRecord | null | undefined
 
 interface ImSourceBadgeProps {
   source: ImSourceLike
@@ -18,21 +11,6 @@ interface ImSourceBadgeProps {
 const CHANNEL_LABEL_KEYS: Record<string, string> = {
   dingtalk: 'workbench.im_channel_dingtalk',
   telegram: 'workbench.im_channel_telegram',
-}
-
-function isRecord(value: unknown): value is ImSourceRecord {
-  return typeof value === 'object' && value !== null
-}
-
-function getTrimmedString(value: unknown): string | undefined {
-  if (typeof value !== 'string') return undefined
-  const trimmed = value.trim()
-  return trimmed.length > 0 ? trimmed : undefined
-}
-
-function isIMSource(source: ImSourceLike): boolean {
-  if (typeof source === 'string') return source === 'im'
-  return isRecord(source) && source.source === 'im'
 }
 
 export function ImSourceBadge({ source, className, testId }: ImSourceBadgeProps) {

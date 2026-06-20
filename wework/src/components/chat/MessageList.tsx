@@ -8,6 +8,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import type { ProcessingBlock, WorkbenchMessage } from '@/types/workbench'
 import { getAttachmentTypeLabel, isImageAttachment } from '@/lib/attachments'
 import { parseChatError } from '@/lib/chat-error'
+import { isIMSource } from '@/lib/im-source'
 import { ImSourceBadge } from '@/components/common/ImSourceBadge'
 import { AttachmentImagePreview } from './AttachmentImagePreview'
 import { ToolBlocksDisplay } from './blocks/ToolBlocksDisplay'
@@ -122,6 +123,7 @@ function UserMessage({ message }: { message: WorkbenchMessage }) {
   const shouldCollapse =
     message.content.length > USER_MESSAGE_COLLAPSE_CHARACTERS ||
     message.content.split('\n').length > USER_MESSAGE_COLLAPSE_LINES
+  const showSourceBadge = isIMSource(message.source)
 
   return (
     <div className="group flex max-w-[80%] flex-col items-end gap-1.5">
@@ -174,9 +176,14 @@ function UserMessage({ message }: { message: WorkbenchMessage }) {
           )}
         </div>
       )}
-      <div className="flex min-h-5 items-center justify-end gap-1">
-        <ImSourceBadge source={message.source} testId="message-source-badge" />
-      </div>
+      {showSourceBadge && (
+        <div
+          data-testid="message-source-row"
+          className="flex min-h-5 items-center justify-end gap-1"
+        >
+          <ImSourceBadge source={message.source} testId="message-source-badge" />
+        </div>
+      )}
       <MessageHoverActions message={message} align="right" />
     </div>
   )
