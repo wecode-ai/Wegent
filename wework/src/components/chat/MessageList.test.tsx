@@ -693,6 +693,36 @@ describe('MessageList', () => {
     expect(screen.queryByText(rawError, { selector: 'p.text-red-500' })).not.toBeInTheDocument()
   })
 
+  test('renders retry card for failed assistant messages without error details', async () => {
+    const user = userEvent.setup()
+    const onRetryFailedMessage = vi.fn()
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: '2',
+            role: 'assistant',
+            content: '',
+            status: 'failed',
+            createdAt: '2026-05-25T18:46:00.000+08:00',
+          },
+        ]}
+        onRetryFailedMessage={onRetryFailedMessage}
+      />
+    )
+
+    expect(screen.getByTestId('assistant-error-card')).toBeInTheDocument()
+    expect(screen.getByText('消息生成失败')).toBeInTheDocument()
+    expect(screen.getByText('请求未能完成。你可以稍后重试。')).toBeInTheDocument()
+    expect(screen.queryByTestId('assistant-error-details-toggle')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('assistant-error-details')).not.toBeInTheDocument()
+
+    await user.click(screen.getByTestId('assistant-error-retry'))
+
+    expect(onRetryFailedMessage).toHaveBeenCalledWith(expect.objectContaining({ id: '2' }))
+  })
+
   test('classifies hidden raw failed content before generic task status errors', () => {
     const rawError =
       'API Error: 400 {"error":{"message":"模型 deepseek-v3.1 不支持 Anthropic 协议, model_id: ali-deepseek-v3.1"}}'
