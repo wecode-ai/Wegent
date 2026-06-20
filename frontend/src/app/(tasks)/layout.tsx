@@ -33,8 +33,8 @@ const GlobalAdminSetupWizard = dynamic(
 )
 
 /**
- * Shared layout for chat and code pages to reuse TaskSessionProvider.
- * This prevents task list from being reloaded when switching between pages
+ * Shared layout for chat and coding mode to reuse TaskSessionProvider.
+ * This prevents task list from being reloaded when switching modes
  * and allows chat streams to continue running in the background
  *
  * SocketProvider is added for real-time WebSocket communication

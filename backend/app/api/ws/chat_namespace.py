@@ -21,6 +21,7 @@ from datetime import datetime
 from typing import Any, Dict, Optional
 
 import socketio
+from socketio.exceptions import ConnectionRefusedError
 from sqlalchemy.orm import Session
 
 import app.stores.tasks as task_stores
@@ -321,7 +322,7 @@ class ChatNamespace(socketio.AsyncNamespace):
         # Extract token expiry for later validation
         token_exp = get_token_expiry(token)
 
-        session_saved = await save_connect_session(
+        await save_connect_session(
             self,
             sid,
             session_data={
@@ -334,23 +335,19 @@ class ChatNamespace(socketio.AsyncNamespace):
             logger=logger,
             log_prefix="[WS]",
         )
-        if not session_saved:
-            return False
 
         # Set user context for trace logging
         set_user_context(user_id=str(user.id), user_name=user.user_name)
 
         # Join user room
         user_room = f"user:{user.id}"
-        room_entered = await enter_connect_room(
+        await enter_connect_room(
             self,
             sid,
             user_room,
             logger=logger,
             log_prefix="[WS]",
         )
-        if not room_entered:
-            return False
 
         logger.info(f"[WS] Connected user={user.id} ({user.user_name}) sid={sid}")
 

@@ -76,6 +76,7 @@ import {
   type ResourceCreateTarget,
 } from '@/features/resource-library/components/ResourceCreateButton'
 import {
+  buildTeamTargetHref,
   filterTeamsByMode,
   getTeamTargetPage,
   type TeamModeFilter,
@@ -338,7 +339,7 @@ export default function TeamList({
     const params = new URLSearchParams()
     params.set('teamId', String(team.id))
     const targetPage = getTeamTargetPage(team, modeFilter)
-    router.push(`/${targetPage}?${params.toString()}`)
+    router.push(buildTeamTargetHref(targetPage, params))
   }
 
   // Filter teams based on mode filter
