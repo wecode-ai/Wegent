@@ -1909,7 +1909,7 @@ start_standalone_service() {
     if [[ "$DRY_RUN" == "1" ]]; then
         ui_info "[DRY RUN] Would run: docker pull ${STANDALONE_IMAGE}"
     else
-        if ! run_quiet_step "Pulling image" docker pull "${STANDALONE_IMAGE}"; then
+        if ! docker pull "${STANDALONE_IMAGE}"; then
             ui_warn "Failed to pull image, will try to use local image if available"
         fi
     fi
