@@ -254,7 +254,7 @@ export interface IMPrivateSession {
   id: number
   channel_type: string
   channel_label: string
-  channel_id: string
+  channel_id: number
   conversation_id: string
   sender_id: string
   display_name: string
