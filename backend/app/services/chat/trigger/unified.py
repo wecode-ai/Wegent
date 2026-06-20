@@ -405,8 +405,12 @@ async def build_execution_request(
         override_model_type = None
         force_override = False
         runtime_model_config = None
-        task_json = task.json or {}
-        task_labels = task_json.get("metadata", {}).get("labels", {})
+        task_json = task.json if isinstance(task.json, dict) else {}
+        metadata = task_json.get("metadata") or {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        labels = metadata.get("labels") or {}
+        task_labels = labels if isinstance(labels, dict) else {}
         if task_labels:
             override_model_name = task_labels.get("modelId")
             override_model_type = task_labels.get("forceOverrideBotModelType")

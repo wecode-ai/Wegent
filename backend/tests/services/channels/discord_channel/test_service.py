@@ -62,6 +62,7 @@ async def test_discord_provider_routes_only_user_dm_messages(monkeypatch):
 
         async def start(self, token):
             self.started_token = token
+            await self.events["on_ready"]()
             self._started.set()
             await asyncio.Future()
 
@@ -111,7 +112,7 @@ async def test_discord_provider_routes_only_user_dm_messages(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_discord_provider_records_background_start_failure(monkeypatch):
+async def test_discord_provider_fails_fast_on_start_failure(monkeypatch):
     class FailingClient:
         def __init__(self):
             self.user = SimpleNamespace(id=1)
@@ -130,14 +131,15 @@ async def test_discord_provider_records_background_start_failure(monkeypatch):
 
     from app.services.channels.discord import service as discord_service
 
-    monkeypatch.setattr(discord_service, "DiscordChannelHandler", lambda **kwargs: object())
+    monkeypatch.setattr(
+        discord_service, "DiscordChannelHandler", lambda **kwargs: object()
+    )
     fake_client = FailingClient()
     provider = DiscordChannelProvider(_channel({"bot_token": "token-2"}))
     monkeypatch.setattr(provider, "_create_client", lambda: fake_client)
 
-    assert await provider.start() is True
+    assert await provider.start() is False
     await fake_client.started.wait()
-    await asyncio.wait_for(provider._task, timeout=1.0)
 
     assert provider.is_running is False
     assert provider.last_error == "Discord client stopped: boom for token-2"
@@ -270,7 +272,9 @@ async def test_channel_manager_hides_discord_provider_after_background_failure(
 
     from app.services.channels.discord import service as discord_service
 
-    monkeypatch.setattr(discord_service, "DiscordChannelHandler", lambda **kwargs: object())
+    monkeypatch.setattr(
+        discord_service, "DiscordChannelHandler", lambda **kwargs: object()
+    )
     fake_client = FailingClient()
     monkeypatch.setattr(
         DiscordChannelProvider,
@@ -280,14 +284,10 @@ async def test_channel_manager_hides_discord_provider_after_background_failure(
 
     channel = _channel({"bot_token": "token-3"})
 
-    assert await manager.start_channel(channel) is True
-    assert manager.get_channel(channel.id) is not None
+    assert await manager.start_channel(channel) is False
+    assert manager.get_channel(channel.id) is None
 
     await fake_client.started.wait()
-    provider = manager._channels[channel.id]
-    await asyncio.wait_for(provider._task, timeout=1.0)
-
-    assert provider.is_running is False
     assert manager.get_channel(channel.id) is None
     assert manager.get_status(channel.id) is None
     assert manager.get_all_statuses() == []

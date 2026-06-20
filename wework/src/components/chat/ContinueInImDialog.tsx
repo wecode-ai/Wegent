@@ -22,21 +22,43 @@ export function ContinueInImDialog({
   onClose,
   onSubmit,
 }: ContinueInImDialogProps) {
+  if (!open) {
+    return null
+  }
+
+  return (
+    <ContinueInImDialogContent
+      loading={loading}
+      submitting={submitting}
+      sessions={sessions}
+      onClose={onClose}
+      onSubmit={onSubmit}
+    />
+  )
+}
+
+type ContinueInImDialogContentProps = Omit<ContinueInImDialogProps, 'open'>
+
+function ContinueInImDialogContent({
+  loading,
+  submitting,
+  sessions,
+  onClose,
+  onSubmit,
+}: ContinueInImDialogContentProps) {
   const { t } = useTranslation('common')
   const dialogRef = useRef<HTMLElement | null>(null)
   const closeButtonRef = useRef<HTMLButtonElement | null>(null)
   const [selectedSessionIds, setSelectedSessionIds] = useState<Set<number>>(new Set())
-  const selectedIds = useMemo(() => Array.from(selectedSessionIds), [selectedSessionIds])
+  const validSessionIds = useMemo(() => new Set(sessions.map(session => session.id)), [sessions])
+  const selectedIds = useMemo(
+    () => Array.from(selectedSessionIds).filter(id => validSessionIds.has(id)),
+    [selectedSessionIds, validSessionIds]
+  )
 
   useEffect(() => {
-    if (open) {
-      closeButtonRef.current?.focus()
-    }
-  }, [open])
-
-  if (!open) {
-    return null
-  }
+    closeButtonRef.current?.focus()
+  }, [])
 
   const toggleSession = (sessionId: number) => {
     setSelectedSessionIds(current => {
@@ -215,9 +237,7 @@ export function ContinueInImDialog({
             onClick={handleSubmit}
             disabled={loading || submitting || selectedIds.length === 0}
           >
-            {submitting
-              ? t('workbench.continue_im_submitting')
-              : t('workbench.continue_im_submit')}
+            {submitting ? t('workbench.continue_im_submitting') : t('workbench.continue_im_submit')}
           </button>
         </footer>
       </section>

@@ -73,7 +73,7 @@ Support for bidirectional interaction with external systems:
 
 1. Navigate to the **Integrations** page
 2. Select **IM Channels**
-3. Choose the platform to integrate (e.g., Slack)
+3. Choose the platform to integrate, such as DingTalk, Telegram, or Discord
 4. Follow the guide to complete authorization
 5. Select the agent to connect
 6. Start using

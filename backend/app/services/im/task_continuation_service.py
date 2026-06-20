@@ -265,7 +265,7 @@ async def resolve_existing_task_params(
         message=message,
         message_source=message_source,
     )
-    return await apply_wework_task_defaults(db, user=user, params=params, task=task)
+    return params
 
 
 async def build_new_task_params(

@@ -634,42 +634,55 @@ describe('DesktopWorkbenchLayout', () => {
   })
 
   test('keeps continue-in-im action with titlebar actions in Tauri', () => {
+    const previousTauriInternals = (window as typeof window & { __TAURI_INTERNALS__?: unknown })
+      .__TAURI_INTERNALS__
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,
       value: {},
     })
 
-    render(
-      <DesktopWorkbenchLayout
-        {...baseProps}
-        state={{
-          ...baseProps.state,
-          currentTask: {
-            id: 7,
-            title: 'Active task',
-            status: 'COMPLETED',
-            task_type: 'code',
-            created_at: '2026-06-20T00:00:00.000Z',
-          },
-        }}
-        messages={[
-          {
-            id: 'message-1',
-            role: 'assistant',
-            content: 'Ready',
-            status: 'done',
-            createdAt: '2026-06-20T00:00:00.000Z',
-          },
-        ]}
-      />
-    )
+    try {
+      render(
+        <DesktopWorkbenchLayout
+          {...baseProps}
+          state={{
+            ...baseProps.state,
+            currentTask: {
+              id: 7,
+              title: 'Active task',
+              status: 'COMPLETED',
+              task_type: 'code',
+              created_at: '2026-06-20T00:00:00.000Z',
+            },
+          }}
+          messages={[
+            {
+              id: 'message-1',
+              role: 'assistant',
+              content: 'Ready',
+              status: 'done',
+              createdAt: '2026-06-20T00:00:00.000Z',
+            },
+          ]}
+        />
+      )
 
-    const titlebarActions = screen.getByTestId('titlebar-actions')
-    expect(titlebarActions).toContainElement(screen.getByTestId('continue-in-im-button'))
-    expect(titlebarActions).toContainElement(
-      screen.getByTestId('toggle-right-workspace-panel-button')
-    )
-    expect(screen.queryByTestId('workbench-topbar-right-actions')).not.toBeInTheDocument()
+      const titlebarActions = screen.getByTestId('titlebar-actions')
+      expect(titlebarActions).toContainElement(screen.getByTestId('continue-in-im-button'))
+      expect(titlebarActions).toContainElement(
+        screen.getByTestId('toggle-right-workspace-panel-button')
+      )
+      expect(screen.queryByTestId('workbench-topbar-right-actions')).not.toBeInTheDocument()
+    } finally {
+      if (previousTauriInternals === undefined) {
+        delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
+      } else {
+        Object.defineProperty(window, '__TAURI_INTERNALS__', {
+          configurable: true,
+          value: previousTauriInternals,
+        })
+      }
+    }
   })
 
   test('hides continue-in-im action for group chat tasks', () => {

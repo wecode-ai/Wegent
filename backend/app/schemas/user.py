@@ -34,7 +34,7 @@ class UserModelSelectionPreference(BaseModel):
     """User-level model selection preference."""
 
     modelName: str
-    modelType: Optional[str] = None
+    modelType: Optional[Literal["public", "user", "group"]] = None
     options: dict[str, str] = Field(default_factory=dict)
 
 

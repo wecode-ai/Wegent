@@ -70,7 +70,7 @@ class DiscordUserResolver:
 
         user = (
             self.db.query(User)
-            .filter(User.id == target_user_id, User.is_active == True)
+            .filter(User.id == target_user_id, User.is_active.is_(True))
             .first()
         )
         if user:
@@ -89,7 +89,7 @@ class DiscordUserResolver:
     ) -> Optional[User]:
         user = (
             self.db.query(User)
-            .filter(User.user_name == username, User.is_active == True)
+            .filter(User.user_name == username, User.is_active.is_(True))
             .first()
         )
         if user:
@@ -104,7 +104,7 @@ class DiscordUserResolver:
     def _resolve_by_email(self, email: str) -> Optional[User]:
         user = (
             self.db.query(User)
-            .filter(User.email == email, User.is_active == True)
+            .filter(User.email == email, User.is_active.is_(True))
             .first()
         )
         if user:

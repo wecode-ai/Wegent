@@ -36,7 +36,7 @@ def upgrade() -> None:
         sa.Column("id", bigint_id, primary_key=True, autoincrement=True),
         sa.Column("user_id", sa.Integer(), nullable=False),
         sa.Column("channel_type", sa.String(length=32), nullable=False),
-        sa.Column("channel_id", sa.Integer(), nullable=False),
+        sa.Column("channel_id", bigint_id, nullable=False),
         sa.Column("conversation_id", sa.String(length=255), nullable=False),
         sa.Column("sender_id", sa.String(length=255), nullable=False),
         sa.Column("display_name", sa.String(length=255), nullable=False),

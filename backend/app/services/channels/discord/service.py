@@ -20,6 +20,8 @@ from app.services.channels.messager_config import (
 
 logger = logging.getLogger(__name__)
 
+DISCORD_STARTUP_TIMEOUT_SECONDS = 10.0
+
 
 class DiscordChannelProvider(BaseChannelProvider):
     """Discord channel provider for DM-only bot integration."""
@@ -30,6 +32,7 @@ class DiscordChannelProvider(BaseChannelProvider):
         self._client: Optional[discord.Client] = None
         self._handler: Optional[DiscordChannelHandler] = None
         self._task: Optional[asyncio.Task] = None
+        self._ready_event: Optional[asyncio.Event] = None
 
     @property
     def bot_token(self) -> Optional[str]:
@@ -80,8 +83,14 @@ class DiscordChannelProvider(BaseChannelProvider):
                 ),
             )
             self._client = self._create_client()
+            self._ready_event = asyncio.Event()
             self._register_events(self._client, self._handler)
             self._task = asyncio.create_task(self._run_client())
+
+            if not await self._wait_until_ready():
+                await self._cleanup()
+                return False
+
             self._set_running(True)
 
             logger.info(
@@ -96,6 +105,32 @@ class DiscordChannelProvider(BaseChannelProvider):
             await self._cleanup()
             return False
 
+    async def _wait_until_ready(self) -> bool:
+        """Wait until the Discord client is ready or fails during startup."""
+        if self._ready_event is None or self._task is None:
+            self._set_error("Discord startup failed: client not initialized")
+            return False
+
+        ready_waiter = asyncio.create_task(self._ready_event.wait())
+        try:
+            done, _pending = await asyncio.wait(
+                {ready_waiter, self._task},
+                timeout=DISCORD_STARTUP_TIMEOUT_SECONDS,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if not done:
+                self._set_error("Discord startup timed out")
+                return False
+            if self._task in done and not self._ready_event.is_set():
+                if not self.last_error:
+                    self._set_error("Discord client stopped before ready")
+                return False
+            return self._ready_event.is_set()
+        finally:
+            if not ready_waiter.done():
+                ready_waiter.cancel()
+                await asyncio.gather(ready_waiter, return_exceptions=True)
+
     async def _run_client(self) -> None:
         """Run the Discord client and record unexpected runtime failures."""
         try:
@@ -105,8 +140,7 @@ class DiscordChannelProvider(BaseChannelProvider):
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            if self._is_running:
-                self._set_error(f"Discord client stopped: {e}")
+            self._set_error(f"Discord client stopped: {e}")
         finally:
             self._set_running(False)
 
@@ -117,6 +151,8 @@ class DiscordChannelProvider(BaseChannelProvider):
 
         @client.event
         async def on_ready() -> None:
+            if self._ready_event is not None:
+                self._ready_event.set()
             logger.info(
                 "[Discord] Channel %s (id=%d) logged in as %s",
                 self.channel_name,
@@ -180,6 +216,7 @@ class DiscordChannelProvider(BaseChannelProvider):
         self._task = None
         self._client = None
         self._handler = None
+        self._ready_event = None
 
     def get_status(self) -> Dict[str, Any]:
         """Get the current status of the Discord provider."""

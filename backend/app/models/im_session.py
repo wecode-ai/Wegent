@@ -48,7 +48,11 @@ class IMPrivateSession(Base):
     )
     user_id = Column(Integer, nullable=False, index=True)
     channel_type = Column(String(32), nullable=False)
-    channel_id = Column(Integer, nullable=False, index=True)
+    channel_id = Column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        nullable=False,
+        index=True,
+    )
     conversation_id = Column(String(255), nullable=False)
     sender_id = Column(String(255), nullable=False, default="")
     display_name = Column(String(255), nullable=False, default="")

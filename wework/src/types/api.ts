@@ -261,7 +261,7 @@ export interface IMPrivateSession {
   sender_id: string
   display_name: string
   mode: 'chat' | 'task'
-  state: 'idle' | 'pending_task_switch' | 'pending_task_creation'
+  state: 'idle' | 'pending_new_flow' | 'pending_task_switch' | 'pending_task_creation'
   active_task_id?: number | null
   last_seen_at: string
 }

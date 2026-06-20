@@ -24,7 +24,7 @@ def _get_channel_spec(channel_id: int) -> Optional[Dict[str, Any]]:
                 Kind.id == channel_id,
                 Kind.kind == MESSAGER_KIND,
                 Kind.user_id == MESSAGER_USER_ID,
-                Kind.is_active == True,
+                Kind.is_active.is_(True),
             )
             .first()
         )

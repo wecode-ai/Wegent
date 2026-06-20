@@ -832,7 +832,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             task = im_task_continuation_service.validate_personal_wework_task(
                 db, user.id, task_id
             )
-        except Exception:
+        except HTTPException:
             self.logger.exception(
                 "[%sHandler] Failed to bind private IM task: user_id=%s task_id=%s",
                 self._channel_type.value,
@@ -843,6 +843,14 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 message_context, "未找到可绑定的个人任务，请使用 /switch 重新选择。"
             )
             return
+        except Exception:
+            self.logger.exception(
+                "[%sHandler] Unexpected private IM bind failure: user_id=%s task_id=%s",
+                self._channel_type.value,
+                user.id,
+                task_id,
+            )
+            raise
 
         im_session_service.bind_active_task(db, session=im_session, task_id=task.id)
         title = im_task_continuation_service.get_task_title(task)
@@ -885,7 +893,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 db, user.id, task_id
             )
             team = im_task_continuation_service.get_task_team(db, task)
-        except Exception:
+        except HTTPException:
             self.logger.exception(
                 "[%sHandler] Active private IM task is unavailable: user_id=%s task_id=%s",
                 self._channel_type.value,
@@ -897,6 +905,15 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 message_context, "当前任务不可用，请使用 /switch 重新选择任务。"
             )
             return
+        except Exception:
+            self.logger.exception(
+                "[%sHandler] Unexpected private IM task validation failure: "
+                "user_id=%s task_id=%s",
+                self._channel_type.value,
+                user.id,
+                task_id,
+            )
+            raise
 
         message_source = self._build_private_im_message_source(im_session)
         try:

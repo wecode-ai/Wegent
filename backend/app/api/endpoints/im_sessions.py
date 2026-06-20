@@ -25,6 +25,7 @@ from app.services.im.task_continuation_service import (
     load_user_private_sessions_by_ids,
     validate_personal_wework_task,
 )
+from shared.telemetry.decorators import trace_async, trace_sync
 
 im_router = APIRouter()
 tasks_router = APIRouter()
@@ -34,6 +35,7 @@ tasks_router = APIRouter()
     "/private-sessions",
     response_model=IMPrivateSessionListResponse,
 )
+@trace_sync("list_private_im_sessions", "im.api")
 def list_private_sessions(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -51,6 +53,7 @@ def list_private_sessions(
     "/{task_id}/im-sessions",
     response_model=BindTaskIMSessionsResponse,
 )
+@trace_async("bind_task_private_sessions", "im.api")
 async def bind_task_private_sessions(
     task_id: int,
     payload: BindTaskIMSessionsRequest,
