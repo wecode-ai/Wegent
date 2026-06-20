@@ -52,6 +52,7 @@ from app.schemas.device import (
     DeviceSlotUpdateEvent,
     DeviceStatusEvent,
     DeviceStatusPayload,
+    DeviceType,
 )
 from app.services.chat.access import get_token_expiry, verify_jwt_token
 from app.services.chat.storage.db import get_db_session, run_sync_in_executor
@@ -938,7 +939,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
         # Prefer self-reported IP from executor, fall back to WebSocket client IP
         client_ip = payload.client_ip or session.get("client_ip")
         is_cloud_device = False
-        if client_ip:
+        if payload.device_type == DeviceType.CLOUD and client_ip:
             cloud_device_id = await self._match_cloud_device(
                 user_id, client_ip, payload.device_id
             )

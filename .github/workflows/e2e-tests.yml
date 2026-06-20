@@ -614,7 +614,7 @@ jobs:
           ADMIN_PASSWORD = os.environ["E2E_BOOTSTRAP_ADMIN_PASSWORD"]
 
 
-          def request_json(path, *, method="GET", payload=None):
+          def request_json(path, *, method="GET", payload=None, allowed_statuses=()):
               data = None
               headers = {"Content-Type": "application/json"}
               if payload is not None:
@@ -629,19 +629,20 @@ jobs:
                   with urllib.request.urlopen(request, timeout=30) as response:
                       return json.load(response)
               except urllib.error.HTTPError as error:
+                  if error.code in allowed_statuses:
+                      return None
                   body = error.read().decode("utf-8", errors="replace")
                   raise RuntimeError(
                       f"{method} {path} failed with HTTP {error.code}: {body}"
                   ) from error
 
 
-          setup_status = request_json("/auth/admin-password/status")
-          if setup_status.get("required"):
-              request_json(
-                  "/auth/admin-password/setup",
-                  method="POST",
-                  payload={"password": ADMIN_PASSWORD},
-              )
+          request_json(
+              "/auth/admin-password/setup",
+              method="POST",
+              payload={"password": ADMIN_PASSWORD},
+              allowed_statuses=(409,),
+          )
 
           token_response = request_json(
               "/auth/login",

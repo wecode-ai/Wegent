@@ -1913,6 +1913,182 @@ describe('WorkbenchProvider', () => {
     expect(listProjects).toHaveBeenCalledTimes(2)
   })
 
+  test('resolves automatic model selection when sending a new project conversation', async () => {
+    const sendMessage = vi.fn().mockResolvedValue({ success: true, task_id: 99 })
+
+    render(
+      <WorkbenchProvider
+        user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+        services={{
+          teamApi: {
+            getDefaultWorkbenchTeam: vi
+              .fn()
+              .mockResolvedValue({ id: 2, name: 'wegent-wework', is_active: true }),
+          },
+          modelApi: {
+            listModels: vi.fn().mockResolvedValue({
+              data: [
+                {
+                  name: 'kimi',
+                  type: 'public',
+                  displayName: 'Kimi',
+                },
+              ],
+            }),
+          },
+          skillApi: {
+            listSkills: vi.fn().mockResolvedValue([]),
+            getTeamSkills: vi.fn().mockResolvedValue({ skills: [], preload_skills: [] }),
+          },
+          projectApi: {
+            listProjects: vi.fn().mockResolvedValue({
+              items: [
+                {
+                  id: 7,
+                  name: 'Wegent',
+                  tasks: [],
+                  config: {
+                    mode: 'workspace',
+                    execution: {
+                      targetType: 'local',
+                      deviceId: 'device-1',
+                    },
+                  },
+                },
+              ],
+            }),
+            getProject: vi.fn(),
+            createProject: vi.fn(),
+            updateProject: vi.fn(),
+            deleteProject: vi.fn(),
+            archiveProjectChats: vi.fn(),
+            archiveAllProjectChats: vi.fn(),
+            createConversation: vi.fn(),
+          },
+          taskApi: {
+            listRecentTasks: vi.fn().mockResolvedValue({ total: 0, items: [] }),
+            getTaskDetail: vi.fn(),
+            renameTask: vi.fn(),
+            archiveTask: vi.fn(),
+            archiveAllChats: vi.fn(),
+            listArchivedTasks: vi.fn(),
+            unarchiveTask: vi.fn(),
+            deleteTask: vi.fn(),
+            deleteArchivedTasks: vi.fn(),
+          },
+          deviceApi: {
+            listDevices: vi.fn().mockResolvedValue([
+              {
+                id: 1,
+                device_id: 'device-1',
+                name: 'Project Device',
+                status: 'online',
+                is_default: false,
+                device_type: 'cloud',
+                bind_shell: 'claudecode',
+                executor_version: '1.8.5',
+              },
+            ]),
+            getHomeDirectory: vi.fn(),
+            getProjectWorkspaceRoot: vi.fn(),
+            listDirectories: vi.fn(),
+            listSkills: vi.fn().mockResolvedValue([]),
+          },
+          chatStream: {
+            joinTask: vi.fn(),
+            leaveTask: vi.fn(),
+            sendMessage,
+            subscribe: vi.fn(() => vi.fn()),
+          },
+        }}
+      >
+        <ProjectChatProbe />
+      </WorkbenchProvider>
+    )
+
+    await waitFor(() => expect(screen.getByText('select project')).toBeInTheDocument())
+
+    await userEvent.click(screen.getByText('select project'))
+    await userEvent.click(screen.getByText('set input'))
+    await userEvent.click(screen.getByText('send'))
+
+    await waitFor(() =>
+      expect(sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          team_id: 2,
+          project_id: 7,
+          message: 'build it',
+          force_override_bot_model: 'kimi',
+          force_override_bot_model_type: 'public',
+        })
+      )
+    )
+  })
+
+  test('surfaces a missing wework default team during bootstrap', async () => {
+    render(
+      <WorkbenchProvider
+        user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+        services={{
+          teamApi: {
+            getDefaultWorkbenchTeam: vi
+              .fn()
+              .mockRejectedValue(new Error('Wework default team is not configured')),
+          },
+          modelApi: {
+            listModels: vi.fn().mockResolvedValue({ data: [] }),
+          },
+          skillApi: {
+            listSkills: vi.fn().mockResolvedValue([]),
+            getTeamSkills: vi.fn().mockResolvedValue({ skills: [], preload_skills: [] }),
+          },
+          projectApi: {
+            listProjects: vi.fn().mockResolvedValue({ items: [] }),
+            getProject: vi.fn(),
+            createProject: vi.fn(),
+            updateProject: vi.fn(),
+            deleteProject: vi.fn(),
+            archiveProjectChats: vi.fn(),
+            archiveAllProjectChats: vi.fn(),
+            createConversation: vi.fn(),
+          },
+          taskApi: {
+            listRecentTasks: vi.fn().mockResolvedValue({ total: 0, items: [] }),
+            getTaskDetail: vi.fn(),
+            renameTask: vi.fn(),
+            archiveTask: vi.fn(),
+            archiveAllChats: vi.fn(),
+            listArchivedTasks: vi.fn(),
+            unarchiveTask: vi.fn(),
+            deleteTask: vi.fn(),
+            deleteArchivedTasks: vi.fn(),
+          },
+          deviceApi: {
+            listDevices: vi.fn().mockResolvedValue([]),
+            getHomeDirectory: vi.fn(),
+            getProjectWorkspaceRoot: vi.fn(),
+            listDirectories: vi.fn(),
+            listSkills: vi.fn().mockResolvedValue([]),
+          },
+          chatStream: {
+            joinTask: vi.fn(),
+            leaveTask: vi.fn(),
+            sendMessage: vi.fn(),
+            subscribe: vi.fn(() => vi.fn()),
+          },
+        }}
+      >
+        <ProjectChatProbe />
+      </WorkbenchProvider>
+    )
+
+    await waitFor(() =>
+      expect(screen.getByTestId('workbench-error')).toHaveTextContent(
+        'Wework default team is not configured'
+      )
+    )
+  })
+
   test('sends pending code comments as formatted message context', async () => {
     const sendMessage = vi.fn().mockResolvedValue({ success: true, task_id: 99 })
 

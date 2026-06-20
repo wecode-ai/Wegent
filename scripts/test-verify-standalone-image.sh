@@ -51,10 +51,13 @@ url="${@: -1}"
 echo "$url" >> "$FAKE_CURL_LOG"
 
 case "$url" in
-    *:18000/health)
+    *:13000/health)
         exit 0
         ;;
     *:13000/)
+        exit 0
+        ;;
+    *:13000/wework/)
         exit 22
         ;;
     *)
@@ -73,14 +76,38 @@ export STANDALONE_VERIFY_TIMEOUT_SECONDS=0
 export STANDALONE_VERIFY_INTERVAL_SECONDS=1
 
 if "$VERIFY_SCRIPT" "ghcr.io/wecode-ai/wegent-standalone:test" > "$TMP_DIR/output.log" 2>&1; then
-    echo "Expected standalone verification to fail when frontend is unreachable."
+    echo "Expected standalone verification to fail when Wework is unreachable."
     cat "$TMP_DIR/output.log"
     exit 1
 fi
 
-if ! grep -q "Frontend failed readiness check" "$TMP_DIR/output.log"; then
-    echo "Expected frontend readiness failure message."
+if ! grep -q "Wework failed readiness check" "$TMP_DIR/output.log"; then
+    echo "Expected Wework readiness failure message."
     cat "$TMP_DIR/output.log"
+    exit 1
+fi
+
+if ! grep -q "http://localhost:13000/wework/" "$FAKE_CURL_LOG"; then
+    echo "Expected Wework to be checked through the frontend standalone port."
+    cat "$FAKE_CURL_LOG"
+    exit 1
+fi
+
+if ! grep -q "http://localhost:13000/health" "$FAKE_CURL_LOG"; then
+    echo "Expected backend health to be checked through the standalone port."
+    cat "$FAKE_CURL_LOG"
+    exit 1
+fi
+
+if grep -q ":8000" "$FAKE_DOCKER_LOG"; then
+    echo "Expected standalone verification to avoid the old direct backend port."
+    cat "$FAKE_DOCKER_LOG"
+    exit 1
+fi
+
+if grep -q ":3001" "$FAKE_DOCKER_LOG"; then
+    echo "Expected standalone verification to avoid the old container Wework port."
+    cat "$FAKE_DOCKER_LOG"
     exit 1
 fi
 
