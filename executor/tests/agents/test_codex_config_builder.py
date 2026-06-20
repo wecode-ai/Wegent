@@ -9,6 +9,7 @@ import json
 import pytest
 
 from executor.agents.codex.config_builder import (
+    _resolve_codex_binary,
     build_codex_config,
     is_codex_compatible_model,
 )
@@ -265,6 +266,34 @@ def test_build_codex_config_uses_existing_no_proxy(monkeypatch):
     assert config.env["HTTPS_PROXY"] == "socks5://127.0.0.1:7890"
     assert config.env["NO_PROXY"] == "localhost,.internal"
     assert config.env["no_proxy"] == "localhost,.internal"
+
+
+def test_resolve_codex_binary_prefers_macos_app_bundle(monkeypatch):
+    app_binary = "/Applications/Codex.app/Contents/Resources/codex"
+
+    monkeypatch.setattr("executor.agents.codex.config_builder.sys.platform", "darwin")
+    monkeypatch.setattr(
+        "executor.agents.codex.config_builder.shutil.which",
+        lambda value: "/opt/homebrew/bin/codex" if value == "codex" else None,
+    )
+    monkeypatch.setattr(
+        "executor.agents.codex.config_builder.Path.exists",
+        lambda path: str(path) == app_binary,
+    )
+
+    assert _resolve_codex_binary("codex") == app_binary
+
+
+def test_resolve_codex_binary_preserves_explicit_path(monkeypatch):
+    explicit_binary = "/usr/local/bin/codex"
+
+    monkeypatch.setattr("executor.agents.codex.config_builder.sys.platform", "darwin")
+    monkeypatch.setattr(
+        "executor.agents.codex.config_builder.Path.exists",
+        lambda path: str(path) == "/Applications/Codex.app/Contents/Resources/codex",
+    )
+
+    assert _resolve_codex_binary(explicit_binary) == explicit_binary
 
 
 def test_build_codex_config_injects_global_mcp_overrides(tmp_path, monkeypatch):
