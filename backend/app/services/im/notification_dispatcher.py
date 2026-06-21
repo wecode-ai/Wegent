@@ -5,10 +5,12 @@
 """Best-effort private IM notifications for task continuation events."""
 
 import logging
-from typing import Any, Sequence
+from contextlib import contextmanager
+from typing import Any, Generator, Sequence
 
 from sqlalchemy.orm import Session
 
+from app.db.session import SessionLocal
 from app.models.im_session import IMPrivateSession
 from app.models.kind import Kind
 from app.services.im.session_service import im_session_service
@@ -83,6 +85,29 @@ class IMNotificationDispatcher:
             content=content,
         )
         return await self._send_to_sessions(db, sessions, message)
+
+    async def send_runtime_task_update_for_user(
+        self,
+        *,
+        user_id: int,
+        address: dict[str, Any],
+        title: str,
+        status: str,
+        content: str = "",
+        source: str | None = None,
+    ) -> dict[str, Any]:
+        """Notify IM sessions about a runtime task update without exposing DB plumbing."""
+
+        with _notification_db_session() as db:
+            return await self.send_runtime_task_update(
+                db,
+                user_id=user_id,
+                address=address,
+                title=title,
+                status=status,
+                content=content,
+                source=source,
+            )
 
     async def send_text(
         self,
@@ -317,6 +342,15 @@ def _dedupe_sessions(
         seen.add(session.session_key)
         deduped.append(session)
     return deduped
+
+
+@contextmanager
+def _notification_db_session() -> Generator[Session, None, None]:
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 
 def _runtime_task_update_message(

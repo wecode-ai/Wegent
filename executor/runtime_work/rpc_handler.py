@@ -27,6 +27,17 @@ from shared.logger import setup_logger
 from shared.models.responses_api_emitter import EventTransport, ResponsesAPIEmitter
 
 logger = setup_logger("runtime_work_rpc_handler")
+CODEX_NATIVE_UPDATE_TERMINAL_STATUSES = {
+    "done",
+    "complete",
+    "completed",
+    "success",
+    "succeeded",
+    "failed",
+    "error",
+    "cancelled",
+    "canceled",
+}
 
 
 class LocalTaskResponsesTransport(EventTransport):
@@ -186,8 +197,8 @@ class RuntimeWorkRpcHandler:
                 continue
 
             previous = self._codex_seen_updated_at.get(record.local_task_id)
-            self._codex_seen_updated_at[record.local_task_id] = record.updated_at
             if previous is None:
+                self._codex_seen_updated_at[record.local_task_id] = record.updated_at
                 continue
             if self._parse_task_time(record.updated_at) <= self._parse_task_time(
                 previous
@@ -195,9 +206,11 @@ class RuntimeWorkRpcHandler:
                 continue
             if record.local_task_id in self._codex_updates_from_wegent:
                 self._codex_updates_from_wegent.discard(record.local_task_id)
+                self._codex_seen_updated_at[record.local_task_id] = record.updated_at
                 continue
 
-            await self._emit_codex_native_update(record)
+            if await self._emit_codex_native_update(record):
+                self._codex_seen_updated_at[record.local_task_id] = record.updated_at
 
     def mark_codex_task_updated_by_wegent(self, local_task_id: str) -> None:
         """Suppress the next watcher notification for a Wegent-originated turn."""
@@ -205,18 +218,50 @@ class RuntimeWorkRpcHandler:
         if local_task_id:
             self._codex_updates_from_wegent.add(local_task_id)
 
-    async def _emit_codex_native_update(self, record: LocalTaskRecord) -> None:
+    async def _emit_codex_native_update(self, record: LocalTaskRecord) -> bool:
         if self.responses_event_emitter is None:
-            return
+            return False
+        message = self._last_codex_assistant_message(record)
+        if message is None:
+            return False
+
+        status = str(message.get("status") or "").strip()
+        content = self._string_content(message.get("content")).strip()
+        if not self._is_codex_native_terminal_status(status) or not content:
+            return False
+
         payload = {
             "localTaskId": record.local_task_id,
             "runtime": record.runtime,
             "title": record.title,
             "updatedAt": record.updated_at,
+            "status": status,
+            "content": content,
         }
         result = self.responses_event_emitter("runtime.tasks.updated", payload)
         if asyncio.iscoroutine(result):
             await result
+        return True
+
+    def _last_codex_assistant_message(
+        self,
+        record: LocalTaskRecord,
+    ) -> Optional[dict[str, Any]]:
+        messages = self._codex_session_messages(record)
+        if messages is None:
+            messages = record.runtime_handle.get("messages", [])
+        if not isinstance(messages, list):
+            return None
+        for message in reversed(messages):
+            if not isinstance(message, dict):
+                continue
+            if str(message.get("role") or "").lower() == "assistant":
+                return message
+        return None
+
+    def _is_codex_native_terminal_status(self, status: str) -> bool:
+        normalized = status.strip().replace("_", "").replace("-", "").lower()
+        return normalized in CODEX_NATIVE_UPDATE_TERMINAL_STATUSES
 
     async def start_codex_watcher(self, interval_seconds: Optional[int] = None) -> None:
         """Start the native Codex update watcher."""

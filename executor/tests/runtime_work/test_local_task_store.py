@@ -1050,7 +1050,23 @@ async def test_runtime_work_handler_emits_codex_native_update_after_seen_timesta
         workspace_path="/repo/Wegent",
         title="Native Codex task",
         runtime="codex",
-        runtime_handle={"threadId": "codex-thread-1"},
+        runtime_handle={
+            "threadId": "codex-thread-1",
+            "messages": [
+                {
+                    "id": "codex-thread-1:user:1",
+                    "role": "user",
+                    "content": "Implement this",
+                    "status": "done",
+                },
+                {
+                    "id": "codex-thread-1:assistant:1",
+                    "role": "assistant",
+                    "content": "Implemented from native Codex",
+                    "status": "done",
+                },
+            ],
+        },
         created_at="2026-06-21T01:00:00Z",
         updated_at="2026-06-21T01:06:00Z",
     )
@@ -1075,7 +1091,93 @@ async def test_runtime_work_handler_emits_codex_native_update_after_seen_timesta
         "runtime": "codex",
         "title": "Native Codex task",
         "updatedAt": "2026-06-21T01:06:00Z",
+        "status": "done",
+        "content": "Implemented from native Codex",
     }
+
+
+@pytest.mark.asyncio
+async def test_runtime_work_handler_waits_for_terminal_codex_native_update(
+    tmp_path,
+):
+    from executor.runtime_work.local_task_store import LocalTaskRecord, LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    initial = LocalTaskRecord(
+        local_task_id="codex-thread-1",
+        workspace_path="/repo/Wegent",
+        title="Native Codex task",
+        runtime="codex",
+        runtime_handle={"threadId": "codex-thread-1"},
+        created_at="2026-06-21T01:00:00Z",
+        updated_at="2026-06-21T01:05:00Z",
+    )
+    streaming = LocalTaskRecord(
+        local_task_id="codex-thread-1",
+        workspace_path="/repo/Wegent",
+        title="Native Codex task",
+        runtime="codex",
+        runtime_handle={
+            "threadId": "codex-thread-1",
+            "messages": [
+                {
+                    "id": "codex-thread-1:assistant:1",
+                    "role": "assistant",
+                    "content": "Partial native Codex response",
+                    "status": "streaming",
+                },
+            ],
+        },
+        created_at="2026-06-21T01:00:00Z",
+        updated_at="2026-06-21T01:06:00Z",
+    )
+    completed = LocalTaskRecord(
+        local_task_id="codex-thread-1",
+        workspace_path="/repo/Wegent",
+        title="Native Codex task",
+        runtime="codex",
+        runtime_handle={
+            "threadId": "codex-thread-1",
+            "messages": [
+                {
+                    "id": "codex-thread-1:assistant:1",
+                    "role": "assistant",
+                    "content": "Final native Codex response",
+                    "status": "done",
+                },
+            ],
+        },
+        created_at="2026-06-21T01:00:00Z",
+        updated_at="2026-06-21T01:06:00Z",
+    )
+    emitted = []
+
+    async def emit_event(event_type, payload):
+        emitted.append((event_type, payload))
+
+    handler = RuntimeWorkRpcHandler(
+        store=LocalTaskStore(tmp_path / "index.json"),
+        codex_discovery=SequenceDiscovery([[initial], [streaming], [completed]]),
+        responses_event_emitter=emit_event,
+    )
+
+    await handler.poll_codex_updates_once()
+    await handler.poll_codex_updates_once()
+    await handler.poll_codex_updates_once()
+
+    assert emitted == [
+        (
+            "runtime.tasks.updated",
+            {
+                "localTaskId": "codex-thread-1",
+                "runtime": "codex",
+                "title": "Native Codex task",
+                "updatedAt": "2026-06-21T01:06:00Z",
+                "status": "done",
+                "content": "Final native Codex response",
+            },
+        )
+    ]
 
 
 @pytest.mark.asyncio

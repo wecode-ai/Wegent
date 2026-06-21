@@ -456,14 +456,14 @@ async def test_runtime_task_updated_event_notifies_im_dispatcher(monkeypatch):
     async def fake_get_session(sid):
         return {"user_id": 7, "device_id": "device-1"}
 
-    async def fake_send_runtime_task_update(_db, **kwargs):
+    async def fake_send_runtime_task_update(**kwargs):
         notifications.append(kwargs)
         return {"sent": 1}
 
     monkeypatch.setattr(namespace, "get_session", fake_get_session)
     monkeypatch.setattr(
         device_namespace.im_notification_dispatcher,
-        "send_runtime_task_update",
+        "send_runtime_task_update_for_user",
         fake_send_runtime_task_update,
     )
 
@@ -474,6 +474,8 @@ async def test_runtime_task_updated_event_notifies_im_dispatcher(monkeypatch):
             "runtime": "codex",
             "title": "Native Codex task",
             "updatedAt": "2026-06-21T01:06:00Z",
+            "status": "done",
+            "content": "Implemented from native Codex",
         },
     )
 
@@ -485,6 +487,81 @@ async def test_runtime_task_updated_event_notifies_im_dispatcher(monkeypatch):
     }
     assert notifications[0]["source"] == "codex_watcher"
     assert notifications[0]["title"] == "Native Codex task"
+    assert notifications[0]["status"] == "done"
+    assert notifications[0]["content"] == "Implemented from native Codex"
+
+
+@pytest.mark.asyncio
+async def test_runtime_task_updated_event_skips_im_notification_until_terminal(
+    monkeypatch,
+):
+    namespace = device_namespace.DeviceNamespace()
+    notifications = []
+
+    async def fake_get_session(sid):
+        return {"user_id": 7, "device_id": "device-1"}
+
+    async def fake_send_runtime_task_update(**kwargs):
+        notifications.append(kwargs)
+        return {"sent": 1}
+
+    monkeypatch.setattr(namespace, "get_session", fake_get_session)
+    monkeypatch.setattr(
+        device_namespace.im_notification_dispatcher,
+        "send_runtime_task_update_for_user",
+        fake_send_runtime_task_update,
+    )
+
+    result = await namespace.on_runtime_task_updated(
+        "sid-1",
+        {
+            "localTaskId": "codex-thread-1",
+            "runtime": "codex",
+            "title": "Native Codex task",
+            "updatedAt": "2026-06-21T01:06:00Z",
+            "status": "streaming",
+            "content": "Partial response",
+        },
+    )
+
+    assert result == {"success": True, "notified": 0, "skipped": "non_terminal"}
+    assert notifications == []
+
+
+@pytest.mark.asyncio
+async def test_runtime_task_updated_event_skips_success_notification_without_content(
+    monkeypatch,
+):
+    namespace = device_namespace.DeviceNamespace()
+    notifications = []
+
+    async def fake_get_session(sid):
+        return {"user_id": 7, "device_id": "device-1"}
+
+    async def fake_send_runtime_task_update(**kwargs):
+        notifications.append(kwargs)
+        return {"sent": 1}
+
+    monkeypatch.setattr(namespace, "get_session", fake_get_session)
+    monkeypatch.setattr(
+        device_namespace.im_notification_dispatcher,
+        "send_runtime_task_update_for_user",
+        fake_send_runtime_task_update,
+    )
+
+    result = await namespace.on_runtime_task_updated(
+        "sid-1",
+        {
+            "localTaskId": "codex-thread-1",
+            "runtime": "codex",
+            "title": "Native Codex task",
+            "updatedAt": "2026-06-21T01:06:00Z",
+            "status": "done",
+        },
+    )
+
+    assert result == {"success": True, "notified": 0, "skipped": "empty_content"}
+    assert notifications == []
 
 
 @pytest.mark.asyncio

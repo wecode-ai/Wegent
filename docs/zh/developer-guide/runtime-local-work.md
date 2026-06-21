@@ -86,7 +86,7 @@ executor 发现但没有映射到中心 Project 的目录会在 Wework 的“未
 - 在 IM 中使用 `/notify on`、`/通知 开` 开启当前用户的全局运行时任务通知目标。
 - 使用 `/notify off` 关闭全局通知，使用 `/notify status` 查看当前状态。
 - 单个 IM 会话订阅某个运行时任务后，只接收该任务的更新。
-- executor 发现原生 Codex 任务更新时间变化时，通过设备 WebSocket 发送不含 `workspacePath` 的 `runtime.tasks.updated`，Backend 再按订阅和全局通知设置投递到 IM。
+- executor 发现原生 Codex 任务更新时间变化时，只在最后一条 assistant 消息进入终态且有回复内容后，通过设备 WebSocket 发送不含 `workspacePath`、但包含 `status` 和 `content` 的 `runtime.tasks.updated`。Backend 会忽略运行中/流式更新，并按订阅和全局通知设置把终态回复投递到 IM。
 - Wegent 发起的 runtime send 与原生 Codex watcher 使用同一个 `deviceId + localTaskId` 去重，避免 Codex 和 Wework 对同一次任务更新重复通知。
 
 ## URL

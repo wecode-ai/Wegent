@@ -89,6 +89,23 @@ DEVICE_CONNECT_RATE_LIMIT_MAX_ATTEMPTS = 30
 DEVICE_REGISTER_UPSERT_DEBOUNCE_SECONDS = 10
 REGISTER_CAPABILITY_SYNC_TIMEOUT_SECONDS = 5
 DEVICE_DISCONNECT_FAILURE_GRACE_SECONDS = 2
+RUNTIME_TASK_TERMINAL_STATUSES = {
+    "done",
+    "complete",
+    "completed",
+    "success",
+    "succeeded",
+    "failed",
+    "error",
+    "cancelled",
+    "canceled",
+}
+RUNTIME_TASK_NON_REPLY_TERMINAL_STATUSES = {
+    "failed",
+    "error",
+    "cancelled",
+    "canceled",
+}
 
 
 @contextmanager
@@ -455,6 +472,26 @@ def _runtime_auth_file_missing(runtime_auth_files: Any, runtime: str) -> bool:
     if not isinstance(state, dict):
         return False
     return state.get("exists") is False
+
+
+def _is_runtime_task_terminal_status(status: Any) -> bool:
+    """Return True when a runtime task update represents a completed turn."""
+    normalized = _normalize_runtime_task_status(status)
+    return normalized in RUNTIME_TASK_TERMINAL_STATUSES
+
+
+def _is_runtime_task_reply_status(status: Any) -> bool:
+    normalized = _normalize_runtime_task_status(status)
+    return (
+        normalized in RUNTIME_TASK_TERMINAL_STATUSES
+        and normalized not in RUNTIME_TASK_NON_REPLY_TERMINAL_STATUSES
+    )
+
+
+def _normalize_runtime_task_status(status: Any) -> str:
+    if not isinstance(status, str):
+        return ""
+    return status.strip().replace("_", "").replace("-", "").lower()
 
 
 class DeviceNamespace(socketio.AsyncNamespace):
@@ -1569,16 +1606,23 @@ class DeviceNamespace(socketio.AsyncNamespace):
         if workspace_path:
             address["workspacePath"] = workspace_path
 
-        with _db_session() as db:
-            notification = await im_notification_dispatcher.send_runtime_task_update(
-                db,
+        status = str(data.get("status") or "updated")
+        if not _is_runtime_task_terminal_status(status):
+            return {"success": True, "notified": 0, "skipped": "non_terminal"}
+        content = str(data.get("content") or "")
+        if _is_runtime_task_reply_status(status) and not content.strip():
+            return {"success": True, "notified": 0, "skipped": "empty_content"}
+
+        notification = (
+            await im_notification_dispatcher.send_runtime_task_update_for_user(
                 user_id=user_id,
                 address=address,
                 title=str(data.get("title") or local_task_id),
-                status=str(data.get("status") or "updated"),
-                content=str(data.get("content") or ""),
+                status=status,
+                content=content,
                 source="codex_watcher",
             )
+        )
         return {"success": True, "notified": int(notification.get("sent") or 0)}
 
     async def _publish_task_completed_event(
