@@ -365,6 +365,7 @@ function SidebarOnlineDevices({
   onToggleExpanded,
   onToggleOfflineExpanded,
   onSelectDevice,
+  onAddDevice,
 }: {
   devices: DeviceInfo[]
   expanded: boolean
@@ -373,6 +374,7 @@ function SidebarOnlineDevices({
   onToggleExpanded: () => void
   onToggleOfflineExpanded: () => void
   onSelectDevice: (deviceId: string) => void
+  onAddDevice: () => void
 }) {
   const { t } = useTranslation('common')
   const onlineDevices = useMemo(
@@ -392,8 +394,6 @@ function SidebarOnlineDevices({
       ? [selectedOfflineDevice]
       : []
   const visibleDevices = [...onlineDevices, ...visibleOfflineDevices]
-
-  if (devices.length === 0) return null
 
   return (
     <section data-testid="sidebar-online-devices" className="mb-6 px-2.5">
@@ -441,6 +441,16 @@ function SidebarOnlineDevices({
                 })}
           </button>
         )}
+        <button
+          type="button"
+          data-testid="sidebar-add-device-button"
+          aria-label={t('workbench.add_device')}
+          title={t('workbench.add_device')}
+          onClick={onAddDevice}
+          className="flex h-5 w-5 shrink-0 items-center justify-center rounded-sm text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-secondary))]"
+        >
+          <Plus className="h-3.5 w-3.5" />
+        </button>
       </div>
       {expanded && (
         <div data-testid="sidebar-device-list" className="space-y-0.5">
@@ -1312,6 +1322,7 @@ export function DesktopSidebar({
           onToggleExpanded={() => setDevicesExpanded(expanded => !expanded)}
           onToggleOfflineExpanded={() => setOfflineDevicesExpanded(expanded => !expanded)}
           onSelectDevice={handleSelectDeviceFilter}
+          onAddDevice={() => onOpenSettings({ autoOpenAddCloudDeviceDialog: true })}
         />
 
         <section>

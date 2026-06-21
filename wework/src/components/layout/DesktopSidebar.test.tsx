@@ -78,6 +78,16 @@ describe('DesktopSidebar', () => {
     localStorage.clear()
   })
 
+  test('opens add device settings from the sidebar device section', async () => {
+    const props = renderSidebar()
+
+    await userEvent.click(screen.getByTestId('sidebar-add-device-button'))
+
+    expect(props.onOpenSettings).toHaveBeenCalledWith({
+      autoOpenAddCloudDeviceDialog: true,
+    })
+  })
+
   test('renders unmapped device runtime tasks without local Codex import UI', async () => {
     const onOpenRuntimeLocalTask = vi.fn()
 
