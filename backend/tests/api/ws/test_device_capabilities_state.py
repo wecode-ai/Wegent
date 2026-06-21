@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
 import json
 from contextlib import contextmanager
 from types import SimpleNamespace
@@ -305,6 +306,192 @@ async def test_responses_api_delta_event_forwards_to_channel_callbacks(monkeypat
 
     assert result == {"success": True}
     assert forwarded_events == [(101, 202, event)]
+
+
+@pytest.mark.asyncio
+async def test_local_task_reasoning_event_emits_chat_chunk(monkeypatch):
+    namespace = device_namespace.DeviceNamespace()
+    sio = SimpleNamespace(emit=AsyncMock())
+
+    async def fake_get_session(sid):
+        return {"user_id": 7, "device_id": "device-1"}
+
+    monkeypatch.setattr(namespace, "get_session", fake_get_session)
+    monkeypatch.setattr(device_namespace, "get_sio", lambda: sio, raising=False)
+
+    result = await namespace._handle_responses_api_event(
+        "sid-1",
+        "response.reasoning_summary_text.delta",
+        {
+            "subtask_id": 202,
+            "local_task_id": "codex-1",
+            "runtime": "codex",
+            "data": {"delta": "Reading files"},
+        },
+    )
+
+    assert result == {"success": True}
+    sio.emit.assert_awaited_once()
+    event_name, payload = sio.emit.await_args.args[:2]
+    assert event_name == device_namespace.ServerEvents.CHAT_CHUNK
+    assert payload["device_id"] == "device-1"
+    assert payload["local_task_id"] == "codex-1"
+    assert payload["content"] == ""
+    assert payload["result"] == {"reasoning_chunk": "Reading files"}
+
+
+@pytest.mark.asyncio
+async def test_local_task_tool_event_emits_block_created(monkeypatch):
+    namespace = device_namespace.DeviceNamespace()
+    sio = SimpleNamespace(emit=AsyncMock())
+
+    async def fake_get_session(sid):
+        return {"user_id": 7, "device_id": "device-1"}
+
+    monkeypatch.setattr(namespace, "get_session", fake_get_session)
+    monkeypatch.setattr(device_namespace, "get_sio", lambda: sio, raising=False)
+
+    result = await namespace._handle_responses_api_event(
+        "sid-1",
+        "response.output_item.added",
+        {
+            "subtask_id": 202,
+            "local_task_id": "codex-1",
+            "runtime": "codex",
+            "data": {
+                "item": {
+                    "type": "function_call",
+                    "call_id": "call-1",
+                    "name": "shell",
+                    "arguments": "{}",
+                }
+            },
+        },
+    )
+
+    assert result == {"success": True}
+    sio.emit.assert_awaited_once()
+    event_name, payload = sio.emit.await_args.args[:2]
+    assert event_name == device_namespace.ServerEvents.CHAT_BLOCK_CREATED
+    assert payload["device_id"] == "device-1"
+    assert payload["local_task_id"] == "codex-1"
+    assert payload["block"]["type"] == "tool"
+    assert payload["block"]["tool_name"] == "shell"
+
+
+@pytest.mark.asyncio
+async def test_local_task_im_source_forwards_stream_event_to_channel_callbacks(
+    monkeypatch,
+):
+    namespace = device_namespace.DeviceNamespace()
+    sio = SimpleNamespace(emit=AsyncMock())
+    forwarded_events = []
+
+    async def fake_get_session(sid):
+        return {"user_id": 7, "device_id": "device-1"}
+
+    async def fake_forward_event_to_channel_callbacks(
+        *, task_id, subtask_id, event, source
+    ):
+        forwarded_events.append((task_id, subtask_id, event, source))
+
+    monkeypatch.setattr(namespace, "get_session", fake_get_session)
+    monkeypatch.setattr(device_namespace, "get_sio", lambda: sio, raising=False)
+    monkeypatch.setattr(
+        device_namespace,
+        "forward_event_to_channel_callbacks",
+        fake_forward_event_to_channel_callbacks,
+        raising=False,
+    )
+
+    result = await namespace._handle_responses_api_event(
+        "sid-1",
+        "response.output_text.delta",
+        {
+            "subtask_id": 202,
+            "local_task_id": "codex-1",
+            "runtime": "codex",
+            "source": {
+                "source": "im",
+                "external_id": "session-1",
+                "channel_type": "telegram",
+                "channel_id": 10,
+                "conversation_id": "12345",
+                "sender_id": "sender-1",
+            },
+            "data": {"delta": "hello"},
+        },
+    )
+
+    assert result == {"success": True}
+    assert len(forwarded_events) == 1
+    task_id, subtask_id, event, source = forwarded_events[0]
+    assert task_id == "runtime:device-1:codex-1"
+    assert subtask_id == 202
+    assert event.type == device_namespace.EventType.CHUNK.value
+    assert event.content == "hello"
+    assert source == "Device WS local task"
+
+
+@pytest.mark.asyncio
+async def test_local_task_responses_api_events_are_serialized(monkeypatch):
+    namespace = device_namespace.DeviceNamespace()
+    first_event_started = asyncio.Event()
+    emitted_chunks = []
+
+    async def fake_get_session(sid):
+        return {"user_id": 7, "device_id": "device-1"}
+
+    async def fake_emit_local_task_execution_event(**kwargs):
+        event = kwargs["event"]
+        if event.content == "first":
+            first_event_started.set()
+            await asyncio.sleep(0.05)
+        emitted_chunks.append(event.content)
+
+    async def fake_forward_local_task_event_to_channel_callbacks(**kwargs):
+        return None
+
+    monkeypatch.setattr(namespace, "get_session", fake_get_session)
+    monkeypatch.setattr(
+        namespace,
+        "_emit_local_task_execution_event",
+        fake_emit_local_task_execution_event,
+    )
+    monkeypatch.setattr(
+        namespace,
+        "_forward_local_task_event_to_channel_callbacks",
+        fake_forward_local_task_event_to_channel_callbacks,
+    )
+
+    first = asyncio.create_task(
+        namespace._handle_responses_api_event(
+            "sid-1",
+            "response.output_text.delta",
+            {
+                "subtask_id": 202,
+                "local_task_id": "codex-1",
+                "runtime": "codex",
+                "data": {"delta": "first"},
+            },
+        )
+    )
+    await first_event_started.wait()
+    second = await namespace._handle_responses_api_event(
+        "sid-1",
+        "response.output_text.delta",
+        {
+            "subtask_id": 202,
+            "local_task_id": "codex-1",
+            "runtime": "codex",
+            "data": {"delta": "second"},
+        },
+    )
+    first_result = await first
+
+    assert first_result == {"success": True}
+    assert second == {"success": True}
+    assert emitted_chunks == ["first", "second"]
 
 
 @pytest.mark.asyncio

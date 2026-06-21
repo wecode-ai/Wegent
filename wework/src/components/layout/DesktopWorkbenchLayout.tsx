@@ -11,7 +11,7 @@ import type {
   ProjectWorkControls,
 } from '@/components/chat/ChatInput'
 import type {
-  BindTaskIMSessionsResponse,
+  BindRuntimeTaskIMSessionsResponse,
   CreateGitWorkspaceProjectRequest,
   CreateProjectRequest,
   GitBranch,
@@ -55,14 +55,15 @@ interface DesktopWorkbenchLayoutProps {
   onSelectProject: (projectId: number | null) => void
   onStartNewProjectChat: (projectId: number) => void
   onOpenRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void>
+  onArchiveRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void>
   onRememberExecutionDevice?: (deviceId: string) => void
   onRefreshDevices?: () => Promise<void>
   onUpgradeDevice?: (deviceId: string) => Promise<void>
   onListImPrivateSessions?: () => Promise<IMPrivateSessionListResponse>
-  onBindTaskToImSessions?: (
-    taskId: number,
+  onBindRuntimeTaskToImSessions?: (
+    address: RuntimeTaskAddress,
     sessionKeys: string[]
-  ) => Promise<BindTaskIMSessionsResponse>
+  ) => Promise<BindRuntimeTaskIMSessionsResponse>
   onCreateProject: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
   onCreateGitWorkspaceProject: (data: CreateGitWorkspaceProjectRequest) => Promise<ProjectWithTasks>
   onListGitRepositories: () => Promise<GitRepoInfo[]>
@@ -132,11 +133,12 @@ export function DesktopWorkbenchLayout({
   onSelectProject,
   onStartNewProjectChat,
   onOpenRuntimeLocalTask,
+  onArchiveRuntimeLocalTask,
   onRememberExecutionDevice,
   onRefreshDevices,
   onUpgradeDevice = async () => {},
   onListImPrivateSessions,
-  onBindTaskToImSessions,
+  onBindRuntimeTaskToImSessions,
   onCreateProject,
   onCreateGitWorkspaceProject,
   onListGitRepositories,
@@ -363,7 +365,7 @@ export function DesktopWorkbenchLayout({
   )
 
   const openContinueInImDialog = useCallback(() => {
-    if (!state.currentTask || state.currentTask.is_group_chat) return
+    if (!state.currentRuntimeTask) return
 
     const requestId = imSessionsRequestSequence.current + 1
     imSessionsRequestSequence.current = requestId
@@ -387,7 +389,7 @@ export function DesktopWorkbenchLayout({
           setImSessionsLoading(false)
         }
       })
-  }, [onListImPrivateSessions, state.currentTask, t])
+  }, [onListImPrivateSessions, state.currentRuntimeTask, t])
 
   const closeContinueInImDialog = useCallback(() => {
     imSessionsRequestSequence.current += 1
@@ -397,14 +399,14 @@ export function DesktopWorkbenchLayout({
 
   const submitContinueInIm = useCallback(
     async (sessionKeys: string[]) => {
-      if (!state.currentTask || state.currentTask.is_group_chat) return
+      if (!state.currentRuntimeTask) return
 
       setImSessionsSubmitting(true)
       try {
-        if (!onBindTaskToImSessions) {
+        if (!onBindRuntimeTaskToImSessions) {
           throw new Error('IM bind handler is not available')
         }
-        await onBindTaskToImSessions(state.currentTask.id, sessionKeys)
+        await onBindRuntimeTaskToImSessions(state.currentRuntimeTask, sessionKeys)
         setContinueInImOpen(false)
         setNotice({ message: t('workbench.continue_im_success'), tone: 'success' })
       } catch {
@@ -413,7 +415,7 @@ export function DesktopWorkbenchLayout({
         setImSessionsSubmitting(false)
       }
     },
-    [onBindTaskToImSessions, state.currentTask, t]
+    [onBindRuntimeTaskToImSessions, state.currentRuntimeTask, t]
   )
 
   const projectWorkWithCreation: ProjectWorkControls = {
@@ -454,6 +456,7 @@ export function DesktopWorkbenchLayout({
           onSelectProject={onSelectProject}
           onStartNewProjectChat={onStartNewProjectChat}
           onOpenRuntimeLocalTask={onOpenRuntimeLocalTask}
+          onArchiveRuntimeLocalTask={onArchiveRuntimeLocalTask}
           onRememberExecutionDevice={onRememberExecutionDevice}
           onOpenPlugins={onOpenPlugins}
           onRefreshDevices={onRefreshDevices}
@@ -491,6 +494,7 @@ export function DesktopWorkbenchLayout({
           sidebarCollapsed={sidebarCollapsed}
           isBootstrapping={state.isBootstrapping}
           currentTask={state.currentTask}
+          currentRuntimeTask={state.currentRuntimeTask}
           currentProject={activeConversationProject}
           workspaceTarget={workspaceTarget}
           workspaceTargetError={workspaceTargetError}

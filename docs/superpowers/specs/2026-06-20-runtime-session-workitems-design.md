@@ -89,7 +89,11 @@ It answers one question:
 For this user and device, which local directory belongs to which Project?
 ```
 
-Suggested central DB shape:
+Device Workspace mapping is stored as a central `Kind` resource with
+`kind: DeviceWorkspace` and `namespace: runtime-work`. The resource JSON keeps
+the mapping in `spec`; no dedicated Device Workspace table is required.
+
+Suggested `Kind.json.spec` shape:
 
 ```ts
 interface DeviceWorkspace {
@@ -112,8 +116,9 @@ token, or runtime handle.
 
 ### LocalTask
 
-LocalTask is the task level under a Device Workspace shown by Wework. It is
-executor-local metadata, scoped under that local directory.
+LocalTask is executor-local metadata scoped under a device-local directory.
+Backend still groups it by Device Workspace, but the project sidebar can flatten
+tasks directly under the Project to preserve title width.
 
 ```text
 Project: Wegent
@@ -133,6 +138,13 @@ Suggested local shape:
 interface LocalTask {
   localTaskId: string
   workspacePath: string
+  workspaceKind?: 'workspace' | 'worktree' | 'chat'
+  worktreeId?: string
+  gitInfo?: {
+    originUrl?: string
+    branch?: string
+    sha?: string
+  }
   title: string
   runtime: 'codex' | 'claude_code'
   runtimeHandle: unknown
@@ -150,6 +162,13 @@ a Codex native thread/session locator. For Claude Code it may contain a Claude
 session locator. Backend and Wework pass it back to the owning executor and do
 not infer lifecycle from it.
 
+For Codex-discovered sessions, executor lists threads through the public
+`openai_codex.Codex.thread_list()` SDK API, sorted by `updated_at` descending.
+`createdAt` and `updatedAt` come from the SDK thread metadata. Executor should
+not use `session_index.jsonl` for the list because it can be stale and miss
+threads that Codex itself shows. The SDK-provided session path can still be used
+to read native transcript JSONL until the SDK exposes a transcript read API.
+
 Fork and migration relationship metadata is stored inline on LocalTask:
 
 - The target device creates a new LocalTask with `parent` pointing to the source.
@@ -163,7 +182,11 @@ LocalTask must not contain:
 - IM active target
 
 Project grouping is inferred by matching the LocalTask's Device Workspace to the
-central Device Workspace mapping.
+central Device Workspace mapping. Codex-discovered code work can also carry SDK
+`gitInfo`; Backend may use `gitInfo.originUrl` to associate a local workspace or
+worktree with an existing central Project that has the same repository identity.
+Standalone chat workspaces are marked as `workspaceKind: 'chat'` and are not
+treated as mappable project directories by default.
 
 ### Runtime Task Address
 
@@ -226,20 +249,24 @@ bodies.
 
 ## Frontend Interaction
 
-The sidebar renders the exact three-level model:
+The data model is Project -> Device Workspace -> LocalTask. The project sidebar
+renders a compact two-level view and moves device/path details into task
+metadata:
 
 ```text
 Projects
   Wegent
-    MacBook /repo/Wegent
-      Fix websocket reconnect
-      Refactor runtime RPC
-    Linux /workspace/Wegent
-      Fork: websocket reconnect
+    Fix websocket reconnect [device icon]
+    Refactor runtime RPC [device icon]
+    Worktree task [device icon] [worktree icon]
+    Fork: websocket reconnect [device icon]
 
 Unmapped Device Workspaces
   MacBook /tmp/spike
     Untitled Codex work
+
+Chats
+  Standalone chat title [device icon]
 ```
 
 Rules:
@@ -247,13 +274,24 @@ Rules:
 - Projects come from central Project resources.
 - Device Workspaces come from the central Device Workspace mapping.
 - LocalTasks come from online executors only.
+- Mapped project LocalTasks are rendered directly under the Project; the
+  Device Workspace is exposed through a task-row device/path icon and in task
+  details, not as another sidebar row.
+- Managed worktree LocalTasks are shown under the source Project; the task row
+  carries a worktree icon and keeps the task's actual worktree `workspacePath`
+  for open/send addresses.
 - If a Device Workspace is offline, Wework can show the workspace as offline but
   must not invent or keep central LocalTasks.
 - Unmapped local directories can be shown from executor discovery, then mapped
   to a Project by creating a central Device Workspace row.
+- Standalone chat LocalTasks are rendered as conversations, not as directory
+  groups. Device/path details stay in task-row metadata.
 - Opening a LocalTask opens that task's native runtime transcript.
-- Runtime and parent/child information is shown in the LocalTask details, not as
-  another tree level.
+- Runtime, device/path, and parent/child information is shown in the LocalTask
+  details, not as another tree level.
+- Sidebar LocalTask rows prioritize title width: they do not show a leading
+  terminal icon or always-on runtime text. Rows show only compact device/path,
+  optional worktree, and relative time metadata.
 
 ## Data Flows
 
@@ -265,8 +303,11 @@ Rules:
 4. Executor reads local metadata and native runtime discovery, then returns
    Device Workspace summaries and LocalTasks.
 5. Backend groups returned LocalTasks under central Device Workspaces by
-   `deviceId + workspacePath`.
-6. Wework renders Projects -> Device Workspaces -> LocalTasks.
+   `deviceId + workspacePath`. For managed worktree paths, Backend resolves the
+   source Project workspace and appends the LocalTask under that source Device
+   Workspace while preserving the task's actual worktree address.
+6. Wework renders mapped Project tasks directly under Projects, and renders
+   unmapped directories as Device Workspaces -> LocalTasks.
 
 Offline devices do not contribute LocalTasks. There is no central runtime task
 cache.
@@ -396,7 +437,8 @@ interface ForkPackage {
 - Executor tests cover fork package creation and local parent/child metadata.
 - Executor tests cover local source metadata overlay onto normalized runtime
   transcript messages.
-- Wework tests cover Project -> Device Workspace -> LocalTask rendering.
+- Wework tests cover flattened Project -> LocalTask sidebar rendering,
+  including device/path icons and worktree task icons.
 - Wework tests cover unmapped local directory mapping into a Project.
 - Wework tests cover opening a runtime transcript without calling task detail.
 - Wework tests cover disabled actions for offline devices.

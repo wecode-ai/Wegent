@@ -11,20 +11,19 @@ import type {
   ChatGuidanceAppliedPayload,
   ChatGuidanceExpiredPayload,
   ChatGuidanceQueuedPayload,
+  ChatMessagePayload,
   ChatSendAck,
   ChatSendPayload,
   ChatStartPayload,
   TaskJoinResponse,
 } from '@/types/api'
-import type {
-  DeviceSlotUpdatePayload,
-  DeviceUpgradeStatusPayload,
-} from '@/types/device-events'
+import type { DeviceSlotUpdatePayload, DeviceUpgradeStatusPayload } from '@/types/device-events'
 import type { SocketClientSocket } from '@wegent/chat-core'
 
 export type WorkbenchSocket = SocketClientSocket
 
 export interface ChatStreamHandlers {
+  onChatMessage?: (payload: ChatMessagePayload) => void
   onChatStart?: (payload: ChatStartPayload) => void
   onChatChunk?: (payload: ChatChunkPayload) => void
   onChatDone?: (payload: ChatDonePayload) => void
@@ -63,7 +62,9 @@ function normalizeGuideAck(response: ChatGuideAck | undefined): ChatGuideAck {
   return { ...response, success: response.success ?? true }
 }
 
-export function createChatStream(socket: Pick<WorkbenchSocket, 'emit' | 'on' | 'off' | 'connected'>) {
+export function createChatStream(
+  socket: Pick<WorkbenchSocket, 'emit' | 'on' | 'off' | 'connected'>
+) {
   return {
     joinTask(taskId: number): Promise<TaskJoinResponse> {
       return new Promise(resolve => {
@@ -76,7 +77,7 @@ export function createChatStream(socket: Pick<WorkbenchSocket, 'emit' | 'on' | '
       socket.emit('task:leave', { task_id: taskId })
     },
     sendMessage(payload: ChatSendPayload): Promise<ChatSendAck> {
-      return new Promise((resolve) => {
+      return new Promise(resolve => {
         if (!socket.connected) {
           resolve({ success: false, error: '连接未建立，请刷新页面重试' })
           return
@@ -93,7 +94,7 @@ export function createChatStream(socket: Pick<WorkbenchSocket, 'emit' | 'on' | '
       })
     },
     sendGuidance(payload: ChatGuidePayload): Promise<ChatGuideAck> {
-      return new Promise((resolve) => {
+      return new Promise(resolve => {
         if (!socket.connected) {
           resolve({ success: false, error: '连接未建立，请刷新页面重试' })
           return
@@ -123,12 +124,13 @@ export function createChatStream(socket: Pick<WorkbenchSocket, 'emit' | 'on' | '
           }
           resolve({
             ...response,
-            success: response.error ? false : response.success ?? true,
+            success: response.error ? false : (response.success ?? true),
           })
         })
       })
     },
     subscribe(handlers: ChatStreamHandlers): () => void {
+      if (handlers.onChatMessage) socket.on('chat:message', handlers.onChatMessage)
       if (handlers.onChatStart) socket.on('chat:start', handlers.onChatStart)
       if (handlers.onChatChunk) socket.on('chat:chunk', handlers.onChatChunk)
       if (handlers.onChatDone) socket.on('chat:done', handlers.onChatDone)
@@ -149,6 +151,7 @@ export function createChatStream(socket: Pick<WorkbenchSocket, 'emit' | 'on' | '
       }
 
       return () => {
+        if (handlers.onChatMessage) socket.off('chat:message', handlers.onChatMessage)
         if (handlers.onChatStart) socket.off('chat:start', handlers.onChatStart)
         if (handlers.onChatChunk) socket.off('chat:chunk', handlers.onChatChunk)
         if (handlers.onChatDone) socket.off('chat:done', handlers.onChatDone)
@@ -156,8 +159,10 @@ export function createChatStream(socket: Pick<WorkbenchSocket, 'emit' | 'on' | '
         if (handlers.onBlockCreated) socket.off('chat:block_created', handlers.onBlockCreated)
         if (handlers.onBlockUpdated) socket.off('chat:block_updated', handlers.onBlockUpdated)
         if (handlers.onGuidanceQueued) socket.off('chat:guidance_queued', handlers.onGuidanceQueued)
-        if (handlers.onGuidanceApplied) socket.off('chat:guidance_applied', handlers.onGuidanceApplied)
-        if (handlers.onGuidanceExpired) socket.off('chat:guidance_expired', handlers.onGuidanceExpired)
+        if (handlers.onGuidanceApplied)
+          socket.off('chat:guidance_applied', handlers.onGuidanceApplied)
+        if (handlers.onGuidanceExpired)
+          socket.off('chat:guidance_expired', handlers.onGuidanceExpired)
         if (handlers.onDeviceOnline) socket.off('device:online', handlers.onDeviceOnline)
         if (handlers.onDeviceOffline) socket.off('device:offline', handlers.onDeviceOffline)
         if (handlers.onDeviceStatus) socket.off('device:status', handlers.onDeviceStatus)

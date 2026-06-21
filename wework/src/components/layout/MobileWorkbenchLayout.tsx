@@ -22,7 +22,7 @@ import {
 } from '@/lib/device-capabilities'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
 import type {
-  BindTaskIMSessionsResponse,
+  BindRuntimeTaskIMSessionsResponse,
   CreateGitWorkspaceProjectRequest,
   CreateProjectRequest,
   GitBranch,
@@ -64,6 +64,7 @@ interface MobileWorkbenchLayoutProps {
   onSelectProject: (projectId: number | null) => void
   onStartNewProjectChat?: (projectId: number) => void
   onOpenRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void>
+  onArchiveRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void>
   onCreateProject?: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
   onCreateGitWorkspaceProject?: (
     data: CreateGitWorkspaceProjectRequest
@@ -104,10 +105,10 @@ interface MobileWorkbenchLayoutProps {
     workspaceTarget?: WorkspaceTarget | null
   ) => Promise<void>
   onListImPrivateSessions?: () => Promise<IMPrivateSessionListResponse>
-  onBindTaskToImSessions?: (
-    taskId: number,
+  onBindRuntimeTaskToImSessions?: (
+    address: RuntimeTaskAddress,
     sessionKeys: string[]
-  ) => Promise<BindTaskIMSessionsResponse>
+  ) => Promise<BindRuntimeTaskIMSessionsResponse>
   onUpgradeDevice?: (deviceId: string) => Promise<void>
   onInputChange: (value: string) => void
   onSend: () => void
@@ -156,7 +157,7 @@ export function MobileWorkbenchLayout({
   onCheckoutEnvironmentBranch,
   onCreateEnvironmentBranch,
   onListImPrivateSessions,
-  onBindTaskToImSessions,
+  onBindRuntimeTaskToImSessions,
   onUpgradeDevice = async () => {},
   onInputChange,
   onSend,
@@ -402,7 +403,7 @@ export function MobileWorkbenchLayout({
   ])
 
   const openContinueInImDialog = useCallback(() => {
-    if (!state.currentTask || state.currentTask.is_group_chat) return
+    if (!state.currentRuntimeTask) return
 
     const requestId = imSessionsRequestSequence.current + 1
     imSessionsRequestSequence.current = requestId
@@ -426,7 +427,7 @@ export function MobileWorkbenchLayout({
           setImSessionsLoading(false)
         }
       })
-  }, [onListImPrivateSessions, state.currentTask, t])
+  }, [onListImPrivateSessions, state.currentRuntimeTask, t])
 
   const closeContinueInImDialog = useCallback(() => {
     imSessionsRequestSequence.current += 1
@@ -436,14 +437,14 @@ export function MobileWorkbenchLayout({
 
   const submitContinueInIm = useCallback(
     async (sessionKeys: string[]) => {
-      if (!state.currentTask || state.currentTask.is_group_chat) return
+      if (!state.currentRuntimeTask) return
 
       setImSessionsSubmitting(true)
       try {
-        if (!onBindTaskToImSessions) {
+        if (!onBindRuntimeTaskToImSessions) {
           throw new Error('IM bind handler is not available')
         }
-        await onBindTaskToImSessions(state.currentTask.id, sessionKeys)
+        await onBindRuntimeTaskToImSessions(state.currentRuntimeTask, sessionKeys)
         setContinueInImOpen(false)
         setNotice({ message: t('workbench.continue_im_success'), tone: 'success' })
       } catch {
@@ -452,7 +453,7 @@ export function MobileWorkbenchLayout({
         setImSessionsSubmitting(false)
       }
     },
-    [onBindTaskToImSessions, state.currentTask, t]
+    [onBindRuntimeTaskToImSessions, state.currentRuntimeTask, t]
   )
 
   if (settingsOpen) {
@@ -515,7 +516,7 @@ export function MobileWorkbenchLayout({
                   <div className="h-10 w-32" data-testid="model-selector-loading" />
                 )}
               </div>
-              {state.currentTask && !state.currentTask.is_group_chat ? (
+              {state.currentRuntimeTask ? (
                 <button
                   type="button"
                   data-testid="mobile-continue-in-im-button"

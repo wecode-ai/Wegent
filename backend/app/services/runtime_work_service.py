@@ -4,24 +4,26 @@
 
 """Service for Project -> Device Workspace -> LocalTask runtime work trees."""
 
+import re
 from dataclasses import dataclass, replace
-from datetime import datetime
 from hashlib import sha256
 from types import SimpleNamespace
 from typing import Any, Optional
+from urllib.parse import urlparse
 from uuid import uuid4
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.constants import CLIENT_ORIGIN_WEWORK
-from app.models.device_workspace import DeviceWorkspace
 from app.models.kind import Kind
 from app.models.project import Project
 from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
 from app.models.user import User
 from app.schemas.project import ProjectConfig
 from app.schemas.runtime_work import (
+    BindRuntimeTaskIMSessionsRequest,
+    BindRuntimeTaskIMSessionsResponse,
     DeviceWorkspaceResponse,
     DeviceWorkspaceUpsert,
     LocalTaskSummary,
@@ -31,6 +33,7 @@ from app.schemas.runtime_work import (
     RuntimeSendRequest,
     RuntimeSendResponse,
     RuntimeTaskAddress,
+    RuntimeTaskArchiveResponse,
     RuntimeTaskCreateRequest,
     RuntimeTaskCreateResponse,
     RuntimeTranscriptResponse,
@@ -38,12 +41,24 @@ from app.schemas.runtime_work import (
 )
 from app.services.device.runtime_rpc_service import RuntimeRpcError, runtime_rpc_service
 from app.services.device_service import device_service
+from app.services.im.notification_dispatcher import im_notification_dispatcher
+from app.services.im.session_service import im_session_service
+from app.services.runtime_work_kind_store import (
+    list_device_workspace_kinds,
+    touch_device_workspace_kind,
+    upsert_device_workspace_kind,
+)
 
 RUNTIME_LIST_TIMEOUT_SECONDS = 30
 RUNTIME_TRANSCRIPT_TIMEOUT_SECONDS = 30
 RUNTIME_SEND_TIMEOUT_SECONDS = 600
 RUNTIME_CREATE_TIMEOUT_SECONDS = 600
 RUNTIME_MODEL_TYPE = "runtime"
+WORKTREE_ROOT_DIR = "worktrees"
+CHAT_WORKSPACE_DIR = "chats"
+EXECUTOR_WORKSPACE_DIR = "workspace"
+EXECUTOR_ROOT_DIR_NAMES = {"wegent-executor", ".wegent-executor"}
+RUNTIME_WORKTREE_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
 @dataclass(frozen=True)
@@ -54,6 +69,14 @@ class RuntimeTaskTarget:
     workspace_path: str
     project: Optional[Project] = None
     workspace_source: str = "local_path"
+
+
+@dataclass(frozen=True)
+class RuntimeWorktreePath:
+    """Parsed runtime worktree path metadata."""
+
+    worktree_id: str
+    project_dir_name: str
 
 
 def normalize_workspace_path(path: str) -> str:
@@ -83,35 +106,14 @@ def upsert_device_workspace(
 
     project = _get_active_project(db, user_id, payload.project_id, None)
     workspace_path = normalize_workspace_path(payload.workspace_path)
-    path_hash = workspace_path_hash(workspace_path)
-    row = (
-        db.query(DeviceWorkspace)
-        .filter(
-            DeviceWorkspace.user_id == user_id,
-            DeviceWorkspace.device_id == payload.device_id,
-            DeviceWorkspace.workspace_path_hash == path_hash,
-        )
-        .first()
+    return upsert_device_workspace_kind(
+        db=db,
+        user_id=user_id,
+        project_id=project.id,
+        payload=payload,
+        workspace_path=workspace_path,
+        workspace_path_hash=workspace_path_hash(workspace_path),
     )
-    if row is None:
-        row = DeviceWorkspace(
-            user_id=user_id,
-            project_id=project.id,
-            device_id=payload.device_id,
-            workspace_path=workspace_path,
-            workspace_path_hash=path_hash,
-        )
-        db.add(row)
-
-    row.project_id = project.id
-    row.workspace_path = workspace_path
-    row.workspace_path_hash = path_hash
-    row.repo_url = payload.repo_url
-    row.repo_root_fingerprint = payload.repo_root_fingerprint
-    row.label = payload.label
-    db.commit()
-    db.refresh(row)
-    return DeviceWorkspaceResponse.model_validate(row)
 
 
 def list_device_workspaces(
@@ -122,13 +124,12 @@ def list_device_workspaces(
 ) -> list[DeviceWorkspaceResponse]:
     """List central device workspace mappings for a user."""
 
-    query = db.query(DeviceWorkspace).filter(DeviceWorkspace.user_id == user_id)
-    if project_id is not None:
-        query = query.filter(DeviceWorkspace.project_id == project_id)
-    rows = query.order_by(
-        DeviceWorkspace.updated_at.desc(), DeviceWorkspace.id.desc()
-    ).all()
-    return [DeviceWorkspaceResponse.model_validate(row) for row in rows]
+    project_ids = [project_id] if project_id is not None else None
+    return list_device_workspace_kinds(
+        db=db,
+        user_id=user_id,
+        project_ids=project_ids,
+    )
 
 
 async def list_runtime_work(
@@ -148,7 +149,7 @@ async def list_runtime_work(
         devices=devices,
     )
 
-    projects_response: list[RuntimeProjectWork] = []
+    workspace_items_by_project_id: dict[int, list[RuntimeDeviceWorkspace]] = {}
     total_local_tasks = 0
     mapped_keys: set[tuple[str, str]] = set()
 
@@ -182,12 +183,51 @@ async def list_runtime_work(
                         local_tasks=local_tasks,
                     )
                 )
-        projects_response.append(
-            RuntimeProjectWork(
-                project=_project_ref(project),
-                deviceWorkspaces=workspace_items,
-            )
+        workspace_items_by_project_id[project.id] = workspace_items
+
+    for (device_id, workspace_path), local_tasks in runtime_workspaces.items():
+        if (device_id, workspace_path) in mapped_keys:
+            continue
+        target = _find_project_target_for_runtime_git_info(
+            projects=projects,
+            mappings=mappings,
+            device_id=device_id,
+            local_tasks=local_tasks,
         )
+        if target is not None and target.project is not None:
+            mapped_keys.add((device_id, workspace_path))
+            total_local_tasks += len(local_tasks)
+            _append_worktree_tasks_to_source_workspace(
+                workspace_items_by_project_id=workspace_items_by_project_id,
+                target=target,
+                device=devices_by_id.get(device_id),
+                local_tasks=local_tasks,
+            )
+            continue
+
+        target = _find_project_target_for_runtime_worktree(
+            projects=projects,
+            device_id=device_id,
+            workspace_path=workspace_path,
+        )
+        if target is None or target.project is None:
+            continue
+        mapped_keys.add((device_id, workspace_path))
+        total_local_tasks += len(local_tasks)
+        _append_worktree_tasks_to_source_workspace(
+            workspace_items_by_project_id=workspace_items_by_project_id,
+            target=target,
+            device=devices_by_id.get(device_id),
+            local_tasks=local_tasks,
+        )
+
+    projects_response = [
+        RuntimeProjectWork(
+            project=_project_ref(project),
+            deviceWorkspaces=workspace_items_by_project_id.get(project.id, []),
+        )
+        for project in projects
+    ]
 
     unmapped: list[RuntimeDeviceWorkspace] = []
     for (device_id, workspace_path), local_tasks in runtime_workspaces.items():
@@ -203,6 +243,7 @@ async def list_runtime_work(
                 deviceName=_device_name(device, device_id),
                 deviceStatus=_device_status(device),
                 workspacePath=workspace_path,
+                **_runtime_workspace_kind_fields(workspace_path),
                 mapped=False,
                 available=True,
                 localTasks=local_tasks,
@@ -269,6 +310,65 @@ async def send_runtime_message(
     except RuntimeRpcError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
     return _runtime_send_response(result, address.local_task_id)
+
+
+async def bind_runtime_task_to_im_sessions(
+    *,
+    db: Session,
+    user_id: int,
+    request: BindRuntimeTaskIMSessionsRequest,
+) -> BindRuntimeTaskIMSessionsResponse:
+    """Bind private IM sessions to a device-local runtime task address."""
+
+    address = _normalized_address(request.address)
+    _ensure_owned_device(db, user_id, address.device_id)
+    _touch_workspace_mapping(db, user_id, address)
+    sessions = await im_session_service.load_user_sessions_by_keys(
+        db,
+        user_id=user_id,
+        session_keys=request.session_keys,
+    )
+    runtime_task = address.model_dump(by_alias=True)
+    for session in sessions:
+        await im_session_service.bind_active_runtime_task(
+            db,
+            session=session,
+            runtime_task=runtime_task,
+        )
+    notification = await im_notification_dispatcher.send_task_switched(
+        db,
+        sessions,
+        address.local_task_id,
+    )
+    return BindRuntimeTaskIMSessionsResponse(
+        address=address,
+        boundSessionKeys=[str(session_key) for session_key in request.session_keys],
+        notifiedCount=int(notification.get("sent") or 0),
+    )
+
+
+async def archive_runtime_task(
+    *,
+    db: Session,
+    user_id: int,
+    address: RuntimeTaskAddress,
+) -> RuntimeTaskArchiveResponse:
+    """Archive a LocalTask through the owning local executor."""
+
+    normalized_address = _normalized_address(address)
+    _ensure_owned_device(db, user_id, normalized_address.device_id)
+    _touch_workspace_mapping(db, user_id, normalized_address)
+    try:
+        result = await runtime_rpc_service.call(
+            user_id=user_id,
+            device_id=normalized_address.device_id,
+            method="runtime.tasks.archive",
+            payload=normalized_address.model_dump(by_alias=True),
+            timeout_seconds=RUNTIME_TRANSCRIPT_TIMEOUT_SECONDS,
+        )
+    except RuntimeRpcError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
+    return _runtime_archive_response(result, normalized_address)
 
 
 async def create_runtime_task(
@@ -351,6 +451,25 @@ def _runtime_send_response(
     )
 
 
+def _runtime_archive_response(
+    result: dict[str, Any],
+    address: RuntimeTaskAddress,
+) -> RuntimeTaskArchiveResponse:
+    if result.get("success") is False:
+        return RuntimeTaskArchiveResponse(
+            accepted=False,
+            localTaskId=str(result.get("localTaskId") or address.local_task_id),
+            workspacePath=str(result.get("workspacePath") or address.workspace_path),
+            error=str(result.get("error") or "Runtime archive failed"),
+        )
+    return RuntimeTaskArchiveResponse(
+        accepted=bool(result.get("accepted", True)),
+        localTaskId=str(result.get("localTaskId") or address.local_task_id),
+        workspacePath=str(result.get("workspacePath") or address.workspace_path),
+        error=result.get("error"),
+    )
+
+
 def _runtime_create_response(
     result: dict[str, Any],
     runtime: str,
@@ -403,17 +522,13 @@ def _list_workspace_rows(
     db: Session,
     user_id: int,
     project_ids: list[int],
-) -> list[DeviceWorkspace]:
+) -> list[DeviceWorkspaceResponse]:
     if not project_ids:
         return []
-    return (
-        db.query(DeviceWorkspace)
-        .filter(
-            DeviceWorkspace.user_id == user_id,
-            DeviceWorkspace.project_id.in_(project_ids),
-        )
-        .order_by(DeviceWorkspace.updated_at.desc(), DeviceWorkspace.id.desc())
-        .all()
+    return list_device_workspace_kinds(
+        db=db,
+        user_id=user_id,
+        project_ids=project_ids,
     )
 
 
@@ -443,6 +558,11 @@ async def _list_online_runtime_workspaces(
                 LocalTaskSummary.model_validate(
                     {
                         **task,
+                        **_runtime_workspace_kind_fields(
+                            normalize_workspace_path(
+                                str(task.get("workspacePath") or workspace_path)
+                            )
+                        ),
                         "workspacePath": normalize_workspace_path(
                             str(task.get("workspacePath") or workspace_path)
                         ),
@@ -474,9 +594,206 @@ def _iter_runtime_workspaces(result: dict[str, Any]) -> list[dict[str, Any]]:
     return normalized
 
 
+def _parse_runtime_worktree_path(path: str) -> Optional[RuntimeWorktreePath]:
+    parts = [part for part in normalize_workspace_path(path).split("/") if part]
+    for index, part in enumerate(parts):
+        if part != WORKTREE_ROOT_DIR:
+            continue
+        if index + 2 >= len(parts):
+            continue
+        worktree_id = parts[index + 1]
+        project_dir_name = parts[index + 2]
+        if RUNTIME_WORKTREE_ID_PATTERN.fullmatch(worktree_id):
+            return RuntimeWorktreePath(
+                worktree_id=worktree_id,
+                project_dir_name=project_dir_name,
+            )
+    return None
+
+
+def _runtime_workspace_kind_fields(workspace_path: str) -> dict[str, Optional[str]]:
+    if _is_runtime_chat_workspace_path(workspace_path):
+        return {"workspaceKind": "chat", "worktreeId": None}
+    worktree = _parse_runtime_worktree_path(workspace_path)
+    if not worktree:
+        return {"workspaceKind": "workspace", "worktreeId": None}
+    return {"workspaceKind": "worktree", "worktreeId": worktree.worktree_id}
+
+
+def _is_runtime_chat_workspace_path(path: str) -> bool:
+    parts = [part for part in normalize_workspace_path(path).split("/") if part]
+    for index, part in enumerate(parts):
+        if part != EXECUTOR_WORKSPACE_DIR or index + 1 >= len(parts):
+            continue
+        if parts[index + 1] != CHAT_WORKSPACE_DIR:
+            continue
+        previous = parts[index - 1] if index > 0 else ""
+        if previous in EXECUTOR_ROOT_DIR_NAMES:
+            return True
+        if index == 0:
+            return True
+    return (
+        len(parts) >= 2
+        and parts[0] == EXECUTOR_WORKSPACE_DIR
+        and parts[1] == CHAT_WORKSPACE_DIR
+    )
+
+
+def _find_project_target_for_runtime_git_info(
+    *,
+    projects: list[Project],
+    mappings: list[DeviceWorkspaceResponse],
+    device_id: str,
+    local_tasks: list[LocalTaskSummary],
+) -> Optional[RuntimeTaskTarget]:
+    task_origin_urls = {
+        _canonical_git_url(_task_git_origin_url(task))
+        for task in local_tasks
+        if task.runtime == "codex" and task.workspace_kind != "chat"
+    }
+    task_origin_urls.discard(None)
+    if not task_origin_urls:
+        return None
+
+    projects_by_id = {project.id: project for project in projects}
+    candidates: list[tuple[int, RuntimeTaskTarget]] = []
+    for mapping in mappings:
+        if mapping.device_id != device_id:
+            continue
+        mapping_url = _canonical_git_url(mapping.repo_url)
+        project = projects_by_id.get(mapping.project_id)
+        if mapping_url and mapping_url in task_origin_urls and project is not None:
+            candidates.append(
+                (
+                    0,
+                    RuntimeTaskTarget(
+                        device_id=mapping.device_id,
+                        workspace_path=mapping.workspace_path,
+                        project=project,
+                        workspace_source="local_path",
+                    ),
+                )
+            )
+
+    for project in projects:
+        target = _project_runtime_target(project)
+        if not target or target.device_id != device_id:
+            continue
+        project_url = _canonical_git_url(_project_git_url(project))
+        if project_url and project_url in task_origin_urls:
+            candidates.append((1, target))
+
+    if not candidates:
+        return None
+    return sorted(
+        candidates,
+        key=lambda item: (item[0], item[1].project.id if item[1].project else 0),
+    )[0][1]
+
+
+def _task_git_origin_url(task: LocalTaskSummary) -> Optional[str]:
+    git_info = task.git_info
+    if not isinstance(git_info, dict):
+        return None
+    value = git_info.get("originUrl") or git_info.get("origin_url")
+    return value if isinstance(value, str) and value.strip() else None
+
+
+def _project_git_url(project: Project) -> Optional[str]:
+    config = _parse_project_config(project, strict=False)
+    if not config or not config.git:
+        return None
+    return config.git.url
+
+
+def _canonical_git_url(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    text = value.strip()
+    if not text:
+        return None
+
+    scp_like = re.match(r"^(?:ssh://)?git@([^:/]+)[:/](.+)$", text)
+    if scp_like:
+        host, path = scp_like.groups()
+        return _canonical_git_host_path(host, path)
+
+    parsed = urlparse(text)
+    if parsed.netloc and parsed.path:
+        return _canonical_git_host_path(parsed.netloc, parsed.path)
+
+    return text.removesuffix(".git").lower()
+
+
+def _canonical_git_host_path(host: str, path: str) -> str:
+    normalized_host = host.lower().removeprefix("www.")
+    normalized_path = path.strip("/").removesuffix(".git").lower()
+    return f"{normalized_host}/{normalized_path}"
+
+
+def _find_project_target_for_runtime_worktree(
+    *,
+    projects: list[Project],
+    device_id: str,
+    workspace_path: str,
+) -> Optional[RuntimeTaskTarget]:
+    worktree = _parse_runtime_worktree_path(workspace_path)
+    if not worktree:
+        return None
+
+    candidates: list[RuntimeTaskTarget] = []
+    for project in projects:
+        target = _project_runtime_target(project)
+        if not target or target.device_id != device_id:
+            continue
+        if _path_basename(target.workspace_path).lower() == (
+            worktree.project_dir_name.lower()
+        ):
+            candidates.append(target)
+    if not candidates:
+        return None
+    return sorted(candidates, key=lambda item: item.project.id if item.project else 0)[
+        0
+    ]
+
+
+def _append_worktree_tasks_to_source_workspace(
+    *,
+    workspace_items_by_project_id: dict[int, list[RuntimeDeviceWorkspace]],
+    target: RuntimeTaskTarget,
+    device: Optional[dict[str, Any]],
+    local_tasks: list[LocalTaskSummary],
+) -> None:
+    if target.project is None:
+        return
+
+    workspace_items = workspace_items_by_project_id.setdefault(target.project.id, [])
+    for item in workspace_items:
+        if (
+            item.device_id == target.device_id
+            and item.workspace_path == target.workspace_path
+        ):
+            item.local_tasks.extend(local_tasks)
+            return
+
+    workspace_items.append(
+        _build_project_config_workspace_item(
+            project=target.project,
+            target=target,
+            device=device,
+            local_tasks=local_tasks,
+        )
+    )
+
+
+def _path_basename(path: str) -> str:
+    parts = [part for part in normalize_workspace_path(path).split("/") if part]
+    return parts[-1] if parts else ""
+
+
 def _build_device_workspace_item(
     *,
-    mapping: DeviceWorkspace,
+    mapping: DeviceWorkspaceResponse,
     device: Optional[dict[str, Any]],
     local_tasks: list[LocalTaskSummary],
 ) -> RuntimeDeviceWorkspace:
@@ -489,6 +806,7 @@ def _build_device_workspace_item(
         deviceName=_device_name(device, mapping.device_id),
         deviceStatus=status_value,
         workspacePath=mapping.workspace_path,
+        **_runtime_workspace_kind_fields(mapping.workspace_path),
         repoUrl=mapping.repo_url,
         repoRootFingerprint=mapping.repo_root_fingerprint,
         label=mapping.label,
@@ -515,6 +833,7 @@ def _build_project_config_workspace_item(
         deviceName=_device_name(device, target.device_id),
         deviceStatus=status_value,
         workspacePath=target.workspace_path,
+        **_runtime_workspace_kind_fields(target.workspace_path),
         label=project.name,
         mapped=True,
         available=available,
@@ -959,19 +1278,10 @@ def _touch_workspace_mapping(
     db: Session,
     user_id: int,
     address: RuntimeTaskAddress,
-) -> Optional[DeviceWorkspace]:
-    path_hash = workspace_path_hash(address.workspace_path)
-    row = (
-        db.query(DeviceWorkspace)
-        .filter(
-            DeviceWorkspace.user_id == user_id,
-            DeviceWorkspace.device_id == address.device_id,
-            DeviceWorkspace.workspace_path_hash == path_hash,
-        )
-        .first()
+) -> Optional[DeviceWorkspaceResponse]:
+    return touch_device_workspace_kind(
+        db=db,
+        user_id=user_id,
+        device_id=address.device_id,
+        workspace_path_hash=workspace_path_hash(address.workspace_path),
     )
-    if not row:
-        return None
-    row.last_seen_at = datetime.now()
-    db.commit()
-    return row

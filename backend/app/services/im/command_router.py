@@ -90,6 +90,12 @@ class IMCommandRouter:
                     task_id=session.active_task_id,
                     message=text,
                 )
+            if session.active_runtime_task:
+                return IMCommandResult(
+                    handled=True,
+                    action=IMCommandAction.CONTINUE_TASK,
+                    message=text,
+                )
             return await self._begin_task_creation(
                 db=db,
                 session=session,
@@ -132,6 +138,11 @@ class IMCommandRouter:
                         handled=True,
                         reply=f"当前为 Task 模式，任务 ID：{session.active_task_id}。",
                     )
+                if session.active_runtime_task:
+                    return IMCommandResult(
+                        handled=True,
+                        reply="当前为 Task 模式，本地任务已绑定。",
+                    )
                 return await self._begin_task_switch(
                     db=db,
                     session=session,
@@ -154,6 +165,11 @@ class IMCommandRouter:
                 return IMCommandResult(
                     handled=True,
                     reply=f"当前为 Task 模式，任务 ID：{session.active_task_id}。",
+                )
+            if session.active_runtime_task:
+                return IMCommandResult(
+                    handled=True,
+                    reply="当前为 Task 模式，本地任务已绑定。",
                 )
             return await self._begin_task_switch(
                 db=db,

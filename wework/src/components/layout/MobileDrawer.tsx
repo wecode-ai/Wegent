@@ -4,7 +4,9 @@ import {
   FolderGit2,
   FolderOpen,
   FolderPlus,
+  GitCompareArrows,
   Loader2,
+  Monitor,
   RotateCw,
   Search,
   SquarePen,
@@ -22,15 +24,22 @@ import type {
   GitBranch,
   GitRepoInfo,
   ProjectWithTasks,
-  RuntimeDeviceWorkspace,
   RuntimeTaskAddress,
   RuntimeWorkListResponse,
   User,
 } from '@/types/api'
 import {
-  getRuntimeTaskRuntimeLabel,
+  getRuntimeChatSidebarTaskItems,
+  getRuntimeDirectoryWorkspaces,
+  getRuntimeTaskAddress,
   getRuntimeTaskTime,
+  getRuntimeTaskWorkspaceTitle,
+  getRuntimeSidebarTaskItems,
+  getRuntimeWorkspaceLabel,
+  getVisibleRuntimeSidebarTaskItems,
+  hasHiddenRuntimeSidebarTaskItems,
   isRuntimeTaskSelected,
+  isRuntimeWorktreeTask,
   sortRuntimeTasks,
 } from './runtimeTaskSidebarHelpers'
 
@@ -85,11 +94,6 @@ function formatRelativeTime(value?: string) {
   return `${Math.floor(days / 7)}w`
 }
 
-function getRuntimeWorkspaceLabel(workspace: RuntimeDeviceWorkspace) {
-  const pathLabel = workspace.label || workspace.workspacePath
-  return `${workspace.deviceName} · ${pathLabel}`
-}
-
 export function MobileDrawer({
   open,
   user,
@@ -138,6 +142,9 @@ export function MobileDrawer({
   const longPressStartRef = useRef({ x: 0, y: 0 })
   const longPressTriggeredRef = useRef(false)
   const [expandedProjectIds, setExpandedProjectIds] = useState<Set<number>>(() => new Set())
+  const [expandedRuntimeProjectTaskIds, setExpandedRuntimeProjectTaskIds] = useState<Set<number>>(
+    () => new Set()
+  )
   const runtimeWorkByProjectId = useMemo(() => {
     const items = runtimeWork?.projects ?? []
     return new Map(items.map(item => [item.project.id, item]))
@@ -145,6 +152,14 @@ export function MobileDrawer({
   const unmappedWorkspaces = useMemo(
     () => runtimeWork?.unmappedDeviceWorkspaces ?? [],
     [runtimeWork]
+  )
+  const unmappedDirectoryWorkspaces = useMemo(
+    () => getRuntimeDirectoryWorkspaces(unmappedWorkspaces),
+    [unmappedWorkspaces]
+  )
+  const unmappedChatTaskItems = useMemo(
+    () => getRuntimeChatSidebarTaskItems(unmappedWorkspaces),
+    [unmappedWorkspaces]
   )
 
   if (!open) return null
@@ -365,6 +380,60 @@ export function MobileDrawer({
                   </>
                 )}
               </div>
+              {unmappedChatTaskItems.length > 0 && (
+                <section className="mt-5">
+                  <div className="mb-2 px-6 text-[18px] font-bold leading-6 text-[#111111]">
+                    {t('workbench.chats', '对话')}
+                  </div>
+                  <div className="space-y-1">
+                    {unmappedChatTaskItems.map(({ workspace, task }) => {
+                      const selectedTask = isRuntimeTaskSelected(
+                        currentRuntimeTask,
+                        workspace,
+                        task
+                      )
+                      const disabled = !workspace.available || !onOpenRuntimeLocalTask
+                      const workspaceTitle = getRuntimeTaskWorkspaceTitle(workspace)
+                      return (
+                        <button
+                          key={`${workspace.deviceId}:${task.workspacePath}:${task.localTaskId}`}
+                          type="button"
+                          data-testid="mobile-chat-runtime-task-button"
+                          disabled={disabled}
+                          onClick={() => {
+                            if (disabled) return
+                            void onOpenRuntimeLocalTask?.(getRuntimeTaskAddress(workspace, task))
+                            onClose()
+                          }}
+                          className={[
+                            'mx-3 flex h-12 min-w-[44px] w-[calc(100%-24px)] items-center rounded-[14px] px-3 text-left text-[18px] font-normal leading-6 disabled:cursor-not-allowed disabled:opacity-50',
+                            selectedTask
+                              ? 'bg-[#F1F1F1] text-[#111111]'
+                              : 'text-[#111111] hover:bg-[#F7F7F7]',
+                          ].join(' ')}
+                        >
+                          <span className="min-w-0 flex-1 truncate">{task.title}</span>
+                          {task.running ? (
+                            <Loader2 className={MOBILE_RUNNING_SPINNER_CLASS} />
+                          ) : (
+                            <span className="ml-2 flex shrink-0 items-center gap-1 text-sm text-[#6B7280]">
+                              <span
+                                title={workspaceTitle}
+                                aria-label={workspaceTitle}
+                                role="img"
+                                className="flex h-3.5 w-3.5 shrink-0 items-center justify-center"
+                              >
+                                <Monitor className="h-3.5 w-3.5" aria-hidden="true" />
+                              </span>
+                              <span>{formatRelativeTime(getRuntimeTaskTime(task))}</span>
+                            </span>
+                          )}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </section>
+              )}
               {projects.map(project => {
                 const runtimeProjectWork = runtimeWorkByProjectId.get(project.id)
                 const workspaces = runtimeProjectWork?.deviceWorkspaces ?? []
@@ -443,77 +512,107 @@ export function MobileDrawer({
                     </button>
                     {expanded && (
                       <div className="ml-[66px] mr-6 mt-1 space-y-1">
-                        {workspaces.length === 0 && (
-                          <div className="flex h-10 items-center rounded-lg px-2 text-left text-[15px] text-[#6B7280]">
-                            {t('workbench.no_chats', '暂无会话')}
-                          </div>
-                        )}
-                        {workspaces.map(workspace => {
-                          const tasks = sortRuntimeTasks(workspace.localTasks)
-                          return (
-                            <div key={`${workspace.deviceId}:${workspace.workspacePath}`}>
-                              <div className="flex h-8 items-center rounded-lg px-2 text-left text-[13px] font-medium text-[#6B7280]">
-                                <span className="min-w-0 flex-1 truncate">
-                                  {getRuntimeWorkspaceLabel(workspace)}
-                                </span>
-                                {!workspace.available && (
-                                  <span className="ml-2 shrink-0">
-                                    {t('workbench.device_offline', '离线')}
-                                  </span>
-                                )}
+                        {(() => {
+                          const taskItems = getRuntimeSidebarTaskItems(workspaces)
+                          if (taskItems.length === 0) {
+                            return (
+                              <div className="flex h-10 items-center rounded-lg px-2 text-left text-[15px] text-[#6B7280]">
+                                {t('workbench.no_chats', '暂无会话')}
                               </div>
-                              {tasks.length === 0 ? (
-                                <div className="flex h-10 items-center rounded-lg px-2 text-left text-[15px] text-[#6B7280]">
-                                  {t('workbench.no_chats', '暂无会话')}
-                                </div>
-                              ) : (
-                                tasks.map(task => {
-                                  const selectedTask = isRuntimeTaskSelected(
-                                    currentRuntimeTask,
-                                    workspace,
-                                    task
-                                  )
-                                  const disabled = !workspace.available || !onOpenRuntimeLocalTask
-                                  return (
-                                    <button
-                                      key={task.localTaskId}
-                                      type="button"
-                                      data-testid="mobile-runtime-task-button"
-                                      disabled={disabled}
-                                      onClick={() => {
-                                        if (disabled) return
-                                        void onOpenRuntimeLocalTask?.({
-                                          deviceId: workspace.deviceId,
-                                          workspacePath: workspace.workspacePath,
-                                          localTaskId: task.localTaskId,
-                                        })
-                                        onClose()
-                                      }}
-                                      className={[
-                                        'flex h-12 min-w-[44px] w-full items-center rounded-[14px] px-2 text-left text-[18px] font-normal leading-6 disabled:cursor-not-allowed disabled:opacity-50',
-                                        selectedTask
-                                          ? 'bg-[#F1F1F1] text-[#111111]'
-                                          : 'text-[#111111] hover:bg-[#F7F7F7]',
-                                      ].join(' ')}
-                                    >
-                                      <span className="min-w-0 flex-1 truncate">{task.title}</span>
-                                      {task.running ? (
-                                        <Loader2 className={MOBILE_RUNNING_SPINNER_CLASS} />
-                                      ) : (
-                                        <span className="ml-2 flex shrink-0 items-center gap-1 text-sm text-[#6B7280]">
-                                          <span>{getRuntimeTaskRuntimeLabel(task.runtime)}</span>
-                                          <span>
-                                            {formatRelativeTime(getRuntimeTaskTime(task))}
-                                          </span>
-                                        </span>
-                                      )}
-                                    </button>
-                                  )
-                                })
-                              )}
-                            </div>
+                            )
+                          }
+
+                          const runtimeTasksExpanded = expandedRuntimeProjectTaskIds.has(project.id)
+                          const visibleTaskItems = getVisibleRuntimeSidebarTaskItems(
+                            taskItems,
+                            runtimeTasksExpanded
                           )
-                        })}
+                          const hasHiddenTasks = hasHiddenRuntimeSidebarTaskItems(taskItems)
+
+                          return (
+                            <>
+                              {visibleTaskItems.map(({ workspace, task }) => {
+                                const selectedTask = isRuntimeTaskSelected(
+                                  currentRuntimeTask,
+                                  workspace,
+                                  task
+                                )
+                                const disabled = !workspace.available || !onOpenRuntimeLocalTask
+                                const workspaceTitle = getRuntimeTaskWorkspaceTitle(workspace)
+                                return (
+                                  <button
+                                    key={`${workspace.deviceId}:${task.workspacePath}:${task.localTaskId}`}
+                                    type="button"
+                                    data-testid="mobile-runtime-task-button"
+                                    disabled={disabled}
+                                    onClick={() => {
+                                      if (disabled) return
+                                      void onOpenRuntimeLocalTask?.(
+                                        getRuntimeTaskAddress(workspace, task)
+                                      )
+                                      onClose()
+                                    }}
+                                    className={[
+                                      'flex h-12 min-w-[44px] w-full items-center rounded-[14px] px-2 text-left text-[18px] font-normal leading-6 disabled:cursor-not-allowed disabled:opacity-50',
+                                      selectedTask
+                                        ? 'bg-[#F1F1F1] text-[#111111]'
+                                        : 'text-[#111111] hover:bg-[#F7F7F7]',
+                                    ].join(' ')}
+                                  >
+                                    <span className="min-w-0 flex-1 truncate">{task.title}</span>
+                                    {task.running ? (
+                                      <Loader2 className={MOBILE_RUNNING_SPINNER_CLASS} />
+                                    ) : (
+                                      <span className="ml-2 flex shrink-0 items-center gap-1 text-sm text-[#6B7280]">
+                                        <span
+                                          title={workspaceTitle}
+                                          aria-label={workspaceTitle}
+                                          role="img"
+                                          className="flex h-3.5 w-3.5 shrink-0 items-center justify-center"
+                                        >
+                                          <Monitor className="h-3.5 w-3.5" aria-hidden="true" />
+                                        </span>
+                                        {isRuntimeWorktreeTask(task) && (
+                                          <GitCompareArrows
+                                            className="h-3.5 w-3.5 shrink-0"
+                                            aria-label="Worktree"
+                                          />
+                                        )}
+                                        <span>{formatRelativeTime(getRuntimeTaskTime(task))}</span>
+                                      </span>
+                                    )}
+                                  </button>
+                                )
+                              })}
+                              {hasHiddenTasks && (
+                                <button
+                                  type="button"
+                                  data-testid={
+                                    runtimeTasksExpanded
+                                      ? `mobile-project-runtime-tasks-collapse-${project.id}`
+                                      : `mobile-project-runtime-tasks-expand-${project.id}`
+                                  }
+                                  onClick={() =>
+                                    setExpandedRuntimeProjectTaskIds(previous => {
+                                      const next = new Set(previous)
+                                      if (next.has(project.id)) {
+                                        next.delete(project.id)
+                                      } else {
+                                        next.add(project.id)
+                                      }
+                                      return next
+                                    })
+                                  }
+                                  className="flex h-10 min-w-[44px] items-center rounded-lg px-2 text-left text-[15px] font-semibold text-[#6B7280] hover:bg-[#F7F7F7]"
+                                >
+                                  {runtimeTasksExpanded
+                                    ? t('workbench.collapse_display', '折叠显示')
+                                    : t('workbench.expand_display', '展开显示')}
+                                </button>
+                              )}
+                            </>
+                          )
+                        })()}
                       </div>
                     )}
                   </div>
@@ -529,12 +628,12 @@ export function MobileDrawer({
               </h2>
             </div>
             <div className="space-y-2">
-              {unmappedWorkspaces.length === 0 ? (
+              {unmappedDirectoryWorkspaces.length === 0 ? (
                 <div className="mx-3 flex h-10 items-center rounded-lg px-3 text-left text-[15px] text-[#6B7280]">
                   {t('workbench.no_unmapped_device_workspaces', '暂无未映射工作区')}
                 </div>
               ) : (
-                unmappedWorkspaces.map(workspace => (
+                unmappedDirectoryWorkspaces.map(workspace => (
                   <div
                     key={`${workspace.deviceId}:${workspace.workspacePath}`}
                     className="mx-3 rounded-[14px]"
@@ -559,11 +658,7 @@ export function MobileDrawer({
                           disabled={disabled}
                           onClick={() => {
                             if (disabled) return
-                            void onOpenRuntimeLocalTask?.({
-                              deviceId: workspace.deviceId,
-                              workspacePath: workspace.workspacePath,
-                              localTaskId: task.localTaskId,
-                            })
+                            void onOpenRuntimeLocalTask?.(getRuntimeTaskAddress(workspace, task))
                             onClose()
                           }}
                           className={[
@@ -577,7 +672,13 @@ export function MobileDrawer({
                           {task.running ? (
                             <Loader2 className={MOBILE_RUNNING_SPINNER_CLASS} />
                           ) : (
-                            <span className="ml-2 shrink-0 text-sm text-[#6B7280]">
+                            <span className="ml-2 flex shrink-0 items-center gap-1 text-sm text-[#6B7280]">
+                              {isRuntimeWorktreeTask(task) && (
+                                <GitCompareArrows
+                                  className="h-3.5 w-3.5 shrink-0"
+                                  aria-label="Worktree"
+                                />
+                              )}
                               {formatRelativeTime(getRuntimeTaskTime(task))}
                             </span>
                           )}

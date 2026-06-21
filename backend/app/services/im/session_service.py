@@ -162,6 +162,7 @@ class IMSessionService:
         session.state_expires_at = None
         if mode == IMSessionMode.CHAT:
             session.active_task_id = None
+            session.active_runtime_task = None
         await self.save_session(session)
 
     async def bind_active_task(
@@ -174,6 +175,22 @@ class IMSessionService:
         session.mode = IMSessionMode.TASK
         session.state = IMSessionState.IDLE
         session.active_task_id = task_id
+        session.active_runtime_task = None
+        session.pending_payload = {}
+        session.state_expires_at = None
+        await self.save_session(session)
+
+    async def bind_active_runtime_task(
+        self,
+        db: Session | None,
+        *,
+        session: IMPrivateSession,
+        runtime_task: dict[str, Any],
+    ) -> None:
+        session.mode = IMSessionMode.TASK
+        session.state = IMSessionState.IDLE
+        session.active_task_id = None
+        session.active_runtime_task = dict(runtime_task)
         session.pending_payload = {}
         session.state_expires_at = None
         await self.save_session(session)
@@ -182,6 +199,7 @@ class IMSessionService:
         self, db: Session | None, *, session: IMPrivateSession
     ) -> None:
         session.active_task_id = None
+        session.active_runtime_task = None
         session.state = IMSessionState.IDLE
         session.pending_payload = {}
         session.state_expires_at = None

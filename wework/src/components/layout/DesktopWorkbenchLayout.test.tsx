@@ -391,7 +391,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('project-work-button')).not.toBeInTheDocument()
   })
 
-  test('opens continue-in-im dialog from the active task topbar button', async () => {
+  test('opens continue-in-im dialog from the active runtime task topbar button', async () => {
     const onListImPrivateSessions = vi.fn().mockResolvedValue({
       total: 1,
       items: [
@@ -416,12 +416,10 @@ describe('DesktopWorkbenchLayout', () => {
         {...baseProps}
         state={{
           ...baseProps.state,
-          currentTask: {
-            id: 7,
-            title: 'Active task',
-            status: 'COMPLETED',
-            task_type: 'code',
-            created_at: '2026-06-20T00:00:00.000Z',
+          currentRuntimeTask: {
+            deviceId: 'device-1',
+            workspacePath: '/workspace/project-alpha',
+            localTaskId: 'runtime-1',
           },
         }}
         messages={[
@@ -450,12 +448,10 @@ describe('DesktopWorkbenchLayout', () => {
         {...baseProps}
         state={{
           ...baseProps.state,
-          currentTask: {
-            id: 7,
-            title: 'Active task',
-            status: 'COMPLETED',
-            task_type: 'code',
-            created_at: '2026-06-20T00:00:00.000Z',
+          currentRuntimeTask: {
+            deviceId: 'device-1',
+            workspacePath: '/workspace/project-alpha',
+            localTaskId: 'runtime-1',
           },
         }}
         messages={[
@@ -492,12 +488,10 @@ describe('DesktopWorkbenchLayout', () => {
           {...baseProps}
           state={{
             ...baseProps.state,
-            currentTask: {
-              id: 7,
-              title: 'Active task',
-              status: 'COMPLETED',
-              task_type: 'code',
-              created_at: '2026-06-20T00:00:00.000Z',
+            currentRuntimeTask: {
+              deviceId: 'device-1',
+              workspacePath: '/workspace/project-alpha',
+              localTaskId: 'runtime-1',
             },
           }}
           messages={[
@@ -530,23 +524,13 @@ describe('DesktopWorkbenchLayout', () => {
     }
   })
 
-  test('hides continue-in-im action for group chat tasks', () => {
+  test('hides continue-in-im action without a runtime task', () => {
     const onListImPrivateSessions = vi.fn().mockResolvedValue({ total: 0, items: [] })
 
     render(
       <DesktopWorkbenchLayout
         {...baseProps}
-        state={{
-          ...baseProps.state,
-          currentTask: {
-            id: 7,
-            title: 'Group task',
-            status: 'COMPLETED',
-            task_type: 'code',
-            is_group_chat: true,
-            created_at: '2026-06-20T00:00:00.000Z',
-          },
-        }}
+        state={baseProps.state}
         messages={[
           {
             id: 'message-1',
@@ -594,12 +578,10 @@ describe('DesktopWorkbenchLayout', () => {
         {...baseProps}
         state={{
           ...baseProps.state,
-          currentTask: {
-            id: 7,
-            title: 'Active task',
-            status: 'COMPLETED',
-            task_type: 'code',
-            created_at: '2026-06-20T00:00:00.000Z',
+          currentRuntimeTask: {
+            deviceId: 'device-1',
+            workspacePath: '/workspace/project-alpha',
+            localTaskId: 'runtime-1',
           },
         }}
         messages={[
@@ -671,12 +653,10 @@ describe('DesktopWorkbenchLayout', () => {
         {...baseProps}
         state={{
           ...baseProps.state,
-          currentTask: {
-            id: 7,
-            title: 'Active task',
-            status: 'COMPLETED',
-            task_type: 'code',
-            created_at: '2026-06-20T00:00:00.000Z',
+          currentRuntimeTask: {
+            deviceId: 'device-1',
+            workspacePath: '/workspace/project-alpha',
+            localTaskId: 'runtime-1',
           },
         }}
         messages={[
@@ -797,10 +777,21 @@ describe('DesktopWorkbenchLayout', () => {
     expect(localStorage.getItem('wework.desktop.sidebar.width')).toBe('235')
   })
 
+  test('clamps sidebar resizing to the maximum width', () => {
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    fireEvent.pointerDown(screen.getByTestId('sidebar-resize-handle'))
+    fireEvent.pointerMove(document, { clientX: 900 })
+    fireEvent.pointerUp(document)
+
+    expect(document.querySelector('aside')).toHaveStyle({ width: '480px' })
+    expect(localStorage.getItem('wework.desktop.sidebar.width')).toBe('480')
+  })
+
   test('uses the selected sidebar width as the default', () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
-    expect(document.querySelector('aside')).toHaveStyle({ width: '220px' })
+    expect(document.querySelector('aside')).toHaveStyle({ width: '240px' })
   })
 
   test('collapses and expands the sidebar', async () => {
@@ -1998,7 +1989,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('settings-button')).toHaveClass('h-9', 'w-full')
   })
 
-  test('selects a project while toggling an empty project chat list', async () => {
+  test('selects a project while toggling an empty project task list', async () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
     expect(screen.queryByText('暂无会话')).not.toBeInTheDocument()

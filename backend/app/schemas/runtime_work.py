@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 RuntimeName = Literal["codex", "claude_code"]
 LocalTaskStatus = Literal["active", "archived"]
+RuntimeWorkspaceKind = Literal["workspace", "worktree", "chat"]
 
 
 class RuntimeTaskAddress(BaseModel):
@@ -43,6 +44,7 @@ class NormalizedRuntimeMessage(BaseModel):
     id: str
     role: Literal["user", "assistant", "system", "tool"]
     content: str = ""
+    subtask_id: Optional[int] = Field(default=None, alias="subtaskId")
     status: Optional[str] = None
     created_at: Optional[str] = Field(default=None, alias="createdAt")
     source: Optional[RuntimeMessageSource] = None
@@ -61,6 +63,11 @@ class LocalTaskSummary(BaseModel):
 
     local_task_id: str = Field(..., alias="localTaskId")
     workspace_path: str = Field(..., alias="workspacePath")
+    workspace_kind: RuntimeWorkspaceKind = Field(
+        default="workspace",
+        alias="workspaceKind",
+    )
+    worktree_id: Optional[str] = Field(default=None, alias="worktreeId")
     title: str
     runtime: RuntimeName
     runtime_handle: Optional[dict[str, Any]] = Field(
@@ -68,6 +75,7 @@ class LocalTaskSummary(BaseModel):
         alias="runtimeHandle",
         exclude=True,
     )
+    git_info: Optional[dict[str, Any]] = Field(default=None, alias="gitInfo")
     parent: Optional[RuntimeTaskAddressRef] = None
     children: list[RuntimeTaskAddressRef] = Field(default_factory=list)
     created_at: Optional[str] = Field(default=None, alias="createdAt")
@@ -93,7 +101,7 @@ class DeviceWorkspaceUpsert(BaseModel):
 
 
 class DeviceWorkspaceResponse(BaseModel):
-    """Central DeviceWorkspace mapping response."""
+    """Kind-backed DeviceWorkspace mapping response."""
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
@@ -133,6 +141,11 @@ class RuntimeDeviceWorkspace(BaseModel):
     device_name: str = Field(..., alias="deviceName")
     device_status: str = Field(..., alias="deviceStatus")
     workspace_path: str = Field(..., alias="workspacePath")
+    workspace_kind: RuntimeWorkspaceKind = Field(
+        default="workspace",
+        alias="workspaceKind",
+    )
+    worktree_id: Optional[str] = Field(default=None, alias="worktreeId")
     repo_url: Optional[str] = Field(default=None, alias="repoUrl")
     repo_root_fingerprint: Optional[str] = Field(
         default=None,
@@ -201,6 +214,36 @@ class RuntimeSendResponse(BaseModel):
 
     accepted: bool
     local_task_id: str = Field(..., alias="localTaskId")
+    error: Optional[str] = None
+
+
+class BindRuntimeTaskIMSessionsRequest(BaseModel):
+    """Bind private IM sessions to a device-local runtime task."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    address: RuntimeTaskAddress
+    session_keys: list[str] = Field(..., alias="sessionKeys", min_length=1)
+
+
+class BindRuntimeTaskIMSessionsResponse(BaseModel):
+    """Acknowledgement for binding private IM sessions to a runtime task."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    address: RuntimeTaskAddress
+    bound_session_keys: list[str] = Field(..., alias="boundSessionKeys")
+    notified_count: int = Field(..., alias="notifiedCount")
+
+
+class RuntimeTaskArchiveResponse(BaseModel):
+    """Acknowledgement from the runtime archive RPC."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    accepted: bool
+    local_task_id: str = Field(..., alias="localTaskId")
+    workspace_path: str = Field(..., alias="workspacePath")
     error: Optional[str] = None
 
 

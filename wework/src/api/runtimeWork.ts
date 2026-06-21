@@ -1,9 +1,12 @@
 import type {
+  BindRuntimeTaskIMSessionsRequest,
+  BindRuntimeTaskIMSessionsResponse,
   DeviceWorkspaceResponse,
   DeviceWorkspaceUpsert,
   RuntimeSendRequest,
   RuntimeSendResponse,
   RuntimeTaskAddress,
+  RuntimeTaskArchiveResponse,
   RuntimeTaskCreateRequest,
   RuntimeTaskCreateResponse,
   RuntimeTranscriptResponse,
@@ -31,6 +34,14 @@ export function createRuntimeWorkApi(client: HttpClient) {
     },
     sendRuntimeMessage(data: RuntimeSendRequest): Promise<RuntimeSendResponse> {
       return client.post('/runtime-work/send', data)
+    },
+    bindRuntimeTaskImSessions(
+      data: BindRuntimeTaskIMSessionsRequest
+    ): Promise<BindRuntimeTaskIMSessionsResponse> {
+      return client.post('/runtime-work/im-sessions', data)
+    },
+    archiveRuntimeTask(address: RuntimeTaskAddress): Promise<RuntimeTaskArchiveResponse> {
+      return client.post('/runtime-work/archive', address)
     },
     createRuntimeTask(data: RuntimeTaskCreateRequest): Promise<RuntimeTaskCreateResponse> {
       return client.post('/runtime-work/create', data)

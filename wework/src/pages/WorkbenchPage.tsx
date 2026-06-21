@@ -26,6 +26,7 @@ export function WorkbenchPage() {
     startStandaloneChat,
     startNewProjectChat,
     openRuntimeLocalTask,
+    archiveRuntimeLocalTask,
     rememberExecutionDevice,
     refreshDevices,
     refreshWorkLists,
@@ -47,7 +48,7 @@ export function WorkbenchPage() {
     checkoutEnvironmentBranch,
     createEnvironmentBranch,
     listImPrivateSessions,
-    bindTaskToImSessions,
+    bindRuntimeTaskToImSessions,
     setInput,
     addCodeCommentContext,
     clearCodeCommentContexts,
@@ -93,6 +94,7 @@ export function WorkbenchPage() {
       onSelectProject={selectProject}
       onStartNewProjectChat={startNewProjectChat}
       onOpenRuntimeLocalTask={openRuntimeLocalTask}
+      onArchiveRuntimeLocalTask={archiveRuntimeLocalTask}
       onRememberExecutionDevice={rememberExecutionDevice}
       onRefreshDevices={refreshDevices}
       onUpgradeDevice={upgradeDevice}
@@ -113,7 +115,7 @@ export function WorkbenchPage() {
       onCheckoutEnvironmentBranch={checkoutEnvironmentBranch}
       onCreateEnvironmentBranch={createEnvironmentBranch}
       onListImPrivateSessions={listImPrivateSessions}
-      onBindTaskToImSessions={bindTaskToImSessions}
+      onBindRuntimeTaskToImSessions={bindRuntimeTaskToImSessions}
       onInputChange={setInput}
       onSend={sendCurrentInput}
       onRetryFailedMessage={retryFailedMessage}

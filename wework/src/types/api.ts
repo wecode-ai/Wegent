@@ -231,15 +231,19 @@ export interface RuntimeMessageSource {
   source: 'im' | 'manual' | string
   external_id?: string | null
   channel_type?: string | null
+  channel_label?: string | null
   channel_id?: number | null
   conversation_id?: string | null
   sender_id?: string | null
+  message_id?: string | null
 }
 
 export interface NormalizedRuntimeMessage {
   id: string
   role: 'user' | 'assistant' | 'system' | string
   content: string
+  subtaskId?: number | null
+  subtask_id?: number | null
   status?: string | null
   createdAt?: string | null
   source?: RuntimeMessageSource | null
@@ -249,6 +253,9 @@ export interface NormalizedRuntimeMessage {
 export interface LocalTaskSummary {
   localTaskId: string
   workspacePath: string
+  workspaceKind?: 'workspace' | 'worktree' | 'chat' | string | null
+  worktreeId?: string | null
+  gitInfo?: Record<string, unknown> | null
   title: string
   runtime: RuntimeName
   createdAt?: string | null
@@ -296,6 +303,8 @@ export interface RuntimeDeviceWorkspace {
   deviceStatus?: DeviceInfo['status'] | string | null
   available: boolean
   workspacePath: string
+  workspaceKind?: 'workspace' | 'worktree' | 'chat' | string | null
+  worktreeId?: string | null
   label?: string | null
   repoUrl?: string | null
   repoRootFingerprint?: string | null
@@ -333,6 +342,24 @@ export interface RuntimeSendRequest {
 export interface RuntimeSendResponse {
   accepted: boolean
   localTaskId: string
+  error?: string | null
+}
+
+export interface BindRuntimeTaskIMSessionsRequest {
+  address: RuntimeTaskAddress
+  sessionKeys: string[]
+}
+
+export interface BindRuntimeTaskIMSessionsResponse {
+  address: RuntimeTaskAddress
+  boundSessionKeys: string[]
+  notifiedCount: number
+}
+
+export interface RuntimeTaskArchiveResponse {
+  accepted: boolean
+  localTaskId: string
+  workspacePath: string
   error?: string | null
 }
 
@@ -411,12 +438,6 @@ export interface IMPrivateSession {
 export interface IMPrivateSessionListResponse {
   total: number
   items: IMPrivateSession[]
-}
-
-export interface BindTaskIMSessionsResponse {
-  task_id: number
-  bound_session_keys: string[]
-  notified_count: number
 }
 
 export interface ArchivedTask {
@@ -655,11 +676,13 @@ export interface ChatCancelAck {
 }
 
 export interface ChatStartPayload {
-  task_id: number
+  task_id?: number
   subtask_id: number
   bot_name?: string
   shell_type?: string
   message_id?: number
+  device_id?: string
+  local_task_id?: string
 }
 
 export type ChatResultPayload = Record<string, unknown> & {
@@ -676,6 +699,8 @@ export interface ChatChunkPayload {
   content: string
   offset: number
   result?: ChatResultPayload
+  device_id?: string
+  local_task_id?: string
 }
 
 export interface ChatDonePayload {
@@ -684,6 +709,8 @@ export interface ChatDonePayload {
   offset: number
   result: ChatResultPayload
   message_id?: number
+  device_id?: string
+  local_task_id?: string
 }
 
 export interface ChatErrorPayload {
@@ -692,6 +719,23 @@ export interface ChatErrorPayload {
   error: string
   type?: string
   message_id?: number
+  device_id?: string
+  local_task_id?: string
+}
+
+export interface ChatMessagePayload {
+  task_id?: number
+  subtask_id: number
+  message_id?: number
+  role: string
+  content: string
+  sender?: Record<string, unknown>
+  created_at: string
+  attachments?: Attachment[]
+  source?: RuntimeMessageSource | null
+  device_id?: string
+  local_task_id?: string
+  runtime?: RuntimeName
 }
 
 export interface TaskJoinResponse {
@@ -1063,19 +1107,23 @@ export interface ChatBlock {
 }
 
 export interface ChatBlockCreatedPayload {
-  task_id: number
+  task_id?: number
   subtask_id: number
   block: ChatBlock
+  device_id?: string
+  local_task_id?: string
 }
 
 export interface ChatBlockUpdatedPayload {
-  task_id: number
+  task_id?: number
   subtask_id: number
   block_id: string
   content?: string
   tool_output?: unknown
   tool_input?: Record<string, unknown>
   status?: ChatBlock['status'] | 'running'
+  device_id?: string
+  local_task_id?: string
 }
 
 export interface ChatGuidanceQueuedPayload {

@@ -1,10 +1,4 @@
-import {
-  useCallback,
-  useLayoutEffect,
-  useRef,
-  useState,
-  type ReactNode,
-} from 'react'
+import { useCallback, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { MessageCircle } from 'lucide-react'
 import { ChatInput } from '@/components/chat/ChatInput'
 import type { ProjectChatControls, ProjectWorkControls } from '@/components/chat/ChatInput'
@@ -20,7 +14,13 @@ import {
   isDeviceBelowWeWorkVersion,
   isWeWorkCompatibleDevice,
 } from '@/lib/device-capabilities'
-import type { DeviceInfo, ProjectWithTasks, Task, TurnFileChangesSummary } from '@/types/api'
+import type {
+  DeviceInfo,
+  ProjectWithTasks,
+  RuntimeTaskAddress,
+  Task,
+  TurnFileChangesSummary,
+} from '@/types/api'
 import type { DeviceUpgradeState } from '@/types/device-events'
 import type { EnvironmentInfo } from '@/types/environment'
 import type {
@@ -123,6 +123,7 @@ interface DesktopWorkbenchMainProps {
   sidebarCollapsed: boolean
   isBootstrapping: boolean
   currentTask: Task | null
+  currentRuntimeTask: RuntimeTaskAddress | null
   currentProject: ProjectWithTasks | null
   workspaceTarget: WorkspaceTarget | null
   workspaceTargetError?: string | null
@@ -167,6 +168,7 @@ export function DesktopWorkbenchMain({
   sidebarCollapsed,
   isBootstrapping,
   currentTask,
+  currentRuntimeTask,
   currentProject,
   workspaceTarget,
   workspaceTargetError,
@@ -415,7 +417,7 @@ export function DesktopWorkbenchMain({
   )
   const workspacePanelActions = renderWorkspacePanelActions('all')
   const showPageTopBar = !isTauri || Boolean(topBarLeftActions)
-  const canContinueInIm = Boolean(currentTask && !currentTask.is_group_chat)
+  const canContinueInIm = Boolean(currentRuntimeTask)
   const continueInImButton =
     canContinueInIm && onContinueInIm ? (
       <button

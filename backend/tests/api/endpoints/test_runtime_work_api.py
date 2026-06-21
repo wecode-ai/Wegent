@@ -109,3 +109,37 @@ def test_runtime_transcript_endpoint_dispatches_address(
     assert response.status_code == 200
     assert response.json()["localTaskId"] == "codex-1"
     assert service_mock.await_args.kwargs["address"].local_task_id == "codex-1"
+
+
+def test_runtime_archive_endpoint_dispatches_address(
+    test_client,
+    test_token,
+    monkeypatch,
+):
+    from app.api.endpoints import runtime_work
+
+    service_mock = AsyncMock(
+        return_value={
+            "accepted": True,
+            "localTaskId": "codex-1",
+            "workspacePath": "/repo/Wegent",
+            "error": None,
+        }
+    )
+    monkeypatch.setattr(
+        runtime_work.runtime_work_service, "archive_runtime_task", service_mock
+    )
+
+    response = test_client.post(
+        "/api/runtime-work/archive",
+        headers=_auth_headers(test_token),
+        json={
+            "deviceId": "device-1",
+            "workspacePath": "/repo/Wegent",
+            "localTaskId": "codex-1",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["accepted"] is True
+    assert service_mock.await_args.kwargs["address"].local_task_id == "codex-1"

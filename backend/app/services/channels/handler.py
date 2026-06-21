@@ -17,14 +17,16 @@ import asyncio
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Generic, List, Optional, TypeVar
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from app.api.ws.events import ServerEvents
 from app.core.cache import cache_manager
 from app.core.config import settings
+from app.core.socketio import get_sio
 from app.db.session import SessionLocal
 from app.models.kind import Kind
 from app.models.user import User
@@ -32,6 +34,7 @@ from app.services.channels.callback import (
     BaseCallbackInfo,
     BaseChannelCallbackService,
     ChannelType,
+    runtime_local_task_callback_key,
 )
 from app.services.channels.commands import (
     AGENT_ITEM_TEMPLATE,
@@ -887,6 +890,15 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         message_context: MessageContext,
     ) -> None:
         if task_id is None:
+            if getattr(im_session, "active_runtime_task", None):
+                await self._execute_private_im_continue_runtime_task(
+                    db=db,
+                    user=user,
+                    im_session=im_session,
+                    message=message,
+                    message_context=message_context,
+                )
+                return
             await self.send_text_reply(message_context, "请先使用 /switch 选择任务。")
             return
 
@@ -960,6 +972,181 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             message_context=message_context,
             params=params,
         )
+
+    async def _execute_private_im_continue_runtime_task(
+        self,
+        *,
+        db: Session,
+        user: User,
+        im_session: Any,
+        message: str,
+        message_context: MessageContext,
+    ) -> None:
+        from app.schemas.runtime_work import (
+            RuntimeMessageSource,
+            RuntimeSendRequest,
+            RuntimeTaskAddress,
+        )
+        from app.services import runtime_work_service
+
+        runtime_task = getattr(im_session, "active_runtime_task", None)
+        if not isinstance(runtime_task, dict):
+            await self.send_text_reply(message_context, "请先使用 /switch 选择任务。")
+            return
+        if not message.strip():
+            await self.send_text_reply(message_context, "请发送文本继续本地任务。")
+            return
+
+        message_source = self._build_private_im_message_source(im_session)
+        callback_key = self._runtime_task_callback_key(runtime_task)
+        await self._register_private_im_runtime_callback(
+            callback_key=callback_key,
+            message_context=message_context,
+        )
+        try:
+            response = await runtime_work_service.send_runtime_message(
+                db=db,
+                user_id=user.id,
+                request=RuntimeSendRequest(
+                    address=RuntimeTaskAddress.model_validate(runtime_task),
+                    message=message,
+                    source=RuntimeMessageSource(
+                        source="im",
+                        external_id=str(
+                            message_source.get("session_key") or im_session.session_key
+                        ),
+                        channel_type=str(
+                            message_source.get("channel_type")
+                            or im_session.channel_type
+                        ),
+                        channel_id=int(
+                            message_source.get("channel_id") or im_session.channel_id
+                        ),
+                        conversation_id=str(
+                            message_source.get("conversation_id")
+                            or im_session.conversation_id
+                        ),
+                        sender_id=str(
+                            message_source.get("sender_id") or im_session.sender_id
+                        ),
+                        message_id=message_source.get("message_id"),
+                    ),
+                ),
+            )
+        except HTTPException:
+            await self._delete_private_im_runtime_callback(callback_key)
+            self.logger.exception(
+                "[%sHandler] Active private IM runtime task is unavailable: "
+                "user_id=%s local_task_id=%s",
+                self._channel_type.value,
+                user.id,
+                runtime_task.get("localTaskId"),
+            )
+            await im_session_service.clear_active_task(db, session=im_session)
+            await self.send_text_reply(
+                message_context, "当前本地任务不可用，请回到 Wework 重新选择。"
+            )
+            return
+
+        if response.accepted:
+            await self._emit_private_im_runtime_user_message_to_web(
+                user=user,
+                runtime_task=runtime_task,
+                message=message,
+                message_context=message_context,
+                message_source=message_source,
+            )
+            return
+        await self._delete_private_im_runtime_callback(callback_key)
+        await self.send_text_reply(
+            message_context,
+            response.error or "本地任务暂时无法接收消息，请稍后重试。",
+        )
+
+    def _runtime_task_callback_key(self, runtime_task: dict[str, Any]) -> str:
+        return runtime_local_task_callback_key(
+            str(runtime_task.get("deviceId") or runtime_task.get("device_id") or ""),
+            str(
+                runtime_task.get("localTaskId")
+                or runtime_task.get("local_task_id")
+                or ""
+            ),
+        )
+
+    async def _register_private_im_runtime_callback(
+        self,
+        *,
+        callback_key: str,
+        message_context: MessageContext,
+    ) -> None:
+        callback_service = self.get_callback_service()
+        if not callback_service:
+            return
+        await callback_service.save_callback_info(
+            task_id=callback_key,
+            callback_info=self.create_callback_info(message_context),
+        )
+
+    async def _delete_private_im_runtime_callback(self, callback_key: str) -> None:
+        callback_service = self.get_callback_service()
+        if not callback_service:
+            return
+        await callback_service.delete_callback_info(callback_key)
+
+    async def _emit_private_im_runtime_user_message_to_web(
+        self,
+        *,
+        user: User,
+        runtime_task: dict[str, Any],
+        message: str,
+        message_context: MessageContext,
+        message_source: dict[str, Any],
+    ) -> None:
+        device_id = str(
+            runtime_task.get("deviceId") or runtime_task.get("device_id") or ""
+        ).strip()
+        local_task_id = str(
+            runtime_task.get("localTaskId") or runtime_task.get("local_task_id") or ""
+        ).strip()
+        if not device_id or not local_task_id:
+            return
+
+        now = datetime.now(timezone.utc)
+        message_id = int(now.timestamp() * 1000)
+        source = dict(message_source)
+        source["source"] = "im"
+        try:
+            await get_sio().emit(
+                ServerEvents.CHAT_MESSAGE,
+                {
+                    "subtask_id": message_id,
+                    "message_id": message_id,
+                    "role": "user",
+                    "content": message,
+                    "sender": {
+                        "user_id": user.id,
+                        "user_name": user.user_name,
+                        "im_sender_id": message_context.sender_id,
+                        "im_sender_name": message_context.sender_name,
+                    },
+                    "created_at": now.isoformat(),
+                    "device_id": device_id,
+                    "local_task_id": local_task_id,
+                    "runtime": runtime_task.get("runtime"),
+                    "source": source,
+                },
+                room=f"user:{user.id}",
+                namespace="/chat",
+            )
+        except Exception:
+            self.logger.warning(
+                "[%sHandler] Failed to emit private IM runtime user message: "
+                "user_id=%s local_task_id=%s",
+                self._channel_type.value,
+                user.id,
+                local_task_id,
+                exc_info=True,
+            )
 
     async def execute_private_im_create_task(
         self,

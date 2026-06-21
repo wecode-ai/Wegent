@@ -34,6 +34,12 @@ logger = logging.getLogger(__name__)
 CHANNEL_TASK_CALLBACK_PREFIX = "channel:task_callback:"
 # TTL for task callback info (1 hour - should be enough for most tasks)
 CHANNEL_TASK_CALLBACK_TTL = 60 * 60
+RUNTIME_LOCAL_TASK_CALLBACK_PREFIX = "runtime"
+
+
+def runtime_local_task_callback_key(device_id: str, local_task_id: str) -> str:
+    """Build the IM callback key for a device-local runtime task."""
+    return f"{RUNTIME_LOCAL_TASK_CALLBACK_PREFIX}:{device_id}:{local_task_id}"
 
 
 class ChannelType(str, Enum):

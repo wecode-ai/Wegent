@@ -507,7 +507,7 @@ describe('MobileWorkbenchLayout', () => {
     expect(screen.getByTestId('model-selector-button')).toHaveTextContent('kimi-for-coding')
   })
 
-  test('opens continue-in-im dialog from the active task header button', async () => {
+  test('opens continue-in-im dialog from the active runtime task header button', async () => {
     const onListImPrivateSessions = vi.fn().mockResolvedValue({
       total: 1,
       items: [
@@ -531,12 +531,10 @@ describe('MobileWorkbenchLayout', () => {
       <MobileWorkbenchLayout
         state={{
           ...baseState,
-          currentTask: {
-            id: 7,
-            title: 'Active task',
-            status: 'COMPLETED',
-            task_type: 'code',
-            created_at: '2026-06-20T00:00:00.000Z',
+          currentRuntimeTask: {
+            deviceId: 'device-1',
+            workspacePath: '/workspace/project-alpha',
+            localTaskId: 'runtime-1',
           },
         }}
         messages={[
@@ -563,22 +561,12 @@ describe('MobileWorkbenchLayout', () => {
     expect(await screen.findByTestId('continue-im-session-session-1')).toHaveTextContent('Alice')
   })
 
-  test('hides continue-in-im action for mobile group chat tasks', () => {
+  test('hides continue-in-im action without a mobile runtime task', () => {
     const onListImPrivateSessions = vi.fn().mockResolvedValue({ total: 0, items: [] })
 
     renderAtMobileWidth(
       <MobileWorkbenchLayout
-        state={{
-          ...baseState,
-          currentTask: {
-            id: 7,
-            title: 'Group task',
-            status: 'COMPLETED',
-            task_type: 'code',
-            is_group_chat: true,
-            created_at: '2026-06-20T00:00:00.000Z',
-          },
-        }}
+        state={baseState}
         messages={[
           {
             id: 'assistant-1',
@@ -628,12 +616,10 @@ describe('MobileWorkbenchLayout', () => {
       <MobileWorkbenchLayout
         state={{
           ...baseState,
-          currentTask: {
-            id: 7,
-            title: 'Active task',
-            status: 'COMPLETED',
-            task_type: 'code',
-            created_at: '2026-06-20T00:00:00.000Z',
+          currentRuntimeTask: {
+            deviceId: 'device-1',
+            workspacePath: '/workspace/project-alpha',
+            localTaskId: 'runtime-1',
           },
         }}
         messages={[
@@ -707,12 +693,10 @@ describe('MobileWorkbenchLayout', () => {
       <MobileWorkbenchLayout
         state={{
           ...baseState,
-          currentTask: {
-            id: 7,
-            title: 'Active task',
-            status: 'COMPLETED',
-            task_type: 'code',
-            created_at: '2026-06-20T00:00:00.000Z',
+          currentRuntimeTask: {
+            deviceId: 'device-1',
+            workspacePath: '/workspace/project-alpha',
+            localTaskId: 'runtime-1',
           },
         }}
         messages={[
@@ -850,7 +834,7 @@ describe('MobileWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('open-mobile-drawer-button'))
     await userEvent.click(screen.getByText('github_wegent'))
 
-    expect(screen.getByText('Local Mac · Wegent local')).toBeInTheDocument()
+    expect(screen.queryByText('Local Mac · Wegent local')).not.toBeInTheDocument()
     await userEvent.click(screen.getByText('Fix reconnect'))
 
     expect(onOpenRuntimeLocalTask).toHaveBeenCalledWith({
@@ -858,6 +842,167 @@ describe('MobileWorkbenchLayout', () => {
       workspacePath: '/repo/Wegent',
       localTaskId: 'codex-1',
     })
+  })
+
+  test('renders unmapped chat runtime tasks as conversations in the mobile drawer', async () => {
+    const onOpenRuntimeLocalTask = vi.fn()
+    const chatPath = '/Users/alice/.wecode/wegent-executor/workspace/chats/2026-06-20/hi-1'
+
+    render(
+      <MobileWorkbenchLayout
+        state={{
+          ...baseState,
+          runtimeWork: {
+            projects: [],
+            unmappedDeviceWorkspaces: [
+              {
+                deviceId: 'local-device',
+                deviceName: 'Local Mac',
+                deviceStatus: 'online',
+                available: true,
+                workspacePath: chatPath,
+                workspaceKind: 'chat',
+                localTasks: [
+                  {
+                    localTaskId: 'chat-1',
+                    workspacePath: chatPath,
+                    workspaceKind: 'chat',
+                    title: 'hi',
+                    runtime: 'codex',
+                  },
+                ],
+              },
+            ],
+            totalLocalTasks: 1,
+          },
+        }}
+        messages={[]}
+        onOpenRuntimeLocalTask={onOpenRuntimeLocalTask}
+        onSelectProject={vi.fn()}
+        onInputChange={vi.fn()}
+        onSend={vi.fn()}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('open-mobile-drawer-button'))
+
+    expect(screen.getByText('对话')).toBeInTheDocument()
+    expect(screen.queryByText(`Local Mac ${chatPath}`)).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('mobile-chat-runtime-task-button'))
+
+    expect(onOpenRuntimeLocalTask).toHaveBeenCalledWith({
+      deviceId: 'local-device',
+      workspacePath: chatPath,
+      localTaskId: 'chat-1',
+    })
+  })
+
+  test('limits mobile project runtime tasks to five rows and toggles the rest by updated time', async () => {
+    render(
+      <MobileWorkbenchLayout
+        state={{
+          ...baseState,
+          runtimeWork: {
+            projects: [
+              {
+                project: { id: 1, name: 'github_wegent' },
+                totalLocalTasks: 6,
+                deviceWorkspaces: [
+                  {
+                    id: 91,
+                    deviceId: 'local-device',
+                    deviceName: 'Local Mac',
+                    deviceStatus: 'online',
+                    available: true,
+                    workspacePath: '/repo/Wegent',
+                    localTasks: [
+                      {
+                        localTaskId: 'task-oldest',
+                        workspacePath: '/repo/Wegent',
+                        title: 'Oldest hidden task',
+                        runtime: 'codex',
+                        updatedAt: '2026-06-20T01:00:00Z',
+                      },
+                      {
+                        localTaskId: 'task-third',
+                        workspacePath: '/repo/Wegent',
+                        title: 'Third task',
+                        runtime: 'codex',
+                        updatedAt: '2026-06-20T04:00:00Z',
+                      },
+                      {
+                        localTaskId: 'task-newest',
+                        workspacePath: '/repo/Wegent',
+                        title: 'Newest task',
+                        runtime: 'codex',
+                        updatedAt: '2026-06-20T06:00:00Z',
+                      },
+                      {
+                        localTaskId: 'task-fifth',
+                        workspacePath: '/repo/Wegent',
+                        title: 'Fifth task',
+                        runtime: 'codex',
+                        updatedAt: '2026-06-20T02:00:00Z',
+                      },
+                      {
+                        localTaskId: 'task-second',
+                        workspacePath: '/repo/Wegent',
+                        title: 'Second task',
+                        runtime: 'codex',
+                        updatedAt: '2026-06-20T05:00:00Z',
+                      },
+                      {
+                        localTaskId: 'task-fourth',
+                        workspacePath: '/repo/Wegent',
+                        title: 'Fourth task',
+                        runtime: 'codex',
+                        updatedAt: '2026-06-20T03:00:00Z',
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+            unmappedDeviceWorkspaces: [],
+            totalLocalTasks: 6,
+          },
+        }}
+        messages={[]}
+        onSelectProject={vi.fn()}
+        onInputChange={vi.fn()}
+        onSend={vi.fn()}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('open-mobile-drawer-button'))
+    await userEvent.click(screen.getByText('github_wegent'))
+
+    const collapsedRows = screen.getAllByTestId('mobile-runtime-task-button')
+    expect(collapsedRows).toHaveLength(5)
+    expect(collapsedRows.map(row => row.textContent)).toEqual([
+      expect.stringContaining('Newest task'),
+      expect.stringContaining('Second task'),
+      expect.stringContaining('Third task'),
+      expect.stringContaining('Fourth task'),
+      expect.stringContaining('Fifth task'),
+    ])
+    expect(screen.queryByText('Oldest hidden task')).not.toBeInTheDocument()
+    expect(screen.getByTestId('mobile-project-runtime-tasks-expand-1')).toHaveTextContent(
+      '展开显示'
+    )
+
+    await userEvent.click(screen.getByTestId('mobile-project-runtime-tasks-expand-1'))
+
+    expect(screen.getAllByTestId('mobile-runtime-task-button')).toHaveLength(6)
+    expect(screen.getByText('Oldest hidden task')).toBeInTheDocument()
+    expect(screen.getByTestId('mobile-project-runtime-tasks-collapse-1')).toHaveTextContent(
+      '折叠显示'
+    )
+
+    await userEvent.click(screen.getByTestId('mobile-project-runtime-tasks-collapse-1'))
+
+    expect(screen.getAllByTestId('mobile-runtime-task-button')).toHaveLength(5)
+    expect(screen.queryByText('Oldest hidden task')).not.toBeInTheDocument()
   })
 
   test('opens project actions on long press without expanding the project', async () => {

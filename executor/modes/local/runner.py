@@ -124,7 +124,9 @@ class LocalRunner:
         )
         self.upgrade_handler = UpgradeHandler(self)
         self.extension_handler = DeviceExtensionHandler(self)
-        self.runtime_work_handler = RuntimeWorkRpcHandler()
+        self.runtime_work_handler = RuntimeWorkRpcHandler(
+            responses_event_emitter=self.websocket_client.emit,
+        )
 
         # Task queue for execution
         self.task_queue: asyncio.Queue = asyncio.Queue()

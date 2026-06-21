@@ -14,11 +14,14 @@ from app.core.constants import CLIENT_ORIGIN_WEWORK, SUPPORTED_CLIENT_ORIGINS
 from app.core.security import get_current_user
 from app.models.user import User
 from app.schemas.runtime_work import (
+    BindRuntimeTaskIMSessionsRequest,
+    BindRuntimeTaskIMSessionsResponse,
     DeviceWorkspaceResponse,
     DeviceWorkspaceUpsert,
     RuntimeSendRequest,
     RuntimeSendResponse,
     RuntimeTaskAddress,
+    RuntimeTaskArchiveResponse,
     RuntimeTaskCreateRequest,
     RuntimeTaskCreateResponse,
     RuntimeTranscriptResponse,
@@ -125,6 +128,44 @@ async def send_runtime_message_endpoint(
         db=db,
         user_id=current_user.id,
         request=request,
+    )
+
+
+@router.post(
+    "/im-sessions",
+    response_model=BindRuntimeTaskIMSessionsResponse,
+    response_model_by_alias=True,
+)
+async def bind_runtime_task_im_sessions_endpoint(
+    request: BindRuntimeTaskIMSessionsRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Bind private IM sessions to a native runtime LocalTask address."""
+
+    return await runtime_work_service.bind_runtime_task_to_im_sessions(
+        db=db,
+        user_id=current_user.id,
+        request=request,
+    )
+
+
+@router.post(
+    "/archive",
+    response_model=RuntimeTaskArchiveResponse,
+    response_model_by_alias=True,
+)
+async def archive_runtime_task_endpoint(
+    address: RuntimeTaskAddress,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Archive a native runtime LocalTask through the owning local executor."""
+
+    return await runtime_work_service.archive_runtime_task(
+        db=db,
+        user_id=current_user.id,
+        address=address,
     )
 
 

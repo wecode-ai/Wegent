@@ -88,6 +88,7 @@ class RuntimeTranscriptTransport(EventTransport):
             "content": content,
             "createdAt": utc_now_iso(),
             "status": status,
+            "subtaskId": subtask_id,
         }
 
         def update(task: LocalTaskRecord) -> LocalTaskRecord:
@@ -331,6 +332,7 @@ def _user_message(
         "content": content,
         "createdAt": utc_now_iso(),
         "status": "done",
+        "subtaskId": subtask_id,
     }
     if attachments:
         message["attachments"] = attachments

@@ -243,6 +243,54 @@ class TestStreamingResponseEmitter:
         assert answer_block == "Final answer"
 
     @pytest.mark.asyncio
+    async def test_emit_chunk_preserves_stream_chunk_boundaries(
+        self, emitter, mock_bot
+    ):
+        """Test streamed answer chunks preserve their exact whitespace boundaries."""
+        mock_message = MagicMock()
+        mock_message.message_id = 999
+        mock_bot.send_message.return_value = mock_message
+        await emitter.emit_start(task_id=1, subtask_id=2)
+        mock_bot.edit_message_text.reset_mock()
+
+        emitter._last_update_time = 0
+        await emitter.emit_chunk(
+            task_id=1,
+            subtask_id=2,
+            content="你刚主要说了：\n\n",
+            offset=8,
+        )
+        emitter._last_update_time = 0
+        await emitter.emit_chunk(
+            task_id=1,
+            subtask_id=2,
+            content="1.  注入当前项目 ",
+            offset=19,
+        )
+
+        await emitter.emit_done(task_id=1, subtask_id=2)
+
+        assert mock_bot.edit_message_text.call_args.kwargs["text"] == (
+            "你刚主要说了：\n\n1.  注入当前项目 "
+        )
+
+    @pytest.mark.asyncio
+    async def test_emit_done_prefers_result_value_over_stream_buffer(
+        self, emitter, mock_bot
+    ):
+        """Test the final Telegram message uses canonical done result content."""
+        mock_message = MagicMock()
+        mock_message.message_id = 999
+        mock_bot.send_message.return_value = mock_message
+        await emitter.emit_start(task_id=1, subtask_id=2)
+        mock_bot.edit_message_text.reset_mock()
+        emitter._full_content = "BAC"
+
+        await emitter.emit_done(task_id=1, subtask_id=2, result={"value": "ABC"})
+
+        assert mock_bot.edit_message_text.call_args.kwargs["text"] == "ABC"
+
+    @pytest.mark.asyncio
     async def test_emit_done(self, emitter, mock_bot):
         """Test emit_done finalizes message."""
         # Setup

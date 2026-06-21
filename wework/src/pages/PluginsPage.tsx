@@ -24,6 +24,7 @@ export function PluginsPage() {
     startStandaloneChat,
     startNewProjectChat,
     openRuntimeLocalTask,
+    archiveRuntimeLocalTask,
     refreshDevices,
     refreshWorkLists,
     createProject,
@@ -97,6 +98,7 @@ export function PluginsPage() {
           onSelectProject={handleSelectProject}
           onStartNewProjectChat={handleStartNewProjectChat}
           onOpenRuntimeLocalTask={openRuntimeLocalTask}
+          onArchiveRuntimeLocalTask={archiveRuntimeLocalTask}
           onOpenPlugins={handleOpenPlugins}
           onRefreshDevices={refreshDevices}
           onCreateProject={createProject}
