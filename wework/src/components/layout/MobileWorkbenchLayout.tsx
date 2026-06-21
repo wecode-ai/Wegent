@@ -761,9 +761,16 @@ export function MobileWorkbenchLayout({
         open={forkDialogOpen}
         source={state.currentRuntimeTask}
         runtimeWork={state.runtimeWork}
+        currentProject={activeConversationProject}
+        devices={state.devices}
         requiresStop={isResponseStreaming}
         onOpenChange={setForkDialogOpen}
         onStopCurrentResponse={onPauseResponse}
+        onPrepareDeviceWorkspace={onPrepareDeviceWorkspace}
+        onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
+        onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot}
+        onListDeviceDirectories={onListDeviceDirectories}
+        onCreateDeviceDirectory={onCreateDeviceDirectory}
         onFork={async target => {
           if (!onForkCurrentRuntimeTask) return
           await onForkCurrentRuntimeTask(target)

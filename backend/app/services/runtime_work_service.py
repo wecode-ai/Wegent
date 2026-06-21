@@ -433,16 +433,18 @@ async def get_im_notification_settings(
         if global_settings.session_key
         else None
     )
-    subscriptions = await im_session_service.list_runtime_task_notification_subscriptions(
-        user_id=user_id,
+    subscriptions = (
+        await im_session_service.list_runtime_task_notification_subscriptions(
+            user_id=user_id,
+        )
     )
     return RuntimeIMNotificationSettingsResponse(
         global_settings={
             "enabled": global_settings.enabled,
             "sessionKey": global_settings.session_key,
-            "session": _im_notification_session_out(global_session)
-            if global_session
-            else None,
+            "session": (
+                _im_notification_session_out(global_session) if global_session else None
+            ),
         },
         runtimeTaskSubscriptions=[
             RuntimeTaskIMNotificationSubscription(
@@ -1376,6 +1378,19 @@ def _runtime_workspace_kind_fields(workspace_path: str) -> dict[str, Optional[st
     return {"workspaceKind": "worktree", "worktreeId": worktree.worktree_id}
 
 
+def _device_workspace_kind_fields(
+    workspace_path: str,
+    label: Optional[str],
+) -> dict[str, Optional[str]]:
+    fields = _runtime_workspace_kind_fields(workspace_path)
+    if label not in {"worktree", "workspace"}:
+        return fields
+    return {
+        "workspaceKind": label,
+        "worktreeId": fields["worktreeId"] if label == "worktree" else None,
+    }
+
+
 def _is_runtime_chat_workspace_path(path: str) -> bool:
     parts = [part for part in normalize_workspace_path(path).split("/") if part]
     for index, part in enumerate(parts):
@@ -1562,7 +1577,7 @@ def _build_device_workspace_item(
         deviceName=_device_name(device, mapping.device_id),
         deviceStatus=status_value,
         workspacePath=mapping.workspace_path,
-        **_runtime_workspace_kind_fields(mapping.workspace_path),
+        **_device_workspace_kind_fields(mapping.workspace_path, mapping.label),
         repoUrl=mapping.repo_url,
         repoRootFingerprint=mapping.repo_root_fingerprint,
         label=mapping.label,

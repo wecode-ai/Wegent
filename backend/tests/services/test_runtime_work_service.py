@@ -412,6 +412,59 @@ async def test_list_runtime_work_groups_local_tasks_under_device_workspaces(
 
 
 @pytest.mark.asyncio
+async def test_list_runtime_work_uses_mapping_label_as_workspace_kind(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    from app.schemas.runtime_work import DeviceWorkspaceUpsert
+    from app.services import runtime_work_service
+
+    project = _project(test_db, test_user.id)
+    runtime_work_service.upsert_device_workspace(
+        db=test_db,
+        user_id=test_user.id,
+        payload=DeviceWorkspaceUpsert(
+            projectId=project.id,
+            deviceId="device-1",
+            workspacePath="/repo/Wegent",
+            label="worktree",
+        ),
+    )
+
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_all_devices",
+        AsyncMock(
+            return_value=[
+                {
+                    "device_id": "device-1",
+                    "name": "MacBook",
+                    "status": "online",
+                    "device_type": "local",
+                }
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        runtime_work_service.runtime_rpc_service,
+        "call",
+        AsyncMock(return_value={"workspaces": []}),
+    )
+
+    response = await runtime_work_service.list_runtime_work(
+        db=test_db,
+        user_id=test_user.id,
+        client_origin=CLIENT_ORIGIN_WEWORK,
+    )
+
+    workspace = response.projects[0].device_workspaces[0]
+    assert workspace.workspace_path == "/repo/Wegent"
+    assert workspace.label == "worktree"
+    assert workspace.workspace_kind == "worktree"
+
+
+@pytest.mark.asyncio
 async def test_list_runtime_work_matches_project_configured_local_directory_without_mapping_row(
     test_db,
     test_user,

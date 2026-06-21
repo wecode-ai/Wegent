@@ -16,6 +16,8 @@ import {
 } from '@/lib/device-capabilities'
 import type {
   DeviceInfo,
+  DeviceWorkspacePrepareRequest,
+  DeviceWorkspacePrepareResponse,
   ProjectWithTasks,
   RuntimeTaskAddress,
   RuntimeTaskForkTarget,
@@ -172,6 +174,13 @@ interface DesktopWorkbenchMainProps {
   topBarLeftActions?: ReactNode
   onContinueInIm?: () => void
   onForkCurrentRuntimeTask?: (target: RuntimeTaskForkTarget) => Promise<void>
+  onPrepareDeviceWorkspace?: (
+    data: DeviceWorkspacePrepareRequest
+  ) => Promise<DeviceWorkspacePrepareResponse>
+  onGetDeviceHomeDirectory?: (deviceId: string) => Promise<string>
+  onGetProjectWorkspaceRoot?: (deviceId: string) => Promise<string>
+  onListDeviceDirectories?: (deviceId: string, path: string) => Promise<string[]>
+  onCreateDeviceDirectory?: (deviceId: string, path: string) => Promise<void>
 }
 
 export function DesktopWorkbenchMain({
@@ -219,6 +228,11 @@ export function DesktopWorkbenchMain({
   topBarLeftActions,
   onContinueInIm,
   onForkCurrentRuntimeTask,
+  onPrepareDeviceWorkspace,
+  onGetDeviceHomeDirectory,
+  onGetProjectWorkspaceRoot,
+  onListDeviceDirectories,
+  onCreateDeviceDirectory,
 }: DesktopWorkbenchMainProps) {
   const { t } = useTranslation('common')
   const [rightPanelOpen, setRightPanelOpen] = useState(false)
@@ -690,9 +704,16 @@ export function DesktopWorkbenchMain({
         open={forkDialogOpen}
         source={currentRuntimeTask}
         runtimeWork={runtimeWork}
+        currentProject={currentProject}
+        devices={devices}
         requiresStop={isResponseStreaming}
         onOpenChange={setForkDialogOpen}
         onStopCurrentResponse={onPauseResponse}
+        onPrepareDeviceWorkspace={onPrepareDeviceWorkspace}
+        onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
+        onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot}
+        onListDeviceDirectories={onListDeviceDirectories}
+        onCreateDeviceDirectory={onCreateDeviceDirectory}
         onFork={async target => {
           if (!onForkCurrentRuntimeTask) return
           await onForkCurrentRuntimeTask(target)

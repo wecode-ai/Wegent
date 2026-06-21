@@ -794,6 +794,11 @@ export function DesktopWorkbenchLayout({
           onClearCodeComments={onClearCodeComments}
           onContinueInIm={openContinueInImDialog}
           onForkCurrentRuntimeTask={onForkCurrentRuntimeTask}
+          onPrepareDeviceWorkspace={onPrepareDeviceWorkspace}
+          onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
+          onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot}
+          onListDeviceDirectories={onListDeviceDirectories}
+          onCreateDeviceDirectory={onCreateDeviceDirectory}
           topBarLeftActions={
             sidebarCollapsed ? (
               <DesktopWindowControls

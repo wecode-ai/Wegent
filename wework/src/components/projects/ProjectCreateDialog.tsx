@@ -27,6 +27,7 @@ import type { DeviceUpgradeState } from '@/types/device-events'
 
 type ProjectCreateMode = 'scratch' | 'existing' | 'git'
 type ProjectFolderMode = 'none' | 'create' | 'select'
+type ProjectWorkspaceKind = 'worktree' | 'workspace'
 
 interface ProjectCreateDialogProps {
   open: boolean
@@ -42,6 +43,8 @@ interface ProjectCreateDialogProps {
   onPrepareDeviceWorkspace?: (
     data: DeviceWorkspacePrepareRequest
   ) => Promise<DeviceWorkspacePrepareResponse>
+  onDeviceWorkspacePrepared?: (response: DeviceWorkspacePrepareResponse) => Promise<void> | void
+  showWorkspaceKindSelect?: boolean
   preferredDeviceId?: string | null
   onSelectDevicePreference?: (deviceId: string) => void
   onOpenCloudDeviceSettings?: () => void
@@ -209,6 +212,8 @@ export function ProjectCreateDialog({
   onClose,
   onCreateProject,
   onPrepareDeviceWorkspace,
+  onDeviceWorkspacePrepared,
+  showWorkspaceKindSelect,
   preferredDeviceId,
   onSelectDevicePreference,
   onOpenCloudDeviceSettings,
@@ -233,6 +238,8 @@ export function ProjectCreateDialog({
       onClose={onClose}
       onCreateProject={onCreateProject}
       onPrepareDeviceWorkspace={onPrepareDeviceWorkspace}
+      onDeviceWorkspacePrepared={onDeviceWorkspacePrepared}
+      showWorkspaceKindSelect={showWorkspaceKindSelect}
       preferredDeviceId={preferredDeviceId}
       onSelectDevicePreference={onSelectDevicePreference}
       onOpenCloudDeviceSettings={onOpenCloudDeviceSettings}
@@ -261,6 +268,8 @@ function ProjectCreateDialogContent({
   onClose,
   onCreateProject,
   onPrepareDeviceWorkspace,
+  onDeviceWorkspacePrepared,
+  showWorkspaceKindSelect = false,
   preferredDeviceId,
   onSelectDevicePreference,
   onOpenCloudDeviceSettings,
@@ -284,6 +293,7 @@ function ProjectCreateDialogContent({
   const [folderMode, setFolderMode] = useState<ProjectFolderMode>(
     editingProject || mode === 'existing' ? 'select' : 'none'
   )
+  const [workspaceKind, setWorkspaceKind] = useState<ProjectWorkspaceKind>('worktree')
   const [projectName, setProjectName] = useState('')
   const [projectRoot, setProjectRoot] = useState(FALLBACK_PROJECTS_ROOT)
   const [currentPath, setCurrentPath] = useState('')
@@ -797,6 +807,38 @@ function ProjectCreateDialogContent({
           })()}
         </div>
       )}
+
+      {showWorkspaceKindSelect && (
+        <div className="mt-5">
+          <label className="block text-[13px] font-semibold text-[#202124]">
+            {t('workbench.project_workspace_kind', '路径类型')}
+          </label>
+          <div className="mt-2 grid grid-cols-2 gap-2">
+            {(
+              [
+                ['worktree', t('workbench.project_workspace_kind_worktree', 'Worktree')],
+                ['workspace', t('workbench.project_workspace_kind_workspace', '普通地址')],
+              ] as [ProjectWorkspaceKind, string][]
+            ).map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                data-testid={`project-workspace-kind-${value}`}
+                disabled={submitting}
+                onClick={() => setWorkspaceKind(value)}
+                className={[
+                  'min-h-10 rounded-lg border px-2 text-[12px] font-medium',
+                  workspaceKind === value
+                    ? 'border-text-primary bg-text-primary text-background'
+                    : 'border-[#d8d8d8] text-[#3c4043] hover:bg-[#f7f7f8]',
+                ].join(' ')}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </>
   ) : null
 
@@ -1218,12 +1260,14 @@ function ProjectCreateDialogContent({
                   if (!onPrepareDeviceWorkspace) {
                     throw new Error(t('workbench.project_create_failed', '项目创建失败'))
                   }
-                  await onPrepareDeviceWorkspace({
+                  const preparedWorkspace = await onPrepareDeviceWorkspace({
                     projectId: project.id,
                     deviceId,
                     workspacePath: finalPath,
                     action: folderMode === 'create' ? 'create' : 'select',
+                    ...(showWorkspaceKindSelect ? { label: workspaceKind } : {}),
                   })
+                  await onDeviceWorkspacePrepared?.(preparedWorkspace)
                 }
                 onClose()
               } catch (error) {
