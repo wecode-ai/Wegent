@@ -24,6 +24,7 @@
     "chat_list_actions": "Chat list actions",
     "task_fork_button": "Copy to another executor",
     "task_fork_title": "Copy task",
+    "task_fork_guidance": "Choose a project workspace on another device. The fork will continue on that target device.",
     "task_fork_current_target": "Current execution target",
     "task_fork_local_path_cloud_disabled": "Local folders cannot be copied to the cloud executor",
     "task_fork_cloud_target": "Cloud executor",

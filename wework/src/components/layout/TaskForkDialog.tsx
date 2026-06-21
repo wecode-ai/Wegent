@@ -113,11 +113,17 @@ export function TaskForkDialog({
     [currentProject, runtimeWork, source]
   )
   const targetProjectId = currentProject?.id ?? sourceProjectWork?.project.id ?? null
-  const projectWorkspaces = sourceProjectWork?.deviceWorkspaces ?? []
+  const projectWorkspaces = useMemo(
+    () => sourceProjectWork?.deviceWorkspaces ?? [],
+    [sourceProjectWork]
+  )
+  const sourceDeviceId = source?.deviceId ?? null
   const options = useMemo<TargetOption[]>(() => {
     const seen = new Set<string>()
     const nextOptions: TargetOption[] = []
     projectWorkspaces.forEach(workspace => {
+      if (sourceDeviceId && workspace.deviceId === sourceDeviceId) return
+
       const target = {
         deviceId: workspace.deviceId,
         workspacePath: workspace.workspacePath,
@@ -143,7 +149,7 @@ export function TaskForkDialog({
       })
     })
     return nextOptions.sort((left, right) => Number(left.disabled) - Number(right.disabled))
-  }, [projectWorkspaces, source, t])
+  }, [projectWorkspaces, source, sourceDeviceId, t])
   const boundDeviceIds = useMemo(
     () => new Set(projectWorkspaces.map(workspace => workspace.deviceId)),
     [projectWorkspaces]
@@ -153,10 +159,11 @@ export function TaskForkDialog({
       devices.filter(
         device =>
           device.status === 'online' &&
+          device.device_id !== sourceDeviceId &&
           !boundDeviceIds.has(device.device_id) &&
           device.bind_shell === 'claudecode'
       ),
-    [boundDeviceIds, devices]
+    [boundDeviceIds, devices, sourceDeviceId]
   )
 
   const enabledOptions = options.filter(option => !option.disabled)
@@ -263,6 +270,10 @@ export function TaskForkDialog({
               {t('workbench.task_fork_stop_notice', '当前任务正在执行。复制前会先停止当前回复。')}
             </div>
           )}
+
+          <p data-testid="task-fork-guidance" className="mt-4 text-xs leading-5 text-text-muted">
+            {t('workbench.task_fork_guidance', '选择其他设备上的项目工作区，复制后会在目标设备继续。')}
+          </p>
 
           <div className="mt-4 space-y-2" role="radiogroup">
             {options.map(option => {

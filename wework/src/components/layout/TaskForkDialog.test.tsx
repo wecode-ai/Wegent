@@ -95,7 +95,7 @@ describe('TaskForkDialog', () => {
     })
   })
 
-  test('disables the current runtime workspace and uses an available target', async () => {
+  test('hides the source device and uses an available target', async () => {
     const onFork = vi.fn().mockResolvedValue(undefined)
 
     render(
@@ -104,6 +104,9 @@ describe('TaskForkDialog', () => {
         source={source()}
         runtimeWork={runtimeWork([
           workspace(),
+          workspace({
+            workspacePath: '/workspace/other-local-worktree',
+          }),
           workspace({
             deviceId: 'local-2',
             deviceName: 'Office Mac',
@@ -117,7 +120,8 @@ describe('TaskForkDialog', () => {
       />
     )
 
-    expect(screen.getByTestId('task-fork-target-local-1')).toBeDisabled()
+    expect(screen.queryAllByTestId('task-fork-target-local-1')).toHaveLength(0)
+    expect(screen.getByTestId('task-fork-guidance')).toHaveTextContent('其他设备')
 
     await userEvent.click(screen.getByTestId('task-fork-confirm-button'))
 
@@ -127,6 +131,39 @@ describe('TaskForkDialog', () => {
         workspacePath: '/workspace/target',
       })
     )
+  })
+
+  test('does not offer the source device as a bind target', () => {
+    render(
+      <TaskForkDialog
+        open
+        source={source()}
+        runtimeWork={runtimeWork([
+          workspace({
+            deviceId: 'local-2',
+            deviceName: 'Office Mac',
+            workspacePath: '/workspace/target',
+          }),
+        ])}
+        currentProject={{ id: 7, name: 'Project', tasks: [] }}
+        devices={[
+          device(),
+          device({
+            id: 3,
+            device_id: 'local-3',
+            name: 'Office Mac',
+          }),
+        ]}
+        requiresStop={false}
+        onOpenChange={vi.fn()}
+        onStopCurrentResponse={vi.fn()}
+        onFork={vi.fn()}
+        onPrepareDeviceWorkspace={vi.fn()}
+      />
+    )
+
+    expect(screen.queryByTestId('task-fork-bind-device-local-1')).not.toBeInTheDocument()
+    expect(screen.getByTestId('task-fork-bind-device-local-3')).toBeInTheDocument()
   })
 
   test('only lists target workspaces from the source project', () => {

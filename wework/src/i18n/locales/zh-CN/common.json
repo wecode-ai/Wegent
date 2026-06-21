@@ -24,6 +24,7 @@
     "chat_list_actions": "对话列表操作",
     "task_fork_button": "复制到其他执行器",
     "task_fork_title": "复制任务",
+    "task_fork_guidance": "选择其他设备上的项目工作区，复制后会在目标设备继续。",
     "task_fork_current_target": "当前执行目标",
     "task_fork_local_path_cloud_disabled": "本地目录不能复制到云端执行器",
     "task_fork_cloud_target": "云端执行器",
