@@ -614,16 +614,26 @@ async def fork_runtime_task(
     _touch_workspace_mapping(db, user_id, source)
 
     transfer_id = str(uuid4())
+    workspace_transfer = _runtime_fork_workspace_transfer(
+        db=db,
+        user_id=user_id,
+        source=source,
+        target_device_id=target_device_id,
+        target_workspace_path=target_workspace_path,
+    )
+    prepare_payload = {
+        **source.model_dump(by_alias=True),
+        "transferId": transfer_id,
+    }
+    if workspace_transfer:
+        prepare_payload["workspaceTransfer"] = workspace_transfer
 
     try:
         package_result = await runtime_rpc_service.call(
             user_id=user_id,
             device_id=source.device_id,
             method="runtime.tasks.prepare_fork_transfer",
-            payload={
-                **source.model_dump(by_alias=True),
-                "transferId": transfer_id,
-            },
+            payload=prepare_payload,
             timeout_seconds=RUNTIME_FORK_TIMEOUT_SECONDS,
         )
     except RuntimeRpcError as exc:
@@ -1260,6 +1270,63 @@ def _raise_runtime_rpc_failure(result: dict[str, Any]) -> None:
         status_code=status.HTTP_502_BAD_GATEWAY,
         detail=str(result.get("error") or "Runtime RPC failed"),
     )
+
+
+def _runtime_fork_workspace_transfer(
+    *,
+    db: Session,
+    user_id: int,
+    source: RuntimeTaskAddress,
+    target_device_id: str,
+    target_workspace_path: str,
+) -> Optional[str]:
+    mappings = list_device_workspace_kinds(db=db, user_id=user_id)
+    source_project_id = _project_id_for_runtime_workspace(
+        mappings=mappings,
+        device_id=source.device_id,
+        workspace_path=source.workspace_path,
+    )
+    target_project_id = _project_id_for_runtime_workspace(
+        mappings=mappings,
+        device_id=target_device_id,
+        workspace_path=target_workspace_path,
+    )
+    if source_project_id is None or target_project_id is None:
+        return None
+    if source_project_id != target_project_id:
+        return None
+    project = _get_active_project(db, user_id, source_project_id, None)
+    if not _project_git_url(project):
+        return None
+    return "git_workspace"
+
+
+def _project_id_for_runtime_workspace(
+    *,
+    mappings: list[DeviceWorkspaceResponse],
+    device_id: str,
+    workspace_path: str,
+) -> Optional[int]:
+    normalized_workspace_path = normalize_workspace_path(workspace_path)
+    for mapping in mappings:
+        if (
+            mapping.device_id == device_id
+            and mapping.workspace_path == normalized_workspace_path
+        ):
+            return mapping.project_id
+
+    worktree = _parse_runtime_worktree_path(normalized_workspace_path)
+    if worktree is None:
+        return None
+    for mapping in mappings:
+        if mapping.device_id != device_id:
+            continue
+        if (
+            _path_basename(mapping.workspace_path).lower()
+            == worktree.project_dir_name.lower()
+        ):
+            return mapping.project_id
+    return None
 
 
 def _list_projects(

@@ -1446,6 +1446,59 @@ async def test_runtime_work_handler_creates_runtime_task_with_local_transcript(
 
 
 @pytest.mark.asyncio
+async def test_runtime_work_handler_imports_git_workspace_fork_without_archive_restore(
+    tmp_path,
+    monkeypatch,
+):
+    from executor.runtime_work import fork_transfer
+    from executor.runtime_work.local_task_store import LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    async def restore_fork_package_archive(*, archive, workspace_path):
+        raise AssertionError("git workspace forks should not restore an archive")
+
+    monkeypatch.setattr(
+        fork_transfer,
+        "restore_fork_package_archive",
+        restore_fork_package_archive,
+    )
+    store = LocalTaskStore(tmp_path / "index.json")
+    handler = RuntimeWorkRpcHandler(store=store, codex_discovery=EmptyDiscovery())
+
+    result = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.import_fork",
+            "payload": {
+                "source": {
+                    "deviceId": "source-device",
+                    "workspacePath": "/source/Wegent",
+                    "localTaskId": "codex-1",
+                },
+                "workspacePath": str(tmp_path / "target"),
+                "forkPackage": {
+                    "sourceRuntime": "codex",
+                    "title": "Forked runtime task",
+                    "recentMessages": [
+                        {"id": "m1", "role": "user", "content": "hello"}
+                    ],
+                    "runtimeHandle": {"threadId": "codex-1"},
+                    "archive": {"mode": "git_workspace"},
+                },
+            },
+        }
+    )
+
+    assert result["success"] is True
+    assert result["accepted"] is True
+    record = store.get_task(
+        result["localTaskId"], workspace_path=str(tmp_path / "target")
+    )
+    assert record.runtime_handle["messages"] == [
+        {"id": "m1", "role": "user", "content": "hello"}
+    ]
+
+
+@pytest.mark.asyncio
 async def test_runtime_work_handler_imports_fork_package_with_parent_metadata(
     tmp_path,
     monkeypatch,

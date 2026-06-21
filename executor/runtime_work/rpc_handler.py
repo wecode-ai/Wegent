@@ -605,10 +605,29 @@ class RuntimeWorkRpcHandler:
         upload_url = payload.get("uploadUrl")
         if upload_url is not None and not isinstance(upload_url, str):
             raise ValueError("uploadUrl must be a string")
+        workspace_transfer = payload.get("workspaceTransfer")
+        if workspace_transfer is not None and not isinstance(workspace_transfer, str):
+            raise ValueError("workspaceTransfer must be a string")
+
+        messages = await self._fork_package_messages(task)
+        if workspace_transfer == "git_workspace":
+            return {
+                "success": True,
+                "package": {
+                    "sourceRuntime": task.runtime,
+                    "title": task.title,
+                    "recentMessages": messages,
+                    "runtimeHandle": task.runtime_handle,
+                    "executorSession": self._executor_session_metadata(task),
+                    "archive": {
+                        "mode": workspace_transfer,
+                        "transferId": transfer_id,
+                    },
+                },
+            }
 
         from executor.runtime_work.fork_transfer import prepare_archive_transfer
 
-        messages = await self._fork_package_messages(task)
         prepared = await prepare_archive_transfer(
             workspace_path=task.workspace_path,
             transfer_id=transfer_id,
@@ -727,13 +746,14 @@ class RuntimeWorkRpcHandler:
         if not isinstance(archive, dict):
             raise ValueError("forkPackage.archive is required")
 
-        from executor.runtime_work.fork_transfer import restore_fork_package_archive
-
         normalized_workspace_path = normalize_workspace_path(workspace_path)
-        await restore_fork_package_archive(
-            archive=archive,
-            workspace_path=normalized_workspace_path,
-        )
+        if not _is_existing_project_workspace_archive(archive):
+            from executor.runtime_work.fork_transfer import restore_fork_package_archive
+
+            await restore_fork_package_archive(
+                archive=archive,
+                workspace_path=normalized_workspace_path,
+            )
         local_task_id = str(payload.get("localTaskId") or f"runtime-{uuid.uuid4()}")
         runtime = str(fork_package.get("sourceRuntime") or "codex")
         runtime_handle = self._imported_runtime_handle(fork_package)
@@ -941,3 +961,7 @@ class RuntimeWorkRpcHandler:
 
     def _error(self, message: str, code: str = "runtime_error") -> dict[str, Any]:
         return {"success": False, "error": message, "code": code}
+
+
+def _is_existing_project_workspace_archive(archive: dict[str, Any]) -> bool:
+    return archive.get("mode") == "git_workspace"

@@ -83,6 +83,8 @@ When Wework forks a runtime task, it only offers target workspaces that belong t
 - An online device that is not yet bound to that Project must first use the same device-directory preparation flow as project creation and editing: choose a directory on the device, then choose whether that Project path is a `worktree` or a regular `workspace`.
 - Backend writes the Device Workspace mapping through `POST /api/runtime-work/device-workspaces/prepare` before continuing the fork.
 - A Device Workspace `label` can store `worktree` or `workspace`. Runtime work list responses prefer that label as `workspaceKind`, so the frontend does not treat a worktree under the same Project as another Project and does not show unrelated Project or unmapped directories as fork targets.
+- If the Project has `git` configuration, the fork reuses the already prepared same-repository workspace on the target Device Workspace and copies only task context plus session metadata; it does not archive and upload the Git repository directory to object storage.
+- If the Project is not Git-backed, the fork uses executor direct archive transfer and only falls back to object storage when direct transfer is unavailable.
 
 The forked task identity still uses `deviceId + localTaskId`. `workspacePath` is only target-directory and workspace-tool context.
 
