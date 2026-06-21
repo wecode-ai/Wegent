@@ -15,6 +15,7 @@ from uuid import uuid4
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.constants import CLIENT_ORIGIN_WEWORK
 from app.models.kind import Kind
 from app.models.project import Project
@@ -36,6 +37,8 @@ from app.schemas.runtime_work import (
     RuntimeTaskArchiveResponse,
     RuntimeTaskCreateRequest,
     RuntimeTaskCreateResponse,
+    RuntimeTaskForkRequest,
+    RuntimeTaskForkResponse,
     RuntimeTranscriptResponse,
     RuntimeWorkListResponse,
 )
@@ -48,11 +51,13 @@ from app.services.runtime_work_kind_store import (
     touch_device_workspace_kind,
     upsert_device_workspace_kind,
 )
+from app.services.object_storage import object_storage_presign_service
 
 RUNTIME_LIST_TIMEOUT_SECONDS = 30
 RUNTIME_TRANSCRIPT_TIMEOUT_SECONDS = 30
 RUNTIME_SEND_TIMEOUT_SECONDS = 600
 RUNTIME_CREATE_TIMEOUT_SECONDS = 600
+RUNTIME_FORK_TIMEOUT_SECONDS = 600
 RUNTIME_MODEL_TYPE = "runtime"
 WORKTREE_ROOT_DIR = "worktrees"
 CHAT_WORKSPACE_DIR = "chats"
@@ -421,6 +426,184 @@ async def create_runtime_task(
     )
 
 
+async def fork_runtime_task(
+    *,
+    db: Session,
+    user_id: int,
+    request: RuntimeTaskForkRequest,
+) -> RuntimeTaskForkResponse:
+    """Fork a device-local LocalTask through direct transfer with storage fallback."""
+
+    source = _normalized_address(request.source)
+    target_device_id = request.target.device_id.strip()
+    target_workspace_path = normalize_workspace_path(request.target.workspace_path)
+    _ensure_owned_device(db, user_id, source.device_id)
+    _ensure_owned_device(db, user_id, target_device_id)
+    _touch_workspace_mapping(db, user_id, source)
+
+    transfer_id = str(uuid4())
+
+    try:
+        package_result = await runtime_rpc_service.call(
+            user_id=user_id,
+            device_id=source.device_id,
+            method="runtime.tasks.prepare_fork_transfer",
+            payload={
+                **source.model_dump(by_alias=True),
+                "transferId": transfer_id,
+            },
+            timeout_seconds=RUNTIME_FORK_TIMEOUT_SECONDS,
+        )
+    except RuntimeRpcError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
+    _raise_runtime_rpc_failure(package_result)
+
+    fork_package = dict(package_result.get("package") or package_result)
+    archive = fork_package.get("archive") if isinstance(fork_package, dict) else None
+    if not isinstance(archive, dict):
+        fork_package["archive"] = {"transferId": transfer_id}
+
+    try:
+        import_result = await runtime_rpc_service.call(
+            user_id=user_id,
+            device_id=target_device_id,
+            method="runtime.tasks.import_fork",
+            payload={
+                "source": source.model_dump(by_alias=True),
+                "workspacePath": target_workspace_path,
+                "forkPackage": fork_package,
+            },
+            timeout_seconds=RUNTIME_FORK_TIMEOUT_SECONDS,
+        )
+    except RuntimeRpcError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
+    if import_result.get("success") is False:
+        push_transfer_id = str(uuid4())
+        push_token = uuid4().hex
+        try:
+            receiver_result = await runtime_rpc_service.call(
+                user_id=user_id,
+                device_id=target_device_id,
+                method="runtime.tasks.prepare_fork_receiver",
+                payload={
+                    "transferId": push_transfer_id,
+                    "token": push_token,
+                },
+                timeout_seconds=RUNTIME_FORK_TIMEOUT_SECONDS,
+            )
+        except RuntimeRpcError:
+            receiver_result = {"success": False}
+
+        if receiver_result.get("success") is not False:
+            upload_urls = receiver_result.get("uploadUrls")
+            try:
+                push_result = await runtime_rpc_service.call(
+                    user_id=user_id,
+                    device_id=source.device_id,
+                    method="runtime.tasks.push_fork_transfer",
+                    payload={
+                        "transferId": transfer_id,
+                        "uploadUrls": (
+                            upload_urls if isinstance(upload_urls, list) else []
+                        ),
+                    },
+                    timeout_seconds=RUNTIME_FORK_TIMEOUT_SECONDS,
+                )
+            except RuntimeRpcError:
+                push_result = {"success": False}
+            if push_result.get("success") is not False:
+                archive = fork_package.get("archive")
+                if isinstance(archive, dict):
+                    archive["localTransferId"] = push_transfer_id
+                else:
+                    fork_package["archive"] = {"localTransferId": push_transfer_id}
+                try:
+                    import_result = await runtime_rpc_service.call(
+                        user_id=user_id,
+                        device_id=target_device_id,
+                        method="runtime.tasks.import_fork",
+                        payload={
+                            "source": source.model_dump(by_alias=True),
+                            "workspacePath": target_workspace_path,
+                            "forkPackage": fork_package,
+                        },
+                        timeout_seconds=RUNTIME_FORK_TIMEOUT_SECONDS,
+                    )
+                except RuntimeRpcError as exc:
+                    raise HTTPException(
+                        status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
+                    )
+
+    if import_result.get("success") is False:
+        object_key = f"runtime-task-transfers/{user_id}/{transfer_id}.tar.gz"
+        upload_url, _upload_expires_at = (
+            object_storage_presign_service.generate_upload_url(
+                bucket=settings.WORKSPACE_ARCHIVE_BUCKET,
+                object_key=object_key,
+                expires_seconds=settings.PUBLISH_PRESIGNED_UPLOAD_EXPIRE_SECONDS,
+            )
+        )
+        download_url, _download_expires_at = (
+            object_storage_presign_service.generate_download_url(
+                bucket=settings.WORKSPACE_ARCHIVE_BUCKET,
+                object_key=object_key,
+                expires_seconds=settings.PUBLISH_PRESIGNED_UPLOAD_EXPIRE_SECONDS,
+            )
+        )
+        try:
+            upload_result = await runtime_rpc_service.call(
+                user_id=user_id,
+                device_id=source.device_id,
+                method="runtime.tasks.upload_fork_transfer",
+                payload={
+                    "transferId": transfer_id,
+                    "uploadUrl": upload_url,
+                },
+                timeout_seconds=RUNTIME_FORK_TIMEOUT_SECONDS,
+            )
+        except RuntimeRpcError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
+            )
+        _raise_runtime_rpc_failure(upload_result)
+        archive = fork_package.get("archive")
+        if isinstance(archive, dict):
+            archive.pop("localTransferId", None)
+            archive["downloadUrl"] = download_url
+        else:
+            fork_package["archive"] = {
+                "transferId": transfer_id,
+                "downloadUrl": download_url,
+            }
+        try:
+            import_result = await runtime_rpc_service.call(
+                user_id=user_id,
+                device_id=target_device_id,
+                method="runtime.tasks.import_fork",
+                payload={
+                    "source": source.model_dump(by_alias=True),
+                    "workspacePath": target_workspace_path,
+                    "forkPackage": fork_package,
+                },
+                timeout_seconds=RUNTIME_FORK_TIMEOUT_SECONDS,
+            )
+        except RuntimeRpcError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
+            )
+
+    response = _runtime_fork_response(
+        result=import_result,
+        source=source,
+        target_device_id=target_device_id,
+        target_workspace_path=target_workspace_path,
+        fallback_runtime=str(fork_package.get("sourceRuntime") or "codex"),
+    )
+    if response.accepted:
+        _touch_workspace_mapping(db, user_id, response.target)
+    return response
+
+
 def _get_active_project(
     db: Session,
     user_id: int,
@@ -500,6 +683,36 @@ def _runtime_create_response(
         localTaskId=str(result.get("localTaskId") or ""),
         workspacePath=str(result.get("workspacePath") or workspace_path),
         runtime=result.get("runtime") or runtime,
+        error=result.get("error"),
+    )
+
+
+def _runtime_fork_response(
+    *,
+    result: dict[str, Any],
+    source: RuntimeTaskAddress,
+    target_device_id: str,
+    target_workspace_path: str,
+    fallback_runtime: str,
+) -> RuntimeTaskForkResponse:
+    target = RuntimeTaskAddress(
+        deviceId=str(result.get("deviceId") or target_device_id),
+        workspacePath=str(result.get("workspacePath") or target_workspace_path),
+        localTaskId=str(result.get("localTaskId") or ""),
+    )
+    if result.get("success") is False:
+        return RuntimeTaskForkResponse(
+            accepted=False,
+            source=source,
+            target=target,
+            runtime=str(result.get("runtime") or fallback_runtime),
+            error=str(result.get("error") or "Runtime task fork failed"),
+        )
+    return RuntimeTaskForkResponse(
+        accepted=bool(result.get("accepted", True)),
+        source=source,
+        target=target,
+        runtime=str(result.get("runtime") or fallback_runtime),
         error=result.get("error"),
     )
 

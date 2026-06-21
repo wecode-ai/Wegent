@@ -383,6 +383,8 @@ class TaskRequestBuilder:
             bot_config[0].get("name", "") if bot_config else ""
         )
         resolved_bot_namespace = getattr(bot, "namespace", None) or "default"
+        fork_runtime = self._extract_task_fork_runtime(task)
+        inherited_sessions = self._extract_inherited_sessions(fork_runtime)
 
         return ExecutionRequest(
             task_id=task.id,
@@ -434,6 +436,8 @@ class TaskRequestBuilder:
             is_group_chat=is_group_chat,
             history_limit=history_limit,
             new_session=new_session,
+            fork_runtime=fork_runtime,
+            inherited_sessions=inherited_sessions,
             collaboration_model=collaboration_model,
             mode=collaboration_model,
             task_mode=self._derive_task_mode(task),
@@ -447,6 +451,25 @@ class TaskRequestBuilder:
             trace_context=trace_context,
             executor_name=subtask.executor_name,
         )
+
+    @staticmethod
+    def _extract_task_fork_runtime(task: TaskResource) -> dict[str, Any] | None:
+        task_json = task.json if isinstance(task.json, dict) else {}
+        spec = task_json.get("spec") if isinstance(task_json.get("spec"), dict) else {}
+        fork = spec.get("fork") if isinstance(spec.get("fork"), dict) else {}
+        runtime = fork.get("runtime")
+        return runtime if isinstance(runtime, dict) else None
+
+    @staticmethod
+    def _extract_inherited_sessions(
+        fork_runtime: dict[str, Any] | None,
+    ) -> list[dict[str, Any]]:
+        if not fork_runtime:
+            return []
+        sessions = fork_runtime.get("sessions")
+        if not isinstance(sessions, list):
+            return []
+        return [session for session in sessions if isinstance(session, dict)]
 
     def resolve_request_preload_skills(
         self,

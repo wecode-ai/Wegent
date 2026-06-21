@@ -388,6 +388,24 @@ export interface RuntimeTaskCreateResponse {
   error?: string | null
 }
 
+export interface RuntimeTaskForkTarget {
+  deviceId: string
+  workspacePath: string
+}
+
+export interface RuntimeTaskForkRequest {
+  source: RuntimeTaskAddress
+  target: RuntimeTaskForkTarget
+}
+
+export interface RuntimeTaskForkResponse {
+  accepted: boolean
+  source: RuntimeTaskAddress
+  target: RuntimeTaskAddress
+  runtime: RuntimeName
+  error?: string | null
+}
+
 export interface UpdateProjectRequest {
   name?: string
   description?: string
@@ -595,6 +613,24 @@ export interface TurnFileChangesRevertResponse {
 
 export interface TaskDetail extends Task {
   subtasks?: Subtask[]
+}
+
+export type TaskForkTarget =
+  | {
+      type: 'managed'
+    }
+  | {
+      type: 'device'
+      device_id: string
+    }
+
+export interface TaskForkRequest {
+  target: TaskForkTarget
+}
+
+export interface TaskForkResponse {
+  task_id: number
+  task: TaskDetail
 }
 
 export interface CreateProjectConversationRequest {

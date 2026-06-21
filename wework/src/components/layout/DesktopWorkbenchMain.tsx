@@ -1,5 +1,5 @@
 import { useCallback, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
-import { MessageCircle } from 'lucide-react'
+import { ArrowLeftRight, MessageCircle } from 'lucide-react'
 import { ChatInput } from '@/components/chat/ChatInput'
 import type { ProjectChatControls, ProjectWorkControls } from '@/components/chat/ChatInput'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
@@ -18,6 +18,8 @@ import type {
   DeviceInfo,
   ProjectWithTasks,
   RuntimeTaskAddress,
+  RuntimeTaskForkTarget,
+  RuntimeWorkListResponse,
   Task,
   TurnFileChangesSummary,
 } from '@/types/api'
@@ -47,6 +49,7 @@ import { DeviceStatusPrompt } from './DeviceStatusPrompt'
 import { TitlebarActionsPortal } from '@/components/topnav/TitlebarActionsPortal'
 import { DESKTOP_TOP_BAR_BUTTON_CLASS, DesktopTopBar } from './DesktopTopBar'
 import { isTauriRuntime } from '@/lib/runtime-environment'
+import { TaskForkDialog } from './TaskForkDialog'
 
 const DESKTOP_COMPOSER_FRAME_CLASS =
   'mx-auto w-[min(58vw,62rem)] min-w-[32rem] max-w-[calc(100vw-4rem)] -translate-y-12'
@@ -124,6 +127,7 @@ interface DesktopWorkbenchMainProps {
   isBootstrapping: boolean
   currentTask: Task | null
   currentRuntimeTask: RuntimeTaskAddress | null
+  runtimeWork: RuntimeWorkListResponse | null
   currentProject: ProjectWithTasks | null
   workspaceTarget: WorkspaceTarget | null
   workspaceTargetError?: string | null
@@ -162,6 +166,7 @@ interface DesktopWorkbenchMainProps {
   onClearCodeComments?: () => void
   topBarLeftActions?: ReactNode
   onContinueInIm?: () => void
+  onForkCurrentRuntimeTask?: (target: RuntimeTaskForkTarget) => Promise<void>
 }
 
 export function DesktopWorkbenchMain({
@@ -169,6 +174,7 @@ export function DesktopWorkbenchMain({
   isBootstrapping,
   currentTask,
   currentRuntimeTask,
+  runtimeWork,
   currentProject,
   workspaceTarget,
   workspaceTargetError,
@@ -207,6 +213,7 @@ export function DesktopWorkbenchMain({
   onClearCodeComments,
   topBarLeftActions,
   onContinueInIm,
+  onForkCurrentRuntimeTask,
 }: DesktopWorkbenchMainProps) {
   const { t } = useTranslation('common')
   const [rightPanelOpen, setRightPanelOpen] = useState(false)
@@ -214,6 +221,7 @@ export function DesktopWorkbenchMain({
   const [rightPanelTabs, setRightPanelTabs] = useState<RightWorkspacePanelTab[]>([])
   const [bottomPanelOpen, setBottomPanelOpen] = useState(false)
   const [openFileRequest, setOpenFileRequest] = useState<WorkspaceFileOpenRequest | null>(null)
+  const [forkDialogOpen, setForkDialogOpen] = useState(false)
   const [reviewState, setReviewState] = useState<DesktopReviewState>({
     loading: false,
     diff: '',
@@ -417,6 +425,19 @@ export function DesktopWorkbenchMain({
   )
   const workspacePanelActions = renderWorkspacePanelActions('all')
   const showPageTopBar = !isTauri || Boolean(topBarLeftActions)
+  const canForkCurrentRuntimeTask = Boolean(currentRuntimeTask && onForkCurrentRuntimeTask)
+  const forkTaskButton = canForkCurrentRuntimeTask ? (
+    <button
+      type="button"
+      data-testid="fork-runtime-task-button"
+      className={DESKTOP_TOP_BAR_BUTTON_CLASS}
+      aria-label={t('workbench.task_fork_button')}
+      title={t('workbench.task_fork_button')}
+      onClick={() => setForkDialogOpen(true)}
+    >
+      <ArrowLeftRight />
+    </button>
+  ) : undefined
   const canContinueInIm = Boolean(currentRuntimeTask)
   const continueInImButton =
     canContinueInIm && onContinueInIm ? (
@@ -433,6 +454,7 @@ export function DesktopWorkbenchMain({
     ) : undefined
   const topRightActions = (
     <>
+      {forkTaskButton}
       {continueInImButton}
       {workspacePanelActions}
     </>
@@ -654,6 +676,19 @@ export function DesktopWorkbenchMain({
           />
         )}
       </div>
+      <TaskForkDialog
+        key={forkDialogOpen ? `open-${currentRuntimeTask?.localTaskId ?? 'none'}` : 'closed'}
+        open={forkDialogOpen}
+        source={currentRuntimeTask}
+        runtimeWork={runtimeWork}
+        requiresStop={isResponseStreaming}
+        onOpenChange={setForkDialogOpen}
+        onStopCurrentResponse={onPauseResponse}
+        onFork={async target => {
+          if (!onForkCurrentRuntimeTask) return
+          await onForkCurrentRuntimeTask(target)
+        }}
+      />
     </main>
   )
 }

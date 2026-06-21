@@ -752,3 +752,133 @@ async def test_create_runtime_task_dispatches_to_project_device_without_task_row
         timeout_seconds=600,
     )
     assert test_db.query(TaskResource).count() == 0
+
+
+@pytest.mark.asyncio
+async def test_fork_runtime_task_uses_bidirectional_direct_transfer(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    import copy
+
+    from app.schemas.runtime_work import RuntimeTaskAddress, RuntimeTaskForkRequest
+    from app.services import runtime_work_service
+
+    calls = []
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: object(),
+    )
+    monkeypatch.setattr(
+        runtime_work_service.object_storage_presign_service,
+        "generate_upload_url",
+        lambda **kwargs: (_ for _ in ()).throw(
+            AssertionError("object storage should not be used")
+        ),
+    )
+    monkeypatch.setattr(
+        runtime_work_service.object_storage_presign_service,
+        "generate_download_url",
+        lambda **kwargs: (_ for _ in ()).throw(
+            AssertionError("object storage should not be used")
+        ),
+    )
+
+    async def rpc(**kwargs):
+        calls.append(copy.deepcopy(kwargs))
+        if kwargs["method"] == "runtime.tasks.prepare_fork_transfer":
+            return {
+                "success": True,
+                "package": {
+                    "sourceRuntime": "codex",
+                    "title": "Continue migration",
+                    "archive": {"directUrls": ["http://source/archive"]},
+                },
+            }
+        if (
+            kwargs["method"] == "runtime.tasks.import_fork"
+            and len(
+                [
+                    call
+                    for call in calls
+                    if call["method"] == "runtime.tasks.import_fork"
+                ]
+            )
+            == 1
+        ):
+            return {
+                "success": False,
+                "error": "direct transfer failed",
+                "code": "direct_transfer_unavailable",
+            }
+        if kwargs["method"] == "runtime.tasks.prepare_fork_receiver":
+            return {
+                "success": True,
+                "accepted": True,
+                "transferId": kwargs["payload"]["transferId"],
+                "uploadUrls": ["http://target/upload"],
+            }
+        if kwargs["method"] == "runtime.tasks.push_fork_transfer":
+            return {
+                "success": True,
+                "accepted": True,
+                "transferId": kwargs["payload"]["transferId"],
+                "uploadedUrl": "http://target/upload",
+                "sizeBytes": 123,
+            }
+        if kwargs["method"] == "runtime.tasks.import_fork":
+            return {
+                "success": True,
+                "accepted": True,
+                "localTaskId": "runtime-copy",
+                "workspacePath": "/target/Wegent",
+                "runtime": "codex",
+            }
+        raise AssertionError(kwargs["method"])
+
+    monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
+
+    response = await runtime_work_service.fork_runtime_task(
+        db=test_db,
+        user_id=test_user.id,
+        request=RuntimeTaskForkRequest(
+            source=RuntimeTaskAddress(
+                deviceId="source-device",
+                workspacePath="/source/Wegent",
+                localTaskId="codex-1",
+            ),
+            target={
+                "deviceId": "target-device",
+                "workspacePath": "/target/Wegent",
+            },
+        ),
+    )
+
+    assert response.accepted is True
+    assert response.target.local_task_id == "runtime-copy"
+    assert [call["method"] for call in calls] == [
+        "runtime.tasks.prepare_fork_transfer",
+        "runtime.tasks.import_fork",
+        "runtime.tasks.prepare_fork_receiver",
+        "runtime.tasks.push_fork_transfer",
+        "runtime.tasks.import_fork",
+    ]
+    assert calls[0]["device_id"] == "source-device"
+    assert "uploadUrl" not in calls[0]["payload"]
+    assert calls[1]["device_id"] == "target-device"
+    assert calls[1]["payload"]["forkPackage"]["archive"] == {
+        "directUrls": ["http://source/archive"],
+    }
+    assert calls[2]["device_id"] == "target-device"
+    assert calls[2]["payload"]["token"]
+    assert calls[3]["device_id"] == "source-device"
+    assert calls[3]["payload"]["transferId"] == calls[0]["payload"]["transferId"]
+    assert calls[3]["payload"]["uploadUrls"] == ["http://target/upload"]
+    assert calls[4]["device_id"] == "target-device"
+    assert calls[4]["payload"]["forkPackage"]["archive"] == {
+        "directUrls": ["http://source/archive"],
+        "localTransferId": calls[2]["payload"]["transferId"],
+    }
+    assert test_db.query(TaskResource).count() == 0

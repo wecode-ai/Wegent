@@ -20,6 +20,7 @@ import type {
   IMPrivateSessionListResponse,
   ProjectWithTasks,
   RuntimeTaskAddress,
+  RuntimeTaskForkTarget,
   TurnFileChangesSummary,
 } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
@@ -56,6 +57,7 @@ interface DesktopWorkbenchLayoutProps {
   onStartNewProjectChat: (projectId: number) => void
   onOpenRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void>
   onArchiveRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void>
+  onForkCurrentRuntimeTask?: (target: RuntimeTaskForkTarget) => Promise<void>
   onRememberExecutionDevice?: (deviceId: string) => void
   onRefreshDevices?: () => Promise<void>
   onUpgradeDevice?: (deviceId: string) => Promise<void>
@@ -134,6 +136,7 @@ export function DesktopWorkbenchLayout({
   onStartNewProjectChat,
   onOpenRuntimeLocalTask,
   onArchiveRuntimeLocalTask,
+  onForkCurrentRuntimeTask,
   onRememberExecutionDevice,
   onRefreshDevices,
   onUpgradeDevice = async () => {},
@@ -495,6 +498,7 @@ export function DesktopWorkbenchLayout({
           isBootstrapping={state.isBootstrapping}
           currentTask={state.currentTask}
           currentRuntimeTask={state.currentRuntimeTask}
+          runtimeWork={state.runtimeWork}
           currentProject={activeConversationProject}
           workspaceTarget={workspaceTarget}
           workspaceTargetError={workspaceTargetError}
@@ -545,6 +549,7 @@ export function DesktopWorkbenchLayout({
           onAddCodeComment={onAddCodeComment}
           onClearCodeComments={onClearCodeComments}
           onContinueInIm={openContinueInImDialog}
+          onForkCurrentRuntimeTask={onForkCurrentRuntimeTask}
           topBarLeftActions={
             sidebarCollapsed ? (
               <DesktopWindowControls

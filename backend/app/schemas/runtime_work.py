@@ -284,3 +284,33 @@ class RuntimeTaskCreateResponse(BaseModel):
     workspace_path: str = Field(..., alias="workspacePath")
     runtime: RuntimeName
     error: Optional[str] = None
+
+
+class RuntimeTaskForkTarget(BaseModel):
+    """Target device workspace for a runtime-native task fork."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    device_id: str = Field(..., alias="deviceId", min_length=1)
+    workspace_path: str = Field(..., alias="workspacePath", min_length=1)
+
+
+class RuntimeTaskForkRequest(BaseModel):
+    """Fork a device-local runtime task to another device workspace."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    source: RuntimeTaskAddress
+    target: RuntimeTaskForkTarget
+
+
+class RuntimeTaskForkResponse(BaseModel):
+    """Acknowledgement for a runtime-native task fork."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    accepted: bool
+    source: RuntimeTaskAddress
+    target: RuntimeTaskAddress
+    runtime: RuntimeName
+    error: Optional[str] = None

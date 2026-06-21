@@ -8,6 +8,7 @@ import asyncio
 import inspect
 import json
 import time
+import uuid
 from collections import defaultdict
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -19,6 +20,7 @@ from executor.runtime_work.local_task_store import (
     LocalTaskRecord,
     LocalTaskStore,
     normalize_workspace_path,
+    utc_now_iso,
 )
 from shared.logger import setup_logger
 from shared.models.responses_api_emitter import EventTransport, ResponsesAPIEmitter
@@ -102,10 +104,19 @@ class RuntimeWorkRpcHandler:
                 return await self._archive(payload)
             if method == "runtime.tasks.status":
                 return self._status(payload)
+            if method == "runtime.tasks.prepare_fork_transfer":
+                return await self._prepare_fork_transfer(payload)
+            if method == "runtime.tasks.prepare_fork_receiver":
+                return await self._prepare_fork_receiver(payload)
+            if method == "runtime.tasks.push_fork_transfer":
+                return await self._push_fork_transfer(payload)
+            if method == "runtime.tasks.upload_fork_transfer":
+                return await self._upload_fork_transfer(payload)
+            if method == "runtime.tasks.import_fork":
+                return await self._import_fork(payload)
             if method in {
                 "runtime.tasks.create",
                 "runtime.tasks.cancel",
-                "runtime.tasks.fork_package",
             }:
                 return await self._adapter_method(method, payload)
             return self._error(f"Unsupported runtime RPC method: {method}")
@@ -444,6 +455,203 @@ class RuntimeWorkRpcHandler:
     def _status(self, payload: dict[str, Any]) -> dict[str, Any]:
         task = self._load_payload_task(payload)
         return {"success": True, "task": self._task_summary(task)}
+
+    async def _prepare_fork_transfer(self, payload: dict[str, Any]) -> dict[str, Any]:
+        task = self._load_payload_task(payload)
+        transfer_id = payload.get("transferId")
+        if not isinstance(transfer_id, str) or not transfer_id.strip():
+            raise ValueError("transferId is required")
+        upload_url = payload.get("uploadUrl")
+        if upload_url is not None and not isinstance(upload_url, str):
+            raise ValueError("uploadUrl must be a string")
+
+        from executor.runtime_work.fork_transfer import prepare_archive_transfer
+
+        messages = await self._fork_package_messages(task)
+        prepared = await prepare_archive_transfer(
+            workspace_path=task.workspace_path,
+            transfer_id=transfer_id,
+            upload_url=upload_url,
+        )
+        return {
+            "success": True,
+            "package": {
+                "sourceRuntime": task.runtime,
+                "title": task.title,
+                "recentMessages": messages,
+                "runtimeHandle": task.runtime_handle,
+                "executorSession": self._executor_session_metadata(task),
+                "archive": {
+                    "transferId": transfer_id,
+                    "directUrls": prepared.direct_urls,
+                    "sizeBytes": prepared.size_bytes,
+                },
+            },
+        }
+
+    async def _fork_package_messages(
+        self,
+        task: LocalTaskRecord,
+    ) -> list[dict[str, Any]]:
+        adapter = self.adapters.get(task.runtime)
+        if adapter and hasattr(adapter, "get_transcript"):
+            messages = await self._maybe_await(adapter.get_transcript(task))
+        else:
+            messages = None
+        if not messages:
+            messages = self._codex_session_messages(task)
+        if messages is None:
+            messages = task.runtime_handle.get("messages", [])
+        return self._normalize_messages(task, messages)
+
+    async def _prepare_fork_receiver(self, payload: dict[str, Any]) -> dict[str, Any]:
+        transfer_id = payload.get("transferId")
+        if not isinstance(transfer_id, str) or not transfer_id.strip():
+            raise ValueError("transferId is required")
+        token = payload.get("token")
+        if not isinstance(token, str) or not token.strip():
+            raise ValueError("token is required")
+
+        from executor.runtime_work.fork_transfer import register_direct_upload_receiver
+
+        upload_urls = register_direct_upload_receiver(transfer_id, token)
+        return {
+            "success": True,
+            "accepted": True,
+            "transferId": transfer_id,
+            "uploadUrls": upload_urls,
+        }
+
+    async def _push_fork_transfer(self, payload: dict[str, Any]) -> dict[str, Any]:
+        transfer_id = payload.get("transferId")
+        if not isinstance(transfer_id, str) or not transfer_id.strip():
+            raise ValueError("transferId is required")
+        upload_urls = payload.get("uploadUrls")
+        if not isinstance(upload_urls, list):
+            raise ValueError("uploadUrls is required")
+
+        from executor.runtime_work.fork_transfer import (
+            upload_registered_archive_to_first_available_url,
+        )
+
+        uploaded_url, size_bytes = (
+            await upload_registered_archive_to_first_available_url(
+                transfer_id=transfer_id,
+                upload_urls=[
+                    url for url in upload_urls if isinstance(url, str) and url.strip()
+                ],
+            )
+        )
+        return {
+            "success": True,
+            "accepted": True,
+            "transferId": transfer_id,
+            "uploadedUrl": uploaded_url,
+            "sizeBytes": size_bytes,
+        }
+
+    async def _upload_fork_transfer(self, payload: dict[str, Any]) -> dict[str, Any]:
+        transfer_id = payload.get("transferId")
+        if not isinstance(transfer_id, str) or not transfer_id.strip():
+            raise ValueError("transferId is required")
+        upload_url = payload.get("uploadUrl")
+        if not isinstance(upload_url, str) or not upload_url.strip():
+            raise ValueError("uploadUrl is required")
+
+        from executor.runtime_work.fork_transfer import upload_registered_archive
+
+        size_bytes = await upload_registered_archive(
+            transfer_id=transfer_id,
+            upload_url=upload_url,
+        )
+        return {
+            "success": True,
+            "accepted": True,
+            "transferId": transfer_id,
+            "sizeBytes": size_bytes,
+        }
+
+    async def _import_fork(self, payload: dict[str, Any]) -> dict[str, Any]:
+        fork_package = payload.get("forkPackage")
+        if not isinstance(fork_package, dict):
+            raise ValueError("forkPackage is required")
+        source = payload.get("source")
+        if not isinstance(source, dict):
+            raise ValueError("source is required")
+        workspace_path = payload.get("workspacePath")
+        if not isinstance(workspace_path, str) or not workspace_path.strip():
+            raise ValueError("workspacePath is required")
+
+        archive = fork_package.get("archive")
+        if not isinstance(archive, dict):
+            raise ValueError("forkPackage.archive is required")
+
+        from executor.runtime_work.fork_transfer import restore_fork_package_archive
+
+        normalized_workspace_path = normalize_workspace_path(workspace_path)
+        await restore_fork_package_archive(
+            archive=archive,
+            workspace_path=normalized_workspace_path,
+        )
+        local_task_id = str(payload.get("localTaskId") or f"runtime-{uuid.uuid4()}")
+        runtime = str(fork_package.get("sourceRuntime") or "codex")
+        runtime_handle = self._imported_runtime_handle(fork_package)
+        messages = fork_package.get("recentMessages")
+        if isinstance(messages, list):
+            runtime_handle["messages"] = [
+                message for message in messages if isinstance(message, dict)
+            ]
+        task = LocalTaskRecord(
+            local_task_id=local_task_id,
+            workspace_path=normalized_workspace_path,
+            title=str(fork_package.get("title") or "Forked task"),
+            runtime=runtime,
+            runtime_handle=runtime_handle,
+            parent=source,
+            created_at=utc_now_iso(),
+            updated_at=utc_now_iso(),
+            running=False,
+            status="active",
+        )
+        self.store.upsert_task(task)
+        return {
+            "success": True,
+            "accepted": True,
+            "localTaskId": task.local_task_id,
+            "workspacePath": task.workspace_path,
+            "runtime": task.runtime,
+        }
+
+    def _imported_runtime_handle(self, fork_package: dict[str, Any]) -> dict[str, Any]:
+        raw_handle = fork_package.get("runtimeHandle")
+        runtime_handle = dict(raw_handle) if isinstance(raw_handle, dict) else {}
+        executor_session = fork_package.get("executorSession")
+        if isinstance(executor_session, dict):
+            runtime_handle["executorSession"] = executor_session
+            execution_request = runtime_handle.get("executionRequest")
+            if isinstance(execution_request, dict):
+                sessions = execution_request.get("inherited_sessions")
+                if not isinstance(sessions, list):
+                    sessions = []
+                execution_request["inherited_sessions"] = [
+                    *sessions,
+                    executor_session,
+                ]
+                execution_request["new_session"] = False
+        return runtime_handle
+
+    def _executor_session_metadata(
+        self,
+        task: LocalTaskRecord,
+    ) -> Optional[dict[str, Any]]:
+        handle_session = task.runtime_handle.get("executorSession")
+        if isinstance(handle_session, dict):
+            return handle_session
+        if task.runtime == "codex":
+            thread_id = task.runtime_handle.get("threadId") or task.local_task_id
+            if isinstance(thread_id, str) and thread_id.strip():
+                return {"agent": "CodeX", "threadId": thread_id}
+        return None
 
     async def _adapter_method(
         self,

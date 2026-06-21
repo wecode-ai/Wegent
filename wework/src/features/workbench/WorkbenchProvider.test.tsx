@@ -24,6 +24,7 @@ function createRuntimeWorkApiMock(overrides: Record<string, unknown> = {}): {
   sendRuntimeMessage: ReturnType<typeof vi.fn>
   bindRuntimeTaskImSessions: ReturnType<typeof vi.fn>
   archiveRuntimeTask: ReturnType<typeof vi.fn>
+  forkRuntimeTask: ReturnType<typeof vi.fn>
   getRuntimeTranscript: ReturnType<typeof vi.fn>
 } {
   return {
@@ -56,6 +57,20 @@ function createRuntimeWorkApiMock(overrides: Record<string, unknown> = {}): {
       accepted: true,
       localTaskId: 'runtime-1',
       workspacePath: '/workspace/project-alpha',
+    }),
+    forkRuntimeTask: vi.fn().mockResolvedValue({
+      accepted: true,
+      source: {
+        deviceId: 'device-1',
+        workspacePath: '/workspace/project-alpha',
+        localTaskId: 'runtime-1',
+      },
+      target: {
+        deviceId: 'device-2',
+        workspacePath: '/workspace/project-alpha',
+        localTaskId: 'runtime-copy',
+      },
+      runtime: 'claude_code',
     }),
     getRuntimeTranscript: vi.fn().mockResolvedValue({
       localTaskId: 'runtime-1',
@@ -434,6 +449,41 @@ function TaskMessagesProbe() {
       </span>
       <button type="button" onClick={() => void workbench.openTask(8)}>
         open task
+      </button>
+    </div>
+  )
+}
+
+function TaskForkProbe() {
+  const workbench = useWorkbench()
+
+  return (
+    <div>
+      <span data-testid="current-runtime-task-id">
+        {workbench.state.currentRuntimeTask?.localTaskId ?? 'no-runtime-task'}
+      </span>
+      <button
+        type="button"
+        onClick={() =>
+          void workbench.openRuntimeLocalTask({
+            deviceId: 'device-1',
+            workspacePath: '/workspace/project-alpha',
+            localTaskId: 'runtime-1',
+          })
+        }
+      >
+        open source task
+      </button>
+      <button
+        type="button"
+        onClick={() =>
+          void workbench.forkCurrentRuntimeTask({
+            deviceId: 'device-2',
+            workspacePath: '/workspace/project-alpha',
+          })
+        }
+      >
+        fork to cloud
       </button>
     </div>
   )
@@ -1130,6 +1180,96 @@ describe('WorkbenchProvider', () => {
     await waitFor(() => expect(getTaskDetail).toHaveBeenCalledWith(8))
     expect(await screen.findByTestId('current-task-title')).toHaveTextContent('Restored task')
     expect(joinTask).toHaveBeenCalledWith(8)
+  })
+
+  test('forks current runtime task and opens the fork without starting execution', async () => {
+    const runtimeWorkApi = createRuntimeWorkApiMock()
+    const joinTask = vi.fn()
+    const sendMessage = vi.fn()
+
+    render(
+      <WorkbenchProvider
+        user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+        services={{
+          teamApi: {
+            getDefaultWorkbenchTeam: vi
+              .fn()
+              .mockResolvedValue({ id: 2, name: 'coder', is_active: true }),
+          },
+          modelApi: { listModels: vi.fn().mockResolvedValue({ data: [] }) },
+          skillApi: {
+            listSkills: vi.fn().mockResolvedValue([]),
+            getTeamSkills: vi.fn().mockResolvedValue({ skills: [], preload_skills: [] }),
+          },
+          projectApi: {
+            listProjects: vi.fn().mockResolvedValue({ items: [] }),
+            getProject: vi.fn(),
+            createProject: vi.fn(),
+            updateProject: vi.fn(),
+            deleteProject: vi.fn(),
+            archiveProjectChats: vi.fn(),
+            archiveAllProjectChats: vi.fn(),
+            createConversation: vi.fn(),
+          },
+          taskApi: {
+            listRecentTasks: vi.fn().mockResolvedValue({ total: 0, items: [] }),
+            getTaskDetail: vi.fn(),
+            renameTask: vi.fn(),
+            archiveTask: vi.fn(),
+            archiveAllChats: vi.fn(),
+            listArchivedTasks: vi.fn(),
+            unarchiveTask: vi.fn(),
+            deleteTask: vi.fn(),
+            deleteArchivedTasks: vi.fn(),
+          },
+          runtimeWorkApi,
+          deviceApi: {
+            listDevices: vi.fn().mockResolvedValue([]),
+            getHomeDirectory: vi.fn(),
+            getProjectWorkspaceRoot: vi.fn(),
+            listDirectories: vi.fn(),
+            listSkills: vi.fn().mockResolvedValue([]),
+          },
+          chatStream: {
+            joinTask,
+            leaveTask: vi.fn(),
+            sendMessage,
+            subscribe: vi.fn(() => vi.fn()),
+          },
+        }}
+      >
+        <TaskForkProbe />
+      </WorkbenchProvider>
+    )
+
+    await userEvent.click(await screen.findByText('open source task'))
+    await waitFor(() =>
+      expect(screen.getByTestId('current-runtime-task-id')).toHaveTextContent('runtime-1')
+    )
+
+    await userEvent.click(screen.getByText('fork to cloud'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('current-runtime-task-id')).toHaveTextContent('runtime-copy')
+    )
+    expect(runtimeWorkApi.forkRuntimeTask).toHaveBeenCalledWith({
+      source: {
+        deviceId: 'device-1',
+        workspacePath: '/workspace/project-alpha',
+        localTaskId: 'runtime-1',
+      },
+      target: {
+        deviceId: 'device-2',
+        workspacePath: '/workspace/project-alpha',
+      },
+    })
+    expect(runtimeWorkApi.getRuntimeTranscript).toHaveBeenCalledWith({
+      deviceId: 'device-2',
+      workspacePath: '/workspace/project-alpha',
+      localTaskId: 'runtime-copy',
+    })
+    expect(joinTask).not.toHaveBeenCalled()
+    expect(sendMessage).not.toHaveBeenCalled()
   })
 
   test('restores cached streaming content when opening a running task after refresh', async () => {

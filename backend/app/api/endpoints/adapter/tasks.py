@@ -57,12 +57,14 @@ from app.schemas.task import (
     TaskSkillsResponse,
     TaskUpdate,
 )
+from app.schemas.task_fork import TaskForkRequest, TaskForkResponse
 from app.services import prompt_draft_service
 from app.services.adapters.executor_job import job_service
 from app.services.adapters.task_kinds import task_kinds_service
 from app.services.chat.storage import session_manager
 from app.services.remote_workspace_service import remote_workspace_service
 from app.services.shared_task import shared_task_service
+from app.services.task_fork import task_fork_service
 from app.stores.tasks import task_store
 from shared.telemetry.decorators import trace_sync
 
@@ -149,6 +151,31 @@ def create_task_with_id(
     return task_kinds_service.create_task_or_append(
         db=db, obj_in=task_create, user=current_user, task_id=task_id
     )
+
+
+@router.post("/{task_id}/fork", response_model=TaskForkResponse)
+def fork_task(
+    task_id: int,
+    request: TaskForkRequest,
+    client_origin: ClientOriginQuery = CLIENT_ORIGIN_FRONTEND,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Create a snapshot fork of a task with a new execution target."""
+    forked_task = task_fork_service.fork_task(
+        db=db,
+        source_task_id=task_id,
+        user_id=current_user.id,
+        request=request,
+        client_origin=client_origin,
+    )
+    task_detail = task_kinds_service.get_task_detail(
+        db=db,
+        task_id=forked_task.id,
+        user_id=current_user.id,
+        client_origin=client_origin,
+    )
+    return {"task_id": forked_task.id, "task": task_detail}
 
 
 @router.get("", response_model=TaskListResponse)

@@ -56,6 +56,7 @@ class RuntimeTranscriptTransport(EventTransport):
                 content=_completed_content(data) or self._assistant_draft,
                 status="done",
                 subtask_id=subtask_id,
+                executor_session=data.get("executor_session"),
             )
             self._assistant_draft = ""
             return
@@ -81,6 +82,7 @@ class RuntimeTranscriptTransport(EventTransport):
         content: str,
         status: str,
         subtask_id: int,
+        executor_session: Optional[Any] = None,
     ) -> None:
         message = {
             "id": f"{self.local_task_id}:assistant:{subtask_id}",
@@ -96,6 +98,8 @@ class RuntimeTranscriptTransport(EventTransport):
             messages = _message_list(handle)
             messages.append(message)
             handle["messages"] = messages
+            if isinstance(executor_session, dict):
+                handle["executorSession"] = executor_session
             return replace(
                 task,
                 runtime_handle=handle,
