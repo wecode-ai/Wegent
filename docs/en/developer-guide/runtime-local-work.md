@@ -75,6 +75,17 @@ POST /api/runtime-work/create
 
 Backend resolves the target device and directory from either `projectId` or `deviceId + workspacePath`, builds a transient execution request, and calls device RPC `runtime.tasks.create`. This flow does not `db.add()` any `TaskResource` or `Subtask`.
 
+## Fork And Cross-Device Transfer
+
+When Wework forks a runtime task, it only offers target workspaces that belong to the source task's Project:
+
+- Other Device Workspaces already bound to that Project can be used directly.
+- An online device that is not yet bound to that Project must first use the same device-directory preparation flow as project creation and editing: choose a directory on the device, then choose whether that Project path is a `worktree` or a regular `workspace`.
+- Backend writes the Device Workspace mapping through `POST /api/runtime-work/device-workspaces/prepare` before continuing the fork.
+- A Device Workspace `label` can store `worktree` or `workspace`. Runtime work list responses prefer that label as `workspaceKind`, so the frontend does not treat a worktree under the same Project as another Project and does not show unrelated Project or unmapped directories as fork targets.
+
+The forked task identity still uses `deviceId + localTaskId`. `workspacePath` is only target-directory and workspace-tool context.
+
 ## Non-Project Workspaces
 
 Directories discovered by an executor but not mapped to a central Project appear in Wework under "Unmapped Device Workspaces". They also come from online device `runtime.tasks.list` responses, not from central database tasks.

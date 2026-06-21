@@ -75,6 +75,17 @@ POST /api/runtime-work/create
 
 Backend 根据请求中的 `projectId` 或 `deviceId + workspacePath` 解析目标设备和目录，构造一次临时 execution request，然后调用设备 RPC `runtime.tasks.create`。这个流程不会 `db.add()` 任何 `TaskResource` 或 `Subtask`。
 
+## 复制和跨设备转移
+
+复制运行时任务时，Wework 只在当前任务所属 Project 内选择目标工作区：
+
+- 已经绑定到该 Project 的其他 Device Workspace 可以直接作为目标。
+- 没有绑定到该 Project 的在线设备，需要先走和项目创建/编辑一致的设备目录准备流程：选择设备目录，并选择该目录在 Project 下的类型是 `worktree` 还是普通 `workspace`。
+- Backend 调用 `POST /api/runtime-work/device-workspaces/prepare` 写入 Device Workspace 映射后，再继续执行任务复制。
+- Device Workspace 的 `label` 可以保存 `worktree` 或 `workspace`。Backend 返回 runtime work 列表时会优先用这个标签作为 `workspaceKind`，这样前端不会把同一 Project 下的 worktree 当成另一个 Project，也不会展示无关 Project 或未映射目录作为复制目标。
+
+复制任务的身份仍然使用 `deviceId + localTaskId`。`workspacePath` 只用于定位目标设备目录和工作区工具上下文。
+
 ## 非 Project 工作区
 
 executor 发现但没有映射到中心 Project 的目录会在 Wework 的“未映射工作区”中显示。它们同样来自在线设备的 `runtime.tasks.list` 返回值，而不是中心数据库任务。
