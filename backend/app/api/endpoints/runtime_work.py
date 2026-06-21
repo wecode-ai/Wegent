@@ -16,6 +16,8 @@ from app.models.user import User
 from app.schemas.runtime_work import (
     BindRuntimeTaskIMSessionsRequest,
     BindRuntimeTaskIMSessionsResponse,
+    DeviceWorkspacePrepareRequest,
+    DeviceWorkspacePrepareResponse,
     DeviceWorkspaceResponse,
     DeviceWorkspaceUpsert,
     RuntimeSendRequest,
@@ -94,6 +96,25 @@ def upsert_device_workspace_endpoint(
     """Create or update a central Project-to-device-directory mapping."""
 
     return runtime_work_service.upsert_device_workspace(
+        db=db,
+        user_id=current_user.id,
+        payload=payload,
+    )
+
+
+@router.post(
+    "/device-workspaces/prepare",
+    response_model=DeviceWorkspacePrepareResponse,
+    response_model_by_alias=True,
+)
+async def prepare_device_workspace_endpoint(
+    payload: DeviceWorkspacePrepareRequest = Body(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Prepare a device folder for one Project and store its mapping."""
+
+    return await runtime_work_service.prepare_device_workspace(
         db=db,
         user_id=current_user.id,
         payload=payload,

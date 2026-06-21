@@ -237,15 +237,16 @@ async def test_runtime_task_update_uses_subscribed_native_codex_task(
         channel_type="telegram",
         sender_id="100200301",
     )
-    address = {
+    subscription_address = {
         "deviceId": "device-1",
         "localTaskId": "codex-thread-1",
+        "workspacePath": "/repo/Wegent",
     }
     await im_session_service.save_session(session)
     await im_session_service.subscribe_runtime_task_notification(
         test_db,
         session=session,
-        runtime_task=address,
+        runtime_task=subscription_address,
     )
     test_db.commit()
     calls: list[dict[str, Any]] = []
@@ -266,7 +267,10 @@ async def test_runtime_task_update_uses_subscribed_native_codex_task(
     result = await im_notification_dispatcher.send_runtime_task_update(
         test_db,
         user_id=test_user.id,
-        address=address,
+        address={
+            "deviceId": "device-1",
+            "localTaskId": "codex-thread-1",
+        },
         title="Native Codex task",
         status="updated",
         content="Subscribed update",

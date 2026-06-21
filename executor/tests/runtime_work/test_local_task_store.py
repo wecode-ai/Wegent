@@ -467,6 +467,7 @@ async def test_runtime_work_handler_streams_discovered_codex_thread_over_respons
     ]
     assert all(payload["local_task_id"] == thread_id for _event, payload in events)
     assert all("workspace_path" not in payload for _event, payload in events)
+    assert all("workspacePath" not in payload for _event, payload in events)
     assert events[1][1]["data"]["delta"] == "Hello"
 
 
@@ -979,7 +980,6 @@ async def test_runtime_work_handler_emits_codex_native_update_after_seen_timesta
     assert emitted[0][0] == "runtime.tasks.updated"
     assert emitted[0][1] == {
         "localTaskId": "codex-thread-1",
-        "workspacePath": "/repo/Wegent",
         "runtime": "codex",
         "title": "Native Codex task",
         "updatedAt": "2026-06-21T01:06:00Z",

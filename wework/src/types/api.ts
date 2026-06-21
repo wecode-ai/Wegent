@@ -223,7 +223,7 @@ export type RuntimeName = 'codex' | 'claude_code' | 'claude' | string
 
 export interface RuntimeTaskAddress {
   deviceId: string
-  workspacePath: string
+  workspacePath?: string | null
   localTaskId: string
 }
 
@@ -275,6 +275,14 @@ export interface DeviceWorkspaceUpsert {
   label?: string | null
 }
 
+export interface DeviceWorkspacePrepareRequest {
+  projectId: number
+  deviceId: string
+  workspacePath: string
+  action: 'create' | 'select'
+  label?: string | null
+}
+
 export interface DeviceWorkspaceResponse {
   id: number
   userId: number
@@ -287,6 +295,11 @@ export interface DeviceWorkspaceResponse {
   lastSeenAt?: string | null
   createdAt: string
   updatedAt: string
+}
+
+export interface DeviceWorkspacePrepareResponse {
+  mapping: DeviceWorkspaceResponse
+  preparedAction: 'created' | 'selected' | 'cloned' | 'reused_git'
 }
 
 export interface RuntimeProjectRef {
@@ -359,7 +372,7 @@ export interface BindRuntimeTaskIMSessionsResponse {
 export interface RuntimeTaskArchiveResponse {
   accepted: boolean
   localTaskId: string
-  workspacePath: string
+  workspacePath?: string | null
   error?: string | null
 }
 

@@ -56,6 +56,8 @@ import type {
   ChatSendPayload,
   CreateProjectRequest,
   CreateGitWorkspaceProjectRequest,
+  DeviceWorkspacePrepareRequest,
+  DeviceWorkspacePrepareResponse,
   GitBranch,
   GitRepoInfo,
   DeviceInfo,
@@ -296,6 +298,9 @@ export interface WorkbenchContextValue {
   upgradeDevice: (deviceId: string) => Promise<void>
   createProject: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
   createGitWorkspaceProject: (data: CreateGitWorkspaceProjectRequest) => Promise<ProjectWithTasks>
+  prepareDeviceWorkspace: (
+    data: DeviceWorkspacePrepareRequest
+  ) => Promise<DeviceWorkspacePrepareResponse>
   listGitRepositories: () => Promise<GitRepoInfo[]>
   listGitBranches: (repo: GitRepoInfo) => Promise<GitBranch[]>
   updateProjectName: (projectId: number, name: string) => Promise<void>
@@ -420,7 +425,6 @@ function resolveRuntimeTaskRouteAddress(
 
     return {
       deviceId: workspace.deviceId,
-      workspacePath: task.workspacePath || workspace.workspacePath,
       localTaskId: task.localTaskId,
     }
   }
@@ -1765,7 +1769,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         item.deviceWorkspaces.some(
           workspace =>
             workspace.deviceId === address.deviceId &&
-            workspace.workspacePath === address.workspacePath
+            workspace.localTasks.some(task => task.localTaskId === address.localTaskId)
         )
       )
       const project = runtimeProjectWork
@@ -1816,7 +1820,6 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
 
       if (
         state.currentRuntimeTask?.deviceId === address.deviceId &&
-        state.currentRuntimeTask.workspacePath === address.workspacePath &&
         state.currentRuntimeTask.localTaskId === address.localTaskId
       ) {
         dispatch({ type: 'current_task_cleared' })
@@ -2018,6 +2021,19 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
       return project
     },
     [refreshWorkLists, rememberExecutionDevice, resolvedServices, user.id]
+  )
+
+  const prepareDeviceWorkspace = useCallback(
+    async (data: DeviceWorkspacePrepareRequest) => {
+      if (!resolvedServices.runtimeWorkApi) {
+        throw new Error('Runtime work is unavailable')
+      }
+      const response = await resolvedServices.runtimeWorkApi.prepareDeviceWorkspace(data)
+      rememberExecutionDevice(data.deviceId)
+      await refreshWorkLists()
+      return response
+    },
+    [refreshWorkLists, rememberExecutionDevice, resolvedServices.runtimeWorkApi]
   )
 
   const listGitRepositories = useCallback(
@@ -2362,7 +2378,6 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         }
         const address: RuntimeTaskAddress = {
           deviceId: response.deviceId,
-          workspacePath: response.workspacePath,
           localTaskId: response.localTaskId,
         }
         const runtimeProject = projectId
@@ -2948,6 +2963,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     upgradeDevice,
     createProject,
     createGitWorkspaceProject,
+    prepareDeviceWorkspace,
     listGitRepositories,
     listGitBranches,
     updateProjectName,

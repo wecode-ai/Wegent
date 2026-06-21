@@ -83,7 +83,6 @@ export function getRuntimeTaskAddress(
 ): RuntimeTaskAddress {
   return {
     deviceId: workspace.deviceId,
-    workspacePath: task.workspacePath || workspace.workspacePath,
     localTaskId: task.localTaskId,
   }
 }
@@ -126,7 +125,6 @@ export function isRuntimeTaskSelected(
   const taskAddress = getRuntimeTaskAddress(workspace, task)
   return (
     currentRuntimeTask?.deviceId === taskAddress.deviceId &&
-    currentRuntimeTask.workspacePath === taskAddress.workspacePath &&
     currentRuntimeTask.localTaskId === taskAddress.localTaskId
   )
 }

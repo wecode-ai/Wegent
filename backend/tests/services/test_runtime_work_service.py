@@ -52,6 +52,28 @@ def _local_path_project(
     return project
 
 
+def _git_project(test_db, user_id: int, name: str = "Wegent") -> Project:
+    project = Project(
+        user_id=user_id,
+        name=name,
+        client_origin=CLIENT_ORIGIN_WEWORK,
+        config={
+            "mode": "workspace",
+            "git": {
+                "url": "https://github.com/wecode-ai/Wegent.git",
+                "repo": "wecode-ai/Wegent",
+                "domain": "github.com",
+                "branch": "main",
+            },
+        },
+        is_active=True,
+    )
+    test_db.add(project)
+    test_db.commit()
+    test_db.refresh(project)
+    return project
+
+
 @pytest.mark.asyncio
 async def test_device_workspace_upsert_normalizes_unique_mapping(test_db, test_user):
     from app.schemas.runtime_work import DeviceWorkspaceUpsert
@@ -153,6 +175,148 @@ async def test_device_workspace_upsert_reactivates_inactive_mapping(test_db, tes
     )
     assert len(rows) == 1
     assert rows[0].is_active is True
+
+
+@pytest.mark.asyncio
+async def test_prepare_plain_device_workspace_creates_directory_and_mapping(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    from app.schemas.runtime_work import DeviceWorkspacePrepareRequest
+    from app.services import runtime_work_service
+
+    project = _project(test_db, test_user.id)
+    calls: list[tuple[str, list[str]]] = []
+
+    async def execute(**kwargs):
+        calls.append((kwargs["command_key"], kwargs.get("args") or []))
+        if kwargs["command_key"] == "project_folder_status":
+            return {"success": True, "exit_code": 0, "stdout": '{"exists": false}'}
+        return {"success": True, "exit_code": 0, "stdout": ""}
+
+    monkeypatch.setattr(
+        runtime_work_service, "execute_configured_device_command", execute
+    )
+
+    response = await runtime_work_service.prepare_device_workspace(
+        db=test_db,
+        user_id=test_user.id,
+        payload=DeviceWorkspacePrepareRequest(
+            projectId=project.id,
+            deviceId="device-1",
+            workspacePath="/repo/Wegent",
+            action="create",
+        ),
+    )
+
+    assert response.mapping.project_id == project.id
+    assert response.mapping.workspace_path == "/repo/Wegent"
+    assert response.mapping.repo_url is None
+    assert response.prepared_action == "created"
+    assert calls == [
+        ("project_folder_status", ["/repo/Wegent"]),
+        ("mkdir_p", ["/repo/Wegent"]),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_prepare_git_device_workspace_clones_into_empty_directory(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    from app.schemas.runtime_work import DeviceWorkspacePrepareRequest
+    from app.services import runtime_work_service
+
+    project = _git_project(test_db, test_user.id)
+    calls: list[tuple[str, list[str]]] = []
+
+    async def execute(**kwargs):
+        calls.append((kwargs["command_key"], kwargs.get("args") or []))
+        if kwargs["command_key"] == "project_folder_status":
+            return {
+                "success": True,
+                "exit_code": 0,
+                "stdout": (
+                    '{"exists": true, "isDirectory": true, "isEmpty": true, '
+                    '"isGitRepo": false, "remoteUrl": null}'
+                ),
+            }
+        return {"success": True, "exit_code": 0, "stdout": ""}
+
+    monkeypatch.setattr(
+        runtime_work_service, "execute_configured_device_command", execute
+    )
+
+    response = await runtime_work_service.prepare_device_workspace(
+        db=test_db,
+        user_id=test_user.id,
+        payload=DeviceWorkspacePrepareRequest(
+            projectId=project.id,
+            deviceId="device-1",
+            workspacePath="/repo/Wegent",
+            action="select",
+        ),
+    )
+
+    assert response.mapping.repo_url == "https://github.com/wecode-ai/Wegent.git"
+    assert response.prepared_action == "cloned"
+    assert (
+        "git_clone",
+        [
+            "--branch",
+            "main",
+            "--single-branch",
+            "https://github.com/wecode-ai/Wegent.git",
+            "/repo/Wegent",
+        ],
+    ) in calls
+
+
+@pytest.mark.asyncio
+async def test_prepare_git_device_workspace_rejects_nonmatching_nonempty_directory(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    from fastapi import HTTPException
+
+    from app.schemas.runtime_work import DeviceWorkspacePrepareRequest
+    from app.services import runtime_work_service
+
+    project = _git_project(test_db, test_user.id)
+
+    async def execute(**kwargs):
+        assert kwargs["command_key"] == "project_folder_status"
+        return {
+            "success": True,
+            "exit_code": 0,
+            "stdout": (
+                '{"exists": true, "isDirectory": true, "isEmpty": false, '
+                '"isGitRepo": true, "remoteUrl": "https://github.com/other/repo.git"}'
+            ),
+        }
+
+    monkeypatch.setattr(
+        runtime_work_service, "execute_configured_device_command", execute
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await runtime_work_service.prepare_device_workspace(
+            db=test_db,
+            user_id=test_user.id,
+            payload=DeviceWorkspacePrepareRequest(
+                projectId=project.id,
+                deviceId="device-1",
+                workspacePath="/repo/Wegent",
+                action="select",
+            ),
+        )
+
+    assert exc.value.status_code == 409
+    assert "other repository" in exc.value.detail
+    assert test_db.query(Kind).filter(Kind.kind == "DeviceWorkspace").count() == 0
 
 
 @pytest.mark.asyncio
@@ -537,7 +701,6 @@ async def test_open_runtime_transcript_dispatches_to_owned_mapped_device_without
         user_id=test_user.id,
         address=RuntimeTaskAddress(
             deviceId="device-1",
-            workspacePath="/repo/Wegent",
             localTaskId="codex-1",
         ),
     )
@@ -551,7 +714,6 @@ async def test_open_runtime_transcript_dispatches_to_owned_mapped_device_without
         method="runtime.tasks.transcript",
         payload={
             "deviceId": "device-1",
-            "workspacePath": "/repo/Wegent",
             "localTaskId": "codex-1",
         },
         timeout_seconds=30,
@@ -588,7 +750,6 @@ async def test_archive_runtime_task_dispatches_to_owned_device_without_task_rows
         user_id=test_user.id,
         address=RuntimeTaskAddress(
             deviceId="device-1",
-            workspacePath="/repo/Wegent",
             localTaskId="codex-1",
         ),
     )
@@ -601,7 +762,6 @@ async def test_archive_runtime_task_dispatches_to_owned_device_without_task_rows
         method="runtime.tasks.archive",
         payload={
             "deviceId": "device-1",
-            "workspacePath": "/repo/Wegent",
             "localTaskId": "codex-1",
         },
         timeout_seconds=30,
@@ -651,7 +811,6 @@ async def test_send_runtime_message_normalizes_runtime_rpc_failure_without_task_
         request=RuntimeSendRequest(
             address=RuntimeTaskAddress(
                 deviceId="device-1",
-                workspacePath="/repo/Wegent",
                 localTaskId="codex-1",
             ),
             message="continue",
@@ -667,7 +826,6 @@ async def test_send_runtime_message_normalizes_runtime_rpc_failure_without_task_
         method="runtime.tasks.send",
         payload={
             "deviceId": "device-1",
-            "workspacePath": "/repo/Wegent",
             "localTaskId": "codex-1",
             "message": "continue",
         },

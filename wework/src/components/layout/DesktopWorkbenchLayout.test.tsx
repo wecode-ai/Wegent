@@ -1188,6 +1188,11 @@ describe('DesktopWorkbenchLayout', () => {
     const onListGitBranches = vi
       .fn()
       .mockResolvedValue([{ name: 'main', default: true, protected: false }])
+    const onCreateProject = vi.fn().mockResolvedValue({
+      id: 9,
+      name: 'Wegent',
+      tasks: [],
+    })
     const onCreateGitWorkspaceProject = vi.fn().mockResolvedValue({
       id: 9,
       name: 'Wegent',
@@ -1199,6 +1204,7 @@ describe('DesktopWorkbenchLayout', () => {
         {...baseProps}
         onListGitRepositories={onListGitRepositories}
         onListGitBranches={onListGitBranches}
+        onCreateProject={onCreateProject}
         onCreateGitWorkspaceProject={onCreateGitWorkspaceProject}
         state={{
           ...baseProps.state,
@@ -1229,16 +1235,19 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('create-project-button'))
 
     await waitFor(() =>
-      expect(onCreateGitWorkspaceProject).toHaveBeenCalledWith(
+      expect(onCreateProject).toHaveBeenCalledWith(
         expect.objectContaining({
-          device_id: 'device-1',
-          git: expect.objectContaining({
-            url: 'https://github.com/wecode-ai/Wegent.git',
-            branch: 'main',
+          name: 'Wegent',
+          config: expect.objectContaining({
+            git: expect.objectContaining({
+              url: 'https://github.com/wecode-ai/Wegent.git',
+              branch: 'main',
+            }),
           }),
         })
       )
     )
+    expect(onCreateGitWorkspaceProject).not.toHaveBeenCalled()
   })
 
   test('opens Git project dialog before device refresh completes', async () => {
@@ -1282,7 +1291,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('projects-create-button'))
     await userEvent.click(screen.getByTestId('project-clone-from-git-button'))
 
-    expect(screen.getByText('克隆 Git 仓库')).toBeInTheDocument()
+    expect(screen.getByText('创建 Git 项目')).toBeInTheDocument()
     expect(screen.getByTestId('git-repository-select')).toBeDisabled()
     expect(screen.getByText('正在加载仓库...')).toBeInTheDocument()
     expect(onRefreshDevices).toHaveBeenCalledTimes(1)
@@ -1319,6 +1328,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     await userEvent.click(screen.getByTestId('projects-create-button'))
     await userEvent.click(screen.getByTestId('project-start-from-scratch-button'))
+    await userEvent.click(screen.getByTestId('project-folder-mode-create'))
 
     expect(screen.getByTestId('project-create-dialog')).toBeInTheDocument()
     expect(screen.getByTestId('project-device-unavailable-old-device')).toHaveTextContent(
@@ -1456,9 +1466,10 @@ describe('DesktopWorkbenchLayout', () => {
 
     await userEvent.click(screen.getByTestId('projects-create-button'))
     await userEvent.click(screen.getByTestId('project-start-from-scratch-button'))
+    await userEvent.click(screen.getByTestId('project-folder-mode-create'))
 
     expect(screen.getByTestId('project-create-dialog')).toBeInTheDocument()
-    expect(screen.getByText('暂无可用设备')).toBeInTheDocument()
+    expect(screen.getByText('创建项目需要一台可用设备。')).toBeInTheDocument()
 
     const settingsLink = screen.getByTestId('open-cloud-device-settings-link')
     expect(settingsLink).toHaveAttribute('href', '/settings')
@@ -1496,6 +1507,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('project-work-button'))
     await userEvent.click(screen.getByTestId('add-project-option'))
     await userEvent.click(screen.getByTestId('project-start-from-scratch-option'))
+    await userEvent.click(screen.getByTestId('project-folder-mode-create'))
     await userEvent.click(screen.getByTestId('open-cloud-device-settings-link'))
 
     expect(screen.queryByTestId('project-create-dialog')).not.toBeInTheDocument()
@@ -1506,6 +1518,22 @@ describe('DesktopWorkbenchLayout', () => {
 
   test('creates a project from an existing folder selected in the directory tree', async () => {
     const onCreateProject = vi.fn().mockResolvedValue({ id: 2, name: 'repo', tasks: [] })
+    const onPrepareDeviceWorkspace = vi.fn().mockResolvedValue({
+      preparedAction: 'selected',
+      mapping: {
+        id: 10,
+        userId: 1,
+        projectId: 2,
+        deviceId: 'device-1',
+        workspacePath: '/home/ubuntu/repo',
+        repoUrl: null,
+        repoRootFingerprint: null,
+        label: null,
+        createdAt: '2026-06-21T00:00:00',
+        updatedAt: '2026-06-21T00:00:00',
+        lastSeenAt: null,
+      },
+    })
     const onGetDeviceHomeDirectory = vi.fn().mockResolvedValue('/home/ubuntu')
     const onListDeviceDirectories = vi.fn().mockResolvedValue(['.cache', 'repo'])
 
@@ -1513,6 +1541,7 @@ describe('DesktopWorkbenchLayout', () => {
       <DesktopWorkbenchLayout
         {...baseProps}
         onCreateProject={onCreateProject}
+        onPrepareDeviceWorkspace={onPrepareDeviceWorkspace}
         onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
         onListDeviceDirectories={onListDeviceDirectories}
         state={{
@@ -1561,15 +1590,18 @@ describe('DesktopWorkbenchLayout', () => {
       expect(onCreateProject).toHaveBeenCalledWith(
         expect.objectContaining({
           name: 'repo',
-          config: expect.objectContaining({
-            workspace: {
-              source: 'local_path',
-              localPath: '/home/ubuntu/repo',
-            },
-          }),
+          config: {
+            mode: 'workspace',
+          },
         })
       )
     )
+    expect(onPrepareDeviceWorkspace).toHaveBeenCalledWith({
+      projectId: 2,
+      deviceId: 'device-1',
+      workspacePath: '/home/ubuntu/repo',
+      action: 'select',
+    })
   })
 
   test('hides project device status when the project device is online', () => {

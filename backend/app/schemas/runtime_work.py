@@ -20,7 +20,7 @@ class RuntimeTaskAddress(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     device_id: str = Field(..., alias="deviceId", min_length=1)
-    workspace_path: str = Field(..., alias="workspacePath", min_length=1)
+    workspace_path: Optional[str] = Field(default=None, alias="workspacePath")
     local_task_id: str = Field(..., alias="localTaskId", min_length=1)
 
 
@@ -100,6 +100,18 @@ class DeviceWorkspaceUpsert(BaseModel):
     label: Optional[str] = None
 
 
+class DeviceWorkspacePrepareRequest(BaseModel):
+    """Prepare one device folder and store it as a project child workspace."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    project_id: int = Field(..., alias="projectId", ge=1)
+    device_id: str = Field(..., alias="deviceId", min_length=1)
+    workspace_path: str = Field(..., alias="workspacePath", min_length=1)
+    action: Literal["create", "select"]
+    label: Optional[str] = None
+
+
 class DeviceWorkspaceResponse(BaseModel):
     """Kind-backed DeviceWorkspace mapping response."""
 
@@ -119,6 +131,18 @@ class DeviceWorkspaceResponse(BaseModel):
     created_at: datetime = Field(..., alias="createdAt")
     updated_at: datetime = Field(..., alias="updatedAt")
     last_seen_at: Optional[datetime] = Field(default=None, alias="lastSeenAt")
+
+
+class DeviceWorkspacePrepareResponse(BaseModel):
+    """Prepared device workspace mapping plus the device-side action result."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    mapping: DeviceWorkspaceResponse
+    prepared_action: Literal["created", "selected", "cloned", "reused_git"] = Field(
+        ...,
+        alias="preparedAction",
+    )
 
 
 class RuntimeProjectRef(BaseModel):
@@ -243,7 +267,7 @@ class RuntimeTaskArchiveResponse(BaseModel):
 
     accepted: bool
     local_task_id: str = Field(..., alias="localTaskId")
-    workspace_path: str = Field(..., alias="workspacePath")
+    workspace_path: Optional[str] = Field(default=None, alias="workspacePath")
     error: Optional[str] = None
 
 

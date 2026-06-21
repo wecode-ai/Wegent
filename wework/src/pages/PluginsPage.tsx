@@ -29,6 +29,7 @@ export function PluginsPage() {
     refreshWorkLists,
     createProject,
     createGitWorkspaceProject,
+    prepareDeviceWorkspace,
     listGitRepositories,
     listGitBranches,
     updateProjectName,
@@ -103,6 +104,7 @@ export function PluginsPage() {
           onRefreshDevices={refreshDevices}
           onCreateProject={createProject}
           onCreateGitWorkspaceProject={createGitWorkspaceProject}
+          onPrepareDeviceWorkspace={prepareDeviceWorkspace}
           onListGitRepositories={listGitRepositories}
           onListGitBranches={listGitBranches}
           onUpdateProjectName={updateProjectName}

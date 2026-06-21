@@ -195,6 +195,58 @@ print(
     "__WORKSPACE_ROOT_GUARD_SCRIPT__", WORKSPACE_ROOT_GUARD_SCRIPT
 ).strip()
 
+PROJECT_FOLDER_STATUS_SCRIPT = """
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+
+def git_output(path, *args):
+    result = subprocess.run(
+        ["git", "-C", str(path), *args],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip()
+
+
+raw_path = sys.argv[1] if len(sys.argv) > 1 else ""
+path = Path(raw_path).expanduser()
+exists = path.exists()
+is_directory = path.is_dir() if exists else None
+is_empty = None
+is_git_repo = False
+remote_url = None
+
+if exists and is_directory:
+    try:
+        is_empty = next(path.iterdir(), None) is None
+    except OSError:
+        is_empty = False
+    is_git_repo = git_output(path, "rev-parse", "--is-inside-work-tree") == "true"
+    if is_git_repo:
+        remote_url = git_output(path, "remote", "get-url", "origin")
+
+print(
+    json.dumps(
+        {
+            "exists": exists,
+            "isDirectory": is_directory,
+            "isEmpty": is_empty,
+            "isGitRepo": is_git_repo,
+            "remoteUrl": remote_url,
+        },
+        ensure_ascii=False,
+    )
+)
+""".strip()
+
 LS_SKILLS_SCRIPT = """
 import json
 import os
@@ -1057,9 +1109,14 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
         command=f"python3 -c {shlex.quote(WORKSPACE_READ_TEXT_FILE_SCRIPT)}",
         post_processor="json",
     ),
+    "project_folder_status": LocalDeviceCommandDefinition(
+        command=f"python3 -c {shlex.quote(PROJECT_FOLDER_STATUS_SCRIPT)}",
+        post_processor="json",
+    ),
     "mkdir_p": LocalDeviceCommandDefinition(command="mkdir -p"),
     "path_exists": LocalDeviceCommandDefinition(command="test -e"),
     "git_clone": LocalDeviceCommandDefinition(command="git clone"),
+    "git_fetch": LocalDeviceCommandDefinition(command="git fetch --all --prune"),
     "git_config": LocalDeviceCommandDefinition(command="git config"),
     "git_worktree_list": LocalDeviceCommandDefinition(
         command="sh -c 'git -C \"$1\" worktree list --porcelain' --"

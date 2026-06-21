@@ -34,6 +34,7 @@ export function WorkbenchPage() {
     upgradeDevice,
     createProject,
     createGitWorkspaceProject,
+    prepareDeviceWorkspace,
     listGitRepositories,
     listGitBranches,
     updateProjectName,
@@ -102,6 +103,7 @@ export function WorkbenchPage() {
       onUpgradeDevice={upgradeDevice}
       onCreateProject={createProject}
       onCreateGitWorkspaceProject={createGitWorkspaceProject}
+      onPrepareDeviceWorkspace={prepareDeviceWorkspace}
       onListGitRepositories={listGitRepositories}
       onListGitBranches={listGitBranches}
       onUpdateProjectName={updateProjectName}

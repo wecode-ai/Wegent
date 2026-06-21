@@ -25,6 +25,8 @@ import type {
   BindRuntimeTaskIMSessionsResponse,
   CreateGitWorkspaceProjectRequest,
   CreateProjectRequest,
+  DeviceWorkspacePrepareRequest,
+  DeviceWorkspacePrepareResponse,
   GitBranch,
   GitRepoInfo,
   IMPrivateSession,
@@ -72,6 +74,9 @@ interface MobileWorkbenchLayoutProps {
   onCreateGitWorkspaceProject?: (
     data: CreateGitWorkspaceProjectRequest
   ) => Promise<ProjectWithTasks>
+  onPrepareDeviceWorkspace?: (
+    data: DeviceWorkspacePrepareRequest
+  ) => Promise<DeviceWorkspacePrepareResponse>
   onListGitRepositories?: () => Promise<GitRepoInfo[]>
   onListGitBranches?: (repo: GitRepoInfo) => Promise<GitBranch[]>
   onUpdateProjectName?: (projectId: number, name: string) => Promise<void>
@@ -148,6 +153,7 @@ export function MobileWorkbenchLayout({
   onForkCurrentRuntimeTask,
   onCreateProject,
   onCreateGitWorkspaceProject,
+  onPrepareDeviceWorkspace,
   onListGitRepositories,
   onListGitBranches,
   onUpdateProjectName,
@@ -714,6 +720,7 @@ export function MobileWorkbenchLayout({
         }}
         onCreateProject={onCreateProject}
         onCreateGitWorkspaceProject={onCreateGitWorkspaceProject}
+        onPrepareDeviceWorkspace={onPrepareDeviceWorkspace}
         onListGitRepositories={onListGitRepositories}
         onListGitBranches={onListGitBranches}
         onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}

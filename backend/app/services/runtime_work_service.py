@@ -4,6 +4,8 @@
 
 """Service for Project -> Device Workspace -> LocalTask runtime work trees."""
 
+import json
+import posixpath
 import re
 from dataclasses import dataclass, replace
 from hashlib import sha256
@@ -25,6 +27,8 @@ from app.schemas.project import ProjectConfig
 from app.schemas.runtime_work import (
     BindRuntimeTaskIMSessionsRequest,
     BindRuntimeTaskIMSessionsResponse,
+    DeviceWorkspacePrepareRequest,
+    DeviceWorkspacePrepareResponse,
     DeviceWorkspaceResponse,
     DeviceWorkspaceUpsert,
     LocalTaskSummary,
@@ -42,6 +46,7 @@ from app.schemas.runtime_work import (
     RuntimeTranscriptResponse,
     RuntimeWorkListResponse,
 )
+from app.services.device.command_service import execute_configured_device_command
 from app.services.device.runtime_rpc_service import RuntimeRpcError, runtime_rpc_service
 from app.services.device_service import device_service
 from app.services.im.notification_dispatcher import im_notification_dispatcher
@@ -58,6 +63,7 @@ RUNTIME_TRANSCRIPT_TIMEOUT_SECONDS = 30
 RUNTIME_SEND_TIMEOUT_SECONDS = 600
 RUNTIME_CREATE_TIMEOUT_SECONDS = 600
 RUNTIME_FORK_TIMEOUT_SECONDS = 600
+DEVICE_WORKSPACE_PREPARE_TIMEOUT_SECONDS = 600
 RUNTIME_MODEL_TYPE = "runtime"
 WORKTREE_ROOT_DIR = "worktrees"
 CHAT_WORKSPACE_DIR = "chats"
@@ -118,6 +124,55 @@ def upsert_device_workspace(
         payload=payload,
         workspace_path=workspace_path,
         workspace_path_hash=workspace_path_hash(workspace_path),
+    )
+
+
+async def prepare_device_workspace(
+    *,
+    db: Session,
+    user_id: int,
+    payload: DeviceWorkspacePrepareRequest,
+) -> DeviceWorkspacePrepareResponse:
+    """Prepare a project child folder on one device and persist its mapping."""
+
+    project = _get_active_project(db, user_id, payload.project_id, None)
+    workspace_path = normalize_workspace_path(payload.workspace_path)
+    config = ProjectConfig.model_validate(project.config or {})
+    repo_url = config.git.url if config.is_workspace and config.git else None
+    prepared_action = (
+        await _prepare_git_workspace_path(
+            db=db,
+            user_id=user_id,
+            device_id=payload.device_id,
+            workspace_path=workspace_path,
+            git_url=repo_url,
+            branch=config.git.branch if config.git else None,
+            git_domain=config.git.domain if config.git else None,
+            action=payload.action,
+        )
+        if repo_url
+        else await _prepare_plain_workspace_path(
+            db=db,
+            user_id=user_id,
+            device_id=payload.device_id,
+            workspace_path=workspace_path,
+            action=payload.action,
+        )
+    )
+    mapping = upsert_device_workspace(
+        db=db,
+        user_id=user_id,
+        payload=DeviceWorkspaceUpsert(
+            projectId=project.id,
+            deviceId=payload.device_id,
+            workspacePath=workspace_path,
+            repoUrl=repo_url,
+            label=payload.label,
+        ),
+    )
+    return DeviceWorkspacePrepareResponse(
+        mapping=mapping,
+        preparedAction=prepared_action,
     )
 
 
@@ -278,7 +333,7 @@ async def get_runtime_transcript(
             user_id=user_id,
             device_id=normalized_address.device_id,
             method="runtime.tasks.transcript",
-            payload=normalized_address.model_dump(by_alias=True),
+            payload=_runtime_task_address_payload(normalized_address),
             timeout_seconds=RUNTIME_TRANSCRIPT_TIMEOUT_SECONDS,
         )
     except RuntimeRpcError as exc:
@@ -302,7 +357,7 @@ async def send_runtime_message(
     _ensure_owned_device(db, user_id, address.device_id)
     _touch_workspace_mapping(db, user_id, address)
     payload = {
-        **address.model_dump(by_alias=True),
+        **_runtime_task_address_payload(address),
         "message": request.message,
     }
     if request.source:
@@ -339,7 +394,7 @@ async def bind_runtime_task_to_im_sessions(
         user_id=user_id,
         session_keys=request.session_keys,
     )
-    runtime_task = address.model_dump(by_alias=True)
+    runtime_task = _runtime_task_address_payload(address)
     for session in sessions:
         await im_session_service.bind_active_runtime_task(
             db,
@@ -374,7 +429,7 @@ async def archive_runtime_task(
             user_id=user_id,
             device_id=normalized_address.device_id,
             method="runtime.tasks.archive",
-            payload=normalized_address.model_dump(by_alias=True),
+            payload=_runtime_task_address_payload(normalized_address),
             timeout_seconds=RUNTIME_TRANSCRIPT_TIMEOUT_SECONDS,
         )
     except RuntimeRpcError as exc:
@@ -626,6 +681,320 @@ def _get_active_project(
     return project
 
 
+async def _prepare_plain_workspace_path(
+    *,
+    db: Session,
+    user_id: int,
+    device_id: str,
+    workspace_path: str,
+    action: str,
+) -> str:
+    status_payload = await _read_project_folder_status(
+        db=db,
+        user_id=user_id,
+        device_id=device_id,
+        workspace_path=workspace_path,
+    )
+    if action == "create":
+        if status_payload.get("exists"):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Project folder already exists",
+            )
+        mkdir_result = await execute_configured_device_command(
+            db=db,
+            user_id=user_id,
+            device_id=device_id,
+            command_key="mkdir_p",
+            args=[workspace_path],
+            timeout_seconds=30,
+        )
+        _raise_for_failed_device_command(
+            mkdir_result, "Failed to create project folder"
+        )
+        return "created"
+
+    _ensure_selectable_directory(status_payload)
+    return "selected"
+
+
+async def _prepare_git_workspace_path(
+    *,
+    db: Session,
+    user_id: int,
+    device_id: str,
+    workspace_path: str,
+    git_url: str,
+    branch: Optional[str],
+    git_domain: Optional[str],
+    action: str,
+) -> str:
+    status_payload = await _read_project_folder_status(
+        db=db,
+        user_id=user_id,
+        device_id=device_id,
+        workspace_path=workspace_path,
+    )
+    if not status_payload.get("exists") or status_payload.get("isEmpty"):
+        await _clone_git_workspace_path(
+            db=db,
+            user_id=user_id,
+            device_id=device_id,
+            workspace_path=workspace_path,
+            git_url=git_url,
+            branch=branch,
+            git_domain=git_domain,
+        )
+        return "cloned"
+
+    _ensure_selectable_directory(status_payload)
+    if not status_payload.get("isGitRepo"):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Project folder has existing content and is not a Git repository",
+        )
+    remote_url = str(status_payload.get("remoteUrl") or "")
+    if not _git_urls_match(remote_url, git_url):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Project folder is linked to another repository",
+        )
+    await _reuse_git_workspace_path(
+        db=db,
+        user_id=user_id,
+        device_id=device_id,
+        workspace_path=workspace_path,
+        branch=branch,
+        git_domain=git_domain,
+    )
+    return "reused_git"
+
+
+async def _read_project_folder_status(
+    *,
+    db: Session,
+    user_id: int,
+    device_id: str,
+    workspace_path: str,
+) -> dict[str, Any]:
+    result = await execute_configured_device_command(
+        db=db,
+        user_id=user_id,
+        device_id=device_id,
+        command_key="project_folder_status",
+        args=[workspace_path],
+        timeout_seconds=30,
+    )
+    _raise_for_failed_device_command(result, "Failed to inspect project folder")
+    stdout = result.get("stdout")
+    if isinstance(stdout, dict):
+        return stdout
+    if isinstance(stdout, str):
+        try:
+            parsed = json.loads(stdout)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Invalid project folder status response: {exc}",
+            ) from exc
+        if isinstance(parsed, dict):
+            return parsed
+    raise HTTPException(
+        status_code=status.HTTP_502_BAD_GATEWAY,
+        detail="Invalid project folder status response",
+    )
+
+
+def _ensure_selectable_directory(status_payload: dict[str, Any]) -> None:
+    if not status_payload.get("exists"):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project folder does not exist",
+        )
+    if not status_payload.get("isDirectory"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Project folder path is not a directory",
+        )
+
+
+async def _clone_git_workspace_path(
+    *,
+    db: Session,
+    user_id: int,
+    device_id: str,
+    workspace_path: str,
+    git_url: str,
+    branch: Optional[str],
+    git_domain: Optional[str],
+) -> None:
+    parent_path = posixpath.dirname(workspace_path)
+    if parent_path and parent_path != ".":
+        mkdir_result = await execute_configured_device_command(
+            db=db,
+            user_id=user_id,
+            device_id=device_id,
+            command_key="mkdir_p",
+            args=[parent_path],
+            timeout_seconds=30,
+        )
+        _raise_for_failed_device_command(mkdir_result, "Failed to create parent folder")
+
+    clone_result = await execute_configured_device_command(
+        db=db,
+        user_id=user_id,
+        device_id=device_id,
+        command_key="git_clone",
+        args=_build_git_clone_args(git_url, branch, workspace_path),
+        timeout_seconds=DEVICE_WORKSPACE_PREPARE_TIMEOUT_SECONDS,
+        max_output_bytes=5 * 1024 * 1024,
+    )
+    _raise_for_failed_device_command(clone_result, "Failed to clone Git repository")
+    await _configure_git_workspace_identity(
+        db=db,
+        user_id=user_id,
+        device_id=device_id,
+        workspace_path=workspace_path,
+        git_domain=git_domain,
+    )
+
+
+async def _reuse_git_workspace_path(
+    *,
+    db: Session,
+    user_id: int,
+    device_id: str,
+    workspace_path: str,
+    branch: Optional[str],
+    git_domain: Optional[str],
+) -> None:
+    fetch_result = await execute_configured_device_command(
+        db=db,
+        user_id=user_id,
+        device_id=device_id,
+        command_key="git_fetch",
+        path=workspace_path,
+        timeout_seconds=DEVICE_WORKSPACE_PREPARE_TIMEOUT_SECONDS,
+        max_output_bytes=5 * 1024 * 1024,
+    )
+    _raise_for_failed_device_command(fetch_result, "Failed to fetch Git repository")
+    if branch and branch.strip():
+        checkout_result = await execute_configured_device_command(
+            db=db,
+            user_id=user_id,
+            device_id=device_id,
+            command_key="git_checkout",
+            path=workspace_path,
+            args=[branch.strip()],
+            timeout_seconds=30,
+        )
+        _raise_for_failed_device_command(checkout_result, "Failed to checkout branch")
+    await _configure_git_workspace_identity(
+        db=db,
+        user_id=user_id,
+        device_id=device_id,
+        workspace_path=workspace_path,
+        git_domain=git_domain,
+    )
+
+
+async def _configure_git_workspace_identity(
+    *,
+    db: Session,
+    user_id: int,
+    device_id: str,
+    workspace_path: str,
+    git_domain: Optional[str],
+) -> None:
+    git_user_name, git_user_email = _resolve_user_git_identity(
+        db,
+        user_id=user_id,
+        git_domain=git_domain,
+    )
+    if not git_user_name or not git_user_email:
+        return
+    for key, value in (("user.name", git_user_name), ("user.email", git_user_email)):
+        config_result = await execute_configured_device_command(
+            db=db,
+            user_id=user_id,
+            device_id=device_id,
+            command_key="git_config",
+            path=workspace_path,
+            args=[key, value],
+            timeout_seconds=30,
+        )
+        _raise_for_failed_device_command(
+            config_result, f"Failed to configure Git {key}"
+        )
+
+
+def _resolve_user_git_identity(
+    db: Session,
+    *,
+    user_id: int,
+    git_domain: Optional[str],
+) -> tuple[Optional[str], Optional[str]]:
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        return None, None
+
+    git_info_list = user.git_info or []
+    if not isinstance(git_info_list, list):
+        git_info_list = [git_info_list] if git_info_list else []
+    if not git_info_list:
+        return None, None
+
+    matched_git_info = None
+    if git_domain:
+        for git_info in git_info_list:
+            if str(git_info.get("git_domain") or "") == git_domain:
+                matched_git_info = git_info
+                break
+    if not matched_git_info:
+        matched_git_info = git_info_list[0]
+
+    git_login = matched_git_info.get("git_login")
+    git_email = matched_git_info.get("git_email")
+    git_id = matched_git_info.get("git_id")
+    if not git_email and git_id and git_login:
+        git_email = f"{git_id}+{git_login}@users.noreply.github.com"
+    return git_login, git_email
+
+
+def _build_git_clone_args(
+    git_url: str,
+    branch: Optional[str],
+    checkout_path: str,
+) -> list[str]:
+    args: list[str] = []
+    if branch and branch.strip():
+        args.extend(["--branch", branch.strip(), "--single-branch"])
+    args.extend([git_url, checkout_path])
+    return args
+
+
+def _git_urls_match(left: str, right: str) -> bool:
+    return _normalize_git_url(left) == _normalize_git_url(right)
+
+
+def _normalize_git_url(url: str) -> str:
+    value = url.strip()
+    if value.startswith("git@") and ":" in value:
+        host, path = value[4:].split(":", 1)
+        value = f"https://{host}/{path}"
+    parsed = urlparse(value)
+    if parsed.scheme and parsed.netloc:
+        value = f"{parsed.netloc}{parsed.path}"
+    return value.lower().removesuffix(".git").rstrip("/")
+
+
+def _raise_for_failed_device_command(result: dict[str, Any], message: str) -> None:
+    if bool(result.get("success")) and result.get("exit_code") == 0:
+        return
+    detail = str(result.get("stderr") or result.get("error") or message)
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
+
+
 def _runtime_send_response(
     result: dict[str, Any],
     local_task_id: str,
@@ -651,13 +1020,13 @@ def _runtime_archive_response(
         return RuntimeTaskArchiveResponse(
             accepted=False,
             localTaskId=str(result.get("localTaskId") or address.local_task_id),
-            workspacePath=str(result.get("workspacePath") or address.workspace_path),
+            workspacePath=result.get("workspacePath") or address.workspace_path,
             error=str(result.get("error") or "Runtime archive failed"),
         )
     return RuntimeTaskArchiveResponse(
         accepted=bool(result.get("accepted", True)),
         localTaskId=str(result.get("localTaskId") or address.local_task_id),
-        workspacePath=str(result.get("workspacePath") or address.workspace_path),
+        workspacePath=result.get("workspacePath") or address.workspace_path,
         error=result.get("error"),
     )
 
@@ -1088,11 +1457,20 @@ def _device_status(device: Optional[dict[str, Any]]) -> str:
 
 
 def _normalized_address(address: RuntimeTaskAddress) -> RuntimeTaskAddress:
+    workspace_path = (
+        normalize_workspace_path(address.workspace_path)
+        if address.workspace_path
+        else None
+    )
     return RuntimeTaskAddress(
         deviceId=address.device_id,
-        workspacePath=normalize_workspace_path(address.workspace_path),
+        workspacePath=workspace_path,
         localTaskId=address.local_task_id.strip(),
     )
+
+
+def _runtime_task_address_payload(address: RuntimeTaskAddress) -> dict[str, Any]:
+    return address.model_dump(by_alias=True, exclude_none=True)
 
 
 def _project_runtime_target(
@@ -1501,6 +1879,8 @@ def _touch_workspace_mapping(
     user_id: int,
     address: RuntimeTaskAddress,
 ) -> Optional[DeviceWorkspaceResponse]:
+    if not address.workspace_path:
+        return None
     return touch_device_workspace_kind(
         db=db,
         user_id=user_id,

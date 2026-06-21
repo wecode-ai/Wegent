@@ -33,7 +33,7 @@ export interface RuntimeTaskRoute {
 }
 
 export interface RuntimeTaskRouteInput extends RuntimeTaskRoute {
-  workspacePath?: string
+  workspacePath?: string | null
 }
 
 function getNumericSearchParam(

@@ -14,6 +14,8 @@ import type {
   BindRuntimeTaskIMSessionsResponse,
   CreateGitWorkspaceProjectRequest,
   CreateProjectRequest,
+  DeviceWorkspacePrepareRequest,
+  DeviceWorkspacePrepareResponse,
   GitBranch,
   GitRepoInfo,
   IMPrivateSession,
@@ -72,6 +74,9 @@ interface DesktopWorkbenchLayoutProps {
   ) => Promise<BindRuntimeTaskIMSessionsResponse>
   onCreateProject: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
   onCreateGitWorkspaceProject: (data: CreateGitWorkspaceProjectRequest) => Promise<ProjectWithTasks>
+  onPrepareDeviceWorkspace: (
+    data: DeviceWorkspacePrepareRequest
+  ) => Promise<DeviceWorkspacePrepareResponse>
   onListGitRepositories: () => Promise<GitRepoInfo[]>
   onListGitBranches: (repo: GitRepoInfo) => Promise<GitBranch[]>
   onUpdateProjectName: (projectId: number, name: string) => Promise<void>
@@ -148,6 +153,7 @@ export function DesktopWorkbenchLayout({
   onBindRuntimeTaskToImSessions,
   onCreateProject,
   onCreateGitWorkspaceProject,
+  onPrepareDeviceWorkspace,
   onListGitRepositories,
   onListGitBranches,
   onUpdateProjectName,
@@ -505,6 +511,7 @@ export function DesktopWorkbenchLayout({
           onUpgradeDevice={onUpgradeDevice}
           onCreateProject={onCreateProject}
           onCreateGitWorkspaceProject={onCreateGitWorkspaceProject}
+          onPrepareDeviceWorkspace={onPrepareDeviceWorkspace}
           onListGitRepositories={onListGitRepositories}
           onListGitBranches={onListGitBranches}
           onUpdateProjectName={onUpdateProjectName}
@@ -613,6 +620,7 @@ export function DesktopWorkbenchLayout({
         }}
         onCreateProject={onCreateProject}
         onCreateGitWorkspaceProject={onCreateGitWorkspaceProject}
+        onPrepareDeviceWorkspace={onPrepareDeviceWorkspace}
         preferredDeviceId={
           state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
         }

@@ -1,10 +1,7 @@
 import { ArrowUpCircle, Check, ChevronLeft, Folder, FolderPlus, Loader2, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
-import {
-  SearchableSelect,
-  type SearchableSelectOption,
-} from '@/components/common/SearchableSelect'
+import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
@@ -19,6 +16,8 @@ import {
 import type {
   CreateGitWorkspaceProjectRequest,
   CreateProjectRequest,
+  DeviceWorkspacePrepareRequest,
+  DeviceWorkspacePrepareResponse,
   DeviceInfo,
   GitBranch,
   GitRepoInfo,
@@ -27,6 +26,7 @@ import type {
 import type { DeviceUpgradeState } from '@/types/device-events'
 
 type ProjectCreateMode = 'scratch' | 'existing' | 'git'
+type ProjectFolderMode = 'none' | 'create' | 'select'
 
 interface ProjectCreateDialogProps {
   open: boolean
@@ -36,8 +36,11 @@ interface ProjectCreateDialogProps {
   onClose: () => void
   onCreateProject: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
   onCreateGitWorkspaceProject?: (
-    data: CreateGitWorkspaceProjectRequest,
+    data: CreateGitWorkspaceProjectRequest
   ) => Promise<ProjectWithTasks>
+  onPrepareDeviceWorkspace?: (
+    data: DeviceWorkspacePrepareRequest
+  ) => Promise<DeviceWorkspacePrepareResponse>
   preferredDeviceId?: string | null
   onSelectDevicePreference?: (deviceId: string) => void
   onOpenCloudDeviceSettings?: () => void
@@ -54,7 +57,10 @@ interface ProjectCreateDialogProps {
 const FALLBACK_PROJECTS_ROOT = '~/.wecode/wegent-executor/workspace/projects'
 
 function sanitizePathSegment(value: string): string {
-  const sanitized = value.trim().replace(/[^\w.-]+/g, '-').replace(/^-+|-+$/g, '')
+  const sanitized = value
+    .trim()
+    .replace(/[^\w.-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
   return sanitized || 'untitled'
 }
 
@@ -95,7 +101,7 @@ function getGitErrorMessage(
   error: unknown,
   tokenMissingText: string,
   fallbackText: string,
-  directoryExistsText?: (path: string) => string,
+  directoryExistsText?: (path: string) => string
 ): string {
   const message = error instanceof Error ? error.message : ''
   const normalizedMessage = message.toLowerCase()
@@ -137,10 +143,7 @@ function canSelectProjectDevice(device: DeviceInfo): boolean {
   return isUsableDevice(device)
 }
 
-function getDefaultDeviceId(
-  devices: DeviceInfo[],
-  preferredDeviceId?: string | null
-): string {
+function getDefaultDeviceId(devices: DeviceInfo[], preferredDeviceId?: string | null): string {
   const preferredDevice = preferredDeviceId
     ? devices.find(device => device.device_id === preferredDeviceId)
     : undefined
@@ -192,8 +195,7 @@ function directoryMatchesQuery(directory: string, query: string): boolean {
 
 function isProjectDeviceUpgradeActive(upgradeState: DeviceUpgradeState | undefined): boolean {
   return Boolean(
-    upgradeState &&
-      !['success', 'error', 'skipped', 'busy'].includes(upgradeState.status),
+    upgradeState && !['success', 'error', 'skipped', 'busy'].includes(upgradeState.status)
   )
 }
 
@@ -204,7 +206,7 @@ export function ProjectCreateDialog({
   devices = [],
   onClose,
   onCreateProject,
-  onCreateGitWorkspaceProject,
+  onPrepareDeviceWorkspace,
   preferredDeviceId,
   onSelectDevicePreference,
   onOpenCloudDeviceSettings,
@@ -227,7 +229,7 @@ export function ProjectCreateDialog({
       devices={devices}
       onClose={onClose}
       onCreateProject={onCreateProject}
-      onCreateGitWorkspaceProject={onCreateGitWorkspaceProject}
+      onPrepareDeviceWorkspace={onPrepareDeviceWorkspace}
       preferredDeviceId={preferredDeviceId}
       onSelectDevicePreference={onSelectDevicePreference}
       onOpenCloudDeviceSettings={onOpenCloudDeviceSettings}
@@ -243,13 +245,18 @@ export function ProjectCreateDialog({
   )
 }
 
+type ProjectCreateDialogContentProps = Omit<
+  ProjectCreateDialogProps,
+  'open' | 'onCreateGitWorkspaceProject'
+>
+
 function ProjectCreateDialogContent({
   mode,
   presentation = 'dialog',
   devices,
   onClose,
   onCreateProject,
-  onCreateGitWorkspaceProject,
+  onPrepareDeviceWorkspace,
   preferredDeviceId,
   onSelectDevicePreference,
   onOpenCloudDeviceSettings,
@@ -261,14 +268,17 @@ function ProjectCreateDialogContent({
   onUpgradeDevice,
   onListGitRepositories,
   onListGitBranches,
-}: Omit<ProjectCreateDialogProps, 'open'>) {
+}: ProjectCreateDialogContentProps) {
   const { t } = useTranslation('common')
   const allProjectDevices = useMemo(() => getProjectDeviceOptions(devices), [devices])
   const firstDeviceId = useMemo(
     () => getDefaultDeviceId(allProjectDevices, preferredDeviceId),
-    [allProjectDevices, preferredDeviceId],
+    [allProjectDevices, preferredDeviceId]
   )
   const [deviceId, setDeviceId] = useState(firstDeviceId)
+  const [folderMode, setFolderMode] = useState<ProjectFolderMode>(
+    mode === 'existing' ? 'select' : 'none'
+  )
   const [projectName, setProjectName] = useState('')
   const [projectRoot, setProjectRoot] = useState(FALLBACK_PROJECTS_ROOT)
   const [currentPath, setCurrentPath] = useState('')
@@ -294,13 +304,15 @@ function ProjectCreateDialogContent({
   const [projectCreateError, setProjectCreateError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
+  const requiresDevice = folderMode !== 'none'
+  const showDeviceSelect = requiresDevice && allProjectDevices.length > 1
   const selectedDevice = allProjectDevices.find(device => device.device_id === deviceId)
   const selectedDeviceUsable = Boolean(selectedDevice && canUseForProjectCreation(selectedDevice))
   const selectedUnavailableDevice =
-    selectedDevice && !selectedDeviceUsable ? selectedDevice : null
+    requiresDevice && selectedDevice && !selectedDeviceUsable ? selectedDevice : null
 
   useEffect(() => {
-    if (mode !== 'scratch' || !deviceId || !selectedDeviceUsable) return
+    if (folderMode !== 'create' || !deviceId || !selectedDeviceUsable) return
     let cancelled = false
 
     async function resolveProjectRoot() {
@@ -320,10 +332,10 @@ function ProjectCreateDialogContent({
     return () => {
       cancelled = true
     }
-  }, [deviceId, mode, onGetProjectWorkspaceRoot, selectedDeviceUsable])
+  }, [deviceId, folderMode, onGetProjectWorkspaceRoot, selectedDeviceUsable])
 
   useEffect(() => {
-    if (mode !== 'existing' || !deviceId || !selectedDeviceUsable) return
+    if (folderMode !== 'select' || !deviceId || !selectedDeviceUsable) return
     let cancelled = false
 
     async function resolveHomeDirectory() {
@@ -350,10 +362,10 @@ function ProjectCreateDialogContent({
     return () => {
       cancelled = true
     }
-  }, [deviceId, mode, onGetDeviceHomeDirectory, selectedDeviceUsable])
+  }, [deviceId, folderMode, onGetDeviceHomeDirectory, selectedDeviceUsable])
 
   useEffect(() => {
-    if (mode !== 'existing') return
+    if (folderMode !== 'select') return
     const normalizedInput = normalizePath(pathInput)
     if (!normalizedInput) return
     if (normalizedInput === currentPath && !directoryQuery) return
@@ -365,10 +377,10 @@ function ProjectCreateDialogContent({
       setSelectedPath(normalizedInput)
     }, 300)
     return () => window.clearTimeout(timeoutId)
-  }, [currentPath, directoryQuery, mode, pathInput])
+  }, [currentPath, directoryQuery, folderMode, pathInput])
 
   useEffect(() => {
-    if (mode !== 'existing' || !deviceId || !selectedDeviceUsable || !currentPath) return
+    if (folderMode !== 'select' || !deviceId || !selectedDeviceUsable || !currentPath) return
     let cancelled = false
 
     async function loadDirectories() {
@@ -384,7 +396,7 @@ function ProjectCreateDialogContent({
         setDirectoryError(
           error instanceof Error
             ? error.message
-            : t('workbench.project_directory_load_failed', '目录加载失败'),
+            : t('workbench.project_directory_load_failed', '目录加载失败')
         )
       } finally {
         if (!cancelled) setLoadingDirectories(false)
@@ -395,7 +407,7 @@ function ProjectCreateDialogContent({
     return () => {
       cancelled = true
     }
-  }, [currentPath, deviceId, mode, onListDeviceDirectories, selectedDeviceUsable, t])
+  }, [currentPath, deviceId, folderMode, onListDeviceDirectories, selectedDeviceUsable, t])
 
   useEffect(() => {
     if (mode !== 'git') return
@@ -410,8 +422,8 @@ function ProjectCreateDialogContent({
         if (cancelled) return
         setRepositories(
           uniqueRepositories(items).sort((left, right) =>
-            left.git_repo.localeCompare(right.git_repo),
-          ),
+            left.git_repo.localeCompare(right.git_repo)
+          )
         )
       } catch (error) {
         if (cancelled) return
@@ -420,8 +432,8 @@ function ProjectCreateDialogContent({
           getGitErrorMessage(
             error,
             t('workbench.project_git_token_missing', '请先在设置中配置 Git Token'),
-            t('workbench.project_git_repository_load_failed', '仓库加载失败'),
-          ),
+            t('workbench.project_git_repository_load_failed', '仓库加载失败')
+          )
         )
       } finally {
         if (!cancelled) setLoadingRepositories(false)
@@ -456,8 +468,8 @@ function ProjectCreateDialogContent({
           getGitErrorMessage(
             error,
             t('workbench.project_git_token_missing', '请先在设置中配置 Git Token'),
-            t('workbench.project_git_branch_load_failed', '分支加载失败'),
-          ),
+            t('workbench.project_git_branch_load_failed', '分支加载失败')
+          )
         )
       } finally {
         if (!cancelled) setLoadingBranches(false)
@@ -470,11 +482,12 @@ function ProjectCreateDialogContent({
     }
   }, [mode, onListGitBranches, selectedRepo, t])
 
-  const scratchPath = useMemo(
-    () => `${normalizePath(projectRoot)}/${sanitizePathSegment(projectName)}`,
-    [projectName, projectRoot],
-  )
   const gitProjectName = getGitProjectName(selectedRepo)
+  const defaultFolderName = mode === 'git' ? gitProjectName : projectName.trim()
+  const createFolderPath = useMemo(
+    () => joinPath(projectRoot, sanitizePathSegment(defaultFolderName)),
+    [defaultFolderName, projectRoot]
+  )
   const finalProjectName =
     mode === 'scratch'
       ? projectName.trim()
@@ -482,22 +495,21 @@ function ProjectCreateDialogContent({
         ? gitProjectName
         : basename(selectedPath)
   const finalPath =
-    mode === 'scratch' ? scratchPath : mode === 'git' ? '' : directoryQuery ? '' : selectedPath
+    folderMode === 'create'
+      ? createFolderPath
+      : folderMode === 'select' && !directoryQuery
+        ? selectedPath
+        : ''
+  const hasProjectIdentity =
+    mode === 'git' ? Boolean(selectedRepo && selectedBranch) : Boolean(finalProjectName)
   const canCreate =
-    mode === 'git'
-      ? Boolean(
-          deviceId &&
-            selectedDeviceUsable &&
-            selectedRepo &&
-            selectedBranch &&
-            onCreateGitWorkspaceProject,
-        )
-      : Boolean(deviceId && selectedDeviceUsable && finalProjectName && finalPath)
+    hasProjectIdentity &&
+    (!requiresDevice || Boolean(deviceId && selectedDeviceUsable && finalPath))
   const visibleDirectories = showHiddenDirectories
     ? directories
     : directories.filter(directory => !directory.startsWith('.'))
   const filteredDirectories = visibleDirectories.filter(directory =>
-    directoryMatchesQuery(directory, directoryQuery),
+    directoryMatchesQuery(directory, directoryQuery)
   )
   const repositoryOptions = useMemo<SearchableSelectOption[]>(
     () =>
@@ -506,21 +518,18 @@ function ProjectCreateDialogContent({
         label: repo.git_repo,
         searchText: `${repo.name} ${repo.namespace} ${repo.git_domain}`,
       })),
-    [repositories],
+    [repositories]
   )
   const branchOptions = useMemo<SearchableSelectOption[]>(
     () =>
       branches.map(branch => ({
         value: branch.name,
         label: branch.default
-          ? `${branch.name}${t(
-              'workbench.project_git_branch_default_suffix',
-              '（默认）',
-            )}`
+          ? `${branch.name}${t('workbench.project_git_branch_default_suffix', '（默认）')}`
           : branch.name,
         searchText: branch.name,
       })),
-    [branches, t],
+    [branches, t]
   )
 
   const handleDeviceChange = (nextDeviceId: string) => {
@@ -541,10 +550,6 @@ function ProjectCreateDialogContent({
     setCreateDirectoryError(null)
     setNewFolderName('')
     setNewFolderOpen(false)
-    setSelectedRepo(null)
-    setBranches([])
-    setSelectedBranch(null)
-    setBranchError(null)
     setProjectCreateError(null)
   }
 
@@ -600,7 +605,7 @@ function ProjectCreateDialogContent({
 
     if (folderName.includes('/')) {
       setCreateDirectoryError(
-        t('workbench.project_create_folder_name_error', '文件夹名称不能包含 /'),
+        t('workbench.project_create_folder_name_error', '文件夹名称不能包含 /')
       )
       return
     }
@@ -617,7 +622,7 @@ function ProjectCreateDialogContent({
       setCreateDirectoryError(
         error instanceof Error
           ? error.message
-          : t('workbench.project_create_folder_failed', '新建文件夹失败'),
+          : t('workbench.project_create_folder_failed', '新建文件夹失败')
       )
     } finally {
       setCreatingDirectory(false)
@@ -628,18 +633,12 @@ function ProjectCreateDialogContent({
 
   const title =
     mode === 'git'
-      ? t('workbench.project_create_git_title', '克隆 Git 仓库')
+      ? t('workbench.project_create_git_title', '创建 Git 项目')
       : mode === 'existing'
         ? t('workbench.project_create_existing_title', '选择项目目录')
         : t('workbench.project_create_title', '新建项目')
-  const submittingLabel =
-    mode === 'git'
-      ? t('workbench.project_git_cloning', '克隆中...')
-      : t('workbench.project_creating', '创建中...')
-  const submittingHint =
-    mode === 'git'
-      ? t('workbench.project_git_clone_progress', '正在克隆仓库，可能需要一点时间')
-      : t('workbench.project_create_progress', '正在创建项目，请稍候')
+  const submittingLabel = t('workbench.project_creating', '创建中...')
+  const submittingHint = t('workbench.project_create_progress', '正在创建项目，请稍候')
   const isMobileSheet = presentation === 'mobileSheet'
   const getDeviceOptionLabel = (device: DeviceInfo) => {
     const statusLabel = isDeviceBelowWeWorkVersion(device)
@@ -650,16 +649,141 @@ function ProjectCreateDialogContent({
             : isUsableDevice(device)
               ? 'workbench.project_device_online'
               : 'workbench.project_device_offline',
-          device.status === 'busy' ? '(忙碌)' : isUsableDevice(device) ? '(在线)' : '(离线)',
+          device.status === 'busy' ? '(忙碌)' : isUsableDevice(device) ? '(在线)' : '(离线)'
         )
 
     return `${device.name || device.device_id}${
       isCloudDevice(device) ? ` ${t('workbench.project_cloud_device', '(云设备)')}` : ''
     } ${statusLabel}`
   }
-  const directoryDeviceUnavailableMessage = selectedDevice && isDeviceBelowWeWorkVersion(selectedDevice)
-    ? t('workbench.project_directory_upgrade_device_hint', '升级当前设备后可选择目录')
-    : t('workbench.project_directory_unavailable_device_hint', '设备恢复在线后可选择目录')
+  const directoryDeviceUnavailableMessage =
+    selectedDevice && isDeviceBelowWeWorkVersion(selectedDevice)
+      ? t('workbench.project_directory_upgrade_device_hint', '升级当前设备后可选择目录')
+      : t('workbench.project_directory_unavailable_device_hint', '设备恢复在线后可选择目录')
+  const folderDeviceControls = requiresDevice ? (
+    <>
+      {showDeviceSelect && (
+        <>
+          <label className="mt-5 block text-[13px] font-semibold text-[#202124]">
+            {t('workbench.project_device', '设备')}
+          </label>
+          <select
+            data-testid="project-device-select"
+            value={deviceId}
+            disabled={submitting}
+            onChange={event => handleDeviceChange(event.target.value)}
+            className="mt-2 h-10 w-full rounded-lg border border-[#d8d8d8] bg-white px-3 text-[13px] outline-none focus:border-[#14b8a6] focus:ring-2 focus:ring-[#14b8a6]/20 disabled:opacity-60"
+          >
+            {allProjectDevices.map(device => (
+              <option
+                key={device.device_id}
+                value={device.device_id}
+                disabled={!canSelectProjectDevice(device)}
+              >
+                {getDeviceOptionLabel(device)}
+              </option>
+            ))}
+          </select>
+        </>
+      )}
+
+      {allProjectDevices.length === 0 && onOpenCloudDeviceSettings && (
+        <p className="mt-2 text-xs leading-5 text-[#606368]">
+          {t('workbench.project_no_available_devices_hint', '创建项目需要一台可用设备。')}
+          <a
+            href="/settings"
+            data-testid="open-cloud-device-settings-link"
+            onClick={event => {
+              event.preventDefault()
+              onOpenCloudDeviceSettings()
+            }}
+            className="ml-1 font-medium text-[#14b8a6] underline underline-offset-2 hover:text-[#0f9f93]"
+          >
+            {t('workbench.project_create_cloud_device_connection', '创建云设备连接')}
+          </a>
+        </p>
+      )}
+
+      {selectedUnavailableDevice && (
+        <div data-testid="project-device-unavailable-list" className="mt-3 space-y-2">
+          <p className="text-xs font-medium text-[#6b6f76]">
+            {isDeviceBelowWeWorkVersion(selectedUnavailableDevice)
+              ? t('workbench.project_selected_device_upgrade_title')
+              : t('workbench.project_selected_device_unavailable_title')}
+          </p>
+          {(() => {
+            const device = selectedUnavailableDevice
+            const belowVersion = isDeviceBelowWeWorkVersion(device)
+            const upgradeState = upgradingDevices[device.device_id]
+            const upgrading = isProjectDeviceUpgradeActive(upgradeState)
+            const canUpgrade = Boolean(
+              onUpgradeDevice && belowVersion && canRequestDeviceUpgrade(device) && !upgrading
+            )
+            const currentVersion = device.executor_version
+              ? `v${device.executor_version}`
+              : t('workbench.project_device_version_unknown')
+            const reason =
+              device.status !== 'online'
+                ? t('workbench.device_status_offline_reason')
+                : belowVersion
+                  ? t('workbench.project_device_upgrade_requirement', {
+                      version: WEWORK_MIN_EXECUTOR_VERSION,
+                    })
+                  : t('workbench.device_status_busy_reason')
+
+            return (
+              <div
+                key={device.device_id}
+                data-testid={`project-device-unavailable-${device.device_id}`}
+                className="flex items-center gap-3 rounded-lg border border-[#e5e5e5] bg-[#f7f7f8] px-3 py-2 text-xs text-[#6b6f76]"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="truncate font-medium text-[#4b4f55]">
+                      {device.name || device.device_id}
+                    </span>
+                    {isCloudDevice(device) && (
+                      <span className="shrink-0 text-[#8a8f98]">
+                        {t('workbench.project_cloud_device')}
+                      </span>
+                    )}
+                  </div>
+                  <p className="mt-1 truncate">
+                    {upgrading
+                      ? t('workbench.project_device_upgrading', {
+                          message: upgradeState?.message ?? t('workbench.device_status_checking'),
+                        })
+                      : belowVersion
+                        ? t('workbench.project_device_upgrade_detail', {
+                            current: currentVersion,
+                            required: WEWORK_MIN_EXECUTOR_VERSION,
+                          })
+                        : reason}
+                  </p>
+                </div>
+                {belowVersion && (
+                  <button
+                    type="button"
+                    data-testid={`upgrade-project-device-${device.device_id}`}
+                    disabled={!canUpgrade}
+                    onClick={() => void handleUpgradeDevice(device.device_id)}
+                    className="inline-flex h-8 shrink-0 items-center gap-1 rounded-md px-2 font-medium text-[#0f766e] hover:bg-[#e5f6f4] disabled:cursor-not-allowed disabled:text-[#8a8f98] disabled:hover:bg-transparent"
+                  >
+                    {upgrading ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <ArrowUpCircle className="h-3.5 w-3.5" />
+                    )}
+                    {t('workbench.project_device_upgrade_action')}
+                  </button>
+                )}
+              </div>
+            )
+          })()}
+        </div>
+      )}
+    </>
+  ) : null
 
   return createPortal(
     <div
@@ -683,7 +807,7 @@ function ProjectCreateDialogContent({
             <p className="mt-2 text-[13px] leading-[18px] text-[#6b6f76]">
               {t(
                 'workbench.project_create_description',
-                '创建一个项目工作区，用于在同一项目下发起多次对话',
+                '创建一个项目工作区，用于在同一项目下发起多次对话'
               )}
             </p>
           </div>
@@ -700,132 +824,6 @@ function ProjectCreateDialogContent({
             <X className="h-4 w-4" />
           </button>
         </div>
-
-        <label className="mt-6 block text-[13px] font-semibold text-[#202124]">
-          {t('workbench.project_device', '设备')}
-        </label>
-        <select
-          data-testid="project-device-select"
-          value={deviceId}
-          disabled={submitting}
-          onChange={event => handleDeviceChange(event.target.value)}
-          className="mt-2 h-10 w-full rounded-lg border border-[#d8d8d8] bg-white px-3 text-[13px] outline-none focus:border-[#14b8a6] focus:ring-2 focus:ring-[#14b8a6]/20 disabled:opacity-60"
-        >
-          {allProjectDevices.length === 0 && (
-            <option value="">{t('workbench.project_no_available_devices', '暂无可用设备')}</option>
-          )}
-          {allProjectDevices.map(device => (
-            <option
-              key={device.device_id}
-              value={device.device_id}
-              disabled={!canSelectProjectDevice(device)}
-            >
-              {getDeviceOptionLabel(device)}
-            </option>
-          ))}
-        </select>
-
-        {allProjectDevices.length === 0 && onOpenCloudDeviceSettings && (
-          <p className="mt-2 text-xs leading-5 text-[#606368]">
-            {t('workbench.project_no_available_devices_hint', '创建项目需要一台可用设备。')}
-            <a
-              href="/settings"
-              data-testid="open-cloud-device-settings-link"
-              onClick={event => {
-                event.preventDefault()
-                onOpenCloudDeviceSettings()
-              }}
-              className="ml-1 font-medium text-[#14b8a6] underline underline-offset-2 hover:text-[#0f9f93]"
-            >
-              {t('workbench.project_create_cloud_device_connection', '创建云设备连接')}
-            </a>
-          </p>
-        )}
-
-        {selectedUnavailableDevice && (
-          <div
-            data-testid="project-device-unavailable-list"
-            className="mt-3 space-y-2"
-          >
-            <p className="text-xs font-medium text-[#6b6f76]">
-              {isDeviceBelowWeWorkVersion(selectedUnavailableDevice)
-                ? t('workbench.project_selected_device_upgrade_title')
-                : t('workbench.project_selected_device_unavailable_title')}
-            </p>
-            {(() => {
-              const device = selectedUnavailableDevice
-              const belowVersion = isDeviceBelowWeWorkVersion(device)
-              const upgradeState = upgradingDevices[device.device_id]
-              const upgrading = isProjectDeviceUpgradeActive(upgradeState)
-              const canUpgrade = Boolean(
-                onUpgradeDevice &&
-                  belowVersion &&
-                  canRequestDeviceUpgrade(device) &&
-                  !upgrading,
-              )
-              const currentVersion = device.executor_version
-                ? `v${device.executor_version}`
-                : t('workbench.project_device_version_unknown')
-              const reason =
-                device.status !== 'online'
-                  ? t('workbench.device_status_offline_reason')
-                  : belowVersion
-                    ? t('workbench.project_device_upgrade_requirement', {
-                        version: WEWORK_MIN_EXECUTOR_VERSION,
-                      })
-                    : t('workbench.device_status_busy_reason')
-
-              return (
-                <div
-                  key={device.device_id}
-                  data-testid={`project-device-unavailable-${device.device_id}`}
-                  className="flex items-center gap-3 rounded-lg border border-[#e5e5e5] bg-[#f7f7f8] px-3 py-2 text-xs text-[#6b6f76]"
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="truncate font-medium text-[#4b4f55]">
-                        {device.name || device.device_id}
-                      </span>
-                      {isCloudDevice(device) && (
-                        <span className="shrink-0 text-[#8a8f98]">
-                          {t('workbench.project_cloud_device')}
-                        </span>
-                      )}
-                    </div>
-                    <p className="mt-1 truncate">
-                      {upgrading
-                        ? t('workbench.project_device_upgrading', {
-                            message: upgradeState?.message ?? t('workbench.device_status_checking'),
-                          })
-                        : belowVersion
-                          ? t('workbench.project_device_upgrade_detail', {
-                              current: currentVersion,
-                              required: WEWORK_MIN_EXECUTOR_VERSION,
-                            })
-                          : reason}
-                    </p>
-                  </div>
-                  {belowVersion && (
-                    <button
-                      type="button"
-                      data-testid={`upgrade-project-device-${device.device_id}`}
-                      disabled={!canUpgrade}
-                      onClick={() => void handleUpgradeDevice(device.device_id)}
-                      className="inline-flex h-8 shrink-0 items-center gap-1 rounded-md px-2 font-medium text-[#0f766e] hover:bg-[#e5f6f4] disabled:cursor-not-allowed disabled:text-[#8a8f98] disabled:hover:bg-transparent"
-                    >
-                      {upgrading ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <ArrowUpCircle className="h-3.5 w-3.5" />
-                      )}
-                      {t('workbench.project_device_upgrade_action')}
-                    </button>
-                  )}
-                </div>
-              )
-            })()}
-          </div>
-        )}
 
         {mode === 'scratch' ? (
           <>
@@ -859,17 +857,10 @@ function ProjectCreateDialogContent({
                   ? t('workbench.project_git_repository_loading', '正在加载仓库...')
                   : t('workbench.project_git_repository_placeholder', '选择仓库')
               }
-              searchPlaceholder={t(
-                'workbench.project_git_repository_search',
-                '搜索仓库',
-              )}
-              emptyText={t(
-                'workbench.project_git_repository_no_results',
-                '没有匹配的仓库',
-              )}
+              searchPlaceholder={t('workbench.project_git_repository_search', '搜索仓库')}
+              emptyText={t('workbench.project_git_repository_no_results', '没有匹配的仓库')}
               onChange={value => {
-                const nextRepo =
-                  repositories.find(repo => repo.git_url === value) ?? null
+                const nextRepo = repositories.find(repo => repo.git_url === value) ?? null
                 setSelectedRepo(nextRepo)
                 setSelectedBranch(null)
                 if (!nextRepo) {
@@ -879,9 +870,7 @@ function ProjectCreateDialogContent({
                 setProjectCreateError(null)
               }}
             />
-            {repositoryError && (
-              <p className="mt-2 text-xs text-[#c44]">{repositoryError}</p>
-            )}
+            {repositoryError && <p className="mt-2 text-xs text-[#c44]">{repositoryError}</p>}
             {!loadingRepositories && !repositoryError && repositories.length === 0 && (
               <p className="mt-2 text-xs text-[#8a8f98]">
                 {t('workbench.project_git_repository_empty', '暂无可用仓库')}
@@ -901,18 +890,10 @@ function ProjectCreateDialogContent({
                   ? t('workbench.project_git_branch_loading', '正在加载分支...')
                   : t('workbench.project_git_branch_placeholder', '选择默认分支')
               }
-              searchPlaceholder={t(
-                'workbench.project_git_branch_search',
-                '搜索分支',
-              )}
-              emptyText={t(
-                'workbench.project_git_branch_no_results',
-                '没有匹配的分支',
-              )}
+              searchPlaceholder={t('workbench.project_git_branch_search', '搜索分支')}
+              emptyText={t('workbench.project_git_branch_no_results', '没有匹配的分支')}
               onChange={value => {
-                setSelectedBranch(
-                  branches.find(branch => branch.name === value) ?? null,
-                )
+                setSelectedBranch(branches.find(branch => branch.name === value) ?? null)
                 setProjectCreateError(null)
               }}
             />
@@ -926,8 +907,69 @@ function ProjectCreateDialogContent({
               </p>
             )}
           </>
-        ) : (
+        ) : null}
+
+        {mode !== 'existing' && (
+          <div className="mt-6">
+            <label className="block text-[13px] font-semibold text-[#202124]">
+              {t('workbench.project_folder_section', '项目文件夹')}
+            </label>
+            <div className="mt-2 grid grid-cols-3 gap-2">
+              {(
+                [
+                  ['none', t('workbench.project_folder_none', '不选择文件夹')],
+                  ['create', t('workbench.project_folder_create', '新建文件夹')],
+                  ['select', t('workbench.project_folder_select', '选择已有文件夹')],
+                ] as const
+              ).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  data-testid={`project-folder-mode-${value}`}
+                  disabled={submitting}
+                  onClick={() => {
+                    setFolderMode(value)
+                    setProjectCreateError(null)
+                  }}
+                  className={[
+                    'min-h-10 rounded-lg border px-2 text-[12px] font-medium',
+                    folderMode === value
+                      ? 'border-text-primary bg-text-primary text-background'
+                      : 'border-[#d8d8d8] text-[#3c4043] hover:bg-[#f7f7f8]',
+                  ].join(' ')}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {folderMode === 'create' ? (
           <>
+            {folderDeviceControls}
+            <label className="mt-5 block text-[13px] font-semibold text-[#202124]">
+              {t('workbench.project_folder_path', '文件夹地址')}
+            </label>
+            <input
+              data-testid="project-folder-create-path-input"
+              value={createFolderPath}
+              readOnly
+              disabled={submitting || !selectedDeviceUsable}
+              className="mt-2 h-10 w-full rounded-lg border border-[#d8d8d8] bg-[#f7f7f8] px-3 font-mono text-[13px] text-[#3c4043] outline-none disabled:opacity-60"
+            />
+            {!selectedDeviceUsable && (
+              <p
+                data-testid="project-directory-device-unavailable"
+                className="mt-2 text-xs text-[#8a8f98]"
+              >
+                {directoryDeviceUnavailableMessage}
+              </p>
+            )}
+          </>
+        ) : folderMode === 'select' ? (
+          <>
+            {folderDeviceControls}
             <div className="mt-5 flex items-center justify-between gap-3">
               <label className="block text-[13px] font-semibold text-[#202124]">
                 {t('workbench.project_directory_path', '目录地址')}
@@ -1093,7 +1135,7 @@ function ProjectCreateDialogContent({
               </div>
             </div>
           </>
-        )}
+        ) : null}
 
         {projectCreateError && (
           <p data-testid="project-create-error" className="mt-4 text-xs text-[#c44]">
@@ -1131,38 +1173,36 @@ function ProjectCreateDialogContent({
               setSubmitting(true)
               setProjectCreateError(null)
               try {
-                if (mode === 'git') {
-                  if (!selectedRepo || !selectedBranch || !onCreateGitWorkspaceProject) return
-                  await onCreateGitWorkspaceProject({
-                    device_id: deviceId,
-                    name: gitProjectName || selectedRepo.git_repo,
-                    git: {
-                      url: selectedRepo.git_url,
-                      repo: selectedRepo.git_repo,
-                      repoId: selectedRepo.git_repo_id,
-                      domain: selectedRepo.git_domain,
-                      branch: selectedBranch.name,
-                    },
-                  })
-                  onClose()
-                  return
-                }
-
-                await onCreateProject({
+                const project = await onCreateProject({
                   name: finalProjectName,
                   description: '',
-                  config: {
-                    mode: 'workspace',
-                    execution: {
-                      targetType: 'local',
-                      deviceId,
-                    },
-                    workspace: {
-                      source: 'local_path',
-                      localPath: finalPath,
-                    },
-                  },
+                  config:
+                    mode === 'git' && selectedRepo && selectedBranch
+                      ? {
+                          mode: 'workspace',
+                          git: {
+                            url: selectedRepo.git_url,
+                            repo: selectedRepo.git_repo,
+                            repoId: selectedRepo.git_repo_id,
+                            domain: selectedRepo.git_domain,
+                            branch: selectedBranch.name,
+                          },
+                        }
+                      : {
+                          mode: 'workspace',
+                        },
                 })
+                if (requiresDevice) {
+                  if (!onPrepareDeviceWorkspace) {
+                    throw new Error(t('workbench.project_create_failed', '项目创建失败'))
+                  }
+                  await onPrepareDeviceWorkspace({
+                    projectId: project.id,
+                    deviceId,
+                    workspacePath: finalPath,
+                    action: folderMode === 'create' ? 'create' : 'select',
+                  })
+                }
                 onClose()
               } catch (error) {
                 setProjectCreateError(
@@ -1174,8 +1214,8 @@ function ProjectCreateDialogContent({
                       t('workbench.project_git_directory_exists', {
                         defaultValue: '项目目录已存在：{{path}}',
                         path,
-                      }),
-                  ),
+                      })
+                  )
                 )
               } finally {
                 setSubmitting(false)
@@ -1185,16 +1225,13 @@ function ProjectCreateDialogContent({
             className="inline-flex h-10 items-center gap-2 rounded-md bg-text-primary px-4 text-[13px] font-medium text-background hover:bg-text-primary/90 disabled:cursor-not-allowed disabled:opacity-70"
           >
             {submitting && (
-              <Loader2
-                data-testid="project-submit-spinner"
-                className="h-4 w-4 animate-spin"
-              />
+              <Loader2 data-testid="project-submit-spinner" className="h-4 w-4 animate-spin" />
             )}
             {submitting ? submittingLabel : t('workbench.create_project', '创建项目')}
           </button>
         </div>
       </div>
     </div>,
-    document.body,
+    document.body
   )
 }

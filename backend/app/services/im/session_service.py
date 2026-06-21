@@ -211,21 +211,31 @@ class IMSessionService:
     ) -> list[IMPrivateSession]:
         task_key = self.runtime_task_notification_key(runtime_task)
         sessions = await self.list_user_sessions(db, user_id=user_id)
-        return [
-            session
-            for session in sessions
-            if isinstance(session.active_runtime_task, dict)
-            and self.runtime_task_notification_key(session.active_runtime_task)
-            == task_key
-        ]
+        matched_sessions: list[IMPrivateSession] = []
+        for session in sessions:
+            if not isinstance(session.active_runtime_task, dict):
+                continue
+            try:
+                active_task_key = self.runtime_task_notification_key(
+                    session.active_runtime_task
+                )
+            except ValueError:
+                continue
+            if active_task_key == task_key:
+                matched_sessions.append(session)
+        return matched_sessions
 
     def runtime_task_notification_key(self, runtime_task: dict[str, Any]) -> str:
         device_id = str(
             runtime_task.get("deviceId") or runtime_task.get("device_id") or ""
-        )
+        ).strip()
         local_task_id = str(
             runtime_task.get("localTaskId") or runtime_task.get("local_task_id") or ""
-        )
+        ).strip()
+        if not device_id or not local_task_id:
+            raise ValueError(
+                "Runtime task notification identity requires deviceId and localTaskId"
+            )
         return "\0".join((device_id, local_task_id))
 
     async def load_user_sessions_by_keys(

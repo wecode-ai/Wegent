@@ -26,6 +26,8 @@ import { cn } from '@/lib/utils'
 import type {
   CreateGitWorkspaceProjectRequest,
   CreateProjectRequest,
+  DeviceWorkspacePrepareRequest,
+  DeviceWorkspacePrepareResponse,
   DeviceInfo,
   GitBranch,
   GitRepoInfo,
@@ -78,6 +80,9 @@ interface DesktopSidebarProps {
   onUpgradeDevice?: (deviceId: string) => Promise<void>
   onCreateProject: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
   onCreateGitWorkspaceProject: (data: CreateGitWorkspaceProjectRequest) => Promise<ProjectWithTasks>
+  onPrepareDeviceWorkspace: (
+    data: DeviceWorkspacePrepareRequest
+  ) => Promise<DeviceWorkspacePrepareResponse>
   onListGitRepositories: () => Promise<GitRepoInfo[]>
   onListGitBranches: (repo: GitRepoInfo) => Promise<GitBranch[]>
   onUpdateProjectName: (projectId: number, name: string) => Promise<void>
@@ -753,6 +758,7 @@ export function DesktopSidebar({
   onUpgradeDevice,
   onCreateProject,
   onCreateGitWorkspaceProject,
+  onPrepareDeviceWorkspace,
   onListGitRepositories,
   onListGitBranches,
   onUpdateProjectName,
@@ -1128,6 +1134,7 @@ export function DesktopSidebar({
         }}
         onCreateProject={onCreateProject}
         onCreateGitWorkspaceProject={onCreateGitWorkspaceProject}
+        onPrepareDeviceWorkspace={onPrepareDeviceWorkspace}
         preferredDeviceId={preferredDeviceId}
         onSelectDevicePreference={onRememberExecutionDevice}
         upgradingDevices={upgradingDevices}

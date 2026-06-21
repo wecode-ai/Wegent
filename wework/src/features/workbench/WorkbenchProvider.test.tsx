@@ -183,7 +183,7 @@ function ProjectChatProbe() {
       <span data-testid="workbench-error">{workbench.state.error ?? ''}</span>
       <span data-testid="current-runtime-task-address">
         {workbench.state.currentRuntimeTask
-          ? `${workbench.state.currentRuntimeTask.deviceId}:${workbench.state.currentRuntimeTask.workspacePath}:${workbench.state.currentRuntimeTask.localTaskId}`
+          ? `${workbench.state.currentRuntimeTask.deviceId}:${workbench.state.currentRuntimeTask.localTaskId}`
           : 'no-runtime-task'}
       </span>
       <button type="button" onClick={() => workbench.selectProject(7)}>
@@ -368,7 +368,7 @@ function RuntimeOpenProbe() {
     <div>
       <span data-testid="current-runtime-task-address">
         {workbench.state.currentRuntimeTask
-          ? `${workbench.state.currentRuntimeTask.deviceId}:${workbench.state.currentRuntimeTask.workspacePath}:${workbench.state.currentRuntimeTask.localTaskId}`
+          ? `${workbench.state.currentRuntimeTask.deviceId}:${workbench.state.currentRuntimeTask.localTaskId}`
           : 'no-runtime-task'}
       </span>
       <ol data-testid="runtime-open-messages">
@@ -1009,7 +1009,7 @@ describe('WorkbenchProvider', () => {
 
     await waitFor(() =>
       expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent(
-        'device-1:/workspace/project-alpha:runtime-a'
+        'device-1:runtime-a'
       )
     )
     expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('已经输出')
@@ -3555,13 +3555,12 @@ describe('WorkbenchProvider', () => {
 
     await waitFor(() =>
       expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent(
-        'device-1:/workspace/project-alpha:runtime-restored'
+        'device-1:runtime-restored'
       )
     )
     expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('restored message')
     expect(getRuntimeTranscript).toHaveBeenCalledWith({
       deviceId: 'device-1',
-      workspacePath: '/workspace/project-alpha',
       localTaskId: 'runtime-restored',
     })
   })
@@ -3626,12 +3625,11 @@ describe('WorkbenchProvider', () => {
 
     await waitFor(() =>
       expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent(
-        'resolved-device:/workspace/project-alpha:runtime-1'
+        'resolved-device:runtime-1'
       )
     )
     expect(runtimeWorkApi.getRuntimeTranscript).toHaveBeenCalledWith({
       deviceId: 'resolved-device',
-      workspacePath: '/workspace/project-alpha',
       localTaskId: 'runtime-1',
     })
   })
@@ -3804,7 +3802,7 @@ describe('WorkbenchProvider', () => {
 
     await waitFor(() =>
       expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent(
-        'device-1:/workspace/project-alpha:runtime-b'
+        'device-1:runtime-b'
       )
     )
     expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('message b')
@@ -3820,7 +3818,7 @@ describe('WorkbenchProvider', () => {
     })
 
     expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent(
-      'device-1:/workspace/project-alpha:runtime-b'
+      'device-1:runtime-b'
     )
     expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('message b')
     expect(screen.getByTestId('runtime-open-messages')).not.toHaveTextContent('message a')
@@ -3954,7 +3952,6 @@ describe('WorkbenchProvider', () => {
       expect.objectContaining({
         address: {
           deviceId: 'device-1',
-          workspacePath: '/workspace/project-alpha',
           localTaskId: 'runtime-99',
         },
         message: '我叫什么',
@@ -4076,7 +4073,7 @@ describe('WorkbenchProvider', () => {
     await userEvent.click(await screen.findByText('open runtime a'))
     await waitFor(() =>
       expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent(
-        'device-1:/workspace/project-alpha:runtime-a'
+        'device-1:runtime-a'
       )
     )
 
@@ -4190,7 +4187,7 @@ describe('WorkbenchProvider', () => {
     await userEvent.click(await screen.findByText('open runtime a'))
     await waitFor(() =>
       expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent(
-        'device-1:/workspace/project-alpha:runtime-a'
+        'device-1:runtime-a'
       )
     )
 
@@ -4528,7 +4525,6 @@ describe('WorkbenchProvider', () => {
       expect.objectContaining({
         address: {
           deviceId: 'device-1',
-          workspacePath: '/workspace/project-alpha',
           localTaskId: 'runtime-1',
         },
         message: 'hi',

@@ -17,7 +17,7 @@ Project
 - Project is central Backend state.
 - Device Workspace is a central mapping from user, device, and local directory to a Project.
 - LocalTask is executor-local state and remains on the device.
-- Backend and Wework only hold a transient `RuntimeTaskAddress`: `deviceId`, `workspacePath`, and `localTaskId`.
+- A LocalTask's stable identity is `deviceId + localTaskId`. `workspacePath` is only device-workspace context for list grouping, task creation, and right-side workspace tools; task URLs, IM notification subscriptions, and native Codex update deduplication do not use the path as an identity field.
 
 The executor stores the LocalTask index as JSON:
 
@@ -35,7 +35,7 @@ The frontend drives task list refreshes through polling.
 2. Backend reads the user's Projects and Device Workspace mappings.
 3. Backend calls `runtime.tasks.list` over the online device WebSocket RPC channel.
 4. The executor refreshes local Codex discovery and the JSON LocalTask index.
-5. Backend groups results by `deviceId + workspacePath` and returns Project -> Device Workspace -> LocalTask.
+5. Backend groups results by `deviceId + workspacePath` and returns Project -> Device Workspace -> LocalTask, while each LocalTask is still opened and notified by `deviceId + localTaskId`.
 
 The executor does not poll or push task lists to Backend by itself. Offline devices do not contribute LocalTasks. Wework may show an offline mapped workspace, but it does not keep a central cache of local tasks.
 
@@ -47,7 +47,7 @@ When a user opens a LocalTask, Wework calls Backend:
 POST /api/runtime-work/transcript
 ```
 
-Backend forwards the `RuntimeTaskAddress` to the owning device with `runtime.tasks.transcript`. The executor reads the native runtime transcript and returns normalized messages.
+Backend forwards `deviceId + localTaskId` to the owning device with `runtime.tasks.transcript`. If the request includes `workspacePath`, the executor uses it as a local-index lookup hint; otherwise, it locates the task from the local LocalTask index by `localTaskId`. The executor reads the native runtime transcript and returns normalized messages.
 
 When a user continues a LocalTask, Wework calls:
 
@@ -55,11 +55,11 @@ When a user continues a LocalTask, Wework calls:
 POST /api/runtime-work/send
 ```
 
-Backend forwards `runtime.tasks.send`. The executor resumes Codex or Claude Code from the local LocalTask's opaque runtime handle and writes the result back to the local JSON index.
+Backend forwards `runtime.tasks.send`. The executor resumes Codex or Claude Code from the local LocalTask's opaque runtime handle and writes the result back to the local JSON index. Streaming Responses events carry `local_task_id` and runtime metadata, not `workspacePath`.
 
 ## Workspace Tool Context
 
-After Wework opens a LocalTask, the right-side file, review, and terminal tools resolve their device and directory from the current `RuntimeTaskAddress`:
+After Wework opens a LocalTask, the right-side file, review, and terminal tools resolve their device and directory from the current LocalTask's device and directory context:
 
 - The LocalTask `workspacePath` returned by `runtime.tasks.list` wins, so a Codex worktree is not treated as a separate Project.
 - If the LocalTask maps to a Project, environment info and review still receive that Project, but Git commands run in the LocalTask's actual directory.
@@ -81,13 +81,23 @@ Directories discovered by an executor but not mapped to a central Project appear
 
 ## IM Notifications
 
-Runtime tasks can send notifications to IM sessions, but notification state is still keyed by `RuntimeTaskAddress`; no DB Task is created.
+Runtime tasks can send notifications to IM sessions, but notification state is keyed by `deviceId + localTaskId`; no DB Task is created, and `workspacePath` is not part of the notification key.
 
 - In IM, `/notify on` enables the current user's global runtime task notification target for the current IM session.
 - `/notify off` disables global notifications, and `/notify status` reports the current state.
 - A single IM session can subscribe to one runtime task and receive only that task's updates.
-- When the executor detects a native Codex task timestamp change, it sends `runtime.tasks.updated` over the device WebSocket. Backend then delivers the update according to task subscriptions and global notification settings.
-- Wegent runtime sends and the native Codex watcher use the same `RuntimeTaskAddress` for deduplication, so Codex and Wework do not notify twice for the same task update.
+- When the executor detects a native Codex task timestamp change, it sends `runtime.tasks.updated` without `workspacePath` over the device WebSocket. Backend then delivers the update according to task subscriptions and global notification settings.
+- Wegent runtime sends and the native Codex watcher use the same `deviceId + localTaskId` for deduplication, so Codex and Wework do not notify twice for the same task update.
+
+## URL
+
+Wework runtime task URLs use:
+
+```text
+/runtime-tasks?deviceId=<device>&localTaskId=<local-task>
+```
+
+The URL does not contain `workspacePath`. On refresh or shared links, the frontend opens the task from `deviceId + localTaskId` and then restores its workspace context from the latest runtime work list.
 
 ## Compatibility
 

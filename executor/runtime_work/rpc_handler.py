@@ -58,7 +58,6 @@ class LocalTaskResponsesTransport(EventTransport):
             "subtask_id": subtask_id,
             "data": data,
             "local_task_id": self.task.local_task_id,
-            "workspacePath": self.task.workspace_path,
             "runtime": self.task.runtime,
         }
         if self.source is not None:
@@ -211,7 +210,6 @@ class RuntimeWorkRpcHandler:
             return
         payload = {
             "localTaskId": record.local_task_id,
-            "workspacePath": record.workspace_path,
             "runtime": record.runtime,
             "title": record.title,
             "updatedAt": record.updated_at,

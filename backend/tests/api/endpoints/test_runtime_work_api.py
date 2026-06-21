@@ -77,6 +77,56 @@ def test_upsert_device_workspace_endpoint_returns_mapping(
     assert service_mock.call_args.kwargs["payload"].device_id == "device-1"
 
 
+def test_prepare_device_workspace_endpoint_dispatches_payload(
+    test_client,
+    test_token,
+    monkeypatch,
+):
+    from app.api.endpoints import runtime_work
+
+    service_mock = AsyncMock(
+        return_value={
+            "mapping": {
+                "id": 1,
+                "userId": 7,
+                "projectId": 3,
+                "deviceId": "device-1",
+                "workspacePath": "/repo/Wegent",
+                "repoUrl": "https://github.com/wecode-ai/Wegent.git",
+                "repoRootFingerprint": None,
+                "label": "MacBook",
+                "createdAt": "2026-06-20T01:00:00",
+                "updatedAt": "2026-06-20T01:00:00",
+                "lastSeenAt": None,
+            },
+            "preparedAction": "cloned",
+        }
+    )
+    monkeypatch.setattr(
+        runtime_work.runtime_work_service, "prepare_device_workspace", service_mock
+    )
+
+    response = test_client.post(
+        "/api/runtime-work/device-workspaces/prepare",
+        headers=_auth_headers(test_token),
+        json={
+            "projectId": 3,
+            "deviceId": "device-1",
+            "workspacePath": "/repo/Wegent",
+            "action": "select",
+            "label": "MacBook",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["preparedAction"] == "cloned"
+    payload = service_mock.await_args.kwargs["payload"]
+    assert payload.project_id == 3
+    assert payload.device_id == "device-1"
+    assert payload.workspace_path == "/repo/Wegent"
+    assert payload.action == "select"
+
+
 def test_runtime_transcript_endpoint_dispatches_address(
     test_client,
     test_token,

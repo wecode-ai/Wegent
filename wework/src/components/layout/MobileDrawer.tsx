@@ -20,6 +20,8 @@ import { cn } from '@/lib/utils'
 import type {
   CreateGitWorkspaceProjectRequest,
   CreateProjectRequest,
+  DeviceWorkspacePrepareRequest,
+  DeviceWorkspacePrepareResponse,
   DeviceInfo,
   GitBranch,
   GitRepoInfo,
@@ -63,6 +65,9 @@ interface MobileDrawerProps {
   onCreateGitWorkspaceProject?: (
     data: CreateGitWorkspaceProjectRequest
   ) => Promise<ProjectWithTasks>
+  onPrepareDeviceWorkspace?: (
+    data: DeviceWorkspacePrepareRequest
+  ) => Promise<DeviceWorkspacePrepareResponse>
   onListGitRepositories?: () => Promise<GitRepoInfo[]>
   onListGitBranches?: (repo: GitRepoInfo) => Promise<GitBranch[]>
   onGetDeviceHomeDirectory?: (deviceId: string) => Promise<string>
@@ -108,6 +113,7 @@ export function MobileDrawer({
   onOpenSettings,
   onCreateProject,
   onCreateGitWorkspaceProject,
+  onPrepareDeviceWorkspace,
   onListGitRepositories,
   onListGitBranches,
   onGetDeviceHomeDirectory,
@@ -715,6 +721,7 @@ export function MobileDrawer({
           }}
           onCreateProject={onCreateProject ?? unavailableProjectAction}
           onCreateGitWorkspaceProject={onCreateGitWorkspaceProject}
+          onPrepareDeviceWorkspace={onPrepareDeviceWorkspace ?? unavailableProjectAction}
           preferredDeviceId={user?.preferences?.default_execution_target}
           onGetDeviceHomeDirectory={onGetDeviceHomeDirectory ?? unavailableProjectAction}
           onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot ?? unavailableProjectAction}

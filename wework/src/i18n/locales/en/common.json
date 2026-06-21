@@ -87,7 +87,7 @@
     "close_dialog": "Close",
     "project_create_title": "New project",
     "project_create_existing_title": "Select project directory",
-    "project_create_git_title": "Clone Git repository",
+    "project_create_git_title": "Create Git project",
     "project_create_description": "Create a project workspace for multiple conversations under the same project",
     "project_device": "Device",
     "project_no_available_devices": "No available devices",

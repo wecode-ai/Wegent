@@ -456,7 +456,6 @@ async def test_runtime_task_updated_event_notifies_im_dispatcher(monkeypatch):
         "sid-1",
         {
             "localTaskId": "codex-thread-1",
-            "workspacePath": "/repo/Wegent",
             "runtime": "codex",
             "title": "Native Codex task",
             "updatedAt": "2026-06-21T01:06:00Z",
@@ -468,7 +467,6 @@ async def test_runtime_task_updated_event_notifies_im_dispatcher(monkeypatch):
     assert notifications[0]["address"] == {
         "deviceId": "device-1",
         "localTaskId": "codex-thread-1",
-        "workspacePath": "/repo/Wegent",
     }
     assert notifications[0]["source"] == "codex_watcher"
     assert notifications[0]["title"] == "Native Codex task"
