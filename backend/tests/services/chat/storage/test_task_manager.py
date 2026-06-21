@@ -612,8 +612,8 @@ def test_prepare_execution_session_uses_fork_history_next_message_id(monkeypatch
         lifecycle,
         "task_fork_history_resolver",
         SimpleNamespace(
-            resolve_for_task=lambda db, *, task_id, user_id: [],
-            get_next_message_id=lambda db, *, task_id, user_id: 9,
+            resolve_for_task=lambda db, *, task_id, user_id, current_task=None: [],
+            get_next_message_id=lambda db, *, task_id, user_id, current_task=None: 9,
         ),
         raising=False,
     )
