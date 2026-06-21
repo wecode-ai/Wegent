@@ -209,7 +209,14 @@ def _is_session_archive_member(name: str) -> bool:
         or normalized_name.startswith(".claude_session_id_")
         or normalized_name.endswith("/.claude_session_id")
         or "/.claude_session_id_" in normalized_name
+        or normalized_name == f"{HOME_ARCHIVE_PREFIX}/.claude.json"
+        or normalized_name == f"{HOME_ARCHIVE_PREFIX}/.claude"
         or normalized_name.startswith(f"{HOME_ARCHIVE_PREFIX}/.claude/")
+        or normalized_name.startswith(f"{HOME_ARCHIVE_PREFIX}/.codex/sessions/")
+        or normalized_name.startswith(
+            f"{HOME_ARCHIVE_PREFIX}/.codex/archived_sessions/"
+        )
+        or normalized_name.startswith(f"{HOME_ARCHIVE_PREFIX}/.codex/state/")
     )
 
 

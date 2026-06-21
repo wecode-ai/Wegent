@@ -1,4 +1,4 @@
-import { Bot, Menu, MessageCircle } from 'lucide-react'
+import { ArrowLeftRight, Bot, Menu, MessageCircle } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ChatInput } from '@/components/chat/ChatInput'
 import type { ProjectChatControls, ProjectWorkControls } from '@/components/chat/ChatInput'
@@ -31,6 +31,7 @@ import type {
   IMPrivateSessionListResponse,
   ProjectWithTasks,
   RuntimeTaskAddress,
+  RuntimeTaskForkTarget,
   TurnFileChangesSummary,
 } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
@@ -47,6 +48,7 @@ import { DeviceStatusPrompt } from './DeviceStatusPrompt'
 import { MobileDrawer } from './MobileDrawer'
 import { ContinueInImDialog } from '@/components/chat/ContinueInImDialog'
 import { TransientNotice } from '@/components/common/TransientNotice'
+import { TaskForkDialog } from './TaskForkDialog'
 
 interface MobileWorkbenchLayoutProps {
   state: WorkbenchState
@@ -65,6 +67,7 @@ interface MobileWorkbenchLayoutProps {
   onStartNewProjectChat?: (projectId: number) => void
   onOpenRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void>
   onArchiveRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void>
+  onForkCurrentRuntimeTask?: (target: RuntimeTaskForkTarget) => Promise<void>
   onCreateProject?: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
   onCreateGitWorkspaceProject?: (
     data: CreateGitWorkspaceProjectRequest
@@ -142,6 +145,7 @@ export function MobileWorkbenchLayout({
   projectWork,
   onSelectProject,
   onOpenRuntimeLocalTask,
+  onForkCurrentRuntimeTask,
   onCreateProject,
   onCreateGitWorkspaceProject,
   onListGitRepositories,
@@ -188,6 +192,7 @@ export function MobileWorkbenchLayout({
   const [workspaceTargetError, setWorkspaceTargetError] = useState<string | null>(null)
   const [workspaceTargetResolving, setWorkspaceTargetResolving] = useState(true)
   const [continueInImOpen, setContinueInImOpen] = useState(false)
+  const [forkDialogOpen, setForkDialogOpen] = useState(false)
   const [imSessions, setImSessions] = useState<IMPrivateSession[]>([])
   const [imSessionsLoading, setImSessionsLoading] = useState(false)
   const [imSessionsSubmitting, setImSessionsSubmitting] = useState(false)
@@ -517,15 +522,28 @@ export function MobileWorkbenchLayout({
                 )}
               </div>
               {state.currentRuntimeTask ? (
-                <button
-                  type="button"
-                  data-testid="mobile-continue-in-im-button"
-                  className="pointer-events-auto flex h-11 min-w-[44px] items-center justify-center rounded-full text-text-primary hover:bg-surface"
-                  aria-label={t('workbench.continue_im_title')}
-                  onClick={openContinueInImDialog}
-                >
-                  <MessageCircle className="h-5 w-5" />
-                </button>
+                <div className="pointer-events-auto flex items-center gap-1">
+                  {onForkCurrentRuntimeTask && (
+                    <button
+                      type="button"
+                      data-testid="mobile-fork-runtime-task-button"
+                      className="flex h-11 min-w-[44px] items-center justify-center rounded-full text-text-primary hover:bg-surface"
+                      aria-label={t('workbench.task_fork_title', '复制任务')}
+                      onClick={() => setForkDialogOpen(true)}
+                    >
+                      <ArrowLeftRight className="h-5 w-5" />
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    data-testid="mobile-continue-in-im-button"
+                    className="flex h-11 min-w-[44px] items-center justify-center rounded-full text-text-primary hover:bg-surface"
+                    aria-label={t('workbench.continue_im_title')}
+                    onClick={openContinueInImDialog}
+                  >
+                    <MessageCircle className="h-5 w-5" />
+                  </button>
+                </div>
               ) : (
                 <div className="h-11 min-w-[44px]" />
               )}
@@ -716,6 +734,19 @@ export function MobileWorkbenchLayout({
         sessions={imSessions}
         onClose={closeContinueInImDialog}
         onSubmit={submitContinueInIm}
+      />
+      <TaskForkDialog
+        key={forkDialogOpen ? `open-${state.currentRuntimeTask?.localTaskId ?? 'none'}` : 'closed'}
+        open={forkDialogOpen}
+        source={state.currentRuntimeTask}
+        runtimeWork={state.runtimeWork}
+        requiresStop={isResponseStreaming}
+        onOpenChange={setForkDialogOpen}
+        onStopCurrentResponse={onPauseResponse}
+        onFork={async target => {
+          if (!onForkCurrentRuntimeTask) return
+          await onForkCurrentRuntimeTask(target)
+        }}
       />
       <TransientNotice
         message={notice?.message ?? null}

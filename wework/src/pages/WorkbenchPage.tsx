@@ -27,6 +27,7 @@ export function WorkbenchPage() {
     startNewProjectChat,
     openRuntimeLocalTask,
     archiveRuntimeLocalTask,
+    forkCurrentRuntimeTask,
     rememberExecutionDevice,
     refreshDevices,
     refreshWorkLists,
@@ -95,6 +96,7 @@ export function WorkbenchPage() {
       onStartNewProjectChat={startNewProjectChat}
       onOpenRuntimeLocalTask={openRuntimeLocalTask}
       onArchiveRuntimeLocalTask={archiveRuntimeLocalTask}
+      onForkCurrentRuntimeTask={forkCurrentRuntimeTask}
       onRememberExecutionDevice={rememberExecutionDevice}
       onRefreshDevices={refreshDevices}
       onUpgradeDevice={upgradeDevice}

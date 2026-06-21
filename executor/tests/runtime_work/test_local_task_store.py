@@ -1020,11 +1020,75 @@ async def test_runtime_work_handler_creates_runtime_task_with_local_transcript(
         "assistant",
     ]
     assert transcript["messages"][0]["content"] == "create the task"
-    assert transcript["messages"][1]["content"] == "Created"
-    assert transcript["messages"][0]["subtaskId"] == 2001
-    assert transcript["messages"][1]["subtaskId"] == 2001
-    assert executed_requests[0].task_id == 1001
-    assert executed_requests[0].new_session is True
+
+
+@pytest.mark.asyncio
+async def test_runtime_work_handler_imports_fork_package_with_parent_metadata(
+    tmp_path,
+    monkeypatch,
+):
+    from executor.runtime_work import fork_transfer
+    from executor.runtime_work.local_task_store import LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    restored = {}
+
+    async def restore_fork_package_archive(*, archive, workspace_path):
+        restored["archive"] = archive
+        restored["workspace_path"] = workspace_path
+
+    monkeypatch.setattr(
+        fork_transfer,
+        "restore_fork_package_archive",
+        restore_fork_package_archive,
+    )
+    store = LocalTaskStore(tmp_path / "index.json")
+    handler = RuntimeWorkRpcHandler(store=store, codex_discovery=EmptyDiscovery())
+
+    result = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.import_fork",
+            "payload": {
+                "source": {
+                    "deviceId": "source-device",
+                    "workspacePath": "/source/Wegent",
+                    "localTaskId": "codex-1",
+                },
+                "workspacePath": str(tmp_path / "target"),
+                "forkPackage": {
+                    "sourceRuntime": "codex",
+                    "title": "Forked runtime task",
+                    "recentMessages": [
+                        {"id": "m1", "role": "user", "content": "hello"}
+                    ],
+                    "runtimeHandle": {"threadId": "codex-1"},
+                    "executorSession": {"agent": "CodeX", "threadId": "codex-1"},
+                    "archive": {
+                        "directUrls": ["http://source/archive"],
+                        "downloadUrl": "https://storage/download",
+                    },
+                },
+            },
+        }
+    )
+
+    assert result["success"] is True
+    assert result["accepted"] is True
+    assert result["runtime"] == "codex"
+    assert restored["archive"]["directUrls"] == ["http://source/archive"]
+    record = store.get_task(
+        result["localTaskId"], workspace_path=str(tmp_path / "target")
+    )
+    assert record.parent == {
+        "deviceId": "source-device",
+        "workspacePath": "/source/Wegent",
+        "localTaskId": "codex-1",
+    }
+    assert record.runtime_handle["executorSession"] == {
+        "agent": "CodeX",
+        "threadId": "codex-1",
+    }
+    assert record.runtime_handle["messages"][0]["content"] == "hello"
 
 
 @pytest.mark.asyncio

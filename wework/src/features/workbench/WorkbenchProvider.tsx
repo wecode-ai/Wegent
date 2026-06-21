@@ -69,6 +69,7 @@ import type {
   ProjectWithTasks,
   RuntimeTaskAddress,
   RuntimeTaskCreateRequest,
+  RuntimeTaskForkTarget,
   RuntimeWorkListResponse,
   SkillRef,
   Subtask,
@@ -283,6 +284,7 @@ export interface WorkbenchContextValue {
   openTask: (taskId: number, projectId?: number) => Promise<void>
   openRuntimeLocalTask: (address: RuntimeTaskAddress) => Promise<void>
   archiveRuntimeLocalTask: (address: RuntimeTaskAddress) => Promise<void>
+  forkCurrentRuntimeTask: (target: RuntimeTaskForkTarget) => Promise<void>
   listImPrivateSessions: () => Promise<IMPrivateSessionListResponse>
   bindRuntimeTaskToImSessions: (
     address: RuntimeTaskAddress,
@@ -1831,6 +1833,37 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     [refreshWorkLists, resolvedServices.runtimeWorkApi, state.currentRuntimeTask]
   )
 
+  const forkCurrentRuntimeTask = useCallback(
+    async (target: RuntimeTaskForkTarget) => {
+      if (!resolvedServices.runtimeWorkApi) {
+        dispatch({ type: 'error_set', error: 'Local runtime work is unavailable' })
+        return
+      }
+      if (!state.currentRuntimeTask) {
+        dispatch({ type: 'error_set', error: 'No runtime task is selected' })
+        return
+      }
+
+      const response = await resolvedServices.runtimeWorkApi.forkRuntimeTask({
+        source: state.currentRuntimeTask,
+        target,
+      })
+      if (!response.accepted) {
+        dispatch({ type: 'error_set', error: response.error || 'Failed to fork runtime task' })
+        return
+      }
+
+      await refreshWorkLists()
+      await openRuntimeLocalTask(response.target)
+    },
+    [
+      openRuntimeLocalTask,
+      refreshWorkLists,
+      resolvedServices.runtimeWorkApi,
+      state.currentRuntimeTask,
+    ]
+  )
+
   const refreshRuntimeTranscript = useCallback(
     async (address: RuntimeTaskAddress, shouldApply: () => boolean = () => true) => {
       if (!resolvedServices.runtimeWorkApi) return
@@ -2906,6 +2939,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     openTask,
     openRuntimeLocalTask,
     archiveRuntimeLocalTask,
+    forkCurrentRuntimeTask,
     listImPrivateSessions,
     bindRuntimeTaskToImSessions,
     rememberExecutionDevice,

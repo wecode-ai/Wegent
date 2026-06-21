@@ -9,6 +9,8 @@ import type {
   RuntimeTaskArchiveResponse,
   RuntimeTaskCreateRequest,
   RuntimeTaskCreateResponse,
+  RuntimeTaskForkRequest,
+  RuntimeTaskForkResponse,
   RuntimeTranscriptResponse,
   RuntimeWorkListResponse,
 } from '@/types/api'
@@ -45,6 +47,9 @@ export function createRuntimeWorkApi(client: HttpClient) {
     },
     createRuntimeTask(data: RuntimeTaskCreateRequest): Promise<RuntimeTaskCreateResponse> {
       return client.post('/runtime-work/create', data)
+    },
+    forkRuntimeTask(data: RuntimeTaskForkRequest): Promise<RuntimeTaskForkResponse> {
+      return client.post('/runtime-work/fork', data)
     },
   }
 }

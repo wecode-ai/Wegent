@@ -388,6 +388,24 @@ export interface RuntimeTaskCreateResponse {
   error?: string | null
 }
 
+export interface RuntimeTaskForkTarget {
+  deviceId: string
+  workspacePath: string
+}
+
+export interface RuntimeTaskForkRequest {
+  source: RuntimeTaskAddress
+  target: RuntimeTaskForkTarget
+}
+
+export interface RuntimeTaskForkResponse {
+  accepted: boolean
+  source: RuntimeTaskAddress
+  target: RuntimeTaskAddress
+  runtime: RuntimeName
+  error?: string | null
+}
+
 export interface UpdateProjectRequest {
   name?: string
   description?: string

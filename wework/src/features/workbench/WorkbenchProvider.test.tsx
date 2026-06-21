@@ -24,6 +24,7 @@ function createRuntimeWorkApiMock(overrides: Record<string, unknown> = {}): {
   sendRuntimeMessage: ReturnType<typeof vi.fn>
   bindRuntimeTaskImSessions: ReturnType<typeof vi.fn>
   archiveRuntimeTask: ReturnType<typeof vi.fn>
+  forkRuntimeTask: ReturnType<typeof vi.fn>
   getRuntimeTranscript: ReturnType<typeof vi.fn>
 } {
   return {
@@ -56,6 +57,20 @@ function createRuntimeWorkApiMock(overrides: Record<string, unknown> = {}): {
       accepted: true,
       localTaskId: 'runtime-1',
       workspacePath: '/workspace/project-alpha',
+    }),
+    forkRuntimeTask: vi.fn().mockResolvedValue({
+      accepted: true,
+      source: {
+        deviceId: 'device-1',
+        workspacePath: '/workspace/project-alpha',
+        localTaskId: 'runtime-1',
+      },
+      target: {
+        deviceId: 'device-2',
+        workspacePath: '/workspace/project-alpha',
+        localTaskId: 'runtime-copy',
+      },
+      runtime: 'claude_code',
     }),
     getRuntimeTranscript: vi.fn().mockResolvedValue({
       localTaskId: 'runtime-1',
@@ -444,13 +459,29 @@ function TaskForkProbe() {
 
   return (
     <div>
-      <span data-testid="current-task-id">{workbench.state.currentTask?.id ?? 'no-task'}</span>
-      <button type="button" onClick={() => void workbench.openTask(8)}>
+      <span data-testid="current-runtime-task-id">
+        {workbench.state.currentRuntimeTask?.localTaskId ?? 'no-runtime-task'}
+      </span>
+      <button
+        type="button"
+        onClick={() =>
+          void workbench.openRuntimeLocalTask({
+            deviceId: 'device-1',
+            workspacePath: '/workspace/project-alpha',
+            localTaskId: 'runtime-1',
+          })
+        }
+      >
         open source task
       </button>
       <button
         type="button"
-        onClick={() => void workbench.forkCurrentTask({ target: { type: 'managed' } })}
+        onClick={() =>
+          void workbench.forkCurrentRuntimeTask({
+            deviceId: 'device-2',
+            workspacePath: '/workspace/project-alpha',
+          })
+        }
       >
         fork to cloud
       </button>
@@ -1151,28 +1182,8 @@ describe('WorkbenchProvider', () => {
     expect(joinTask).toHaveBeenCalledWith(8)
   })
 
-  test('forks current task and opens the fork without starting execution', async () => {
-    const forkTask = vi.fn().mockResolvedValue({
-      task_id: 86,
-      task: {
-        id: 86,
-        title: 'Forked task',
-        status: 'PENDING',
-        task_type: 'code',
-        project_id: 0,
-        created_at: '2026-06-04T00:02:00.000Z',
-        subtasks: [],
-      },
-    })
-    const getTaskDetail = vi.fn(async (taskId: number) => ({
-      id: taskId,
-      title: taskId === 86 ? 'Forked task' : 'Source task',
-      status: taskId === 86 ? 'PENDING' : 'COMPLETED',
-      task_type: 'code',
-      project_id: 0,
-      created_at: '2026-06-04T00:00:00.000Z',
-      subtasks: [],
-    }))
+  test('forks current runtime task and opens the fork without starting execution', async () => {
+    const runtimeWorkApi = createRuntimeWorkApiMock()
     const joinTask = vi.fn()
     const sendMessage = vi.fn()
 
@@ -1202,8 +1213,7 @@ describe('WorkbenchProvider', () => {
           },
           taskApi: {
             listRecentTasks: vi.fn().mockResolvedValue({ total: 0, items: [] }),
-            getTaskDetail,
-            forkTask,
+            getTaskDetail: vi.fn(),
             renameTask: vi.fn(),
             archiveTask: vi.fn(),
             archiveAllChats: vi.fn(),
@@ -1212,6 +1222,7 @@ describe('WorkbenchProvider', () => {
             deleteTask: vi.fn(),
             deleteArchivedTasks: vi.fn(),
           },
+          runtimeWorkApi,
           deviceApi: {
             listDevices: vi.fn().mockResolvedValue([]),
             getHomeDirectory: vi.fn(),
@@ -1232,14 +1243,32 @@ describe('WorkbenchProvider', () => {
     )
 
     await userEvent.click(await screen.findByText('open source task'))
-    await waitFor(() => expect(screen.getByTestId('current-task-id')).toHaveTextContent('8'))
+    await waitFor(() =>
+      expect(screen.getByTestId('current-runtime-task-id')).toHaveTextContent('runtime-1')
+    )
 
     await userEvent.click(screen.getByText('fork to cloud'))
 
-    await waitFor(() => expect(screen.getByTestId('current-task-id')).toHaveTextContent('86'))
-    expect(forkTask).toHaveBeenCalledWith(8, { target: { type: 'managed' } })
-    expect(getTaskDetail).toHaveBeenCalledWith(86)
-    expect(joinTask).toHaveBeenCalledWith(86)
+    await waitFor(() =>
+      expect(screen.getByTestId('current-runtime-task-id')).toHaveTextContent('runtime-copy')
+    )
+    expect(runtimeWorkApi.forkRuntimeTask).toHaveBeenCalledWith({
+      source: {
+        deviceId: 'device-1',
+        workspacePath: '/workspace/project-alpha',
+        localTaskId: 'runtime-1',
+      },
+      target: {
+        deviceId: 'device-2',
+        workspacePath: '/workspace/project-alpha',
+      },
+    })
+    expect(runtimeWorkApi.getRuntimeTranscript).toHaveBeenCalledWith({
+      deviceId: 'device-2',
+      workspacePath: '/workspace/project-alpha',
+      localTaskId: 'runtime-copy',
+    })
+    expect(joinTask).not.toHaveBeenCalled()
     expect(sendMessage).not.toHaveBeenCalled()
   })
 
