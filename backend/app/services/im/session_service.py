@@ -174,7 +174,9 @@ class IMSessionService:
         session_key: str | None = None,
     ) -> "IMGlobalNotificationSettings":
         current = await self.get_global_notification_settings(user_id)
-        next_session_key = session_key if session_key is not None else current.session_key
+        next_session_key = (
+            session_key if session_key is not None else current.session_key
+        )
         if enabled and not next_session_key:
             from fastapi import HTTPException, status
 

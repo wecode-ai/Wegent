@@ -266,7 +266,9 @@ async def subscribe_runtime_task_im_notification_endpoint(
     response_model=RuntimeTaskIMNotificationSubscriptionResponse,
     response_model_by_alias=True,
 )
-@trace_async("runtime_work.im_notifications.runtime_task.unsubscribe", "runtime_work.api")
+@trace_async(
+    "runtime_work.im_notifications.runtime_task.unsubscribe", "runtime_work.api"
+)
 async def unsubscribe_runtime_task_im_notification_endpoint(
     address: RuntimeTaskAddress,
     db: Session = Depends(get_db),
