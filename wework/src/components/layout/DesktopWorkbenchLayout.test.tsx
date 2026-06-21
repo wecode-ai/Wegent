@@ -3715,6 +3715,102 @@ describe('DesktopWorkbenchLayout', () => {
     )
   })
 
+  test('loads environment info from the current runtime task workspace', async () => {
+    const onLoadEnvironmentInfo = vi.fn().mockResolvedValue({
+      additions: '+2',
+      deletions: '-0',
+      executionTarget: 'local' as const,
+      deviceId: 'runtime-device',
+      branchName: 'runtime/worktree',
+    })
+    const onGetProjectWorkspaceRoot = vi.fn().mockResolvedValue('/workspace/projects')
+    const runtimeProject = {
+      id: 12,
+      name: 'runtime-project',
+      tasks: [],
+      config: {
+        mode: 'workspace' as const,
+        execution: {
+          targetType: 'local' as const,
+          deviceId: 'runtime-device',
+        },
+      },
+    }
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot}
+        onLoadEnvironmentInfo={onLoadEnvironmentInfo}
+        state={{
+          ...baseProps.state,
+          currentProject: null,
+          currentRuntimeTask: {
+            deviceId: 'runtime-device',
+            workspacePath: '/workspace/project-alpha',
+            localTaskId: 'runtime-1',
+          },
+          projects: [
+            {
+              id: 2,
+              name: 'fallback',
+              tasks: [],
+              config: {
+                mode: 'workspace',
+                execution: {
+                  targetType: 'local',
+                  deviceId: 'fallback-device',
+                },
+                workspace: {
+                  source: 'local_path',
+                  localPath: '/workspace/fallback',
+                },
+              },
+            },
+            runtimeProject,
+          ],
+          runtimeWork: {
+            projects: [
+              {
+                project: { id: runtimeProject.id, name: runtimeProject.name },
+                deviceWorkspaces: [
+                  {
+                    id: 91,
+                    deviceId: 'runtime-device',
+                    workspacePath: '/workspace/project-alpha',
+                    available: true,
+                    mapped: true,
+                    localTasks: [
+                      {
+                        localTaskId: 'runtime-1',
+                        workspacePath: '/workspace/worktrees/8/project-alpha',
+                        title: 'Runtime task',
+                        runtime: 'codex',
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+            unmappedDeviceWorkspaces: [],
+            totalLocalTasks: 1,
+          },
+        }}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('environment-info-button'))
+
+    await waitFor(() =>
+      expect(onLoadEnvironmentInfo).toHaveBeenCalledWith(runtimeProject, {
+        deviceId: 'runtime-device',
+        path: '/workspace/worktrees/8/project-alpha',
+        source: 'runtime',
+      })
+    )
+    expect(onGetProjectWorkspaceRoot).not.toHaveBeenCalled()
+  })
+
   test('refreshes environment info when an assistant message completes', async () => {
     const onLoadEnvironmentInfo = vi.fn().mockResolvedValue({
       additions: '+4',

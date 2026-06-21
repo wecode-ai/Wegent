@@ -43,6 +43,20 @@ class _ChoiceOption:
     label: str
 
 
+NOTIFY_ON_ARGS = {"on", "open", "enable", "enabled", "true", "1", "开", "开启", "打开"}
+NOTIFY_OFF_ARGS = {
+    "off",
+    "close",
+    "disable",
+    "disabled",
+    "false",
+    "0",
+    "关",
+    "关闭",
+}
+NOTIFY_STATUS_ARGS = {"", "status", "状态", "state"}
+
+
 class IMCommandRouter:
     """Route private IM commands without depending on a provider SDK."""
 
@@ -187,6 +201,13 @@ class IMCommandRouter:
                 recent_tasks=recent_tasks,
             )
 
+        if command == CommandType.NOTIFY:
+            return await self._route_notify_command(
+                db=db,
+                session=session,
+                argument=argument,
+            )
+
         if command == CommandType.NEW:
             return await self._begin_new_flow(db=db, session=session)
 
@@ -195,6 +216,56 @@ class IMCommandRouter:
             return IMCommandResult(handled=True, reply="已取消。")
 
         return IMCommandResult(handled=False)
+
+    async def _route_notify_command(
+        self,
+        *,
+        db: Session,
+        session: IMPrivateSession,
+        argument: str | None,
+    ) -> IMCommandResult:
+        normalized = (argument or "").strip().lower()
+        if normalized in NOTIFY_ON_ARGS:
+            await im_session_service.enable_global_notification(db, session=session)
+            return IMCommandResult(
+                handled=True,
+                reply="已开启全局 IM 通知，后续任务输出会通知到当前会话。",
+            )
+
+        if normalized in NOTIFY_OFF_ARGS:
+            await im_session_service.disable_global_notification(session.user_id)
+            return IMCommandResult(
+                handled=True,
+                reply="已关闭全局 IM 通知。",
+            )
+
+        if normalized in NOTIFY_STATUS_ARGS:
+            return IMCommandResult(
+                handled=True,
+                reply=await self._format_notify_status_reply(session.user_id),
+            )
+
+        return IMCommandResult(
+            handled=True,
+            reply="用法：/notify on、/notify off、/notify status。",
+        )
+
+    async def _format_notify_status_reply(self, user_id: int) -> str:
+        settings = await im_session_service.get_global_notification_settings(user_id)
+        if not settings.enabled:
+            return "全局 IM 通知：已关闭。"
+
+        target = (
+            await im_session_service.get_session(settings.session_key)
+            if settings.session_key
+            else None
+        )
+        if target is None:
+            return "全局 IM 通知：已开启，但默认 IM 会话不可用。请重新发送 /notify on。"
+
+        label = im_session_service.get_channel_label(target.channel_type)
+        display_name = target.display_name or target.sender_id
+        return f"全局 IM 通知：已开启，默认会话：{label} / {display_name}。"
 
     async def _route_pending(
         self,

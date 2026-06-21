@@ -16,6 +16,17 @@ class EmptyDiscovery:
         return []
 
 
+class SequenceDiscovery:
+    def __init__(self, batches):
+        self.batches = list(batches)
+        self.calls = 0
+
+    def discover(self):
+        index = min(self.calls, len(self.batches) - 1)
+        self.calls += 1
+        return list(self.batches[index])
+
+
 class FakeCodexThreadListClient:
     def __init__(self, threads):
         self.threads = threads
@@ -923,6 +934,99 @@ async def test_runtime_work_handler_refreshes_codex_sessions_before_listing(tmp_
     assert task["localTaskId"] == thread_id
     assert task["runtime"] == "codex"
     assert task["running"] is True
+
+
+@pytest.mark.asyncio
+async def test_runtime_work_handler_emits_codex_native_update_after_seen_timestamp_changes(
+    tmp_path,
+):
+    from executor.runtime_work.local_task_store import LocalTaskRecord, LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    initial = LocalTaskRecord(
+        local_task_id="codex-thread-1",
+        workspace_path="/repo/Wegent",
+        title="Native Codex task",
+        runtime="codex",
+        runtime_handle={"threadId": "codex-thread-1"},
+        created_at="2026-06-21T01:00:00Z",
+        updated_at="2026-06-21T01:05:00Z",
+    )
+    updated = LocalTaskRecord(
+        local_task_id="codex-thread-1",
+        workspace_path="/repo/Wegent",
+        title="Native Codex task",
+        runtime="codex",
+        runtime_handle={"threadId": "codex-thread-1"},
+        created_at="2026-06-21T01:00:00Z",
+        updated_at="2026-06-21T01:06:00Z",
+    )
+    emitted = []
+
+    async def emit_event(event_type, payload):
+        emitted.append((event_type, payload))
+
+    handler = RuntimeWorkRpcHandler(
+        store=LocalTaskStore(tmp_path / "index.json"),
+        codex_discovery=SequenceDiscovery([[initial], [updated]]),
+        responses_event_emitter=emit_event,
+    )
+
+    await handler.poll_codex_updates_once()
+    await handler.poll_codex_updates_once()
+
+    assert len(emitted) == 1
+    assert emitted[0][0] == "runtime.tasks.updated"
+    assert emitted[0][1] == {
+        "localTaskId": "codex-thread-1",
+        "workspacePath": "/repo/Wegent",
+        "runtime": "codex",
+        "title": "Native Codex task",
+        "updatedAt": "2026-06-21T01:06:00Z",
+    }
+
+
+@pytest.mark.asyncio
+async def test_runtime_work_handler_suppresses_codex_watcher_after_wegent_send(
+    tmp_path,
+):
+    from executor.runtime_work.local_task_store import LocalTaskRecord, LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    initial = LocalTaskRecord(
+        local_task_id="codex-thread-1",
+        workspace_path="/repo/Wegent",
+        title="Native Codex task",
+        runtime="codex",
+        runtime_handle={"threadId": "codex-thread-1"},
+        created_at="2026-06-21T01:00:00Z",
+        updated_at="2026-06-21T01:05:00Z",
+    )
+    updated = LocalTaskRecord(
+        local_task_id="codex-thread-1",
+        workspace_path="/repo/Wegent",
+        title="Native Codex task",
+        runtime="codex",
+        runtime_handle={"threadId": "codex-thread-1"},
+        created_at="2026-06-21T01:00:00Z",
+        updated_at="2026-06-21T01:06:00Z",
+    )
+    emitted = []
+
+    async def emit_event(event_type, payload):
+        emitted.append((event_type, payload))
+
+    handler = RuntimeWorkRpcHandler(
+        store=LocalTaskStore(tmp_path / "index.json"),
+        codex_discovery=SequenceDiscovery([[initial], [updated]]),
+        responses_event_emitter=emit_event,
+    )
+
+    await handler.poll_codex_updates_once()
+    handler.mark_codex_task_updated_by_wegent("codex-thread-1")
+    await handler.poll_codex_updates_once()
+
+    assert emitted == []
 
 
 @pytest.mark.asyncio

@@ -46,12 +46,12 @@ from app.services.device.runtime_rpc_service import RuntimeRpcError, runtime_rpc
 from app.services.device_service import device_service
 from app.services.im.notification_dispatcher import im_notification_dispatcher
 from app.services.im.session_service import im_session_service
+from app.services.object_storage import object_storage_presign_service
 from app.services.runtime_work_kind_store import (
     list_device_workspace_kinds,
     touch_device_workspace_kind,
     upsert_device_workspace_kind,
 )
-from app.services.object_storage import object_storage_presign_service
 
 RUNTIME_LIST_TIMEOUT_SECONDS = 30
 RUNTIME_TRANSCRIPT_TIMEOUT_SECONDS = 30

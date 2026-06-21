@@ -369,6 +369,32 @@ describe('WorkspacePanelCards', () => {
     expect(localPathExistsMock).toHaveBeenCalledWith('/workspace/worktrees/8/project38')
   })
 
+  test('launches the native terminal for a runtime workspace without requiring a project', async () => {
+    const api = createProjectApiMock()
+    render(
+      <WorkspacePanelCards
+        currentProject={null}
+        devices={localDevices}
+        workspaceTarget={{
+          deviceId: 'device-1',
+          path: '/workspace/runtime/project38',
+          source: 'runtime',
+        }}
+      />
+    )
+
+    expect(screen.queryByText('请选择项目后使用')).not.toBeInTheDocument()
+
+    await userEvent.click(await screen.findByTestId('workspace-terminal-card'))
+
+    await waitFor(() =>
+      expect(startLocalTerminalMock).toHaveBeenCalledWith({
+        cwd: '/workspace/runtime/project38',
+      })
+    )
+    expect(api.startTerminalSession).not.toHaveBeenCalled()
+  })
+
   test('uses the backend remote terminal outside the WeWork macOS app', async () => {
     const api = createProjectApiMock()
     isLocalTerminalAvailableMock.mockReturnValue(false)

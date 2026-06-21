@@ -14,6 +14,7 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 
+from executor.config import config
 from executor.runtime_work.agent_adapter import RuntimeAgentAdapter
 from executor.runtime_work.codex_discovery import CodexSessionDiscovery
 from executor.runtime_work.local_task_store import (
@@ -57,6 +58,7 @@ class LocalTaskResponsesTransport(EventTransport):
             "subtask_id": subtask_id,
             "data": data,
             "local_task_id": self.task.local_task_id,
+            "workspacePath": self.task.workspace_path,
             "runtime": self.task.runtime,
         }
         if self.source is not None:
@@ -88,6 +90,9 @@ class RuntimeWorkRpcHandler:
         self.codex_discovery = codex_discovery or CodexSessionDiscovery()
         self.responses_event_emitter = responses_event_emitter
         self._running_sdk_tasks: set[asyncio.Task] = set()
+        self._codex_seen_updated_at: dict[str, str] = {}
+        self._codex_updates_from_wegent: set[str] = set()
+        self._codex_watcher_task: Optional[asyncio.Task] = None
 
     async def handle_runtime_rpc(self, data: dict[str, Any]) -> dict[str, Any]:
         method = data.get("method")
@@ -170,6 +175,91 @@ class RuntimeWorkRpcHandler:
         for record in records:
             self.store.upsert_task(record)
         return records
+
+    async def poll_codex_updates_once(self) -> None:
+        """Detect native Codex thread updates and report them to Backend."""
+
+        if self.responses_event_emitter is None:
+            return
+
+        for record in self._refresh_discovered_tasks():
+            if record.runtime != "codex":
+                continue
+
+            previous = self._codex_seen_updated_at.get(record.local_task_id)
+            self._codex_seen_updated_at[record.local_task_id] = record.updated_at
+            if previous is None:
+                continue
+            if self._parse_task_time(record.updated_at) <= self._parse_task_time(
+                previous
+            ):
+                continue
+            if record.local_task_id in self._codex_updates_from_wegent:
+                self._codex_updates_from_wegent.discard(record.local_task_id)
+                continue
+
+            await self._emit_codex_native_update(record)
+
+    def mark_codex_task_updated_by_wegent(self, local_task_id: str) -> None:
+        """Suppress the next watcher notification for a Wegent-originated turn."""
+
+        if local_task_id:
+            self._codex_updates_from_wegent.add(local_task_id)
+
+    async def _emit_codex_native_update(self, record: LocalTaskRecord) -> None:
+        if self.responses_event_emitter is None:
+            return
+        payload = {
+            "localTaskId": record.local_task_id,
+            "workspacePath": record.workspace_path,
+            "runtime": record.runtime,
+            "title": record.title,
+            "updatedAt": record.updated_at,
+        }
+        result = self.responses_event_emitter("runtime.tasks.updated", payload)
+        if asyncio.iscoroutine(result):
+            await result
+
+    async def start_codex_watcher(self, interval_seconds: Optional[int] = None) -> None:
+        """Start the native Codex update watcher."""
+
+        interval = (
+            config.RUNTIME_CODEX_WATCH_INTERVAL
+            if interval_seconds is None
+            else interval_seconds
+        )
+        if interval <= 0 or self.codex_discovery is None:
+            return
+        if self._codex_watcher_task and not self._codex_watcher_task.done():
+            return
+
+        await self.poll_codex_updates_once()
+        self._codex_watcher_task = asyncio.create_task(
+            self._codex_watcher_loop(interval)
+        )
+
+    async def stop_codex_watcher(self) -> None:
+        """Stop the native Codex update watcher."""
+
+        task = self._codex_watcher_task
+        self._codex_watcher_task = None
+        if task is None or task.done():
+            return
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    async def _codex_watcher_loop(self, interval_seconds: int) -> None:
+        while True:
+            await asyncio.sleep(interval_seconds)
+            try:
+                await self.poll_codex_updates_once()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Codex native update watcher failed")
 
     def _list_visible_tasks(
         self,
@@ -388,6 +478,7 @@ class RuntimeWorkRpcHandler:
             except Exception:
                 logger.exception("Failed to emit Codex SDK stream error")
         finally:
+            self.mark_codex_task_updated_by_wegent(task.local_task_id)
             self.store.update_task(
                 task.local_task_id,
                 lambda current: replace(

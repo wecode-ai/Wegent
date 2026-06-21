@@ -57,6 +57,14 @@ POST /api/runtime-work/send
 
 Backend forwards `runtime.tasks.send`. The executor resumes Codex or Claude Code from the local LocalTask's opaque runtime handle and writes the result back to the local JSON index.
 
+## Workspace Tool Context
+
+After Wework opens a LocalTask, the right-side file, review, and terminal tools resolve their device and directory from the current `RuntimeTaskAddress`:
+
+- The LocalTask `workspacePath` returned by `runtime.tasks.list` wins, so a Codex worktree is not treated as a separate Project.
+- If the LocalTask maps to a Project, environment info and review still receive that Project, but Git commands run in the LocalTask's actual directory.
+- If the LocalTask does not map to a Project, the local terminal can still open as long as the device is online and the directory is accessible. IDE capabilities that depend on Project APIs still require Project context.
+
 ## Create Tasks
 
 Wework creates a new runtime task with:
@@ -70,6 +78,16 @@ Backend resolves the target device and directory from either `projectId` or `dev
 ## Non-Project Workspaces
 
 Directories discovered by an executor but not mapped to a central Project appear in Wework under "Unmapped Device Workspaces". They also come from online device `runtime.tasks.list` responses, not from central database tasks.
+
+## IM Notifications
+
+Runtime tasks can send notifications to IM sessions, but notification state is still keyed by `RuntimeTaskAddress`; no DB Task is created.
+
+- In IM, `/notify on` enables the current user's global runtime task notification target for the current IM session.
+- `/notify off` disables global notifications, and `/notify status` reports the current state.
+- A single IM session can subscribe to one runtime task and receive only that task's updates.
+- When the executor detects a native Codex task timestamp change, it sends `runtime.tasks.updated` over the device WebSocket. Backend then delivers the update according to task subscriptions and global notification settings.
+- Wegent runtime sends and the native Codex watcher use the same `RuntimeTaskAddress` for deduplication, so Codex and Wework do not notify twice for the same task update.
 
 ## Compatibility
 

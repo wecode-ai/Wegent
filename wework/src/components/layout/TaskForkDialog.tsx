@@ -82,7 +82,7 @@ export function TaskForkDialog({
       })
       .filter((option): option is TargetOption => Boolean(option))
       .sort((left, right) => Number(left.disabled) - Number(right.disabled))
-  }, [runtimeWork, source?.deviceId, source?.workspacePath, t])
+  }, [runtimeWork, source, t])
 
   const enabledOptions = options.filter(option => !option.disabled)
   const selectedOption =

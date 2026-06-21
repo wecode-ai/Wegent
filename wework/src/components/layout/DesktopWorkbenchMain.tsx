@@ -67,13 +67,18 @@ const DESKTOP_QUEUED_SCROLL_TO_BOTTOM_BUTTON_CLASS =
 
 function workbenchSessionKey({
   currentTask,
+  currentRuntimeTask,
   currentProject,
 }: {
   currentTask: Task | null
+  currentRuntimeTask: RuntimeTaskAddress | null
   currentProject: ProjectWithTasks | null
 }): string {
   if (currentTask) {
     return `task:${currentTask.id}`
+  }
+  if (currentRuntimeTask) {
+    return `runtime:${currentRuntimeTask.deviceId}:${currentRuntimeTask.localTaskId}`
   }
   if (currentProject) {
     return `project:${currentProject.id}`
@@ -233,7 +238,11 @@ export function DesktopWorkbenchMain({
   const chatColumnWidth = rightPanelOpen ? rightSplitChatWidth : '100%'
   const rightPanelShellWidth = rightPanelOpen ? `calc(100% - ${rightSplitChatWidth}px)` : '0px'
   const reviewRequestSequence = useRef(0)
-  const rightPanelSessionKey = workbenchSessionKey({ currentTask, currentProject })
+  const rightPanelSessionKey = workbenchSessionKey({
+    currentTask,
+    currentRuntimeTask,
+    currentProject,
+  })
   const previousRightPanelSessionKey = useRef(rightPanelSessionKey)
   const isTauri = isTauriRuntime()
   const [modelSelectorOpenSignal, setModelSelectorOpenSignal] = useState(0)

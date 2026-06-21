@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.models.im_session import IMPrivateSession
 from app.models.kind import Kind
+from app.services.im.session_service import im_session_service
 from shared.utils.crypto import decrypt_sensitive_data
 
 logger = logging.getLogger(__name__)
@@ -53,6 +54,35 @@ class IMNotificationDispatcher:
                 sent += 1
 
         return {"sent": sent, "results": results}
+
+    async def send_runtime_task_update(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        address: dict[str, Any],
+        title: str,
+        status: str,
+        content: str = "",
+        source: str | None = None,
+    ) -> dict[str, Any]:
+        """Notify IM sessions about a runtime task update using priority rules."""
+
+        if source == "im":
+            return {"sent": 0, "results": [], "skipped": "im_source"}
+
+        sessions = await self._runtime_notification_sessions(
+            db=db,
+            user_id=user_id,
+            address=address,
+        )
+        message = _runtime_task_update_message(
+            title=title,
+            local_task_id=str(address.get("localTaskId") or "本地任务"),
+            status=status,
+            content=content,
+        )
+        return await self._send_to_sessions(db, sessions, message)
 
     async def send_text(
         self,
@@ -99,6 +129,55 @@ class IMNotificationDispatcher:
                 "channel_type": session.channel_type,
                 "error": str(exc),
             }
+
+    async def _runtime_notification_sessions(
+        self,
+        *,
+        db: Session,
+        user_id: int,
+        address: dict[str, Any],
+    ) -> list[IMPrivateSession]:
+        active_sessions = await im_session_service.list_active_runtime_task_sessions(
+            db,
+            user_id=user_id,
+            runtime_task=address,
+        )
+        if active_sessions:
+            return _dedupe_sessions(active_sessions)
+
+        subscribed_sessions = (
+            await im_session_service.list_runtime_task_notification_sessions(
+                db,
+                user_id=user_id,
+                runtime_task=address,
+            )
+        )
+        if subscribed_sessions:
+            return _dedupe_sessions(subscribed_sessions)
+
+        settings = await im_session_service.get_global_notification_settings(user_id)
+        if not settings.enabled or not settings.session_key:
+            return []
+        session = await im_session_service.get_session(settings.session_key)
+        if session is None or session.user_id != user_id:
+            return []
+        return [session]
+
+    async def _send_to_sessions(
+        self,
+        db: Session,
+        sessions: Sequence[IMPrivateSession],
+        message: str,
+    ) -> dict[str, Any]:
+        sent = 0
+        results: list[dict[str, Any]] = []
+        for session in _dedupe_sessions(sessions):
+            result = await self.send_text(db, session, message)
+            result.setdefault("session_key", session.session_key)
+            results.append(result)
+            if result.get("success"):
+                sent += 1
+        return {"sent": sent, "results": results}
 
     def _get_channel(self, db: Session, channel_id: int) -> Kind | None:
         return (
@@ -225,6 +304,45 @@ def _config_value(config: dict[str, Any], *keys: str) -> str | None:
         if isinstance(value, str) and value:
             return value
     return None
+
+
+def _dedupe_sessions(
+    sessions: Sequence[IMPrivateSession],
+) -> list[IMPrivateSession]:
+    seen: set[str] = set()
+    deduped: list[IMPrivateSession] = []
+    for session in sessions:
+        if session.session_key in seen:
+            continue
+        seen.add(session.session_key)
+        deduped.append(session)
+    return deduped
+
+
+def _runtime_task_update_message(
+    *,
+    title: str,
+    local_task_id: str,
+    status: str,
+    content: str,
+) -> str:
+    task_title = title or local_task_id or "本地任务"
+    if status in {"failed", "FAILED"}:
+        body = content or "任务执行失败。"
+        return f"任务「{task_title}」执行失败：\n\n{body}"
+    if status in {"cancelled", "CANCELLED"}:
+        return f"任务「{task_title}」已取消。"
+
+    body = content or "任务有新的更新，请打开 Wework 查看完整对话。"
+    return "\n".join(
+        [
+            f"任务「{task_title}」有新的 AI 回复：",
+            "",
+            body,
+            "",
+            "回复这条通知可继续该任务。",
+        ]
+    )
 
 
 im_notification_dispatcher = IMNotificationDispatcher()

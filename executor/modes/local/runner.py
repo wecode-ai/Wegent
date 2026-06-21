@@ -238,6 +238,7 @@ class LocalRunner:
 
             # Start heartbeat service
             await self.heartbeat_service.start()
+            await self.runtime_work_handler.start_codex_watcher()
 
             # Run task processing loop
             await self._task_loop()
@@ -263,6 +264,7 @@ class LocalRunner:
 
         # Stop heartbeat service
         await self.heartbeat_service.stop()
+        await self.runtime_work_handler.stop_codex_watcher()
 
         # Stop interactive sessions and gateway
         await self.session_handler.stop()

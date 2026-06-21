@@ -434,6 +434,47 @@ async def test_local_task_im_source_forwards_stream_event_to_channel_callbacks(
 
 
 @pytest.mark.asyncio
+async def test_runtime_task_updated_event_notifies_im_dispatcher(monkeypatch):
+    namespace = device_namespace.DeviceNamespace()
+    notifications = []
+
+    async def fake_get_session(sid):
+        return {"user_id": 7, "device_id": "device-1"}
+
+    async def fake_send_runtime_task_update(_db, **kwargs):
+        notifications.append(kwargs)
+        return {"sent": 1}
+
+    monkeypatch.setattr(namespace, "get_session", fake_get_session)
+    monkeypatch.setattr(
+        device_namespace.im_notification_dispatcher,
+        "send_runtime_task_update",
+        fake_send_runtime_task_update,
+    )
+
+    result = await namespace.on_runtime_task_updated(
+        "sid-1",
+        {
+            "localTaskId": "codex-thread-1",
+            "workspacePath": "/repo/Wegent",
+            "runtime": "codex",
+            "title": "Native Codex task",
+            "updatedAt": "2026-06-21T01:06:00Z",
+        },
+    )
+
+    assert result == {"success": True, "notified": 1}
+    assert notifications[0]["user_id"] == 7
+    assert notifications[0]["address"] == {
+        "deviceId": "device-1",
+        "localTaskId": "codex-thread-1",
+        "workspacePath": "/repo/Wegent",
+    }
+    assert notifications[0]["source"] == "codex_watcher"
+    assert notifications[0]["title"] == "Native Codex task"
+
+
+@pytest.mark.asyncio
 async def test_local_task_responses_api_events_are_serialized(monkeypatch):
     namespace = device_namespace.DeviceNamespace()
     first_event_started = asyncio.Event()

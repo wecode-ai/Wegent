@@ -28,7 +28,11 @@ import type { DeviceUpgradeState } from '@/types/device-events'
 import type { CodeCommentContext, WorkspaceTarget } from '@/types/workspace-files'
 import { stripAppBasePath } from '@/config/runtime'
 import { isSettingsRoute, navigateTo } from '@/lib/navigation'
-import { resolveWorkspaceTarget, workspaceTargetKey } from '@/lib/workspace-target'
+import {
+  resolveRuntimeWorkspaceContext,
+  resolveWorkspaceTarget,
+  workspaceTargetKey,
+} from '@/lib/workspace-target'
 import { findProjectForTask } from '@/lib/workbench-device'
 import { DesktopSidebar } from './DesktopSidebar'
 import { ProjectCreateDialog } from '@/components/projects/ProjectCreateDialog'
@@ -202,14 +206,32 @@ export function DesktopWorkbenchLayout({
     () => findProjectForTask(state.projects, state.currentTask),
     [state.currentTask, state.projects]
   )
-  const activeConversationProject = state.currentProject ?? currentTaskProject
-  const environmentProject = useMemo(
+  const runtimeWorkspaceContext = useMemo(
     () =>
+      resolveRuntimeWorkspaceContext({
+        currentRuntimeTask: state.currentRuntimeTask,
+        projects: state.projects,
+        runtimeWork: state.runtimeWork,
+      }),
+    [state.currentRuntimeTask, state.projects, state.runtimeWork]
+  )
+  const activeConversationProject =
+    state.currentProject ?? currentTaskProject ?? runtimeWorkspaceContext?.project ?? null
+  const environmentProject = useMemo(() => {
+    if (state.currentRuntimeTask) {
+      return runtimeWorkspaceContext?.project ?? null
+    }
+    return (
       activeConversationProject ??
       state.projects.find(project => project.config?.mode === 'workspace') ??
-      null,
-    [activeConversationProject, state.projects]
-  )
+      null
+    )
+  }, [
+    activeConversationProject,
+    runtimeWorkspaceContext?.project,
+    state.currentRuntimeTask,
+    state.projects,
+  ])
   const completedAssistantMessageIds = useRef<Set<string>>(new Set())
   const completedAssistantMessagesInitialized = useRef(false)
   const currentTaskWorkspaceKey = state.currentTask
@@ -226,9 +248,23 @@ export function DesktopWorkbenchLayout({
   const hasEnvironmentProject = Boolean(environmentProject)
   const environmentWorkspaceReady = !hasEnvironmentProject || Boolean(workspaceTarget)
   const workspaceTargetProject = environmentProject
+  const runtimeWorkspaceTarget = runtimeWorkspaceContext?.workspaceTarget ?? null
+  const runtimeWorkspaceTargetKey = workspaceTargetKey(runtimeWorkspaceTarget)
 
   useEffect(() => {
     let cancelled = false
+
+    if (state.currentRuntimeTask) {
+      setWorkspaceTarget(current =>
+        workspaceTargetKey(current) === runtimeWorkspaceTargetKey ? current : runtimeWorkspaceTarget
+      )
+      setWorkspaceTargetError(runtimeWorkspaceTarget ? null : 'Workspace is not ready')
+      setWorkspaceTargetResolving(false)
+      return () => {
+        cancelled = true
+      }
+    }
+
     setWorkspaceTargetResolving(true)
     setWorkspaceTarget(null)
     setWorkspaceTargetError(null)
@@ -260,7 +296,10 @@ export function DesktopWorkbenchLayout({
     }
   }, [
     currentTaskWorkspaceKey,
+    runtimeWorkspaceTarget,
+    runtimeWorkspaceTargetKey,
     state.currentTask,
+    state.currentRuntimeTask,
     workspaceTargetProject,
     workspaceTargetResolverApi,
   ])

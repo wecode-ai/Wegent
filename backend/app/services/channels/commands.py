@@ -23,6 +23,7 @@ Supported commands:
 - /chat - Switch private IM session to Chat mode
 - /task - Switch private IM session to Task mode
 - /switch - Switch active private IM task
+- /notify - Manage global IM task notifications
 - /cancel - Cancel pending private IM choice
 - /help - Show available commands
 """
@@ -50,6 +51,7 @@ class CommandType(str, Enum):
     CHAT = "chat"  # Switch private IM session to Chat mode
     TASK = "task"  # Switch private IM session to Task mode
     SWITCH = "switch"  # Switch active private IM task
+    NOTIFY = "notify"  # Manage global IM task notifications
     CANCEL = "cancel"  # Cancel pending private IM choice
 
 
@@ -104,6 +106,8 @@ def parse_command(content: str) -> Optional[ParsedCommand]:
         "/chat": CommandType.CHAT,
         "/task": CommandType.TASK,
         "/switch": CommandType.SWITCH,
+        "/notify": CommandType.NOTIFY,
+        "/通知": CommandType.NOTIFY,
         "/cancel": CommandType.CANCEL,
     }
 
@@ -159,6 +163,7 @@ HELP_MESSAGE = """📋 **可用命令**
 • `/chat` - 切换到 Chat 模式
 • `/task` - 切换到 Task 模式
 • `/switch` - 切换当前任务
+• `/notify on|off|status` - 管理全局 IM 任务通知
 • `/cancel` - 取消当前选择
 • `/status` - 查看当前状态
 • `/help` - 显示此帮助
@@ -223,6 +228,7 @@ IM_CHANNEL_CONTEXT_HINT = """
 - `/chat` - 切换到 Chat 模式
 - `/task` - 切换到 Task 模式
 - `/switch` - 切换当前任务
+- `/notify on|off|status` - 管理全局 IM 任务通知
 - `/cancel` - 取消当前选择
 - `/help` - 显示完整帮助
 

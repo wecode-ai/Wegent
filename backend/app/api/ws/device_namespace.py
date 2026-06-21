@@ -72,6 +72,7 @@ from app.services.device_service import device_service
 from app.services.execution.dispatcher import ResponsesAPIEventParser
 from app.services.execution.emitters.status_updating import StatusUpdatingEmitter
 from app.services.execution.emitters.websocket import WebSocketResultEmitter
+from app.services.im.notification_dispatcher import im_notification_dispatcher
 from app.services.user_runtime_config import (
     UserRuntimeConfigError,
     UserRuntimeConfigSyncError,
@@ -477,6 +478,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
             "device:heartbeat": "on_device_heartbeat",
             "device:status": "on_device_status",
             "device:upgrade_status": "on_device_upgrade_status",
+            "runtime.tasks.updated": "on_runtime_task_updated",
             "terminal:output": "on_terminal_output",
             "terminal:exit": "on_terminal_exit",
         }
@@ -1543,6 +1545,41 @@ class DeviceNamespace(socketio.AsyncNamespace):
             get_lock=self._get_subtask_lock,
             cleanup_lock=self._cleanup_subtask_lock,
         )
+
+    async def on_runtime_task_updated(self, sid: str, data: dict) -> dict:
+        """Handle native runtime task updates detected by a local executor watcher."""
+
+        session = await self.get_session(sid)
+        if not session:
+            return {"error": "Device not authenticated"}
+
+        user_id = int(session.get("user_id"))
+        device_id = str(session.get("device_id") or "")
+        local_task_id = str(data.get("localTaskId") or data.get("local_task_id") or "")
+        workspace_path = str(
+            data.get("workspacePath") or data.get("workspace_path") or ""
+        )
+        if not device_id or not local_task_id:
+            return {"error": "Invalid runtime task update payload"}
+
+        address = {
+            "deviceId": device_id,
+            "localTaskId": local_task_id,
+        }
+        if workspace_path:
+            address["workspacePath"] = workspace_path
+
+        with _db_session() as db:
+            notification = await im_notification_dispatcher.send_runtime_task_update(
+                db,
+                user_id=user_id,
+                address=address,
+                title=str(data.get("title") or local_task_id),
+                status=str(data.get("status") or "updated"),
+                content=str(data.get("content") or ""),
+                source="codex_watcher",
+            )
+        return {"success": True, "notified": int(notification.get("sent") or 0)}
 
     async def _publish_task_completed_event(
         self,
