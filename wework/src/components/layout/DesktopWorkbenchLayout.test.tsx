@@ -690,7 +690,10 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await userEvent.click(screen.getByTestId('continue-in-im-button'))
-    await userEvent.click(await screen.findByTestId('continue-im-session-session-1'))
+    expect(await screen.findByTestId('continue-im-session-session-1')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
     await userEvent.click(screen.getByTestId('continue-im-submit-button'))
 
     expect(await screen.findByTestId('transient-notice')).toHaveTextContent('继续到私聊失败')

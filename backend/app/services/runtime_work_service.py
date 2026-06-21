@@ -277,7 +277,10 @@ async def get_runtime_transcript(
             timeout_seconds=RUNTIME_TRANSCRIPT_TIMEOUT_SECONDS,
         )
     except RuntimeRpcError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
     _raise_runtime_rpc_failure(result)
     return RuntimeTranscriptResponse.model_validate(result)
 
@@ -308,7 +311,10 @@ async def send_runtime_message(
             timeout_seconds=RUNTIME_SEND_TIMEOUT_SECONDS,
         )
     except RuntimeRpcError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
     return _runtime_send_response(result, address.local_task_id)
 
 
@@ -367,7 +373,10 @@ async def archive_runtime_task(
             timeout_seconds=RUNTIME_TRANSCRIPT_TIMEOUT_SECONDS,
         )
     except RuntimeRpcError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
     return _runtime_archive_response(result, normalized_address)
 
 
@@ -1254,7 +1263,7 @@ def _get_team(db: Session, user_id: int, team_id: int) -> Kind:
             Kind.id == team_id,
             Kind.kind == "Team",
             Kind.user_id.in_([user_id, 0]),
-            Kind.is_active == True,
+            Kind.is_active.is_(True),
         )
         .first()
     )

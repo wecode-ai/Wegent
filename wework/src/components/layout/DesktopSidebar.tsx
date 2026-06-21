@@ -415,7 +415,7 @@ function RuntimeLocalTaskRow({
         selected
           ? 'bg-[rgb(var(--color-sidebar-active))] text-text-primary'
           : marked
-            ? 'bg-[#FFF4D6] text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[#FFE8A3]'
+            ? 'bg-primary/10 text-[rgb(var(--color-sidebar-text-primary))] hover:bg-primary/20'
             : 'text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]'
       )}
     >
@@ -462,7 +462,7 @@ function RuntimeLocalTaskRow({
             onClick={handleToggleMark}
             className={cn(
               'flex h-6 w-6 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]',
-              marked && 'text-[#9A6700]'
+              marked && 'text-primary'
             )}
             title={
               marked

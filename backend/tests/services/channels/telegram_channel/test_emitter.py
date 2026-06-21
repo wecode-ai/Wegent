@@ -360,6 +360,28 @@ class TestStreamingResponseEmitter:
         )
 
     @pytest.mark.asyncio
+    async def test_emit_error_flushes_pending_content(self, emitter, mock_bot):
+        """Test emit_error preserves buffered stream content."""
+        mock_message = MagicMock()
+        mock_message.message_id = 999
+        mock_bot.send_message.return_value = mock_message
+        await emitter.emit_start(task_id=1, subtask_id=2)
+        mock_bot.edit_message_text.reset_mock()
+        emitter._full_content = "Visible"
+        emitter._pending_content = " pending"
+
+        await emitter.emit_error(
+            task_id=1,
+            subtask_id=2,
+            error="Something went wrong",
+        )
+
+        text = mock_bot.edit_message_text.call_args.kwargs["text"]
+        assert "Visible pending" in text
+        assert "Something went wrong" in text
+        assert emitter._pending_content == ""
+
+    @pytest.mark.asyncio
     async def test_emit_error_already_finished(self, emitter, mock_bot):
         """Test emit_error when already finished."""
         emitter._finished = True
@@ -386,6 +408,24 @@ class TestStreamingResponseEmitter:
 
         assert emitter._finished is True
         assert "取消" in emitter._full_content
+
+    @pytest.mark.asyncio
+    async def test_emit_cancelled_flushes_pending_content(self, emitter, mock_bot):
+        """Test emit_cancelled preserves buffered stream content."""
+        mock_message = MagicMock()
+        mock_message.message_id = 999
+        mock_bot.send_message.return_value = mock_message
+        await emitter.emit_start(task_id=1, subtask_id=2)
+        mock_bot.edit_message_text.reset_mock()
+        emitter._full_content = "Visible"
+        emitter._pending_content = " pending"
+
+        await emitter.emit_cancelled(task_id=1, subtask_id=2)
+
+        text = mock_bot.edit_message_text.call_args.kwargs["text"]
+        assert "Visible pending" in text
+        assert "任务已取消" in text
+        assert emitter._pending_content == ""
 
     def test_max_message_length(self, emitter):
         """Test MAX_MESSAGE_LENGTH constant."""

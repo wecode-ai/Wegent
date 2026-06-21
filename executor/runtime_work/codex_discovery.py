@@ -274,7 +274,7 @@ def _codex_enum_value(enum_name: str, value: str) -> Any:
 
         enum_type = getattr(v2_all, enum_name)
         return enum_type(value)
-    except Exception:
+    except (ImportError, AttributeError, TypeError, ValueError):
         return value
 
 

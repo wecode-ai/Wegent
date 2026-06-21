@@ -110,6 +110,52 @@ async def test_device_workspace_upsert_normalizes_unique_mapping(test_db, test_u
 
 
 @pytest.mark.asyncio
+async def test_device_workspace_upsert_reactivates_inactive_mapping(test_db, test_user):
+    from app.schemas.runtime_work import DeviceWorkspaceUpsert
+    from app.services import runtime_work_service
+
+    project = _project(test_db, test_user.id)
+    first = runtime_work_service.upsert_device_workspace(
+        db=test_db,
+        user_id=test_user.id,
+        payload=DeviceWorkspaceUpsert(
+            projectId=project.id,
+            deviceId="device-1",
+            workspacePath="/repo/Wegent",
+            label="MacBook",
+        ),
+    )
+    row = test_db.get(Kind, first.id)
+    row.is_active = False
+    test_db.commit()
+
+    restored = runtime_work_service.upsert_device_workspace(
+        db=test_db,
+        user_id=test_user.id,
+        payload=DeviceWorkspaceUpsert(
+            projectId=project.id,
+            deviceId="device-1",
+            workspacePath="/repo/Wegent/",
+            label="Restored",
+        ),
+    )
+
+    assert restored.id == first.id
+    assert restored.label == "Restored"
+    rows = (
+        test_db.query(Kind)
+        .filter(
+            Kind.user_id == test_user.id,
+            Kind.kind == "DeviceWorkspace",
+            Kind.namespace == "runtime-work",
+        )
+        .all()
+    )
+    assert len(rows) == 1
+    assert rows[0].is_active is True
+
+
+@pytest.mark.asyncio
 async def test_list_runtime_work_groups_local_tasks_under_device_workspaces(
     test_db,
     test_user,

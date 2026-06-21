@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Generic, List, Optional, TypeVar
 
 from fastapi import HTTPException
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from app.api.ws.events import ServerEvents
@@ -997,8 +998,26 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             await self.send_text_reply(message_context, "请发送文本继续本地任务。")
             return
 
+        try:
+            address = RuntimeTaskAddress.model_validate(runtime_task)
+        except ValidationError:
+            self.logger.exception(
+                "[%sHandler] Active private IM runtime task address is invalid: "
+                "user_id=%s",
+                self._channel_type.value,
+                user.id,
+            )
+            await im_session_service.clear_active_task(db, session=im_session)
+            await self.send_text_reply(
+                message_context, "当前本地任务不可用，请回到 Wework 重新选择。"
+            )
+            return
+
         message_source = self._build_private_im_message_source(im_session)
-        callback_key = self._runtime_task_callback_key(runtime_task)
+        callback_key = runtime_local_task_callback_key(
+            address.device_id,
+            address.local_task_id,
+        )
         await self._register_private_im_runtime_callback(
             callback_key=callback_key,
             message_context=message_context,
@@ -1008,7 +1027,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 db=db,
                 user_id=user.id,
                 request=RuntimeSendRequest(
-                    address=RuntimeTaskAddress.model_validate(runtime_task),
+                    address=address,
                     message=message,
                     source=RuntimeMessageSource(
                         source="im",
@@ -1033,7 +1052,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                     ),
                 ),
             )
-        except HTTPException:
+        except (HTTPException, ValidationError):
             await self._delete_private_im_runtime_callback(callback_key)
             self.logger.exception(
                 "[%sHandler] Active private IM runtime task is unavailable: "

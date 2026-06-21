@@ -789,7 +789,7 @@ def enum_value(enum_name, value):
 
         enum_type = getattr(v2_all, enum_name)
         return enum_type(value)
-    except Exception:
+    except (ImportError, AttributeError, TypeError, ValueError):
         return value
 
 
@@ -828,6 +828,7 @@ def sort_key(record):
 limit = parse_limit()
 codex_home = Path(os.environ.get("CODEX_HOME") or (Path.home() / ".codex")).expanduser()
 records = []
+discovery_error = None
 
 try:
     from openai_codex import Codex, CodexConfig
@@ -852,11 +853,14 @@ try:
         normalized = normalize_thread(thread)
         if normalized:
             records.append(normalized)
-except Exception:
-    records = []
+except Exception as exc:
+    discovery_error = str(exc)
 
 records.sort(key=sort_key, reverse=True)
-print(json.dumps({"threads": records}, ensure_ascii=False))
+payload = {"threads": records}
+if discovery_error:
+    payload["error"] = discovery_error
+print(json.dumps(payload, ensure_ascii=False))
 """.strip()
 
 CODEX_THREADS_LIST_COMMAND = f"python3 -c {shlex.quote(CODEX_THREADS_LIST_SCRIPT)}"

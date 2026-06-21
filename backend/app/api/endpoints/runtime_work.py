@@ -28,6 +28,11 @@ from app.schemas.runtime_work import (
     RuntimeWorkListResponse,
 )
 from app.services import runtime_work_service
+from shared.telemetry.decorators import (
+    add_span_event,
+    set_span_attribute,
+    trace_async,
+)
 
 router = APIRouter()
 
@@ -136,6 +141,7 @@ async def send_runtime_message_endpoint(
     response_model=BindRuntimeTaskIMSessionsResponse,
     response_model_by_alias=True,
 )
+@trace_async("runtime_work.bind_im_sessions", "runtime_work.api")
 async def bind_runtime_task_im_sessions_endpoint(
     request: BindRuntimeTaskIMSessionsRequest,
     db: Session = Depends(get_db),
@@ -143,6 +149,19 @@ async def bind_runtime_task_im_sessions_endpoint(
 ):
     """Bind private IM sessions to a native runtime LocalTask address."""
 
+    set_span_attribute("user.id", current_user.id)
+    set_span_attribute("runtime.device_id", request.address.device_id)
+    set_span_attribute("runtime.local_task_id", request.address.local_task_id)
+    set_span_attribute("runtime.im_session_count", len(request.session_keys))
+    add_span_event(
+        "runtime_work.im_sessions.bind",
+        {
+            "user.id": current_user.id,
+            "runtime.device_id": request.address.device_id,
+            "runtime.local_task_id": request.address.local_task_id,
+            "runtime.im_session_count": len(request.session_keys),
+        },
+    )
     return await runtime_work_service.bind_runtime_task_to_im_sessions(
         db=db,
         user_id=current_user.id,
@@ -155,6 +174,7 @@ async def bind_runtime_task_im_sessions_endpoint(
     response_model=RuntimeTaskArchiveResponse,
     response_model_by_alias=True,
 )
+@trace_async("runtime_work.archive_task", "runtime_work.api")
 async def archive_runtime_task_endpoint(
     address: RuntimeTaskAddress,
     db: Session = Depends(get_db),
@@ -162,6 +182,17 @@ async def archive_runtime_task_endpoint(
 ):
     """Archive a native runtime LocalTask through the owning local executor."""
 
+    set_span_attribute("user.id", current_user.id)
+    set_span_attribute("runtime.device_id", address.device_id)
+    set_span_attribute("runtime.local_task_id", address.local_task_id)
+    add_span_event(
+        "runtime_work.task.archive",
+        {
+            "user.id": current_user.id,
+            "runtime.device_id": address.device_id,
+            "runtime.local_task_id": address.local_task_id,
+        },
+    )
     return await runtime_work_service.archive_runtime_task(
         db=db,
         user_id=current_user.id,

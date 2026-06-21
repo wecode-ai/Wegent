@@ -43,6 +43,7 @@ def upsert_device_workspace_kind(
         user_id=user_id,
         device_id=device_id,
         workspace_path_hash=workspace_path_hash,
+        active_only=False,
     )
     status = _kind_status(row) if row else {}
     resource = _device_workspace_resource(
@@ -87,7 +88,7 @@ def list_device_workspace_kinds(
             Kind.user_id == user_id,
             Kind.kind == DEVICE_WORKSPACE_KIND,
             Kind.namespace == DEVICE_WORKSPACE_NAMESPACE,
-            Kind.is_active == True,
+            Kind.is_active,
         )
         .order_by(Kind.updated_at.desc(), Kind.id.desc())
         .all()
@@ -157,19 +158,18 @@ def _get_device_workspace_kind(
     user_id: int,
     device_id: str,
     workspace_path_hash: str,
+    active_only: bool = True,
 ) -> Optional[Kind]:
     name = device_workspace_kind_name(device_id, workspace_path_hash)
-    return (
-        db.query(Kind)
-        .filter(
-            Kind.user_id == user_id,
-            Kind.kind == DEVICE_WORKSPACE_KIND,
-            Kind.namespace == DEVICE_WORKSPACE_NAMESPACE,
-            Kind.name == name,
-            Kind.is_active == True,
-        )
-        .first()
+    query = db.query(Kind).filter(
+        Kind.user_id == user_id,
+        Kind.kind == DEVICE_WORKSPACE_KIND,
+        Kind.namespace == DEVICE_WORKSPACE_NAMESPACE,
+        Kind.name == name,
     )
+    if active_only:
+        query = query.filter(Kind.is_active)
+    return query.first()
 
 
 def _device_workspace_resource(

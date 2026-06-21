@@ -386,17 +386,14 @@ class StreamingResponseEmitter(ResultEmitter):
         **kwargs,
     ) -> None:
         """Emit done event - finalize the message."""
-        if self._finished:
-            logger.warning(
-                "[TelegramStreamingEmitter] emit_done called but already finished"
-            )
-            return
-
         async with self._update_lock:
-            final_content = self._full_content
-            if self._pending_content:
-                final_content += self._pending_content
-                self._pending_content = ""
+            if self._finished:
+                logger.warning(
+                    "[TelegramStreamingEmitter] emit_done called but already finished"
+                )
+                return
+
+            final_content = self._drain_pending_content_locked()
 
             if result and isinstance(result, dict):
                 result_value = result.get("value", "") or result.get("output", "") or ""
@@ -466,15 +463,15 @@ class StreamingResponseEmitter(ResultEmitter):
         **kwargs,
     ) -> None:
         """Emit error event - show error message."""
-        if self._finished:
-            return
-
         logger.warning(
             f"[TelegramStreamingEmitter] error task={task_id} subtask={subtask_id} "
             f"error={error}"
         )
 
         async with self._update_lock:
+            if self._finished:
+                return
+
             try:
                 # Ensure message is created
                 if not await self._ensure_message_created():
@@ -482,8 +479,9 @@ class StreamingResponseEmitter(ResultEmitter):
 
                 # Update message with error
                 error_text = f"❌ 错误: {error}"
-                if self._full_content:
-                    error_text = f"{self._full_content}\n\n{error_text}"
+                final_content = self._drain_pending_content_locked()
+                if final_content:
+                    error_text = f"{final_content}\n\n{error_text}"
 
                 await self._bot.edit_message_text(
                     chat_id=self._chat_id,
@@ -505,21 +503,23 @@ class StreamingResponseEmitter(ResultEmitter):
         **kwargs,
     ) -> None:
         """Emit cancelled event - show cancellation message."""
-        if self._finished:
-            return
-
         logger.info(
             f"[TelegramStreamingEmitter] cancelled task={task_id} subtask={subtask_id}"
         )
 
         async with self._update_lock:
+            if self._finished:
+                return
+
             try:
                 # Ensure message is created
                 if not await self._ensure_message_created():
                     return
 
                 # Add cancellation note to content
-                self._full_content += "\n\n⚠️ 任务已取消"
+                self._full_content = (
+                    self._drain_pending_content_locked() + "\n\n⚠️ 任务已取消"
+                )
 
                 # Update message with cancellation
                 display_content = self._full_content
@@ -544,3 +544,11 @@ class StreamingResponseEmitter(ResultEmitter):
     async def close(self) -> None:
         """Close the emitter and release resources."""
         pass
+
+    def _drain_pending_content_locked(self) -> str:
+        final_content = self._full_content
+        if self._pending_content:
+            final_content += self._pending_content
+            self._pending_content = ""
+        self._full_content = final_content
+        return final_content

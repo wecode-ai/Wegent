@@ -493,6 +493,60 @@ async def test_task_mode_runtime_message_registers_callback_without_static_ack(
 
 
 @pytest.mark.asyncio
+async def test_task_mode_runtime_message_rejects_invalid_address_before_callback(
+    monkeypatch: pytest.MonkeyPatch,
+    test_db: Session,
+    test_user: User,
+    channel_sessionlocal,
+) -> None:
+    from app.services import runtime_work_service
+
+    handler = FakeChannelHandler(test_user)
+    session = await im_session_service.get_or_create_private_session(
+        db=test_db,
+        user_id=test_user.id,
+        channel_type="dingtalk",
+        channel_id=77,
+        conversation_id="conv-private",
+        sender_id="staff-a",
+        display_name="Alice",
+    )
+    await im_session_service.bind_active_runtime_task(
+        test_db,
+        session=session,
+        runtime_task={"deviceId": "device-1", "localTaskId": "codex-1"},
+    )
+    calls: dict[str, Any] = {}
+
+    class FakeCallbackService:
+        async def save_callback_info(self, task_id, callback_info):
+            calls["callback"] = task_id
+
+        async def delete_callback_info(self, task_id):
+            calls["deleted_callback"] = task_id
+
+    async def fake_send_runtime_message(**kwargs):
+        calls["send"] = kwargs
+        return SimpleNamespace(accepted=True, local_task_id="codex-1", error=None)
+
+    monkeypatch.setattr(handler, "get_callback_service", lambda: FakeCallbackService())
+    monkeypatch.setattr(
+        runtime_work_service,
+        "send_runtime_message",
+        fake_send_runtime_message,
+    )
+
+    handled = await handler.handle_message(_message("继续 runtime"))
+
+    assert handled is True
+    assert "callback" not in calls
+    assert "send" not in calls
+    assert handler.replies == ["当前本地任务不可用，请回到 Wework 重新选择。"]
+    refreshed = await _private_session(test_db, test_user)
+    assert refreshed.active_runtime_task is None
+
+
+@pytest.mark.asyncio
 async def test_task_mode_runtime_message_emits_user_message_to_web(
     monkeypatch: pytest.MonkeyPatch,
     test_db: Session,

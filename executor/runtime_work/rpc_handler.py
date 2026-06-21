@@ -168,9 +168,14 @@ class RuntimeWorkRpcHandler:
         workspace_path: Any,
         include_archived: bool,
     ) -> list[LocalTaskRecord]:
-        visible_tasks = [
-            task for task in store_tasks if task.runtime.lower() != "codex"
-        ]
+        discovered_ids = {task.local_task_id for task in discovered_tasks}
+        visible_tasks: list[LocalTaskRecord] = []
+        for task in store_tasks:
+            if (
+                task.runtime.lower() != "codex"
+                or task.local_task_id not in discovered_ids
+            ):
+                visible_tasks.append(task)
         visible_tasks.extend(
             task
             for task in discovered_tasks
@@ -263,6 +268,8 @@ class RuntimeWorkRpcHandler:
 
     async def _send(self, payload: dict[str, Any]) -> dict[str, Any]:
         task = self._load_payload_task(payload)
+        if task.running:
+            raise ValueError("runtime task is already running")
         content = payload.get("content") or payload.get("message")
         if not isinstance(content, str) or not content.strip():
             raise ValueError("message is required")
@@ -355,16 +362,20 @@ class RuntimeWorkRpcHandler:
         source: Optional[dict[str, Any]],
         subtask_id: int,
     ) -> None:
+        emitter = self._create_local_task_emitter(task, source, subtask_id)
         try:
-            emitter = self._create_local_task_emitter(task, source, subtask_id)
             await stream_message(
                 thread_id,
                 message,
                 cwd=task.workspace_path,
                 emitter=emitter,
             )
-        except Exception:
+        except Exception as exc:
             logger.exception("Failed to continue Codex SDK thread: %s", thread_id)
+            try:
+                await emitter.error(str(exc), "execution_error")
+            except Exception:
+                logger.exception("Failed to emit Codex SDK stream error")
         finally:
             self.store.update_task(
                 task.local_task_id,

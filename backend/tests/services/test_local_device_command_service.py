@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import subprocess
+import sys
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -80,7 +81,7 @@ def test_turn_file_changes_command_rejects_invalid_artifact_id(
     from app.services.device.command_registry import TURN_FILE_CHANGES_SCRIPT
 
     result = subprocess.run(
-        ["python3", "-c", TURN_FILE_CHANGES_SCRIPT, "review", artifact_id],
+        [sys.executable, "-c", TURN_FILE_CHANGES_SCRIPT, "review", artifact_id],
         cwd=tmp_path,
         env={**os.environ, "WEGENT_EXECUTOR_HOME": str(tmp_path / "home")},
         capture_output=True,
@@ -97,7 +98,7 @@ def test_turn_file_changes_review_returns_validated_diff(tmp_path):
     repo, executor_home = _create_turn_file_changes_artifact(tmp_path)
     result = subprocess.run(
         [
-            "python3",
+            sys.executable,
             "-c",
             TURN_FILE_CHANGES_SCRIPT,
             "review",
@@ -122,7 +123,7 @@ def test_turn_file_changes_revert_is_conflict_safe(tmp_path):
     (repo / "changed.txt").write_text("later change\n", encoding="utf-8")
     result = subprocess.run(
         [
-            "python3",
+            sys.executable,
             "-c",
             TURN_FILE_CHANGES_SCRIPT,
             "revert",
@@ -145,7 +146,7 @@ def test_turn_file_changes_revert_applies_reverse_patch(tmp_path):
     repo, executor_home = _create_turn_file_changes_artifact(tmp_path)
     result = subprocess.run(
         [
-            "python3",
+            sys.executable,
             "-c",
             TURN_FILE_CHANGES_SCRIPT,
             "revert",
@@ -441,6 +442,47 @@ class ThreadSortKey(str):
     return root
 
 
+def _write_failing_openai_codex_sdk(root):
+    package_root = root / "openai_codex"
+    generated_root = package_root / "generated"
+    generated_root.mkdir(parents=True)
+    (package_root / "__init__.py").write_text(
+        """
+class CodexConfig:
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+
+
+class Codex:
+    def __init__(self, config):
+        self.config = config
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, _exc_type, _exc, _tb):
+        return None
+
+    def thread_list(self, **kwargs):
+        raise RuntimeError("sdk exploded")
+""".strip(),
+        encoding="utf-8",
+    )
+    (generated_root / "__init__.py").write_text("", encoding="utf-8")
+    (generated_root / "v2_all.py").write_text(
+        """
+class SortDirection(str):
+    pass
+
+
+class ThreadSortKey(str):
+    pass
+""".strip(),
+        encoding="utf-8",
+    )
+    return root
+
+
 def test_codex_threads_list_command_reads_sdk_thread_list(tmp_path):
     """codex_threads_list should expose SDK thread summaries without transcripts."""
     from app.services.device.command_registry import CODEX_THREADS_LIST_SCRIPT
@@ -448,7 +490,7 @@ def test_codex_threads_list_command_reads_sdk_thread_list(tmp_path):
     fake_sdk_root = _write_fake_openai_codex_sdk(tmp_path / "fake-sdk")
 
     result = subprocess.run(
-        ["python3", "-c", CODEX_THREADS_LIST_SCRIPT],
+        [sys.executable, "-c", CODEX_THREADS_LIST_SCRIPT],
         env={
             **os.environ,
             "CODEX_HOME": str(tmp_path / "codex-home"),
@@ -483,6 +525,30 @@ def test_codex_threads_list_command_reads_sdk_thread_list(tmp_path):
     assert "session_index" not in json.dumps(payload)
 
 
+def test_codex_threads_list_command_surfaces_sdk_errors(tmp_path):
+    """codex_threads_list should report SDK discovery failures."""
+    from app.services.device.command_registry import CODEX_THREADS_LIST_SCRIPT
+
+    fake_sdk_root = _write_failing_openai_codex_sdk(tmp_path / "fake-sdk")
+
+    result = subprocess.run(
+        [sys.executable, "-c", CODEX_THREADS_LIST_SCRIPT],
+        env={
+            **os.environ,
+            "CODEX_HOME": str(tmp_path / "codex-home"),
+            "PYTHONPATH": str(fake_sdk_root),
+            "WEGENT_CODEX_THREADS_LIMIT": "1000",
+        },
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(result.stdout)
+    assert payload["threads"] == []
+    assert payload["error"] == "sdk exploded"
+
+
 def test_codex_threads_list_command_stops_after_limit(tmp_path):
     """codex_threads_list should pass a bounded limit to the SDK."""
     from app.services.device.command_registry import CODEX_THREADS_LIST_SCRIPT
@@ -490,10 +556,11 @@ def test_codex_threads_list_command_stops_after_limit(tmp_path):
     fake_sdk_root = _write_fake_openai_codex_sdk(tmp_path / "fake-sdk")
 
     result = subprocess.run(
-        ["python3", "-c", CODEX_THREADS_LIST_SCRIPT],
+        [sys.executable, "-c", CODEX_THREADS_LIST_SCRIPT],
         env={
             **os.environ,
             "PYTHONPATH": str(fake_sdk_root),
+            "CODEX_HOME": str(tmp_path / "codex-home"),
             "WEGENT_CODEX_THREADS_LIMIT": "2",
         },
         check=True,
@@ -1090,7 +1157,7 @@ metadata:
 
     env = {**os.environ, "HOME": str(tmp_path)}
     result = subprocess.run(
-        ["python3", "-c", LS_SKILLS_SCRIPT],
+        [sys.executable, "-c", LS_SKILLS_SCRIPT],
         env=env,
         check=True,
         capture_output=True,
@@ -1145,7 +1212,7 @@ description: Shared local context.
 
     env = {**os.environ, "HOME": str(tmp_path)}
     result = subprocess.run(
-        ["python3", "-c", LS_SKILLS_SCRIPT],
+        [sys.executable, "-c", LS_SKILLS_SCRIPT],
         env=env,
         check=True,
         capture_output=True,
@@ -1189,7 +1256,7 @@ description: Linked helper skill.
 
     env = {**os.environ, "HOME": str(tmp_path)}
     result = subprocess.run(
-        ["python3", "-c", LS_SKILLS_SCRIPT],
+        [sys.executable, "-c", LS_SKILLS_SCRIPT],
         env=env,
         check=True,
         capture_output=True,
@@ -1231,7 +1298,7 @@ description: Codex-only linked skill.
 
     env = {**os.environ, "HOME": str(tmp_path)}
     result = subprocess.run(
-        ["python3", "-c", LS_SKILLS_SCRIPT],
+        [sys.executable, "-c", LS_SKILLS_SCRIPT],
         env=env,
         check=True,
         capture_output=True,
@@ -1261,7 +1328,7 @@ def test_setup_shared_skills_command_migrates_legacy_skill_dirs(tmp_path):
 
     env = {**os.environ, "HOME": str(tmp_path)}
     result = subprocess.run(
-        ["python3", "-c", SETUP_SHARED_SKILLS_SCRIPT],
+        [sys.executable, "-c", SETUP_SHARED_SKILLS_SCRIPT],
         env=env,
         check=True,
         capture_output=True,
@@ -1306,7 +1373,7 @@ def test_setup_shared_skills_command_is_idempotent(tmp_path):
 
     env = {**os.environ, "HOME": str(tmp_path)}
     result = subprocess.run(
-        ["python3", "-c", SETUP_SHARED_SKILLS_SCRIPT],
+        [sys.executable, "-c", SETUP_SHARED_SKILLS_SCRIPT],
         env=env,
         check=True,
         capture_output=True,
@@ -1332,7 +1399,7 @@ def test_sync_runtime_auth_file_command_writes_json_object(tmp_path):
         "WEGENT_RUNTIME_CONFIG_CONTENT": '{"token":"secret","account":{"id":"u1"}}',
     }
     result = subprocess.run(
-        ["python3", "-c", SYNC_RUNTIME_AUTH_FILE_SCRIPT],
+        [sys.executable, "-c", SYNC_RUNTIME_AUTH_FILE_SCRIPT],
         env=env,
         check=True,
         capture_output=True,
@@ -1369,7 +1436,7 @@ def test_sync_runtime_auth_file_command_does_not_overwrite_existing_file(tmp_pat
         "WEGENT_RUNTIME_CONFIG_CONTENT": '{"token":"new"}',
     }
     result = subprocess.run(
-        ["python3", "-c", SYNC_RUNTIME_AUTH_FILE_SCRIPT],
+        [sys.executable, "-c", SYNC_RUNTIME_AUTH_FILE_SCRIPT],
         env=env,
         check=True,
         capture_output=True,
@@ -1398,7 +1465,7 @@ def test_read_runtime_auth_file_command_returns_existing_json(tmp_path):
         "WEGENT_RUNTIME_CONFIG_TARGET_PATH": "~/.codex/auth.json",
     }
     result = subprocess.run(
-        ["python3", "-c", READ_RUNTIME_AUTH_FILE_SCRIPT],
+        [sys.executable, "-c", READ_RUNTIME_AUTH_FILE_SCRIPT],
         env=env,
         check=True,
         capture_output=True,
@@ -1485,7 +1552,7 @@ metadata:
 
     env = {**os.environ, "HOME": str(tmp_path)}
     result = subprocess.run(
-        ["python3", "-c", LS_SKILLS_SCRIPT],
+        [sys.executable, "-c", LS_SKILLS_SCRIPT],
         env=env,
         check=True,
         capture_output=True,

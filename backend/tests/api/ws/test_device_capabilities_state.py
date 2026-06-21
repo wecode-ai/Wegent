@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.api.ws import device_namespace
+from app.api.ws import device_namespace, local_task_responses
 from app.services.device.terminal_session_service import TerminalSessionRecord
 
 
@@ -317,7 +317,7 @@ async def test_local_task_reasoning_event_emits_chat_chunk(monkeypatch):
         return {"user_id": 7, "device_id": "device-1"}
 
     monkeypatch.setattr(namespace, "get_session", fake_get_session)
-    monkeypatch.setattr(device_namespace, "get_sio", lambda: sio, raising=False)
+    monkeypatch.setattr(local_task_responses, "get_sio", lambda: sio, raising=False)
 
     result = await namespace._handle_responses_api_event(
         "sid-1",
@@ -349,7 +349,7 @@ async def test_local_task_tool_event_emits_block_created(monkeypatch):
         return {"user_id": 7, "device_id": "device-1"}
 
     monkeypatch.setattr(namespace, "get_session", fake_get_session)
-    monkeypatch.setattr(device_namespace, "get_sio", lambda: sio, raising=False)
+    monkeypatch.setattr(local_task_responses, "get_sio", lambda: sio, raising=False)
 
     result = await namespace._handle_responses_api_event(
         "sid-1",
@@ -396,9 +396,9 @@ async def test_local_task_im_source_forwards_stream_event_to_channel_callbacks(
         forwarded_events.append((task_id, subtask_id, event, source))
 
     monkeypatch.setattr(namespace, "get_session", fake_get_session)
-    monkeypatch.setattr(device_namespace, "get_sio", lambda: sio, raising=False)
+    monkeypatch.setattr(local_task_responses, "get_sio", lambda: sio, raising=False)
     monkeypatch.setattr(
-        device_namespace,
+        local_task_responses,
         "forward_event_to_channel_callbacks",
         fake_forward_event_to_channel_callbacks,
         raising=False,
@@ -454,13 +454,13 @@ async def test_local_task_responses_api_events_are_serialized(monkeypatch):
 
     monkeypatch.setattr(namespace, "get_session", fake_get_session)
     monkeypatch.setattr(
-        namespace,
-        "_emit_local_task_execution_event",
+        namespace._local_task_responses,
+        "emit_execution_event",
         fake_emit_local_task_execution_event,
     )
     monkeypatch.setattr(
-        namespace,
-        "_forward_local_task_event_to_channel_callbacks",
+        namespace._local_task_responses,
+        "forward_channel_callbacks",
         fake_forward_local_task_event_to_channel_callbacks,
     )
 
@@ -476,7 +476,7 @@ async def test_local_task_responses_api_events_are_serialized(monkeypatch):
             },
         )
     )
-    await first_event_started.wait()
+    await asyncio.wait_for(first_event_started.wait(), timeout=1)
     second = await namespace._handle_responses_api_event(
         "sid-1",
         "response.output_text.delta",
