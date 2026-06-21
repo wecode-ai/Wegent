@@ -96,12 +96,14 @@ def create_subtasks(
             db,
             task_id=task.id,
             user_id=user_id,
+            current_task=task,
         )
     ]
     next_message_id = task_fork_history_resolver.get_next_message_id(
         db,
         task_id=task.id,
         user_id=user_id,
+        current_task=task,
     )
     parent_id = next_message_id - 1 if next_message_id > 1 else 0
 

@@ -59,6 +59,11 @@ def _codex_discovery_for_threads(codex_home, *threads):
     return discovery, fake_codex
 
 
+async def _drain_runtime_adapter(adapter):
+    while adapter._running_tasks:
+        await asyncio.gather(*adapter._running_tasks)
+
+
 def test_local_task_store_persists_tasks_and_validates_workspace(tmp_path):
     from executor.runtime_work.local_task_store import LocalTaskRecord, LocalTaskStore
 
@@ -120,6 +125,35 @@ def test_local_task_store_update_keeps_original_primary_key(tmp_path):
     assert store.get_task("runtime-1").title == "Updated"
     with pytest.raises(KeyError):
         store.get_task("runtime-2")
+
+
+def test_local_task_store_orders_tasks_by_parsed_updated_time(tmp_path):
+    from executor.runtime_work.local_task_store import LocalTaskRecord, LocalTaskStore
+
+    store = LocalTaskStore(tmp_path / "index.json")
+    store.upsert_task(
+        LocalTaskRecord(
+            local_task_id="local-offset",
+            workspace_path="/repo/Wegent",
+            title="offset",
+            runtime="codex",
+            updated_at="2026-06-20T10:00:00+08:00",
+        )
+    )
+    store.upsert_task(
+        LocalTaskRecord(
+            local_task_id="utc-later",
+            workspace_path="/repo/Wegent",
+            title="utc",
+            runtime="codex",
+            updated_at="2026-06-20T03:00:00Z",
+        )
+    )
+
+    assert [task.local_task_id for task in store.list_tasks()] == [
+        "utc-later",
+        "local-offset",
+    ]
 
 
 @pytest.mark.asyncio
@@ -407,6 +441,64 @@ async def test_runtime_work_handler_continues_discovered_codex_thread_through_sd
     await asyncio.wait_for(finished.wait(), timeout=1)
     await asyncio.gather(*handler._running_sdk_tasks)
     assert store.get_task(thread_id, workspace_path="/repo/Wegent").running is False
+
+
+@pytest.mark.asyncio
+async def test_runtime_work_handler_rejects_concurrent_sdk_codex_send_atomically(
+    tmp_path,
+):
+    from executor.runtime_work.local_task_store import LocalTaskRecord, LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    class SlowCodexStreamDiscovery:
+        def __init__(self):
+            self.calls = 0
+            self.release = asyncio.Event()
+
+        def discover(self):
+            return []
+
+        async def stream_message(self, _thread_id, _message, *, cwd=None, emitter):
+            self.calls += 1
+            await self.release.wait()
+            await emitter.done("done")
+
+    thread_id = "019ee7f6-456a-78a1-96b1-66451afc310e"
+    discovery = SlowCodexStreamDiscovery()
+    store = LocalTaskStore(tmp_path / "index.json")
+    store.upsert_task(
+        LocalTaskRecord(
+            local_task_id=thread_id,
+            workspace_path="/repo/Wegent",
+            title="hi",
+            runtime="codex",
+            runtime_handle={"threadId": thread_id},
+        )
+    )
+    handler = RuntimeWorkRpcHandler(
+        store=store,
+        adapters={"codex": SimpleNamespace()},
+        codex_discovery=discovery,
+        responses_event_emitter=lambda _event, _payload: None,
+    )
+    payload = {
+        "method": "runtime.tasks.send",
+        "payload": {
+            "workspacePath": "/repo/Wegent",
+            "localTaskId": thread_id,
+            "message": "continue",
+        },
+    }
+
+    first, second = await asyncio.gather(
+        handler.handle_runtime_rpc(payload),
+        handler.handle_runtime_rpc(payload),
+    )
+
+    assert sorted(result["success"] for result in [first, second]) == [False, True]
+    assert discovery.calls == 1
+    discovery.release.set()
+    await asyncio.gather(*handler._running_sdk_tasks)
 
 
 @pytest.mark.asyncio
@@ -1196,15 +1288,14 @@ async def test_runtime_work_handler_creates_runtime_task_with_local_transcript(
         await emitter.done(content="Created")
 
     store = LocalTaskStore(tmp_path / "index.json")
+    adapter = RuntimeAgentAdapter(
+        runtime="claude_code",
+        store=store,
+        execute_agent=execute_agent,
+    )
     handler = RuntimeWorkRpcHandler(
         store=store,
-        adapters={
-            "claude_code": RuntimeAgentAdapter(
-                runtime="claude_code",
-                store=store,
-                execute_agent=execute_agent,
-            )
-        },
+        adapters={"claude_code": adapter},
         codex_discovery=EmptyDiscovery(),
     )
 
@@ -1233,7 +1324,7 @@ async def test_runtime_work_handler_creates_runtime_task_with_local_transcript(
     assert result["success"] is True
     assert result["accepted"] is True
     local_task_id = result["localTaskId"]
-    await asyncio.sleep(0)
+    await _drain_runtime_adapter(adapter)
 
     transcript = await handler.handle_runtime_rpc(
         {
@@ -1338,15 +1429,14 @@ async def test_runtime_work_handler_sends_followup_with_same_runtime_session(tmp
         await emitter.done(content=f"reply:{request.prompt}")
 
     store = LocalTaskStore(tmp_path / "index.json")
+    adapter = RuntimeAgentAdapter(
+        runtime="codex",
+        store=store,
+        execute_agent=execute_agent,
+    )
     handler = RuntimeWorkRpcHandler(
         store=store,
-        adapters={
-            "codex": RuntimeAgentAdapter(
-                runtime="codex",
-                store=store,
-                execute_agent=execute_agent,
-            )
-        },
+        adapters={"codex": adapter},
         codex_discovery=EmptyDiscovery(),
     )
     create = await handler.handle_runtime_rpc(
@@ -1370,7 +1460,7 @@ async def test_runtime_work_handler_sends_followup_with_same_runtime_session(tmp
         }
     )
     local_task_id = create["localTaskId"]
-    await asyncio.sleep(0)
+    await _drain_runtime_adapter(adapter)
 
     send = await handler.handle_runtime_rpc(
         {
@@ -1382,7 +1472,7 @@ async def test_runtime_work_handler_sends_followup_with_same_runtime_session(tmp
             },
         }
     )
-    await asyncio.sleep(0)
+    await _drain_runtime_adapter(adapter)
 
     assert send["success"] is True
     assert send["accepted"] is True

@@ -102,7 +102,6 @@ describe('DesktopSidebar', () => {
 
     expect(onOpenRuntimeLocalTask).toHaveBeenCalledWith({
       deviceId: 'local-device',
-      workspacePath: '/tmp/spike',
       localTaskId: 'claude-1',
     })
   })
@@ -169,7 +168,6 @@ describe('DesktopSidebar', () => {
 
     expect(onOpenRuntimeLocalTask).toHaveBeenCalledWith({
       deviceId: 'local-device',
-      workspacePath: chatPath,
       localTaskId: 'chat-1',
     })
   })
@@ -226,7 +224,6 @@ describe('DesktopSidebar', () => {
 
     expect(onOpenRuntimeLocalTask).toHaveBeenCalledWith({
       deviceId: 'local-device',
-      workspacePath: '/repo/Wegent',
       localTaskId: 'codex-1',
     })
   })
@@ -292,14 +289,13 @@ describe('DesktopSidebar', () => {
     await user.click(screen.getByTestId('runtime-local-task-mark-codex-1'))
 
     expect(taskRow).toHaveAttribute('data-marked', 'true')
-    expect(taskRow.className).toContain('FFF4D6')
-    expect(taskRow.className).toContain('FFE8A3')
+    expect(taskRow.className).toContain('color-sidebar-marked')
+    expect(taskRow.className).toContain('color-sidebar-marked-hover')
 
     await user.click(screen.getByTestId('runtime-local-task-archive-codex-1'))
 
     expect(onArchiveRuntimeLocalTask).toHaveBeenCalledWith({
       deviceId: 'local-device',
-      workspacePath: '/repo/Wegent',
       localTaskId: 'codex-1',
     })
   })
@@ -394,7 +390,6 @@ describe('DesktopSidebar', () => {
 
     expect(onOpenRuntimeLocalTask).toHaveBeenCalledWith({
       deviceId: 'local-device',
-      workspacePath: '/workspace/worktrees/42/Wegent',
       localTaskId: 'codex-worktree',
     })
   })

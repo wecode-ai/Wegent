@@ -7,6 +7,7 @@
 """Restore forked task workspaces from archived runtime snapshots."""
 
 import io
+import shutil
 import tarfile
 from copy import copy
 from dataclasses import dataclass
@@ -28,6 +29,11 @@ EXECUTOR_HOME_ARCHIVE_ALLOWLIST = {
     ".claude",
     ".claude.json",
 }
+EXECUTOR_HOME_ARCHIVE_PREFIX_ALLOWLIST = (
+    ".codex/sessions",
+    ".codex/archived_sessions",
+    ".codex/state",
+)
 
 
 @dataclass(frozen=True)
@@ -108,6 +114,7 @@ def restore_archive_content(
             _filter_restorable_members(
                 _strip_member_prefix(home_members, HOME_ARCHIVE_PREFIX),
                 include_names=EXECUTOR_HOME_ARCHIVE_ALLOWLIST,
+                include_prefixes=EXECUTOR_HOME_ARCHIVE_PREFIX_ALLOWLIST,
             ),
             home_path,
         )
@@ -169,6 +176,7 @@ def _filter_restorable_members(
     members: Iterable[tarfile.TarInfo],
     *,
     include_names: set[str] | None,
+    include_prefixes: tuple[str, ...] = (),
 ) -> list[tarfile.TarInfo]:
     filtered: list[tarfile.TarInfo] = []
     for member in members:
@@ -177,7 +185,12 @@ def _filter_restorable_members(
             continue
         if include_names is not None:
             root_name = normalized_name.split("/", 1)[0]
-            if root_name not in include_names:
+            allowed_by_name = root_name in include_names
+            allowed_by_prefix = any(
+                normalized_name == prefix or normalized_name.startswith(f"{prefix}/")
+                for prefix in include_prefixes
+            )
+            if not allowed_by_name and not allowed_by_prefix:
                 continue
         member.name = normalized_name
         filtered.append(member)
@@ -198,8 +211,29 @@ def _extract_members(
         return
     try:
         archive.extractall(path=str(path), members=members, filter="data")
+        return
     except TypeError:
-        archive.extractall(path=str(path), members=members)
+        _extract_members_without_filter(archive, members, path)
+
+
+def _extract_members_without_filter(
+    archive: tarfile.TarFile,
+    members: list[tarfile.TarInfo],
+    path: Path,
+) -> None:
+    for member in members:
+        target_path = path / member.name
+        if member.isdir():
+            target_path.mkdir(parents=True, exist_ok=True)
+            continue
+        if not member.isfile():
+            continue
+        source = archive.extractfile(member)
+        if source is None:
+            continue
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        with target_path.open("wb") as destination:
+            shutil.copyfileobj(source, destination)
 
 
 def _is_session_archive_member(name: str) -> bool:

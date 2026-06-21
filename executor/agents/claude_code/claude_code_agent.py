@@ -366,14 +366,17 @@ class ClaudeCodeAgent(Agent):
             return False
         if SessionManager.load_saved_session_id(self.task_id, self._bot_id):
             return False
+        return self._seed_inherited_session_from_known_empty() is not None
 
+    def _seed_inherited_session_from_known_empty(self) -> Optional[str]:
+        """Seed inherited session when the current session file is known missing."""
         inherited_session = self._find_inherited_session()
         if not inherited_session:
-            return False
+            return None
 
         session_id = str(inherited_session["sessionId"])
         SessionManager.save_session_id(self.task_id, session_id, self._bot_id)
-        return True
+        return session_id
 
     def update_prompt(self, new_prompt: str) -> None:
         """
@@ -1100,11 +1103,12 @@ class ClaudeCodeAgent(Agent):
                 f"(pipeline stage change requires fresh session, enables rollback)"
             )
         elif "resume" not in self.options:
-            self._seed_inherited_session()
             # Load session ID for this specific bot (pipeline mode: each bot has its own session file)
             saved_session_id = SessionManager.load_saved_session_id(
                 self.task_id, self._bot_id
             )
+            if not saved_session_id:
+                saved_session_id = self._seed_inherited_session_from_known_empty()
             if saved_session_id:
                 logger.info(
                     f"Resuming Claude session for task {self.task_id} "

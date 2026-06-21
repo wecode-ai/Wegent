@@ -130,6 +130,51 @@ def test_resolve_for_fork_uses_parent_cutoff(monkeypatch):
     ]
 
 
+def test_resolve_for_fork_uses_parent_task_owner(monkeypatch):
+    root = _task(1, 8)
+    fork = _task(
+        2,
+        7,
+        fork={"sourceTaskId": 1, "afterMessageId": 1, "rootTaskId": 1},
+    )
+    calls = []
+    subtasks = {
+        1: [_subtask(1, 1, 8, 1, SubtaskRole.USER)],
+        2: [_subtask(2, 2, 7, 2, SubtaskRole.USER)],
+    }
+
+    def get_by_id(_db, *, task_id, owner_user_id=None):
+        calls.append((task_id, owner_user_id))
+        if task_id == 2 and owner_user_id == 7:
+            return fork
+        if task_id == 1 and owner_user_id is None:
+            return root
+        return None
+
+    monkeypatch.setattr(
+        "app.services.task_fork_history.task_store.get_by_id",
+        get_by_id,
+    )
+    monkeypatch.setattr(
+        "app.services.task_fork_history.subtask_store.list_by_task_ordered",
+        lambda db, task_id, owner_user_id=None: (
+            subtasks[task_id] if owner_user_id in {7, 8} else []
+        ),
+    )
+
+    items = task_fork_history_resolver.resolve_for_task(
+        db=None,
+        task_id=2,
+        user_id=7,
+    )
+
+    assert calls == [(2, 7), (1, None)]
+    assert [
+        (item.origin_task_id, item.subtask.user_id, item.subtask.message_id)
+        for item in items
+    ] == [(1, 8, 1), (2, 7, 2)]
+
+
 def test_next_message_id_uses_inherited_boundary(monkeypatch):
     fork = _task(
         2,

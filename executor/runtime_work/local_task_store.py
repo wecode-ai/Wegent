@@ -48,7 +48,7 @@ class LocalTaskStore:
     _locks: dict[Path, threading.RLock] = {}
     _locks_guard = threading.Lock()
 
-    def __init__(self, index_path: Optional[Path] = None):
+    def __init__(self, index_path: Optional[Path] = None) -> None:
         root = Path(config.WEGENT_EXECUTOR_HOME).expanduser() / "runtime-work"
         self.index_path = (
             Path(index_path).expanduser() if index_path else root / "index.json"
@@ -102,7 +102,10 @@ class LocalTaskStore:
 
         return sorted(
             filtered,
-            key=lambda record: (record.updated_at, record.created_at),
+            key=lambda record: (
+                parse_task_time(record.updated_at),
+                parse_task_time(record.created_at),
+            ),
             reverse=True,
         )
 
@@ -214,3 +217,13 @@ class LocalTaskStore:
 
     def _list_value(self, value: Any) -> list[dict[str, Any]]:
         return value if isinstance(value, list) else []
+
+
+def parse_task_time(value: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return datetime.min.replace(tzinfo=timezone.utc)
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed

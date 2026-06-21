@@ -23,6 +23,8 @@ from shared.models.responses_api import ResponsesAPIStreamEvents
 
 logger = logging.getLogger(__name__)
 
+MAX_RUNTIME_SUBTASK_ID = 2_147_483_647
+
 
 class LocalTaskResponsesHandler:
     """Translate local-task Responses API events into chat/channel events."""
@@ -43,7 +45,7 @@ class LocalTaskResponsesHandler:
         cleanup_lock: Callable[[int], None],
     ) -> dict:
         local_task_id = str(data["local_task_id"]).strip()
-        subtask_id = runtime_subtask_id(data, local_task_id)
+        subtask_id = runtime_subtask_id(data, device_id, local_task_id)
         lock = get_lock(subtask_id)
         is_terminal = False
 
@@ -381,8 +383,11 @@ async def emit_local_task_chat_event(
     )
 
 
-def runtime_subtask_id(data: dict, local_task_id: str) -> int:
+def runtime_subtask_id(data: dict, device_id: str, local_task_id: str) -> int:
     value = data.get("subtask_id")
     if isinstance(value, int) and value > 0:
         return value
-    return uuid.uuid5(uuid.NAMESPACE_URL, local_task_id).int % 2_147_483_647
+    runtime_key = f"{device_id}:{local_task_id}"
+    return (
+        uuid.uuid5(uuid.NAMESPACE_URL, runtime_key).int % (MAX_RUNTIME_SUBTASK_ID - 1)
+    ) + 1

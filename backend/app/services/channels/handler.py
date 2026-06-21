@@ -1009,7 +1009,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             )
             await im_session_service.clear_active_task(db, session=im_session)
             await self.send_text_reply(
-                message_context, "当前本地任务不可用，请回到 Wework 重新选择。"
+                message_context, "当前本地任务不可用,请回到 Wework 重新选择。"
             )
             return
 
@@ -1063,7 +1063,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             )
             await im_session_service.clear_active_task(db, session=im_session)
             await self.send_text_reply(
-                message_context, "当前本地任务不可用，请回到 Wework 重新选择。"
+                message_context, "当前本地任务不可用,请回到 Wework 重新选择。"
             )
             return
 

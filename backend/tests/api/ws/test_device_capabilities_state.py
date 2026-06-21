@@ -86,6 +86,21 @@ def test_runtime_auth_file_missing_requires_explicit_false():
     assert device_namespace._runtime_auth_file_missing(None, "codex") is False
 
 
+def test_runtime_subtask_id_fallback_is_scoped_by_device():
+    first = local_task_responses.runtime_subtask_id({}, "device-a", "codex-1")
+    second = local_task_responses.runtime_subtask_id({}, "device-b", "codex-1")
+
+    assert first != second
+    assert (
+        local_task_responses.runtime_subtask_id(
+            {"subtask_id": 202},
+            "device-b",
+            "codex-1",
+        )
+        == 202
+    )
+
+
 @pytest.mark.asyncio
 async def test_heartbeat_runtime_auth_sync_uses_user_preferences(monkeypatch):
     namespace = device_namespace.DeviceNamespace()

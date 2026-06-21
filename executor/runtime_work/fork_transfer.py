@@ -29,6 +29,9 @@ logger = setup_logger("runtime_work_fork_transfer")
 TRANSFER_TTL_SECONDS = 900
 TRANSFER_PATH_PREFIX = "/runtime-task-transfers/"
 TRANSFER_UPLOAD_PATH_PREFIX = "/runtime-task-transfer-uploads/"
+DIRECT_TRANSFER_BIND_HOST = "127.0.0.1"
+ARCHIVE_HTTP_TIMEOUT_SECONDS = 300.0
+ARCHIVE_IO_CHUNK_BYTES = 1024 * 1024
 HOME_ARCHIVE_PREFIX = "home"
 WORKSPACE_ARCHIVE_PREFIX = "workspace"
 HOME_SESSION_ALLOWLIST = (
@@ -128,8 +131,9 @@ def register_direct_upload_receiver(transfer_id: str, token: str) -> list[str]:
     cleanup_timer.daemon = True
     cleanup_timer.start()
     port = int(server.server_address[1])
+    bind_host = str(server.server_address[0])
     urls = []
-    for host in _candidate_hosts():
+    for host in _candidate_hosts(bind_host):
         urls.append(
             f"http://{host}:{port}{TRANSFER_UPLOAD_PATH_PREFIX}{transfer_id}?token={token}"
         )
@@ -193,8 +197,9 @@ def register_direct_archive(
     cleanup_timer.daemon = True
     cleanup_timer.start()
     port = int(server.server_address[1])
+    bind_host = str(server.server_address[0])
     urls = []
-    for host in _candidate_hosts():
+    for host in _candidate_hosts(bind_host):
         urls.append(
             f"http://{host}:{port}{TRANSFER_PATH_PREFIX}{transfer_id}?token={token}"
         )
@@ -204,14 +209,25 @@ def register_direct_archive(
 async def upload_archive(upload_url: str, archive_path: Path) -> None:
     """Upload archive bytes directly to object storage via presigned URL."""
 
-    async with httpx.AsyncClient(timeout=300.0) as client:
-        with archive_path.open("rb") as handle:
-            response = await client.put(
-                upload_url,
-                content=handle.read(),
-                headers={"Content-Type": "application/gzip"},
-            )
+    async with httpx.AsyncClient(timeout=ARCHIVE_HTTP_TIMEOUT_SECONDS) as client:
+        response = await client.put(
+            upload_url,
+            content=_iter_archive_chunks(archive_path),
+            headers={
+                "Content-Type": "application/gzip",
+                "Content-Length": str(archive_path.stat().st_size),
+            },
+        )
         response.raise_for_status()
+
+
+async def _iter_archive_chunks(archive_path: Path):
+    with archive_path.open("rb") as handle:
+        while True:
+            chunk = await asyncio.to_thread(handle.read, ARCHIVE_IO_CHUNK_BYTES)
+            if not chunk:
+                break
+            yield chunk
 
 
 async def upload_archive_to_first_available_url(
@@ -250,7 +266,7 @@ async def _download_archive_bytes(archive: dict[str, Any]) -> bytes:
 
 
 async def _download_url(url: str) -> bytes:
-    async with httpx.AsyncClient(timeout=300.0) as client:
+    async with httpx.AsyncClient(timeout=ARCHIVE_HTTP_TIMEOUT_SECONDS) as client:
         response = await client.get(url)
         response.raise_for_status()
         return response.content
@@ -261,7 +277,10 @@ def _ensure_direct_server() -> ThreadingHTTPServer:
     with _server_lock:
         if _server is not None:
             return _server
-        _server = ThreadingHTTPServer(("0.0.0.0", 0), _TransferRequestHandler)
+        _server = ThreadingHTTPServer(
+            (_direct_transfer_bind_host(), 0),
+            _TransferRequestHandler,
+        )
         _server_thread = threading.Thread(
             target=_server.serve_forever,
             name="runtime-fork-transfer-server",
@@ -380,11 +399,23 @@ def _restore_incoming_transfer(transfer_id: str, workspace_path: str) -> bool:
     return True
 
 
-def _candidate_hosts() -> list[str]:
+def _direct_transfer_bind_host() -> str:
+    configured = getattr(config, "RUNTIME_TRANSFER_BIND_HOST", None)
+    if isinstance(configured, str) and configured.strip():
+        return configured.strip()
+    return DIRECT_TRANSFER_BIND_HOST
+
+
+def _candidate_hosts(bind_host: str) -> list[str]:
+    if _is_loopback_host(bind_host):
+        return [bind_host]
+
     hosts = []
     configured = getattr(config, "RUNTIME_TRANSFER_HOST", None)
     if isinstance(configured, str) and configured.strip():
         hosts.append(configured.strip())
+    if bind_host not in {"", "0.0.0.0", "::"}:
+        hosts.append(bind_host)
     with contextlib.suppress(OSError):
         hostname = socket.gethostname()
         host = socket.gethostbyname(hostname)
@@ -392,6 +423,10 @@ def _candidate_hosts() -> list[str]:
             hosts.append(host)
     hosts.append("127.0.0.1")
     return list(dict.fromkeys(hosts))
+
+
+def _is_loopback_host(host: str) -> bool:
+    return host == "localhost" or host == "::1" or host.startswith("127.")
 
 
 def _add_directory_children(

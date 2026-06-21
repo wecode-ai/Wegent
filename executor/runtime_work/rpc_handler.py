@@ -83,7 +83,7 @@ class RuntimeWorkRpcHandler:
         adapters: Optional[dict[str, Any]] = None,
         codex_discovery: Optional[CodexSessionDiscovery] = None,
         responses_event_emitter: Optional[Callable[[str, dict[str, Any]], Any]] = None,
-    ):
+    ) -> None:
         self.store = store or LocalTaskStore()
         self.adapters = adapters or self._default_adapters()
         self.codex_discovery = codex_discovery or CodexSessionDiscovery()
@@ -367,7 +367,7 @@ class RuntimeWorkRpcHandler:
 
     async def _send(self, payload: dict[str, Any]) -> dict[str, Any]:
         task = self._load_payload_task(payload)
-        if task.running:
+        if task.running and not self._is_sdk_codex_task(task):
             raise ValueError("runtime task is already running")
         content = payload.get("content") or payload.get("message")
         if not isinstance(content, str) or not content.strip():
@@ -416,19 +416,9 @@ class RuntimeWorkRpcHandler:
             raise ValueError("Codex threadId is required")
 
         subtask_id = self._next_sdk_codex_subtask_id(task)
-        self.store.update_task(
+        task = self.store.update_task(
             task.local_task_id,
-            lambda current: replace(
-                current,
-                running=True,
-                runtime_handle={
-                    **current.runtime_handle,
-                    "activeSubtaskId": subtask_id,
-                },
-                updated_at=datetime.now(timezone.utc)
-                .replace(microsecond=0)
-                .isoformat(),
-            ),
+            lambda current: self._mark_task_running(current, subtask_id),
             workspace_path=task.workspace_path,
         )
         sdk_task = asyncio.create_task(
@@ -450,6 +440,23 @@ class RuntimeWorkRpcHandler:
             "workspacePath": task.workspace_path,
             "runtime": "codex",
         }
+
+    def _mark_task_running(
+        self,
+        task: LocalTaskRecord,
+        subtask_id: int,
+    ) -> LocalTaskRecord:
+        if task.running:
+            raise ValueError("runtime task is already running")
+        return replace(
+            task,
+            running=True,
+            runtime_handle={
+                **task.runtime_handle,
+                "activeSubtaskId": subtask_id,
+            },
+            updated_at=datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+        )
 
     async def _run_sdk_codex_task(
         self,

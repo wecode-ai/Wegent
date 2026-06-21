@@ -472,7 +472,10 @@ async def create_runtime_task(
             timeout_seconds=RUNTIME_CREATE_TIMEOUT_SECONDS,
         )
     except RuntimeRpcError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
     return _runtime_create_response(
         result,
         request.runtime,
@@ -510,7 +513,10 @@ async def fork_runtime_task(
             timeout_seconds=RUNTIME_FORK_TIMEOUT_SECONDS,
         )
     except RuntimeRpcError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
     _raise_runtime_rpc_failure(package_result)
 
     fork_package = dict(package_result.get("package") or package_result)
@@ -587,7 +593,7 @@ async def fork_runtime_task(
                 except RuntimeRpcError as exc:
                     raise HTTPException(
                         status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
-                    )
+                    ) from exc
 
     if import_result.get("success") is False:
         object_key = f"runtime-task-transfers/{user_id}/{transfer_id}.tar.gz"
@@ -619,7 +625,7 @@ async def fork_runtime_task(
         except RuntimeRpcError as exc:
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
-            )
+            ) from exc
         _raise_runtime_rpc_failure(upload_result)
         archive = fork_package.get("archive")
         if isinstance(archive, dict):
@@ -645,7 +651,7 @@ async def fork_runtime_task(
         except RuntimeRpcError as exc:
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
-            )
+            ) from exc
 
     response = _runtime_fork_response(
         result=import_result,

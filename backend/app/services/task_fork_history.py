@@ -5,8 +5,9 @@
 """Fork-aware task history resolution."""
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Optional
 
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from app.models.subtask import Subtask
@@ -47,8 +48,14 @@ class TaskForkHistoryResolver:
         before_message_id: Optional[int] = None,
         after_message_id: Optional[int] = None,
         limit: Optional[int] = None,
+        current_task: Optional[TaskResource] = None,
     ) -> list[ForkHistoryItem]:
-        lineage = self.resolve_lineage(db, task_id=task_id, user_id=user_id)
+        lineage = self.resolve_lineage(
+            db,
+            task_id=task_id,
+            user_id=user_id,
+            current_task=current_task,
+        )
         items: list[ForkHistoryItem] = []
         current_task_id = lineage[-1].task.id if lineage else task_id
 
@@ -102,23 +109,26 @@ class TaskForkHistoryResolver:
         *,
         task_id: int,
         user_id: int,
+        current_task: Optional[TaskResource] = None,
     ) -> list[ForkLineageNode]:
         nodes_reversed: list[ForkLineageNode] = []
         seen: set[int] = set()
         current_task_id = task_id
         inherited_cutoff: Optional[int] = None
 
-        for _depth in range(MAX_FORK_DEPTH):
+        for depth in range(MAX_FORK_DEPTH):
             if current_task_id in seen:
                 raise ValueError(
                     f"Task fork history cycle detected at task {current_task_id}"
                 )
             seen.add(current_task_id)
 
-            task = task_store.get_by_id(
+            task = self._lineage_task(
                 db,
                 task_id=current_task_id,
-                owner_user_id=user_id,
+                user_id=user_id,
+                current_task=current_task,
+                depth=depth,
             )
             if task is None or task.json is None:
                 raise ValueError(
@@ -128,8 +138,7 @@ class TaskForkHistoryResolver:
             nodes_reversed.append(
                 ForkLineageNode(task=task, inherited_cutoff=inherited_cutoff)
             )
-            task_crd = Task.model_validate(task.json)
-            fork = task_crd.spec.fork
+            fork = self._fork_spec(task.json)
             if fork is None:
                 break
 
@@ -140,28 +149,72 @@ class TaskForkHistoryResolver:
 
         return list(reversed(nodes_reversed))
 
+    def _lineage_task(
+        self,
+        db: Session,
+        *,
+        task_id: int,
+        user_id: int,
+        current_task: Optional[TaskResource],
+        depth: int,
+    ) -> Optional[TaskResource]:
+        if depth == 0 and current_task is not None and current_task.id == task_id:
+            return current_task
+        owner_user_id = user_id if depth == 0 else None
+        return task_store.get_by_id(
+            db,
+            task_id=task_id,
+            owner_user_id=owner_user_id,
+        )
+
+    def _fork_spec(self, task_json: Any):
+        if not isinstance(task_json, dict):
+            return None
+        try:
+            task_crd = Task.model_validate(task_json)
+        except ValidationError:
+            return None
+        return task_crd.spec.fork
+
     def get_inherited_max_message_id(
         self,
         db: Session,
         *,
         task_id: int,
         user_id: int,
+        current_task: Optional[TaskResource] = None,
     ) -> int:
-        task = task_store.get_by_id(db, task_id=task_id, owner_user_id=user_id)
+        task = (
+            current_task
+            if current_task is not None and current_task.id == task_id
+            else task_store.get_by_id(db, task_id=task_id, owner_user_id=user_id)
+        )
         if task is None or task.json is None:
             return 0
-        task_crd = Task.model_validate(task.json)
-        fork = task_crd.spec.fork
+        fork = self._fork_spec(task.json)
         return fork.afterMessageId if fork else 0
 
-    def get_next_message_id(self, db: Session, *, task_id: int, user_id: int) -> int:
+    def get_next_message_id(
+        self,
+        db: Session,
+        *,
+        task_id: int,
+        user_id: int,
+        current_task: Optional[TaskResource] = None,
+    ) -> int:
         local_next = subtask_store.get_next_message_id(
             db,
             task_id=task_id,
             owner_user_id=user_id,
         )
         inherited_next = (
-            self.get_inherited_max_message_id(db, task_id=task_id, user_id=user_id) + 1
+            self.get_inherited_max_message_id(
+                db,
+                task_id=task_id,
+                user_id=user_id,
+                current_task=current_task,
+            )
+            + 1
         )
         return max(local_next, inherited_next)
 

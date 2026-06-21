@@ -514,7 +514,7 @@ async def test_task_mode_runtime_message_rejects_invalid_address_before_callback
     await im_session_service.bind_active_runtime_task(
         test_db,
         session=session,
-        runtime_task={"deviceId": "device-1", "localTaskId": "codex-1"},
+        runtime_task={"deviceId": "device-1"},
     )
     calls: dict[str, Any] = {}
 
@@ -540,8 +540,9 @@ async def test_task_mode_runtime_message_rejects_invalid_address_before_callback
 
     assert handled is True
     assert "callback" not in calls
+    assert "deleted_callback" not in calls
     assert "send" not in calls
-    assert handler.replies == ["当前本地任务不可用，请回到 Wework 重新选择。"]
+    assert handler.replies == ["当前本地任务不可用,请回到 Wework 重新选择。"]
     refreshed = await _private_session(test_db, test_user)
     assert refreshed.active_runtime_task is None
 
