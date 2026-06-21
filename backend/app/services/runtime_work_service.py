@@ -5,6 +5,7 @@
 """Service for Project -> Device Workspace -> LocalTask runtime work trees."""
 
 import json
+import logging
 import posixpath
 import re
 from dataclasses import dataclass, replace
@@ -65,6 +66,8 @@ from app.services.runtime_work_kind_store import (
     upsert_device_workspace_kind,
 )
 
+logger = logging.getLogger(__name__)
+
 RUNTIME_LIST_TIMEOUT_SECONDS = 30
 RUNTIME_TRANSCRIPT_TIMEOUT_SECONDS = 30
 RUNTIME_SEND_TIMEOUT_SECONDS = 600
@@ -95,6 +98,15 @@ class RuntimeWorktreePath:
 
     worktree_id: str
     project_dir_name: str
+
+
+@dataclass(frozen=True)
+class RuntimeForkWorkspaceTransfer:
+    """Target workspace details for an optimized runtime fork transfer."""
+
+    mode: str
+    target_workspace_path: str
+    source_commit: str
 
 
 def normalize_workspace_path(path: str) -> str:
@@ -274,6 +286,7 @@ async def list_runtime_work(
 
         target = _find_project_target_for_runtime_worktree(
             projects=projects,
+            mappings=mappings,
             device_id=device_id,
             workspace_path=workspace_path,
         )
@@ -611,22 +624,39 @@ async def fork_runtime_task(
     target_workspace_path = normalize_workspace_path(request.target.workspace_path)
     _ensure_owned_device(db, user_id, source.device_id)
     _ensure_owned_device(db, user_id, target_device_id)
+    source = await _resolve_runtime_task_source_address(
+        user_id=user_id,
+        source=source,
+    )
     _touch_workspace_mapping(db, user_id, source)
 
     transfer_id = str(uuid4())
-    workspace_transfer = _runtime_fork_workspace_transfer(
+    workspace_transfer = await _runtime_fork_workspace_transfer(
         db=db,
         user_id=user_id,
         source=source,
         target_device_id=target_device_id,
         target_workspace_path=target_workspace_path,
+        transfer_id=transfer_id,
+    )
+    import_workspace_path = (
+        workspace_transfer.target_workspace_path
+        if workspace_transfer
+        else target_workspace_path
     )
     prepare_payload = {
         **source.model_dump(by_alias=True),
         "transferId": transfer_id,
     }
+    source_direct_hosts = await _runtime_transfer_direct_hosts(
+        db=db,
+        user_id=user_id,
+        device_id=source.device_id,
+        peer_device_id=target_device_id,
+    )
+    prepare_payload["directHosts"] = source_direct_hosts
     if workspace_transfer:
-        prepare_payload["workspaceTransfer"] = workspace_transfer
+        prepare_payload["workspaceTransfer"] = workspace_transfer.mode
 
     try:
         package_result = await runtime_rpc_service.call(
@@ -655,7 +685,7 @@ async def fork_runtime_task(
             method="runtime.tasks.import_fork",
             payload={
                 "source": source.model_dump(by_alias=True),
-                "workspacePath": target_workspace_path,
+                "workspacePath": import_workspace_path,
                 "forkPackage": fork_package,
             },
             timeout_seconds=RUNTIME_FORK_TIMEOUT_SECONDS,
@@ -673,29 +703,66 @@ async def fork_runtime_task(
                 payload={
                     "transferId": push_transfer_id,
                     "token": push_token,
+                    "directHosts": await _runtime_transfer_direct_hosts(
+                        db=db,
+                        user_id=user_id,
+                        device_id=target_device_id,
+                        peer_device_id=source.device_id,
+                    ),
                 },
                 timeout_seconds=RUNTIME_FORK_TIMEOUT_SECONDS,
             )
-        except RuntimeRpcError:
-            receiver_result = {"success": False}
+        except RuntimeRpcError as exc:
+            logger.info(
+                "Runtime fork prepare receiver failed: user_id=%s target_device=%s "
+                "transfer_id=%s error=%s",
+                user_id,
+                target_device_id,
+                push_transfer_id,
+                exc,
+            )
+            receiver_result = {"success": False, "error": str(exc)}
 
         if receiver_result.get("success") is not False:
             upload_urls = receiver_result.get("uploadUrls")
-            try:
-                push_result = await runtime_rpc_service.call(
-                    user_id=user_id,
-                    device_id=source.device_id,
-                    method="runtime.tasks.push_fork_transfer",
-                    payload={
-                        "transferId": transfer_id,
-                        "uploadUrls": (
-                            upload_urls if isinstance(upload_urls, list) else []
-                        ),
-                    },
-                    timeout_seconds=RUNTIME_FORK_TIMEOUT_SECONDS,
+            usable_upload_urls = [
+                url for url in upload_urls or [] if isinstance(url, str) and url.strip()
+            ]
+            if usable_upload_urls:
+                try:
+                    push_result = await runtime_rpc_service.call(
+                        user_id=user_id,
+                        device_id=source.device_id,
+                        method="runtime.tasks.push_fork_transfer",
+                        payload={
+                            "transferId": transfer_id,
+                            "uploadUrls": usable_upload_urls,
+                            "uploadToken": push_token,
+                        },
+                        timeout_seconds=RUNTIME_FORK_TIMEOUT_SECONDS,
+                    )
+                except RuntimeRpcError as exc:
+                    logger.info(
+                        "Runtime fork direct push failed: user_id=%s source_device=%s "
+                        "target_device=%s transfer_id=%s upload_urls=%s error=%s",
+                        user_id,
+                        source.device_id,
+                        target_device_id,
+                        transfer_id,
+                        usable_upload_urls,
+                        exc,
+                    )
+                    push_result = {"success": False, "error": str(exc)}
+            else:
+                logger.info(
+                    "Runtime fork direct receiver returned no upload URLs: user_id=%s "
+                    "source_device=%s target_device=%s transfer_id=%s",
+                    user_id,
+                    source.device_id,
+                    target_device_id,
+                    push_transfer_id,
                 )
-            except RuntimeRpcError:
-                push_result = {"success": False}
+                push_result = {"success": False, "error": "No direct upload URLs"}
             if push_result.get("success") is not False:
                 archive = fork_package.get("archive")
                 if isinstance(archive, dict):
@@ -709,7 +776,7 @@ async def fork_runtime_task(
                         method="runtime.tasks.import_fork",
                         payload={
                             "source": source.model_dump(by_alias=True),
-                            "workspacePath": target_workspace_path,
+                            "workspacePath": import_workspace_path,
                             "forkPackage": fork_package,
                         },
                         timeout_seconds=RUNTIME_FORK_TIMEOUT_SECONDS,
@@ -721,20 +788,38 @@ async def fork_runtime_task(
 
     if import_result.get("success") is False:
         object_key = f"runtime-task-transfers/{user_id}/{transfer_id}.tar.gz"
-        upload_url, _upload_expires_at = (
-            object_storage_presign_service.generate_upload_url(
-                bucket=settings.WORKSPACE_ARCHIVE_BUCKET,
-                object_key=object_key,
-                expires_seconds=settings.PUBLISH_PRESIGNED_UPLOAD_EXPIRE_SECONDS,
+        try:
+            upload_url, _upload_expires_at = (
+                object_storage_presign_service.generate_upload_url(
+                    bucket=settings.WORKSPACE_ARCHIVE_BUCKET,
+                    object_key=object_key,
+                    expires_seconds=settings.PUBLISH_PRESIGNED_UPLOAD_EXPIRE_SECONDS,
+                )
             )
-        )
-        download_url, _download_expires_at = (
-            object_storage_presign_service.generate_download_url(
-                bucket=settings.WORKSPACE_ARCHIVE_BUCKET,
-                object_key=object_key,
-                expires_seconds=settings.PUBLISH_PRESIGNED_UPLOAD_EXPIRE_SECONDS,
+            download_url, _download_expires_at = (
+                object_storage_presign_service.generate_download_url(
+                    bucket=settings.WORKSPACE_ARCHIVE_BUCKET,
+                    object_key=object_key,
+                    expires_seconds=settings.PUBLISH_PRESIGNED_UPLOAD_EXPIRE_SECONDS,
+                )
             )
-        )
+        except Exception as exc:
+            logger.warning(
+                "Runtime fork object storage fallback unavailable: user_id=%s "
+                "source_device=%s target_device=%s transfer_id=%s error=%s",
+                user_id,
+                source.device_id,
+                target_device_id,
+                transfer_id,
+                exc,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=(
+                    "Runtime fork direct transfer failed and object storage fallback "
+                    "is not configured"
+                ),
+            ) from exc
         try:
             upload_result = await runtime_rpc_service.call(
                 user_id=user_id,
@@ -767,7 +852,7 @@ async def fork_runtime_task(
                 method="runtime.tasks.import_fork",
                 payload={
                     "source": source.model_dump(by_alias=True),
-                    "workspacePath": target_workspace_path,
+                    "workspacePath": import_workspace_path,
                     "forkPackage": fork_package,
                 },
                 timeout_seconds=RUNTIME_FORK_TIMEOUT_SECONDS,
@@ -781,7 +866,7 @@ async def fork_runtime_task(
         result=import_result,
         source=source,
         target_device_id=target_device_id,
-        target_workspace_path=target_workspace_path,
+        target_workspace_path=import_workspace_path,
         fallback_runtime=str(fork_package.get("sourceRuntime") or "codex"),
     )
     if response.accepted:
@@ -1263,6 +1348,73 @@ def _runtime_fork_response(
     )
 
 
+async def _resolve_runtime_task_source_address(
+    *,
+    user_id: int,
+    source: RuntimeTaskAddress,
+) -> RuntimeTaskAddress:
+    if source.workspace_path:
+        return source
+    workspace_path = await _runtime_task_workspace_path(
+        user_id=user_id,
+        address=source,
+    )
+    if not workspace_path:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Runtime task workspacePath not found",
+        )
+    return RuntimeTaskAddress(
+        deviceId=source.device_id,
+        workspacePath=workspace_path,
+        localTaskId=source.local_task_id,
+    )
+
+
+async def _runtime_task_workspace_path(
+    *,
+    user_id: int,
+    address: RuntimeTaskAddress,
+) -> Optional[str]:
+    try:
+        result = await runtime_rpc_service.call(
+            user_id=user_id,
+            device_id=address.device_id,
+            method="runtime.tasks.list",
+            payload={},
+            timeout_seconds=RUNTIME_LIST_TIMEOUT_SECONDS,
+        )
+    except RuntimeRpcError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to resolve runtime task workspacePath: {exc}",
+        ) from exc
+    _raise_runtime_rpc_failure(result)
+    return _workspace_path_for_runtime_task(result, address.local_task_id)
+
+
+def _workspace_path_for_runtime_task(
+    result: dict[str, Any],
+    local_task_id: str,
+) -> Optional[str]:
+    expected_task_id = str(local_task_id).strip()
+    if not expected_task_id:
+        return None
+    for workspace in _iter_runtime_workspaces(result):
+        workspace_path = normalize_workspace_path(workspace["workspacePath"])
+        for task in workspace["localTasks"]:
+            if not isinstance(task, dict):
+                continue
+            task_id = str(task.get("localTaskId") or task.get("local_task_id") or "")
+            if task_id.strip() != expected_task_id:
+                continue
+            task_path = task.get("workspacePath") or task.get("workspace_path")
+            if isinstance(task_path, str) and task_path.strip():
+                return normalize_workspace_path(task_path)
+            return workspace_path
+    return None
+
+
 def _raise_runtime_rpc_failure(result: dict[str, Any]) -> None:
     if result.get("success") is not False:
         return
@@ -1272,7 +1424,89 @@ def _raise_runtime_rpc_failure(result: dict[str, Any]) -> None:
     )
 
 
-def _runtime_fork_workspace_transfer(
+async def _runtime_fork_workspace_transfer(
+    *,
+    db: Session,
+    user_id: int,
+    source: RuntimeTaskAddress,
+    target_device_id: str,
+    target_workspace_path: str,
+    transfer_id: str,
+) -> Optional[RuntimeForkWorkspaceTransfer]:
+    mappings = list_device_workspace_kinds(db=db, user_id=user_id)
+    target_project_id = _project_id_for_runtime_workspace(
+        mappings=mappings,
+        device_id=target_device_id,
+        workspace_path=target_workspace_path,
+    )
+    if target_project_id is None:
+        return None
+    source_commit = await _runtime_git_workspace_transfer_source_commit(
+        db=db,
+        user_id=user_id,
+        source=source,
+        target_device_id=target_device_id,
+        target_workspace_path=target_workspace_path,
+    )
+    if not source_commit:
+        return None
+    target_worktree_path = _runtime_fork_git_worktree_path(
+        target_workspace_path=target_workspace_path,
+        transfer_id=transfer_id,
+    )
+    if target_worktree_path != target_workspace_path:
+        await _prepare_runtime_fork_git_worktree(
+            db=db,
+            user_id=user_id,
+            target_device_id=target_device_id,
+            target_workspace_path=target_workspace_path,
+            target_worktree_path=target_worktree_path,
+            source_commit=source_commit,
+        )
+    return RuntimeForkWorkspaceTransfer(
+        mode="git_workspace",
+        target_workspace_path=target_worktree_path,
+        source_commit=source_commit,
+    )
+
+
+async def _runtime_transfer_direct_hosts(
+    *,
+    db: Session,
+    user_id: int,
+    device_id: str,
+    peer_device_id: str,
+) -> list[str]:
+    hosts: list[str] = []
+    online_info = await device_service.get_device_online_info(user_id, device_id)
+    if isinstance(online_info, dict):
+        _append_runtime_transfer_host(hosts, online_info.get("runtime_transfer_host"))
+        _append_runtime_transfer_host(hosts, online_info.get("client_ip"))
+
+    if device_id != peer_device_id:
+        hosts = [host for host in hosts if not _is_loopback_transfer_host(host)]
+    return list(dict.fromkeys(hosts))
+
+
+def _append_runtime_transfer_host(hosts: list[str], value: Any) -> None:
+    if not isinstance(value, str):
+        return
+    host = value.strip()
+    if not host:
+        return
+    hosts.append(host)
+
+
+def _is_loopback_transfer_host(host: str) -> bool:
+    normalized = host.strip().lower()
+    return (
+        normalized == "localhost"
+        or normalized == "::1"
+        or normalized.startswith("127.")
+    )
+
+
+async def _runtime_git_workspace_transfer_source_commit(
     *,
     db: Session,
     user_id: int,
@@ -1280,34 +1514,210 @@ def _runtime_fork_workspace_transfer(
     target_device_id: str,
     target_workspace_path: str,
 ) -> Optional[str]:
-    mappings = list_device_workspace_kinds(db=db, user_id=user_id)
-    source_project_id = _project_id_for_runtime_workspace(
-        mappings=mappings,
+    if not source.workspace_path:
+        return None
+    source_status = await _runtime_git_status(
+        db=db,
+        user_id=user_id,
         device_id=source.device_id,
         workspace_path=source.workspace_path,
     )
-    target_project_id = _project_id_for_runtime_workspace(
-        mappings=mappings,
+    target_status = await _runtime_git_status(
+        db=db,
+        user_id=user_id,
         device_id=target_device_id,
         workspace_path=target_workspace_path,
     )
-    if source_project_id is None or target_project_id is None:
+    if not source_status or not target_status:
         return None
-    if source_project_id != target_project_id:
+    source_origin = _normalize_git_remote_url(source_status.get("remoteUrl"))
+    target_origin = _normalize_git_remote_url(target_status.get("remoteUrl"))
+    if not source_origin or source_origin != target_origin:
         return None
-    project = _get_active_project(db, user_id, source_project_id, None)
-    if not _project_git_url(project):
+    source_commit = _string_value(source_status.get("headCommit"))
+    if not source_commit:
         return None
-    return "git_workspace"
+    available = await _runtime_git_commit_available(
+        db=db,
+        user_id=user_id,
+        device_id=target_device_id,
+        workspace_path=target_workspace_path,
+        commit=source_commit,
+    )
+    return source_commit if available else None
+
+
+async def _prepare_runtime_fork_git_worktree(
+    *,
+    db: Session,
+    user_id: int,
+    target_device_id: str,
+    target_workspace_path: str,
+    target_worktree_path: str,
+    source_commit: str,
+) -> None:
+    result = await execute_configured_device_command(
+        db=db,
+        user_id=user_id,
+        device_id=target_device_id,
+        command_key="git_worktree_add",
+        args=[target_workspace_path, target_worktree_path, source_commit],
+        timeout_seconds=DEVICE_WORKSPACE_PREPARE_TIMEOUT_SECONDS,
+        max_output_bytes=5 * 1024 * 1024,
+    )
+    _raise_for_failed_device_command(result, "Failed to prepare Git worktree")
+
+
+def _runtime_fork_git_worktree_path(
+    *,
+    target_workspace_path: str,
+    transfer_id: str,
+) -> str:
+    normalized_target = normalize_workspace_path(target_workspace_path)
+    if _parse_runtime_worktree_path(normalized_target):
+        return normalized_target
+
+    worktree_id = _runtime_fork_worktree_id(transfer_id)
+    project_dir_name = _path_basename(normalized_target)
+    relative_worktree_path = posixpath.join(
+        WORKTREE_ROOT_DIR,
+        worktree_id,
+        project_dir_name,
+    )
+
+    parts = [part for part in normalized_target.split("/") if part]
+    if "projects" in parts:
+        project_root_index = parts.index("projects")
+        prefix_parts = parts[:project_root_index]
+        if normalized_target.startswith("/"):
+            prefix = "/" + "/".join(prefix_parts) if prefix_parts else "/"
+            return _join_device_path(prefix, relative_worktree_path)
+        if not prefix_parts:
+            return relative_worktree_path
+        return _join_device_path("/".join(prefix_parts), relative_worktree_path)
+
+    parent = posixpath.dirname(normalized_target)
+    return _join_device_path(parent, relative_worktree_path)
+
+
+def _runtime_fork_worktree_id(transfer_id: str) -> str:
+    normalized = re.sub(r"[^A-Za-z0-9._-]+", "-", transfer_id.strip()).strip("-")
+    if normalized and RUNTIME_WORKTREE_ID_PATTERN.fullmatch(normalized):
+        return normalized
+    return uuid4().hex
+
+
+def _join_device_path(root: str, relative_path: str) -> str:
+    return f"{root.rstrip('/')}/{relative_path.strip('/')}"
+
+
+async def _runtime_git_status(
+    *,
+    db: Session,
+    user_id: int,
+    device_id: str,
+    workspace_path: str,
+) -> Optional[dict[str, Any]]:
+    try:
+        status_payload = await _read_project_folder_status(
+            db=db,
+            user_id=user_id,
+            device_id=device_id,
+            workspace_path=workspace_path,
+        )
+    except Exception:
+        return None
+    if not status_payload.get("isGitRepo"):
+        return None
+    return status_payload
+
+
+async def _runtime_git_commit_available(
+    *,
+    db: Session,
+    user_id: int,
+    device_id: str,
+    workspace_path: str,
+    commit: str,
+) -> bool:
+    try:
+        result = await execute_configured_device_command(
+            db=db,
+            user_id=user_id,
+            device_id=device_id,
+            command_key="git_commit_available",
+            args=[workspace_path, commit],
+            timeout_seconds=30,
+        )
+    except Exception:
+        return False
+    return result.get("success") is not False and int(result.get("exit_code", 1)) == 0
+
+
+def _normalize_git_remote_url(value: Any) -> Optional[str]:
+    text = _string_value(value)
+    if not text:
+        return None
+    if text.startswith("git@") and ":" in text:
+        host_part, path_part = text.split(":", maxsplit=1)
+        host = host_part.removeprefix("git@").lower()
+        path = path_part.strip().strip("/")
+        if path.endswith(".git"):
+            path = path[:-4]
+        return f"{host}/{path}" if host and path else None
+
+    parsed = urlparse(text)
+    if parsed.scheme and parsed.netloc:
+        host = parsed.hostname or parsed.netloc.rsplit("@", maxsplit=1)[-1]
+        path = parsed.path.strip("/")
+        if path.endswith(".git"):
+            path = path[:-4]
+        return f"{host.lower()}/{path}" if host and path else None
+
+    normalized = text.strip().strip("/")
+    if normalized.endswith(".git"):
+        normalized = normalized[:-4]
+    return normalized or None
+
+
+def _string_value(value: Any) -> Optional[str]:
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
+def _device_workspace_mapping_for_path(
+    *,
+    mappings: list[DeviceWorkspaceResponse],
+    device_id: str,
+    workspace_path: str,
+) -> Optional[DeviceWorkspaceResponse]:
+    try:
+        normalized_workspace_path = normalize_workspace_path(workspace_path)
+    except ValueError:
+        return None
+    for mapping in mappings:
+        if (
+            mapping.device_id == device_id
+            and mapping.workspace_path == normalized_workspace_path
+        ):
+            return mapping
+    return None
 
 
 def _project_id_for_runtime_workspace(
     *,
     mappings: list[DeviceWorkspaceResponse],
     device_id: str,
-    workspace_path: str,
+    workspace_path: Optional[str],
 ) -> Optional[int]:
-    normalized_workspace_path = normalize_workspace_path(workspace_path)
+    if not workspace_path:
+        return None
+    try:
+        normalized_workspace_path = normalize_workspace_path(workspace_path)
+    except ValueError:
+        return None
     for mapping in mappings:
         if (
             mapping.device_id == device_id
@@ -1572,6 +1982,7 @@ def _canonical_git_host_path(host: str, path: str) -> str:
 def _find_project_target_for_runtime_worktree(
     *,
     projects: list[Project],
+    mappings: list[DeviceWorkspaceResponse],
     device_id: str,
     workspace_path: str,
 ) -> Optional[RuntimeTaskTarget]:
@@ -1579,7 +1990,29 @@ def _find_project_target_for_runtime_worktree(
     if not worktree:
         return None
 
-    candidates: list[RuntimeTaskTarget] = []
+    projects_by_id = {project.id: project for project in projects}
+    candidates: list[tuple[int, RuntimeTaskTarget]] = []
+    for mapping in mappings:
+        if mapping.device_id != device_id:
+            continue
+        project = projects_by_id.get(mapping.project_id)
+        if project is None:
+            continue
+        if _path_basename(mapping.workspace_path).lower() == (
+            worktree.project_dir_name.lower()
+        ):
+            candidates.append(
+                (
+                    0,
+                    RuntimeTaskTarget(
+                        device_id=mapping.device_id,
+                        workspace_path=mapping.workspace_path,
+                        project=project,
+                        workspace_source="local_path",
+                    ),
+                )
+            )
+
     for project in projects:
         target = _project_runtime_target(project)
         if not target or target.device_id != device_id:
@@ -1587,12 +2020,13 @@ def _find_project_target_for_runtime_worktree(
         if _path_basename(target.workspace_path).lower() == (
             worktree.project_dir_name.lower()
         ):
-            candidates.append(target)
+            candidates.append((1, target))
     if not candidates:
         return None
-    return sorted(candidates, key=lambda item: item.project.id if item.project else 0)[
-        0
-    ]
+    return sorted(
+        candidates,
+        key=lambda item: (item[0], item[1].project.id if item[1].project else 0),
+    )[0][1]
 
 
 def _append_worktree_tasks_to_source_workspace(

@@ -315,7 +315,7 @@ describe('DesktopSidebar', () => {
       },
     })
 
-    expect(screen.getByTestId('sidebar-online-devices')).toHaveTextContent('在线设备')
+    expect(screen.getByTestId('sidebar-online-devices')).toHaveTextContent('在线设备2')
     expect(screen.getByTestId('sidebar-devices-section-toggle')).toHaveAttribute(
       'aria-expanded',
       'false'

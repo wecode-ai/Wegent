@@ -415,6 +415,9 @@ function SidebarOnlineDevices({
             )}
           />
           <span className="shrink-0">{t('workbench.online_devices', '在线设备')}</span>
+          <span className="shrink-0 text-[11px] font-medium text-[rgb(var(--color-sidebar-text-secondary))]">
+            {onlineDevices.length}
+          </span>
           {selectedDevice && (
             <span className="min-w-0 truncate text-[11px] font-medium text-[rgb(var(--color-sidebar-text-secondary))]">
               {selectedDevice.name || selectedDevice.device_id}

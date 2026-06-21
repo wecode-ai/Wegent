@@ -74,6 +74,53 @@ def _git_project(test_db, user_id: int, name: str = "Wegent") -> Project:
     return project
 
 
+def _git_status_command(
+    statuses: dict[tuple[str, str], dict],
+    *,
+    reachable_commits: set[tuple[str, str, str]] | None = None,
+    calls: list[dict] | None = None,
+):
+    reachable_commits = reachable_commits or set()
+
+    async def command(**kwargs):
+        call = {
+            "device_id": kwargs["device_id"],
+            "command_key": kwargs["command_key"],
+            "args": kwargs["args"],
+        }
+        if calls is not None:
+            calls.append(call)
+
+        if kwargs["command_key"] == "project_folder_status":
+            status = statuses[(kwargs["device_id"], kwargs["args"][0])]
+            return {
+                "success": True,
+                "exit_code": 0,
+                "stdout": {
+                    "exists": True,
+                    "isDirectory": True,
+                    "isEmpty": False,
+                    "isGitRepo": True,
+                    **status,
+                },
+            }
+        if kwargs["command_key"] == "git_commit_available":
+            key = (kwargs["device_id"], kwargs["args"][0], kwargs["args"][1])
+            if key in reachable_commits:
+                return {"success": True, "exit_code": 0, "stdout": ""}
+            return {"success": False, "exit_code": 1, "stderr": "missing"}
+        if kwargs["command_key"] == "git_worktree_add":
+            return {"success": True, "exit_code": 0, "stdout": ""}
+        raise AssertionError(kwargs["command_key"])
+
+    return command
+
+
+def _expected_runtime_fork_worktree_path(target_path: str, transfer_id: str) -> str:
+    parent, project_dir = target_path.rstrip("/").rsplit("/", maxsplit=1)
+    return f"{parent}/worktrees/{transfer_id}/{project_dir}"
+
+
 @pytest.mark.asyncio
 async def test_device_workspace_upsert_normalizes_unique_mapping(test_db, test_user):
     from app.schemas.runtime_work import DeviceWorkspaceUpsert
@@ -626,6 +673,86 @@ async def test_list_runtime_work_groups_managed_worktree_under_source_project(
 
 
 @pytest.mark.asyncio
+async def test_list_runtime_work_groups_mapped_device_worktree_under_project(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    from app.schemas.runtime_work import DeviceWorkspaceUpsert
+    from app.services import runtime_work_service
+
+    project = _git_project(test_db, test_user.id, name="Wegent_github")
+    runtime_work_service.upsert_device_workspace(
+        db=test_db,
+        user_id=test_user.id,
+        payload=DeviceWorkspaceUpsert(
+            projectId=project.id,
+            deviceId="target-device",
+            workspacePath="/target/Wegent_github",
+            repoUrl="https://github.com/wecode-ai/Wegent.git",
+            label="workspace",
+        ),
+    )
+
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_all_devices",
+        AsyncMock(
+            return_value=[
+                {
+                    "device_id": "target-device",
+                    "name": "Linux",
+                    "status": "online",
+                    "device_type": "local",
+                }
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        runtime_work_service.runtime_rpc_service,
+        "call",
+        AsyncMock(
+            return_value={
+                "workspaces": [
+                    {
+                        "workspacePath": "/target/worktrees/019eeb2c/Wegent_github",
+                        "localTasks": [
+                            {
+                                "localTaskId": "forked-codex",
+                                "workspacePath": (
+                                    "/target/worktrees/019eeb2c/Wegent_github"
+                                ),
+                                "title": "Forked Codex task",
+                                "runtime": "codex",
+                                "updatedAt": "2026-06-22T02:00:00Z",
+                            }
+                        ],
+                    }
+                ]
+            }
+        ),
+    )
+
+    response = await runtime_work_service.list_runtime_work(
+        db=test_db,
+        user_id=test_user.id,
+        client_origin=CLIENT_ORIGIN_WEWORK,
+    )
+
+    workspace = response.projects[0].device_workspaces[0]
+    task = workspace.local_tasks[0]
+    assert response.projects[0].project.id == project.id
+    assert workspace.device_id == "target-device"
+    assert workspace.workspace_path == "/target/Wegent_github"
+    assert task.local_task_id == "forked-codex"
+    assert task.workspace_path == "/target/worktrees/019eeb2c/Wegent_github"
+    assert task.workspace_kind == "worktree"
+    assert task.worktree_id == "019eeb2c"
+    assert response.unmapped_device_workspaces == []
+    assert test_db.query(TaskResource).count() == 0
+
+
+@pytest.mark.asyncio
 async def test_list_runtime_work_groups_codex_git_origin_under_matching_project(
     test_db,
     test_user,
@@ -1004,6 +1131,7 @@ async def test_fork_runtime_task_uses_git_workspace_without_storage(
         ),
     )
     calls = []
+    command_calls = []
     monkeypatch.setattr(
         runtime_work_service.device_service,
         "get_device_by_device_id",
@@ -1022,6 +1150,24 @@ async def test_fork_runtime_task_uses_git_workspace_without_storage(
         lambda **kwargs: (_ for _ in ()).throw(
             AssertionError("object storage should not be used for git workspace forks")
         ),
+    )
+
+    command = _git_status_command(
+        {
+            (
+                "source-device",
+                "/Users/alice/.codex/worktrees/0889/Wegent",
+            ): {
+                "remoteUrl": "https://github.com/wecode-ai/Wegent.git",
+                "headCommit": "abc123",
+            },
+            ("target-device", "/target/Wegent"): {
+                "remoteUrl": "git@github.com:wecode-ai/Wegent.git",
+                "headCommit": "def456",
+            },
+        },
+        reachable_commits={("target-device", "/target/Wegent", "abc123")},
+        calls=command_calls,
     )
 
     async def rpc(**kwargs):
@@ -1044,16 +1190,24 @@ async def test_fork_runtime_task_uses_git_workspace_without_storage(
                 "mode": "git_workspace",
                 "transferId": calls[0]["payload"]["transferId"],
             }
+            expected_target_path = _expected_runtime_fork_worktree_path(
+                "/target/Wegent",
+                calls[0]["payload"]["transferId"],
+            )
+            assert kwargs["payload"]["workspacePath"] == expected_target_path
             return {
                 "success": True,
                 "accepted": True,
                 "localTaskId": "runtime-copy",
-                "workspacePath": "/target/Wegent",
+                "workspacePath": kwargs["payload"]["workspacePath"],
                 "runtime": "codex",
             }
         raise AssertionError(kwargs["method"])
 
     monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
+    monkeypatch.setattr(
+        runtime_work_service, "execute_configured_device_command", command
+    )
 
     response = await runtime_work_service.fork_runtime_task(
         db=test_db,
@@ -1073,11 +1227,725 @@ async def test_fork_runtime_task_uses_git_workspace_without_storage(
 
     assert response.accepted is True
     assert response.target.local_task_id == "runtime-copy"
+    transfer_id = calls[0]["payload"]["transferId"]
+    expected_target_path = _expected_runtime_fork_worktree_path(
+        "/target/Wegent",
+        transfer_id,
+    )
+    assert response.target.workspace_path == expected_target_path
     assert [call["method"] for call in calls] == [
         "runtime.tasks.prepare_fork_transfer",
         "runtime.tasks.import_fork",
     ]
     assert test_db.query(TaskResource).count() == 0
+    assert command_calls == [
+        {
+            "device_id": "source-device",
+            "command_key": "project_folder_status",
+            "args": ["/Users/alice/.codex/worktrees/0889/Wegent"],
+        },
+        {
+            "device_id": "target-device",
+            "command_key": "project_folder_status",
+            "args": ["/target/Wegent"],
+        },
+        {
+            "device_id": "target-device",
+            "command_key": "git_commit_available",
+            "args": ["/target/Wegent", "abc123"],
+        },
+        {
+            "device_id": "target-device",
+            "command_key": "git_worktree_add",
+            "args": ["/target/Wegent", expected_target_path, "abc123"],
+        },
+    ]
+
+
+@pytest.mark.asyncio
+async def test_fork_runtime_task_uses_archive_when_git_commit_unreachable(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    import copy
+
+    from app.schemas.runtime_work import (
+        DeviceWorkspaceUpsert,
+        RuntimeTaskAddress,
+        RuntimeTaskForkRequest,
+    )
+    from app.services import runtime_work_service
+
+    project = _git_project(test_db, test_user.id)
+    runtime_work_service.upsert_device_workspace(
+        db=test_db,
+        user_id=test_user.id,
+        payload=DeviceWorkspaceUpsert(
+            projectId=project.id,
+            deviceId="target-device",
+            workspacePath="/target/Wegent",
+            repoUrl="https://github.com/wecode-ai/Wegent.git",
+            label="workspace",
+        ),
+    )
+    calls = []
+    command_calls = []
+    command = _git_status_command(
+        {
+            ("source-device", "/source/Wegent"): {
+                "remoteUrl": "https://github.com/wecode-ai/Wegent.git",
+                "headCommit": "abc123",
+            },
+            ("target-device", "/target/Wegent"): {
+                "remoteUrl": "https://github.com/wecode-ai/Wegent.git",
+                "headCommit": "def456",
+            },
+        },
+        reachable_commits={("target-device", "/target/Wegent", "abc123")},
+        calls=command_calls,
+    )
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: object(),
+    )
+    monkeypatch.setattr(
+        runtime_work_service.object_storage_presign_service,
+        "generate_upload_url",
+        lambda **kwargs: (_ for _ in ()).throw(
+            AssertionError("direct transfer should run before object storage")
+        ),
+    )
+    monkeypatch.setattr(
+        runtime_work_service.object_storage_presign_service,
+        "generate_download_url",
+        lambda **kwargs: (_ for _ in ()).throw(
+            AssertionError("direct transfer should run before object storage")
+        ),
+    )
+
+    async def command(**kwargs):
+        if kwargs["command_key"] == "project_folder_status":
+            return {
+                "success": True,
+                "exit_code": 0,
+                "stdout": {
+                    "exists": True,
+                    "isDirectory": True,
+                    "isEmpty": False,
+                    "isGitRepo": True,
+                    "remoteUrl": "https://github.com/wecode-ai/Wegent.git",
+                    "headCommit": "abc123",
+                },
+            }
+        if kwargs["command_key"] == "git_commit_available":
+            return {"success": False, "exit_code": 1, "stderr": "missing"}
+        raise AssertionError(kwargs["command_key"])
+
+    async def rpc(**kwargs):
+        calls.append(copy.deepcopy(kwargs))
+        if kwargs["method"] == "runtime.tasks.prepare_fork_transfer":
+            assert "workspaceTransfer" not in kwargs["payload"]
+            return {
+                "success": True,
+                "package": {
+                    "sourceRuntime": "codex",
+                    "title": "Continue migration",
+                    "archive": {
+                        "directUrls": ["http://source/archive"],
+                        "directToken": "source-token",
+                    },
+                },
+            }
+        if (
+            kwargs["method"] == "runtime.tasks.import_fork"
+            and len(
+                [
+                    call
+                    for call in calls
+                    if call["method"] == "runtime.tasks.import_fork"
+                ]
+            )
+            == 1
+        ):
+            return {"success": False, "error": "direct transfer failed"}
+        if kwargs["method"] == "runtime.tasks.prepare_fork_receiver":
+            return {
+                "success": True,
+                "accepted": True,
+                "transferId": kwargs["payload"]["transferId"],
+                "uploadUrls": ["http://target/upload"],
+            }
+        if kwargs["method"] == "runtime.tasks.push_fork_transfer":
+            return {"success": True, "accepted": True}
+        if kwargs["method"] == "runtime.tasks.import_fork":
+            return {
+                "success": True,
+                "accepted": True,
+                "localTaskId": "runtime-copy",
+                "workspacePath": "/target/Wegent",
+                "runtime": "codex",
+            }
+        raise AssertionError(kwargs["method"])
+
+    monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
+    monkeypatch.setattr(
+        runtime_work_service, "execute_configured_device_command", command
+    )
+
+    response = await runtime_work_service.fork_runtime_task(
+        db=test_db,
+        user_id=test_user.id,
+        request=RuntimeTaskForkRequest(
+            source=RuntimeTaskAddress(
+                deviceId="source-device",
+                workspacePath="/Users/alice/.codex/worktrees/0889/Wegent",
+                localTaskId="codex-1",
+            ),
+            target={
+                "deviceId": "target-device",
+                "workspacePath": "/target/Wegent",
+            },
+        ),
+    )
+
+    assert response.accepted is True
+    assert [call["method"] for call in calls] == [
+        "runtime.tasks.prepare_fork_transfer",
+        "runtime.tasks.import_fork",
+        "runtime.tasks.prepare_fork_receiver",
+        "runtime.tasks.push_fork_transfer",
+        "runtime.tasks.import_fork",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_fork_runtime_task_without_source_workspace_path_resolves_git_workspace(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    import copy
+
+    from app.schemas.runtime_work import (
+        DeviceWorkspaceUpsert,
+        RuntimeTaskAddress,
+        RuntimeTaskForkRequest,
+    )
+    from app.services import runtime_work_service
+
+    project = _git_project(test_db, test_user.id)
+    runtime_work_service.upsert_device_workspace(
+        db=test_db,
+        user_id=test_user.id,
+        payload=DeviceWorkspaceUpsert(
+            projectId=project.id,
+            deviceId="source-device",
+            workspacePath="/source/Wegent",
+            repoUrl="https://github.com/wecode-ai/Wegent.git",
+            label="workspace",
+        ),
+    )
+    runtime_work_service.upsert_device_workspace(
+        db=test_db,
+        user_id=test_user.id,
+        payload=DeviceWorkspaceUpsert(
+            projectId=project.id,
+            deviceId="target-device",
+            workspacePath="/target/Wegent",
+            repoUrl="https://github.com/wecode-ai/Wegent.git",
+            label="workspace",
+        ),
+    )
+    calls = []
+    command_calls = []
+    command = _git_status_command(
+        {
+            ("source-device", "/source/Wegent"): {
+                "remoteUrl": "https://github.com/wecode-ai/Wegent.git",
+                "headCommit": "abc123",
+            },
+            ("target-device", "/target/Wegent"): {
+                "remoteUrl": "https://github.com/wecode-ai/Wegent.git",
+                "headCommit": "def456",
+            },
+        },
+        reachable_commits={("target-device", "/target/Wegent", "abc123")},
+        calls=command_calls,
+    )
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: object(),
+    )
+
+    async def rpc(**kwargs):
+        calls.append(copy.deepcopy(kwargs))
+        if kwargs["method"] == "runtime.tasks.list":
+            return {
+                "success": True,
+                "workspaces": [
+                    {
+                        "workspacePath": "/source/Wegent",
+                        "localTasks": [
+                            {
+                                "localTaskId": "codex-1",
+                                "workspacePath": "/source/Wegent",
+                                "title": "Continue migration",
+                                "runtime": "codex",
+                                "createdAt": "2026-06-22T00:00:00Z",
+                                "updatedAt": "2026-06-22T00:00:00Z",
+                            }
+                        ],
+                    }
+                ],
+            }
+        if kwargs["method"] == "runtime.tasks.prepare_fork_transfer":
+            assert kwargs["payload"]["workspacePath"] == "/source/Wegent"
+            assert kwargs["payload"]["workspaceTransfer"] == "git_workspace"
+            return {
+                "success": True,
+                "package": {
+                    "sourceRuntime": "codex",
+                    "title": "Continue migration",
+                    "archive": {
+                        "mode": "git_workspace",
+                        "transferId": kwargs["payload"]["transferId"],
+                    },
+                },
+            }
+        if kwargs["method"] == "runtime.tasks.import_fork":
+            assert kwargs["payload"]["source"]["workspacePath"] == "/source/Wegent"
+            expected_target_path = _expected_runtime_fork_worktree_path(
+                "/target/Wegent",
+                calls[1]["payload"]["transferId"],
+            )
+            assert kwargs["payload"]["workspacePath"] == expected_target_path
+            return {
+                "success": True,
+                "accepted": True,
+                "localTaskId": "runtime-copy",
+                "workspacePath": kwargs["payload"]["workspacePath"],
+                "runtime": "codex",
+            }
+        raise AssertionError(kwargs["method"])
+
+    monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
+    monkeypatch.setattr(
+        runtime_work_service, "execute_configured_device_command", command
+    )
+
+    response = await runtime_work_service.fork_runtime_task(
+        db=test_db,
+        user_id=test_user.id,
+        request=RuntimeTaskForkRequest(
+            source=RuntimeTaskAddress(
+                deviceId="source-device",
+                localTaskId="codex-1",
+            ),
+            target={
+                "deviceId": "target-device",
+                "workspacePath": "/target/Wegent",
+            },
+        ),
+    )
+
+    assert response.accepted is True
+    assert [call["method"] for call in calls] == [
+        "runtime.tasks.list",
+        "runtime.tasks.prepare_fork_transfer",
+        "runtime.tasks.import_fork",
+    ]
+    transfer_id = calls[1]["payload"]["transferId"]
+    expected_target_path = _expected_runtime_fork_worktree_path(
+        "/target/Wegent",
+        transfer_id,
+    )
+    assert response.target.workspace_path == expected_target_path
+    assert command_calls == [
+        {
+            "device_id": "source-device",
+            "command_key": "project_folder_status",
+            "args": ["/source/Wegent"],
+        },
+        {
+            "device_id": "target-device",
+            "command_key": "project_folder_status",
+            "args": ["/target/Wegent"],
+        },
+        {
+            "device_id": "target-device",
+            "command_key": "git_commit_available",
+            "args": ["/target/Wegent", "abc123"],
+        },
+        {
+            "device_id": "target-device",
+            "command_key": "git_worktree_add",
+            "args": ["/target/Wegent", expected_target_path, "abc123"],
+        },
+    ]
+
+
+@pytest.mark.asyncio
+async def test_fork_runtime_task_uses_target_git_project_for_unmapped_worktree(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    import copy
+
+    from app.schemas.runtime_work import (
+        DeviceWorkspaceUpsert,
+        RuntimeTaskAddress,
+        RuntimeTaskForkRequest,
+    )
+    from app.services import runtime_work_service
+
+    project = _git_project(test_db, test_user.id, name="Wegent_github")
+    runtime_work_service.upsert_device_workspace(
+        db=test_db,
+        user_id=test_user.id,
+        payload=DeviceWorkspaceUpsert(
+            projectId=project.id,
+            deviceId="source-device",
+            workspacePath="/source/Wegent_github",
+            repoUrl="https://github.com/wecode-ai/Wegent.git",
+            label="workspace",
+        ),
+    )
+    runtime_work_service.upsert_device_workspace(
+        db=test_db,
+        user_id=test_user.id,
+        payload=DeviceWorkspaceUpsert(
+            projectId=project.id,
+            deviceId="target-device",
+            workspacePath="/target/Wegent_github",
+            repoUrl="https://github.com/wecode-ai/Wegent.git",
+            label="workspace",
+        ),
+    )
+    calls = []
+    command_calls = []
+    command = _git_status_command(
+        {
+            (
+                "source-device",
+                "/Users/alice/.codex/worktrees/0889/Wegent",
+            ): {
+                "remoteUrl": "https://github.com/wecode-ai/Wegent.git",
+                "headCommit": "abc123",
+            },
+            ("target-device", "/target/Wegent_github"): {
+                "remoteUrl": "https://github.com/wecode-ai/Wegent.git",
+                "headCommit": "def456",
+            },
+        },
+        reachable_commits={("target-device", "/target/Wegent_github", "abc123")},
+        calls=command_calls,
+    )
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: object(),
+    )
+    monkeypatch.setattr(
+        runtime_work_service.object_storage_presign_service,
+        "generate_upload_url",
+        lambda **kwargs: (_ for _ in ()).throw(
+            AssertionError("object storage should not be used for git workspace forks")
+        ),
+    )
+    monkeypatch.setattr(
+        runtime_work_service.object_storage_presign_service,
+        "generate_download_url",
+        lambda **kwargs: (_ for _ in ()).throw(
+            AssertionError("object storage should not be used for git workspace forks")
+        ),
+    )
+
+    async def rpc(**kwargs):
+        calls.append(copy.deepcopy(kwargs))
+        if kwargs["method"] == "runtime.tasks.list":
+            return {
+                "success": True,
+                "workspaces": [
+                    {
+                        "workspacePath": "/Users/alice/.codex/worktrees/0889/Wegent",
+                        "localTasks": [
+                            {
+                                "localTaskId": "codex-1",
+                                "workspacePath": (
+                                    "/Users/alice/.codex/worktrees/0889/Wegent"
+                                ),
+                                "title": "Continue migration",
+                                "runtime": "codex",
+                                "createdAt": "2026-06-22T00:00:00Z",
+                                "updatedAt": "2026-06-22T00:00:00Z",
+                            }
+                        ],
+                    }
+                ],
+            }
+        if kwargs["method"] == "runtime.tasks.prepare_fork_transfer":
+            assert kwargs["payload"]["workspacePath"] == (
+                "/Users/alice/.codex/worktrees/0889/Wegent"
+            )
+            assert kwargs["payload"]["workspaceTransfer"] == "git_workspace"
+            return {
+                "success": True,
+                "package": {
+                    "sourceRuntime": "codex",
+                    "title": "Continue migration",
+                    "archive": {
+                        "mode": "git_workspace",
+                        "transferId": kwargs["payload"]["transferId"],
+                    },
+                },
+            }
+        if kwargs["method"] == "runtime.tasks.import_fork":
+            expected_target_path = _expected_runtime_fork_worktree_path(
+                "/target/Wegent_github",
+                calls[1]["payload"]["transferId"],
+            )
+            assert kwargs["payload"]["workspacePath"] == expected_target_path
+            return {
+                "success": True,
+                "accepted": True,
+                "localTaskId": "runtime-copy",
+                "workspacePath": kwargs["payload"]["workspacePath"],
+                "runtime": "codex",
+            }
+        raise AssertionError(kwargs["method"])
+
+    monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
+    monkeypatch.setattr(
+        runtime_work_service, "execute_configured_device_command", command
+    )
+
+    response = await runtime_work_service.fork_runtime_task(
+        db=test_db,
+        user_id=test_user.id,
+        request=RuntimeTaskForkRequest(
+            source=RuntimeTaskAddress(
+                deviceId="source-device",
+                localTaskId="codex-1",
+            ),
+            target={
+                "deviceId": "target-device",
+                "workspacePath": "/target/Wegent_github",
+            },
+        ),
+    )
+
+    assert response.accepted is True
+    assert [call["method"] for call in calls] == [
+        "runtime.tasks.list",
+        "runtime.tasks.prepare_fork_transfer",
+        "runtime.tasks.import_fork",
+    ]
+    transfer_id = calls[1]["payload"]["transferId"]
+    expected_target_path = _expected_runtime_fork_worktree_path(
+        "/target/Wegent_github",
+        transfer_id,
+    )
+    assert response.target.workspace_path == expected_target_path
+    assert command_calls == [
+        {
+            "device_id": "source-device",
+            "command_key": "project_folder_status",
+            "args": ["/Users/alice/.codex/worktrees/0889/Wegent"],
+        },
+        {
+            "device_id": "target-device",
+            "command_key": "project_folder_status",
+            "args": ["/target/Wegent_github"],
+        },
+        {
+            "device_id": "target-device",
+            "command_key": "git_commit_available",
+            "args": ["/target/Wegent_github", "abc123"],
+        },
+        {
+            "device_id": "target-device",
+            "command_key": "git_worktree_add",
+            "args": ["/target/Wegent_github", expected_target_path, "abc123"],
+        },
+    ]
+
+
+@pytest.mark.asyncio
+async def test_fork_runtime_task_uses_git_workspace_for_local_path_git_project(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    import copy
+
+    from app.schemas.runtime_work import (
+        DeviceWorkspaceUpsert,
+        RuntimeTaskAddress,
+        RuntimeTaskForkRequest,
+    )
+    from app.services import runtime_work_service
+
+    project = _local_path_project(
+        test_db,
+        test_user.id,
+        device_id="source-device",
+        path="/source/Wegent",
+        name="Wegent_github",
+    )
+    runtime_work_service.upsert_device_workspace(
+        db=test_db,
+        user_id=test_user.id,
+        payload=DeviceWorkspaceUpsert(
+            projectId=project.id,
+            deviceId="target-device",
+            workspacePath="/target/Wegent_github",
+            label="workspace",
+        ),
+    )
+    calls = []
+    command_calls = []
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: object(),
+    )
+    monkeypatch.setattr(
+        runtime_work_service.object_storage_presign_service,
+        "generate_upload_url",
+        lambda **kwargs: (_ for _ in ()).throw(
+            AssertionError("object storage should not be used for git workspace forks")
+        ),
+    )
+    monkeypatch.setattr(
+        runtime_work_service.object_storage_presign_service,
+        "generate_download_url",
+        lambda **kwargs: (_ for _ in ()).throw(
+            AssertionError("object storage should not be used for git workspace forks")
+        ),
+    )
+
+    command = _git_status_command(
+        {
+            (
+                "source-device",
+                "/Users/alice/.codex/worktrees/0889/Wegent",
+            ): {
+                "remoteUrl": "https://github.com/wecode-ai/Wegent.git",
+                "headCommit": "abc123",
+            },
+            ("target-device", "/target/Wegent_github"): {
+                "remoteUrl": "https://github.com/wecode-ai/Wegent.git",
+                "headCommit": "def456",
+            },
+        },
+        reachable_commits={("target-device", "/target/Wegent_github", "abc123")},
+        calls=command_calls,
+    )
+
+    async def rpc(**kwargs):
+        calls.append(copy.deepcopy(kwargs))
+        if kwargs["method"] == "runtime.tasks.list":
+            return {
+                "success": True,
+                "workspaces": [
+                    {
+                        "workspacePath": "/Users/alice/.codex/worktrees/0889/Wegent",
+                        "localTasks": [
+                            {
+                                "localTaskId": "codex-1",
+                                "workspacePath": (
+                                    "/Users/alice/.codex/worktrees/0889/Wegent"
+                                ),
+                                "title": "Continue migration",
+                                "runtime": "codex",
+                                "createdAt": "2026-06-22T00:00:00Z",
+                                "updatedAt": "2026-06-22T00:00:00Z",
+                            }
+                        ],
+                    }
+                ],
+            }
+        if kwargs["method"] == "runtime.tasks.prepare_fork_transfer":
+            assert kwargs["payload"]["workspaceTransfer"] == "git_workspace"
+            return {
+                "success": True,
+                "package": {
+                    "sourceRuntime": "codex",
+                    "title": "Continue migration",
+                    "archive": {
+                        "mode": "git_workspace",
+                        "transferId": kwargs["payload"]["transferId"],
+                    },
+                },
+            }
+        if kwargs["method"] == "runtime.tasks.import_fork":
+            expected_target_path = _expected_runtime_fork_worktree_path(
+                "/target/Wegent_github",
+                calls[1]["payload"]["transferId"],
+            )
+            assert kwargs["payload"]["workspacePath"] == expected_target_path
+            return {
+                "success": True,
+                "accepted": True,
+                "localTaskId": "runtime-copy",
+                "workspacePath": kwargs["payload"]["workspacePath"],
+                "runtime": "codex",
+            }
+        raise AssertionError(kwargs["method"])
+
+    monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
+    monkeypatch.setattr(
+        runtime_work_service, "execute_configured_device_command", command
+    )
+
+    response = await runtime_work_service.fork_runtime_task(
+        db=test_db,
+        user_id=test_user.id,
+        request=RuntimeTaskForkRequest(
+            source=RuntimeTaskAddress(
+                deviceId="source-device",
+                localTaskId="codex-1",
+            ),
+            target={
+                "deviceId": "target-device",
+                "workspacePath": "/target/Wegent_github",
+            },
+        ),
+    )
+
+    assert response.accepted is True
+    transfer_id = calls[1]["payload"]["transferId"]
+    expected_target_path = _expected_runtime_fork_worktree_path(
+        "/target/Wegent_github",
+        transfer_id,
+    )
+    assert response.target.workspace_path == expected_target_path
+    assert command_calls == [
+        {
+            "device_id": "source-device",
+            "command_key": "project_folder_status",
+            "args": ["/Users/alice/.codex/worktrees/0889/Wegent"],
+        },
+        {
+            "device_id": "target-device",
+            "command_key": "project_folder_status",
+            "args": ["/target/Wegent_github"],
+        },
+        {
+            "device_id": "target-device",
+            "command_key": "git_commit_available",
+            "args": ["/target/Wegent_github", "abc123"],
+        },
+        {
+            "device_id": "target-device",
+            "command_key": "git_worktree_add",
+            "args": ["/target/Wegent_github", expected_target_path, "abc123"],
+        },
+    ]
 
 
 @pytest.mark.asyncio
@@ -1240,6 +2108,18 @@ async def test_fork_runtime_task_uses_bidirectional_direct_transfer(
         ),
     )
 
+    async def direct_hosts(*, db, user_id, device_id, peer_device_id):
+        return {
+            "source-device": ["10.0.0.11"],
+            "target-device": ["10.0.0.12"],
+        }[device_id]
+
+    monkeypatch.setattr(
+        runtime_work_service,
+        "_runtime_transfer_direct_hosts",
+        direct_hosts,
+    )
+
     async def rpc(**kwargs):
         calls.append(copy.deepcopy(kwargs))
         if kwargs["method"] == "runtime.tasks.prepare_fork_transfer":
@@ -1321,12 +2201,14 @@ async def test_fork_runtime_task_uses_bidirectional_direct_transfer(
     ]
     assert calls[0]["device_id"] == "source-device"
     assert "uploadUrl" not in calls[0]["payload"]
+    assert calls[0]["payload"]["directHosts"] == ["10.0.0.11"]
     assert calls[1]["device_id"] == "target-device"
     assert calls[1]["payload"]["forkPackage"]["archive"] == {
         "directUrls": ["http://source/archive"],
     }
     assert calls[2]["device_id"] == "target-device"
     assert calls[2]["payload"]["token"]
+    assert calls[2]["payload"]["directHosts"] == ["10.0.0.12"]
     assert calls[3]["device_id"] == "source-device"
     assert calls[3]["payload"]["transferId"] == calls[0]["payload"]["transferId"]
     assert calls[3]["payload"]["uploadUrls"] == ["http://target/upload"]
@@ -1336,3 +2218,146 @@ async def test_fork_runtime_task_uses_bidirectional_direct_transfer(
         "localTransferId": calls[2]["payload"]["transferId"],
     }
     assert test_db.query(TaskResource).count() == 0
+
+
+@pytest.mark.asyncio
+async def test_fork_runtime_task_reports_storage_unavailable_without_internal_error(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    import copy
+
+    from fastapi import HTTPException, status
+
+    from app.schemas.runtime_work import RuntimeTaskAddress, RuntimeTaskForkRequest
+    from app.services import runtime_work_service
+
+    calls = []
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: object(),
+    )
+    monkeypatch.setattr(
+        runtime_work_service,
+        "_runtime_transfer_direct_hosts",
+        AsyncMock(return_value=[]),
+    )
+    monkeypatch.setattr(
+        runtime_work_service.object_storage_presign_service,
+        "generate_upload_url",
+        lambda **kwargs: (_ for _ in ()).throw(
+            ValueError("MinIO configuration not set")
+        ),
+    )
+
+    async def rpc(**kwargs):
+        calls.append(copy.deepcopy(kwargs))
+        if kwargs["method"] == "runtime.tasks.prepare_fork_transfer":
+            return {
+                "success": True,
+                "package": {
+                    "sourceRuntime": "codex",
+                    "title": "Continue migration",
+                    "archive": {"directUrls": []},
+                },
+            }
+        if kwargs["method"] == "runtime.tasks.import_fork":
+            return {"success": False, "error": "direct transfer failed"}
+        if kwargs["method"] == "runtime.tasks.prepare_fork_receiver":
+            return {
+                "success": True,
+                "accepted": True,
+                "transferId": kwargs["payload"]["transferId"],
+                "uploadUrls": [],
+            }
+        if kwargs["method"] == "runtime.tasks.push_fork_transfer":
+            raise AssertionError("push should be skipped without upload URLs")
+        raise AssertionError(kwargs["method"])
+
+    monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await runtime_work_service.fork_runtime_task(
+            db=test_db,
+            user_id=test_user.id,
+            request=RuntimeTaskForkRequest(
+                source=RuntimeTaskAddress(
+                    deviceId="source-device",
+                    workspacePath="/source/Wegent",
+                    localTaskId="codex-1",
+                ),
+                target={
+                    "deviceId": "target-device",
+                    "workspacePath": "/target/Wegent",
+                },
+            ),
+        )
+
+    assert exc_info.value.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+    assert [call["method"] for call in calls] == [
+        "runtime.tasks.prepare_fork_transfer",
+        "runtime.tasks.import_fork",
+        "runtime.tasks.prepare_fork_receiver",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_runtime_transfer_direct_hosts_uses_reported_host_then_tcp_ip(
+    monkeypatch,
+):
+    from app.services import runtime_work_service
+
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_device_online_info",
+        AsyncMock(
+            return_value={
+                "runtime_transfer_host": "192.168.0.190",
+                "client_ip": "10.0.0.12",
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_device_by_device_id",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("persisted device IP should not drive direct transfer")
+        ),
+    )
+
+    assert await runtime_work_service._runtime_transfer_direct_hosts(
+        db=None,
+        user_id=7,
+        device_id="target-device",
+        peer_device_id="source-device",
+    ) == ["192.168.0.190", "10.0.0.12"]
+
+
+@pytest.mark.asyncio
+async def test_runtime_transfer_direct_hosts_filters_loopback_for_cross_device(
+    monkeypatch,
+):
+    from app.services import runtime_work_service
+
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_device_online_info",
+        AsyncMock(
+            return_value={
+                "runtime_transfer_host": "127.0.0.1",
+                "client_ip": "127.0.0.1",
+            }
+        ),
+    )
+
+    assert (
+        await runtime_work_service._runtime_transfer_direct_hosts(
+            db=None,
+            user_id=7,
+            device_id="target-device",
+            peer_device_id="source-device",
+        )
+        == []
+    )

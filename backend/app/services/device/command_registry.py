@@ -223,6 +223,7 @@ is_directory = path.is_dir() if exists else None
 is_empty = None
 is_git_repo = False
 remote_url = None
+head_commit = None
 
 if exists and is_directory:
     try:
@@ -232,6 +233,7 @@ if exists and is_directory:
     is_git_repo = git_output(path, "rev-parse", "--is-inside-work-tree") == "true"
     if is_git_repo:
         remote_url = git_output(path, "remote", "get-url", "origin")
+        head_commit = git_output(path, "rev-parse", "HEAD")
 
 print(
     json.dumps(
@@ -241,6 +243,7 @@ print(
             "isEmpty": is_empty,
             "isGitRepo": is_git_repo,
             "remoteUrl": remote_url,
+            "headCommit": head_commit,
         },
         ensure_ascii=False,
     )
@@ -1135,9 +1138,19 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
     "git_worktree_add": LocalDeviceCommandDefinition(
         command=(
             "sh -c '"
-            'if [ -n "$3" ]; then '
-            'git -C "$1" worktree add --detach "$2" "$3"; '
-            'else git -C "$1" worktree add --detach "$2"; fi'
+            "source=$1; target=$2; ref=$3; "
+            'mkdir -p "$(dirname "$target")"; '
+            'if git -C "$target" rev-parse --is-inside-work-tree '
+            ">/dev/null 2>&1; then "
+            'if [ -n "$ref" ]; then '
+            'git -C "$target" checkout --force --detach "$ref"; fi; '
+            "else "
+            'if [ -e "$target" ]; then '
+            'echo "target exists and is not a Git worktree" >&2; exit 64; fi; '
+            'if [ -n "$ref" ]; then '
+            'git -C "$source" worktree add --detach "$target" "$ref"; '
+            'else git -C "$source" worktree add --detach "$target"; fi; '
+            "fi"
             "' --"
         )
     ),
@@ -1174,6 +1187,9 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
         command="git status --porcelain"
     ),
     "git_remote_url": LocalDeviceCommandDefinition(command="git remote get-url origin"),
+    "git_commit_available": LocalDeviceCommandDefinition(
+        command='sh -c \'git -C "$1" cat-file -e "$2^{commit}"\' --'
+    ),
     "git_add_all": LocalDeviceCommandDefinition(command="git add --all"),
     "git_commit": LocalDeviceCommandDefinition(command="git commit"),
     "ls_skills": LocalDeviceCommandDefinition(

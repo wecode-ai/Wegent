@@ -956,6 +956,20 @@ def test_local_device_command_registry_builds_git_worktree_add_argv():
     )
 
     definition = resolve_local_device_command("git_worktree_add")
+    expected_script = (
+        'source=$1; target=$2; ref=$3; mkdir -p "$(dirname "$target")"; '
+        'if git -C "$target" rev-parse --is-inside-work-tree '
+        ">/dev/null 2>&1; then "
+        'if [ -n "$ref" ]; then '
+        'git -C "$target" checkout --force --detach "$ref"; fi; '
+        "else "
+        'if [ -e "$target" ]; then '
+        'echo "target exists and is not a Git worktree" >&2; exit 64; fi; '
+        'if [ -n "$ref" ]; then '
+        'git -C "$source" worktree add --detach "$target" "$ref"; '
+        'else git -C "$source" worktree add --detach "$target"; fi; '
+        "fi"
+    )
 
     assert definition is not None
     assert build_local_device_command_argv(
@@ -964,7 +978,7 @@ def test_local_device_command_registry_builds_git_worktree_add_argv():
     ) == [
         "sh",
         "-c",
-        'if [ -n "$3" ]; then git -C "$1" worktree add --detach "$2" "$3"; else git -C "$1" worktree add --detach "$2"; fi',
+        expected_script,
         "--",
         "/workspace/projects/d837/Wegent",
         "/workspace/worktrees/1386/Wegent",
@@ -979,6 +993,20 @@ def test_local_device_command_registry_builds_git_worktree_add_argv_with_branch(
     )
 
     definition = resolve_local_device_command("git_worktree_add")
+    expected_script = (
+        'source=$1; target=$2; ref=$3; mkdir -p "$(dirname "$target")"; '
+        'if git -C "$target" rev-parse --is-inside-work-tree '
+        ">/dev/null 2>&1; then "
+        'if [ -n "$ref" ]; then '
+        'git -C "$target" checkout --force --detach "$ref"; fi; '
+        "else "
+        'if [ -e "$target" ]; then '
+        'echo "target exists and is not a Git worktree" >&2; exit 64; fi; '
+        'if [ -n "$ref" ]; then '
+        'git -C "$source" worktree add --detach "$target" "$ref"; '
+        'else git -C "$source" worktree add --detach "$target"; fi; '
+        "fi"
+    )
 
     assert definition is not None
     assert build_local_device_command_argv(
@@ -991,7 +1019,7 @@ def test_local_device_command_registry_builds_git_worktree_add_argv_with_branch(
     ) == [
         "sh",
         "-c",
-        'if [ -n "$3" ]; then git -C "$1" worktree add --detach "$2" "$3"; else git -C "$1" worktree add --detach "$2"; fi',
+        expected_script,
         "--",
         "/workspace/projects/d837/Wegent",
         "/workspace/worktrees/1386/Wegent",

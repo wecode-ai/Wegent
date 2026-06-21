@@ -146,7 +146,14 @@ async def test_telegram_notification_decrypts_bot_token(
 
         async def send_text_message(self, chat_id: int, text: str):
             calls.append({"chat_id": chat_id, "text": text})
-            return {"success": True}
+            return {
+                "success": True,
+                "result": {
+                    "result": {
+                        "message_id": 3201,
+                    },
+                },
+            }
 
     monkeypatch.setattr(
         "app.services.channels.telegram.sender.TelegramBotSender",
@@ -193,7 +200,14 @@ async def test_runtime_task_update_uses_global_im_notification_target(
 
         async def send_text_message(self, chat_id: int, text: str):
             calls.append({"chat_id": chat_id, "text": text})
-            return {"success": True}
+            return {
+                "success": True,
+                "result": {
+                    "result": {
+                        "message_id": 3201,
+                    },
+                },
+            }
 
     monkeypatch.setattr(
         "app.services.channels.telegram.sender.TelegramBotSender",
@@ -257,7 +271,14 @@ async def test_runtime_task_update_uses_subscribed_native_codex_task(
 
         async def send_text_message(self, chat_id: int, text: str):
             calls.append({"chat_id": chat_id, "text": text})
-            return {"success": True}
+            return {
+                "success": True,
+                "result": {
+                    "result": {
+                        "message_id": 3201,
+                    },
+                },
+            }
 
     monkeypatch.setattr(
         "app.services.channels.telegram.sender.TelegramBotSender",
@@ -281,6 +302,13 @@ async def test_runtime_task_update_uses_subscribed_native_codex_task(
     assert calls[1]["chat_id"] == 100200301
     assert "Native Codex task" in calls[1]["text"]
     assert "Subscribed update" in calls[1]["text"]
+    assert await im_session_service.get_runtime_task_reply_target(
+        session=session,
+        message_id=3201,
+    ) == {
+        "deviceId": "device-1",
+        "localTaskId": "codex-thread-1",
+    }
 
 
 @pytest.mark.asyncio

@@ -57,6 +57,8 @@ POST /api/runtime-work/send
 
 Backend forwards `runtime.tasks.send`. The executor resumes Codex or Claude Code from the local LocalTask's opaque runtime handle and writes the result back to the local JSON index. Streaming Responses events carry `local_task_id` and runtime metadata, not `workspacePath`.
 
+Native Codex tasks have one additional rule: transcript refreshes trust only Codex's own session transcript. `runtimeHandle.messages` from a fork package or the executor JSON index is only an import-time snapshot and must not be used as a fallback for native Codex transcripts; otherwise Wework can show stale messages or lose follow-up turns after refresh. Non-SDK native tasks may still use the executor JSON index as their local transcript source.
+
 ## Workspace Tool Context
 
 After Wework opens a LocalTask, the right-side file, review, and terminal tools resolve their device and directory from the current LocalTask's device and directory context:
@@ -83,8 +85,10 @@ When Wework forks a runtime task, it only offers target workspaces that belong t
 - An online device that is not yet bound to that Project must first use the same device-directory preparation flow as project creation and editing: choose a directory on the device, then choose whether that Project path is a `worktree` or a regular `workspace`.
 - Backend writes the Device Workspace mapping through `POST /api/runtime-work/device-workspaces/prepare` before continuing the fork.
 - A Device Workspace `label` can store `worktree` or `workspace`. Runtime work list responses prefer that label as `workspaceKind`, so the frontend does not treat a worktree under the same Project as another Project and does not show unrelated Project or unmapped directories as fork targets.
-- If the Project has `git` configuration, the fork reuses the already prepared same-repository workspace on the target Device Workspace and copies only task context plus session metadata; it does not archive and upload the Git repository directory to object storage.
+- If the Project has `git` configuration, Backend first verifies that the source and target workspaces have the same Git remote and that the source task `HEAD` commit is reachable in the target repository. After that, the target device does not import the task into the Project root. It creates or reuses a detached Git worktree under `worktrees/<transferId>/<projectDir>` for the target Project workspace, then binds the forked LocalTask to that worktree path. This prevents the fork from mutating the target Project root, while list refresh can still group the worktree task under the same Project.
+- Git forks copy only task context, Codex session state, and required session files. They do not archive and upload the Git repository directory to object storage. If Git requirements are not met, Backend uses the regular archive transfer path.
 - If the Project is not Git-backed, the fork uses executor direct archive transfer and only falls back to object storage when direct transfer is unavailable.
+- Direct archive transfer only tries the TCP peer host observed from the Backend WebSocket connection and the runtime transfer host reported by the executor. The executor validates the peer with a token probe before upload, so a NAT/proxy-reported business address is not trusted by itself. If direct transfer is unavailable and object storage is not configured, Backend returns 503 instead of silently falling into an unusable S3 path.
 
 The forked task identity still uses `deviceId + localTaskId`. `workspacePath` is only target-directory and workspace-tool context.
 

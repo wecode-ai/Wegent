@@ -870,6 +870,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         task_id: Optional[int],
         message: str,
         message_context: MessageContext,
+        runtime_task: Optional[dict[str, Any]] = None,
     ) -> None:
         await self._execute_private_im_continue_task(
             db=db,
@@ -878,6 +879,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             task_id=task_id,
             message=message,
             message_context=message_context,
+            runtime_task=runtime_task,
         )
 
     async def _execute_private_im_continue_task(
@@ -889,15 +891,30 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         task_id: Optional[int],
         message: str,
         message_context: MessageContext,
+        runtime_task: Optional[dict[str, Any]] = None,
     ) -> None:
+        if runtime_task is not None:
+            await self._execute_private_im_continue_runtime_task(
+                db=db,
+                user=user,
+                im_session=im_session,
+                message=message,
+                message_context=message_context,
+                runtime_task=runtime_task,
+            )
+            return
+
         if task_id is None:
-            if getattr(im_session, "active_runtime_task", None):
+            if runtime_task is not None or getattr(
+                im_session, "active_runtime_task", None
+            ):
                 await self._execute_private_im_continue_runtime_task(
                     db=db,
                     user=user,
                     im_session=im_session,
                     message=message,
                     message_context=message_context,
+                    runtime_task=runtime_task,
                 )
                 return
             await self.send_text_reply(message_context, "请先使用 /switch 选择任务。")
@@ -982,6 +999,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         im_session: Any,
         message: str,
         message_context: MessageContext,
+        runtime_task: Optional[dict[str, Any]] = None,
     ) -> None:
         from app.schemas.runtime_work import (
             RuntimeMessageSource,
@@ -990,7 +1008,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         )
         from app.services import runtime_work_service
 
-        runtime_task = getattr(im_session, "active_runtime_task", None)
+        runtime_task = runtime_task or getattr(im_session, "active_runtime_task", None)
         if not isinstance(runtime_task, dict):
             await self.send_text_reply(message_context, "请先使用 /switch 选择任务。")
             return

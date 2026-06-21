@@ -31,6 +31,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, Generator, Optional
+from urllib.parse import urlsplit
 
 import socketio
 from socketio.exceptions import ConnectionRefusedError
@@ -211,6 +212,7 @@ def _register_device(
     client_ip: Optional[str] = None,
     device_type: Optional[str] = None,
     bind_shell: Optional[str] = None,
+    runtime_transfer_host: Optional[str] = None,
 ) -> tuple[bool, Optional[str], Optional[str]]:
     """
     Register or update device CRD in database.
@@ -222,6 +224,7 @@ def _register_device(
         client_ip: Device's client IP address
         device_type: Device type ('local' or 'cloud')
         bind_shell: Shell runtime binding ('claudecode' or 'openclaw')
+        runtime_transfer_host: Host peers should use for direct transfers
 
     Returns (success, persisted_display_name, error_message).
     """
@@ -235,6 +238,7 @@ def _register_device(
                 client_ip=client_ip,
                 device_type=device_type,
                 bind_shell=bind_shell,
+                runtime_transfer_host=runtime_transfer_host,
             )
             persisted_display_name = (
                 device_kind.json.get("spec", {}).get("displayName") or name
@@ -243,6 +247,22 @@ def _register_device(
     except Exception as e:
         logger.error(f"[Device WS] Error registering device: {e}")
         return False, None, str(e)
+
+
+def _normalize_runtime_transfer_host(value: Any) -> Optional[str]:
+    """Normalize an executor-advertised direct-transfer host."""
+
+    if not isinstance(value, str):
+        return None
+    candidate = value.strip()
+    if not candidate:
+        return None
+    parsed = urlsplit(candidate)
+    if parsed.scheme and parsed.hostname:
+        candidate = parsed.hostname
+    elif "/" in candidate:
+        return None
+    return candidate.strip("[]") or None
 
 
 def _update_device_heartbeat(user_id: int, device_id: str) -> None:
@@ -488,6 +508,29 @@ def _is_runtime_task_reply_status(status: Any) -> bool:
     )
 
 
+def _summarize_runtime_notification_results(
+    notification: dict[str, Any],
+) -> list[dict[str, Any]]:
+    results = notification.get("results")
+    if not isinstance(results, list):
+        return []
+    summarized: list[dict[str, Any]] = []
+    for result in results:
+        if not isinstance(result, dict):
+            continue
+        summarized.append(
+            {
+                "success": bool(result.get("success")),
+                "channel_id": result.get("channel_id"),
+                "channel_type": result.get("channel_type"),
+                "session_key": result.get("session_key"),
+                "error": result.get("error"),
+                "error_type": result.get("error_type"),
+            }
+        )
+    return summarized
+
+
 def _normalize_runtime_task_status(status: Any) -> str:
     if not isinstance(status, str):
         return ""
@@ -652,29 +695,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
         return await super().trigger_event(event, sid, *args)
 
     def _get_client_ip(self, environ: dict) -> Optional[str]:
-        """Extract client IP from WSGI environ.
-
-        Checks X-Forwarded-For header first (for proxied connections),
-        then falls back to REMOTE_ADDR.
-
-        Args:
-            environ: WSGI environ dict
-
-        Returns:
-            Client IP address or None
-        """
-        # Check X-Forwarded-For header (common for proxied connections)
-        forwarded_for = environ.get("HTTP_X_FORWARDED_FOR")
-        if forwarded_for:
-            # X-Forwarded-For can contain multiple IPs, take the first one
-            return forwarded_for.split(",")[0].strip()
-
-        # Check X-Real-IP header
-        real_ip = environ.get("HTTP_X_REAL_IP")
-        if real_ip:
-            return real_ip
-
-        # Fall back to REMOTE_ADDR
+        """Extract the TCP peer IP from WSGI environ."""
         return environ.get("REMOTE_ADDR")
 
     def _get_client_ip_log_context(self, environ: dict) -> tuple[Optional[str], str]:
@@ -972,14 +993,21 @@ class DeviceNamespace(socketio.AsyncNamespace):
         if not user_id:
             return {"error": "Not authenticated"}
 
+        runtime_transfer_host = _normalize_runtime_transfer_host(
+            payload.runtime_transfer_host or payload.client_ip
+        )
         logger.info(
             f"[Device WS] device:register user={user_id}, device_id={payload.device_id}, "
-            f"name={payload.name}, executor_version={payload.executor_version}, client_ip={payload.client_ip}"
+            f"name={payload.name}, executor_version={payload.executor_version}, "
+            f"tcp_client_ip={session.get('client_ip')}, "
+            f"reported_client_ip={payload.client_ip}, "
+            f"runtime_transfer_host={runtime_transfer_host}"
         )
 
         # Check if this is a cloud device registration (by IP matching)
-        # Prefer self-reported IP from executor, fall back to WebSocket client IP
-        client_ip = payload.client_ip or session.get("client_ip")
+        # Use the WebSocket TCP peer observed by backend. The executor-reported
+        # address is advisory and must not drive transfer routing.
+        client_ip = session.get("client_ip")
         is_cloud_device = False
         if payload.device_type == DeviceType.CLOUD and client_ip:
             cloud_device_id = await self._match_cloud_device(
@@ -1005,9 +1033,10 @@ class DeviceNamespace(socketio.AsyncNamespace):
                     user_id,
                     payload.device_id,
                     payload.name,
-                    payload.client_ip,
+                    client_ip,
                     payload.device_type.value,
                     payload.bind_shell.value,
+                    runtime_transfer_host,
                 )
                 if not success:
                     return {"error": f"Registration failed: {error}"}
@@ -1026,11 +1055,14 @@ class DeviceNamespace(socketio.AsyncNamespace):
             socket_id=sid,
             name=effective_device_name,
             executor_version=payload.executor_version,
+            client_ip=client_ip,
+            runtime_transfer_host=runtime_transfer_host,
         )
 
         # Update session with device_id and device_name
         session["device_id"] = payload.device_id
         session["device_name"] = effective_device_name
+        session["runtime_transfer_host"] = runtime_transfer_host
         session["registered"] = True
         await self.save_session(sid, session)
 
@@ -1207,12 +1239,19 @@ class DeviceNamespace(socketio.AsyncNamespace):
         if session_device_id != payload.device_id:
             return {"error": "Device ID mismatch"}
 
+        runtime_transfer_host = _normalize_runtime_transfer_host(
+            payload.runtime_transfer_host
+        ) or session.get("runtime_transfer_host")
+        session["runtime_transfer_host"] = runtime_transfer_host
+        await self.save_session(sid, session)
+
         # Refresh Redis TTL and update running_task_ids
         success = await device_service.refresh_device_heartbeat(
             user_id,
             payload.device_id,
             payload.running_task_ids,
             payload.executor_version,
+            runtime_transfer_host=runtime_transfer_host,
         )
 
         if not success:
@@ -1228,6 +1267,8 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 socket_id=sid,
                 name=device_name,
                 executor_version=payload.executor_version,
+                client_ip=session.get("client_ip"),
+                runtime_transfer_host=runtime_transfer_host,
             )
             # Re-broadcast device online event
             await self._broadcast_device_online(user_id, payload.device_id, device_name)
@@ -1608,9 +1649,25 @@ class DeviceNamespace(socketio.AsyncNamespace):
 
         status = str(data.get("status") or "updated")
         if not _is_runtime_task_terminal_status(status):
+            logger.info(
+                "[RuntimeTaskNotification] Skipped non-terminal update: "
+                "user_id=%s device_id=%s local_task_id=%s status=%s",
+                user_id,
+                device_id,
+                local_task_id,
+                status,
+            )
             return {"success": True, "notified": 0, "skipped": "non_terminal"}
         content = str(data.get("content") or "")
         if _is_runtime_task_reply_status(status) and not content.strip():
+            logger.info(
+                "[RuntimeTaskNotification] Skipped empty reply update: "
+                "user_id=%s device_id=%s local_task_id=%s status=%s",
+                user_id,
+                device_id,
+                local_task_id,
+                status,
+            )
             return {"success": True, "notified": 0, "skipped": "empty_content"}
 
         notification = (
@@ -1623,7 +1680,28 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 source="codex_watcher",
             )
         )
-        return {"success": True, "notified": int(notification.get("sent") or 0)}
+        notified = int(notification.get("sent") or 0)
+        if notified <= 0:
+            logger.warning(
+                "[RuntimeTaskNotification] Runtime task update notification "
+                "was not delivered: user_id=%s device_id=%s local_task_id=%s "
+                "status=%s results=%s",
+                user_id,
+                device_id,
+                local_task_id,
+                status,
+                _summarize_runtime_notification_results(notification),
+            )
+        logger.info(
+            "[RuntimeTaskNotification] Dispatched runtime task update: "
+            "user_id=%s device_id=%s local_task_id=%s status=%s sent=%s",
+            user_id,
+            device_id,
+            local_task_id,
+            status,
+            notified,
+        )
+        return {"success": True, "notified": notified}
 
     async def _publish_task_completed_event(
         self,

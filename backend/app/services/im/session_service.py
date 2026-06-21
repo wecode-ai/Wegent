@@ -22,6 +22,8 @@ PRIVATE_SESSION_KEY_PREFIX = "channel:private_session:"
 USER_PRIVATE_SESSIONS_PREFIX = "channel:user_private_sessions:"
 USER_GLOBAL_NOTIFICATION_PREFIX = "channel:user_global_notification:"
 USER_RUNTIME_TASK_SUBSCRIPTIONS_PREFIX = "channel:user_runtime_task_subscriptions:"
+RUNTIME_TASK_REPLY_TARGET_PREFIX = "channel:runtime_task_reply_target:"
+RUNTIME_TASK_REPLY_TARGET_TTL_SECONDS = 7 * 24 * 60 * 60
 
 CHANNEL_LABELS = {
     "dingtalk": "钉钉",
@@ -257,6 +259,49 @@ class IMSessionService:
         subscriptions.pop(task_key, None)
         await self._save_runtime_task_subscriptions(user_id, subscriptions)
 
+    async def save_runtime_task_reply_target(
+        self,
+        *,
+        session: IMPrivateSession,
+        message_id: int | str,
+        runtime_task: dict[str, Any],
+    ) -> None:
+        self.runtime_task_notification_key(runtime_task)
+        normalized_message_id = self._normalize_reply_message_id(message_id)
+        if not normalized_message_id:
+            return
+        await cache_manager.set(
+            self._runtime_task_reply_target_key(
+                session.session_key,
+                normalized_message_id,
+            ),
+            dict(runtime_task),
+            expire=RUNTIME_TASK_REPLY_TARGET_TTL_SECONDS,
+        )
+
+    async def get_runtime_task_reply_target(
+        self,
+        *,
+        session: IMPrivateSession,
+        message_id: int | str | None,
+    ) -> dict[str, Any] | None:
+        normalized_message_id = self._normalize_reply_message_id(message_id)
+        if not normalized_message_id:
+            return None
+        data = await cache_manager.get(
+            self._runtime_task_reply_target_key(
+                session.session_key,
+                normalized_message_id,
+            )
+        )
+        if not isinstance(data, dict):
+            return None
+        try:
+            self.runtime_task_notification_key(data)
+        except ValueError:
+            return None
+        return data
+
     async def list_active_runtime_task_sessions(
         self,
         db: Session | None,
@@ -425,6 +470,21 @@ class IMSessionService:
 
     def _runtime_task_subscriptions_key(self, user_id: int) -> str:
         return f"{USER_RUNTIME_TASK_SUBSCRIPTIONS_PREFIX}{user_id}"
+
+    def _runtime_task_reply_target_key(
+        self,
+        session_key: str,
+        message_id: str,
+    ) -> str:
+        return f"{RUNTIME_TASK_REPLY_TARGET_PREFIX}{session_key}:{message_id}"
+
+    def _normalize_reply_message_id(self, message_id: int | str | None) -> str:
+        if isinstance(message_id, bool) or message_id is None:
+            return ""
+        if isinstance(message_id, int):
+            return str(message_id) if message_id > 0 else ""
+        normalized = str(message_id).strip()
+        return normalized if normalized else ""
 
     async def _save_global_notification_settings(
         self,

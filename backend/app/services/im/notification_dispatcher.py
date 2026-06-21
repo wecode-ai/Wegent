@@ -84,7 +84,12 @@ class IMNotificationDispatcher:
             status=status,
             content=content,
         )
-        return await self._send_to_sessions(db, sessions, message)
+        return await self._send_to_sessions(
+            db,
+            sessions,
+            message,
+            runtime_task=address,
+        )
 
     async def send_runtime_task_update_for_user(
         self,
@@ -193,6 +198,7 @@ class IMNotificationDispatcher:
         db: Session,
         sessions: Sequence[IMPrivateSession],
         message: str,
+        runtime_task: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         sent = 0
         results: list[dict[str, Any]] = []
@@ -202,6 +208,13 @@ class IMNotificationDispatcher:
             results.append(result)
             if result.get("success"):
                 sent += 1
+                message_id = _result_message_id(result)
+                if runtime_task is not None and message_id is not None:
+                    await im_session_service.save_runtime_task_reply_target(
+                        session=session,
+                        message_id=message_id,
+                        runtime_task=runtime_task,
+                    )
         return {"sent": sent, "results": results}
 
     def _get_channel(self, db: Session, channel_id: int) -> Kind | None:
@@ -342,6 +355,19 @@ def _dedupe_sessions(
         seen.add(session.session_key)
         deduped.append(session)
     return deduped
+
+
+def _result_message_id(result: dict[str, Any]) -> int | str | None:
+    payload = result.get("result")
+    if not isinstance(payload, dict):
+        return None
+    result_payload = payload.get("result")
+    if not isinstance(result_payload, dict):
+        return None
+    message_id = result_payload.get("message_id")
+    if isinstance(message_id, (int, str)) and not isinstance(message_id, bool):
+        return message_id
+    return None
 
 
 @contextmanager

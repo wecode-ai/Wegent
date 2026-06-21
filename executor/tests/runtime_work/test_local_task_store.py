@@ -1181,7 +1181,121 @@ async def test_runtime_work_handler_waits_for_terminal_codex_native_update(
 
 
 @pytest.mark.asyncio
-async def test_runtime_work_handler_suppresses_codex_watcher_after_wegent_send(
+async def test_runtime_work_handler_does_not_notify_previous_reply_for_pending_turn(
+    tmp_path,
+):
+    from executor.runtime_work.local_task_store import LocalTaskRecord, LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    initial = LocalTaskRecord(
+        local_task_id="codex-thread-1",
+        workspace_path="/repo/Wegent",
+        title="Native Codex task",
+        runtime="codex",
+        runtime_handle={
+            "threadId": "codex-thread-1",
+            "messages": [
+                {
+                    "id": "codex-thread-1:assistant:1",
+                    "role": "assistant",
+                    "content": "Previous native Codex response",
+                    "status": "done",
+                },
+            ],
+        },
+        created_at="2026-06-21T01:00:00Z",
+        updated_at="2026-06-21T01:05:00Z",
+    )
+    pending_turn = LocalTaskRecord(
+        local_task_id="codex-thread-1",
+        workspace_path="/repo/Wegent",
+        title="Native Codex task",
+        runtime="codex",
+        runtime_handle={
+            "threadId": "codex-thread-1",
+            "messages": [
+                {
+                    "id": "codex-thread-1:assistant:1",
+                    "role": "assistant",
+                    "content": "Previous native Codex response",
+                    "status": "done",
+                },
+                {
+                    "id": "codex-thread-1:user:2",
+                    "role": "user",
+                    "content": "New native Codex request",
+                    "status": "done",
+                },
+            ],
+        },
+        created_at="2026-06-21T01:00:00Z",
+        updated_at="2026-06-21T01:06:00Z",
+    )
+    completed_turn = LocalTaskRecord(
+        local_task_id="codex-thread-1",
+        workspace_path="/repo/Wegent",
+        title="Native Codex task",
+        runtime="codex",
+        runtime_handle={
+            "threadId": "codex-thread-1",
+            "messages": [
+                {
+                    "id": "codex-thread-1:assistant:1",
+                    "role": "assistant",
+                    "content": "Previous native Codex response",
+                    "status": "done",
+                },
+                {
+                    "id": "codex-thread-1:user:2",
+                    "role": "user",
+                    "content": "New native Codex request",
+                    "status": "done",
+                },
+                {
+                    "id": "codex-thread-1:assistant:2",
+                    "role": "assistant",
+                    "content": "Latest native Codex response",
+                    "status": "done",
+                },
+            ],
+        },
+        created_at="2026-06-21T01:00:00Z",
+        updated_at="2026-06-21T01:07:00Z",
+    )
+    emitted = []
+
+    async def emit_event(event_type, payload):
+        emitted.append((event_type, payload))
+
+    handler = RuntimeWorkRpcHandler(
+        store=LocalTaskStore(tmp_path / "index.json"),
+        codex_discovery=SequenceDiscovery(
+            [[initial], [pending_turn], [completed_turn]]
+        ),
+        responses_event_emitter=emit_event,
+    )
+
+    await handler.poll_codex_updates_once()
+    await handler.poll_codex_updates_once()
+    await handler.poll_codex_updates_once()
+
+    assert emitted == [
+        (
+            "runtime.tasks.updated",
+            {
+                "localTaskId": "codex-thread-1",
+                "runtime": "codex",
+                "title": "Native Codex task",
+                "updatedAt": "2026-06-21T01:07:00Z",
+                "status": "done",
+                "content": "Latest native Codex response",
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_runtime_work_handler_suppresses_codex_watcher_after_im_send(
     tmp_path,
 ):
     from executor.runtime_work.local_task_store import LocalTaskRecord, LocalTaskStore
@@ -1201,7 +1315,71 @@ async def test_runtime_work_handler_suppresses_codex_watcher_after_wegent_send(
         workspace_path="/repo/Wegent",
         title="Native Codex task",
         runtime="codex",
+        runtime_handle={
+            "threadId": "codex-thread-1",
+            "messages": [
+                {
+                    "id": "codex-thread-1:assistant:1",
+                    "role": "assistant",
+                    "content": "Reply to IM message",
+                    "status": "done",
+                },
+            ],
+        },
+        created_at="2026-06-21T01:00:00Z",
+        updated_at="2026-06-21T01:06:00Z",
+    )
+    emitted = []
+
+    async def emit_event(event_type, payload):
+        emitted.append((event_type, payload))
+
+    handler = RuntimeWorkRpcHandler(
+        store=LocalTaskStore(tmp_path / "index.json"),
+        codex_discovery=SequenceDiscovery([[initial], [updated]]),
+        responses_event_emitter=emit_event,
+    )
+
+    await handler.poll_codex_updates_once()
+    handler.mark_codex_task_updated_by_wegent(
+        "codex-thread-1",
+        {"source": "im", "external_id": "session-telegram"},
+    )
+    await handler.poll_codex_updates_once()
+
+    assert emitted == []
+
+
+@pytest.mark.asyncio
+async def test_runtime_work_handler_emits_codex_watcher_after_web_send(tmp_path):
+    from executor.runtime_work.local_task_store import LocalTaskRecord, LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    initial = LocalTaskRecord(
+        local_task_id="codex-thread-1",
+        workspace_path="/repo/Wegent",
+        title="Native Codex task",
+        runtime="codex",
         runtime_handle={"threadId": "codex-thread-1"},
+        created_at="2026-06-21T01:00:00Z",
+        updated_at="2026-06-21T01:05:00Z",
+    )
+    updated = LocalTaskRecord(
+        local_task_id="codex-thread-1",
+        workspace_path="/repo/Wegent",
+        title="Native Codex task",
+        runtime="codex",
+        runtime_handle={
+            "threadId": "codex-thread-1",
+            "messages": [
+                {
+                    "id": "codex-thread-1:assistant:1",
+                    "role": "assistant",
+                    "content": "Reply to web message",
+                    "status": "done",
+                },
+            ],
+        },
         created_at="2026-06-21T01:00:00Z",
         updated_at="2026-06-21T01:06:00Z",
     )
@@ -1220,7 +1398,19 @@ async def test_runtime_work_handler_suppresses_codex_watcher_after_wegent_send(
     handler.mark_codex_task_updated_by_wegent("codex-thread-1")
     await handler.poll_codex_updates_once()
 
-    assert emitted == []
+    assert emitted == [
+        (
+            "runtime.tasks.updated",
+            {
+                "localTaskId": "codex-thread-1",
+                "runtime": "codex",
+                "title": "Native Codex task",
+                "updatedAt": "2026-06-21T01:06:00Z",
+                "status": "done",
+                "content": "Reply to web message",
+            },
+        )
+    ]
 
 
 @pytest.mark.asyncio
@@ -1305,6 +1495,134 @@ async def test_runtime_work_handler_reads_discovered_codex_transcript(tmp_path):
         "Show project task",
         "Project task is visible",
     ]
+
+
+@pytest.mark.asyncio
+async def test_runtime_work_handler_prefers_codex_transcript_over_imported_cache(
+    tmp_path,
+):
+    from executor.runtime_work.local_task_store import LocalTaskRecord, LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    class CurrentCodexTranscript:
+        def discover(self):
+            return []
+
+        def read_transcript(self, thread_id, session_path=None):
+            return [
+                {
+                    "id": f"{thread_id}:user:1",
+                    "role": "user",
+                    "content": "latest follow-up",
+                    "createdAt": "2026-06-21T12:00:00Z",
+                    "status": "done",
+                },
+                {
+                    "id": f"{thread_id}:assistant:1",
+                    "role": "assistant",
+                    "content": "latest reply",
+                    "createdAt": "2026-06-21T12:00:01Z",
+                    "status": "done",
+                },
+            ]
+
+    store = LocalTaskStore(tmp_path / "index.json")
+    store.upsert_task(
+        LocalTaskRecord(
+            local_task_id="codex-1",
+            workspace_path="/repo/Wegent",
+            title="Forked Codex task",
+            runtime="codex",
+            runtime_handle={
+                "threadId": "codex-1",
+                "messages": [
+                    {
+                        "id": "codex-1:user:0",
+                        "role": "user",
+                        "content": "imported old prompt",
+                        "createdAt": "2026-06-21T11:00:00Z",
+                        "status": "done",
+                    }
+                ],
+            },
+            running=False,
+            status="active",
+        )
+    )
+
+    result = await RuntimeWorkRpcHandler(
+        store=store,
+        codex_discovery=CurrentCodexTranscript(),
+    ).handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "workspacePath": "/repo/Wegent",
+                "localTaskId": "codex-1",
+            },
+        }
+    )
+
+    assert result["success"] is True
+    assert [message["content"] for message in result["messages"]] == [
+        "latest follow-up",
+        "latest reply",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_runtime_work_handler_does_not_fallback_to_imported_cache_for_sdk_codex(
+    tmp_path,
+):
+    from executor.runtime_work.local_task_store import LocalTaskRecord, LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    class EmptyCodexTranscript:
+        def discover(self):
+            return []
+
+        def read_transcript(self, thread_id, session_path=None):
+            return []
+
+    store = LocalTaskStore(tmp_path / "index.json")
+    store.upsert_task(
+        LocalTaskRecord(
+            local_task_id="codex-1",
+            workspace_path="/repo/Wegent",
+            title="Forked Codex task",
+            runtime="codex",
+            runtime_handle={
+                "threadId": "codex-1",
+                "messages": [
+                    {
+                        "id": "codex-1:user:0",
+                        "role": "user",
+                        "content": "imported stale prompt",
+                        "createdAt": "2026-06-21T11:00:00Z",
+                        "status": "done",
+                    }
+                ],
+            },
+            running=False,
+            status="active",
+        )
+    )
+
+    result = await RuntimeWorkRpcHandler(
+        store=store,
+        codex_discovery=EmptyCodexTranscript(),
+    ).handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "workspacePath": "/repo/Wegent",
+                "localTaskId": "codex-1",
+            },
+        }
+    )
+
+    assert result["success"] is True
+    assert result["messages"] == []
 
 
 @pytest.mark.asyncio
@@ -1496,6 +1814,70 @@ async def test_runtime_work_handler_imports_git_workspace_fork_without_archive_r
     assert record.runtime_handle["messages"] == [
         {"id": "m1", "role": "user", "content": "hello"}
     ]
+
+
+@pytest.mark.asyncio
+async def test_runtime_work_handler_restores_git_workspace_session_archive(
+    tmp_path,
+    monkeypatch,
+):
+    from executor.runtime_work import fork_transfer
+    from executor.runtime_work.local_task_store import LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    restored = {}
+
+    async def restore_fork_package_archive(*, archive, workspace_path):
+        restored["archive"] = archive
+        restored["workspace_path"] = workspace_path
+
+    monkeypatch.setattr(
+        fork_transfer,
+        "restore_fork_package_archive",
+        restore_fork_package_archive,
+    )
+    store = LocalTaskStore(tmp_path / "index.json")
+    handler = RuntimeWorkRpcHandler(store=store, codex_discovery=EmptyDiscovery())
+    target_workspace = str(tmp_path / "target")
+
+    result = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.import_fork",
+            "payload": {
+                "source": {
+                    "deviceId": "source-device",
+                    "workspacePath": "/source/Wegent",
+                    "localTaskId": "codex-1",
+                },
+                "workspacePath": target_workspace,
+                "forkPackage": {
+                    "sourceRuntime": "codex",
+                    "title": "Forked runtime task",
+                    "runtimeHandle": {
+                        "threadId": "codex-1",
+                        "sessionPath": "/source/.codex/sessions/thread.jsonl",
+                    },
+                    "archive": {
+                        "mode": "git_workspace",
+                        "requiresSessionRestore": True,
+                        "directUrls": ["http://source/archive"],
+                        "directToken": "token",
+                    },
+                },
+            },
+        }
+    )
+
+    assert result["success"] is True
+    assert restored == {
+        "archive": {
+            "mode": "git_workspace",
+            "requiresSessionRestore": True,
+            "directUrls": ["http://source/archive"],
+            "directToken": "token",
+        },
+        "workspace_path": target_workspace,
+    }
 
 
 @pytest.mark.asyncio

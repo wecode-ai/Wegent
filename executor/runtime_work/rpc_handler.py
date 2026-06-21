@@ -212,10 +212,14 @@ class RuntimeWorkRpcHandler:
             if await self._emit_codex_native_update(record):
                 self._codex_seen_updated_at[record.local_task_id] = record.updated_at
 
-    def mark_codex_task_updated_by_wegent(self, local_task_id: str) -> None:
-        """Suppress the next watcher notification for a Wegent-originated turn."""
+    def mark_codex_task_updated_by_wegent(
+        self,
+        local_task_id: str,
+        source: Optional[dict[str, Any]] = None,
+    ) -> None:
+        """Suppress the next watcher notification only for IM-originated turns."""
 
-        if local_task_id:
+        if local_task_id and self._is_im_source(source):
             self._codex_updates_from_wegent.add(local_task_id)
 
     async def _emit_codex_native_update(self, record: LocalTaskRecord) -> bool:
@@ -255,13 +259,20 @@ class RuntimeWorkRpcHandler:
         for message in reversed(messages):
             if not isinstance(message, dict):
                 continue
-            if str(message.get("role") or "").lower() == "assistant":
+            role = str(message.get("role") or "").lower()
+            if not role:
+                continue
+            if role == "assistant":
                 return message
+            return None
         return None
 
     def _is_codex_native_terminal_status(self, status: str) -> bool:
         normalized = status.strip().replace("_", "").replace("-", "").lower()
         return normalized in CODEX_NATIVE_UPDATE_TERMINAL_STATUSES
+
+    def _is_im_source(self, source: Optional[dict[str, Any]]) -> bool:
+        return isinstance(source, dict) and source.get("source") == "im"
 
     async def start_codex_watcher(self, interval_seconds: Optional[int] = None) -> None:
         """Start the native Codex update watcher."""
@@ -372,17 +383,7 @@ class RuntimeWorkRpcHandler:
     async def _transcript(self, payload: dict[str, Any]) -> dict[str, Any]:
         self._refresh_discovered_tasks()
         task = self._load_payload_task(payload)
-        adapter = self.adapters.get(task.runtime)
-        adapter_messages = None
-
-        if adapter and hasattr(adapter, "get_transcript"):
-            adapter_messages = await self._maybe_await(adapter.get_transcript(task))
-
-        messages = adapter_messages
-        if not messages:
-            messages = self._codex_session_messages(task)
-        if messages is None:
-            messages = task.runtime_handle.get("messages", [])
+        messages = await self._task_transcript_messages(task)
 
         return {
             "success": True,
@@ -392,6 +393,27 @@ class RuntimeWorkRpcHandler:
             "title": task.title,
             "messages": self._normalize_messages(task, messages),
         }
+
+    async def _task_transcript_messages(
+        self,
+        task: LocalTaskRecord,
+    ) -> list[dict[str, Any]]:
+        if self._is_sdk_codex_task(task):
+            codex_messages = self._codex_session_messages(task)
+            return codex_messages or []
+
+        adapter = self.adapters.get(task.runtime)
+        if adapter and hasattr(adapter, "get_transcript"):
+            adapter_messages = await self._maybe_await(adapter.get_transcript(task))
+            if adapter_messages:
+                return adapter_messages
+
+        codex_messages = self._codex_session_messages(task)
+        if codex_messages:
+            return codex_messages
+
+        messages = task.runtime_handle.get("messages", [])
+        return messages if isinstance(messages, list) else []
 
     def _codex_session_messages(
         self, task: LocalTaskRecord
@@ -528,7 +550,7 @@ class RuntimeWorkRpcHandler:
             except Exception:
                 logger.exception("Failed to emit Codex SDK stream error")
         finally:
-            self.mark_codex_task_updated_by_wegent(task.local_task_id)
+            self.mark_codex_task_updated_by_wegent(task.local_task_id, source)
             self.store.update_task(
                 task.local_task_id,
                 lambda current: replace(
@@ -608,9 +630,36 @@ class RuntimeWorkRpcHandler:
         workspace_transfer = payload.get("workspaceTransfer")
         if workspace_transfer is not None and not isinstance(workspace_transfer, str):
             raise ValueError("workspaceTransfer must be a string")
+        direct_hosts = self._payload_string_list(payload.get("directHosts"))
 
         messages = await self._fork_package_messages(task)
         if workspace_transfer == "git_workspace":
+            archive = {
+                "mode": workspace_transfer,
+                "transferId": transfer_id,
+            }
+            session_paths = self._session_paths_for_archive(task)
+            codex_thread_id = self._codex_thread_id(task)
+            if session_paths or codex_thread_id:
+                from executor.runtime_work.fork_transfer import prepare_archive_transfer
+
+                prepared = await prepare_archive_transfer(
+                    workspace_path=task.workspace_path,
+                    transfer_id=transfer_id,
+                    upload_url=upload_url,
+                    session_paths=session_paths,
+                    direct_hosts=direct_hosts,
+                    include_workspace=False,
+                    codex_thread_id=codex_thread_id,
+                )
+                archive.update(
+                    {
+                        "directUrls": prepared.direct_urls,
+                        "directToken": prepared.direct_token,
+                        "sizeBytes": prepared.size_bytes,
+                        "requiresSessionRestore": True,
+                    }
+                )
             return {
                 "success": True,
                 "package": {
@@ -619,10 +668,7 @@ class RuntimeWorkRpcHandler:
                     "recentMessages": messages,
                     "runtimeHandle": task.runtime_handle,
                     "executorSession": self._executor_session_metadata(task),
-                    "archive": {
-                        "mode": workspace_transfer,
-                        "transferId": transfer_id,
-                    },
+                    "archive": archive,
                 },
             }
 
@@ -632,6 +678,9 @@ class RuntimeWorkRpcHandler:
             workspace_path=task.workspace_path,
             transfer_id=transfer_id,
             upload_url=upload_url,
+            session_paths=self._session_paths_for_archive(task),
+            direct_hosts=direct_hosts,
+            codex_thread_id=self._codex_thread_id(task),
         )
         return {
             "success": True,
@@ -644,6 +693,7 @@ class RuntimeWorkRpcHandler:
                 "archive": {
                     "transferId": transfer_id,
                     "directUrls": prepared.direct_urls,
+                    "directToken": prepared.direct_token,
                     "sizeBytes": prepared.size_bytes,
                 },
             },
@@ -653,15 +703,7 @@ class RuntimeWorkRpcHandler:
         self,
         task: LocalTaskRecord,
     ) -> list[dict[str, Any]]:
-        adapter = self.adapters.get(task.runtime)
-        if adapter and hasattr(adapter, "get_transcript"):
-            messages = await self._maybe_await(adapter.get_transcript(task))
-        else:
-            messages = None
-        if not messages:
-            messages = self._codex_session_messages(task)
-        if messages is None:
-            messages = task.runtime_handle.get("messages", [])
+        messages = await self._task_transcript_messages(task)
         return self._normalize_messages(task, messages)
 
     async def _prepare_fork_receiver(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -671,10 +713,15 @@ class RuntimeWorkRpcHandler:
         token = payload.get("token")
         if not isinstance(token, str) or not token.strip():
             raise ValueError("token is required")
+        direct_hosts = self._payload_string_list(payload.get("directHosts"))
 
         from executor.runtime_work.fork_transfer import register_direct_upload_receiver
 
-        upload_urls = register_direct_upload_receiver(transfer_id, token)
+        upload_urls = register_direct_upload_receiver(
+            transfer_id,
+            token,
+            direct_hosts=direct_hosts,
+        )
         return {
             "success": True,
             "accepted": True,
@@ -689,6 +736,9 @@ class RuntimeWorkRpcHandler:
         upload_urls = payload.get("uploadUrls")
         if not isinstance(upload_urls, list):
             raise ValueError("uploadUrls is required")
+        upload_token = payload.get("uploadToken")
+        if upload_token is not None and not isinstance(upload_token, str):
+            raise ValueError("uploadToken must be a string")
 
         from executor.runtime_work.fork_transfer import (
             upload_registered_archive_to_first_available_url,
@@ -700,6 +750,7 @@ class RuntimeWorkRpcHandler:
                 upload_urls=[
                     url for url in upload_urls if isinstance(url, str) and url.strip()
                 ],
+                upload_token=upload_token,
             )
         )
         return {
@@ -747,7 +798,7 @@ class RuntimeWorkRpcHandler:
             raise ValueError("forkPackage.archive is required")
 
         normalized_workspace_path = normalize_workspace_path(workspace_path)
-        if not _is_existing_project_workspace_archive(archive):
+        if _requires_fork_archive_restore(archive):
             from executor.runtime_work.fork_transfer import restore_fork_package_archive
 
             await restore_fork_package_archive(
@@ -813,6 +864,29 @@ class RuntimeWorkRpcHandler:
             if isinstance(thread_id, str) and thread_id.strip():
                 return {"agent": "CodeX", "threadId": thread_id}
         return None
+
+    def _session_paths_for_archive(self, task: LocalTaskRecord) -> list[str]:
+        session_path = task.runtime_handle.get("sessionPath")
+        if isinstance(session_path, str) and session_path.strip():
+            return [session_path]
+        return []
+
+    def _codex_thread_id(self, task: LocalTaskRecord) -> Optional[str]:
+        if task.runtime != "codex":
+            return None
+        thread_id = task.runtime_handle.get("threadId") or task.local_task_id
+        if isinstance(thread_id, str) and thread_id.strip():
+            return thread_id.strip()
+        return None
+
+    def _payload_string_list(self, value: Any) -> Optional[list[str]]:
+        if value is None:
+            return None
+        if not isinstance(value, list):
+            raise ValueError("directHosts must be a list")
+        return [
+            item.strip() for item in value if isinstance(item, str) and item.strip()
+        ]
 
     async def _adapter_method(
         self,
@@ -963,5 +1037,17 @@ class RuntimeWorkRpcHandler:
         return {"success": False, "error": message, "code": code}
 
 
-def _is_existing_project_workspace_archive(archive: dict[str, Any]) -> bool:
-    return archive.get("mode") == "git_workspace"
+def _requires_fork_archive_restore(archive: dict[str, Any]) -> bool:
+    if archive.get("mode") != "git_workspace":
+        return True
+    if archive.get("requiresSessionRestore"):
+        return True
+    return any(
+        isinstance(archive.get(key), value_type) and bool(archive.get(key))
+        for key, value_type in (
+            ("localTransferId", str),
+            ("receiverTransferId", str),
+            ("downloadUrl", str),
+            ("directUrls", list),
+        )
+    )

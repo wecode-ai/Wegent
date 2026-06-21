@@ -150,6 +150,11 @@ CODEX_BINARY_PATH = os.environ.get("CODEX_BINARY_PATH") or os.environ.get(
 )
 CODEX_MODEL_PROVIDER = os.environ.get("CODEX_MODEL_PROVIDER", "wecode-openai")
 
+# Host advertised to peer executors for runtime fork direct transfers.
+# If unset, local mode falls back to the detected LAN address.
+RUNTIME_TRANSFER_HOST = os.environ.get("RUNTIME_TRANSFER_HOST", "").strip()
+RUNTIME_TRANSFER_BIND_HOST = os.environ.get("RUNTIME_TRANSFER_BIND_HOST", "").strip()
+
 
 def get_wegent_mcp_url() -> str:
     """Get the URL for the Wegent MCP server.
