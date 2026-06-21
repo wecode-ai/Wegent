@@ -155,6 +155,14 @@ describe('WorkspacePanelCards', () => {
     } as unknown as ReturnType<typeof createProjectApi>)
     createDeviceApiMock.mockReturnValue({
       getVncConfig: getVncConfigMock,
+      startTerminal: vi.fn().mockResolvedValue({
+        session_id: 'device-terminal-1',
+        url: '',
+        transport: 'socketio',
+        device_id: 'device-2',
+        type: 'terminal',
+        path: '/workspace/worktrees/9/project38',
+      }),
     } as unknown as ReturnType<typeof createDeviceApi>)
     getVncConfigMock.mockResolvedValue({
       wss_url: 'wss://example.com/vnc',
@@ -409,6 +417,45 @@ describe('WorkspacePanelCards', () => {
     expect(screen.queryByTestId('workspace-ide-card')).not.toBeInTheDocument()
     expect(screen.queryByTestId('workspace-desktop-card')).not.toBeInTheDocument()
     expect(screen.queryByTestId('workspace-local-device-limited-tools')).not.toBeInTheDocument()
+  })
+
+  test('starts remote terminal on the active runtime workspace device and path', async () => {
+    const projectApi = createProjectApiMock()
+    const deviceApi = createDeviceApiMock()
+    isLocalTerminalAvailableMock.mockReturnValue(false)
+
+    render(
+      <WorkspacePanelCards
+        currentProject={project}
+        devices={[
+          ...localDevices,
+          {
+            id: 22,
+            device_id: 'device-2',
+            name: 'Remote Device',
+            status: 'online',
+            is_default: false,
+            device_type: 'local',
+            bind_shell: 'claudecode',
+          },
+        ]}
+        workspaceTarget={{
+          deviceId: 'device-2',
+          path: '/workspace/worktrees/9/project38',
+          source: 'runtime',
+        }}
+      />
+    )
+
+    await userEvent.click(await screen.findByTestId('workspace-terminal-card'))
+
+    await waitFor(() =>
+      expect(deviceApi.startTerminal).toHaveBeenCalledWith(
+        'device-2',
+        '/workspace/worktrees/9/project38'
+      )
+    )
+    expect(projectApi.startTerminalSession).not.toHaveBeenCalled()
   })
 
   test('launches the native terminal when the executor id differs but the local path exists', async () => {

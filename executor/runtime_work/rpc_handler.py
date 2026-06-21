@@ -634,32 +634,29 @@ class RuntimeWorkRpcHandler:
 
         messages = await self._fork_package_messages(task)
         if workspace_transfer == "git_workspace":
+            from executor.runtime_work.fork_transfer import prepare_archive_transfer
+
+            session_paths = self._session_paths_for_archive(task)
+            codex_thread_id = self._codex_thread_id(task)
+            prepared = await prepare_archive_transfer(
+                workspace_path=task.workspace_path,
+                transfer_id=transfer_id,
+                upload_url=upload_url,
+                session_paths=session_paths,
+                direct_hosts=direct_hosts,
+                include_workspace=True,
+                codex_thread_id=codex_thread_id,
+            )
             archive = {
                 "mode": workspace_transfer,
                 "transferId": transfer_id,
+                "directUrls": prepared.direct_urls,
+                "directToken": prepared.direct_token,
+                "sizeBytes": prepared.size_bytes,
+                "requiresWorkspaceRestore": True,
             }
-            session_paths = self._session_paths_for_archive(task)
-            codex_thread_id = self._codex_thread_id(task)
             if session_paths or codex_thread_id:
-                from executor.runtime_work.fork_transfer import prepare_archive_transfer
-
-                prepared = await prepare_archive_transfer(
-                    workspace_path=task.workspace_path,
-                    transfer_id=transfer_id,
-                    upload_url=upload_url,
-                    session_paths=session_paths,
-                    direct_hosts=direct_hosts,
-                    include_workspace=False,
-                    codex_thread_id=codex_thread_id,
-                )
-                archive.update(
-                    {
-                        "directUrls": prepared.direct_urls,
-                        "directToken": prepared.direct_token,
-                        "sizeBytes": prepared.size_bytes,
-                        "requiresSessionRestore": True,
-                    }
-                )
+                archive["requiresSessionRestore"] = True
             return {
                 "success": True,
                 "package": {

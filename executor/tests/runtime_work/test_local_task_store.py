@@ -1764,6 +1764,70 @@ async def test_runtime_work_handler_creates_runtime_task_with_local_transcript(
 
 
 @pytest.mark.asyncio
+async def test_runtime_work_handler_prepares_git_workspace_fork_patch_archive(
+    tmp_path,
+    monkeypatch,
+):
+    from executor.runtime_work import fork_transfer
+    from executor.runtime_work.local_task_store import LocalTaskRecord, LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    prepared = {}
+
+    async def prepare_archive_transfer(**kwargs):
+        prepared.update(kwargs)
+        return SimpleNamespace(
+            direct_urls=["http://source/archive"],
+            direct_token="token",
+            size_bytes=128,
+        )
+
+    monkeypatch.setattr(
+        fork_transfer,
+        "prepare_archive_transfer",
+        prepare_archive_transfer,
+    )
+    workspace = tmp_path / "source"
+    workspace.mkdir()
+    store = LocalTaskStore(tmp_path / "index.json")
+    store.upsert_task(
+        LocalTaskRecord(
+            local_task_id="codex-1",
+            workspace_path=str(workspace),
+            title="Fork dirty worktree",
+            runtime="codex",
+            runtime_handle={},
+        )
+    )
+    handler = RuntimeWorkRpcHandler(store=store, codex_discovery=EmptyDiscovery())
+
+    result = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.prepare_fork_transfer",
+            "payload": {
+                "workspacePath": str(workspace),
+                "localTaskId": "codex-1",
+                "transferId": "transfer-1",
+                "workspaceTransfer": "git_workspace",
+            },
+        }
+    )
+
+    assert result["success"] is True
+    assert prepared["workspace_path"] == str(workspace)
+    assert prepared["include_workspace"] is True
+    assert result["package"]["archive"] == {
+        "mode": "git_workspace",
+        "transferId": "transfer-1",
+        "directUrls": ["http://source/archive"],
+        "directToken": "token",
+        "sizeBytes": 128,
+        "requiresWorkspaceRestore": True,
+        "requiresSessionRestore": True,
+    }
+
+
+@pytest.mark.asyncio
 async def test_runtime_work_handler_imports_git_workspace_fork_without_archive_restore(
     tmp_path,
     monkeypatch,

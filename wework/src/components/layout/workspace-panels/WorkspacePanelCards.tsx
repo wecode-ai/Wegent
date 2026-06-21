@@ -264,19 +264,40 @@ export function WorkspacePanelCards({
         return
       }
 
+      if (workspaceTarget?.source === 'runtime' && activeWorkspaceDeviceId && activeWorkspacePath) {
+        const session = await createDeviceSessionApi().startTerminal(
+          activeWorkspaceDeviceId,
+          activeWorkspacePath
+        )
+        const startedSession = {
+          ...session,
+          project_id: currentProject?.id ?? 0,
+        }
+        if (startedSession.transport !== 'socketio') {
+          throw new Error('Terminal session transport is not supported')
+        }
+        setTerminalSessions(sessions => [
+          ...sessions,
+          { ...startedSession, terminal_kind: 'remote' },
+        ])
+        setActiveTerminalSessionId(startedSession.session_id)
+        setShowToolLauncher(false)
+        return
+      }
+
       if (!currentProject) {
         return
       }
 
       const projectApi = createProjectSessionApi()
-      const session = activeSessionTaskId
+      const startedSession = activeSessionTaskId
         ? await projectApi.startTerminalSession(currentProject.id, { taskId: activeSessionTaskId })
         : await projectApi.startTerminalSession(currentProject.id)
-      if (session.transport !== 'socketio') {
+      if (startedSession.transport !== 'socketio') {
         throw new Error('Terminal session transport is not supported')
       }
-      setTerminalSessions(sessions => [...sessions, { ...session, terminal_kind: 'remote' }])
-      setActiveTerminalSessionId(session.session_id)
+      setTerminalSessions(sessions => [...sessions, { ...startedSession, terminal_kind: 'remote' }])
+      setActiveTerminalSessionId(startedSession.session_id)
       setShowToolLauncher(false)
     } catch (e) {
       console.error('Failed to start project terminal:', e)
@@ -297,6 +318,7 @@ export function WorkspacePanelCards({
     localTerminalAvailable,
     markToolUnavailable,
     setProjectError,
+    workspaceTarget?.source,
   ])
 
   useEffect(() => {
