@@ -172,10 +172,8 @@ describe('DesktopSidebar', () => {
     expect(screen.getByTestId('runtime-chat-section')).toHaveTextContent('对话')
     expect(screen.queryByTestId(`runtime-workspace-row-${chatPath}`)).not.toBeInTheDocument()
     expect(screen.getByTestId('runtime-local-task-row-chat-1')).toHaveTextContent('hi')
-    expect(screen.getByTestId('runtime-local-task-device-icon-chat-1')).toHaveAttribute(
-      'title',
-      `Local Mac ${chatPath}`
-    )
+    expect(screen.queryByTestId('runtime-local-task-device-marker-chat-1')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('runtime-local-task-device-icon-chat-1')).not.toBeInTheDocument()
     expect(screen.getByTestId('runtime-workspace-row-/tmp/spike')).toHaveTextContent(
       'Local Mac /tmp/spike'
     )
@@ -231,10 +229,8 @@ describe('DesktopSidebar', () => {
     const taskRow = screen.getByTestId('runtime-local-task-row-codex-1')
     expect(taskRow).toHaveTextContent('Fix reconnect')
     expect(taskRow).not.toHaveTextContent('Codex')
-    expect(screen.getByTestId('runtime-local-task-device-icon-codex-1')).toHaveAttribute(
-      'title',
-      'Local Mac /repo/Wegent'
-    )
+    expect(screen.queryByTestId('runtime-local-task-device-marker-codex-1')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('runtime-local-task-device-icon-codex-1')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('runtime-local-task-row-codex-1'))
 
@@ -242,6 +238,138 @@ describe('DesktopSidebar', () => {
       deviceId: 'local-device',
       localTaskId: 'codex-1',
     })
+  })
+
+  test('shows online device colors and marks runtime tasks by device', async () => {
+    renderSidebar({
+      devices: [
+        localDevice(),
+        localDevice({
+          id: 2,
+          device_id: 'cloud-device',
+          name: 'Cloud Box',
+          device_type: 'cloud',
+        }),
+        localDevice({
+          id: 3,
+          device_id: 'offline-device',
+          name: 'Offline Box',
+          status: 'offline',
+        }),
+      ],
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, name: 'Wegent' },
+            totalLocalTasks: 2,
+            deviceWorkspaces: [
+              {
+                id: 91,
+                deviceId: 'local-device',
+                deviceName: 'Local Mac',
+                deviceStatus: 'online',
+                available: true,
+                workspacePath: '/repo/Wegent',
+                localTasks: [
+                  {
+                    localTaskId: 'local-task',
+                    workspacePath: '/repo/Wegent',
+                    title: 'Local task',
+                    runtime: 'codex',
+                    updatedAt: '2026-06-20T02:00:00Z',
+                  },
+                ],
+              },
+              {
+                id: 92,
+                deviceId: 'cloud-device',
+                deviceName: 'Cloud Box',
+                deviceStatus: 'online',
+                available: true,
+                workspacePath: '/repo/Wegent',
+                localTasks: [
+                  {
+                    localTaskId: 'cloud-task',
+                    workspacePath: '/repo/Wegent',
+                    title: 'Cloud task',
+                    runtime: 'codex',
+                    updatedAt: '2026-06-20T03:00:00Z',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        unmappedDeviceWorkspaces: [],
+        totalLocalTasks: 2,
+      },
+    })
+
+    expect(screen.getByTestId('sidebar-online-devices')).toHaveTextContent('在线设备')
+    expect(screen.getByTestId('sidebar-devices-section-toggle')).toHaveAttribute(
+      'aria-expanded',
+      'false'
+    )
+    expect(screen.getByTestId('sidebar-offline-devices-toggle').parentElement).toBe(
+      screen.getByTestId('sidebar-devices-header')
+    )
+    expect(screen.getByTestId('sidebar-offline-devices-toggle')).toHaveTextContent('离线 1')
+    expect(screen.queryByTestId('sidebar-online-device-local-device')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('sidebar-online-device-offline-device')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('project-item-button'))
+
+    expect(screen.queryByTestId('runtime-local-task-device-marker-local-task')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('runtime-local-task-device-marker-cloud-task')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('sidebar-devices-section-toggle'))
+
+    expect(screen.getByTestId('sidebar-devices-section-toggle')).toHaveAttribute(
+      'aria-expanded',
+      'true'
+    )
+    expect(screen.getByTestId('sidebar-online-device-local-device')).toHaveTextContent('Local Mac')
+    expect(screen.getByTestId('sidebar-online-device-cloud-device')).toHaveTextContent('Cloud Box')
+
+    const localLegendColor = screen.getByTestId('sidebar-online-device-color-local-device')
+    const cloudLegendColor = screen.getByTestId('sidebar-online-device-color-cloud-device')
+    const localTaskMarker = screen.getByTestId('runtime-local-task-device-marker-local-task')
+    const cloudTaskMarker = screen.getByTestId('runtime-local-task-device-marker-cloud-task')
+
+    expect(localTaskMarker).toHaveAttribute('title', 'Local Mac /repo/Wegent')
+    expect(cloudTaskMarker).toHaveAttribute('title', 'Cloud Box /repo/Wegent')
+    expect(localTaskMarker.style.backgroundColor).toBe(localLegendColor.style.backgroundColor)
+    expect(cloudTaskMarker.style.backgroundColor).toBe(cloudLegendColor.style.backgroundColor)
+
+    await userEvent.click(screen.getByTestId('sidebar-online-device-local-device'))
+
+    expect(screen.getByTestId('sidebar-online-device-local-device')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+    expect(screen.getByTestId('runtime-local-task-row-local-task')).toBeInTheDocument()
+    expect(screen.queryByTestId('runtime-local-task-row-cloud-task')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('sidebar-online-device-local-device'))
+
+    expect(screen.getByTestId('runtime-local-task-row-cloud-task')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('sidebar-offline-devices-toggle'))
+
+    expect(screen.getByTestId('sidebar-online-device-offline-device')).toHaveTextContent(
+      'Offline Box'
+    )
+    expect(screen.getByTestId('sidebar-offline-devices-toggle')).toHaveTextContent('收起离线')
+
+    await userEvent.click(screen.getByTestId('sidebar-devices-section-toggle'))
+
+    expect(screen.getByTestId('sidebar-devices-section-toggle')).toHaveAttribute(
+      'aria-expanded',
+      'false'
+    )
+    expect(screen.queryByTestId('sidebar-online-device-local-device')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('runtime-local-task-device-marker-local-task')).not.toBeInTheDocument()
+    expect(screen.getByTestId('sidebar-offline-devices-toggle')).toBeInTheDocument()
   })
 
   test('shows hover actions to mark and archive project runtime tasks', async () => {
@@ -290,6 +418,7 @@ describe('DesktopSidebar', () => {
     expect(rowChildren).toHaveLength(2)
     expect(rowChildren[1]).toHaveAttribute('data-testid', 'runtime-local-task-trailing-codex-1')
     expect(screen.getByTestId('runtime-local-task-time-codex-1').parentElement).toBe(rowChildren[1])
+    expect(screen.queryByTestId('runtime-local-task-device-marker-codex-1')).not.toBeInTheDocument()
     expect(screen.getByTestId('runtime-local-task-hover-actions-codex-1').parentElement).toBe(
       rowChildren[1]
     )
@@ -541,7 +670,7 @@ describe('DesktopSidebar', () => {
     expect(screen.getByTestId('project-local-tasks-empty-7')).toHaveTextContent('暂无会话')
   })
 
-  test('shows managed worktree tasks directly under the source project with icons', async () => {
+  test('shows managed worktree tasks directly under the source project with device marker', async () => {
     const onOpenRuntimeLocalTask = vi.fn()
 
     renderSidebar({
@@ -590,10 +719,12 @@ describe('DesktopSidebar', () => {
     expect(
       screen.getByTestId('runtime-local-task-worktree-icon-codex-worktree')
     ).toBeInTheDocument()
-    expect(screen.getByTestId('runtime-local-task-device-icon-codex-worktree')).toHaveAttribute(
-      'title',
-      'Local Mac /workspace/Wegent'
-    )
+    expect(
+      screen.queryByTestId('runtime-local-task-device-marker-codex-worktree')
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByTestId('runtime-local-task-device-icon-codex-worktree')
+    ).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('runtime-local-task-row-codex-worktree'))
 

@@ -7,7 +7,6 @@ import {
   FolderPlus,
   GitCompareArrows,
   MessageSquarePlus,
-  Monitor,
   Pin,
   Plus,
   RotateCw,
@@ -108,6 +107,34 @@ type ProjectCreateMode = 'scratch' | 'existing' | 'git'
 
 const SIDEBAR_ROW_METADATA_CLASS =
   'flex items-center gap-1 text-xs text-[rgb(var(--color-sidebar-text-muted))] group-hover/task:invisible'
+
+const SIDEBAR_DEVICE_COLORS = [
+  '#5B7CFA',
+  '#3FA67A',
+  '#C9892B',
+  '#8F6DD8',
+  '#C65D5D',
+  '#339DA0',
+  '#B35EA4',
+  '#6F9B4B',
+] as const
+
+function getSidebarDeviceColorKey(
+  deviceName: string | null | undefined,
+  deviceId: string | null | undefined
+): string {
+  return deviceName?.trim() || deviceId?.trim() || 'device'
+}
+
+function getSidebarDeviceColor(colorKey: string): string {
+  let hash = 0
+
+  for (let index = 0; index < colorKey.length; index += 1) {
+    hash = (hash * 31 + colorKey.charCodeAt(index)) >>> 0
+  }
+
+  return SIDEBAR_DEVICE_COLORS[hash % SIDEBAR_DEVICE_COLORS.length]
+}
 
 function SidebarButton({
   icon: Icon,
@@ -300,6 +327,175 @@ function getSidebarDeviceName(deviceState: SidebarDeviceState): string {
   return deviceState.device?.name || deviceState.deviceId
 }
 
+function getRuntimeWorkspaceDeviceColor(workspace: RuntimeDeviceWorkspace): string {
+  return getSidebarDeviceColor(getSidebarDeviceColorKey(workspace.deviceName, workspace.deviceId))
+}
+
+function getRuntimeWorkspaceTaskCount(workspaces: RuntimeDeviceWorkspace[]): number {
+  return workspaces.reduce((count, workspace) => count + workspace.localTasks.length, 0)
+}
+
+function filterRuntimeWorkspacesByDevice(
+  workspaces: RuntimeDeviceWorkspace[],
+  deviceId: string | null
+): RuntimeDeviceWorkspace[] {
+  if (!deviceId) return workspaces
+  return workspaces.filter(workspace => workspace.deviceId === deviceId)
+}
+
+function filterRuntimeProjectWorkByDevice(
+  projectWork: RuntimeProjectWork,
+  deviceId: string | null
+): RuntimeProjectWork {
+  if (!deviceId) return projectWork
+
+  const deviceWorkspaces = filterRuntimeWorkspacesByDevice(projectWork.deviceWorkspaces, deviceId)
+  return {
+    ...projectWork,
+    deviceWorkspaces,
+    totalLocalTasks: getRuntimeWorkspaceTaskCount(deviceWorkspaces),
+  }
+}
+
+function SidebarOnlineDevices({
+  devices,
+  expanded,
+  offlineExpanded,
+  selectedDeviceId,
+  onToggleExpanded,
+  onToggleOfflineExpanded,
+  onSelectDevice,
+}: {
+  devices: DeviceInfo[]
+  expanded: boolean
+  offlineExpanded: boolean
+  selectedDeviceId: string | null
+  onToggleExpanded: () => void
+  onToggleOfflineExpanded: () => void
+  onSelectDevice: (deviceId: string) => void
+}) {
+  const { t } = useTranslation('common')
+  const onlineDevices = useMemo(
+    () => devices.filter(device => device.status === 'online'),
+    [devices]
+  )
+  const offlineDevices = useMemo(
+    () => devices.filter(device => device.status !== 'online'),
+    [devices]
+  )
+  const selectedDevice = devices.find(device => device.device_id === selectedDeviceId) ?? null
+  const selectedOfflineDevice =
+    selectedDevice && selectedDevice.status !== 'online' ? selectedDevice : null
+  const visibleOfflineDevices = offlineExpanded
+    ? offlineDevices
+    : selectedOfflineDevice
+      ? [selectedOfflineDevice]
+      : []
+  const visibleDevices = [...onlineDevices, ...visibleOfflineDevices]
+
+  if (devices.length === 0) return null
+
+  return (
+    <section data-testid="sidebar-online-devices" className="mb-6 px-2.5">
+      <div
+        data-testid="sidebar-devices-header"
+        className="mb-1.5 flex h-5 items-center justify-between gap-2"
+      >
+        <button
+          type="button"
+          data-testid="sidebar-devices-section-toggle"
+          aria-expanded={expanded}
+          onClick={onToggleExpanded}
+          className="flex min-w-0 flex-1 items-center gap-1 rounded-sm text-left text-[12px] font-semibold leading-4 text-[rgb(var(--color-sidebar-text-muted))] hover:text-[rgb(var(--color-sidebar-text-secondary))]"
+        >
+          <ChevronRight
+            className={cn(
+              'h-3.5 w-3.5 shrink-0 transition-transform',
+              expanded ? 'rotate-90' : 'rotate-0'
+            )}
+          />
+          <span className="shrink-0">{t('workbench.online_devices', '在线设备')}</span>
+          {selectedDevice && (
+            <span className="min-w-0 truncate text-[11px] font-medium text-[rgb(var(--color-sidebar-text-secondary))]">
+              {selectedDevice.name || selectedDevice.device_id}
+            </span>
+          )}
+        </button>
+        {offlineDevices.length > 0 && (
+          <button
+            type="button"
+            data-testid="sidebar-offline-devices-toggle"
+            onClick={() => {
+              if (!offlineExpanded && !expanded) {
+                onToggleExpanded()
+              }
+              onToggleOfflineExpanded()
+            }}
+            className="h-5 shrink-0 rounded-sm px-1 text-[11px] font-medium leading-4 text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-secondary))]"
+          >
+            {offlineExpanded
+              ? t('workbench.hide_offline_devices', '收起离线')
+              : t('workbench.show_offline_devices', {
+                  count: offlineDevices.length,
+                  defaultValue: '离线 {{count}}',
+                })}
+          </button>
+        )}
+      </div>
+      {expanded && (
+        <div data-testid="sidebar-device-list" className="space-y-0.5">
+          {visibleDevices.map(device => {
+            const deviceName = device.name || device.device_id
+            const color = getSidebarDeviceColor(
+              getSidebarDeviceColorKey(device.name, device.device_id)
+            )
+            const selected = selectedDeviceId === device.device_id
+            const deviceState: SidebarDeviceState = {
+              deviceId: device.device_id,
+              device,
+              status: device.status,
+            }
+
+            return (
+              <button
+                type="button"
+                key={device.device_id}
+                data-testid={`sidebar-online-device-${device.device_id}`}
+                aria-pressed={selected}
+                onClick={() => onSelectDevice(device.device_id)}
+                title={deviceName}
+                className={cn(
+                  'flex h-5 w-full min-w-0 items-center gap-2 rounded-sm text-left text-[12px] leading-4 hover:text-[rgb(var(--color-sidebar-text-primary))]',
+                  selected
+                    ? 'font-semibold text-[rgb(var(--color-sidebar-text-primary))]'
+                    : 'font-medium text-[rgb(var(--color-sidebar-text-secondary))]',
+                  device.status !== 'online' && 'opacity-70'
+                )}
+              >
+                <span
+                  data-testid={`sidebar-online-device-color-${device.device_id}`}
+                  aria-hidden="true"
+                  className={cn(
+                    'h-2 w-2 shrink-0 rounded-full opacity-90',
+                    selected && 'h-2.5 w-2.5'
+                  )}
+                  style={{ backgroundColor: color }}
+                />
+                <span className="min-w-0 truncate">{deviceName}</span>
+                <SidebarDeviceStatusIndicator
+                  deviceState={deviceState}
+                  testId={`sidebar-device-status-${device.device_id}`}
+                  className="ml-auto"
+                />
+              </button>
+            )
+          })}
+        </div>
+      )}
+    </section>
+  )
+}
+
 function getSidebarDeviceStatusLabel(
   t: ReturnType<typeof useTranslation>['t'],
   status: SidebarDeviceStatus
@@ -413,8 +609,8 @@ function RuntimeLocalTaskRow({
   task,
   selected,
   indentClassName = 'pl-12',
-  showDeviceIcon = false,
   imNotificationSettings,
+  showDeviceMarker,
   onOpenRuntimeLocalTask,
   onArchiveRuntimeLocalTask,
   onToggleRuntimeTaskNotification,
@@ -423,8 +619,8 @@ function RuntimeLocalTaskRow({
   task: LocalTaskSummary
   selected: boolean
   indentClassName?: string
-  showDeviceIcon?: boolean
   imNotificationSettings?: RuntimeIMNotificationSettingsResponse | null
+  showDeviceMarker: boolean
   onOpenRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void> | void
   onArchiveRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void> | void
   onToggleRuntimeTaskNotification?: (
@@ -437,6 +633,7 @@ function RuntimeLocalTaskRow({
   const [archiving, setArchiving] = useState(false)
   const worktreeTask = isRuntimeWorktreeTask(task)
   const workspaceTitle = getRuntimeTaskWorkspaceTitle(workspace)
+  const deviceColor = getRuntimeWorkspaceDeviceColor(workspace)
   const disabled = !workspace.available || !onOpenRuntimeLocalTask
   const archiveDisabled = !workspace.available || !onArchiveRuntimeLocalTask || archiving
   const taskAddress = getRuntimeTaskAddress(workspace, task)
@@ -480,7 +677,7 @@ function RuntimeLocalTaskRow({
       onClick={handleOpen}
       onKeyDown={event => handleSidebarRowKeyDown(event, handleOpen)}
       className={cn(
-        'group/task flex h-8 min-w-0 items-center rounded-md pr-2 text-[13px] leading-[18px]',
+        'group/task relative flex h-8 min-w-0 items-center rounded-md pr-2 text-[13px] leading-[18px]',
         indentClassName,
         disabled ? 'cursor-not-allowed opacity-55' : 'cursor-default',
         selected
@@ -501,17 +698,6 @@ function RuntimeLocalTaskRow({
           data-testid={`runtime-local-task-time-${task.localTaskId}`}
           className={SIDEBAR_ROW_METADATA_CLASS}
         >
-          {showDeviceIcon && (
-            <span
-              data-testid={`runtime-local-task-device-icon-${task.localTaskId}`}
-              title={workspaceTitle}
-              aria-label={workspaceTitle}
-              role="img"
-              className="flex h-3.5 w-3.5 shrink-0 items-center justify-center text-[rgb(var(--color-sidebar-text-muted))]"
-            >
-              <Monitor className="h-3.5 w-3.5" aria-hidden="true" />
-            </span>
-          )}
           {worktreeTask && (
             <GitCompareArrows
               data-testid={`runtime-local-task-worktree-icon-${task.localTaskId}`}
@@ -522,6 +708,15 @@ function RuntimeLocalTaskRow({
           <span className="flex h-7 w-7 items-center justify-center">
             {formatRelativeSidebarTime(getRuntimeTaskTime(task))}
           </span>
+          {showDeviceMarker && (
+            <span
+              data-testid={`runtime-local-task-device-marker-${task.localTaskId}`}
+              title={workspaceTitle}
+              aria-label={workspaceTitle}
+              className="h-3.5 w-0.5 shrink-0 rounded-full"
+              style={{ backgroundColor: deviceColor }}
+            />
+          )}
         </span>
         <span
           data-testid={`runtime-local-task-hover-actions-${task.localTaskId}`}
@@ -605,6 +800,7 @@ function RuntimeWorkspaceGroup({
   workspace,
   currentRuntimeTask,
   imNotificationSettings,
+  showDeviceMarker,
   onOpenRuntimeLocalTask,
   onArchiveRuntimeLocalTask,
   onToggleRuntimeTaskNotification,
@@ -612,6 +808,7 @@ function RuntimeWorkspaceGroup({
   workspace: RuntimeDeviceWorkspace
   currentRuntimeTask?: RuntimeTaskAddress | null
   imNotificationSettings?: RuntimeIMNotificationSettingsResponse | null
+  showDeviceMarker: boolean
   onOpenRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void> | void
   onArchiveRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void> | void
   onToggleRuntimeTaskNotification?: (
@@ -667,6 +864,7 @@ function RuntimeWorkspaceGroup({
             task={task}
             selected={isRuntimeTaskSelected(currentRuntimeTask, workspace, task)}
             imNotificationSettings={imNotificationSettings}
+            showDeviceMarker={showDeviceMarker}
             onOpenRuntimeLocalTask={onOpenRuntimeLocalTask}
             onArchiveRuntimeLocalTask={onArchiveRuntimeLocalTask}
             onToggleRuntimeTaskNotification={onToggleRuntimeTaskNotification}
@@ -686,6 +884,7 @@ function ProjectItem({
   runtimeProjectWork,
   currentRuntimeTask,
   imNotificationSettings,
+  showDeviceMarker,
   onStartNewProjectChat,
   onRemoveProject,
   onEditProject,
@@ -702,6 +901,7 @@ function ProjectItem({
   runtimeProjectWork?: RuntimeProjectWork
   currentRuntimeTask?: RuntimeTaskAddress | null
   imNotificationSettings?: RuntimeIMNotificationSettingsResponse | null
+  showDeviceMarker: boolean
   onStartNewProjectChat: (projectId: number) => void
   onRemoveProject: (projectId: number) => Promise<void>
   onEditProject: (project: ProjectWithTasks) => void
@@ -824,8 +1024,8 @@ function ProjectItem({
                   task={task}
                   selected={isRuntimeTaskSelected(currentRuntimeTask, workspace, task)}
                   indentClassName="pl-9"
-                  showDeviceIcon
                   imNotificationSettings={imNotificationSettings}
+                  showDeviceMarker={showDeviceMarker}
                   onOpenRuntimeLocalTask={onOpenRuntimeLocalTask}
                   onArchiveRuntimeLocalTask={onArchiveRuntimeLocalTask}
                   onToggleRuntimeTaskNotification={onToggleRuntimeTaskNotification}
@@ -922,17 +1122,31 @@ export function DesktopSidebar({
   const [expandedProjectIds, setExpandedProjectIds] = useState<Set<number>>(() =>
     readStoredNumberSet(expandedProjectIdsStorageKey)
   )
+  const [devicesExpanded, setDevicesExpanded] = useState(false)
+  const [offlineDevicesExpanded, setOfflineDevicesExpanded] = useState(false)
+  const [selectedDeviceFilterId, setSelectedDeviceFilterId] = useState<string | null>(null)
+  const activeDeviceFilterId =
+    selectedDeviceFilterId && devices.some(device => device.device_id === selectedDeviceFilterId)
+      ? selectedDeviceFilterId
+      : null
   const visibleExpandedProjectIds = useMemo(
     () => pruneProjectIdSet(expandedProjectIds, projects),
     [expandedProjectIds, projects]
   )
-  const runtimeWorkByProjectId = useMemo(() => {
+  const filteredRuntimeProjects = useMemo(() => {
     const items = runtimeWork?.projects ?? []
-    return new Map(items.map(item => [item.project.id, item]))
-  }, [runtimeWork])
+    return items.map(item => filterRuntimeProjectWorkByDevice(item, activeDeviceFilterId))
+  }, [runtimeWork?.projects, activeDeviceFilterId])
+  const runtimeWorkByProjectId = useMemo(() => {
+    return new Map(filteredRuntimeProjects.map(item => [item.project.id, item]))
+  }, [filteredRuntimeProjects])
   const unmappedWorkspaces = useMemo(
-    () => runtimeWork?.unmappedDeviceWorkspaces ?? [],
-    [runtimeWork]
+    () =>
+      filterRuntimeWorkspacesByDevice(
+        runtimeWork?.unmappedDeviceWorkspaces ?? [],
+        activeDeviceFilterId
+      ),
+    [runtimeWork?.unmappedDeviceWorkspaces, activeDeviceFilterId]
   )
   const unmappedDirectoryWorkspaces = useMemo(
     () => getRuntimeDirectoryWorkspaces(unmappedWorkspaces),
@@ -977,6 +1191,10 @@ export function DesktopSidebar({
       }
       return next
     })
+  }
+
+  const handleSelectDeviceFilter = (deviceId: string) => {
+    setSelectedDeviceFilterId(previous => (previous === deviceId ? null : deviceId))
   }
 
   const openProjectCreateDialog = () => {
@@ -1086,6 +1304,16 @@ export function DesktopSidebar({
         data-testid="sidebar-worklists-scroll"
         className="scrollbar-none mt-8 min-h-0 flex-1 overflow-y-auto"
       >
+        <SidebarOnlineDevices
+          devices={devices}
+          expanded={devicesExpanded}
+          offlineExpanded={offlineDevicesExpanded}
+          selectedDeviceId={activeDeviceFilterId}
+          onToggleExpanded={() => setDevicesExpanded(expanded => !expanded)}
+          onToggleOfflineExpanded={() => setOfflineDevicesExpanded(expanded => !expanded)}
+          onSelectDevice={handleSelectDeviceFilter}
+        />
+
         <section>
           <SidebarSectionHeader
             title={t('workbench.projects', '项目')}
@@ -1119,6 +1347,7 @@ export function DesktopSidebar({
                   runtimeProjectWork={runtimeWorkByProjectId.get(project.id)}
                   currentRuntimeTask={currentRuntimeTask}
                   imNotificationSettings={imNotificationSettings}
+                  showDeviceMarker={devicesExpanded}
                   onToggleProject={handleToggleProject}
                   onSelectProject={onSelectProject}
                   onStartNewProjectChat={onStartNewProjectChat}
@@ -1149,8 +1378,8 @@ export function DesktopSidebar({
                   task={task}
                   selected={isRuntimeTaskSelected(currentRuntimeTask, workspace, task)}
                   indentClassName="pl-2.5"
-                  showDeviceIcon
                   imNotificationSettings={imNotificationSettings}
+                  showDeviceMarker={devicesExpanded}
                   onOpenRuntimeLocalTask={onOpenRuntimeLocalTask}
                   onArchiveRuntimeLocalTask={onArchiveRuntimeLocalTask}
                   onToggleRuntimeTaskNotification={onToggleRuntimeTaskNotification}
@@ -1184,6 +1413,7 @@ export function DesktopSidebar({
                     workspace={workspace}
                     currentRuntimeTask={currentRuntimeTask}
                     imNotificationSettings={imNotificationSettings}
+                    showDeviceMarker={devicesExpanded}
                     onOpenRuntimeLocalTask={onOpenRuntimeLocalTask}
                     onArchiveRuntimeLocalTask={onArchiveRuntimeLocalTask}
                     onToggleRuntimeTaskNotification={onToggleRuntimeTaskNotification}
