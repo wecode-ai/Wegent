@@ -575,7 +575,7 @@ describe('DesktopSidebar', () => {
     expect(onCreateProject).not.toHaveBeenCalled()
   })
 
-  test('shows a runtime task notification toggle in task hover actions', async () => {
+  test('shows a subscribed runtime task notification toggle outside hover actions', async () => {
     const user = userEvent.setup()
     const onToggleRuntimeTaskNotification = vi.fn()
     const onOpenRuntimeLocalTask = vi.fn()
@@ -633,7 +633,10 @@ describe('DesktopSidebar', () => {
     await user.click(screen.getByTestId('project-item-button'))
 
     const toggle = screen.getByTestId('runtime-local-task-notify-codex-1')
+    const hoverActions = screen.getByTestId('runtime-local-task-hover-actions-codex-1')
+
     expect(toggle).toHaveAttribute('aria-pressed', 'true')
+    expect(hoverActions).not.toContainElement(toggle)
     expect(screen.getByTestId('runtime-local-task-notify-icon-codex-1')).toHaveClass('fill-current')
 
     await user.click(toggle)

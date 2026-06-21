@@ -676,6 +676,29 @@ function RuntimeLocalTaskRow({
     if (notificationsDisabled) return
     void onToggleRuntimeTaskNotification?.(taskAddress, notificationsSubscribed)
   }
+  const notificationActionLabel = notificationsSubscribed
+    ? t('workbench.unsubscribe_runtime_task_notifications', '取消任务通知')
+    : t('workbench.subscribe_runtime_task_notifications', '订阅任务通知')
+  const renderNotificationButton = (testId: string, iconTestId: string) => (
+    <button
+      type="button"
+      data-testid={testId}
+      disabled={notificationsDisabled}
+      aria-pressed={notificationsSubscribed}
+      onClick={handleToggleNotification}
+      className={cn(
+        'flex h-6 w-6 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))] disabled:cursor-not-allowed disabled:opacity-45',
+        notificationsSubscribed && 'text-primary'
+      )}
+      title={notificationActionLabel}
+      aria-label={notificationActionLabel}
+    >
+      <Bell
+        data-testid={iconTestId}
+        className={cn('h-4 w-4', notificationsSubscribed && 'fill-current')}
+      />
+    </button>
+  )
 
   return (
     <div
@@ -715,6 +738,11 @@ function RuntimeLocalTaskRow({
               aria-label="Worktree"
             />
           )}
+          {notificationsSubscribed &&
+            renderNotificationButton(
+              `runtime-local-task-notify-${task.localTaskId}`,
+              `runtime-local-task-notify-icon-${task.localTaskId}`
+            )}
           <span className="flex h-7 w-7 items-center justify-center">
             {formatRelativeSidebarTime(getRuntimeTaskTime(task))}
           </span>
@@ -732,32 +760,14 @@ function RuntimeLocalTaskRow({
           data-testid={`runtime-local-task-hover-actions-${task.localTaskId}`}
           className="pointer-events-none invisible absolute right-0 top-1/2 flex w-[78px] -translate-y-1/2 items-center justify-end gap-0.5 opacity-0 transition-opacity group-hover/task:pointer-events-auto group-hover/task:visible group-hover/task:opacity-100"
         >
-          <button
-            type="button"
-            data-testid={`runtime-local-task-notify-${task.localTaskId}`}
-            disabled={notificationsDisabled}
-            aria-pressed={notificationsSubscribed}
-            onClick={handleToggleNotification}
-            className={cn(
-              'flex h-6 w-6 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))] disabled:cursor-not-allowed disabled:opacity-45',
-              notificationsSubscribed && 'text-primary'
-            )}
-            title={
-              notificationsSubscribed
-                ? t('workbench.unsubscribe_runtime_task_notifications', '取消任务通知')
-                : t('workbench.subscribe_runtime_task_notifications', '订阅任务通知')
-            }
-            aria-label={
-              notificationsSubscribed
-                ? t('workbench.unsubscribe_runtime_task_notifications', '取消任务通知')
-                : t('workbench.subscribe_runtime_task_notifications', '订阅任务通知')
-            }
-          >
-            <Bell
-              data-testid={`runtime-local-task-notify-icon-${task.localTaskId}`}
-              className={cn('h-4 w-4', notificationsSubscribed && 'fill-current')}
-            />
-          </button>
+          {renderNotificationButton(
+            notificationsSubscribed
+              ? `runtime-local-task-notify-hover-${task.localTaskId}`
+              : `runtime-local-task-notify-${task.localTaskId}`,
+            notificationsSubscribed
+              ? `runtime-local-task-notify-hover-icon-${task.localTaskId}`
+              : `runtime-local-task-notify-icon-${task.localTaskId}`
+          )}
           <button
             type="button"
             data-testid={`runtime-local-task-mark-${task.localTaskId}`}
