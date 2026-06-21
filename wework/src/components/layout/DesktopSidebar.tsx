@@ -1331,7 +1331,7 @@ export function DesktopSidebar({
                 event.stopPropagation()
                 openProjectCreateDialog()
               }}
-              className="flex h-7 w-7 items-center justify-center rounded-md text-[#606368] hover:bg-white/80 hover:text-[#2d2d2d]"
+              className="flex h-7 w-7 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
             >
               <FolderPlus className="h-4 w-4" />
             </button>
