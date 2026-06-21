@@ -2,9 +2,13 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-import tomllib
 from configparser import ConfigParser
 from pathlib import Path
+
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
 
 
 def test_default_pytest_addopts_do_not_enable_coverage():
