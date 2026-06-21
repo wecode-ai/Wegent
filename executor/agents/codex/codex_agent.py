@@ -97,6 +97,8 @@ class CodeXAgent(Agent):
 
     async def pre_execute(self) -> Tuple[TaskStatus, Optional[str]]:
         try:
+            self.prepare_project_workspace_path()
+            await self.restore_fork_workspace_archive_if_needed()
             await self.download_code()
             self._prepare_standalone_chat_workspace()
             if self.project_path is None:
@@ -190,6 +192,7 @@ class CodeXAgent(Agent):
         mapper = CodeXEventMapper(
             self.emitter,
             turn_file_change_tracker=turn_file_change_tracker,
+            executor_session_provider=self._executor_session_metadata,
         )
 
         try:
@@ -304,6 +307,7 @@ class CodeXAgent(Agent):
 
     async def _open_thread(self) -> None:
         assert self.codex_config is not None
+        self._seed_inherited_thread()
         thread_id = self._session_store.load(
             self.task_id,
             self._bot_id,
@@ -333,6 +337,44 @@ class CodeXAgent(Agent):
                 service_name="wegent",
             )
         self._session_store.save(self.task_id, self._bot_id, self._thread.id)
+
+    def _find_inherited_thread(self) -> Optional[str]:
+        for session in self.task_data.inherited_sessions or []:
+            if not isinstance(session, dict):
+                continue
+            if str(session.get("agent") or "") not in {"CodeX", "Codex"}:
+                continue
+            bot_id = session.get("botId")
+            if bot_id is not None and self._bot_id is not None:
+                try:
+                    if int(bot_id) != int(self._bot_id):
+                        continue
+                except (TypeError, ValueError):
+                    continue
+            thread_id = session.get("threadId")
+            if thread_id:
+                return str(thread_id)
+        return None
+
+    def _seed_inherited_thread(self) -> bool:
+        if self.new_session:
+            return False
+        if self._session_store.load(self.task_id, self._bot_id, new_session=False):
+            return False
+        thread_id = self._find_inherited_thread()
+        if not thread_id:
+            return False
+        self._session_store.save(self.task_id, self._bot_id, thread_id)
+        return True
+
+    def _executor_session_metadata(self) -> Optional[dict[str, Any]]:
+        thread_id = getattr(self._thread, "id", None)
+        if not thread_id:
+            return None
+        return {
+            "agent": "CodeX",
+            "threadId": str(thread_id),
+        }
 
     def _build_thread_kwargs(self, developer_instructions: str) -> dict[str, Any]:
         from openai_codex import ApprovalMode

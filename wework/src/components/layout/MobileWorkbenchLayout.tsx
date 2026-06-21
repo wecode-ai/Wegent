@@ -1,4 +1,4 @@
-import { Bot, Copy, Menu } from 'lucide-react'
+import { ArrowLeftRight, Bot, Menu } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ChatInput } from '@/components/chat/ChatInput'
 import type { ProjectChatControls, ProjectWorkControls } from '@/components/chat/ChatInput'
@@ -451,7 +451,7 @@ export function MobileWorkbenchLayout({
                   aria-label={t('workbench.task_fork_button', '复制到其他执行器')}
                   title={t('workbench.task_fork_button', '复制到其他执行器')}
                 >
-                  <Copy className="h-5 w-5" />
+                  <ArrowLeftRight className="h-5 w-5" />
                 </button>
               ) : (
                 <div className="h-11 min-w-[44px]" />

@@ -158,6 +158,8 @@ class ExecutionRequest:
     history_limit: Optional[int] = None
     stateless: bool = False
     new_session: bool = False
+    fork_runtime: Optional[dict] = None
+    inherited_sessions: list[dict] = field(default_factory=list)
     collaboration_model: str = "single"
     mode: Optional[str] = (
         None  # From Task: Collaboration mode (e.g., "coordinate", "collaborate")

@@ -17,7 +17,35 @@ def test_task_fork_spec_round_trips_camel_case_fields():
         "sourceTaskId": 10,
         "afterMessageId": 6,
         "rootTaskId": 3,
+        "runtime": None,
     }
+
+
+def test_task_fork_spec_accepts_runtime_migration_metadata():
+    spec = TaskForkSpec(
+        sourceTaskId=10,
+        afterMessageId=6,
+        rootTaskId=3,
+        runtime={
+            "workspace": {
+                "sourceTaskId": 10,
+                "archiveStorageKey": "workspace-archives/10/archive.tar.gz",
+                "restoreRequired": True,
+            },
+            "sessions": [
+                {
+                    "agent": "ClaudeCode",
+                    "sourceTaskId": 10,
+                    "botId": 987,
+                    "sessionId": "claude-session",
+                }
+            ],
+        },
+    )
+
+    assert spec.runtime is not None
+    assert spec.runtime["workspace"]["restoreRequired"] is True
+    assert spec.runtime["sessions"][0]["sessionId"] == "claude-session"
 
 
 def test_task_crd_accepts_optional_fork_metadata():

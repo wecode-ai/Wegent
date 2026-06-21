@@ -1,5 +1,13 @@
 import { useMemo, useState } from 'react'
-import { Check, Cloud, Copy, HardDrive, Loader2, X, type LucideIcon } from 'lucide-react'
+import {
+  ArrowLeftRight,
+  Check,
+  Cloud,
+  HardDrive,
+  Loader2,
+  X,
+  type LucideIcon,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isWeWorkCompatibleDevice } from '@/lib/device-capabilities'
@@ -176,7 +184,7 @@ export function TaskForkDialog({
       >
         <div className="flex items-center gap-3">
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-surface text-text-primary">
-            <Copy className="h-4 w-4" />
+            <ArrowLeftRight className="h-4 w-4" />
           </div>
           <div className="min-w-0 flex-1">
             <h2 id="task-fork-dialog-title" className="truncate text-base font-semibold">

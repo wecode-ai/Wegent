@@ -48,6 +48,7 @@ def _task(
     device_id: str | None = "mac",
     execution_source: str = "git_worktree",
     fork: dict | None = None,
+    archive: dict | None = None,
 ) -> TaskResource:
     spec = {
         "title": "Original",
@@ -63,6 +64,14 @@ def _task(
         spec["device_id"] = device_id
     if fork:
         spec["fork"] = fork
+    task_status = {
+        "state": "Available",
+        "status": status,
+        "createdAt": datetime.now().isoformat(),
+    }
+    if archive:
+        task_status["archive"] = archive
+
     return TaskResource(
         id=task_id,
         user_id=user_id,
@@ -78,11 +87,7 @@ def _task(
                 "labels": {"taskType": "code"},
             },
             "spec": spec,
-            "status": {
-                "state": "Available",
-                "status": status,
-                "createdAt": datetime.now().isoformat(),
-            },
+            "status": task_status,
         },
         is_active=TaskResource.STATE_ACTIVE,
         client_origin="wework",
@@ -232,6 +237,83 @@ def test_managed_fork_clears_device_copies_workspace_and_writes_fork_metadata(
     assert captured["workspace"][0:2] == ("workspace-2", "default")
     assert captured["workspace"][2]["spec"]["repository"]["gitRepo"] == "repo"
     assert captured["workspace"][2]["metadata"]["labels"] == {"forkedFromTaskId": "1"}
+
+
+def test_fork_persists_runtime_sessions_from_source_history(monkeypatch):
+    source = _task(1)
+    history = [
+        SimpleNamespace(
+            subtask=SimpleNamespace(
+                message_id=4,
+                result={
+                    "executor_session": {
+                        "agent": "ClaudeCode",
+                        "sessionId": "claude-session-1",
+                    }
+                },
+            )
+        ),
+        SimpleNamespace(
+            subtask=SimpleNamespace(
+                message_id=6,
+                result={
+                    "executor_session": {
+                        "agent": "CodeX",
+                        "threadId": "codex-thread-1",
+                    }
+                },
+            )
+        ),
+    ]
+    _patch_common(monkeypatch, source, history=history, workspace=_workspace(1))
+
+    result = task_fork_service.fork_task(
+        db=_Db(),
+        source_task_id=1,
+        user_id=7,
+        request=TaskForkRequest.model_validate({"target": {"type": "managed"}}),
+        client_origin="wework",
+    )
+
+    assert result.json["spec"]["fork"]["runtime"] == {
+        "sessions": [
+            {
+                "agent": "ClaudeCode",
+                "sessionId": "claude-session-1",
+            },
+            {
+                "agent": "CodeX",
+                "threadId": "codex-thread-1",
+            },
+        ]
+    }
+
+
+def test_managed_fork_migrates_archived_local_workspace(monkeypatch):
+    archive = {
+        "storageKey": "workspace-archives/1/archive.tar.gz",
+        "archivedAt": "2026-06-20T12:00:00+00:00",
+        "expiresAt": "2026-07-20T12:00:00+00:00",
+        "sizeBytes": 2048,
+        "sessionFileIncluded": True,
+        "gitIncluded": True,
+    }
+    source = _task(1, execution_source="local_path", archive=archive)
+    _patch_common(monkeypatch, source, history=[], workspace=_workspace(1))
+
+    result = task_fork_service.fork_task(
+        db=_Db(),
+        source_task_id=1,
+        user_id=7,
+        request=TaskForkRequest.model_validate({"target": {"type": "managed"}}),
+        client_origin="wework",
+    )
+
+    assert result.json["status"]["archive"] == archive
+    assert result.json["spec"]["fork"]["runtime"]["workspaceArchive"] == {
+        "sourceTaskId": 1,
+        "storageKey": "workspace-archives/1/archive.tar.gz",
+    }
 
 
 def test_device_fork_sets_selected_online_device(monkeypatch):

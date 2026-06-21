@@ -58,13 +58,19 @@ class TaskForkService:
             user_id=user_id,
             request=request,
         )
-        after_message_id = self._resolve_after_message_id(
+        history_items = task_fork_history_resolver.resolve_for_task(
             db,
             task_id=source_task_id,
             user_id=user_id,
         )
+        after_message_id = self._resolve_after_message_id(history_items)
+        fork_runtime = self._extract_runtime_from_history(history_items)
         root_task_id = (
             source_crd.spec.fork.rootTaskId if source_crd.spec.fork else source_task_id
+        )
+        workspace_archive = self._extract_workspace_archive(
+            source_json=source_task.json,
+            source_task_id=source_task_id,
         )
 
         def workspace_factory(task_id_value: int) -> tuple[str, str, dict[str, Any]]:
@@ -96,6 +102,8 @@ class TaskForkService:
             after_message_id=after_message_id,
             root_task_id=root_task_id,
             target_device_id=target_device_id,
+            fork_runtime=fork_runtime,
+            workspace_archive=workspace_archive,
         )
         task_store.update_json(db, task=new_task, payload=new_crd_dict)
         db.commit()
@@ -130,6 +138,8 @@ class TaskForkService:
         after_message_id: int,
         root_task_id: int,
         target_device_id: str | None,
+        fork_runtime: dict[str, Any] | None,
+        workspace_archive: dict[str, Any] | None,
     ) -> dict[str, Any]:
         now = datetime.now().isoformat()
         new_crd_dict = deepcopy(source_json)
@@ -143,6 +153,14 @@ class TaskForkService:
             "afterMessageId": after_message_id,
             "rootTaskId": root_task_id,
         }
+        combined_runtime = deepcopy(fork_runtime) if fork_runtime else {}
+        if workspace_archive:
+            combined_runtime["workspaceArchive"] = {
+                "sourceTaskId": source_task_id,
+                "storageKey": workspace_archive["storageKey"],
+            }
+        if combined_runtime:
+            new_crd_dict["spec"]["fork"]["runtime"] = combined_runtime
         if target_device_id:
             new_crd_dict["spec"]["device_id"] = target_device_id
         else:
@@ -155,6 +173,8 @@ class TaskForkService:
             "createdAt": now,
             "updatedAt": now,
         }
+        if workspace_archive:
+            new_crd_dict["status"]["archive"] = workspace_archive
         return new_crd_dict
 
     def _build_workspace_json(
@@ -197,17 +217,78 @@ class TaskForkService:
 
     def _resolve_after_message_id(
         self,
-        db: Session,
-        *,
-        task_id: int,
-        user_id: int,
+        history_items: list[Any],
     ) -> int:
-        items = task_fork_history_resolver.resolve_for_task(
-            db,
-            task_id=task_id,
-            user_id=user_id,
+        return max((item.subtask.message_id for item in history_items), default=0)
+
+    def _extract_runtime_from_history(
+        self,
+        history_items: list[Any],
+    ) -> dict[str, Any] | None:
+        sessions: list[dict[str, Any]] = []
+        seen: set[tuple[str, str, str]] = set()
+
+        for item in history_items:
+            result = getattr(getattr(item, "subtask", None), "result", None)
+            if not isinstance(result, dict):
+                continue
+            session = result.get("executor_session")
+            normalized = self._normalize_executor_session(session)
+            if not normalized:
+                continue
+            identity = (
+                str(normalized.get("agent") or ""),
+                str(normalized.get("sessionId") or ""),
+                str(normalized.get("threadId") or ""),
+            )
+            if identity in seen:
+                continue
+            seen.add(identity)
+            sessions.append(normalized)
+
+        if not sessions:
+            return None
+        return {"sessions": sessions}
+
+    @staticmethod
+    def _extract_workspace_archive(
+        *,
+        source_json: dict[str, Any],
+        source_task_id: int,
+    ) -> dict[str, Any] | None:
+        status = (
+            source_json.get("status")
+            if isinstance(source_json.get("status"), dict)
+            else {}
         )
-        return max((item.subtask.message_id for item in items), default=0)
+        archive = status.get("archive")
+        if not isinstance(archive, dict):
+            return None
+        storage_key = archive.get("storageKey")
+        if not isinstance(storage_key, str) or not storage_key.strip():
+            return None
+        normalized = deepcopy(archive)
+        normalized["storageKey"] = storage_key.strip()
+        return normalized
+
+    @staticmethod
+    def _normalize_executor_session(session: Any) -> dict[str, Any] | None:
+        if not isinstance(session, dict):
+            return None
+        agent = session.get("agent")
+        session_id = session.get("sessionId")
+        thread_id = session.get("threadId")
+        if not agent or not (session_id or thread_id):
+            return None
+
+        normalized: dict[str, Any] = {"agent": str(agent)}
+        if session_id:
+            normalized["sessionId"] = str(session_id)
+        if thread_id:
+            normalized["threadId"] = str(thread_id)
+        if session.get("botId") is not None:
+            normalized["botId"] = session["botId"]
+        return normalized
 
     def _validate_device_target(
         self,
@@ -240,6 +321,9 @@ class TaskForkService:
         execution = source_crd.spec.execution
         workspace = execution.workspace if execution else None
         if workspace and workspace.source == "local_path":
+            archive = source_crd.status.archive if source_crd.status else None
+            if archive and archive.storageKey:
+                return
             raise HTTPException(
                 status_code=409,
                 detail="workspace_not_available_for_target",

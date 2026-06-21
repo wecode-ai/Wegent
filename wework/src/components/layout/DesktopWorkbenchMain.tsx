@@ -1,5 +1,5 @@
 import { useCallback, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
-import { Copy } from 'lucide-react'
+import { ArrowLeftRight } from 'lucide-react'
 import { ChatInput } from '@/components/chat/ChatInput'
 import type { ProjectChatControls, ProjectWorkControls } from '@/components/chat/ChatInput'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
@@ -407,7 +407,7 @@ export function DesktopWorkbenchMain({
       aria-label={t('workbench.task_fork_button', '复制到其他执行器')}
       title={t('workbench.task_fork_button', '复制到其他执行器')}
     >
-      <Copy />
+      <ArrowLeftRight />
     </button>
   ) : null
   const workspacePanelActions = (

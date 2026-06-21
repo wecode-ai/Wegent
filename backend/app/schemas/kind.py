@@ -586,6 +586,10 @@ class TaskForkSpec(BaseModel):
         ..., ge=0, description="Maximum parent message_id inherited by this fork"
     )
     rootTaskId: int = Field(..., ge=1, description="Root task ID for the fork chain")
+    runtime: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Runtime migration metadata for workspace and executor sessions",
+    )
 
 
 class TaskSpec(BaseModel):
