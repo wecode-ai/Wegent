@@ -260,6 +260,80 @@ class BindRuntimeTaskIMSessionsResponse(BaseModel):
     notified_count: int = Field(..., alias="notifiedCount")
 
 
+class RuntimeIMNotificationSession(BaseModel):
+    """Private IM session metadata used for notification target selection."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    session_key: str = Field(..., alias="sessionKey")
+    channel_type: str = Field(..., alias="channelType")
+    channel_label: str = Field(..., alias="channelLabel")
+    channel_id: int = Field(..., alias="channelId")
+    conversation_id: str = Field(..., alias="conversationId")
+    sender_id: str = Field(..., alias="senderId")
+    display_name: str = Field("", alias="displayName")
+
+
+class RuntimeGlobalIMNotificationSettings(BaseModel):
+    """User-level IM notification switch and default session."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    enabled: bool = False
+    session_key: Optional[str] = Field(default=None, alias="sessionKey")
+    session: Optional[RuntimeIMNotificationSession] = None
+
+
+class RuntimeTaskIMNotificationSubscription(BaseModel):
+    """Task-level IM notification subscription state."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    address: RuntimeTaskAddress
+    session_keys: list[str] = Field(default_factory=list, alias="sessionKeys")
+    sessions: list[RuntimeIMNotificationSession] = Field(default_factory=list)
+
+
+class RuntimeIMNotificationSettingsResponse(BaseModel):
+    """All runtime IM notification settings needed by Wework."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    global_settings: RuntimeGlobalIMNotificationSettings = Field(..., alias="global")
+    runtime_task_subscriptions: list[RuntimeTaskIMNotificationSubscription] = Field(
+        default_factory=list,
+        alias="runtimeTaskSubscriptions",
+    )
+
+
+class RuntimeGlobalIMNotificationUpdateRequest(BaseModel):
+    """Update the global IM notification switch."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    enabled: bool
+    session_key: Optional[str] = Field(default=None, alias="sessionKey")
+
+
+class RuntimeTaskIMNotificationSubscriptionRequest(BaseModel):
+    """Subscribe a runtime task to one or more private IM sessions."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    address: RuntimeTaskAddress
+    session_keys: list[str] = Field(..., alias="sessionKeys", min_length=1)
+
+
+class RuntimeTaskIMNotificationSubscriptionResponse(BaseModel):
+    """Acknowledgement for task-level IM notification subscription changes."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    address: RuntimeTaskAddress
+    subscribed: bool
+    session_keys: list[str] = Field(default_factory=list, alias="sessionKeys")
+
+
 class RuntimeTaskArchiveResponse(BaseModel):
     """Acknowledgement from the runtime archive RPC."""
 

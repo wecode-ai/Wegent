@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.constants import CLIENT_ORIGIN_WEWORK
+from app.models.im_session import IMPrivateSession
 from app.models.kind import Kind
 from app.models.project import Project
 from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
@@ -33,6 +34,9 @@ from app.schemas.runtime_work import (
     DeviceWorkspaceUpsert,
     LocalTaskSummary,
     RuntimeDeviceWorkspace,
+    RuntimeGlobalIMNotificationUpdateRequest,
+    RuntimeIMNotificationSession,
+    RuntimeIMNotificationSettingsResponse,
     RuntimeProjectRef,
     RuntimeProjectWork,
     RuntimeSendRequest,
@@ -43,6 +47,9 @@ from app.schemas.runtime_work import (
     RuntimeTaskCreateResponse,
     RuntimeTaskForkRequest,
     RuntimeTaskForkResponse,
+    RuntimeTaskIMNotificationSubscription,
+    RuntimeTaskIMNotificationSubscriptionRequest,
+    RuntimeTaskIMNotificationSubscriptionResponse,
     RuntimeTranscriptResponse,
     RuntimeWorkListResponse,
 )
@@ -410,6 +417,111 @@ async def bind_runtime_task_to_im_sessions(
         address=address,
         boundSessionKeys=[str(session_key) for session_key in request.session_keys],
         notifiedCount=int(notification.get("sent") or 0),
+    )
+
+
+async def get_im_notification_settings(
+    *,
+    db: Session,
+    user_id: int,
+) -> RuntimeIMNotificationSettingsResponse:
+    """Return global and task-level IM notification settings for runtime tasks."""
+
+    global_settings = await im_session_service.get_global_notification_settings(user_id)
+    global_session = (
+        await _load_user_im_session(user_id, global_settings.session_key)
+        if global_settings.session_key
+        else None
+    )
+    subscriptions = await im_session_service.list_runtime_task_notification_subscriptions(
+        user_id=user_id,
+    )
+    return RuntimeIMNotificationSettingsResponse(
+        global_settings={
+            "enabled": global_settings.enabled,
+            "sessionKey": global_settings.session_key,
+            "session": _im_notification_session_out(global_session)
+            if global_session
+            else None,
+        },
+        runtimeTaskSubscriptions=[
+            RuntimeTaskIMNotificationSubscription(
+                address=_runtime_task_address_from_notification_key(task_key),
+                sessionKeys=session_keys,
+                sessions=[
+                    _im_notification_session_out(session)
+                    for session in await _load_user_im_sessions(user_id, session_keys)
+                ],
+            )
+            for task_key, session_keys in subscriptions.items()
+        ],
+    )
+
+
+async def update_global_im_notification(
+    *,
+    db: Session,
+    user_id: int,
+    request: RuntimeGlobalIMNotificationUpdateRequest,
+) -> RuntimeIMNotificationSettingsResponse:
+    """Update the user-level IM notification quick switch."""
+
+    await im_session_service.update_global_notification(
+        db,
+        user_id=user_id,
+        enabled=request.enabled,
+        session_key=request.session_key,
+    )
+    return await get_im_notification_settings(db=db, user_id=user_id)
+
+
+async def subscribe_runtime_task_im_notification(
+    *,
+    db: Session,
+    user_id: int,
+    request: RuntimeTaskIMNotificationSubscriptionRequest,
+) -> RuntimeTaskIMNotificationSubscriptionResponse:
+    """Subscribe a device-local runtime task to private IM notifications."""
+
+    address = _normalized_address(request.address)
+    _ensure_owned_device(db, user_id, address.device_id)
+    sessions = await im_session_service.load_user_sessions_by_keys(
+        db,
+        user_id=user_id,
+        session_keys=request.session_keys,
+    )
+    runtime_task = _runtime_task_address_payload(address)
+    for session in sessions:
+        await im_session_service.subscribe_runtime_task_notification(
+            db,
+            session=session,
+            runtime_task=runtime_task,
+        )
+    return RuntimeTaskIMNotificationSubscriptionResponse(
+        address=address,
+        subscribed=True,
+        sessionKeys=[session.session_key for session in sessions],
+    )
+
+
+async def unsubscribe_runtime_task_im_notification(
+    *,
+    db: Session,
+    user_id: int,
+    address: RuntimeTaskAddress,
+) -> RuntimeTaskIMNotificationSubscriptionResponse:
+    """Remove all private IM notification subscriptions for one runtime task."""
+
+    normalized_address = _normalized_address(address)
+    _ensure_owned_device(db, user_id, normalized_address.device_id)
+    await im_session_service.unsubscribe_runtime_task_notification(
+        user_id=user_id,
+        runtime_task=_runtime_task_address_payload(normalized_address),
+    )
+    return RuntimeTaskIMNotificationSubscriptionResponse(
+        address=normalized_address,
+        subscribed=False,
+        sessionKeys=[],
     )
 
 
@@ -1035,6 +1147,53 @@ def _runtime_archive_response(
         workspacePath=result.get("workspacePath") or address.workspace_path,
         error=result.get("error"),
     )
+
+
+def _im_notification_session_out(
+    session: IMPrivateSession,
+) -> RuntimeIMNotificationSession:
+    return RuntimeIMNotificationSession(
+        sessionKey=session.session_key,
+        channelType=session.channel_type,
+        channelLabel=im_session_service.get_channel_label(session.channel_type),
+        channelId=session.channel_id,
+        conversationId=session.conversation_id,
+        senderId=session.sender_id,
+        displayName=session.display_name,
+    )
+
+
+async def _load_user_im_session(
+    user_id: int,
+    session_key: str | None,
+) -> IMPrivateSession | None:
+    if not session_key:
+        return None
+    session = await im_session_service.get_session(session_key)
+    if session is None or session.user_id != user_id:
+        return None
+    return session
+
+
+async def _load_user_im_sessions(
+    user_id: int,
+    session_keys: list[str],
+) -> list[IMPrivateSession]:
+    sessions: list[IMPrivateSession] = []
+    for session_key in session_keys:
+        session = await _load_user_im_session(user_id, session_key)
+        if session is not None:
+            sessions.append(session)
+    return sessions
+
+
+def _runtime_task_address_from_notification_key(task_key: str) -> RuntimeTaskAddress:
+    try:
+        device_id, local_task_id = task_key.split("\0", 1)
+    except ValueError:
+        device_id = ""
+        local_task_id = task_key
+    return RuntimeTaskAddress(deviceId=device_id, localTaskId=local_task_id)
 
 
 def _runtime_create_response(

@@ -5,6 +5,8 @@ import type {
   DeviceWorkspacePrepareRequest,
   DeviceWorkspacePrepareResponse,
   DeviceWorkspaceUpsert,
+  RuntimeGlobalIMNotificationUpdateRequest,
+  RuntimeIMNotificationSettingsResponse,
   RuntimeSendRequest,
   RuntimeSendResponse,
   RuntimeTaskAddress,
@@ -13,6 +15,8 @@ import type {
   RuntimeTaskCreateResponse,
   RuntimeTaskForkRequest,
   RuntimeTaskForkResponse,
+  RuntimeTaskIMNotificationSubscriptionRequest,
+  RuntimeTaskIMNotificationSubscriptionResponse,
   RuntimeTranscriptResponse,
   RuntimeWorkListResponse,
 } from '@/types/api'
@@ -48,6 +52,24 @@ export function createRuntimeWorkApi(client: HttpClient) {
       data: BindRuntimeTaskIMSessionsRequest
     ): Promise<BindRuntimeTaskIMSessionsResponse> {
       return client.post('/runtime-work/im-sessions', data)
+    },
+    getImNotificationSettings(): Promise<RuntimeIMNotificationSettingsResponse> {
+      return client.get('/runtime-work/im-notifications')
+    },
+    updateGlobalImNotification(
+      data: RuntimeGlobalIMNotificationUpdateRequest
+    ): Promise<RuntimeIMNotificationSettingsResponse> {
+      return client.put('/runtime-work/im-notifications/global', data)
+    },
+    subscribeRuntimeTaskNotifications(
+      data: RuntimeTaskIMNotificationSubscriptionRequest
+    ): Promise<RuntimeTaskIMNotificationSubscriptionResponse> {
+      return client.put('/runtime-work/im-notifications/runtime-task', data)
+    },
+    unsubscribeRuntimeTaskNotifications(
+      address: RuntimeTaskAddress
+    ): Promise<RuntimeTaskIMNotificationSubscriptionResponse> {
+      return client.post('/runtime-work/im-notifications/runtime-task/unsubscribe', address)
     },
     archiveRuntimeTask(address: RuntimeTaskAddress): Promise<RuntimeTaskArchiveResponse> {
       return client.post('/runtime-work/archive', address)

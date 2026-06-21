@@ -771,17 +771,7 @@ describe('MobileWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('open-mobile-drawer-button'))
     await userEvent.click(screen.getByTestId('mobile-new-project-button'))
 
-    expect(screen.getByTestId('mobile-project-create-menu')).toBeInTheDocument()
-    expect(screen.getByText('新建空白项目')).toBeInTheDocument()
-    expect(screen.getByText('使用现有目录')).toBeInTheDocument()
-    expect(screen.getByText('从 Git 克隆')).toBeInTheDocument()
-
-    await userEvent.click(screen.getByTestId('mobile-project-create-menu-backdrop'))
     expect(screen.queryByTestId('mobile-project-create-menu')).not.toBeInTheDocument()
-
-    await userEvent.click(screen.getByTestId('mobile-new-project-button'))
-    await userEvent.click(screen.getByTestId('mobile-project-start-from-scratch-button'))
-
     expect(screen.getByTestId('project-create-dialog')).toHaveClass(
       'rounded-t-[28px]',
       'max-h-[88dvh]'

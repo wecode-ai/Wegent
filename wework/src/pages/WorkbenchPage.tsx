@@ -51,6 +51,10 @@ export function WorkbenchPage() {
     createEnvironmentBranch,
     listImPrivateSessions,
     bindRuntimeTaskToImSessions,
+    getImNotificationSettings,
+    updateGlobalImNotification,
+    subscribeRuntimeTaskNotifications,
+    unsubscribeRuntimeTaskNotifications,
     setInput,
     addCodeCommentContext,
     clearCodeCommentContexts,
@@ -120,6 +124,10 @@ export function WorkbenchPage() {
       onCreateEnvironmentBranch={createEnvironmentBranch}
       onListImPrivateSessions={listImPrivateSessions}
       onBindRuntimeTaskToImSessions={bindRuntimeTaskToImSessions}
+      onGetImNotificationSettings={getImNotificationSettings}
+      onUpdateGlobalImNotification={updateGlobalImNotification}
+      onSubscribeRuntimeTaskNotifications={subscribeRuntimeTaskNotifications}
+      onUnsubscribeRuntimeTaskNotifications={unsubscribeRuntimeTaskNotifications}
       onInputChange={setInput}
       onSend={sendCurrentInput}
       onRetryFailedMessage={retryFailedMessage}

@@ -12,6 +12,12 @@ interface ContinueInImDialogProps {
   loading: boolean
   submitting: boolean
   sessions: IMPrivateSession[]
+  title?: string
+  emptyGuide?: string
+  submitLabel?: string
+  allowMultiple?: boolean
+  rememberSelection?: boolean
+  defaultSelectedSessionKeys?: string[]
   onClose: () => void
   onSubmit: (sessionKeys: string[]) => Promise<void>
 }
@@ -21,6 +27,12 @@ export function ContinueInImDialog({
   loading,
   submitting,
   sessions,
+  title,
+  emptyGuide,
+  submitLabel,
+  allowMultiple,
+  rememberSelection,
+  defaultSelectedSessionKeys,
   onClose,
   onSubmit,
 }: ContinueInImDialogProps) {
@@ -33,6 +45,12 @@ export function ContinueInImDialog({
       loading={loading}
       submitting={submitting}
       sessions={sessions}
+      title={title}
+      emptyGuide={emptyGuide}
+      submitLabel={submitLabel}
+      allowMultiple={allowMultiple}
+      rememberSelection={rememberSelection}
+      defaultSelectedSessionKeys={defaultSelectedSessionKeys}
       onClose={onClose}
       onSubmit={onSubmit}
     />
@@ -70,9 +88,17 @@ function writeRememberedSessionKeys(sessionKeys: string[]) {
 
 function getDefaultSelectedSessionKeys(
   sessions: IMPrivateSession[],
-  rememberedSessionKeys: string[]
+  rememberedSessionKeys: string[],
+  providedSessionKeys: string[]
 ): Set<string> {
   const validSessionKeys = new Set(sessions.map(session => session.session_key))
+  const providedValidSessionKeys = providedSessionKeys.filter(sessionKey =>
+    validSessionKeys.has(sessionKey)
+  )
+  if (providedValidSessionKeys.length > 0) {
+    return new Set(providedValidSessionKeys)
+  }
+
   const rememberedValidSessionKeys = rememberedSessionKeys.filter(sessionKey =>
     validSessionKeys.has(sessionKey)
   )
@@ -95,6 +121,12 @@ function ContinueInImDialogContent({
   loading,
   submitting,
   sessions,
+  title,
+  emptyGuide,
+  submitLabel,
+  allowMultiple = true,
+  rememberSelection = true,
+  defaultSelectedSessionKeys: providedDefaultSelectedSessionKeys = [],
   onClose,
   onSubmit,
 }: ContinueInImDialogContentProps) {
@@ -110,8 +142,13 @@ function ContinueInImDialogContent({
     [sessions]
   )
   const defaultSelectedSessionKeys = useMemo(
-    () => getDefaultSelectedSessionKeys(sessions, rememberedSessionKeys),
-    [rememberedSessionKeys, sessions]
+    () =>
+      getDefaultSelectedSessionKeys(
+        sessions,
+        rememberSelection ? rememberedSessionKeys : [],
+        providedDefaultSelectedSessionKeys
+      ),
+    [providedDefaultSelectedSessionKeys, rememberSelection, rememberedSessionKeys, sessions]
   )
   const selectedSessionKeys = useMemo(() => {
     if (!manualSelectedSessionKeys) {
@@ -136,6 +173,10 @@ function ContinueInImDialogContent({
 
   const toggleSession = (sessionKey: string) => {
     setManualSelectedSessionKeys(current => {
+      if (!allowMultiple) {
+        return new Set([sessionKey])
+      }
+
       const baseSelection = current
         ? filterValidSessionKeys(current, validSessionKeys)
         : selectedSessionKeys
@@ -150,7 +191,9 @@ function ContinueInImDialogContent({
   }
 
   const handleSubmit = () => {
-    writeRememberedSessionKeys(selectedKeys)
+    if (rememberSelection) {
+      writeRememberedSessionKeys(selectedKeys)
+    }
     void onSubmit(selectedKeys)
   }
 
@@ -216,7 +259,7 @@ function ContinueInImDialogContent({
       >
         <header className="flex min-h-14 items-center gap-3 border-b border-border px-4">
           <h2 id="continue-im-dialog-title" className="min-w-0 flex-1 text-lg font-semibold">
-            {t('workbench.continue_im_title')}
+            {title ?? t('workbench.continue_im_title')}
           </h2>
           <button
             ref={closeButtonRef}
@@ -244,7 +287,7 @@ function ContinueInImDialogContent({
               data-testid="continue-im-empty-guide"
               className="rounded-lg border border-dashed border-border bg-surface px-4 py-6 text-sm leading-6 text-text-secondary"
             >
-              {t('workbench.continue_im_empty_guide')}
+              {emptyGuide ?? t('workbench.continue_im_empty_guide')}
             </div>
           ) : (
             <div className="space-y-2">
@@ -315,7 +358,9 @@ function ContinueInImDialogContent({
             onClick={handleSubmit}
             disabled={loading || submitting || selectedKeys.length === 0}
           >
-            {submitting ? t('workbench.continue_im_submitting') : t('workbench.continue_im_submit')}
+            {submitting
+              ? t('workbench.continue_im_submitting')
+              : (submitLabel ?? t('workbench.continue_im_submit'))}
           </button>
         </footer>
       </section>

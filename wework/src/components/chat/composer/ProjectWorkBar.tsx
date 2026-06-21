@@ -1,16 +1,12 @@
 import {
   Check,
   ChevronDown,
-  ChevronRight,
   Cloud,
-  Folder,
-  FolderGit2,
   FolderPlus,
   FolderX,
   GitBranch,
   HardDrive,
   Laptop,
-  Plus,
   Search,
   X,
 } from 'lucide-react'
@@ -48,7 +44,6 @@ const PROJECT_MENU_DIVIDER_BLOCK_HEIGHT = 13
 const PROJECT_MENU_ACTION_HEIGHT = 32
 const PROJECT_MENU_ACTION_GAP = 2
 const EXECUTION_MODE_MENU_HEIGHT = 126
-const CREATE_PROJECT_SUBMENU_HEIGHT = 128
 
 const CLIPPING_OVERFLOW_RE = /(auto|hidden|scroll|clip)/
 
@@ -162,26 +157,18 @@ export function ProjectWorkBar({
   const executionModeContainerRef = useRef<HTMLDivElement>(null)
   const triggerButtonRef = useRef<HTMLButtonElement>(null)
   const executionModeButtonRef = useRef<HTMLButtonElement>(null)
-  const createOptionButtonRef = useRef<HTMLButtonElement>(null)
 
   const searchInputRef = useRef<HTMLInputElement>(null)
   const [open, setOpen] = useState(false)
   const [executionModeOpenProjectId, setExecutionModeOpenProjectId] = useState<number | null>(null)
-  const [activeSubmenu, setActiveSubmenu] = useState<'create' | null>(null)
   const [projectQuery, setProjectQuery] = useState('')
   const [menuLayout, setMenuLayout] = useState<{
     placement: 'below' | 'above'
     maxHeight: number
   }>({ placement: 'below', maxHeight: PROJECT_MENU_MAX_HEIGHT })
   const [executionModePlacement, setExecutionModePlacement] = useState<'below' | 'above'>('below')
-  const [sideSubmenuPlacement, setSideSubmenuPlacement] = useState<
-    Record<'create', 'below' | 'above'>
-  >({
-    create: 'below',
-  })
   const closeMenu = useCallback(() => {
     setOpen(false)
-    setActiveSubmenu(null)
     setProjectQuery('')
   }, [])
   const closeExecutionModeMenu = useCallback(() => {
@@ -255,24 +242,6 @@ export function ProjectWorkBar({
     })
   }, [executionModeOpen])
 
-  const updateSideSubmenuPlacement = useCallback(() => {
-    if (typeof window === 'undefined') return
-
-    const trigger = createOptionButtonRef.current
-    if (!trigger) return
-
-    const triggerRect = trigger.getBoundingClientRect()
-    const submenuHeight = CREATE_PROJECT_SUBMENU_HEIGHT
-    const visibleBounds = getMenuVisibleBounds(containerRef.current)
-    const spaceBelow = visibleBounds.bottom - triggerRect.top
-    const placement = spaceBelow >= submenuHeight ? 'below' : 'above'
-
-    setSideSubmenuPlacement(current => {
-      if (current.create === placement) return current
-      return { create: placement }
-    })
-  }, [])
-
   useLayoutEffect(() => {
     updateMenuLayout()
   }, [updateMenuLayout])
@@ -286,14 +255,11 @@ export function ProjectWorkBar({
 
     const handleResize = () => {
       updateMenuLayout()
-      if (activeSubmenu) {
-        updateSideSubmenuPlacement()
-      }
     }
 
     window.addEventListener('resize', handleResize)
     return () => window.removeEventListener('resize', handleResize)
-  }, [activeSubmenu, open, updateMenuLayout, updateSideSubmenuPlacement])
+  }, [open, updateMenuLayout])
 
   useEffect(() => {
     if (!executionModeOpen) return
@@ -301,12 +267,6 @@ export function ProjectWorkBar({
     window.addEventListener('resize', updateExecutionModeLayout)
     return () => window.removeEventListener('resize', updateExecutionModeLayout)
   }, [executionModeOpen, updateExecutionModeLayout])
-
-  useLayoutEffect(() => {
-    if (!activeSubmenu) return
-
-    updateSideSubmenuPlacement()
-  }, [activeSubmenu, updateSideSubmenuPlacement])
 
   useEffect(() => {
     if (!open) return
@@ -439,14 +399,9 @@ export function ProjectWorkBar({
     closeExecutionModeMenu()
   }
 
-  const handleCreateProjectMode = (mode: ProjectCreateMode) => {
-    onCreateProjectMode?.(mode)
+  const handleCreateProject = () => {
+    onCreateProjectMode?.('scratch')
     closeMenu()
-  }
-
-  const handleActivateCreateSubmenu = () => {
-    updateSideSubmenuPlacement()
-    setActiveSubmenu('create')
   }
 
   const handleToggleMenu = () => {
@@ -455,7 +410,6 @@ export function ProjectWorkBar({
       return
     }
     closeExecutionModeMenu()
-    setActiveSubmenu(null)
     setOpen(true)
   }
 
@@ -561,7 +515,6 @@ export function ProjectWorkBar({
                   type="search"
                   value={projectQuery}
                   onChange={event => setProjectQuery(event.target.value)}
-                  onFocus={() => setActiveSubmenu(null)}
                   placeholder={t('workbench.search_projects', '搜索项目')}
                   className={cn(
                     'min-w-0 flex-1 bg-transparent text-[13px] leading-[18px] text-text-primary outline-none placeholder:text-text-muted',
@@ -648,68 +601,18 @@ export function ProjectWorkBar({
               <div className="my-1.5 shrink-0 border-t border-border" />
               <div className={cn('shrink-0 space-y-0.5', isMobile && 'space-y-2')}>
                 {onCreateProjectMode && (
-                  <div
-                    className="relative"
-                    onMouseEnter={() => handleActivateCreateSubmenu()}
-                    onFocus={() => handleActivateCreateSubmenu()}
-                  >
+                  <div className="relative">
                     <button
-                      ref={createOptionButtonRef}
                       type="button"
                       data-testid="add-project-option"
-                      onClick={() => handleActivateCreateSubmenu()}
-                      className={cn(
-                        'flex h-8 w-full items-center gap-3 rounded-lg px-4 text-left text-[13px] font-medium leading-[18px] text-text-secondary hover:bg-muted',
-                        activeSubmenu === 'create' && 'bg-muted text-text-primary'
-                      )}
+                      onClick={() => handleCreateProject()}
+                      className="flex h-8 w-full items-center gap-3 rounded-lg px-4 text-left text-[13px] font-medium leading-[18px] text-text-secondary hover:bg-muted"
                     >
                       <FolderPlus className="h-4 w-4 shrink-0" />
                       <span className="min-w-0 flex-1">
                         {t('workbench.add_new_project', '添加新项目')}
                       </span>
-                      <ChevronRight className="h-4 w-4 shrink-0" />
                     </button>
-                    {activeSubmenu === 'create' && (
-                      <div
-                        className={cn(
-                          'absolute left-full z-popover pl-2',
-                          sideSubmenuPlacement.create === 'below' ? 'top-0' : 'bottom-0'
-                        )}
-                      >
-                        <div
-                          data-testid="create-project-submenu"
-                          className="w-56 rounded-2xl border border-border bg-background p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]"
-                        >
-                          <button
-                            type="button"
-                            data-testid="project-start-from-scratch-option"
-                            onClick={() => handleCreateProjectMode('scratch')}
-                            className="flex min-h-9 w-full items-center gap-3 rounded-xl px-4 py-2 text-left text-[13px] font-medium leading-[18px] text-text-secondary hover:bg-muted"
-                          >
-                            <Plus className="h-4 w-4 shrink-0" />
-                            <span>{t('workbench.start_from_scratch', '新建空白项目')}</span>
-                          </button>
-                          <button
-                            type="button"
-                            data-testid="project-existing-folder-option"
-                            onClick={() => handleCreateProjectMode('existing')}
-                            className="flex min-h-9 w-full items-center gap-3 rounded-xl px-4 py-2 text-left text-[13px] font-medium leading-[18px] text-text-secondary hover:bg-muted"
-                          >
-                            <Folder className="h-4 w-4 shrink-0" />
-                            <span>{t('workbench.using_existing_folder', '使用现有目录')}</span>
-                          </button>
-                          <button
-                            type="button"
-                            data-testid="project-clone-from-git-option"
-                            onClick={() => handleCreateProjectMode('git')}
-                            className="flex min-h-9 w-full items-center gap-3 rounded-xl px-4 py-2 text-left text-[13px] font-medium leading-[18px] text-text-secondary hover:bg-muted"
-                          >
-                            <FolderGit2 className="h-4 w-4 shrink-0" />
-                            <span>{t('workbench.clone_from_git', '从 Git 克隆')}</span>
-                          </button>
-                        </div>
-                      </div>
-                    )}
                   </div>
                 )}
                 <div>

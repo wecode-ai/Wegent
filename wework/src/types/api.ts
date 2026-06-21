@@ -369,6 +369,49 @@ export interface BindRuntimeTaskIMSessionsResponse {
   notifiedCount: number
 }
 
+export interface RuntimeIMNotificationSession {
+  sessionKey: string
+  channelType: string
+  channelLabel: string
+  channelId: number
+  conversationId: string
+  senderId: string
+  displayName?: string | null
+}
+
+export interface RuntimeIMNotificationGlobalSettings {
+  enabled: boolean
+  sessionKey?: string | null
+  session?: RuntimeIMNotificationSession | null
+}
+
+export interface RuntimeTaskIMNotificationSubscription {
+  address: RuntimeTaskAddress
+  sessionKeys: string[]
+  sessions?: RuntimeIMNotificationSession[]
+}
+
+export interface RuntimeIMNotificationSettingsResponse {
+  global: RuntimeIMNotificationGlobalSettings
+  runtimeTaskSubscriptions: RuntimeTaskIMNotificationSubscription[]
+}
+
+export interface RuntimeGlobalIMNotificationUpdateRequest {
+  enabled: boolean
+  sessionKey?: string | null
+}
+
+export interface RuntimeTaskIMNotificationSubscriptionRequest {
+  address: RuntimeTaskAddress
+  sessionKeys: string[]
+}
+
+export interface RuntimeTaskIMNotificationSubscriptionResponse {
+  address: RuntimeTaskAddress
+  subscribed: boolean
+  sessionKeys: string[]
+}
+
 export interface RuntimeTaskArchiveResponse {
   accepted: boolean
   localTaskId: string

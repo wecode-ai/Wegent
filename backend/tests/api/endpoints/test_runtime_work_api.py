@@ -193,3 +193,151 @@ def test_runtime_archive_endpoint_dispatches_address(
     assert response.status_code == 200
     assert response.json()["accepted"] is True
     assert service_mock.await_args.kwargs["address"].local_task_id == "codex-1"
+
+
+def test_runtime_im_notification_settings_endpoint_uses_current_user(
+    test_client,
+    test_token,
+    monkeypatch,
+):
+    from app.api.endpoints import runtime_work
+
+    service_mock = AsyncMock(
+        return_value={
+            "global": {
+                "enabled": True,
+                "sessionKey": "session-1",
+                "session": None,
+            },
+            "runtimeTaskSubscriptions": [],
+        }
+    )
+    monkeypatch.setattr(
+        runtime_work.runtime_work_service,
+        "get_im_notification_settings",
+        service_mock,
+    )
+
+    response = test_client.get(
+        "/api/runtime-work/im-notifications",
+        headers=_auth_headers(test_token),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["global"]["enabled"] is True
+    assert service_mock.await_args.kwargs["user_id"] > 0
+
+
+def test_runtime_global_im_notification_endpoint_dispatches_payload(
+    test_client,
+    test_token,
+    monkeypatch,
+):
+    from app.api.endpoints import runtime_work
+
+    service_mock = AsyncMock(
+        return_value={
+            "global": {
+                "enabled": True,
+                "sessionKey": "session-1",
+                "session": None,
+            },
+            "runtimeTaskSubscriptions": [],
+        }
+    )
+    monkeypatch.setattr(
+        runtime_work.runtime_work_service,
+        "update_global_im_notification",
+        service_mock,
+    )
+
+    response = test_client.put(
+        "/api/runtime-work/im-notifications/global",
+        headers=_auth_headers(test_token),
+        json={"enabled": True, "sessionKey": "session-1"},
+    )
+
+    assert response.status_code == 200
+    payload = service_mock.await_args.kwargs["request"]
+    assert payload.enabled is True
+    assert payload.session_key == "session-1"
+
+
+def test_runtime_task_im_notification_subscribe_endpoint_dispatches_address(
+    test_client,
+    test_token,
+    monkeypatch,
+):
+    from app.api.endpoints import runtime_work
+
+    service_mock = AsyncMock(
+        return_value={
+            "address": {
+                "deviceId": "device-1",
+                "localTaskId": "codex-1",
+            },
+            "subscribed": True,
+            "sessionKeys": ["session-1"],
+        }
+    )
+    monkeypatch.setattr(
+        runtime_work.runtime_work_service,
+        "subscribe_runtime_task_im_notification",
+        service_mock,
+    )
+
+    response = test_client.put(
+        "/api/runtime-work/im-notifications/runtime-task",
+        headers=_auth_headers(test_token),
+        json={
+            "address": {
+                "deviceId": "device-1",
+                "localTaskId": "codex-1",
+            },
+            "sessionKeys": ["session-1"],
+        },
+    )
+
+    assert response.status_code == 200
+    request = service_mock.await_args.kwargs["request"]
+    assert request.address.device_id == "device-1"
+    assert request.address.local_task_id == "codex-1"
+    assert request.session_keys == ["session-1"]
+
+
+def test_runtime_task_im_notification_unsubscribe_endpoint_dispatches_address(
+    test_client,
+    test_token,
+    monkeypatch,
+):
+    from app.api.endpoints import runtime_work
+
+    service_mock = AsyncMock(
+        return_value={
+            "address": {
+                "deviceId": "device-1",
+                "localTaskId": "codex-1",
+            },
+            "subscribed": False,
+            "sessionKeys": [],
+        }
+    )
+    monkeypatch.setattr(
+        runtime_work.runtime_work_service,
+        "unsubscribe_runtime_task_im_notification",
+        service_mock,
+    )
+
+    response = test_client.post(
+        "/api/runtime-work/im-notifications/runtime-task/unsubscribe",
+        headers=_auth_headers(test_token),
+        json={
+            "deviceId": "device-1",
+            "localTaskId": "codex-1",
+        },
+    )
+
+    assert response.status_code == 200
+    address = service_mock.await_args.kwargs["address"]
+    assert address.device_id == "device-1"
+    assert address.local_task_id == "codex-1"

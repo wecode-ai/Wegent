@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import '@/i18n'
@@ -40,6 +40,22 @@ function renderSidebar(overrides: Partial<Parameters<typeof DesktopSidebar>[0]> 
     onOpenPlugins: vi.fn(),
     onCreateProject: vi.fn(),
     onCreateGitWorkspaceProject: vi.fn(),
+    onPrepareDeviceWorkspace: vi.fn().mockResolvedValue({
+      preparedAction: 'selected',
+      mapping: {
+        id: 19,
+        userId: 1,
+        projectId: 7,
+        deviceId: 'local-device',
+        workspacePath: '/Users/alice',
+        repoUrl: null,
+        repoRootFingerprint: null,
+        label: null,
+        createdAt: '2026-06-21T00:00:00',
+        updatedAt: '2026-06-21T00:00:00',
+        lastSeenAt: null,
+      },
+    }),
     onListGitRepositories: vi.fn().mockResolvedValue([]),
     onListGitBranches: vi.fn().mockResolvedValue([]),
     onUpdateProjectName: vi.fn(),
@@ -298,6 +314,199 @@ describe('DesktopSidebar', () => {
       deviceId: 'local-device',
       localTaskId: 'codex-1',
     })
+  })
+
+  test('shows a global IM notification quick toggle near settings', async () => {
+    const user = userEvent.setup()
+    const onToggleGlobalImNotification = vi.fn()
+
+    renderSidebar({
+      imNotificationSettings: {
+        global: {
+          enabled: false,
+          sessionKey: 'session-telegram',
+          session: {
+            sessionKey: 'session-telegram',
+            channelType: 'telegram',
+            channelLabel: 'Telegram',
+            channelId: 9,
+            conversationId: 'telegram-1',
+            senderId: '100200300',
+            displayName: 'Alice',
+          },
+        },
+        runtimeTaskSubscriptions: [],
+      },
+      onToggleGlobalImNotification,
+    })
+
+    const toggle = screen.getByTestId('sidebar-global-im-notification-button')
+
+    expect(toggle).toHaveTextContent('IM通知')
+    expect(toggle).toHaveAttribute('aria-pressed', 'false')
+    expect(toggle).toHaveAttribute('title', expect.stringContaining('Telegram'))
+
+    await user.click(toggle)
+
+    expect(onToggleGlobalImNotification).toHaveBeenCalledTimes(1)
+  })
+
+  test('opens global IM notification channel settings separately from the quick toggle', async () => {
+    const user = userEvent.setup()
+    const onToggleGlobalImNotification = vi.fn()
+    const onOpenGlobalImNotificationSettings = vi.fn()
+
+    renderSidebar({
+      imNotificationSettings: {
+        global: {
+          enabled: true,
+          sessionKey: 'session-telegram',
+          session: {
+            sessionKey: 'session-telegram',
+            channelType: 'telegram',
+            channelLabel: 'Telegram',
+            channelId: 9,
+            conversationId: 'telegram-1',
+            senderId: '100200300',
+            displayName: 'Alice',
+          },
+        },
+        runtimeTaskSubscriptions: [],
+      },
+      onToggleGlobalImNotification,
+      onOpenGlobalImNotificationSettings,
+    })
+
+    await user.click(screen.getByTestId('sidebar-global-im-notification-settings-button'))
+
+    expect(onOpenGlobalImNotificationSettings).toHaveBeenCalledTimes(1)
+    expect(onToggleGlobalImNotification).not.toHaveBeenCalled()
+  })
+
+  test('edits an existing project by associating another device workspace', async () => {
+    const user = userEvent.setup()
+    const onCreateProject = vi.fn()
+    const onPrepareDeviceWorkspace = vi.fn().mockResolvedValue({
+      preparedAction: 'selected',
+      mapping: {
+        id: 20,
+        userId: 1,
+        projectId: 7,
+        deviceId: 'second-device',
+        workspacePath: '/Users/alice',
+        repoUrl: null,
+        repoRootFingerprint: null,
+        label: null,
+        createdAt: '2026-06-21T00:00:00',
+        updatedAt: '2026-06-21T00:00:00',
+        lastSeenAt: null,
+      },
+    })
+
+    renderSidebar({
+      devices: [
+        localDevice(),
+        localDevice({
+          id: 2,
+          device_id: 'second-device',
+          name: 'Second Mac',
+          is_default: false,
+        }),
+      ],
+      onCreateProject,
+      onPrepareDeviceWorkspace,
+      onGetDeviceHomeDirectory: vi.fn().mockResolvedValue('/Users/alice'),
+    })
+
+    await user.click(screen.getByTestId('project-menu-7'))
+    await user.click(screen.getByTestId('edit-project-7'))
+
+    const deviceSelect = await screen.findByTestId('project-device-select')
+    await user.selectOptions(deviceSelect, 'second-device')
+    await user.click(screen.getByTestId('create-project-button'))
+
+    await waitFor(() =>
+      expect(onPrepareDeviceWorkspace).toHaveBeenCalledWith({
+        projectId: 7,
+        deviceId: 'second-device',
+        workspacePath: '/Users/alice',
+        action: 'select',
+      })
+    )
+    expect(onCreateProject).not.toHaveBeenCalled()
+  })
+
+  test('shows a runtime task notification toggle in task hover actions', async () => {
+    const user = userEvent.setup()
+    const onToggleRuntimeTaskNotification = vi.fn()
+    const onOpenRuntimeLocalTask = vi.fn()
+
+    renderSidebar({
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, name: 'Wegent' },
+            totalLocalTasks: 1,
+            deviceWorkspaces: [
+              {
+                id: 91,
+                deviceId: 'local-device',
+                deviceName: 'Local Mac',
+                deviceStatus: 'online',
+                available: true,
+                workspacePath: '/repo/Wegent',
+                localTasks: [
+                  {
+                    localTaskId: 'codex-1',
+                    workspacePath: '/repo/Wegent',
+                    title: 'Fix reconnect',
+                    runtime: 'codex',
+                    updatedAt: '2026-06-20T02:00:00Z',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        unmappedDeviceWorkspaces: [],
+        totalLocalTasks: 1,
+      },
+      imNotificationSettings: {
+        global: {
+          enabled: true,
+          sessionKey: 'session-telegram',
+          session: null,
+        },
+        runtimeTaskSubscriptions: [
+          {
+            address: {
+              deviceId: 'local-device',
+              localTaskId: 'codex-1',
+            },
+            sessionKeys: ['session-telegram'],
+          },
+        ],
+      },
+      onOpenRuntimeLocalTask,
+      onToggleRuntimeTaskNotification,
+    })
+
+    await user.click(screen.getByTestId('project-item-button'))
+
+    const toggle = screen.getByTestId('runtime-local-task-notify-codex-1')
+    expect(toggle).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByTestId('runtime-local-task-notify-icon-codex-1')).toHaveClass('fill-current')
+
+    await user.click(toggle)
+
+    expect(onToggleRuntimeTaskNotification).toHaveBeenCalledWith(
+      {
+        deviceId: 'local-device',
+        localTaskId: 'codex-1',
+      },
+      true
+    )
+    expect(onOpenRuntimeLocalTask).not.toHaveBeenCalled()
   })
 
   test('shows an empty task state when a project has no local tasks', async () => {

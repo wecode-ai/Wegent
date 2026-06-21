@@ -1,7 +1,6 @@
 import {
   Edit3,
   Folder,
-  FolderGit2,
   FolderOpen,
   FolderPlus,
   GitCompareArrows,
@@ -135,7 +134,6 @@ export function MobileDrawer({
     handlers: pullHandlers,
   } = usePullToRefresh(onRefreshWorkLists ?? (async () => {}))
   const [searchOpen, setSearchOpen] = useState(false)
-  const [projectCreateMenuOpen, setProjectCreateMenuOpen] = useState(false)
   const [projectCreateMode, setProjectCreateMode] = useState<ProjectCreateMode | null>(null)
   const [projectActionTarget, setProjectActionTarget] = useState<ProjectWithTasks | null>(null)
   const [renamingProjectId, setRenamingProjectId] = useState<number | null>(null)
@@ -199,9 +197,8 @@ export function MobileDrawer({
     onSelectProject(projectId)
   }
 
-  const openProjectCreateDialog = (mode: ProjectCreateMode) => {
-    setProjectCreateMenuOpen(false)
-    setProjectCreateMode(mode)
+  const openProjectCreateDialog = () => {
+    setProjectCreateMode('scratch')
   }
 
   const cancelLongPress = () => {
@@ -327,64 +324,13 @@ export function MobileDrawer({
                 <button
                   type="button"
                   data-testid="mobile-new-project-button"
-                  onClick={() => setProjectCreateMenuOpen(open => !open)}
-                  aria-expanded={projectCreateMenuOpen}
+                  onClick={() => openProjectCreateDialog()}
                   className="mx-3 flex h-[54px] min-w-[44px] w-[calc(100%-24px)] items-center gap-[18px] rounded-[14px] px-3 text-left text-[18px] font-normal leading-6 text-[#111111] hover:bg-[#F7F7F7] disabled:cursor-not-allowed disabled:text-[#6B7280]"
                   disabled={!canOpenProjectSheet}
                 >
                   <FolderPlus className="h-6 w-6 shrink-0 stroke-[2.4]" />
                   <span className="min-w-0 truncate">{t('workbench.new_project', '新建项目')}</span>
                 </button>
-                {projectCreateMenuOpen && (
-                  <>
-                    <button
-                      type="button"
-                      data-testid="mobile-project-create-menu-backdrop"
-                      aria-label={t('workbench.close_menu', '关闭菜单')}
-                      onClick={() => setProjectCreateMenuOpen(false)}
-                      className="fixed inset-0 z-10 cursor-default"
-                    />
-                    <div
-                      data-testid="mobile-project-create-menu"
-                      className="absolute left-4 top-[58px] z-20 w-[min(350px,calc(100vw-32px))] rounded-[18px] border border-[#E0E0E0] bg-white p-2 shadow-[0_12px_32px_rgba(0,0,0,0.14)]"
-                    >
-                      {[
-                        {
-                          mode: 'scratch' as const,
-                          label: t('workbench.start_from_scratch', '新建空白项目'),
-                          icon: FolderPlus,
-                          testId: 'mobile-project-start-from-scratch-button',
-                        },
-                        {
-                          mode: 'existing' as const,
-                          label: t('workbench.using_existing_folder', '使用现有目录'),
-                          icon: Folder,
-                          testId: 'mobile-project-existing-folder-button',
-                        },
-                        {
-                          mode: 'git' as const,
-                          label: t('workbench.clone_from_git', '从 Git 克隆'),
-                          icon: FolderGit2,
-                          testId: 'mobile-project-clone-from-git-button',
-                        },
-                      ].map(item => {
-                        const Icon = item.icon
-                        return (
-                          <button
-                            key={item.mode}
-                            type="button"
-                            data-testid={item.testId}
-                            onClick={() => openProjectCreateDialog(item.mode)}
-                            className="flex h-14 min-w-[44px] w-full items-center gap-4 rounded-xl px-4 text-left text-[18px] font-normal text-[#111111] hover:bg-[#F7F7F7]"
-                          >
-                            <Icon className="h-6 w-6 shrink-0 stroke-[2.2]" />
-                            <span>{item.label}</span>
-                          </button>
-                        )
-                      })}
-                    </div>
-                  </>
-                )}
               </div>
               {unmappedChatTaskItems.length > 0 && (
                 <section className="mt-5">

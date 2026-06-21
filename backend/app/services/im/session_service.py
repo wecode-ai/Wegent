@@ -165,6 +165,41 @@ class IMSessionService:
         await self._save_global_notification_settings(user_id, settings)
         return settings
 
+    async def update_global_notification(
+        self,
+        db: Session | None,
+        *,
+        user_id: int,
+        enabled: bool,
+        session_key: str | None = None,
+    ) -> "IMGlobalNotificationSettings":
+        current = await self.get_global_notification_settings(user_id)
+        next_session_key = session_key if session_key is not None else current.session_key
+        if enabled and not next_session_key:
+            from fastapi import HTTPException, status
+
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="IM notification session is required",
+            )
+        if next_session_key:
+            session = await self.get_session(next_session_key)
+            if session is None or session.user_id != user_id:
+                from fastapi import HTTPException, status
+
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="IM private session not found",
+                )
+            await self._add_user_session(session)
+
+        settings = IMGlobalNotificationSettings(
+            enabled=enabled,
+            session_key=next_session_key,
+        )
+        await self._save_global_notification_settings(user_id, settings)
+        return settings
+
     async def subscribe_runtime_task_notification(
         self,
         db: Session | None,
@@ -201,6 +236,24 @@ class IMSessionService:
             if session is not None and session.user_id == user_id:
                 sessions.append(session)
         return sessions
+
+    async def list_runtime_task_notification_subscriptions(
+        self,
+        *,
+        user_id: int,
+    ) -> dict[str, list[str]]:
+        return await self._get_runtime_task_subscriptions(user_id)
+
+    async def unsubscribe_runtime_task_notification(
+        self,
+        *,
+        user_id: int,
+        runtime_task: dict[str, Any],
+    ) -> None:
+        task_key = self.runtime_task_notification_key(runtime_task)
+        subscriptions = await self._get_runtime_task_subscriptions(user_id)
+        subscriptions.pop(task_key, None)
+        await self._save_runtime_task_subscriptions(user_id, subscriptions)
 
     async def list_active_runtime_task_sessions(
         self,

@@ -23,6 +23,10 @@ function createRuntimeWorkApiMock(overrides: Record<string, unknown> = {}): {
   createRuntimeTask: ReturnType<typeof vi.fn>
   sendRuntimeMessage: ReturnType<typeof vi.fn>
   bindRuntimeTaskImSessions: ReturnType<typeof vi.fn>
+  getImNotificationSettings: ReturnType<typeof vi.fn>
+  updateGlobalImNotification: ReturnType<typeof vi.fn>
+  subscribeRuntimeTaskNotifications: ReturnType<typeof vi.fn>
+  unsubscribeRuntimeTaskNotifications: ReturnType<typeof vi.fn>
   archiveRuntimeTask: ReturnType<typeof vi.fn>
   forkRuntimeTask: ReturnType<typeof vi.fn>
   getRuntimeTranscript: ReturnType<typeof vi.fn>
@@ -52,6 +56,38 @@ function createRuntimeWorkApiMock(overrides: Record<string, unknown> = {}): {
       },
       boundSessionKeys: ['session-7', 'session-9'],
       notifiedCount: 2,
+    }),
+    getImNotificationSettings: vi.fn().mockResolvedValue({
+      global: {
+        enabled: false,
+        sessionKey: null,
+        session: null,
+      },
+      runtimeTaskSubscriptions: [],
+    }),
+    updateGlobalImNotification: vi.fn().mockResolvedValue({
+      global: {
+        enabled: true,
+        sessionKey: 'session-7',
+        session: null,
+      },
+      runtimeTaskSubscriptions: [],
+    }),
+    subscribeRuntimeTaskNotifications: vi.fn().mockResolvedValue({
+      address: {
+        deviceId: 'device-1',
+        localTaskId: 'runtime-1',
+      },
+      subscribed: true,
+      sessionKeys: ['session-7'],
+    }),
+    unsubscribeRuntimeTaskNotifications: vi.fn().mockResolvedValue({
+      address: {
+        deviceId: 'device-1',
+        localTaskId: 'runtime-1',
+      },
+      subscribed: false,
+      sessionKeys: [],
     }),
     archiveRuntimeTask: vi.fn().mockResolvedValue({
       accepted: true,

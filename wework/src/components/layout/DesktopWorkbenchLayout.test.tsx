@@ -1172,40 +1172,13 @@ describe('DesktopWorkbenchLayout', () => {
     expect(quotaLink).not.toHaveClass('text-primary')
   })
 
-  test('opens Git project creation from the project create menu', async () => {
-    const onListGitRepositories = vi.fn().mockResolvedValue([
-      {
-        git_repo_id: 101,
-        name: 'Wegent',
-        git_repo: 'wecode-ai/Wegent',
-        git_url: 'https://github.com/wecode-ai/Wegent.git',
-        git_domain: 'github.com',
-        namespace: 'wecode-ai',
-        private: false,
-        type: 'github',
-      },
-    ])
-    const onListGitBranches = vi
-      .fn()
-      .mockResolvedValue([{ name: 'main', default: true, protected: false }])
-    const onCreateProject = vi.fn().mockResolvedValue({
-      id: 9,
-      name: 'Wegent',
-      tasks: [],
-    })
-    const onCreateGitWorkspaceProject = vi.fn().mockResolvedValue({
-      id: 9,
-      name: 'Wegent',
-      tasks: [],
-    })
+  test('opens project creation directly from the sidebar project create button', async () => {
+    const onRefreshDevices = vi.fn().mockResolvedValue(undefined)
 
     render(
       <DesktopWorkbenchLayout
         {...baseProps}
-        onListGitRepositories={onListGitRepositories}
-        onListGitBranches={onListGitBranches}
-        onCreateProject={onCreateProject}
-        onCreateGitWorkspaceProject={onCreateGitWorkspaceProject}
+        onRefreshDevices={onRefreshDevices}
         state={{
           ...baseProps.state,
           devices: [
@@ -1224,45 +1197,21 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await userEvent.click(screen.getByTestId('projects-create-button'))
-    await userEvent.click(screen.getByTestId('project-clone-from-git-button'))
 
-    await waitFor(() => expect(onListGitRepositories).toHaveBeenCalledTimes(1))
-    await userEvent.click(screen.getByTestId('git-repository-select'))
-    await userEvent.click(screen.getByTestId('git-repository-select-option'))
-    await waitFor(() =>
-      expect(screen.getByTestId('git-branch-select')).toHaveTextContent('main（默认）')
-    )
-    await userEvent.click(screen.getByTestId('create-project-button'))
-
-    await waitFor(() =>
-      expect(onCreateProject).toHaveBeenCalledWith(
-        expect.objectContaining({
-          name: 'Wegent',
-          config: expect.objectContaining({
-            git: expect.objectContaining({
-              url: 'https://github.com/wecode-ai/Wegent.git',
-              branch: 'main',
-            }),
-          }),
-        })
-      )
-    )
-    expect(onCreateGitWorkspaceProject).not.toHaveBeenCalled()
+    expect(screen.getByTestId('project-create-dialog')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '新建项目' })).toBeInTheDocument()
+    expect(screen.getByTestId('project-name-input')).toBeInTheDocument()
+    expect(screen.queryByTestId('projects-create-button-menu')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('project-start-from-scratch-button')).not.toBeInTheDocument()
+    expect(onRefreshDevices).toHaveBeenCalledTimes(1)
   })
 
-  test('opens Git project dialog before device refresh completes', async () => {
+  test('opens project create dialog before device refresh completes', async () => {
     let resolveRefreshDevices: (() => void) | undefined
-    let resolveRepositories: (() => void) | undefined
     const onRefreshDevices = vi.fn(
       () =>
         new Promise<void>(resolve => {
           resolveRefreshDevices = resolve
-        })
-    )
-    const onListGitRepositories = vi.fn(
-      () =>
-        new Promise<[]>(resolve => {
-          resolveRepositories = () => resolve([])
         })
     )
 
@@ -1270,7 +1219,6 @@ describe('DesktopWorkbenchLayout', () => {
       <DesktopWorkbenchLayout
         {...baseProps}
         onRefreshDevices={onRefreshDevices}
-        onListGitRepositories={onListGitRepositories}
         state={{
           ...baseProps.state,
           devices: [
@@ -1289,15 +1237,12 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await userEvent.click(screen.getByTestId('projects-create-button'))
-    await userEvent.click(screen.getByTestId('project-clone-from-git-button'))
 
-    expect(screen.getByText('创建 Git 项目')).toBeInTheDocument()
-    expect(screen.getByTestId('git-repository-select')).toBeDisabled()
-    expect(screen.getByText('正在加载仓库...')).toBeInTheDocument()
+    expect(screen.getByText('新建项目')).toBeInTheDocument()
+    expect(screen.getByTestId('project-name-input')).toBeInTheDocument()
     expect(onRefreshDevices).toHaveBeenCalledTimes(1)
 
     resolveRefreshDevices?.()
-    resolveRepositories?.()
   })
 
   test('enables device upgrade from the sidebar project create dialog', async () => {
@@ -1327,7 +1272,6 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await userEvent.click(screen.getByTestId('projects-create-button'))
-    await userEvent.click(screen.getByTestId('project-start-from-scratch-button'))
     await userEvent.click(screen.getByTestId('project-folder-mode-create'))
 
     expect(screen.getByTestId('project-create-dialog')).toBeInTheDocument()
@@ -1343,23 +1287,24 @@ describe('DesktopWorkbenchLayout', () => {
     expect(onUpgradeDevice).toHaveBeenCalledWith('old-device')
   })
 
-  test('keeps project create menu open until clicking outside', async () => {
+  test('does not render a project create menu when opening the sidebar dialog', async () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
     await userEvent.click(screen.getByTestId('projects-create-button'))
-    expect(screen.getByTestId('project-start-from-scratch-button')).toBeInTheDocument()
+    expect(screen.getByTestId('project-create-dialog')).toBeInTheDocument()
+    expect(screen.queryByTestId('project-start-from-scratch-button')).not.toBeInTheDocument()
 
     fireEvent.pointerMove(document, { clientX: 500, clientY: 500 })
-    expect(screen.getByTestId('project-start-from-scratch-button')).toBeInTheDocument()
+    expect(screen.getByTestId('project-create-dialog')).toBeInTheDocument()
 
     await userEvent.hover(screen.getByTestId('project-row-1'))
-    expect(screen.getByTestId('project-start-from-scratch-button')).toBeInTheDocument()
+    expect(screen.getByTestId('project-create-dialog')).toBeInTheDocument()
 
     fireEvent.pointerDown(document.body)
-    expect(screen.queryByTestId('project-start-from-scratch-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('project-create-dialog')).toBeInTheDocument()
   })
 
-  test('renders project create menu as a body-level flyout to the right of the trigger', async () => {
+  test('does not render a body-level project create flyout', async () => {
     const getBoundingClientRectSpy = vi
       .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
       .mockImplementation(function () {
@@ -1391,10 +1336,8 @@ describe('DesktopWorkbenchLayout', () => {
       const trigger = screen.getByTestId('projects-create-button')
       await userEvent.click(trigger)
 
-      const menu = screen.getByTestId('projects-create-button-menu')
-      await waitFor(() => expect(menu).toHaveStyle({ left: '140px', top: '246px' }))
-      expect(document.body).toContainElement(menu)
-      expect(trigger.parentElement).not.toContainElement(menu)
+      expect(screen.getByTestId('project-create-dialog')).toBeInTheDocument()
+      expect(screen.queryByTestId('projects-create-button-menu')).not.toBeInTheDocument()
     } finally {
       getBoundingClientRectSpy.mockRestore()
     }
@@ -1404,7 +1347,6 @@ describe('DesktopWorkbenchLayout', () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
     await userEvent.click(screen.getByTestId('projects-create-button'))
-    await userEvent.click(screen.getByTestId('project-existing-folder-button'))
 
     const dialog = screen.getByTestId('project-create-dialog')
     const overlay = dialog.parentElement
@@ -1448,11 +1390,10 @@ describe('DesktopWorkbenchLayout', () => {
     ])
 
     await userEvent.click(addProjectOption)
-    expect(screen.getByTestId('create-project-submenu')).toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('project-start-from-scratch-option'))
 
     expect(onRefreshDevices).toHaveBeenCalledTimes(1)
     expect(screen.queryByTestId('project-work-menu')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('create-project-submenu')).not.toBeInTheDocument()
     expect(screen.getByTestId('project-create-dialog')).toBeInTheDocument()
     expect(screen.getByText('新建项目')).toBeInTheDocument()
     expect(screen.getByTestId('project-name-input')).toBeInTheDocument()
@@ -1465,7 +1406,6 @@ describe('DesktopWorkbenchLayout', () => {
     render(<DesktopWorkbenchLayout {...baseProps} onRefreshDevices={onRefreshDevices} />)
 
     await userEvent.click(screen.getByTestId('projects-create-button'))
-    await userEvent.click(screen.getByTestId('project-start-from-scratch-button'))
     await userEvent.click(screen.getByTestId('project-folder-mode-create'))
 
     expect(screen.getByTestId('project-create-dialog')).toBeInTheDocument()
@@ -1506,7 +1446,6 @@ describe('DesktopWorkbenchLayout', () => {
 
     await userEvent.click(screen.getByTestId('project-work-button'))
     await userEvent.click(screen.getByTestId('add-project-option'))
-    await userEvent.click(screen.getByTestId('project-start-from-scratch-option'))
     await userEvent.click(screen.getByTestId('project-folder-mode-create'))
     await userEvent.click(screen.getByTestId('open-cloud-device-settings-link'))
 
@@ -1562,7 +1501,8 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await userEvent.click(screen.getByTestId('projects-create-button'))
-    await userEvent.click(screen.getByTestId('project-existing-folder-button'))
+    await userEvent.type(screen.getByTestId('project-name-input'), 'repo')
+    await userEvent.click(screen.getByTestId('project-folder-mode-select'))
 
     await waitFor(() => expect(onGetDeviceHomeDirectory).toHaveBeenCalledWith('device-1'))
     await waitFor(() =>
@@ -1570,7 +1510,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
     expect(screen.queryByText('.cache')).not.toBeInTheDocument()
     expect(screen.queryByTestId('select-current-directory-button')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('project-name-input')).not.toBeInTheDocument()
+    expect(screen.getByTestId('project-name-input')).toHaveValue('repo')
 
     const repoEntry = await screen.findByText('repo')
     await userEvent.click(repoEntry)

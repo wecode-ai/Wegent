@@ -20,6 +20,8 @@ from app.schemas.runtime_work import (
     DeviceWorkspacePrepareResponse,
     DeviceWorkspaceResponse,
     DeviceWorkspaceUpsert,
+    RuntimeGlobalIMNotificationUpdateRequest,
+    RuntimeIMNotificationSettingsResponse,
     RuntimeSendRequest,
     RuntimeSendResponse,
     RuntimeTaskAddress,
@@ -28,6 +30,8 @@ from app.schemas.runtime_work import (
     RuntimeTaskCreateResponse,
     RuntimeTaskForkRequest,
     RuntimeTaskForkResponse,
+    RuntimeTaskIMNotificationSubscriptionRequest,
+    RuntimeTaskIMNotificationSubscriptionResponse,
     RuntimeTranscriptResponse,
     RuntimeWorkListResponse,
 )
@@ -189,6 +193,94 @@ async def bind_runtime_task_im_sessions_endpoint(
         db=db,
         user_id=current_user.id,
         request=request,
+    )
+
+
+@router.get(
+    "/im-notifications",
+    response_model=RuntimeIMNotificationSettingsResponse,
+    response_model_by_alias=True,
+)
+@trace_async("runtime_work.im_notifications.get", "runtime_work.api")
+async def get_im_notification_settings_endpoint(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Read global and task-level IM notification settings."""
+
+    set_span_attribute("user.id", current_user.id)
+    return await runtime_work_service.get_im_notification_settings(
+        db=db,
+        user_id=current_user.id,
+    )
+
+
+@router.put(
+    "/im-notifications/global",
+    response_model=RuntimeIMNotificationSettingsResponse,
+    response_model_by_alias=True,
+)
+@trace_async("runtime_work.im_notifications.global.update", "runtime_work.api")
+async def update_global_im_notification_endpoint(
+    request: RuntimeGlobalIMNotificationUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Update the user-level IM notification quick switch."""
+
+    set_span_attribute("user.id", current_user.id)
+    set_span_attribute("runtime.im_notifications.global.enabled", request.enabled)
+    return await runtime_work_service.update_global_im_notification(
+        db=db,
+        user_id=current_user.id,
+        request=request,
+    )
+
+
+@router.put(
+    "/im-notifications/runtime-task",
+    response_model=RuntimeTaskIMNotificationSubscriptionResponse,
+    response_model_by_alias=True,
+)
+@trace_async("runtime_work.im_notifications.runtime_task.subscribe", "runtime_work.api")
+async def subscribe_runtime_task_im_notification_endpoint(
+    request: RuntimeTaskIMNotificationSubscriptionRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Subscribe a runtime LocalTask to private IM notifications."""
+
+    set_span_attribute("user.id", current_user.id)
+    set_span_attribute("runtime.device_id", request.address.device_id)
+    set_span_attribute("runtime.local_task_id", request.address.local_task_id)
+    set_span_attribute("runtime.im_session_count", len(request.session_keys))
+    return await runtime_work_service.subscribe_runtime_task_im_notification(
+        db=db,
+        user_id=current_user.id,
+        request=request,
+    )
+
+
+@router.post(
+    "/im-notifications/runtime-task/unsubscribe",
+    response_model=RuntimeTaskIMNotificationSubscriptionResponse,
+    response_model_by_alias=True,
+)
+@trace_async("runtime_work.im_notifications.runtime_task.unsubscribe", "runtime_work.api")
+async def unsubscribe_runtime_task_im_notification_endpoint(
+    address: RuntimeTaskAddress,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Remove runtime LocalTask private IM notification subscriptions."""
+
+    set_span_attribute("user.id", current_user.id)
+    set_span_attribute("runtime.device_id", address.device_id)
+    set_span_attribute("runtime.local_task_id", address.local_task_id)
+    return await runtime_work_service.unsubscribe_runtime_task_im_notification(
+        db=db,
+        user_id=current_user.id,
+        address=address,
     )
 
 

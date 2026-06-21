@@ -34,6 +34,10 @@ import type {
   ProjectWithTasks,
   RuntimeTaskAddress,
   RuntimeTaskForkTarget,
+  RuntimeGlobalIMNotificationUpdateRequest,
+  RuntimeIMNotificationSettingsResponse,
+  RuntimeTaskIMNotificationSubscriptionRequest,
+  RuntimeTaskIMNotificationSubscriptionResponse,
   TurnFileChangesSummary,
 } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
@@ -117,6 +121,16 @@ interface MobileWorkbenchLayoutProps {
     address: RuntimeTaskAddress,
     sessionKeys: string[]
   ) => Promise<BindRuntimeTaskIMSessionsResponse>
+  onGetImNotificationSettings?: () => Promise<RuntimeIMNotificationSettingsResponse>
+  onUpdateGlobalImNotification?: (
+    data: RuntimeGlobalIMNotificationUpdateRequest
+  ) => Promise<RuntimeIMNotificationSettingsResponse>
+  onSubscribeRuntimeTaskNotifications?: (
+    data: RuntimeTaskIMNotificationSubscriptionRequest
+  ) => Promise<RuntimeTaskIMNotificationSubscriptionResponse>
+  onUnsubscribeRuntimeTaskNotifications?: (
+    address: RuntimeTaskAddress
+  ) => Promise<RuntimeTaskIMNotificationSubscriptionResponse>
   onUpgradeDevice?: (deviceId: string) => Promise<void>
   onInputChange: (value: string) => void
   onSend: () => void

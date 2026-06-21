@@ -23,6 +23,10 @@ import type {
   ProjectWithTasks,
   RuntimeTaskAddress,
   RuntimeTaskForkTarget,
+  RuntimeGlobalIMNotificationUpdateRequest,
+  RuntimeIMNotificationSettingsResponse,
+  RuntimeTaskIMNotificationSubscriptionRequest,
+  RuntimeTaskIMNotificationSubscriptionResponse,
   TurnFileChangesSummary,
 } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
@@ -72,6 +76,16 @@ interface DesktopWorkbenchLayoutProps {
     address: RuntimeTaskAddress,
     sessionKeys: string[]
   ) => Promise<BindRuntimeTaskIMSessionsResponse>
+  onGetImNotificationSettings?: () => Promise<RuntimeIMNotificationSettingsResponse>
+  onUpdateGlobalImNotification?: (
+    data: RuntimeGlobalIMNotificationUpdateRequest
+  ) => Promise<RuntimeIMNotificationSettingsResponse>
+  onSubscribeRuntimeTaskNotifications?: (
+    data: RuntimeTaskIMNotificationSubscriptionRequest
+  ) => Promise<RuntimeTaskIMNotificationSubscriptionResponse>
+  onUnsubscribeRuntimeTaskNotifications?: (
+    address: RuntimeTaskAddress
+  ) => Promise<RuntimeTaskIMNotificationSubscriptionResponse>
   onCreateProject: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
   onCreateGitWorkspaceProject: (data: CreateGitWorkspaceProjectRequest) => Promise<ProjectWithTasks>
   onPrepareDeviceWorkspace: (
@@ -129,6 +143,8 @@ interface DesktopWorkbenchLayoutProps {
   onLogout: () => void
 }
 
+type ImNotificationDialogMode = { type: 'global' } | { type: 'task'; address: RuntimeTaskAddress }
+
 export function DesktopWorkbenchLayout({
   state,
   messages,
@@ -151,6 +167,10 @@ export function DesktopWorkbenchLayout({
   onUpgradeDevice = async () => {},
   onListImPrivateSessions,
   onBindRuntimeTaskToImSessions,
+  onGetImNotificationSettings,
+  onUpdateGlobalImNotification,
+  onSubscribeRuntimeTaskNotifications,
+  onUnsubscribeRuntimeTaskNotifications,
   onCreateProject,
   onCreateGitWorkspaceProject,
   onPrepareDeviceWorkspace,
@@ -200,6 +220,10 @@ export function DesktopWorkbenchLayout({
   const [workspaceTargetError, setWorkspaceTargetError] = useState<string | null>(null)
   const [workspaceTargetResolving, setWorkspaceTargetResolving] = useState(false)
   const [continueInImOpen, setContinueInImOpen] = useState(false)
+  const [imNotificationDialogMode, setImNotificationDialogMode] =
+    useState<ImNotificationDialogMode | null>(null)
+  const [imNotificationSettings, setImNotificationSettings] =
+    useState<RuntimeIMNotificationSettingsResponse | null>(null)
   const [imSessions, setImSessions] = useState<IMPrivateSession[]>([])
   const [imSessionsLoading, setImSessionsLoading] = useState(false)
   const [imSessionsSubmitting, setImSessionsSubmitting] = useState(false)
@@ -412,12 +436,9 @@ export function DesktopWorkbenchLayout({
     [onRefreshDevices]
   )
 
-  const openContinueInImDialog = useCallback(() => {
-    if (!state.currentRuntimeTask) return
-
+  const loadImSessionsForDialog = useCallback(() => {
     const requestId = imSessionsRequestSequence.current + 1
     imSessionsRequestSequence.current = requestId
-    setContinueInImOpen(true)
     setImSessionsLoading(true)
     setImSessions([])
     void (onListImPrivateSessions?.() ?? Promise.resolve({ total: 0, items: [] }))
@@ -437,11 +458,49 @@ export function DesktopWorkbenchLayout({
           setImSessionsLoading(false)
         }
       })
-  }, [onListImPrivateSessions, state.currentRuntimeTask, t])
+  }, [onListImPrivateSessions, t])
+
+  const refreshImNotificationSettings = useCallback(async () => {
+    if (!onGetImNotificationSettings) {
+      setImNotificationSettings(null)
+      return null
+    }
+
+    const settings = await onGetImNotificationSettings()
+    setImNotificationSettings(settings)
+    return settings
+  }, [onGetImNotificationSettings])
+
+  useEffect(() => {
+    void refreshImNotificationSettings().catch(() => undefined)
+  }, [refreshImNotificationSettings])
+
+  const openContinueInImDialog = useCallback(() => {
+    if (!state.currentRuntimeTask) return
+
+    setImNotificationDialogMode(null)
+    setContinueInImOpen(true)
+    loadImSessionsForDialog()
+  }, [loadImSessionsForDialog, state.currentRuntimeTask])
+
+  const openImNotificationTargetDialog = useCallback(
+    (mode: ImNotificationDialogMode) => {
+      setContinueInImOpen(false)
+      setImNotificationDialogMode(mode)
+      loadImSessionsForDialog()
+    },
+    [loadImSessionsForDialog]
+  )
 
   const closeContinueInImDialog = useCallback(() => {
     imSessionsRequestSequence.current += 1
     setContinueInImOpen(false)
+    setImSessionsLoading(false)
+  }, [])
+
+  const closeImNotificationDialog = useCallback(() => {
+    imSessionsRequestSequence.current += 1
+    setImNotificationDialogMode(null)
     setImSessionsLoading(false)
   }, [])
 
@@ -464,6 +523,139 @@ export function DesktopWorkbenchLayout({
       }
     },
     [onBindRuntimeTaskToImSessions, state.currentRuntimeTask, t]
+  )
+
+  const toggleGlobalImNotification = useCallback(async () => {
+    if (!onUpdateGlobalImNotification) return
+
+    const currentSettings = imNotificationSettings
+    if (currentSettings?.global.enabled) {
+      try {
+        const settings = await onUpdateGlobalImNotification({
+          enabled: false,
+          sessionKey: currentSettings.global.sessionKey ?? undefined,
+        })
+        setImNotificationSettings(settings)
+      } catch {
+        setNotice({
+          message: t('workbench.im_notification_update_failed', 'IM 通知设置失败'),
+          tone: 'error',
+        })
+      }
+      return
+    }
+
+    if (currentSettings?.global.sessionKey) {
+      try {
+        const settings = await onUpdateGlobalImNotification({
+          enabled: true,
+          sessionKey: currentSettings.global.sessionKey,
+        })
+        setImNotificationSettings(settings)
+      } catch {
+        setNotice({
+          message: t('workbench.im_notification_update_failed', 'IM 通知设置失败'),
+          tone: 'error',
+        })
+      }
+      return
+    }
+
+    openImNotificationTargetDialog({ type: 'global' })
+  }, [imNotificationSettings, onUpdateGlobalImNotification, openImNotificationTargetDialog, t])
+
+  const toggleRuntimeTaskNotification = useCallback(
+    async (address: RuntimeTaskAddress, subscribed: boolean) => {
+      if (subscribed) {
+        if (!onUnsubscribeRuntimeTaskNotifications) return
+        try {
+          await onUnsubscribeRuntimeTaskNotifications(address)
+          await refreshImNotificationSettings()
+        } catch {
+          setNotice({
+            message: t('workbench.im_notification_update_failed', 'IM 通知设置失败'),
+            tone: 'error',
+          })
+        }
+        return
+      }
+
+      openImNotificationTargetDialog({ type: 'task', address })
+    },
+    [
+      onUnsubscribeRuntimeTaskNotifications,
+      openImNotificationTargetDialog,
+      refreshImNotificationSettings,
+      t,
+    ]
+  )
+
+  const notificationDefaultSessionKeys = useMemo(() => {
+    if (!imNotificationDialogMode || !imNotificationSettings) return []
+    if (imNotificationDialogMode.type === 'global') {
+      return imNotificationSettings.global.sessionKey
+        ? [imNotificationSettings.global.sessionKey]
+        : []
+    }
+
+    const taskKey = `${imNotificationDialogMode.address.deviceId}\0${imNotificationDialogMode.address.localTaskId}`
+    const subscription = imNotificationSettings.runtimeTaskSubscriptions.find(
+      item => `${item.address.deviceId}\0${item.address.localTaskId}` === taskKey
+    )
+    if (subscription?.sessionKeys.length) {
+      return subscription.sessionKeys
+    }
+    return imNotificationSettings.global.sessionKey
+      ? [imNotificationSettings.global.sessionKey]
+      : []
+  }, [imNotificationDialogMode, imNotificationSettings])
+
+  const submitImNotificationTarget = useCallback(
+    async (sessionKeys: string[]) => {
+      if (!imNotificationDialogMode || sessionKeys.length === 0) return
+
+      setImSessionsSubmitting(true)
+      try {
+        if (imNotificationDialogMode.type === 'global') {
+          if (!onUpdateGlobalImNotification) {
+            throw new Error('Global IM notification handler is not available')
+          }
+          const settings = await onUpdateGlobalImNotification({
+            enabled: true,
+            sessionKey: sessionKeys[0],
+          })
+          setImNotificationSettings(settings)
+        } else {
+          if (!onSubscribeRuntimeTaskNotifications) {
+            throw new Error('Runtime task IM notification handler is not available')
+          }
+          await onSubscribeRuntimeTaskNotifications({
+            address: imNotificationDialogMode.address,
+            sessionKeys,
+          })
+          await refreshImNotificationSettings()
+        }
+        setImNotificationDialogMode(null)
+        setNotice({
+          message: t('workbench.im_notification_update_success', 'IM 通知已更新'),
+          tone: 'success',
+        })
+      } catch {
+        setNotice({
+          message: t('workbench.im_notification_update_failed', 'IM 通知设置失败'),
+          tone: 'error',
+        })
+      } finally {
+        setImSessionsSubmitting(false)
+      }
+    },
+    [
+      imNotificationDialogMode,
+      onSubscribeRuntimeTaskNotifications,
+      onUpdateGlobalImNotification,
+      refreshImNotificationSettings,
+      t,
+    ]
   )
 
   const projectWorkWithCreation: ProjectWorkControls = {
@@ -494,6 +686,7 @@ export function DesktopWorkbenchLayout({
           devices={state.devices}
           runtimeWork={state.runtimeWork}
           currentRuntimeTask={state.currentRuntimeTask}
+          imNotificationSettings={imNotificationSettings}
           preferredDeviceId={
             state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
           }
@@ -505,6 +698,11 @@ export function DesktopWorkbenchLayout({
           onStartNewProjectChat={onStartNewProjectChat}
           onOpenRuntimeLocalTask={onOpenRuntimeLocalTask}
           onArchiveRuntimeLocalTask={onArchiveRuntimeLocalTask}
+          onToggleRuntimeTaskNotification={toggleRuntimeTaskNotification}
+          onToggleGlobalImNotification={toggleGlobalImNotification}
+          onOpenGlobalImNotificationSettings={() =>
+            openImNotificationTargetDialog({ type: 'global' })
+          }
           onRememberExecutionDevice={onRememberExecutionDevice}
           onOpenPlugins={onOpenPlugins}
           onRefreshDevices={onRefreshDevices}
@@ -642,6 +840,31 @@ export function DesktopWorkbenchLayout({
         sessions={imSessions}
         onClose={closeContinueInImDialog}
         onSubmit={submitContinueInIm}
+      />
+      <ContinueInImDialog
+        key={
+          imNotificationDialogMode
+            ? `im-notification-${imNotificationDialogMode.type}`
+            : 'im-notification-closed'
+        }
+        open={imNotificationDialogMode !== null}
+        loading={imSessionsLoading}
+        submitting={imSessionsSubmitting}
+        sessions={imSessions}
+        title={
+          imNotificationDialogMode?.type === 'global'
+            ? t('workbench.global_im_notifications_title', '全局 IM 通知')
+            : t('workbench.runtime_task_im_notifications_title', '订阅任务通知')
+        }
+        emptyGuide={t(
+          'workbench.im_notifications_empty_guide',
+          '还没有可用的 IM 会话，请先从 IM 给 Wegent 发送一条消息。'
+        )}
+        submitLabel={t('workbench.save', '保存')}
+        allowMultiple={imNotificationDialogMode?.type !== 'global'}
+        defaultSelectedSessionKeys={notificationDefaultSessionKeys}
+        onClose={closeImNotificationDialog}
+        onSubmit={submitImNotificationTarget}
       />
       <TransientNotice
         message={notice?.message ?? null}

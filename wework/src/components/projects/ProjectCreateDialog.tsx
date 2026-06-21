@@ -32,6 +32,7 @@ interface ProjectCreateDialogProps {
   open: boolean
   mode: ProjectCreateMode
   presentation?: 'dialog' | 'mobileSheet'
+  project?: ProjectWithTasks | null
   devices: DeviceInfo[]
   onClose: () => void
   onCreateProject: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
@@ -203,6 +204,7 @@ export function ProjectCreateDialog({
   open,
   mode,
   presentation = 'dialog',
+  project,
   devices = [],
   onClose,
   onCreateProject,
@@ -223,9 +225,10 @@ export function ProjectCreateDialog({
 
   return (
     <ProjectCreateDialogContent
-      key={`${mode}:${getDefaultDeviceId(getProjectDeviceOptions(devices))}`}
+      key={`${project?.id ?? 'new'}:${mode}:${getDefaultDeviceId(getProjectDeviceOptions(devices))}`}
       mode={mode}
       presentation={presentation}
+      project={project}
       devices={devices}
       onClose={onClose}
       onCreateProject={onCreateProject}
@@ -253,6 +256,7 @@ type ProjectCreateDialogContentProps = Omit<
 function ProjectCreateDialogContent({
   mode,
   presentation = 'dialog',
+  project,
   devices,
   onClose,
   onCreateProject,
@@ -270,6 +274,7 @@ function ProjectCreateDialogContent({
   onListGitBranches,
 }: ProjectCreateDialogContentProps) {
   const { t } = useTranslation('common')
+  const editingProject = project ?? null
   const allProjectDevices = useMemo(() => getProjectDeviceOptions(devices), [devices])
   const firstDeviceId = useMemo(
     () => getDefaultDeviceId(allProjectDevices, preferredDeviceId),
@@ -277,7 +282,7 @@ function ProjectCreateDialogContent({
   )
   const [deviceId, setDeviceId] = useState(firstDeviceId)
   const [folderMode, setFolderMode] = useState<ProjectFolderMode>(
-    mode === 'existing' ? 'select' : 'none'
+    editingProject || mode === 'existing' ? 'select' : 'none'
   )
   const [projectName, setProjectName] = useState('')
   const [projectRoot, setProjectRoot] = useState(FALLBACK_PROJECTS_ROOT)
@@ -304,7 +309,7 @@ function ProjectCreateDialogContent({
   const [projectCreateError, setProjectCreateError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
-  const requiresDevice = folderMode !== 'none'
+  const requiresDevice = Boolean(editingProject) || folderMode !== 'none'
   const showDeviceSelect = requiresDevice && allProjectDevices.length > 1
   const selectedDevice = allProjectDevices.find(device => device.device_id === deviceId)
   const selectedDeviceUsable = Boolean(selectedDevice && canUseForProjectCreation(selectedDevice))
@@ -483,13 +488,15 @@ function ProjectCreateDialogContent({
   }, [mode, onListGitBranches, selectedRepo, t])
 
   const gitProjectName = getGitProjectName(selectedRepo)
-  const defaultFolderName = mode === 'git' ? gitProjectName : projectName.trim()
+  const defaultFolderName =
+    mode === 'git' ? gitProjectName : (editingProject?.name ?? projectName.trim())
   const createFolderPath = useMemo(
     () => joinPath(projectRoot, sanitizePathSegment(defaultFolderName)),
     [defaultFolderName, projectRoot]
   )
-  const finalProjectName =
-    mode === 'scratch'
+  const finalProjectName = editingProject
+    ? editingProject.name
+    : mode === 'scratch'
       ? projectName.trim()
       : mode === 'git'
         ? gitProjectName
@@ -500,8 +507,11 @@ function ProjectCreateDialogContent({
       : folderMode === 'select' && !directoryQuery
         ? selectedPath
         : ''
-  const hasProjectIdentity =
-    mode === 'git' ? Boolean(selectedRepo && selectedBranch) : Boolean(finalProjectName)
+  const hasProjectIdentity = editingProject
+    ? true
+    : mode === 'git'
+      ? Boolean(selectedRepo && selectedBranch)
+      : Boolean(finalProjectName)
   const canCreate =
     hasProjectIdentity &&
     (!requiresDevice || Boolean(deviceId && selectedDeviceUsable && finalPath))
@@ -631,14 +641,19 @@ function ProjectCreateDialogContent({
 
   useEscapeKey(onClose, !submitting)
 
-  const title =
-    mode === 'git'
+  const title = editingProject
+    ? t('workbench.project_edit_title', '编辑项目')
+    : mode === 'git'
       ? t('workbench.project_create_git_title', '创建 Git 项目')
       : mode === 'existing'
         ? t('workbench.project_create_existing_title', '选择项目目录')
         : t('workbench.project_create_title', '新建项目')
-  const submittingLabel = t('workbench.project_creating', '创建中...')
-  const submittingHint = t('workbench.project_create_progress', '正在创建项目，请稍候')
+  const submittingLabel = editingProject
+    ? t('workbench.project_saving', '保存中...')
+    : t('workbench.project_creating', '创建中...')
+  const submittingHint = editingProject
+    ? t('workbench.project_edit_progress', '正在保存项目，请稍候')
+    : t('workbench.project_create_progress', '正在创建项目，请稍候')
   const isMobileSheet = presentation === 'mobileSheet'
   const getDeviceOptionLabel = (device: DeviceInfo) => {
     const statusLabel = isDeviceBelowWeWorkVersion(device)
@@ -825,7 +840,7 @@ function ProjectCreateDialogContent({
           </button>
         </div>
 
-        {mode === 'scratch' ? (
+        {!editingProject && mode === 'scratch' ? (
           <>
             <label className="mt-5 block text-[13px] font-semibold text-[#202124]">
               {t('workbench.project_name', '项目名称')}
@@ -909,18 +924,23 @@ function ProjectCreateDialogContent({
           </>
         ) : null}
 
-        {mode !== 'existing' && (
+        {(editingProject || mode !== 'existing') && (
           <div className="mt-6">
             <label className="block text-[13px] font-semibold text-[#202124]">
               {t('workbench.project_folder_section', '项目文件夹')}
             </label>
             <div className="mt-2 grid grid-cols-3 gap-2">
               {(
-                [
-                  ['none', t('workbench.project_folder_none', '不选择文件夹')],
-                  ['create', t('workbench.project_folder_create', '新建文件夹')],
-                  ['select', t('workbench.project_folder_select', '选择已有文件夹')],
-                ] as const
+                (editingProject
+                  ? [
+                      ['create', t('workbench.project_folder_create', '新建文件夹')],
+                      ['select', t('workbench.project_folder_select', '选择已有文件夹')],
+                    ]
+                  : [
+                      ['none', t('workbench.project_folder_none', '不选择文件夹')],
+                      ['create', t('workbench.project_folder_create', '新建文件夹')],
+                      ['select', t('workbench.project_folder_select', '选择已有文件夹')],
+                    ]) as [ProjectFolderMode, string][]
               ).map(([value, label]) => (
                 <button
                   key={value}
@@ -1173,25 +1193,27 @@ function ProjectCreateDialogContent({
               setSubmitting(true)
               setProjectCreateError(null)
               try {
-                const project = await onCreateProject({
-                  name: finalProjectName,
-                  description: '',
-                  config:
-                    mode === 'git' && selectedRepo && selectedBranch
-                      ? {
-                          mode: 'workspace',
-                          git: {
-                            url: selectedRepo.git_url,
-                            repo: selectedRepo.git_repo,
-                            repoId: selectedRepo.git_repo_id,
-                            domain: selectedRepo.git_domain,
-                            branch: selectedBranch.name,
-                          },
-                        }
-                      : {
-                          mode: 'workspace',
-                        },
-                })
+                const project = editingProject
+                  ? editingProject
+                  : await onCreateProject({
+                      name: finalProjectName,
+                      description: '',
+                      config:
+                        mode === 'git' && selectedRepo && selectedBranch
+                          ? {
+                              mode: 'workspace',
+                              git: {
+                                url: selectedRepo.git_url,
+                                repo: selectedRepo.git_repo,
+                                repoId: selectedRepo.git_repo_id,
+                                domain: selectedRepo.git_domain,
+                                branch: selectedBranch.name,
+                              },
+                            }
+                          : {
+                              mode: 'workspace',
+                            },
+                    })
                 if (requiresDevice) {
                   if (!onPrepareDeviceWorkspace) {
                     throw new Error(t('workbench.project_create_failed', '项目创建失败'))
@@ -1227,7 +1249,11 @@ function ProjectCreateDialogContent({
             {submitting && (
               <Loader2 data-testid="project-submit-spinner" className="h-4 w-4 animate-spin" />
             )}
-            {submitting ? submittingLabel : t('workbench.create_project', '创建项目')}
+            {submitting
+              ? submittingLabel
+              : editingProject
+                ? t('workbench.save', '保存')
+                : t('workbench.create_project', '创建项目')}
           </button>
         </div>
       </div>

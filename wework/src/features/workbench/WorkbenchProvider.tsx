@@ -72,6 +72,10 @@ import type {
   RuntimeTaskAddress,
   RuntimeTaskCreateRequest,
   RuntimeTaskForkTarget,
+  RuntimeGlobalIMNotificationUpdateRequest,
+  RuntimeIMNotificationSettingsResponse,
+  RuntimeTaskIMNotificationSubscriptionRequest,
+  RuntimeTaskIMNotificationSubscriptionResponse,
   RuntimeWorkListResponse,
   SkillRef,
   Subtask,
@@ -292,6 +296,16 @@ export interface WorkbenchContextValue {
     address: RuntimeTaskAddress,
     sessionKeys: string[]
   ) => Promise<BindRuntimeTaskIMSessionsResponse>
+  getImNotificationSettings: () => Promise<RuntimeIMNotificationSettingsResponse>
+  updateGlobalImNotification: (
+    data: RuntimeGlobalIMNotificationUpdateRequest
+  ) => Promise<RuntimeIMNotificationSettingsResponse>
+  subscribeRuntimeTaskNotifications: (
+    data: RuntimeTaskIMNotificationSubscriptionRequest
+  ) => Promise<RuntimeTaskIMNotificationSubscriptionResponse>
+  unsubscribeRuntimeTaskNotifications: (
+    address: RuntimeTaskAddress
+  ) => Promise<RuntimeTaskIMNotificationSubscriptionResponse>
   rememberExecutionDevice: (deviceId: string) => void
   refreshWorkLists: () => Promise<void>
   refreshDevices: () => Promise<void>
@@ -1958,6 +1972,43 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     [resolvedServices]
   )
 
+  const getImNotificationSettings = useCallback(() => {
+    if (!resolvedServices.runtimeWorkApi) {
+      return Promise.reject(new Error('Runtime work API is unavailable'))
+    }
+    return resolvedServices.runtimeWorkApi.getImNotificationSettings()
+  }, [resolvedServices])
+
+  const updateGlobalImNotification = useCallback(
+    (data: RuntimeGlobalIMNotificationUpdateRequest) => {
+      if (!resolvedServices.runtimeWorkApi) {
+        return Promise.reject(new Error('Runtime work API is unavailable'))
+      }
+      return resolvedServices.runtimeWorkApi.updateGlobalImNotification(data)
+    },
+    [resolvedServices]
+  )
+
+  const subscribeRuntimeTaskNotifications = useCallback(
+    (data: RuntimeTaskIMNotificationSubscriptionRequest) => {
+      if (!resolvedServices.runtimeWorkApi) {
+        return Promise.reject(new Error('Runtime work API is unavailable'))
+      }
+      return resolvedServices.runtimeWorkApi.subscribeRuntimeTaskNotifications(data)
+    },
+    [resolvedServices]
+  )
+
+  const unsubscribeRuntimeTaskNotifications = useCallback(
+    (address: RuntimeTaskAddress) => {
+      if (!resolvedServices.runtimeWorkApi) {
+        return Promise.reject(new Error('Runtime work API is unavailable'))
+      }
+      return resolvedServices.runtimeWorkApi.unsubscribeRuntimeTaskNotifications(address)
+    },
+    [resolvedServices]
+  )
+
   useEffect(() => {
     if (state.isBootstrapping) return
     const taskId = readTaskIdFromUrl()
@@ -2957,6 +3008,10 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     forkCurrentRuntimeTask,
     listImPrivateSessions,
     bindRuntimeTaskToImSessions,
+    getImNotificationSettings,
+    updateGlobalImNotification,
+    subscribeRuntimeTaskNotifications,
+    unsubscribeRuntimeTaskNotifications,
     rememberExecutionDevice,
     refreshWorkLists,
     refreshDevices,
