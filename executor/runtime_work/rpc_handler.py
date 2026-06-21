@@ -400,7 +400,10 @@ class RuntimeWorkRpcHandler:
     ) -> list[dict[str, Any]]:
         if self._is_sdk_codex_task(task):
             codex_messages = self._codex_session_messages(task)
-            return codex_messages or []
+            if codex_messages:
+                return codex_messages
+            if self._has_explicit_codex_thread(task):
+                return []
 
         adapter = self.adapters.get(task.runtime)
         if adapter and hasattr(adapter, "get_transcript"):
@@ -592,6 +595,10 @@ class RuntimeWorkRpcHandler:
         if isinstance(task.runtime_handle.get("executionRequest"), dict):
             return False
         thread_id = task.runtime_handle.get("threadId") or task.local_task_id
+        return isinstance(thread_id, str) and bool(thread_id.strip())
+
+    def _has_explicit_codex_thread(self, task: LocalTaskRecord) -> bool:
+        thread_id = task.runtime_handle.get("threadId")
         return isinstance(thread_id, str) and bool(thread_id.strip())
 
     async def _archive(self, payload: dict[str, Any]) -> dict[str, Any]:

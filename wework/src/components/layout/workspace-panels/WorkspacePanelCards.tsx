@@ -105,6 +105,7 @@ export function WorkspacePanelCards({
     message: null,
   })
   const projectDeviceId = getProjectDeviceId(currentProject)
+  const workspaceSource = workspaceTarget?.source
   const activeWorkspaceDeviceId = workspaceTarget?.deviceId ?? projectDeviceId
   const activeWorkspacePath =
     workspaceTarget?.path ?? (currentProject ? getProjectLocalPath(currentProject) : undefined)
@@ -264,7 +265,7 @@ export function WorkspacePanelCards({
         return
       }
 
-      if (workspaceTarget?.source === 'runtime' && activeWorkspaceDeviceId && activeWorkspacePath) {
+      if (workspaceSource === 'runtime' && activeWorkspaceDeviceId && activeWorkspacePath) {
         const session = await createDeviceSessionApi().startTerminal(
           activeWorkspaceDeviceId,
           activeWorkspacePath
@@ -318,7 +319,7 @@ export function WorkspacePanelCards({
     localTerminalAvailable,
     markToolUnavailable,
     setProjectError,
-    workspaceTarget?.source,
+    workspaceSource,
   ])
 
   useEffect(() => {
