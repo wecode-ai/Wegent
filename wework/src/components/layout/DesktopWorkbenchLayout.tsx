@@ -11,15 +11,15 @@ import type {
   ProjectWorkControls,
 } from '@/components/chat/ChatInput'
 import type {
-  ArchivedTaskListResponse,
+  BindRuntimeTaskIMSessionsResponse,
   CreateGitWorkspaceProjectRequest,
   CreateProjectRequest,
   GitBranch,
   GitRepoInfo,
+  IMPrivateSession,
+  IMPrivateSessionListResponse,
   ProjectWithTasks,
-  TaskDetail,
-  TaskForkRequest,
-  TaskListResponse,
+  RuntimeTaskAddress,
   TurnFileChangesSummary,
 } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
@@ -31,10 +31,13 @@ import { resolveWorkspaceTarget, workspaceTargetKey } from '@/lib/workspace-targ
 import { findProjectForTask } from '@/lib/workbench-device'
 import { DesktopSidebar } from './DesktopSidebar'
 import { ProjectCreateDialog } from '@/components/projects/ProjectCreateDialog'
+import { ContinueInImDialog } from '@/components/chat/ContinueInImDialog'
+import { TransientNotice } from '@/components/common/TransientNotice'
 import { DesktopWorkbenchMain } from './DesktopWorkbenchMain'
 import { DesktopWindowControls } from './DesktopWindowControls'
 import { useDesktopSidebarCollapsed } from './useDesktopSidebarCollapsed'
 import { ConnectionsSettingsPage } from '@/components/settings/ConnectionsSettingsPage'
+import { useTranslation } from '@/hooks/useTranslation'
 
 interface DesktopWorkbenchLayoutProps {
   state: WorkbenchState
@@ -42,7 +45,6 @@ interface DesktopWorkbenchLayoutProps {
   queuedMessages?: QueuedWorkbenchMessage[]
   guidanceMessages?: GuidanceWorkbenchMessage[]
   codeCommentContexts?: CodeCommentContext[]
-  runningTaskIds: Set<number>
   upgradingDevices?: Record<string, DeviceUpgradeState>
   activeItem?: 'chat' | 'plugins' | 'automation'
   onNewChat: () => void
@@ -52,27 +54,22 @@ interface DesktopWorkbenchLayoutProps {
   projectWork: ProjectWorkControls
   onSelectProject: (projectId: number | null) => void
   onStartNewProjectChat: (projectId: number) => void
-  onOpenTask: (taskId: number, projectId?: number) => void
-  onSearchTasks?: (query: string) => Promise<TaskListResponse>
-  onSearchTaskDetail?: (taskId: number) => Promise<TaskDetail>
+  onOpenRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void>
+  onArchiveRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void>
   onRememberExecutionDevice?: (deviceId: string) => void
   onRefreshDevices?: () => Promise<void>
   onUpgradeDevice?: (deviceId: string) => Promise<void>
+  onListImPrivateSessions?: () => Promise<IMPrivateSessionListResponse>
+  onBindRuntimeTaskToImSessions?: (
+    address: RuntimeTaskAddress,
+    sessionKeys: string[]
+  ) => Promise<BindRuntimeTaskIMSessionsResponse>
   onCreateProject: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
   onCreateGitWorkspaceProject: (data: CreateGitWorkspaceProjectRequest) => Promise<ProjectWithTasks>
   onListGitRepositories: () => Promise<GitRepoInfo[]>
   onListGitBranches: (repo: GitRepoInfo) => Promise<GitBranch[]>
   onUpdateProjectName: (projectId: number, name: string) => Promise<void>
   onRemoveProject: (projectId: number) => Promise<void>
-  onArchiveAllChats: () => Promise<void>
-  onArchiveAllProjectChats: () => Promise<void>
-  onArchiveProjectChats: (projectId: number) => Promise<void>
-  onArchiveTask: (taskId: number) => Promise<void>
-  onRenameTask: (taskId: number, title: string) => Promise<void>
-  onListArchivedTasks: () => Promise<ArchivedTaskListResponse>
-  onUnarchiveTask: (taskId: number) => Promise<void>
-  onDeleteTask: (taskId: number) => Promise<void>
-  onDeleteArchivedTasks: () => Promise<void>
   onGetDeviceHomeDirectory: (deviceId: string) => Promise<string>
   onGetProjectWorkspaceRoot: (deviceId: string) => Promise<string>
   onListDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
@@ -109,7 +106,6 @@ interface DesktopWorkbenchLayoutProps {
   onRetryFailedMessage?: (messageId: string) => void
   isResponseStreaming?: boolean
   onPauseResponse?: () => void
-  onForkCurrentTask?: (request: TaskForkRequest) => Promise<unknown>
   onCancelQueuedMessage?: (id: string) => void
   onSendQueuedAsGuidance?: (id: string) => void
   onEditQueuedMessage?: (id: string) => void
@@ -128,37 +124,27 @@ export function DesktopWorkbenchLayout({
   queuedMessages = [],
   guidanceMessages = [],
   codeCommentContexts = [],
-  runningTaskIds,
   upgradingDevices = {},
   activeItem = 'chat',
   onNewChat,
-  onStartStandaloneChat,
   onOpenPlugins,
   projectChat,
   projectWork,
   onSelectProject,
   onStartNewProjectChat,
-  onOpenTask,
-  onSearchTasks,
-  onSearchTaskDetail,
+  onOpenRuntimeLocalTask,
+  onArchiveRuntimeLocalTask,
   onRememberExecutionDevice,
   onRefreshDevices,
   onUpgradeDevice = async () => {},
+  onListImPrivateSessions,
+  onBindRuntimeTaskToImSessions,
   onCreateProject,
   onCreateGitWorkspaceProject,
   onListGitRepositories,
   onListGitBranches,
   onUpdateProjectName,
   onRemoveProject,
-  onArchiveAllChats,
-  onArchiveAllProjectChats,
-  onArchiveProjectChats,
-  onArchiveTask,
-  onRenameTask,
-  onListArchivedTasks,
-  onUnarchiveTask,
-  onDeleteTask,
-  onDeleteArchivedTasks,
   onGetDeviceHomeDirectory,
   onGetProjectWorkspaceRoot,
   onListDeviceDirectories,
@@ -174,7 +160,6 @@ export function DesktopWorkbenchLayout({
   onRetryFailedMessage,
   isResponseStreaming = false,
   onPauseResponse = () => {},
-  onForkCurrentTask,
   onCancelQueuedMessage = () => {},
   onSendQueuedAsGuidance = () => {},
   onEditQueuedMessage = () => {},
@@ -186,6 +171,7 @@ export function DesktopWorkbenchLayout({
   onRefreshWorkLists,
   onLogout,
 }: DesktopWorkbenchLayoutProps) {
+  const { t } = useTranslation('common')
   const { sidebarCollapsed, setSidebarCollapsed } = useDesktopSidebarCollapsed()
   const [settingsOpen, setSettingsOpen] = useState(() =>
     isSettingsRoute(stripAppBasePath(window.location.pathname))
@@ -200,6 +186,15 @@ export function DesktopWorkbenchLayout({
   const [workspaceTarget, setWorkspaceTarget] = useState<WorkspaceTarget | null>(null)
   const [workspaceTargetError, setWorkspaceTargetError] = useState<string | null>(null)
   const [workspaceTargetResolving, setWorkspaceTargetResolving] = useState(false)
+  const [continueInImOpen, setContinueInImOpen] = useState(false)
+  const [imSessions, setImSessions] = useState<IMPrivateSession[]>([])
+  const [imSessionsLoading, setImSessionsLoading] = useState(false)
+  const [imSessionsSubmitting, setImSessionsSubmitting] = useState(false)
+  const [notice, setNotice] = useState<{
+    message: string
+    tone: 'success' | 'error'
+  } | null>(null)
+  const imSessionsRequestSequence = useRef(0)
   const currentTaskProject = useMemo(
     () => findProjectForTask(state.projects, state.currentTask),
     [state.currentTask, state.projects]
@@ -369,6 +364,60 @@ export function DesktopWorkbenchLayout({
     [onRefreshDevices]
   )
 
+  const openContinueInImDialog = useCallback(() => {
+    if (!state.currentRuntimeTask) return
+
+    const requestId = imSessionsRequestSequence.current + 1
+    imSessionsRequestSequence.current = requestId
+    setContinueInImOpen(true)
+    setImSessionsLoading(true)
+    setImSessions([])
+    void (onListImPrivateSessions?.() ?? Promise.resolve({ total: 0, items: [] }))
+      .then(response => {
+        if (imSessionsRequestSequence.current === requestId) {
+          setImSessions(response.items)
+        }
+      })
+      .catch(() => {
+        if (imSessionsRequestSequence.current === requestId) {
+          setImSessions([])
+          setNotice({ message: t('workbench.continue_im_failed'), tone: 'error' })
+        }
+      })
+      .finally(() => {
+        if (imSessionsRequestSequence.current === requestId) {
+          setImSessionsLoading(false)
+        }
+      })
+  }, [onListImPrivateSessions, state.currentRuntimeTask, t])
+
+  const closeContinueInImDialog = useCallback(() => {
+    imSessionsRequestSequence.current += 1
+    setContinueInImOpen(false)
+    setImSessionsLoading(false)
+  }, [])
+
+  const submitContinueInIm = useCallback(
+    async (sessionKeys: string[]) => {
+      if (!state.currentRuntimeTask) return
+
+      setImSessionsSubmitting(true)
+      try {
+        if (!onBindRuntimeTaskToImSessions) {
+          throw new Error('IM bind handler is not available')
+        }
+        await onBindRuntimeTaskToImSessions(state.currentRuntimeTask, sessionKeys)
+        setContinueInImOpen(false)
+        setNotice({ message: t('workbench.continue_im_success'), tone: 'success' })
+      } catch {
+        setNotice({ message: t('workbench.continue_im_failed'), tone: 'error' })
+      } finally {
+        setImSessionsSubmitting(false)
+      }
+    },
+    [onBindRuntimeTaskToImSessions, state.currentRuntimeTask, t]
+  )
+
   const projectWorkWithCreation: ProjectWorkControls = {
     ...projectWork,
     onCreateProjectMode: openProjectFromWorkMenu,
@@ -395,10 +444,8 @@ export function DesktopWorkbenchLayout({
           user={state.user}
           projects={state.projects}
           devices={state.devices}
-          recentTasks={state.recentTasks}
-          runningTaskIds={runningTaskIds}
-          currentProjectId={state.currentProject?.id}
-          currentTaskId={state.currentTask?.id}
+          runtimeWork={state.runtimeWork}
+          currentRuntimeTask={state.currentRuntimeTask}
           preferredDeviceId={
             state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
           }
@@ -406,12 +453,10 @@ export function DesktopWorkbenchLayout({
           activeItem={activeItem}
           onCollapse={() => setSidebarCollapsed(true)}
           onNewChat={onNewChat}
-          onStartStandaloneChat={onStartStandaloneChat}
           onSelectProject={onSelectProject}
           onStartNewProjectChat={onStartNewProjectChat}
-          onOpenTask={onOpenTask}
-          onSearchTasks={onSearchTasks}
-          onSearchTaskDetail={onSearchTaskDetail}
+          onOpenRuntimeLocalTask={onOpenRuntimeLocalTask}
+          onArchiveRuntimeLocalTask={onArchiveRuntimeLocalTask}
           onRememberExecutionDevice={onRememberExecutionDevice}
           onOpenPlugins={onOpenPlugins}
           onRefreshDevices={onRefreshDevices}
@@ -422,11 +467,6 @@ export function DesktopWorkbenchLayout({
           onListGitBranches={onListGitBranches}
           onUpdateProjectName={onUpdateProjectName}
           onRemoveProject={onRemoveProject}
-          onArchiveAllChats={onArchiveAllChats}
-          onArchiveAllProjectChats={onArchiveAllProjectChats}
-          onArchiveProjectChats={onArchiveProjectChats}
-          onArchiveTask={onArchiveTask}
-          onRenameTask={onRenameTask}
           onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
           onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot}
           onListDeviceDirectories={onListDeviceDirectories}
@@ -448,16 +488,13 @@ export function DesktopWorkbenchLayout({
             setAutoOpenAddCloudDeviceDialog(false)
             navigateTo('/')
           }}
-          onListArchivedTasks={onListArchivedTasks}
-          onUnarchiveTask={onUnarchiveTask}
-          onDeleteTask={onDeleteTask}
-          onDeleteArchivedTasks={onDeleteArchivedTasks}
         />
       ) : (
         <DesktopWorkbenchMain
           sidebarCollapsed={sidebarCollapsed}
           isBootstrapping={state.isBootstrapping}
           currentTask={state.currentTask}
+          currentRuntimeTask={state.currentRuntimeTask}
           currentProject={activeConversationProject}
           workspaceTarget={workspaceTarget}
           workspaceTargetError={workspaceTargetError}
@@ -471,9 +508,7 @@ export function DesktopWorkbenchLayout({
           projectWork={projectWorkWithCreation}
           input={state.input}
           isSending={state.isSending}
-          currentTaskRunning={Boolean(
-            state.currentTask && runningTaskIds.has(state.currentTask.id)
-          )}
+          error={state.error}
           environmentInfo={environmentInfo}
           onRefreshEnvironmentInfo={refreshEnvironmentInfo}
           onCommitEnvironmentChanges={handleCommitEnvironmentChanges}
@@ -501,7 +536,6 @@ export function DesktopWorkbenchLayout({
           onRetryFailedMessage={onRetryFailedMessage}
           isResponseStreaming={isResponseStreaming}
           onPauseResponse={onPauseResponse}
-          onForkCurrentTask={onForkCurrentTask}
           onCancelQueuedMessage={onCancelQueuedMessage}
           onSendQueuedAsGuidance={onSendQueuedAsGuidance}
           onEditQueuedMessage={onEditQueuedMessage}
@@ -510,6 +544,7 @@ export function DesktopWorkbenchLayout({
           onRevertFileChanges={onRevertFileChanges}
           onAddCodeComment={onAddCodeComment}
           onClearCodeComments={onClearCodeComments}
+          onContinueInIm={openContinueInImDialog}
           topBarLeftActions={
             sidebarCollapsed ? (
               <DesktopWindowControls
@@ -546,6 +581,20 @@ export function DesktopWorkbenchLayout({
         onCreateDeviceDirectory={onCreateDeviceDirectory}
         onListGitRepositories={onListGitRepositories}
         onListGitBranches={onListGitBranches}
+      />
+      <ContinueInImDialog
+        key={continueInImOpen ? 'continue-im-open' : 'continue-im-closed'}
+        open={continueInImOpen}
+        loading={imSessionsLoading}
+        submitting={imSessionsSubmitting}
+        sessions={imSessions}
+        onClose={closeContinueInImDialog}
+        onSubmit={submitContinueInIm}
+      />
+      <TransientNotice
+        message={notice?.message ?? null}
+        tone={notice?.tone}
+        onClear={() => setNotice(null)}
       />
     </div>
   )

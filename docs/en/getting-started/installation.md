@@ -115,8 +115,13 @@ ATTACHMENT_STORAGE_BACKEND=mysql
 # Sets the scaling Wiki link in the cloud device resource note card under Settings -> Connections
 # VITE_CLOUD_DEVICE_SCALING_WIKI_URL=https://wiki.example.com/cloud-device-scaling
 
+# Image configuration
+# Set to edge when testing CI-published edge images
+WEGENT_IMAGE_TAG=latest
+
 # Executor Manager Configuration
-EXECUTOR_IMAGE=ghcr.io/wecode-ai/wegent-executor:latest
+# Optional: explicitly override the executor image; leave unset to follow WEGENT_IMAGE_TAG
+# EXECUTOR_IMAGE=ghcr.io/wecode-ai/wegent-executor:latest
 EXECUTOR_WORKSPACE=/path/to/workspace
 ```
 
@@ -133,6 +138,18 @@ docker-compose ps
 
 # View logs
 docker-compose logs -f
+```
+
+To test CI-published edge images, set the shared image tag:
+
+```bash
+WEGENT_IMAGE_TAG=edge docker compose up -d
+```
+
+When using `install.sh`, you can also pass the edge shortcut directly:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash -s -- --edge
 ```
 
 ### Step 4: Verify Installation

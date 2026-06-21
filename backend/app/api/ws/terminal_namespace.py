@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Any, Dict, Optional
 
 import socketio
+from socketio.exceptions import ConnectionRefusedError
 
 from app.api.ws.connection_utils import enter_connect_room, save_connect_session
 from app.api.ws.decorators import trace_websocket_event
@@ -76,7 +77,7 @@ class TerminalNamespace(socketio.AsyncNamespace):
             raise ConnectionRefusedError("Invalid or expired token")
 
         token_exp = get_token_expiry(token)
-        session_saved = await save_connect_session(
+        await save_connect_session(
             self,
             sid,
             session_data={
@@ -90,20 +91,16 @@ class TerminalNamespace(socketio.AsyncNamespace):
             logger=logger,
             log_prefix="[Terminal WS]",
         )
-        if not session_saved:
-            return False
 
         set_user_context(user_id=str(user.id), user_name=user.user_name)
 
-        room_entered = await enter_connect_room(
+        await enter_connect_room(
             self,
             sid,
             f"user:{user.id}",
             logger=logger,
             log_prefix="[Terminal WS]",
         )
-        if not room_entered:
-            return False
 
         logger.info("[Terminal WS] Connected user=%s sid=%s", user.id, sid)
 

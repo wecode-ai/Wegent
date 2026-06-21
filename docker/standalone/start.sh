@@ -249,13 +249,14 @@ BACKEND_PID=$!
 
 wait_for_http "Backend" "http://localhost:${BACKEND_PORT}/health" 60 "$BACKEND_PID" true
 
+# Host executor setup reads this token even when the in-container executor is disabled.
+ensure_standalone_executor_token
+
 # ========================================
 # Step 4: Start Standalone Executor
 # ========================================
 start_executor() {
     echo "[4/8] Starting Standalone Executor..."
-
-    ensure_standalone_executor_token
 
     export EXECUTOR_MODE=local
     export DEVICE_TYPE=cloud

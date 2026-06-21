@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from socketio.exceptions import ConnectionRefusedError
 
 from app.api.ws import chat_namespace
 from app.core.shutdown import shutdown_manager
@@ -29,7 +30,7 @@ def valid_jwt_auth(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_connect_returns_false_when_session_disappears_before_save(
+async def test_connect_rejects_when_session_disappears_before_save(
     valid_jwt_auth,
     monkeypatch,
 ):
@@ -39,19 +40,19 @@ async def test_connect_returns_false_when_session_disappears_before_save(
     monkeypatch.setattr(namespace, "save_session", save_session)
     monkeypatch.setattr(namespace, "enter_room", enter_room)
 
-    result = await namespace.on_connect(
-        "sid-1",
-        {"REMOTE_ADDR": "127.0.0.1"},
-        {"token": "jwt-token"},
-    )
+    with pytest.raises(ConnectionRefusedError, match="disconnected"):
+        await namespace.on_connect(
+            "sid-1",
+            {"REMOTE_ADDR": "127.0.0.1"},
+            {"token": "jwt-token"},
+        )
 
-    assert result is False
     save_session.assert_awaited_once()
     enter_room.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_connect_returns_false_when_session_disappears_before_room_join(
+async def test_connect_rejects_when_session_disappears_before_room_join(
     valid_jwt_auth,
     monkeypatch,
 ):
@@ -61,12 +62,12 @@ async def test_connect_returns_false_when_session_disappears_before_room_join(
     monkeypatch.setattr(namespace, "save_session", save_session)
     monkeypatch.setattr(namespace, "enter_room", enter_room)
 
-    result = await namespace.on_connect(
-        "sid-1",
-        {"REMOTE_ADDR": "127.0.0.1"},
-        {"token": "jwt-token"},
-    )
+    with pytest.raises(ConnectionRefusedError, match="disconnected"):
+        await namespace.on_connect(
+            "sid-1",
+            {"REMOTE_ADDR": "127.0.0.1"},
+            {"token": "jwt-token"},
+        )
 
-    assert result is False
     save_session.assert_awaited_once()
     enter_room.assert_awaited_once_with("sid-1", "user:7")

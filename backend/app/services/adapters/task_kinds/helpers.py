@@ -658,6 +658,9 @@ def build_lite_task_list(
             and task_crd.metadata.labels.get("type")
             or "online"
         )
+        labels = task_crd.metadata.labels or {}
+        source_label = labels.get("source")
+        source = source_label if isinstance(source_label, str) else None
         status = task_crd.status.status if task_crd.status else "PENDING"
 
         created_at = task_related_data.get("created_at", task.created_at)
@@ -692,6 +695,7 @@ def build_lite_task_list(
                 "status": status,
                 "task_type": task_type,
                 "type": type_value,
+                "source": source,
                 "created_at": created_at,
                 "updated_at": updated_at,
                 "completed_at": completed_at,

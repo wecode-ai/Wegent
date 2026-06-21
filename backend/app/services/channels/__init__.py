@@ -55,12 +55,26 @@ from app.services.channels.device_selection import (
     device_selection_manager,
 )
 from app.services.channels.emitter import SyncResponseEmitter
-from app.services.channels.handler import (
-    BaseChannelHandler,
-    MessageContext,
-    UserMappingConfig,
-)
 from app.services.channels.manager import ChannelManager, get_channel_manager
+
+_LAZY_EXPORTS = {
+    "BaseChannelHandler": ("app.services.channels.handler", "BaseChannelHandler"),
+    "MessageContext": ("app.services.channels.handler", "MessageContext"),
+    "UserMappingConfig": ("app.services.channels.handler", "UserMappingConfig"),
+}
+
+
+def __getattr__(name: str):
+    """Load handler exports lazily to avoid command-router import cycles."""
+    if name in _LAZY_EXPORTS:
+        from importlib import import_module
+
+        module_name, attr_name = _LAZY_EXPORTS[name]
+        value = getattr(import_module(module_name), attr_name)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     # Base classes

@@ -34,6 +34,12 @@ logger = logging.getLogger(__name__)
 CHANNEL_TASK_CALLBACK_PREFIX = "channel:task_callback:"
 # TTL for task callback info (1 hour - should be enough for most tasks)
 CHANNEL_TASK_CALLBACK_TTL = 60 * 60
+RUNTIME_LOCAL_TASK_CALLBACK_PREFIX = "runtime"
+
+
+def runtime_local_task_callback_key(device_id: str, local_task_id: str) -> str:
+    """Build the IM callback key for a device-local runtime task."""
+    return f"{RUNTIME_LOCAL_TASK_CALLBACK_PREFIX}:{device_id}:{local_task_id}"
 
 
 class ChannelType(str, Enum):
@@ -42,6 +48,7 @@ class ChannelType(str, Enum):
     DINGTALK = "dingtalk"
     FEISHU = "feishu"
     TELEGRAM = "telegram"
+    DISCORD = "discord"
     SLACK = "slack"
     WECHAT = "wechat"
 
@@ -809,3 +816,37 @@ async def handle_channel_task_completed(event: Any) -> None:
         result=event.result,
         error=event.error,
     )
+
+
+async def forward_event_to_channel_callbacks(
+    *,
+    task_id: int,
+    subtask_id: int,
+    event: Any,
+    source: str = "ChannelCallback",
+) -> None:
+    """Forward a non-terminal execution event to active IM channel callbacks."""
+    registry = get_callback_registry()
+    for channel_type, service in registry.iter_services():
+        try:
+            forwarded = await service.emit_event(
+                task_id=task_id,
+                subtask_id=subtask_id,
+                event=event,
+            )
+            if forwarded:
+                logger.debug(
+                    "[%s] Forwarded event %s to %s for task %s",
+                    source,
+                    event.type,
+                    channel_type.value,
+                    task_id,
+                )
+        except Exception as e:
+            logger.warning(
+                "[%s] Failed to forward event to %s for task %s: %s",
+                source,
+                channel_type.value,
+                task_id,
+                e,
+            )

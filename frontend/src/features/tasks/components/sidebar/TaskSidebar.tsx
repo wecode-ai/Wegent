@@ -24,6 +24,7 @@ import {
   Inbox,
   Library,
   LayoutGrid,
+  Zap,
 } from 'lucide-react'
 import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import TaskListSection from './TaskListSection'
@@ -188,7 +189,7 @@ export default function TaskSidebar({
     },
     {
       label: t(codingNavItem.labelKey),
-      icon: codingNavItem.key === 'wework' ? LayoutGrid : Code,
+      icon: codingNavItem.key === 'wework' ? Zap : Code,
       path: codingNavItem.href,
       isActive: pageType === 'code' || isCodeAgentActive,
       tooltip: pageType === 'code' ? t('common:tasks.new_task') : undefined,

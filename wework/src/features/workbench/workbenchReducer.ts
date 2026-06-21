@@ -3,6 +3,8 @@ import type {
   ModelSelectionConfig,
   ProjectTask,
   ProjectWithTasks,
+  RuntimeTaskAddress,
+  RuntimeWorkListResponse,
   Task,
   Team,
   User,
@@ -15,8 +17,9 @@ export const initialWorkbenchState: WorkbenchState = {
   defaultTeam: null,
   projects: [],
   devices: [],
-  recentTasks: [],
+  runtimeWork: null,
   currentProject: null,
+  currentRuntimeTask: null,
   standaloneDeviceId: null,
   currentTask: null,
   input: '',
@@ -32,7 +35,7 @@ export type WorkbenchAction =
       defaultTeam: Team | null
       projects: ProjectWithTasks[]
       devices: DeviceInfo[]
-      recentTasks: Task[]
+      runtimeWork?: RuntimeWorkListResponse | null
       currentProject?: ProjectWithTasks | null
       standaloneDeviceId?: string | null
     }
@@ -40,7 +43,7 @@ export type WorkbenchAction =
       type: 'lists_refreshed'
       projects: ProjectWithTasks[]
       devices: DeviceInfo[]
-      recentTasks: Task[]
+      runtimeWork?: RuntimeWorkListResponse | null
       standaloneDeviceId?: string | null
     }
   | {
@@ -60,6 +63,11 @@ export type WorkbenchAction =
       project?: ProjectWithTasks | null
       standaloneDeviceId?: string | null
     }
+  | {
+      type: 'runtime_task_opened'
+      address: RuntimeTaskAddress
+      project: ProjectWithTasks | null
+    }
   | { type: 'task_upserted'; task: Task }
   | { type: 'task_status_changed'; taskId: number; status: string }
   | {
@@ -76,20 +84,7 @@ function taskBelongsToProject(task: Task): boolean {
   return Boolean(task.project_id && task.project_id > 0)
 }
 
-function collectProjectTaskIds(projects: ProjectWithTasks[]): Set<number> {
-  const ids = new Set<number>()
-  for (const project of projects) {
-    for (const task of project.tasks ?? []) {
-      ids.add(task.task_id)
-    }
-  }
-  return ids
-}
-
-function removeTaskFromProjects(
-  projects: ProjectWithTasks[],
-  taskId: number
-): ProjectWithTasks[] {
+function removeTaskFromProjects(projects: ProjectWithTasks[], taskId: number): ProjectWithTasks[] {
   return projects.map(project => {
     if (!project.tasks?.some(task => task.task_id === taskId)) return project
     return {
@@ -99,25 +94,9 @@ function removeTaskFromProjects(
   })
 }
 
-/**
- * Enforce that the "conversations" list (recentTasks) and the "projects" lists
- * are mutually exclusive. A task already grouped under a project must never
- * leak into recentTasks, even if the server momentarily reports project_id=0
- * for it (eventual consistency right after task creation).
- */
-function normalizeListExclusivity(state: WorkbenchState): WorkbenchState {
-  const projectTaskIds = collectProjectTaskIds(state.projects)
-  if (projectTaskIds.size === 0) return state
-  const dedupedRecentTasks = state.recentTasks.filter(
-    task => !projectTaskIds.has(task.id)
-  )
-  if (dedupedRecentTasks.length === state.recentTasks.length) return state
-  return { ...state, recentTasks: dedupedRecentTasks }
-}
-
 function keepDevicesOnTransientEmpty(
   currentDevices: DeviceInfo[],
-  nextDevices: DeviceInfo[],
+  nextDevices: DeviceInfo[]
 ): DeviceInfo[] {
   if (nextDevices.length > 0) return nextDevices
   if (currentDevices.length > 0) return currentDevices
@@ -132,6 +111,7 @@ function toProjectTask(task: Task): ProjectTask {
     task_status: task.status,
     title: task.title,
     status: task.status,
+    source: task.source,
     task_type: task.task_type,
     created_at: task.created_at,
     updated_at: task.updated_at,
@@ -163,15 +143,11 @@ function upsertOpenedTask(state: WorkbenchState, task: Task): WorkbenchState {
             }
           : project
       ),
-      // A project task must not linger in the standalone conversation list.
-      recentTasks: state.recentTasks.filter(item => item.id !== task.id),
     }
   }
 
   return {
     ...state,
-    recentTasks: upsertTask(state.recentTasks, task.id, task, item => item.id),
-    // A standalone task must not linger in any project bucket.
     projects: removeTaskFromProjects(state.projects, task.id),
   }
 }
@@ -187,68 +163,55 @@ function normalizeOpenedTaskProject(
   }
 }
 
-function workListsIncludeTask(
-  projects: ProjectWithTasks[],
-  recentTasks: Task[],
-  task: Task
-): boolean {
+function workListsIncludeTask(projects: ProjectWithTasks[], task: Task): boolean {
   if (taskBelongsToProject(task)) {
-    return projects.some(project =>
-      project.id === task.project_id &&
-      (project.tasks ?? []).some(projectTask => projectTask.task_id === task.id)
+    return projects.some(
+      project =>
+        project.id === task.project_id &&
+        (project.tasks ?? []).some(projectTask => projectTask.task_id === task.id)
     )
   }
 
-  return recentTasks.some(recentTask => recentTask.id === task.id)
+  return false
 }
 
-export function workbenchReducer(
-  state: WorkbenchState,
-  action: WorkbenchAction
-): WorkbenchState {
+export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction): WorkbenchState {
   switch (action.type) {
     case 'bootstrapped':
-      return normalizeListExclusivity({
+      return {
         ...state,
         user: action.user,
         defaultTeam: action.defaultTeam,
         projects: action.projects,
         devices: keepDevicesOnTransientEmpty(state.devices, action.devices),
-        recentTasks: action.recentTasks,
+        runtimeWork: action.runtimeWork === undefined ? state.runtimeWork : action.runtimeWork,
         currentProject:
-          action.currentProject === undefined
-            ? state.currentProject
-            : action.currentProject,
+          action.currentProject === undefined ? state.currentProject : action.currentProject,
         standaloneDeviceId:
           action.standaloneDeviceId === undefined
             ? state.standaloneDeviceId
             : action.standaloneDeviceId,
         isBootstrapping: false,
         error: null,
-      })
+      }
     case 'lists_refreshed': {
       const refreshedState = {
         ...state,
         projects: action.projects,
         devices: keepDevicesOnTransientEmpty(state.devices, action.devices),
-        recentTasks: action.recentTasks,
+        runtimeWork: action.runtimeWork === undefined ? state.runtimeWork : action.runtimeWork,
         currentProject: state.currentProject
-          ? action.projects.find(project => project.id === state.currentProject?.id) ?? null
+          ? (action.projects.find(project => project.id === state.currentProject?.id) ?? null)
           : null,
         standaloneDeviceId:
           action.standaloneDeviceId === undefined
             ? state.standaloneDeviceId
             : action.standaloneDeviceId,
       }
-      if (
-        state.currentTask &&
-        !workListsIncludeTask(action.projects, action.recentTasks, state.currentTask)
-      ) {
-        return normalizeListExclusivity(
-          upsertOpenedTask(refreshedState, state.currentTask)
-        )
+      if (state.currentTask && !workListsIncludeTask(action.projects, state.currentTask)) {
+        return upsertOpenedTask(refreshedState, state.currentTask)
       }
-      return normalizeListExclusivity(refreshedState)
+      return refreshedState
     }
     case 'devices_refreshed':
       return {
@@ -262,14 +225,17 @@ export function workbenchReducer(
     case 'bootstrap_failed':
       return { ...state, isBootstrapping: false, error: action.error }
     case 'project_selected':
-      return { ...state, currentProject: action.project, currentTask: null }
+      return {
+        ...state,
+        currentProject: action.project,
+        currentTask: null,
+        currentRuntimeTask: null,
+      }
     case 'project_updated':
       return {
         ...state,
         currentProject:
-          state.currentProject?.id === action.project.id
-            ? action.project
-            : state.currentProject,
+          state.currentProject?.id === action.project.id ? action.project : state.currentProject,
         projects: state.projects.map(project =>
           project.id === action.project.id ? action.project : project
         ),
@@ -283,6 +249,7 @@ export function workbenchReducer(
             ? state.standaloneDeviceId
             : action.standaloneDeviceId,
         currentTask: null,
+        currentRuntimeTask: null,
       }
     case 'user_preferences_updated':
       return {
@@ -299,19 +266,25 @@ export function workbenchReducer(
         ...state,
         standaloneDeviceId: action.standaloneDeviceId,
       }
-    case 'task_opened':
-      {
-        const openedTask = normalizeOpenedTaskProject(action.task, action.project)
-        return {
-          ...upsertOpenedTask(state, openedTask),
-          currentProject:
-            action.project === undefined ? state.currentProject : action.project,
-          standaloneDeviceId:
-            action.project === null
-              ? action.standaloneDeviceId ?? openedTask.device_id ?? state.standaloneDeviceId
-              : state.standaloneDeviceId,
-          currentTask: openedTask,
-        }
+    case 'task_opened': {
+      const openedTask = normalizeOpenedTaskProject(action.task, action.project)
+      return {
+        ...upsertOpenedTask(state, openedTask),
+        currentProject: action.project === undefined ? state.currentProject : action.project,
+        standaloneDeviceId:
+          action.project === null
+            ? (action.standaloneDeviceId ?? openedTask.device_id ?? state.standaloneDeviceId)
+            : state.standaloneDeviceId,
+        currentTask: openedTask,
+        currentRuntimeTask: null,
+      }
+    }
+    case 'runtime_task_opened':
+      return {
+        ...state,
+        currentProject: action.project,
+        currentTask: null,
+        currentRuntimeTask: action.address,
       }
     case 'task_upserted':
       return upsertOpenedTask(
@@ -325,9 +298,6 @@ export function workbenchReducer(
           state.currentTask?.id === action.taskId
             ? { ...state.currentTask, status: action.status }
             : state.currentTask,
-        recentTasks: state.recentTasks.map(task =>
-          task.id === action.taskId ? { ...task, status: action.status } : task
-        ),
         projects: state.projects.map(project => ({
           ...project,
           tasks: project.tasks?.map(task =>
@@ -350,7 +320,7 @@ export function workbenchReducer(
           : state.currentTask,
       }
     case 'current_task_cleared':
-      return { ...state, currentTask: null }
+      return { ...state, currentTask: null, currentRuntimeTask: null }
     case 'input_changed':
       return { ...state, input: action.input }
     case 'sending_started':

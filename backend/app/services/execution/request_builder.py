@@ -136,6 +136,7 @@ class TaskRequestBuilder:
         # Model override (from ChatConfigBuilder)
         override_model_name: Optional[str] = None,
         force_override: bool = False,
+        runtime_model_config: Optional[dict[str, Any]] = None,
         team_member_prompt: Optional[str] = None,
         web_runtime_guidance: bool = False,
     ) -> ExecutionRequest:
@@ -165,6 +166,7 @@ class TaskRequestBuilder:
             trace_context: OpenTelemetry trace context
             override_model_name: Optional model name to override bot's model
             force_override: If True, override takes highest priority
+            runtime_model_config: Optional already-resolved runtime model config
             team_member_prompt: Optional additional prompt from team member
             web_runtime_guidance: Whether to inject Wegent web UI runtime guidance
 
@@ -213,6 +215,7 @@ class TaskRequestBuilder:
             force_override=force_override,
             task_id=task.id,
             team_id=team.id,
+            runtime_model_config=runtime_model_config,
         )
 
         # Get base system prompt from Ghost
@@ -296,6 +299,7 @@ class TaskRequestBuilder:
             user_id=user.id,
             override_model_name=override_model_name,
             force_override=force_override,
+            runtime_model_config=runtime_model_config,
         )
 
         # Get collaboration model
@@ -824,6 +828,7 @@ class TaskRequestBuilder:
         force_override: bool,
         task_id: int,
         team_id: int,
+        runtime_model_config: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Get model configuration for the bot.
 
@@ -842,10 +847,14 @@ class TaskRequestBuilder:
             force_override: Whether override takes priority
             task_id: Task ID for placeholder replacement
             team_id: Team ID for placeholder replacement
+            runtime_model_config: Optional already-resolved runtime model config
 
         Returns:
             Model configuration dictionary
         """
+        if runtime_model_config:
+            return dict(runtime_model_config)
+
         from app.services.chat.config.model_resolver import (
             _process_model_config_placeholders,
             get_model_config_for_bot,
@@ -1672,6 +1681,7 @@ Response template:
         user_id: int,
         override_model_name: str | None = None,
         force_override: bool = False,
+        runtime_model_config: dict[str, Any] | None = None,
     ) -> list[dict]:
         """Build bot configuration list.
 
@@ -1682,6 +1692,7 @@ Response template:
             user_id: User ID for model resolution
             override_model_name: Optional model name override from task
             force_override: Whether override takes priority
+            runtime_model_config: Optional already-resolved runtime model config
 
         Returns:
             List of bot configuration dictionaries
@@ -1757,13 +1768,16 @@ Response template:
                     }
 
             # Resolve agent_config from model binding
-            agent_config = build_agent_config_for_bot(
-                self.db,
-                bot,
-                user_id,
-                override_model_name=override_model_name,
-                force_override=force_override,
-            )
+            if runtime_model_config:
+                agent_config = self._build_runtime_agent_config(runtime_model_config)
+            else:
+                agent_config = build_agent_config_for_bot(
+                    self.db,
+                    bot,
+                    user_id,
+                    override_model_name=override_model_name,
+                    force_override=force_override,
+                )
 
             bot_config = {
                 "id": bot.id,
@@ -1801,6 +1815,17 @@ Response template:
             )
 
         return bot_configs
+
+    @staticmethod
+    def _build_runtime_agent_config(model_config: dict[str, Any]) -> dict[str, Any]:
+        agent_config: dict[str, Any] = {"env": dict(model_config)}
+        protocol = model_config.get("protocol")
+        if protocol:
+            agent_config["protocol"] = protocol
+        api_format = model_config.get("api_format") or model_config.get("apiFormat")
+        if api_format:
+            agent_config["apiFormat"] = api_format
+        return agent_config
 
     # =========================================================================
     # MCP Servers Configuration

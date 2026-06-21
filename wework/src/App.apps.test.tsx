@@ -12,11 +12,12 @@ vi.mock('@/features/auth/useAuth', () => ({
   useAuth: () => ({
     user: { id: 1, user_name: 'alice', email: 'alice@example.com' },
     isLoading: false,
+    adminPasswordSetupRequired: false,
+    adminUsername: 'admin',
     login: vi.fn(),
     logout: vi.fn(),
     refresh: vi.fn(),
     loginWithOidcToken: vi.fn(),
-    getAdminPasswordSetupStatus: vi.fn(),
     setupAdminPassword: vi.fn(),
   }),
 }))

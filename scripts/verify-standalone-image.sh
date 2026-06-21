@@ -78,6 +78,39 @@ wait_for_url() {
     done
 }
 
+wait_for_api_proxy() {
+    local url="http://localhost:${STANDALONE_PORT}/api/users/me"
+    local referer="http://localhost:${STANDALONE_PORT}/"
+    local deadline=$((SECONDS + TIMEOUT_SECONDS))
+
+    echo "Waiting for API proxy: ${url}"
+    while true; do
+        local status
+        status="$(curl -sS -o /dev/null -w "%{http_code}" \
+            -H "Referer: ${referer}" \
+            "$url" 2>/dev/null || true)"
+
+        case "$status" in
+            200|400|401|403)
+                echo "API proxy is reachable (HTTP ${status})"
+                return 0
+                ;;
+        esac
+
+        if ! is_container_running; then
+            echo "API proxy failed readiness check: container exited before ${url} became reachable." >&2
+            return 1
+        fi
+
+        if [ "$SECONDS" -ge "$deadline" ]; then
+            echo "API proxy failed readiness check: ${url} returned HTTP ${status:-000}." >&2
+            return 1
+        fi
+
+        sleep "$INTERVAL_SECONDS"
+    done
+}
+
 echo "Starting standalone verification container ${CONTAINER_NAME} from ${IMAGE}"
 docker run -d \
     --name "$CONTAINER_NAME" \
@@ -87,5 +120,6 @@ docker run -d \
 wait_for_url "Backend" "http://localhost:${STANDALONE_PORT}/health"
 wait_for_url "Frontend" "http://localhost:${STANDALONE_PORT}/"
 wait_for_url "Wework" "http://localhost:${STANDALONE_PORT}/wework/"
+wait_for_api_proxy
 
 echo "Standalone image verification succeeded for ${IMAGE}"

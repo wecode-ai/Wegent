@@ -1,8 +1,7 @@
 import { getRuntimeConfig } from '@/config/runtime'
 
 function joinBrowserPath(basePath: string | undefined, path: string): string {
-  const normalizedBasePath =
-    !basePath || basePath === '/' ? '' : basePath.replace(/\/+$/, '')
+  const normalizedBasePath = !basePath || basePath === '/' ? '' : basePath.replace(/\/+$/, '')
   const normalizedPath = path.startsWith('/') ? path : `/${path}`
 
   if (!normalizedBasePath) return normalizedPath
@@ -26,6 +25,15 @@ export function navigateTo(path: string) {
 export interface TaskRoute {
   taskId: number
   projectId?: number
+}
+
+export interface RuntimeTaskRoute {
+  deviceId: string
+  localTaskId: string
+}
+
+export interface RuntimeTaskRouteInput extends RuntimeTaskRoute {
+  workspacePath?: string
 }
 
 function getNumericSearchParam(
@@ -75,6 +83,37 @@ export function buildTaskRoute({ taskId, projectId }: TaskRoute): string {
     return `/projects/${projectId}/tasks/${taskId}`
   }
   return `/tasks/${taskId}`
+}
+
+function getRequiredSearchParam(
+  searchParams: URLSearchParams,
+  ...names: string[]
+): string | undefined {
+  for (const name of names) {
+    const value = searchParams.get(name)
+    if (value && value.trim()) {
+      return value
+    }
+  }
+  return undefined
+}
+
+export function parseRuntimeTaskRoute(path: string, search = ''): RuntimeTaskRoute | null {
+  if (path !== '/runtime-tasks') return null
+
+  const searchParams = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search)
+  const deviceId = getRequiredSearchParam(searchParams, 'deviceId', 'device_id')
+  const localTaskId = getRequiredSearchParam(searchParams, 'localTaskId', 'local_task_id')
+  if (!deviceId || !localTaskId) return null
+
+  return { deviceId, localTaskId }
+}
+
+export function buildRuntimeTaskRoute(address: RuntimeTaskRouteInput): string {
+  const searchParams = new URLSearchParams()
+  searchParams.set('deviceId', address.deviceId)
+  searchParams.set('localTaskId', address.localTaskId)
+  return `/runtime-tasks?${searchParams.toString()}`
 }
 
 export function isSettingsRoute(path: string): boolean {

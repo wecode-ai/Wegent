@@ -81,7 +81,7 @@ Before using AI Coding, ensure you have:
 
 ### Quick Start
 
-1. **Navigate to Code Page**: Click "Code" in the left navigation
+1. **Open the Code entry**: Click "Code" in the left navigation to open coding mode at `/chat?agent=code`
 2. **Select an Agent**: Choose a code-capable agent from the dropdown
 3. **Select Repository**: Pick your target repository and branch
 4. **Enter Your Task**: Describe what you want the AI to do

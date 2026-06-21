@@ -21,6 +21,7 @@ from datetime import datetime
 from typing import Any, Dict, Optional
 
 import socketio
+from socketio.exceptions import ConnectionRefusedError
 from sqlalchemy.orm import Session
 
 import app.stores.tasks as task_stores
@@ -45,6 +46,7 @@ from app.api.ws.events import (
     TaskJoinPayload,
     TaskLeavePayload,
 )
+from app.core.constants import CLIENT_ORIGIN_WEWORK
 from app.db.session import SessionLocal
 from app.models.kind import Kind
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
@@ -71,6 +73,7 @@ from app.services.chat.rag import process_context_and_rag
 from app.services.chat.storage import session_manager
 from app.services.chat.storage.db import get_db_session, run_sync_in_executor
 from app.services.chat.trigger import trigger_ai_response_unified
+from app.services.chat.wework_task_defaults import apply_wework_task_defaults
 from app.services.task_fork_history import task_fork_history_resolver
 from app.utils.prompt_utils import extract_display_prompt
 from shared.telemetry.context import (
@@ -322,7 +325,7 @@ class ChatNamespace(socketio.AsyncNamespace):
         # Extract token expiry for later validation
         token_exp = get_token_expiry(token)
 
-        session_saved = await save_connect_session(
+        await save_connect_session(
             self,
             sid,
             session_data={
@@ -335,23 +338,19 @@ class ChatNamespace(socketio.AsyncNamespace):
             logger=logger,
             log_prefix="[WS]",
         )
-        if not session_saved:
-            return False
 
         # Set user context for trace logging
         set_user_context(user_id=str(user.id), user_name=user.user_name)
 
         # Join user room
         user_room = f"user:{user.id}"
-        room_entered = await enter_connect_room(
+        await enter_connect_room(
             self,
             sid,
             user_room,
             logger=logger,
             log_prefix="[WS]",
         )
-        if not room_entered:
-            return False
 
         logger.info(f"[WS] Connected user={user.id} ({user.user_name}) sid={sid}")
 
@@ -804,6 +803,12 @@ class ChatNamespace(socketio.AsyncNamespace):
                 client_origin=payload.client_origin,
                 generate_params=generate_params_dict,
             )
+            if payload.client_origin == CLIENT_ORIGIN_WEWORK and not payload.task_id:
+                params = await apply_wework_task_defaults(
+                    db,
+                    user=user,
+                    params=params,
+                )
 
             result = await create_chat_task(
                 db=db,
@@ -1066,6 +1071,11 @@ class ChatNamespace(socketio.AsyncNamespace):
         # Note: attachments field is kept for backward compatibility but set to empty
         # All context data should be read from the 'contexts' field
         attachment_info = None
+        source = None
+        if isinstance(user_subtask.result, dict):
+            result_source = user_subtask.result.get("source")
+            if isinstance(result_source, dict):
+                source = result_source
 
         logger.info(
             f"[WS] Broadcasting user message to room: room={task_room}, "
@@ -1090,6 +1100,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                 "attachment": attachment_info,  # Keep for backward compatibility
                 "attachments": [],  # Legacy array format - empty, use contexts instead
                 "contexts": contexts_list,  # New contexts format
+                "source": source,
             },
             room=task_room,
             skip_sid=skip_sid,

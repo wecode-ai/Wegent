@@ -7,6 +7,7 @@ describe('createHttpClient', () => {
   beforeEach(() => {
     fetchMock.mockReset()
     localStorage.clear()
+    sessionStorage.clear()
     vi.stubGlobal('fetch', fetchMock)
   })
 
@@ -162,6 +163,27 @@ describe('createHttpClient', () => {
     })
     expect(localStorage.getItem('auth_token')).toBeNull()
     expect(sessionStorage.getItem('postLoginRedirectPath')).toBe('/current?x=1')
+    expect(window.location.pathname).toBe('/login')
+  })
+
+  test('can disable login redirects for anonymous 401 handshakes', async () => {
+    localStorage.setItem('auth_token', 'token-1')
+    window.history.pushState({}, '', '/login')
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 401,
+      text: async () => JSON.stringify({ detail: 'Unauthorized' }),
+    })
+
+    const client = createHttpClient({ baseUrl: '/api' })
+
+    await expect(
+      client.get('/users/me', { redirectOnUnauthorized: false })
+    ).rejects.toMatchObject<ApiError>({
+      status: 401,
+    })
+    expect(localStorage.getItem('auth_token')).toBe('token-1')
+    expect(sessionStorage.getItem('postLoginRedirectPath')).toBeNull()
     expect(window.location.pathname).toBe('/login')
   })
 })

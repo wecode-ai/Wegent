@@ -1237,6 +1237,7 @@ describe('ChatInput', () => {
       },
     }
     const setSelectedModel = vi.fn()
+    const onBlockedModelSelect = vi.fn()
     render(
       <ChatInput
         value=""
@@ -1249,6 +1250,7 @@ describe('ChatInput', () => {
           selectedModel,
           selectedModelOptions: {},
           setSelectedModel,
+          onBlockedModelSelect,
         })}
       />
     )
@@ -1256,7 +1258,7 @@ describe('ChatInput', () => {
     await userEvent.click(screen.getByTestId('model-selector-button'))
 
     const disabledOption = screen.getByTestId('model-option-overseas-gpt-5.4')
-    expect(disabledOption).toBeDisabled()
+    expect(disabledOption).not.toBeDisabled()
     expect(disabledOption).toHaveAttribute('aria-disabled', 'true')
     expect(disabledOption).toHaveAttribute('title', 'Incompatible with the current model protocol')
     expect(disabledOption).toHaveTextContent('Incompatible with the current model protocol')
@@ -1264,6 +1266,10 @@ describe('ChatInput', () => {
     await userEvent.click(disabledOption)
 
     expect(setSelectedModel).not.toHaveBeenCalled()
+    expect(onBlockedModelSelect).toHaveBeenCalledWith(
+      incompatibleModel,
+      'Incompatible with the current model protocol'
+    )
   })
 
   test('closes the model menu after selecting a reasoning option', async () => {

@@ -13,7 +13,7 @@ test.describe('Code Task', () => {
   let codeBot: CreatedResource | null = null
   let codeTeam: CreatedResource | null = null
 
-  const codePagePath = () => `/code?teamId=${codeTeam?.id}`
+  const codeModePath = () => `/chat?agent=code&teamId=${codeTeam?.id}`
 
   test.beforeAll(async ({ request }) => {
     apiClient = createApiClient(request)
@@ -75,17 +75,17 @@ test.describe('Code Task', () => {
     })
   })
 
-  test('should access code page', async ({ page }) => {
-    await page.goto(codePagePath())
+  test('should access code mode', async ({ page }) => {
+    await page.goto(codeModePath())
 
-    // Should be on code page
-    await expect(page).toHaveURL(/\/code/)
+    // Should be in code agent mode on the chat page
+    await expect(page).toHaveURL(/\/chat\?.*agent=code/)
 
     await page.waitForLoadState('domcontentloaded')
   })
 
   test('should display team selector', async ({ page }) => {
-    await page.goto(codePagePath())
+    await page.goto(codeModePath())
     await page.waitForLoadState('domcontentloaded')
 
     // Look for team selector
@@ -99,7 +99,7 @@ test.describe('Code Task', () => {
   })
 
   test('should display repository selector', async ({ page }) => {
-    await page.goto(codePagePath())
+    await page.goto(codeModePath())
     await page.waitForLoadState('domcontentloaded')
 
     // Look for repository selector or input
@@ -115,7 +115,7 @@ test.describe('Code Task', () => {
   })
 
   test('should create new code task', async ({ page }) => {
-    await page.goto(codePagePath())
+    await page.goto(codeModePath())
     await page.waitForLoadState('domcontentloaded')
 
     // Look for new task button
@@ -130,7 +130,7 @@ test.describe('Code Task', () => {
   })
 
   test('should display message input for code task', async ({ page }) => {
-    await page.goto(codePagePath())
+    await page.goto(codeModePath())
     await page.waitForLoadState('domcontentloaded')
 
     // Message input should be visible
@@ -141,7 +141,7 @@ test.describe('Code Task', () => {
   })
 
   test('should send code task message', async ({ page }) => {
-    await page.goto(codePagePath())
+    await page.goto(codeModePath())
     await page.waitForLoadState('domcontentloaded')
 
     // Find message input

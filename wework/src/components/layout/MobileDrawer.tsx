@@ -1,11 +1,12 @@
 import {
-  Archive,
   Edit3,
   Folder,
   FolderGit2,
   FolderOpen,
   FolderPlus,
+  GitCompareArrows,
   Loader2,
+  Monitor,
   RotateCw,
   Search,
   SquarePen,
@@ -15,7 +16,6 @@ import { useMemo, useRef, useState } from 'react'
 import { ProjectCreateDialog } from '@/components/projects/ProjectCreateDialog'
 import { useTranslation } from '@/hooks/useTranslation'
 import { usePullToRefresh } from '@/hooks/usePullToRefresh'
-import { selectStandaloneConversations } from '@/lib/taskLists'
 import { cn } from '@/lib/utils'
 import type {
   CreateGitWorkspaceProjectRequest,
@@ -23,30 +23,37 @@ import type {
   DeviceInfo,
   GitBranch,
   GitRepoInfo,
-  ProjectTask,
   ProjectWithTasks,
-  Task,
+  RuntimeTaskAddress,
+  RuntimeWorkListResponse,
   User,
 } from '@/types/api'
+import {
+  getRuntimeChatSidebarTaskItems,
+  getRuntimeDirectoryWorkspaces,
+  getRuntimeTaskAddress,
+  getRuntimeTaskTime,
+  getRuntimeTaskWorkspaceTitle,
+  getRuntimeSidebarTaskItems,
+  getRuntimeWorkspaceLabel,
+  getVisibleRuntimeSidebarTaskItems,
+  hasHiddenRuntimeSidebarTaskItems,
+  isRuntimeTaskSelected,
+  isRuntimeWorktreeTask,
+  sortRuntimeTasks,
+} from './runtimeTaskSidebarHelpers'
 
-const PROJECT_TASK_LIMIT = 4
-const MOBILE_RUNNING_SPINNER_CLASS =
-  'ml-2 h-3.5 w-3.5 shrink-0 animate-spin text-[#6B7280]'
+const MOBILE_RUNNING_SPINNER_CLASS = 'ml-2 h-3.5 w-3.5 shrink-0 animate-spin text-[#6B7280]'
 type ProjectCreateMode = 'scratch' | 'existing' | 'git'
-type ChatActionTarget = {
-  id: number
-  title: string
-}
 
 interface MobileDrawerProps {
   open: boolean
   user: User | null
   devices?: DeviceInfo[]
   projects: ProjectWithTasks[]
-  recentTasks: Task[]
-  runningTaskIds?: Set<number>
+  runtimeWork?: RuntimeWorkListResponse | null
   currentProjectId?: number
-  currentTaskId?: number
+  currentRuntimeTask?: RuntimeTaskAddress | null
   activeItem?: 'chat' | 'plugins' | 'automation'
   onClose: () => void
   onNewChat?: () => void
@@ -54,7 +61,7 @@ interface MobileDrawerProps {
   onOpenSettings?: () => void
   onCreateProject?: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
   onCreateGitWorkspaceProject?: (
-    data: CreateGitWorkspaceProjectRequest,
+    data: CreateGitWorkspaceProjectRequest
   ) => Promise<ProjectWithTasks>
   onListGitRepositories?: () => Promise<GitRepoInfo[]>
   onListGitBranches?: (repo: GitRepoInfo) => Promise<GitBranch[]>
@@ -64,11 +71,8 @@ interface MobileDrawerProps {
   onCreateDeviceDirectory?: (deviceId: string, path: string) => Promise<void>
   onUpdateProjectName?: (projectId: number, name: string) => Promise<void>
   onRemoveProject?: (projectId: number) => Promise<void>
-  onArchiveProjectChats?: (projectId: number) => Promise<void>
-  onArchiveTask?: (taskId: number) => Promise<void>
-  onRenameTask?: (taskId: number, title: string) => Promise<void>
   onSelectProject: (projectId: number) => void
-  onOpenTask: (taskId: number, projectId?: number) => void
+  onOpenRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void> | void
   onRefreshWorkLists?: () => Promise<void>
 }
 
@@ -90,31 +94,14 @@ function formatRelativeTime(value?: string) {
   return `${Math.floor(days / 7)}w`
 }
 
-function getProjectTaskTitle(task: ProjectTask) {
-  return task.task_title || task.title || `Task #${task.task_id}`
-}
-
-function getProjectTaskTime(task: ProjectTask) {
-  return task.updated_at || task.created_at
-}
-
-function sortProjectTasks(tasks: ProjectTask[] = []) {
-  return [...tasks].sort((left, right) => {
-    const leftTime = new Date(getProjectTaskTime(left) || 0).getTime()
-    const rightTime = new Date(getProjectTaskTime(right) || 0).getTime()
-    return rightTime - leftTime
-  })
-}
-
 export function MobileDrawer({
   open,
   user,
   devices = [],
   projects,
-  recentTasks,
-  runningTaskIds = new Set(),
+  runtimeWork,
   currentProjectId,
-  currentTaskId,
+  currentRuntimeTask,
   onClose,
   onNewChat,
   onStartStandaloneChat,
@@ -129,11 +116,8 @@ export function MobileDrawer({
   onCreateDeviceDirectory,
   onUpdateProjectName,
   onRemoveProject,
-  onArchiveProjectChats,
-  onArchiveTask,
-  onRenameTask,
   onSelectProject,
-  onOpenTask,
+  onOpenRuntimeLocalTask,
   onRefreshWorkLists,
 }: MobileDrawerProps) {
   const { t } = useTranslation('common')
@@ -147,12 +131,8 @@ export function MobileDrawer({
   const [searchOpen, setSearchOpen] = useState(false)
   const [projectCreateMenuOpen, setProjectCreateMenuOpen] = useState(false)
   const [projectCreateMode, setProjectCreateMode] = useState<ProjectCreateMode | null>(null)
-  const [projectActionTarget, setProjectActionTarget] =
-    useState<ProjectWithTasks | null>(null)
-  const [chatActionTarget, setChatActionTarget] =
-    useState<ChatActionTarget | null>(null)
+  const [projectActionTarget, setProjectActionTarget] = useState<ProjectWithTasks | null>(null)
   const [renamingProjectId, setRenamingProjectId] = useState<number | null>(null)
-  const [renamingChatId, setRenamingChatId] = useState<number | null>(null)
   const [renameValue, setRenameValue] = useState('')
   const [actionMenuPosition, setActionMenuPosition] = useState({
     left: 12,
@@ -161,15 +141,25 @@ export function MobileDrawer({
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const longPressStartRef = useRef({ x: 0, y: 0 })
   const longPressTriggeredRef = useRef(false)
-  const [expandedProjectIds, setExpandedProjectIds] = useState<Set<number>>(
-    () => new Set(),
+  const [expandedProjectIds, setExpandedProjectIds] = useState<Set<number>>(() => new Set())
+  const [expandedRuntimeProjectTaskIds, setExpandedRuntimeProjectTaskIds] = useState<Set<number>>(
+    () => new Set()
   )
-  const [expandedTaskProjectIds, setExpandedTaskProjectIds] = useState<Set<number>>(
-    () => new Set(),
+  const runtimeWorkByProjectId = useMemo(() => {
+    const items = runtimeWork?.projects ?? []
+    return new Map(items.map(item => [item.project.id, item]))
+  }, [runtimeWork])
+  const unmappedWorkspaces = useMemo(
+    () => runtimeWork?.unmappedDeviceWorkspaces ?? [],
+    [runtimeWork]
   )
-  const standaloneRecentTasks = useMemo(
-    () => selectStandaloneConversations(recentTasks),
-    [recentTasks],
+  const unmappedDirectoryWorkspaces = useMemo(
+    () => getRuntimeDirectoryWorkspaces(unmappedWorkspaces),
+    [unmappedWorkspaces]
+  )
+  const unmappedChatTaskItems = useMemo(
+    () => getRuntimeChatSidebarTaskItems(unmappedWorkspaces),
+    [unmappedWorkspaces]
   )
 
   if (!open) return null
@@ -203,18 +193,6 @@ export function MobileDrawer({
     onSelectProject(projectId)
   }
 
-  const toggleProjectTaskLimit = (projectId: number) => {
-    setExpandedTaskProjectIds(previous => {
-      const next = new Set(previous)
-      if (next.has(projectId)) {
-        next.delete(projectId)
-      } else {
-        next.add(projectId)
-      }
-      return next
-    })
-  }
-
   const openProjectCreateDialog = (mode: ProjectCreateMode) => {
     setProjectCreateMenuOpen(false)
     setProjectCreateMode(mode)
@@ -225,22 +203,12 @@ export function MobileDrawer({
     longPressTimerRef.current = null
   }
 
-  const positionActionMenu = (
-    clientX: number,
-    clientY: number,
-    rowCount: number,
-  ) => {
+  const positionActionMenu = (clientX: number, clientY: number, rowCount: number) => {
     const menuWidth = 240
     const menuHeight = rowCount * 56 + 16
     setActionMenuPosition({
-      left: Math.min(
-        Math.max(12, clientX - 24),
-        window.innerWidth - menuWidth - 12,
-      ),
-      top: Math.min(
-        Math.max(12, clientY + 12),
-        window.innerHeight - menuHeight - 12,
-      ),
+      left: Math.min(Math.max(12, clientX - 24), window.innerWidth - menuWidth - 12),
+      top: Math.min(Math.max(12, clientY + 12), window.innerHeight - menuHeight - 12),
     })
   }
 
@@ -248,7 +216,7 @@ export function MobileDrawer({
     clientX: number,
     clientY: number,
     rowCount: number,
-    onTrigger: () => void,
+    onTrigger: () => void
   ) => {
     cancelLongPress()
     longPressTriggeredRef.current = false
@@ -262,7 +230,6 @@ export function MobileDrawer({
 
   const handleAction = async (action: () => Promise<void> | void) => {
     setProjectActionTarget(null)
-    setChatActionTarget(null)
     await action()
   }
 
@@ -272,16 +239,8 @@ export function MobileDrawer({
     setRenamingProjectId(null)
   }
 
-  const submitChatRename = async (taskId: number) => {
-    const title = renameValue.trim()
-    if (title && onRenameTask) await onRenameTask(taskId, title)
-    setRenamingChatId(null)
-  }
-
   return (
-    <div
-      className="fixed inset-0 z-critical isolate flex h-dvh select-none flex-col overflow-hidden bg-white pb-[max(24px,env(safe-area-inset-bottom))] pt-[max(20px,env(safe-area-inset-top))] text-[#111111]"
-    >
+    <div className="fixed inset-0 z-critical isolate flex h-dvh select-none flex-col overflow-hidden bg-white pb-[max(24px,env(safe-area-inset-bottom))] pt-[max(20px,env(safe-area-inset-top))] text-[#111111]">
       <header className="flex shrink-0 items-center justify-between gap-4 px-6">
         <h1 className="text-[26px] font-bold leading-8 tracking-normal text-[#111111]">
           {t('workbench.brand', 'Wework')}
@@ -353,364 +312,384 @@ export function MobileDrawer({
         <div
           style={{
             transform: pullDistance ? `translateY(${pullDistance}px)` : undefined,
-            transition:
-              refreshing || pullDistance === 0 ? 'transform 0.2s ease' : undefined,
+            transition: refreshing || pullDistance === 0 ? 'transform 0.2s ease' : undefined,
           }}
         >
-        <section>
-          <div className="space-y-1">
-            <div className="relative">
-              <button
-                type="button"
-                data-testid="mobile-new-project-button"
-                onClick={() => setProjectCreateMenuOpen(open => !open)}
-                aria-expanded={projectCreateMenuOpen}
-                className="mx-3 flex h-[54px] min-w-[44px] w-[calc(100%-24px)] items-center gap-[18px] rounded-[14px] px-3 text-left text-[18px] font-normal leading-6 text-[#111111] hover:bg-[#F7F7F7] disabled:cursor-not-allowed disabled:text-[#6B7280]"
-                disabled={!canOpenProjectSheet}
-              >
-                <FolderPlus className="h-6 w-6 shrink-0 stroke-[2.4]" />
-                <span className="min-w-0 truncate">
-                  {t('workbench.new_project', '新建项目')}
-                </span>
-              </button>
-              {projectCreateMenuOpen && (
-                <>
-                  <button
-                    type="button"
-                    data-testid="mobile-project-create-menu-backdrop"
-                    aria-label={t('workbench.close_menu', '关闭菜单')}
-                    onClick={() => setProjectCreateMenuOpen(false)}
-                    className="fixed inset-0 z-10 cursor-default"
-                  />
-                  <div
-                    data-testid="mobile-project-create-menu"
-                    className="absolute left-4 top-[58px] z-20 w-[min(350px,calc(100vw-32px))] rounded-[18px] border border-[#E0E0E0] bg-white p-2 shadow-[0_12px_32px_rgba(0,0,0,0.14)]"
-                  >
-                    {[
-                      {
-                        mode: 'scratch' as const,
-                        label: t('workbench.start_from_scratch', '新建空白项目'),
-                        icon: FolderPlus,
-                        testId: 'mobile-project-start-from-scratch-button',
-                      },
-                      {
-                        mode: 'existing' as const,
-                        label: t('workbench.using_existing_folder', '使用现有目录'),
-                        icon: Folder,
-                        testId: 'mobile-project-existing-folder-button',
-                      },
-                      {
-                        mode: 'git' as const,
-                        label: t('workbench.clone_from_git', '从 Git 克隆'),
-                        icon: FolderGit2,
-                        testId: 'mobile-project-clone-from-git-button',
-                      },
-                    ].map(item => {
-                      const Icon = item.icon
+          <section>
+            <div className="space-y-1">
+              <div className="relative">
+                <button
+                  type="button"
+                  data-testid="mobile-new-project-button"
+                  onClick={() => setProjectCreateMenuOpen(open => !open)}
+                  aria-expanded={projectCreateMenuOpen}
+                  className="mx-3 flex h-[54px] min-w-[44px] w-[calc(100%-24px)] items-center gap-[18px] rounded-[14px] px-3 text-left text-[18px] font-normal leading-6 text-[#111111] hover:bg-[#F7F7F7] disabled:cursor-not-allowed disabled:text-[#6B7280]"
+                  disabled={!canOpenProjectSheet}
+                >
+                  <FolderPlus className="h-6 w-6 shrink-0 stroke-[2.4]" />
+                  <span className="min-w-0 truncate">{t('workbench.new_project', '新建项目')}</span>
+                </button>
+                {projectCreateMenuOpen && (
+                  <>
+                    <button
+                      type="button"
+                      data-testid="mobile-project-create-menu-backdrop"
+                      aria-label={t('workbench.close_menu', '关闭菜单')}
+                      onClick={() => setProjectCreateMenuOpen(false)}
+                      className="fixed inset-0 z-10 cursor-default"
+                    />
+                    <div
+                      data-testid="mobile-project-create-menu"
+                      className="absolute left-4 top-[58px] z-20 w-[min(350px,calc(100vw-32px))] rounded-[18px] border border-[#E0E0E0] bg-white p-2 shadow-[0_12px_32px_rgba(0,0,0,0.14)]"
+                    >
+                      {[
+                        {
+                          mode: 'scratch' as const,
+                          label: t('workbench.start_from_scratch', '新建空白项目'),
+                          icon: FolderPlus,
+                          testId: 'mobile-project-start-from-scratch-button',
+                        },
+                        {
+                          mode: 'existing' as const,
+                          label: t('workbench.using_existing_folder', '使用现有目录'),
+                          icon: Folder,
+                          testId: 'mobile-project-existing-folder-button',
+                        },
+                        {
+                          mode: 'git' as const,
+                          label: t('workbench.clone_from_git', '从 Git 克隆'),
+                          icon: FolderGit2,
+                          testId: 'mobile-project-clone-from-git-button',
+                        },
+                      ].map(item => {
+                        const Icon = item.icon
+                        return (
+                          <button
+                            key={item.mode}
+                            type="button"
+                            data-testid={item.testId}
+                            onClick={() => openProjectCreateDialog(item.mode)}
+                            className="flex h-14 min-w-[44px] w-full items-center gap-4 rounded-xl px-4 text-left text-[18px] font-normal text-[#111111] hover:bg-[#F7F7F7]"
+                          >
+                            <Icon className="h-6 w-6 shrink-0 stroke-[2.2]" />
+                            <span>{item.label}</span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </>
+                )}
+              </div>
+              {unmappedChatTaskItems.length > 0 && (
+                <section className="mt-5">
+                  <div className="mb-2 px-6 text-[18px] font-bold leading-6 text-[#111111]">
+                    {t('workbench.chats', '对话')}
+                  </div>
+                  <div className="space-y-1">
+                    {unmappedChatTaskItems.map(({ workspace, task }) => {
+                      const selectedTask = isRuntimeTaskSelected(
+                        currentRuntimeTask,
+                        workspace,
+                        task
+                      )
+                      const disabled = !workspace.available || !onOpenRuntimeLocalTask
+                      const workspaceTitle = getRuntimeTaskWorkspaceTitle(workspace)
                       return (
                         <button
-                          key={item.mode}
+                          key={`${workspace.deviceId}:${task.workspacePath}:${task.localTaskId}`}
                           type="button"
-                          data-testid={item.testId}
-                          onClick={() => openProjectCreateDialog(item.mode)}
-                          className="flex h-14 min-w-[44px] w-full items-center gap-4 rounded-xl px-4 text-left text-[18px] font-normal text-[#111111] hover:bg-[#F7F7F7]"
+                          data-testid="mobile-chat-runtime-task-button"
+                          disabled={disabled}
+                          onClick={() => {
+                            if (disabled) return
+                            void onOpenRuntimeLocalTask?.(getRuntimeTaskAddress(workspace, task))
+                            onClose()
+                          }}
+                          className={[
+                            'mx-3 flex h-12 min-w-[44px] w-[calc(100%-24px)] items-center rounded-[14px] px-3 text-left text-[18px] font-normal leading-6 disabled:cursor-not-allowed disabled:opacity-50',
+                            selectedTask
+                              ? 'bg-[#F1F1F1] text-[#111111]'
+                              : 'text-[#111111] hover:bg-[#F7F7F7]',
+                          ].join(' ')}
                         >
-                          <Icon className="h-6 w-6 shrink-0 stroke-[2.2]" />
-                          <span>{item.label}</span>
+                          <span className="min-w-0 flex-1 truncate">{task.title}</span>
+                          {task.running ? (
+                            <Loader2 className={MOBILE_RUNNING_SPINNER_CLASS} />
+                          ) : (
+                            <span className="ml-2 flex shrink-0 items-center gap-1 text-sm text-[#6B7280]">
+                              <span
+                                title={workspaceTitle}
+                                aria-label={workspaceTitle}
+                                role="img"
+                                className="flex h-3.5 w-3.5 shrink-0 items-center justify-center"
+                              >
+                                <Monitor className="h-3.5 w-3.5" aria-hidden="true" />
+                              </span>
+                              <span>{formatRelativeTime(getRuntimeTaskTime(task))}</span>
+                            </span>
+                          )}
                         </button>
                       )
                     })}
                   </div>
-                </>
+                </section>
               )}
-            </div>
-            {projects.map(project => {
-              const sortedTasks = sortProjectTasks(project.tasks)
-              const showAllTasks = expandedTaskProjectIds.has(project.id)
-              const tasks = showAllTasks
-                ? sortedTasks
-                : sortedTasks.slice(0, PROJECT_TASK_LIMIT)
-              const hasMoreTasks = sortedTasks.length > PROJECT_TASK_LIMIT
-              const selected = currentProjectId === project.id
-              const expanded = expandedProjectIds.has(project.id)
+              {projects.map(project => {
+                const runtimeProjectWork = runtimeWorkByProjectId.get(project.id)
+                const workspaces = runtimeProjectWork?.deviceWorkspaces ?? []
+                const selected = currentProjectId === project.id
+                const expanded = expandedProjectIds.has(project.id)
 
-              return (
-                <div key={project.id}>
-                  <button
-                    type="button"
-                    data-testid="mobile-project-item-button"
-                    onClick={() => {
-                      if (longPressTriggeredRef.current) {
-                        longPressTriggeredRef.current = false
-                        return
-                      }
-                      toggleProject(project.id)
-                    }}
-                    onPointerDown={event =>
-                      startLongPress(
-                        event.clientX,
-                        event.clientY,
-                        3,
-                        () => setProjectActionTarget(project),
-                      )
-                    }
-                    onPointerMove={event => {
-                      const { x, y } = longPressStartRef.current
-                      if (
-                        Math.abs(event.clientX - x) > 10 ||
-                        Math.abs(event.clientY - y) > 10
-                      ) {
-                        cancelLongPress()
-                      }
-                    }}
-                    onPointerUp={cancelLongPress}
-                    onPointerCancel={cancelLongPress}
-                    onContextMenu={event => {
-                      event.preventDefault()
-                      cancelLongPress()
-                      longPressTriggeredRef.current = true
-                      positionActionMenu(event.clientX, event.clientY, 3)
-                      setProjectActionTarget(project)
-                    }}
-                    aria-expanded={expanded}
-                    className={[
-                      'mx-3 flex h-[54px] min-w-[44px] w-[calc(100%-24px)] items-center gap-[18px] rounded-[14px] px-3 text-left text-[18px] font-normal leading-6',
-                      selected
-                        ? 'bg-[#F1F1F1] text-[#111111]'
-                        : 'text-[#111111] hover:bg-[#F7F7F7]',
-                    ].join(' ')}
-                  >
-                    {expanded ? (
-                      <FolderOpen className="h-6 w-6 shrink-0 stroke-[2.4]" />
-                    ) : (
-                      <Folder className="h-6 w-6 shrink-0 stroke-[2.4]" />
-                    )}
-                    {renamingProjectId === project.id ? (
-                      <input
-                        data-testid="mobile-inline-project-name-input"
-                        value={renameValue}
-                        autoFocus
-                        onFocus={event => event.currentTarget.select()}
-                        onClick={event => event.stopPropagation()}
-                        onPointerDown={event => event.stopPropagation()}
-                        onChange={event => setRenameValue(event.target.value)}
-                        onBlur={() => void submitProjectRename(project.id)}
-                        onKeyDown={event => {
-                          if (event.key === 'Enter') {
-                            event.preventDefault()
-                            void submitProjectRename(project.id)
-                          } else if (event.key === 'Escape') {
-                            event.preventDefault()
-                            setRenamingProjectId(null)
-                          }
-                        }}
-                        className="min-w-0 flex-1 select-text rounded-lg border border-[#D8D8D8] bg-white px-2 py-1 text-[18px] leading-6 outline-none focus:border-[#111111]"
-                      />
-                    ) : (
-                      <span className="min-w-0 flex-1 truncate">{project.name}</span>
-                    )}
-                  </button>
-                  {expanded && (
-                    <div className="ml-[66px] mr-6 mt-1 space-y-1">
-                      {tasks.map(task => {
-                        const running = runningTaskIds.has(task.task_id)
-                        return (
-                          <button
-                            key={task.task_id}
-                            type="button"
-                            data-testid="mobile-project-task-button"
-                            onClick={() => {
-                              if (longPressTriggeredRef.current) {
-                                longPressTriggeredRef.current = false
-                                return
-                              }
-                              onOpenTask(task.task_id, project.id)
-                              onClose()
-                            }}
-                            onPointerDown={event =>
-                              startLongPress(
-                                event.clientX,
-                                event.clientY,
-                                2,
-                                () =>
-                                  setChatActionTarget({
-                                    id: task.task_id,
-                                    title: getProjectTaskTitle(task),
-                                  }),
-                              )
-                            }
-                            onPointerMove={event => {
-                              const { x, y } = longPressStartRef.current
-                              if (
-                                Math.abs(event.clientX - x) > 10 ||
-                                Math.abs(event.clientY - y) > 10
-                              ) {
-                                cancelLongPress()
-                              }
-                            }}
-                            onPointerUp={cancelLongPress}
-                            onPointerCancel={cancelLongPress}
-                            onContextMenu={event => {
-                              event.preventDefault()
-                              cancelLongPress()
-                              longPressTriggeredRef.current = true
-                              positionActionMenu(event.clientX, event.clientY, 2)
-                              setChatActionTarget({
-                                id: task.task_id,
-                                title: getProjectTaskTitle(task),
-                              })
-                            }}
-                            className={[
-                              'flex h-12 min-w-[44px] w-full items-center rounded-[14px] px-2 text-left text-[18px] font-normal leading-6',
-                              currentTaskId === task.task_id
-                                ? 'bg-[#F1F1F1] text-[#111111]'
-                                : 'text-[#111111] hover:bg-[#F7F7F7]',
-                            ].join(' ')}
-                          >
-                            {renamingChatId === task.task_id ? (
-                              <input
-                                data-testid="mobile-inline-chat-name-input"
-                                value={renameValue}
-                                autoFocus
-                                onFocus={event => event.currentTarget.select()}
-                                onClick={event => event.stopPropagation()}
-                                onPointerDown={event => event.stopPropagation()}
-                                onChange={event => setRenameValue(event.target.value)}
-                                onBlur={() => void submitChatRename(task.task_id)}
-                                onKeyDown={event => {
-                                  if (event.key === 'Enter') {
-                                    event.preventDefault()
-                                    void submitChatRename(task.task_id)
-                                  } else if (event.key === 'Escape') {
-                                    event.preventDefault()
-                                    setRenamingChatId(null)
-                                  }
-                                }}
-                                className="min-w-0 flex-1 select-text rounded-lg border border-[#D8D8D8] bg-white px-2 py-1 text-[18px] leading-6 outline-none focus:border-[#111111]"
-                              />
-                            ) : (
-                              <span className="min-w-0 flex-1 truncate">
-                                {getProjectTaskTitle(task)}
-                              </span>
-                            )}
-                            {running ? (
-                              <Loader2 className={MOBILE_RUNNING_SPINNER_CLASS} />
-                            ) : (
-                              <span className="ml-2 shrink-0 text-sm text-[#6B7280]">
-                                {formatRelativeTime(getProjectTaskTime(task))}
-                              </span>
-                            )}
-                          </button>
+                return (
+                  <div key={project.id}>
+                    <button
+                      type="button"
+                      data-testid="mobile-project-item-button"
+                      onClick={() => {
+                        if (longPressTriggeredRef.current) {
+                          longPressTriggeredRef.current = false
+                          return
+                        }
+                        toggleProject(project.id)
+                      }}
+                      onPointerDown={event =>
+                        startLongPress(event.clientX, event.clientY, 2, () =>
+                          setProjectActionTarget(project)
                         )
-                      })}
-                      {hasMoreTasks && (
-                        <button
-                          type="button"
-                          data-testid={`mobile-project-task-limit-toggle-${project.id}`}
-                          onClick={() => toggleProjectTaskLimit(project.id)}
-                          className="flex h-11 min-w-[44px] w-full items-center rounded-lg px-2 text-left text-[13px] font-medium text-[#6B7280] hover:bg-[#F7F7F7] hover:text-[#111111]"
-                        >
-                          {showAllTasks
-                            ? t('workbench.show_less', '收起')
-                            : t('workbench.show_more', '显示更多')}
-                        </button>
-                      )}
-                      {tasks.length === 0 && (
-                        <div className="flex h-10 items-center rounded-lg px-2 text-left text-[15px] text-[#6B7280]">
-                          {t('workbench.no_chats', '暂无会话')}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-        </section>
-
-        <section className="mt-8">
-          <div className="mb-3 flex items-center justify-between px-6">
-            <h2 className="text-[18px] font-bold leading-6 text-[#111111]">
-              {t('workbench.history', '对话')}
-            </h2>
-          </div>
-          <div className="space-y-1">
-            {standaloneRecentTasks.map(task => {
-              return (
-                <button
-                  key={task.id}
-                  type="button"
-                  data-testid="mobile-recent-task-button"
-                  onClick={() => {
-                    if (longPressTriggeredRef.current) {
-                      longPressTriggeredRef.current = false
-                      return
-                    }
-                    onOpenTask(task.id, task.project_id)
-                    onClose()
-                  }}
-                  onPointerDown={event =>
-                    startLongPress(event.clientX, event.clientY, 2, () =>
-                      setChatActionTarget({
-                        id: task.id,
-                        title: task.title,
-                      }),
-                    )
-                  }
-                  onPointerMove={event => {
-                    const { x, y } = longPressStartRef.current
-                    if (
-                      Math.abs(event.clientX - x) > 10 ||
-                      Math.abs(event.clientY - y) > 10
-                    ) {
-                      cancelLongPress()
-                    }
-                  }}
-                  onPointerUp={cancelLongPress}
-                  onPointerCancel={cancelLongPress}
-                  onContextMenu={event => {
-                    event.preventDefault()
-                    cancelLongPress()
-                    longPressTriggeredRef.current = true
-                    positionActionMenu(event.clientX, event.clientY, 2)
-                    setChatActionTarget({ id: task.id, title: task.title })
-                  }}
-                  className={[
-                    'mx-3 flex h-12 min-w-[44px] w-[calc(100%-24px)] items-center rounded-[14px] px-3 text-left text-[18px] font-normal leading-6',
-                    currentTaskId === task.id && !currentProjectId
-                      ? 'bg-[#F1F1F1] text-[#111111]'
-                      : 'text-[#111111] hover:bg-[#F7F7F7]',
-                  ].join(' ')}
-                >
-                  {renamingChatId === task.id ? (
-                    <input
-                      data-testid="mobile-inline-chat-name-input"
-                      value={renameValue}
-                      autoFocus
-                      onFocus={event => event.currentTarget.select()}
-                      onClick={event => event.stopPropagation()}
-                      onPointerDown={event => event.stopPropagation()}
-                      onChange={event => setRenameValue(event.target.value)}
-                      onBlur={() => void submitChatRename(task.id)}
-                      onKeyDown={event => {
-                        if (event.key === 'Enter') {
-                          event.preventDefault()
-                          void submitChatRename(task.id)
-                        } else if (event.key === 'Escape') {
-                          event.preventDefault()
-                          setRenamingChatId(null)
+                      }
+                      onPointerMove={event => {
+                        const { x, y } = longPressStartRef.current
+                        if (Math.abs(event.clientX - x) > 10 || Math.abs(event.clientY - y) > 10) {
+                          cancelLongPress()
                         }
                       }}
-                      className="min-w-0 flex-1 select-text rounded-lg border border-[#D8D8D8] bg-white px-2 py-1 text-[18px] leading-6 outline-none focus:border-[#111111]"
-                    />
-                  ) : (
-                    <span className="min-w-0 flex-1 truncate">{task.title}</span>
-                  )}
-                </button>
-              )
-            })}
-          </div>
-        </section>
+                      onPointerUp={cancelLongPress}
+                      onPointerCancel={cancelLongPress}
+                      onContextMenu={event => {
+                        event.preventDefault()
+                        cancelLongPress()
+                        longPressTriggeredRef.current = true
+                        positionActionMenu(event.clientX, event.clientY, 2)
+                        setProjectActionTarget(project)
+                      }}
+                      aria-expanded={expanded}
+                      className={[
+                        'mx-3 flex h-[54px] min-w-[44px] w-[calc(100%-24px)] items-center gap-[18px] rounded-[14px] px-3 text-left text-[18px] font-normal leading-6',
+                        selected
+                          ? 'bg-[#F1F1F1] text-[#111111]'
+                          : 'text-[#111111] hover:bg-[#F7F7F7]',
+                      ].join(' ')}
+                    >
+                      {expanded ? (
+                        <FolderOpen className="h-6 w-6 shrink-0 stroke-[2.4]" />
+                      ) : (
+                        <Folder className="h-6 w-6 shrink-0 stroke-[2.4]" />
+                      )}
+                      {renamingProjectId === project.id ? (
+                        <input
+                          data-testid="mobile-inline-project-name-input"
+                          value={renameValue}
+                          autoFocus
+                          onFocus={event => event.currentTarget.select()}
+                          onClick={event => event.stopPropagation()}
+                          onPointerDown={event => event.stopPropagation()}
+                          onChange={event => setRenameValue(event.target.value)}
+                          onBlur={() => void submitProjectRename(project.id)}
+                          onKeyDown={event => {
+                            if (event.key === 'Enter') {
+                              event.preventDefault()
+                              void submitProjectRename(project.id)
+                            } else if (event.key === 'Escape') {
+                              event.preventDefault()
+                              setRenamingProjectId(null)
+                            }
+                          }}
+                          className="min-w-0 flex-1 select-text rounded-lg border border-[#D8D8D8] bg-white px-2 py-1 text-[18px] leading-6 outline-none focus:border-[#111111]"
+                        />
+                      ) : (
+                        <span className="min-w-0 flex-1 truncate">{project.name}</span>
+                      )}
+                    </button>
+                    {expanded && (
+                      <div className="ml-[66px] mr-6 mt-1 space-y-1">
+                        {(() => {
+                          const taskItems = getRuntimeSidebarTaskItems(workspaces)
+                          if (taskItems.length === 0) {
+                            return (
+                              <div className="flex h-10 items-center rounded-lg px-2 text-left text-[15px] text-[#6B7280]">
+                                {t('workbench.no_chats', '暂无会话')}
+                              </div>
+                            )
+                          }
+
+                          const runtimeTasksExpanded = expandedRuntimeProjectTaskIds.has(project.id)
+                          const visibleTaskItems = getVisibleRuntimeSidebarTaskItems(
+                            taskItems,
+                            runtimeTasksExpanded
+                          )
+                          const hasHiddenTasks = hasHiddenRuntimeSidebarTaskItems(taskItems)
+
+                          return (
+                            <>
+                              {visibleTaskItems.map(({ workspace, task }) => {
+                                const selectedTask = isRuntimeTaskSelected(
+                                  currentRuntimeTask,
+                                  workspace,
+                                  task
+                                )
+                                const disabled = !workspace.available || !onOpenRuntimeLocalTask
+                                const workspaceTitle = getRuntimeTaskWorkspaceTitle(workspace)
+                                return (
+                                  <button
+                                    key={`${workspace.deviceId}:${task.workspacePath}:${task.localTaskId}`}
+                                    type="button"
+                                    data-testid="mobile-runtime-task-button"
+                                    disabled={disabled}
+                                    onClick={() => {
+                                      if (disabled) return
+                                      void onOpenRuntimeLocalTask?.(
+                                        getRuntimeTaskAddress(workspace, task)
+                                      )
+                                      onClose()
+                                    }}
+                                    className={[
+                                      'flex h-12 min-w-[44px] w-full items-center rounded-[14px] px-2 text-left text-[18px] font-normal leading-6 disabled:cursor-not-allowed disabled:opacity-50',
+                                      selectedTask
+                                        ? 'bg-[#F1F1F1] text-[#111111]'
+                                        : 'text-[#111111] hover:bg-[#F7F7F7]',
+                                    ].join(' ')}
+                                  >
+                                    <span className="min-w-0 flex-1 truncate">{task.title}</span>
+                                    {task.running ? (
+                                      <Loader2 className={MOBILE_RUNNING_SPINNER_CLASS} />
+                                    ) : (
+                                      <span className="ml-2 flex shrink-0 items-center gap-1 text-sm text-[#6B7280]">
+                                        <span
+                                          title={workspaceTitle}
+                                          aria-label={workspaceTitle}
+                                          role="img"
+                                          className="flex h-3.5 w-3.5 shrink-0 items-center justify-center"
+                                        >
+                                          <Monitor className="h-3.5 w-3.5" aria-hidden="true" />
+                                        </span>
+                                        {isRuntimeWorktreeTask(task) && (
+                                          <GitCompareArrows
+                                            className="h-3.5 w-3.5 shrink-0"
+                                            aria-label="Worktree"
+                                          />
+                                        )}
+                                        <span>{formatRelativeTime(getRuntimeTaskTime(task))}</span>
+                                      </span>
+                                    )}
+                                  </button>
+                                )
+                              })}
+                              {hasHiddenTasks && (
+                                <button
+                                  type="button"
+                                  data-testid={
+                                    runtimeTasksExpanded
+                                      ? `mobile-project-runtime-tasks-collapse-${project.id}`
+                                      : `mobile-project-runtime-tasks-expand-${project.id}`
+                                  }
+                                  onClick={() =>
+                                    setExpandedRuntimeProjectTaskIds(previous => {
+                                      const next = new Set(previous)
+                                      if (next.has(project.id)) {
+                                        next.delete(project.id)
+                                      } else {
+                                        next.add(project.id)
+                                      }
+                                      return next
+                                    })
+                                  }
+                                  className="flex h-10 min-w-[44px] items-center rounded-lg px-2 text-left text-[15px] font-semibold text-[#6B7280] hover:bg-[#F7F7F7]"
+                                >
+                                  {runtimeTasksExpanded
+                                    ? t('workbench.collapse_display', '折叠显示')
+                                    : t('workbench.expand_display', '展开显示')}
+                                </button>
+                              )}
+                            </>
+                          )
+                        })()}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </section>
+
+          <section className="mt-8">
+            <div className="mb-3 flex items-center justify-between px-6">
+              <h2 className="text-[18px] font-bold leading-6 text-[#111111]">
+                {t('workbench.unmapped_device_workspaces', '未映射工作区')}
+              </h2>
+            </div>
+            <div className="space-y-2">
+              {unmappedDirectoryWorkspaces.length === 0 ? (
+                <div className="mx-3 flex h-10 items-center rounded-lg px-3 text-left text-[15px] text-[#6B7280]">
+                  {t('workbench.no_unmapped_device_workspaces', '暂无未映射工作区')}
+                </div>
+              ) : (
+                unmappedDirectoryWorkspaces.map(workspace => (
+                  <div
+                    key={`${workspace.deviceId}:${workspace.workspacePath}`}
+                    className="mx-3 rounded-[14px]"
+                  >
+                    <div className="flex h-9 items-center rounded-lg px-3 text-left text-[13px] font-medium text-[#6B7280]">
+                      <span className="min-w-0 flex-1 truncate">
+                        {getRuntimeWorkspaceLabel(workspace)}
+                      </span>
+                    </div>
+                    {sortRuntimeTasks(workspace.localTasks).map(task => {
+                      const selectedTask = isRuntimeTaskSelected(
+                        currentRuntimeTask,
+                        workspace,
+                        task
+                      )
+                      const disabled = !workspace.available || !onOpenRuntimeLocalTask
+                      return (
+                        <button
+                          key={task.localTaskId}
+                          type="button"
+                          data-testid="mobile-unmapped-runtime-task-button"
+                          disabled={disabled}
+                          onClick={() => {
+                            if (disabled) return
+                            void onOpenRuntimeLocalTask?.(getRuntimeTaskAddress(workspace, task))
+                            onClose()
+                          }}
+                          className={[
+                            'flex h-12 min-w-[44px] w-full items-center rounded-[14px] px-3 text-left text-[18px] font-normal leading-6 disabled:cursor-not-allowed disabled:opacity-50',
+                            selectedTask
+                              ? 'bg-[#F1F1F1] text-[#111111]'
+                              : 'text-[#111111] hover:bg-[#F7F7F7]',
+                          ].join(' ')}
+                        >
+                          <span className="min-w-0 flex-1 truncate">{task.title}</span>
+                          {task.running ? (
+                            <Loader2 className={MOBILE_RUNNING_SPINNER_CLASS} />
+                          ) : (
+                            <span className="ml-2 flex shrink-0 items-center gap-1 text-sm text-[#6B7280]">
+                              {isRuntimeWorktreeTask(task) && (
+                                <GitCompareArrows
+                                  className="h-3.5 w-3.5 shrink-0"
+                                  aria-label="Worktree"
+                                />
+                              )}
+                              {formatRelativeTime(getRuntimeTaskTime(task))}
+                            </span>
+                          )}
+                        </button>
+                      )
+                    })}
+                  </div>
+                ))
+              )}
+            </div>
+          </section>
         </div>
       </div>
 
@@ -773,68 +752,12 @@ export function MobileDrawer({
             </button>
             <button
               type="button"
-              data-testid="mobile-archive-project-chats-button"
-              onClick={() =>
-                handleAction(() =>
-                  onArchiveProjectChats?.(projectActionTarget.id),
-                )
-              }
-              className="flex h-14 min-w-[44px] w-full items-center gap-4 rounded-xl px-4 text-left text-[18px] text-[#111111] hover:bg-[#F7F7F7]"
-            >
-              <Archive className="h-6 w-6 shrink-0" />
-              <span>{t('workbench.archive_chats', '归档会话')}</span>
-            </button>
-            <button
-              type="button"
               data-testid="mobile-remove-project-button"
-              onClick={() =>
-                handleAction(() =>
-                  onRemoveProject?.(projectActionTarget.id),
-                )
-              }
+              onClick={() => handleAction(() => onRemoveProject?.(projectActionTarget.id))}
               className="flex h-14 min-w-[44px] w-full items-center gap-4 rounded-xl px-4 text-left text-[18px] text-[#EF4444] hover:bg-[#FFF5F5]"
             >
               <X className="h-6 w-6 shrink-0" />
               <span>{t('workbench.remove_project', '移除')}</span>
-            </button>
-          </div>
-        </div>
-      )}
-      {chatActionTarget && (
-        <div
-          className="fixed inset-0 z-30"
-          data-testid="mobile-chat-actions-backdrop"
-          onClick={() => setChatActionTarget(null)}
-        >
-          <div
-            data-testid="mobile-chat-actions-menu"
-            className="absolute w-[240px] overflow-hidden rounded-2xl border border-[#EDEDED] bg-white p-2 shadow-[0_12px_36px_rgba(0,0,0,0.18)]"
-            style={actionMenuPosition}
-            onClick={event => event.stopPropagation()}
-          >
-            <button
-              type="button"
-              data-testid="mobile-rename-chat-button"
-              onClick={() => {
-                setRenameValue(chatActionTarget.title)
-                setRenamingChatId(chatActionTarget.id)
-                setChatActionTarget(null)
-              }}
-              className="flex h-14 min-w-[44px] w-full items-center gap-4 rounded-xl px-4 text-left text-[18px] text-[#111111] hover:bg-[#F7F7F7]"
-            >
-              <Edit3 className="h-6 w-6 shrink-0" />
-              <span>{t('workbench.rename_chat', '重命名会话')}</span>
-            </button>
-            <button
-              type="button"
-              data-testid="mobile-archive-chat-button"
-              onClick={() =>
-                handleAction(() => onArchiveTask?.(chatActionTarget.id))
-              }
-              className="flex h-14 min-w-[44px] w-full items-center gap-4 rounded-xl px-4 text-left text-[18px] text-[#111111] hover:bg-[#F7F7F7]"
-            >
-              <Archive className="h-6 w-6 shrink-0" />
-              <span>{t('workbench.archive_chat', '归档会话')}</span>
             </button>
           </div>
         </div>

@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.services.channels.telegram.emitter import StreamingResponseEmitter
+from shared.models import EventType, ExecutionEvent
 
 
 class TestStreamingResponseEmitter:
@@ -142,6 +143,154 @@ class TestStreamingResponseEmitter:
         mock_bot.edit_message_text.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_emit_thinking_event_edits_message(self, emitter, mock_bot):
+        """Test THINKING events are displayed as temporary thinking status."""
+        mock_message = MagicMock()
+        mock_message.message_id = 999
+        mock_bot.send_message.return_value = mock_message
+        await emitter.emit_start(task_id=1, subtask_id=2)
+        mock_bot.edit_message_text.reset_mock()
+        emitter._last_update_time = 0
+
+        await emitter.emit(
+            ExecutionEvent.create(
+                EventType.THINKING,
+                task_id=1,
+                subtask_id=2,
+                content="Checking the workspace",
+                offset=0,
+            )
+        )
+
+        mock_bot.edit_message_text.assert_called_once()
+        text = mock_bot.edit_message_text.call_args.kwargs["text"]
+        assert "💭 思考摘要" in text
+        assert "Checking the workspace" in text
+        assert emitter._full_content == ""
+
+    @pytest.mark.asyncio
+    async def test_emit_done_keeps_reasoning_summary_separate_from_answer(
+        self, emitter, mock_bot
+    ):
+        """Test final output keeps thinking summary visible above the answer."""
+        mock_message = MagicMock()
+        mock_message.message_id = 999
+        mock_bot.send_message.return_value = mock_message
+        await emitter.emit_start(task_id=1, subtask_id=2)
+        mock_bot.edit_message_text.reset_mock()
+        emitter._last_update_time = 0
+
+        await emitter.emit(
+            ExecutionEvent.create(
+                EventType.THINKING,
+                task_id=1,
+                subtask_id=2,
+                content="Checking the workspace",
+                offset=0,
+            )
+        )
+        emitter._last_update_time = 0
+        await emitter.emit_chunk(
+            task_id=1,
+            subtask_id=2,
+            content="Final answer",
+            offset=12,
+        )
+
+        await emitter.emit_done(task_id=1, subtask_id=2, offset=12)
+
+        text = mock_bot.edit_message_text.call_args.kwargs["text"]
+        assert "💭 思考摘要" in text
+        assert "Checking the workspace" in text
+        assert "回复" in text
+        assert "Final answer" in text
+        assert text.index("Checking the workspace") < text.index("Final answer")
+
+    @pytest.mark.asyncio
+    async def test_multiline_thinking_does_not_leak_into_answer(
+        self, emitter, mock_bot
+    ):
+        """Test multiline thinking stays in the reasoning summary block."""
+        mock_message = MagicMock()
+        mock_message.message_id = 999
+        mock_bot.send_message.return_value = mock_message
+        await emitter.emit_start(task_id=1, subtask_id=2)
+        mock_bot.edit_message_text.reset_mock()
+        emitter._last_update_time = 0
+
+        await emitter.emit(
+            ExecutionEvent.create(
+                EventType.THINKING,
+                task_id=1,
+                subtask_id=2,
+                content="Read files\nCheck tests",
+                offset=0,
+            )
+        )
+        emitter._last_update_time = 0
+        await emitter.emit_chunk(
+            task_id=1,
+            subtask_id=2,
+            content="Final answer",
+            offset=12,
+        )
+
+        await emitter.emit_done(task_id=1, subtask_id=2, offset=12)
+
+        text = mock_bot.edit_message_text.call_args.kwargs["text"]
+        reasoning_block, answer_block = text.split("\n\n回复\n", maxsplit=1)
+        assert "Read files\nCheck tests" in reasoning_block
+        assert answer_block == "Final answer"
+
+    @pytest.mark.asyncio
+    async def test_emit_chunk_preserves_stream_chunk_boundaries(
+        self, emitter, mock_bot
+    ):
+        """Test streamed answer chunks preserve their exact whitespace boundaries."""
+        mock_message = MagicMock()
+        mock_message.message_id = 999
+        mock_bot.send_message.return_value = mock_message
+        await emitter.emit_start(task_id=1, subtask_id=2)
+        mock_bot.edit_message_text.reset_mock()
+
+        emitter._last_update_time = 0
+        await emitter.emit_chunk(
+            task_id=1,
+            subtask_id=2,
+            content="你刚主要说了：\n\n",
+            offset=8,
+        )
+        emitter._last_update_time = 0
+        await emitter.emit_chunk(
+            task_id=1,
+            subtask_id=2,
+            content="1.  注入当前项目 ",
+            offset=19,
+        )
+
+        await emitter.emit_done(task_id=1, subtask_id=2)
+
+        assert mock_bot.edit_message_text.call_args.kwargs["text"] == (
+            "你刚主要说了：\n\n1.  注入当前项目 "
+        )
+
+    @pytest.mark.asyncio
+    async def test_emit_done_prefers_result_value_over_stream_buffer(
+        self, emitter, mock_bot
+    ):
+        """Test the final Telegram message uses canonical done result content."""
+        mock_message = MagicMock()
+        mock_message.message_id = 999
+        mock_bot.send_message.return_value = mock_message
+        await emitter.emit_start(task_id=1, subtask_id=2)
+        mock_bot.edit_message_text.reset_mock()
+        emitter._full_content = "BAC"
+
+        await emitter.emit_done(task_id=1, subtask_id=2, result={"value": "ABC"})
+
+        assert mock_bot.edit_message_text.call_args.kwargs["text"] == "ABC"
+
+    @pytest.mark.asyncio
     async def test_emit_done(self, emitter, mock_bot):
         """Test emit_done finalizes message."""
         # Setup
@@ -156,6 +305,27 @@ class TestStreamingResponseEmitter:
 
         assert emitter._finished is True
         mock_bot.edit_message_text.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_emit_done_uses_result_value_without_streamed_content(
+        self, emitter, mock_bot
+    ):
+        """Test emit_done uses result content when no chunks were streamed."""
+        mock_message = MagicMock()
+        mock_message.message_id = 999
+        mock_bot.send_message.return_value = mock_message
+        await emitter.emit_start(task_id=1, subtask_id=2)
+        mock_bot.edit_message_text.reset_mock()
+
+        await emitter.emit_done(
+            task_id=1,
+            subtask_id=2,
+            result={"value": "Final answer"},
+        )
+
+        assert emitter._finished is True
+        mock_bot.edit_message_text.assert_called_once()
+        assert mock_bot.edit_message_text.call_args.kwargs["text"] == "Final answer"
 
     @pytest.mark.asyncio
     async def test_emit_done_already_finished(self, emitter, mock_bot):

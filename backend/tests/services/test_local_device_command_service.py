@@ -249,6 +249,9 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     read_runtime_auth_file_definition = resolve_local_device_command(
         "read_runtime_auth_file", settings.LOCAL_DEVICE_COMMANDS
     )
+    codex_threads_list_definition = resolve_local_device_command(
+        "codex_threads_list", settings.LOCAL_DEVICE_COMMANDS
+    )
 
     assert pwd_definition is not None
     assert pwd_definition.command == "pwd"
@@ -352,6 +355,157 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
         "WEGENT_RUNTIME_CONFIG_TARGET_PATH" in read_runtime_auth_file_definition.command
     )
     assert read_runtime_auth_file_definition.post_processor == "json"
+    assert codex_threads_list_definition is not None
+    assert "openai_codex" in codex_threads_list_definition.command
+    assert "thread_list" in codex_threads_list_definition.command
+    assert "session_index.jsonl" not in codex_threads_list_definition.command
+    assert "transcript" not in codex_threads_list_definition.command
+    assert codex_threads_list_definition.post_processor == "json"
+
+
+def _write_fake_openai_codex_sdk(root):
+    package_root = root / "openai_codex"
+    generated_root = package_root / "generated"
+    generated_root.mkdir(parents=True)
+    (package_root / "__init__.py").write_text(
+        """
+from types import SimpleNamespace
+
+
+class CodexConfig:
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+
+
+class Codex:
+    def __init__(self, config):
+        self.config = config
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, _exc_type, _exc, _tb):
+        return None
+
+    def thread_list(self, **kwargs):
+        if kwargs.get("archived") is not False:
+            raise AssertionError("archived must be false")
+        if kwargs.get("use_state_db_only") is not True:
+            raise AssertionError("use_state_db_only must be true")
+        limit = kwargs.get("limit", 100)
+        threads = [
+            SimpleNamespace(
+                id="018f2d6b-8c7a-7abc-9def-0123456789ac",
+                name="Newer",
+                preview=None,
+                cwd=SimpleNamespace(root="/tmp/newer-project"),
+                updated_at=1782008158,
+                archived=False,
+                status=SimpleNamespace(type="running"),
+            ),
+            SimpleNamespace(
+                id="018f2d6b-8c7a-7abc-9def-0123456789ab",
+                name=None,
+                preview="Older",
+                cwd="/tmp/older-project",
+                updated_at=1781979275,
+                archived=False,
+                status=SimpleNamespace(type="notLoaded"),
+            ),
+            SimpleNamespace(
+                id="018f2d6b-8c7a-7abc-9def-0123456789aa",
+                name="Oldest",
+                preview=None,
+                cwd="/tmp/oldest-project",
+                updated_at=1781970000,
+                archived=False,
+                status=None,
+            ),
+        ]
+        return SimpleNamespace(data=threads[:limit])
+""".strip(),
+        encoding="utf-8",
+    )
+    (generated_root / "__init__.py").write_text("", encoding="utf-8")
+    (generated_root / "v2_all.py").write_text(
+        """
+class SortDirection(str):
+    pass
+
+
+class ThreadSortKey(str):
+    pass
+""".strip(),
+        encoding="utf-8",
+    )
+    return root
+
+
+def test_codex_threads_list_command_reads_sdk_thread_list(tmp_path):
+    """codex_threads_list should expose SDK thread summaries without transcripts."""
+    from app.services.device.command_registry import CODEX_THREADS_LIST_SCRIPT
+
+    fake_sdk_root = _write_fake_openai_codex_sdk(tmp_path / "fake-sdk")
+
+    result = subprocess.run(
+        ["python3", "-c", CODEX_THREADS_LIST_SCRIPT],
+        env={
+            **os.environ,
+            "CODEX_HOME": str(tmp_path / "codex-home"),
+            "PYTHONPATH": str(fake_sdk_root),
+            "WEGENT_CODEX_THREADS_LIMIT": "1000",
+        },
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(result.stdout)
+    assert [thread["title"] for thread in payload["threads"]] == [
+        "Newer",
+        "Older",
+        "Oldest",
+    ]
+    assert set(payload["threads"][0]) == {
+        "threadId",
+        "title",
+        "cwd",
+        "updatedAt",
+        "archived",
+        "running",
+    }
+    assert payload["threads"][0]["threadId"] == "018f2d6b-8c7a-7abc-9def-0123456789ac"
+    assert payload["threads"][0]["cwd"] == "/tmp/newer-project"
+    assert payload["threads"][0]["archived"] is False
+    assert payload["threads"][0]["running"] is True
+    assert payload["threads"][1]["running"] is False
+    assert "transcript" not in json.dumps(payload)
+    assert "session_index" not in json.dumps(payload)
+
+
+def test_codex_threads_list_command_stops_after_limit(tmp_path):
+    """codex_threads_list should pass a bounded limit to the SDK."""
+    from app.services.device.command_registry import CODEX_THREADS_LIST_SCRIPT
+
+    fake_sdk_root = _write_fake_openai_codex_sdk(tmp_path / "fake-sdk")
+
+    result = subprocess.run(
+        ["python3", "-c", CODEX_THREADS_LIST_SCRIPT],
+        env={
+            **os.environ,
+            "PYTHONPATH": str(fake_sdk_root),
+            "WEGENT_CODEX_THREADS_LIMIT": "2",
+        },
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(result.stdout)
+    assert [thread["title"] for thread in payload["threads"]] == [
+        "Newer",
+        "Older",
+    ]
 
 
 def test_local_device_command_registry_default_includes_workspace_file_commands():

@@ -1,5 +1,5 @@
 import { useCallback, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
-import { ArrowLeftRight } from 'lucide-react'
+import { MessageCircle } from 'lucide-react'
 import { ChatInput } from '@/components/chat/ChatInput'
 import type { ProjectChatControls, ProjectWorkControls } from '@/components/chat/ChatInput'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
@@ -9,12 +9,16 @@ import {
   getActiveWorkbenchDeviceId,
   isWorkbenchDeviceOnline,
 } from '@/lib/workbench-device'
-import { isDeviceBelowWeWorkVersion, isWeWorkCompatibleDevice } from '@/lib/device-capabilities'
+import {
+  WEWORK_MIN_EXECUTOR_VERSION,
+  isDeviceBelowWeWorkVersion,
+  isWeWorkCompatibleDevice,
+} from '@/lib/device-capabilities'
 import type {
   DeviceInfo,
   ProjectWithTasks,
+  RuntimeTaskAddress,
   Task,
-  TaskForkRequest,
   TurnFileChangesSummary,
 } from '@/types/api'
 import type { DeviceUpgradeState } from '@/types/device-events'
@@ -43,7 +47,6 @@ import { DeviceStatusPrompt } from './DeviceStatusPrompt'
 import { TitlebarActionsPortal } from '@/components/topnav/TitlebarActionsPortal'
 import { DESKTOP_TOP_BAR_BUTTON_CLASS, DesktopTopBar } from './DesktopTopBar'
 import { isTauriRuntime } from '@/lib/runtime-environment'
-import { TaskForkDialog } from './TaskForkDialog'
 
 const DESKTOP_COMPOSER_FRAME_CLASS =
   'mx-auto w-[min(58vw,62rem)] min-w-[32rem] max-w-[calc(100vw-4rem)] -translate-y-12'
@@ -120,6 +123,7 @@ interface DesktopWorkbenchMainProps {
   sidebarCollapsed: boolean
   isBootstrapping: boolean
   currentTask: Task | null
+  currentRuntimeTask: RuntimeTaskAddress | null
   currentProject: ProjectWithTasks | null
   workspaceTarget: WorkspaceTarget | null
   workspaceTargetError?: string | null
@@ -133,7 +137,7 @@ interface DesktopWorkbenchMainProps {
   projectWork: ProjectWorkControls
   input: string
   isSending: boolean
-  currentTaskRunning?: boolean
+  error?: string | null
   environmentInfo: EnvironmentInfo
   onRefreshEnvironmentInfo: () => Promise<void>
   onCommitEnvironmentChanges: (message: string) => Promise<void>
@@ -148,7 +152,6 @@ interface DesktopWorkbenchMainProps {
   onRetryFailedMessage?: (messageId: string) => void
   isResponseStreaming: boolean
   onPauseResponse: () => void
-  onForkCurrentTask?: (request: TaskForkRequest) => Promise<unknown>
   onCancelQueuedMessage: (id: string) => void
   onSendQueuedAsGuidance: (id: string) => void
   onEditQueuedMessage: (id: string) => void
@@ -158,12 +161,14 @@ interface DesktopWorkbenchMainProps {
   onAddCodeComment?: (context: CodeCommentContext) => void
   onClearCodeComments?: () => void
   topBarLeftActions?: ReactNode
+  onContinueInIm?: () => void
 }
 
 export function DesktopWorkbenchMain({
   sidebarCollapsed,
   isBootstrapping,
   currentTask,
+  currentRuntimeTask,
   currentProject,
   workspaceTarget,
   workspaceTargetError,
@@ -177,7 +182,7 @@ export function DesktopWorkbenchMain({
   projectWork,
   input,
   isSending,
-  currentTaskRunning = false,
+  error,
   environmentInfo,
   onRefreshEnvironmentInfo,
   onCommitEnvironmentChanges,
@@ -192,7 +197,6 @@ export function DesktopWorkbenchMain({
   onRetryFailedMessage,
   isResponseStreaming,
   onPauseResponse,
-  onForkCurrentTask,
   onCancelQueuedMessage,
   onSendQueuedAsGuidance,
   onEditQueuedMessage,
@@ -202,6 +206,7 @@ export function DesktopWorkbenchMain({
   onAddCodeComment = () => {},
   onClearCodeComments,
   topBarLeftActions,
+  onContinueInIm,
 }: DesktopWorkbenchMainProps) {
   const { t } = useTranslation('common')
   const [rightPanelOpen, setRightPanelOpen] = useState(false)
@@ -215,7 +220,6 @@ export function DesktopWorkbenchMain({
     error: undefined,
     reloadDiff: undefined,
   })
-  const [forkDialogOpen, setForkDialogOpen] = useState(false)
   const { width: rightSplitChatWidth, handleResizeStart: handleRightSplitResizeStart } =
     useResizableRightSplitChat()
   const chatColumnWidth = rightPanelOpen ? rightSplitChatWidth : '100%'
@@ -248,6 +252,20 @@ export function DesktopWorkbenchMain({
     activeDeviceUnavailable ||
     activeDeviceVersionUnsupported ||
     noStandaloneCompatibleDevice
+  const composerDisabledReason = isSending
+    ? t('workbench.sending_message')
+    : activeDeviceUnavailable
+      ? t('workbench.device_status_active_unavailable', {
+          device: activeDevice?.name || activeDeviceId || t('workbench.project_device'),
+        })
+      : activeDeviceVersionUnsupported
+        ? t('workbench.device_status_active_upgrade_required', {
+            device: activeDevice?.name || activeDeviceId || t('workbench.project_device'),
+            version: WEWORK_MIN_EXECUTOR_VERSION,
+          })
+        : noStandaloneCompatibleDevice
+          ? t('workbench.device_status_no_online_device')
+          : undefined
   const projectChatWithModelSelectorSignal: ProjectChatControls = {
     ...projectChat,
     modelSelectorOpenSignal,
@@ -397,26 +415,28 @@ export function DesktopWorkbenchMain({
       onToggleBottomPanel={toggleBottomPanel}
     />
   )
-  const canForkCurrentTask = Boolean(currentTask && onForkCurrentTask)
-  const forkTaskButton = canForkCurrentTask ? (
-    <button
-      type="button"
-      data-testid="fork-task-button"
-      onClick={() => setForkDialogOpen(true)}
-      className={DESKTOP_TOP_BAR_BUTTON_CLASS}
-      aria-label={t('workbench.task_fork_button', '复制到其他执行器')}
-      title={t('workbench.task_fork_button', '复制到其他执行器')}
-    >
-      <ArrowLeftRight />
-    </button>
-  ) : null
-  const workspacePanelActions = (
+  const workspacePanelActions = renderWorkspacePanelActions('all')
+  const showPageTopBar = !isTauri || Boolean(topBarLeftActions)
+  const canContinueInIm = Boolean(currentRuntimeTask)
+  const continueInImButton =
+    canContinueInIm && onContinueInIm ? (
+      <button
+        type="button"
+        data-testid="continue-in-im-button"
+        className={DESKTOP_TOP_BAR_BUTTON_CLASS}
+        aria-label={t('workbench.continue_im_title')}
+        title={t('workbench.continue_im_title')}
+        onClick={onContinueInIm}
+      >
+        <MessageCircle />
+      </button>
+    ) : undefined
+  const topRightActions = (
     <>
-      {forkTaskButton}
-      {renderWorkspacePanelActions('all')}
+      {continueInImButton}
+      {workspacePanelActions}
     </>
   )
-  const showPageTopBar = !isTauri || Boolean(topBarLeftActions)
 
   useLayoutEffect(() => {
     if (previousRightPanelSessionKey.current === rightPanelSessionKey) {
@@ -444,13 +464,13 @@ export function DesktopWorkbenchMain({
         sidebarCollapsed && 'ml-1.5'
       )}
     >
-      {isTauri && <TitlebarActionsPortal>{workspacePanelActions}</TitlebarActionsPortal>}
+      {isTauri && <TitlebarActionsPortal>{topRightActions}</TitlebarActionsPortal>}
       {!isTauri && (
         <div
           data-testid="workspace-panel-floating-actions"
           className="pointer-events-auto absolute right-7 top-3 z-popover flex shrink-0 items-center gap-2"
         >
-          {workspacePanelActions}
+          {topRightActions}
         </div>
       )}
       {showPageTopBar && (
@@ -459,8 +479,6 @@ export function DesktopWorkbenchMain({
           className="absolute left-0 top-0 z-chrome overflow-hidden bg-transparent pl-2 pr-7 transition-[width] duration-300 ease-out"
           style={{ width: chatColumnWidth }}
           left={topBarLeftActions}
-          right={undefined}
-          rightClassName="gap-2"
         />
       )}
       <div
@@ -533,6 +551,8 @@ export function DesktopWorkbenchMain({
                   onChange={onInputChange}
                   onSubmit={onSend}
                   disabled={composerDisabled}
+                  error={error}
+                  disabledReason={composerDisabledReason}
                   placeholder={t('workbench.input_placeholder', '尽管问')}
                   variant="desktop"
                   projectChat={projectChatWithModelSelectorSignal}
@@ -578,6 +598,8 @@ export function DesktopWorkbenchMain({
                 onChange={onInputChange}
                 onSubmit={onSend}
                 disabled={composerDisabled}
+                error={error}
+                disabledReason={composerDisabledReason}
                 placeholder={t('workbench.input_placeholder', '尽管问')}
                 variant="desktop"
                 projectChat={projectChatWithModelSelectorSignal}
@@ -632,20 +654,6 @@ export function DesktopWorkbenchMain({
           />
         )}
       </div>
-      <TaskForkDialog
-        key={forkDialogOpen ? `open-${currentTask?.id ?? 'none'}` : 'closed'}
-        open={forkDialogOpen}
-        task={currentTask}
-        devices={devices}
-        activeDeviceId={activeDeviceId}
-        requiresStop={currentTaskRunning}
-        onOpenChange={setForkDialogOpen}
-        onStopCurrentResponse={onPauseResponse}
-        onFork={async request => {
-          if (!onForkCurrentTask) return
-          await onForkCurrentTask(request)
-        }}
-      />
     </main>
   )
 }

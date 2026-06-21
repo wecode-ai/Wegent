@@ -4,6 +4,7 @@
 
 import type { Team } from '@/types/api'
 import {
+  buildTeamTargetHref,
   filterTeamsByMode,
   getTeamTargetPage,
 } from '@/features/tasks/components/selector/team-selector-utils'
@@ -45,5 +46,12 @@ describe('team selector utils', () => {
     expect(getTeamTargetPage(makeTeam(2, ['chat', 'task']), 'task')).toBe('devices/chat')
     expect(getTeamTargetPage(makeTeam(3, ['chat', 'code']), 'code')).toBe('code')
     expect(getTeamTargetPage(makeTeam(4, ['chat', 'code']), 'all')).toBe('chat')
+  })
+
+  it('builds code target hrefs through chat agent mode', () => {
+    const params = new URLSearchParams({ teamId: '42' })
+
+    expect(buildTeamTargetHref('code', params)).toBe('/chat?teamId=42&agent=code')
+    expect(buildTeamTargetHref('devices/chat', params)).toBe('/devices/chat?teamId=42')
   })
 })

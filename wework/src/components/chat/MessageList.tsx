@@ -8,6 +8,8 @@ import { useTranslation } from '@/hooks/useTranslation'
 import type { ProcessingBlock, WorkbenchMessage } from '@/types/workbench'
 import { getAttachmentTypeLabel, isImageAttachment } from '@/lib/attachments'
 import { parseChatError } from '@/lib/chat-error'
+import { isIMSource } from '@/lib/im-source'
+import { ImSourceBadge } from '@/components/common/ImSourceBadge'
 import { AttachmentImagePreview } from './AttachmentImagePreview'
 import { ToolBlocksDisplay } from './blocks/ToolBlocksDisplay'
 import { FileChangesCard } from './FileChangesCard'
@@ -121,6 +123,7 @@ function UserMessage({ message }: { message: WorkbenchMessage }) {
   const shouldCollapse =
     message.content.length > USER_MESSAGE_COLLAPSE_CHARACTERS ||
     message.content.split('\n').length > USER_MESSAGE_COLLAPSE_LINES
+  const showSourceBadge = isIMSource(message.source)
 
   return (
     <div className="group flex max-w-[80%] flex-col items-end gap-1.5">
@@ -171,6 +174,14 @@ function UserMessage({ message }: { message: WorkbenchMessage }) {
               {isExpanded ? '收起' : '展开'}
             </button>
           )}
+        </div>
+      )}
+      {showSourceBadge && (
+        <div
+          data-testid="message-source-row"
+          className="flex min-h-5 items-center justify-end gap-1"
+        >
+          <ImSourceBadge source={message.source} testId="message-source-badge" />
         </div>
       )}
       <MessageHoverActions message={message} align="right" />
@@ -403,9 +414,11 @@ function AssistantMessage({
               p: ({ children }) => <p className="mb-3 min-w-0 break-words leading-6">{children}</p>,
               ul: ({ children }) => <ul className="mb-3 list-disc space-y-1.5 pl-5">{children}</ul>,
               ol: ({ children }) => (
-                <ol className="mb-3 list-decimal space-y-1.5 pl-5">{children}</ol>
+                <ol className="mb-3 list-decimal space-y-1.5 pl-8">{children}</ol>
               ),
-              li: ({ children }) => <li className="min-w-0 break-words leading-6">{children}</li>,
+              li: ({ children }) => (
+                <li className="min-w-0 break-words pl-1 leading-6">{children}</li>
+              ),
               strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
               code: ({ className, children }) => {
                 const match = /language-(\w*)/.exec(className || '')
@@ -461,7 +474,7 @@ function AssistantMessage({
       {isStreaming && hasVisibleContent && !hasBlocks && (
         <span className="text-text-muted">正在思考</span>
       )}
-      {message.status === 'failed' && message.error && (
+      {message.status === 'failed' && (
         <AssistantErrorCard
           error={message.error}
           errorType={message.errorType}
@@ -499,7 +512,7 @@ function AssistantErrorCard({
   onRetry,
   onSwitchModel,
 }: {
-  error: string
+  error?: string
   errorType?: string
   rawError?: string
   message: WorkbenchMessage
@@ -509,10 +522,11 @@ function AssistantErrorCard({
   const { t } = useTranslation('chat')
   const [isDetailExpanded, setIsDetailExpanded] = useState(false)
   const displayError = rawError || error
-  const parsedError = parseChatError(displayError, errorType)
+  const hasErrorDetails = Boolean(displayError)
+  const parsedError = parseChatError(displayError ?? '', errorType)
   const modelName =
-    displayError.match(/model_id:\s*([^"'}\s]+)/)?.[1] ??
-    displayError.match(/model(?:\s+|_id["':\s]+)([a-z0-9._:-]+)/i)?.[1]
+    displayError?.match(/model_id:\s*([^"'}\s]+)/)?.[1] ??
+    displayError?.match(/model(?:\s+|_id["':\s]+)([a-z0-9._:-]+)/i)?.[1]
   const title = t(parsedError.titleKey, {
     defaultValue: t('assistant_error.types.generic_error.title', '消息生成失败'),
   })
@@ -522,12 +536,14 @@ function AssistantErrorCard({
           model: modelName,
           defaultValue: `${modelName} 不支持当前运行协议。请切换兼容模型后重试。`,
         })
-      : t(parsedError.descriptionKey, {
-          defaultValue: t(
-            'assistant_error.types.generic_error.description',
-            '请求未能完成。你可以稍后重试，或查看错误详情。'
-          ),
-        })
+      : !hasErrorDetails && parsedError.type === 'generic_error'
+        ? t('assistant_error.types.generic_error.description_without_details')
+        : t(parsedError.descriptionKey, {
+            defaultValue: t(
+              'assistant_error.types.generic_error.description',
+              '请求未能完成。你可以稍后重试，或查看错误详情。'
+            ),
+          })
 
   return (
     <div
@@ -557,33 +573,37 @@ function AssistantErrorCard({
           >
             {t('assistant_error.actions.retry', '重试')}
           </button>
-          <button
-            type="button"
-            data-testid="assistant-error-details-toggle"
-            aria-expanded={isDetailExpanded}
-            onClick={() => setIsDetailExpanded(value => !value)}
-            className="inline-flex h-8 items-center gap-1 rounded-lg border border-border bg-base px-3 text-xs font-semibold text-text-secondary hover:bg-muted hover:text-text-primary"
-          >
-            <ChevronDown
-              className={[
-                'h-3.5 w-3.5 transition-transform',
-                isDetailExpanded ? 'rotate-180' : '',
-              ].join(' ')}
-            />
-            {t('assistant_error.details', '错误详情')}
-          </button>
+          {hasErrorDetails && (
+            <button
+              type="button"
+              data-testid="assistant-error-details-toggle"
+              aria-expanded={isDetailExpanded}
+              onClick={() => setIsDetailExpanded(value => !value)}
+              className="inline-flex h-8 items-center gap-1 rounded-lg border border-border bg-base px-3 text-xs font-semibold text-text-secondary hover:bg-muted hover:text-text-primary"
+            >
+              <ChevronDown
+                className={[
+                  'h-3.5 w-3.5 transition-transform',
+                  isDetailExpanded ? 'rotate-180' : '',
+                ].join(' ')}
+              />
+              {t('assistant_error.details', '错误详情')}
+            </button>
+          )}
         </div>
-        <pre
-          data-testid="assistant-error-details"
-          className={[
-            'mt-2 max-w-full rounded-md bg-base px-2.5 py-1.5 font-mono text-[11px] leading-4 text-text-muted',
-            isDetailExpanded
-              ? 'max-h-32 overflow-auto whitespace-pre-wrap break-words'
-              : 'overflow-hidden truncate whitespace-nowrap',
-          ].join(' ')}
-        >
-          {displayError}
-        </pre>
+        {hasErrorDetails && (
+          <pre
+            data-testid="assistant-error-details"
+            className={[
+              'mt-2 max-w-full rounded-md bg-base px-2.5 py-1.5 font-mono text-[11px] leading-4 text-text-muted',
+              isDetailExpanded
+                ? 'max-h-32 overflow-auto whitespace-pre-wrap break-words'
+                : 'overflow-hidden truncate whitespace-nowrap',
+            ].join(' ')}
+          >
+            {displayError}
+          </pre>
+        )}
       </div>
     </div>
   )

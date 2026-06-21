@@ -23,6 +23,7 @@ from app.models.user import User
 from app.schemas.kind import Team
 from app.services.chat.storage.task_manager import (
     TaskCreationParams,
+    build_user_subtask_result,
     check_task_status,
     create_new_task,
     create_user_subtask,
@@ -330,7 +331,10 @@ def prepare_execution_session(
                 assistant_message_id=next_message_id + 1,
                 assistant_parent_id=next_message_id,
                 sender_user_id=user.id,
-                result={"video_config": video_config} if video_config else None,
+                result=build_user_subtask_result(
+                    video_config=video_config,
+                    message_source=resolved_task_params.message_source,
+                ),
             )
         )
     else:
@@ -345,6 +349,7 @@ def prepare_execution_session(
             next_message_id=next_message_id,
             parent_id=parent_id,
             video_config=video_config,
+            message_source=resolved_task_params.message_source,
         )
 
     db.commit()

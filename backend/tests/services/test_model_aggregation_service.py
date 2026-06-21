@@ -20,10 +20,133 @@ from app.services.model_aggregation_service import (
     build_model_runtime_family,
     model_aggregation_service,
 )
+from app.services.user_runtime_config import user_runtime_config_service
 
 
 class TestModelAggregationService:
     """Tests for model_aggregation_service methods."""
+
+    def test_wework_lists_runtime_codex_model_when_user_auth_enabled(
+        self, test_db: Session, test_user: User, monkeypatch
+    ):
+        """Wework should see a runtime-only Codex GPT model after auth is enabled."""
+        monkeypatch.setattr(
+            "app.services.model_aggregation_service.kind_service.list_resources",
+            lambda user_id, kind, namespace: [],
+        )
+        user_runtime_config_service.save_auth_json(
+            test_db,
+            user_id=test_user.id,
+            runtime="codex",
+            auth_json='{"token":"secret"}',
+        )
+        user_runtime_config_service.set_use_user_config(
+            test_db,
+            user=test_user,
+            runtime="codex",
+            use_user_config=True,
+        )
+        test_db.refresh(test_user)
+
+        models = model_aggregation_service.list_available_models(
+            db=test_db,
+            current_user=test_user,
+            scope="all",
+            model_category_type="llm",
+            client_origin="wework",
+        )
+
+        runtime_model = next(
+            model for model in models if model["name"] == "codex-gpt-5.5"
+        )
+        assert runtime_model["type"] == "runtime"
+        assert runtime_model["provider"] == "openai"
+        assert runtime_model["modelId"] == "gpt-5.5"
+        assert runtime_model["runtime"] == {
+            "family": "openai.openai-responses",
+            "provider": "openai",
+        }
+        assert runtime_model["config"] == {
+            "protocol": "openai-responses",
+            "apiFormat": "responses",
+            "ui": {
+                "family": "gpt",
+                "modelLabel": "GPT-5.5",
+                "controls": ["speed"],
+                "sortOrder": 10,
+            },
+        }
+
+    def test_runtime_codex_model_is_hidden_outside_wework(
+        self, test_db: Session, test_user: User, monkeypatch
+    ):
+        """The runtime-only Codex model must not leak into normal Wegent model lists."""
+        monkeypatch.setattr(
+            "app.services.model_aggregation_service.kind_service.list_resources",
+            lambda user_id, kind, namespace: [],
+        )
+        user_runtime_config_service.save_auth_json(
+            test_db,
+            user_id=test_user.id,
+            runtime="codex",
+            auth_json='{"token":"secret"}',
+        )
+        user_runtime_config_service.set_use_user_config(
+            test_db,
+            user=test_user,
+            runtime="codex",
+            use_user_config=True,
+        )
+        test_db.refresh(test_user)
+
+        models = model_aggregation_service.list_available_models(
+            db=test_db,
+            current_user=test_user,
+            scope="all",
+            model_category_type="llm",
+        )
+
+        assert all(model["name"] != "codex-gpt-5.5" for model in models)
+
+    def test_resolves_runtime_codex_model_by_explicit_type_when_user_auth_enabled(
+        self, test_db: Session, test_user: User
+    ):
+        """Runtime Codex model details should resolve for send/detail flows."""
+        user_runtime_config_service.save_auth_json(
+            test_db,
+            user_id=test_user.id,
+            runtime="codex",
+            auth_json='{"token":"secret"}',
+        )
+        user_runtime_config_service.set_use_user_config(
+            test_db,
+            user=test_user,
+            runtime="codex",
+            use_user_config=True,
+        )
+        test_db.refresh(test_user)
+
+        model = model_aggregation_service.resolve_model(
+            db=test_db,
+            current_user=test_user,
+            name="codex-gpt-5.5",
+            model_type="runtime",
+        )
+
+        assert model is not None
+        assert model["type"] == "runtime"
+        assert model["provider"] == "openai"
+        assert model["modelId"] == "gpt-5.5"
+        assert model["config"] == {
+            "protocol": "openai-responses",
+            "apiFormat": "responses",
+            "ui": {
+                "family": "gpt",
+                "modelLabel": "GPT-5.5",
+                "controls": ["speed"],
+                "sortOrder": 10,
+            },
+        }
 
     def test_extract_model_info_includes_custom_group_fields(self):
         """Test Model.spec grouping fields are exposed by aggregation metadata."""

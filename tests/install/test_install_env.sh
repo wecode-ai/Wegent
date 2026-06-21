@@ -38,6 +38,9 @@ with_temp_dir() {
 
     (
         cd "$tmp_dir"
+        export WEGENT_BIN_DIR="$tmp_dir/bin"
+        export WEGENT_HOST_EXECUTOR_HOME="$tmp_dir/host-executor"
+        export WEGENT_STANDALONE_STATE_FILE="$tmp_dir/standalone/config.env"
         "$test_fn"
     )
     status=$?
@@ -133,6 +136,98 @@ if default_rag_services:
     )
     sys.exit(1)
 PY
+}
+
+test_standard_compose_accepts_wegent_image_tag() {
+    local compose_json
+
+    compose_json="$(
+        cd "$REPO_ROOT"
+        WEGENT_IMAGE_TAG=edge INTERNAL_SERVICE_TOKEN=dummy \
+            docker compose --profile rag -f docker-compose.yml config --format json
+    )"
+
+    python3 - "$compose_json" <<'PY'
+import json
+import sys
+
+config = json.loads(sys.argv[1])
+expected_images = {
+    "backend": "ghcr.io/wecode-ai/wegent-backend:edge",
+    "frontend": "ghcr.io/wecode-ai/wegent-web:edge",
+    "chat_shell": "ghcr.io/wecode-ai/wegent-chat-shell:edge",
+    "executor_manager": "ghcr.io/wecode-ai/wegent-executor-manager:edge",
+    "knowledge_runtime": "ghcr.io/wecode-ai/wegent-knowledge-runtime:edge",
+    "knowledge_doc_converter": "ghcr.io/wecode-ai/wegent-knowledge-doc-converter:edge",
+}
+
+services = config.get("services", {})
+for service_name, expected_image in expected_images.items():
+    actual_image = services.get(service_name, {}).get("image")
+    if actual_image != expected_image:
+        print(f"{service_name} image = {actual_image!r}, expected {expected_image!r}")
+        sys.exit(1)
+
+executor_env = services.get("executor_manager", {}).get("environment", {})
+executor_image = executor_env.get("EXECUTOR_IMAGE")
+expected_executor_image = "ghcr.io/wecode-ai/wegent-executor:edge"
+if executor_image != expected_executor_image:
+    print(f"EXECUTOR_IMAGE = {executor_image!r}, expected {expected_executor_image!r}")
+    sys.exit(1)
+PY
+}
+
+test_standalone_accepts_wegent_image_tag() {
+    WEGENT_IMAGE_TAG=edge source_installer_without_main
+
+    [[ "$STANDALONE_IMAGE" == "ghcr.io/wecode-ai/wegent-standalone:edge" ]]
+}
+
+test_standalone_image_override_takes_precedence_over_tag() {
+    WEGENT_IMAGE_TAG=edge \
+        WEGENT_STANDALONE_IMAGE=example.test/wegent-standalone:test \
+        source_installer_without_main
+
+    [[ "$STANDALONE_IMAGE" == "example.test/wegent-standalone:test" ]]
+}
+
+test_parse_args_accepts_edge_shortcut() {
+    source_installer_without_main
+
+    IMAGE_TAG="latest"
+    STANDALONE_IMAGE="ghcr.io/wecode-ai/wegent-standalone:latest"
+
+    parse_args --edge
+    resolve_image_config
+
+    [[ "$IMAGE_TAG" == "edge" ]]
+    [[ "$STANDALONE_IMAGE" == "ghcr.io/wecode-ai/wegent-standalone:edge" ]]
+}
+
+test_parse_args_accepts_image_tag_value() {
+    source_installer_without_main
+
+    IMAGE_TAG="latest"
+    STANDALONE_IMAGE="ghcr.io/wecode-ai/wegent-standalone:latest"
+
+    parse_args --image-tag edge
+    resolve_image_config
+
+    [[ "$IMAGE_TAG" == "edge" ]]
+    [[ "$STANDALONE_IMAGE" == "ghcr.io/wecode-ai/wegent-standalone:edge" ]]
+}
+
+test_image_tag_rejects_invalid_value() {
+    if (
+        source_installer_without_main
+        IMAGE_TAG="bad tag"
+        resolve_image_config
+    ) >/tmp/wegent-invalid-image-tag.out 2>&1; then
+        cat /tmp/wegent-invalid-image-tag.out
+        return 1
+    fi
+
+    grep -q "Invalid image tag" /tmp/wegent-invalid-image-tag.out
 }
 
 test_knowledge_service_images_are_published() {
@@ -278,6 +373,54 @@ test_standalone_dry_run_recreates_existing_container_for_host_mode() {
     grep -q -- "-e STANDALONE_EXECUTOR_ENABLED=false" /tmp/wegent-host-recreate.out
 }
 
+test_standalone_dry_run_recreates_existing_container_for_image_change() {
+    source_installer_without_main
+
+    DEPLOY_MODE="standalone"
+    STANDALONE_EXECUTOR_MODE="container"
+    STANDALONE_IMAGE="ghcr.io/wecode-ai/wegent-standalone:edge"
+    DRY_RUN="1"
+    NO_PROMPT="1"
+    SOCKET_URL="http://localhost:8000"
+    ACCESS_HOST="localhost"
+
+    docker() {
+        case "$*" in
+            "ps -a --format {{.Names}}")
+                echo "wegent-standalone"
+                ;;
+            "ps --format {{.Names}}")
+                echo "wegent-standalone"
+                ;;
+            "inspect --format {{range .Config.Env}}{{println .}}{{end}} wegent-standalone")
+                echo "STANDALONE_EXECUTOR_ENABLED=true"
+                ;;
+            "inspect --format {{.Config.Image}} wegent-standalone")
+                echo "ghcr.io/wecode-ai/wegent-standalone:latest"
+                ;;
+            "volume ls --format {{.Name}}")
+                echo "wegent-data"
+                echo "wegent-workspace"
+                ;;
+            *)
+                echo "unexpected docker command: $*" >&2
+                return 1
+                ;;
+        esac
+    }
+
+    start_standalone_service >/tmp/wegent-image-recreate.out
+
+    grep -q "Selected image changes container image from ghcr.io/wecode-ai/wegent-standalone:latest to ghcr.io/wecode-ai/wegent-standalone:edge" \
+        /tmp/wegent-image-recreate.out
+    grep -q "\\[DRY RUN\\] Would remove existing container: wegent-standalone" \
+        /tmp/wegent-image-recreate.out
+    grep -q "\\[DRY RUN\\] Would run: docker pull ghcr.io/wecode-ai/wegent-standalone:edge" \
+        /tmp/wegent-image-recreate.out
+    grep -q "ghcr.io/wecode-ai/wegent-standalone:edge" \
+        /tmp/wegent-image-recreate.out
+}
+
 test_standalone_starts_existing_stopped_container_without_recreating() {
     source_installer_without_main
 
@@ -314,6 +457,51 @@ test_standalone_starts_existing_stopped_container_without_recreating() {
     grep -q "Container started" /tmp/wegent-start-existing.out
 }
 
+test_standalone_pull_progress_is_visible() {
+    source_installer_without_main
+
+    DEPLOY_MODE="standalone"
+    STANDALONE_EXECUTOR_MODE="container"
+    STANDALONE_IMAGE="example.test/wegent:latest"
+    STANDALONE_CONTAINER_NAME="wegent-standalone"
+    STANDALONE_VOLUME_NAME="wegent-data"
+    STANDALONE_WORKSPACE_VOLUME_NAME="wegent-workspace"
+    DRY_RUN="0"
+    NO_PROMPT="1"
+    SOCKET_URL="http://localhost:8000"
+    ACCESS_HOST="localhost"
+
+    docker() {
+        case "$*" in
+            "ps -a --format {{.Names}}")
+                ;;
+            "pull example.test/wegent:latest")
+                echo "layer-a: Downloading [====>      ] 12.3MB/45.6MB"
+                ;;
+            "volume ls --format {{.Name}}")
+                ;;
+            "volume create wegent-data")
+                echo "wegent-data"
+                ;;
+            "volume create wegent-workspace")
+                echo "wegent-workspace"
+                ;;
+            "run -d --name wegent-standalone "*)
+                echo "container-id"
+                ;;
+            *)
+                echo "unexpected docker command: $*" >&2
+                return 1
+                ;;
+        esac
+    }
+
+    start_standalone_service >/tmp/wegent-pull-progress.out
+
+    grep -Fq "layer-a: Downloading [====>      ] 12.3MB/45.6MB" \
+        /tmp/wegent-pull-progress.out
+}
+
 test_standalone_installs_management_command() {
     source_installer_without_main
 
@@ -346,6 +534,8 @@ test_standalone_installs_management_command() {
     [[ -x "$STANDALONE_COMMAND_PATH" ]]
     grep -q "STATE_FILE=" "$STANDALONE_COMMAND_PATH"
     grep -q "start_host_executor" "$STANDALONE_COMMAND_PATH"
+    grep -q "current_container_image" "$STANDALONE_COMMAND_PATH"
+    grep -q "apply image" "$STANDALONE_COMMAND_PATH"
     grep -Fq 'case "${1:-start}"' "$STANDALONE_COMMAND_PATH"
     bash -n "$STANDALONE_COMMAND_PATH"
 }
@@ -440,8 +630,12 @@ run_test "executor mode reuses persisted mode for non-interactive start" \
     test_executor_mode_reuses_persisted_mode_for_non_interactive_start
 run_test "standalone dry-run recreates existing container for host mode" \
     test_standalone_dry_run_recreates_existing_container_for_host_mode
+run_test "standalone dry-run recreates existing container for image change" \
+    test_standalone_dry_run_recreates_existing_container_for_image_change
 run_test "standalone starts existing stopped container without recreating" \
     test_standalone_starts_existing_stopped_container_without_recreating
+run_test "standalone pull progress is visible" \
+    test_standalone_pull_progress_is_visible
 run_test "standalone installs management command" \
     test_standalone_installs_management_command
 run_test "standalone completion mentions management command" \
@@ -454,6 +648,18 @@ run_test "standard compose uses prebuilt images only" \
     test_standard_compose_uses_prebuilt_images_only
 run_test "default standard compose keeps RAG services optional" \
     test_default_standard_compose_keeps_rag_services_optional
+run_test "standard compose accepts WEGENT_IMAGE_TAG" \
+    test_standard_compose_accepts_wegent_image_tag
+run_test "standalone accepts WEGENT_IMAGE_TAG" \
+    test_standalone_accepts_wegent_image_tag
+run_test "standalone image override takes precedence over tag" \
+    test_standalone_image_override_takes_precedence_over_tag
+run_test "parse args accepts edge shortcut" \
+    test_parse_args_accepts_edge_shortcut
+run_test "parse args accepts image tag value" \
+    test_parse_args_accepts_image_tag_value
+run_test "image tag rejects invalid value" \
+    test_image_tag_rejects_invalid_value
 run_test "knowledge service images are published" \
     test_knowledge_service_images_are_published
 run_test "standalone uses nginx single browser port" \

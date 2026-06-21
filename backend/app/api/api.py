@@ -12,6 +12,7 @@ from app.api.endpoints import (
     dingtalk_docs,
     groups,
     health,
+    im_sessions,
     installed_mcps,
     installed_plugins,
     knowledge,
@@ -26,6 +27,7 @@ from app.api.endpoints import (
     prompt_optimization,
     quota,
     repository,
+    runtime_work,
     share,
     skill_identity,
     skill_market,
@@ -96,6 +98,7 @@ api_router.include_router(users.router, prefix="/users", tags=["users"])
 api_router.include_router(pet.router, prefix="/users/me/pet", tags=["pet"])
 api_router.include_router(admin.router, prefix="/admin", tags=["admin"])
 api_router.include_router(groups.router, prefix="/groups", tags=["groups"])
+api_router.include_router(im_sessions.im_router, prefix="/im", tags=["im"])
 api_router.include_router(projects.router, prefix="/projects", tags=["projects"])
 api_router.include_router(api_keys.router, prefix="/api-keys", tags=["api-keys"])
 api_router.include_router(devices.router, prefix="/devices", tags=["devices"])
@@ -124,6 +127,9 @@ api_router.include_router(
     subscription_market.router, prefix="/market", tags=["subscription-market"]
 )
 api_router.include_router(tasks.router, prefix="/tasks", tags=["tasks"])
+api_router.include_router(
+    im_sessions.tasks_router, prefix="/tasks", tags=["im-sessions"]
+)
 api_router.include_router(subtasks.router, prefix="/subtasks", tags=["subtasks"])
 api_router.include_router(task_members.router, prefix="/tasks", tags=["task-members"])
 api_router.include_router(
@@ -222,6 +228,9 @@ api_router.include_router(installed_mcps.router, prefix="/mcps", tags=["mcps"])
 api_router.include_router(installed_plugins.router, prefix="/plugins", tags=["plugins"])
 api_router.include_router(
     local_executor.router, prefix="/local-executor", tags=["local-executor"]
+)
+api_router.include_router(
+    runtime_work.router, prefix="/runtime-work", tags=["runtime-work"]
 )
 
 api_router.include_router(utils.router, prefix="/utils", tags=["utils"])

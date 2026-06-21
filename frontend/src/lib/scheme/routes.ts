@@ -31,7 +31,7 @@ export function initializeRouteMappings(): void {
     examples: ['wegent://open/chat', 'wegent://open/chat?team=123'],
   })
 
-  // Code page
+  // Coding entry
   registerScheme('open-code', {
     pattern: 'wegent://open/code',
     handler: (context: SchemeHandlerContext) => {
@@ -44,7 +44,7 @@ export function initializeRouteMappings(): void {
       openNavigationHref(router, getCodingEntryHref(undefined, query))
     },
     requireAuth: false,
-    description: 'Navigate to code page',
+    description: 'Navigate to coding mode',
     examples: ['wegent://open/code', 'wegent://open/code?team=123'],
   })
 
