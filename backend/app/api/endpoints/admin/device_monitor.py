@@ -20,6 +20,7 @@ from app.core.cache import cache_manager
 from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.device import BindShell, DeviceStatusEnum, DeviceType
+from app.services.device.admin_device_restart import restart_admin_device
 from app.services.device.local_provider import local_device_provider
 from app.services.device_service import DeviceService as device_service
 
@@ -708,15 +709,27 @@ async def restart_device(
             detail="Only cloud devices can be restarted",
         )
 
-    logger.info(
-        f"[Admin Device Restart] Stub called: "
-        f"admin={current_user.user_name}, user_id={user_id}, device_id={device_id}"
-    )
+    try:
+        result = await restart_admin_device(db, user_id, device_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(
+            f"[Admin Device Restart] Error: device_id={device_id}, error={e}"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to trigger restart: {str(e)}",
+        )
 
-    # TODO: Implement actual restart logic for cloud devices
+    logger.info(
+        f"[Admin Device Restart] Completed: "
+        f"admin={current_user.user_name}, user_id={user_id}, "
+        f"device_id={device_id}, success={result.success}"
+    )
     return AdminDeviceActionResponse(
-        success=False,
-        message="Device restart is not yet implemented. This feature will be available in a future release.",
+        success=result.success,
+        message=result.message,
     )
 
 

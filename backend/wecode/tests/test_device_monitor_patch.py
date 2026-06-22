@@ -2,12 +2,11 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Tests for the admin device monitor restart monkey patch."""
+"""Tests for the admin device monitor restart extension registration."""
 
 from types import SimpleNamespace
 
 from fastapi import FastAPI
-from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
 import app.api.api  # noqa: F401  register routers and finalize wecode patches
@@ -15,6 +14,7 @@ from app.api.dependencies import get_db
 from app.api.router import api_router
 from app.core import security
 from app.schemas.device import DeviceType
+from app.services.device import admin_device_restart
 from wecode.api import device_monitor_patch, finalize_patches
 
 
@@ -31,19 +31,8 @@ class _FakeCloudDeviceProvider:
         }
 
 
-def _find_restart_route() -> APIRoute:
-    for route in api_router.routes:
-        if (
-            isinstance(route, APIRoute)
-            and route.path == "/admin/device-monitor/devices/{device_id}/restart"
-            and "POST" in route.methods
-        ):
-            return route
-    raise AssertionError("admin device restart route not found")
-
-
-def test_admin_device_restart_patch_updates_fastapi_execution_handler(monkeypatch):
-    """The patched admin restart route should execute the Nevis provider path."""
+def test_admin_device_restart_registration_updates_real_route_behavior(monkeypatch):
+    """The admin restart route should execute the registered private provider path."""
     db = SimpleNamespace()
     provider = _FakeCloudDeviceProvider()
     device_kind = SimpleNamespace(
@@ -51,6 +40,7 @@ def test_admin_device_restart_patch_updates_fastapi_execution_handler(monkeypatc
     )
     app = FastAPI()
 
+    admin_device_restart._reset_admin_device_restart_handler_for_tests()
     monkeypatch.setattr(device_monitor_patch, "cloud_device_provider", provider)
     monkeypatch.setattr(
         device_monitor_patch.device_service,
@@ -58,11 +48,8 @@ def test_admin_device_restart_patch_updates_fastapi_execution_handler(monkeypatc
         lambda _db, user_id, device_id: device_kind,
     )
 
+    device_monitor_patch.apply_patch()
     finalize_patches()
-    route = _find_restart_route()
-
-    assert route.endpoint is device_monitor_patch.restart_device_patched
-    assert route.dependant.call is device_monitor_patch.restart_device_patched
 
     app.include_router(api_router, prefix="/api")
     app.dependency_overrides[get_db] = lambda: db

@@ -33,6 +33,13 @@ describe('ScrollableMessageArea', () => {
     expect(emptyState).toHaveTextContent('开始新的对话')
   })
 
+  test('renders a loading state instead of the new conversation empty state', () => {
+    render(<ScrollableMessageArea messages={[]} loading />)
+
+    expect(screen.getByTestId('chat-loading-state')).toHaveTextContent('正在加载会话')
+    expect(screen.queryByTestId('chat-empty-state')).not.toBeInTheDocument()
+  })
+
   test('shows a scroll-to-bottom button when messages overflow above the bottom', async () => {
     render(
       <ScrollableMessageArea

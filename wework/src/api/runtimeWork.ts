@@ -1,6 +1,8 @@
 import type {
   BindRuntimeTaskIMSessionsRequest,
   BindRuntimeTaskIMSessionsResponse,
+  DeleteDeviceWorkspaceRequest,
+  DeleteDeviceWorkspaceResponse,
   DeviceWorkspaceResponse,
   DeviceWorkspacePrepareRequest,
   DeviceWorkspacePrepareResponse,
@@ -41,6 +43,16 @@ export function createRuntimeWorkApi(client: HttpClient) {
       data: DeviceWorkspacePrepareRequest
     ): Promise<DeviceWorkspacePrepareResponse> {
       return client.post('/runtime-work/device-workspaces/prepare', data)
+    },
+    deleteDeviceWorkspace(
+      data: DeleteDeviceWorkspaceRequest
+    ): Promise<DeleteDeviceWorkspaceResponse> {
+      const params = new URLSearchParams({
+        project_id: String(data.projectId),
+        device_id: data.deviceId,
+        workspace_path: data.workspacePath,
+      })
+      return client.delete(`/runtime-work/device-workspaces?${params.toString()}`)
     },
     getRuntimeTranscript(address: RuntimeTaskAddress): Promise<RuntimeTranscriptResponse> {
       return client.post('/runtime-work/transcript', address)

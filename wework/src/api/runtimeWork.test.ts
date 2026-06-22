@@ -3,6 +3,23 @@ import { createRuntimeWorkApi } from './runtimeWork'
 import type { HttpClient } from './http'
 
 describe('createRuntimeWorkApi', () => {
+  test('deletes a device workspace mapping', async () => {
+    const del = vi.fn().mockResolvedValue({ deleted: true })
+    const api = createRuntimeWorkApi({ delete: del } as unknown as HttpClient)
+
+    await expect(
+      api.deleteDeviceWorkspace({
+        projectId: 3,
+        deviceId: 'device-1',
+        workspacePath: '/repo/Wegent',
+      })
+    ).resolves.toEqual({ deleted: true })
+
+    expect(del).toHaveBeenCalledWith(
+      '/runtime-work/device-workspaces?project_id=3&device_id=device-1&workspace_path=%2Frepo%2FWegent'
+    )
+  })
+
   test('forks a runtime task by runtime addresses', async () => {
     const post = vi.fn().mockResolvedValue({
       accepted: true,

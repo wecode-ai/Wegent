@@ -127,6 +127,38 @@ def test_prepare_device_workspace_endpoint_dispatches_payload(
     assert payload.action == "select"
 
 
+def test_delete_device_workspace_endpoint_dispatches_payload(
+    test_client,
+    test_token,
+    monkeypatch,
+):
+    from app.api.endpoints import runtime_work
+
+    service_mock = MagicMock(return_value=True)
+    monkeypatch.setattr(
+        runtime_work.runtime_work_service,
+        "delete_device_workspace",
+        service_mock,
+    )
+
+    response = test_client.request(
+        "DELETE",
+        "/api/runtime-work/device-workspaces",
+        headers=_auth_headers(test_token),
+        params={
+            "project_id": 3,
+            "device_id": "device-1",
+            "workspace_path": "/repo/Wegent",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"deleted": True}
+    assert service_mock.call_args.kwargs["project_id"] == 3
+    assert service_mock.call_args.kwargs["device_id"] == "device-1"
+    assert service_mock.call_args.kwargs["workspace_path"] == "/repo/Wegent"
+
+
 def test_runtime_transcript_endpoint_dispatches_address(
     test_client,
     test_token,

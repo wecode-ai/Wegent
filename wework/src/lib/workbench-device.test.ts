@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest'
-import type { DeviceInfo, ProjectWithTasks, Task } from '@/types/api'
+import type { DeviceInfo } from '@/types/api'
 import {
-  findProjectForTask,
+  getActiveWorkbenchDeviceId,
   findWorkbenchDevice,
   isWorkbenchDeviceOnline,
 } from './workbench-device'
@@ -15,22 +15,23 @@ describe('workbench-device', () => {
     expect(isWorkbenchDeviceOnline(device)).toBe(false)
   })
 
-  test('finds a task owning project from nested project task records', () => {
-    const projects: ProjectWithTasks[] = [
-      {
-        id: 7,
-        name: 'Wegent',
-        tasks: [{ id: 71, task_id: 71, task_title: 'Continue project work' }],
-      },
-    ]
-    const task: Task = {
-      id: 71,
-      title: 'Continue project work',
-      status: 'SUCCESS',
-      task_type: 'code',
-      created_at: '2026-05-27T00:00:00.000Z',
-    }
+  test('uses the project configured device before standalone fallback', () => {
+    expect(
+      getActiveWorkbenchDeviceId({
+        currentProject: {
+          id: 7,
+          name: 'Wegent',
+          config: { execution: { targetType: 'local', deviceId: 'project-device' } },
+        },
+        standaloneDeviceId: 'standalone-device',
+      })
+    ).toBe('project-device')
 
-    expect(findProjectForTask(projects, task)?.id).toBe(7)
+    expect(
+      getActiveWorkbenchDeviceId({
+        currentProject: null,
+        standaloneDeviceId: 'standalone-device',
+      })
+    ).toBe('standalone-device')
   })
 })

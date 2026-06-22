@@ -109,7 +109,6 @@ export function WorkspacePanelCards({
   const activeWorkspaceDeviceId = workspaceTarget?.deviceId ?? projectDeviceId
   const activeWorkspacePath =
     workspaceTarget?.path ?? (currentProject ? getProjectLocalPath(currentProject) : undefined)
-  const activeSessionTaskId = workspaceTarget?.taskId
   const projectDevice = activeWorkspaceDeviceId
     ? devices.find(device => device.device_id === activeWorkspaceDeviceId)
     : undefined
@@ -160,7 +159,6 @@ export function WorkspacePanelCards({
         currentProject?.id ?? 'workspace',
         activeWorkspaceDeviceId ?? '',
         activeWorkspacePath ?? '',
-        activeSessionTaskId ?? '',
       ].join(':')
     : ''
   const availableTools =
@@ -290,9 +288,7 @@ export function WorkspacePanelCards({
       }
 
       const projectApi = createProjectSessionApi()
-      const startedSession = activeSessionTaskId
-        ? await projectApi.startTerminalSession(currentProject.id, { taskId: activeSessionTaskId })
-        : await projectApi.startTerminalSession(currentProject.id)
+      const startedSession = await projectApi.startTerminalSession(currentProject.id)
       if (startedSession.transport !== 'socketio') {
         throw new Error('Terminal session transport is not supported')
       }
@@ -307,7 +303,6 @@ export function WorkspacePanelCards({
       setLoadingTool(null)
     }
   }, [
-    activeSessionTaskId,
     activeWorkspaceDeviceId,
     activeWorkspacePath,
     availableTools.terminal,
@@ -380,11 +375,7 @@ export function WorkspacePanelCards({
     let shouldClosePanel = false
     try {
       const projectApi = createProjectSessionApi()
-      const session = activeSessionTaskId
-        ? await projectApi.startCodeServerSession(currentProject.id, {
-            taskId: activeSessionTaskId,
-          })
-        : await projectApi.startCodeServerSession(currentProject.id)
+      const session = await projectApi.startCodeServerSession(currentProject.id)
       if (!session.url) {
         throw new Error('IDE session URL is missing')
       }

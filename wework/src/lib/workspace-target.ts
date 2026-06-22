@@ -4,7 +4,6 @@ import type {
   RuntimeDeviceWorkspace,
   RuntimeTaskAddress,
   RuntimeWorkListResponse,
-  Task,
 } from '@/types/api'
 import {
   executionDeviceId,
@@ -14,7 +13,6 @@ import {
 import type { WorkspaceTarget } from '@/types/workspace-files'
 
 interface ResolveWorkspaceTargetOptions {
-  currentTask: Task | null
   currentProject: ProjectWithTasks | null
   api: ProjectWorkspaceRootApi
 }
@@ -30,15 +28,6 @@ export interface RuntimeWorkspaceContext {
   workspaceTarget: WorkspaceTarget
 }
 
-function workspaceTargetFromTask(task: Task): WorkspaceTarget | null {
-  const path = task.execution_workspace_path?.trim()
-  const deviceId = task.device_id?.trim()
-  if (!path || !deviceId) {
-    return null
-  }
-  return { deviceId, path, source: 'task', taskId: task.id }
-}
-
 async function projectWorkspaceTarget(
   project: ProjectWithTasks,
   api: ProjectWorkspaceRootApi
@@ -52,15 +41,9 @@ async function projectWorkspaceTarget(
 }
 
 export async function resolveWorkspaceTarget({
-  currentTask,
   currentProject,
   api,
 }: ResolveWorkspaceTargetOptions): Promise<WorkspaceTarget | null> {
-  if (currentTask) {
-    const currentTaskWorkspace = workspaceTargetFromTask(currentTask)
-    if (currentTaskWorkspace) return currentTaskWorkspace
-  }
-
   if (currentProject) {
     return projectWorkspaceTarget(currentProject, api)
   }
@@ -141,5 +124,5 @@ export function resolveRuntimeWorkspaceContext({
 }
 
 export function workspaceTargetKey(target: WorkspaceTarget | null): string {
-  return target ? `${target.deviceId}:${target.path}:${target.source}:${target.taskId ?? ''}` : ''
+  return target ? `${target.deviceId}:${target.path}:${target.source}` : ''
 }

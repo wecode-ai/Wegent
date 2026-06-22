@@ -12,7 +12,7 @@ interface DeviceCommandApi {
 }
 
 type EnvironmentWorkspaceTarget = Pick<WorkspaceTarget, 'deviceId' | 'path'> &
-  Partial<Pick<WorkspaceTarget, 'source' | 'taskId'>>
+  Partial<Pick<WorkspaceTarget, 'source'>>
 
 interface GitRemoteParts {
   host: string
@@ -63,7 +63,6 @@ function environmentInfoCacheKey(
     deviceId,
     path: target?.path ?? null,
     source: target?.source ?? 'project',
-    taskId: target?.taskId ?? null,
     executionTarget: config?.execution?.targetType ?? 'local',
     workspaceSource: workspace?.source,
     workspacePath: project ? configuredWorkspacePath(project) : null,

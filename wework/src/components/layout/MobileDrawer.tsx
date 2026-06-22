@@ -19,6 +19,7 @@ import { cn } from '@/lib/utils'
 import type {
   CreateGitWorkspaceProjectRequest,
   CreateProjectRequest,
+  DeleteDeviceWorkspaceRequest,
   DeviceWorkspacePrepareRequest,
   DeviceWorkspacePrepareResponse,
   DeviceInfo,
@@ -44,7 +45,7 @@ import {
   sortRuntimeTasks,
 } from './runtimeTaskSidebarHelpers'
 
-const MOBILE_RUNNING_SPINNER_CLASS = 'ml-2 h-3.5 w-3.5 shrink-0 animate-spin text-[#6B7280]'
+const MOBILE_RUNNING_SPINNER_CLASS = 'h-3.5 w-3.5 shrink-0 animate-spin'
 type ProjectCreateMode = 'scratch' | 'existing' | 'git'
 
 interface MobileDrawerProps {
@@ -67,6 +68,7 @@ interface MobileDrawerProps {
   onPrepareDeviceWorkspace?: (
     data: DeviceWorkspacePrepareRequest
   ) => Promise<DeviceWorkspacePrepareResponse>
+  onDeleteDeviceWorkspace?: (data: DeleteDeviceWorkspaceRequest) => Promise<void>
   onListGitRepositories?: () => Promise<GitRepoInfo[]>
   onListGitBranches?: (repo: GitRepoInfo) => Promise<GitBranch[]>
   onGetDeviceHomeDirectory?: (deviceId: string) => Promise<string>
@@ -113,6 +115,7 @@ export function MobileDrawer({
   onCreateProject,
   onCreateGitWorkspaceProject,
   onPrepareDeviceWorkspace,
+  onDeleteDeviceWorkspace,
   onListGitRepositories,
   onListGitBranches,
   onGetDeviceHomeDirectory,
@@ -167,6 +170,21 @@ export function MobileDrawer({
   )
 
   if (!open) return null
+
+  const renderRuntimeTaskRunningStatus = (testId: string) => {
+    const label = t('workbench.runtime_task_running')
+    return (
+      <span
+        data-testid={testId}
+        role="status"
+        aria-label={label}
+        title={label}
+        className="ml-2 inline-flex h-7 w-7 shrink-0 items-center justify-center text-[#6B7280]"
+      >
+        <Loader2 className={MOBILE_RUNNING_SPINNER_CLASS} aria-hidden="true" />
+      </span>
+    )
+  }
 
   const closeAfter = (action?: () => void) => {
     action?.()
@@ -366,7 +384,9 @@ export function MobileDrawer({
                         >
                           <span className="min-w-0 flex-1 truncate">{task.title}</span>
                           {task.running ? (
-                            <Loader2 className={MOBILE_RUNNING_SPINNER_CLASS} />
+                            renderRuntimeTaskRunningStatus(
+                              `mobile-chat-runtime-task-running-${task.localTaskId}`
+                            )
                           ) : (
                             <span className="ml-2 flex shrink-0 items-center gap-1 text-sm text-[#6B7280]">
                               <span
@@ -513,7 +533,9 @@ export function MobileDrawer({
                                   >
                                     <span className="min-w-0 flex-1 truncate">{task.title}</span>
                                     {task.running ? (
-                                      <Loader2 className={MOBILE_RUNNING_SPINNER_CLASS} />
+                                      renderRuntimeTaskRunningStatus(
+                                        `mobile-runtime-task-running-${task.localTaskId}`
+                                      )
                                     ) : (
                                       <span className="ml-2 flex shrink-0 items-center gap-1 text-sm text-[#6B7280]">
                                         <span
@@ -622,7 +644,9 @@ export function MobileDrawer({
                         >
                           <span className="min-w-0 flex-1 truncate">{task.title}</span>
                           {task.running ? (
-                            <Loader2 className={MOBILE_RUNNING_SPINNER_CLASS} />
+                            renderRuntimeTaskRunningStatus(
+                              `mobile-unmapped-runtime-task-running-${task.localTaskId}`
+                            )
                           ) : (
                             <span className="ml-2 flex shrink-0 items-center gap-1 text-sm text-[#6B7280]">
                               {isRuntimeWorktreeTask(task) && (
@@ -668,6 +692,7 @@ export function MobileDrawer({
           onCreateProject={onCreateProject ?? unavailableProjectAction}
           onCreateGitWorkspaceProject={onCreateGitWorkspaceProject}
           onPrepareDeviceWorkspace={onPrepareDeviceWorkspace ?? unavailableProjectAction}
+          onDeleteDeviceWorkspace={onDeleteDeviceWorkspace ?? unavailableProjectAction}
           preferredDeviceId={user?.preferences?.default_execution_target}
           onGetDeviceHomeDirectory={onGetDeviceHomeDirectory ?? unavailableProjectAction}
           onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot ?? unavailableProjectAction}

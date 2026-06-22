@@ -25,7 +25,7 @@ from wecode.service.skill_market import weibo_skill_market_provider
 skill_market_registry.register(weibo_skill_market_provider)
 
 import wecode.api.agents_endpoint_patch  # noqa: F401  patch app.api.endpoints.agents to enforce admin-only endpoints
-import wecode.api.device_monitor_patch  # noqa: F401  patch restart_device to call Nevis API
+import wecode.api.device_monitor_patch  # noqa: F401  register internal admin restart handler
 import wecode.api.executors_endpoint_patch  # noqa: F401  patch /tasks/dispatch endpoint to replace API key placeholders (pull mode, backup)
 import wecode.api.gitlab_provider_patch  # noqa: F401  ensures GitLabProvider is monkey-patched at import time
 import wecode.api.models_endpoint_patch  # noqa: F401  patch app.api.endpoints.models to enforce admin-only endpoints
@@ -51,9 +51,6 @@ from wecode.api.auth import router as auth_router
 from wecode.api.cloud_devices import router as cloud_devices_router
 from wecode.api.department_search import router as department_search_router
 from wecode.api.dept_visibility_admin import router as dept_visibility_admin_router
-from wecode.api.device_monitor_patch import (
-    apply_patch_to_api_router as _apply_device_monitor_patch,
-)
 from wecode.api.evaluation import router as evaluation_router
 from wecode.api.mail_devices import router as mail_devices_router
 from wecode.api.mail_token import router as mail_token_router
@@ -99,4 +96,4 @@ def finalize_patches() -> None:
 
     This should be called after all routers are included in api_router.
     """
-    _apply_device_monitor_patch()
+    return None

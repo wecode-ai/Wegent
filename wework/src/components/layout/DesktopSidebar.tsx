@@ -6,6 +6,7 @@ import {
   Folder,
   FolderPlus,
   GitCompareArrows,
+  Loader2,
   MessageSquarePlus,
   Pin,
   Plus,
@@ -25,8 +26,10 @@ import { cn } from '@/lib/utils'
 import type {
   CreateGitWorkspaceProjectRequest,
   CreateProjectRequest,
+  DeleteDeviceWorkspaceRequest,
   DeviceWorkspacePrepareRequest,
   DeviceWorkspacePrepareResponse,
+  DeviceWorkspaceResponse,
   DeviceInfo,
   GitBranch,
   GitRepoInfo,
@@ -90,6 +93,7 @@ interface DesktopSidebarProps {
   onPrepareDeviceWorkspace: (
     data: DeviceWorkspacePrepareRequest
   ) => Promise<DeviceWorkspacePrepareResponse>
+  onDeleteDeviceWorkspace: (data: DeleteDeviceWorkspaceRequest) => Promise<void>
   onListGitRepositories: () => Promise<GitRepoInfo[]>
   onListGitBranches: (repo: GitRepoInfo) => Promise<GitBranch[]>
   onUpdateProjectName: (projectId: number, name: string) => Promise<void>
@@ -107,6 +111,8 @@ type ProjectCreateMode = 'scratch' | 'existing' | 'git'
 
 const SIDEBAR_ROW_METADATA_CLASS =
   'flex items-center gap-1 text-xs text-[rgb(var(--color-sidebar-text-muted))] group-hover/task:invisible'
+const SIDEBAR_RUNNING_SPINNER_CLASS =
+  'h-4 w-4 shrink-0 animate-spin text-[rgb(var(--color-sidebar-text-muted))]'
 
 const SIDEBAR_DEVICE_COLORS = [
   '#5B7CFA',
@@ -333,6 +339,29 @@ function getRuntimeWorkspaceDeviceColor(workspace: RuntimeDeviceWorkspace): stri
 
 function getRuntimeWorkspaceTaskCount(workspaces: RuntimeDeviceWorkspace[]): number {
   return workspaces.reduce((count, workspace) => count + workspace.localTasks.length, 0)
+}
+
+function getProjectDeviceWorkspaces(
+  runtimeWork: RuntimeWorkListResponse | null | undefined,
+  projectId: number | undefined
+): DeviceWorkspaceResponse[] {
+  if (!runtimeWork || projectId === undefined) return []
+  const projectWork = runtimeWork.projects.find(item => item.project.id === projectId)
+  return (
+    projectWork?.deviceWorkspaces.map((workspace, index) => ({
+      id: workspace.id ?? -(index + 1),
+      userId: 0,
+      projectId,
+      deviceId: workspace.deviceId,
+      workspacePath: workspace.workspacePath,
+      repoUrl: workspace.repoUrl ?? null,
+      repoRootFingerprint: workspace.repoRootFingerprint ?? null,
+      label: workspace.label ?? null,
+      lastSeenAt: null,
+      createdAt: '',
+      updatedAt: '',
+    })) ?? []
+  )
 }
 
 function filterRuntimeWorkspacesByDevice(
@@ -747,7 +776,19 @@ function RuntimeLocalTaskRow({
               `runtime-local-task-notify-icon-${task.localTaskId}`
             )}
           <span className="flex h-7 w-7 items-center justify-center">
-            {formatRelativeSidebarTime(getRuntimeTaskTime(task))}
+            {task.running ? (
+              <span
+                data-testid={`runtime-local-task-running-${task.localTaskId}`}
+                role="status"
+                title={t('workbench.runtime_task_running')}
+                aria-label={t('workbench.runtime_task_running')}
+                className="flex h-7 w-7 items-center justify-center"
+              >
+                <Loader2 className={SIDEBAR_RUNNING_SPINNER_CLASS} aria-hidden="true" />
+              </span>
+            ) : (
+              formatRelativeSidebarTime(getRuntimeTaskTime(task))
+            )}
           </span>
           {showDeviceMarker && (
             <span
@@ -1104,6 +1145,7 @@ export function DesktopSidebar({
   onCreateProject,
   onCreateGitWorkspaceProject,
   onPrepareDeviceWorkspace,
+  onDeleteDeviceWorkspace,
   onListGitRepositories,
   onListGitBranches,
   onUpdateProjectName,
@@ -1547,6 +1589,7 @@ export function DesktopSidebar({
         open={projectCreateMode !== null || editingProject !== null}
         mode={editingProject ? 'existing' : (projectCreateMode ?? 'scratch')}
         project={editingProject}
+        deviceWorkspaces={getProjectDeviceWorkspaces(runtimeWork, editingProject?.id)}
         devices={devices}
         onClose={() => {
           setProjectCreateMode(null)
@@ -1560,6 +1603,8 @@ export function DesktopSidebar({
         onCreateProject={onCreateProject}
         onCreateGitWorkspaceProject={onCreateGitWorkspaceProject}
         onPrepareDeviceWorkspace={onPrepareDeviceWorkspace}
+        onDeleteDeviceWorkspace={onDeleteDeviceWorkspace}
+        onUpdateProjectName={onUpdateProjectName}
         preferredDeviceId={preferredDeviceId}
         onSelectDevicePreference={onRememberExecutionDevice}
         upgradingDevices={upgradingDevices}
