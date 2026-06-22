@@ -555,13 +555,18 @@ describe('DesktopSidebar', () => {
       onCreateProject,
       onPrepareDeviceWorkspace,
       onGetDeviceHomeDirectory: vi.fn().mockResolvedValue('/Users/alice'),
+      onListDeviceDirectories: vi.fn().mockResolvedValue([]),
     })
 
     await user.click(screen.getByTestId('project-menu-7'))
     await user.click(screen.getByTestId('edit-project-7'))
 
-    const deviceSelect = await screen.findByTestId('project-device-select')
-    await user.selectOptions(deviceSelect, 'second-device')
+    await user.click(await screen.findByTestId('project-device-tab-second-device'))
+    await user.click(screen.getByTestId('project-folder-select-button'))
+    await waitFor(() =>
+      expect(screen.getByTestId('device-folder-path-input')).toHaveValue('/Users/alice')
+    )
+    await user.click(screen.getByTestId('confirm-device-folder-picker-button'))
     await user.click(screen.getByTestId('create-project-button'))
 
     await waitFor(() =>

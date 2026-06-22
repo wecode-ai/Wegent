@@ -100,6 +100,7 @@ class RuntimeWorkRpcHandler:
         self.codex_discovery = codex_discovery or CodexSessionDiscovery()
         self.responses_event_emitter = responses_event_emitter
         self._running_sdk_tasks: set[asyncio.Task] = set()
+        self._running_sdk_task_ids: set[str] = set()
         self._codex_seen_updated_at: dict[str, str] = {}
         self._codex_updates_from_wegent: set[str] = set()
         self._codex_watcher_task: Optional[asyncio.Task] = None
@@ -177,14 +178,10 @@ class RuntimeWorkRpcHandler:
         if self.codex_discovery is None:
             return []
         try:
-            records = self.codex_discovery.discover()
+            return self.codex_discovery.discover()
         except Exception:
             logger.exception("Failed to discover Codex runtime tasks")
             return []
-
-        for record in records:
-            self.store.upsert_task(record)
-        return records
 
     async def poll_codex_updates_once(self) -> None:
         """Detect native Codex thread updates and report them to Backend."""
@@ -193,7 +190,7 @@ class RuntimeWorkRpcHandler:
             return
 
         for record in self._refresh_discovered_tasks():
-            if record.runtime != "codex":
+            if not self._is_codex_runtime(record.runtime):
                 continue
 
             previous = self._codex_seen_updated_at.get(record.local_task_id)
@@ -323,13 +320,9 @@ class RuntimeWorkRpcHandler:
         workspace_path: Any,
         include_archived: bool,
     ) -> list[LocalTaskRecord]:
-        discovered_ids = {task.local_task_id for task in discovered_tasks}
         visible_tasks: list[LocalTaskRecord] = []
         for task in store_tasks:
-            if (
-                task.runtime.lower() != "codex"
-                or task.local_task_id not in discovered_ids
-            ):
+            if not self._is_codex_runtime(task.runtime):
                 visible_tasks.append(task)
         visible_tasks.extend(
             task
@@ -373,7 +366,6 @@ class RuntimeWorkRpcHandler:
 
     def _default_adapters(self) -> dict[str, RuntimeAgentAdapter]:
         return {
-            "codex": RuntimeAgentAdapter(runtime="codex", store=self.store),
             "claude_code": RuntimeAgentAdapter(
                 runtime="claude_code",
                 store=self.store,
@@ -381,8 +373,8 @@ class RuntimeWorkRpcHandler:
         }
 
     async def _transcript(self, payload: dict[str, Any]) -> dict[str, Any]:
-        self._refresh_discovered_tasks()
-        task = self._load_payload_task(payload)
+        discovered_tasks = self._refresh_discovered_tasks()
+        task = self._load_payload_task(payload, discovered_tasks=discovered_tasks)
         messages = await self._task_transcript_messages(task)
 
         return {
@@ -421,7 +413,7 @@ class RuntimeWorkRpcHandler:
     def _codex_session_messages(
         self, task: LocalTaskRecord
     ) -> Optional[list[dict[str, Any]]]:
-        if task.runtime != "codex" or self.codex_discovery is None:
+        if not self._is_codex_runtime(task.runtime) or self.codex_discovery is None:
             return None
         if not hasattr(self.codex_discovery, "read_transcript"):
             return None
@@ -484,13 +476,12 @@ class RuntimeWorkRpcHandler:
         thread_id = task.runtime_handle.get("threadId") or task.local_task_id
         if not isinstance(thread_id, str) or not thread_id.strip():
             raise ValueError("Codex threadId is required")
+        if task.local_task_id in self._running_sdk_task_ids:
+            raise ValueError("runtime task is already running")
 
         subtask_id = self._next_sdk_codex_subtask_id(task)
-        task = self.store.update_task(
-            task.local_task_id,
-            lambda current: self._mark_task_running(current, subtask_id),
-            workspace_path=task.workspace_path,
-        )
+        task = self._mark_task_running(task, subtask_id)
+        self._running_sdk_task_ids.add(task.local_task_id)
         sdk_task = asyncio.create_task(
             self._run_sdk_codex_task(
                 task=task,
@@ -554,17 +545,7 @@ class RuntimeWorkRpcHandler:
                 logger.exception("Failed to emit Codex SDK stream error")
         finally:
             self.mark_codex_task_updated_by_wegent(task.local_task_id, source)
-            self.store.update_task(
-                task.local_task_id,
-                lambda current: replace(
-                    current,
-                    running=False,
-                    updated_at=datetime.now(timezone.utc)
-                    .replace(microsecond=0)
-                    .isoformat(),
-                ),
-                workspace_path=task.workspace_path,
-            )
+            self._running_sdk_task_ids.discard(task.local_task_id)
 
     def _create_local_task_emitter(
         self,
@@ -590,12 +571,15 @@ class RuntimeWorkRpcHandler:
         return int(time.time() * 1000)
 
     def _is_sdk_codex_task(self, task: LocalTaskRecord) -> bool:
-        if task.runtime != "codex":
+        if not self._is_codex_runtime(task.runtime):
             return False
         if isinstance(task.runtime_handle.get("executionRequest"), dict):
             return False
-        thread_id = task.runtime_handle.get("threadId") or task.local_task_id
+        thread_id = task.runtime_handle.get("threadId")
         return isinstance(thread_id, str) and bool(thread_id.strip())
+
+    def _is_codex_runtime(self, runtime: str) -> bool:
+        return runtime.lower() == "codex"
 
     def _has_explicit_codex_thread(self, task: LocalTaskRecord) -> bool:
         thread_id = task.runtime_handle.get("threadId")
@@ -604,11 +588,19 @@ class RuntimeWorkRpcHandler:
     async def _archive(self, payload: dict[str, Any]) -> dict[str, Any]:
         task = self._load_payload_task(payload)
 
-        if task.runtime == "codex" and self.codex_discovery is not None:
+        if self._is_codex_runtime(task.runtime) and self.codex_discovery is not None:
             thread_id = task.runtime_handle.get("threadId") or task.local_task_id
             archive_thread = getattr(self.codex_discovery, "archive_thread", None)
             if isinstance(thread_id, str) and thread_id.strip() and archive_thread:
                 await self._maybe_await(archive_thread(thread_id))
+
+        if self._is_sdk_codex_task(task):
+            return {
+                "success": True,
+                "accepted": True,
+                "localTaskId": task.local_task_id,
+                "workspacePath": task.workspace_path,
+            }
 
         archived = self.store.update_task(
             task.local_task_id,
@@ -811,6 +803,10 @@ class RuntimeWorkRpcHandler:
             )
         local_task_id = str(payload.get("localTaskId") or f"runtime-{uuid.uuid4()}")
         runtime = str(fork_package.get("sourceRuntime") or "codex")
+        if self._is_codex_runtime(runtime):
+            raise ValueError(
+                "Codex fork imports must restore into native Codex, not runtime index"
+            )
         runtime_handle = self._imported_runtime_handle(fork_package)
         messages = fork_package.get("recentMessages")
         if isinstance(messages, list):
@@ -863,7 +859,7 @@ class RuntimeWorkRpcHandler:
         handle_session = task.runtime_handle.get("executorSession")
         if isinstance(handle_session, dict):
             return handle_session
-        if task.runtime == "codex":
+        if self._is_codex_runtime(task.runtime):
             thread_id = task.runtime_handle.get("threadId") or task.local_task_id
             if isinstance(thread_id, str) and thread_id.strip():
                 return {"agent": "CodeX", "threadId": thread_id}
@@ -876,7 +872,7 @@ class RuntimeWorkRpcHandler:
         return []
 
     def _codex_thread_id(self, task: LocalTaskRecord) -> Optional[str]:
-        if task.runtime != "codex":
+        if not self._is_codex_runtime(task.runtime):
             return None
         thread_id = task.runtime_handle.get("threadId") or task.local_task_id
         if isinstance(thread_id, str) and thread_id.strip():
@@ -898,6 +894,11 @@ class RuntimeWorkRpcHandler:
         payload: dict[str, Any],
     ) -> dict[str, Any]:
         runtime = payload.get("runtime")
+        if isinstance(runtime, str) and self._is_codex_runtime(runtime):
+            return self._error(
+                "Codex runtime tasks are discovered from native Codex only",
+                code="unsupported_runtime",
+            )
         adapter = self.adapters.get(runtime) if isinstance(runtime, str) else None
         adapter_method_name = method.rsplit(".", maxsplit=1)[-1]
 
@@ -912,7 +913,12 @@ class RuntimeWorkRpcHandler:
             return {"success": True, **result}
         return {"success": True, "result": result}
 
-    def _load_payload_task(self, payload: dict[str, Any]) -> LocalTaskRecord:
+    def _load_payload_task(
+        self,
+        payload: dict[str, Any],
+        *,
+        discovered_tasks: Optional[list[LocalTaskRecord]] = None,
+    ) -> LocalTaskRecord:
         local_task_id = payload.get("localTaskId")
         if not isinstance(local_task_id, str) or not local_task_id.strip():
             raise ValueError("localTaskId is required")
@@ -921,7 +927,45 @@ class RuntimeWorkRpcHandler:
         if workspace_path is not None and not isinstance(workspace_path, str):
             raise ValueError("workspacePath must be a string")
 
-        return self.store.get_task(local_task_id, workspace_path=workspace_path)
+        try:
+            task = self.store.get_task(local_task_id, workspace_path=workspace_path)
+            if not self._is_codex_runtime(task.runtime):
+                return task
+        except KeyError:
+            pass
+
+        discovered_task = self._find_discovered_task(
+            local_task_id,
+            workspace_path=workspace_path,
+            discovered_tasks=discovered_tasks,
+        )
+        if discovered_task is not None:
+            return discovered_task
+
+        raise KeyError(f"Local task not found: {local_task_id}")
+
+    def _find_discovered_task(
+        self,
+        local_task_id: str,
+        *,
+        workspace_path: Optional[str],
+        discovered_tasks: Optional[list[LocalTaskRecord]] = None,
+    ) -> Optional[LocalTaskRecord]:
+        records = (
+            discovered_tasks
+            if discovered_tasks is not None
+            else self._refresh_discovered_tasks()
+        )
+        normalized_workspace = (
+            normalize_workspace_path(workspace_path) if workspace_path else None
+        )
+        for task in records:
+            if task.local_task_id != local_task_id:
+                continue
+            if normalized_workspace and task.workspace_path != normalized_workspace:
+                continue
+            return task
+        return None
 
     def _task_summary(self, task: LocalTaskRecord) -> dict[str, Any]:
         summary = {

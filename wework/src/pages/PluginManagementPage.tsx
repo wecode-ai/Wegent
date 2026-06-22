@@ -30,6 +30,7 @@ export function PluginManagementPage() {
     createProject,
     createGitWorkspaceProject,
     prepareDeviceWorkspace,
+    deleteDeviceWorkspace,
     listGitRepositories,
     listGitBranches,
     updateProjectName,
@@ -105,6 +106,7 @@ export function PluginManagementPage() {
           onCreateProject={createProject}
           onCreateGitWorkspaceProject={createGitWorkspaceProject}
           onPrepareDeviceWorkspace={prepareDeviceWorkspace}
+          onDeleteDeviceWorkspace={deleteDeviceWorkspace}
           onListGitRepositories={listGitRepositories}
           onListGitBranches={listGitBranches}
           onUpdateProjectName={updateProjectName}
@@ -146,6 +148,18 @@ export function PluginManagementPage() {
             onOpenSettings={() => setSettingsOpen(true)}
             onSelectProject={handleSelectProject}
             onOpenRuntimeLocalTask={openRuntimeLocalTask}
+            onCreateProject={createProject}
+            onCreateGitWorkspaceProject={createGitWorkspaceProject}
+            onPrepareDeviceWorkspace={prepareDeviceWorkspace}
+            onDeleteDeviceWorkspace={deleteDeviceWorkspace}
+            onListGitRepositories={listGitRepositories}
+            onListGitBranches={listGitBranches}
+            onUpdateProjectName={updateProjectName}
+            onRemoveProject={removeProject}
+            onGetDeviceHomeDirectory={getDeviceHomeDirectory}
+            onGetProjectWorkspaceRoot={getProjectWorkspaceRoot}
+            onListDeviceDirectories={listDeviceDirectories}
+            onCreateDeviceDirectory={createDeviceDirectory}
           />
         </>
       )}

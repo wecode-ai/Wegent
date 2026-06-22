@@ -64,6 +64,33 @@ async def _drain_runtime_adapter(adapter):
         await asyncio.gather(*adapter._running_tasks)
 
 
+def _sdk_codex_record(
+    thread_id,
+    *,
+    workspace_path="/repo/Wegent",
+    title="hi",
+    running=False,
+    runtime_handle=None,
+):
+    from executor.runtime_work.local_task_store import LocalTaskRecord
+
+    handle = {"threadId": thread_id}
+    if isinstance(runtime_handle, dict):
+        handle.update(runtime_handle)
+
+    return LocalTaskRecord(
+        local_task_id=thread_id,
+        workspace_path=workspace_path,
+        title=title,
+        runtime="codex",
+        runtime_handle=handle,
+        created_at="2026-06-21T02:15:37Z",
+        updated_at="2026-06-21T02:15:58Z",
+        running=running,
+        status="active",
+    )
+
+
 def test_local_task_store_persists_tasks_and_validates_workspace(tmp_path):
     from executor.runtime_work.local_task_store import LocalTaskRecord, LocalTaskStore
 
@@ -244,7 +271,52 @@ async def test_runtime_work_handler_lists_codex_tasks_from_sdk_only(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_runtime_work_handler_keeps_adapter_codex_and_archived_store_tasks(
+async def test_runtime_work_handler_ignores_stale_cached_codex_tasks(
+    tmp_path,
+):
+    from executor.runtime_work.local_task_store import LocalTaskRecord, LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    store = LocalTaskStore(tmp_path / "index.json")
+    store.upsert_task(
+        LocalTaskRecord(
+            local_task_id="stale-thread",
+            workspace_path="/repo/Wegent",
+            title="Stale cached Codex task",
+            runtime="codex",
+            runtime_handle={"threadId": "stale-thread"},
+            created_at="2026-06-21T02:15:37Z",
+            updated_at="2026-06-21T02:15:58Z",
+            running=False,
+            status="active",
+        )
+    )
+    store.upsert_task(
+        LocalTaskRecord(
+            local_task_id="stale-runtime-codex",
+            workspace_path="/repo/Wegent",
+            title="Stale adapter Codex task",
+            runtime="codex",
+            runtime_handle={"executionRequest": {"message": "hi"}, "messages": []},
+            created_at="2026-06-21T02:15:37Z",
+            updated_at="2026-06-21T02:15:58Z",
+            running=False,
+            status="active",
+        )
+    )
+
+    result = await RuntimeWorkRpcHandler(
+        store=store,
+        codex_discovery=EmptyDiscovery(),
+    ).handle_runtime_rpc({"method": "runtime.tasks.list", "payload": {}})
+
+    assert result == {"success": True, "workspaces": []}
+    assert store.get_task("stale-thread").status == "active"
+    assert store.get_task("stale-runtime-codex").status == "active"
+
+
+@pytest.mark.asyncio
+async def test_runtime_work_handler_ignores_store_codex_and_keeps_live_discovery(
     tmp_path,
 ):
     from executor.runtime_work.local_task_store import LocalTaskRecord, LocalTaskStore
@@ -297,7 +369,7 @@ async def test_runtime_work_handler_keeps_adapter_codex_and_archived_store_tasks
     )
 
     tasks = {item["localTaskId"] for item in result["workspaces"][0]["localTasks"]}
-    assert tasks == {sdk_thread_id, "adapter-codex-1", "archived-codex-1"}
+    assert tasks == {sdk_thread_id}
 
 
 @pytest.mark.asyncio
@@ -346,10 +418,8 @@ async def test_runtime_work_handler_archives_codex_thread_through_sdk(tmp_path):
         "workspacePath": "/repo/Wegent",
     }
     assert fake_codex.archived_thread_ids == [thread_id]
-    assert (
-        handler.store.get_task(thread_id, workspace_path="/repo/Wegent").status
-        == "archived"
-    )
+    with pytest.raises(KeyError):
+        handler.store.get_task(thread_id, workspace_path="/repo/Wegent")
 
 
 @pytest.mark.asyncio
@@ -367,7 +437,7 @@ async def test_runtime_work_handler_continues_discovered_codex_thread_through_sd
             self.finished = finished
 
         def discover(self):
-            return []
+            return [_sdk_codex_record(thread_id)]
 
         async def stream_message(self, thread_id, message, *, cwd=None, emitter):
             self.streamed_messages.append((thread_id, message, cwd))
@@ -421,7 +491,7 @@ async def test_runtime_work_handler_continues_discovered_codex_thread_through_sd
     assert discovery.streamed_messages == [
         (thread_id, "continue from Telegram", "/repo/Wegent")
     ]
-    assert store.get_task(thread_id, workspace_path="/repo/Wegent").running is True
+    assert thread_id in handler._running_sdk_task_ids
     second_result = await handler.handle_runtime_rpc(
         {
             "method": "runtime.tasks.send",
@@ -440,7 +510,7 @@ async def test_runtime_work_handler_continues_discovered_codex_thread_through_sd
     release.set()
     await asyncio.wait_for(finished.wait(), timeout=1)
     await asyncio.gather(*handler._running_sdk_tasks)
-    assert store.get_task(thread_id, workspace_path="/repo/Wegent").running is False
+    assert thread_id not in handler._running_sdk_task_ids
 
 
 @pytest.mark.asyncio
@@ -456,7 +526,7 @@ async def test_runtime_work_handler_rejects_concurrent_sdk_codex_send_atomically
             self.release = asyncio.Event()
 
         def discover(self):
-            return []
+            return [_sdk_codex_record(thread_id)]
 
         async def stream_message(self, _thread_id, _message, *, cwd=None, emitter):
             self.calls += 1
@@ -510,7 +580,7 @@ async def test_runtime_work_handler_streams_discovered_codex_thread_over_respons
 
     class FakeCodexStreamDiscovery:
         def discover(self):
-            return []
+            return [_sdk_codex_record(thread_id)]
 
         async def stream_message(self, thread_id, message, *, cwd=None, emitter):
             await emitter.start(shell_type="Codex")
@@ -570,7 +640,7 @@ async def test_runtime_work_handler_emits_error_when_sdk_stream_fails(tmp_path):
 
     class FailingCodexStreamDiscovery:
         def discover(self):
-            return []
+            return [_sdk_codex_record(thread_id)]
 
         async def stream_message(self, thread_id, message, *, cwd=None, emitter):
             await emitter.start(shell_type="Codex")
@@ -614,7 +684,7 @@ async def test_runtime_work_handler_emits_error_when_sdk_stream_fails(tmp_path):
     assert [event for event, _payload in events] == ["response.created", "error"]
     assert events[-1][1]["data"]["message"] == "stream failed"
     assert events[-1][1]["data"]["code"] == "execution_error"
-    assert store.get_task(thread_id, workspace_path="/repo/Wegent").running is False
+    assert thread_id not in handler._running_sdk_task_ids
 
 
 @pytest.mark.asyncio
@@ -626,7 +696,7 @@ async def test_runtime_work_handler_includes_im_source_on_sdk_stream_events(
 
     class FakeCodexStreamDiscovery:
         def discover(self):
-            return []
+            return [_sdk_codex_record(thread_id)]
 
         async def stream_message(self, thread_id, message, *, cwd=None, emitter):
             await emitter.start(shell_type="Codex")
@@ -691,7 +761,7 @@ async def test_runtime_work_handler_rejects_sdk_codex_send_without_event_emitter
             self.streamed = False
 
         def discover(self):
-            return []
+            return [_sdk_codex_record(thread_id)]
 
         async def stream_message(self, thread_id, message, *, cwd=None, emitter):
             self.streamed = True
@@ -711,11 +781,12 @@ async def test_runtime_work_handler_rejects_sdk_codex_send_without_event_emitter
         )
     )
 
-    result = await RuntimeWorkRpcHandler(
+    handler = RuntimeWorkRpcHandler(
         store=store,
         adapters={"codex": SimpleNamespace()},
         codex_discovery=discovery,
-    ).handle_runtime_rpc(
+    )
+    result = await handler.handle_runtime_rpc(
         {
             "method": "runtime.tasks.send",
             "payload": {
@@ -732,7 +803,7 @@ async def test_runtime_work_handler_rejects_sdk_codex_send_without_event_emitter
         "code": "unsupported_runtime",
     }
     assert discovery.streamed is False
-    assert store.get_task(thread_id, workspace_path="/repo/Wegent").running is False
+    assert thread_id not in handler._running_sdk_task_ids
 
 
 @pytest.mark.asyncio
@@ -1185,6 +1256,8 @@ async def test_runtime_work_handler_refreshes_codex_sessions_before_listing(tmp_
     assert task["localTaskId"] == thread_id
     assert task["runtime"] == "codex"
     assert task["running"] is True
+    with pytest.raises(KeyError):
+        store.get_task(thread_id, workspace_path="/repo/Wegent")
 
 
 @pytest.mark.asyncio
@@ -1729,7 +1802,7 @@ async def test_runtime_work_handler_prefers_codex_transcript_over_imported_cache
 
     class CurrentCodexTranscript:
         def discover(self):
-            return []
+            return [_sdk_codex_record("codex-1")]
 
         def read_transcript(self, thread_id, session_path=None):
             return [
@@ -1802,7 +1875,7 @@ async def test_runtime_work_handler_does_not_fallback_to_imported_cache_for_sdk_
 
     class EmptyCodexTranscript:
         def discover(self):
-            return []
+            return [_sdk_codex_record("codex-1")]
 
         def read_transcript(self, thread_id, session_path=None):
             return []
@@ -1857,7 +1930,13 @@ async def test_runtime_work_handler_marks_active_codex_streaming_message_with_su
 
     class StreamingDiscovery:
         def discover(self):
-            return []
+            return [
+                _sdk_codex_record(
+                    "codex-1",
+                    running=True,
+                    runtime_handle={"activeSubtaskId": 7001},
+                )
+            ]
 
         def read_transcript(self, thread_id, session_path=None):
             return [
@@ -1987,6 +2066,44 @@ async def test_runtime_work_handler_creates_runtime_task_with_local_transcript(
 
 
 @pytest.mark.asyncio
+async def test_runtime_work_handler_rejects_codex_runtime_task_create(tmp_path):
+    from executor.runtime_work.local_task_store import LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    store = LocalTaskStore(tmp_path / "index.json")
+    result = await RuntimeWorkRpcHandler(
+        store=store,
+        codex_discovery=EmptyDiscovery(),
+    ).handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.create",
+            "payload": {
+                "runtime": "codex",
+                "workspacePath": "/repo/Wegent",
+                "message": "create a Codex task",
+                "executionRequest": {
+                    "task_id": 1001,
+                    "subtask_id": 2001,
+                    "team_id": 1,
+                    "prompt": "create a Codex task",
+                    "workspace_source": "local_path",
+                    "project_workspace_path": "/repo/Wegent",
+                    "model_config": {},
+                    "bot": [],
+                },
+            },
+        }
+    )
+
+    assert result == {
+        "success": False,
+        "error": "Codex runtime tasks are discovered from native Codex only",
+        "code": "unsupported_runtime",
+    }
+    assert store.list_tasks() == []
+
+
+@pytest.mark.asyncio
 async def test_runtime_work_handler_prepares_git_workspace_fork_patch_archive(
     tmp_path,
     monkeypatch,
@@ -2015,10 +2132,10 @@ async def test_runtime_work_handler_prepares_git_workspace_fork_patch_archive(
     store = LocalTaskStore(tmp_path / "index.json")
     store.upsert_task(
         LocalTaskRecord(
-            local_task_id="codex-1",
+            local_task_id="claude-1",
             workspace_path=str(workspace),
             title="Fork dirty worktree",
-            runtime="codex",
+            runtime="claude_code",
             runtime_handle={},
         )
     )
@@ -2029,7 +2146,7 @@ async def test_runtime_work_handler_prepares_git_workspace_fork_patch_archive(
             "method": "runtime.tasks.prepare_fork_transfer",
             "payload": {
                 "workspacePath": str(workspace),
-                "localTaskId": "codex-1",
+                "localTaskId": "claude-1",
                 "transferId": "transfer-1",
                 "workspaceTransfer": "git_workspace",
             },
@@ -2046,7 +2163,6 @@ async def test_runtime_work_handler_prepares_git_workspace_fork_patch_archive(
         "directToken": "token",
         "sizeBytes": 128,
         "requiresWorkspaceRestore": True,
-        "requiresSessionRestore": True,
     }
 
 
@@ -2077,16 +2193,16 @@ async def test_runtime_work_handler_imports_git_workspace_fork_without_archive_r
                 "source": {
                     "deviceId": "source-device",
                     "workspacePath": "/source/Wegent",
-                    "localTaskId": "codex-1",
+                    "localTaskId": "claude-1",
                 },
                 "workspacePath": str(tmp_path / "target"),
                 "forkPackage": {
-                    "sourceRuntime": "codex",
+                    "sourceRuntime": "claude_code",
                     "title": "Forked runtime task",
                     "recentMessages": [
                         {"id": "m1", "role": "user", "content": "hello"}
                     ],
-                    "runtimeHandle": {"threadId": "codex-1"},
+                    "runtimeHandle": {"executorSession": {"agent": "ClaudeCode"}},
                     "archive": {"mode": "git_workspace"},
                 },
             },
@@ -2101,6 +2217,44 @@ async def test_runtime_work_handler_imports_git_workspace_fork_without_archive_r
     assert record.runtime_handle["messages"] == [
         {"id": "m1", "role": "user", "content": "hello"}
     ]
+
+
+@pytest.mark.asyncio
+async def test_runtime_work_handler_rejects_codex_fork_import_to_runtime_index(
+    tmp_path,
+):
+    from executor.runtime_work.local_task_store import LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    store = LocalTaskStore(tmp_path / "index.json")
+    handler = RuntimeWorkRpcHandler(store=store, codex_discovery=EmptyDiscovery())
+
+    result = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.import_fork",
+            "payload": {
+                "source": {
+                    "deviceId": "source-device",
+                    "workspacePath": "/source/Wegent",
+                    "localTaskId": "codex-1",
+                },
+                "workspacePath": str(tmp_path / "target"),
+                "forkPackage": {
+                    "sourceRuntime": "codex",
+                    "title": "Forked Codex task",
+                    "runtimeHandle": {"threadId": "codex-1"},
+                    "archive": {"mode": "git_workspace"},
+                },
+            },
+        }
+    )
+
+    assert result == {
+        "success": False,
+        "error": "Codex fork imports must restore into native Codex, not runtime index",
+        "code": "bad_request",
+    }
+    assert store.list_tasks() == []
 
 
 @pytest.mark.asyncio
@@ -2134,15 +2288,14 @@ async def test_runtime_work_handler_restores_git_workspace_session_archive(
                 "source": {
                     "deviceId": "source-device",
                     "workspacePath": "/source/Wegent",
-                    "localTaskId": "codex-1",
+                    "localTaskId": "claude-1",
                 },
                 "workspacePath": target_workspace,
                 "forkPackage": {
-                    "sourceRuntime": "codex",
+                    "sourceRuntime": "claude_code",
                     "title": "Forked runtime task",
                     "runtimeHandle": {
-                        "threadId": "codex-1",
-                        "sessionPath": "/source/.codex/sessions/thread.jsonl",
+                        "executorSession": {"agent": "ClaudeCode"},
                     },
                     "archive": {
                         "mode": "git_workspace",
@@ -2197,17 +2350,17 @@ async def test_runtime_work_handler_imports_fork_package_with_parent_metadata(
                 "source": {
                     "deviceId": "source-device",
                     "workspacePath": "/source/Wegent",
-                    "localTaskId": "codex-1",
+                    "localTaskId": "claude-1",
                 },
                 "workspacePath": str(tmp_path / "target"),
                 "forkPackage": {
-                    "sourceRuntime": "codex",
+                    "sourceRuntime": "claude_code",
                     "title": "Forked runtime task",
                     "recentMessages": [
                         {"id": "m1", "role": "user", "content": "hello"}
                     ],
-                    "runtimeHandle": {"threadId": "codex-1"},
-                    "executorSession": {"agent": "CodeX", "threadId": "codex-1"},
+                    "runtimeHandle": {"executorSession": {"agent": "ClaudeCode"}},
+                    "executorSession": {"agent": "ClaudeCode"},
                     "archive": {
                         "directUrls": ["http://source/archive"],
                         "downloadUrl": "https://storage/download",
@@ -2219,7 +2372,7 @@ async def test_runtime_work_handler_imports_fork_package_with_parent_metadata(
 
     assert result["success"] is True
     assert result["accepted"] is True
-    assert result["runtime"] == "codex"
+    assert result["runtime"] == "claude_code"
     assert restored["archive"]["directUrls"] == ["http://source/archive"]
     record = store.get_task(
         result["localTaskId"], workspace_path=str(tmp_path / "target")
@@ -2227,12 +2380,9 @@ async def test_runtime_work_handler_imports_fork_package_with_parent_metadata(
     assert record.parent == {
         "deviceId": "source-device",
         "workspacePath": "/source/Wegent",
-        "localTaskId": "codex-1",
+        "localTaskId": "claude-1",
     }
-    assert record.runtime_handle["executorSession"] == {
-        "agent": "CodeX",
-        "threadId": "codex-1",
-    }
+    assert record.runtime_handle["executorSession"] == {"agent": "ClaudeCode"}
     assert record.runtime_handle["messages"][0]["content"] == "hello"
 
 
@@ -2254,20 +2404,20 @@ async def test_runtime_work_handler_sends_followup_with_same_runtime_session(tmp
 
     store = LocalTaskStore(tmp_path / "index.json")
     adapter = RuntimeAgentAdapter(
-        runtime="codex",
+        runtime="claude_code",
         store=store,
         execute_agent=execute_agent,
     )
     handler = RuntimeWorkRpcHandler(
         store=store,
-        adapters={"codex": adapter},
+        adapters={"claude_code": adapter},
         codex_discovery=EmptyDiscovery(),
     )
     create = await handler.handle_runtime_rpc(
         {
             "method": "runtime.tasks.create",
             "payload": {
-                "runtime": "codex",
+                "runtime": "claude_code",
                 "workspacePath": "/repo/Wegent",
                 "message": "first",
                 "executionRequest": {
@@ -2330,10 +2480,10 @@ async def test_runtime_work_handler_transcript_overlays_im_source(tmp_path):
     store = LocalTaskStore(tmp_path / "index.json")
     store.upsert_task(
         LocalTaskRecord(
-            local_task_id="codex-1",
+            local_task_id="claude-1",
             workspace_path="/repo/Wegent",
             title="Fix reconnect",
-            runtime="codex",
+            runtime="claude_code",
             runtime_handle={
                 "messages": [
                     {
@@ -2360,12 +2510,15 @@ async def test_runtime_work_handler_transcript_overlays_im_source(tmp_path):
         )
     )
 
-    result = await RuntimeWorkRpcHandler(store=store).handle_runtime_rpc(
+    result = await RuntimeWorkRpcHandler(
+        store=store,
+        codex_discovery=EmptyDiscovery(),
+    ).handle_runtime_rpc(
         {
             "method": "runtime.tasks.transcript",
             "payload": {
                 "workspacePath": "/repo/Wegent",
-                "localTaskId": "codex-1",
+                "localTaskId": "claude-1",
             },
         }
     )

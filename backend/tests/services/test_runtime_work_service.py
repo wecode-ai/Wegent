@@ -225,6 +225,68 @@ async def test_device_workspace_upsert_reactivates_inactive_mapping(test_db, tes
 
 
 @pytest.mark.asyncio
+async def test_delete_device_workspace_deactivates_only_matching_project_mapping(
+    test_db,
+    test_user,
+):
+    from app.schemas.runtime_work import DeviceWorkspaceUpsert
+    from app.services import runtime_work_service
+
+    project = _project(test_db, test_user.id)
+    other_project = _project(test_db, test_user.id, name="Other")
+    first = runtime_work_service.upsert_device_workspace(
+        db=test_db,
+        user_id=test_user.id,
+        payload=DeviceWorkspaceUpsert(
+            projectId=project.id,
+            deviceId="device-1",
+            workspacePath="/repo/Wegent",
+            label="MacBook",
+        ),
+    )
+    other = runtime_work_service.upsert_device_workspace(
+        db=test_db,
+        user_id=test_user.id,
+        payload=DeviceWorkspaceUpsert(
+            projectId=other_project.id,
+            deviceId="device-1",
+            workspacePath="/repo/Other",
+            label="Other",
+        ),
+    )
+
+    result = runtime_work_service.delete_device_workspace(
+        db=test_db,
+        user_id=test_user.id,
+        project_id=project.id,
+        device_id="device-1",
+        workspace_path="/repo/Wegent/",
+    )
+
+    assert result is True
+    rows = (
+        test_db.query(Kind)
+        .filter(
+            Kind.user_id == test_user.id,
+            Kind.kind == "DeviceWorkspace",
+            Kind.namespace == "runtime-work",
+        )
+        .order_by(Kind.id)
+        .all()
+    )
+    first_row = next(row for row in rows if row.id == first.id)
+    other_row = next(row for row in rows if row.id == other.id)
+    assert first_row.is_active is False
+    assert other_row.is_active is True
+    remaining = runtime_work_service.list_device_workspaces(
+        db=test_db,
+        user_id=test_user.id,
+        project_id=project.id,
+    )
+    assert remaining == []
+
+
+@pytest.mark.asyncio
 async def test_prepare_plain_device_workspace_creates_directory_and_mapping(
     test_db,
     test_user,
