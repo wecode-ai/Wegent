@@ -66,6 +66,21 @@ class LazySkillProviderTool(BaseTool):
         )
         self._load_skill_tool = load_skill_tool
 
+    def _to_args_and_kwargs(
+        self, tool_input: Any, *args: Any, **kwargs: Any
+    ) -> tuple[tuple, dict]:
+        """Forward all model-provided arguments to the proxy implementation.
+
+        ``LazySkillProviderInput`` declares no fields and accepts arbitrary input
+        via ``extra="allow"``. LangChain's default ``_to_args_and_kwargs`` discards
+        every argument when the schema has no declared fields, which would strip the
+        real tool's arguments (e.g. ``command``/``file_path``) before delegation.
+        Returning the raw input preserves them so the concrete tool can validate.
+        """
+        if isinstance(tool_input, dict):
+            return (), dict(tool_input)
+        return super()._to_args_and_kwargs(tool_input, *args, **kwargs)
+
     def _run(
         self,
         run_manager: CallbackManagerForToolRun | None = None,
