@@ -96,7 +96,7 @@ describe('ProjectCreateDialog', () => {
     expect(onOpenCloudDeviceSettings).toHaveBeenCalledTimes(1)
   })
 
-  test('create flow starts with the preferred current device only', () => {
+  test('create flow shows all device tabs and starts on the preferred device', () => {
     render(
       <ProjectCreateDialog
         open
@@ -115,7 +115,9 @@ describe('ProjectCreateDialog', () => {
     )
 
     expect(screen.getByTestId('project-device-tab-local-device')).toHaveTextContent('Local Device')
-    expect(screen.queryByTestId('project-device-tab-cloud-device')).not.toBeInTheDocument()
+    expect(screen.getByTestId('project-device-tab-local-device')).toHaveClass('bg-text-primary')
+    expect(screen.getByTestId('project-device-tab-cloud-device')).toHaveTextContent('Cloud Device')
+    expect(screen.queryByTestId('project-add-other-device-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('create-project-button')).toBeDisabled()
   })
 
@@ -170,7 +172,18 @@ describe('ProjectCreateDialog', () => {
     })
   })
 
-  test('can reveal another device during creation', async () => {
+  test('can switch the target device before choosing a folder', async () => {
+    const onCreateProject = vi.fn().mockResolvedValue({ id: 2, name: 'cloud-repo', tasks: [] })
+    const onPrepareDeviceWorkspace = vi.fn().mockResolvedValue({
+      preparedAction: 'selected',
+      mapping: mapping({
+        id: 11,
+        projectId: 2,
+        deviceId: 'cloud-device',
+        workspacePath: '/home/user/cloud-repo',
+      }),
+    })
+
     render(
       <ProjectCreateDialog
         open
@@ -178,19 +191,30 @@ describe('ProjectCreateDialog', () => {
         devices={devices}
         preferredDeviceId="local-device"
         onClose={vi.fn()}
-        onCreateProject={vi.fn()}
-        onPrepareDeviceWorkspace={vi.fn()}
+        onCreateProject={onCreateProject}
+        onPrepareDeviceWorkspace={onPrepareDeviceWorkspace}
         onDeleteDeviceWorkspace={vi.fn()}
         onGetDeviceHomeDirectory={vi.fn().mockResolvedValue('/home/user')}
         onGetProjectWorkspaceRoot={vi.fn().mockResolvedValue('/workspace/projects')}
-        onListDeviceDirectories={vi.fn().mockResolvedValue([])}
+        onListDeviceDirectories={vi.fn().mockResolvedValue(['cloud-repo'])}
         onCreateDeviceDirectory={vi.fn()}
       />
     )
 
-    await userEvent.click(screen.getByTestId('project-add-other-device-button'))
+    await userEvent.click(screen.getByTestId('project-device-tab-cloud-device'))
+    await userEvent.click(screen.getByTestId('project-folder-select-button'))
+    await userEvent.click(await screen.findByText('cloud-repo'))
+    await userEvent.click(screen.getByTestId('confirm-device-folder-picker-button'))
+    await userEvent.click(screen.getByTestId('create-project-button'))
 
-    expect(screen.getByTestId('project-device-tab-cloud-device')).toBeInTheDocument()
+    await waitFor(() =>
+      expect(onPrepareDeviceWorkspace).toHaveBeenCalledWith({
+        projectId: 2,
+        deviceId: 'cloud-device',
+        workspacePath: '/home/user/cloud-repo',
+        action: 'select',
+      })
+    )
   })
 
   test('edit flow shows all devices as tabs with existing mappings', () => {

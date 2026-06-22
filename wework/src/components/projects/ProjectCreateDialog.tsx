@@ -1,4 +1,4 @@
-import { Folder, FolderPlus, Loader2, Plus, X } from 'lucide-react'
+import { Folder, FolderPlus, Loader2, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
@@ -101,14 +101,6 @@ function getDeviceLabel(device: DeviceInfo): string {
   return device.name || device.device_id
 }
 
-function getInitialVisibleDeviceIds(
-  devices: DeviceInfo[],
-  preferredDeviceId?: string | null
-): string[] {
-  const defaultDeviceId = getDefaultDeviceId(devices, preferredDeviceId)
-  return defaultDeviceId ? [defaultDeviceId] : []
-}
-
 function getInitialActiveDeviceId(
   devices: DeviceInfo[],
   deviceWorkspaces: DeviceWorkspaceResponse[],
@@ -174,11 +166,6 @@ function ProjectCreateDialogContent({
   const isEditing = Boolean(project)
   const allProjectDevices = useMemo(() => getProjectDevices(devices), [devices])
   const existingMappings = useMemo(() => mappingsByDeviceId(deviceWorkspaces), [deviceWorkspaces])
-  const [visibleDeviceIds, setVisibleDeviceIds] = useState<string[]>(() =>
-    isEditing
-      ? allProjectDevices.map(device => device.device_id)
-      : getInitialVisibleDeviceIds(allProjectDevices, preferredDeviceId)
-  )
   const [activeDeviceId, setActiveDeviceId] = useState(() =>
     getInitialActiveDeviceId(allProjectDevices, deviceWorkspaces, preferredDeviceId, isEditing)
   )
@@ -191,9 +178,7 @@ function ProjectCreateDialogContent({
   const [projectCreateError, setProjectCreateError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
-  const visibleDevices = allProjectDevices.filter(device =>
-    visibleDeviceIds.includes(device.device_id)
-  )
+  const visibleDevices = allProjectDevices
   const activeDevice =
     visibleDevices.find(device => device.device_id === activeDeviceId) ?? visibleDevices[0] ?? null
   const pickerDevice = folderPickerState
@@ -203,7 +188,6 @@ function ProjectCreateDialogContent({
   const primaryDraft = selectedDrafts[0]
   const derivedProjectName = primaryDraft ? getFolderProjectName(primaryDraft.path) : ''
   const finalProjectName = projectName.trim() || derivedProjectName
-  const hasHiddenDevices = !isEditing && visibleDeviceIds.length < allProjectDevices.length
   const canSubmit = isEditing ? true : Boolean(selectedDrafts.length && finalProjectName)
   const title = isEditing
     ? t('workbench.project_edit_title', '编辑项目')
@@ -217,10 +201,6 @@ function ProjectCreateDialogContent({
   const isMobileSheet = presentation === 'mobileSheet'
 
   useEscapeKey(onClose, !submitting)
-
-  const revealOtherDevices = () => {
-    setVisibleDeviceIds(allProjectDevices.map(device => device.device_id))
-  }
 
   const selectDevice = (deviceId: string) => {
     setActiveDeviceId(deviceId)
@@ -549,17 +529,6 @@ function ProjectCreateDialogContent({
                   </button>
                 )
               })}
-              {hasHiddenDevices && (
-                <button
-                  type="button"
-                  data-testid="project-add-other-device-button"
-                  onClick={revealOtherDevices}
-                  className="inline-flex min-h-10 items-center gap-2 rounded-md border border-[#d8d8d8] px-3 text-sm font-medium text-[#3c4043] hover:bg-[#f7f7f8]"
-                >
-                  <Plus className="h-4 w-4" />
-                  {t('workbench.project_add_other_device', '添加其他设备')}
-                </button>
-              )}
             </div>
             {renderActiveDevicePanel()}
           </>
