@@ -76,7 +76,16 @@ Wework creates a new runtime task with:
 POST /api/runtime-work/create
 ```
 
-Backend resolves the target device and directory from either `projectId` or `deviceId + workspacePath`, builds a transient execution request, and calls device RPC `runtime.tasks.create`. This flow does not `db.add()` any `TaskResource` or `Subtask`.
+Backend resolves the target device and directory from either a Project mapping or a standalone device workspace, builds a transient execution request, and calls device RPC `runtime.tasks.create`. This flow does not `db.add()` any `TaskResource` or `Subtask`.
+
+Project-backed creation must use a trusted Device Workspace mapping:
+
+- Wework sends `projectId + deviceWorkspaceId`; it does not send `workspacePath`.
+- Backend verifies that `deviceWorkspaceId` belongs to the current user and the requested `projectId`, then resolves the trusted `deviceId + workspacePath` from that mapping.
+- If a Project has exactly one available Device Workspace, the frontend may select it directly. If it has multiple available Device Workspaces, the frontend must ask the user to confirm the runtime location before sending.
+- Legacy Project configuration that stores `execution.deviceId + workspace.localPath` is materialized into a Device Workspace mapping during runtime work list refresh, so older Projects use the same trusted mapping path.
+
+Standalone non-Project device workspaces still use `deviceId + workspacePath` for task creation. That path only applies to explicitly selected unmapped device workspaces and must not be used as a frontend-supplied Project task target.
 
 ## Fork And Cross-Device Transfer
 

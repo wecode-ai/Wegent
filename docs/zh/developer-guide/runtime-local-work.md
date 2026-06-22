@@ -76,7 +76,16 @@ Wework 打开 LocalTask 后，右侧文件、审查和终端工具使用当前 L
 POST /api/runtime-work/create
 ```
 
-Backend 根据请求中的 `projectId` 或 `deviceId + workspacePath` 解析目标设备和目录，构造一次临时 execution request，然后调用设备 RPC `runtime.tasks.create`。这个流程不会 `db.add()` 任何 `TaskResource` 或 `Subtask`。
+Backend 根据请求中的项目映射或独立设备工作区解析目标设备和目录，构造一次临时 execution request，然后调用设备 RPC `runtime.tasks.create`。这个流程不会 `db.add()` 任何 `TaskResource` 或 `Subtask`。
+
+Project 场景必须使用可信的 Device Workspace 映射：
+
+- Wework 发送 `projectId + deviceWorkspaceId`，不发送 `workspacePath`。
+- Backend 校验 `deviceWorkspaceId` 属于当前用户和该 `projectId`，并且映射里包含可信的 `deviceId + workspacePath`。
+- 如果同一个 Project 只有一个可用 Device Workspace，前端可以直接选中；如果有多个可用 Device Workspace，前端必须让用户确认运行位置后再发送。
+- 旧版 Project 配置里保存的 `execution.deviceId + workspace.localPath` 会在 runtime work 列表刷新时物化为 Device Workspace 映射，以便旧项目也走同一套可信映射路径。
+
+非 Project 的独立设备工作区仍使用 `deviceId + workspacePath` 创建任务。该路径只适用于用户显式选择的未映射设备工作区，不能用于 Project 任务的前端透传。
 
 ## 复制和跨设备转移
 
