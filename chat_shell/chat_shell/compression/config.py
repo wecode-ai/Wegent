@@ -12,6 +12,12 @@ or fall back to built-in defaults based on model ID.
 from dataclasses import dataclass, replace
 from typing import Any, Optional
 
+# Flat output-buffer reservation for context budgeting (decoupled from a
+# model's max output capability). See ModelContextConfig.reserved_output_tokens.
+RESERVED_OUTPUT_WINDOW_RATIO = 0.1
+RESERVED_OUTPUT_MIN_TOKENS = 16_000
+RESERVED_OUTPUT_MAX_TOKENS = 48_000
+
 
 @dataclass
 class ModelContextConfig:
@@ -19,7 +25,8 @@ class ModelContextConfig:
 
     Attributes:
         context_window: Maximum context window size in tokens
-        output_tokens: Reserved tokens for model output
+        output_tokens: Model's max output capability (informational; from CRD).
+            NOT used to size the input budget — see ``reserved_output_tokens``.
         trigger_threshold: Percentage of context window that triggers compression (0.0-1.0)
         target_threshold: Target percentage of context window after compression (0.0-1.0)
     """
@@ -31,9 +38,32 @@ class ModelContextConfig:
     auto_compact_token_limit: int | None = None
 
     @property
+    def reserved_output_tokens(self) -> int:
+        """Flat output buffer reserved from the window for context budgeting.
+
+        Deliberately decoupled from ``output_tokens`` (the model's max output
+        capability, commonly configured at the model ceiling, e.g. 96k). Using
+        that ceiling as the reserve makes compaction trigger far too early. We
+        reserve a flat buffer instead, but never more than the configured model
+        output cap when it is smaller:
+
+            reserved = min(clamp(context_window * 0.1, 16k, 48k), output_tokens)
+            reserved = min(reserved, context_window // 2)
+
+        The final ``window // 2`` cap protects small-window models from
+        over-reserving input budget.
+        """
+        ratio_based = int(self.context_window * RESERVED_OUTPUT_WINDOW_RATIO)
+        reserved = min(
+            max(ratio_based, RESERVED_OUTPUT_MIN_TOKENS), RESERVED_OUTPUT_MAX_TOKENS
+        )
+        reserved = min(reserved, self.output_tokens)
+        return min(reserved, self.context_window // 2)
+
+    @property
     def available_tokens(self) -> int:
-        """Calculate available tokens after reserving output tokens."""
-        return self.context_window - self.output_tokens
+        """Calculate available input tokens after reserving the output buffer."""
+        return max(0, self.context_window - self.reserved_output_tokens)
 
     @property
     def trigger_limit(self) -> int:

@@ -47,6 +47,8 @@ def test_calculate_context_metrics_uses_model_config_limits():
         },
     )
 
+    # reserved uses the flat buffer, capped by the configured model output cap.
+    # clamp(32000 * 0.1, 16k, 48k) = 16000, then min(16000, 4000) = 4000.
     assert snapshot.context_window == 32000
     assert snapshot.reserved_output_tokens == 4000
     assert snapshot.available_input_tokens == 28000
@@ -224,6 +226,35 @@ async def test_tracker_invalidates_provider_usage_baseline_on_prefix_mismatch():
     assert snapshot.used_input_tokens != 500
 
 
+@pytest.mark.asyncio
+async def test_tracker_baseline_matches_even_when_live_view_has_extra_fields():
+    emitter = AsyncMock()
+    tracker = ContextMetricsTracker(
+        task_id=1,
+        subtask_id=2,
+        metrics_fn=_metrics_fn,
+        emitter=emitter,
+    )
+    baseline_messages = [{"role": "user", "content": "same"}]
+    tracker.record_provider_usage(baseline_messages, input_tokens=500)
+
+    messages = [
+        {
+            "role": "user",
+            "content": "same",
+            "id": "h-1",
+            "additional_kwargs": {"cache_control": {"type": "ephemeral"}},
+        },
+        {"role": "assistant", "content": "delta"},
+    ]
+    counter = TokenCounter(model_name="gpt-4o", model_type="openai")
+    expected = 500 + counter.count_messages(messages[1:])
+
+    snapshot = await tracker.capture(messages, PHASE_BUILD_MESSAGES)
+
+    assert snapshot.used_input_tokens == expected
+
+
 def test_auto_compact_token_limit_clamps_trigger_and_target(monkeypatch):
     from chat_shell.core.config import settings
 
@@ -233,6 +264,7 @@ def test_auto_compact_token_limit_clamps_trigger_and_target(monkeypatch):
         model_config={"context_window": 10000, "max_output_tokens": 4000},
     )
 
+    # reserved = min(clamp(1000, 16k, 48k), 4000) = 4000 -> available 6000
     assert config.available_tokens == 6000
     assert config.trigger_limit == 3000
     assert config.target_limit == 3000
@@ -247,6 +279,8 @@ def test_auto_compact_token_limit_never_exceeds_available_tokens(monkeypatch):
         model_config={"context_window": 10000, "max_output_tokens": 4000},
     )
 
+    # reserved = min(clamp(1000, 16k, 48k), 4000) = 4000 -> available 6000;
+    # override (9000) is clamped down to available, target follows.
     assert config.available_tokens == 6000
     assert config.trigger_limit == 6000
     assert config.target_limit == 4200
