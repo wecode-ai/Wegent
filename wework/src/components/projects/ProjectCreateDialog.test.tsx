@@ -121,6 +121,47 @@ describe('ProjectCreateDialog', () => {
     expect(screen.getByTestId('create-project-button')).toBeDisabled()
   })
 
+  test('create flow disables unavailable device tabs and starts on an available device', async () => {
+    const onSelectDevicePreference = vi.fn()
+    const offlineDevices: DeviceInfo[] = [
+      {
+        ...devices[1],
+        name: 'Offline Local',
+        status: 'offline',
+      },
+      devices[0],
+    ]
+
+    render(
+      <ProjectCreateDialog
+        open
+        mode="scratch"
+        devices={offlineDevices}
+        preferredDeviceId="local-device"
+        onClose={vi.fn()}
+        onCreateProject={vi.fn()}
+        onPrepareDeviceWorkspace={vi.fn()}
+        onDeleteDeviceWorkspace={vi.fn()}
+        onSelectDevicePreference={onSelectDevicePreference}
+        onGetDeviceHomeDirectory={vi.fn().mockResolvedValue('/home/user')}
+        onGetProjectWorkspaceRoot={vi.fn().mockResolvedValue('/workspace/projects')}
+        onListDeviceDirectories={vi.fn().mockResolvedValue([])}
+        onCreateDeviceDirectory={vi.fn()}
+      />
+    )
+
+    const offlineTab = screen.getByTestId('project-device-tab-local-device')
+
+    expect(screen.getByTestId('project-device-tab-cloud-device')).toHaveClass('bg-text-primary')
+    expect(offlineTab).toBeDisabled()
+    expect(offlineTab).toHaveTextContent('离线')
+
+    await userEvent.click(offlineTab)
+
+    expect(screen.getByTestId('project-device-tab-cloud-device')).toHaveClass('bg-text-primary')
+    expect(onSelectDevicePreference).not.toHaveBeenCalledWith('local-device')
+  })
+
   test('creates a project from the selected current-device folder name', async () => {
     const onCreateProject = vi.fn().mockResolvedValue({ id: 2, name: 'repo', tasks: [] })
     const onPrepareDeviceWorkspace = vi.fn().mockResolvedValue({

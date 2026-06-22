@@ -7,6 +7,7 @@ import {
   canUseForProjectCreation,
   isCloudDevice,
   isClaudeCodeDevice,
+  isDeviceBelowWeWorkVersion,
 } from '@/lib/device-capabilities'
 import type {
   CreateGitWorkspaceProjectRequest,
@@ -88,9 +89,16 @@ function getProjectDevices(devices: DeviceInfo[]): DeviceInfo[] {
 
 function getDefaultDeviceId(devices: DeviceInfo[], preferredDeviceId?: string | null): string {
   const preferredDevice = preferredDeviceId
-    ? devices.find(device => device.device_id === preferredDeviceId)
+    ? devices.find(
+        device =>
+          device.device_id === preferredDeviceId && canUseForProjectCreation(device)
+      )
     : undefined
-  return preferredDevice?.device_id ?? devices[0]?.device_id ?? ''
+  return (
+    preferredDevice?.device_id ??
+    devices.find(device => canUseForProjectCreation(device))?.device_id ??
+    ''
+  )
 }
 
 function getFolderProjectName(path: string): string {
@@ -178,9 +186,24 @@ function ProjectCreateDialogContent({
   const [projectCreateError, setProjectCreateError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
+  const getDeviceFolder = (deviceId: string) => {
+    const draft = folderDrafts[deviceId]
+    if (draft) return draft.path
+    if (removedDeviceIds.has(deviceId)) return ''
+    return existingMappings.get(deviceId)?.workspacePath ?? ''
+  }
+
+  const isDeviceLinked = (deviceId: string) => Boolean(getDeviceFolder(deviceId))
+  const canSelectDeviceTab = (device: DeviceInfo) =>
+    canUseForProjectCreation(device) || (isEditing && isDeviceLinked(device.device_id))
+
   const visibleDevices = allProjectDevices
   const activeDevice =
-    visibleDevices.find(device => device.device_id === activeDeviceId) ?? visibleDevices[0] ?? null
+    visibleDevices.find(
+      device => device.device_id === activeDeviceId && canSelectDeviceTab(device)
+    ) ??
+    visibleDevices.find(canSelectDeviceTab) ??
+    null
   const pickerDevice = folderPickerState
     ? allProjectDevices.find(device => device.device_id === folderPickerState.deviceId)
     : null
@@ -229,15 +252,6 @@ function ProjectCreateDialogContent({
     setRemovedDeviceIds(deviceIds => new Set(deviceIds).add(activeDevice.device_id))
     setProjectCreateError(null)
   }
-
-  const getDeviceFolder = (deviceId: string) => {
-    const draft = folderDrafts[deviceId]
-    if (draft) return draft.path
-    if (removedDeviceIds.has(deviceId)) return ''
-    return existingMappings.get(deviceId)?.workspacePath ?? ''
-  }
-
-  const isDeviceLinked = (deviceId: string) => Boolean(getDeviceFolder(deviceId))
 
   const handleSubmit = async () => {
     if (!canSubmit || submitting) return
@@ -402,6 +416,20 @@ function ProjectCreateDialogContent({
     )
   }
 
+  const getDeviceTabStatus = (device: DeviceInfo, linked: boolean) => {
+    if (linked) return t('workbench.project_device_linked', '已关联')
+    if (canUseForProjectCreation(device)) {
+      return t('workbench.project_device_unlinked', '未关联')
+    }
+    if (device.status === 'offline') {
+      return t('workbench.project_device_status_offline', '离线')
+    }
+    if (isDeviceBelowWeWorkVersion(device)) {
+      return t('workbench.project_device_upgrade_required_short', '需升级')
+    }
+    return t('workbench.project_device_status_unavailable', '不可用')
+  }
+
   return createPortal(
     <div
       className={
@@ -507,30 +535,43 @@ function ProjectCreateDialogContent({
               {visibleDevices.map(device => {
                 const active = activeDevice?.device_id === device.device_id
                 const linked = isDeviceLinked(device.device_id)
+                const selectable = canSelectDeviceTab(device)
                 return (
                   <button
                     key={device.device_id}
                     type="button"
                     data-testid={`project-device-tab-${device.device_id}`}
+                    disabled={submitting || !selectable}
                     onClick={() => selectDevice(device.device_id)}
                     className={[
                       'min-h-10 rounded-md border px-3 text-left text-sm',
                       active
                         ? 'border-text-primary bg-text-primary text-background'
                         : 'border-[#d8d8d8] text-[#3c4043] hover:bg-[#f7f7f8]',
+                      !selectable ? 'cursor-not-allowed opacity-50 hover:bg-transparent' : '',
                     ].join(' ')}
                   >
                     <span className="font-medium">{getDeviceLabel(device)}</span>
                     <span className="ml-2 text-xs opacity-75">
-                      {linked
-                        ? t('workbench.project_device_linked', '已关联')
-                        : t('workbench.project_device_unlinked', '未关联')}
+                      {getDeviceTabStatus(device, linked)}
                     </span>
                   </button>
                 )
               })}
             </div>
-            {renderActiveDevicePanel()}
+            {activeDevice ? (
+              renderActiveDevicePanel()
+            ) : (
+              <p
+                data-testid="project-no-usable-device-hint"
+                className="mt-4 rounded-lg border border-[#e5e5e5] bg-[#fafafa] px-3 py-3 text-sm text-[#6b6f76]"
+              >
+                {t(
+                  'workbench.device_status_no_online_device',
+                  '暂无在线可用设备，设备恢复在线后可继续对话'
+                )}
+              </p>
+            )}
           </>
         )}
 
