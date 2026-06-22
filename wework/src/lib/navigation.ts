@@ -22,11 +22,6 @@ export function navigateTo(path: string) {
   window.dispatchEvent(new PopStateEvent('popstate'))
 }
 
-export interface TaskRoute {
-  taskId: number
-  projectId?: number
-}
-
 export interface RuntimeTaskRoute {
   deviceId: string
   localTaskId: string
@@ -34,55 +29,6 @@ export interface RuntimeTaskRoute {
 
 export interface RuntimeTaskRouteInput extends RuntimeTaskRoute {
   workspacePath?: string | null
-}
-
-function getNumericSearchParam(
-  searchParams: URLSearchParams,
-  ...names: string[]
-): number | undefined {
-  for (const name of names) {
-    const value = searchParams.get(name)
-    if (value === null || value.trim() === '') continue
-
-    const numberValue = Number(value)
-    if (Number.isInteger(numberValue) && numberValue >= 0) {
-      return numberValue
-    }
-  }
-
-  return undefined
-}
-
-export function parseTaskRoute(path: string, search = ''): TaskRoute | null {
-  const searchParams = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search)
-  const queryProjectId = getNumericSearchParam(searchParams, 'projectId', 'project_id')
-
-  const projectTaskMatch = path.match(/^\/projects\/(\d+)\/tasks\/(\d+)$/)
-  if (projectTaskMatch) {
-    return {
-      projectId: Number(projectTaskMatch[1]),
-      taskId: Number(projectTaskMatch[2]),
-    }
-  }
-
-  const taskMatch = path.match(/^\/tasks\/(\d+)$/)
-  if (taskMatch) {
-    return { taskId: Number(taskMatch[1]), projectId: queryProjectId }
-  }
-
-  const queryTaskId = getNumericSearchParam(searchParams, 'taskId', 'task_id', 'taskid')
-  if (queryTaskId !== undefined) {
-    return { taskId: queryTaskId, projectId: queryProjectId }
-  }
-
-  return null
-}
-
-export function buildTaskRoute({ taskId, projectId }: TaskRoute): string {
-  if (projectId !== undefined) {
-    return `/projects/${projectId}/tasks/${taskId}`
-  }
-  return `/tasks/${taskId}`
 }
 
 function getRequiredSearchParam(

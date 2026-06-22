@@ -40,7 +40,6 @@ import {
   resolveWorkspaceTarget,
   workspaceTargetKey,
 } from '@/lib/workspace-target'
-import { findProjectForTask } from '@/lib/workbench-device'
 import { DesktopSidebar } from './DesktopSidebar'
 import { ProjectCreateDialog } from '@/components/projects/ProjectCreateDialog'
 import { ContinueInImDialog } from '@/components/chat/ContinueInImDialog'
@@ -57,6 +56,7 @@ interface DesktopWorkbenchLayoutProps {
   queuedMessages?: QueuedWorkbenchMessage[]
   guidanceMessages?: GuidanceWorkbenchMessage[]
   codeCommentContexts?: CodeCommentContext[]
+  isRuntimeTranscriptLoading?: boolean
   upgradingDevices?: Record<string, DeviceUpgradeState>
   activeItem?: 'chat' | 'plugins' | 'automation'
   onNewChat: () => void
@@ -153,6 +153,7 @@ export function DesktopWorkbenchLayout({
   queuedMessages = [],
   guidanceMessages = [],
   codeCommentContexts = [],
+  isRuntimeTranscriptLoading = false,
   upgradingDevices = {},
   activeItem = 'chat',
   onNewChat,
@@ -235,10 +236,6 @@ export function DesktopWorkbenchLayout({
     tone: 'success' | 'error'
   } | null>(null)
   const imSessionsRequestSequence = useRef(0)
-  const currentTaskProject = useMemo(
-    () => findProjectForTask(state.projects, state.currentTask),
-    [state.currentTask, state.projects]
-  )
   const runtimeWorkspaceContext = useMemo(
     () =>
       resolveRuntimeWorkspaceContext({
@@ -249,7 +246,7 @@ export function DesktopWorkbenchLayout({
     [state.currentRuntimeTask, state.projects, state.runtimeWork]
   )
   const activeConversationProject =
-    state.currentProject ?? currentTaskProject ?? runtimeWorkspaceContext?.project ?? null
+    state.currentProject ?? runtimeWorkspaceContext?.project ?? null
   const environmentProject = useMemo(() => {
     if (state.currentRuntimeTask) {
       return runtimeWorkspaceContext?.project ?? null
@@ -265,13 +262,6 @@ export function DesktopWorkbenchLayout({
     state.currentRuntimeTask,
     state.projects,
   ])
-  const currentTaskWorkspaceKey = state.currentTask
-    ? [
-        state.currentTask.id,
-        state.currentTask.device_id ?? '',
-        state.currentTask.execution_workspace_path ?? '',
-      ].join(':')
-    : ''
   const workspaceTargetResolverApi = useMemo(
     () => ({ getProjectWorkspaceRoot: onGetProjectWorkspaceRoot }),
     [onGetProjectWorkspaceRoot]
@@ -300,7 +290,6 @@ export function DesktopWorkbenchLayout({
     setWorkspaceTarget(null)
     setWorkspaceTargetError(null)
     resolveWorkspaceTarget({
-      currentTask: state.currentTask,
       currentProject: workspaceTargetProject,
       api: workspaceTargetResolverApi,
     })
@@ -326,10 +315,8 @@ export function DesktopWorkbenchLayout({
       cancelled = true
     }
   }, [
-    currentTaskWorkspaceKey,
     runtimeWorkspaceTarget,
     runtimeWorkspaceTargetKey,
-    state.currentTask,
     state.currentRuntimeTask,
     workspaceTargetProject,
     workspaceTargetResolverApi,
@@ -715,7 +702,6 @@ export function DesktopWorkbenchLayout({
         <DesktopWorkbenchMain
           sidebarCollapsed={sidebarCollapsed}
           isBootstrapping={state.isBootstrapping}
-          currentTask={state.currentTask}
           currentRuntimeTask={state.currentRuntimeTask}
           runtimeWork={state.runtimeWork}
           currentProject={activeConversationProject}
@@ -724,6 +710,7 @@ export function DesktopWorkbenchLayout({
           devices={state.devices}
           upgradingDevices={upgradingDevices}
           messages={messages}
+          isRuntimeTranscriptLoading={isRuntimeTranscriptLoading}
           queuedMessages={queuedMessages}
           guidanceMessages={guidanceMessages}
           codeCommentContexts={codeCommentContexts}

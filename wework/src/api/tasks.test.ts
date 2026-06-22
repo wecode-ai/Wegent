@@ -3,21 +3,23 @@ import { createTaskApi } from './tasks'
 import type { HttpClient } from './http'
 
 describe('createTaskApi', () => {
-  test('renameTask sends the Wework client origin', async () => {
+  test('loads turn file changes diff by subtask id', async () => {
     const client = {
-      put: vi.fn().mockResolvedValue({
-        id: 42,
-        title: 'Renamed',
-        status: 'PENDING',
-      }),
+      get: vi.fn().mockResolvedValue({ diff: 'diff --git a/file b/file' }),
     } as unknown as HttpClient
 
-    const api = createTaskApi(client)
+    await createTaskApi(client).getTurnFileChangesDiff(42)
 
-    await api.renameTask(42, 'Renamed')
+    expect(client.get).toHaveBeenCalledWith('/subtasks/42/file-changes/diff')
+  })
 
-    expect(client.put).toHaveBeenCalledWith('/tasks/42?client_origin=wework', {
-      title: 'Renamed',
-    })
+  test('reverts turn file changes by subtask id', async () => {
+    const client = {
+      post: vi.fn().mockResolvedValue({ file_changes: [] }),
+    } as unknown as HttpClient
+
+    await createTaskApi(client).revertTurnFileChanges(42)
+
+    expect(client.post).toHaveBeenCalledWith('/subtasks/42/file-changes/revert')
   })
 })

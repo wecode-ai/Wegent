@@ -206,7 +206,9 @@ function ProjectCreateDialogContent({
 
   const isDeviceLinked = (deviceId: string) => Boolean(getDeviceFolder(deviceId))
   const canSelectDeviceTab = (device: DeviceInfo) =>
-    canUseForProjectCreation(device) || (isEditing && isDeviceLinked(device.device_id))
+    canUseForProjectCreation(device) ||
+    isDeviceBelowWeWorkVersion(device) ||
+    (isEditing && isDeviceLinked(device.device_id))
 
   const visibleDevices = allProjectDevices
   const activeDevice =
