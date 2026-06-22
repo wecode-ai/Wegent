@@ -124,6 +124,6 @@ Presigned URL expiration is configured separately:
 | Setting | Default | Purpose |
 | --- | --- | --- |
 | `PUBLISH_PRESIGNED_UPLOAD_EXPIRE_SECONDS` | `3600` | Upload URL lifetime |
-| `PUBLISH_PRESIGNED_DOWNLOAD_EXPIRE_SECONDS` | `7776000` | Download URL lifetime, 90 days by default |
+| `PUBLISH_PRESIGNED_DOWNLOAD_EXPIRE_SECONDS` | `3122064000` | Download URL lifetime, 99 years by default |
 
-Upload URLs should stay short-lived to limit risk if an unused grant leaks. Download URLs need to cover the time window in which later publishing steps read generated artifacts, so they use an independent setting.
+Upload URLs should stay short-lived to limit risk if an unused grant leaks. Download URLs need to cover the time window in which later publishing steps read generated artifacts, so they use an independent setting. When the download lifetime exceeds the MinIO client default presign limit, Backend generates the URL through the long-lived signing path.

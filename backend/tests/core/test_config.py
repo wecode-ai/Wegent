@@ -147,7 +147,7 @@ class TestSettings:
         s = build_settings()
 
         assert s.PUBLISH_PRESIGNED_UPLOAD_EXPIRE_SECONDS == 3600
-        assert s.PUBLISH_PRESIGNED_DOWNLOAD_EXPIRE_SECONDS == 90 * 24 * 60 * 60
+        assert s.PUBLISH_PRESIGNED_DOWNLOAD_EXPIRE_SECONDS == 99 * 365 * 24 * 60 * 60
 
     def test_tool_output_guard_enabled_from_env(self, monkeypatch):
         """Test tool output guard default can be controlled from env."""
