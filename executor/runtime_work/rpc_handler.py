@@ -24,6 +24,7 @@ from executor.runtime_work.local_task_store import (
     utc_now_iso,
 )
 from shared.logger import setup_logger
+from shared.models.execution import ExecutionRequest
 from shared.models.responses_api_emitter import EventTransport, ResponsesAPIEmitter
 
 logger = setup_logger("runtime_work_rpc_handler")
@@ -83,6 +84,22 @@ class LocalTaskResponsesTransport(EventTransport):
         result = self.emit_event(event_type, payload)
         if asyncio.iscoroutine(result):
             await result
+
+
+class NoopResponsesTransport(EventTransport):
+    """Drop local-task Responses API events when no socket emitter is available."""
+
+    async def send(
+        self,
+        event_type: str,
+        task_id: int,
+        subtask_id: int,
+        data: dict,
+        message_id: Optional[int] = None,
+        executor_name: Optional[str] = None,
+        executor_namespace: Optional[str] = None,
+    ) -> None:
+        return None
 
 
 class RuntimeWorkRpcHandler:
@@ -553,14 +570,18 @@ class RuntimeWorkRpcHandler:
         source: Optional[dict[str, Any]],
         subtask_id: int,
     ) -> ResponsesAPIEmitter:
-        return ResponsesAPIEmitter(
-            task_id=0,
-            subtask_id=subtask_id,
-            transport=LocalTaskResponsesTransport(
+        if self.responses_event_emitter is None:
+            transport: EventTransport = NoopResponsesTransport()
+        else:
+            transport = LocalTaskResponsesTransport(
                 emit_event=self.responses_event_emitter,
                 task=task,
                 source=source,
-            ),
+            )
+        return ResponsesAPIEmitter(
+            task_id=0,
+            subtask_id=subtask_id,
+            transport=transport,
             model="codex",
         )
 
@@ -895,6 +916,8 @@ class RuntimeWorkRpcHandler:
     ) -> dict[str, Any]:
         runtime = payload.get("runtime")
         if isinstance(runtime, str) and self._is_codex_runtime(runtime):
+            if method == "runtime.tasks.create":
+                return await self._create_sdk_codex_task(payload)
             return self._error(
                 "Codex runtime tasks are discovered from native Codex only",
                 code="unsupported_runtime",
@@ -912,6 +935,138 @@ class RuntimeWorkRpcHandler:
         if isinstance(result, dict):
             return {"success": True, **result}
         return {"success": True, "result": result}
+
+    async def _create_sdk_codex_task(self, payload: dict[str, Any]) -> dict[str, Any]:
+        stream_new_thread = getattr(self.codex_discovery, "stream_new_thread", None)
+        if not callable(stream_new_thread):
+            return self._error(
+                "Codex SDK create adapter is not available",
+                code="unsupported_runtime",
+            )
+
+        request = self._sdk_codex_create_request(payload)
+        workspace_path = normalize_workspace_path(str(payload.get("workspacePath")))
+        message = str(payload.get("message") or "").strip()
+        title = str(payload.get("title") or message).strip()[:100] or "New task"
+        loop = asyncio.get_running_loop()
+        thread_started: asyncio.Future[LocalTaskRecord] = loop.create_future()
+        sdk_task = asyncio.create_task(
+            self._run_sdk_codex_create_task(
+                stream_new_thread=stream_new_thread,
+                request=request,
+                message=message,
+                workspace_path=workspace_path,
+                title=title,
+                thread_started=thread_started,
+            )
+        )
+        self._running_sdk_tasks.add(sdk_task)
+        sdk_task.add_done_callback(self._running_sdk_tasks.discard)
+
+        task = await thread_started
+        return {
+            "success": True,
+            "accepted": True,
+            "localTaskId": task.local_task_id,
+            "workspacePath": task.workspace_path,
+            "runtime": "codex",
+        }
+
+    async def _run_sdk_codex_create_task(
+        self,
+        *,
+        stream_new_thread: Callable[..., Any],
+        request: ExecutionRequest,
+        message: str,
+        workspace_path: str,
+        title: str,
+        thread_started: asyncio.Future[LocalTaskRecord],
+    ) -> None:
+        started_task: Optional[LocalTaskRecord] = None
+
+        def emitter_factory(thread_id: str) -> ResponsesAPIEmitter:
+            nonlocal started_task
+            started_task = self._sdk_codex_create_record(
+                thread_id=thread_id,
+                workspace_path=workspace_path,
+                title=title,
+            )
+            self._running_sdk_task_ids.add(started_task.local_task_id)
+            if not thread_started.done():
+                thread_started.set_result(started_task)
+            return self._create_local_task_emitter(
+                started_task,
+                source=None,
+                subtask_id=request.subtask_id,
+            )
+
+        try:
+            await self._maybe_await(
+                stream_new_thread(
+                    request,
+                    message,
+                    cwd=workspace_path,
+                    emitter_factory=emitter_factory,
+                )
+            )
+            if not thread_started.done():
+                thread_started.set_exception(
+                    RuntimeError("Codex thread did not report a threadId")
+                )
+        except Exception as exc:
+            logger.exception("Failed to create Codex SDK thread")
+            if not thread_started.done():
+                thread_started.set_exception(exc)
+        finally:
+            if started_task is not None:
+                self.mark_codex_task_updated_by_wegent(
+                    started_task.local_task_id,
+                    source=None,
+                )
+                self._running_sdk_task_ids.discard(started_task.local_task_id)
+
+    def _sdk_codex_create_request(self, payload: dict[str, Any]) -> ExecutionRequest:
+        workspace_path = payload.get("workspacePath")
+        if not isinstance(workspace_path, str) or not workspace_path.strip():
+            raise ValueError("workspacePath is required")
+        message = payload.get("message")
+        if not isinstance(message, str) or not message.strip():
+            raise ValueError("message is required")
+        raw_request = payload.get("executionRequest")
+        if not isinstance(raw_request, dict):
+            raise ValueError("executionRequest is required")
+
+        request_data = dict(raw_request)
+        request_data["prompt"] = message.strip()
+        request_data["workspace_source"] = "local_path"
+        request_data["project_workspace_path"] = normalize_workspace_path(
+            workspace_path
+        )
+        request_data["new_session"] = True
+        return ExecutionRequest.from_dict(request_data)
+
+    def _sdk_codex_create_record(
+        self,
+        *,
+        thread_id: str,
+        workspace_path: str,
+        title: str,
+    ) -> LocalTaskRecord:
+        thread_id = thread_id.strip()
+        if not thread_id:
+            raise ValueError("Codex threadId is required")
+        now = utc_now_iso()
+        return LocalTaskRecord(
+            local_task_id=thread_id,
+            workspace_path=workspace_path,
+            title=title,
+            runtime="codex",
+            runtime_handle={"threadId": thread_id},
+            created_at=now,
+            updated_at=now,
+            running=True,
+            status="active",
+        )
 
     def _load_payload_task(
         self,
