@@ -3,18 +3,20 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export const POST_LOGIN_REDIRECT_KEY = 'postLoginRedirectPath'
+export const ADMIN_PASSWORD_SETUP_REQUIRED_ERROR_CODE = 'ADMIN_PASSWORD_SETUP_REQUIRED'
+export const INITIAL_ADMIN_USERNAME = 'admin'
 export const PASSWORD_LOGIN_SEARCH_PARAM = 'password_login'
 
-type SearchParamsLike = Pick<URLSearchParams, 'get' | 'has'>
+type SearchParamsLike = Pick<URLSearchParams, 'get'> & Partial<Pick<URLSearchParams, 'has'>>
 
 export const hasAideskAuthParams = (
   searchParams: Pick<URLSearchParams, 'get'> | null | undefined
 ): boolean => {
   return Boolean(
     searchParams?.get('source') === 'aidesk' &&
-      searchParams.get('username') &&
-      searchParams.get('timestamp') &&
-      searchParams.get('sign')
+    searchParams.get('username') &&
+    searchParams.get('timestamp') &&
+    searchParams.get('sign')
   )
 }
 
@@ -25,7 +27,11 @@ export const isPasswordLoginForced = (
     return false
   }
 
-  return Boolean(searchParams?.has(PASSWORD_LOGIN_SEARCH_PARAM))
+  if (typeof searchParams?.has === 'function') {
+    return searchParams.has(PASSWORD_LOGIN_SEARCH_PARAM)
+  }
+
+  return searchParams?.get(PASSWORD_LOGIN_SEARCH_PARAM) !== null
 }
 
 export const resolveLoginDisplayMode = (

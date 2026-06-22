@@ -9,7 +9,7 @@
 import json
 import time
 import uuid
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from executor.services.turn_file_changes import NativeTurnFileChangeTracker
 from shared.logger import setup_logger
@@ -27,9 +27,11 @@ class CodeXEventMapper:
         self,
         emitter: ResponsesAPIEmitter,
         turn_file_change_tracker: NativeTurnFileChangeTracker | None = None,
+        executor_session_provider: Callable[[], dict[str, Any] | None] | None = None,
     ):
         self.emitter = emitter
         self.turn_file_change_tracker = turn_file_change_tracker
+        self.executor_session_provider = executor_session_provider
         self.final_text = ""
         self.usage: Optional[dict[str, Any]] = None
         self._saw_delta = False
@@ -317,7 +319,11 @@ class CodeXEventMapper:
         status_value = getattr(getattr(turn, "status", None), "value", None)
 
         if status_value == "completed":
-            await self.emitter.done(content=self.final_text, usage=self.usage)
+            await self.emitter.done(
+                content=self.final_text,
+                usage=self.usage,
+                **self._executor_session_result_fields(),
+            )
             return TaskStatus.COMPLETED
 
         if status_value == "interrupted":
@@ -327,6 +333,18 @@ class CodeXEventMapper:
         error_message = self._extract_error_message(turn)
         await self.emitter.error(error_message, "execution_error")
         return TaskStatus.FAILED
+
+    def _executor_session_result_fields(self) -> dict[str, Any]:
+        if self.executor_session_provider is None:
+            return {}
+        try:
+            session = self.executor_session_provider()
+        except Exception:
+            logger.exception("Failed to collect Codex executor session metadata")
+            return {}
+        if not isinstance(session, dict) or not session:
+            return {}
+        return {"executor_session": session}
 
     @staticmethod
     def _extract_error_message(turn: Any) -> str:

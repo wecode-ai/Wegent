@@ -511,6 +511,47 @@ class Agent:
         )
         return project_path
 
+    async def restore_fork_workspace_archive_if_needed(self) -> bool:
+        """Restore archived fork workspace content before code checkout."""
+        fork_runtime = getattr(self.task_data, "fork_runtime", None)
+        workspace_archive = (
+            fork_runtime.get("workspaceArchive")
+            if isinstance(fork_runtime, dict)
+            else None
+        )
+        if not isinstance(workspace_archive, dict):
+            return False
+
+        if self.project_path is None:
+            self.prepare_project_workspace_path()
+        if self.project_path is None:
+            git_url = self.task_data.git_url or ""
+            if git_url:
+                repo_name = git_util.get_repo_name_from_url(git_url)
+                self.project_path = self._resolve_git_project_path(repo_name)
+            else:
+                self.project_path = os.path.join(
+                    config.get_workspace_root(),
+                    str(self.task_id),
+                )
+
+        from executor.services.workspace_archive_restore import (
+            restore_fork_workspace_archive,
+        )
+
+        result = await restore_fork_workspace_archive(self.task_data, self.project_path)
+        if result.restored:
+            logger.info(
+                "Agent[%s][%s] restored fork workspace archive: "
+                "session_restored=%s git_restored=%s path=%s",
+                self.get_name(),
+                self.task_id,
+                result.session_restored,
+                result.git_restored,
+                self.project_path,
+            )
+        return result.restored
+
     def initialize(self) -> TaskStatus:
         """
         Initialize the agent with configuration from task_data.

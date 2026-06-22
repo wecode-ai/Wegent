@@ -14,6 +14,7 @@ from app.api.dependencies import get_db
 from app.models.task import TaskResource
 from app.schemas.kind import ArchiveInfo
 from app.services.workspace_archive import archive_service
+from app.services.workspace_archive.storage import archive_storage_service
 from app.stores.tasks import subtask_store, task_store
 
 logger = logging.getLogger(__name__)
@@ -41,6 +42,14 @@ class SandboxRestoreResponse(BaseModel):
 
     success: bool
     task_id: int
+
+
+class ArchiveDownloadUrlResponse(BaseModel):
+    """Response model for direct workspace archive downloads."""
+
+    task_id: int
+    storage_key: str
+    download_url: str
 
 
 def _get_active_task(db: Session, task_id: int) -> TaskResource:
@@ -146,3 +155,33 @@ async def restore_sandbox_workspace(
     )
 
     return SandboxRestoreResponse(success=restored, task_id=task_id)
+
+
+@router.get("/{task_id}/download-url", response_model=ArchiveDownloadUrlResponse)
+async def get_workspace_archive_download_url(
+    task_id: int,
+    storage_key: str | None = None,
+    db: Session = Depends(get_db),
+):
+    """Generate a presigned download URL for a task workspace archive."""
+    task = _get_active_task(db, task_id)
+    task_json = task.json if isinstance(task.json, dict) else {}
+    status = (
+        task_json.get("status") if isinstance(task_json.get("status"), dict) else {}
+    )
+    archive = status.get("archive") if isinstance(status.get("archive"), dict) else {}
+    archived_storage_key = archive.get("storageKey")
+    if not isinstance(archived_storage_key, str) or not archived_storage_key.strip():
+        raise HTTPException(status_code=404, detail="archive_not_found")
+
+    archived_storage_key = archived_storage_key.strip()
+    if storage_key and storage_key != archived_storage_key:
+        raise HTTPException(status_code=403, detail="archive_storage_key_mismatch")
+
+    return ArchiveDownloadUrlResponse(
+        task_id=task_id,
+        storage_key=archived_storage_key,
+        download_url=archive_storage_service.generate_download_url(
+            archived_storage_key
+        ),
+    )

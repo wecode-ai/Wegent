@@ -374,6 +374,14 @@ class WebSocketClient:
         # Fallback to localhost
         return "127.0.0.1"
 
+    def _get_runtime_transfer_host(self) -> str:
+        """Return the host peers should use for runtime direct transfers."""
+
+        configured = getattr(config, "RUNTIME_TRANSFER_HOST", "")
+        if isinstance(configured, str) and configured.strip():
+            return configured.strip()
+        return self._get_client_ip()
+
     def _setup_internal_handlers(self) -> None:
         """Setup internal event handlers for connection lifecycle."""
 
@@ -413,7 +421,14 @@ class WebSocketClient:
     @property
     def connected(self) -> bool:
         """Check if WebSocket is connected."""
-        return self._connected
+        return self._connected and self._socketio_connected()
+
+    def _socketio_connected(self) -> bool:
+        """Check whether Socket.IO has an active transport or namespace."""
+        namespaces = getattr(self.sio, "namespaces", {})
+        return bool(getattr(self.sio, "connected", False)) or (
+            "/local-executor" in namespaces
+        )
 
     @property
     def registered(self) -> bool:
@@ -443,9 +458,14 @@ class WebSocketClient:
                 "Auth token not configured. Set WEGENT_AUTH_TOKEN environment variable."
             )
 
-        if self._connected:
+        if self.connected:
             logger.info("Already connected to WebSocket")
             return True
+
+        if self._connected:
+            logger.warning("WebSocket local state was stale; resetting before connect")
+            self._connected = False
+            self._registered = False
 
         if self._connecting:
             logger.info("Connection already in progress")
@@ -478,6 +498,29 @@ class WebSocketClient:
             logger.error(f"Failed to connect to WebSocket: {e}")
             return False
 
+    async def reconnect(self, wait_timeout: float = 30.0) -> bool:
+        """Force a fresh WebSocket connection and re-register the device."""
+        logger.info("Forcing WebSocket reconnect")
+
+        try:
+            if self._connected or self._socketio_connected():
+                await self.sio.disconnect()
+        except Exception as e:
+            logger.warning(f"Error while disconnecting stale WebSocket: {e}")
+
+        self._connected = False
+        self._registered = False
+        self._connecting = False
+
+        connected = await self.connect(wait_timeout=wait_timeout)
+        if not connected:
+            return False
+
+        if self._was_registered and not self._registered:
+            return await self.register_device()
+
+        return True
+
     async def register_device(self, timeout: float = 10.0) -> bool:
         """Register device with Backend using call (request-response).
 
@@ -487,7 +530,7 @@ class WebSocketClient:
         Returns:
             True if registered successfully, False otherwise.
         """
-        if not self._connected:
+        if not self.connected:
             raise ConnectionError("WebSocket not connected")
 
         try:
@@ -498,6 +541,7 @@ class WebSocketClient:
                 "bind_shell": self.bind_shell,
                 "executor_version": get_version(),
                 "client_ip": self._get_client_ip(),
+                "runtime_transfer_host": self._get_runtime_transfer_host(),
             }
             logger.info(f"Sending device:register to /local-executor: {register_data}")
 
@@ -541,7 +585,7 @@ class WebSocketClient:
         Returns:
             True if heartbeat acknowledged, False otherwise.
         """
-        if not self._connected:
+        if not self.connected:
             raise ConnectionError("WebSocket not connected")
 
         try:
@@ -556,6 +600,7 @@ class WebSocketClient:
                 "executor_version": get_version(),
                 "capabilities": self.capability_reporter.build_report(),
                 "runtime_auth_files": build_runtime_auth_file_report(),
+                "runtime_transfer_host": self._get_runtime_transfer_host(),
             }
             logger.info(
                 f"Sending device:heartbeat to /local-executor: {heartbeat_data}"
@@ -589,7 +634,7 @@ class WebSocketClient:
 
     async def disconnect(self) -> None:
         """Disconnect from the WebSocket server."""
-        if self._connected:
+        if self._connected or self._socketio_connected():
             try:
                 await self.sio.disconnect()
                 logger.info("WebSocket disconnected gracefully")
@@ -608,7 +653,7 @@ class WebSocketClient:
             data: Event data payload.
             callback: Optional callback for acknowledgment.
         """
-        if not self._connected:
+        if not self.connected:
             raise ConnectionError("WebSocket not connected")
 
         try:
@@ -636,7 +681,7 @@ class WebSocketClient:
         Returns:
             Response data or None if failed.
         """
-        if not self._connected:
+        if not self.connected:
             raise ConnectionError("WebSocket not connected")
 
         try:

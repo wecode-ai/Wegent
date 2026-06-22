@@ -14,6 +14,7 @@ interface ComposerToolbarProps {
   isModelSelectionReady: boolean
   onSelectModel: (model: UnifiedModel | null) => void
   onSelectModelOption: (optionId: string, value: string) => void
+  onBlockedModelSelect?: (model: UnifiedModel, message?: string) => void
   onFileSelect: (files: File | File[]) => void
   isStreaming?: boolean
   onPause?: () => void
@@ -29,6 +30,7 @@ export function ComposerToolbar({
   isModelSelectionReady,
   onSelectModel,
   onSelectModelOption,
+  onBlockedModelSelect,
   onFileSelect,
   isStreaming = false,
   onPause,
@@ -50,12 +52,10 @@ export function ComposerToolbar({
             disabled={disabled}
             onSelectModel={onSelectModel}
             onSelectModelOption={onSelectModelOption}
+            onBlockedModelSelect={onBlockedModelSelect}
           />
         ) : (
-          <div
-            className="h-11 w-32 shrink-0"
-            data-testid="model-selector-loading"
-          />
+          <div className="h-11 w-32 shrink-0" data-testid="model-selector-loading" />
         )}
         {isStreaming ? (
           <button

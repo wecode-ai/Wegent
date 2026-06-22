@@ -13,10 +13,13 @@ import type { GuidanceWorkbenchMessage, QueuedWorkbenchMessage } from '@/types/w
 
 vi.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
-    t: (key: string, options?: string | { count?: number }) => {
+    t: (key: string, options?: string | { action?: string; count?: number; device?: string }) => {
       if (typeof options === 'string') return options
       if (key === 'workbench.code_comment_count') {
         return `${options?.count ?? 0} 个评论`
+      }
+      if (key === 'workbench.project_work_trigger_device_aria') {
+        return `${options?.action ?? ''}，当前设备 ${options?.device ?? ''}`
       }
       if (key === 'workbench.remove_code_comments') {
         return '移除代码评论'
@@ -1234,6 +1237,7 @@ describe('ChatInput', () => {
       },
     }
     const setSelectedModel = vi.fn()
+    const onBlockedModelSelect = vi.fn()
     render(
       <ChatInput
         value=""
@@ -1246,6 +1250,7 @@ describe('ChatInput', () => {
           selectedModel,
           selectedModelOptions: {},
           setSelectedModel,
+          onBlockedModelSelect,
         })}
       />
     )
@@ -1253,7 +1258,7 @@ describe('ChatInput', () => {
     await userEvent.click(screen.getByTestId('model-selector-button'))
 
     const disabledOption = screen.getByTestId('model-option-overseas-gpt-5.4')
-    expect(disabledOption).toBeDisabled()
+    expect(disabledOption).not.toBeDisabled()
     expect(disabledOption).toHaveAttribute('aria-disabled', 'true')
     expect(disabledOption).toHaveAttribute('title', 'Incompatible with the current model protocol')
     expect(disabledOption).toHaveTextContent('Incompatible with the current model protocol')
@@ -1261,6 +1266,10 @@ describe('ChatInput', () => {
     await userEvent.click(disabledOption)
 
     expect(setSelectedModel).not.toHaveBeenCalled()
+    expect(onBlockedModelSelect).toHaveBeenCalledWith(
+      incompatibleModel,
+      'Incompatible with the current model protocol'
+    )
   })
 
   test('closes the model menu after selecting a reasoning option', async () => {
@@ -1932,6 +1941,41 @@ describe('ChatInput', () => {
     expect(
       screen.queryByTestId('standalone-device-selected-icon-cloud-online')
     ).not.toBeInTheDocument()
+  })
+
+  test('shows the current standalone device in the project work trigger', () => {
+    const devices: DeviceInfo[] = [
+      {
+        id: 1,
+        device_id: 'local-online',
+        name: 'Local Online',
+        status: 'online',
+        is_default: false,
+        device_type: 'local',
+      },
+    ]
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectWork={projectWorkControls({
+          projects: [{ id: 7, name: 'hello', tasks: [] }],
+          devices,
+          currentProjectId: undefined,
+          currentStandaloneDeviceId: 'local-online',
+        })}
+      />
+    )
+
+    const trigger = screen.getByTestId('project-work-button')
+
+    expect(trigger).toHaveTextContent('进入项目工作')
+    expect(trigger).toHaveTextContent('Local Online')
+    expect(trigger).toHaveAccessibleName('进入项目工作，当前设备 Local Online')
   })
 
   test('does not include enter-project work as a menu item', async () => {

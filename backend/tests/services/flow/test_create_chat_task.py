@@ -6,6 +6,7 @@
 Unit tests for create_chat_task function.
 """
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -165,3 +166,74 @@ class TestCreateChatTaskRouting:
             mock_create_task.assert_called_once()
             assert result.task.id == 100
             assert result.ai_triggered is True
+
+
+@pytest.mark.parametrize("should_trigger_ai", [True, False])
+def test_create_chat_task_persists_user_message_source_metadata(should_trigger_ai):
+    """TaskCreationParams.message_source should be saved on the user subtask."""
+    from app.services.chat.trigger.lifecycle import prepare_execution_session
+
+    message_source = {
+        "source": "im",
+        "session_id": "session-1",
+        "message_id": "im-message-1",
+    }
+    video_config = {
+        "model": "video-model",
+        "resolution": "720p",
+        "ratio": "16:9",
+        "duration": 5,
+    }
+    params = TaskCreationParams(
+        message="Hello from IM",
+        title="IM task",
+        message_source=message_source,
+    )
+    db = MagicMock()
+    user = SimpleNamespace(id=7)
+    team = SimpleNamespace(id=11, name="assistant", namespace="default", json=None)
+    task = SimpleNamespace(
+        id=101, user_id=7, json={}, client_origin=params.client_origin
+    )
+
+    def create_user_and_assistant_subtasks(*args, result=None, **kwargs):
+        user_subtask = SimpleNamespace(id=201, result=result)
+        assistant_subtask = SimpleNamespace(id=202, result=None)
+        return user_subtask, assistant_subtask
+
+    def create_user_subtask(*args, result=None, **kwargs):
+        return SimpleNamespace(id=203, result=result)
+
+    with (
+        patch(
+            "app.services.chat.trigger.lifecycle.create_new_task",
+            return_value=task,
+        ),
+        patch(
+            "app.services.chat.trigger.lifecycle.task_stores.subtask_store.list_latest_by_task",
+            return_value=[],
+        ),
+        patch(
+            "app.services.chat.trigger.lifecycle.task_stores.subtask_store.create_user_and_assistant_subtasks",
+            side_effect=create_user_and_assistant_subtasks,
+        ),
+        patch(
+            "app.services.chat.storage.task_manager.task_stores.subtask_store.create_user_subtask",
+            side_effect=create_user_subtask,
+        ),
+    ):
+        session = prepare_execution_session(
+            db=db,
+            user=user,
+            team=team,
+            input_text="Hello from IM",
+            task_params=params,
+            should_trigger_ai=should_trigger_ai,
+            bot_ids_override=[31],
+            video_config=video_config,
+        )
+
+    assert session.user_subtask.result == {
+        "video_config": video_config,
+        "source": message_source,
+    }

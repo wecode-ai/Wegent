@@ -23,6 +23,7 @@ from app.models.user import User
 from app.schemas.kind import Team
 from app.services.chat.storage.task_manager import (
     TaskCreationParams,
+    build_user_subtask_result,
     check_task_status,
     create_new_task,
     create_user_subtask,
@@ -30,6 +31,7 @@ from app.services.chat.storage.task_manager import (
     get_task_with_access_check,
 )
 from app.services.readers.kinds import KindType, kindReader
+from app.services.task_fork_history import task_fork_history_resolver
 from app.services.task_status import mark_task_pending_payload
 from app.stores.tasks import subtask_store
 
@@ -285,18 +287,22 @@ def prepare_execution_session(
         task = create_new_task(db, user, team, resolved_task_params)
         subtask_user_id = user.id
 
-    existing_subtasks = task_stores.subtask_store.list_latest_by_task(
+    existing_subtasks = [
+        item.subtask
+        for item in task_fork_history_resolver.resolve_for_task(
+            db,
+            task_id=task.id,
+            user_id=subtask_user_id,
+            current_task=task,
+        )
+    ]
+    next_message_id = task_fork_history_resolver.get_next_message_id(
         db,
         task_id=task.id,
         user_id=subtask_user_id,
+        current_task=task,
     )
-
-    next_message_id = 1
-    parent_id = 0
-    if existing_subtasks:
-        latest_subtask = existing_subtasks[-1]
-        next_message_id = latest_subtask.message_id + 1
-        parent_id = latest_subtask.message_id
+    parent_id = next_message_id - 1 if next_message_id > 1 else 0
 
     handoff_message = input_text
     if (
@@ -327,7 +333,10 @@ def prepare_execution_session(
                 assistant_message_id=next_message_id + 1,
                 assistant_parent_id=next_message_id,
                 sender_user_id=user.id,
-                result={"video_config": video_config} if video_config else None,
+                result=build_user_subtask_result(
+                    video_config=video_config,
+                    message_source=resolved_task_params.message_source,
+                ),
             )
         )
     else:
@@ -342,6 +351,7 @@ def prepare_execution_session(
             next_message_id=next_message_id,
             parent_id=parent_id,
             video_config=video_config,
+            message_source=resolved_task_params.message_source,
         )
 
     db.commit()

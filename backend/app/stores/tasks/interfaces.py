@@ -264,6 +264,24 @@ class TaskStore(Protocol):
         order_by_updated_at_desc: bool = False,
     ) -> list[TaskResource]: ...
 
+    def list_recent_owner_only_tasks(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        limit: int,
+        client_origin: Optional[str] = None,
+    ) -> list[TaskResource]: ...
+
+    def list_owned_tasks_by_states(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        states: Sequence[int],
+        client_origin: Optional[str] = None,
+    ) -> list[TaskResource]: ...
+
     def list_kind_resources(
         self,
         db: Session,

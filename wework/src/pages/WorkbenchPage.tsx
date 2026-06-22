@@ -14,7 +14,6 @@ export function WorkbenchPage() {
     queuedMessages,
     guidanceMessages,
     codeCommentContexts,
-    runningTaskIds,
     upgradingDevices,
     projectExecutionMode,
     setProjectExecutionMode,
@@ -26,28 +25,20 @@ export function WorkbenchPage() {
     startNewChat,
     startStandaloneChat,
     startNewProjectChat,
-    openTask,
-    searchTasks,
-    searchTaskDetail,
+    openRuntimeLocalTask,
+    archiveRuntimeLocalTask,
+    forkCurrentRuntimeTask,
     rememberExecutionDevice,
     refreshDevices,
     refreshWorkLists,
     upgradeDevice,
     createProject,
     createGitWorkspaceProject,
+    prepareDeviceWorkspace,
     listGitRepositories,
     listGitBranches,
     updateProjectName,
     removeProject,
-    archiveAllChats,
-    archiveAllProjectChats,
-    archiveProjectChats,
-    archiveTask,
-    renameTask,
-    listArchivedTasks,
-    unarchiveTask,
-    deleteTask,
-    deleteArchivedTasks,
     getDeviceHomeDirectory,
     getProjectWorkspaceRoot,
     listDeviceDirectories,
@@ -58,6 +49,12 @@ export function WorkbenchPage() {
     listEnvironmentBranches,
     checkoutEnvironmentBranch,
     createEnvironmentBranch,
+    listImPrivateSessions,
+    bindRuntimeTaskToImSessions,
+    getImNotificationSettings,
+    updateGlobalImNotification,
+    subscribeRuntimeTaskNotifications,
+    unsubscribeRuntimeTaskNotifications,
     setInput,
     addCodeCommentContext,
     clearCodeCommentContexts,
@@ -94,7 +91,6 @@ export function WorkbenchPage() {
       queuedMessages={queuedMessages}
       guidanceMessages={guidanceMessages}
       codeCommentContexts={codeCommentContexts}
-      runningTaskIds={runningTaskIds}
       upgradingDevices={upgradingDevices}
       onNewChat={startNewChat}
       onStartStandaloneChat={startStandaloneChat}
@@ -103,27 +99,19 @@ export function WorkbenchPage() {
       projectWork={projectWork}
       onSelectProject={selectProject}
       onStartNewProjectChat={startNewProjectChat}
-      onOpenTask={openTask}
-      onSearchTasks={searchTasks}
-      onSearchTaskDetail={searchTaskDetail}
+      onOpenRuntimeLocalTask={openRuntimeLocalTask}
+      onArchiveRuntimeLocalTask={archiveRuntimeLocalTask}
+      onForkCurrentRuntimeTask={forkCurrentRuntimeTask}
       onRememberExecutionDevice={rememberExecutionDevice}
       onRefreshDevices={refreshDevices}
       onUpgradeDevice={upgradeDevice}
       onCreateProject={createProject}
       onCreateGitWorkspaceProject={createGitWorkspaceProject}
+      onPrepareDeviceWorkspace={prepareDeviceWorkspace}
       onListGitRepositories={listGitRepositories}
       onListGitBranches={listGitBranches}
       onUpdateProjectName={updateProjectName}
       onRemoveProject={removeProject}
-      onArchiveAllChats={archiveAllChats}
-      onArchiveAllProjectChats={archiveAllProjectChats}
-      onArchiveProjectChats={archiveProjectChats}
-      onArchiveTask={archiveTask}
-      onRenameTask={renameTask}
-      onListArchivedTasks={listArchivedTasks}
-      onUnarchiveTask={unarchiveTask}
-      onDeleteTask={deleteTask}
-      onDeleteArchivedTasks={deleteArchivedTasks}
       onGetDeviceHomeDirectory={getDeviceHomeDirectory}
       onGetProjectWorkspaceRoot={getProjectWorkspaceRoot}
       onListDeviceDirectories={listDeviceDirectories}
@@ -134,6 +122,12 @@ export function WorkbenchPage() {
       onListEnvironmentBranches={listEnvironmentBranches}
       onCheckoutEnvironmentBranch={checkoutEnvironmentBranch}
       onCreateEnvironmentBranch={createEnvironmentBranch}
+      onListImPrivateSessions={listImPrivateSessions}
+      onBindRuntimeTaskToImSessions={bindRuntimeTaskToImSessions}
+      onGetImNotificationSettings={getImNotificationSettings}
+      onUpdateGlobalImNotification={updateGlobalImNotification}
+      onSubscribeRuntimeTaskNotifications={subscribeRuntimeTaskNotifications}
+      onUnsubscribeRuntimeTaskNotifications={unsubscribeRuntimeTaskNotifications}
       onInputChange={setInput}
       onSend={sendCurrentInput}
       onRetryFailedMessage={retryFailedMessage}

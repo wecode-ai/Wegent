@@ -246,6 +246,7 @@ class TaskLite(BaseModel):
     status: TaskStatus
     task_type: str
     type: str
+    source: Optional[str] = None
     created_at: datetime
     updated_at: datetime
     completed_at: Optional[datetime] = None

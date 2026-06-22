@@ -89,6 +89,10 @@ export function supportsCloudSessions(device: DeviceLike): boolean {
   return isCloudDevice(device) && isClaudeCodeDevice(device)
 }
 
+export function supportsRemoteTerminalSessions(device: DeviceLike): boolean {
+  return isClaudeCodeDevice(device)
+}
+
 export function supportsLocalTerminalLaunch(device: DeviceLike): boolean {
   return !isCloudDevice(device) && isClaudeCodeDevice(device)
 }

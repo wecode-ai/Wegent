@@ -8,8 +8,9 @@ import './task-list-scrollbar.css'
 import React, { useRef, useEffect, useState, useMemo } from 'react'
 import { Button } from '@/components/ui/button'
 import Image from 'next/image'
-import { useRouter } from 'next/navigation'
+import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { paths } from '@/config/paths'
+import { getCodingNavItem, openNavigationHref } from '@/config/coding-route'
 import {
   Plus,
   X,
@@ -24,6 +25,7 @@ import {
   Library,
   LayoutGrid,
   ClipboardCheck,
+  Zap,
 } from 'lucide-react'
 import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import { useUser } from '@/features/common/UserContext'
@@ -81,6 +83,8 @@ export default function TaskSidebar({
   const { t } = useTranslation()
   const router = useRouter()
   const { user } = useUser()
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
   const {
     tasks,
     groupTasks,
@@ -168,6 +172,7 @@ export default function TaskSidebar({
     | 'inbox'
     | 'resource-library'
     | 'evaluation'
+    | 'wework'
   interface NavigationButton {
     label: string
     icon: typeof Workflow
@@ -179,8 +184,13 @@ export default function TaskSidebar({
     testId?: string
   }
 
-  const currentPath = typeof window === 'undefined' ? '' : window.location.pathname
+  const currentPath = pathname ?? ''
   const resourceLibraryPath = paths.resourceLibrary?.getHref?.() ?? '/resource-library'
+  const codingNavItem = getCodingNavItem()
+  const isCodeAgentActive =
+    !codingNavItem.external &&
+    currentPath === paths.chat.getHref() &&
+    searchParams.get('agent') === 'code'
 
   const navigationButtons: NavigationButton[] = useMemo(() => {
     const buttons: NavigationButton[] = [
@@ -192,12 +202,12 @@ export default function TaskSidebar({
         buttonPageType: 'flow' as const,
       },
       {
-        label: t('common:navigation.code'),
-        icon: Code,
-        path: paths.code.getHref(),
-        isActive: pageType === 'code',
+        label: t(codingNavItem.labelKey),
+        icon: codingNavItem.key === 'wework' ? Zap : Code,
+        path: codingNavItem.href,
+        isActive: pageType === 'code' || isCodeAgentActive,
         tooltip: pageType === 'code' ? t('common:tasks.new_task') : undefined,
-        buttonPageType: 'code' as const,
+        buttonPageType: codingNavItem.key,
       },
       {
         label: t('common:navigation.wiki'),
@@ -242,7 +252,18 @@ export default function TaskSidebar({
       })
     }
     return buttons
-  }, [currentPath, inboxUnreadCount, isAdmin, pageType, resourceLibraryPath, t])
+  }, [
+    codingNavItem.href,
+    codingNavItem.key,
+    codingNavItem.labelKey,
+    currentPath,
+    inboxUnreadCount,
+    isAdmin,
+    isCodeAgentActive,
+    pageType,
+    resourceLibraryPath,
+    t,
+  ])
 
   // New conversation - always navigate to chat page
   const handleNewAgentClick = () => {
@@ -260,6 +281,8 @@ export default function TaskSidebar({
 
   // Handle navigation button click - reset the current task session when re-entering a page
   const handleNavigationClick = (path: string, isActive: boolean, buttonPageType?: string) => {
+    const isExternalNavigation = buttonPageType === 'wework'
+
     if (isActive) {
       // IMPORTANT: Clear selected task FIRST to ensure UI state is reset immediately
       selectTask(null)
@@ -269,9 +292,13 @@ export default function TaskSidebar({
         window.dispatchEvent(new CustomEvent('knowledge-clear-selection'))
       }
 
-      router.replace(path)
+      if (isExternalNavigation) {
+        openNavigationHref(router, path)
+      } else {
+        router.replace(path)
+      }
     } else {
-      router.push(path)
+      openNavigationHref(router, path)
     }
     setIsMobileSidebarOpen(false)
   }
@@ -321,12 +348,14 @@ export default function TaskSidebar({
     btn =>
       btn.buttonPageType === 'flow' ||
       btn.buttonPageType === 'code' ||
+      btn.buttonPageType === 'wework' ||
       btn.buttonPageType === 'knowledge'
   )
   const moreNavigationButtons = navigationButtons.filter(
     btn =>
       btn.buttonPageType !== 'flow' &&
       btn.buttonPageType !== 'code' &&
+      btn.buttonPageType !== 'wework' &&
       btn.buttonPageType !== 'knowledge'
   )
   const fixedSecondaryNavigationButtons = SIDEBAR_NAV_CONFIG.keepSecondaryNavFixed

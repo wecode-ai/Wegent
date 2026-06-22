@@ -12,6 +12,48 @@ describe('workbenchReducer', () => {
     expect(state.currentTask).toBeNull()
   })
 
+  test('stores runtime work separately from backend task lists', () => {
+    const runtimeWork = {
+      projects: [
+        {
+          project: { id: 7, name: 'Repo' },
+          totalLocalTasks: 1,
+          deviceWorkspaces: [
+            {
+              id: 3,
+              deviceId: 'local-device',
+              deviceName: 'Local Mac',
+              deviceStatus: 'online',
+              available: true,
+              workspacePath: '/repo/Wegent',
+              label: 'Wegent',
+              localTasks: [
+                {
+                  localTaskId: 'codex-1',
+                  workspacePath: '/repo/Wegent',
+                  title: 'Fix reconnect',
+                  runtime: 'codex',
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      unmappedDeviceWorkspaces: [],
+      totalLocalTasks: 1,
+    }
+
+    const state = workbenchReducer(initialWorkbenchState, {
+      type: 'lists_refreshed',
+      projects: [{ id: 7, name: 'Repo', tasks: [] }],
+      devices: [],
+      runtimeWork,
+    })
+
+    expect(state.runtimeWork).toBe(runtimeWork)
+    expect(state.projects[0].tasks).toEqual([])
+  })
+
   test('opens task and leaves selected project unchanged', () => {
     const selected = workbenchReducer(initialWorkbenchState, {
       type: 'project_selected',
@@ -49,7 +91,6 @@ describe('workbenchReducer', () => {
     expect(opened.currentProject?.name).toBe('sina-sso')
     expect(opened.currentTask?.id).toBe(3)
     expect(opened.currentTask?.project_id).toBe(9)
-    expect(opened.recentTasks).toEqual([])
   })
 
   test('normalizes project task detail before updating work lists', () => {
@@ -59,7 +100,6 @@ describe('workbenchReducer', () => {
       defaultTeam: null,
       projects: [{ id: 7, name: 'Repo', tasks: [] }],
       devices: [],
-      recentTasks: [],
       currentProject: { id: 7, name: 'Repo', tasks: [] },
     })
 
@@ -76,7 +116,6 @@ describe('workbenchReducer', () => {
     })
 
     expect(opened.currentTask?.project_id).toBe(7)
-    expect(opened.recentTasks).toEqual([])
     expect(opened.projects[0].tasks).toEqual([
       expect.objectContaining({
         task_id: 12,
@@ -86,7 +125,7 @@ describe('workbenchReducer', () => {
     ])
   })
 
-  test('adds a newly opened standalone task to recent chats immediately', () => {
+  test('opens a standalone legacy task without materializing a DB sidebar list', () => {
     const opened = workbenchReducer(initialWorkbenchState, {
       type: 'task_opened',
       task: {
@@ -101,12 +140,12 @@ describe('workbenchReducer', () => {
       project: null,
     })
 
-    expect(opened.recentTasks).toHaveLength(1)
-    expect(opened.recentTasks[0]).toMatchObject({
+    expect(opened.currentTask).toMatchObject({
       id: 11,
       title: 'Standalone prompt',
       device_id: 'local-1',
     })
+    expect(opened.currentProject).toBeNull()
   })
 
   test('adds a newly opened project task to that project immediately', () => {
@@ -116,7 +155,6 @@ describe('workbenchReducer', () => {
       defaultTeam: null,
       projects: [{ id: 7, name: 'Repo', tasks: [] }],
       devices: [],
-      recentTasks: [],
       currentProject: { id: 7, name: 'Repo', tasks: [] },
     })
     const opened = workbenchReducer(bootstrapped, {
@@ -140,7 +178,7 @@ describe('workbenchReducer', () => {
     ])
   })
 
-  test('preserves current task when a stale list refresh misses it', () => {
+  test('preserves current standalone task when a worklist refresh has no DB task list', () => {
     const opened = workbenchReducer(initialWorkbenchState, {
       type: 'task_opened',
       task: {
@@ -162,56 +200,9 @@ describe('workbenchReducer', () => {
       type: 'lists_refreshed',
       projects: [],
       devices: [],
-      recentTasks: [],
     })
 
-    expect(staleRefresh.recentTasks).toEqual([
-      expect.objectContaining({ id: 11, status: 'COMPLETED' }),
-    ])
-  })
-
-  test('re-adds current task after a stale list refresh without regressing status', () => {
-    const opened = workbenchReducer(initialWorkbenchState, {
-      type: 'task_opened',
-      task: {
-        id: 11,
-        title: 'Standalone prompt',
-        status: 'RUNNING',
-        task_type: 'code',
-        project_id: 0,
-        created_at: '2026-05-25T00:00:00.000Z',
-      },
-      project: null,
-    })
-    const completed = workbenchReducer(opened, {
-      type: 'task_status_changed',
-      taskId: 11,
-      status: 'COMPLETED',
-    })
-    const staleRefresh = {
-      ...workbenchReducer(completed, {
-        type: 'lists_refreshed',
-        projects: [],
-        devices: [],
-        recentTasks: [],
-      }),
-      recentTasks: [],
-    }
-    const reinserted = workbenchReducer(staleRefresh, {
-      type: 'task_upserted',
-      task: {
-        id: 11,
-        title: 'Standalone prompt',
-        status: 'RUNNING',
-        task_type: 'code',
-        project_id: 0,
-        created_at: '2026-05-25T00:00:00.000Z',
-      },
-    })
-
-    expect(reinserted.recentTasks).toEqual([
-      expect.objectContaining({ id: 11, status: 'COMPLETED' }),
-    ])
+    expect(staleRefresh.currentTask).toMatchObject({ id: 11, status: 'COMPLETED' })
   })
 
   test('updates model selection only on the current task state', () => {
@@ -244,10 +235,6 @@ describe('workbenchReducer', () => {
       force_override_bot_model_type: 'user',
       model_options: {},
     })
-    expect(updated.recentTasks[0]).toMatchObject({
-      id: 11,
-      model_id: 'claude-sonnet-4-5',
-    })
   })
 
   test('clears the current task without changing the selected project', () => {
@@ -271,10 +258,27 @@ describe('workbenchReducer', () => {
     expect(cleared.currentTask).toBeNull()
   })
 
-  test('keeps a project task out of recent chats when the server reports project_id=0 in both lists', () => {
-    // Simulates the eventual-consistency window right after creating a project
-    // chat: the server returns the task inside its project AND in the personal
-    // (recent) list with project_id still 0. It must appear only in the project.
+  test('clears selected project when opening a standalone runtime task', () => {
+    const selected = workbenchReducer(initialWorkbenchState, {
+      type: 'project_selected',
+      project: { id: 7, name: 'Repo', tasks: [] },
+    })
+    const opened = workbenchReducer(selected, {
+      type: 'runtime_task_opened',
+      address: {
+        deviceId: 'device-1',
+        workspacePath: '/workspace/default',
+        localTaskId: 'runtime-1',
+      },
+      project: null,
+    })
+
+    expect(opened.currentProject).toBeNull()
+    expect(opened.currentTask).toBeNull()
+    expect(opened.currentRuntimeTask?.localTaskId).toBe('runtime-1')
+  })
+
+  test('keeps project tasks only in the project list returned by the server', () => {
     const refreshed = workbenchReducer(initialWorkbenchState, {
       type: 'lists_refreshed',
       projects: [
@@ -296,23 +300,12 @@ describe('workbenchReducer', () => {
         },
       ],
       devices: [],
-      recentTasks: [
-        {
-          id: 42,
-          title: 'Project chat',
-          status: 'RUNNING',
-          task_type: 'code',
-          project_id: 0,
-          created_at: '2026-05-25T00:00:00.000Z',
-        },
-      ],
     })
 
-    expect(refreshed.recentTasks).toEqual([])
     expect(refreshed.projects[0].tasks).toHaveLength(1)
   })
 
-  test('re-adds a missing current project task and never duplicates it into recent chats', () => {
+  test('re-adds a missing current project task after a stale project refresh', () => {
     const selected = workbenchReducer(initialWorkbenchState, {
       type: 'project_selected',
       project: { id: 7, name: 'Repo', tasks: [] },
@@ -328,28 +321,15 @@ describe('workbenchReducer', () => {
         created_at: '2026-05-25T00:00:00.000Z',
       },
     })
-    // Server hasn't associated the task with the project yet: it's missing from
-    // the project list and leaks into recentTasks with project_id=0.
+    // Server hasn't associated the task with the project yet, so the project
+    // list is temporarily missing the current task.
     const refreshed = workbenchReducer(opened, {
       type: 'lists_refreshed',
       projects: [{ id: 7, name: 'Repo', tasks: [] }],
       devices: [],
-      recentTasks: [
-        {
-          id: 42,
-          title: 'Project chat',
-          status: 'RUNNING',
-          task_type: 'code',
-          project_id: 0,
-          created_at: '2026-05-25T00:00:00.000Z',
-        },
-      ],
     })
 
-    expect(refreshed.recentTasks).toEqual([])
-    expect(refreshed.projects[0].tasks).toEqual([
-      expect.objectContaining({ task_id: 42 }),
-    ])
+    expect(refreshed.projects[0].tasks).toEqual([expect.objectContaining({ task_id: 42 })])
   })
 
   test('keeps existing devices when a device refresh returns a transient empty list', () => {
@@ -396,7 +376,6 @@ describe('workbenchReducer', () => {
       type: 'lists_refreshed',
       projects: [],
       devices: [],
-      recentTasks: [],
     })
 
     expect(refreshed.devices).toEqual([device])

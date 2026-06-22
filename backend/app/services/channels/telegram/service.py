@@ -38,121 +38,20 @@ from app.core.cache import cache_manager
 from app.db.session import SessionLocal
 from app.services.channels.base import BaseChannelProvider
 from app.services.channels.commands import CommandType, parse_command
+from app.services.channels.messager_config import (
+    get_channel_default_model_name,
+    get_channel_default_team_id,
+    get_channel_user_mapping_config,
+)
 from app.services.channels.telegram.handler import TelegramChannelHandler
 
 logger = logging.getLogger(__name__)
 
-# CRD kind for IM channels
-MESSAGER_KIND = "Messager"
-MESSAGER_USER_ID = 0
-
 # Message deduplication settings
 TELEGRAM_MSG_DEDUP_PREFIX = "telegram:msg_dedup:"
 TELEGRAM_MSG_DEDUP_TTL = 300  # 5 minutes
-
-
-def _get_channel_default_team_id(channel_id: int) -> Optional[int]:
-    """
-    Get the current default_team_id for a channel from database.
-
-    This function is used by the handler to dynamically get the latest
-    default_team_id, allowing configuration updates without restart.
-
-    Args:
-        channel_id: The IM channel ID (Kind.id)
-
-    Returns:
-        The default team ID or None
-    """
-    from app.models.kind import Kind
-
-    db = SessionLocal()
-    try:
-        channel = (
-            db.query(Kind)
-            .filter(
-                Kind.id == channel_id,
-                Kind.kind == MESSAGER_KIND,
-                Kind.user_id == MESSAGER_USER_ID,
-                Kind.is_active == True,
-            )
-            .first()
-        )
-        if channel:
-            spec = channel.json.get("spec", {})
-            return spec.get("defaultTeamId", 0)
-        return None
-    finally:
-        db.close()
-
-
-def _get_channel_default_model_name(channel_id: int) -> Optional[str]:
-    """
-    Get the current default_model_name for a channel from database.
-
-    Args:
-        channel_id: The IM channel ID (Kind.id)
-
-    Returns:
-        The default model name or None
-    """
-    from app.models.kind import Kind
-
-    db = SessionLocal()
-    try:
-        channel = (
-            db.query(Kind)
-            .filter(
-                Kind.id == channel_id,
-                Kind.kind == MESSAGER_KIND,
-                Kind.user_id == MESSAGER_USER_ID,
-                Kind.is_active == True,
-            )
-            .first()
-        )
-        if channel:
-            spec = channel.json.get("spec", {})
-            model_name = spec.get("defaultModelName", "")
-            return model_name if model_name else None
-        return None
-    finally:
-        db.close()
-
-
-def _get_channel_user_mapping_config(channel_id: int) -> Dict[str, Any]:
-    """
-    Get the user mapping configuration for a channel from database.
-
-    Args:
-        channel_id: The IM channel ID (Kind.id)
-
-    Returns:
-        Dict with user_mapping_mode and user_mapping_config.
-    """
-    from app.models.kind import Kind
-
-    db = SessionLocal()
-    try:
-        channel = (
-            db.query(Kind)
-            .filter(
-                Kind.id == channel_id,
-                Kind.kind == MESSAGER_KIND,
-                Kind.user_id == MESSAGER_USER_ID,
-                Kind.is_active == True,
-            )
-            .first()
-        )
-        if channel:
-            spec = channel.json.get("spec", {})
-            config = spec.get("config", {})
-            return {
-                "mode": config.get("user_mapping_mode", "select_user"),
-                "config": config.get("user_mapping_config"),
-            }
-        return {"mode": "select_user", "config": None}
-    finally:
-        db.close()
+TELEGRAM_REQUEST_TIMEOUT_SECONDS = 30.0
+TELEGRAM_GET_UPDATES_READ_TIMEOUT_SECONDS = 60.0
 
 
 class TelegramChannelProvider(BaseChannelProvider):
@@ -193,6 +92,22 @@ class TelegramChannelProvider(BaseChannelProvider):
         """Check if Telegram is properly configured."""
         return bool(self.bot_token)
 
+    def _build_application(self) -> Application:
+        """Build the Telegram application with explicit network timeouts."""
+        return (
+            Application.builder()
+            .token(self.bot_token)
+            .connect_timeout(TELEGRAM_REQUEST_TIMEOUT_SECONDS)
+            .read_timeout(TELEGRAM_REQUEST_TIMEOUT_SECONDS)
+            .write_timeout(TELEGRAM_REQUEST_TIMEOUT_SECONDS)
+            .pool_timeout(TELEGRAM_REQUEST_TIMEOUT_SECONDS)
+            .get_updates_connect_timeout(TELEGRAM_REQUEST_TIMEOUT_SECONDS)
+            .get_updates_read_timeout(TELEGRAM_GET_UPDATES_READ_TIMEOUT_SECONDS)
+            .get_updates_write_timeout(TELEGRAM_REQUEST_TIMEOUT_SECONDS)
+            .get_updates_pool_timeout(TELEGRAM_REQUEST_TIMEOUT_SECONDS)
+            .build()
+        )
+
     async def start(self) -> bool:
         """
         Start the Telegram Bot with Long Polling.
@@ -220,7 +135,7 @@ class TelegramChannelProvider(BaseChannelProvider):
             )
 
             # Create application with bot token
-            self._application = Application.builder().token(self.bot_token).build()
+            self._application = self._build_application()
             self._bot = self._application.bot
 
             # Create handler with dynamic configuration getters
@@ -229,11 +144,11 @@ class TelegramChannelProvider(BaseChannelProvider):
                 channel_id=channel_id,
                 bot=self._bot,
                 use_inline_keyboard=self.use_inline_keyboard,
-                get_default_team_id=lambda: _get_channel_default_team_id(channel_id),
-                get_default_model_name=lambda: _get_channel_default_model_name(
+                get_default_team_id=lambda: get_channel_default_team_id(channel_id),
+                get_default_model_name=lambda: get_channel_default_model_name(
                     channel_id
                 ),
-                get_user_mapping_config=lambda: _get_channel_user_mapping_config(
+                get_user_mapping_config=lambda: get_channel_user_mapping_config(
                     channel_id
                 ),
             )
@@ -245,9 +160,7 @@ class TelegramChannelProvider(BaseChannelProvider):
             self._application.add_handler(
                 CommandHandler("help", self._handle_help_command)
             )
-            self._application.add_handler(
-                CommandHandler("new", self._handle_new_command)
-            )
+            self._application.add_handler(CommandHandler("new", self._handle_message))
             self._application.add_handler(
                 CommandHandler("status", self._handle_status_command)
             )
@@ -260,11 +173,15 @@ class TelegramChannelProvider(BaseChannelProvider):
             self._application.add_handler(
                 CommandHandler("use", self._handle_use_command)
             )
+            for command in ("bind", "mode", "chat", "task", "switch", "cancel"):
+                self._application.add_handler(
+                    CommandHandler(command, self._handle_message)
+                )
             self._application.add_handler(
                 CallbackQueryHandler(self._handle_callback_query)
             )
             self._application.add_handler(
-                MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_message)
+                MessageHandler(filters.TEXT, self._handle_message)
             )
 
             # Register error handler for polling and handler errors

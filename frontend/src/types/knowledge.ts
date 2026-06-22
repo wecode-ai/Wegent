@@ -295,7 +295,7 @@ export function normalizeSplitterConfigForDisplay(
 export interface SummaryModelRef {
   name: string
   namespace: string
-  type: 'public' | 'user' | 'group'
+  type: 'public' | 'user' | 'group' | 'runtime'
 }
 
 // Knowledge Base Type

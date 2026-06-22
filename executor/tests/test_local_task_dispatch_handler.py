@@ -11,6 +11,8 @@ import pytest
 
 from executor.modes.local.handlers import TaskHandler
 from executor.modes.local.runner import LocalRunner
+from shared.models import ExecutionRequest
+from shared.status import TaskStatus
 
 
 @pytest.mark.asyncio
@@ -69,3 +71,117 @@ async def test_cancel_task_stores_pending_subtask_when_task_not_registered():
 
     assert runner._pending_cancel_subtask_ids == {2}
     assert runner._pending_cancel_task_ids == set()
+
+
+@pytest.mark.asyncio
+async def test_execute_task_does_not_emit_generic_error_after_agent_error(monkeypatch):
+    """Local runner should not overwrite an agent-emitted error with a generic status."""
+
+    class FakeEmitter:
+        def __init__(self):
+            self.errors = []
+
+        async def in_progress(self):
+            return None
+
+        async def error(self, message, code=None):
+            self.errors.append((message, code))
+
+        async def incomplete(self, reason=None):
+            return None
+
+    class FakeAgent:
+        state_manager = None
+
+        def __init__(self, emitter):
+            self.emitter = emitter
+
+        def initialize(self):
+            return TaskStatus.SUCCESS
+
+        async def pre_execute(self):
+            return TaskStatus.SUCCESS, None
+
+        async def execute_async(self):
+            await self.emitter.error(
+                "Codex CLI failed to resume thread: session not found",
+                "execution_error",
+            )
+            return TaskStatus.FAILED
+
+    emitter = FakeEmitter()
+    runner = object.__new__(LocalRunner)
+    runner._running_tasks = {1: SimpleNamespace(agent=None, cancel_requested=False)}
+    runner.websocket_client = SimpleNamespace(send_heartbeat=AsyncMock())
+    monkeypatch.setattr(runner, "_create_emitter", lambda task_id, subtask_id: emitter)
+
+    from executor.agents.factory import AgentFactory
+
+    monkeypatch.setattr(
+        AgentFactory,
+        "get_code_agent",
+        lambda task_data, emitter: FakeAgent(emitter),
+    )
+
+    await runner._execute_task(ExecutionRequest(task_id=1, subtask_id=2))
+
+    assert emitter.errors == [
+        (
+            "Codex CLI failed to resume thread: session not found",
+            "execution_error",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_execute_task_does_not_emit_generic_error_without_agent_error(
+    monkeypatch,
+):
+    """Local runner should not invent a generic task status error."""
+
+    class FakeEmitter:
+        def __init__(self):
+            self.errors = []
+
+        async def in_progress(self):
+            return None
+
+        async def error(self, message, code=None):
+            self.errors.append((message, code))
+
+        async def incomplete(self, reason=None):
+            return None
+
+    class FakeStateManager:
+        def get_current_state(self):
+            return {}
+
+    class FakeAgent:
+        state_manager = FakeStateManager()
+
+        def initialize(self):
+            return TaskStatus.SUCCESS
+
+        async def pre_execute(self):
+            return TaskStatus.SUCCESS, None
+
+        async def execute_async(self):
+            return TaskStatus.FAILED
+
+    emitter = FakeEmitter()
+    runner = object.__new__(LocalRunner)
+    runner._running_tasks = {1: SimpleNamespace(agent=None, cancel_requested=False)}
+    runner.websocket_client = SimpleNamespace(send_heartbeat=AsyncMock())
+    monkeypatch.setattr(runner, "_create_emitter", lambda task_id, subtask_id: emitter)
+
+    from executor.agents.factory import AgentFactory
+
+    monkeypatch.setattr(
+        AgentFactory,
+        "get_code_agent",
+        lambda task_data, emitter: FakeAgent(),
+    )
+
+    await runner._execute_task(ExecutionRequest(task_id=1, subtask_id=2))
+
+    assert emitter.errors == []

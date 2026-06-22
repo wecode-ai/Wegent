@@ -14,6 +14,7 @@ from app.models.namespace import Namespace
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.task import TaskResource
+from app.schemas.task import TaskLite
 from app.services.adapters.task_kinds.helpers import (
     _batch_query_teams,
     _get_team_display_name,
@@ -89,6 +90,7 @@ def test_build_lite_task_list_uses_batch_related_data_and_avoids_per_task_sql():
     db.execute.return_value = mock_execute_result
 
     tasks = [_build_task(1, "Task One", project_id=42), _build_task(2, "Task Two")]
+    tasks[0].json["metadata"]["labels"]["source"] = "im"
     tasks[1].json["spec"]["execution"] = {
         "workspace": {
             "source": "git_worktree",
@@ -144,6 +146,7 @@ def test_build_lite_task_list_uses_batch_related_data_and_avoids_per_task_sql():
     assert result[0]["device_name"] is None
     assert result[0]["git_repo"] == "repo-a"
     assert result[0]["is_group_chat"] is True
+    assert result[0]["source"] == "im"
     assert result[1]["team_id"] == 102
     assert result[1]["team_name"] == "team-b"
     assert result[1]["team_namespace"] == "default"
@@ -155,8 +158,49 @@ def test_build_lite_task_list_uses_batch_related_data_and_avoids_per_task_sql():
     assert result[1]["execution_workspace_source"] == "git_worktree"
     assert result[1]["git_repo"] == "repo-b"
     assert result[1]["is_group_chat"] is False
+    assert result[1]["source"] is None
     mock_batch.assert_called_once_with(db, tasks, 7)
     db.execute.assert_not_called()
+
+
+@pytest.mark.unit
+def test_build_lite_task_list_normalizes_missing_and_empty_source_labels():
+    db = Mock(spec=Session)
+    tasks = [
+        _build_task(1, "Empty Labels"),
+        _build_task(2, "Absent Labels"),
+        _build_task(3, "Missing Labels"),
+    ]
+    tasks[0].json["metadata"]["labels"] = {}
+    tasks[1].json["metadata"]["labels"].pop("source", None)
+    tasks[2].json["metadata"].pop("labels")
+
+    with patch(
+        "app.services.adapters.task_kinds.helpers.get_tasks_related_data_batch",
+        return_value={},
+    ):
+        result = build_lite_task_list(db, tasks, user_id=7)
+
+    assert [item["source"] for item in result] == [None, None, None]
+
+
+@pytest.mark.unit
+def test_task_lite_schema_preserves_source():
+    now = datetime.now()
+
+    task = TaskLite(
+        id=1,
+        title="IM Task",
+        status="PENDING",
+        task_type="chat",
+        type="online",
+        source="im",
+        created_at=now,
+        updated_at=now,
+    )
+
+    assert task.source == "im"
+    assert task.model_dump()["source"] == "im"
 
 
 @pytest.mark.unit

@@ -26,12 +26,14 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.models.task import TaskResource
+from app.services.channels.callback import forward_event_to_channel_callbacks
 
 # Import channel callback modules to ensure they register with
 # ChannelCallbackRegistry in this worker process. Without these imports,
 # the registry may be empty when /callback is handled by a different worker
 # than the one that processed the original IM message.
 from app.services.channels.dingtalk import callback as _dingtalk_cb  # noqa: F401
+from app.services.channels.telegram import callback as _telegram_cb  # noqa: F401
 from app.services.chat.storage import session_manager
 from app.services.execution.dispatcher import ResponsesAPIEventParser
 from app.services.execution.emitters.status_updating import StatusUpdatingEmitter
@@ -44,38 +46,6 @@ router = APIRouter(prefix="/callback", tags=["execution-callback"])
 
 # Shared event parser instance
 _event_parser = ResponsesAPIEventParser()
-
-
-async def _forward_event_to_channels(
-    task_id: int,
-    subtask_id: int,
-    event: Any,
-) -> None:
-    """Forward a non-terminal event to registered channel callback services.
-
-    Each channel service checks if it has callback info for the task and
-    forwards the event to the appropriate streaming emitter.
-    """
-    from app.services.channels.callback import get_callback_registry
-
-    registry = get_callback_registry()
-    for channel_type, service in registry.iter_services():
-        try:
-            forwarded = await service.emit_event(
-                task_id=task_id,
-                subtask_id=subtask_id,
-                event=event,
-            )
-            if forwarded:
-                logger.debug(
-                    f"[Callback] Forwarded event {event.type} to "
-                    f"{channel_type.value} for task {task_id}"
-                )
-        except Exception as e:
-            logger.warning(
-                f"[Callback] Failed to forward event to {channel_type.value} "
-                f"for task {task_id}: {e}"
-            )
 
 
 class CallbackRequest(BaseModel):
@@ -190,10 +160,11 @@ async def handle_callback(
         # Forward non-terminal events to registered channel callback services
         # (e.g., DingTalk AI Card streaming). Terminal events (DONE, ERROR,
         # CANCELLED) are handled by TaskCompletedEvent via send_task_result().
-        await _forward_event_to_channels(
+        await forward_event_to_channel_callbacks(
             task_id=request.task_id,
             subtask_id=request.subtask_id,
             event=event,
+            source="Callback",
         )
 
         # Note: TaskCompletedEvent is now published by StatusUpdatingEmitter

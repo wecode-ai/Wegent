@@ -8,7 +8,6 @@ import asyncio
 import contextlib
 import os
 import signal
-import socket
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -18,7 +17,7 @@ from urllib.parse import parse_qsl, urlencode
 from aiohttp import ClientSession, CookieJar, WSMsgType, web
 
 from executor.config import config
-from executor.platform_compat import sanitize_subprocess_environment
+from executor.platform_compat import get_pty_manager, sanitize_subprocess_environment
 from shared.logger import setup_logger
 
 logger = setup_logger("local_session_handler")
@@ -27,10 +26,8 @@ DEFAULT_GATEWAY_HOST = "0.0.0.0"
 DEFAULT_GATEWAY_PORT = 17888
 DEFAULT_PUBLIC_BASE_URL = "http://localhost:17888"
 DEFAULT_SESSION_TTL_SECONDS = 60 * 60
+DEFAULT_GATEWAY_ENABLED = True
 SESSION_IDLE_GRACE_SECONDS = 3
-SESSION_PORT_READY_TIMEOUT_SECONDS = 5.0
-SESSION_PORT_CONNECT_TIMEOUT_SECONDS = 0.2
-SESSION_PORT_RETRY_INTERVAL_SECONDS = 0.05
 SESSION_PROBE_QUERY_KEY = "__wegent_probe"
 
 SessionType = Literal["terminal", "code_server"]
@@ -48,6 +45,8 @@ class LocalSession:
     port: int
     process: Optional[asyncio.subprocess.Process]
     expires_at: float
+    terminal: Optional[Any] = None
+    reader_task: Optional[asyncio.Task] = None
     active_websockets: int = 0
     connected_once: bool = False
     cleanup_task: Optional[asyncio.Task] = None
@@ -117,6 +116,14 @@ class SessionGateway:
                 message=(
                     "This terminal or IDE session has expired. "
                     "Return to Wegent and open it again from the workspace tools."
+                ),
+            )
+        if session.session_type == "terminal":
+            return self._session_error_response(
+                status=404,
+                message=(
+                    "Terminal sessions are available through Wegent's "
+                    "authenticated terminal channel."
                 ),
             )
 
@@ -436,7 +443,7 @@ class SessionGateway:
 
 
 class LocalSessionHandler:
-    """Start and manage ttyd/code-server sessions for local device projects."""
+    """Start and manage PTY terminal and code-server sessions for local devices."""
 
     def __init__(
         self,
@@ -444,7 +451,14 @@ class LocalSessionHandler:
         public_base_url: Optional[str] = None,
         gateway_host: Optional[str] = None,
         gateway_port: Optional[int] = None,
+        gateway_enabled: Optional[bool] = None,
+        terminal_event_emitter: Optional[Any] = None,
     ):
+        self.gateway_enabled = (
+            _env_bool("DEVICE_SESSION_GATEWAY_ENABLED", DEFAULT_GATEWAY_ENABLED)
+            if gateway_enabled is None
+            else gateway_enabled
+        )
         self.public_base_url = (
             public_base_url
             or os.getenv("DEVICE_PUBLIC_BASE_URL")
@@ -459,19 +473,28 @@ class LocalSessionHandler:
         )
         self.code_server_port = int(os.getenv("DEVICE_CODE_SERVER_PORT", "18080"))
         self.sessions: dict[str, LocalSession] = {}
-        self.gateway = SessionGateway(
-            self.sessions,
-            host=self.gateway_host,
-            port=self.gateway_port,
+        self.terminal_event_emitter = terminal_event_emitter
+        self.gateway = (
+            SessionGateway(
+                self.sessions,
+                host=self.gateway_host,
+                port=self.gateway_port,
+            )
+            if self.gateway_enabled
+            else None
         )
 
     async def start_gateway(self) -> None:
         """Start the shared session gateway."""
+        if not self.gateway:
+            logger.info("[LocalSessionHandler] Session gateway is disabled")
+            return
         await self.gateway.start()
 
     async def stop(self) -> None:
         """Stop all sessions and the gateway."""
-        await self.gateway.stop()
+        if self.gateway:
+            await self.gateway.stop()
         sessions = list(self.sessions.values())
         self.sessions.clear()
         await asyncio.gather(
@@ -480,6 +503,10 @@ class LocalSessionHandler:
                 for session in sessions
                 if session.process is not None
             ),
+            return_exceptions=True,
+        )
+        await asyncio.gather(
+            *(self._terminate_terminal_session(session) for session in sessions),
             return_exceptions=True,
         )
 
@@ -501,6 +528,8 @@ class LocalSessionHandler:
                 await terminate_session_process(existing.process)
 
         if session_type == "code_server":
+            if not self.gateway_enabled:
+                return self._error("Session gateway is disabled")
             session = LocalSession(
                 session_id=session_id,
                 session_type=session_type,
@@ -527,35 +556,23 @@ class LocalSessionHandler:
                 "url": url,
             }
 
-        port = _find_free_port()
-        argv = self._build_session_argv(
-            session_type, path, port, session_id, project_id
-        )
-        logger.info(
-            "[LocalSessionHandler] Starting %s session %s for project %s at %s",
-            session_type,
-            session_id,
-            project_id,
-            path,
-        )
+        rows = self._get_dimension(data, "rows", 24)
+        cols = self._get_dimension(data, "cols", 80)
+        pty_manager = get_pty_manager()
+        if not pty_manager.is_available():
+            return self._error("PTY is not available on this device")
 
         try:
-            process = await asyncio.create_subprocess_exec(
-                *argv,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
+            terminal = pty_manager.spawn(
+                self._build_terminal_command(),
                 cwd=path,
                 env=self._build_env(),
-                start_new_session=os.name != "nt",
+                rows=rows,
+                cols=cols,
             )
         except Exception as exc:
-            logger.exception("[LocalSessionHandler] Failed to start session")
+            logger.exception("[LocalSessionHandler] Failed to start PTY terminal")
             return self._error(str(exc))
-
-        is_ready = await _wait_for_session_port("127.0.0.1", port, process)
-        if not is_ready:
-            await terminate_session_process(process)
-            return self._error("Terminal session failed to become ready")
 
         session = LocalSession(
             session_id=session_id,
@@ -563,12 +580,15 @@ class LocalSessionHandler:
             access_token=access_token,
             project_id=project_id,
             path=path,
-            port=port,
-            process=process,
+            port=0,
+            process=None,
+            terminal=terminal,
             expires_at=time.time() + ttl_seconds,
         )
         self.sessions[session_id] = session
-        asyncio.create_task(self._watch_session(session))
+        session.reader_task = asyncio.create_task(
+            self._watch_terminal_session(session, pty_manager)
+        )
 
         return {
             "success": True,
@@ -576,35 +596,60 @@ class LocalSessionHandler:
             "project_id": project_id,
             "type": session_type,
             "path": path,
-            "url": self._build_session_url(
-                session_type, session_id, access_token, path
-            ),
+            "url": "",
+            "transport": "socketio",
         }
 
-    def _build_session_argv(
-        self,
-        session_type: SessionType,
-        path: str,
-        port: int,
-        session_id: str,
-        project_id: int = 0,
-    ) -> list[str]:
-        return [
-            "ttyd",
-            "-i",
-            "127.0.0.1",
-            "-p",
-            str(port),
-            "-w",
-            path,
-            "-m",
-            "1",
-            "-o",
-            "-W",
-            "-b",
-            f"/s/{session_id}",
-            "bash",
-        ]
+    async def handle_terminal_input(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Write frontend terminal input to an active PTY session."""
+        session = self._get_terminal_session(data)
+        if not session:
+            return self._error("Terminal session not found")
+        text = data.get("data")
+        if not isinstance(text, str):
+            return self._error("data is required")
+
+        try:
+            session.terminal.write(text.encode("utf-8"))
+        except Exception:
+            return self._error("Terminal session is not writable")
+        return {"success": True}
+
+    async def handle_terminal_resize(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Resize an active PTY session."""
+        session = self._get_terminal_session(data)
+        if not session:
+            return self._error("Terminal session not found")
+        rows = self._get_dimension(data, "rows", 24)
+        cols = self._get_dimension(data, "cols", 80)
+        try:
+            session.terminal.resize(rows, cols)
+        except Exception:
+            return self._error("Terminal session is not resizable")
+        return {"success": True}
+
+    async def handle_terminal_close(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Close an active PTY terminal session."""
+        session = self._get_terminal_session(data)
+        if not session:
+            return {"success": True}
+        exit_code = session.terminal.poll()
+        await self._terminate_terminal_session(session)
+        self.sessions.pop(session.session_id, None)
+        await self._emit_terminal_event(
+            "terminal:exit",
+            {
+                "session_id": session.session_id,
+                "exit_code": exit_code,
+            },
+        )
+        return {"success": True}
+
+    def _build_terminal_command(self) -> list[str]:
+        shell = os.getenv("SHELL")
+        if os.name == "nt":
+            return [os.getenv("COMSPEC") or "cmd.exe"]
+        return [shell or "bash"]
 
     def _build_session_url(
         self,
@@ -626,6 +671,76 @@ class LocalSessionHandler:
             logger.exception("[LocalSessionHandler] Session watcher failed")
         finally:
             self.sessions.pop(session.session_id, None)
+
+    async def _watch_terminal_session(
+        self, session: LocalSession, pty_manager: Any
+    ) -> None:
+        try:
+            while self.sessions.get(session.session_id) is session:
+                data = await self._read_terminal_data(session.terminal, pty_manager)
+                if data:
+                    await self._emit_terminal_event(
+                        "terminal:output",
+                        {
+                            "session_id": session.session_id,
+                            "data": data.decode("utf-8", errors="replace"),
+                        },
+                    )
+                    continue
+                exit_code = session.terminal.poll()
+                if exit_code is not None:
+                    await self._emit_terminal_event(
+                        "terminal:exit",
+                        {
+                            "session_id": session.session_id,
+                            "exit_code": exit_code,
+                        },
+                    )
+                    break
+                await asyncio.sleep(0.05)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("[LocalSessionHandler] Terminal watcher failed")
+        finally:
+            self.sessions.pop(session.session_id, None)
+
+    async def _read_terminal_data(self, terminal: Any, pty_manager: Any) -> bytes:
+        fd = getattr(terminal, "fd", -1)
+        if isinstance(fd, int) and fd >= 0:
+            data = await asyncio.to_thread(pty_manager.read_available, fd, 0.1)
+            return data or b""
+        return await asyncio.to_thread(terminal.read, 4096)
+
+    async def _emit_terminal_event(self, event: str, payload: dict[str, Any]) -> None:
+        if not self.terminal_event_emitter:
+            return
+        await self.terminal_event_emitter(event, payload)
+
+    async def _terminate_terminal_session(self, session: LocalSession) -> None:
+        if session.reader_task and not session.reader_task.done():
+            session.reader_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await session.reader_task
+        if session.terminal is None:
+            return
+        with contextlib.suppress(Exception):
+            session.terminal.terminate()
+        with contextlib.suppress(Exception):
+            session.terminal.close()
+
+    def _get_terminal_session(self, data: dict[str, Any]) -> Optional[LocalSession]:
+        session_id = data.get("session_id")
+        if not isinstance(session_id, str) or not session_id:
+            return None
+        session = self.sessions.get(session_id)
+        if (
+            not session
+            or session.session_type != "terminal"
+            or session.terminal is None
+        ):
+            return None
+        return session
 
     def _get_session_type(self, data: dict[str, Any]) -> SessionType:
         session_type = data.get("type")
@@ -661,6 +776,13 @@ class LocalSessionHandler:
             return DEFAULT_SESSION_TTL_SECONDS
         return min(ttl_seconds, DEFAULT_SESSION_TTL_SECONDS)
 
+    def _get_dimension(self, data: dict[str, Any], key: str, default: int) -> int:
+        try:
+            value = int(data.get(key, default))
+        except (TypeError, ValueError):
+            return default
+        return max(value, 1)
+
     def _build_env(self) -> dict[str, str]:
         env = os.environ.copy()
         sanitize_subprocess_environment(env)
@@ -670,40 +792,11 @@ class LocalSessionHandler:
         return {"success": False, "error": error}
 
 
-def _find_free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
-
-
-async def _wait_for_session_port(
-    host: str,
-    port: int,
-    process: asyncio.subprocess.Process,
-    timeout: float = SESSION_PORT_READY_TIMEOUT_SECONDS,
-) -> bool:
-    """Wait until the session process accepts TCP connections."""
-    deadline = time.monotonic() + timeout
-    loop = asyncio.get_running_loop()
-
-    while time.monotonic() < deadline:
-        if getattr(process, "returncode", None) is not None:
-            return False
-
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.setblocking(False)
-        try:
-            await asyncio.wait_for(
-                loop.sock_connect(sock, (host, port)),
-                timeout=SESSION_PORT_CONNECT_TIMEOUT_SECONDS,
-            )
-            return True
-        except (OSError, asyncio.TimeoutError):
-            await asyncio.sleep(SESSION_PORT_RETRY_INTERVAL_SECONDS)
-        finally:
-            sock.close()
-
-    return False
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() not in {"", "0", "false", "no", "off"}
 
 
 async def terminate_session_process(process: asyncio.subprocess.Process) -> None:

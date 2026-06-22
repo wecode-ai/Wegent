@@ -315,7 +315,10 @@ class TaskQueryMixin:
         from app.services.adapters.team_kinds import team_kinds_service
         from app.services.readers.kinds import KindType, kindReader
         from app.services.readers.users import userReader
-        from app.services.subtask import subtask_service
+        from app.services.task_fork_history import (
+            ForkHistoryItem,
+            task_fork_history_resolver,
+        )
 
         task_dict = self.get_task_by_id(
             db, task_id=task_id, user_id=user_id, client_origin=client_origin
@@ -363,12 +366,16 @@ class TaskQueryMixin:
                     )
                     team = None
 
-        subtasks = subtask_service.get_by_task(
-            db=db, task_id=task_id, user_id=user_id, from_latest=True
+        subtasks = task_fork_history_resolver.resolve_for_task(
+            db=db,
+            task_id=task_id,
+            user_id=task_dict.get("user_id") or user_id,
+            limit=100,
         )
 
         all_bot_ids = set()
-        for subtask in subtasks:
+        for item in subtasks:
+            subtask = item.subtask if isinstance(item, ForkHistoryItem) else item
             if subtask.bot_ids:
                 all_bot_ids.update(subtask.bot_ids)
 

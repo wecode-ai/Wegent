@@ -19,6 +19,10 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.user import User
+from app.services.admin_password_bootstrap import (
+    create_unusable_password_hash,
+    mark_admin_password_setup_required,
+)
 from app.services.k_batch import batch_service
 
 logger = logging.getLogger(__name__)
@@ -61,16 +65,18 @@ def ensure_default_user(db: Session) -> tuple[int, bool]:
 
     if not admin_user:
         logger.info("Creating default admin user")
-        # Default admin user (admin/Wegent2025!)
         admin_user = User(
             user_name="admin",
-            password_hash="$2b$12$5jQMrJGO8NMXmF90f/xnKeLtM/Deh912k4GRPx.q3nTGOg1e1IJzW",
+            password_hash=create_unusable_password_hash(),
             email="admin@example.com",
             git_info=[],
             is_active=True,
             role="admin",
+            auth_source="password",
         )
         db.add(admin_user)
+        db.flush()
+        mark_admin_password_setup_required(db, admin_user_id=admin_user.id)
         db.commit()
         db.refresh(admin_user)
         logger.info(f"Created default admin user with ID: {admin_user.id}")

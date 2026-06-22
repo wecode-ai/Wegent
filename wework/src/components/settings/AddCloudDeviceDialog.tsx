@@ -3,6 +3,9 @@ import { useCallback, useState } from 'react'
 import { createHttpClient } from '@/api/http'
 import { createDeviceApi } from '@/api/devices'
 import { getRuntimeConfig } from '@/config/runtime'
+import { useTranslation } from '@/hooks/useTranslation'
+
+const LOCAL_DEVICE_START_COMMAND = 'wegent-executor'
 
 interface AddCloudDeviceDialogProps {
   open: boolean
@@ -17,6 +20,7 @@ export function AddCloudDeviceDialog({
   onCreated,
   onCreatingChange,
 }: AddCloudDeviceDialogProps) {
+  const { t } = useTranslation('common')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -79,6 +83,21 @@ export function AddCloudDeviceDialog({
             {error}
           </div>
         )}
+
+        <div className="mt-4 rounded-md border border-border bg-surface px-3 py-2.5">
+          <div className="text-xs font-medium text-text-primary">
+            {t('workbench.connection_start_device_command_title')}
+          </div>
+          <p className="mt-1 text-xs leading-5 text-text-secondary">
+            {t('workbench.connection_start_device_command_desc')}
+          </p>
+          <code
+            data-testid="add-cloud-device-start-command"
+            className="mt-2 block overflow-x-auto rounded bg-background px-2 py-1.5 font-mono text-[11px] leading-5 text-text-primary"
+          >
+            {LOCAL_DEVICE_START_COMMAND}
+          </code>
+        </div>
 
         <div className="mt-5 flex justify-end gap-2">
           <button

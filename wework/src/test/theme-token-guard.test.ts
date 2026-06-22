@@ -30,7 +30,6 @@ const zIndexGuardedFiles = [
   'components/chat/composer/ModelSelector.tsx',
   'components/chat/composer/ProjectChatComposer.tsx',
   'components/chat/composer/ComposerTextarea.tsx',
-  'components/layout/DesktopSearchDialog.tsx',
   'components/layout/DesktopWorkbenchLayout.tsx',
   'components/layout/DesktopWorkbenchMain.tsx',
   'components/layout/MobileDrawer.tsx',

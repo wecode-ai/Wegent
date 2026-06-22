@@ -58,6 +58,8 @@ export interface DeviceSessionResponse {
   type: string
   path: string
   url: string
+  transport?: 'url' | 'socketio'
+  expires_at?: string | null
 }
 
 export interface CloudDeviceResponse {

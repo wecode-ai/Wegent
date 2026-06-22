@@ -21,15 +21,12 @@ export function createTeamApi(client: HttpClient) {
     async getDefaultWorkbenchTeam(): Promise<Team> {
       const teams = (await listTeams()).filter(isActive)
       const weworkTeam = teams.find(team => team.default_for_modes?.includes('wework'))
-      const codeTeam = teams.find(team => team.default_for_modes?.includes('code'))
-      const chatTeam = teams.find(team => team.default_for_modes?.includes('chat'))
-      const fallback = teams[0]
 
-      if (!weworkTeam && !codeTeam && !chatTeam && !fallback) {
-        throw new Error('No active team is available')
+      if (!weworkTeam) {
+        throw new Error('Wework default team is not configured')
       }
 
-      return weworkTeam ?? codeTeam ?? chatTeam ?? fallback
+      return weworkTeam
     },
   }
 }

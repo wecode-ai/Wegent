@@ -13,12 +13,16 @@ API Reference:
 - Send message: POST /bot{token}/sendMessage
 """
 
+import asyncio
 import logging
 from typing import Any, Dict, Optional
 
 import httpx
 
 logger = logging.getLogger(__name__)
+
+TELEGRAM_SEND_MAX_ATTEMPTS = 3
+TELEGRAM_SEND_RETRY_DELAY_SECONDS = 0.5
 
 
 class TelegramBotSender:
@@ -109,6 +113,36 @@ class TelegramBotSender:
         if not chat_id:
             return {"success": False, "error": "No chat ID provided"}
 
+        last_error: dict[str, Any] | None = None
+        for attempt in range(1, TELEGRAM_SEND_MAX_ATTEMPTS + 1):
+            result = await self._send_message_once(
+                chat_id=chat_id,
+                text=text,
+                parse_mode=parse_mode,
+                disable_notification=disable_notification,
+                attempt=attempt,
+            )
+            if result.get("success"):
+                return result
+
+            last_error = result
+            if not result.get("retryable") or attempt >= TELEGRAM_SEND_MAX_ATTEMPTS:
+                return result
+
+            await asyncio.sleep(TELEGRAM_SEND_RETRY_DELAY_SECONDS * attempt)
+
+        return last_error or {"success": False, "error": "Unknown Telegram send error"}
+
+    async def _send_message_once(
+        self,
+        chat_id: int,
+        text: str,
+        parse_mode: Optional[str],
+        disable_notification: bool,
+        attempt: int,
+    ) -> Dict[str, Any]:
+        """Send one Telegram message attempt."""
+
         try:
             url = f"{self.BASE_URL}/bot{self.bot_token}/sendMessage"
             payload: Dict[str, Any] = {
@@ -124,7 +158,7 @@ class TelegramBotSender:
 
             logger.info(
                 f"[TelegramSender] Sending message to chat_id={chat_id}, "
-                f"text_length={len(text)}"
+                f"text_length={len(text)}, attempt={attempt}"
             )
 
             async with httpx.AsyncClient(timeout=30.0) as client:
@@ -156,16 +190,45 @@ class TelegramBotSender:
                 pass
 
             error_desc = error_data.get("description", str(e))
-            logger.error(f"[TelegramSender] HTTP error sending message: {error_desc}")
+            logger.error(
+                "[TelegramSender] HTTP error sending message: "
+                "status_code=%s error=%s",
+                e.response.status_code,
+                error_desc,
+            )
 
             return {
                 "success": False,
                 "error": error_desc,
+                "error_type": e.__class__.__name__,
+                "retryable": 500 <= e.response.status_code < 600,
             }
 
-        except Exception as e:
-            logger.error(f"[TelegramSender] Error sending message: {e}")
+        except (httpx.TimeoutException, httpx.TransportError) as e:
+            error_desc = str(e) or repr(e)
+            logger.warning(
+                "[TelegramSender] Retryable error sending message: "
+                "type=%s attempt=%s/%s error=%s",
+                e.__class__.__name__,
+                attempt,
+                TELEGRAM_SEND_MAX_ATTEMPTS,
+                error_desc,
+            )
             return {
                 "success": False,
-                "error": str(e),
+                "error": error_desc,
+                "error_type": e.__class__.__name__,
+                "retryable": True,
+            }
+        except Exception as e:
+            error_desc = str(e) or repr(e)
+            logger.exception(
+                "[TelegramSender] Error sending message: type=%s error=%s",
+                e.__class__.__name__,
+                error_desc,
+            )
+            return {
+                "success": False,
+                "error": error_desc,
+                "error_type": e.__class__.__name__,
             }

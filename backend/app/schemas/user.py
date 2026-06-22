@@ -34,7 +34,7 @@ class UserModelSelectionPreference(BaseModel):
     """User-level model selection preference."""
 
     modelName: str
-    modelType: Optional[Literal["public", "user", "group"]] = None
+    modelType: Optional[Literal["public", "user", "group", "runtime"]] = None
     options: dict[str, str] = Field(default_factory=dict)
 
 
@@ -211,6 +211,12 @@ class WeiboAccountPreviewResponse(BaseModel):
     weibo_uid: str
     weibo_screen_name: Optional[str] = None
     weibo_avatar_url: Optional[str] = None
+
+
+class AdminPasswordSetupRequest(BaseModel):
+    """Request body for setting the initial admin password."""
+
+    password: str = Field(..., min_length=6)
 
 
 class UserInfo(BaseModel):

@@ -398,7 +398,7 @@ export interface AdminPublicShellUpdate {
 }
 
 // IM Channel Types
-export type IMChannelType = 'dingtalk' | 'feishu' | 'wechat' | 'telegram'
+export type IMChannelType = 'dingtalk' | 'feishu' | 'wechat' | 'telegram' | 'discord'
 
 export interface IMChannel {
   id: number

@@ -387,7 +387,7 @@ curl -I http://localhost:8000/socket.io/
 **2. Verify JWT token**
 ```bash
 # Check if token is valid (in browser console)
-localStorage.getItem('token')
+localStorage.getItem('auth_token')
 
 # Token should be passed in Socket.IO auth
 ```
@@ -407,13 +407,17 @@ docker-compose exec redis redis-cli ping
 
 **5. Check frontend Socket.IO configuration**
 ```typescript
-// frontend/src/contexts/SocketContext.tsx
-// Verify connection parameters
+// packages/chat-core/src/socket/authenticatedSocketClient.ts
+// frontend and wework both connect through the shared SocketClient
 const socket = io(API_URL + '/chat', {
   path: '/socket.io',
   auth: { token },
-  transports: ['websocket', 'polling'],
-});
+  autoConnect: false,
+  reconnection: false,
+  transports: ['websocket'],
+  forceNew: true,
+  multiplex: false,
+})
 ```
 
 **6. Debug WebSocket in browser**

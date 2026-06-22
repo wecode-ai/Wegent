@@ -25,8 +25,36 @@ def user_preferences_client(test_db: Session, test_user: User) -> TestClient:
 
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[security.get_current_user] = lambda: test_user
+    app.dependency_overrides[security.get_current_user_optional] = lambda: test_user
 
     return TestClient(app)
+
+
+@pytest.mark.api
+def test_read_current_user_accepts_runtime_model_selection(
+    user_preferences_client: TestClient,
+    test_db: Session,
+    test_user: User,
+):
+    test_user.preferences = json.dumps(
+        {
+            "wework_new_chat_model_selection": {
+                "modelName": "codex-gpt-5.5",
+                "modelType": "runtime",
+                "options": {"reasoning": "medium"},
+            }
+        }
+    )
+    test_db.add(test_user)
+    test_db.commit()
+
+    response = user_preferences_client.get("/api/users/me")
+
+    assert response.status_code == 200
+    assert (
+        response.json()["preferences"]["wework_new_chat_model_selection"]["modelType"]
+        == "runtime"
+    )
 
 
 @pytest.mark.api

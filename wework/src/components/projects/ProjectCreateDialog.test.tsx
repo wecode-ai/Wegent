@@ -52,7 +52,7 @@ describe('ProjectCreateDialog', () => {
     render(
       <ProjectCreateDialog
         open
-        mode="scratch"
+        mode="existing"
         devices={devices}
         onClose={vi.fn()}
         onCreateProject={vi.fn()}
@@ -60,7 +60,7 @@ describe('ProjectCreateDialog', () => {
         onGetProjectWorkspaceRoot={vi.fn().mockResolvedValue('/workspace/projects')}
         onListDeviceDirectories={vi.fn().mockResolvedValue([])}
         onCreateDeviceDirectory={vi.fn()}
-      />,
+      />
     )
 
     const createButton = screen.getByTestId('create-project-button')
@@ -74,7 +74,7 @@ describe('ProjectCreateDialog', () => {
     render(
       <ProjectCreateDialog
         open
-        mode="scratch"
+        mode="existing"
         devices={[]}
         onClose={vi.fn()}
         onCreateProject={vi.fn()}
@@ -83,10 +83,9 @@ describe('ProjectCreateDialog', () => {
         onGetProjectWorkspaceRoot={vi.fn().mockResolvedValue('/workspace/projects')}
         onListDeviceDirectories={vi.fn().mockResolvedValue([])}
         onCreateDeviceDirectory={vi.fn()}
-      />,
+      />
     )
 
-    expect(screen.getByText('暂无可用设备')).toBeInTheDocument()
     const settingsLink = screen.getByTestId('open-cloud-device-settings-link')
 
     expect(settingsLink).toHaveAttribute('href', '/settings')
@@ -100,7 +99,7 @@ describe('ProjectCreateDialog', () => {
     render(
       <ProjectCreateDialog
         open
-        mode="scratch"
+        mode="existing"
         devices={[
           ...devices,
           {
@@ -119,7 +118,7 @@ describe('ProjectCreateDialog', () => {
         onGetProjectWorkspaceRoot={vi.fn().mockResolvedValue('')}
         onListDeviceDirectories={vi.fn().mockResolvedValue([])}
         onCreateDeviceDirectory={vi.fn()}
-      />,
+      />
     )
 
     expect(screen.getByTestId('project-device-select')).toHaveTextContent('Cloud Device')
@@ -133,7 +132,7 @@ describe('ProjectCreateDialog', () => {
     render(
       <ProjectCreateDialog
         open
-        mode="scratch"
+        mode="existing"
         devices={[
           {
             id: 4,
@@ -154,20 +153,14 @@ describe('ProjectCreateDialog', () => {
         onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot}
         onListDeviceDirectories={vi.fn().mockResolvedValue([])}
         onCreateDeviceDirectory={vi.fn()}
-      />,
+      />
     )
 
-    const deviceSelect = screen.getByTestId('project-device-select')
-    const oldDeviceOption = within(deviceSelect).getByRole('option', {
-      name: /Old Device.*需升级/,
-    })
-
-    expect(deviceSelect).toHaveValue('old-device')
-    expect(oldDeviceOption).not.toBeDisabled()
+    expect(screen.queryByTestId('project-device-select')).not.toBeInTheDocument()
     expect(screen.getByTestId('create-project-button')).toBeDisabled()
     expect(onGetProjectWorkspaceRoot).not.toHaveBeenCalled()
     expect(screen.getByTestId('project-device-unavailable-old-device')).toHaveTextContent(
-      '当前 v1.8.4，需要 1.8.5 或以上',
+      '当前 v1.8.4，需要 1.8.5 或以上'
     )
 
     await userEvent.click(screen.getByTestId('upgrade-project-device-old-device'))
@@ -179,7 +172,7 @@ describe('ProjectCreateDialog', () => {
     render(
       <ProjectCreateDialog
         open
-        mode="scratch"
+        mode="existing"
         devices={[
           ...devices,
           {
@@ -211,7 +204,7 @@ describe('ProjectCreateDialog', () => {
         onGetProjectWorkspaceRoot={vi.fn().mockResolvedValue('/workspace/projects')}
         onListDeviceDirectories={vi.fn().mockResolvedValue([])}
         onCreateDeviceDirectory={vi.fn()}
-      />,
+      />
     )
 
     const deviceSelect = screen.getByTestId('project-device-select')
@@ -231,10 +224,10 @@ describe('ProjectCreateDialog', () => {
 
     expect(deviceSelect).toHaveValue('old-device')
     expect(screen.getByTestId('project-device-unavailable-old-device')).toHaveTextContent(
-      '当前 v1.8.4，需要 1.8.5 或以上',
+      '当前 v1.8.4，需要 1.8.5 或以上'
     )
     expect(
-      screen.queryByTestId('project-device-unavailable-second-old-device'),
+      screen.queryByTestId('project-device-unavailable-second-old-device')
     ).not.toBeInTheDocument()
   })
 
@@ -265,12 +258,12 @@ describe('ProjectCreateDialog', () => {
         onGetProjectWorkspaceRoot={vi.fn().mockResolvedValue('/workspace/projects')}
         onListDeviceDirectories={onListDeviceDirectories}
         onCreateDeviceDirectory={vi.fn()}
-      />,
+      />
     )
 
     expect(screen.getByTestId('project-directory-path-input')).toBeDisabled()
     expect(screen.getByTestId('project-directory-device-unavailable')).toHaveTextContent(
-      '升级当前设备后可选择目录',
+      '升级当前设备后可选择目录'
     )
     expect(onGetDeviceHomeDirectory).not.toHaveBeenCalled()
     expect(onListDeviceDirectories).not.toHaveBeenCalled()
@@ -304,8 +297,10 @@ describe('ProjectCreateDialog', () => {
 
     render(<Harness />)
 
-    const deviceSelect = screen.getByTestId('project-device-select')
     const projectNameInput = screen.getByTestId('project-name-input')
+
+    await userEvent.click(screen.getByTestId('project-folder-mode-create'))
+    const deviceSelect = screen.getByTestId('project-device-select')
 
     expect(deviceSelect).toHaveValue('local-device')
 
@@ -330,7 +325,7 @@ describe('ProjectCreateDialog', () => {
         onGetProjectWorkspaceRoot={vi.fn().mockResolvedValue('/workspace/projects')}
         onListDeviceDirectories={vi.fn().mockResolvedValue([])}
         onCreateDeviceDirectory={vi.fn()}
-      />,
+      />
     )
 
     fireEvent.keyDown(document, { key: 'Escape' })
@@ -354,19 +349,118 @@ describe('ProjectCreateDialog', () => {
         onGetProjectWorkspaceRoot={vi.fn().mockResolvedValue('/workspace/projects')}
         onListDeviceDirectories={vi.fn().mockResolvedValue([])}
         onCreateDeviceDirectory={vi.fn()}
-      />,
+      />
     )
 
     await userEvent.type(screen.getByTestId('project-name-input'), 'demo')
     await userEvent.click(screen.getByTestId('create-project-button'))
 
-    await waitFor(() => expect(screen.getByTestId('project-create-error')).toHaveTextContent('create failed'))
+    await waitFor(() =>
+      expect(screen.getByTestId('project-create-error')).toHaveTextContent('create failed')
+    )
     expect(onClose).not.toHaveBeenCalled()
+  })
+
+  test('creates a scratch project as a cross-device project without binding a device path', async () => {
+    const onCreateProject = vi.fn().mockResolvedValue({ id: 2, name: 'demo', tasks: [] })
+    const onClose = vi.fn()
+
+    render(
+      <ProjectCreateDialog
+        open
+        mode="scratch"
+        devices={devices}
+        preferredDeviceId="local-device"
+        onClose={onClose}
+        onCreateProject={onCreateProject}
+        onGetDeviceHomeDirectory={vi.fn().mockResolvedValue('/home/user')}
+        onGetProjectWorkspaceRoot={vi.fn().mockResolvedValue('/workspace/projects')}
+        onListDeviceDirectories={vi.fn().mockResolvedValue([])}
+        onCreateDeviceDirectory={vi.fn()}
+      />
+    )
+
+    await userEvent.type(screen.getByTestId('project-name-input'), 'demo')
+    await userEvent.click(screen.getByTestId('create-project-button'))
+
+    await waitFor(() =>
+      expect(onCreateProject).toHaveBeenCalledWith({
+        name: 'demo',
+        description: '',
+        config: {
+          mode: 'workspace',
+        },
+      })
+    )
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  test('prepares a selected device folder after creating a project', async () => {
+    const onCreateProject = vi.fn().mockResolvedValue({ id: 2, name: 'demo', tasks: [] })
+    const onPrepareDeviceWorkspace = vi.fn().mockResolvedValue({
+      preparedAction: 'created',
+      mapping: {
+        id: 10,
+        userId: 1,
+        projectId: 2,
+        deviceId: 'local-device',
+        workspacePath: '/workspace/projects/demo',
+        repoUrl: null,
+        repoRootFingerprint: null,
+        label: null,
+        createdAt: '2026-06-21T00:00:00',
+        updatedAt: '2026-06-21T00:00:00',
+        lastSeenAt: null,
+      },
+    })
+    const onClose = vi.fn()
+
+    render(
+      <ProjectCreateDialog
+        open
+        mode="scratch"
+        devices={devices}
+        preferredDeviceId="local-device"
+        onClose={onClose}
+        onCreateProject={onCreateProject}
+        onPrepareDeviceWorkspace={onPrepareDeviceWorkspace}
+        onGetDeviceHomeDirectory={vi.fn().mockResolvedValue('/home/user')}
+        onGetProjectWorkspaceRoot={vi.fn().mockResolvedValue('/workspace/projects')}
+        onListDeviceDirectories={vi.fn().mockResolvedValue([])}
+        onCreateDeviceDirectory={vi.fn()}
+      />
+    )
+
+    await userEvent.type(screen.getByTestId('project-name-input'), 'demo')
+    await userEvent.click(screen.getByTestId('project-folder-mode-create'))
+    await waitFor(() =>
+      expect(screen.getByTestId('project-folder-create-path-input')).toHaveValue(
+        '/workspace/projects/demo'
+      )
+    )
+    await userEvent.click(screen.getByTestId('create-project-button'))
+
+    await waitFor(() =>
+      expect(onPrepareDeviceWorkspace).toHaveBeenCalledWith({
+        projectId: 2,
+        deviceId: 'local-device',
+        workspacePath: '/workspace/projects/demo',
+        action: 'create',
+      })
+    )
+    expect(onCreateProject).toHaveBeenCalledWith({
+      name: 'demo',
+      description: '',
+      config: {
+        mode: 'workspace',
+      },
+    })
+    expect(onClose).toHaveBeenCalledTimes(1)
   })
 
   test('filters parent directory entries when the path is typed partially', async () => {
     const onListDeviceDirectories = vi.fn((_: string, path: string) =>
-      Promise.resolve(path === '/home/user/repo' ? ['src'] : ['Desktop', 'Downloads', 'repo']),
+      Promise.resolve(path === '/home/user/repo' ? ['src'] : ['Desktop', 'Downloads', 'repo'])
     )
 
     render(
@@ -381,7 +475,7 @@ describe('ProjectCreateDialog', () => {
         onGetProjectWorkspaceRoot={vi.fn().mockResolvedValue('/workspace/projects')}
         onListDeviceDirectories={onListDeviceDirectories}
         onCreateDeviceDirectory={vi.fn()}
-      />,
+      />
     )
 
     const pathInput = await screen.findByTestId('project-directory-path-input')
@@ -399,7 +493,7 @@ describe('ProjectCreateDialog', () => {
 
   test('opens the only fuzzy path match when Enter is pressed', async () => {
     const onListDeviceDirectories = vi.fn((_: string, path: string) =>
-      Promise.resolve(path === '/home/user/repo' ? ['src'] : ['repo']),
+      Promise.resolve(path === '/home/user/repo' ? ['src'] : ['repo'])
     )
 
     render(
@@ -414,7 +508,7 @@ describe('ProjectCreateDialog', () => {
         onGetProjectWorkspaceRoot={vi.fn().mockResolvedValue('/workspace/projects')}
         onListDeviceDirectories={onListDeviceDirectories}
         onCreateDeviceDirectory={vi.fn()}
-      />,
+      />
     )
 
     const pathInput = await screen.findByTestId('project-directory-path-input')
@@ -427,7 +521,7 @@ describe('ProjectCreateDialog', () => {
 
     await waitFor(() => expect(pathInput).toHaveValue('/home/user/repo'))
     await waitFor(() =>
-      expect(onListDeviceDirectories).toHaveBeenCalledWith('local-device', '/home/user/repo'),
+      expect(onListDeviceDirectories).toHaveBeenCalledWith('local-device', '/home/user/repo')
     )
     expect(await screen.findByText('src')).toBeInTheDocument()
   })
@@ -435,7 +529,7 @@ describe('ProjectCreateDialog', () => {
   test('creates a folder and refreshes into the new directory', async () => {
     const onCreateDeviceDirectory = vi.fn().mockResolvedValue(undefined)
     const onListDeviceDirectories = vi.fn((_: string, path: string) =>
-      Promise.resolve(path === '/home/user/new-app' ? ['src'] : []),
+      Promise.resolve(path === '/home/user/new-app' ? ['src'] : [])
     )
 
     render(
@@ -450,7 +544,7 @@ describe('ProjectCreateDialog', () => {
         onGetProjectWorkspaceRoot={vi.fn().mockResolvedValue('/workspace/projects')}
         onListDeviceDirectories={onListDeviceDirectories}
         onCreateDeviceDirectory={onCreateDeviceDirectory}
-      />,
+      />
     )
 
     const pathInput = await screen.findByTestId('project-directory-path-input')
@@ -461,16 +555,21 @@ describe('ProjectCreateDialog', () => {
     await userEvent.click(screen.getByTestId('confirm-create-folder-button'))
 
     await waitFor(() =>
-      expect(onCreateDeviceDirectory).toHaveBeenCalledWith('local-device', '/home/user/new-app'),
+      expect(onCreateDeviceDirectory).toHaveBeenCalledWith('local-device', '/home/user/new-app')
     )
     await waitFor(() =>
-      expect(onListDeviceDirectories).toHaveBeenCalledWith('local-device', '/home/user/new-app'),
+      expect(onListDeviceDirectories).toHaveBeenCalledWith('local-device', '/home/user/new-app')
     )
     expect(pathInput).toHaveValue('/home/user/new-app')
     expect(await screen.findByText('src')).toBeInTheDocument()
   })
 
   test('creates a Git workspace project from selected repository and branch', async () => {
+    const onCreateProject = vi.fn().mockResolvedValue({
+      id: 9,
+      name: 'Wegent',
+      tasks: [],
+    })
     const onCreateGitWorkspaceProject = vi.fn().mockResolvedValue({
       id: 9,
       name: 'Wegent',
@@ -485,7 +584,7 @@ describe('ProjectCreateDialog', () => {
         devices={devices}
         preferredDeviceId="cloud-device"
         onClose={onClose}
-        onCreateProject={vi.fn()}
+        onCreateProject={onCreateProject}
         onCreateGitWorkspaceProject={onCreateGitWorkspaceProject}
         onGetDeviceHomeDirectory={vi.fn().mockResolvedValue('/home/user')}
         onGetProjectWorkspaceRoot={vi.fn().mockResolvedValue('/workspace/projects')}
@@ -502,29 +601,21 @@ describe('ProjectCreateDialog', () => {
           },
         ])}
         onListGitBranches={vi.fn().mockResolvedValue(branches)}
-      />,
+      />
     )
 
-    await waitFor(() =>
-      expect(screen.getByTestId('git-repository-select')).not.toBeDisabled(),
-    )
+    await waitFor(() => expect(screen.getByTestId('git-repository-select')).not.toBeDisabled())
     await userEvent.click(screen.getByTestId('git-repository-select'))
-    await userEvent.type(
-      screen.getByTestId('git-repository-select-search-input'),
-      'Wegent',
-    )
+    await userEvent.type(screen.getByTestId('git-repository-select-search-input'), 'Wegent')
     const repositoryMenu = screen.getByTestId('git-repository-select-menu')
     expect(within(repositoryMenu).getByText('wecode-ai/Wegent')).toBeInTheDocument()
     expect(within(repositoryMenu).queryByText('wecode-ai/docs')).not.toBeInTheDocument()
     await userEvent.click(screen.getByTestId('git-repository-select-option'))
     await waitFor(() =>
-      expect(screen.getByTestId('git-branch-select')).toHaveTextContent('main（默认）'),
+      expect(screen.getByTestId('git-branch-select')).toHaveTextContent('main（默认）')
     )
     await userEvent.click(screen.getByTestId('git-branch-select'))
-    await userEvent.type(
-      screen.getByTestId('git-branch-select-search-input'),
-      'develop',
-    )
+    await userEvent.type(screen.getByTestId('git-branch-select-search-input'), 'develop')
     const branchMenu = screen.getByTestId('git-branch-select-menu')
     expect(within(branchMenu).getByText('develop')).toBeInTheDocument()
     expect(within(branchMenu).queryByText('main（默认）')).not.toBeInTheDocument()
@@ -532,28 +623,32 @@ describe('ProjectCreateDialog', () => {
     await userEvent.click(screen.getByTestId('create-project-button'))
 
     await waitFor(() =>
-      expect(onCreateGitWorkspaceProject).toHaveBeenCalledWith({
-        device_id: 'cloud-device',
+      expect(onCreateProject).toHaveBeenCalledWith({
         name: 'Wegent',
-        git: {
-          url: 'https://github.com/wecode-ai/Wegent.git',
-          repo: 'wecode-ai/Wegent',
-          repoId: 101,
-          domain: 'github.com',
-          branch: 'develop',
+        description: '',
+        config: {
+          mode: 'workspace',
+          git: {
+            url: 'https://github.com/wecode-ai/Wegent.git',
+            repo: 'wecode-ai/Wegent',
+            repoId: 101,
+            domain: 'github.com',
+            branch: 'develop',
+          },
         },
-      }),
+      })
     )
+    expect(onCreateGitWorkspaceProject).not.toHaveBeenCalled()
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 
   test('shows progress while Git workspace creation is running', async () => {
     let resolveCreate: ((project: { id: number; name: string; tasks: [] }) => void) | undefined
-    const onCreateGitWorkspaceProject = vi.fn(
+    const onCreateProject = vi.fn(
       () =>
         new Promise<ProjectWithTasks>(resolve => {
           resolveCreate = resolve
-        }),
+        })
     )
     const onClose = vi.fn()
 
@@ -564,32 +659,27 @@ describe('ProjectCreateDialog', () => {
         devices={devices}
         preferredDeviceId="cloud-device"
         onClose={onClose}
-        onCreateProject={vi.fn()}
-        onCreateGitWorkspaceProject={onCreateGitWorkspaceProject}
+        onCreateProject={onCreateProject}
         onGetDeviceHomeDirectory={vi.fn().mockResolvedValue('/home/user')}
         onGetProjectWorkspaceRoot={vi.fn().mockResolvedValue('/workspace/projects')}
         onListDeviceDirectories={vi.fn().mockResolvedValue([])}
         onCreateDeviceDirectory={vi.fn()}
         onListGitRepositories={vi.fn().mockResolvedValue(repositories)}
         onListGitBranches={vi.fn().mockResolvedValue(branches)}
-      />,
+      />
     )
 
-    await waitFor(() =>
-      expect(screen.getByTestId('git-repository-select')).not.toBeDisabled(),
-    )
+    await waitFor(() => expect(screen.getByTestId('git-repository-select')).not.toBeDisabled())
     await userEvent.click(screen.getByTestId('git-repository-select'))
     await userEvent.click(screen.getAllByTestId('git-repository-select-option')[0])
     await waitFor(() =>
-      expect(screen.getByTestId('git-branch-select')).toHaveTextContent('main（默认）'),
+      expect(screen.getByTestId('git-branch-select')).toHaveTextContent('main（默认）')
     )
     await userEvent.click(screen.getByTestId('create-project-button'))
 
-    expect(screen.getByTestId('create-project-button')).toHaveTextContent('克隆中...')
+    expect(screen.getByTestId('create-project-button')).toHaveTextContent('创建中...')
     expect(screen.getByTestId('project-submit-spinner')).toBeInTheDocument()
-    expect(screen.getByTestId('project-submit-progress')).toHaveTextContent(
-      '正在克隆仓库，可能需要一点时间',
-    )
+    expect(screen.getByTestId('project-submit-progress')).toHaveTextContent('正在创建项目，请稍候')
     expect(screen.getByTestId('cancel-project-create-button')).toBeDisabled()
 
     resolveCreate?.({ id: 9, name: 'Wegent', tasks: [] })

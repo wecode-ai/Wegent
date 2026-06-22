@@ -4,12 +4,56 @@
 
 """Unit tests for TelegramChannelHandler."""
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import HTTPException
 
+from app.models.subtask import SubtaskStatus
 from app.services.channels.callback import ChannelType
+from app.services.channels.handler import MessageContext
 from app.services.channels.telegram.handler import TelegramChannelHandler
+
+EXPECTED_IM_SOURCE = {
+    "source": "im",
+    "channel_type": "telegram",
+    "channel_label": "Telegram",
+}
+
+
+def _message_context() -> MessageContext:
+    return MessageContext(
+        content="Hello from Telegram",
+        sender_id="12345",
+        sender_name="Test",
+        conversation_id="67890",
+        conversation_type="private",
+        is_mention=False,
+        raw_message=MagicMock(),
+        extra_data={},
+    )
+
+
+def _creation_result() -> SimpleNamespace:
+    return SimpleNamespace(
+        task=SimpleNamespace(id=200),
+        user_subtask=SimpleNamespace(id=300),
+        assistant_subtask=SimpleNamespace(id=301),
+    )
+
+
+def _streaming_emitter() -> SimpleNamespace:
+    return SimpleNamespace(
+        emit_start=AsyncMock(),
+        emit_chunk=AsyncMock(),
+        set_shared_content_key=MagicMock(),
+    )
+
+
+def _assert_message_source(create_task_mock: AsyncMock) -> None:
+    params = create_task_mock.await_args.kwargs["params"]
+    assert params.message_source == EXPECTED_IM_SOURCE
 
 
 class TestTelegramChannelHandler:
@@ -264,3 +308,305 @@ class TestTelegramChannelHandler:
         emitter = await handler.create_streaming_emitter(mock_context)
 
         assert emitter is None
+
+    @pytest.mark.asyncio
+    async def test_create_and_process_chat_attaches_im_source_metadata(self, handler):
+        """Chat task creation should tag tasks with provider-level IM metadata."""
+        message_context = _message_context()
+        user = SimpleNamespace(id=1)
+        team = SimpleNamespace(id=100)
+        creation_result = _creation_result()
+        db = MagicMock()
+        streaming_emitter = _streaming_emitter()
+
+        with (
+            patch(
+                "app.services.channels.handler.SessionLocal",
+                return_value=db,
+            ),
+            patch.object(
+                handler,
+                "_get_user_model_override",
+                new=AsyncMock(return_value=(None, None)),
+            ),
+            patch.object(
+                handler,
+                "_get_conversation_task_id",
+                new=AsyncMock(return_value=(None, False)),
+            ),
+            patch.object(
+                handler,
+                "_set_conversation_task_id",
+                new=AsyncMock(),
+            ),
+            patch.object(
+                handler,
+                "_get_selected_or_default_team",
+                new=AsyncMock(return_value=team),
+            ),
+            patch.object(
+                handler,
+                "create_streaming_emitter",
+                new=AsyncMock(return_value=streaming_emitter),
+            ),
+            patch.object(
+                handler,
+                "_register_streaming_emitter",
+                new=AsyncMock(),
+            ),
+            patch(
+                "app.services.chat.storage.task_manager.create_task_and_subtasks",
+                new=AsyncMock(return_value=creation_result),
+            ) as create_task_mock,
+            patch(
+                "app.services.chat.trigger.trigger_ai_response_unified",
+                new=AsyncMock(),
+            ),
+        ):
+            result = await handler._create_and_process_chat(user, message_context)
+
+        assert result is None
+        _assert_message_source(create_task_mock)
+
+    @pytest.mark.asyncio
+    async def test_create_and_process_device_task_attaches_im_source_metadata(
+        self, handler
+    ):
+        """Device task creation should tag tasks with provider-level IM metadata."""
+        message_context = _message_context()
+        user = SimpleNamespace(id=1)
+        team = SimpleNamespace(id=100)
+        creation_result = _creation_result()
+        db = MagicMock()
+        streaming_emitter = _streaming_emitter()
+
+        with (
+            patch.object(
+                handler,
+                "_get_device_mode_model_override",
+                new=AsyncMock(return_value=(None, None)),
+            ),
+            patch.object(
+                handler,
+                "_get_conversation_task_id",
+                new=AsyncMock(return_value=(None, False)),
+            ),
+            patch.object(
+                handler,
+                "_set_conversation_task_id",
+                new=AsyncMock(),
+            ),
+            patch.object(
+                handler,
+                "create_streaming_emitter",
+                new=AsyncMock(return_value=streaming_emitter),
+            ),
+            patch.object(
+                handler,
+                "_register_streaming_emitter",
+                new=AsyncMock(),
+            ),
+            patch(
+                "app.services.chat.storage.task_manager.create_task_and_subtasks",
+                new=AsyncMock(return_value=creation_result),
+            ) as create_task_mock,
+            patch(
+                "app.services.device_router.route_task_to_device",
+                new=AsyncMock(),
+            ),
+        ):
+            result = await handler._create_and_process_device_task(
+                db=db,
+                user=user,
+                team=team,
+                device_id="device-123456",
+                message_context=message_context,
+            )
+
+        assert result is None
+        _assert_message_source(create_task_mock)
+
+    @pytest.mark.asyncio
+    async def test_create_and_process_cloud_task_attaches_im_source_metadata(
+        self, handler
+    ):
+        """Cloud task creation should tag tasks with provider-level IM metadata."""
+        message_context = _message_context()
+        user = SimpleNamespace(id=1)
+        team = SimpleNamespace(id=100)
+        creation_result = _creation_result()
+        db = MagicMock()
+        streaming_emitter = _streaming_emitter()
+
+        with (
+            patch.object(
+                handler,
+                "_get_user_model_override",
+                new=AsyncMock(return_value=(None, None)),
+            ),
+            patch.object(
+                handler,
+                "_get_conversation_task_id",
+                new=AsyncMock(return_value=(None, False)),
+            ),
+            patch.object(
+                handler,
+                "_set_conversation_task_id",
+                new=AsyncMock(),
+            ),
+            patch.object(
+                handler,
+                "create_streaming_emitter",
+                new=AsyncMock(return_value=streaming_emitter),
+            ),
+            patch.object(
+                handler,
+                "_register_streaming_emitter",
+                new=AsyncMock(),
+            ),
+            patch(
+                "app.services.chat.storage.task_manager.create_task_and_subtasks",
+                new=AsyncMock(return_value=creation_result),
+            ) as create_task_mock,
+            patch("app.services.execution.schedule_dispatch") as schedule_dispatch,
+        ):
+            result = await handler._create_and_process_cloud_task(
+                db=db,
+                user=user,
+                team=team,
+                message_context=message_context,
+            )
+
+        assert result is None
+        schedule_dispatch.assert_called_once_with(creation_result.task.id)
+        _assert_message_source(create_task_mock)
+
+    @pytest.mark.asyncio
+    async def test_private_im_task_response_failure_marks_task_failed(self, handler):
+        message_context = _message_context()
+        task = SimpleNamespace(id=33, json={"status": {"status": "PENDING"}})
+        assistant_subtask = SimpleNamespace(
+            id=52,
+            status=SubtaskStatus.PENDING,
+            progress=0,
+            error_message="",
+            completed_at=None,
+        )
+        db = MagicMock()
+
+        with (
+            patch.object(
+                handler,
+                "create_streaming_emitter",
+                new=AsyncMock(return_value=None),
+            ),
+            patch.object(handler, "_register_streaming_emitter", new=AsyncMock()),
+            patch.object(handler, "send_text_reply", new=AsyncMock()) as send_reply,
+            patch(
+                "app.services.chat.trigger.trigger_ai_response_unified",
+                new=AsyncMock(side_effect=ValueError("Model codex-gpt-5.5 not found")),
+            ),
+        ):
+            await handler._trigger_private_im_task_response(
+                db=db,
+                task=task,
+                assistant_subtask=assistant_subtask,
+                team=SimpleNamespace(id=38),
+                user=SimpleNamespace(id=1),
+                user_subtask_id=51,
+                message="我刚才说的啥",
+                message_context=message_context,
+                params=SimpleNamespace(is_group_chat=False),
+            )
+
+        assert task.json["status"]["status"] == "FAILED"
+        assert "Model codex-gpt-5.5 not found" in task.json["status"]["errorMessage"]
+        assert assistant_subtask.status == SubtaskStatus.FAILED
+        assert assistant_subtask.progress == 100
+        assert "Model codex-gpt-5.5 not found" in assistant_subtask.error_message
+        db.commit.assert_called_once()
+        send_reply.assert_awaited_once()
+        assert "任务执行失败" in send_reply.await_args.args[1]
+
+    @pytest.mark.asyncio
+    async def test_private_im_task_response_routes_existing_device_task_to_device(
+        self, handler
+    ):
+        message_context = _message_context()
+        task = SimpleNamespace(
+            id=33,
+            json={"spec": {"device_id": "hw-4e4bfa88fa25"}},
+        )
+        assistant_subtask = SimpleNamespace(id=54)
+        streaming_emitter = _streaming_emitter()
+
+        with (
+            patch.object(
+                handler,
+                "create_streaming_emitter",
+                new=AsyncMock(return_value=streaming_emitter),
+            ),
+            patch.object(handler, "_register_streaming_emitter", new=AsyncMock()),
+            patch(
+                "app.services.chat.trigger.trigger_ai_response_unified",
+                new=AsyncMock(),
+            ) as trigger_mock,
+        ):
+            await handler._trigger_private_im_task_response(
+                db=MagicMock(),
+                task=task,
+                assistant_subtask=assistant_subtask,
+                team=SimpleNamespace(id=38),
+                user=SimpleNamespace(id=1),
+                user_subtask_id=53,
+                message="继续",
+                message_context=message_context,
+                params=SimpleNamespace(is_group_chat=False),
+            )
+
+        assert trigger_mock.await_args.kwargs["device_id"] == "hw-4e4bfa88fa25"
+
+    @pytest.mark.asyncio
+    async def test_private_im_continue_task_reports_running_task(self, handler):
+        message_context = _message_context()
+        db = MagicMock()
+        user = SimpleNamespace(id=1)
+        im_session = SimpleNamespace(active_task_id=33)
+        task = SimpleNamespace(id=33)
+
+        with (
+            patch(
+                "app.services.channels.handler.im_task_continuation_service.validate_personal_wework_task",
+                return_value=task,
+            ),
+            patch(
+                "app.services.channels.handler.im_task_continuation_service.get_task_team",
+                return_value=SimpleNamespace(id=38),
+            ),
+            patch.object(
+                handler,
+                "_build_private_im_message_source",
+                return_value=EXPECTED_IM_SOURCE,
+            ),
+            patch(
+                "app.services.channels.handler.im_task_continuation_service.append_message_to_task",
+                new=AsyncMock(
+                    side_effect=HTTPException(
+                        status_code=400,
+                        detail="Task is still running",
+                    )
+                ),
+            ),
+            patch.object(handler, "send_text_reply", new=AsyncMock()) as send_reply,
+        ):
+            await handler._execute_private_im_continue_task(
+                db=db,
+                user=user,
+                im_session=im_session,
+                task_id=33,
+                message="我刚才说的啥",
+                message_context=message_context,
+            )
+
+        send_reply.assert_awaited_once()
+        assert "当前任务仍在执行" in send_reply.await_args.args[1]

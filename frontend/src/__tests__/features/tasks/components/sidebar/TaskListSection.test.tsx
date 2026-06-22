@@ -199,4 +199,14 @@ describe('TaskListSection', () => {
       mockPush.mock.invocationCallOrder[0]
     )
   })
+
+  it('opens code tasks in the unified chat page', () => {
+    const task = createTask(8, { task_type: 'code' })
+
+    render(<TaskListSection tasks={[task]} title="History" />)
+
+    fireEvent.click(screen.getAllByText('Conversation 8')[0].closest('.cursor-pointer')!)
+
+    expect(mockPush).toHaveBeenCalledWith('/chat?taskId=8')
+  })
 })

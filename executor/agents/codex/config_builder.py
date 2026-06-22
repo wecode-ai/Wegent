@@ -10,7 +10,9 @@ import json
 import os
 import re
 import shutil
+import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Optional
 
 from executor.agents.api_headers import (
@@ -25,6 +27,7 @@ OPENAI_RESPONSES_PROTOCOL = "openai-responses"
 RESPONSES_WIRE_API = "responses"
 DEFAULT_PROVIDER_NAME = "wecode openai"
 DEFAULT_NO_PROXY = "localhost,127.0.0.1,::1,host.docker.internal"
+MACOS_CODEX_APP_BINARY = "/Applications/Codex.app/Contents/Resources/codex"
 CODEX_REASONING_EFFORTS = {"none", "minimal", "low", "medium", "high", "xhigh"}
 CODEX_REASONING_SUMMARIES = {"auto", "concise", "detailed"}
 DEFAULT_REASONING_EFFORT = "medium"
@@ -314,6 +317,10 @@ def _sanitize_provider_id(value: str) -> str:
 def _resolve_codex_binary(value: str) -> str:
     if "/" in value or "\\" in value:
         return value
+    if value == "codex" and sys.platform == "darwin":
+        app_binary = Path(MACOS_CODEX_APP_BINARY)
+        if app_binary.exists():
+            return str(app_binary)
     return shutil.which(value) or value
 
 

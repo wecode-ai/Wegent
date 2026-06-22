@@ -74,6 +74,8 @@ class DeviceService:
         name: str,
         status: str = "online",
         executor_version: Optional[str] = None,
+        client_ip: Optional[str] = None,
+        runtime_transfer_host: Optional[str] = None,
     ) -> bool:
         """Set device online status in Redis.
 
@@ -84,6 +86,8 @@ class DeviceService:
             name: Device name
             status: Device status (online, busy)
             executor_version: Executor version (e.g., '1.0.0')
+            client_ip: Device-reported or websocket-observed IP address
+            runtime_transfer_host: Host peers should use for direct transfers
 
         Returns:
             True if set successfully
@@ -96,6 +100,8 @@ class DeviceService:
             name=name,
             status=status,
             executor_version=executor_version,
+            client_ip=client_ip,
+            runtime_transfer_host=runtime_transfer_host,
         )
 
     @staticmethod
@@ -104,6 +110,7 @@ class DeviceService:
         device_id: str,
         running_task_ids: list[int] = None,
         executor_version: Optional[str] = None,
+        runtime_transfer_host: Optional[str] = None,
     ) -> bool:
         """Refresh device heartbeat in Redis (extend TTL) and update running task IDs.
 
@@ -122,6 +129,7 @@ class DeviceService:
             device_id=device_id,
             running_task_ids=running_task_ids,
             executor_version=executor_version,
+            runtime_transfer_host=runtime_transfer_host,
         )
 
     @staticmethod
@@ -307,6 +315,7 @@ class DeviceService:
         client_ip: Optional[str] = None,
         device_type: Optional[str] = None,
         bind_shell: Optional[str] = None,
+        runtime_transfer_host: Optional[str] = None,
     ) -> Kind:
         """Create or update a Device CRD record.
 
@@ -324,6 +333,7 @@ class DeviceService:
             bind_shell: Shell runtime binding ('claudecode' or 'openclaw').
                         If None, defaults to 'claudecode' for new devices or
                         preserves existing value.
+            runtime_transfer_host: Host peers should use for direct transfers
 
         Returns:
             Kind model instance for the device
@@ -358,6 +368,8 @@ class DeviceService:
             # Update client IP if provided
             if client_ip is not None:
                 device_json["spec"]["clientIp"] = client_ip
+            if runtime_transfer_host is not None:
+                device_json["spec"]["runtimeTransferHost"] = runtime_transfer_host
             # Update bind_shell if provided, otherwise preserve existing value
             if bind_shell is not None:
                 device_json["spec"]["bindShell"] = bind_shell
@@ -412,6 +424,7 @@ class DeviceService:
                     "isDefault": is_first_device,
                     "capabilities": None,
                     "clientIp": client_ip,
+                    "runtimeTransferHost": runtime_transfer_host,
                 },
                 "status": {
                     "state": "Available",

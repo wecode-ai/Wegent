@@ -4,9 +4,10 @@
 
 'use client'
 
-import { useEffect } from 'react'
+import { useCallback, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { paths } from '@/config/paths'
+import { openNavigationHref } from '@/config/coding-route'
 import { useTranslation } from '@/hooks/useTranslation'
 import LanguageSwitcher from '@/components/LanguageSwitcher'
 import PoweredByFooter from '@/components/common/PoweredByFooter'
@@ -22,22 +23,20 @@ export default function Home() {
   const router = useRouter()
   const { t } = useTranslation('common')
 
+  const redirectToLastTab = useCallback(() => {
+    const lastTab = getLastTab()
+    if (lastTab === 'code') {
+      openNavigationHref(router, paths.code.getHref())
+    } else if (lastTab === 'wiki') {
+      router.replace(paths.wiki.getHref())
+    } else {
+      router.replace(paths.chat.getHref())
+    }
+  }, [router])
+
   // Redirect logic with priority: logged in user > DingTalk mode
   // Also listen for Aidesk login success event
   useEffect(() => {
-    // Helper function to redirect to user's last active tab
-    const redirectToLastTab = () => {
-      const lastTab = getLastTab()
-      if (lastTab === 'code') {
-        router.replace(paths.code.getHref())
-      } else if (lastTab === 'wiki') {
-        router.replace(paths.wiki.getHref())
-      } else {
-        // Default to chat if no preference or preference is chat
-        router.replace(paths.chat.getHref())
-      }
-    }
-
     // Priority 1: If user is already logged in, redirect directly (skip Aidesk login flow)
     const token = getToken()
     if (token) {
@@ -53,28 +52,19 @@ export default function Home() {
 
     // Listen for Aidesk login success event and redirect to chat
     const handleAideskLoginSuccess = () => {
-      router.replace(paths.chat.getHref())
+      redirectToLastTab()
     }
 
     window.addEventListener('aidesk-login-success', handleAideskLoginSuccess)
     return () => {
       window.removeEventListener('aidesk-login-success', handleAideskLoginSuccess)
     }
-  }, [router])
+  }, [redirectToLastTab, router])
 
   const handleGetStarted = () => {
     const token = getToken()
     if (token) {
-      // Try to restore user's last active tab
-      const lastTab = getLastTab()
-      if (lastTab === 'code') {
-        router.replace(paths.code.getHref())
-      } else if (lastTab === 'wiki') {
-        router.replace(paths.wiki.getHref())
-      } else {
-        // Default to chat if no preference or preference is chat
-        router.replace(paths.chat.getHref())
-      }
+      redirectToLastTab()
     } else {
       router.push(paths.auth.login.getHref())
     }
