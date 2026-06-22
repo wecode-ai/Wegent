@@ -202,12 +202,17 @@ export function ProjectChatComposer({
         <ProjectWorkBar
           projects={projectWork.projects}
           devices={projectWork.devices}
+          runtimeWork={projectWork.runtimeWork}
           currentProjectId={projectWork.currentProjectId}
           currentStandaloneDeviceId={projectWork.currentStandaloneDeviceId}
+          selectedDeviceWorkspaceId={projectWork.selectedDeviceWorkspaceId}
+          pendingProjectWorkspaceProjectId={projectWork.pendingProjectWorkspaceProjectId}
           executionMode={projectWork.executionMode}
           executionModeLocked={projectWork.executionModeLocked}
           onSelectProject={projectWork.onSelectProject}
           onSelectStandaloneDevice={projectWork.onSelectStandaloneDevice}
+          onSelectProjectWorkspace={projectWork.onSelectProjectWorkspace}
+          onBindProjectWorkspace={projectWork.onBindProjectWorkspace}
           onExecutionModeChange={projectWork.onExecutionModeChange}
           onCreateProjectMode={projectWork.onCreateProjectMode}
           branchName={projectWork.branchName}

@@ -22,9 +22,19 @@ import {
   sortStandaloneDevices,
 } from '@/lib/device-selection'
 import { isWeWorkExecutorVersionCompatible } from '@/lib/device-capabilities'
+import {
+  buildProjectWorkspaceOptions,
+  isSelectableProjectWorkspace,
+} from '@/lib/project-workspace-selection'
 import { supportsGitWorktreeExecution } from '@/lib/projectClassification'
 import { cn } from '@/lib/utils'
-import type { DeviceInfo, ProjectExecutionMode, ProjectWithTasks } from '@/types/api'
+import type {
+  DeviceInfo,
+  ProjectExecutionMode,
+  ProjectWithTasks,
+  RuntimeDeviceWorkspace,
+  RuntimeWorkListResponse,
+} from '@/types/api'
 import type { ProjectCreateMode } from '../ChatInput'
 import { useOutsideClick } from './useOutsideClick'
 import { WorktreeBranchSelector } from './WorktreeBranchSelector'
@@ -105,12 +115,17 @@ function getProjectDeviceId(project: ProjectWithTasks): string | undefined {
 interface ProjectWorkBarProps {
   projects: ProjectWithTasks[]
   devices: DeviceInfo[]
+  runtimeWork?: RuntimeWorkListResponse | null
   currentProjectId?: number
   currentStandaloneDeviceId?: string | null
+  selectedDeviceWorkspaceId?: number | null
+  pendingProjectWorkspaceProjectId?: number | null
   executionMode: ProjectExecutionMode
   executionModeLocked?: boolean
   onSelectProject: (projectId: number | null) => void
   onSelectStandaloneDevice: (deviceId: string | null) => void
+  onSelectProjectWorkspace?: (projectId: number, deviceWorkspaceId: number | null) => void
+  onBindProjectWorkspace?: (projectId: number) => void
   onExecutionModeChange: (mode: ProjectExecutionMode) => void
   onCreateProjectMode?: (mode: ProjectCreateMode) => void
   branchName?: string
@@ -130,12 +145,17 @@ interface ProjectWorkBarProps {
 export function ProjectWorkBar({
   projects,
   devices,
+  runtimeWork = null,
   currentProjectId,
   currentStandaloneDeviceId,
+  selectedDeviceWorkspaceId = null,
+  pendingProjectWorkspaceProjectId = null,
   executionMode,
   executionModeLocked = false,
   onSelectProject,
   onSelectStandaloneDevice,
+  onSelectProjectWorkspace,
+  onBindProjectWorkspace,
   onExecutionModeChange,
   onCreateProjectMode,
   branchName,
@@ -310,6 +330,22 @@ export function ProjectWorkBar({
     },
     [devices]
   )
+  const projectWorkspaceOptions = useMemo(
+    () => buildProjectWorkspaceOptions({ projects, devices, runtimeWork }),
+    [devices, projects, runtimeWork]
+  )
+  const hasRuntimeWork = runtimeWork != null
+  const projectWorkspaceOptionByProjectId = useMemo(
+    () => new Map(projectWorkspaceOptions.map(option => [option.project.id, option])),
+    [projectWorkspaceOptions]
+  )
+  const selectedDeviceWorkspace = useMemo(() => {
+    for (const option of projectWorkspaceOptions) {
+      const workspace = option.workspaces.find(item => item.id === selectedDeviceWorkspaceId)
+      if (workspace) return workspace
+    }
+    return null
+  }, [projectWorkspaceOptions, selectedDeviceWorkspaceId])
   const isProjectAvailable = useCallback(
     (project: ProjectWithTasks): boolean => {
       const deviceId = getProjectDeviceId(project)
@@ -325,8 +361,17 @@ export function ProjectWorkBar({
     [getDeviceForProject]
   )
   const availableProjects = useMemo(
-    () => projects.filter(isProjectAvailable),
-    [isProjectAvailable, projects]
+    () => (hasRuntimeWork ? projects : projects.filter(isProjectAvailable)),
+    [hasRuntimeWork, isProjectAvailable, projects]
+  )
+
+  const handleSelectDeviceWorkspace = useCallback(
+    (projectId: number, workspace: RuntimeDeviceWorkspace) => {
+      if (!isSelectableProjectWorkspace(workspace, devices) || !workspace.id) return
+      onSelectProjectWorkspace?.(projectId, workspace.id)
+      closeMenu()
+    },
+    [closeMenu, devices, onSelectProjectWorkspace]
   )
 
   const sortedProjects = useMemo(() => {
@@ -373,6 +418,12 @@ export function ProjectWorkBar({
     ? selectedStandaloneDevice.name || selectedStandaloneDevice.device_id
     : null
   const projectWorkTriggerLabel = emptyLabel ?? t('workbench.enter_project_work', '进入项目工作')
+  const pendingWorkspaceSelection =
+    currentProject &&
+    pendingProjectWorkspaceProjectId === currentProject.id &&
+    !selectedDeviceWorkspace
+  const selectedWorkspaceDeviceLabel =
+    selectedDeviceWorkspace?.deviceName || selectedDeviceWorkspace?.deviceId || null
   const projectWorkTriggerAriaLabel =
     !currentProject && isStandaloneMode && selectedStandaloneDeviceLabel
       ? t('workbench.project_work_trigger_device_aria', {
@@ -382,6 +433,21 @@ export function ProjectWorkBar({
       : (currentProject?.name ?? projectWorkTriggerLabel)
 
   const handleSelectProject = (projectId: number) => {
+    const option = projectWorkspaceOptionByProjectId.get(projectId)
+    if (hasRuntimeWork && option?.kind === 'multi') {
+      onSelectProjectWorkspace?.(projectId, null)
+      return
+    }
+    if (hasRuntimeWork && option?.kind === 'single' && option.workspace?.id && option.selectable) {
+      onSelectProjectWorkspace?.(projectId, option.workspace.id)
+      closeMenu()
+      return
+    }
+    if (hasRuntimeWork && option?.kind === 'empty' && onBindProjectWorkspace) {
+      onBindProjectWorkspace?.(projectId)
+      closeMenu()
+      return
+    }
     onSelectProject(projectId)
     closeMenu()
   }
@@ -547,53 +613,117 @@ export function ProjectWorkBar({
                     const DeviceIcon = device && isCloudDevice(device) ? Cloud : HardDrive
                     const selected = project.id === currentProjectId
                     const projectTextClass = selected ? 'text-text-primary' : 'text-text-secondary'
+                    const option = projectWorkspaceOptionByProjectId.get(project.id)
+                    const expanded =
+                      option?.kind === 'multi' && pendingProjectWorkspaceProjectId === project.id
+                    const bindRequired =
+                      hasRuntimeWork && option?.kind === 'empty' && Boolean(onBindProjectWorkspace)
                     return (
-                      <button
-                        key={project.id}
-                        type="button"
-                        data-testid={`project-option-${project.id}`}
-                        onClick={() => handleSelectProject(project.id)}
-                        className={`flex h-9 w-full rounded-lg px-4 text-left hover:bg-muted ${projectTextClass}`}
-                      >
-                        <div className="flex min-h-0 w-full items-center gap-3">
-                          <ProjectFolderIcon
-                            project={project}
-                            testId={`project-available-icon-${project.id}`}
-                            className="h-4 w-4 shrink-0 text-text-secondary"
-                          />
-                          <div className="flex min-w-0 flex-1 items-center gap-2">
-                            <span
-                              className={cn(
-                                'min-w-0 truncate text-[13px] font-semibold leading-[18px]',
-                                device ? 'max-w-[9rem] shrink' : 'flex-1',
-                                'text-text-primary'
-                              )}
-                            >
-                              {project.name}
-                            </span>
-                            {device && (
-                              <span className="flex min-w-0 flex-1 items-center gap-1.5 text-xs leading-4 text-text-secondary">
-                                <DeviceIcon className="h-3.5 w-3.5 shrink-0" />
-                                <span
-                                  className={`h-1.5 w-1.5 shrink-0 rounded-full ${getDeviceStatusDotClass(device)}`}
-                                />
-                                <span className="min-w-0 truncate text-text-secondary">
-                                  {device.name}
-                                </span>
-                                <span className="shrink-0">
-                                  {getCompactDeviceStatusLabel(device)}
-                                </span>
+                      <div key={project.id} className="space-y-0.5">
+                        <button
+                          type="button"
+                          data-testid={`project-option-${project.id}`}
+                          onClick={() => handleSelectProject(project.id)}
+                          className={`flex h-9 w-full rounded-lg px-4 text-left hover:bg-muted ${projectTextClass}`}
+                        >
+                          <div className="flex min-h-0 w-full items-center gap-3">
+                            <ProjectFolderIcon
+                              project={project}
+                              testId={`project-available-icon-${project.id}`}
+                              className="h-4 w-4 shrink-0 text-text-secondary"
+                            />
+                            <div className="flex min-w-0 flex-1 items-center gap-2">
+                              <span
+                                className={cn(
+                                  'min-w-0 truncate text-[13px] font-semibold leading-[18px]',
+                                  device ? 'max-w-[9rem] shrink' : 'flex-1',
+                                  'text-text-primary'
+                                )}
+                              >
+                                {project.name}
                               </span>
+                              {device && (
+                                <span className="flex min-w-0 flex-1 items-center gap-1.5 text-xs leading-4 text-text-secondary">
+                                  <DeviceIcon className="h-3.5 w-3.5 shrink-0" />
+                                  <span
+                                    className={`h-1.5 w-1.5 shrink-0 rounded-full ${getDeviceStatusDotClass(device)}`}
+                                  />
+                                  <span className="min-w-0 truncate text-text-secondary">
+                                    {device.name}
+                                  </span>
+                                  <span className="shrink-0">
+                                    {getCompactDeviceStatusLabel(device)}
+                                  </span>
+                                </span>
+                              )}
+                            </div>
+                            {selected && (
+                              <Check
+                                data-testid={`project-selected-icon-${project.id}`}
+                                className="h-3.5 w-3.5 shrink-0 text-text-primary"
+                              />
                             )}
                           </div>
-                          {selected && (
-                            <Check
-                              data-testid={`project-selected-icon-${project.id}`}
-                              className="h-3.5 w-3.5 shrink-0 text-text-primary"
-                            />
-                          )}
-                        </div>
-                      </button>
+                        </button>
+                        {bindRequired && (
+                          <button
+                            type="button"
+                            data-testid={`project-bind-workspace-${project.id}`}
+                            onClick={() => {
+                              onBindProjectWorkspace?.(project.id)
+                              closeMenu()
+                            }}
+                            className="ml-7 flex h-9 w-[calc(100%-1.75rem)] items-center gap-2 rounded-lg px-3 text-left text-[13px] font-medium leading-[18px] text-text-secondary hover:bg-muted"
+                          >
+                            <FolderPlus className="h-3.5 w-3.5 shrink-0" />
+                            <span>{t('workbench.bind_project_workspace', '绑定设备工作区')}</span>
+                          </button>
+                        )}
+                        {expanded &&
+                          option?.workspaces.map(workspace => {
+                            const workspaceSelected = workspace.id === selectedDeviceWorkspaceId
+                            const selectable = isSelectableProjectWorkspace(workspace, devices)
+                            const workspaceDevice = devices.find(
+                              item => item.device_id === workspace.deviceId
+                            )
+                            const WorkspaceDeviceIcon =
+                              workspaceDevice && isCloudDevice(workspaceDevice) ? Cloud : HardDrive
+                            return (
+                              <button
+                                key={`${workspace.deviceId}:${workspace.workspacePath}`}
+                                type="button"
+                                data-testid={`project-workspace-option-${workspace.id}`}
+                                disabled={!selectable}
+                                onClick={() => handleSelectDeviceWorkspace(project.id, workspace)}
+                                className={cn(
+                                  'ml-7 flex h-9 w-[calc(100%-1.75rem)] items-center gap-2 rounded-lg px-3 text-left text-[13px] leading-[18px]',
+                                  selectable
+                                    ? 'text-text-secondary hover:bg-muted'
+                                    : 'cursor-not-allowed text-text-muted opacity-60',
+                                  workspaceSelected && 'bg-muted text-text-primary'
+                                )}
+                              >
+                                <WorkspaceDeviceIcon className="h-3.5 w-3.5 shrink-0" />
+                                <span
+                                  className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                                    workspace.deviceStatus === 'online'
+                                      ? 'bg-primary'
+                                      : workspace.deviceStatus === 'busy'
+                                        ? 'bg-amber-500'
+                                        : 'bg-text-muted'
+                                  }`}
+                                />
+                                <span className="min-w-0 flex-1 truncate">
+                                  {workspace.deviceName || workspace.deviceId}
+                                </span>
+                                <span className="min-w-0 max-w-[7rem] truncate text-xs text-text-muted">
+                                  {workspace.workspacePath}
+                                </span>
+                                {workspaceSelected && <Check className="h-3.5 w-3.5 shrink-0" />}
+                              </button>
+                            )
+                          })}
+                      </div>
                     )
                   })}
                 </div>
@@ -690,7 +820,14 @@ export function ProjectWorkBar({
           {currentProject ? (
             <>
               <ProjectFolderIcon project={currentProject} className="h-4 w-4" />
-              <span className="max-w-[12rem] truncate">{currentProject.name}</span>
+              <span className="max-w-[12rem] truncate">
+                {currentProject.name}
+                {pendingWorkspaceSelection
+                  ? ` · ${t('workbench.select_workspace', '选择工作区')}`
+                  : selectedWorkspaceDeviceLabel
+                    ? ` · ${selectedWorkspaceDeviceLabel}`
+                    : ''}
+              </span>
             </>
           ) : (
             <>
