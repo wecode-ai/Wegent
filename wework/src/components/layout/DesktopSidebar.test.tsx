@@ -294,9 +294,10 @@ describe('DesktopSidebar', () => {
 
     await userEvent.click(screen.getByTestId('project-item-button'))
 
-    expect(screen.getByTestId('runtime-local-task-running-codex-running')).toHaveTextContent(
-      '运行中'
-    )
+    const runningStatus = screen.getByTestId('runtime-local-task-running-codex-running')
+    expect(runningStatus).toHaveAttribute('aria-label', '运行中')
+    expect(runningStatus).not.toHaveTextContent('运行中')
+    expect(runningStatus.querySelector('svg')).not.toBeNull()
     expect(screen.queryByTestId('runtime-local-task-running-codex-idle')).not.toBeInTheDocument()
   })
 

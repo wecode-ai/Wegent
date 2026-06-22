@@ -879,7 +879,10 @@ describe('MobileWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('open-mobile-drawer-button'))
     await userEvent.click(screen.getByText('github_wegent'))
 
-    expect(screen.getByTestId('mobile-runtime-task-running-codex-1')).toHaveTextContent('运行中')
+    const runningStatus = screen.getByTestId('mobile-runtime-task-running-codex-1')
+    expect(runningStatus).toHaveAttribute('aria-label', '运行中')
+    expect(runningStatus).not.toHaveTextContent('运行中')
+    expect(runningStatus.querySelector('svg')).not.toBeNull()
   })
 
   test('renders unmapped chat runtime tasks as conversations in the mobile drawer', async () => {

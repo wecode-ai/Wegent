@@ -6,6 +6,7 @@ import {
   Folder,
   FolderPlus,
   GitCompareArrows,
+  Loader2,
   MessageSquarePlus,
   Pin,
   Plus,
@@ -110,6 +111,8 @@ type ProjectCreateMode = 'scratch' | 'existing' | 'git'
 
 const SIDEBAR_ROW_METADATA_CLASS =
   'flex items-center gap-1 text-xs text-[rgb(var(--color-sidebar-text-muted))] group-hover/task:invisible'
+const SIDEBAR_RUNNING_SPINNER_CLASS =
+  'h-4 w-4 shrink-0 animate-spin text-[rgb(var(--color-sidebar-text-muted))]'
 
 const SIDEBAR_DEVICE_COLORS = [
   '#5B7CFA',
@@ -772,18 +775,20 @@ function RuntimeLocalTaskRow({
               `runtime-local-task-notify-${task.localTaskId}`,
               `runtime-local-task-notify-icon-${task.localTaskId}`
             )}
-          {task.running && (
-            <span
-              data-testid={`runtime-local-task-running-${task.localTaskId}`}
-              title={t('workbench.runtime_task_running')}
-              aria-label={t('workbench.runtime_task_running')}
-              className="inline-flex h-5 w-[56px] shrink-0 items-center justify-center rounded-md bg-primary/10 text-[11px] font-medium leading-4 text-primary"
-            >
-              {t('workbench.runtime_task_running')}
-            </span>
-          )}
           <span className="flex h-7 w-7 items-center justify-center">
-            {formatRelativeSidebarTime(getRuntimeTaskTime(task))}
+            {task.running ? (
+              <span
+                data-testid={`runtime-local-task-running-${task.localTaskId}`}
+                role="status"
+                title={t('workbench.runtime_task_running')}
+                aria-label={t('workbench.runtime_task_running')}
+                className="flex h-7 w-7 items-center justify-center"
+              >
+                <Loader2 className={SIDEBAR_RUNNING_SPINNER_CLASS} aria-hidden="true" />
+              </span>
+            ) : (
+              formatRelativeSidebarTime(getRuntimeTaskTime(task))
+            )}
           </span>
           {showDeviceMarker && (
             <span

@@ -179,10 +179,9 @@ export function MobileDrawer({
         role="status"
         aria-label={label}
         title={label}
-        className="ml-2 inline-flex h-7 w-[72px] shrink-0 items-center justify-center gap-1 rounded-lg bg-primary/10 text-xs font-medium text-primary"
+        className="ml-2 inline-flex h-7 w-7 shrink-0 items-center justify-center text-[#6B7280]"
       >
         <Loader2 className={MOBILE_RUNNING_SPINNER_CLASS} aria-hidden="true" />
-        <span>{label}</span>
       </span>
     )
   }
