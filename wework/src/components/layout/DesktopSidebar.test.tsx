@@ -250,6 +250,57 @@ describe('DesktopSidebar', () => {
     })
   })
 
+  test('shows running status on running runtime tasks only', async () => {
+    renderSidebar({
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, name: 'Wegent' },
+            totalLocalTasks: 2,
+            deviceWorkspaces: [
+              {
+                id: 91,
+                deviceId: 'local-device',
+                deviceName: 'Local Mac',
+                deviceStatus: 'online',
+                available: true,
+                workspacePath: '/repo/Wegent',
+                localTasks: [
+                  {
+                    localTaskId: 'codex-running',
+                    workspacePath: '/repo/Wegent',
+                    title: 'Investigate stream',
+                    runtime: 'codex',
+                    running: true,
+                    updatedAt: '2026-06-20T03:00:00Z',
+                  },
+                  {
+                    localTaskId: 'codex-idle',
+                    workspacePath: '/repo/Wegent',
+                    title: 'Finished fix',
+                    runtime: 'codex',
+                    running: false,
+                    updatedAt: '2026-06-20T02:00:00Z',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        unmappedDeviceWorkspaces: [],
+        totalLocalTasks: 2,
+      },
+    })
+
+    await userEvent.click(screen.getByTestId('project-item-button'))
+
+    const runningStatus = screen.getByTestId('runtime-local-task-running-codex-running')
+    expect(runningStatus).toHaveAttribute('aria-label', '运行中')
+    expect(runningStatus).not.toHaveTextContent('运行中')
+    expect(runningStatus.querySelector('svg')).not.toBeNull()
+    expect(screen.queryByTestId('runtime-local-task-running-codex-idle')).not.toBeInTheDocument()
+  })
+
   test('shows online device colors and marks runtime tasks by device', async () => {
     renderSidebar({
       devices: [
@@ -561,6 +612,7 @@ describe('DesktopSidebar', () => {
       onCreateProject,
       onPrepareDeviceWorkspace,
       onGetDeviceHomeDirectory: vi.fn().mockResolvedValue('/Users/alice'),
+      onListDeviceDirectories: vi.fn().mockResolvedValue([]),
     })
 
     await user.click(screen.getByTestId('project-menu-7'))

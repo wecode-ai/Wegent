@@ -196,46 +196,6 @@ describe('WorkspacePanelCards', () => {
     expect(screen.queryByText('/workspace/projects/project38')).not.toBeInTheDocument()
   })
 
-  test('starts cloud project sessions scoped to the active task workspace', async () => {
-    const api = createProjectApiMock()
-    render(
-      <WorkspacePanelCards
-        currentProject={project}
-        devices={cloudDevices}
-        workspaceTarget={{
-          deviceId: 'device-1',
-          path: '/workspace/worktrees/8/project38',
-          source: 'task',
-          taskId: 8,
-        }}
-      />
-    )
-
-    await userEvent.click(await screen.findByTestId('workspace-terminal-card'))
-
-    await waitFor(() => expect(api.startTerminalSession).toHaveBeenCalledWith(7, { taskId: 8 }))
-  })
-
-  test('starts cloud IDE sessions scoped to the active task workspace', async () => {
-    const api = createProjectApiMock()
-    render(
-      <WorkspacePanelCards
-        currentProject={project}
-        devices={cloudDevices}
-        workspaceTarget={{
-          deviceId: 'device-1',
-          path: '/workspace/worktrees/8/project38',
-          source: 'task',
-          taskId: 8,
-        }}
-      />
-    )
-
-    await userEvent.click(screen.getByTestId('workspace-ide-card'))
-
-    await waitFor(() => expect(api.startCodeServerSession).toHaveBeenCalledWith(7, { taskId: 8 }))
-  })
-
   test('gives the embedded terminal explicit dimensions for Safari', async () => {
     render(<WorkspacePanelCards currentProject={project} devices={cloudDevices} />)
 
@@ -361,8 +321,7 @@ describe('WorkspacePanelCards', () => {
         workspaceTarget={{
           deviceId: 'device-1',
           path: '/workspace/worktrees/8/project38',
-          source: 'task',
-          taskId: 8,
+          source: 'runtime',
         }}
       />
     )

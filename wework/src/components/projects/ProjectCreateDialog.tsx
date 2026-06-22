@@ -1,4 +1,4 @@
-import { Folder, FolderPlus, Loader2, X } from 'lucide-react'
+import { ArrowUpCircle, Folder, FolderPlus, Loader2, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
@@ -98,6 +98,7 @@ function getDefaultDeviceId(devices: DeviceInfo[], preferredDeviceId?: string | 
   return (
     preferredDevice?.device_id ??
     devices.find(device => canUseForProjectCreation(device))?.device_id ??
+    devices[0]?.device_id ??
     ''
   )
 }
@@ -135,6 +136,12 @@ function mappingsByDeviceId(
     }
   }
   return byDeviceId
+}
+
+function isProjectDeviceUpgradeActive(upgradeState: DeviceUpgradeState | undefined): boolean {
+  return Boolean(
+    upgradeState && !['success', 'error', 'skipped', 'busy'].includes(upgradeState.status)
+  )
 }
 
 export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
@@ -327,11 +334,12 @@ function ProjectCreateDialogContent({
 
     const folderPath = getDeviceFolder(activeDevice.device_id)
     const canUseDevice = canUseForProjectCreation(activeDevice)
+    const belowVersion = isDeviceBelowWeWorkVersion(activeDevice)
     const upgradeState = upgradingDevices[activeDevice.device_id]
-    const canUpgradeDevice =
-      isDeviceBelowWeWorkVersion(activeDevice) &&
-      canRequestDeviceUpgrade(activeDevice) &&
-      Boolean(onUpgradeDevice)
+    const upgrading = isProjectDeviceUpgradeActive(upgradeState)
+    const canUpgradeDevice = Boolean(
+      onUpgradeDevice && belowVersion && canRequestDeviceUpgrade(activeDevice)
+    )
 
     return (
       <section className="mt-4 rounded-lg border border-[#e5e5e5] bg-[#fafafa] p-3">
@@ -355,33 +363,55 @@ function ProjectCreateDialogContent({
           )}
         </div>
 
-        {!canUseDevice && isDeviceBelowWeWorkVersion(activeDevice) && (
-          <div className="mt-3 rounded-md border border-[#f3d7a1] bg-[#fff8e8] px-3 py-2 text-xs text-[#7a4b00]">
-            <p data-testid={`project-device-unavailable-${activeDevice.device_id}`}>
-              {t('workbench.project_device_upgrade_detail', {
-                defaultValue: '当前 {{current}}，需要 {{required}} 或以上',
-                current:
-                  activeDevice.executor_version ||
-                  t('workbench.project_device_version_unknown', '版本未知'),
-                required: WEWORK_MIN_EXECUTOR_VERSION,
-              })}
-            </p>
-            {canUpgradeDevice && (
-              <button
-                type="button"
-                data-testid={`upgrade-project-device-${activeDevice.device_id}`}
-                disabled={submitting || Boolean(upgradeState)}
-                onClick={() => void onUpgradeDevice?.(activeDevice.device_id)}
-                className="mt-2 h-8 rounded-md bg-text-primary px-3 text-xs font-medium text-background hover:bg-text-primary/90 disabled:opacity-60"
-              >
-                {upgradeState
-                  ? t('workbench.project_device_upgrading', {
-                      defaultValue: '升级中：{{message}}',
-                      message: upgradeState.message,
-                    })
-                  : t('workbench.project_device_upgrade_action', '升级')}
-              </button>
-            )}
+        {!canUseDevice && (
+          <div
+            data-testid={`project-device-unavailable-${activeDevice.device_id}`}
+            className="mt-3 rounded-lg border border-[#f0dfc7] bg-[#fff8ed] px-3 py-2 text-[13px] leading-5 text-[#7a4b16]"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="font-medium">
+                  {belowVersion
+                    ? t(
+                        'workbench.project_directory_upgrade_device_hint',
+                        '升级当前设备后可选择目录'
+                      )
+                    : t(
+                        'workbench.project_directory_unavailable_device_hint',
+                        '设备恢复在线后可选择目录'
+                      )}
+                </p>
+                <p className="mt-0.5 text-xs text-[#8a5a20]">
+                  {belowVersion
+                    ? t('workbench.project_device_upgrade_detail', {
+                        defaultValue: '当前 {{current}}，需要 {{required}} 或以上',
+                        current: activeDevice.executor_version
+                          ? `v${activeDevice.executor_version.replace(/^v/i, '')}`
+                          : '-',
+                        required: WEWORK_MIN_EXECUTOR_VERSION,
+                      })
+                    : getDeviceTabStatus(activeDevice, false)}
+                </p>
+              </div>
+              {canUpgradeDevice && (
+                <button
+                  type="button"
+                  data-testid={`upgrade-project-device-${activeDevice.device_id}`}
+                  disabled={submitting || upgrading}
+                  onClick={() => void onUpgradeDevice?.(activeDevice.device_id)}
+                  className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-[#e4b777] bg-white px-2 text-xs font-medium text-[#7a4b16] hover:bg-[#fff4df] disabled:opacity-50"
+                >
+                  {upgrading ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <ArrowUpCircle className="h-3.5 w-3.5" />
+                  )}
+                  {upgrading
+                    ? (upgradeState?.message ?? t('workbench.device_status_checking', '检查中'))
+                    : t('workbench.device_status_upgrade_action', '升级')}
+                </button>
+              )}
+            </div>
           </div>
         )}
 

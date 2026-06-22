@@ -19,13 +19,13 @@ Project
 - LocalTask is executor-local state and remains on the device.
 - A LocalTask's stable identity is `deviceId + localTaskId`. `workspacePath` is only device-workspace context for list grouping, task creation, and right-side workspace tools; task URLs, IM notification subscriptions, and native Codex update deduplication do not use the path as an identity field.
 
-The executor stores the LocalTask index as JSON:
+The executor still keeps a JSON LocalTask index for non-Codex or imported local tasks:
 
 ```text
 $WEGENT_EXECUTOR_HOME/runtime-work/index.json
 ```
 
-It does not depend on SQLite, and it does not sync Codex or Claude Code runtime handles into the central database.
+Native Codex tasks are not written to this index. List refresh discovers them from the Codex SDK and Codex session files, and running state is derived from Codex status plus the session transcript. Runtime handles do not depend on SQLite and are not synced to the central database.
 
 ## List Refresh
 
@@ -34,7 +34,7 @@ The frontend drives task list refreshes through polling.
 1. Wework periodically requests `GET /api/runtime-work?client_origin=wework`.
 2. Backend reads the user's Projects and Device Workspace mappings.
 3. Backend calls `runtime.tasks.list` over the online device WebSocket RPC channel.
-4. The executor refreshes local Codex discovery and the JSON LocalTask index.
+4. The executor refreshes local Codex discovery and merges the non-Codex/imported JSON LocalTask index.
 5. Backend groups results by `deviceId + workspacePath` and returns Project -> Device Workspace -> LocalTask, while each LocalTask is still opened and notified by `deviceId + localTaskId`.
 
 The executor does not poll or push task lists to Backend by itself. Offline devices do not contribute LocalTasks. Wework may show an offline mapped workspace, but it does not keep a central cache of local tasks.
@@ -47,7 +47,7 @@ When a user opens a LocalTask, Wework calls Backend:
 POST /api/runtime-work/transcript
 ```
 
-Backend forwards `deviceId + localTaskId` to the owning device with `runtime.tasks.transcript`. If the request includes `workspacePath`, the executor uses it as a local-index lookup hint; otherwise, it locates the task from the local LocalTask index by `localTaskId`. The executor reads the native runtime transcript and returns normalized messages.
+Backend forwards `deviceId + localTaskId` to the owning device with `runtime.tasks.transcript`. Native Codex tasks are located through their Codex session path or session-file discovery. Non-Codex/imported tasks may use `workspacePath` as a local-index lookup hint, or locate the task from the local LocalTask index by `localTaskId`. The executor reads the native runtime transcript and returns normalized messages.
 
 When a user continues a LocalTask, Wework calls:
 

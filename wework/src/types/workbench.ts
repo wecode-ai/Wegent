@@ -4,7 +4,6 @@ import type {
   ProjectWithTasks,
   RuntimeTaskAddress,
   RuntimeWorkListResponse,
-  Task,
   Team,
   TurnFileChangesSummary,
   User,
@@ -70,7 +69,6 @@ export interface WorkbenchState {
   selectedDeviceWorkspaceId: number | null
   pendingProjectWorkspaceProjectId: number | null
   standaloneDeviceId: string | null
-  currentTask: Task | null
   input: string
   isBootstrapping: boolean
   isSending: boolean

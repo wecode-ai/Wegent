@@ -250,6 +250,7 @@ export interface NormalizedRuntimeMessage {
   createdAt?: string | null
   source?: RuntimeMessageSource | null
   attachments?: Attachment[]
+  blocks?: ChatBlock[]
 }
 
 export interface LocalTaskSummary {

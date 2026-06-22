@@ -14,6 +14,7 @@ export function WorkbenchPage() {
     queuedMessages,
     guidanceMessages,
     codeCommentContexts,
+    isRuntimeTranscriptLoading,
     upgradingDevices,
     projectExecutionMode,
     setProjectExecutionMode,
@@ -81,7 +82,7 @@ export function WorkbenchPage() {
     selectedDeviceWorkspaceId: state.selectedDeviceWorkspaceId,
     pendingProjectWorkspaceProjectId: state.pendingProjectWorkspaceProjectId,
     executionMode: projectExecutionMode,
-    executionModeLocked: Boolean(state.currentTask),
+    executionModeLocked: Boolean(state.currentRuntimeTask),
     onSelectProject: selectProject,
     onSelectStandaloneDevice: selectStandaloneDevice,
     onSelectProjectWorkspace: selectProjectWorkspace,
@@ -100,6 +101,7 @@ export function WorkbenchPage() {
       queuedMessages={queuedMessages}
       guidanceMessages={guidanceMessages}
       codeCommentContexts={codeCommentContexts}
+      isRuntimeTranscriptLoading={isRuntimeTranscriptLoading}
       upgradingDevices={upgradingDevices}
       onNewChat={startNewChat}
       onStartStandaloneChat={startStandaloneChat}

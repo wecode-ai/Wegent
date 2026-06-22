@@ -1380,6 +1380,13 @@ class RuntimeWorkRpcHandler:
                     for attachment in attachments
                     if isinstance(attachment, dict)
                 ]
+            blocks = message.get("blocks")
+            if isinstance(blocks, list):
+                normalized_blocks = [
+                    block for block in blocks if isinstance(block, dict)
+                ]
+                if normalized_blocks:
+                    normalized_message["blocks"] = normalized_blocks
 
             source = message.get("source") or source_by_message_id.get(message_id)
             if isinstance(source, dict):

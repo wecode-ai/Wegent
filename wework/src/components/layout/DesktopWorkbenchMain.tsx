@@ -23,7 +23,6 @@ import type {
   RuntimeTaskAddress,
   RuntimeTaskForkTarget,
   RuntimeWorkListResponse,
-  Task,
   TurnFileChangesSummary,
 } from '@/types/api'
 import type { DeviceUpgradeState } from '@/types/device-events'
@@ -69,17 +68,12 @@ const DESKTOP_QUEUED_SCROLL_TO_BOTTOM_BUTTON_CLASS =
   'bottom-52 z-popover bg-background/95 shadow-md'
 
 function workbenchSessionKey({
-  currentTask,
   currentRuntimeTask,
   currentProject,
 }: {
-  currentTask: Task | null
   currentRuntimeTask: RuntimeTaskAddress | null
   currentProject: ProjectWithTasks | null
 }): string {
-  if (currentTask) {
-    return `task:${currentTask.id}`
-  }
   if (currentRuntimeTask) {
     return `runtime:${currentRuntimeTask.deviceId}:${currentRuntimeTask.localTaskId}`
   }
@@ -133,7 +127,6 @@ interface DesktopReviewState {
 interface DesktopWorkbenchMainProps {
   sidebarCollapsed: boolean
   isBootstrapping: boolean
-  currentTask: Task | null
   currentRuntimeTask: RuntimeTaskAddress | null
   runtimeWork: RuntimeWorkListResponse | null
   currentProject: ProjectWithTasks | null
@@ -142,6 +135,7 @@ interface DesktopWorkbenchMainProps {
   devices: DeviceInfo[]
   upgradingDevices: Record<string, DeviceUpgradeState>
   messages: WorkbenchMessage[]
+  isRuntimeTranscriptLoading?: boolean
   queuedMessages: QueuedWorkbenchMessage[]
   guidanceMessages: GuidanceWorkbenchMessage[]
   codeCommentContexts?: CodeCommentContext[]
@@ -188,7 +182,6 @@ interface DesktopWorkbenchMainProps {
 export function DesktopWorkbenchMain({
   sidebarCollapsed,
   isBootstrapping,
-  currentTask,
   currentRuntimeTask,
   runtimeWork,
   currentProject,
@@ -197,6 +190,7 @@ export function DesktopWorkbenchMain({
   devices,
   upgradingDevices,
   messages,
+  isRuntimeTranscriptLoading = false,
   queuedMessages,
   guidanceMessages,
   codeCommentContexts = [],
@@ -256,17 +250,15 @@ export function DesktopWorkbenchMain({
   const rightPanelShellWidth = rightPanelOpen ? `calc(100% - ${rightSplitChatWidth}px)` : '0px'
   const reviewRequestSequence = useRef(0)
   const rightPanelSessionKey = workbenchSessionKey({
-    currentTask,
     currentRuntimeTask,
     currentProject,
   })
   const previousRightPanelSessionKey = useRef(rightPanelSessionKey)
   const isTauri = isTauriRuntime()
   const [modelSelectorOpenSignal, setModelSelectorOpenSignal] = useState(0)
-  const hasConversation = messages.length > 0 || Boolean(currentTask || currentRuntimeTask)
+  const hasConversation = messages.length > 0 || currentRuntimeTask
   const hasQueuedComposerRows = queuedMessages.length > 0 || guidanceMessages.length > 0
   const activeDeviceId = getActiveWorkbenchDeviceId({
-    currentTask,
     currentProject,
     standaloneDeviceId: projectWork.currentStandaloneDeviceId,
   })
@@ -544,7 +536,8 @@ export function DesktopWorkbenchMain({
           <div className="relative min-h-0 flex-1 overflow-hidden">
             <ScrollableMessageArea
               messages={messages}
-              conversationKey={currentTask?.id ?? null}
+              loading={isRuntimeTranscriptLoading}
+              conversationKey={currentRuntimeTask?.localTaskId ?? null}
               className="h-full"
               scrollTestId="desktop-chat-scroll"
               scrollerClassName={hasQueuedComposerRows ? 'pb-52' : 'pb-40'}

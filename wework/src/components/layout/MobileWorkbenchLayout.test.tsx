@@ -31,7 +31,6 @@ const baseState = {
   currentProject: null,
   currentRuntimeTask: null,
   standaloneDeviceId: null,
-  currentTask: null,
   input: '',
   isBootstrapping: false,
   isSending: false,
@@ -200,14 +199,7 @@ describe('MobileWorkbenchLayout', () => {
           ...baseState,
           projects: [project],
           devices: [offlineDevice],
-          currentTask: {
-            id: 7,
-            title: '项目任务',
-            status: 'COMPLETED',
-            task_type: 'code',
-            project_id: 1,
-            created_at: '2026-05-25T00:00:00.000Z',
-          },
+          currentProject: project,
           input: 'hello',
         }}
         messages={[
@@ -473,12 +465,9 @@ describe('MobileWorkbenchLayout', () => {
   test('keeps the conversation chrome fixed while only messages scroll', () => {
     const state = {
       ...baseState,
-      currentTask: {
-        id: 3,
-        title: '开始追问',
-        status: 'COMPLETED',
-        task_type: 'code' as const,
-        created_at: '2026-05-25T00:00:00.000Z',
+      currentRuntimeTask: {
+        deviceId: 'device-1',
+        localTaskId: 'runtime-3',
       },
     }
 
@@ -855,6 +844,57 @@ describe('MobileWorkbenchLayout', () => {
       deviceId: 'local-device',
       localTaskId: 'codex-1',
     })
+  })
+
+  test('shows running status on mobile runtime tasks', async () => {
+    render(
+      <MobileWorkbenchLayout
+        state={{
+          ...baseState,
+          runtimeWork: {
+            projects: [
+              {
+                project: { id: 1, name: 'github_wegent' },
+                totalLocalTasks: 1,
+                deviceWorkspaces: [
+                  {
+                    id: 91,
+                    deviceId: 'local-device',
+                    deviceName: 'Local Mac',
+                    deviceStatus: 'online',
+                    available: true,
+                    workspacePath: '/repo/Wegent',
+                    localTasks: [
+                      {
+                        localTaskId: 'codex-1',
+                        workspacePath: '/repo/Wegent',
+                        title: 'Fix reconnect',
+                        runtime: 'codex',
+                        running: true,
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+            unmappedDeviceWorkspaces: [],
+            totalLocalTasks: 1,
+          },
+        }}
+        messages={[]}
+        onSelectProject={vi.fn()}
+        onInputChange={vi.fn()}
+        onSend={vi.fn()}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('open-mobile-drawer-button'))
+    await userEvent.click(screen.getByText('github_wegent'))
+
+    const runningStatus = screen.getByTestId('mobile-runtime-task-running-codex-1')
+    expect(runningStatus).toHaveAttribute('aria-label', '运行中')
+    expect(runningStatus).not.toHaveTextContent('运行中')
+    expect(runningStatus.querySelector('svg')).not.toBeNull()
   })
 
   test('renders unmapped chat runtime tasks as conversations in the mobile drawer', async () => {
