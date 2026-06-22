@@ -10,7 +10,6 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { isSettingsRoute, navigateTo } from '@/lib/navigation'
 import { resolveWorkspaceTarget, workspaceTargetKey } from '@/lib/workspace-target'
 import {
-  findProjectForTask,
   findWorkbenchDevice,
   getActiveWorkbenchDeviceId,
   isWorkbenchDeviceOnline,
@@ -62,6 +61,7 @@ interface MobileWorkbenchLayoutProps {
   queuedMessages?: QueuedWorkbenchMessage[]
   guidanceMessages?: GuidanceWorkbenchMessage[]
   codeCommentContexts?: CodeCommentContext[]
+  isRuntimeTranscriptLoading?: boolean
   upgradingDevices?: Record<string, DeviceUpgradeState>
   activeItem?: 'chat' | 'plugins' | 'automation'
   onNewChat?: () => void
@@ -155,6 +155,7 @@ export function MobileWorkbenchLayout({
   queuedMessages = [],
   guidanceMessages = [],
   codeCommentContexts = [],
+  isRuntimeTranscriptLoading = false,
   upgradingDevices = {},
   activeItem,
   onNewChat,
@@ -221,19 +222,8 @@ export function MobileWorkbenchLayout({
     tone: 'success' | 'error'
   } | null>(null)
   const imSessionsRequestSequence = useRef(0)
-  const hasConversation = messages.length > 0 || state.currentTask
-  const currentTaskProject = useMemo(
-    () => findProjectForTask(state.projects, state.currentTask),
-    [state.currentTask, state.projects]
-  )
-  const activeConversationProject = state.currentProject ?? currentTaskProject
-  const currentTaskWorkspaceKey = state.currentTask
-    ? [
-        state.currentTask.id,
-        state.currentTask.device_id ?? '',
-        state.currentTask.execution_workspace_path ?? '',
-      ].join(':')
-    : ''
+  const hasConversation = messages.length > 0 || state.currentRuntimeTask
+  const activeConversationProject = state.currentProject
   const workspaceTargetResolverApi = useMemo(
     () => ({
       getProjectWorkspaceRoot: (deviceId: string) => {
@@ -306,7 +296,7 @@ export function MobileWorkbenchLayout({
     currentProjectId: state.currentProject?.id,
     currentStandaloneDeviceId: state.standaloneDeviceId,
     executionMode: 'current_workspace',
-    executionModeLocked: Boolean(state.currentTask),
+    executionModeLocked: Boolean(state.currentRuntimeTask),
     onSelectProject,
     onSelectStandaloneDevice: () => {},
     onExecutionModeChange: () => {},
@@ -340,7 +330,6 @@ export function MobileWorkbenchLayout({
         : undefined,
   }
   const activeDeviceId = getActiveWorkbenchDeviceId({
-    currentTask: state.currentTask,
     currentProject: activeConversationProject,
     standaloneDeviceId: effectiveProjectWork.currentStandaloneDeviceId,
   })
@@ -384,10 +373,10 @@ export function MobileWorkbenchLayout({
   }, [])
 
   useEffect(() => {
-    if (activeConversationProject && !state.currentTask) {
+    if (activeConversationProject) {
       void refreshEnvironmentInfo()
     }
-  }, [activeConversationProject, refreshEnvironmentInfo, state.currentTask])
+  }, [activeConversationProject, refreshEnvironmentInfo])
 
   useEffect(() => {
     let cancelled = false
@@ -395,7 +384,6 @@ export function MobileWorkbenchLayout({
     setWorkspaceTarget(null)
     setWorkspaceTargetError(null)
     resolveWorkspaceTarget({
-      currentTask: state.currentTask,
       currentProject: activeConversationProject,
       api: workspaceTargetResolverApi,
     })
@@ -422,8 +410,6 @@ export function MobileWorkbenchLayout({
     }
   }, [
     activeConversationProject,
-    currentTaskWorkspaceKey,
-    state.currentTask,
     workspaceTargetResolverApi,
   ])
 
@@ -570,7 +556,8 @@ export function MobileWorkbenchLayout({
             </header>
             <ScrollableMessageArea
               messages={messages}
-              conversationKey={state.currentTask?.id ?? null}
+              loading={isRuntimeTranscriptLoading}
+              conversationKey={state.currentRuntimeTask?.localTaskId ?? null}
               className="h-full"
               scrollerClassName="pb-28 pt-16"
               devices={state.devices}

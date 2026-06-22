@@ -88,11 +88,7 @@ export function WorkspacePanelActions({
     setCodeServerLoading(true)
     setCodeServerError(null)
     try {
-      const session = workspaceTarget?.taskId
-        ? await projectApi.startCodeServerSession(currentProject.id, {
-            taskId: workspaceTarget.taskId,
-          })
-        : await projectApi.startCodeServerSession(currentProject.id)
+      const session = await projectApi.startCodeServerSession(currentProject.id)
       if (!session.url) {
         throw new Error('IDE session URL is missing')
       }

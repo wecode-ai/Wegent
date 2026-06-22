@@ -23,8 +23,7 @@ export interface WorkspaceTextFileResponse {
 export interface WorkspaceTarget {
   deviceId: string
   path: string
-  source: 'task' | 'project' | 'runtime'
-  taskId?: number
+  source: 'project' | 'runtime'
 }
 
 export interface WorkspaceFileOpenRequest {
