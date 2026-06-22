@@ -81,8 +81,9 @@ Backend 根据请求中的项目映射或独立设备工作区解析目标设备
 运行时创建的持久化位置由具体 runtime 决定：
 
 - Claude Code 创建 executor JSON LocalTask，并在该索引中保存 transcript 和 runtime handle。
-- Codex 创建原生 Codex SDK thread。`runtime.tasks.create` 返回的 `localTaskId` 是 Codex threadId，后续列表和 transcript 只从原生 Codex discovery/session 读取，不把 Codex 任务缓存到 executor JSON 索引。
-- Codex 创建时仍通过 LocalTask Responses 事件通道流式返回 `response.created`、文本/tool 增量和 `response.completed`/`error`，前端不需要等待下一次列表刷新才能显示运行中的回复。
+- Codex 创建时先返回 executor 进程内的 `localTaskId`，让前端立即打开任务并接收 stream；后台启动原生 Codex SDK thread 后，会把真实 Codex threadId 保存在内存 runtime handle 中用于后续 send/resume。
+- Codex 创建和继续时都不把任务缓存到 executor JSON 索引。当前 executor 进程内会保留一个临时内存记录，用来覆盖 Codex discovery 尚未发现新 thread 的短暂空窗；executor 重启后再以原生 Codex discovery/session 为准。
+- Codex 创建时仍通过 LocalTask Responses 事件通道流式返回 `response.created`、文本/tool 增量和 `response.completed`/`error`，这些事件使用 create 返回的 `localTaskId`，前端不需要等待下一次列表刷新才能显示运行中的回复。
 - 附件仍由 executor 的 Codex attachment pipeline 处理：Backend 只传 attachment id，executor 在目标设备上下载并转换给 Codex SDK，前端不传本地附件路径。
 
 Project 场景必须使用可信的 Device Workspace 映射：

@@ -81,8 +81,9 @@ Backend resolves the target device and directory from either a Project mapping o
 The runtime owns persistence for newly created tasks:
 
 - Claude Code creates an executor JSON LocalTask and stores the transcript and runtime handle in that index.
-- Codex creates a native Codex SDK thread. The `localTaskId` returned by `runtime.tasks.create` is the Codex threadId. Later list and transcript calls read only from native Codex discovery/session data and do not cache Codex tasks in the executor JSON index.
-- Codex creation still streams over the LocalTask Responses event channel with `response.created`, text/tool deltas, and `response.completed`/`error`, so the frontend does not need to wait for the next list refresh to show the running reply.
+- Codex creation first returns an executor-process-local `localTaskId` so the frontend can open the task and receive stream events immediately. After the native Codex SDK thread starts in the background, the real Codex threadId is stored in the in-memory runtime handle for later send/resume calls.
+- Codex creation and continuation do not cache the task in the executor JSON index. The current executor process keeps a temporary in-memory record to cover the short window before Codex discovery can see the new thread; after an executor restart, native Codex discovery/session data is authoritative again.
+- Codex creation still streams over the LocalTask Responses event channel with `response.created`, text/tool deltas, and `response.completed`/`error`. Those events use the `localTaskId` returned by create, so the frontend does not need to wait for the next list refresh to show the running reply.
 - Attachments still go through the executor Codex attachment pipeline: Backend sends attachment ids only, and the executor downloads and converts them on the target device for the Codex SDK. The frontend does not send local attachment paths.
 
 Project-backed creation must use a trusted Device Workspace mapping:

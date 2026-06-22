@@ -244,6 +244,20 @@ function ProjectChatProbe() {
           .flatMap(message => (message.attachments ?? []).map(attachment => attachment.filename))
           .join(',')}
       </span>
+      <span data-testid="project-chat-message-contents">
+        {workbench.messages.map(message => `${message.role}:${message.content}`).join('|')}
+      </span>
+      <span data-testid="project-chat-blocks">
+        {workbench.messages
+          .flatMap(message =>
+            (message.blocks ?? []).map(block =>
+              block.type === 'tool'
+                ? `${block.type}:${block.toolName}:${block.status}`
+                : `${block.type}:${block.status}`
+            )
+          )
+          .join('|')}
+      </span>
       <span data-testid="project-execution-mode">{workbench.projectExecutionMode}</span>
       <span data-testid="project-worktree-base-branch">
         {workbench.projectWorktreeBaseBranch ?? 'no-branch'}
@@ -798,6 +812,29 @@ describe('WorkbenchProvider', () => {
     )
 
     await waitFor(() => expect(screen.getByTestId('probe')).toHaveTextContent('alice'))
+  })
+
+  test('ensures the chat socket is connected while mounted', async () => {
+    const socketClient = {
+      ensureConnected: vi.fn().mockResolvedValue(undefined),
+      dispose: vi.fn(),
+    }
+    const services = {
+      ...createWorkbenchServices(),
+      socketClient,
+    } as WorkbenchServices & { socketClient: typeof socketClient }
+
+    const { unmount } = render(
+      <WorkbenchProvider user={{ id: 1, user_name: 'alice', email: 'a@b.c' }} services={services}>
+        <Probe />
+      </WorkbenchProvider>
+    )
+
+    await waitFor(() => expect(socketClient.ensureConnected).toHaveBeenCalledTimes(1))
+
+    unmount()
+
+    expect(socketClient.dispose).toHaveBeenCalledTimes(1)
   })
 
   test('loads runtime work during bootstrap without a DB recent task API', async () => {
@@ -2577,7 +2614,21 @@ describe('WorkbenchProvider', () => {
         localTaskId: 'runtime-codex-1',
         workspacePath: '/workspace/project-alpha',
         runtime: 'codex',
-        messages: [],
+        messages: [
+          {
+            id: 'runtime-codex-1:user:1',
+            role: 'user',
+            content: 'build it',
+            createdAt: '2026-06-20T00:00:00.000Z',
+          },
+          {
+            id: 'runtime-codex-1:assistant:1',
+            role: 'assistant',
+            content: 'Done',
+            status: 'done',
+            createdAt: '2026-06-20T00:00:01.000Z',
+          },
+        ],
       }),
     })
     const updateCurrentUser = vi.fn().mockResolvedValue(undefined)
@@ -2707,6 +2758,154 @@ describe('WorkbenchProvider', () => {
         },
       },
     })
+    expect(screen.getByTestId('project-chat-message-contents')).toHaveTextContent('assistant:Done')
+  })
+
+  test('renders streaming local task events when the socket connects after chat start', async () => {
+    let streamHandlers: ChatStreamHandlers = {}
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      createRuntimeTask: vi.fn().mockResolvedValue({
+        accepted: true,
+        deviceId: 'device-1',
+        localTaskId: 'runtime-codex-live',
+        runtime: 'codex',
+      }),
+      getRuntimeTranscript: vi.fn().mockResolvedValue({
+        localTaskId: 'runtime-codex-live',
+        runtime: 'codex',
+        messages: [],
+      }),
+    })
+
+    render(
+      <WorkbenchProvider
+        user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+        services={createWorkbenchServices({
+          modelApi: {
+            listModels: vi.fn().mockResolvedValue({
+              data: [
+                {
+                  name: 'codex-gpt-5.5',
+                  type: 'runtime',
+                  displayName: 'GPT-5.5 (Codex)',
+                  provider: 'openai',
+                  modelId: 'gpt-5.5',
+                  config: {
+                    protocol: 'openai-responses',
+                    apiFormat: 'responses',
+                  },
+                  runtime: {
+                    family: 'openai.openai-responses',
+                    provider: 'openai',
+                  },
+                },
+              ],
+            }),
+          },
+          projectApi: {
+            ...createWorkbenchServices().projectApi,
+            listProjects: vi.fn().mockResolvedValue({
+              items: [
+                {
+                  id: 7,
+                  name: 'Wegent',
+                  tasks: [],
+                  config: {
+                    mode: 'workspace',
+                    execution: {
+                      targetType: 'local',
+                      deviceId: 'device-1',
+                    },
+                  },
+                },
+              ],
+            }),
+          },
+          deviceApi: {
+            ...createWorkbenchServices().deviceApi,
+            listDevices: vi.fn().mockResolvedValue([
+              {
+                id: 1,
+                device_id: 'device-1',
+                name: 'Project Device',
+                status: 'online',
+                is_default: false,
+                device_type: 'cloud',
+                bind_shell: 'claudecode',
+                executor_version: '1.8.5',
+              },
+            ]),
+            listSkills: vi.fn().mockResolvedValue([]),
+          },
+          runtimeWorkApi,
+          chatStream: {
+            joinTask: vi.fn(),
+            leaveTask: vi.fn(),
+            sendMessage: vi.fn(),
+            subscribe: vi.fn(handlers => {
+              streamHandlers = handlers
+              return vi.fn()
+            }),
+          },
+        })}
+      >
+        <ProjectChatProbe />
+      </WorkbenchProvider>
+    )
+
+    await waitFor(() => expect(screen.getByText('select project')).toBeInTheDocument())
+
+    await userEvent.click(screen.getByText('select project'))
+    await userEvent.click(screen.getByText('select runtime model'))
+    await userEvent.click(screen.getByText('set input'))
+    await userEvent.click(screen.getByText('send'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent(
+        'device-1:runtime-codex-live'
+      )
+    )
+
+    await act(async () => {
+      streamHandlers.onBlockCreated?.({
+        subtask_id: 10225859991233,
+        device_id: 'device-1',
+        local_task_id: 'runtime-codex-live',
+        block: {
+          id: 'call_1',
+          type: 'tool',
+          tool_name: 'bash',
+          tool_input: {},
+          status: 'pending',
+        },
+      })
+      streamHandlers.onBlockUpdated?.({
+        subtask_id: 10225859991233,
+        device_id: 'device-1',
+        local_task_id: 'runtime-codex-live',
+        block_id: 'call_1',
+        status: 'done',
+        tool_output: 'tool output',
+      })
+      streamHandlers.onChatChunk?.({
+        subtask_id: 10225859991233,
+        content: 'Hi',
+        offset: 0,
+        device_id: 'device-1',
+        local_task_id: 'runtime-codex-live',
+      })
+      streamHandlers.onChatDone?.({
+        subtask_id: 10225859991233,
+        offset: 2,
+        result: { value: 'Hi' },
+        device_id: 'device-1',
+        local_task_id: 'runtime-codex-live',
+      })
+      await Promise.resolve()
+    })
+
+    expect(screen.getByTestId('project-chat-message-contents')).toHaveTextContent('assistant:Hi')
+    expect(screen.getByTestId('project-chat-blocks')).toHaveTextContent('tool:bash:done')
   })
 
   test('blocks runtime project send until a project workspace is confirmed', async () => {

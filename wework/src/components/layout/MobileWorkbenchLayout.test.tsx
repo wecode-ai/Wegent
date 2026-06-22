@@ -140,6 +140,29 @@ describe('MobileWorkbenchLayout', () => {
     expect(screen.getByTestId('add-context-button')).toHaveClass('h-[52px]')
   })
 
+  test('treats a selected runtime task with an empty transcript as a conversation', () => {
+    renderAtMobileWidth(
+      <MobileWorkbenchLayout
+        state={{
+          ...baseState,
+          currentRuntimeTask: {
+            deviceId: 'device-1',
+            workspacePath: '/workspace/project-alpha',
+            localTaskId: 'runtime-empty',
+          },
+        }}
+        messages={[]}
+        projectChat={baseProjectChat}
+        onSelectProject={vi.fn()}
+        onInputChange={vi.fn()}
+        onSend={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('mobile-chat-input-dock')).toBeInTheDocument()
+    expect(screen.queryByTestId('mobile-empty-state-content')).not.toBeInTheDocument()
+  })
+
   test('shows an offline device notice above mobile conversations', () => {
     const offlineDevice = {
       id: 1,

@@ -221,7 +221,8 @@ export function MobileWorkbenchLayout({
     tone: 'success' | 'error'
   } | null>(null)
   const imSessionsRequestSequence = useRef(0)
-  const hasConversation = messages.length > 0 || state.currentTask
+  const hasConversation =
+    messages.length > 0 || Boolean(state.currentTask || state.currentRuntimeTask)
   const currentTaskProject = useMemo(
     () => findProjectForTask(state.projects, state.currentTask),
     [state.currentTask, state.projects]

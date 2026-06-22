@@ -104,6 +104,7 @@ import {
   normalizeWorkbenchBlockStatus,
   reduceWorkbenchMessages,
 } from '@wegent/chat-core'
+import type { AuthenticatedSocketClient } from '@wegent/chat-core'
 import { useWorkbenchAttachments } from './useWorkbenchAttachments'
 import { useWorkbenchModels } from './useWorkbenchModels'
 import { useWorkbenchSkills } from './useWorkbenchSkills'
@@ -247,6 +248,7 @@ export interface WorkbenchServices {
   imSessionApi?: ReturnType<typeof createImSessionApi>
   runtimeWorkApi?: ReturnType<typeof createRuntimeWorkApi>
   userApi?: ReturnType<typeof createUserApi>
+  socketClient?: Pick<AuthenticatedSocketClient, 'ensureConnected' | 'dispose'>
   chatStream: ReturnType<typeof createChatStream>
 }
 
@@ -386,7 +388,6 @@ function createDefaultServices(): WorkbenchServices {
     getToken,
     logger: console,
   })
-  void socketClient.ensureConnected()
 
   return {
     teamApi: createTeamApi(client),
@@ -399,6 +400,7 @@ function createDefaultServices(): WorkbenchServices {
     imSessionApi: createImSessionApi(client),
     runtimeWorkApi: createRuntimeWorkApi(client),
     userApi: createUserApi(client),
+    socketClient,
     chatStream: createChatStream(socketClient.socket),
   }
 }
@@ -1003,6 +1005,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
   const handledRuntimeTaskRouteRef = useRef<string | null>(null)
   const urlTaskOpenAttemptRef = useRef<number | null>(null)
   const runtimeOpenRequestIdRef = useRef(0)
+  const currentRuntimeTaskRef = useRef<RuntimeTaskAddress | null>(null)
   const isOptionsLocked = Boolean(state.currentTask || state.currentRuntimeTask)
   const currentUser = state.user ?? user
   const activeProject =
@@ -1012,6 +1015,27 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     currentProject: activeProject,
     standaloneDeviceId: state.standaloneDeviceId,
   })
+
+  useEffect(() => {
+    currentRuntimeTaskRef.current = state.currentRuntimeTask
+  }, [state.currentRuntimeTask])
+
+  useEffect(() => {
+    const socketClient = resolvedServices.socketClient
+    if (!socketClient) return undefined
+
+    let isMounted = true
+    void socketClient.ensureConnected().catch(error => {
+      if (isMounted) {
+        console.error('[Workbench] Failed to connect chat socket', error)
+      }
+    })
+
+    return () => {
+      isMounted = false
+      socketClient.dispose()
+    }
+  }, [resolvedServices.socketClient])
 
   const markTaskRunning = useCallback((taskId: number | null | undefined) => {
     if (!taskId) return
@@ -1390,7 +1414,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
       onDeviceUpgradeStatus: handleDeviceUpgradeStatus,
       onChatMessage: payload => {
         if (payload.local_task_id) {
-          if (!isCurrentLocalTaskEvent(state.currentRuntimeTask, payload)) return
+          if (!isCurrentLocalTaskEvent(currentRuntimeTaskRef.current, payload)) return
           dispatchMessages({
             type: 'user_added',
             message: chatMessageToWorkbenchMessage(payload),
@@ -1405,7 +1429,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
       },
       onChatStart: payload => {
         if (payload.local_task_id) {
-          if (!isCurrentLocalTaskEvent(state.currentRuntimeTask, payload)) return
+          if (!isCurrentLocalTaskEvent(currentRuntimeTaskRef.current, payload)) return
           setIsAwaitingAssistantStart(false)
           dispatchMessages({
             type: 'assistant_started',
@@ -1432,7 +1456,10 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         })
       },
       onChatChunk: payload => {
-        if (payload.local_task_id && !isCurrentLocalTaskEvent(state.currentRuntimeTask, payload)) {
+        if (
+          payload.local_task_id &&
+          !isCurrentLocalTaskEvent(currentRuntimeTaskRef.current, payload)
+        ) {
           return
         }
         dispatchMessages({
@@ -1445,7 +1472,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
       },
       onChatDone: payload => {
         if (payload.local_task_id) {
-          if (!isCurrentLocalTaskEvent(state.currentRuntimeTask, payload)) return
+          if (!isCurrentLocalTaskEvent(currentRuntimeTaskRef.current, payload)) return
           setIsAwaitingAssistantStart(false)
           dispatchMessages({
             type: 'assistant_done',
@@ -1478,7 +1505,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
       },
       onChatError: payload => {
         if (payload.local_task_id) {
-          if (!isCurrentLocalTaskEvent(state.currentRuntimeTask, payload)) return
+          if (!isCurrentLocalTaskEvent(currentRuntimeTaskRef.current, payload)) return
           setIsAwaitingAssistantStart(false)
           dispatchMessages({
             type: 'assistant_error',
@@ -1508,7 +1535,10 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         })
       },
       onBlockCreated: payload => {
-        if (payload.local_task_id && !isCurrentLocalTaskEvent(state.currentRuntimeTask, payload)) {
+        if (
+          payload.local_task_id &&
+          !isCurrentLocalTaskEvent(currentRuntimeTaskRef.current, payload)
+        ) {
           return
         }
         const block = normalizeChatBlock(payload.subtask_id, payload.block)
@@ -1520,7 +1550,10 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         })
       },
       onBlockUpdated: payload => {
-        if (payload.local_task_id && !isCurrentLocalTaskEvent(state.currentRuntimeTask, payload)) {
+        if (
+          payload.local_task_id &&
+          !isCurrentLocalTaskEvent(currentRuntimeTaskRef.current, payload)
+        ) {
           return
         }
         dispatchMessages({
@@ -1572,7 +1605,6 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     resolvedServices,
     setDeviceUpgradeState,
     state.currentTask?.id,
-    state.currentRuntimeTask,
   ])
 
   useEffect(() => {
@@ -1864,6 +1896,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         address,
         project,
       })
+      currentRuntimeTaskRef.current = address
       dispatchMessages({
         type: 'reset',
         messages: transcript.messages.map(message =>
@@ -1898,6 +1931,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         state.currentRuntimeTask.localTaskId === address.localTaskId
       ) {
         dispatch({ type: 'current_task_cleared' })
+        currentRuntimeTaskRef.current = null
         dispatchMessages({ type: 'reset', messages: [] })
         setQueuedSends([])
         setGuidanceMessages([])
@@ -2526,6 +2560,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
           ? (state.projects.find(project => project.id === projectId) ?? state.currentProject)
           : null
         if (address.deviceId) rememberExecutionDevice(address.deviceId)
+        currentRuntimeTaskRef.current = address
         dispatch({
           type: 'runtime_task_opened',
           address,

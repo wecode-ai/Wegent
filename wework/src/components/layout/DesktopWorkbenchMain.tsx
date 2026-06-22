@@ -263,7 +263,7 @@ export function DesktopWorkbenchMain({
   const previousRightPanelSessionKey = useRef(rightPanelSessionKey)
   const isTauri = isTauriRuntime()
   const [modelSelectorOpenSignal, setModelSelectorOpenSignal] = useState(0)
-  const hasConversation = messages.length > 0 || currentTask
+  const hasConversation = messages.length > 0 || Boolean(currentTask || currentRuntimeTask)
   const hasQueuedComposerRows = queuedMessages.length > 0 || guidanceMessages.length > 0
   const activeDeviceId = getActiveWorkbenchDeviceId({
     currentTask,

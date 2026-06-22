@@ -1901,11 +1901,17 @@ async def test_runtime_work_handler_creates_codex_runtime_task_as_native_thread(
 
     assert result["success"] is True
     assert result["accepted"] is True
-    assert result["localTaskId"] == "codex-thread-1"
+    assert result["localTaskId"].startswith("codex-")
     assert result["workspacePath"] == "/repo/Wegent"
     assert result["runtime"] == "codex"
     await asyncio.gather(*handler._running_sdk_tasks)
     assert store.list_tasks() == []
+    assert (
+        handler._sdk_codex_task_records[result["localTaskId"]].runtime_handle[
+            "threadId"
+        ]
+        == "codex-thread-1"
+    )
     assert discovery.created[0][1:] == ("create a Codex task", "/repo/Wegent")
     assert discovery.created[0][0].new_session is True
     assert discovery.created[0][0].project_workspace_path == "/repo/Wegent"
@@ -1914,7 +1920,194 @@ async def test_runtime_work_handler_creates_codex_runtime_task_as_native_thread(
         "response.output_text.delta",
         "response.completed",
     ]
-    assert events[0][1]["local_task_id"] == "codex-thread-1"
+    assert {payload["local_task_id"] for _event, payload in events} == {
+        result["localTaskId"]
+    }
+    transcript = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "workspacePath": "/repo/Wegent",
+                "localTaskId": result["localTaskId"],
+            },
+        }
+    )
+    assert [message["role"] for message in transcript["messages"]] == [
+        "user",
+        "assistant",
+    ]
+    assert [message["content"] for message in transcript["messages"]] == [
+        "create a Codex task",
+        "Created",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_runtime_work_handler_returns_before_codex_thread_start_finishes(
+    tmp_path,
+):
+    from executor.runtime_work.local_task_store import LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    class DelayedThreadStartDiscovery(EmptyDiscovery):
+        def __init__(self, release):
+            self.release = release
+            self.started = asyncio.Event()
+
+        async def stream_new_thread(
+            self,
+            _request,
+            _message,
+            *,
+            cwd,
+            emitter_factory,
+        ):
+            self.started.set()
+            await self.release.wait()
+            emitter = emitter_factory("codex-thread-1")
+            await emitter.start(shell_type="Codex")
+            await emitter.done(content="Created")
+
+    release = asyncio.Event()
+    discovery = DelayedThreadStartDiscovery(release)
+    events = []
+    handler = RuntimeWorkRpcHandler(
+        store=LocalTaskStore(tmp_path / "index.json"),
+        codex_discovery=discovery,
+        responses_event_emitter=lambda event, payload: events.append((event, payload)),
+    )
+    create = await asyncio.wait_for(
+        handler.handle_runtime_rpc(
+            {
+                "method": "runtime.tasks.create",
+                "payload": {
+                    "runtime": "codex",
+                    "workspacePath": "/repo/Wegent",
+                    "message": "create a Codex task",
+                    "executionRequest": {
+                        "task_id": 1001,
+                        "subtask_id": 2001,
+                        "team_id": 1,
+                        "prompt": "create a Codex task",
+                        "workspace_source": "local_path",
+                        "project_workspace_path": "/repo/Wegent",
+                        "model_config": {},
+                        "bot": [],
+                    },
+                },
+            }
+        ),
+        timeout=0.1,
+    )
+
+    assert create["success"] is True
+    assert create["accepted"] is True
+    assert create["localTaskId"]
+    await asyncio.wait_for(discovery.started.wait(), timeout=1)
+    assert events == []
+
+    release.set()
+    await asyncio.gather(*handler._running_sdk_tasks)
+
+    assert [event for event, _payload in events] == [
+        "response.created",
+        "response.completed",
+    ]
+    assert {payload["local_task_id"] for _event, payload in events} == {
+        create["localTaskId"]
+    }
+    assert handler.store.list_tasks() == []
+
+
+@pytest.mark.asyncio
+async def test_runtime_work_handler_opens_fresh_codex_thread_before_discovery(
+    tmp_path,
+):
+    from executor.runtime_work.local_task_store import LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    class SlowNativeCreateDiscovery(EmptyDiscovery):
+        def __init__(self, release):
+            self.release = release
+
+        def read_transcript(self, _thread_id, _session_path=None):
+            return []
+
+        async def stream_new_thread(
+            self,
+            _request,
+            _message,
+            *,
+            cwd,
+            emitter_factory,
+        ):
+            emitter = emitter_factory("codex-thread-1")
+            await emitter.start(shell_type="Codex")
+            await self.release.wait()
+            await emitter.done(content="Created")
+
+    release = asyncio.Event()
+    handler = RuntimeWorkRpcHandler(
+        store=LocalTaskStore(tmp_path / "index.json"),
+        codex_discovery=SlowNativeCreateDiscovery(release),
+        responses_event_emitter=lambda _event, _payload: None,
+    )
+    create = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.create",
+            "payload": {
+                "runtime": "codex",
+                "workspacePath": "/repo/Wegent",
+                "message": "create a Codex task",
+                "executionRequest": {
+                    "task_id": 1001,
+                    "subtask_id": 2001,
+                    "team_id": 1,
+                    "prompt": "create a Codex task",
+                    "workspace_source": "local_path",
+                    "project_workspace_path": "/repo/Wegent",
+                    "model_config": {},
+                    "bot": [],
+                },
+            },
+        }
+    )
+
+    transcript_while_running = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "workspacePath": "/repo/Wegent",
+                "localTaskId": create["localTaskId"],
+            },
+        }
+    )
+
+    assert transcript_while_running["success"] is True
+    assert transcript_while_running["localTaskId"] == create["localTaskId"]
+
+    release.set()
+    await asyncio.gather(*handler._running_sdk_tasks)
+
+    transcript_after_completion = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "workspacePath": "/repo/Wegent",
+                "localTaskId": create["localTaskId"],
+            },
+        }
+    )
+
+    assert transcript_after_completion["success"] is True
+    assert transcript_after_completion["localTaskId"] == create["localTaskId"]
+    assert (
+        handler._sdk_codex_task_records[create["localTaskId"]].runtime_handle[
+            "threadId"
+        ]
+        == "codex-thread-1"
+    )
+    assert handler.store.list_tasks() == []
 
 
 @pytest.mark.asyncio

@@ -391,6 +391,26 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('project-work-button')).not.toBeInTheDocument()
   })
 
+  test('treats a selected runtime task with an empty transcript as a conversation', () => {
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          currentRuntimeTask: {
+            deviceId: 'device-1',
+            workspacePath: '/workspace/project-alpha',
+            localTaskId: 'runtime-empty',
+          },
+        }}
+        messages={[]}
+      />
+    )
+
+    expect(screen.getByTestId('desktop-floating-composer-layer')).toBeInTheDocument()
+    expect(screen.queryByTestId('desktop-empty-composer-frame')).not.toBeInTheDocument()
+  })
+
   test('opens continue-in-im dialog from the active runtime task topbar button', async () => {
     const onListImPrivateSessions = vi.fn().mockResolvedValue({
       total: 1,
