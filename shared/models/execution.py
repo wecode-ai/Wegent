@@ -140,8 +140,6 @@ class ExecutionRequest:
     project_workspace_path: Optional[str] = None
     execution_target_type: Optional[str] = None
     device_id: Optional[str] = None
-    local_codex_thread_id: Optional[str] = None
-    local_codex_device_id: Optional[str] = None
 
     # === Git Configuration (from Task) ===
     git_domain: Optional[str] = None
@@ -160,6 +158,8 @@ class ExecutionRequest:
     history_limit: Optional[int] = None
     stateless: bool = False
     new_session: bool = False
+    fork_runtime: Optional[dict] = None
+    inherited_sessions: list[dict] = field(default_factory=list)
     collaboration_model: str = "single"
     mode: Optional[str] = (
         None  # From Task: Collaboration mode (e.g., "coordinate", "collaborate")

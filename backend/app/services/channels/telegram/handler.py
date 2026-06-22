@@ -174,6 +174,11 @@ class TelegramChannelHandler(BaseChannelHandler["Update", TelegramCallbackInfo])
                 "telegram_first_name": user.first_name if user else None,
                 "telegram_last_name": user.last_name if user else None,
                 "is_callback_query": False,
+                "reply_to_message_id": (
+                    message.reply_to_message.message_id
+                    if message.reply_to_message
+                    else None
+                ),
             },
         )
 

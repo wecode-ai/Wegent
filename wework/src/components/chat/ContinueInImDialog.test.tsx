@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, test, vi } from 'vitest'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 import '@/i18n'
 import type { IMPrivateSession } from '@/types/api'
 import { ContinueInImDialog } from './ContinueInImDialog'
@@ -26,6 +26,10 @@ function createSession(
 }
 
 describe('ContinueInImDialog', () => {
+  beforeEach(() => {
+    localStorage.clear()
+  })
+
   test('shows the empty binding guide with slash bind command', () => {
     render(
       <ContinueInImDialog
@@ -42,6 +46,34 @@ describe('ContinueInImDialog', () => {
     expect(screen.getByTestId('continue-im-empty-guide')).toHaveTextContent('/bind')
   })
 
+  test('preselects the first available private IM session', async () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined)
+
+    render(
+      <ContinueInImDialog
+        open
+        loading={false}
+        submitting={false}
+        sessions={[createSession(1, 'Alice'), createSession(2, 'Bob')]}
+        onClose={vi.fn()}
+        onSubmit={onSubmit}
+      />
+    )
+
+    expect(screen.getByTestId('continue-im-session-session-1')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+    expect(screen.getByTestId('continue-im-session-session-2')).toHaveAttribute(
+      'aria-pressed',
+      'false'
+    )
+
+    await userEvent.click(screen.getByTestId('continue-im-submit-button'))
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(['session-1']))
+  })
+
   test('submits selected session keys', async () => {
     const onSubmit = vi.fn().mockResolvedValue(undefined)
 
@@ -56,11 +88,51 @@ describe('ContinueInImDialog', () => {
       />
     )
 
-    await userEvent.click(screen.getByTestId('continue-im-session-session-1'))
     await userEvent.click(screen.getByTestId('continue-im-session-session-2'))
     await userEvent.click(screen.getByTestId('continue-im-submit-button'))
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(['session-1', 'session-2']))
+  })
+
+  test('remembers submitted private IM sessions for the next open', async () => {
+    const firstSubmit = vi.fn().mockResolvedValue(undefined)
+    const { unmount } = render(
+      <ContinueInImDialog
+        open
+        loading={false}
+        submitting={false}
+        sessions={[createSession(1, 'Alice'), createSession(2, 'Bob')]}
+        onClose={vi.fn()}
+        onSubmit={firstSubmit}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('continue-im-session-session-1'))
+    await userEvent.click(screen.getByTestId('continue-im-session-session-2'))
+    await userEvent.click(screen.getByTestId('continue-im-submit-button'))
+
+    await waitFor(() => expect(firstSubmit).toHaveBeenCalledWith(['session-2']))
+    unmount()
+
+    render(
+      <ContinueInImDialog
+        open
+        loading={false}
+        submitting={false}
+        sessions={[createSession(1, 'Alice'), createSession(2, 'Bob')]}
+        onClose={vi.fn()}
+        onSubmit={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('continue-im-session-session-1')).toHaveAttribute(
+      'aria-pressed',
+      'false'
+    )
+    expect(screen.getByTestId('continue-im-session-session-2')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
   })
 
   test('shows channel labels in session rows', () => {
@@ -114,7 +186,6 @@ describe('ContinueInImDialog', () => {
 
     expect(screen.getByTestId('continue-im-close-button')).toHaveFocus()
 
-    await userEvent.click(screen.getByTestId('continue-im-session-session-1'))
     screen.getByTestId('continue-im-close-button').focus()
     await userEvent.tab({ shift: true })
     expect(screen.getByTestId('continue-im-submit-button')).toHaveFocus()

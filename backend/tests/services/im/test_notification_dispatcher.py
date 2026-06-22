@@ -146,7 +146,14 @@ async def test_telegram_notification_decrypts_bot_token(
 
         async def send_text_message(self, chat_id: int, text: str):
             calls.append({"chat_id": chat_id, "text": text})
-            return {"success": True}
+            return {
+                "success": True,
+                "result": {
+                    "result": {
+                        "message_id": 3201,
+                    },
+                },
+            }
 
     monkeypatch.setattr(
         "app.services.channels.telegram.sender.TelegramBotSender",
@@ -162,6 +169,146 @@ async def test_telegram_notification_decrypts_bot_token(
     assert result["success"] is True
     assert calls[0] == {"bot_token": "telegram-token"}
     assert calls[1] == {"chat_id": 100200300, "text": "已切换"}
+
+
+@pytest.mark.asyncio
+async def test_runtime_task_update_uses_global_im_notification_target(
+    test_db: Session,
+    test_user,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _create_channel(
+        test_db,
+        channel_id=9412,
+        channel_type="telegram",
+        config={"botToken": encrypt_sensitive_data("telegram-token")},
+    )
+    session = _create_session(
+        user_id=test_user.id,
+        channel_id=9412,
+        channel_type="telegram",
+        sender_id="100200300",
+    )
+    await im_session_service.save_session(session)
+    await im_session_service.enable_global_notification(test_db, session=session)
+    test_db.commit()
+    calls: list[dict[str, Any]] = []
+
+    class FakeTelegramBotSender:
+        def __init__(self, bot_token: str):
+            calls.append({"bot_token": bot_token})
+
+        async def send_text_message(self, chat_id: int, text: str):
+            calls.append({"chat_id": chat_id, "text": text})
+            return {
+                "success": True,
+                "result": {
+                    "result": {
+                        "message_id": 3201,
+                    },
+                },
+            }
+
+    monkeypatch.setattr(
+        "app.services.channels.telegram.sender.TelegramBotSender",
+        FakeTelegramBotSender,
+    )
+
+    result = await im_notification_dispatcher.send_runtime_task_update(
+        test_db,
+        user_id=test_user.id,
+        address={
+            "deviceId": "device-1",
+            "localTaskId": "codex-thread-1",
+        },
+        title="Native Codex task",
+        status="updated",
+        content="Implemented from native Codex",
+        source="codex_watcher",
+    )
+
+    assert result["sent"] == 1
+    assert calls[1]["chat_id"] == 100200300
+    assert "Native Codex task" in calls[1]["text"]
+    assert "Implemented from native Codex" in calls[1]["text"]
+
+
+@pytest.mark.asyncio
+async def test_runtime_task_update_uses_subscribed_native_codex_task(
+    test_db: Session,
+    test_user,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _create_channel(
+        test_db,
+        channel_id=9413,
+        channel_type="telegram",
+        config={"botToken": encrypt_sensitive_data("telegram-token")},
+    )
+    session = _create_session(
+        user_id=test_user.id,
+        channel_id=9413,
+        channel_type="telegram",
+        sender_id="100200301",
+    )
+    subscription_address = {
+        "deviceId": "device-1",
+        "localTaskId": "codex-thread-1",
+        "workspacePath": "/repo/Wegent",
+    }
+    await im_session_service.save_session(session)
+    await im_session_service.subscribe_runtime_task_notification(
+        test_db,
+        session=session,
+        runtime_task=subscription_address,
+    )
+    test_db.commit()
+    calls: list[dict[str, Any]] = []
+
+    class FakeTelegramBotSender:
+        def __init__(self, bot_token: str):
+            calls.append({"bot_token": bot_token})
+
+        async def send_text_message(self, chat_id: int, text: str):
+            calls.append({"chat_id": chat_id, "text": text})
+            return {
+                "success": True,
+                "result": {
+                    "result": {
+                        "message_id": 3201,
+                    },
+                },
+            }
+
+    monkeypatch.setattr(
+        "app.services.channels.telegram.sender.TelegramBotSender",
+        FakeTelegramBotSender,
+    )
+
+    result = await im_notification_dispatcher.send_runtime_task_update(
+        test_db,
+        user_id=test_user.id,
+        address={
+            "deviceId": "device-1",
+            "localTaskId": "codex-thread-1",
+        },
+        title="Native Codex task",
+        status="updated",
+        content="Subscribed update",
+        source="codex_watcher",
+    )
+
+    assert result["sent"] == 1
+    assert calls[1]["chat_id"] == 100200301
+    assert "Native Codex task" in calls[1]["text"]
+    assert "Subscribed update" in calls[1]["text"]
+    assert await im_session_service.get_runtime_task_reply_target(
+        session=session,
+        message_id=3201,
+    ) == {
+        "deviceId": "device-1",
+        "localTaskId": "codex-thread-1",
+    }
 
 
 @pytest.mark.asyncio

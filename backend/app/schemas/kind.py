@@ -575,6 +575,23 @@ class TaskExecutionSpec(BaseModel):
     workspace: Optional[TaskExecutionWorkspace] = None
 
 
+class TaskForkSpec(BaseModel):
+    """Task-level fork metadata.
+
+    Forks inherit parent history up to afterMessageId without copying subtasks.
+    """
+
+    sourceTaskId: int = Field(..., ge=1, description="Direct source task ID")
+    afterMessageId: int = Field(
+        ..., ge=0, description="Maximum parent message_id inherited by this fork"
+    )
+    rootTaskId: int = Field(..., ge=1, description="Root task ID for the fork chain")
+    runtime: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Runtime migration metadata for workspace and executor sessions",
+    )
+
+
 class TaskSpec(BaseModel):
     """Task specification"""
 
@@ -591,6 +608,7 @@ class TaskSpec(BaseModel):
     )
     device_id: Optional[str] = None  # Device ID used for execution (for task history)
     execution: Optional[TaskExecutionSpec] = None
+    fork: Optional[TaskForkSpec] = None
     # Pipeline mode: current stage index (0-based)
     # Updated when user confirms to proceed to next stage
     # Used to determine which bot to use for follow-up questions

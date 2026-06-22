@@ -374,6 +374,14 @@ class WebSocketClient:
         # Fallback to localhost
         return "127.0.0.1"
 
+    def _get_runtime_transfer_host(self) -> str:
+        """Return the host peers should use for runtime direct transfers."""
+
+        configured = getattr(config, "RUNTIME_TRANSFER_HOST", "")
+        if isinstance(configured, str) and configured.strip():
+            return configured.strip()
+        return self._get_client_ip()
+
     def _setup_internal_handlers(self) -> None:
         """Setup internal event handlers for connection lifecycle."""
 
@@ -533,6 +541,7 @@ class WebSocketClient:
                 "bind_shell": self.bind_shell,
                 "executor_version": get_version(),
                 "client_ip": self._get_client_ip(),
+                "runtime_transfer_host": self._get_runtime_transfer_host(),
             }
             logger.info(f"Sending device:register to /local-executor: {register_data}")
 
@@ -591,6 +600,7 @@ class WebSocketClient:
                 "executor_version": get_version(),
                 "capabilities": self.capability_reporter.build_report(),
                 "runtime_auth_files": build_runtime_auth_file_report(),
+                "runtime_transfer_host": self._get_runtime_transfer_host(),
             }
             logger.info(
                 f"Sending device:heartbeat to /local-executor: {heartbeat_data}"

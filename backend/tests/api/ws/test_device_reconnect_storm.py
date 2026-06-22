@@ -176,6 +176,61 @@ async def test_local_device_register_does_not_match_cloud_device_by_ip(monkeypat
 
 
 @pytest.mark.asyncio
+async def test_device_register_uses_tcp_client_ip_not_reported_payload(monkeypatch):
+    namespace = DeviceNamespace()
+    upsert_calls = []
+
+    async def fake_get_session(sid):
+        return {
+            "user_id": 7,
+            "client_ip": "203.0.113.20",
+        }
+
+    async def fake_run_sync_in_executor(func, *args):
+        upsert_calls.append((func, args))
+        return True, "MacBook", None
+
+    monkeypatch.setattr(namespace, "get_session", fake_get_session)
+    monkeypatch.setattr(namespace, "save_session", AsyncMock())
+    monkeypatch.setattr(namespace, "enter_room", AsyncMock())
+    monkeypatch.setattr(namespace, "_match_cloud_device", AsyncMock(return_value=None))
+    monkeypatch.setattr(namespace, "_broadcast_device_online", AsyncMock())
+    monkeypatch.setattr(
+        namespace,
+        "_sync_global_capabilities_to_registered_device",
+        AsyncMock(),
+    )
+    monkeypatch.setattr(
+        device_namespace,
+        "run_sync_in_executor",
+        fake_run_sync_in_executor,
+    )
+    set_device_online = AsyncMock(return_value=True)
+    monkeypatch.setattr(
+        device_namespace.device_service, "set_device_online", set_device_online
+    )
+
+    result = await namespace.on_device_register(
+        "sid-local",
+        {
+            "device_id": "hw-local",
+            "name": "MacBook",
+            "device_type": DeviceType.LOCAL.value,
+            "executor_version": "1.8.5",
+            "client_ip": "192.168.0.190",
+        },
+    )
+
+    assert result == {"success": True, "device_id": "hw-local"}
+    assert upsert_calls[0][1][3] == "203.0.113.20"
+    assert upsert_calls[0][1][6] == "192.168.0.190"
+    assert set_device_online.await_args.kwargs["client_ip"] == "203.0.113.20"
+    assert (
+        set_device_online.await_args.kwargs["runtime_transfer_host"] == "192.168.0.190"
+    )
+
+
+@pytest.mark.asyncio
 async def test_cloud_device_register_matches_cloud_device(monkeypatch):
     namespace = DeviceNamespace()
     match_cloud_device = AsyncMock(return_value="standalone-admin-device")

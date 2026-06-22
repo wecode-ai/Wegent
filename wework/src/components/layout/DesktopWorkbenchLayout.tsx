@@ -11,20 +11,22 @@ import type {
   ProjectWorkControls,
 } from '@/components/chat/ChatInput'
 import type {
-  ArchivedTaskListResponse,
-  BindTaskIMSessionsResponse,
+  BindRuntimeTaskIMSessionsResponse,
   CreateGitWorkspaceProjectRequest,
   CreateProjectRequest,
+  DeviceWorkspacePrepareRequest,
+  DeviceWorkspacePrepareResponse,
   GitBranch,
   GitRepoInfo,
   IMPrivateSession,
   IMPrivateSessionListResponse,
-  LocalCodexBindRequest,
-  LocalCodexBindResponse,
-  LocalCodexThreadSummary,
   ProjectWithTasks,
-  TaskDetail,
-  TaskListResponse,
+  RuntimeTaskAddress,
+  RuntimeTaskForkTarget,
+  RuntimeGlobalIMNotificationUpdateRequest,
+  RuntimeIMNotificationSettingsResponse,
+  RuntimeTaskIMNotificationSubscriptionRequest,
+  RuntimeTaskIMNotificationSubscriptionResponse,
   TurnFileChangesSummary,
 } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
@@ -32,7 +34,11 @@ import type { DeviceUpgradeState } from '@/types/device-events'
 import type { CodeCommentContext, WorkspaceTarget } from '@/types/workspace-files'
 import { stripAppBasePath } from '@/config/runtime'
 import { isSettingsRoute, navigateTo } from '@/lib/navigation'
-import { resolveWorkspaceTarget, workspaceTargetKey } from '@/lib/workspace-target'
+import {
+  resolveRuntimeWorkspaceContext,
+  resolveWorkspaceTarget,
+  workspaceTargetKey,
+} from '@/lib/workspace-target'
 import { findProjectForTask } from '@/lib/workbench-device'
 import { DesktopSidebar } from './DesktopSidebar'
 import { ProjectCreateDialog } from '@/components/projects/ProjectCreateDialog'
@@ -50,7 +56,6 @@ interface DesktopWorkbenchLayoutProps {
   queuedMessages?: QueuedWorkbenchMessage[]
   guidanceMessages?: GuidanceWorkbenchMessage[]
   codeCommentContexts?: CodeCommentContext[]
-  runningTaskIds: Set<number>
   upgradingDevices?: Record<string, DeviceUpgradeState>
   activeItem?: 'chat' | 'plugins' | 'automation'
   onNewChat: () => void
@@ -60,34 +65,36 @@ interface DesktopWorkbenchLayoutProps {
   projectWork: ProjectWorkControls
   onSelectProject: (projectId: number | null) => void
   onStartNewProjectChat: (projectId: number) => void
-  onOpenTask: (taskId: number, projectId?: number) => void
-  onSearchTasks?: (query: string) => Promise<TaskListResponse>
-  onSearchTaskDetail?: (taskId: number) => Promise<TaskDetail>
-  onListLocalCodexThreads?: (deviceId: string, limit?: number) => Promise<LocalCodexThreadSummary[]>
-  onBindLocalCodexThread?: (request: LocalCodexBindRequest) => Promise<LocalCodexBindResponse>
+  onOpenRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void>
+  onArchiveRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void>
+  onForkCurrentRuntimeTask?: (target: RuntimeTaskForkTarget) => Promise<void>
   onRememberExecutionDevice?: (deviceId: string) => void
   onRefreshDevices?: () => Promise<void>
   onUpgradeDevice?: (deviceId: string) => Promise<void>
   onListImPrivateSessions?: () => Promise<IMPrivateSessionListResponse>
-  onBindTaskToImSessions?: (
-    taskId: number,
+  onBindRuntimeTaskToImSessions?: (
+    address: RuntimeTaskAddress,
     sessionKeys: string[]
-  ) => Promise<BindTaskIMSessionsResponse>
+  ) => Promise<BindRuntimeTaskIMSessionsResponse>
+  onGetImNotificationSettings?: () => Promise<RuntimeIMNotificationSettingsResponse>
+  onUpdateGlobalImNotification?: (
+    data: RuntimeGlobalIMNotificationUpdateRequest
+  ) => Promise<RuntimeIMNotificationSettingsResponse>
+  onSubscribeRuntimeTaskNotifications?: (
+    data: RuntimeTaskIMNotificationSubscriptionRequest
+  ) => Promise<RuntimeTaskIMNotificationSubscriptionResponse>
+  onUnsubscribeRuntimeTaskNotifications?: (
+    address: RuntimeTaskAddress
+  ) => Promise<RuntimeTaskIMNotificationSubscriptionResponse>
   onCreateProject: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
   onCreateGitWorkspaceProject: (data: CreateGitWorkspaceProjectRequest) => Promise<ProjectWithTasks>
+  onPrepareDeviceWorkspace: (
+    data: DeviceWorkspacePrepareRequest
+  ) => Promise<DeviceWorkspacePrepareResponse>
   onListGitRepositories: () => Promise<GitRepoInfo[]>
   onListGitBranches: (repo: GitRepoInfo) => Promise<GitBranch[]>
   onUpdateProjectName: (projectId: number, name: string) => Promise<void>
   onRemoveProject: (projectId: number) => Promise<void>
-  onArchiveAllChats: () => Promise<void>
-  onArchiveAllProjectChats: () => Promise<void>
-  onArchiveProjectChats: (projectId: number) => Promise<void>
-  onArchiveTask: (taskId: number) => Promise<void>
-  onRenameTask: (taskId: number, title: string) => Promise<void>
-  onListArchivedTasks: () => Promise<ArchivedTaskListResponse>
-  onUnarchiveTask: (taskId: number) => Promise<void>
-  onDeleteTask: (taskId: number) => Promise<void>
-  onDeleteArchivedTasks: () => Promise<void>
   onGetDeviceHomeDirectory: (deviceId: string) => Promise<string>
   onGetProjectWorkspaceRoot: (deviceId: string) => Promise<string>
   onListDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
@@ -136,47 +143,41 @@ interface DesktopWorkbenchLayoutProps {
   onLogout: () => void
 }
 
+type ImNotificationDialogMode = { type: 'global' } | { type: 'task'; address: RuntimeTaskAddress }
+
 export function DesktopWorkbenchLayout({
   state,
   messages,
   queuedMessages = [],
   guidanceMessages = [],
   codeCommentContexts = [],
-  runningTaskIds,
   upgradingDevices = {},
   activeItem = 'chat',
   onNewChat,
-  onStartStandaloneChat,
   onOpenPlugins,
   projectChat,
   projectWork,
   onSelectProject,
   onStartNewProjectChat,
-  onOpenTask,
-  onSearchTasks,
-  onSearchTaskDetail,
-  onListLocalCodexThreads,
-  onBindLocalCodexThread,
+  onOpenRuntimeLocalTask,
+  onArchiveRuntimeLocalTask,
+  onForkCurrentRuntimeTask,
   onRememberExecutionDevice,
   onRefreshDevices,
   onUpgradeDevice = async () => {},
   onListImPrivateSessions,
-  onBindTaskToImSessions,
+  onBindRuntimeTaskToImSessions,
+  onGetImNotificationSettings,
+  onUpdateGlobalImNotification,
+  onSubscribeRuntimeTaskNotifications,
+  onUnsubscribeRuntimeTaskNotifications,
   onCreateProject,
   onCreateGitWorkspaceProject,
+  onPrepareDeviceWorkspace,
   onListGitRepositories,
   onListGitBranches,
   onUpdateProjectName,
   onRemoveProject,
-  onArchiveAllChats,
-  onArchiveAllProjectChats,
-  onArchiveProjectChats,
-  onArchiveTask,
-  onRenameTask,
-  onListArchivedTasks,
-  onUnarchiveTask,
-  onDeleteTask,
-  onDeleteArchivedTasks,
   onGetDeviceHomeDirectory,
   onGetProjectWorkspaceRoot,
   onListDeviceDirectories,
@@ -219,6 +220,10 @@ export function DesktopWorkbenchLayout({
   const [workspaceTargetError, setWorkspaceTargetError] = useState<string | null>(null)
   const [workspaceTargetResolving, setWorkspaceTargetResolving] = useState(false)
   const [continueInImOpen, setContinueInImOpen] = useState(false)
+  const [imNotificationDialogMode, setImNotificationDialogMode] =
+    useState<ImNotificationDialogMode | null>(null)
+  const [imNotificationSettings, setImNotificationSettings] =
+    useState<RuntimeIMNotificationSettingsResponse | null>(null)
   const [imSessions, setImSessions] = useState<IMPrivateSession[]>([])
   const [imSessionsLoading, setImSessionsLoading] = useState(false)
   const [imSessionsSubmitting, setImSessionsSubmitting] = useState(false)
@@ -231,14 +236,32 @@ export function DesktopWorkbenchLayout({
     () => findProjectForTask(state.projects, state.currentTask),
     [state.currentTask, state.projects]
   )
-  const activeConversationProject = state.currentProject ?? currentTaskProject
-  const environmentProject = useMemo(
+  const runtimeWorkspaceContext = useMemo(
     () =>
+      resolveRuntimeWorkspaceContext({
+        currentRuntimeTask: state.currentRuntimeTask,
+        projects: state.projects,
+        runtimeWork: state.runtimeWork,
+      }),
+    [state.currentRuntimeTask, state.projects, state.runtimeWork]
+  )
+  const activeConversationProject =
+    state.currentProject ?? currentTaskProject ?? runtimeWorkspaceContext?.project ?? null
+  const environmentProject = useMemo(() => {
+    if (state.currentRuntimeTask) {
+      return runtimeWorkspaceContext?.project ?? null
+    }
+    return (
       activeConversationProject ??
       state.projects.find(project => project.config?.mode === 'workspace') ??
-      null,
-    [activeConversationProject, state.projects]
-  )
+      null
+    )
+  }, [
+    activeConversationProject,
+    runtimeWorkspaceContext?.project,
+    state.currentRuntimeTask,
+    state.projects,
+  ])
   const completedAssistantMessageIds = useRef<Set<string>>(new Set())
   const completedAssistantMessagesInitialized = useRef(false)
   const currentTaskWorkspaceKey = state.currentTask
@@ -255,9 +278,23 @@ export function DesktopWorkbenchLayout({
   const hasEnvironmentProject = Boolean(environmentProject)
   const environmentWorkspaceReady = !hasEnvironmentProject || Boolean(workspaceTarget)
   const workspaceTargetProject = environmentProject
+  const runtimeWorkspaceTarget = runtimeWorkspaceContext?.workspaceTarget ?? null
+  const runtimeWorkspaceTargetKey = workspaceTargetKey(runtimeWorkspaceTarget)
 
   useEffect(() => {
     let cancelled = false
+
+    if (state.currentRuntimeTask) {
+      setWorkspaceTarget(current =>
+        workspaceTargetKey(current) === runtimeWorkspaceTargetKey ? current : runtimeWorkspaceTarget
+      )
+      setWorkspaceTargetError(runtimeWorkspaceTarget ? null : 'Workspace is not ready')
+      setWorkspaceTargetResolving(false)
+      return () => {
+        cancelled = true
+      }
+    }
+
     setWorkspaceTargetResolving(true)
     setWorkspaceTarget(null)
     setWorkspaceTargetError(null)
@@ -289,7 +326,10 @@ export function DesktopWorkbenchLayout({
     }
   }, [
     currentTaskWorkspaceKey,
+    runtimeWorkspaceTarget,
+    runtimeWorkspaceTargetKey,
     state.currentTask,
+    state.currentRuntimeTask,
     workspaceTargetProject,
     workspaceTargetResolverApi,
   ])
@@ -396,12 +436,9 @@ export function DesktopWorkbenchLayout({
     [onRefreshDevices]
   )
 
-  const openContinueInImDialog = useCallback(() => {
-    if (!state.currentTask || state.currentTask.is_group_chat) return
-
+  const loadImSessionsForDialog = useCallback(() => {
     const requestId = imSessionsRequestSequence.current + 1
     imSessionsRequestSequence.current = requestId
-    setContinueInImOpen(true)
     setImSessionsLoading(true)
     setImSessions([])
     void (onListImPrivateSessions?.() ?? Promise.resolve({ total: 0, items: [] }))
@@ -421,7 +458,39 @@ export function DesktopWorkbenchLayout({
           setImSessionsLoading(false)
         }
       })
-  }, [onListImPrivateSessions, state.currentTask, t])
+  }, [onListImPrivateSessions, t])
+
+  const refreshImNotificationSettings = useCallback(async () => {
+    if (!onGetImNotificationSettings) {
+      setImNotificationSettings(null)
+      return null
+    }
+
+    const settings = await onGetImNotificationSettings()
+    setImNotificationSettings(settings)
+    return settings
+  }, [onGetImNotificationSettings])
+
+  useEffect(() => {
+    void refreshImNotificationSettings().catch(() => undefined)
+  }, [refreshImNotificationSettings])
+
+  const openContinueInImDialog = useCallback(() => {
+    if (!state.currentRuntimeTask) return
+
+    setImNotificationDialogMode(null)
+    setContinueInImOpen(true)
+    loadImSessionsForDialog()
+  }, [loadImSessionsForDialog, state.currentRuntimeTask])
+
+  const openImNotificationTargetDialog = useCallback(
+    (mode: ImNotificationDialogMode) => {
+      setContinueInImOpen(false)
+      setImNotificationDialogMode(mode)
+      loadImSessionsForDialog()
+    },
+    [loadImSessionsForDialog]
+  )
 
   const closeContinueInImDialog = useCallback(() => {
     imSessionsRequestSequence.current += 1
@@ -429,16 +498,22 @@ export function DesktopWorkbenchLayout({
     setImSessionsLoading(false)
   }, [])
 
+  const closeImNotificationDialog = useCallback(() => {
+    imSessionsRequestSequence.current += 1
+    setImNotificationDialogMode(null)
+    setImSessionsLoading(false)
+  }, [])
+
   const submitContinueInIm = useCallback(
     async (sessionKeys: string[]) => {
-      if (!state.currentTask || state.currentTask.is_group_chat) return
+      if (!state.currentRuntimeTask) return
 
       setImSessionsSubmitting(true)
       try {
-        if (!onBindTaskToImSessions) {
+        if (!onBindRuntimeTaskToImSessions) {
           throw new Error('IM bind handler is not available')
         }
-        await onBindTaskToImSessions(state.currentTask.id, sessionKeys)
+        await onBindRuntimeTaskToImSessions(state.currentRuntimeTask, sessionKeys)
         setContinueInImOpen(false)
         setNotice({ message: t('workbench.continue_im_success'), tone: 'success' })
       } catch {
@@ -447,7 +522,140 @@ export function DesktopWorkbenchLayout({
         setImSessionsSubmitting(false)
       }
     },
-    [onBindTaskToImSessions, state.currentTask, t]
+    [onBindRuntimeTaskToImSessions, state.currentRuntimeTask, t]
+  )
+
+  const toggleGlobalImNotification = useCallback(async () => {
+    if (!onUpdateGlobalImNotification) return
+
+    const currentSettings = imNotificationSettings
+    if (currentSettings?.global.enabled) {
+      try {
+        const settings = await onUpdateGlobalImNotification({
+          enabled: false,
+          sessionKey: currentSettings.global.sessionKey ?? undefined,
+        })
+        setImNotificationSettings(settings)
+      } catch {
+        setNotice({
+          message: t('workbench.im_notification_update_failed', 'IM 通知设置失败'),
+          tone: 'error',
+        })
+      }
+      return
+    }
+
+    if (currentSettings?.global.sessionKey) {
+      try {
+        const settings = await onUpdateGlobalImNotification({
+          enabled: true,
+          sessionKey: currentSettings.global.sessionKey,
+        })
+        setImNotificationSettings(settings)
+      } catch {
+        setNotice({
+          message: t('workbench.im_notification_update_failed', 'IM 通知设置失败'),
+          tone: 'error',
+        })
+      }
+      return
+    }
+
+    openImNotificationTargetDialog({ type: 'global' })
+  }, [imNotificationSettings, onUpdateGlobalImNotification, openImNotificationTargetDialog, t])
+
+  const toggleRuntimeTaskNotification = useCallback(
+    async (address: RuntimeTaskAddress, subscribed: boolean) => {
+      if (subscribed) {
+        if (!onUnsubscribeRuntimeTaskNotifications) return
+        try {
+          await onUnsubscribeRuntimeTaskNotifications(address)
+          await refreshImNotificationSettings()
+        } catch {
+          setNotice({
+            message: t('workbench.im_notification_update_failed', 'IM 通知设置失败'),
+            tone: 'error',
+          })
+        }
+        return
+      }
+
+      openImNotificationTargetDialog({ type: 'task', address })
+    },
+    [
+      onUnsubscribeRuntimeTaskNotifications,
+      openImNotificationTargetDialog,
+      refreshImNotificationSettings,
+      t,
+    ]
+  )
+
+  const notificationDefaultSessionKeys = useMemo(() => {
+    if (!imNotificationDialogMode || !imNotificationSettings) return []
+    if (imNotificationDialogMode.type === 'global') {
+      return imNotificationSettings.global.sessionKey
+        ? [imNotificationSettings.global.sessionKey]
+        : []
+    }
+
+    const taskKey = `${imNotificationDialogMode.address.deviceId}\0${imNotificationDialogMode.address.localTaskId}`
+    const subscription = imNotificationSettings.runtimeTaskSubscriptions.find(
+      item => `${item.address.deviceId}\0${item.address.localTaskId}` === taskKey
+    )
+    if (subscription?.sessionKeys.length) {
+      return subscription.sessionKeys
+    }
+    return imNotificationSettings.global.sessionKey
+      ? [imNotificationSettings.global.sessionKey]
+      : []
+  }, [imNotificationDialogMode, imNotificationSettings])
+
+  const submitImNotificationTarget = useCallback(
+    async (sessionKeys: string[]) => {
+      if (!imNotificationDialogMode || sessionKeys.length === 0) return
+
+      setImSessionsSubmitting(true)
+      try {
+        if (imNotificationDialogMode.type === 'global') {
+          if (!onUpdateGlobalImNotification) {
+            throw new Error('Global IM notification handler is not available')
+          }
+          const settings = await onUpdateGlobalImNotification({
+            enabled: true,
+            sessionKey: sessionKeys[0],
+          })
+          setImNotificationSettings(settings)
+        } else {
+          if (!onSubscribeRuntimeTaskNotifications) {
+            throw new Error('Runtime task IM notification handler is not available')
+          }
+          await onSubscribeRuntimeTaskNotifications({
+            address: imNotificationDialogMode.address,
+            sessionKeys,
+          })
+          await refreshImNotificationSettings()
+        }
+        setImNotificationDialogMode(null)
+        setNotice({
+          message: t('workbench.im_notification_update_success', 'IM 通知已更新'),
+          tone: 'success',
+        })
+      } catch {
+        setNotice({
+          message: t('workbench.im_notification_update_failed', 'IM 通知设置失败'),
+          tone: 'error',
+        })
+      } finally {
+        setImSessionsSubmitting(false)
+      }
+    },
+    [
+      imNotificationDialogMode,
+      onSubscribeRuntimeTaskNotifications,
+      onUpdateGlobalImNotification,
+      refreshImNotificationSettings,
+      t,
+    ]
   )
 
   const projectWorkWithCreation: ProjectWorkControls = {
@@ -476,10 +684,9 @@ export function DesktopWorkbenchLayout({
           user={state.user}
           projects={state.projects}
           devices={state.devices}
-          recentTasks={state.recentTasks}
-          runningTaskIds={runningTaskIds}
-          currentProjectId={state.currentProject?.id}
-          currentTaskId={state.currentTask?.id}
+          runtimeWork={state.runtimeWork}
+          currentRuntimeTask={state.currentRuntimeTask}
+          imNotificationSettings={imNotificationSettings}
           preferredDeviceId={
             state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
           }
@@ -487,29 +694,26 @@ export function DesktopWorkbenchLayout({
           activeItem={activeItem}
           onCollapse={() => setSidebarCollapsed(true)}
           onNewChat={onNewChat}
-          onStartStandaloneChat={onStartStandaloneChat}
           onSelectProject={onSelectProject}
           onStartNewProjectChat={onStartNewProjectChat}
-          onOpenTask={onOpenTask}
-          onSearchTasks={onSearchTasks}
-          onSearchTaskDetail={onSearchTaskDetail}
-          onListLocalCodexThreads={onListLocalCodexThreads}
-          onBindLocalCodexThread={onBindLocalCodexThread}
+          onOpenRuntimeLocalTask={onOpenRuntimeLocalTask}
+          onArchiveRuntimeLocalTask={onArchiveRuntimeLocalTask}
+          onToggleRuntimeTaskNotification={toggleRuntimeTaskNotification}
+          onToggleGlobalImNotification={toggleGlobalImNotification}
+          onOpenGlobalImNotificationSettings={() =>
+            openImNotificationTargetDialog({ type: 'global' })
+          }
           onRememberExecutionDevice={onRememberExecutionDevice}
           onOpenPlugins={onOpenPlugins}
           onRefreshDevices={onRefreshDevices}
           onUpgradeDevice={onUpgradeDevice}
           onCreateProject={onCreateProject}
           onCreateGitWorkspaceProject={onCreateGitWorkspaceProject}
+          onPrepareDeviceWorkspace={onPrepareDeviceWorkspace}
           onListGitRepositories={onListGitRepositories}
           onListGitBranches={onListGitBranches}
           onUpdateProjectName={onUpdateProjectName}
           onRemoveProject={onRemoveProject}
-          onArchiveAllChats={onArchiveAllChats}
-          onArchiveAllProjectChats={onArchiveAllProjectChats}
-          onArchiveProjectChats={onArchiveProjectChats}
-          onArchiveTask={onArchiveTask}
-          onRenameTask={onRenameTask}
           onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
           onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot}
           onListDeviceDirectories={onListDeviceDirectories}
@@ -531,16 +735,14 @@ export function DesktopWorkbenchLayout({
             setAutoOpenAddCloudDeviceDialog(false)
             navigateTo('/')
           }}
-          onListArchivedTasks={onListArchivedTasks}
-          onUnarchiveTask={onUnarchiveTask}
-          onDeleteTask={onDeleteTask}
-          onDeleteArchivedTasks={onDeleteArchivedTasks}
         />
       ) : (
         <DesktopWorkbenchMain
           sidebarCollapsed={sidebarCollapsed}
           isBootstrapping={state.isBootstrapping}
           currentTask={state.currentTask}
+          currentRuntimeTask={state.currentRuntimeTask}
+          runtimeWork={state.runtimeWork}
           currentProject={activeConversationProject}
           workspaceTarget={workspaceTarget}
           workspaceTargetError={workspaceTargetError}
@@ -591,6 +793,12 @@ export function DesktopWorkbenchLayout({
           onAddCodeComment={onAddCodeComment}
           onClearCodeComments={onClearCodeComments}
           onContinueInIm={openContinueInImDialog}
+          onForkCurrentRuntimeTask={onForkCurrentRuntimeTask}
+          onPrepareDeviceWorkspace={onPrepareDeviceWorkspace}
+          onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
+          onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot}
+          onListDeviceDirectories={onListDeviceDirectories}
+          onCreateDeviceDirectory={onCreateDeviceDirectory}
           topBarLeftActions={
             sidebarCollapsed ? (
               <DesktopWindowControls
@@ -615,6 +823,7 @@ export function DesktopWorkbenchLayout({
         }}
         onCreateProject={onCreateProject}
         onCreateGitWorkspaceProject={onCreateGitWorkspaceProject}
+        onPrepareDeviceWorkspace={onPrepareDeviceWorkspace}
         preferredDeviceId={
           state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
         }
@@ -636,6 +845,31 @@ export function DesktopWorkbenchLayout({
         sessions={imSessions}
         onClose={closeContinueInImDialog}
         onSubmit={submitContinueInIm}
+      />
+      <ContinueInImDialog
+        key={
+          imNotificationDialogMode
+            ? `im-notification-${imNotificationDialogMode.type}`
+            : 'im-notification-closed'
+        }
+        open={imNotificationDialogMode !== null}
+        loading={imSessionsLoading}
+        submitting={imSessionsSubmitting}
+        sessions={imSessions}
+        title={
+          imNotificationDialogMode?.type === 'global'
+            ? t('workbench.global_im_notifications_title', '全局 IM 通知')
+            : t('workbench.runtime_task_im_notifications_title', '订阅任务通知')
+        }
+        emptyGuide={t(
+          'workbench.im_notifications_empty_guide',
+          '还没有可用的 IM 会话，请先从 IM 给 Wegent 发送一条消息。'
+        )}
+        submitLabel={t('workbench.save', '保存')}
+        allowMultiple={imNotificationDialogMode?.type !== 'global'}
+        defaultSelectedSessionKeys={notificationDefaultSessionKeys}
+        onClose={closeImNotificationDialog}
+        onSubmit={submitImNotificationTarget}
       />
       <TransientNotice
         message={notice?.message ?? null}

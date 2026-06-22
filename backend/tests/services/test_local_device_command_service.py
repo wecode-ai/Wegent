@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import subprocess
+import sys
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -80,7 +81,7 @@ def test_turn_file_changes_command_rejects_invalid_artifact_id(
     from app.services.device.command_registry import TURN_FILE_CHANGES_SCRIPT
 
     result = subprocess.run(
-        ["python3", "-c", TURN_FILE_CHANGES_SCRIPT, "review", artifact_id],
+        [sys.executable, "-c", TURN_FILE_CHANGES_SCRIPT, "review", artifact_id],
         cwd=tmp_path,
         env={**os.environ, "WEGENT_EXECUTOR_HOME": str(tmp_path / "home")},
         capture_output=True,
@@ -97,7 +98,7 @@ def test_turn_file_changes_review_returns_validated_diff(tmp_path):
     repo, executor_home = _create_turn_file_changes_artifact(tmp_path)
     result = subprocess.run(
         [
-            "python3",
+            sys.executable,
             "-c",
             TURN_FILE_CHANGES_SCRIPT,
             "review",
@@ -122,7 +123,7 @@ def test_turn_file_changes_revert_is_conflict_safe(tmp_path):
     (repo / "changed.txt").write_text("later change\n", encoding="utf-8")
     result = subprocess.run(
         [
-            "python3",
+            sys.executable,
             "-c",
             TURN_FILE_CHANGES_SCRIPT,
             "revert",
@@ -145,7 +146,7 @@ def test_turn_file_changes_revert_applies_reverse_patch(tmp_path):
     repo, executor_home = _create_turn_file_changes_artifact(tmp_path)
     result = subprocess.run(
         [
-            "python3",
+            sys.executable,
             "-c",
             TURN_FILE_CHANGES_SCRIPT,
             "revert",
@@ -356,48 +357,144 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     )
     assert read_runtime_auth_file_definition.post_processor == "json"
     assert codex_threads_list_definition is not None
-    assert "session_index.jsonl" in codex_threads_list_definition.command
+    assert "openai_codex" in codex_threads_list_definition.command
+    assert "thread_list" in codex_threads_list_definition.command
+    assert "session_index.jsonl" not in codex_threads_list_definition.command
     assert "transcript" not in codex_threads_list_definition.command
     assert codex_threads_list_definition.post_processor == "json"
 
 
-def test_codex_threads_list_command_parses_session_index_only(tmp_path):
-    """codex_threads_list should expose recent thread summaries without transcripts."""
-    from app.services.device.command_registry import CODEX_THREADS_LIST_SCRIPT
+def _write_fake_openai_codex_sdk(root):
+    package_root = root / "openai_codex"
+    generated_root = package_root / "generated"
+    generated_root.mkdir(parents=True)
+    (package_root / "__init__.py").write_text(
+        """
+from types import SimpleNamespace
 
-    codex_home = tmp_path / "codex-home"
-    codex_home.mkdir()
-    (codex_home / "session_index.jsonl").write_text(
-        "\n".join(
-            [
-                json.dumps(
-                    {
-                        "id": "018f2d6b-8c7a-7abc-9def-0123456789ab",
-                        "title": "Older",
-                        "updatedAt": "2026-06-19T01:00:00Z",
-                        "transcript": "hidden",
-                    }
-                ),
-                json.dumps(
-                    {
-                        "thread_id": "018f2d6b-8c7a-7abc-9def-0123456789ac",
-                        "title": "Newer",
-                        "updated_at": "2026-06-20T01:00:00Z",
-                        "cwd": "/tmp/project",
-                        "running": True,
-                    }
-                ),
-            ]
-        ),
+
+class CodexConfig:
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+
+
+class Codex:
+    def __init__(self, config):
+        self.config = config
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, _exc_type, _exc, _tb):
+        return None
+
+    def thread_list(self, **kwargs):
+        if kwargs.get("archived") is not False:
+            raise AssertionError("archived must be false")
+        if kwargs.get("use_state_db_only") is not True:
+            raise AssertionError("use_state_db_only must be true")
+        limit = kwargs.get("limit", 100)
+        threads = [
+            SimpleNamespace(
+                id="018f2d6b-8c7a-7abc-9def-0123456789ac",
+                name="Newer",
+                preview=None,
+                cwd=SimpleNamespace(root="/tmp/newer-project"),
+                updated_at=1782008158,
+                archived=False,
+                status=SimpleNamespace(type="running"),
+            ),
+            SimpleNamespace(
+                id="018f2d6b-8c7a-7abc-9def-0123456789ab",
+                name=None,
+                preview="Older",
+                cwd="/tmp/older-project",
+                updated_at=1781979275,
+                archived=False,
+                status=SimpleNamespace(type="notLoaded"),
+            ),
+            SimpleNamespace(
+                id="018f2d6b-8c7a-7abc-9def-0123456789aa",
+                name="Oldest",
+                preview=None,
+                cwd="/tmp/oldest-project",
+                updated_at=1781970000,
+                archived=False,
+                status=None,
+            ),
+        ]
+        return SimpleNamespace(data=threads[:limit])
+""".strip(),
         encoding="utf-8",
     )
-    (codex_home / "transcript.jsonl").write_text("must not be read", encoding="utf-8")
+    (generated_root / "__init__.py").write_text("", encoding="utf-8")
+    (generated_root / "v2_all.py").write_text(
+        """
+class SortDirection(str):
+    pass
+
+
+class ThreadSortKey(str):
+    pass
+""".strip(),
+        encoding="utf-8",
+    )
+    return root
+
+
+def _write_failing_openai_codex_sdk(root):
+    package_root = root / "openai_codex"
+    generated_root = package_root / "generated"
+    generated_root.mkdir(parents=True)
+    (package_root / "__init__.py").write_text(
+        """
+class CodexConfig:
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+
+
+class Codex:
+    def __init__(self, config):
+        self.config = config
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, _exc_type, _exc, _tb):
+        return None
+
+    def thread_list(self, **kwargs):
+        raise RuntimeError("sdk exploded")
+""".strip(),
+        encoding="utf-8",
+    )
+    (generated_root / "__init__.py").write_text("", encoding="utf-8")
+    (generated_root / "v2_all.py").write_text(
+        """
+class SortDirection(str):
+    pass
+
+
+class ThreadSortKey(str):
+    pass
+""".strip(),
+        encoding="utf-8",
+    )
+    return root
+
+
+def test_codex_threads_list_command_reads_sdk_thread_list(tmp_path):
+    """codex_threads_list should expose SDK thread summaries without transcripts."""
+    from app.services.device.command_registry import CODEX_THREADS_LIST_SCRIPT
+
+    fake_sdk_root = _write_fake_openai_codex_sdk(tmp_path / "fake-sdk")
 
     result = subprocess.run(
-        ["python3", "-c", CODEX_THREADS_LIST_SCRIPT],
+        [sys.executable, "-c", CODEX_THREADS_LIST_SCRIPT],
         env={
             **os.environ,
-            "CODEX_HOME": str(codex_home),
+            "CODEX_HOME": str(tmp_path / "codex-home"),
+            "PYTHONPATH": str(fake_sdk_root),
             "WEGENT_CODEX_THREADS_LIMIT": "1000",
         },
         check=True,
@@ -406,8 +503,11 @@ def test_codex_threads_list_command_parses_session_index_only(tmp_path):
     )
 
     payload = json.loads(result.stdout)
-    assert [thread["title"] for thread in payload["threads"]] == ["Newer", "Older"]
-    assert len(payload["threads"]) == 2
+    assert [thread["title"] for thread in payload["threads"]] == [
+        "Newer",
+        "Older",
+        "Oldest",
+    ]
     assert set(payload["threads"][0]) == {
         "threadId",
         "title",
@@ -417,51 +517,27 @@ def test_codex_threads_list_command_parses_session_index_only(tmp_path):
         "running",
     }
     assert payload["threads"][0]["threadId"] == "018f2d6b-8c7a-7abc-9def-0123456789ac"
-    assert payload["threads"][0]["cwd"] == "/tmp/project"
+    assert payload["threads"][0]["cwd"] == "/tmp/newer-project"
     assert payload["threads"][0]["archived"] is False
     assert payload["threads"][0]["running"] is True
+    assert payload["threads"][1]["running"] is False
     assert "transcript" not in json.dumps(payload)
+    assert "session_index" not in json.dumps(payload)
 
 
-def test_codex_threads_list_command_reads_cwd_from_session_metadata(tmp_path):
-    """codex_threads_list should enrich index-only records from Codex session files."""
+def test_codex_threads_list_command_surfaces_sdk_errors(tmp_path):
+    """codex_threads_list should report SDK discovery failures."""
     from app.services.device.command_registry import CODEX_THREADS_LIST_SCRIPT
 
-    codex_home = tmp_path / "codex-home"
-    codex_home.mkdir()
-    thread_id = "018f2d6b-8c7a-7abc-9def-0123456789ad"
-    (codex_home / "session_index.jsonl").write_text(
-        json.dumps(
-            {
-                "id": thread_id,
-                "thread_name": "Thread from index",
-                "updated_at": "2026-06-20T05:52:31Z",
-            }
-        ),
-        encoding="utf-8",
-    )
-    session_dir = codex_home / "sessions" / "2026" / "06" / "20"
-    session_dir.mkdir(parents=True)
-    (session_dir / f"rollout-2026-06-20T13-52-19-{thread_id}.jsonl").write_text(
-        json.dumps(
-            {
-                "type": "session_meta",
-                "payload": {
-                    "id": thread_id,
-                    "cwd": "/tmp/project-from-session",
-                },
-            }
-        )
-        + "\n",
-        encoding="utf-8",
-    )
+    fake_sdk_root = _write_failing_openai_codex_sdk(tmp_path / "fake-sdk")
 
     result = subprocess.run(
-        ["python3", "-c", CODEX_THREADS_LIST_SCRIPT],
+        [sys.executable, "-c", CODEX_THREADS_LIST_SCRIPT],
         env={
             **os.environ,
-            "CODEX_HOME": str(codex_home),
-            "WEGENT_CODEX_THREADS_LIMIT": "100",
+            "CODEX_HOME": str(tmp_path / "codex-home"),
+            "PYTHONPATH": str(fake_sdk_root),
+            "WEGENT_CODEX_THREADS_LIMIT": "1000",
         },
         check=True,
         capture_output=True,
@@ -469,116 +545,22 @@ def test_codex_threads_list_command_reads_cwd_from_session_metadata(tmp_path):
     )
 
     payload = json.loads(result.stdout)
-    assert payload["threads"][0]["threadId"] == thread_id
-    assert payload["threads"][0]["title"] == "Thread from index"
-    assert payload["threads"][0]["cwd"] == "/tmp/project-from-session"
-
-
-def test_codex_threads_list_command_filters_subagent_threads(tmp_path):
-    """codex_threads_list should not expose Codex subagent sessions."""
-    from app.services.device.command_registry import CODEX_THREADS_LIST_SCRIPT
-
-    codex_home = tmp_path / "codex-home"
-    codex_home.mkdir()
-    user_thread_id = "018f2d6b-8c7a-7abc-9def-0123456789ae"
-    subagent_thread_id = "018f2d6b-8c7a-7abc-9def-0123456789af"
-    (codex_home / "session_index.jsonl").write_text(
-        "\n".join(
-            [
-                json.dumps(
-                    {
-                        "id": user_thread_id,
-                        "thread_name": "User thread",
-                        "updated_at": "2026-06-20T05:52:31Z",
-                    }
-                ),
-                json.dumps(
-                    {
-                        "id": subagent_thread_id,
-                        "thread_name": "Subagent thread",
-                        "updated_at": "2026-06-20T05:53:31Z",
-                    }
-                ),
-            ]
-        ),
-        encoding="utf-8",
-    )
-    session_dir = codex_home / "sessions" / "2026" / "06" / "20"
-    session_dir.mkdir(parents=True)
-    (session_dir / f"rollout-2026-06-20T13-52-19-{user_thread_id}.jsonl").write_text(
-        json.dumps(
-            {
-                "type": "session_meta",
-                "payload": {
-                    "id": user_thread_id,
-                    "cwd": "/tmp/user-project",
-                    "thread_source": "user",
-                },
-            }
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    (
-        session_dir / f"rollout-2026-06-20T13-53-19-{subagent_thread_id}.jsonl"
-    ).write_text(
-        json.dumps(
-            {
-                "type": "session_meta",
-                "payload": {
-                    "id": subagent_thread_id,
-                    "cwd": "/tmp/subagent-project",
-                    "thread_source": "subagent",
-                },
-            }
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-
-    result = subprocess.run(
-        ["python3", "-c", CODEX_THREADS_LIST_SCRIPT],
-        env={
-            **os.environ,
-            "CODEX_HOME": str(codex_home),
-            "WEGENT_CODEX_THREADS_LIMIT": "100",
-        },
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-
-    payload = json.loads(result.stdout)
-    assert [thread["threadId"] for thread in payload["threads"]] == [user_thread_id]
-    assert payload["threads"][0]["cwd"] == "/tmp/user-project"
+    assert payload["threads"] == []
+    assert payload["error"] == "sdk exploded"
 
 
 def test_codex_threads_list_command_stops_after_limit(tmp_path):
-    """codex_threads_list should avoid processing unbounded session indexes."""
+    """codex_threads_list should pass a bounded limit to the SDK."""
     from app.services.device.command_registry import CODEX_THREADS_LIST_SCRIPT
 
-    codex_home = tmp_path / "codex-home"
-    codex_home.mkdir()
-    records = [
-        json.dumps(
-            {
-                "id": f"018f2d6b-8c7a-7abc-9def-0123456789{i:02x}",
-                "title": f"Thread {i}",
-                "updatedAt": f"2026-06-20T00:{i:02d}:00Z",
-            }
-        )
-        for i in range(3)
-    ]
-    (codex_home / "session_index.jsonl").write_text(
-        "\n".join(records),
-        encoding="utf-8",
-    )
+    fake_sdk_root = _write_fake_openai_codex_sdk(tmp_path / "fake-sdk")
 
     result = subprocess.run(
-        ["python3", "-c", CODEX_THREADS_LIST_SCRIPT],
+        [sys.executable, "-c", CODEX_THREADS_LIST_SCRIPT],
         env={
             **os.environ,
-            "CODEX_HOME": str(codex_home),
+            "PYTHONPATH": str(fake_sdk_root),
+            "CODEX_HOME": str(tmp_path / "codex-home"),
             "WEGENT_CODEX_THREADS_LIMIT": "2",
         },
         check=True,
@@ -588,8 +570,8 @@ def test_codex_threads_list_command_stops_after_limit(tmp_path):
 
     payload = json.loads(result.stdout)
     assert [thread["title"] for thread in payload["threads"]] == [
-        "Thread 2",
-        "Thread 1",
+        "Newer",
+        "Older",
     ]
 
 
@@ -974,6 +956,20 @@ def test_local_device_command_registry_builds_git_worktree_add_argv():
     )
 
     definition = resolve_local_device_command("git_worktree_add")
+    expected_script = (
+        'source=$1; target=$2; ref=$3; mkdir -p "$(dirname "$target")"; '
+        'if git -C "$target" rev-parse --is-inside-work-tree '
+        ">/dev/null 2>&1; then "
+        'if [ -n "$ref" ]; then '
+        'git -C "$target" checkout --force --detach "$ref"; fi; '
+        "else "
+        'if [ -e "$target" ]; then '
+        'echo "target exists and is not a Git worktree" >&2; exit 64; fi; '
+        'if [ -n "$ref" ]; then '
+        'git -C "$source" worktree add --detach "$target" "$ref"; '
+        'else git -C "$source" worktree add --detach "$target"; fi; '
+        "fi"
+    )
 
     assert definition is not None
     assert build_local_device_command_argv(
@@ -982,7 +978,7 @@ def test_local_device_command_registry_builds_git_worktree_add_argv():
     ) == [
         "sh",
         "-c",
-        'if [ -n "$3" ]; then git -C "$1" worktree add --detach "$2" "$3"; else git -C "$1" worktree add --detach "$2"; fi',
+        expected_script,
         "--",
         "/workspace/projects/d837/Wegent",
         "/workspace/worktrees/1386/Wegent",
@@ -997,6 +993,20 @@ def test_local_device_command_registry_builds_git_worktree_add_argv_with_branch(
     )
 
     definition = resolve_local_device_command("git_worktree_add")
+    expected_script = (
+        'source=$1; target=$2; ref=$3; mkdir -p "$(dirname "$target")"; '
+        'if git -C "$target" rev-parse --is-inside-work-tree '
+        ">/dev/null 2>&1; then "
+        'if [ -n "$ref" ]; then '
+        'git -C "$target" checkout --force --detach "$ref"; fi; '
+        "else "
+        'if [ -e "$target" ]; then '
+        'echo "target exists and is not a Git worktree" >&2; exit 64; fi; '
+        'if [ -n "$ref" ]; then '
+        'git -C "$source" worktree add --detach "$target" "$ref"; '
+        'else git -C "$source" worktree add --detach "$target"; fi; '
+        "fi"
+    )
 
     assert definition is not None
     assert build_local_device_command_argv(
@@ -1009,7 +1019,7 @@ def test_local_device_command_registry_builds_git_worktree_add_argv_with_branch(
     ) == [
         "sh",
         "-c",
-        'if [ -n "$3" ]; then git -C "$1" worktree add --detach "$2" "$3"; else git -C "$1" worktree add --detach "$2"; fi',
+        expected_script,
         "--",
         "/workspace/projects/d837/Wegent",
         "/workspace/worktrees/1386/Wegent",
@@ -1175,7 +1185,7 @@ metadata:
 
     env = {**os.environ, "HOME": str(tmp_path)}
     result = subprocess.run(
-        ["python3", "-c", LS_SKILLS_SCRIPT],
+        [sys.executable, "-c", LS_SKILLS_SCRIPT],
         env=env,
         check=True,
         capture_output=True,
@@ -1230,7 +1240,7 @@ description: Shared local context.
 
     env = {**os.environ, "HOME": str(tmp_path)}
     result = subprocess.run(
-        ["python3", "-c", LS_SKILLS_SCRIPT],
+        [sys.executable, "-c", LS_SKILLS_SCRIPT],
         env=env,
         check=True,
         capture_output=True,
@@ -1274,7 +1284,7 @@ description: Linked helper skill.
 
     env = {**os.environ, "HOME": str(tmp_path)}
     result = subprocess.run(
-        ["python3", "-c", LS_SKILLS_SCRIPT],
+        [sys.executable, "-c", LS_SKILLS_SCRIPT],
         env=env,
         check=True,
         capture_output=True,
@@ -1316,7 +1326,7 @@ description: Codex-only linked skill.
 
     env = {**os.environ, "HOME": str(tmp_path)}
     result = subprocess.run(
-        ["python3", "-c", LS_SKILLS_SCRIPT],
+        [sys.executable, "-c", LS_SKILLS_SCRIPT],
         env=env,
         check=True,
         capture_output=True,
@@ -1346,7 +1356,7 @@ def test_setup_shared_skills_command_migrates_legacy_skill_dirs(tmp_path):
 
     env = {**os.environ, "HOME": str(tmp_path)}
     result = subprocess.run(
-        ["python3", "-c", SETUP_SHARED_SKILLS_SCRIPT],
+        [sys.executable, "-c", SETUP_SHARED_SKILLS_SCRIPT],
         env=env,
         check=True,
         capture_output=True,
@@ -1391,7 +1401,7 @@ def test_setup_shared_skills_command_is_idempotent(tmp_path):
 
     env = {**os.environ, "HOME": str(tmp_path)}
     result = subprocess.run(
-        ["python3", "-c", SETUP_SHARED_SKILLS_SCRIPT],
+        [sys.executable, "-c", SETUP_SHARED_SKILLS_SCRIPT],
         env=env,
         check=True,
         capture_output=True,
@@ -1417,7 +1427,7 @@ def test_sync_runtime_auth_file_command_writes_json_object(tmp_path):
         "WEGENT_RUNTIME_CONFIG_CONTENT": '{"token":"secret","account":{"id":"u1"}}',
     }
     result = subprocess.run(
-        ["python3", "-c", SYNC_RUNTIME_AUTH_FILE_SCRIPT],
+        [sys.executable, "-c", SYNC_RUNTIME_AUTH_FILE_SCRIPT],
         env=env,
         check=True,
         capture_output=True,
@@ -1454,7 +1464,7 @@ def test_sync_runtime_auth_file_command_does_not_overwrite_existing_file(tmp_pat
         "WEGENT_RUNTIME_CONFIG_CONTENT": '{"token":"new"}',
     }
     result = subprocess.run(
-        ["python3", "-c", SYNC_RUNTIME_AUTH_FILE_SCRIPT],
+        [sys.executable, "-c", SYNC_RUNTIME_AUTH_FILE_SCRIPT],
         env=env,
         check=True,
         capture_output=True,
@@ -1483,7 +1493,7 @@ def test_read_runtime_auth_file_command_returns_existing_json(tmp_path):
         "WEGENT_RUNTIME_CONFIG_TARGET_PATH": "~/.codex/auth.json",
     }
     result = subprocess.run(
-        ["python3", "-c", READ_RUNTIME_AUTH_FILE_SCRIPT],
+        [sys.executable, "-c", READ_RUNTIME_AUTH_FILE_SCRIPT],
         env=env,
         check=True,
         capture_output=True,
@@ -1570,7 +1580,7 @@ metadata:
 
     env = {**os.environ, "HOME": str(tmp_path)}
     result = subprocess.run(
-        ["python3", "-c", LS_SKILLS_SCRIPT],
+        [sys.executable, "-c", LS_SKILLS_SCRIPT],
         env=env,
         check=True,
         capture_output=True,

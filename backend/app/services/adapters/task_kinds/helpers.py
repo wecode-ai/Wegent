@@ -29,6 +29,7 @@ from app.services.adapters.pipeline_stage import pipeline_stage_service
 from app.services.device.display_name import resolve_device_display_name
 from app.services.readers.kinds import KindType, kindReader
 from app.services.readers.users import userReader
+from app.services.task_fork_history import task_fork_history_resolver
 from app.stores.tasks import WorkspaceRefLookup
 
 from .converters import (
@@ -89,18 +90,22 @@ def create_subtasks(
             detail="No valid bots found in team configuration, please check that the bots referenced by the team exist and are active",
         )
 
-    # For followup tasks: query existing subtasks and add one more
-    existing_subtasks = task_stores.subtask_store.list_latest_by_task(
-        db, task_id=task.id, user_id=user_id
+    existing_subtasks = [
+        item.subtask
+        for item in task_fork_history_resolver.resolve_for_task(
+            db,
+            task_id=task.id,
+            user_id=user_id,
+            current_task=task,
+        )
+    ]
+    next_message_id = task_fork_history_resolver.get_next_message_id(
+        db,
+        task_id=task.id,
+        user_id=user_id,
+        current_task=task,
     )
-
-    # Get the next message_id for the new subtask
-    next_message_id = 1
-    parent_id = 0
-    if existing_subtasks:
-        latest_subtask = existing_subtasks[-1]
-        next_message_id = latest_subtask.message_id + 1
-        parent_id = latest_subtask.message_id
+    parent_id = next_message_id - 1 if next_message_id > 1 else 0
 
     collaboration_model = team_crd.spec.collaborationModel
     if collaboration_model == "pipeline":
