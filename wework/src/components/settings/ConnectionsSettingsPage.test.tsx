@@ -479,7 +479,7 @@ describe('ConnectionsSettingsPage', () => {
 
     await userEvent.click(screen.getByTestId('worktree-task-link-1386'))
 
-    expect(window.location.pathname).toBe('/projects/7/tasks/1386')
+    expect(window.location.pathname).toBe('/settings/worktrees')
   })
 
   test('configures shared skills from the coding settings navigation', async () => {

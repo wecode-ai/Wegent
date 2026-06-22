@@ -1,3 +1,5 @@
+import type { DeviceSessionTransport, DeviceSessionType } from './device-sessions'
+
 export interface DeviceInfo {
   id: number
   device_id: string
@@ -55,10 +57,10 @@ export interface UpgradeDeviceResponse {
 export interface DeviceSessionResponse {
   session_id: string
   device_id: string
-  type: string
+  type: DeviceSessionType
   path: string
   url: string
-  transport?: 'url' | 'socketio'
+  transport?: DeviceSessionTransport
   expires_at?: string | null
 }
 

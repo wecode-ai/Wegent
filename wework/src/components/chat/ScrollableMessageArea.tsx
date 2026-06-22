@@ -11,6 +11,7 @@ const STABLE_SCROLL_DELAYS = [0, 50, 150, 300]
 
 interface ScrollableMessageAreaProps {
   messages: WorkbenchMessage[]
+  loading?: boolean
   className?: string
   scrollerClassName?: string
   scrollButtonClassName?: string
@@ -30,6 +31,7 @@ interface ScrollableMessageAreaProps {
 
 export function ScrollableMessageArea({
   messages,
+  loading = false,
   className,
   scrollerClassName,
   scrollButtonClassName,
@@ -207,20 +209,29 @@ export function ScrollableMessageArea({
       >
         <div ref={contentRef} className="min-w-0 overflow-x-hidden">
           {messages.length === 0 ? (
-            <div
-              data-testid="chat-empty-state"
-              className="flex min-h-full flex-col items-center justify-center px-6 py-16 text-center"
-            >
-              <h2 className="text-sm font-medium text-text-primary">
-                {t('workbench.empty_conversation_title', '开始新的对话')}
-              </h2>
-              <p className="mt-2 max-w-sm text-xs leading-5 text-text-muted">
-                {t(
-                  'workbench.empty_conversation_description',
-                  '在下方输入问题、粘贴上下文或添加附件，Codex 会在这里展示回复。'
-                )}
-              </p>
-            </div>
+            loading ? (
+              <div
+                data-testid="chat-loading-state"
+                className="flex min-h-full items-center justify-center px-6 py-16 text-center text-sm text-text-muted"
+              >
+                {t('workbench.loading_conversation', '正在加载会话...')}
+              </div>
+            ) : (
+              <div
+                data-testid="chat-empty-state"
+                className="flex min-h-full flex-col items-center justify-center px-6 py-16 text-center"
+              >
+                <h2 className="text-sm font-medium text-text-primary">
+                  {t('workbench.empty_conversation_title', '开始新的对话')}
+                </h2>
+                <p className="mt-2 max-w-sm text-xs leading-5 text-text-muted">
+                  {t(
+                    'workbench.empty_conversation_description',
+                    '在下方输入问题、粘贴上下文或添加附件，Codex 会在这里展示回复。'
+                  )}
+                </p>
+              </div>
+            )
           ) : (
             <MessageList
               messages={messages}

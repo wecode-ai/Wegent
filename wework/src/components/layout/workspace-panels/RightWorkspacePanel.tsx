@@ -125,7 +125,7 @@ export function RightWorkspacePanel({
           <FileWorkspacePanel
             key={
               workspaceTarget
-                ? `${workspaceTarget.deviceId}:${workspaceTarget.path}:${workspaceTarget.taskId ?? ''}`
+                ? `${workspaceTarget.deviceId}:${workspaceTarget.path}`
                 : 'empty'
             }
             target={workspaceTarget}

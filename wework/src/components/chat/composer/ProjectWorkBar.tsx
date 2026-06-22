@@ -186,7 +186,7 @@ export function ProjectWorkBar({
     currentProject && hasGitBranch && supportsGitWorktreeExecution(currentProject)
   )
   const canShowExecutionModeControl = Boolean(currentProject)
-  const canShowBranchSelector = hasGitBranch
+  const canShowBranchSelector = Boolean(currentProject && (hasGitBranch || onListBranches))
   const canShowWorktreeBranchSelector = Boolean(
     currentProject &&
     executionMode === 'git_worktree' &&
