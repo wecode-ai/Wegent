@@ -800,6 +800,7 @@ export default function TaskSidebar({
       <div
         className="hidden lg:flex lg:flex-col w-full h-full bg-base rounded-3xl shadow-sidebar my-2"
         style={{ height: 'calc(100% - 24px)' }}
+        data-testid="task-sidebar"
         data-tour="task-sidebar"
       >
         {renderSidebarContent(desktopScrollRef, 'desktop')}
