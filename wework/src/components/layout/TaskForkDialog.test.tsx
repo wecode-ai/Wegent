@@ -290,11 +290,13 @@ describe('TaskForkDialog', () => {
 
     await userEvent.click(screen.getByTestId('task-fork-bind-device-local-3'))
     expect(await screen.findByTestId('project-create-dialog')).toBeInTheDocument()
-    await waitFor(() =>
-      expect(screen.getByTestId('project-directory-path-input')).toHaveValue('/home/alice')
-    )
     await userEvent.click(screen.getByTestId('project-workspace-kind-worktree'))
+    await userEvent.click(screen.getByTestId('project-folder-select-button'))
+    await waitFor(() =>
+      expect(screen.getByTestId('device-folder-path-input')).toHaveValue('/home/alice')
+    )
     await userEvent.click(await screen.findByText('office-project'))
+    await userEvent.click(screen.getByTestId('confirm-device-folder-picker-button'))
     await userEvent.click(screen.getByTestId('create-project-button'))
 
     await waitFor(() =>

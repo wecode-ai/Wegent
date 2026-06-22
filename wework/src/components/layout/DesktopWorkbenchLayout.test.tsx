@@ -1199,8 +1199,10 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('projects-create-button'))
 
     expect(screen.getByTestId('project-create-dialog')).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: '新建项目' })).toBeInTheDocument()
-    expect(screen.getByTestId('project-name-input')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '选择项目文件夹' })).toBeInTheDocument()
+    expect(screen.getByTestId('project-device-tab-device-1')).toHaveTextContent('executor')
+    expect(screen.getByTestId('project-folder-select-button')).toBeInTheDocument()
+    expect(screen.queryByTestId('project-name-input')).not.toBeInTheDocument()
     expect(screen.queryByTestId('projects-create-button-menu')).not.toBeInTheDocument()
     expect(screen.queryByTestId('project-start-from-scratch-button')).not.toBeInTheDocument()
     expect(onRefreshDevices).toHaveBeenCalledTimes(1)
@@ -1238,8 +1240,9 @@ describe('DesktopWorkbenchLayout', () => {
 
     await userEvent.click(screen.getByTestId('projects-create-button'))
 
-    expect(screen.getByText('新建项目')).toBeInTheDocument()
-    expect(screen.getByTestId('project-name-input')).toBeInTheDocument()
+    expect(screen.getByText('选择项目文件夹')).toBeInTheDocument()
+    expect(screen.getByTestId('project-folder-select-button')).toBeInTheDocument()
+    expect(screen.queryByTestId('project-name-input')).not.toBeInTheDocument()
     expect(onRefreshDevices).toHaveBeenCalledTimes(1)
 
     resolveRefreshDevices?.()
@@ -1272,9 +1275,9 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await userEvent.click(screen.getByTestId('projects-create-button'))
-    await userEvent.click(screen.getByTestId('project-folder-mode-create'))
 
     expect(screen.getByTestId('project-create-dialog')).toBeInTheDocument()
+    expect(screen.getByTestId('project-device-tab-old-device')).toHaveTextContent('需升级')
     expect(screen.getByTestId('project-device-unavailable-old-device')).toHaveTextContent(
       '当前 v1.8.4，需要 1.8.5 或以上'
     )
@@ -1373,6 +1376,9 @@ describe('DesktopWorkbenchLayout', () => {
               name: 'executor',
               status: 'online',
               is_default: true,
+              device_type: 'local',
+              bind_shell: 'claudecode',
+              executor_version: '1.8.5',
             },
           ],
         }}
@@ -1395,8 +1401,9 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('project-work-menu')).not.toBeInTheDocument()
     expect(screen.queryByTestId('create-project-submenu')).not.toBeInTheDocument()
     expect(screen.getByTestId('project-create-dialog')).toBeInTheDocument()
-    expect(screen.getByText('新建项目')).toBeInTheDocument()
-    expect(screen.getByTestId('project-name-input')).toBeInTheDocument()
+    expect(screen.getByText('选择项目文件夹')).toBeInTheDocument()
+    expect(screen.getByTestId('project-folder-select-button')).toBeInTheDocument()
+    expect(screen.queryByTestId('project-name-input')).not.toBeInTheDocument()
     expect(screen.getByTestId('create-project-button')).toHaveTextContent('创建项目')
   })
 
@@ -1406,7 +1413,6 @@ describe('DesktopWorkbenchLayout', () => {
     render(<DesktopWorkbenchLayout {...baseProps} onRefreshDevices={onRefreshDevices} />)
 
     await userEvent.click(screen.getByTestId('projects-create-button'))
-    await userEvent.click(screen.getByTestId('project-folder-mode-create'))
 
     expect(screen.getByTestId('project-create-dialog')).toBeInTheDocument()
     expect(screen.getByText('创建项目需要一台可用设备。')).toBeInTheDocument()
@@ -1446,7 +1452,6 @@ describe('DesktopWorkbenchLayout', () => {
 
     await userEvent.click(screen.getByTestId('project-work-button'))
     await userEvent.click(screen.getByTestId('add-project-option'))
-    await userEvent.click(screen.getByTestId('project-folder-mode-create'))
     await userEvent.click(screen.getByTestId('open-cloud-device-settings-link'))
 
     expect(screen.queryByTestId('project-create-dialog')).not.toBeInTheDocument()
@@ -1501,22 +1506,20 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await userEvent.click(screen.getByTestId('projects-create-button'))
-    await userEvent.type(screen.getByTestId('project-name-input'), 'repo')
-    await userEvent.click(screen.getByTestId('project-folder-mode-select'))
+    await userEvent.click(screen.getByTestId('project-folder-select-button'))
 
     await waitFor(() => expect(onGetDeviceHomeDirectory).toHaveBeenCalledWith('device-1'))
     await waitFor(() =>
       expect(onListDeviceDirectories).toHaveBeenCalledWith('device-1', '/home/ubuntu')
     )
     expect(screen.queryByText('.cache')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('select-current-directory-button')).not.toBeInTheDocument()
-    expect(screen.getByTestId('project-name-input')).toHaveValue('repo')
+    expect(screen.getByTestId('device-folder-path-input')).toHaveValue('/home/ubuntu')
 
     const repoEntry = await screen.findByText('repo')
     await userEvent.click(repoEntry)
     expect(onListDeviceDirectories).not.toHaveBeenCalledWith('device-1', '/home/ubuntu/repo')
 
-    await userEvent.click(screen.getByTestId('project-hidden-directories-toggle'))
+    await userEvent.click(screen.getByTestId('device-folder-hidden-toggle'))
     expect(screen.getByText('.cache')).toBeInTheDocument()
 
     await userEvent.dblClick(repoEntry)
@@ -1524,6 +1527,8 @@ describe('DesktopWorkbenchLayout', () => {
       expect(onListDeviceDirectories).toHaveBeenCalledWith('device-1', '/home/ubuntu/repo')
     )
 
+    await userEvent.click(screen.getByTestId('confirm-device-folder-picker-button'))
+    expect(screen.getByTestId('project-name-preview')).toHaveTextContent('repo')
     await userEvent.click(screen.getByTestId('create-project-button'))
 
     await waitFor(() =>
