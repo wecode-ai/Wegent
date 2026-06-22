@@ -30,9 +30,18 @@ ExecuteAgent = Callable[[ExecutionRequest, ResponsesAPIEmitter], Awaitable[Any]]
 class RuntimeTranscriptTransport(EventTransport):
     """Capture agent Responses API events into a LocalTask transcript."""
 
-    def __init__(self, store: LocalTaskStore, local_task_id: str):
+    def __init__(
+        self,
+        store: LocalTaskStore,
+        local_task_id: str,
+        *,
+        runtime: str,
+        emit_event: Optional[Callable[[str, dict[str, Any]], Any]] = None,
+    ):
         self.store = store
         self.local_task_id = local_task_id
+        self.runtime = runtime
+        self.emit_event = emit_event
         self._assistant_draft = ""
 
     async def send(
@@ -47,9 +56,27 @@ class RuntimeTranscriptTransport(EventTransport):
     ) -> None:
         if event_type == ResponsesAPIStreamEvents.OUTPUT_TEXT_DELTA.value:
             self._assistant_draft += str(data.get("delta") or "")
+            await self._forward_event(
+                event_type,
+                task_id,
+                subtask_id,
+                data,
+                message_id,
+                executor_name,
+                executor_namespace,
+            )
             return
         if event_type == ResponsesAPIStreamEvents.OUTPUT_TEXT_DONE.value:
             self._assistant_draft = str(data.get("text") or self._assistant_draft)
+            await self._forward_event(
+                event_type,
+                task_id,
+                subtask_id,
+                data,
+                message_id,
+                executor_name,
+                executor_namespace,
+            )
             return
         if event_type == ResponsesAPIStreamEvents.RESPONSE_COMPLETED.value:
             self._append_assistant_message(
@@ -59,6 +86,15 @@ class RuntimeTranscriptTransport(EventTransport):
                 executor_session=data.get("executor_session"),
             )
             self._assistant_draft = ""
+            await self._forward_event(
+                event_type,
+                task_id,
+                subtask_id,
+                data,
+                message_id,
+                executor_name,
+                executor_namespace,
+            )
             return
         if event_type == ResponsesAPIStreamEvents.RESPONSE_INCOMPLETE.value:
             self._append_assistant_message(
@@ -67,6 +103,15 @@ class RuntimeTranscriptTransport(EventTransport):
                 subtask_id=subtask_id,
             )
             self._assistant_draft = ""
+            await self._forward_event(
+                event_type,
+                task_id,
+                subtask_id,
+                data,
+                message_id,
+                executor_name,
+                executor_namespace,
+            )
             return
         if event_type == ResponsesAPIStreamEvents.ERROR.value:
             self._append_assistant_message(
@@ -75,6 +120,58 @@ class RuntimeTranscriptTransport(EventTransport):
                 subtask_id=subtask_id,
             )
             self._assistant_draft = ""
+            await self._forward_event(
+                event_type,
+                task_id,
+                subtask_id,
+                data,
+                message_id,
+                executor_name,
+                executor_namespace,
+            )
+            return
+
+        await self._forward_event(
+            event_type,
+            task_id,
+            subtask_id,
+            data,
+            message_id,
+            executor_name,
+            executor_namespace,
+        )
+
+    async def _forward_event(
+        self,
+        event_type: str,
+        task_id: int,
+        subtask_id: int,
+        data: dict,
+        message_id: Optional[int],
+        executor_name: Optional[str],
+        executor_namespace: Optional[str],
+    ) -> None:
+        if self.emit_event is None:
+            return
+
+        payload: dict[str, Any] = {
+            "event_type": event_type,
+            "task_id": task_id,
+            "subtask_id": subtask_id,
+            "data": data,
+            "local_task_id": self.local_task_id,
+            "runtime": self.runtime,
+        }
+        if message_id is not None:
+            payload["message_id"] = message_id
+        if executor_name is not None:
+            payload["executor_name"] = executor_name
+        if executor_namespace is not None:
+            payload["executor_namespace"] = executor_namespace
+
+        result = self.emit_event(event_type, payload)
+        if asyncio.iscoroutine(result):
+            await result
 
     def _append_assistant_message(
         self,
@@ -119,11 +216,13 @@ class RuntimeAgentAdapter:
         store: LocalTaskStore,
         execute_agent: Optional[ExecuteAgent] = None,
         run_background: bool = True,
+        responses_event_emitter: Optional[Callable[[str, dict[str, Any]], Any]] = None,
     ):
         self.runtime = runtime
         self.store = store
         self.execute_agent = execute_agent or self._execute_real_agent
         self.run_background = run_background
+        self.responses_event_emitter = responses_event_emitter
         self._running_tasks: set[asyncio.Task] = set()
 
     async def create(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -210,7 +309,12 @@ class RuntimeAgentAdapter:
         task.add_done_callback(self._running_tasks.discard)
 
     async def _run_agent(self, local_task_id: str, request: ExecutionRequest) -> None:
-        transport = RuntimeTranscriptTransport(self.store, local_task_id)
+        transport = RuntimeTranscriptTransport(
+            self.store,
+            local_task_id,
+            runtime=self.runtime,
+            emit_event=self.responses_event_emitter,
+        )
         emitter = ResponsesAPIEmitter(
             task_id=request.task_id,
             subtask_id=request.subtask_id,

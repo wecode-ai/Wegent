@@ -2235,6 +2235,76 @@ async def test_runtime_work_handler_creates_runtime_task_with_local_transcript(
 
 
 @pytest.mark.asyncio
+async def test_runtime_work_handler_streams_claude_runtime_task_events(
+    tmp_path,
+    monkeypatch,
+):
+    from executor.runtime_work.agent_adapter import RuntimeAgentAdapter
+    from executor.runtime_work.local_task_store import LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    async def execute_agent(self, request, emitter):
+        await emitter.start(shell_type="ClaudeCode")
+        await emitter.text_delta("Created")
+        await emitter.done(content="Created")
+
+    monkeypatch.setattr(RuntimeAgentAdapter, "_execute_real_agent", execute_agent)
+
+    events = []
+    handler = RuntimeWorkRpcHandler(
+        store=LocalTaskStore(tmp_path / "index.json"),
+        codex_discovery=EmptyDiscovery(),
+        responses_event_emitter=lambda event, payload: events.append((event, payload)),
+    )
+
+    result = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.create",
+            "payload": {
+                "runtime": "claude_code",
+                "workspacePath": "/repo/Wegent",
+                "message": "create the task",
+                "executionRequest": {
+                    "task_id": 1001,
+                    "subtask_id": 2001,
+                    "team_id": 1,
+                    "prompt": "create the task",
+                    "workspace_source": "local_path",
+                    "project_workspace_path": "/repo/Wegent",
+                    "model_config": {},
+                    "bot": [],
+                },
+            },
+        }
+    )
+
+    assert result["success"] is True
+    await _drain_runtime_adapter(handler.adapters["claude_code"])
+
+    assert [event for event, _payload in events] == [
+        "response.created",
+        "response.output_text.delta",
+        "response.completed",
+    ]
+    delta_payload = events[1][1]
+    assert delta_payload["local_task_id"] == result["localTaskId"]
+    assert delta_payload["runtime"] == "claude_code"
+    assert delta_payload["data"]["delta"] == "Created"
+
+    transcript = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "workspacePath": "/repo/Wegent",
+                "localTaskId": result["localTaskId"],
+            },
+        }
+    )
+
+    assert transcript["messages"][1]["content"] == "Created"
+
+
+@pytest.mark.asyncio
 async def test_runtime_work_handler_creates_codex_runtime_task_as_native_thread(
     tmp_path,
 ):
