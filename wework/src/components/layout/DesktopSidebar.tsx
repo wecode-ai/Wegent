@@ -746,6 +746,16 @@ function RuntimeLocalTaskRow({
               `runtime-local-task-notify-${task.localTaskId}`,
               `runtime-local-task-notify-icon-${task.localTaskId}`
             )}
+          {task.running && (
+            <span
+              data-testid={`runtime-local-task-running-${task.localTaskId}`}
+              title={t('workbench.runtime_task_running')}
+              aria-label={t('workbench.runtime_task_running')}
+              className="inline-flex h-5 w-[56px] shrink-0 items-center justify-center rounded-md bg-primary/10 text-[11px] font-medium leading-4 text-primary"
+            >
+              {t('workbench.runtime_task_running')}
+            </span>
+          )}
           <span className="flex h-7 w-7 items-center justify-center">
             {formatRelativeSidebarTime(getRuntimeTaskTime(task))}
           </span>
