@@ -54,6 +54,7 @@ DEFAULT_LOCAL_HEARTBEAT_INTERVAL = 30
 DEFAULT_LOCAL_HEARTBEAT_TIMEOUT = 90
 DEFAULT_LOCAL_RECONNECT_DELAY = 1
 DEFAULT_LOCAL_RECONNECT_MAX_DELAY = 30
+DEFAULT_RUNTIME_CODEX_WATCH_INTERVAL = 30
 
 
 def _get_int_env(name: str, default: int) -> int:
@@ -91,6 +92,9 @@ LOCAL_HEARTBEAT_INTERVAL = _get_int_env(
 )
 LOCAL_HEARTBEAT_TIMEOUT = _get_int_env(
     "LOCAL_HEARTBEAT_TIMEOUT", DEFAULT_LOCAL_HEARTBEAT_TIMEOUT
+)
+RUNTIME_CODEX_WATCH_INTERVAL = _get_int_env(
+    "RUNTIME_CODEX_WATCH_INTERVAL", DEFAULT_RUNTIME_CODEX_WATCH_INTERVAL
 )
 
 # Local mode reconnection configuration
@@ -145,6 +149,11 @@ CODEX_BINARY_PATH = os.environ.get("CODEX_BINARY_PATH") or os.environ.get(
     "CODEX_BIN", "codex"
 )
 CODEX_MODEL_PROVIDER = os.environ.get("CODEX_MODEL_PROVIDER", "wecode-openai")
+
+# Host advertised to peer executors for runtime fork direct transfers.
+# If unset, local mode falls back to the detected LAN address.
+RUNTIME_TRANSFER_HOST = os.environ.get("RUNTIME_TRANSFER_HOST", "").strip()
+RUNTIME_TRANSFER_BIND_HOST = os.environ.get("RUNTIME_TRANSFER_BIND_HOST", "").strip()
 
 
 def get_wegent_mcp_url() -> str:

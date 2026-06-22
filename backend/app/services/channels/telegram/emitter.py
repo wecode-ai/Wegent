@@ -9,6 +9,7 @@ This module provides ResultEmitter implementations for Telegram:
 - StreamingResponseEmitter: Telegram-specific streaming via message editing
 """
 
+import asyncio
 import logging
 import time
 from typing import TYPE_CHECKING, Any, Dict, Optional
@@ -88,6 +89,7 @@ class StreamingResponseEmitter(ResultEmitter):
         self._pending_content = ""
         self._started = False
         self._finished = False
+        self._update_lock = asyncio.Lock()
 
     @property
     def message_id(self) -> Optional[int]:
@@ -151,33 +153,31 @@ class StreamingResponseEmitter(ResultEmitter):
         Returns:
             Tuple of (thinking_status, actual_content)
         """
-        lines = text.split("\n")
-        thinking_lines = []
-        content_lines = []
-        in_content = False
+        if not text:
+            return "", ""
 
-        for line in lines:
-            stripped = line.strip()
-            # Check if this line starts actual content (after "**回复:**")
-            if "**回复:**" in line:
-                in_content = True
-                continue
-            # If we're in content section, everything is content
-            if in_content:
-                content_lines.append(line)
-            # If line is a thinking status, it's thinking
-            elif self._is_thinking_status(stripped):
-                thinking_lines.append(line)
-            # Empty lines before content are part of thinking section
-            elif not stripped and not content_lines:
-                continue
-            # Otherwise it's content
-            else:
-                content_lines.append(line)
+        if "**回复:**" in text:
+            thinking_text, _, content = text.partition("**回复:**")
+            thinking_lines = [
+                line
+                for line in thinking_text.splitlines()
+                if self._is_thinking_status(line.strip())
+            ]
+            if content.startswith("\r\n"):
+                content = content[2:]
+            elif content.startswith("\n"):
+                content = content[1:]
+            return "\n".join(thinking_lines).strip(), content
 
-        thinking = "\n".join(thinking_lines).strip()
-        content = "\n".join(content_lines).strip()
-        return thinking, content
+        stripped = text.strip()
+        if (
+            stripped
+            and self._is_thinking_status(stripped)
+            and text.endswith(("\n\n", "\r\n\r\n"))
+        ):
+            return stripped, ""
+
+        return "", text
 
     def _format_reasoning_summary(self) -> str:
         """Format accumulated model reasoning summary for display."""
@@ -193,7 +193,7 @@ class StreamingResponseEmitter(ResultEmitter):
         include_status: bool = True,
     ) -> str:
         """Build Telegram text with separate reasoning and answer blocks."""
-        answer = answer_content.strip()
+        answer = answer_content if answer_content.strip() else ""
         reasoning_summary = self._format_reasoning_summary()
         display_parts = []
 
@@ -335,7 +335,8 @@ class StreamingResponseEmitter(ResultEmitter):
         logger.info(
             f"[TelegramStreamingEmitter] start task={task_id} subtask={subtask_id}"
         )
-        await self._ensure_message_created()
+        async with self._update_lock:
+            await self._ensure_message_created()
 
     async def emit_chunk(
         self,
@@ -349,12 +350,13 @@ class StreamingResponseEmitter(ResultEmitter):
         if not content:
             return
 
-        # Ensure message is created
-        if not await self._ensure_message_created():
-            return
+        async with self._update_lock:
+            # Ensure message is created
+            if not await self._ensure_message_created():
+                return
 
-        # Use throttling to reduce API calls
-        await self._send_streaming_update(content)
+            # Use throttling to reduce API calls
+            await self._send_streaming_update(content)
 
     async def emit_thinking(
         self,
@@ -368,12 +370,13 @@ class StreamingResponseEmitter(ResultEmitter):
         if not content:
             return
 
-        # Ensure message is created
-        if not await self._ensure_message_created():
-            return
+        async with self._update_lock:
+            # Ensure message is created
+            if not await self._ensure_message_created():
+                return
 
-        self._reasoning_content += content
-        await self._send_streaming_update("")
+            self._reasoning_content += content
+            await self._send_streaming_update("")
 
     async def emit_done(
         self,
@@ -383,75 +386,74 @@ class StreamingResponseEmitter(ResultEmitter):
         **kwargs,
     ) -> None:
         """Emit done event - finalize the message."""
-        if self._finished:
-            logger.warning(
-                "[TelegramStreamingEmitter] emit_done called but already finished"
-            )
-            return
-
-        final_content = self._full_content
-        if self._pending_content:
-            final_content += self._pending_content
-            self._pending_content = ""
-
-        if result and isinstance(result, dict):
-            result_value = result.get("value", "") or result.get("output", "") or ""
-            if result_value and not isinstance(result_value, str):
-                result_value = str(result_value)
-            if result_value and len(result_value) > len(final_content):
-                final_content = result_value
-                logger.info(
-                    f"[TelegramStreamingEmitter] Using result.value ({len(result_value)} chars) "
-                    f"instead of accumulated content ({len(self._full_content)} chars)"
-                )
-
-        logger.info(
-            f"[TelegramStreamingEmitter] done task={task_id} subtask={subtask_id} "
-            f"final_content_len={len(final_content)}"
-        )
-
-        try:
-            # Ensure message is created
-            if not await self._ensure_message_created():
-                logger.error(
-                    "[TelegramStreamingEmitter] Cannot finish - message not created"
+        async with self._update_lock:
+            if self._finished:
+                logger.warning(
+                    "[TelegramStreamingEmitter] emit_done called but already finished"
                 )
                 return
 
-            self._full_content = final_content
+            final_content = self._drain_pending_content_locked()
 
-            # Final update with complete content
-            display_content = self._build_display_content(
-                final_content,
-                include_status=False,
-            )
-            if display_content:
-                display_content = self._truncate_message(display_content)
-
-                try:
-                    await self._bot.edit_message_text(
-                        chat_id=self._chat_id,
-                        message_id=self._message_id,
-                        text=display_content,
+            if result and isinstance(result, dict):
+                result_value = result.get("value", "") or result.get("output", "") or ""
+                if result_value and not isinstance(result_value, str):
+                    result_value = str(result_value)
+                if result_value:
+                    final_content = result_value
+                    logger.info(
+                        f"[TelegramStreamingEmitter] Using final result content "
+                        f"({len(result_value)} chars) instead of accumulated content "
+                        f"({len(self._full_content)} chars)"
                     )
-                except Exception as edit_error:
-                    # Ignore "Message is not modified" error - this happens when
-                    # the final content is the same as the last streamed content
-                    error_str = str(edit_error)
-                    if "Message is not modified" in error_str:
-                        logger.debug(
-                            "[TelegramStreamingEmitter] Message content unchanged, skipping final edit"
-                        )
-                    else:
-                        raise
 
-            self._finished = True
-            logger.info("[TelegramStreamingEmitter] Message finalized successfully")
-
-        except Exception as e:
-            logger.exception(
-                f"[TelegramStreamingEmitter] Failed to finalize message: {e}"
+            logger.info(
+                f"[TelegramStreamingEmitter] done task={task_id} subtask={subtask_id} "
+                f"final_content_len={len(final_content)}"
             )
+
+            try:
+                # Ensure message is created
+                if not await self._ensure_message_created():
+                    logger.error(
+                        "[TelegramStreamingEmitter] Cannot finish - message not created"
+                    )
+                    return
+
+                self._full_content = final_content
+
+                # Final update with complete content
+                display_content = self._build_display_content(
+                    final_content,
+                    include_status=False,
+                )
+                if display_content:
+                    display_content = self._truncate_message(display_content)
+
+                    try:
+                        await self._bot.edit_message_text(
+                            chat_id=self._chat_id,
+                            message_id=self._message_id,
+                            text=display_content,
+                        )
+                    except Exception as edit_error:
+                        # Ignore "Message is not modified" error - this happens when
+                        # the final content is the same as the last streamed content
+                        error_str = str(edit_error)
+                        if "Message is not modified" in error_str:
+                            logger.debug(
+                                "[TelegramStreamingEmitter] Message content unchanged, skipping final edit"
+                            )
+                        else:
+                            raise
+
+                self._finished = True
+                logger.info("[TelegramStreamingEmitter] Message finalized successfully")
+
+            except Exception as e:
+                logger.exception(
+                    f"[TelegramStreamingEmitter] Failed to finalize message: {e}"
+                )
 
     async def emit_error(
         self,
@@ -461,36 +463,38 @@ class StreamingResponseEmitter(ResultEmitter):
         **kwargs,
     ) -> None:
         """Emit error event - show error message."""
-        if self._finished:
-            return
-
         logger.warning(
             f"[TelegramStreamingEmitter] error task={task_id} subtask={subtask_id} "
             f"error={error}"
         )
 
-        try:
-            # Ensure message is created
-            if not await self._ensure_message_created():
+        async with self._update_lock:
+            if self._finished:
                 return
 
-            # Update message with error
-            error_text = f"❌ 错误: {error}"
-            if self._full_content:
-                error_text = f"{self._full_content}\n\n{error_text}"
+            try:
+                # Ensure message is created
+                if not await self._ensure_message_created():
+                    return
 
-            await self._bot.edit_message_text(
-                chat_id=self._chat_id,
-                message_id=self._message_id,
-                text=error_text[: self.MAX_MESSAGE_LENGTH],
-            )
+                # Update message with error
+                error_text = f"❌ 错误: {error}"
+                final_content = self._drain_pending_content_locked()
+                if final_content:
+                    error_text = f"{final_content}\n\n{error_text}"
 
-            self._finished = True
+                await self._bot.edit_message_text(
+                    chat_id=self._chat_id,
+                    message_id=self._message_id,
+                    text=error_text[: self.MAX_MESSAGE_LENGTH],
+                )
 
-        except Exception as e:
-            logger.exception(
-                f"[TelegramStreamingEmitter] Failed to send error message: {e}"
-            )
+                self._finished = True
+
+            except Exception as e:
+                logger.exception(
+                    f"[TelegramStreamingEmitter] Failed to send error message: {e}"
+                )
 
     async def emit_cancelled(
         self,
@@ -499,41 +503,52 @@ class StreamingResponseEmitter(ResultEmitter):
         **kwargs,
     ) -> None:
         """Emit cancelled event - show cancellation message."""
-        if self._finished:
-            return
-
         logger.info(
             f"[TelegramStreamingEmitter] cancelled task={task_id} subtask={subtask_id}"
         )
 
-        try:
-            # Ensure message is created
-            if not await self._ensure_message_created():
+        async with self._update_lock:
+            if self._finished:
                 return
 
-            # Add cancellation note to content
-            self._full_content += "\n\n⚠️ 任务已取消"
+            try:
+                # Ensure message is created
+                if not await self._ensure_message_created():
+                    return
 
-            # Update message with cancellation
-            display_content = self._full_content
-            if len(display_content) > self.MAX_MESSAGE_LENGTH - 50:
-                display_content = (
-                    display_content[: self.MAX_MESSAGE_LENGTH - 50] + "\n\n..."
+                # Add cancellation note to content
+                self._full_content = (
+                    self._drain_pending_content_locked() + "\n\n⚠️ 任务已取消"
                 )
 
-            await self._bot.edit_message_text(
-                chat_id=self._chat_id,
-                message_id=self._message_id,
-                text=display_content,
-            )
+                # Update message with cancellation
+                display_content = self._full_content
+                if len(display_content) > self.MAX_MESSAGE_LENGTH - 50:
+                    display_content = (
+                        display_content[: self.MAX_MESSAGE_LENGTH - 50] + "\n\n..."
+                    )
 
-            self._finished = True
+                await self._bot.edit_message_text(
+                    chat_id=self._chat_id,
+                    message_id=self._message_id,
+                    text=display_content,
+                )
 
-        except Exception as e:
-            logger.exception(
-                f"[TelegramStreamingEmitter] Failed to send cancellation message: {e}"
-            )
+                self._finished = True
+
+            except Exception as e:
+                logger.exception(
+                    f"[TelegramStreamingEmitter] Failed to send cancellation message: {e}"
+                )
 
     async def close(self) -> None:
         """Close the emitter and release resources."""
         pass
+
+    def _drain_pending_content_locked(self) -> str:
+        final_content = self._full_content
+        if self._pending_content:
+            final_content += self._pending_content
+            self._pending_content = ""
+        self._full_content = final_content
+        return final_content

@@ -18,12 +18,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.constants import (
-    CLIENT_ORIGIN_WEWORK,
-    LABEL_LOCAL_CODEX_DEVICE_ID,
-    LABEL_LOCAL_CODEX_THREAD_ID,
-    WORKSPACE_SOURCE_LOCAL_CODEX_THREAD,
-)
+from app.core.constants import CLIENT_ORIGIN_WEWORK
 from app.models.project import Project
 from app.models.subtask import Subtask
 from app.models.task import TaskResource
@@ -388,7 +383,8 @@ class TaskRequestBuilder:
             bot_config[0].get("name", "") if bot_config else ""
         )
         resolved_bot_namespace = getattr(bot, "namespace", None) or "default"
-        local_codex_binding = self._extract_local_codex_binding_metadata(task)
+        fork_runtime = self._extract_task_fork_runtime(task)
+        inherited_sessions = self._extract_inherited_sessions(fork_runtime)
 
         return ExecutionRequest(
             task_id=task.id,
@@ -429,8 +425,6 @@ class TaskRequestBuilder:
             workspace_source=project_workspace.get("workspace_source"),
             project_workspace_path=project_workspace.get("project_workspace_path"),
             execution_target_type=project_workspace.get("execution_target_type"),
-            local_codex_thread_id=local_codex_binding["local_codex_thread_id"],
-            local_codex_device_id=local_codex_binding["local_codex_device_id"],
             # Git fields extracted from workspace for executor compatibility
             git_url=git_url,
             git_domain=git_domain,
@@ -442,6 +436,8 @@ class TaskRequestBuilder:
             is_group_chat=is_group_chat,
             history_limit=history_limit,
             new_session=new_session,
+            fork_runtime=fork_runtime,
+            inherited_sessions=inherited_sessions,
             collaboration_model=collaboration_model,
             mode=collaboration_model,
             task_mode=self._derive_task_mode(task),
@@ -455,6 +451,25 @@ class TaskRequestBuilder:
             trace_context=trace_context,
             executor_name=subtask.executor_name,
         )
+
+    @staticmethod
+    def _extract_task_fork_runtime(task: TaskResource) -> dict[str, Any] | None:
+        task_json = task.json if isinstance(task.json, dict) else {}
+        spec = task_json.get("spec") if isinstance(task_json.get("spec"), dict) else {}
+        fork = spec.get("fork") if isinstance(spec.get("fork"), dict) else {}
+        runtime = fork.get("runtime")
+        return runtime if isinstance(runtime, dict) else None
+
+    @staticmethod
+    def _extract_inherited_sessions(
+        fork_runtime: dict[str, Any] | None,
+    ) -> list[dict[str, Any]]:
+        if not fork_runtime:
+            return []
+        sessions = fork_runtime.get("sessions")
+        if not isinstance(sessions, list):
+            return []
+        return [session for session in sessions if isinstance(session, dict)]
 
     def resolve_request_preload_skills(
         self,
@@ -685,46 +700,6 @@ class TaskRequestBuilder:
         if isinstance(device_id, str) and device_id.strip():
             return device_id.strip()
         return None
-
-    @staticmethod
-    def _extract_local_codex_binding_metadata(
-        task: TaskResource,
-    ) -> dict[str, str | None]:
-        """Extract local Codex binding metadata from task labels."""
-
-        task_json = task.json if isinstance(task.json, dict) else {}
-        spec = task_json.get("spec", {})
-        if not isinstance(spec, dict):
-            return {"local_codex_thread_id": None, "local_codex_device_id": None}
-        execution = spec.get("execution", {})
-        if not isinstance(execution, dict):
-            return {"local_codex_thread_id": None, "local_codex_device_id": None}
-        workspace = execution.get("workspace", {})
-        if (
-            not isinstance(workspace, dict)
-            or workspace.get("source") != WORKSPACE_SOURCE_LOCAL_CODEX_THREAD
-        ):
-            return {"local_codex_thread_id": None, "local_codex_device_id": None}
-
-        metadata = task_json.get("metadata", {})
-        labels = metadata.get("labels", {}) if isinstance(metadata, dict) else {}
-        if not isinstance(labels, dict):
-            labels = {}
-
-        thread_id = labels.get(LABEL_LOCAL_CODEX_THREAD_ID)
-        device_id = labels.get(LABEL_LOCAL_CODEX_DEVICE_ID)
-        return {
-            "local_codex_thread_id": (
-                thread_id.strip()
-                if isinstance(thread_id, str) and thread_id.strip()
-                else None
-            ),
-            "local_codex_device_id": (
-                device_id.strip()
-                if isinstance(device_id, str) and device_id.strip()
-                else None
-            ),
-        }
 
     def _get_device_type(self, user_id: int, device_id: str | None) -> str | None:
         """Resolve a Device CRD type without making request building depend on it."""
@@ -2652,21 +2627,6 @@ Response template:
                 task=task,
                 project_workspace=existing_project,
             )
-
-        if (
-            not isinstance(workspace_path, str) or not workspace_path.strip()
-        ) and workspace_source == WORKSPACE_SOURCE_LOCAL_CODEX_THREAD:
-            workspace_data["project"] = {
-                "project_id": project_id,
-                "workspace_source": workspace_source,
-                "project_workspace_path": None,
-                "execution_target_type": existing_project.get("execution_target_type")
-                or "local",
-                "device_id": device_id,
-                "checkout_path": None,
-                "local_path": None,
-            }
-            return True
 
         if not isinstance(workspace_path, str) or not workspace_path.strip():
             return False

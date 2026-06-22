@@ -414,9 +414,11 @@ function AssistantMessage({
               p: ({ children }) => <p className="mb-3 min-w-0 break-words leading-6">{children}</p>,
               ul: ({ children }) => <ul className="mb-3 list-disc space-y-1.5 pl-5">{children}</ul>,
               ol: ({ children }) => (
-                <ol className="mb-3 list-decimal space-y-1.5 pl-5">{children}</ol>
+                <ol className="mb-3 list-decimal space-y-1.5 pl-8">{children}</ol>
               ),
-              li: ({ children }) => <li className="min-w-0 break-words leading-6">{children}</li>,
+              li: ({ children }) => (
+                <li className="min-w-0 break-words pl-1 leading-6">{children}</li>
+              ),
               strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
               code: ({ className, children }) => {
                 const match = /language-(\w*)/.exec(className || '')
@@ -536,12 +538,12 @@ function AssistantErrorCard({
         })
       : !hasErrorDetails && parsedError.type === 'generic_error'
         ? t('assistant_error.types.generic_error.description_without_details')
-      : t(parsedError.descriptionKey, {
-          defaultValue: t(
-            'assistant_error.types.generic_error.description',
-            '请求未能完成。你可以稍后重试，或查看错误详情。'
-          ),
-        })
+        : t(parsedError.descriptionKey, {
+            defaultValue: t(
+              'assistant_error.types.generic_error.description',
+              '请求未能完成。你可以稍后重试，或查看错误详情。'
+            ),
+          })
 
   return (
     <div

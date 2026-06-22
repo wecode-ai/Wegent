@@ -77,7 +77,7 @@ async def test_connect_rejects_when_session_disappears_before_room_join(
 
 
 @pytest.mark.asyncio
-async def test_connect_logs_resolved_client_ip_and_forwarding_context(
+async def test_connect_logs_tcp_client_ip_and_forwarding_context(
     valid_jwt_auth,
     monkeypatch,
     caplog,
@@ -96,13 +96,13 @@ async def test_connect_logs_resolved_client_ip_and_forwarding_context(
         await namespace.on_connect("sid-1", environ, {"token": "jwt-token"})
 
     assert (
-        "[Device WS] Connection attempt sid=sid-1 client_ip=203.0.113.9 "
+        "[Device WS] Connection attempt sid=sid-1 client_ip=10.2.0.5 "
         "remote_addr=10.2.0.5 x_forwarded_for=203.0.113.9, 10.0.0.2 "
         "x_real_ip=198.51.100.10"
     ) in caplog.messages
     assert (
         "[Device WS] Connected user=7 (alice) via jwt sid=sid-1 "
-        "client_ip=203.0.113.9 remote_addr=10.2.0.5 "
+        "client_ip=10.2.0.5 remote_addr=10.2.0.5 "
         "x_forwarded_for=203.0.113.9, 10.0.0.2 x_real_ip=198.51.100.10, "
         "awaiting registration"
     ) in caplog.messages

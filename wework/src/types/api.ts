@@ -219,6 +219,249 @@ export interface DeleteProjectWorktreeResponse {
   deleted_task_ids: number[]
 }
 
+export type RuntimeName = 'codex' | 'claude_code' | 'claude' | string
+
+export interface RuntimeTaskAddress {
+  deviceId: string
+  workspacePath?: string | null
+  localTaskId: string
+}
+
+export interface RuntimeMessageSource {
+  source: 'im' | 'manual' | string
+  external_id?: string | null
+  channel_type?: string | null
+  channel_label?: string | null
+  channel_id?: number | null
+  conversation_id?: string | null
+  sender_id?: string | null
+  message_id?: string | null
+}
+
+export interface NormalizedRuntimeMessage {
+  id: string
+  role: 'user' | 'assistant' | 'system' | string
+  content: string
+  subtaskId?: number | null
+  subtask_id?: number | null
+  status?: string | null
+  createdAt?: string | null
+  source?: RuntimeMessageSource | null
+  attachments?: Attachment[]
+}
+
+export interface LocalTaskSummary {
+  localTaskId: string
+  workspacePath: string
+  workspaceKind?: 'workspace' | 'worktree' | 'chat' | string | null
+  worktreeId?: string | null
+  gitInfo?: Record<string, unknown> | null
+  title: string
+  runtime: RuntimeName
+  createdAt?: string | null
+  updatedAt?: string | null
+  running?: boolean
+  status?: string | null
+  parent?: Record<string, unknown> | null
+  children?: Record<string, unknown>[]
+}
+
+export interface DeviceWorkspaceUpsert {
+  projectId: number
+  deviceId: string
+  workspacePath: string
+  repoUrl?: string | null
+  repoRootFingerprint?: string | null
+  label?: string | null
+}
+
+export interface DeviceWorkspacePrepareRequest {
+  projectId: number
+  deviceId: string
+  workspacePath: string
+  action: 'create' | 'select'
+  label?: string | null
+}
+
+export interface DeviceWorkspaceResponse {
+  id: number
+  userId: number
+  projectId: number
+  deviceId: string
+  workspacePath: string
+  repoUrl?: string | null
+  repoRootFingerprint?: string | null
+  label?: string | null
+  lastSeenAt?: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface DeviceWorkspacePrepareResponse {
+  mapping: DeviceWorkspaceResponse
+  preparedAction: 'created' | 'selected' | 'cloned' | 'reused_git'
+}
+
+export interface RuntimeProjectRef {
+  id: number
+  name: string
+  description?: string | null
+  color?: string | null
+}
+
+export interface RuntimeDeviceWorkspace {
+  id?: number | null
+  deviceId: string
+  deviceName?: string | null
+  deviceStatus?: DeviceInfo['status'] | string | null
+  available: boolean
+  workspacePath: string
+  workspaceKind?: 'workspace' | 'worktree' | 'chat' | string | null
+  worktreeId?: string | null
+  label?: string | null
+  repoUrl?: string | null
+  repoRootFingerprint?: string | null
+  mapped?: boolean
+  localTasks: LocalTaskSummary[]
+  error?: string | null
+}
+
+export interface RuntimeProjectWork {
+  project: RuntimeProjectRef
+  deviceWorkspaces: RuntimeDeviceWorkspace[]
+  totalLocalTasks?: number
+}
+
+export interface RuntimeWorkListResponse {
+  projects: RuntimeProjectWork[]
+  unmappedDeviceWorkspaces: RuntimeDeviceWorkspace[]
+  totalLocalTasks: number
+}
+
+export interface RuntimeTranscriptResponse {
+  localTaskId: string
+  workspacePath: string
+  runtime: RuntimeName
+  title?: string | null
+  messages: NormalizedRuntimeMessage[]
+}
+
+export interface RuntimeSendRequest {
+  address: RuntimeTaskAddress
+  message: string
+  source?: RuntimeMessageSource | null
+}
+
+export interface RuntimeSendResponse {
+  accepted: boolean
+  localTaskId: string
+  error?: string | null
+}
+
+export interface BindRuntimeTaskIMSessionsRequest {
+  address: RuntimeTaskAddress
+  sessionKeys: string[]
+}
+
+export interface BindRuntimeTaskIMSessionsResponse {
+  address: RuntimeTaskAddress
+  boundSessionKeys: string[]
+  notifiedCount: number
+}
+
+export interface RuntimeIMNotificationSession {
+  sessionKey: string
+  channelType: string
+  channelLabel: string
+  channelId: number
+  conversationId: string
+  senderId: string
+  displayName?: string | null
+}
+
+export interface RuntimeIMNotificationGlobalSettings {
+  enabled: boolean
+  sessionKey?: string | null
+  session?: RuntimeIMNotificationSession | null
+}
+
+export interface RuntimeTaskIMNotificationSubscription {
+  address: RuntimeTaskAddress
+  sessionKeys: string[]
+  sessions?: RuntimeIMNotificationSession[]
+}
+
+export interface RuntimeIMNotificationSettingsResponse {
+  global: RuntimeIMNotificationGlobalSettings
+  runtimeTaskSubscriptions: RuntimeTaskIMNotificationSubscription[]
+}
+
+export interface RuntimeGlobalIMNotificationUpdateRequest {
+  enabled: boolean
+  sessionKey?: string | null
+}
+
+export interface RuntimeTaskIMNotificationSubscriptionRequest {
+  address: RuntimeTaskAddress
+  sessionKeys: string[]
+}
+
+export interface RuntimeTaskIMNotificationSubscriptionResponse {
+  address: RuntimeTaskAddress
+  subscribed: boolean
+  sessionKeys: string[]
+}
+
+export interface RuntimeTaskArchiveResponse {
+  accepted: boolean
+  localTaskId: string
+  workspacePath?: string | null
+  error?: string | null
+}
+
+export interface RuntimeTaskCreateRequest {
+  projectId?: number
+  deviceId?: string
+  workspacePath?: string
+  teamId: number
+  runtime: RuntimeName
+  message: string
+  title?: string
+  modelId?: string
+  modelType?: ModelType | null
+  modelOptions?: Record<string, string>
+  additionalSkills?: SkillRef[]
+  attachmentIds?: number[]
+  execution?: ChatSendPayload['execution']
+}
+
+export interface RuntimeTaskCreateResponse {
+  accepted: boolean
+  deviceId: string
+  localTaskId: string
+  workspacePath: string
+  runtime: RuntimeName
+  error?: string | null
+}
+
+export interface RuntimeTaskForkTarget {
+  deviceId: string
+  workspacePath: string
+}
+
+export interface RuntimeTaskForkRequest {
+  source: RuntimeTaskAddress
+  target: RuntimeTaskForkTarget
+}
+
+export interface RuntimeTaskForkResponse {
+  accepted: boolean
+  source: RuntimeTaskAddress
+  target: RuntimeTaskAddress
+  runtime: RuntimeName
+  error?: string | null
+}
+
 export interface UpdateProjectRequest {
   name?: string
   description?: string
@@ -269,41 +512,6 @@ export interface IMPrivateSession {
 export interface IMPrivateSessionListResponse {
   total: number
   items: IMPrivateSession[]
-}
-
-export interface BindTaskIMSessionsResponse {
-  task_id: number
-  bound_session_keys: string[]
-  notified_count: number
-}
-
-export interface LocalCodexThreadSummary {
-  threadId: string
-  title: string
-  cwd?: string
-  updatedAt?: string
-  archived?: boolean
-  running?: boolean
-}
-
-export interface LocalCodexThreadListResponse {
-  threads: LocalCodexThreadSummary[]
-}
-
-export interface LocalCodexBindRequest {
-  deviceId: string
-  threadId: string
-  teamId?: number
-  title?: string
-  cwd?: string
-}
-
-export interface LocalCodexBindResponse {
-  taskId: number
-  task: Task
-  created: boolean
-  threadId: string
-  deviceId: string
 }
 
 export interface ArchivedTask {
@@ -463,6 +671,24 @@ export interface TaskDetail extends Task {
   subtasks?: Subtask[]
 }
 
+export type TaskForkTarget =
+  | {
+      type: 'managed'
+    }
+  | {
+      type: 'device'
+      device_id: string
+    }
+
+export interface TaskForkRequest {
+  target: TaskForkTarget
+}
+
+export interface TaskForkResponse {
+  task_id: number
+  task: TaskDetail
+}
+
 export interface CreateProjectConversationRequest {
   prompt: string
   title?: string
@@ -542,11 +768,13 @@ export interface ChatCancelAck {
 }
 
 export interface ChatStartPayload {
-  task_id: number
+  task_id?: number
   subtask_id: number
   bot_name?: string
   shell_type?: string
   message_id?: number
+  device_id?: string
+  local_task_id?: string
 }
 
 export type ChatResultPayload = Record<string, unknown> & {
@@ -563,6 +791,8 @@ export interface ChatChunkPayload {
   content: string
   offset: number
   result?: ChatResultPayload
+  device_id?: string
+  local_task_id?: string
 }
 
 export interface ChatDonePayload {
@@ -571,6 +801,8 @@ export interface ChatDonePayload {
   offset: number
   result: ChatResultPayload
   message_id?: number
+  device_id?: string
+  local_task_id?: string
 }
 
 export interface ChatErrorPayload {
@@ -579,6 +811,23 @@ export interface ChatErrorPayload {
   error: string
   type?: string
   message_id?: number
+  device_id?: string
+  local_task_id?: string
+}
+
+export interface ChatMessagePayload {
+  task_id?: number
+  subtask_id: number
+  message_id?: number
+  role: string
+  content: string
+  sender?: Record<string, unknown>
+  created_at: string
+  attachments?: Attachment[]
+  source?: RuntimeMessageSource | null
+  device_id?: string
+  local_task_id?: string
+  runtime?: RuntimeName
 }
 
 export interface TaskJoinResponse {
@@ -950,19 +1199,23 @@ export interface ChatBlock {
 }
 
 export interface ChatBlockCreatedPayload {
-  task_id: number
+  task_id?: number
   subtask_id: number
   block: ChatBlock
+  device_id?: string
+  local_task_id?: string
 }
 
 export interface ChatBlockUpdatedPayload {
-  task_id: number
+  task_id?: number
   subtask_id: number
   block_id: string
   content?: string
   tool_output?: unknown
   tool_input?: Record<string, unknown>
   status?: ChatBlock['status'] | 'running'
+  device_id?: string
+  local_task_id?: string
 }
 
 export interface ChatGuidanceQueuedPayload {

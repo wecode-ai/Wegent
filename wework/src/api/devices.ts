@@ -403,8 +403,13 @@ export function createDeviceApi(client: HttpClient) {
       )
     },
 
-    async startTerminal(deviceId: string): Promise<DeviceSessionResponse> {
-      return client.post<DeviceSessionResponse>(`/devices/${encodeURIComponent(deviceId)}/terminal`)
+    async startTerminal(deviceId: string, cwd?: string): Promise<DeviceSessionResponse> {
+      const path = cwd?.trim()
+      return path
+        ? client.post<DeviceSessionResponse>(`/devices/${encodeURIComponent(deviceId)}/terminal`, {
+            path,
+          })
+        : client.post<DeviceSessionResponse>(`/devices/${encodeURIComponent(deviceId)}/terminal`)
     },
 
     async startCodeServer(deviceId: string): Promise<DeviceSessionResponse> {

@@ -97,6 +97,7 @@ def _message(
     *,
     conversation_type: str = "private",
     conversation_id: str = "conv-private",
+    extra_data: dict[str, Any] | None = None,
     images: list[dict[str, str]] | None = None,
     files: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
@@ -106,6 +107,7 @@ def _message(
         "conversation_id": conversation_id,
         "sender_id": "staff-a",
         "sender_name": "Alice",
+        "extra_data": extra_data or {},
         "images": images or [],
         "files": files or [],
     }
@@ -430,6 +432,347 @@ async def test_task_mode_plain_text_appends_to_active_task_with_im_source_metada
     assert calls["append"]["message_source"]["channel_label"] == "钉钉"
     assert calls["trigger"]["task"].id == task.id
     assert calls["trigger"]["user_subtask_id"] == 501
+
+
+@pytest.mark.asyncio
+async def test_task_mode_runtime_message_registers_callback_without_static_ack(
+    monkeypatch: pytest.MonkeyPatch,
+    test_db: Session,
+    test_user: User,
+    channel_sessionlocal,
+) -> None:
+    from app.services import runtime_work_service
+
+    handler = FakeChannelHandler(test_user)
+    session = await im_session_service.get_or_create_private_session(
+        db=test_db,
+        user_id=test_user.id,
+        channel_type="dingtalk",
+        channel_id=77,
+        conversation_id="conv-private",
+        sender_id="staff-a",
+        display_name="Alice",
+    )
+    await im_session_service.bind_active_runtime_task(
+        test_db,
+        session=session,
+        runtime_task={
+            "deviceId": "device-1",
+            "workspacePath": "/repo/Wegent",
+            "localTaskId": "codex-1",
+        },
+    )
+    calls: dict[str, Any] = {}
+
+    class FakeCallbackService:
+        async def save_callback_info(self, task_id, callback_info):
+            calls["callback"] = {
+                "task_id": task_id,
+                "callback_info": callback_info,
+            }
+
+        async def delete_callback_info(self, task_id):
+            calls["deleted_callback"] = task_id
+
+    async def fake_send_runtime_message(**kwargs):
+        calls["send"] = kwargs
+        return SimpleNamespace(accepted=True, local_task_id="codex-1", error=None)
+
+    monkeypatch.setattr(handler, "get_callback_service", lambda: FakeCallbackService())
+    monkeypatch.setattr(
+        runtime_work_service,
+        "send_runtime_message",
+        fake_send_runtime_message,
+    )
+
+    handled = await handler.handle_message(_message("继续 runtime"))
+
+    assert handled is True
+    assert handler.replies == []
+    assert calls["callback"]["task_id"] == "runtime:device-1:codex-1"
+    assert calls["callback"]["callback_info"].conversation_id == "conv-private"
+    assert calls["send"]["request"].source.source == "im"
+
+
+@pytest.mark.asyncio
+async def test_task_mode_runtime_reply_uses_notification_target_without_rebinding(
+    monkeypatch: pytest.MonkeyPatch,
+    test_db: Session,
+    test_user: User,
+    channel_sessionlocal,
+) -> None:
+    from app.services import runtime_work_service
+
+    handler = FakeChannelHandler(test_user)
+    session = await im_session_service.get_or_create_private_session(
+        db=test_db,
+        user_id=test_user.id,
+        channel_type="dingtalk",
+        channel_id=77,
+        conversation_id="conv-private",
+        sender_id="staff-a",
+        display_name="Alice",
+    )
+    await im_session_service.bind_active_runtime_task(
+        test_db,
+        session=session,
+        runtime_task={
+            "deviceId": "device-active",
+            "workspacePath": "/repo/Active",
+            "localTaskId": "codex-active",
+        },
+    )
+    await im_session_service.save_runtime_task_reply_target(
+        session=session,
+        message_id=901,
+        runtime_task={
+            "deviceId": "device-notified",
+            "workspacePath": "/repo/Notified",
+            "localTaskId": "codex-notified",
+        },
+    )
+    calls: dict[str, Any] = {}
+
+    class FakeCallbackService:
+        async def save_callback_info(self, task_id, callback_info):
+            calls["callback"] = {
+                "task_id": task_id,
+                "callback_info": callback_info,
+            }
+
+        async def delete_callback_info(self, task_id):
+            calls["deleted_callback"] = task_id
+
+    async def fake_send_runtime_message(**kwargs):
+        calls["send"] = kwargs
+        return SimpleNamespace(
+            accepted=True,
+            local_task_id="codex-notified",
+            error=None,
+        )
+
+    monkeypatch.setattr(handler, "get_callback_service", lambda: FakeCallbackService())
+    monkeypatch.setattr(
+        runtime_work_service,
+        "send_runtime_message",
+        fake_send_runtime_message,
+    )
+
+    handled = await handler.handle_message(
+        _message(
+            "回复通知",
+            extra_data={"reply_to_message_id": 901},
+        )
+    )
+
+    assert handled is True
+    assert handler.replies == []
+    assert calls["callback"]["task_id"] == "runtime:device-notified:codex-notified"
+    assert calls["send"]["request"].address.device_id == "device-notified"
+    assert calls["send"]["request"].address.local_task_id == "codex-notified"
+    refreshed = await _private_session(test_db, test_user)
+    assert refreshed.active_runtime_task["deviceId"] == "device-active"
+    assert refreshed.active_runtime_task["localTaskId"] == "codex-active"
+
+
+@pytest.mark.asyncio
+async def test_runtime_notification_reply_continues_task_from_chat_mode(
+    monkeypatch: pytest.MonkeyPatch,
+    test_db: Session,
+    test_user: User,
+    channel_sessionlocal,
+) -> None:
+    from app.services import runtime_work_service
+
+    handler = FakeChannelHandler(test_user)
+    session = await im_session_service.get_or_create_private_session(
+        db=test_db,
+        user_id=test_user.id,
+        channel_type="dingtalk",
+        channel_id=77,
+        conversation_id="conv-private",
+        sender_id="staff-a",
+        display_name="Alice",
+    )
+    await im_session_service.set_mode(test_db, session=session, mode=IMSessionMode.CHAT)
+    await im_session_service.save_runtime_task_reply_target(
+        session=session,
+        message_id=902,
+        runtime_task={
+            "deviceId": "device-notified",
+            "workspacePath": "/repo/Notified",
+            "localTaskId": "codex-notified",
+        },
+    )
+    calls: dict[str, Any] = {}
+
+    class FakeCallbackService:
+        async def save_callback_info(self, task_id, callback_info):
+            calls["callback"] = task_id
+
+        async def delete_callback_info(self, task_id):
+            calls["deleted_callback"] = task_id
+
+    async def fake_send_runtime_message(**kwargs):
+        calls["send"] = kwargs
+        return SimpleNamespace(
+            accepted=True,
+            local_task_id="codex-notified",
+            error=None,
+        )
+
+    monkeypatch.setattr(handler, "get_callback_service", lambda: FakeCallbackService())
+    monkeypatch.setattr(
+        runtime_work_service,
+        "send_runtime_message",
+        fake_send_runtime_message,
+    )
+
+    handled = await handler.handle_message(
+        _message(
+            "从通知回复",
+            extra_data={"reply_to_message_id": 902},
+        )
+    )
+
+    assert handled is True
+    assert handler.replies == []
+    assert calls["callback"] == "runtime:device-notified:codex-notified"
+    assert calls["send"]["request"].address.local_task_id == "codex-notified"
+
+
+@pytest.mark.asyncio
+async def test_task_mode_runtime_message_rejects_invalid_address_before_callback(
+    monkeypatch: pytest.MonkeyPatch,
+    test_db: Session,
+    test_user: User,
+    channel_sessionlocal,
+) -> None:
+    from app.services import runtime_work_service
+
+    handler = FakeChannelHandler(test_user)
+    session = await im_session_service.get_or_create_private_session(
+        db=test_db,
+        user_id=test_user.id,
+        channel_type="dingtalk",
+        channel_id=77,
+        conversation_id="conv-private",
+        sender_id="staff-a",
+        display_name="Alice",
+    )
+    await im_session_service.bind_active_runtime_task(
+        test_db,
+        session=session,
+        runtime_task={"deviceId": "device-1"},
+    )
+    calls: dict[str, Any] = {}
+
+    class FakeCallbackService:
+        async def save_callback_info(self, task_id, callback_info):
+            calls["callback"] = task_id
+
+        async def delete_callback_info(self, task_id):
+            calls["deleted_callback"] = task_id
+
+    async def fake_send_runtime_message(**kwargs):
+        calls["send"] = kwargs
+        return SimpleNamespace(accepted=True, local_task_id="codex-1", error=None)
+
+    monkeypatch.setattr(handler, "get_callback_service", lambda: FakeCallbackService())
+    monkeypatch.setattr(
+        runtime_work_service,
+        "send_runtime_message",
+        fake_send_runtime_message,
+    )
+
+    handled = await handler.handle_message(_message("继续 runtime"))
+
+    assert handled is True
+    assert "callback" not in calls
+    assert "deleted_callback" not in calls
+    assert "send" not in calls
+    assert handler.replies == ["当前本地任务不可用,请回到 Wework 重新选择。"]
+    refreshed = await _private_session(test_db, test_user)
+    assert refreshed.active_runtime_task is None
+
+
+@pytest.mark.asyncio
+async def test_task_mode_runtime_message_emits_user_message_to_web(
+    monkeypatch: pytest.MonkeyPatch,
+    test_db: Session,
+    test_user: User,
+    channel_sessionlocal,
+) -> None:
+    from app.services import runtime_work_service
+
+    handler = FakeChannelHandler(test_user)
+    session = await im_session_service.get_or_create_private_session(
+        db=test_db,
+        user_id=test_user.id,
+        channel_type="dingtalk",
+        channel_id=77,
+        conversation_id="conv-private",
+        sender_id="staff-a",
+        display_name="Alice",
+    )
+    await im_session_service.bind_active_runtime_task(
+        test_db,
+        session=session,
+        runtime_task={
+            "deviceId": "device-1",
+            "workspacePath": "/repo/Wegent",
+            "localTaskId": "codex-1",
+        },
+    )
+    emitted: list[dict[str, Any]] = []
+
+    class FakeCallbackService:
+        async def save_callback_info(self, task_id, callback_info):
+            pass
+
+        async def delete_callback_info(self, task_id):
+            pass
+
+    class FakeSocket:
+        async def emit(self, event_name, payload, **kwargs):
+            emitted.append(
+                {
+                    "event_name": event_name,
+                    "payload": payload,
+                    "kwargs": kwargs,
+                }
+            )
+
+    async def fake_send_runtime_message(**kwargs):
+        return SimpleNamespace(accepted=True, local_task_id="codex-1", error=None)
+
+    monkeypatch.setattr(handler, "get_callback_service", lambda: FakeCallbackService())
+    monkeypatch.setattr(
+        runtime_work_service,
+        "send_runtime_message",
+        fake_send_runtime_message,
+    )
+    monkeypatch.setattr(
+        "app.services.channels.handler.get_sio",
+        lambda: FakeSocket(),
+    )
+
+    handled = await handler.handle_message(_message("继续 runtime"))
+
+    assert handled is True
+    assert len(emitted) == 1
+    assert emitted[0]["event_name"] == "chat:message"
+    assert emitted[0]["kwargs"] == {
+        "room": f"user:{test_user.id}",
+        "namespace": "/chat",
+    }
+    payload = emitted[0]["payload"]
+    assert payload["role"] == "user"
+    assert payload["content"] == "继续 runtime"
+    assert payload["device_id"] == "device-1"
+    assert payload["local_task_id"] == "codex-1"
+    assert payload["source"]["source"] == "im"
+    assert payload["source"]["channel_label"] == "钉钉"
 
 
 @pytest.mark.asyncio

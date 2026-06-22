@@ -290,7 +290,7 @@ wegent-executor
 
 | 操作 | 后端接口 | 说明 |
 |------|----------|------|
-| **终端** | `POST /api/devices/{device_id}/terminal` | 在默认工作目录 `/home/ubuntu/.wegent-executor/workspace` 启动 PTY，并通过 Backend Socket.IO 中转 |
+| **终端** | `POST /api/devices/{device_id}/terminal` | 在默认工作目录 `/home/ubuntu/.wegent-executor/workspace` 启动 PTY；请求 body 可传 `path` 指定工作目录，并通过 Backend Socket.IO 中转 |
 | **IDE** | `POST /api/devices/{device_id}/code-server` | 打开 code-server 会话 |
 
 终端会话不暴露设备端口；IDE 返回的访问地址带有短期 session token，并通过设备侧 session gateway 暴露。设备离线时，终端和 IDE 按钮不可用。

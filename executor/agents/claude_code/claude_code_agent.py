@@ -340,6 +340,44 @@ class ClaudeCodeAgent(Agent):
 
             logger.info("Initialized progress state manager")
 
+    def _find_inherited_session(self) -> Optional[dict[str, Any]]:
+        """Return inherited Claude Code session metadata for this bot."""
+        for session in self.task_data.inherited_sessions or []:
+            if not isinstance(session, dict):
+                continue
+            agent_name = str(session.get("agent") or "")
+            if agent_name not in {"ClaudeCode", "Claude Code"}:
+                continue
+            bot_id = session.get("botId")
+            if bot_id is not None and self._bot_id is not None:
+                try:
+                    if int(bot_id) != int(self._bot_id):
+                        continue
+                except (TypeError, ValueError):
+                    continue
+            session_id = session.get("sessionId")
+            if session_id:
+                return session
+        return None
+
+    def _seed_inherited_session(self) -> bool:
+        """Seed current task's Claude session file from fork runtime metadata."""
+        if self.new_session:
+            return False
+        if SessionManager.load_saved_session_id(self.task_id, self._bot_id):
+            return False
+        return self._seed_inherited_session_from_known_empty() is not None
+
+    def _seed_inherited_session_from_known_empty(self) -> Optional[str]:
+        """Seed inherited session when the current session file is known missing."""
+        inherited_session = self._find_inherited_session()
+        if not inherited_session:
+            return None
+
+        session_id = str(inherited_session["sessionId"])
+        SessionManager.save_session_id(self.task_id, session_id, self._bot_id)
+        return session_id
+
     def update_prompt(self, new_prompt: str) -> None:
         """
         Update the prompt attribute while keeping other attributes unchanged
@@ -444,6 +482,7 @@ class ClaudeCodeAgent(Agent):
         """
         try:
             self._prepare_project_workspace()
+            await self.restore_fork_workspace_archive_if_needed()
             git_url = self.task_data.git_url
             # Download code if git_url is provided
             if git_url and git_url != "":
@@ -1068,6 +1107,8 @@ class ClaudeCodeAgent(Agent):
             saved_session_id = SessionManager.load_saved_session_id(
                 self.task_id, self._bot_id
             )
+            if not saved_session_id:
+                saved_session_id = self._seed_inherited_session_from_known_empty()
             if saved_session_id:
                 logger.info(
                     f"Resuming Claude session for task {self.task_id} "

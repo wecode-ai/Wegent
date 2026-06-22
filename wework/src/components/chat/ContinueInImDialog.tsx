@@ -5,11 +5,19 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type { IMPrivateSession } from '@/types/api'
 
+const LAST_CONTINUE_IM_SESSION_KEYS_STORAGE_KEY = 'wework.continueInIm.lastSessionKeys'
+
 interface ContinueInImDialogProps {
   open: boolean
   loading: boolean
   submitting: boolean
   sessions: IMPrivateSession[]
+  title?: string
+  emptyGuide?: string
+  submitLabel?: string
+  allowMultiple?: boolean
+  rememberSelection?: boolean
+  defaultSelectedSessionKeys?: string[]
   onClose: () => void
   onSubmit: (sessionKeys: string[]) => Promise<void>
 }
@@ -19,6 +27,12 @@ export function ContinueInImDialog({
   loading,
   submitting,
   sessions,
+  title,
+  emptyGuide,
+  submitLabel,
+  allowMultiple,
+  rememberSelection,
+  defaultSelectedSessionKeys,
   onClose,
   onSubmit,
 }: ContinueInImDialogProps) {
@@ -31,6 +45,12 @@ export function ContinueInImDialog({
       loading={loading}
       submitting={submitting}
       sessions={sessions}
+      title={title}
+      emptyGuide={emptyGuide}
+      submitLabel={submitLabel}
+      allowMultiple={allowMultiple}
+      rememberSelection={rememberSelection}
+      defaultSelectedSessionKeys={defaultSelectedSessionKeys}
       onClose={onClose}
       onSubmit={onSubmit}
     />
@@ -39,33 +59,128 @@ export function ContinueInImDialog({
 
 type ContinueInImDialogContentProps = Omit<ContinueInImDialogProps, 'open'>
 
+function readRememberedSessionKeys(): string[] {
+  if (typeof window === 'undefined') return []
+
+  try {
+    const raw = window.localStorage.getItem(LAST_CONTINUE_IM_SESSION_KEYS_STORAGE_KEY)
+    const parsed = raw ? JSON.parse(raw) : []
+    return Array.isArray(parsed)
+      ? parsed.filter((value): value is string => typeof value === 'string')
+      : []
+  } catch {
+    return []
+  }
+}
+
+function writeRememberedSessionKeys(sessionKeys: string[]) {
+  if (typeof window === 'undefined' || sessionKeys.length === 0) return
+
+  try {
+    window.localStorage.setItem(
+      LAST_CONTINUE_IM_SESSION_KEYS_STORAGE_KEY,
+      JSON.stringify(sessionKeys)
+    )
+  } catch {
+    // Ignore storage failures; the dialog still works without persisted selection.
+  }
+}
+
+function getDefaultSelectedSessionKeys(
+  sessions: IMPrivateSession[],
+  rememberedSessionKeys: string[],
+  providedSessionKeys: string[]
+): Set<string> {
+  const validSessionKeys = new Set(sessions.map(session => session.session_key))
+  const providedValidSessionKeys = providedSessionKeys.filter(sessionKey =>
+    validSessionKeys.has(sessionKey)
+  )
+  if (providedValidSessionKeys.length > 0) {
+    return new Set(providedValidSessionKeys)
+  }
+
+  const rememberedValidSessionKeys = rememberedSessionKeys.filter(sessionKey =>
+    validSessionKeys.has(sessionKey)
+  )
+  if (rememberedValidSessionKeys.length > 0) {
+    return new Set(rememberedValidSessionKeys)
+  }
+
+  const firstSessionKey = sessions[0]?.session_key
+  return firstSessionKey ? new Set([firstSessionKey]) : new Set()
+}
+
+function filterValidSessionKeys(
+  sessionKeys: Set<string>,
+  validSessionKeys: Set<string>
+): Set<string> {
+  return new Set(Array.from(sessionKeys).filter(sessionKey => validSessionKeys.has(sessionKey)))
+}
+
 function ContinueInImDialogContent({
   loading,
   submitting,
   sessions,
+  title,
+  emptyGuide,
+  submitLabel,
+  allowMultiple = true,
+  rememberSelection = true,
+  defaultSelectedSessionKeys: providedDefaultSelectedSessionKeys = [],
   onClose,
   onSubmit,
 }: ContinueInImDialogContentProps) {
   const { t } = useTranslation('common')
   const dialogRef = useRef<HTMLElement | null>(null)
   const closeButtonRef = useRef<HTMLButtonElement | null>(null)
-  const [selectedSessionKeys, setSelectedSessionKeys] = useState<Set<string>>(new Set())
+  const [rememberedSessionKeys] = useState(readRememberedSessionKeys)
+  const [manualSelectedSessionKeys, setManualSelectedSessionKeys] = useState<Set<string> | null>(
+    null
+  )
   const validSessionKeys = useMemo(
     () => new Set(sessions.map(session => session.session_key)),
     [sessions]
   )
-  const selectedKeys = useMemo(
-    () => Array.from(selectedSessionKeys).filter(sessionKey => validSessionKeys.has(sessionKey)),
-    [selectedSessionKeys, validSessionKeys]
+  const defaultSelectedSessionKeys = useMemo(
+    () =>
+      getDefaultSelectedSessionKeys(
+        sessions,
+        rememberSelection ? rememberedSessionKeys : [],
+        providedDefaultSelectedSessionKeys
+      ),
+    [providedDefaultSelectedSessionKeys, rememberSelection, rememberedSessionKeys, sessions]
   )
+  const selectedSessionKeys = useMemo(() => {
+    if (!manualSelectedSessionKeys) {
+      return defaultSelectedSessionKeys
+    }
+
+    const validManualSessionKeys = filterValidSessionKeys(
+      manualSelectedSessionKeys,
+      validSessionKeys
+    )
+    if (validManualSessionKeys.size > 0 || manualSelectedSessionKeys.size === 0) {
+      return validManualSessionKeys
+    }
+
+    return defaultSelectedSessionKeys
+  }, [defaultSelectedSessionKeys, manualSelectedSessionKeys, validSessionKeys])
+  const selectedKeys = useMemo(() => Array.from(selectedSessionKeys), [selectedSessionKeys])
 
   useEffect(() => {
     closeButtonRef.current?.focus()
   }, [])
 
   const toggleSession = (sessionKey: string) => {
-    setSelectedSessionKeys(current => {
-      const next = new Set(current)
+    setManualSelectedSessionKeys(current => {
+      if (!allowMultiple) {
+        return new Set([sessionKey])
+      }
+
+      const baseSelection = current
+        ? filterValidSessionKeys(current, validSessionKeys)
+        : selectedSessionKeys
+      const next = new Set(baseSelection)
       if (next.has(sessionKey)) {
         next.delete(sessionKey)
       } else {
@@ -76,6 +191,9 @@ function ContinueInImDialogContent({
   }
 
   const handleSubmit = () => {
+    if (rememberSelection) {
+      writeRememberedSessionKeys(selectedKeys)
+    }
     void onSubmit(selectedKeys)
   }
 
@@ -141,7 +259,7 @@ function ContinueInImDialogContent({
       >
         <header className="flex min-h-14 items-center gap-3 border-b border-border px-4">
           <h2 id="continue-im-dialog-title" className="min-w-0 flex-1 text-lg font-semibold">
-            {t('workbench.continue_im_title')}
+            {title ?? t('workbench.continue_im_title')}
           </h2>
           <button
             ref={closeButtonRef}
@@ -169,7 +287,7 @@ function ContinueInImDialogContent({
               data-testid="continue-im-empty-guide"
               className="rounded-lg border border-dashed border-border bg-surface px-4 py-6 text-sm leading-6 text-text-secondary"
             >
-              {t('workbench.continue_im_empty_guide')}
+              {emptyGuide ?? t('workbench.continue_im_empty_guide')}
             </div>
           ) : (
             <div className="space-y-2">
@@ -240,7 +358,9 @@ function ContinueInImDialogContent({
             onClick={handleSubmit}
             disabled={loading || submitting || selectedKeys.length === 0}
           >
-            {submitting ? t('workbench.continue_im_submitting') : t('workbench.continue_im_submit')}
+            {submitting
+              ? t('workbench.continue_im_submitting')
+              : (submitLabel ?? t('workbench.continue_im_submit'))}
           </button>
         </footer>
       </section>

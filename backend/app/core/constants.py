@@ -44,14 +44,6 @@ LABEL_SUBSCRIPTION_ID = "subscriptionId"
 LABEL_EXECUTION_ID = "executionId"
 LABEL_BACKGROUND_EXECUTION_ID = "backgroundExecutionId"
 LABEL_SOURCE = "source"
-LABEL_LOCAL_CODEX_THREAD_ID = "localCodexThreadId"
-LABEL_LOCAL_CODEX_DEVICE_ID = "localCodexDeviceId"
-
-
-# ========== Task / Workspace Sources ==========
-
-TASK_SOURCE_LOCAL_CODEX_THREAD = "local_codex_thread"
-WORKSPACE_SOURCE_LOCAL_CODEX_THREAD = "local_codex_thread"
 
 
 # ========== Trigger Types (string values for database storage) ==========

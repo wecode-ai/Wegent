@@ -1,4 +1,4 @@
-import { Bot, Menu, MessageCircle } from 'lucide-react'
+import { ArrowLeftRight, Bot, Menu, MessageCircle } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ChatInput } from '@/components/chat/ChatInput'
 import type { ProjectChatControls, ProjectWorkControls } from '@/components/chat/ChatInput'
@@ -22,15 +22,22 @@ import {
 } from '@/lib/device-capabilities'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
 import type {
-  ArchivedTaskListResponse,
-  BindTaskIMSessionsResponse,
+  BindRuntimeTaskIMSessionsResponse,
   CreateGitWorkspaceProjectRequest,
   CreateProjectRequest,
+  DeviceWorkspacePrepareRequest,
+  DeviceWorkspacePrepareResponse,
   GitBranch,
   GitRepoInfo,
   IMPrivateSession,
   IMPrivateSessionListResponse,
   ProjectWithTasks,
+  RuntimeTaskAddress,
+  RuntimeTaskForkTarget,
+  RuntimeGlobalIMNotificationUpdateRequest,
+  RuntimeIMNotificationSettingsResponse,
+  RuntimeTaskIMNotificationSubscriptionRequest,
+  RuntimeTaskIMNotificationSubscriptionResponse,
   TurnFileChangesSummary,
 } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
@@ -47,6 +54,7 @@ import { DeviceStatusPrompt } from './DeviceStatusPrompt'
 import { MobileDrawer } from './MobileDrawer'
 import { ContinueInImDialog } from '@/components/chat/ContinueInImDialog'
 import { TransientNotice } from '@/components/common/TransientNotice'
+import { TaskForkDialog } from './TaskForkDialog'
 
 interface MobileWorkbenchLayoutProps {
   state: WorkbenchState
@@ -54,7 +62,6 @@ interface MobileWorkbenchLayoutProps {
   queuedMessages?: QueuedWorkbenchMessage[]
   guidanceMessages?: GuidanceWorkbenchMessage[]
   codeCommentContexts?: CodeCommentContext[]
-  runningTaskIds?: Set<number>
   upgradingDevices?: Record<string, DeviceUpgradeState>
   activeItem?: 'chat' | 'plugins' | 'automation'
   onNewChat?: () => void
@@ -64,24 +71,20 @@ interface MobileWorkbenchLayoutProps {
   projectWork: ProjectWorkControls
   onSelectProject: (projectId: number | null) => void
   onStartNewProjectChat?: (projectId: number) => void
-  onOpenTask: (taskId: number, projectId?: number) => void
+  onOpenRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void>
+  onArchiveRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void>
+  onForkCurrentRuntimeTask?: (target: RuntimeTaskForkTarget) => Promise<void>
   onCreateProject?: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
   onCreateGitWorkspaceProject?: (
     data: CreateGitWorkspaceProjectRequest
   ) => Promise<ProjectWithTasks>
+  onPrepareDeviceWorkspace?: (
+    data: DeviceWorkspacePrepareRequest
+  ) => Promise<DeviceWorkspacePrepareResponse>
   onListGitRepositories?: () => Promise<GitRepoInfo[]>
   onListGitBranches?: (repo: GitRepoInfo) => Promise<GitBranch[]>
   onUpdateProjectName?: (projectId: number, name: string) => Promise<void>
   onRemoveProject?: (projectId: number) => Promise<void>
-  onArchiveAllChats?: () => Promise<void>
-  onArchiveAllProjectChats?: () => Promise<void>
-  onArchiveProjectChats?: (projectId: number) => Promise<void>
-  onArchiveTask?: (taskId: number) => Promise<void>
-  onRenameTask?: (taskId: number, title: string) => Promise<void>
-  onListArchivedTasks?: () => Promise<ArchivedTaskListResponse>
-  onUnarchiveTask?: (taskId: number) => Promise<void>
-  onDeleteTask?: (taskId: number) => Promise<void>
-  onDeleteArchivedTasks?: () => Promise<void>
   onGetDeviceHomeDirectory?: (deviceId: string) => Promise<string>
   onGetProjectWorkspaceRoot?: (deviceId: string) => Promise<string>
   onListDeviceDirectories?: (deviceId: string, path: string) => Promise<string[]>
@@ -114,10 +117,20 @@ interface MobileWorkbenchLayoutProps {
     workspaceTarget?: WorkspaceTarget | null
   ) => Promise<void>
   onListImPrivateSessions?: () => Promise<IMPrivateSessionListResponse>
-  onBindTaskToImSessions?: (
-    taskId: number,
+  onBindRuntimeTaskToImSessions?: (
+    address: RuntimeTaskAddress,
     sessionKeys: string[]
-  ) => Promise<BindTaskIMSessionsResponse>
+  ) => Promise<BindRuntimeTaskIMSessionsResponse>
+  onGetImNotificationSettings?: () => Promise<RuntimeIMNotificationSettingsResponse>
+  onUpdateGlobalImNotification?: (
+    data: RuntimeGlobalIMNotificationUpdateRequest
+  ) => Promise<RuntimeIMNotificationSettingsResponse>
+  onSubscribeRuntimeTaskNotifications?: (
+    data: RuntimeTaskIMNotificationSubscriptionRequest
+  ) => Promise<RuntimeTaskIMNotificationSubscriptionResponse>
+  onUnsubscribeRuntimeTaskNotifications?: (
+    address: RuntimeTaskAddress
+  ) => Promise<RuntimeTaskIMNotificationSubscriptionResponse>
   onUpgradeDevice?: (deviceId: string) => Promise<void>
   onInputChange: (value: string) => void
   onSend: () => void
@@ -142,7 +155,6 @@ export function MobileWorkbenchLayout({
   queuedMessages = [],
   guidanceMessages = [],
   codeCommentContexts = [],
-  runningTaskIds,
   upgradingDevices = {},
   activeItem,
   onNewChat,
@@ -151,16 +163,15 @@ export function MobileWorkbenchLayout({
   projectChat,
   projectWork,
   onSelectProject,
-  onOpenTask,
+  onOpenRuntimeLocalTask,
+  onForkCurrentRuntimeTask,
   onCreateProject,
   onCreateGitWorkspaceProject,
+  onPrepareDeviceWorkspace,
   onListGitRepositories,
   onListGitBranches,
   onUpdateProjectName,
   onRemoveProject,
-  onArchiveProjectChats,
-  onArchiveTask,
-  onRenameTask,
   onGetDeviceHomeDirectory,
   onGetProjectWorkspaceRoot,
   onListDeviceDirectories,
@@ -170,7 +181,7 @@ export function MobileWorkbenchLayout({
   onCheckoutEnvironmentBranch,
   onCreateEnvironmentBranch,
   onListImPrivateSessions,
-  onBindTaskToImSessions,
+  onBindRuntimeTaskToImSessions,
   onUpgradeDevice = async () => {},
   onInputChange,
   onSend,
@@ -201,6 +212,7 @@ export function MobileWorkbenchLayout({
   const [workspaceTargetError, setWorkspaceTargetError] = useState<string | null>(null)
   const [workspaceTargetResolving, setWorkspaceTargetResolving] = useState(true)
   const [continueInImOpen, setContinueInImOpen] = useState(false)
+  const [forkDialogOpen, setForkDialogOpen] = useState(false)
   const [imSessions, setImSessions] = useState<IMPrivateSession[]>([])
   const [imSessionsLoading, setImSessionsLoading] = useState(false)
   const [imSessionsSubmitting, setImSessionsSubmitting] = useState(false)
@@ -416,7 +428,7 @@ export function MobileWorkbenchLayout({
   ])
 
   const openContinueInImDialog = useCallback(() => {
-    if (!state.currentTask || state.currentTask.is_group_chat) return
+    if (!state.currentRuntimeTask) return
 
     const requestId = imSessionsRequestSequence.current + 1
     imSessionsRequestSequence.current = requestId
@@ -440,7 +452,7 @@ export function MobileWorkbenchLayout({
           setImSessionsLoading(false)
         }
       })
-  }, [onListImPrivateSessions, state.currentTask, t])
+  }, [onListImPrivateSessions, state.currentRuntimeTask, t])
 
   const closeContinueInImDialog = useCallback(() => {
     imSessionsRequestSequence.current += 1
@@ -450,14 +462,14 @@ export function MobileWorkbenchLayout({
 
   const submitContinueInIm = useCallback(
     async (sessionKeys: string[]) => {
-      if (!state.currentTask || state.currentTask.is_group_chat) return
+      if (!state.currentRuntimeTask) return
 
       setImSessionsSubmitting(true)
       try {
-        if (!onBindTaskToImSessions) {
+        if (!onBindRuntimeTaskToImSessions) {
           throw new Error('IM bind handler is not available')
         }
-        await onBindTaskToImSessions(state.currentTask.id, sessionKeys)
+        await onBindRuntimeTaskToImSessions(state.currentRuntimeTask, sessionKeys)
         setContinueInImOpen(false)
         setNotice({ message: t('workbench.continue_im_success'), tone: 'success' })
       } catch {
@@ -466,7 +478,7 @@ export function MobileWorkbenchLayout({
         setImSessionsSubmitting(false)
       }
     },
-    [onBindTaskToImSessions, state.currentTask, t]
+    [onBindRuntimeTaskToImSessions, state.currentRuntimeTask, t]
   )
 
   if (settingsOpen) {
@@ -529,16 +541,29 @@ export function MobileWorkbenchLayout({
                   <div className="h-10 w-32" data-testid="model-selector-loading" />
                 )}
               </div>
-              {state.currentTask && !state.currentTask.is_group_chat ? (
-                <button
-                  type="button"
-                  data-testid="mobile-continue-in-im-button"
-                  className="pointer-events-auto flex h-11 min-w-[44px] items-center justify-center rounded-full text-text-primary hover:bg-surface"
-                  aria-label={t('workbench.continue_im_title')}
-                  onClick={openContinueInImDialog}
-                >
-                  <MessageCircle className="h-5 w-5" />
-                </button>
+              {state.currentRuntimeTask ? (
+                <div className="pointer-events-auto flex items-center gap-1">
+                  {onForkCurrentRuntimeTask && (
+                    <button
+                      type="button"
+                      data-testid="mobile-fork-runtime-task-button"
+                      className="flex h-11 min-w-[44px] items-center justify-center rounded-full text-text-primary hover:bg-surface"
+                      aria-label={t('workbench.task_fork_title', '复制任务')}
+                      onClick={() => setForkDialogOpen(true)}
+                    >
+                      <ArrowLeftRight className="h-5 w-5" />
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    data-testid="mobile-continue-in-im-button"
+                    className="flex h-11 min-w-[44px] items-center justify-center rounded-full text-text-primary hover:bg-surface"
+                    aria-label={t('workbench.continue_im_title')}
+                    onClick={openContinueInImDialog}
+                  >
+                    <MessageCircle className="h-5 w-5" />
+                  </button>
+                </div>
               ) : (
                 <div className="h-11 min-w-[44px]" />
               )}
@@ -696,10 +721,9 @@ export function MobileWorkbenchLayout({
         user={state.user}
         devices={state.devices}
         projects={state.projects}
-        recentTasks={state.recentTasks}
-        runningTaskIds={runningTaskIds}
+        runtimeWork={state.runtimeWork}
         currentProjectId={state.currentProject?.id}
-        currentTaskId={state.currentTask?.id}
+        currentRuntimeTask={state.currentRuntimeTask}
         activeItem={activeItem}
         onClose={() => setDrawerOpen(false)}
         onNewChat={onNewChat}
@@ -710,6 +734,7 @@ export function MobileWorkbenchLayout({
         }}
         onCreateProject={onCreateProject}
         onCreateGitWorkspaceProject={onCreateGitWorkspaceProject}
+        onPrepareDeviceWorkspace={onPrepareDeviceWorkspace}
         onListGitRepositories={onListGitRepositories}
         onListGitBranches={onListGitBranches}
         onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
@@ -718,11 +743,8 @@ export function MobileWorkbenchLayout({
         onCreateDeviceDirectory={onCreateDeviceDirectory}
         onUpdateProjectName={onUpdateProjectName}
         onRemoveProject={onRemoveProject}
-        onArchiveProjectChats={onArchiveProjectChats}
-        onArchiveTask={onArchiveTask}
-        onRenameTask={onRenameTask}
         onSelectProject={onSelectProject}
-        onOpenTask={onOpenTask}
+        onOpenRuntimeLocalTask={onOpenRuntimeLocalTask}
         onRefreshWorkLists={onRefreshWorkLists}
       />
       <ContinueInImDialog
@@ -733,6 +755,26 @@ export function MobileWorkbenchLayout({
         sessions={imSessions}
         onClose={closeContinueInImDialog}
         onSubmit={submitContinueInIm}
+      />
+      <TaskForkDialog
+        key={forkDialogOpen ? `open-${state.currentRuntimeTask?.localTaskId ?? 'none'}` : 'closed'}
+        open={forkDialogOpen}
+        source={state.currentRuntimeTask}
+        runtimeWork={state.runtimeWork}
+        currentProject={activeConversationProject}
+        devices={state.devices}
+        requiresStop={isResponseStreaming}
+        onOpenChange={setForkDialogOpen}
+        onStopCurrentResponse={onPauseResponse}
+        onPrepareDeviceWorkspace={onPrepareDeviceWorkspace}
+        onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
+        onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot}
+        onListDeviceDirectories={onListDeviceDirectories}
+        onCreateDeviceDirectory={onCreateDeviceDirectory}
+        onFork={async target => {
+          if (!onForkCurrentRuntimeTask) return
+          await onForkCurrentRuntimeTask(target)
+        }}
       />
       <TransientNotice
         message={notice?.message ?? null}

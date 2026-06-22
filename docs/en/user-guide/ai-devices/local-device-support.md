@@ -288,7 +288,7 @@ Online cloud devices can open interactive sessions directly:
 
 | Action | Backend API | Description |
 |--------|-------------|-------------|
-| **Terminal** | `POST /api/devices/{device_id}/terminal` | Starts a PTY in the default working directory `/home/ubuntu/.wegent-executor/workspace` and relays it through Backend Socket.IO |
+| **Terminal** | `POST /api/devices/{device_id}/terminal` | Starts a PTY in the default working directory `/home/ubuntu/.wegent-executor/workspace`; the request body may include `path` to choose the working directory, and Backend relays it through Socket.IO |
 | **IDE** | `POST /api/devices/{device_id}/code-server` | Opens a code-server session |
 
 Terminal sessions do not expose device ports. IDE sessions return a short-lived session-token URL exposed through the device-side session gateway. Terminal and IDE buttons are disabled while the device is offline.

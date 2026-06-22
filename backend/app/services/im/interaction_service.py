@@ -10,9 +10,11 @@ from sqlalchemy.orm import Session
 
 from app.models.im_session import IMPrivateSession, IMSessionMode
 from app.models.user import User
+from app.services.channels.commands import parse_command
 from app.services.channels.handler import MessageContext
 from app.services.im import task_continuation_service as im_task_continuation_service
 from app.services.im.command_router import IMCommandAction, im_command_router
+from app.services.im.session_service import im_session_service
 
 
 class PrivateIMInteractionPort(Protocol):
@@ -47,6 +49,7 @@ class PrivateIMInteractionPort(Protocol):
         task_id: int | None,
         message: str,
         message_context: MessageContext,
+        runtime_task: dict | None = None,
     ) -> None: ...
 
     async def execute_private_im_create_task(
@@ -80,6 +83,26 @@ class IMInteractionService:
                 task_id=im_session.active_task_id,
                 message="",
                 message_context=message_context,
+            )
+            return True
+
+        runtime_reply_target = await self._runtime_reply_target(
+            im_session,
+            message_context,
+        )
+        if (
+            runtime_reply_target is not None
+            and (message_context.content or "").strip()
+            and parse_command(message_context.content) is None
+        ):
+            await port.execute_private_im_continue_task(
+                db=db,
+                user=user,
+                im_session=im_session,
+                task_id=None,
+                message=message_context.content,
+                message_context=message_context,
+                runtime_task=runtime_reply_target,
             )
             return True
 
@@ -132,6 +155,7 @@ class IMInteractionService:
                 task_id=result.task_id,
                 message=result.message or message_context.content,
                 message_context=message_context,
+                runtime_task=runtime_reply_target,
             )
             return True
 
@@ -147,6 +171,17 @@ class IMInteractionService:
             return True
 
         return False
+
+    async def _runtime_reply_target(
+        self,
+        im_session: IMPrivateSession,
+        message_context: MessageContext,
+    ) -> dict | None:
+        reply_to_message_id = message_context.extra_data.get("reply_to_message_id")
+        return await im_session_service.get_runtime_task_reply_target(
+            session=im_session,
+            message_id=reply_to_message_id,
+        )
 
     def _should_continue_task_media_message(
         self,

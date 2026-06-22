@@ -2,6 +2,8 @@ import type {
   Attachment,
   DeviceInfo,
   ProjectWithTasks,
+  RuntimeTaskAddress,
+  RuntimeWorkListResponse,
   Task,
   Team,
   TurnFileChangesSummary,
@@ -62,8 +64,9 @@ export interface WorkbenchState {
   defaultTeam: Team | null
   projects: ProjectWithTasks[]
   devices: DeviceInfo[]
-  recentTasks: Task[]
+  runtimeWork: RuntimeWorkListResponse | null
   currentProject: ProjectWithTasks | null
+  currentRuntimeTask: RuntimeTaskAddress | null
   standaloneDeviceId: string | null
   currentTask: Task | null
   input: string

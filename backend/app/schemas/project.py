@@ -165,9 +165,7 @@ class ProjectConfig(BaseModel):
         if self.mode != "workspace":
             return self
 
-        if not self.execution:
-            if not self.device_id:
-                raise ValueError("execution is required for workspace projects")
+        if not self.execution and self.device_id:
             self.execution = ProjectExecutionConfig(
                 targetType="local",
                 deviceId=self.device_id,
@@ -189,13 +187,14 @@ class ProjectConfig(BaseModel):
                 )
                 workspace.checkoutPath = workspace_key
             if (
-                self.execution.targetType == "cloud"
+                self.execution
+                and self.execution.targetType == "cloud"
                 and workspace.checkoutPath
                 and posixpath.isabs(workspace.checkoutPath)
             ):
                 raise ValueError("cloud git checkoutPath must be relative")
         elif workspace.source == "local_path":
-            if self.execution.targetType != "local":
+            if not self.execution or self.execution.targetType != "local":
                 raise ValueError("local_path source is only supported for local target")
             if not workspace.localPath:
                 raise ValueError(

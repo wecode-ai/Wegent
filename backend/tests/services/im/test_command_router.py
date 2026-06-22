@@ -63,6 +63,66 @@ async def test_bind_command_is_handled_with_bound_reply(
     assert "已绑定" in result.reply
 
 
+async def test_notify_on_sets_current_im_session_as_global_target(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    session = await _create_session(test_db, test_user)
+
+    result = await im_command_router.route(
+        test_db,
+        session,
+        "/notify on",
+        recent_tasks=[],
+        projects=[],
+    )
+
+    settings = await im_session_service.get_global_notification_settings(test_user.id)
+    assert result.handled is True
+    assert result.action == IMCommandAction.NONE
+    assert settings.enabled is True
+    assert settings.session_key == session.session_key
+    assert "已开启全局 IM 通知" in result.reply
+
+
+async def test_notify_status_and_off_share_user_global_state(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    session = await _create_session(test_db, test_user)
+    await im_command_router.route(
+        test_db,
+        session,
+        "/通知 开",
+        recent_tasks=[],
+        projects=[],
+    )
+
+    status = await im_command_router.route(
+        test_db,
+        session,
+        "/notify status",
+        recent_tasks=[],
+        projects=[],
+    )
+    disabled = await im_command_router.route(
+        test_db,
+        session,
+        "/notify off",
+        recent_tasks=[],
+        projects=[],
+    )
+    settings = await im_session_service.get_global_notification_settings(test_user.id)
+
+    assert status.handled is True
+    assert "全局 IM 通知：已开启" in status.reply
+    assert "Alice" in status.reply
+    assert disabled.handled is True
+    assert "已关闭全局 IM 通知" in disabled.reply
+    assert settings.enabled is False
+    assert settings.session_key == session.session_key
+
+
 async def test_task_without_active_task_enters_pending_switch_and_lists_recent_tasks(
     test_db: Session,
     test_user: User,

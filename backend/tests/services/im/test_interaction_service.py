@@ -27,6 +27,7 @@ class FakeInteractionPort:
         self.deleted_conversations: list[tuple[str, int]] = []
         self.bound_tasks: list[int | None] = []
         self.continued_tasks: list[tuple[int | None, str]] = []
+        self.continued_runtime_tasks: list[dict[str, Any] | None] = []
         self.created_tasks: list[tuple[int | None, str]] = []
 
     async def send_text_reply(
@@ -62,8 +63,10 @@ class FakeInteractionPort:
         task_id: int | None,
         message: str,
         message_context: MessageContext,
+        runtime_task: dict[str, Any] | None = None,
     ) -> None:
         self.continued_tasks.append((task_id, message))
+        self.continued_runtime_tasks.append(runtime_task)
 
     async def execute_private_im_create_task(
         self,

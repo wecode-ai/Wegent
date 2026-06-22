@@ -91,6 +91,7 @@ class CloudDeviceProvider(LocalDeviceProvider):
             "latest_version": latest_version,
             "update_available": update_available,
             "client_ip": spec.get("clientIp"),
+            "runtime_transfer_host": spec.get("runtimeTransferHost"),
             "cloud_config": spec.get("cloudConfig"),
             "bind_shell": spec.get("bindShell", "claudecode"),
         }
@@ -191,6 +192,7 @@ class CloudDeviceProvider(LocalDeviceProvider):
                     "latest_version": latest_version,
                     "update_available": update_available,
                     "client_ip": spec.get("clientIp"),
+                    "runtime_transfer_host": spec.get("runtimeTransferHost"),
                     "cloud_config": spec.get("cloudConfig"),
                     "bind_shell": spec.get("bindShell", "claudecode"),
                 }

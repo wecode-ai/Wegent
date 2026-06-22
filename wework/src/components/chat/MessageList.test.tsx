@@ -120,6 +120,29 @@ describe('MessageList', () => {
     expect(container.firstElementChild).toHaveClass('min-w-0', 'overflow-x-hidden')
   })
 
+  test('reserves enough marker gutter for multi-digit ordered lists', () => {
+    const { container } = render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-list',
+            role: 'assistant',
+            content: Array.from(
+              { length: 12 },
+              (_, index) => `${index + 1}. item ${index + 1}`
+            ).join('\n'),
+            status: 'done',
+            createdAt: '2026-06-21T00:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    const orderedList = container.querySelector('.assistant-markdown ol')
+    expect(orderedList).toHaveClass('pl-8')
+    expect(orderedList).not.toHaveClass('pl-5')
+  })
+
   test('renders IM source badge for user messages with channel label', () => {
     render(
       <MessageList
