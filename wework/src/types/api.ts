@@ -313,6 +313,7 @@ export interface RuntimeProjectRef {
 
 export interface RuntimeDeviceWorkspace {
   id?: number | null
+  projectId?: number | null
   deviceId: string
   deviceName?: string | null
   deviceStatus?: DeviceInfo['status'] | string | null
@@ -423,6 +424,7 @@ export interface RuntimeTaskArchiveResponse {
 
 export interface RuntimeTaskCreateRequest {
   projectId?: number
+  deviceWorkspaceId?: number
   deviceId?: string
   workspacePath?: string
   teamId: number
