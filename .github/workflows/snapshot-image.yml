@@ -159,6 +159,137 @@ jobs:
           cache-to: type=gha,mode=max,scope=snapshot-${{ matrix.image.cache_scope }}-${{ matrix.platform.suffix }}
           build-args: ${{ steps.build-args.outputs.args }}
 
+  build-executor-binaries:
+    needs: prepare-snapshot
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: macos-arm64
+            runner: macos-14
+            output_path: executor/dist/wegent-executor
+            artifact_path: executor/dist/wegent-executor-macos-arm64
+            artifact_name: wegent-executor-macos-arm64
+          - target: macos-amd64
+            runner: macos-14
+            output_path: executor/dist/wegent-executor
+            artifact_path: executor/dist/wegent-executor-macos-amd64
+            artifact_name: wegent-executor-macos-amd64
+          - target: linux-amd64
+            runner: ubuntu-22.04
+            output_path: executor/dist/wegent-executor
+            artifact_path: executor/dist/wegent-executor-linux-amd64
+            artifact_name: wegent-executor-linux-amd64
+          - target: linux-amd64-no-claude
+            runner: ubuntu-22.04
+            output_path: executor/dist/wegent-executor
+            artifact_path: executor/dist/wegent-executor-linux-amd64-no-claude
+            artifact_name: wegent-executor-linux-amd64-no-claude
+          - target: linux-arm64
+            runner: ubuntu-22.04-arm
+            output_path: executor/dist/wegent-executor
+            artifact_path: executor/dist/wegent-executor-linux-arm64
+            artifact_name: wegent-executor-linux-arm64
+          - target: windows-amd64
+            runner: windows-latest
+            output_path: executor/dist/wegent-executor.exe
+            artifact_path: executor/dist/wegent-executor-windows-amd64.exe
+            artifact_name: wegent-executor-windows-amd64
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-snapshot.outputs.git_sha }}
+
+      - name: Install Rosetta 2
+        if: matrix.target == 'macos-amd64'
+        run: |
+          if ! /usr/bin/pgrep -q oahd; then
+            sudo softwareupdate --install-rosetta --agree-to-license || true
+          fi
+
+      - name: Set up Python
+        if: matrix.target != 'macos-amd64'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Set up Python x86_64
+        if: matrix.target == 'macos-amd64'
+        run: |
+          curl -L -o python-installer.pkg "https://www.python.org/ftp/python/3.11.9/python-3.11.9-macos11.pkg"
+          sudo installer -pkg python-installer.pkg -target /
+          rm python-installer.pkg
+
+      - name: Install uv
+        if: matrix.target != 'macos-amd64'
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install uv x86_64
+        if: matrix.target == 'macos-amd64'
+        run: |
+          arch -x86_64 /usr/local/bin/python3.11 -m pip install --upgrade pip
+          arch -x86_64 /usr/local/bin/python3.11 -m pip install uv
+
+      - name: Build executor binary
+        if: matrix.target != 'macos-amd64' && matrix.target != 'windows-amd64'
+        working-directory: executor
+        env:
+          GITHUB_REPO: ${{ github.repository }}
+          APP_VERSION: ${{ needs.prepare-snapshot.outputs.app_version }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          uv sync --group build
+          build_args=("--version" "${APP_VERSION}")
+          if [[ "${TARGET}" == "linux-amd64-no-claude" ]]; then
+            build_args+=("--no-bundle-claude")
+          fi
+          uv run python scripts/build_local.py "${build_args[@]}"
+
+      - name: Build executor binary x86_64
+        if: matrix.target == 'macos-amd64'
+        working-directory: executor
+        env:
+          GITHUB_REPO: ${{ github.repository }}
+          APP_VERSION: ${{ needs.prepare-snapshot.outputs.app_version }}
+        run: |
+          set -euo pipefail
+          arch -x86_64 /usr/local/bin/python3.11 -m uv sync --group build
+          arch -x86_64 /usr/local/bin/python3.11 -m uv run python scripts/build_local.py --version "${APP_VERSION}"
+
+      - name: Build executor binary Windows
+        if: matrix.target == 'windows-amd64'
+        working-directory: executor
+        shell: pwsh
+        env:
+          GITHUB_REPO: ${{ github.repository }}
+          APP_VERSION: ${{ needs.prepare-snapshot.outputs.app_version }}
+        run: |
+          uv sync --group build
+          uv run python scripts/build_local.py --version "$env:APP_VERSION"
+
+      - name: Rename binary
+        if: matrix.target != 'windows-amd64'
+        run: mv "${{ matrix.output_path }}" "${{ matrix.artifact_path }}"
+
+      - name: Rename binary Windows
+        if: matrix.target == 'windows-amd64'
+        shell: pwsh
+        run: Move-Item "${{ matrix.output_path }}" "${{ matrix.artifact_path }}"
+
+      - name: Upload executor binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_path }}
+          retention-days: 14
+
   create-commit-manifests:
     needs:
       - prepare-snapshot

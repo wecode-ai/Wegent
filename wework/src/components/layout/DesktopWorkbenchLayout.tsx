@@ -14,6 +14,7 @@ import type {
   BindRuntimeTaskIMSessionsResponse,
   CreateGitWorkspaceProjectRequest,
   CreateProjectRequest,
+  DeleteDeviceWorkspaceRequest,
   DeviceWorkspacePrepareRequest,
   DeviceWorkspacePrepareResponse,
   GitBranch,
@@ -91,6 +92,7 @@ interface DesktopWorkbenchLayoutProps {
   onPrepareDeviceWorkspace: (
     data: DeviceWorkspacePrepareRequest
   ) => Promise<DeviceWorkspacePrepareResponse>
+  onDeleteDeviceWorkspace: (data: DeleteDeviceWorkspaceRequest) => Promise<void>
   onListGitRepositories: () => Promise<GitRepoInfo[]>
   onListGitBranches: (repo: GitRepoInfo) => Promise<GitBranch[]>
   onUpdateProjectName: (projectId: number, name: string) => Promise<void>
@@ -174,6 +176,7 @@ export function DesktopWorkbenchLayout({
   onCreateProject,
   onCreateGitWorkspaceProject,
   onPrepareDeviceWorkspace,
+  onDeleteDeviceWorkspace,
   onListGitRepositories,
   onListGitBranches,
   onUpdateProjectName,
@@ -262,8 +265,6 @@ export function DesktopWorkbenchLayout({
     state.currentRuntimeTask,
     state.projects,
   ])
-  const completedAssistantMessageIds = useRef<Set<string>>(new Set())
-  const completedAssistantMessagesInitialized = useRef(false)
   const currentTaskWorkspaceKey = state.currentTask
     ? [
         state.currentTask.id,
@@ -383,33 +384,12 @@ export function DesktopWorkbenchLayout({
     }
   }, [autoOpenAddCloudDeviceDialog, settingsOpen])
 
-  useEffect(() => {
-    const nextCompletedIds = new Set(
-      messages
-        .filter(message => message.role === 'assistant' && message.status === 'done')
-        .map(message => message.id)
-    )
-    const hasNewCompletedMessage = [...nextCompletedIds].some(
-      id => !completedAssistantMessageIds.current.has(id)
-    )
-    completedAssistantMessageIds.current = nextCompletedIds
-
-    if (!completedAssistantMessagesInitialized.current) {
-      completedAssistantMessagesInitialized.current = true
-      return
-    }
-
-    if (hasNewCompletedMessage) {
-      void refreshEnvironmentInfo()
-    }
-  }, [messages, refreshEnvironmentInfo])
-
   async function handleCommitEnvironmentChanges(message: string) {
     if (!workspaceTarget) {
       throw new Error(workspaceTargetError ?? 'Workspace is not ready')
     }
     await onCommitEnvironmentChanges(environmentProject, message, workspaceTarget)
-    await refreshEnvironmentInfo()
+    setEnvironmentInfo(info => ({ ...info, additions: '', deletions: '' }))
   }
 
   async function handleCheckoutEnvironmentBranch(branchName: string) {
@@ -417,7 +397,7 @@ export function DesktopWorkbenchLayout({
       throw new Error(workspaceTargetError ?? 'Workspace is not ready')
     }
     await onCheckoutEnvironmentBranch(environmentProject, branchName, workspaceTarget)
-    await refreshEnvironmentInfo()
+    setEnvironmentInfo(info => ({ ...info, branchName }))
   }
 
   async function handleCreateEnvironmentBranch(branchName: string) {
@@ -425,7 +405,7 @@ export function DesktopWorkbenchLayout({
       throw new Error(workspaceTargetError ?? 'Workspace is not ready')
     }
     await onCreateEnvironmentBranch(environmentProject, branchName, workspaceTarget)
-    await refreshEnvironmentInfo()
+    setEnvironmentInfo(info => ({ ...info, branchName }))
   }
 
   const openProjectFromWorkMenu = useCallback(
@@ -663,19 +643,13 @@ export function DesktopWorkbenchLayout({
     onCreateProjectMode: openProjectFromWorkMenu,
     branchName: environmentInfo.branchName,
     branchLoading: environmentInfo.loading,
-    onRefreshBranch: refreshEnvironmentInfo,
+    onRefreshBranch: undefined,
     onListBranches: workspaceTarget
       ? () => onListEnvironmentBranches(environmentProject, workspaceTarget)
       : undefined,
     onCheckoutBranch: handleCheckoutEnvironmentBranch,
     onCreateBranch: handleCreateEnvironmentBranch,
   }
-
-  useEffect(() => {
-    if (state.currentProject && !state.currentTask) {
-      void refreshEnvironmentInfo()
-    }
-  }, [refreshEnvironmentInfo, state.currentProject, state.currentTask])
 
   return (
     <div className="relative flex h-full overflow-hidden bg-transparent text-text-primary">
@@ -710,6 +684,7 @@ export function DesktopWorkbenchLayout({
           onCreateProject={onCreateProject}
           onCreateGitWorkspaceProject={onCreateGitWorkspaceProject}
           onPrepareDeviceWorkspace={onPrepareDeviceWorkspace}
+          onDeleteDeviceWorkspace={onDeleteDeviceWorkspace}
           onListGitRepositories={onListGitRepositories}
           onListGitBranches={onListGitBranches}
           onUpdateProjectName={onUpdateProjectName}
@@ -795,6 +770,7 @@ export function DesktopWorkbenchLayout({
           onContinueInIm={openContinueInImDialog}
           onForkCurrentRuntimeTask={onForkCurrentRuntimeTask}
           onPrepareDeviceWorkspace={onPrepareDeviceWorkspace}
+          onDeleteDeviceWorkspace={onDeleteDeviceWorkspace}
           onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
           onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot}
           onListDeviceDirectories={onListDeviceDirectories}
@@ -824,6 +800,7 @@ export function DesktopWorkbenchLayout({
         onCreateProject={onCreateProject}
         onCreateGitWorkspaceProject={onCreateGitWorkspaceProject}
         onPrepareDeviceWorkspace={onPrepareDeviceWorkspace}
+        onDeleteDeviceWorkspace={onDeleteDeviceWorkspace}
         preferredDeviceId={
           state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
         }

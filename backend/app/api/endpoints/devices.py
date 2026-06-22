@@ -12,7 +12,7 @@ Online status is managed via Redis with heartbeat mechanism.
 import logging
 import os
 import posixpath
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, status
 from pydantic import BaseModel, Field
@@ -555,10 +555,13 @@ class DeviceSessionResponse(BaseModel):
 
     session_id: str = Field(..., description="Unique session identifier")
     device_id: str = Field(..., description="Target device ID")
-    type: str = Field(..., description="Session type (terminal or code_server)")
+    type: Literal["terminal", "code_server"] = Field(
+        ...,
+        description="Session type",
+    )
     path: str = Field(..., description="Working directory path")
     url: str = Field(default="", description="Browser-accessible session URL")
-    transport: str = Field(
+    transport: Literal["url", "socketio"] = Field(
         default="url",
         description="Browser transport for the interactive session",
     )

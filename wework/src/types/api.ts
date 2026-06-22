@@ -1,3 +1,5 @@
+import type { DeviceSessionTransport, DeviceSessionType } from './device-sessions'
+
 export interface User {
   id: number
   user_name: string
@@ -281,6 +283,16 @@ export interface DeviceWorkspacePrepareRequest {
   workspacePath: string
   action: 'create' | 'select'
   label?: string | null
+}
+
+export interface DeleteDeviceWorkspaceRequest {
+  projectId: number
+  deviceId: string
+  workspacePath: string
+}
+
+export interface DeleteDeviceWorkspaceResponse {
+  deleted: boolean
 }
 
 export interface DeviceWorkspaceResponse {
@@ -705,10 +717,10 @@ export interface ProjectDeviceSessionResponse {
   session_id: string
   project_id: number
   device_id: string
-  type: 'terminal' | 'code_server'
+  type: DeviceSessionType
   path: string
   url: string
-  transport?: 'url' | 'socketio'
+  transport?: DeviceSessionTransport
   expires_at?: string | null
 }
 
