@@ -329,8 +329,12 @@ describe('DesktopSidebar', () => {
 
     await userEvent.click(screen.getByTestId('project-item-button'))
 
-    expect(screen.queryByTestId('runtime-local-task-device-marker-local-task')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('runtime-local-task-device-marker-cloud-task')).not.toBeInTheDocument()
+    expect(
+      screen.queryByTestId('runtime-local-task-device-marker-local-task')
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByTestId('runtime-local-task-device-marker-cloud-task')
+    ).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('sidebar-devices-section-toggle'))
 
@@ -378,7 +382,9 @@ describe('DesktopSidebar', () => {
       'false'
     )
     expect(screen.queryByTestId('sidebar-online-device-local-device')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('runtime-local-task-device-marker-local-task')).not.toBeInTheDocument()
+    expect(
+      screen.queryByTestId('runtime-local-task-device-marker-local-task')
+    ).not.toBeInTheDocument()
     expect(screen.getByTestId('sidebar-offline-devices-toggle')).toBeInTheDocument()
   })
 
@@ -560,8 +566,12 @@ describe('DesktopSidebar', () => {
     await user.click(screen.getByTestId('project-menu-7'))
     await user.click(screen.getByTestId('edit-project-7'))
 
-    const deviceSelect = await screen.findByTestId('project-device-select')
-    await user.selectOptions(deviceSelect, 'second-device')
+    await user.click(await screen.findByTestId('project-device-tab-second-device'))
+    await user.click(screen.getByTestId('project-folder-select-button'))
+    await waitFor(() =>
+      expect(screen.getByTestId('device-folder-path-input')).toHaveValue('/Users/alice')
+    )
+    await user.click(screen.getByTestId('confirm-device-folder-picker-button'))
     await user.click(screen.getByTestId('create-project-button'))
 
     await waitFor(() =>

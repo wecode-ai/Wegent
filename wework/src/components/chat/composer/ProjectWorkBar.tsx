@@ -206,7 +206,7 @@ export function ProjectWorkBar({
     currentProject && hasGitBranch && supportsGitWorktreeExecution(currentProject)
   )
   const canShowExecutionModeControl = Boolean(currentProject)
-  const canShowBranchSelector = hasGitBranch
+  const canShowBranchSelector = Boolean(currentProject && (hasGitBranch || onListBranches))
   const canShowWorktreeBranchSelector = Boolean(
     currentProject &&
     executionMode === 'git_worktree' &&
@@ -523,23 +523,38 @@ export function ProjectWorkBar({
     <div className="fixed inset-0 z-modal bg-black/25" onClick={onClose} />
   )
 
-  const getCompactDeviceStatusLabel = (device: DeviceInfo) => {
-    if (!isWeWorkExecutorVersionCompatible(device.executor_version)) {
+  const getCompactWorkspaceStatusLabel = (
+    status: RuntimeDeviceWorkspace['deviceStatus'] | DeviceInfo['status'] | undefined,
+    versionCompatible = true
+  ) => {
+    if (!versionCompatible) {
       return t('workbench.project_device_upgrade_required_short')
     }
-    if (device.status === 'online') {
+    if (status === 'online') {
       return t('workbench.project_device_status_online', '在线')
     }
-    if (device.status === 'busy') {
+    if (status === 'busy') {
       return t('workbench.project_device_status_busy', '忙碌')
     }
     return t('workbench.project_device_status_offline', '离线')
   }
 
-  const getDeviceStatusDotClass = (device: DeviceInfo) => {
-    if (device.status === 'online') return 'bg-primary'
-    if (device.status === 'busy') return 'bg-amber-500'
+  const getCompactDeviceStatusLabel = (device: DeviceInfo) =>
+    getCompactWorkspaceStatusLabel(
+      device.status,
+      isWeWorkExecutorVersionCompatible(device.executor_version)
+    )
+
+  const getWorkspaceStatusDotClass = (
+    status: RuntimeDeviceWorkspace['deviceStatus'] | DeviceInfo['status'] | undefined
+  ) => {
+    if (status === 'online') return 'bg-primary'
+    if (status === 'busy') return 'bg-amber-500'
     return 'bg-text-muted'
+  }
+
+  const getDeviceStatusDotClass = (device: DeviceInfo) => {
+    return getWorkspaceStatusDotClass(device.status)
   }
 
   return (
@@ -609,11 +624,24 @@ export function ProjectWorkBar({
                   style={{ maxHeight: isMobile ? undefined : PROJECT_MENU_LIST_MAX_HEIGHT }}
                 >
                   {filteredProjects.map(project => {
-                    const device = getDeviceForProject(project)
+                    const option = projectWorkspaceOptionByProjectId.get(project.id)
+                    const singleWorkspace = option?.kind === 'single' ? option.workspace : null
+                    const singleWorkspaceDevice = singleWorkspace
+                      ? devices.find(item => item.device_id === singleWorkspace.deviceId)
+                      : undefined
+                    const device = getDeviceForProject(project) ?? singleWorkspaceDevice
+                    const deviceLabel =
+                      device?.name ||
+                      singleWorkspace?.deviceName ||
+                      singleWorkspace?.deviceId ||
+                      null
+                    const deviceStatus = device?.status ?? singleWorkspace?.deviceStatus
+                    const versionCompatible = device
+                      ? isWeWorkExecutorVersionCompatible(device.executor_version)
+                      : true
                     const DeviceIcon = device && isCloudDevice(device) ? Cloud : HardDrive
                     const selected = project.id === currentProjectId
                     const projectTextClass = selected ? 'text-text-primary' : 'text-text-secondary'
-                    const option = projectWorkspaceOptionByProjectId.get(project.id)
                     const expanded =
                       option?.kind === 'multi' && pendingProjectWorkspaceProjectId === project.id
                     const bindRequired =
@@ -636,23 +664,26 @@ export function ProjectWorkBar({
                               <span
                                 className={cn(
                                   'min-w-0 truncate text-[13px] font-semibold leading-[18px]',
-                                  device ? 'max-w-[9rem] shrink' : 'flex-1',
+                                  deviceLabel ? 'max-w-[9rem] shrink' : 'flex-1',
                                   'text-text-primary'
                                 )}
                               >
                                 {project.name}
                               </span>
-                              {device && (
+                              {deviceLabel && (
                                 <span className="flex min-w-0 flex-1 items-center gap-1.5 text-xs leading-4 text-text-secondary">
                                   <DeviceIcon className="h-3.5 w-3.5 shrink-0" />
                                   <span
-                                    className={`h-1.5 w-1.5 shrink-0 rounded-full ${getDeviceStatusDotClass(device)}`}
+                                    className={`h-1.5 w-1.5 shrink-0 rounded-full ${getWorkspaceStatusDotClass(deviceStatus)}`}
                                   />
                                   <span className="min-w-0 truncate text-text-secondary">
-                                    {device.name}
+                                    {deviceLabel}
                                   </span>
                                   <span className="shrink-0">
-                                    {getCompactDeviceStatusLabel(device)}
+                                    {getCompactWorkspaceStatusLabel(
+                                      deviceStatus,
+                                      versionCompatible
+                                    )}
                                   </span>
                                 </span>
                               )}

@@ -1,7 +1,6 @@
-import { ArrowUpCircle, Check, ChevronLeft, Folder, FolderPlus, Loader2, X } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { Folder, FolderPlus, Loader2, X } from 'lucide-react'
+import { useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
@@ -11,22 +10,28 @@ import {
   isCloudDevice,
   isClaudeCodeDevice,
   isDeviceBelowWeWorkVersion,
-  isUsableDevice,
 } from '@/lib/device-capabilities'
 import type {
   CreateGitWorkspaceProjectRequest,
   CreateProjectRequest,
+  DeleteDeviceWorkspaceRequest,
+  DeviceInfo,
   DeviceWorkspacePrepareRequest,
   DeviceWorkspacePrepareResponse,
-  DeviceInfo,
+  DeviceWorkspaceResponse,
   GitBranch,
   GitRepoInfo,
   ProjectWithTasks,
 } from '@/types/api'
 import type { DeviceUpgradeState } from '@/types/device-events'
+import {
+  DeviceFolderPicker,
+  type DeviceFolderPickerMode,
+  type DeviceFolderPickerResult,
+} from './DeviceFolderPicker'
+import { basename } from './device-folder-path'
 
 type ProjectCreateMode = 'scratch' | 'existing' | 'git'
-type ProjectFolderMode = 'none' | 'create' | 'select'
 type ProjectWorkspaceKind = 'worktree' | 'workspace'
 
 interface ProjectCreateDialogProps {
@@ -34,6 +39,7 @@ interface ProjectCreateDialogProps {
   mode: ProjectCreateMode
   presentation?: 'dialog' | 'mobileSheet'
   project?: ProjectWithTasks | null
+  deviceWorkspaces?: DeviceWorkspaceResponse[]
   devices: DeviceInfo[]
   onClose: () => void
   onCreateProject: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
@@ -43,7 +49,9 @@ interface ProjectCreateDialogProps {
   onPrepareDeviceWorkspace?: (
     data: DeviceWorkspacePrepareRequest
   ) => Promise<DeviceWorkspacePrepareResponse>
+  onDeleteDeviceWorkspace?: (data: DeleteDeviceWorkspaceRequest) => Promise<void>
   onDeviceWorkspacePrepared?: (response: DeviceWorkspacePrepareResponse) => Promise<void> | void
+  onUpdateProjectName?: (projectId: number, name: string) => Promise<void>
   showWorkspaceKindSelect?: boolean
   preferredDeviceId?: string | null
   onSelectDevicePreference?: (deviceId: string) => void
@@ -58,67 +66,9 @@ interface ProjectCreateDialogProps {
   onListGitBranches?: (repo: GitRepoInfo) => Promise<GitBranch[]>
 }
 
-const FALLBACK_PROJECTS_ROOT = '~/.wecode/wegent-executor/workspace/projects'
-
-function sanitizePathSegment(value: string): string {
-  const sanitized = value
-    .trim()
-    .replace(/[^\w.-]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-  return sanitized || 'untitled'
-}
-
-function normalizePath(path: string): string {
-  const trimmed = path.trim()
-  if (!trimmed || trimmed === '/') return trimmed || '/'
-  return trimmed.replace(/\/+$/, '')
-}
-
-function joinPath(parent: string, child: string): string {
-  const normalizedParent = normalizePath(parent)
-  if (!normalizedParent || normalizedParent === '/') return `/${child}`
-  return `${normalizedParent}/${child}`
-}
-
-function basename(path: string): string {
-  const segments = normalizePath(path).split('/').filter(Boolean)
-  return segments.at(-1) || 'project'
-}
-
-function getGitProjectName(repo: GitRepoInfo | null): string {
-  if (!repo) return ''
-  return repo.name || repo.git_repo.split('/').filter(Boolean).at(-1) || repo.git_repo
-}
-
-function uniqueRepositories(repositories: GitRepoInfo[]): GitRepoInfo[] {
-  const uniqueByRepository = new Map<string, GitRepoInfo>()
-  repositories.forEach(repository => {
-    const key = `${repository.git_domain}:${repository.git_repo}`
-    if (!uniqueByRepository.has(key)) {
-      uniqueByRepository.set(key, repository)
-    }
-  })
-  return [...uniqueByRepository.values()]
-}
-
-function getGitErrorMessage(
-  error: unknown,
-  tokenMissingText: string,
-  fallbackText: string,
-  directoryExistsText?: (path: string) => string
-): string {
-  const message = error instanceof Error ? error.message : ''
-  const normalizedMessage = message.toLowerCase()
-  if (normalizedMessage.includes('no git token configured')) {
-    return tokenMissingText
-  }
-  const directoryExistsPrefix = 'target project directory already exists:'
-  const directoryExistsIndex = normalizedMessage.indexOf(directoryExistsPrefix)
-  if (directoryExistsIndex >= 0 && directoryExistsText) {
-    const path = message.slice(directoryExistsIndex + directoryExistsPrefix.length).trim()
-    return directoryExistsText(path)
-  }
-  return message || fallbackText
+interface DeviceFolderPickerState {
+  deviceId: string
+  mode: DeviceFolderPickerMode
 }
 
 function sortDevicesForProjectCreation(devices: DeviceInfo[]): DeviceInfo[] {
@@ -127,693 +77,316 @@ function sortDevicesForProjectCreation(devices: DeviceInfo[]): DeviceInfo[] {
     const rightUsable = canUseForProjectCreation(right) ? 0 : 1
     if (leftUsable !== rightUsable) return leftUsable - rightUsable
 
-    const leftCloud = isUsableDevice(left) && isCloudDevice(left) ? 0 : 1
-    const rightCloud = isUsableDevice(right) && isCloudDevice(right) ? 0 : 1
+    const leftCloud = isCloudDevice(left) ? 0 : 1
+    const rightCloud = isCloudDevice(right) ? 0 : 1
     if (leftCloud !== rightCloud) return leftCloud - rightCloud
 
     return (left.name || left.device_id).localeCompare(right.name || right.device_id)
   })
 }
 
-function getProjectCreationDevices(devices: DeviceInfo[]): DeviceInfo[] {
-  return sortDevicesForProjectCreation(devices.filter(canUseForProjectCreation))
-}
-
-function getProjectDeviceOptions(devices: DeviceInfo[]): DeviceInfo[] {
+function getProjectDevices(devices: DeviceInfo[]): DeviceInfo[] {
   return sortDevicesForProjectCreation(devices.filter(isClaudeCodeDevice))
-}
-
-function canSelectProjectDevice(device: DeviceInfo): boolean {
-  return isUsableDevice(device)
 }
 
 function getDefaultDeviceId(devices: DeviceInfo[], preferredDeviceId?: string | null): string {
   const preferredDevice = preferredDeviceId
-    ? devices.find(device => device.device_id === preferredDeviceId)
+    ? devices.find(
+        device => device.device_id === preferredDeviceId && canUseForProjectCreation(device)
+      )
     : undefined
-  if (preferredDevice && canUseForProjectCreation(preferredDevice)) {
-    return preferredDevice.device_id
-  }
-
-  return getProjectCreationDevices(devices)[0]?.device_id ?? devices[0]?.device_id ?? ''
-}
-
-function getParentPath(path: string): string {
-  const segments = normalizePath(path).split('/').filter(Boolean)
-  if (segments.length <= 1) return '/'
-  return `/${segments.slice(0, -1).join('/')}`
-}
-
-function getPathSearchParts(path: string): { parentPath: string; query: string } {
-  const trimmedPath = path.trim()
-  if (!trimmedPath || trimmedPath === '/') {
-    return { parentPath: '/', query: '' }
-  }
-
-  if (trimmedPath.endsWith('/')) {
-    return { parentPath: normalizePath(trimmedPath), query: '' }
-  }
-
-  const normalized = normalizePath(trimmedPath)
-  return {
-    parentPath: getParentPath(normalized),
-    query: basename(normalized),
-  }
-}
-
-function directoryMatchesQuery(directory: string, query: string): boolean {
-  const normalizedDirectory = directory.toLowerCase()
-  const normalizedQuery = query.trim().toLowerCase()
-  if (!normalizedQuery) return true
-  if (normalizedDirectory.includes(normalizedQuery)) return true
-
-  let queryIndex = 0
-  for (const character of normalizedDirectory) {
-    if (character === normalizedQuery[queryIndex]) {
-      queryIndex += 1
-      if (queryIndex === normalizedQuery.length) return true
-    }
-  }
-  return false
-}
-
-function isProjectDeviceUpgradeActive(upgradeState: DeviceUpgradeState | undefined): boolean {
-  return Boolean(
-    upgradeState && !['success', 'error', 'skipped', 'busy'].includes(upgradeState.status)
+  return (
+    preferredDevice?.device_id ??
+    devices.find(device => canUseForProjectCreation(device))?.device_id ??
+    ''
   )
 }
 
-export function ProjectCreateDialog({
-  open,
-  mode,
-  presentation = 'dialog',
-  project,
-  devices = [],
-  onClose,
-  onCreateProject,
-  onPrepareDeviceWorkspace,
-  onDeviceWorkspacePrepared,
-  showWorkspaceKindSelect,
-  preferredDeviceId,
-  onSelectDevicePreference,
-  onOpenCloudDeviceSettings,
-  onGetDeviceHomeDirectory,
-  onGetProjectWorkspaceRoot,
-  onListDeviceDirectories,
-  onCreateDeviceDirectory,
-  upgradingDevices = {},
-  onUpgradeDevice,
-  onListGitRepositories,
-  onListGitBranches,
-}: ProjectCreateDialogProps) {
-  if (!open) return null
+function getFolderProjectName(path: string): string {
+  return basename(path)
+}
+
+function getDeviceLabel(device: DeviceInfo): string {
+  return device.name || device.device_id
+}
+
+function getInitialActiveDeviceId(
+  devices: DeviceInfo[],
+  deviceWorkspaces: DeviceWorkspaceResponse[],
+  preferredDeviceId: string | null | undefined,
+  editing: boolean
+): string {
+  if (editing) {
+    const mappedDevice = deviceWorkspaces.find(workspace =>
+      devices.some(device => device.device_id === workspace.deviceId)
+    )
+    if (mappedDevice) return mappedDevice.deviceId
+  }
+  return getDefaultDeviceId(devices, preferredDeviceId)
+}
+
+function mappingsByDeviceId(
+  deviceWorkspaces: DeviceWorkspaceResponse[]
+): Map<string, DeviceWorkspaceResponse> {
+  const byDeviceId = new Map<string, DeviceWorkspaceResponse>()
+  for (const workspace of deviceWorkspaces) {
+    if (!byDeviceId.has(workspace.deviceId)) {
+      byDeviceId.set(workspace.deviceId, workspace)
+    }
+  }
+  return byDeviceId
+}
+
+export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
+  if (!props.open) return null
 
   return (
     <ProjectCreateDialogContent
-      key={`${project?.id ?? 'new'}:${mode}:${getDefaultDeviceId(getProjectDeviceOptions(devices))}`}
-      mode={mode}
-      presentation={presentation}
-      project={project}
-      devices={devices}
-      onClose={onClose}
-      onCreateProject={onCreateProject}
-      onPrepareDeviceWorkspace={onPrepareDeviceWorkspace}
-      onDeviceWorkspacePrepared={onDeviceWorkspacePrepared}
-      showWorkspaceKindSelect={showWorkspaceKindSelect}
-      preferredDeviceId={preferredDeviceId}
-      onSelectDevicePreference={onSelectDevicePreference}
-      onOpenCloudDeviceSettings={onOpenCloudDeviceSettings}
-      onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
-      onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot}
-      onListDeviceDirectories={onListDeviceDirectories}
-      onCreateDeviceDirectory={onCreateDeviceDirectory}
-      upgradingDevices={upgradingDevices}
-      onUpgradeDevice={onUpgradeDevice}
-      onListGitRepositories={onListGitRepositories}
-      onListGitBranches={onListGitBranches}
+      key={`${props.project?.id ?? 'new'}:${props.mode}:${getDefaultDeviceId(
+        getProjectDevices(props.devices),
+        props.preferredDeviceId
+      )}`}
+      {...props}
     />
   )
 }
-
-type ProjectCreateDialogContentProps = Omit<
-  ProjectCreateDialogProps,
-  'open' | 'onCreateGitWorkspaceProject'
->
 
 function ProjectCreateDialogContent({
   mode,
   presentation = 'dialog',
   project,
-  devices,
+  deviceWorkspaces = [],
+  devices = [],
   onClose,
   onCreateProject,
   onPrepareDeviceWorkspace,
+  onDeleteDeviceWorkspace,
   onDeviceWorkspacePrepared,
+  onUpdateProjectName,
   showWorkspaceKindSelect = false,
   preferredDeviceId,
   onSelectDevicePreference,
   onOpenCloudDeviceSettings,
   onGetDeviceHomeDirectory,
-  onGetProjectWorkspaceRoot,
   onListDeviceDirectories,
   onCreateDeviceDirectory,
   upgradingDevices = {},
   onUpgradeDevice,
-  onListGitRepositories,
-  onListGitBranches,
-}: ProjectCreateDialogContentProps) {
+}: ProjectCreateDialogProps) {
   const { t } = useTranslation('common')
-  const editingProject = project ?? null
-  const allProjectDevices = useMemo(() => getProjectDeviceOptions(devices), [devices])
-  const firstDeviceId = useMemo(
-    () => getDefaultDeviceId(allProjectDevices, preferredDeviceId),
-    [allProjectDevices, preferredDeviceId]
+  const isEditing = Boolean(project)
+  const allProjectDevices = useMemo(() => getProjectDevices(devices), [devices])
+  const existingMappings = useMemo(() => mappingsByDeviceId(deviceWorkspaces), [deviceWorkspaces])
+  const [activeDeviceId, setActiveDeviceId] = useState(() =>
+    getInitialActiveDeviceId(allProjectDevices, deviceWorkspaces, preferredDeviceId, isEditing)
   )
-  const [deviceId, setDeviceId] = useState(firstDeviceId)
-  const [folderMode, setFolderMode] = useState<ProjectFolderMode>(
-    editingProject || mode === 'existing' ? 'select' : 'none'
-  )
+  const [folderDrafts, setFolderDrafts] = useState<Record<string, DeviceFolderPickerResult>>({})
+  const [removedDeviceIds, setRemovedDeviceIds] = useState<Set<string>>(() => new Set())
+  const [folderPickerState, setFolderPickerState] = useState<DeviceFolderPickerState | null>(null)
+  const [projectName, setProjectName] = useState(project?.name ?? '')
+  const [renamingInline, setRenamingInline] = useState(Boolean(project))
   const [workspaceKind, setWorkspaceKind] = useState<ProjectWorkspaceKind>('worktree')
-  const [projectName, setProjectName] = useState('')
-  const [projectRoot, setProjectRoot] = useState(FALLBACK_PROJECTS_ROOT)
-  const [currentPath, setCurrentPath] = useState('')
-  const [pathInput, setPathInput] = useState('')
-  const [directoryQuery, setDirectoryQuery] = useState('')
-  const [selectedPath, setSelectedPath] = useState('')
-  const [directories, setDirectories] = useState<string[]>([])
-  const [showHiddenDirectories, setShowHiddenDirectories] = useState(false)
-  const [loadingDirectories, setLoadingDirectories] = useState(false)
-  const [directoryError, setDirectoryError] = useState<string | null>(null)
-  const [newFolderOpen, setNewFolderOpen] = useState(false)
-  const [newFolderName, setNewFolderName] = useState('')
-  const [creatingDirectory, setCreatingDirectory] = useState(false)
-  const [createDirectoryError, setCreateDirectoryError] = useState<string | null>(null)
-  const [repositories, setRepositories] = useState<GitRepoInfo[]>([])
-  const [selectedRepo, setSelectedRepo] = useState<GitRepoInfo | null>(null)
-  const [loadingRepositories, setLoadingRepositories] = useState(false)
-  const [repositoryError, setRepositoryError] = useState<string | null>(null)
-  const [branches, setBranches] = useState<GitBranch[]>([])
-  const [selectedBranch, setSelectedBranch] = useState<GitBranch | null>(null)
-  const [loadingBranches, setLoadingBranches] = useState(false)
-  const [branchError, setBranchError] = useState<string | null>(null)
   const [projectCreateError, setProjectCreateError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
-  const requiresDevice = Boolean(editingProject) || folderMode !== 'none'
-  const showDeviceSelect = requiresDevice && allProjectDevices.length > 1
-  const selectedDevice = allProjectDevices.find(device => device.device_id === deviceId)
-  const selectedDeviceUsable = Boolean(selectedDevice && canUseForProjectCreation(selectedDevice))
-  const selectedUnavailableDevice =
-    requiresDevice && selectedDevice && !selectedDeviceUsable ? selectedDevice : null
-
-  useEffect(() => {
-    if (folderMode !== 'create' || !deviceId || !selectedDeviceUsable) return
-    let cancelled = false
-
-    async function resolveProjectRoot() {
-      try {
-        const resolvedRoot = normalizePath(await onGetProjectWorkspaceRoot(deviceId))
-        if (!cancelled && resolvedRoot) {
-          setProjectRoot(resolvedRoot)
-        }
-      } catch {
-        if (!cancelled) {
-          setProjectRoot(FALLBACK_PROJECTS_ROOT)
-        }
-      }
-    }
-
-    void resolveProjectRoot()
-    return () => {
-      cancelled = true
-    }
-  }, [deviceId, folderMode, onGetProjectWorkspaceRoot, selectedDeviceUsable])
-
-  useEffect(() => {
-    if (folderMode !== 'select' || !deviceId || !selectedDeviceUsable) return
-    let cancelled = false
-
-    async function resolveHomeDirectory() {
-      try {
-        const homePath = normalizePath(await onGetDeviceHomeDirectory(deviceId))
-        if (!cancelled) {
-          const nextPath = homePath || '/'
-          setCurrentPath(nextPath)
-          setPathInput(nextPath)
-          setDirectoryQuery('')
-          setSelectedPath(nextPath)
-        }
-      } catch {
-        if (!cancelled) {
-          setCurrentPath('/')
-          setPathInput('/')
-          setDirectoryQuery('')
-          setSelectedPath('/')
-        }
-      }
-    }
-
-    void resolveHomeDirectory()
-    return () => {
-      cancelled = true
-    }
-  }, [deviceId, folderMode, onGetDeviceHomeDirectory, selectedDeviceUsable])
-
-  useEffect(() => {
-    if (folderMode !== 'select') return
-    const normalizedInput = normalizePath(pathInput)
-    if (!normalizedInput) return
-    if (normalizedInput === currentPath && !directoryQuery) return
-
-    const timeoutId = window.setTimeout(() => {
-      const { parentPath, query } = getPathSearchParts(pathInput)
-      setCurrentPath(parentPath)
-      setDirectoryQuery(query)
-      setSelectedPath(normalizedInput)
-    }, 300)
-    return () => window.clearTimeout(timeoutId)
-  }, [currentPath, directoryQuery, folderMode, pathInput])
-
-  useEffect(() => {
-    if (folderMode !== 'select' || !deviceId || !selectedDeviceUsable || !currentPath) return
-    let cancelled = false
-
-    async function loadDirectories() {
-      setLoadingDirectories(true)
-      setDirectoryError(null)
-      try {
-        const items = await onListDeviceDirectories(deviceId, currentPath)
-        if (cancelled) return
-        setDirectories([...items].sort((left, right) => left.localeCompare(right)))
-      } catch (error) {
-        if (cancelled) return
-        setDirectories([])
-        setDirectoryError(
-          error instanceof Error
-            ? error.message
-            : t('workbench.project_directory_load_failed', '目录加载失败')
-        )
-      } finally {
-        if (!cancelled) setLoadingDirectories(false)
-      }
-    }
-
-    void loadDirectories()
-    return () => {
-      cancelled = true
-    }
-  }, [currentPath, deviceId, folderMode, onListDeviceDirectories, selectedDeviceUsable, t])
-
-  useEffect(() => {
-    if (mode !== 'git') return
-    let cancelled = false
-
-    async function loadRepositories() {
-      if (!onListGitRepositories) return
-      setLoadingRepositories(true)
-      setRepositoryError(null)
-      try {
-        const items = await onListGitRepositories()
-        if (cancelled) return
-        setRepositories(
-          uniqueRepositories(items).sort((left, right) =>
-            left.git_repo.localeCompare(right.git_repo)
-          )
-        )
-      } catch (error) {
-        if (cancelled) return
-        setRepositories([])
-        setRepositoryError(
-          getGitErrorMessage(
-            error,
-            t('workbench.project_git_token_missing', '请先在设置中配置 Git Token'),
-            t('workbench.project_git_repository_load_failed', '仓库加载失败')
-          )
-        )
-      } finally {
-        if (!cancelled) setLoadingRepositories(false)
-      }
-    }
-
-    void loadRepositories()
-    return () => {
-      cancelled = true
-    }
-  }, [mode, onListGitRepositories, t])
-
-  useEffect(() => {
-    if (mode !== 'git' || !selectedRepo) return
-    let cancelled = false
-    const repo = selectedRepo
-
-    async function loadBranches() {
-      if (!onListGitBranches) return
-      setLoadingBranches(true)
-      setBranchError(null)
-      try {
-        const items = await onListGitBranches(repo)
-        if (cancelled) return
-        setBranches(items)
-        setSelectedBranch(items.find(branch => branch.default) ?? items[0] ?? null)
-      } catch (error) {
-        if (cancelled) return
-        setBranches([])
-        setSelectedBranch(null)
-        setBranchError(
-          getGitErrorMessage(
-            error,
-            t('workbench.project_git_token_missing', '请先在设置中配置 Git Token'),
-            t('workbench.project_git_branch_load_failed', '分支加载失败')
-          )
-        )
-      } finally {
-        if (!cancelled) setLoadingBranches(false)
-      }
-    }
-
-    void loadBranches()
-    return () => {
-      cancelled = true
-    }
-  }, [mode, onListGitBranches, selectedRepo, t])
-
-  const gitProjectName = getGitProjectName(selectedRepo)
-  const defaultFolderName =
-    mode === 'git' ? gitProjectName : (editingProject?.name ?? projectName.trim())
-  const createFolderPath = useMemo(
-    () => joinPath(projectRoot, sanitizePathSegment(defaultFolderName)),
-    [defaultFolderName, projectRoot]
-  )
-  const finalProjectName = editingProject
-    ? editingProject.name
-    : mode === 'scratch'
-      ? projectName.trim()
-      : mode === 'git'
-        ? gitProjectName
-        : basename(selectedPath)
-  const finalPath =
-    folderMode === 'create'
-      ? createFolderPath
-      : folderMode === 'select' && !directoryQuery
-        ? selectedPath
-        : ''
-  const hasProjectIdentity = editingProject
-    ? true
-    : mode === 'git'
-      ? Boolean(selectedRepo && selectedBranch)
-      : Boolean(finalProjectName)
-  const canCreate =
-    hasProjectIdentity &&
-    (!requiresDevice || Boolean(deviceId && selectedDeviceUsable && finalPath))
-  const visibleDirectories = showHiddenDirectories
-    ? directories
-    : directories.filter(directory => !directory.startsWith('.'))
-  const filteredDirectories = visibleDirectories.filter(directory =>
-    directoryMatchesQuery(directory, directoryQuery)
-  )
-  const repositoryOptions = useMemo<SearchableSelectOption[]>(
-    () =>
-      repositories.map(repo => ({
-        value: repo.git_url,
-        label: repo.git_repo,
-        searchText: `${repo.name} ${repo.namespace} ${repo.git_domain}`,
-      })),
-    [repositories]
-  )
-  const branchOptions = useMemo<SearchableSelectOption[]>(
-    () =>
-      branches.map(branch => ({
-        value: branch.name,
-        label: branch.default
-          ? `${branch.name}${t('workbench.project_git_branch_default_suffix', '（默认）')}`
-          : branch.name,
-        searchText: branch.name,
-      })),
-    [branches, t]
-  )
-
-  const handleDeviceChange = (nextDeviceId: string) => {
-    const nextDevice = allProjectDevices.find(device => device.device_id === nextDeviceId)
-    if (nextDevice && !canSelectProjectDevice(nextDevice)) return
-
-    setDeviceId(nextDeviceId)
-    if (nextDeviceId) {
-      onSelectDevicePreference?.(nextDeviceId)
-    }
-    setProjectRoot(FALLBACK_PROJECTS_ROOT)
-    setCurrentPath('')
-    setPathInput('')
-    setDirectoryQuery('')
-    setSelectedPath('')
-    setDirectories([])
-    setDirectoryError(null)
-    setCreateDirectoryError(null)
-    setNewFolderName('')
-    setNewFolderOpen(false)
-    setProjectCreateError(null)
+  const getDeviceFolder = (deviceId: string) => {
+    const draft = folderDrafts[deviceId]
+    if (draft) return draft.path
+    if (removedDeviceIds.has(deviceId)) return ''
+    return existingMappings.get(deviceId)?.workspacePath ?? ''
   }
 
-  const handleUpgradeDevice = async (nextDeviceId: string) => {
-    if (!onUpgradeDevice) return
-    setProjectCreateError(null)
-    await onUpgradeDevice(nextDeviceId)
-  }
+  const isDeviceLinked = (deviceId: string) => Boolean(getDeviceFolder(deviceId))
+  const canSelectDeviceTab = (device: DeviceInfo) =>
+    canUseForProjectCreation(device) ||
+    (isDeviceBelowWeWorkVersion(device) && canRequestDeviceUpgrade(device)) ||
+    (isEditing && isDeviceLinked(device.device_id))
 
-  const handleBrowsePath = (path: string) => {
-    const normalized = normalizePath(path) || '/'
-    setCurrentPath(normalized)
-    setPathInput(normalized)
-    setDirectoryQuery('')
-    setSelectedPath(normalized)
-  }
-
-  const handleConfirmPathInput = () => {
-    const normalized = normalizePath(pathInput) || '/'
-    if (normalized === currentPath) {
-      handleBrowsePath(normalized)
-      return
-    }
-
-    const { parentPath, query } = getPathSearchParts(pathInput)
-    const matchingDirectories =
-      parentPath === currentPath
-        ? visibleDirectories.filter(directory => directoryMatchesQuery(directory, query))
-        : []
-
-    if (query && matchingDirectories.length === 1) {
-      handleBrowsePath(joinPath(parentPath, matchingDirectories[0]))
-      return
-    }
-
-    if (query) {
-      setCurrentPath(parentPath)
-      setDirectoryQuery(query)
-      setSelectedPath(normalized)
-      return
-    }
-
-    handleBrowsePath(parentPath)
-  }
-
-  const handleOpenDirectory = (path: string) => {
-    handleBrowsePath(path)
-  }
-
-  const handleCreateDirectory = async () => {
-    const folderName = newFolderName.trim()
-    if (!deviceId || !selectedDeviceUsable || !currentPath || !folderName) return
-
-    if (folderName.includes('/')) {
-      setCreateDirectoryError(
-        t('workbench.project_create_folder_name_error', '文件夹名称不能包含 /')
+  const visibleDevices = allProjectDevices
+  const activeDevice =
+    visibleDevices.find(
+      device => device.device_id === activeDeviceId && canSelectDeviceTab(device)
+    ) ??
+    visibleDevices.find(canSelectDeviceTab) ??
+    null
+  const pickerDevice = folderPickerState
+    ? allProjectDevices.find(device => device.device_id === folderPickerState.deviceId)
+    : null
+  const selectedDrafts = Object.values(folderDrafts)
+  const primaryDraft = selectedDrafts[0]
+  const derivedProjectName = primaryDraft ? getFolderProjectName(primaryDraft.path) : ''
+  const finalProjectName = projectName.trim() || derivedProjectName
+  const canSubmit = isEditing ? true : Boolean(selectedDrafts.length && finalProjectName)
+  const title = isEditing
+    ? t('workbench.project_edit_title', '编辑项目')
+    : t('workbench.project_choose_folder_title', '选择项目文件夹')
+  const description = isEditing
+    ? t('workbench.project_edit_folder_desc', '为每台设备选择或调整这个项目关联的文件夹。')
+    : t(
+        'workbench.project_choose_folder_desc',
+        '为这台设备选择或新建一个文件夹。项目名默认使用文件夹名称。'
       )
-      return
-    }
-
-    const nextPath = joinPath(currentPath, folderName)
-    setCreatingDirectory(true)
-    setCreateDirectoryError(null)
-    try {
-      await onCreateDeviceDirectory(deviceId, nextPath)
-      setNewFolderName('')
-      setNewFolderOpen(false)
-      handleBrowsePath(nextPath)
-    } catch (error) {
-      setCreateDirectoryError(
-        error instanceof Error
-          ? error.message
-          : t('workbench.project_create_folder_failed', '新建文件夹失败')
-      )
-    } finally {
-      setCreatingDirectory(false)
-    }
-  }
+  const isMobileSheet = presentation === 'mobileSheet'
 
   useEscapeKey(onClose, !submitting)
 
-  const title = editingProject
-    ? t('workbench.project_edit_title', '编辑项目')
-    : mode === 'git'
-      ? t('workbench.project_create_git_title', '创建 Git 项目')
-      : mode === 'existing'
-        ? t('workbench.project_create_existing_title', '选择项目目录')
-        : t('workbench.project_create_title', '新建项目')
-  const submittingLabel = editingProject
-    ? t('workbench.project_saving', '保存中...')
-    : t('workbench.project_creating', '创建中...')
-  const submittingHint = editingProject
-    ? t('workbench.project_edit_progress', '正在保存项目，请稍候')
-    : t('workbench.project_create_progress', '正在创建项目，请稍候')
-  const isMobileSheet = presentation === 'mobileSheet'
-  const getDeviceOptionLabel = (device: DeviceInfo) => {
-    const statusLabel = isDeviceBelowWeWorkVersion(device)
-      ? t('workbench.project_device_upgrade_required_option', '（需升级）')
-      : t(
-          device.status === 'busy'
-            ? 'workbench.project_device_busy'
-            : isUsableDevice(device)
-              ? 'workbench.project_device_online'
-              : 'workbench.project_device_offline',
-          device.status === 'busy' ? '(忙碌)' : isUsableDevice(device) ? '(在线)' : '(离线)'
-        )
-
-    return `${device.name || device.device_id}${
-      isCloudDevice(device) ? ` ${t('workbench.project_cloud_device', '(云设备)')}` : ''
-    } ${statusLabel}`
+  const selectDevice = (deviceId: string) => {
+    setActiveDeviceId(deviceId)
+    onSelectDevicePreference?.(deviceId)
   }
-  const directoryDeviceUnavailableMessage =
-    selectedDevice && isDeviceBelowWeWorkVersion(selectedDevice)
-      ? t('workbench.project_directory_upgrade_device_hint', '升级当前设备后可选择目录')
-      : t('workbench.project_directory_unavailable_device_hint', '设备恢复在线后可选择目录')
-  const folderDeviceControls = requiresDevice ? (
-    <>
-      {showDeviceSelect && (
-        <>
-          <label className="mt-5 block text-[13px] font-semibold text-[#202124]">
-            {t('workbench.project_device', '设备')}
-          </label>
-          <select
-            data-testid="project-device-select"
-            value={deviceId}
-            disabled={submitting}
-            onChange={event => handleDeviceChange(event.target.value)}
-            className="mt-2 h-10 w-full rounded-lg border border-[#d8d8d8] bg-white px-3 text-[13px] outline-none focus:border-[#14b8a6] focus:ring-2 focus:ring-[#14b8a6]/20 disabled:opacity-60"
-          >
-            {allProjectDevices.map(device => (
-              <option
-                key={device.device_id}
-                value={device.device_id}
-                disabled={!canSelectProjectDevice(device)}
-              >
-                {getDeviceOptionLabel(device)}
-              </option>
-            ))}
-          </select>
-        </>
-      )}
 
-      {allProjectDevices.length === 0 && onOpenCloudDeviceSettings && (
-        <p className="mt-2 text-xs leading-5 text-[#606368]">
-          {t('workbench.project_no_available_devices_hint', '创建项目需要一台可用设备。')}
-          <a
-            href="/settings"
-            data-testid="open-cloud-device-settings-link"
-            onClick={event => {
-              event.preventDefault()
-              onOpenCloudDeviceSettings()
-            }}
-            className="ml-1 font-medium text-[#14b8a6] underline underline-offset-2 hover:text-[#0f9f93]"
-          >
-            {t('workbench.project_create_cloud_device_connection', '创建云设备连接')}
-          </a>
-        </p>
-      )}
+  const setFolderDraft = (result: DeviceFolderPickerResult) => {
+    setFolderDrafts(drafts => ({ ...drafts, [result.deviceId]: result }))
+    setRemovedDeviceIds(deviceIds => {
+      const next = new Set(deviceIds)
+      next.delete(result.deviceId)
+      return next
+    })
+    setProjectName(name => name || getFolderProjectName(result.path))
+    setProjectCreateError(null)
+    setFolderPickerState(null)
+  }
 
-      {selectedUnavailableDevice && (
-        <div data-testid="project-device-unavailable-list" className="mt-3 space-y-2">
-          <p className="text-xs font-medium text-[#6b6f76]">
-            {isDeviceBelowWeWorkVersion(selectedUnavailableDevice)
-              ? t('workbench.project_selected_device_upgrade_title')
-              : t('workbench.project_selected_device_unavailable_title')}
-          </p>
-          {(() => {
-            const device = selectedUnavailableDevice
-            const belowVersion = isDeviceBelowWeWorkVersion(device)
-            const upgradeState = upgradingDevices[device.device_id]
-            const upgrading = isProjectDeviceUpgradeActive(upgradeState)
-            const canUpgrade = Boolean(
-              onUpgradeDevice && belowVersion && canRequestDeviceUpgrade(device) && !upgrading
-            )
-            const currentVersion = device.executor_version
-              ? `v${device.executor_version}`
-              : t('workbench.project_device_version_unknown')
-            const reason =
-              device.status !== 'online'
-                ? t('workbench.device_status_offline_reason')
-                : belowVersion
-                  ? t('workbench.project_device_upgrade_requirement', {
-                      version: WEWORK_MIN_EXECUTOR_VERSION,
-                    })
-                  : t('workbench.device_status_busy_reason')
+  const unlinkActiveDevice = () => {
+    if (!activeDevice) return
+    setFolderDrafts(drafts => {
+      const next = { ...drafts }
+      delete next[activeDevice.device_id]
+      return next
+    })
+    setRemovedDeviceIds(deviceIds => new Set(deviceIds).add(activeDevice.device_id))
+    setProjectCreateError(null)
+  }
 
-            return (
-              <div
-                key={device.device_id}
-                data-testid={`project-device-unavailable-${device.device_id}`}
-                className="flex items-center gap-3 rounded-lg border border-[#e5e5e5] bg-[#f7f7f8] px-3 py-2 text-xs text-[#6b6f76]"
-              >
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="truncate font-medium text-[#4b4f55]">
-                      {device.name || device.device_id}
-                    </span>
-                    {isCloudDevice(device) && (
-                      <span className="shrink-0 text-[#8a8f98]">
-                        {t('workbench.project_cloud_device')}
-                      </span>
-                    )}
-                  </div>
-                  <p className="mt-1 truncate">
-                    {upgrading
-                      ? t('workbench.project_device_upgrading', {
-                          message: upgradeState?.message ?? t('workbench.device_status_checking'),
-                        })
-                      : belowVersion
-                        ? t('workbench.project_device_upgrade_detail', {
-                            current: currentVersion,
-                            required: WEWORK_MIN_EXECUTOR_VERSION,
-                          })
-                        : reason}
-                  </p>
-                </div>
-                {belowVersion && (
-                  <button
-                    type="button"
-                    data-testid={`upgrade-project-device-${device.device_id}`}
-                    disabled={!canUpgrade}
-                    onClick={() => void handleUpgradeDevice(device.device_id)}
-                    className="inline-flex h-8 shrink-0 items-center gap-1 rounded-md px-2 font-medium text-[#0f766e] hover:bg-[#e5f6f4] disabled:cursor-not-allowed disabled:text-[#8a8f98] disabled:hover:bg-transparent"
-                  >
-                    {upgrading ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <ArrowUpCircle className="h-3.5 w-3.5" />
-                    )}
-                    {t('workbench.project_device_upgrade_action')}
-                  </button>
-                )}
-              </div>
-            )
-          })()}
+  const handleSubmit = async () => {
+    if (!canSubmit || submitting) return
+    setSubmitting(true)
+    setProjectCreateError(null)
+    try {
+      if (isEditing && project) {
+        const nextName = projectName.trim()
+        if (nextName && nextName !== project.name && onUpdateProjectName) {
+          await onUpdateProjectName(project.id, nextName)
+        }
+        if (onDeleteDeviceWorkspace) {
+          for (const deviceId of removedDeviceIds) {
+            const mapping = existingMappings.get(deviceId)
+            if (mapping) {
+              await onDeleteDeviceWorkspace({
+                projectId: project.id,
+                deviceId,
+                workspacePath: mapping.workspacePath,
+              })
+            }
+          }
+        }
+        if (onPrepareDeviceWorkspace) {
+          for (const draft of selectedDrafts) {
+            const preparedWorkspace = await onPrepareDeviceWorkspace({
+              projectId: project.id,
+              deviceId: draft.deviceId,
+              workspacePath: draft.path,
+              action: draft.action,
+              ...(showWorkspaceKindSelect ? { label: workspaceKind } : {}),
+            })
+            await onDeviceWorkspacePrepared?.(preparedWorkspace)
+          }
+        }
+      } else {
+        if (!selectedDrafts.length || !finalProjectName || !onPrepareDeviceWorkspace) return
+        const createdProject = await onCreateProject({
+          name: finalProjectName,
+          description: '',
+          config: { mode: mode === 'git' ? 'workspace' : 'workspace' },
+        })
+        for (const draft of selectedDrafts) {
+          const preparedWorkspace = await onPrepareDeviceWorkspace({
+            projectId: createdProject.id,
+            deviceId: draft.deviceId,
+            workspacePath: draft.path,
+            action: draft.action,
+            ...(showWorkspaceKindSelect ? { label: workspaceKind } : {}),
+          })
+          await onDeviceWorkspacePrepared?.(preparedWorkspace)
+        }
+      }
+      onClose()
+    } catch (error) {
+      setProjectCreateError(
+        error instanceof Error
+          ? error.message
+          : t('workbench.project_create_failed', '项目创建失败')
+      )
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const renderActiveDevicePanel = () => {
+    if (!activeDevice) return null
+
+    const folderPath = getDeviceFolder(activeDevice.device_id)
+    const canUseDevice = canUseForProjectCreation(activeDevice)
+    const upgradeState = upgradingDevices[activeDevice.device_id]
+    const canUpgradeDevice =
+      isDeviceBelowWeWorkVersion(activeDevice) &&
+      canRequestDeviceUpgrade(activeDevice) &&
+      Boolean(onUpgradeDevice)
+
+    return (
+      <section className="mt-4 rounded-lg border border-[#e5e5e5] bg-[#fafafa] p-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-[#202124]">{getDeviceLabel(activeDevice)}</p>
+            <p className="mt-1 truncate font-mono text-xs text-[#6b6f76]">
+              {folderPath || t('workbench.project_device_folder_empty', '尚未关联文件夹')}
+            </p>
+          </div>
+          {isEditing && folderPath && (
+            <button
+              type="button"
+              data-testid="project-device-unlink-button"
+              disabled={submitting}
+              onClick={unlinkActiveDevice}
+              className="h-8 shrink-0 rounded-md border border-[#d8d8d8] px-2 text-xs font-medium text-[#8a3b3b] hover:bg-[#fff1f1] disabled:opacity-50"
+            >
+              {t('workbench.project_unlink_device_folder', '解除关联')}
+            </button>
+          )}
         </div>
-      )}
 
-      {showWorkspaceKindSelect && (
-        <div className="mt-5">
-          <label className="block text-[13px] font-semibold text-[#202124]">
-            {t('workbench.project_workspace_kind', '路径类型')}
-          </label>
-          <div className="mt-2 grid grid-cols-2 gap-2">
+        {!canUseDevice && isDeviceBelowWeWorkVersion(activeDevice) && (
+          <div className="mt-3 rounded-md border border-[#f3d7a1] bg-[#fff8e8] px-3 py-2 text-xs text-[#7a4b00]">
+            <p data-testid={`project-device-unavailable-${activeDevice.device_id}`}>
+              {t('workbench.project_device_upgrade_detail', {
+                defaultValue: '当前 {{current}}，需要 {{required}} 或以上',
+                current:
+                  activeDevice.executor_version ||
+                  t('workbench.project_device_version_unknown', '版本未知'),
+                required: WEWORK_MIN_EXECUTOR_VERSION,
+              })}
+            </p>
+            {canUpgradeDevice && (
+              <button
+                type="button"
+                data-testid={`upgrade-project-device-${activeDevice.device_id}`}
+                disabled={submitting || Boolean(upgradeState)}
+                onClick={() => void onUpgradeDevice?.(activeDevice.device_id)}
+                className="mt-2 h-8 rounded-md bg-text-primary px-3 text-xs font-medium text-background hover:bg-text-primary/90 disabled:opacity-60"
+              >
+                {upgradeState
+                  ? t('workbench.project_device_upgrading', {
+                      defaultValue: '升级中：{{message}}',
+                      message: upgradeState.message,
+                    })
+                  : t('workbench.project_device_upgrade_action', '升级')}
+              </button>
+            )}
+          </div>
+        )}
+
+        {showWorkspaceKindSelect && (
+          <div className="mt-3 grid grid-cols-2 gap-2">
             {(
               [
                 ['worktree', t('workbench.project_workspace_kind_worktree', 'Worktree')],
@@ -837,10 +410,65 @@ function ProjectCreateDialogContent({
               </button>
             ))}
           </div>
+        )}
+
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            data-testid="project-folder-select-button"
+            disabled={submitting || !canUseDevice}
+            onClick={() =>
+              setFolderPickerState({ deviceId: activeDevice.device_id, mode: 'select' })
+            }
+            className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-[#d8d8d8] bg-white px-3 text-sm font-medium text-[#3c4043] hover:bg-[#f7f7f8] disabled:opacity-50"
+          >
+            <Folder className="h-4 w-4" />
+            {t('workbench.project_folder_select_existing', '选择已有')}
+          </button>
+          <button
+            type="button"
+            data-testid="project-folder-create-button"
+            disabled={submitting || !canUseDevice}
+            onClick={() =>
+              setFolderPickerState({ deviceId: activeDevice.device_id, mode: 'create' })
+            }
+            className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-[#d8d8d8] bg-white px-3 text-sm font-medium text-[#3c4043] hover:bg-[#f7f7f8] disabled:opacity-50"
+          >
+            <FolderPlus className="h-4 w-4" />
+            {t('workbench.project_folder_create_new', '新建')}
+          </button>
         </div>
-      )}
-    </>
-  ) : null
+
+        {folderPickerState?.deviceId === activeDevice.device_id && pickerDevice && (
+          <div className="mt-3">
+            <DeviceFolderPicker
+              device={pickerDevice}
+              mode={folderPickerState.mode}
+              onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
+              onListDeviceDirectories={onListDeviceDirectories}
+              onCreateDeviceDirectory={onCreateDeviceDirectory}
+              onCancel={() => setFolderPickerState(null)}
+              onConfirm={setFolderDraft}
+            />
+          </div>
+        )}
+      </section>
+    )
+  }
+
+  const getDeviceTabStatus = (device: DeviceInfo, linked: boolean) => {
+    if (linked) return t('workbench.project_device_linked', '已关联')
+    if (canUseForProjectCreation(device)) {
+      return t('workbench.project_device_unlinked', '未关联')
+    }
+    if (device.status === 'offline') {
+      return t('workbench.project_device_status_offline', '离线')
+    }
+    if (isDeviceBelowWeWorkVersion(device)) {
+      return t('workbench.project_device_upgrade_required_short', '需升级')
+    }
+    return t('workbench.project_device_status_unavailable', '不可用')
+  }
 
   return createPortal(
     <div
@@ -855,18 +483,13 @@ function ProjectCreateDialogContent({
         className={
           isMobileSheet
             ? 'max-h-[88dvh] w-full overflow-y-auto rounded-t-[28px] border border-[#EDEDED] border-b-0 bg-white p-5 pb-[max(24px,env(safe-area-inset-bottom))] shadow-[0_-18px_48px_rgba(0,0,0,0.18)]'
-            : 'w-full max-w-[560px] rounded-lg border border-[#d8d8d8] bg-white p-6 shadow-2xl'
+            : 'max-h-[88vh] w-full max-w-[680px] overflow-y-auto rounded-lg border border-[#d8d8d8] bg-white p-6 shadow-2xl'
         }
       >
         <div className="flex items-start justify-between gap-4">
           <div>
             <h2 className="text-base font-semibold text-[#202124]">{title}</h2>
-            <p className="mt-2 text-[13px] leading-[18px] text-[#6b6f76]">
-              {t(
-                'workbench.project_create_description',
-                '创建一个项目工作区，用于在同一项目下发起多次对话'
-              )}
-            </p>
+            <p className="mt-2 text-[13px] leading-[18px] text-[#6b6f76]">{description}</p>
           </div>
           <button
             type="button"
@@ -882,11 +505,28 @@ function ProjectCreateDialogContent({
           </button>
         </div>
 
-        {!editingProject && mode === 'scratch' ? (
-          <>
-            <label className="mt-5 block text-[13px] font-semibold text-[#202124]">
+        {allProjectDevices.length === 0 && onOpenCloudDeviceSettings && (
+          <p className="mt-5 text-sm leading-5 text-[#606368]">
+            {t('workbench.project_no_available_devices_hint', '创建项目需要一台可用设备。')}
+            <a
+              href="/settings"
+              data-testid="open-cloud-device-settings-link"
+              onClick={event => {
+                event.preventDefault()
+                onOpenCloudDeviceSettings()
+              }}
+              className="ml-1 font-medium text-[#14b8a6] underline underline-offset-2 hover:text-[#0f9f93]"
+            >
+              {t('workbench.project_create_cloud_device_connection', '创建云设备连接')}
+            </a>
+          </p>
+        )}
+
+        {isEditing ? (
+          <label className="mt-5 block">
+            <span className="text-[13px] font-semibold text-[#202124]">
               {t('workbench.project_name', '项目名称')}
-            </label>
+            </span>
             <input
               data-testid="project-name-input"
               value={projectName}
@@ -895,325 +535,89 @@ function ProjectCreateDialogContent({
                 setProjectName(event.target.value)
                 setProjectCreateError(null)
               }}
-              placeholder={t('workbench.project_name_placeholder', '输入项目名称')}
               className="mt-2 h-10 w-full rounded-lg border border-[#d8d8d8] px-3 text-[13px] outline-none focus:border-[#14b8a6] focus:ring-2 focus:ring-[#14b8a6]/20 disabled:opacity-60"
             />
-          </>
-        ) : mode === 'git' ? (
-          <>
-            <label className="mt-5 block text-[13px] font-semibold text-[#202124]">
-              {t('workbench.project_git_repository', 'Git 仓库')}
-            </label>
-            <SearchableSelect
-              testId="git-repository-select"
-              value={selectedRepo?.git_url ?? ''}
-              options={repositoryOptions}
-              disabled={submitting || loadingRepositories || repositories.length === 0}
-              placeholder={
-                loadingRepositories
-                  ? t('workbench.project_git_repository_loading', '正在加载仓库...')
-                  : t('workbench.project_git_repository_placeholder', '选择仓库')
-              }
-              searchPlaceholder={t('workbench.project_git_repository_search', '搜索仓库')}
-              emptyText={t('workbench.project_git_repository_no_results', '没有匹配的仓库')}
-              onChange={value => {
-                const nextRepo = repositories.find(repo => repo.git_url === value) ?? null
-                setSelectedRepo(nextRepo)
-                setSelectedBranch(null)
-                if (!nextRepo) {
-                  setBranches([])
-                  setBranchError(null)
-                }
-                setProjectCreateError(null)
-              }}
-            />
-            {repositoryError && <p className="mt-2 text-xs text-[#c44]">{repositoryError}</p>}
-            {!loadingRepositories && !repositoryError && repositories.length === 0 && (
-              <p className="mt-2 text-xs text-[#8a8f98]">
-                {t('workbench.project_git_repository_empty', '暂无可用仓库')}
-              </p>
-            )}
-
-            <label className="mt-5 block text-[13px] font-semibold text-[#202124]">
-              {t('workbench.project_git_default_branch', '默认分支')}
-            </label>
-            <SearchableSelect
-              testId="git-branch-select"
-              value={selectedBranch?.name ?? ''}
-              options={branchOptions}
-              disabled={submitting || !selectedRepo || loadingBranches || branches.length === 0}
-              placeholder={
-                loadingBranches
-                  ? t('workbench.project_git_branch_loading', '正在加载分支...')
-                  : t('workbench.project_git_branch_placeholder', '选择默认分支')
-              }
-              searchPlaceholder={t('workbench.project_git_branch_search', '搜索分支')}
-              emptyText={t('workbench.project_git_branch_no_results', '没有匹配的分支')}
-              onChange={value => {
-                setSelectedBranch(branches.find(branch => branch.name === value) ?? null)
-                setProjectCreateError(null)
-              }}
-            />
-            {branchError && <p className="mt-2 text-xs text-[#c44]">{branchError}</p>}
-            {gitProjectName && (
-              <p className="mt-2 text-xs text-[#606368]">
-                {t('workbench.project_git_name_preview', {
-                  defaultValue: '项目名称：{{name}}',
-                  name: gitProjectName,
-                })}
-              </p>
-            )}
-          </>
-        ) : null}
-
-        {(editingProject || mode !== 'existing') && (
-          <div className="mt-6">
-            <label className="block text-[13px] font-semibold text-[#202124]">
-              {t('workbench.project_folder_section', '项目文件夹')}
-            </label>
-            <div className="mt-2 grid grid-cols-3 gap-2">
-              {(
-                (editingProject
-                  ? [
-                      ['create', t('workbench.project_folder_create', '新建文件夹')],
-                      ['select', t('workbench.project_folder_select', '选择已有文件夹')],
-                    ]
-                  : [
-                      ['none', t('workbench.project_folder_none', '不选择文件夹')],
-                      ['create', t('workbench.project_folder_create', '新建文件夹')],
-                      ['select', t('workbench.project_folder_select', '选择已有文件夹')],
-                    ]) as [ProjectFolderMode, string][]
-              ).map(([value, label]) => (
-                <button
-                  key={value}
-                  type="button"
-                  data-testid={`project-folder-mode-${value}`}
-                  disabled={submitting}
-                  onClick={() => {
-                    setFolderMode(value)
-                    setProjectCreateError(null)
-                  }}
-                  className={[
-                    'min-h-10 rounded-lg border px-2 text-[12px] font-medium',
-                    folderMode === value
-                      ? 'border-text-primary bg-text-primary text-background'
-                      : 'border-[#d8d8d8] text-[#3c4043] hover:bg-[#f7f7f8]',
-                  ].join(' ')}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {folderMode === 'create' ? (
-          <>
-            {folderDeviceControls}
-            <label className="mt-5 block text-[13px] font-semibold text-[#202124]">
-              {t('workbench.project_folder_path', '文件夹地址')}
-            </label>
-            <input
-              data-testid="project-folder-create-path-input"
-              value={createFolderPath}
-              readOnly
-              disabled={submitting || !selectedDeviceUsable}
-              className="mt-2 h-10 w-full rounded-lg border border-[#d8d8d8] bg-[#f7f7f8] px-3 font-mono text-[13px] text-[#3c4043] outline-none disabled:opacity-60"
-            />
-            {!selectedDeviceUsable && (
-              <p
-                data-testid="project-directory-device-unavailable"
-                className="mt-2 text-xs text-[#8a8f98]"
-              >
-                {directoryDeviceUnavailableMessage}
-              </p>
-            )}
-          </>
-        ) : folderMode === 'select' ? (
-          <>
-            {folderDeviceControls}
-            <div className="mt-5 flex items-center justify-between gap-3">
-              <label className="block text-[13px] font-semibold text-[#202124]">
-                {t('workbench.project_directory_path', '目录地址')}
-              </label>
-              <label className="flex items-center gap-2 text-xs font-medium text-[#606368]">
-                <input
-                  data-testid="project-hidden-directories-toggle"
-                  type="checkbox"
-                  checked={showHiddenDirectories}
-                  disabled={!selectedDeviceUsable}
-                  onChange={event => setShowHiddenDirectories(event.target.checked)}
-                  className="h-4 w-4 rounded border-[#d8d8d8] accent-[#14b8a6] disabled:opacity-50"
-                />
-                {t('workbench.project_show_hidden_directories', '显示隐藏目录')}
-              </label>
-            </div>
-            <div className="mt-2 rounded-lg border border-[#d8d8d8]">
-              <div className="flex items-center gap-2 border-b border-[#e5e5e5] px-3 py-2">
-                <input
-                  data-testid="project-directory-path-input"
-                  value={pathInput}
-                  disabled={submitting || !selectedDeviceUsable}
-                  onChange={event => setPathInput(event.target.value)}
-                  onBlur={handleConfirmPathInput}
-                  onKeyDown={event => {
-                    if (event.key === 'Enter') {
-                      event.preventDefault()
-                      handleConfirmPathInput()
-                    }
-                  }}
-                  className="h-8 min-w-0 flex-1 rounded-md border border-transparent bg-transparent px-1 font-mono text-[13px] text-[#3c4043] outline-none focus:border-[#14b8a6] focus:bg-white focus:ring-2 focus:ring-[#14b8a6]/20 disabled:opacity-60"
-                  placeholder={
-                    selectedDeviceUsable
-                      ? t('workbench.project_directory_loading', '正在加载目录...')
-                      : directoryDeviceUnavailableMessage
-                  }
-                />
-                <button
-                  type="button"
-                  data-testid="open-create-folder-button"
-                  disabled={submitting || !selectedDeviceUsable}
-                  onClick={() => {
-                    setNewFolderOpen(open => !open)
-                    setCreateDirectoryError(null)
-                  }}
-                  className="flex h-11 min-w-[44px] shrink-0 items-center gap-1 rounded-md px-2 text-xs font-medium text-[#0f766e] hover:bg-[#e5f6f4] disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  <FolderPlus className="h-4 w-4" />
-                  {t('workbench.project_create_folder', '新建文件夹')}
-                </button>
-              </div>
-              {newFolderOpen && (
-                <div className="flex items-center gap-2 border-b border-[#e5e5e5] px-3 py-2">
-                  <input
-                    data-testid="create-folder-name-input"
-                    value={newFolderName}
-                    onChange={event => {
-                      setNewFolderName(event.target.value)
-                      setCreateDirectoryError(null)
-                    }}
-                    onKeyDown={event => {
-                      if (event.key === 'Enter') {
-                        event.preventDefault()
-                        void handleCreateDirectory()
-                      }
-                    }}
-                    className="h-8 min-w-0 flex-1 rounded-md border border-[#d8d8d8] px-2 text-[13px] outline-none focus:border-text-primary focus:ring-2 focus:ring-text-primary/10"
-                    placeholder={t('workbench.project_create_folder_placeholder', '输入文件夹名称')}
-                    autoFocus
-                  />
-                  <button
-                    type="button"
-                    data-testid="cancel-create-folder-button"
-                    onClick={() => {
-                      setNewFolderOpen(false)
-                      setNewFolderName('')
-                      setCreateDirectoryError(null)
-                    }}
-                    className="h-11 min-w-[44px] rounded-md border border-[#d8d8d8] px-2 text-xs font-medium text-[#3c4043] hover:bg-[#f7f7f8]"
-                  >
-                    {t('workbench.cancel', '取消')}
-                  </button>
-                  <button
-                    type="button"
-                    data-testid="confirm-create-folder-button"
-                    disabled={!newFolderName.trim() || creatingDirectory}
-                    onClick={() => void handleCreateDirectory()}
-                    className="h-11 min-w-[44px] rounded-md bg-text-primary px-2 text-xs font-medium text-background hover:bg-text-primary/90 disabled:opacity-50"
-                  >
-                    {creatingDirectory
-                      ? t('workbench.project_creating_folder', '创建中')
-                      : t('workbench.project_create_folder_confirm', '创建')}
-                  </button>
-                </div>
-              )}
-              {createDirectoryError && (
-                <p className="border-b border-[#e5e5e5] px-3 py-2 text-xs text-[#c44]">
-                  {createDirectoryError}
-                </p>
-              )}
-              <div data-testid="project-directory-tree" className="max-h-[320px] overflow-auto p-2">
-                {selectedDeviceUsable && currentPath && currentPath !== '/' && (
-                  <button
-                    type="button"
-                    data-testid="directory-parent-button"
-                    onClick={() => handleBrowsePath(getParentPath(currentPath))}
-                    className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[13px] text-[#3c4043] hover:bg-[#f1f3f4]"
-                  >
-                    <ChevronLeft className="h-4 w-4" />
-                    ..
-                  </button>
-                )}
-                {!selectedDeviceUsable && (
-                  <p
-                    data-testid="project-directory-device-unavailable"
-                    className="px-2 py-8 text-center text-[13px] text-[#8a8f98]"
-                  >
-                    {directoryDeviceUnavailableMessage}
-                  </p>
-                )}
-                {selectedDeviceUsable && loadingDirectories && (
-                  <p className="px-2 py-3 text-[13px] text-[#8a8f98]">
-                    {t('workbench.project_directory_loading', '正在加载目录...')}
-                  </p>
-                )}
-                {selectedDeviceUsable && !loadingDirectories && directoryError && (
-                  <p className="px-2 py-3 text-[13px] text-[#c44]">{directoryError}</p>
-                )}
-                {selectedDeviceUsable &&
-                  !loadingDirectories &&
-                  !directoryError &&
-                  filteredDirectories.map(directory => {
-                    const childPath = joinPath(currentPath, directory)
-                    const selected = selectedPath === childPath
-                    return (
-                      <button
-                        type="button"
-                        key={childPath}
-                        data-testid="directory-entry-button"
-                        onClick={() => setSelectedPath(childPath)}
-                        onDoubleClick={() => handleOpenDirectory(childPath)}
-                        className={[
-                          'flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[13px]',
-                          selected
-                            ? 'bg-[#e5f6f4] text-[#0f766e]'
-                            : 'text-[#3c4043] hover:bg-[#f1f3f4]',
-                        ].join(' ')}
-                      >
-                        <Folder className="h-4 w-4 shrink-0" />
-                        <span className="min-w-0 flex-1 truncate">{directory}</span>
-                        {selected && <Check className="h-4 w-4 shrink-0" />}
-                      </button>
-                    )
+          </label>
+        ) : primaryDraft ? (
+          <div className="mt-5 rounded-lg border border-[#e5e5e5] bg-[#f7f7f8] px-3 py-2">
+            {renamingInline ? (
+              <input
+                data-testid="project-name-input"
+                value={projectName}
+                disabled={submitting}
+                onChange={event => setProjectName(event.target.value)}
+                className="h-9 w-full rounded-md border border-[#d8d8d8] bg-white px-2 text-[13px] outline-none focus:border-[#14b8a6] focus:ring-2 focus:ring-[#14b8a6]/20"
+              />
+            ) : (
+              <div className="flex items-center justify-between gap-3">
+                <p data-testid="project-name-preview" className="truncate text-sm text-[#3c4043]">
+                  {t('workbench.project_name_preview', {
+                    defaultValue: '项目名：{{name}}',
+                    name: finalProjectName,
                   })}
-                {selectedDeviceUsable &&
-                  !loadingDirectories &&
-                  !directoryError &&
-                  filteredDirectories.length === 0 && (
-                    <p className="px-2 py-8 text-center text-[13px] text-[#8a8f98]">
-                      {t('workbench.project_directory_empty', '当前目录下没有子目录')}
-                    </p>
-                  )}
+                </p>
+                <button
+                  type="button"
+                  data-testid="project-rename-inline-button"
+                  onClick={() => setRenamingInline(true)}
+                  className="h-8 shrink-0 rounded-md px-2 text-xs font-medium text-[#0f766e] hover:bg-[#e5f6f4]"
+                >
+                  {t('workbench.rename_project', '重命名项目')}
+                </button>
               </div>
-            </div>
-          </>
+            )}
+          </div>
         ) : null}
+
+        {allProjectDevices.length > 0 && (
+          <>
+            <div className="mt-5 flex flex-wrap items-center gap-2">
+              {visibleDevices.map(device => {
+                const active = activeDevice?.device_id === device.device_id
+                const linked = isDeviceLinked(device.device_id)
+                const selectable = canSelectDeviceTab(device)
+                return (
+                  <button
+                    key={device.device_id}
+                    type="button"
+                    data-testid={`project-device-tab-${device.device_id}`}
+                    disabled={submitting || !selectable}
+                    onClick={() => selectDevice(device.device_id)}
+                    className={[
+                      'min-h-10 rounded-md border px-3 text-left text-sm',
+                      active
+                        ? 'border-text-primary bg-text-primary text-background'
+                        : 'border-[#d8d8d8] text-[#3c4043] hover:bg-[#f7f7f8]',
+                      !selectable ? 'cursor-not-allowed opacity-50 hover:bg-transparent' : '',
+                    ].join(' ')}
+                  >
+                    <span className="font-medium">{getDeviceLabel(device)}</span>
+                    <span className="ml-2 text-xs opacity-75">
+                      {getDeviceTabStatus(device, linked)}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+            {activeDevice ? (
+              renderActiveDevicePanel()
+            ) : (
+              <p
+                data-testid="project-no-usable-device-hint"
+                className="mt-4 rounded-lg border border-[#e5e5e5] bg-[#fafafa] px-3 py-3 text-sm text-[#6b6f76]"
+              >
+                {t(
+                  'workbench.device_status_no_online_device',
+                  '暂无在线可用设备，设备恢复在线后可继续对话'
+                )}
+              </p>
+            )}
+          </>
+        )}
 
         {projectCreateError && (
-          <p data-testid="project-create-error" className="mt-4 text-xs text-[#c44]">
+          <p className="mt-4 rounded-md bg-[#fff1f1] px-3 py-2 text-sm text-[#8a3b3b]">
             {projectCreateError}
-          </p>
-        )}
-        {submitting && (
-          <p
-            data-testid="project-submit-progress"
-            className="mt-4 flex items-center gap-2 text-xs text-[#606368]"
-          >
-            <Loader2
-              data-testid="project-submit-progress-spinner"
-              className="h-3.5 w-3.5 animate-spin text-text-secondary"
-            />
-            <span>{submittingHint}</span>
           </p>
         )}
 
@@ -1221,8 +625,8 @@ function ProjectCreateDialogContent({
           <button
             type="button"
             data-testid="cancel-project-create-button"
-            onClick={onClose}
             disabled={submitting}
+            onClick={onClose}
             className="h-10 rounded-md border border-[#d8d8d8] px-4 text-[13px] font-medium text-[#3c4043] hover:bg-[#f7f7f8] disabled:cursor-not-allowed disabled:opacity-50"
           >
             {t('workbench.cancel', '取消')}
@@ -1230,74 +634,15 @@ function ProjectCreateDialogContent({
           <button
             type="button"
             data-testid="create-project-button"
-            disabled={!canCreate || submitting}
-            onClick={async () => {
-              setSubmitting(true)
-              setProjectCreateError(null)
-              try {
-                const project = editingProject
-                  ? editingProject
-                  : await onCreateProject({
-                      name: finalProjectName,
-                      description: '',
-                      config:
-                        mode === 'git' && selectedRepo && selectedBranch
-                          ? {
-                              mode: 'workspace',
-                              git: {
-                                url: selectedRepo.git_url,
-                                repo: selectedRepo.git_repo,
-                                repoId: selectedRepo.git_repo_id,
-                                domain: selectedRepo.git_domain,
-                                branch: selectedBranch.name,
-                              },
-                            }
-                          : {
-                              mode: 'workspace',
-                            },
-                    })
-                if (requiresDevice) {
-                  if (!onPrepareDeviceWorkspace) {
-                    throw new Error(t('workbench.project_create_failed', '项目创建失败'))
-                  }
-                  const preparedWorkspace = await onPrepareDeviceWorkspace({
-                    projectId: project.id,
-                    deviceId,
-                    workspacePath: finalPath,
-                    action: folderMode === 'create' ? 'create' : 'select',
-                    ...(showWorkspaceKindSelect ? { label: workspaceKind } : {}),
-                  })
-                  await onDeviceWorkspacePrepared?.(preparedWorkspace)
-                }
-                onClose()
-              } catch (error) {
-                setProjectCreateError(
-                  getGitErrorMessage(
-                    error,
-                    t('workbench.project_git_token_missing', '请先在设置中配置 Git Token'),
-                    t('workbench.project_create_failed', '项目创建失败'),
-                    path =>
-                      t('workbench.project_git_directory_exists', {
-                        defaultValue: '项目目录已存在：{{path}}',
-                        path,
-                      })
-                  )
-                )
-              } finally {
-                setSubmitting(false)
-              }
-            }}
+            disabled={!canSubmit || submitting}
+            onClick={() => void handleSubmit()}
             aria-busy={submitting}
             className="inline-flex h-10 items-center gap-2 rounded-md bg-text-primary px-4 text-[13px] font-medium text-background hover:bg-text-primary/90 disabled:cursor-not-allowed disabled:opacity-70"
           >
             {submitting && (
               <Loader2 data-testid="project-submit-spinner" className="h-4 w-4 animate-spin" />
             )}
-            {submitting
-              ? submittingLabel
-              : editingProject
-                ? t('workbench.save', '保存')
-                : t('workbench.create_project', '创建项目')}
+            {isEditing ? t('workbench.save', '保存') : t('workbench.create_project', '创建项目')}
           </button>
         </div>
       </div>

@@ -126,6 +126,37 @@ describe('ProjectWorkBar', () => {
     expect(onSelectProjectWorkspace).toHaveBeenCalledWith(8, 201)
   })
 
+  test('shows the device summary for a single-workspace project row', async () => {
+    const projectWithoutLegacyDevice: ProjectWithTasks = {
+      id: 8,
+      name: 'Notes',
+      tasks: [],
+      config: { mode: 'workspace' },
+    }
+
+    render(
+      <ProjectWorkBar
+        projects={[projectWithoutLegacyDevice]}
+        devices={[device]}
+        runtimeWork={runtimeWork}
+        currentProjectId={8}
+        currentStandaloneDeviceId={null}
+        selectedDeviceWorkspaceId={201}
+        executionMode="current_workspace"
+        onSelectProject={vi.fn()}
+        onSelectStandaloneDevice={vi.fn()}
+        onSelectProjectWorkspace={vi.fn()}
+        onExecutionModeChange={vi.fn()}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('project-work-button'))
+
+    const option = screen.getByTestId('project-option-8')
+    expect(option).toHaveTextContent('Local Device')
+    expect(option).toHaveTextContent('在线')
+  })
+
   test('expands a multi-workspace project before selection', async () => {
     const onSelectProjectWorkspace = vi.fn()
 

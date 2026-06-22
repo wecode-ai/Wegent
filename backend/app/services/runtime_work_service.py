@@ -61,6 +61,7 @@ from app.services.im.notification_dispatcher import im_notification_dispatcher
 from app.services.im.session_service import im_session_service
 from app.services.object_storage import object_storage_presign_service
 from app.services.runtime_work_kind_store import (
+    deactivate_device_workspace_kind,
     get_device_workspace_kind_by_id,
     list_device_workspace_kinds,
     touch_device_workspace_kind,
@@ -209,6 +210,27 @@ def list_device_workspaces(
         db=db,
         user_id=user_id,
         project_ids=project_ids,
+    )
+
+
+def delete_device_workspace(
+    *,
+    db: Session,
+    user_id: int,
+    project_id: int,
+    device_id: str,
+    workspace_path: str,
+) -> bool:
+    """Deactivate one Project-to-device workspace mapping."""
+
+    project = _get_active_project(db, user_id, project_id, None)
+    normalized_path = normalize_workspace_path(workspace_path)
+    return deactivate_device_workspace_kind(
+        db=db,
+        user_id=user_id,
+        project_id=project.id,
+        device_id=device_id.strip(),
+        workspace_path_hash=workspace_path_hash(normalized_path),
     )
 
 

@@ -36,6 +36,7 @@ export function WorkbenchPage() {
     createProject,
     createGitWorkspaceProject,
     prepareDeviceWorkspace,
+    deleteDeviceWorkspace,
     listGitRepositories,
     listGitBranches,
     updateProjectName,
@@ -116,6 +117,7 @@ export function WorkbenchPage() {
       onCreateProject={createProject}
       onCreateGitWorkspaceProject={createGitWorkspaceProject}
       onPrepareDeviceWorkspace={prepareDeviceWorkspace}
+      onDeleteDeviceWorkspace={deleteDeviceWorkspace}
       onListGitRepositories={listGitRepositories}
       onListGitBranches={listGitBranches}
       onUpdateProjectName={updateProjectName}
