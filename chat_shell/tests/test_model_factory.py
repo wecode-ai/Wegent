@@ -20,6 +20,7 @@ from chat_shell.models.factory import (
     LangChainModelFactory,
     _detect_provider,
     _extract_think_params,
+    _supports_developer_role,
 )
 from chat_shell.models.openai_reasoning import ChatOpenAIWithReasoning
 
@@ -179,6 +180,51 @@ class TestDetectProvider:
 
 
 # ---------------------------------------------------------------------------
+# _supports_developer_role
+# ---------------------------------------------------------------------------
+
+
+class TestSupportsDeveloperRole:
+    """Tests for developer role capability detection."""
+
+    def test_openai_provider_defaults_to_developer_role(self):
+        assert _supports_developer_role(
+            provider="openai",
+            model_config={},
+        )
+
+    def test_openai_compatible_qwen_defaults_to_developer_role(self):
+        assert _supports_developer_role(
+            provider="openai",
+            model_config={},
+        )
+
+    def test_non_openai_provider_does_not_support_developer_role(self):
+        assert not _supports_developer_role(
+            provider="anthropic",
+            model_config={},
+        )
+
+    def test_explicit_false_disables_openai_provider(self):
+        assert not _supports_developer_role(
+            provider="openai",
+            model_config={"supports_developer_role": False},
+        )
+
+    def test_string_false_disables_openai_provider(self):
+        assert not _supports_developer_role(
+            provider="openai",
+            model_config={"supports_developer_role": "false"},
+        )
+
+    def test_non_false_value_keeps_openai_default(self):
+        assert _supports_developer_role(
+            provider="openai",
+            model_config={"supports_developer_role": True},
+        )
+
+
+# ---------------------------------------------------------------------------
 # LangChainModelFactory.create_from_config with think_config
 # ---------------------------------------------------------------------------
 
@@ -215,6 +261,41 @@ class TestCreateFromConfigThinkConfig:
         config = self._base_config()
         model = LangChainModelFactory.create_from_config(config)
         assert type(model) is ChatOpenAI
+        assert model._wegent_supports_developer_role is True
+
+    @patch("chat_shell.models.factory.add_span_event")
+    @patch("chat_shell.models.factory.trace_sync", lambda **kw: lambda fn: fn)
+    def test_qwen_openai_compatible_model_defaults_to_developer_role(self, _span):
+        """OpenAI-compatible models preserve the existing default behavior."""
+        config = self._base_config(model_id="qwen3.6-plus")
+        model = LangChainModelFactory.create_from_config(config)
+        assert type(model) is ChatOpenAI
+        assert model._wegent_provider == "openai"
+        assert model._wegent_supports_developer_role is True
+
+    @patch("chat_shell.models.factory.add_span_event")
+    @patch("chat_shell.models.factory.trace_sync", lambda **kw: lambda fn: fn)
+    def test_qwen_openai_compatible_model_can_disable_developer_role(self, _span):
+        """Qwen can opt out when configured to reject developer role."""
+        config = self._base_config(
+            model_id="qwen3.6-plus",
+            supports_developer_role=False,
+        )
+        model = LangChainModelFactory.create_from_config(config)
+        assert type(model) is ChatOpenAI
+        assert model._wegent_provider == "openai"
+        assert model._wegent_supports_developer_role is False
+
+    @patch("chat_shell.models.factory.add_span_event")
+    @patch("chat_shell.models.factory.trace_sync", lambda **kw: lambda fn: fn)
+    def test_explicit_developer_role_override_is_attached(self, _span):
+        """Explicit capability config overrides model-id defaults."""
+        config = self._base_config(
+            model_id="custom-compatible-model",
+            supports_developer_role=True,
+        )
+        model = LangChainModelFactory.create_from_config(config)
+        assert model._wegent_supports_developer_role is True
 
     # -- OpenRouter / OpenAI-compatible with reasoning dict --
 
