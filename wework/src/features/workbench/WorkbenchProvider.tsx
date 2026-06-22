@@ -71,6 +71,7 @@ import type {
   ProjectWithTasks,
   RuntimeTaskAddress,
   RuntimeTaskCreateRequest,
+  RuntimeDeviceWorkspace,
   RuntimeTaskForkTarget,
   RuntimeGlobalIMNotificationUpdateRequest,
   RuntimeIMNotificationSettingsResponse,
@@ -283,6 +284,7 @@ export interface WorkbenchContextValue {
   projectWorktreeBaseBranch: string | null
   setProjectWorktreeBaseBranch: (branchName: string | null) => void
   selectProject: (projectId: number | null) => void
+  selectProjectWorkspace: (projectId: number, deviceWorkspaceId: number | null) => void
   selectStandaloneDevice: (deviceId: string | null) => void
   startNewChat: () => void
   startStandaloneChat: () => void
@@ -924,6 +926,40 @@ function findRuntimeWorkspaceForDevice(
   )
   const workspacePaths = [...new Set(matches.map(item => item.workspacePath))]
   return workspacePaths.length === 1 ? workspacePaths[0] : null
+}
+
+function getSelectableProjectDeviceWorkspaces(
+  runtimeWork: RuntimeWorkListResponse | null | undefined,
+  projectId: number | null | undefined
+): RuntimeDeviceWorkspace[] {
+  if (!projectId) return []
+  const projectWork = runtimeWork?.projects.find(item => item.project.id === projectId)
+  return (
+    projectWork?.deviceWorkspaces.filter(
+      workspace => workspace.id != null && workspace.available
+    ) ?? []
+  )
+}
+
+function getSingleProjectDeviceWorkspaceId(
+  runtimeWork: RuntimeWorkListResponse | null | undefined,
+  projectId: number | null | undefined
+): number | null {
+  const workspaces = getSelectableProjectDeviceWorkspaces(runtimeWork, projectId)
+  return workspaces.length === 1 ? (workspaces[0].id ?? null) : null
+}
+
+function findProjectDeviceWorkspace(
+  runtimeWork: RuntimeWorkListResponse | null | undefined,
+  projectId: number | null | undefined,
+  deviceWorkspaceId: number | null | undefined
+): RuntimeDeviceWorkspace | null {
+  if (!deviceWorkspaceId) return null
+  return (
+    getSelectableProjectDeviceWorkspaces(runtimeWork, projectId).find(
+      workspace => workspace.id === deviceWorkspaceId
+    ) ?? null
+  )
 }
 
 function inferRuntimeName(model: UnifiedModel | null): 'codex' | 'claude_code' {
@@ -1632,6 +1668,28 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     [state.devices, state.projects, state.standaloneDeviceId, user]
   )
 
+  const selectProjectWorkspace = useCallback(
+    (projectId: number, deviceWorkspaceId: number | null) => {
+      writeTaskIdToUrl(null)
+      const project = state.projects.find(item => item.id === projectId)
+      if (!project) return
+      writeLastProjectId(user.id, project.id)
+      dispatch({
+        type: 'project_workspace_selected',
+        project,
+        deviceWorkspaceId,
+      })
+      dispatchMessages({ type: 'reset', messages: [] })
+      setQueuedSends([])
+      setGuidanceMessages([])
+      setCodeCommentContexts([])
+      handledTaskRouteRef.current = null
+      handledRuntimeTaskRouteRef.current = null
+      navigateTo('/')
+    },
+    [state.projects, user.id]
+  )
+
   const selectStandaloneDevice = useCallback(
     (deviceId: string | null) => {
       writeTaskIdToUrl(null)
@@ -1702,10 +1760,11 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
 
   const startNewProjectChat = useCallback(
     (projectId: number) => {
-      selectProject(projectId)
+      const deviceWorkspaceId = getSingleProjectDeviceWorkspaceId(state.runtimeWork, projectId)
+      selectProjectWorkspace(projectId, deviceWorkspaceId)
       dispatchMessages({ type: 'reset', messages: [] })
     },
-    [selectProject]
+    [selectProjectWorkspace, state.runtimeWork]
   )
 
   const openTask = useCallback(
@@ -2205,11 +2264,19 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
       const activeProject =
         state.currentProject ?? findProjectForTask(state.projects, state.currentTask)
 
-      const activeDeviceId = getActiveWorkbenchDeviceId({
-        currentTask: state.currentTask,
-        currentProject: activeProject,
-        standaloneDeviceId: state.standaloneDeviceId,
-      })
+      const selectedProjectWorkspace = findProjectDeviceWorkspace(
+        state.runtimeWork,
+        activeProject?.id,
+        state.selectedDeviceWorkspaceId
+      )
+      const activeDeviceId =
+        !state.currentTask && activeProject && selectedProjectWorkspace
+          ? selectedProjectWorkspace.deviceId
+          : getActiveWorkbenchDeviceId({
+              currentTask: state.currentTask,
+              currentProject: activeProject,
+              standaloneDeviceId: state.standaloneDeviceId,
+            })
 
       const payload: ChatSendPayload = {
         task_id: state.currentTask?.id,
@@ -2277,6 +2344,8 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
       state.currentTask,
       state.defaultTeam,
       state.projects,
+      state.runtimeWork,
+      state.selectedDeviceWorkspaceId,
       state.standaloneDeviceId,
     ]
   )
@@ -2384,6 +2453,15 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         return false
       }
       const projectId = payload.project_id && payload.project_id > 0 ? payload.project_id : null
+      const selectedProjectWorkspace = findProjectDeviceWorkspace(
+        state.runtimeWork,
+        projectId,
+        state.selectedDeviceWorkspaceId
+      )
+      if (projectId && !selectedProjectWorkspace) {
+        reportSendBlocked('请选择任务运行位置')
+        return false
+      }
       const workspacePath = projectId
         ? null
         : findRuntimeWorkspaceForDevice(state.runtimeWork, activeDeviceId)
@@ -2396,7 +2474,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         modelSelection.selectedModel ?? resolveAutomaticModel(modelSelection.models)
       const createRequest: RuntimeTaskCreateRequest = {
         ...(projectId
-          ? { projectId }
+          ? { projectId, deviceWorkspaceId: selectedProjectWorkspace?.id }
           : { deviceId: activeDeviceId, workspacePath: workspacePath as string }),
         teamId: payload.team_id,
         runtime: inferRuntimeName(selectedModel),
@@ -2467,6 +2545,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
       state.currentProject,
       state.projects,
       state.runtimeWork,
+      state.selectedDeviceWorkspaceId,
     ]
   )
 
@@ -2998,6 +3077,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
       listLocalSkills,
     },
     selectProject,
+    selectProjectWorkspace,
     selectStandaloneDevice,
     startNewChat,
     startStandaloneChat,

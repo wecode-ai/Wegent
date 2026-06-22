@@ -67,6 +67,8 @@ export interface WorkbenchState {
   runtimeWork: RuntimeWorkListResponse | null
   currentProject: ProjectWithTasks | null
   currentRuntimeTask: RuntimeTaskAddress | null
+  selectedDeviceWorkspaceId: number | null
+  pendingProjectWorkspaceProjectId: number | null
   standaloneDeviceId: string | null
   currentTask: Task | null
   input: string

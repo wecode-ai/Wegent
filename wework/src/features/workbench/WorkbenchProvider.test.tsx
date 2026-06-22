@@ -33,7 +33,40 @@ function createRuntimeWorkApiMock(overrides: Record<string, unknown> = {}): {
 } {
   return {
     listRuntimeWork: vi.fn().mockResolvedValue({
-      projects: [],
+      projects: [
+        {
+          project: { id: 7, name: 'Wegent' },
+          deviceWorkspaces: [
+            {
+              id: 101,
+              projectId: 7,
+              deviceId: 'device-1',
+              deviceName: 'Project Device',
+              deviceStatus: 'online',
+              available: true,
+              workspacePath: '/workspace/project-alpha',
+              mapped: true,
+              localTasks: [],
+            },
+          ],
+        },
+        {
+          project: { id: 8, name: 'Docs' },
+          deviceWorkspaces: [
+            {
+              id: 201,
+              projectId: 8,
+              deviceId: 'device-2',
+              deviceName: 'Docs Device',
+              deviceStatus: 'online',
+              available: true,
+              workspacePath: '/workspace/projects/Docs',
+              mapped: true,
+              localTasks: [],
+            },
+          ],
+        },
+      ],
       unmappedDeviceWorkspaces: [],
       totalLocalTasks: 0,
     }),
@@ -222,8 +255,14 @@ function ProjectChatProbe() {
           ? `${workbench.state.currentRuntimeTask.deviceId}:${workbench.state.currentRuntimeTask.localTaskId}`
           : 'no-runtime-task'}
       </span>
-      <button type="button" onClick={() => workbench.selectProject(7)}>
+      <button type="button" onClick={() => workbench.selectProjectWorkspace(7, 101)}>
         select project
+      </button>
+      <button type="button" onClick={() => workbench.selectProjectWorkspace(7, null)}>
+        select project pending workspace
+      </button>
+      <button type="button" onClick={() => workbench.selectProjectWorkspace(7, 101)}>
+        select project workspace
       </button>
       <button type="button" onClick={() => workbench.startNewProjectChat(8)}>
         start project 8 chat
@@ -275,7 +314,7 @@ function CodeCommentSendProbe() {
       <span data-testid="message-contents">
         {workbench.messages.map(message => message.content).join('|')}
       </span>
-      <button type="button" onClick={() => workbench.selectProject(7)}>
+      <button type="button" onClick={() => workbench.selectProjectWorkspace(7, 101)}>
         select project
       </button>
       <button type="button" onClick={() => workbench.addCodeCommentContext(codeComment)}>
@@ -2670,6 +2709,149 @@ describe('WorkbenchProvider', () => {
     })
   })
 
+  test('blocks runtime project send until a project workspace is confirmed', async () => {
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue({
+        projects: [
+          {
+            project: { id: 7, name: 'Wegent' },
+            deviceWorkspaces: [
+              {
+                id: 101,
+                projectId: 7,
+                deviceId: 'device-1',
+                deviceName: 'Project Device',
+                deviceStatus: 'online',
+                available: true,
+                workspacePath: '/repo/Wegent',
+                mapped: true,
+                localTasks: [],
+              },
+            ],
+          },
+        ],
+        unmappedDeviceWorkspaces: [],
+        totalLocalTasks: 0,
+      }),
+    })
+
+    render(
+      <WorkbenchProvider
+        user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+        services={createWorkbenchServices({
+          projectApi: {
+            ...createWorkbenchServices().projectApi,
+            listProjects: vi.fn().mockResolvedValue({
+              items: [{ id: 7, name: 'Wegent', tasks: [], config: { mode: 'workspace' } }],
+            }),
+          },
+          deviceApi: {
+            ...createWorkbenchServices().deviceApi,
+            listDevices: vi.fn().mockResolvedValue([
+              {
+                id: 1,
+                device_id: 'device-1',
+                name: 'Project Device',
+                status: 'online',
+                is_default: false,
+                bind_shell: 'claudecode',
+                executor_version: '1.8.5',
+              },
+            ]),
+          },
+          runtimeWorkApi,
+        })}
+      >
+        <ProjectChatProbe />
+      </WorkbenchProvider>
+    )
+
+    await waitFor(() =>
+      expect(screen.getByText('select project pending workspace')).toBeInTheDocument()
+    )
+
+    await userEvent.click(screen.getByText('select project pending workspace'))
+    await userEvent.click(screen.getByText('set input'))
+    await userEvent.click(screen.getByText('send'))
+
+    expect(runtimeWorkApi.createRuntimeTask).not.toHaveBeenCalled()
+    expect(screen.getByTestId('workbench-error')).toHaveTextContent('请选择任务运行位置')
+  })
+
+  test('creates runtime project tasks with deviceWorkspaceId instead of workspacePath', async () => {
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue({
+        projects: [
+          {
+            project: { id: 7, name: 'Wegent' },
+            deviceWorkspaces: [
+              {
+                id: 101,
+                projectId: 7,
+                deviceId: 'device-1',
+                deviceName: 'Project Device',
+                deviceStatus: 'online',
+                available: true,
+                workspacePath: '/repo/Wegent',
+                mapped: true,
+                localTasks: [],
+              },
+            ],
+          },
+        ],
+        unmappedDeviceWorkspaces: [],
+        totalLocalTasks: 0,
+      }),
+    })
+
+    render(
+      <WorkbenchProvider
+        user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+        services={createWorkbenchServices({
+          projectApi: {
+            ...createWorkbenchServices().projectApi,
+            listProjects: vi.fn().mockResolvedValue({
+              items: [{ id: 7, name: 'Wegent', tasks: [], config: { mode: 'workspace' } }],
+            }),
+          },
+          deviceApi: {
+            ...createWorkbenchServices().deviceApi,
+            listDevices: vi.fn().mockResolvedValue([
+              {
+                id: 1,
+                device_id: 'device-1',
+                name: 'Project Device',
+                status: 'online',
+                is_default: false,
+                bind_shell: 'claudecode',
+                executor_version: '1.8.5',
+              },
+            ]),
+          },
+          runtimeWorkApi,
+        })}
+      >
+        <ProjectChatProbe />
+      </WorkbenchProvider>
+    )
+
+    await waitFor(() => expect(screen.getByText('select project workspace')).toBeInTheDocument())
+
+    await userEvent.click(screen.getByText('select project workspace'))
+    await userEvent.click(screen.getByText('set input'))
+    await userEvent.click(screen.getByText('send'))
+
+    await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
+    expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: 7,
+        deviceWorkspaceId: 101,
+        message: 'build it',
+      })
+    )
+    expect(runtimeWorkApi.createRuntimeTask.mock.calls[0][0]).not.toHaveProperty('workspacePath')
+  })
+
   test('resolves automatic model selection when sending a new project conversation', async () => {
     const sendMessage = vi.fn().mockResolvedValue({ success: true, task_id: 99 })
     const runtimeWorkApi = createRuntimeWorkApiMock()
@@ -3603,6 +3785,28 @@ describe('WorkbenchProvider', () => {
 
   test('uses the device id returned by runtime task creation for project task address', async () => {
     const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue({
+        projects: [
+          {
+            project: { id: 7, name: 'Wegent' },
+            deviceWorkspaces: [
+              {
+                id: 101,
+                projectId: 7,
+                deviceId: 'configured-device',
+                deviceName: 'Configured Device',
+                deviceStatus: 'online',
+                available: true,
+                workspacePath: '/workspace/project-alpha',
+                mapped: true,
+                localTasks: [],
+              },
+            ],
+          },
+        ],
+        unmappedDeviceWorkspaces: [],
+        totalLocalTasks: 0,
+      }),
       createRuntimeTask: vi.fn().mockResolvedValue({
         accepted: true,
         deviceId: 'resolved-device',
@@ -3884,7 +4088,7 @@ describe('WorkbenchProvider', () => {
             {workbench.state.currentRuntimeTask?.localTaskId ?? 'no-runtime-task'}
           </span>
           <span data-testid="followup-project-count">{workbench.state.projects.length}</span>
-          <button type="button" onClick={() => workbench.selectProject(7)}>
+          <button type="button" onClick={() => workbench.selectProjectWorkspace(7, 101)}>
             select project
           </button>
           <button type="button" onClick={() => workbench.setInput('我叫胡云鹏')}>

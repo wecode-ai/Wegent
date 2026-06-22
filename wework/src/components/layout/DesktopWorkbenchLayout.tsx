@@ -211,6 +211,9 @@ export function DesktopWorkbenchLayout({
   )
   const [autoOpenAddCloudDeviceDialog, setAutoOpenAddCloudDeviceDialog] = useState(false)
   const [projectWorkCreateMode, setProjectWorkCreateMode] = useState<ProjectCreateMode | null>(null)
+  const [projectWorkEditProject, setProjectWorkEditProject] = useState<ProjectWithTasks | null>(
+    null
+  )
   const [environmentInfo, setEnvironmentInfo] = useState<EnvironmentInfo>({
     additions: '+0',
     deletions: '-0',
@@ -431,9 +434,21 @@ export function DesktopWorkbenchLayout({
   const openProjectFromWorkMenu = useCallback(
     (mode: ProjectCreateMode) => {
       setProjectWorkCreateMode(mode)
+      setProjectWorkEditProject(null)
       void onRefreshDevices?.().catch(() => undefined)
     },
     [onRefreshDevices]
+  )
+
+  const openProjectWorkspaceBinding = useCallback(
+    (projectId: number) => {
+      const project = state.projects.find(item => item.id === projectId)
+      if (!project) return
+      setProjectWorkEditProject(project)
+      setProjectWorkCreateMode(null)
+      void onRefreshDevices?.().catch(() => undefined)
+    },
+    [onRefreshDevices, state.projects]
   )
 
   const loadImSessionsForDialog = useCallback(() => {
@@ -661,6 +676,7 @@ export function DesktopWorkbenchLayout({
   const projectWorkWithCreation: ProjectWorkControls = {
     ...projectWork,
     onCreateProjectMode: openProjectFromWorkMenu,
+    onBindProjectWorkspace: openProjectWorkspaceBinding,
     branchName: environmentInfo.branchName,
     branchLoading: environmentInfo.loading,
     onRefreshBranch: refreshEnvironmentInfo,
@@ -811,12 +827,17 @@ export function DesktopWorkbenchLayout({
         />
       )}
       <ProjectCreateDialog
-        open={projectWorkCreateMode !== null}
-        mode={projectWorkCreateMode ?? 'scratch'}
+        open={projectWorkCreateMode !== null || projectWorkEditProject !== null}
+        mode={projectWorkEditProject ? 'existing' : (projectWorkCreateMode ?? 'scratch')}
+        project={projectWorkEditProject}
         devices={state.devices}
-        onClose={() => setProjectWorkCreateMode(null)}
+        onClose={() => {
+          setProjectWorkCreateMode(null)
+          setProjectWorkEditProject(null)
+        }}
         onOpenCloudDeviceSettings={() => {
           setProjectWorkCreateMode(null)
+          setProjectWorkEditProject(null)
           setAutoOpenAddCloudDeviceDialog(true)
           setSettingsOpen(true)
           navigateTo('/settings')
