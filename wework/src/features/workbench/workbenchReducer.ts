@@ -17,6 +17,8 @@ export const initialWorkbenchState: WorkbenchState = {
   runtimeWork: null,
   currentProject: null,
   currentRuntimeTask: null,
+  selectedDeviceWorkspaceId: null,
+  pendingProjectWorkspaceProjectId: null,
   standaloneDeviceId: null,
   input: '',
   isBootstrapping: true,
@@ -49,6 +51,11 @@ export type WorkbenchAction =
     }
   | { type: 'bootstrap_failed'; error: string }
   | { type: 'project_selected'; project: ProjectWithTasks }
+  | {
+      type: 'project_workspace_selected'
+      project: ProjectWithTasks
+      deviceWorkspaceId: number | null
+    }
   | { type: 'project_updated'; project: ProjectWithTasks }
   | { type: 'project_cleared'; standaloneDeviceId?: string | null }
   | { type: 'user_preferences_updated'; preferences: UserPreferences }
@@ -123,6 +130,17 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
       return {
         ...state,
         currentProject: action.project,
+        selectedDeviceWorkspaceId: null,
+        pendingProjectWorkspaceProjectId: null,
+        currentRuntimeTask: null,
+      }
+    case 'project_workspace_selected':
+      return {
+        ...state,
+        currentProject: action.project,
+        selectedDeviceWorkspaceId: action.deviceWorkspaceId,
+        pendingProjectWorkspaceProjectId:
+          action.deviceWorkspaceId === null ? action.project.id : null,
         currentRuntimeTask: null,
       }
     case 'project_updated':
@@ -138,6 +156,8 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
       return {
         ...state,
         currentProject: null,
+        selectedDeviceWorkspaceId: null,
+        pendingProjectWorkspaceProjectId: null,
         standaloneDeviceId:
           action.standaloneDeviceId === undefined
             ? state.standaloneDeviceId

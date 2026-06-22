@@ -390,6 +390,26 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('project-work-button')).not.toBeInTheDocument()
   })
 
+  test('treats a selected runtime task with an empty transcript as a conversation', () => {
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          currentRuntimeTask: {
+            deviceId: 'device-1',
+            workspacePath: '/workspace/project-alpha',
+            localTaskId: 'runtime-empty',
+          },
+        }}
+        messages={[]}
+      />
+    )
+
+    expect(screen.getByTestId('desktop-floating-composer-layer')).toBeInTheDocument()
+    expect(screen.queryByTestId('desktop-empty-composer-frame')).not.toBeInTheDocument()
+  })
+
   test('opens continue-in-im dialog from the active runtime task topbar button', async () => {
     const onListImPrivateSessions = vi.fn().mockResolvedValue({
       total: 1,
@@ -1468,6 +1488,7 @@ describe('DesktopWorkbenchLayout', () => {
       expect(onListDeviceDirectories).toHaveBeenCalledWith('device-1', '/home/ubuntu')
     )
     expect(screen.queryByText('.cache')).not.toBeInTheDocument()
+    expect(screen.getByTestId('confirm-device-folder-picker-button')).toBeInTheDocument()
 
     const repoEntry = await screen.findByText('repo')
     await userEvent.click(repoEntry)
@@ -1482,7 +1503,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await userEvent.click(screen.getByTestId('confirm-device-folder-picker-button'))
-    expect(screen.getByTestId('project-name-preview')).toHaveTextContent('repo')
+    expect(screen.getByTestId('project-name-preview')).toHaveTextContent('项目名：repo')
     await userEvent.click(screen.getByTestId('create-project-button'))
 
     await waitFor(() =>

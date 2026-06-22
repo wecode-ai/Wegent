@@ -6,6 +6,7 @@ import type {
   ModelOptions,
   ProjectExecutionMode,
   ProjectWithTasks,
+  RuntimeWorkListResponse,
   SkillRef,
   UnifiedModel,
   UnifiedSkill,
@@ -42,12 +43,17 @@ export interface ProjectChatControls {
 export interface ProjectWorkControls {
   projects: ProjectWithTasks[]
   devices: DeviceInfo[]
+  runtimeWork?: RuntimeWorkListResponse | null
   currentProjectId?: number
   currentStandaloneDeviceId?: string | null
+  selectedDeviceWorkspaceId?: number | null
+  pendingProjectWorkspaceProjectId?: number | null
   executionMode: ProjectExecutionMode
   executionModeLocked?: boolean
   onSelectProject: (projectId: number | null) => void
   onSelectStandaloneDevice: (deviceId: string | null) => void
+  onSelectProjectWorkspace?: (projectId: number, deviceWorkspaceId: number | null) => void
+  onBindProjectWorkspace?: (projectId: number) => void
   onExecutionModeChange: (mode: ProjectExecutionMode) => void
   onCreateProjectMode?: (mode: ProjectCreateMode) => void
   branchName?: string
@@ -188,12 +194,17 @@ export function ChatInput({
             projectWork ?? {
               projects: [],
               devices: [],
+              runtimeWork: null,
               currentProjectId: undefined,
               currentStandaloneDeviceId: null,
+              selectedDeviceWorkspaceId: null,
+              pendingProjectWorkspaceProjectId: null,
               executionMode: 'current_workspace',
               executionModeLocked: false,
               onSelectProject: () => {},
               onSelectStandaloneDevice: () => {},
+              onSelectProjectWorkspace: () => {},
+              onBindProjectWorkspace: () => {},
               onExecutionModeChange: () => {},
               onCreateProjectMode: undefined,
             }

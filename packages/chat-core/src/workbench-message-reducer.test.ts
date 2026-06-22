@@ -40,6 +40,55 @@ describe('reduceWorkbenchMessages', () => {
     })
   })
 
+  test('late assistant stream creates an assistant message when a user message has the same subtask id', () => {
+    const state: WorkbenchMessage[] = [
+      {
+        id: 'user-9',
+        role: 'user',
+        subtaskId: 9,
+        content: 'hello',
+        status: 'done',
+        createdAt: '2026-05-25T00:00:00.000Z',
+      },
+    ]
+
+    const withTool = reduceWorkbenchMessages(state, {
+      type: 'block_created',
+      subtaskId: 9,
+      block: {
+        id: 'call_1',
+        subtaskId: 9,
+        type: 'tool',
+        toolName: 'bash',
+        status: 'pending',
+        createdAt: 1770000000000,
+      },
+    })
+    const withChunk = reduceWorkbenchMessages(withTool, {
+      type: 'assistant_chunk',
+      subtaskId: 9,
+      content: 'Hi',
+    })
+    const done = reduceWorkbenchMessages(withChunk, {
+      type: 'assistant_done',
+      subtaskId: 9,
+      content: 'Hi',
+    })
+
+    expect(done).toHaveLength(2)
+    expect(done[0]).toMatchObject({
+      role: 'user',
+      content: 'hello',
+      status: 'done',
+    })
+    expect(done[1]).toMatchObject({
+      role: 'assistant',
+      content: 'Hi',
+      status: 'done',
+      blocks: [{ type: 'tool', toolName: 'bash', status: 'done' }],
+    })
+  })
+
   test('finalizes thinking blocks when a tool block is created', () => {
     const state = reduceWorkbenchMessages(
       reduceWorkbenchMessages([], {

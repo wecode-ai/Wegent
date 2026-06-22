@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, test, vi } from 'vitest'
 import '@/i18n'
 import { ProjectWorkBar } from './ProjectWorkBar'
-import type { DeviceInfo, ProjectWithTasks } from '@/types/api'
+import type { DeviceInfo, ProjectWithTasks, RuntimeWorkListResponse } from '@/types/api'
 
 const project: ProjectWithTasks = {
   id: 7,
@@ -50,7 +50,179 @@ const device: DeviceInfo = {
   executor_version: '1.8.5',
 }
 
+const runtimeWork: RuntimeWorkListResponse = {
+  projects: [
+    {
+      project: { id: 7, name: 'Wegent' },
+      deviceWorkspaces: [
+        {
+          id: 101,
+          projectId: 7,
+          deviceId: 'device-1',
+          deviceName: 'Local Device',
+          deviceStatus: 'online',
+          available: true,
+          workspacePath: '/repo/Wegent',
+          mapped: true,
+          localTasks: [],
+        },
+        {
+          id: 102,
+          projectId: 7,
+          deviceId: 'device-2',
+          deviceName: 'Offline Device',
+          deviceStatus: 'offline',
+          available: false,
+          workspacePath: '/repo/Wegent',
+          mapped: true,
+          localTasks: [],
+        },
+      ],
+    },
+    {
+      project: { id: 8, name: 'Notes' },
+      deviceWorkspaces: [
+        {
+          id: 201,
+          projectId: 8,
+          deviceId: 'device-1',
+          deviceName: 'Local Device',
+          deviceStatus: 'online',
+          available: true,
+          workspacePath: '/workspace/notes',
+          mapped: true,
+          localTasks: [],
+        },
+      ],
+    },
+  ],
+  unmappedDeviceWorkspaces: [],
+  totalLocalTasks: 0,
+}
+
 describe('ProjectWorkBar', () => {
+  test('selects a single-workspace project directly', async () => {
+    const onSelectProjectWorkspace = vi.fn()
+
+    render(
+      <ProjectWorkBar
+        projects={[project, nonGitProject]}
+        devices={[device]}
+        runtimeWork={runtimeWork}
+        currentProjectId={undefined}
+        currentStandaloneDeviceId={null}
+        selectedDeviceWorkspaceId={null}
+        executionMode="current_workspace"
+        onSelectProject={vi.fn()}
+        onSelectStandaloneDevice={vi.fn()}
+        onSelectProjectWorkspace={onSelectProjectWorkspace}
+        onExecutionModeChange={vi.fn()}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('project-work-button'))
+    await userEvent.click(screen.getByTestId('project-option-8'))
+
+    expect(onSelectProjectWorkspace).toHaveBeenCalledWith(8, 201)
+  })
+
+  test('shows the device summary for a single-workspace project row', async () => {
+    const projectWithoutLegacyDevice: ProjectWithTasks = {
+      id: 8,
+      name: 'Notes',
+      tasks: [],
+      config: { mode: 'workspace' },
+    }
+
+    render(
+      <ProjectWorkBar
+        projects={[projectWithoutLegacyDevice]}
+        devices={[device]}
+        runtimeWork={runtimeWork}
+        currentProjectId={8}
+        currentStandaloneDeviceId={null}
+        selectedDeviceWorkspaceId={201}
+        executionMode="current_workspace"
+        onSelectProject={vi.fn()}
+        onSelectStandaloneDevice={vi.fn()}
+        onSelectProjectWorkspace={vi.fn()}
+        onExecutionModeChange={vi.fn()}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('project-work-button'))
+
+    const option = screen.getByTestId('project-option-8')
+    expect(option).toHaveTextContent('Local Device')
+    expect(option).toHaveTextContent('在线')
+  })
+
+  test('expands a multi-workspace project before selection', async () => {
+    const onSelectProjectWorkspace = vi.fn()
+
+    render(
+      <ProjectWorkBar
+        projects={[project]}
+        devices={[device]}
+        runtimeWork={runtimeWork}
+        currentProjectId={7}
+        currentStandaloneDeviceId={null}
+        selectedDeviceWorkspaceId={null}
+        pendingProjectWorkspaceProjectId={7}
+        executionMode="current_workspace"
+        onSelectProject={vi.fn()}
+        onSelectStandaloneDevice={vi.fn()}
+        onSelectProjectWorkspace={onSelectProjectWorkspace}
+        onExecutionModeChange={vi.fn()}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('project-work-button'))
+
+    expect(screen.getByTestId('project-workspace-option-101')).toHaveTextContent('Local Device')
+    expect(screen.getByTestId('project-workspace-option-102')).toBeDisabled()
+
+    await userEvent.click(screen.getByTestId('project-workspace-option-101'))
+
+    expect(onSelectProjectWorkspace).toHaveBeenCalledWith(7, 101)
+  })
+
+  test('opens workspace binding for projects without mapped workspaces', async () => {
+    const onBindProjectWorkspace = vi.fn()
+    const emptyProject: ProjectWithTasks = {
+      id: 9,
+      name: 'Empty Project',
+      tasks: [],
+      config: { mode: 'workspace' },
+    }
+
+    render(
+      <ProjectWorkBar
+        projects={[emptyProject]}
+        devices={[device]}
+        runtimeWork={{
+          projects: [],
+          unmappedDeviceWorkspaces: [],
+          totalLocalTasks: 0,
+        }}
+        currentProjectId={undefined}
+        currentStandaloneDeviceId={null}
+        selectedDeviceWorkspaceId={null}
+        executionMode="current_workspace"
+        onSelectProject={vi.fn()}
+        onSelectStandaloneDevice={vi.fn()}
+        onSelectProjectWorkspace={vi.fn()}
+        onBindProjectWorkspace={onBindProjectWorkspace}
+        onExecutionModeChange={vi.fn()}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('project-work-button'))
+    await userEvent.click(screen.getByTestId('project-bind-workspace-9'))
+
+    expect(onBindProjectWorkspace).toHaveBeenCalledWith(9)
+  })
+
   test('shows local mode but hides worktree controls when the project directory is not a git repository', async () => {
     const user = userEvent.setup()
 

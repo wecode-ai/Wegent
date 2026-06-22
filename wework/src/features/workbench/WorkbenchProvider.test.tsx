@@ -221,8 +221,11 @@ function ProjectSendProbe() {
       <span data-testid="message-contents">
         {workbench.messages.map(message => message.content).join('|')}
       </span>
+      <span data-testid="message-roles">
+        {workbench.messages.map(message => `${message.role}:${message.content}`).join('|')}
+      </span>
       <span data-testid="workbench-error">{workbench.state.error ?? ''}</span>
-      <button type="button" onClick={() => workbench.selectProject(7)}>
+      <button type="button" onClick={() => workbench.selectProjectWorkspace(7, 22)}>
         select project
       </button>
       <button type="button" onClick={() => workbench.setInput('修复 CI')}>
@@ -321,6 +324,25 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(services.runtimeWorkApi?.listRuntimeWork).toHaveBeenCalledTimes(1)
   })
 
+  test('ensures the chat socket is connected while mounted', async () => {
+    const socketClient = {
+      ensureConnected: vi.fn().mockResolvedValue(undefined),
+      dispose: vi.fn(),
+    }
+    const services = createWorkbenchServices({
+      socketClient,
+    } as Partial<WorkbenchServices>)
+
+    const { unmount } = renderWorkbench(<BootstrapProbe />, services)
+
+    await waitFor(() => expect(socketClient.ensureConnected).toHaveBeenCalledTimes(1))
+    expect(socketClient.dispose).not.toHaveBeenCalled()
+
+    unmount()
+
+    expect(socketClient.dispose).toHaveBeenCalledTimes(1)
+  })
+
   test('creates a runtime local task for a new project message', async () => {
     const runtimeWorkApi = createRuntimeWorkApiMock({
       createRuntimeTask: vi.fn().mockResolvedValue({
@@ -352,11 +374,13 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledWith(
       expect.objectContaining({
         projectId: 7,
+        deviceWorkspaceId: 22,
         teamId: 2,
         message: '修复 CI',
       })
     )
     expect(runtimeWorkApi.createRuntimeTask.mock.calls[0][0]).not.toHaveProperty('task_id')
+    expect(runtimeWorkApi.createRuntimeTask.mock.calls[0][0]).not.toHaveProperty('workspacePath')
     await waitFor(() =>
       expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent(
         'resolved-device:runtime-created'
@@ -366,6 +390,75 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(parseRuntimeTaskRoute(window.location.pathname, window.location.search)).toEqual({
       deviceId: 'resolved-device',
       localTaskId: 'runtime-created',
+    })
+  })
+
+  test('renders streaming local task chunks when the socket connects after chat start', async () => {
+    let streamHandlers: ChatStreamHandlers = {}
+    const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
+      streamHandlers = handlers
+      return vi.fn()
+    })
+    const transcript = deferred<RuntimeTranscriptResponse>()
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      createRuntimeTask: vi.fn().mockResolvedValue({
+        accepted: true,
+        deviceId: 'resolved-device',
+        localTaskId: 'runtime-created',
+        workspacePath: '/workspace/project-alpha',
+        runtime: 'codex',
+      }),
+      getRuntimeTranscript: vi.fn().mockReturnValue(transcript.promise),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      chatStream: {
+        subscribe,
+      } as unknown as WorkbenchServices['chatStream'],
+    })
+
+    renderWorkbench(<ProjectSendProbe />, services)
+
+    await waitFor(() => expect(screen.getByText('select project')).toBeInTheDocument())
+    await userEvent.click(screen.getByText('select project'))
+    await userEvent.click(screen.getByText('set input'))
+    await userEvent.click(screen.getByText('send'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent(
+        'resolved-device:runtime-created'
+      )
+    )
+
+    await act(async () => {
+      streamHandlers.onChatChunk?.({
+        subtask_id: 102,
+        content: 'streamed answer',
+        offset: 0,
+        device_id: 'resolved-device',
+        local_task_id: 'runtime-created',
+      })
+    })
+
+    expect(screen.getByTestId('message-roles')).toHaveTextContent('user:修复 CI')
+    expect(screen.getByTestId('message-roles')).toHaveTextContent('assistant:streamed answer')
+
+    await act(async () => {
+      transcript.resolve({
+        localTaskId: 'runtime-created',
+        workspacePath: '/workspace/project-alpha',
+        runtime: 'codex',
+        messages: [
+          { id: 'user-1', role: 'user', content: '修复 CI' },
+          {
+            id: 'assistant-1',
+            role: 'assistant',
+            content: 'streamed answer',
+            subtaskId: 102,
+          },
+        ],
+      })
+      await transcript.promise
     })
   })
 

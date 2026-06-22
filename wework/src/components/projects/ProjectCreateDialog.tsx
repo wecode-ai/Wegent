@@ -92,8 +92,7 @@ function getProjectDevices(devices: DeviceInfo[]): DeviceInfo[] {
 function getDefaultDeviceId(devices: DeviceInfo[], preferredDeviceId?: string | null): string {
   const preferredDevice = preferredDeviceId
     ? devices.find(
-        device =>
-          device.device_id === preferredDeviceId && canUseForProjectCreation(device)
+        device => device.device_id === preferredDeviceId && canUseForProjectCreation(device)
       )
     : undefined
   return (
@@ -207,7 +206,7 @@ function ProjectCreateDialogContent({
   const isDeviceLinked = (deviceId: string) => Boolean(getDeviceFolder(deviceId))
   const canSelectDeviceTab = (device: DeviceInfo) =>
     canUseForProjectCreation(device) ||
-    isDeviceBelowWeWorkVersion(device) ||
+    (isDeviceBelowWeWorkVersion(device) && canRequestDeviceUpgrade(device)) ||
     (isEditing && isDeviceLinked(device.device_id))
 
   const visibleDevices = allProjectDevices

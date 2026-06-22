@@ -22,6 +22,7 @@ export function WorkbenchPage() {
     setProjectWorktreeBaseBranch,
     projectChat,
     selectProject,
+    selectProjectWorkspace,
     selectStandaloneDevice,
     startNewChat,
     startStandaloneChat,
@@ -75,12 +76,19 @@ export function WorkbenchPage() {
   const projectWork = {
     projects: state.projects,
     devices: state.devices,
+    runtimeWork: state.runtimeWork,
     currentProjectId: state.currentProject?.id,
     currentStandaloneDeviceId: state.standaloneDeviceId,
+    selectedDeviceWorkspaceId: state.selectedDeviceWorkspaceId,
+    pendingProjectWorkspaceProjectId: state.pendingProjectWorkspaceProjectId,
     executionMode: projectExecutionMode,
     executionModeLocked: Boolean(state.currentRuntimeTask),
     onSelectProject: selectProject,
     onSelectStandaloneDevice: selectStandaloneDevice,
+    onSelectProjectWorkspace: selectProjectWorkspace,
+    onBindProjectWorkspace: (projectId: number) => {
+      selectProject(projectId)
+    },
     onExecutionModeChange: setProjectExecutionMode,
     worktreeBaseBranch: projectWorktreeBaseBranch,
     onWorktreeBaseBranchChange: setProjectWorktreeBaseBranch,

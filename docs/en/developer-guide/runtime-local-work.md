@@ -55,7 +55,7 @@ When a user continues a LocalTask, Wework calls:
 POST /api/runtime-work/send
 ```
 
-Backend forwards `runtime.tasks.send`. The executor resumes Codex or Claude Code from the local runtime handle. Native Codex follow-up state is carried by Codex session records and is not written back to the JSON LocalTask index. Streaming Responses events carry `local_task_id` and runtime metadata, not `workspacePath`.
+Backend forwards `runtime.tasks.send`. The executor resumes the runtime session from the local LocalTask's opaque runtime handle. Claude Code tasks write the local transcript back to the JSON LocalTask index. Native Codex tasks only continue the Codex SDK thread; messages and status come from Codex's own session records and are not written back to the executor JSON index. Streaming Responses events carry `local_task_id` and runtime metadata, not `workspacePath`.
 
 Native Codex tasks have one additional rule: transcript refreshes trust only Codex's own session transcript. `runtimeHandle.messages` from a fork package or the executor JSON index is only an import-time snapshot and must not be used as a fallback for native Codex transcripts; otherwise Wework can show stale messages or lose follow-up turns after refresh. Non-SDK native tasks may still use the executor JSON index as their local transcript source.
 
@@ -76,7 +76,24 @@ Wework creates a new runtime task with:
 POST /api/runtime-work/create
 ```
 
-Backend resolves the target device and directory from either `projectId` or `deviceId + workspacePath`, builds a transient execution request, and calls device RPC `runtime.tasks.create`. This flow does not `db.add()` any `TaskResource` or `Subtask`.
+Backend resolves the target device and directory from either a Project mapping or a standalone device workspace, builds a transient execution request, and calls device RPC `runtime.tasks.create`. This flow does not `db.add()` any `TaskResource` or `Subtask`.
+
+The runtime owns persistence for newly created tasks:
+
+- Claude Code creates an executor JSON LocalTask and stores the transcript and runtime handle in that index.
+- Codex creation first returns an executor-process-local `localTaskId` so the frontend can open the task and receive stream events immediately. After the native Codex SDK thread starts in the background, the real Codex threadId is stored in the in-memory runtime handle for later send/resume calls.
+- Codex creation and continuation do not cache the task in the executor JSON index. The current executor process keeps a temporary in-memory record to cover the short window before Codex discovery can see the new thread; after an executor restart, native Codex discovery/session data is authoritative again.
+- Codex creation still streams over the LocalTask Responses event channel with `response.created`, text/tool deltas, and `response.completed`/`error`. Those events use the `localTaskId` returned by create, so the frontend does not need to wait for the next list refresh to show the running reply.
+- Attachments still go through the executor Codex attachment pipeline: Backend sends attachment ids only, and the executor downloads and converts them on the target device for the Codex SDK. The frontend does not send local attachment paths.
+
+Project-backed creation must use a trusted Device Workspace mapping:
+
+- Wework sends `projectId + deviceWorkspaceId`; it does not send `workspacePath`.
+- Backend verifies that `deviceWorkspaceId` belongs to the current user and the requested `projectId`, then resolves the trusted `deviceId + workspacePath` from that mapping.
+- If a Project has exactly one available Device Workspace, the frontend may select it directly. If it has multiple available Device Workspaces, the frontend must ask the user to confirm the runtime location before sending.
+- Legacy Project configuration that stores `execution.deviceId + workspace.localPath` is materialized into a Device Workspace mapping during runtime work list refresh, so older Projects use the same trusted mapping path.
+
+Standalone non-Project device workspaces still use `deviceId + workspacePath` for task creation. That path only applies to explicitly selected unmapped device workspaces and must not be used as a frontend-supplied Project task target.
 
 ## Fork And Cross-Device Transfer
 

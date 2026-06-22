@@ -143,6 +143,91 @@ async def test_executor_archive_and_restore_includes_workspace_and_claude_home(
 
 
 @pytest.mark.asyncio
+async def test_restore_legacy_archive_without_workspace_prefix(
+    tmp_path: Path, monkeypatch
+):
+    task_id = 5728299
+    download_url = "https://minio.local/download/legacy-workspace-archive"
+
+    workspace_path = tmp_path / "workspace" / str(task_id)
+    home_path = tmp_path / "home"
+    home_path.mkdir(parents=True)
+
+    archive_buffer = BytesIO()
+    with tarfile.open(fileobj=archive_buffer, mode="w:gz") as tar:
+        workspace_file = b"legacy workspace content"
+        workspace_info = tarfile.TarInfo("repo/README.md")
+        workspace_info.size = len(workspace_file)
+        tar.addfile(workspace_info, BytesIO(workspace_file))
+
+        session_file = b"legacy-session-id"
+        session_info = tarfile.TarInfo(".claude_session_id")
+        session_info.size = len(session_file)
+        tar.addfile(session_info, BytesIO(session_file))
+
+        git_head = b"ref: refs/heads/main"
+        git_info = tarfile.TarInfo(".git/HEAD")
+        git_info.size = len(git_head)
+        tar.addfile(git_info, BytesIO(git_head))
+
+        home_memory = b"legacy home memory"
+        home_memory_info = tarfile.TarInfo("__home__/.claude/home-memory.md")
+        home_memory_info.size = len(home_memory)
+        tar.addfile(home_memory_info, BytesIO(home_memory))
+
+        home_config = json.dumps({"legacy": True}).encode("utf-8")
+        home_config_info = tarfile.TarInfo("__home__/.claude.json")
+        home_config_info.size = len(home_config)
+        tar.addfile(home_config_info, BytesIO(home_config))
+
+    async def _mock_download_archive(url: str) -> bytes:
+        assert url == download_url
+        return archive_buffer.getvalue()
+
+    monkeypatch.setattr(routes, "get_workspace_path", lambda _: workspace_path)
+    monkeypatch.setattr(routes, "get_home_path", lambda: home_path)
+    monkeypatch.setattr(routes, "download_archive_from_url", _mock_download_archive)
+
+    app = FastAPI()
+    register_rest_api(app)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(
+        transport=transport,
+        base_url="http://testserver",
+    ) as client:
+        restore_response = await client.post(
+            "/api/restore",
+            json={
+                "task_id": task_id,
+                "download_url": download_url,
+            },
+        )
+
+    assert restore_response.status_code == 200
+    restore_payload = restore_response.json()
+    assert restore_payload["success"] is True
+    assert restore_payload["session_restored"] is True
+    assert restore_payload["git_restored"] is True
+
+    assert (workspace_path / "repo" / "README.md").read_text(
+        encoding="utf-8"
+    ) == "legacy workspace content"
+    assert (workspace_path / ".claude_session_id").read_text(
+        encoding="utf-8"
+    ) == "legacy-session-id"
+    assert (workspace_path / ".git" / "HEAD").read_text(
+        encoding="utf-8"
+    ) == "ref: refs/heads/main"
+    assert (home_path / ".claude" / "home-memory.md").read_text(
+        encoding="utf-8"
+    ) == "legacy home memory"
+    assert json.loads((home_path / ".claude.json").read_text(encoding="utf-8")) == {
+        "legacy": True
+    }
+
+
+@pytest.mark.asyncio
 async def test_archive_returns_404_when_workspace_missing(tmp_path: Path, monkeypatch):
     task_id = 2468
     monkeypatch.setattr(
