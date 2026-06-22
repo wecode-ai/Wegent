@@ -348,6 +348,7 @@
     "back_to_workspace_tools": "返回工具",
     "project_terminal_frame_title": "项目终端",
     "scroll_to_bottom": "下拉到底",
+    "loading_conversation": "正在加载会话...",
     "empty_conversation_title": "开始新的对话",
     "empty_conversation_description": "在下方输入问题、粘贴上下文或添加附件，Codex 会在这里展示回复。",
     "account_fallback": "当前账号",

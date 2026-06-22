@@ -185,7 +185,6 @@ describe('DesktopWorkbenchLayout', () => {
       currentProject: null,
       currentRuntimeTask: null,
       standaloneDeviceId: null,
-      currentTask: null,
       input: '',
       isBootstrapping: false,
       isSending: false,
@@ -927,44 +926,6 @@ describe('DesktopWorkbenchLayout', () => {
     )
   })
 
-  test('opens project code-server from the current task execution workspace in the Tauri titlebar', async () => {
-    Object.defineProperty(window, '__TAURI_INTERNALS__', {
-      configurable: true,
-      value: {},
-    })
-    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null)
-    const workspacePanelState = createCloudWorkspacePanelState()
-
-    render(
-      <DesktopWorkbenchLayout
-        {...baseProps}
-        state={{
-          ...baseProps.state,
-          ...workspacePanelState,
-          currentTask: {
-            id: 8,
-            title: 'Task',
-            status: 'RUNNING',
-            created_at: '2026-06-12T00:00:00.000Z',
-            device_id: 'workspace-cloud-device',
-            execution_workspace_path: '/workspace/worktrees/8/workspace-project',
-          },
-        }}
-        projectWork={{
-          ...baseProps.projectWork,
-          projects: workspacePanelState.projects,
-          devices: workspacePanelState.devices,
-          currentProjectId: workspacePanelState.currentProject.id,
-        }}
-      />
-    )
-
-    await userEvent.click(screen.getByTestId('open-code-server-titlebar-button'))
-
-    await waitFor(() => expect(startCodeServerSessionMock).toHaveBeenCalledWith(12, { taskId: 8 }))
-    expect(openSpy).toHaveBeenCalledWith('http://localhost/ide', '_blank', 'noopener')
-  })
-
   test('shows project code-server in the Tauri titlebar before devices hydrate', () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,
@@ -1199,8 +1160,9 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('projects-create-button'))
 
     expect(screen.getByTestId('project-create-dialog')).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: '新建项目' })).toBeInTheDocument()
-    expect(screen.getByTestId('project-name-input')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '选择项目文件夹' })).toBeInTheDocument()
+    expect(screen.getByTestId('project-folder-select-button')).toBeInTheDocument()
+    expect(screen.getByTestId('project-folder-create-button')).toBeInTheDocument()
     expect(screen.queryByTestId('projects-create-button-menu')).not.toBeInTheDocument()
     expect(screen.queryByTestId('project-start-from-scratch-button')).not.toBeInTheDocument()
     expect(onRefreshDevices).toHaveBeenCalledTimes(1)
@@ -1238,8 +1200,8 @@ describe('DesktopWorkbenchLayout', () => {
 
     await userEvent.click(screen.getByTestId('projects-create-button'))
 
-    expect(screen.getByText('新建项目')).toBeInTheDocument()
-    expect(screen.getByTestId('project-name-input')).toBeInTheDocument()
+    expect(screen.getByText('选择项目文件夹')).toBeInTheDocument()
+    expect(screen.getByTestId('project-folder-select-button')).toBeInTheDocument()
     expect(onRefreshDevices).toHaveBeenCalledTimes(1)
 
     resolveRefreshDevices?.()
@@ -1272,7 +1234,6 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await userEvent.click(screen.getByTestId('projects-create-button'))
-    await userEvent.click(screen.getByTestId('project-folder-mode-create'))
 
     expect(screen.getByTestId('project-create-dialog')).toBeInTheDocument()
     expect(screen.getByTestId('project-device-unavailable-old-device')).toHaveTextContent(
@@ -1395,8 +1356,9 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('project-work-menu')).not.toBeInTheDocument()
     expect(screen.queryByTestId('create-project-submenu')).not.toBeInTheDocument()
     expect(screen.getByTestId('project-create-dialog')).toBeInTheDocument()
-    expect(screen.getByText('新建项目')).toBeInTheDocument()
-    expect(screen.getByTestId('project-name-input')).toBeInTheDocument()
+    expect(screen.getByText('选择项目文件夹')).toBeInTheDocument()
+    expect(screen.getByTestId('project-folder-select-button')).toBeInTheDocument()
+    expect(screen.getByTestId('project-folder-create-button')).toBeInTheDocument()
     expect(screen.getByTestId('create-project-button')).toHaveTextContent('创建项目')
   })
 
@@ -1406,7 +1368,6 @@ describe('DesktopWorkbenchLayout', () => {
     render(<DesktopWorkbenchLayout {...baseProps} onRefreshDevices={onRefreshDevices} />)
 
     await userEvent.click(screen.getByTestId('projects-create-button'))
-    await userEvent.click(screen.getByTestId('project-folder-mode-create'))
 
     expect(screen.getByTestId('project-create-dialog')).toBeInTheDocument()
     expect(screen.getByText('创建项目需要一台可用设备。')).toBeInTheDocument()
@@ -1446,7 +1407,6 @@ describe('DesktopWorkbenchLayout', () => {
 
     await userEvent.click(screen.getByTestId('project-work-button'))
     await userEvent.click(screen.getByTestId('add-project-option'))
-    await userEvent.click(screen.getByTestId('project-folder-mode-create'))
     await userEvent.click(screen.getByTestId('open-cloud-device-settings-link'))
 
     expect(screen.queryByTestId('project-create-dialog')).not.toBeInTheDocument()
@@ -1501,22 +1461,19 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await userEvent.click(screen.getByTestId('projects-create-button'))
-    await userEvent.type(screen.getByTestId('project-name-input'), 'repo')
-    await userEvent.click(screen.getByTestId('project-folder-mode-select'))
+    await userEvent.click(screen.getByTestId('project-folder-select-button'))
 
     await waitFor(() => expect(onGetDeviceHomeDirectory).toHaveBeenCalledWith('device-1'))
     await waitFor(() =>
       expect(onListDeviceDirectories).toHaveBeenCalledWith('device-1', '/home/ubuntu')
     )
     expect(screen.queryByText('.cache')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('select-current-directory-button')).not.toBeInTheDocument()
-    expect(screen.getByTestId('project-name-input')).toHaveValue('repo')
 
     const repoEntry = await screen.findByText('repo')
     await userEvent.click(repoEntry)
     expect(onListDeviceDirectories).not.toHaveBeenCalledWith('device-1', '/home/ubuntu/repo')
 
-    await userEvent.click(screen.getByTestId('project-hidden-directories-toggle'))
+    await userEvent.click(screen.getByTestId('device-folder-hidden-toggle'))
     expect(screen.getByText('.cache')).toBeInTheDocument()
 
     await userEvent.dblClick(repoEntry)
@@ -1524,6 +1481,8 @@ describe('DesktopWorkbenchLayout', () => {
       expect(onListDeviceDirectories).toHaveBeenCalledWith('device-1', '/home/ubuntu/repo')
     )
 
+    await userEvent.click(screen.getByTestId('confirm-device-folder-picker-button'))
+    expect(screen.getByTestId('project-name-preview')).toHaveTextContent('repo')
     await userEvent.click(screen.getByTestId('create-project-button'))
 
     await waitFor(() =>
@@ -1614,14 +1573,6 @@ describe('DesktopWorkbenchLayout', () => {
           projects: [project],
           devices: [offlineDevice],
           currentProject: project,
-          currentTask: {
-            id: 71,
-            title: 'Offline chat',
-            status: 'COMPLETED',
-            task_type: 'code',
-            project_id: 7,
-            created_at: new Date().toISOString(),
-          },
           input: 'hello offline',
         }}
         messages={[
@@ -1648,235 +1599,6 @@ describe('DesktopWorkbenchLayout', () => {
     )
     expect(screen.getByTestId('conversation-device-offline-banner')).toHaveTextContent(
       'Offline Device 已离线，恢复在线后可继续对话'
-    )
-    expect(screen.queryByTestId('device-status-prompt')).not.toBeInTheDocument()
-    expect(screen.getByTestId('send-message-button')).toBeDisabled()
-
-    await userEvent.click(screen.getByTestId('send-message-button'))
-    expect(baseProps.onSend).not.toHaveBeenCalled()
-  })
-
-  test('locks composer for project tasks when the owning project device is offline', async () => {
-    const offlineDevice = {
-      id: 1,
-      device_id: 'offline-project-device',
-      name: 'Offline Project Device',
-      status: 'offline' as const,
-      is_default: false,
-      device_type: 'cloud' as const,
-      bind_shell: 'claudecode',
-      executor_version: '1.8.5',
-    }
-    const onlineTaskDevice = {
-      id: 2,
-      device_id: 'online-task-device',
-      name: 'Online Task Device',
-      status: 'online' as const,
-      is_default: false,
-      device_type: 'cloud' as const,
-      bind_shell: 'claudecode',
-      executor_version: '1.8.5',
-    }
-    const project = {
-      id: 7,
-      name: 'hello',
-      config: {
-        execution: {
-          targetType: 'cloud' as const,
-          deviceId: 'offline-project-device',
-        },
-      },
-      tasks: [
-        {
-          id: 71,
-          task_id: 71,
-          task_title: 'Offline project task',
-          device_id: 'online-task-device',
-          updated_at: new Date().toISOString(),
-        },
-      ],
-    }
-
-    render(
-      <DesktopWorkbenchLayout
-        {...baseProps}
-        state={{
-          ...baseProps.state,
-          projects: [project],
-          devices: [offlineDevice, onlineTaskDevice],
-          currentProject: null,
-          currentTask: {
-            id: 71,
-            title: 'Offline project task',
-            status: 'COMPLETED',
-            task_type: 'code',
-            project_id: 7,
-            device_id: 'online-task-device',
-            created_at: new Date().toISOString(),
-          },
-          input: 'should not send',
-        }}
-        messages={[
-          {
-            id: 'message-1',
-            role: 'user',
-            content: 'hello',
-            status: 'done',
-            createdAt: new Date().toISOString(),
-          },
-        ]}
-      />
-    )
-
-    expect(screen.queryByTestId('device-status-prompt')).not.toBeInTheDocument()
-    expect(
-      within(screen.getByTestId('desktop-floating-composer-card')).getByTestId(
-        'conversation-device-offline-banner'
-      )
-    ).toBeInTheDocument()
-    expect(screen.getByTestId('conversation-device-offline-banner')).toHaveTextContent(
-      'Offline Project Device 已离线，恢复在线后可继续对话'
-    )
-    expect(screen.getByTestId('conversation-device-offline-banner')).toHaveClass(
-      'bg-background/95',
-      'text-text-secondary'
-    )
-    expect(screen.getByTestId('desktop-chat-scroll')).not.toHaveClass('pt-14')
-    expect(screen.getByTestId('send-message-button')).toBeDisabled()
-
-    await userEvent.click(screen.getByTestId('send-message-button'))
-    expect(baseProps.onSend).not.toHaveBeenCalled()
-  })
-
-  test('does not expose raw device ids in the offline conversation notice', () => {
-    const project = {
-      id: 7,
-      name: 'hello',
-      config: {
-        execution: {
-          targetType: 'cloud' as const,
-          deviceId: 'b2f75045-2062-4a94-b5c0-ffb9f3b94a90',
-        },
-      },
-      tasks: [
-        {
-          id: 71,
-          task_id: 71,
-          task_title: 'Unavailable project task',
-          updated_at: new Date().toISOString(),
-        },
-      ],
-    }
-
-    render(
-      <DesktopWorkbenchLayout
-        {...baseProps}
-        state={{
-          ...baseProps.state,
-          projects: [project],
-          devices: [],
-          currentProject: null,
-          currentTask: {
-            id: 71,
-            title: 'Unavailable project task',
-            status: 'COMPLETED',
-            task_type: 'code',
-            project_id: 7,
-            created_at: new Date().toISOString(),
-          },
-        }}
-        messages={[
-          {
-            id: 'message-1',
-            role: 'user',
-            content: 'hello',
-            status: 'done',
-            createdAt: new Date().toISOString(),
-          },
-        ]}
-      />
-    )
-
-    expect(screen.getByTestId('conversation-device-offline-banner')).toHaveTextContent(
-      '当前设备 不可用，恢复在线后可继续对话'
-    )
-    expect(screen.getByTestId('conversation-device-offline-banner')).not.toHaveTextContent(
-      'b2f75045-2062-4a94-b5c0-ffb9f3b94a90'
-    )
-  })
-
-  test('locks composer for nested project tasks even when task detail omits project id', async () => {
-    const offlineDevice = {
-      id: 1,
-      device_id: 'nested-offline-project-device',
-      name: 'Nested Offline Project Device',
-      status: 'offline' as const,
-      is_default: false,
-      device_type: 'cloud' as const,
-      bind_shell: 'claudecode',
-      executor_version: '1.8.5',
-    }
-    const standaloneOnlineDevice = {
-      id: 2,
-      device_id: 'standalone-online-device',
-      name: 'Standalone Online Device',
-      status: 'online' as const,
-      is_default: false,
-      device_type: 'cloud' as const,
-      bind_shell: 'claudecode',
-      executor_version: '1.8.5',
-    }
-    const project = {
-      id: 7,
-      name: 'hello',
-      config: {
-        execution: {
-          targetType: 'cloud' as const,
-          deviceId: 'nested-offline-project-device',
-        },
-      },
-      tasks: [
-        {
-          id: 71,
-          task_id: 71,
-          task_title: 'Nested offline project task',
-          updated_at: new Date().toISOString(),
-        },
-      ],
-    }
-
-    render(
-      <DesktopWorkbenchLayout
-        {...baseProps}
-        state={{
-          ...baseProps.state,
-          projects: [project],
-          devices: [offlineDevice, standaloneOnlineDevice],
-          standaloneDeviceId: 'standalone-online-device',
-          currentProject: null,
-          currentTask: {
-            id: 71,
-            title: 'Nested offline project task',
-            status: 'COMPLETED',
-            task_type: 'code',
-            created_at: new Date().toISOString(),
-          },
-          input: 'still should not send',
-        }}
-        messages={[
-          {
-            id: 'message-1',
-            role: 'assistant',
-            content: 'done',
-            status: 'done',
-            createdAt: new Date().toISOString(),
-          },
-        ]}
-      />
-    )
-
-    expect(screen.getByTestId('conversation-device-offline-banner')).toHaveTextContent(
-      'Nested Offline Project Device 已离线，恢复在线后可继续对话'
     )
     expect(screen.queryByTestId('device-status-prompt')).not.toBeInTheDocument()
     expect(screen.getByTestId('send-message-button')).toBeDisabled()
@@ -2205,60 +1927,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(await screen.findByTestId('workspace-file-tree')).toBeInTheDocument()
   })
 
-  test('right workspace panel clears remembered tabs when switching sessions', async () => {
-    const workspacePanelState = createCloudWorkspacePanelState()
-    const sessionTask = {
-      id: 101,
-      title: 'Session A',
-      status: 'COMPLETED',
-      task_type: 'code' as const,
-      project_id: workspacePanelState.currentProject.id,
-      created_at: '2026-06-12T00:00:00.000Z',
-    }
-    const nextSessionTask = {
-      ...sessionTask,
-      id: 102,
-      title: 'Session B',
-    }
-    const layoutProps = {
-      ...baseProps,
-      state: {
-        ...baseProps.state,
-        ...workspacePanelState,
-        currentTask: sessionTask,
-      },
-      projectWork: {
-        ...baseProps.projectWork,
-        projects: workspacePanelState.projects,
-        devices: workspacePanelState.devices,
-        currentProjectId: workspacePanelState.currentProject.id,
-      },
-    }
-
-    const { rerender } = render(<DesktopWorkbenchLayout {...layoutProps} />)
-
-    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
-    await userEvent.click(screen.getByTestId('right-workspace-file-option'))
-    expect(await screen.findByTestId('workspace-file-tree')).toBeInTheDocument()
-    expect(screen.getByTestId('right-workspace-file-tab')).toHaveAttribute('aria-selected', 'true')
-
-    rerender(
-      <DesktopWorkbenchLayout
-        {...layoutProps}
-        state={{
-          ...layoutProps.state,
-          currentTask: nextSessionTask,
-        }}
-      />
-    )
-
-    await waitFor(() =>
-      expect(screen.queryByTestId('right-workspace-file-tab')).not.toBeInTheDocument()
-    )
-    expect(screen.getByTestId('right-workspace-launcher')).toBeInTheDocument()
-  })
-
-  test('project conversations open files from the project workspace instead of stale task worktrees', async () => {
+  test('project conversations open files from the project workspace', async () => {
     const workspaceProject = {
       id: 12,
       name: 'Wegent',
@@ -2291,14 +1960,6 @@ describe('DesktopWorkbenchLayout', () => {
         state={{
           ...baseProps.state,
           currentProject: workspaceProject,
-          currentTask: {
-            id: 99,
-            title: 'Stale task',
-            status: 'COMPLETED',
-            task_type: 'code',
-            project_id: workspaceProject.id,
-            created_at: '2026-06-12T00:00:00.000Z',
-          },
           projects: [workspaceProject],
           devices: [
             {
@@ -2511,52 +2172,6 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(await screen.findByTestId('workspace-file-preview')).toHaveTextContent('hello world')
     expect(screen.getByText('/workspace/project/README.md')).toBeInTheDocument()
-  })
-
-  test('right workspace panel uses the current task execution workspace path', async () => {
-    const workspacePanelState = createCloudWorkspacePanelState()
-    const listWorkspaceEntries = vi.fn().mockResolvedValue({
-      path: '/workspace/worktrees/8/workspace-project',
-      entries: [],
-    })
-    createDeviceApiMock.mockReturnValue(
-      createMockDeviceApi({
-        listWorkspaceEntries,
-      }) as never
-    )
-
-    render(
-      <DesktopWorkbenchLayout
-        {...baseProps}
-        state={{
-          ...baseProps.state,
-          ...workspacePanelState,
-          currentTask: {
-            id: 8,
-            title: 'Task',
-            status: 'RUNNING',
-            created_at: '2026-06-12T00:00:00.000Z',
-            device_id: 'workspace-cloud-device',
-            execution_workspace_path: '/workspace/worktrees/8/workspace-project',
-          },
-        }}
-        projectWork={{
-          ...baseProps.projectWork,
-          projects: workspacePanelState.projects,
-          devices: workspacePanelState.devices,
-          currentProjectId: workspacePanelState.currentProject?.id,
-        }}
-      />
-    )
-
-    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
-    await userEvent.click(screen.getByTestId('right-workspace-file-option'))
-
-    expect(await screen.findByTestId('workspace-file-tree')).toBeInTheDocument()
-    expect(listWorkspaceEntries).toHaveBeenCalledWith(
-      'workspace-cloud-device',
-      '/workspace/worktrees/8/workspace-project'
-    )
   })
 
   test('opens an edited file from the conversation tool block in the workspace panel', async () => {
@@ -3322,57 +2937,6 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('file-changes-review-panel')).toHaveTextContent('+new')
   })
 
-  test('opens environment changes review from the current task execution workspace', async () => {
-    const workspacePanelState = createCloudWorkspacePanelState()
-    const onLoadEnvironmentDiff = vi
-      .fn()
-      .mockResolvedValue(
-        'diff --git a/src/env.ts b/src/env.ts\n--- a/src/env.ts\n+++ b/src/env.ts\n@@ -1 +1 @@\n-old\n+new\n'
-      )
-
-    render(
-      <DesktopWorkbenchLayout
-        {...baseProps}
-        onLoadEnvironmentDiff={onLoadEnvironmentDiff}
-        state={{
-          ...baseProps.state,
-          ...workspacePanelState,
-          currentTask: {
-            id: 8,
-            title: 'Task',
-            status: 'RUNNING',
-            created_at: '2026-06-12T00:00:00.000Z',
-            device_id: 'workspace-cloud-device',
-            execution_workspace_path: '/workspace/worktrees/8/workspace-project',
-          },
-        }}
-        projectWork={{
-          ...baseProps.projectWork,
-          projects: workspacePanelState.projects,
-          devices: workspacePanelState.devices,
-          currentProjectId: workspacePanelState.currentProject.id,
-        }}
-      />
-    )
-
-    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
-    await waitFor(() => expect(screen.getByTestId('right-workspace-review-option')).toBeEnabled())
-    await userEvent.click(screen.getByTestId('right-workspace-review-option'))
-
-    await waitFor(() =>
-      expect(onLoadEnvironmentDiff).toHaveBeenCalledWith(
-        expect.objectContaining({ id: 12, name: 'workspace-project' }),
-        {
-          deviceId: 'workspace-cloud-device',
-          path: '/workspace/worktrees/8/workspace-project',
-          source: 'task',
-          taskId: 8,
-        }
-      )
-    )
-    expect(await screen.findByTestId('file-changes-review-panel')).toHaveTextContent('src/env.ts')
-  })
-
   test('submits environment commits from the popover', async () => {
     const onCommitEnvironmentChanges = vi.fn().mockResolvedValue(undefined)
     render(
@@ -3613,80 +3177,6 @@ describe('DesktopWorkbenchLayout', () => {
     )
   })
 
-  test('loads environment info from the current task project before the fallback project', async () => {
-    const onLoadEnvironmentInfo = vi.fn().mockResolvedValue({
-      additions: '+1',
-      deletions: '-1',
-      executionTarget: 'local' as const,
-      deviceId: 'device-sina',
-      branchName: 'human/seal-20260529-104820',
-    })
-    const sinaProject = {
-      id: 9,
-      name: 'sina-sso',
-      tasks: [],
-      config: {
-        mode: 'workspace',
-        execution: {
-          targetType: 'local' as const,
-          deviceId: 'device-sina',
-        },
-        workspace: {
-          source: 'local_path' as const,
-          localPath: '/Users/hongyu9/Downloads/sina-sso',
-        },
-      },
-    }
-
-    render(
-      <DesktopWorkbenchLayout
-        {...baseProps}
-        onLoadEnvironmentInfo={onLoadEnvironmentInfo}
-        state={{
-          ...baseProps.state,
-          currentProject: null,
-          currentTask: {
-            id: 99,
-            title: 'sina task',
-            status: 'RUNNING',
-            task_type: 'code',
-            project_id: 9,
-            created_at: '2026-05-29T00:00:00.000Z',
-          },
-          projects: [
-            {
-              id: 2,
-              name: 'agno',
-              tasks: [],
-              config: {
-                mode: 'workspace',
-                execution: {
-                  targetType: 'local',
-                  deviceId: 'device-agno',
-                },
-                workspace: {
-                  source: 'local_path',
-                  localPath: '/Volumes/OuterHD/OuterIdeaProjects/agno',
-                },
-              },
-            },
-            sinaProject,
-          ],
-        }}
-      />
-    )
-
-    await userEvent.click(screen.getByTestId('environment-info-button'))
-
-    await waitFor(() =>
-      expect(onLoadEnvironmentInfo).toHaveBeenCalledWith(sinaProject, {
-        deviceId: 'device-sina',
-        path: '/Users/hongyu9/Downloads/sina-sso',
-        source: 'project',
-      })
-    )
-  })
-
   test('loads environment info from the current runtime task workspace', async () => {
     const onLoadEnvironmentInfo = vi.fn().mockResolvedValue({
       additions: '+2',
@@ -3903,37 +3393,6 @@ describe('DesktopWorkbenchLayout', () => {
     fireEvent.pointerUp(document)
 
     expect(panel).toHaveStyle({ height: '400px' })
-  })
-
-  test('bottom workspace terminal uses the current task execution workspace session', async () => {
-    const workspacePanelState = createCloudWorkspacePanelState()
-    render(
-      <DesktopWorkbenchLayout
-        {...baseProps}
-        state={{
-          ...baseProps.state,
-          ...workspacePanelState,
-          currentTask: {
-            id: 8,
-            title: 'Task',
-            status: 'RUNNING',
-            created_at: '2026-06-12T00:00:00.000Z',
-            device_id: 'workspace-cloud-device',
-            execution_workspace_path: '/workspace/worktrees/8/workspace-project',
-          },
-        }}
-        projectWork={{
-          ...baseProps.projectWork,
-          projects: workspacePanelState.projects,
-          devices: workspacePanelState.devices,
-          currentProjectId: workspacePanelState.currentProject?.id,
-        }}
-      />
-    )
-
-    await userEvent.click(screen.getByTestId('toggle-bottom-workspace-panel-button'))
-
-    await waitFor(() => expect(startTerminalSessionMock).toHaveBeenCalledWith(12, { taskId: 8 }))
   })
 
   test('opens the terminal by default when the bottom workspace panel opens', async () => {

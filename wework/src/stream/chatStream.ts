@@ -12,10 +12,7 @@ import type {
   ChatGuidanceExpiredPayload,
   ChatGuidanceQueuedPayload,
   ChatMessagePayload,
-  ChatSendAck,
-  ChatSendPayload,
   ChatStartPayload,
-  TaskJoinResponse,
 } from '@/types/api'
 import type { DeviceSlotUpdatePayload, DeviceUpgradeStatusPayload } from '@/types/device-events'
 import type { SocketClientSocket } from '@wegent/chat-core'
@@ -42,16 +39,6 @@ export interface ChatStreamHandlers {
 
 const SEND_TIMEOUT_MS = 30_000
 
-function normalizeSendAck(response: ChatSendAck | undefined): ChatSendAck {
-  if (!response) {
-    return { success: false, error: '发送失败' }
-  }
-  if (response.error) {
-    return { ...response, success: false }
-  }
-  return { ...response, success: response.success ?? true }
-}
-
 function normalizeGuideAck(response: ChatGuideAck | undefined): ChatGuideAck {
   if (!response) {
     return { success: false, error: '引导发送失败' }
@@ -66,33 +53,6 @@ export function createChatStream(
   socket: Pick<WorkbenchSocket, 'emit' | 'on' | 'off' | 'connected'>
 ) {
   return {
-    joinTask(taskId: number): Promise<TaskJoinResponse> {
-      return new Promise(resolve => {
-        socket.emit('task:join', { task_id: taskId }, (response: TaskJoinResponse) => {
-          resolve(response)
-        })
-      })
-    },
-    leaveTask(taskId: number) {
-      socket.emit('task:leave', { task_id: taskId })
-    },
-    sendMessage(payload: ChatSendPayload): Promise<ChatSendAck> {
-      return new Promise(resolve => {
-        if (!socket.connected) {
-          resolve({ success: false, error: '连接未建立，请刷新页面重试' })
-          return
-        }
-
-        const timer = setTimeout(() => {
-          resolve({ success: false, error: '发送超时，请重试' })
-        }, SEND_TIMEOUT_MS)
-
-        socket.emit('chat:send', payload, (response: ChatSendAck) => {
-          clearTimeout(timer)
-          resolve(normalizeSendAck(response))
-        })
-      })
-    },
     sendGuidance(payload: ChatGuidePayload): Promise<ChatGuideAck> {
       return new Promise(resolve => {
         if (!socket.connected) {
