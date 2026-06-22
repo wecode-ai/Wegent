@@ -3783,7 +3783,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(onGetProjectWorkspaceRoot).not.toHaveBeenCalled()
   })
 
-  test('refreshes environment info when an assistant message completes', async () => {
+  test('loads environment info only when the environment popover opens', async () => {
     const onLoadEnvironmentInfo = vi.fn().mockResolvedValue({
       additions: '+4',
       deletions: '-1',
@@ -3826,14 +3826,8 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
-    await waitFor(() => {
-      expect(onLoadEnvironmentInfo).toHaveBeenCalledTimes(1)
-      expect(onLoadEnvironmentInfo).toHaveBeenCalledWith(workspaceProject, {
-        deviceId: 'device-1',
-        path: '/repo',
-        source: 'project',
-      })
-    })
+    await new Promise(resolve => window.setTimeout(resolve, 0))
+    expect(onLoadEnvironmentInfo).not.toHaveBeenCalled()
 
     rerender(
       <DesktopWorkbenchLayout
@@ -3852,7 +3846,19 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
-    await waitFor(() => expect(onLoadEnvironmentInfo).toHaveBeenCalledTimes(2))
+    await new Promise(resolve => window.setTimeout(resolve, 0))
+    expect(onLoadEnvironmentInfo).not.toHaveBeenCalled()
+
+    await userEvent.click(screen.getByTestId('environment-info-button'))
+
+    await waitFor(() => {
+      expect(onLoadEnvironmentInfo).toHaveBeenCalledTimes(1)
+      expect(onLoadEnvironmentInfo).toHaveBeenCalledWith(workspaceProject, {
+        deviceId: 'device-1',
+        path: '/repo',
+        source: 'project',
+      })
+    })
   })
 
   test('closes the right workspace panel from the panel actions', async () => {
