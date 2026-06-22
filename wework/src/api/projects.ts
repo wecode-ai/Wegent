@@ -20,18 +20,6 @@ function withClientOrigin(path: string): string {
 }
 
 export function createProjectApi(client: HttpClient) {
-  function projectSessionPayload(options?: { taskId?: number }) {
-    return options?.taskId ? { task_id: options.taskId } : undefined
-  }
-
-  function startProjectSession(
-    path: string,
-    options?: { taskId?: number }
-  ): Promise<ProjectDeviceSessionResponse> {
-    const payload = projectSessionPayload(options)
-    return payload ? client.post(path, payload) : client.post(path)
-  }
-
   return {
     listProjects(): Promise<ProjectListResponse> {
       return client.get(withClientOrigin('/projects'))
@@ -69,17 +57,11 @@ export function createProjectApi(client: HttpClient) {
     deleteProject(projectId: number): Promise<void> {
       return client.delete(withClientOrigin(`/projects/${projectId}`))
     },
-    startTerminalSession(
-      projectId: number,
-      options?: { taskId?: number }
-    ): Promise<ProjectDeviceSessionResponse> {
-      return startProjectSession(withClientOrigin(`/projects/${projectId}/terminal`), options)
+    startTerminalSession(projectId: number): Promise<ProjectDeviceSessionResponse> {
+      return client.post(withClientOrigin(`/projects/${projectId}/terminal`))
     },
-    startCodeServerSession(
-      projectId: number,
-      options?: { taskId?: number }
-    ): Promise<ProjectDeviceSessionResponse> {
-      return startProjectSession(withClientOrigin(`/projects/${projectId}/code-server`), options)
+    startCodeServerSession(projectId: number): Promise<ProjectDeviceSessionResponse> {
+      return client.post(withClientOrigin(`/projects/${projectId}/code-server`))
     },
   }
 }

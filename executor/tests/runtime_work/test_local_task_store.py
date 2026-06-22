@@ -1234,6 +1234,164 @@ def test_codex_discovery_reads_user_visible_transcript(tmp_path):
     assert transcript[1]["status"] == "done"
 
 
+def test_codex_discovery_restores_processing_blocks_from_response_items(tmp_path):
+    from executor.runtime_work.codex_discovery import CodexSessionDiscovery
+
+    codex_home = tmp_path / "codex-home"
+    session_dir = codex_home / "sessions" / "2026" / "06" / "20"
+    session_dir.mkdir(parents=True)
+    thread_id = "018f2d6b-8c7a-7abc-9def-0123456789af"
+    session_path = session_dir / f"rollout-2026-06-20T13-52-19-{thread_id}.jsonl"
+    session_path.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "timestamp": "2026-06-20T05:52:19Z",
+                        "type": "session_meta",
+                        "payload": {
+                            "id": thread_id,
+                            "cwd": "/repo/Wegent",
+                            "thread_source": "user",
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "timestamp": "2026-06-20T05:52:20Z",
+                        "type": "response_item",
+                        "payload": {
+                            "type": "function_call",
+                            "call_id": "ignored-before-user",
+                            "name": "exec_command",
+                            "arguments": '{"cmd": "pwd"}',
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "timestamp": "2026-06-20T05:52:21Z",
+                        "type": "event_msg",
+                        "payload": {
+                            "type": "user_message",
+                            "message": "Restore Codex processing history",
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "timestamp": "2026-06-20T05:52:22Z",
+                        "type": "response_item",
+                        "payload": {
+                            "type": "reasoning",
+                            "id": "reasoning-1",
+                            "summary": [
+                                {"type": "summary_text", "text": "Inspect transcript"}
+                            ],
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "timestamp": "2026-06-20T05:52:23Z",
+                        "type": "response_item",
+                        "payload": {
+                            "type": "function_call",
+                            "call_id": "call-1",
+                            "name": "exec_command",
+                            "arguments": '{"cmd": "pwd", "workdir": "/repo/Wegent"}',
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "timestamp": "2026-06-20T05:52:24Z",
+                        "type": "response_item",
+                        "payload": {
+                            "type": "function_call_output",
+                            "call_id": "call-1",
+                            "output": "/repo/Wegent\n",
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "timestamp": "2026-06-20T05:52:25Z",
+                        "type": "response_item",
+                        "payload": {
+                            "type": "message",
+                            "id": "commentary-1",
+                            "role": "assistant",
+                            "phase": "commentary",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "I found the likely cause.",
+                                }
+                            ],
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "timestamp": "2026-06-20T05:52:26Z",
+                        "type": "event_msg",
+                        "payload": {
+                            "type": "task_complete",
+                            "last_agent_message": "Processing history restored",
+                        },
+                    }
+                ),
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    transcript = CodexSessionDiscovery(codex_home=codex_home).read_transcript(
+        thread_id,
+        str(session_path),
+    )
+
+    assert [message["role"] for message in transcript] == ["user", "assistant"]
+    reasoning_timestamp = int(
+        datetime(2026, 6, 20, 5, 52, 22, tzinfo=timezone.utc).timestamp() * 1000
+    )
+    tool_timestamp = int(
+        datetime(2026, 6, 20, 5, 52, 24, tzinfo=timezone.utc).timestamp() * 1000
+    )
+    final_timestamp = int(
+        datetime(2026, 6, 20, 5, 52, 26, tzinfo=timezone.utc).timestamp() * 1000
+    )
+    assert transcript[1]["createdAt"] == "2026-06-20T05:52:21Z"
+    blocks = transcript[1]["blocks"]
+    assert blocks == [
+        {
+            "id": "reasoning-1",
+            "type": "thinking",
+            "content": "Inspect transcript",
+            "status": "done",
+            "timestamp": reasoning_timestamp,
+        },
+        {
+            "id": "call-1",
+            "type": "tool",
+            "tool_use_id": "call-1",
+            "tool_name": "bash",
+            "tool_input": {"command": "pwd", "cwd": "/repo/Wegent"},
+            "tool_output": "/repo/Wegent\n",
+            "status": "done",
+            "timestamp": tool_timestamp,
+        },
+        {
+            "id": "commentary-1",
+            "type": "text",
+            "content": "I found the likely cause.",
+            "status": "done",
+            "timestamp": final_timestamp,
+        },
+    ]
+
+
 @pytest.mark.asyncio
 async def test_runtime_work_handler_refreshes_codex_sessions_before_listing(tmp_path):
     from executor.runtime_work.local_task_store import LocalTaskStore
@@ -1693,6 +1851,47 @@ async def test_runtime_work_handler_reads_discovered_codex_transcript(tmp_path):
                 json.dumps(
                     {
                         "timestamp": "2026-06-20T06:00:02Z",
+                        "type": "response_item",
+                        "payload": {
+                            "type": "function_call",
+                            "call_id": "call-runtime-1",
+                            "name": "exec_command",
+                            "arguments": '{"cmd": "pwd", "workdir": "/repo/Wegent"}',
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "timestamp": "2026-06-20T06:00:03Z",
+                        "type": "response_item",
+                        "payload": {
+                            "type": "function_call_output",
+                            "call_id": "call-runtime-1",
+                            "output": "/repo/Wegent\n",
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "timestamp": "2026-06-20T06:00:04Z",
+                        "type": "response_item",
+                        "payload": {
+                            "type": "message",
+                            "id": "commentary-runtime-1",
+                            "role": "assistant",
+                            "phase": "commentary",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "Project task metadata is loaded.",
+                                }
+                            ],
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "timestamp": "2026-06-20T06:00:05Z",
                         "type": "event_msg",
                         "payload": {
                             "type": "task_complete",
@@ -1736,6 +1935,30 @@ async def test_runtime_work_handler_reads_discovered_codex_transcript(tmp_path):
     assert [message["content"] for message in result["messages"]] == [
         "Show project task",
         "Project task is visible",
+    ]
+    assert result["messages"][1]["createdAt"] == "2026-06-20T06:00:01Z"
+    assert result["messages"][1]["blocks"] == [
+        {
+            "id": "call-runtime-1",
+            "type": "tool",
+            "tool_use_id": "call-runtime-1",
+            "tool_name": "bash",
+            "tool_input": {"command": "pwd", "cwd": "/repo/Wegent"},
+            "tool_output": "/repo/Wegent\n",
+            "status": "done",
+            "timestamp": int(
+                datetime(2026, 6, 20, 6, 0, 3, tzinfo=timezone.utc).timestamp() * 1000
+            ),
+        },
+        {
+            "id": "commentary-runtime-1",
+            "type": "text",
+            "content": "Project task metadata is loaded.",
+            "status": "done",
+            "timestamp": int(
+                datetime(2026, 6, 20, 6, 0, 5, tzinfo=timezone.utc).timestamp() * 1000
+            ),
+        },
     ]
 
 

@@ -348,6 +348,7 @@
     "back_to_workspace_tools": "Back to tools",
     "project_terminal_frame_title": "Project terminal",
     "scroll_to_bottom": "Scroll to bottom",
+    "loading_conversation": "Loading conversation...",
     "empty_conversation_title": "Start a new conversation",
     "empty_conversation_description": "Ask a question, paste context, or add attachments below. Codex responses will appear here.",
     "account_fallback": "Current account",

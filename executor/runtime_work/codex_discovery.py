@@ -429,6 +429,9 @@ def _iter_unique_matches(root: Path, pattern: str, seen: set[str]) -> Iterable[P
 def _read_session_transcript(path: Path, thread_id: str) -> list[dict[str, Any]]:
     messages: list[dict[str, Any]] = []
     pending_agent_message: Optional[dict[str, Any]] = None
+    processing_blocks: list[dict[str, Any]] = []
+    tool_blocks_by_call_id: dict[str, dict[str, Any]] = {}
+    turn_started_at: Optional[str] = None
     turn_counter = 0
 
     try:
@@ -444,9 +447,24 @@ def _read_session_transcript(path: Path, thread_id: str) -> list[dict[str, Any]]
 
                 event_type = payload.get("type")
                 timestamp = _record_timestamp(record, payload)
+                if record.get("type") == "response_item":
+                    if turn_counter > 0:
+                        _append_response_item_block(
+                            payload=payload,
+                            timestamp=timestamp,
+                            thread_id=thread_id,
+                            turn_counter=turn_counter,
+                            processing_blocks=processing_blocks,
+                            tool_blocks_by_call_id=tool_blocks_by_call_id,
+                        )
+                    continue
+
                 if event_type == "user_message":
                     turn_counter += 1
                     pending_agent_message = None
+                    processing_blocks = []
+                    tool_blocks_by_call_id = {}
+                    turn_started_at = timestamp
                     message = _first_text(payload, "message")
                     if message:
                         messages.append(
@@ -467,11 +485,13 @@ def _read_session_transcript(path: Path, thread_id: str) -> list[dict[str, Any]]
                             turn_counter=turn_counter,
                             role="assistant",
                             content=message,
-                            created_at=timestamp,
+                            created_at=turn_started_at or timestamp,
                             status="streaming",
+                            blocks=processing_blocks,
                         )
                 elif event_type == "task_complete":
                     message = _first_text(payload, "last_agent_message")
+                    _finish_processing_blocks(processing_blocks, timestamp)
                     if message:
                         messages.append(
                             _transcript_message(
@@ -479,30 +499,154 @@ def _read_session_transcript(path: Path, thread_id: str) -> list[dict[str, Any]]
                                 turn_counter=turn_counter,
                                 role="assistant",
                                 content=message,
-                                created_at=timestamp,
+                                created_at=turn_started_at or timestamp,
                                 status="done",
+                                blocks=processing_blocks,
                             )
                         )
                     pending_agent_message = None
+                    processing_blocks = []
+                    tool_blocks_by_call_id = {}
+                    turn_started_at = None
                 elif event_type == "turn_aborted":
                     reason = _first_text(payload, "reason") or "Codex turn aborted"
+                    _finish_processing_blocks(processing_blocks, timestamp)
                     messages.append(
                         _transcript_message(
                             thread_id=thread_id,
                             turn_counter=turn_counter,
                             role="assistant",
                             content=reason,
-                            created_at=timestamp,
+                            created_at=turn_started_at or timestamp,
                             status="cancelled",
+                            blocks=processing_blocks,
                         )
                     )
                     pending_agent_message = None
+                    processing_blocks = []
+                    tool_blocks_by_call_id = {}
+                    turn_started_at = None
     except OSError:
         return []
 
     if pending_agent_message:
+        _set_message_blocks(pending_agent_message, processing_blocks)
         messages.append(pending_agent_message)
     return messages
+
+
+def _append_response_item_block(
+    *,
+    payload: dict[str, Any],
+    timestamp: str,
+    thread_id: str,
+    turn_counter: int,
+    processing_blocks: list[dict[str, Any]],
+    tool_blocks_by_call_id: dict[str, dict[str, Any]],
+) -> None:
+    item_type = _normalize_codex_type(payload.get("type"))
+    timestamp_ms = _timestamp_to_millis(timestamp)
+
+    if item_type == "reasoning":
+        content = _extract_reasoning_text(payload)
+        if not content:
+            return
+        block_id = _first_text(payload, "id") or (
+            f"{thread_id}:thinking:{turn_counter}:{len(processing_blocks)}"
+        )
+        processing_blocks.append(
+            {
+                "id": block_id,
+                "type": "thinking",
+                "content": content,
+                "status": "done",
+                "timestamp": timestamp_ms,
+            }
+        )
+        return
+
+    if item_type == "function_call":
+        call_id = _response_item_call_id(payload)
+        if not call_id:
+            return
+        raw_name = _first_text(payload, "name") or "unknown"
+        raw_arguments = _parse_tool_arguments(payload.get("arguments"))
+        tool_name, tool_input = _normalize_tool(raw_name, raw_arguments)
+        block = {
+            "id": call_id,
+            "type": "tool",
+            "tool_use_id": call_id,
+            "tool_name": tool_name,
+            "tool_input": tool_input,
+            "status": "pending",
+            "timestamp": timestamp_ms,
+        }
+        processing_blocks.append(block)
+        tool_blocks_by_call_id[call_id] = block
+        return
+
+    if item_type == "function_call_output":
+        call_id = _response_item_call_id(payload)
+        if not call_id:
+            return
+        block = tool_blocks_by_call_id.get(call_id)
+        if block is None:
+            block = {
+                "id": call_id,
+                "type": "tool",
+                "tool_use_id": call_id,
+                "tool_name": "unknown",
+                "tool_input": {},
+                "timestamp": timestamp_ms,
+            }
+            processing_blocks.append(block)
+            tool_blocks_by_call_id[call_id] = block
+        block["tool_output"] = _stringify_tool_output(payload.get("output"))
+        block["status"] = "done"
+        _set_block_timestamp(block, timestamp_ms)
+        return
+
+    if item_type == "message":
+        phase = _normalize_codex_type(payload.get("phase"))
+        role = str(payload.get("role") or "").lower()
+        if phase != "commentary" or role != "assistant":
+            return
+        content = _extract_response_message_text(payload)
+        if not content:
+            return
+        block_id = _first_text(payload, "id") or (
+            f"{thread_id}:text:{turn_counter}:{len(processing_blocks)}"
+        )
+        processing_blocks.append(
+            {
+                "id": block_id,
+                "type": "text",
+                "content": content,
+                "status": "done",
+                "timestamp": timestamp_ms,
+            }
+        )
+
+
+def _set_message_blocks(
+    message: dict[str, Any],
+    blocks: list[dict[str, Any]],
+) -> None:
+    if blocks:
+        message["blocks"] = list(blocks)
+
+
+def _finish_processing_blocks(blocks: list[dict[str, Any]], timestamp: str) -> None:
+    if not blocks:
+        return
+    _set_block_timestamp(blocks[-1], _timestamp_to_millis(timestamp))
+
+
+def _set_block_timestamp(block: dict[str, Any], timestamp_ms: int) -> None:
+    current = block.get("timestamp")
+    if isinstance(current, (int, float)) and current >= timestamp_ms:
+        return
+    block["timestamp"] = timestamp_ms
 
 
 def _transcript_message(
@@ -513,15 +657,18 @@ def _transcript_message(
     content: str,
     created_at: str,
     status: str,
+    blocks: Optional[list[dict[str, Any]]] = None,
 ) -> dict[str, Any]:
     index = max(turn_counter, 0)
-    return {
+    message = {
         "id": f"{thread_id}:{role}:{index}",
         "role": role,
         "content": content,
         "createdAt": created_at,
         "status": status,
     }
+    _set_message_blocks(message, blocks or [])
+    return message
 
 
 def _record_timestamp(record: dict[str, Any], payload: dict[str, Any]) -> str:
@@ -542,3 +689,90 @@ def _record_timestamp_value(
     if isinstance(timestamp, (int, float)):
         return datetime.fromtimestamp(timestamp, timezone.utc).isoformat()
     return None
+
+
+def _timestamp_to_millis(value: str) -> int:
+    parsed = _parse_datetime(value)
+    if parsed is not None:
+        return int(parsed.timestamp() * 1000)
+    return int(datetime.now(timezone.utc).timestamp() * 1000)
+
+
+def _normalize_codex_type(value: Any) -> str:
+    raw_value = getattr(value, "value", value)
+    return str(raw_value or "").replace("-", "_").lower()
+
+
+def _response_item_call_id(payload: dict[str, Any]) -> Optional[str]:
+    return _first_text(payload, "call_id", "callId", "id")
+
+
+def _parse_tool_arguments(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str) and value:
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return {"arguments": value}
+        return parsed if isinstance(parsed, dict) else {"arguments": parsed}
+    return {}
+
+
+def _normalize_tool(
+    name: str,
+    arguments: dict[str, Any],
+) -> tuple[str, dict[str, Any]]:
+    if name != "exec_command":
+        return name, arguments
+
+    normalized_arguments = dict(arguments)
+    command = normalized_arguments.pop("cmd", None)
+    workdir = normalized_arguments.pop("workdir", None)
+    if command is not None:
+        normalized_arguments["command"] = command
+    if workdir is not None:
+        normalized_arguments["cwd"] = workdir
+    return "bash", normalized_arguments
+
+
+def _extract_reasoning_text(payload: dict[str, Any]) -> Optional[str]:
+    parts = _collect_text_parts(payload.get("summary"))
+    if not parts:
+        parts = _collect_text_parts(payload.get("content"))
+    content = "\n".join(parts).strip()
+    return content or None
+
+
+def _extract_response_message_text(payload: dict[str, Any]) -> Optional[str]:
+    text = _first_text(payload, "text")
+    if text:
+        return text
+    content = "\n".join(_collect_text_parts(payload.get("content"))).strip()
+    return content or None
+
+
+def _collect_text_parts(value: Any) -> list[str]:
+    if isinstance(value, str):
+        text = value.strip()
+        return [text] if text else []
+    if isinstance(value, list):
+        parts: list[str] = []
+        for item in value:
+            parts.extend(_collect_text_parts(item))
+        return parts
+    if isinstance(value, dict):
+        parts: list[str] = []
+        for key in ("text", "content"):
+            parts.extend(_collect_text_parts(value.get(key)))
+        return parts
+    return []
+
+
+def _stringify_tool_output(value: Any) -> Any:
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    try:
+        return json.dumps(value, ensure_ascii=False)
+    except (TypeError, ValueError):
+        return str(value)
