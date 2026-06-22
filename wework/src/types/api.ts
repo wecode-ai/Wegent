@@ -285,6 +285,16 @@ export interface DeviceWorkspacePrepareRequest {
   label?: string | null
 }
 
+export interface DeleteDeviceWorkspaceRequest {
+  projectId: number
+  deviceId: string
+  workspacePath: string
+}
+
+export interface DeleteDeviceWorkspaceResponse {
+  deleted: boolean
+}
+
 export interface DeviceWorkspaceResponse {
   id: number
   userId: number

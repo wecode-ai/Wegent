@@ -125,6 +125,26 @@ async def prepare_device_workspace_endpoint(
     )
 
 
+@router.delete("/device-workspaces")
+def delete_device_workspace_endpoint(
+    project_id: int = Query(..., ge=1),
+    device_id: str = Query(..., min_length=1),
+    workspace_path: str = Query(..., min_length=1),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Deactivate one Project-to-device-directory mapping."""
+
+    deleted = runtime_work_service.delete_device_workspace(
+        db=db,
+        user_id=current_user.id,
+        project_id=project_id,
+        device_id=device_id,
+        workspace_path=workspace_path,
+    )
+    return {"deleted": deleted}
+
+
 @router.post(
     "/transcript",
     response_model=RuntimeTranscriptResponse,

@@ -15,6 +15,7 @@ import {
   isWeWorkCompatibleDevice,
 } from '@/lib/device-capabilities'
 import type {
+  DeleteDeviceWorkspaceRequest,
   DeviceInfo,
   DeviceWorkspacePrepareRequest,
   DeviceWorkspacePrepareResponse,
@@ -177,6 +178,7 @@ interface DesktopWorkbenchMainProps {
   onPrepareDeviceWorkspace?: (
     data: DeviceWorkspacePrepareRequest
   ) => Promise<DeviceWorkspacePrepareResponse>
+  onDeleteDeviceWorkspace?: (data: DeleteDeviceWorkspaceRequest) => Promise<void>
   onGetDeviceHomeDirectory?: (deviceId: string) => Promise<string>
   onGetProjectWorkspaceRoot?: (deviceId: string) => Promise<string>
   onListDeviceDirectories?: (deviceId: string, path: string) => Promise<string[]>
@@ -229,6 +231,7 @@ export function DesktopWorkbenchMain({
   onContinueInIm,
   onForkCurrentRuntimeTask,
   onPrepareDeviceWorkspace,
+  onDeleteDeviceWorkspace,
   onGetDeviceHomeDirectory,
   onGetProjectWorkspaceRoot,
   onListDeviceDirectories,
@@ -710,6 +713,7 @@ export function DesktopWorkbenchMain({
         onOpenChange={setForkDialogOpen}
         onStopCurrentResponse={onPauseResponse}
         onPrepareDeviceWorkspace={onPrepareDeviceWorkspace}
+        onDeleteDeviceWorkspace={onDeleteDeviceWorkspace}
         onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
         onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot}
         onListDeviceDirectories={onListDeviceDirectories}

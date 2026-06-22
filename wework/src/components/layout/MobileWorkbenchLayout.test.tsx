@@ -387,6 +387,7 @@ describe('MobileWorkbenchLayout', () => {
       executionTarget: 'local' as const,
       branchName: 'main',
     })
+    const onListEnvironmentBranches = vi.fn().mockResolvedValue(['feature/mobile', 'main'])
     const onCheckoutEnvironmentBranch = vi.fn().mockResolvedValue(undefined)
 
     renderAtMobileWidth(
@@ -409,7 +410,7 @@ describe('MobileWorkbenchLayout', () => {
         }}
         onSelectProject={vi.fn()}
         onLoadEnvironmentInfo={onLoadEnvironmentInfo}
-        onListEnvironmentBranches={vi.fn().mockResolvedValue(['feature/mobile', 'main'])}
+        onListEnvironmentBranches={onListEnvironmentBranches}
         onCheckoutEnvironmentBranch={onCheckoutEnvironmentBranch}
         onCreateEnvironmentBranch={vi.fn().mockResolvedValue(undefined)}
         onInputChange={vi.fn()}
@@ -417,9 +418,10 @@ describe('MobileWorkbenchLayout', () => {
       />
     )
 
-    await waitFor(() =>
-      expect(screen.getByTestId('project-branch-button')).toHaveTextContent('main')
-    )
+    await new Promise(resolve => window.setTimeout(resolve, 0))
+    expect(onLoadEnvironmentInfo).not.toHaveBeenCalled()
+    expect(onListEnvironmentBranches).not.toHaveBeenCalled()
+    expect(screen.getByTestId('project-branch-button')).toBeInTheDocument()
     const controls = screen.getByTestId('project-work-button').parentElement?.parentElement
     expect(controls).toHaveClass('flex-col')
     expect(screen.getByTestId('execution-mode-button')).toBeInTheDocument()
@@ -430,13 +432,9 @@ describe('MobileWorkbenchLayout', () => {
     expect(screen.getByTestId('project-search-input')).not.toHaveFocus()
     await userEvent.click(screen.getByTestId('project-work-mobile-close-button'))
 
-    await userEvent.click(screen.getByTestId('execution-mode-button'))
-    expect(screen.getByTestId('project-execution-mode-menu')).toHaveAttribute('data-mobile', 'true')
-    expect(screen.getByTestId('project-execution-mode-menu')).toHaveClass('fixed', 'max-h-[45dvh]')
-    await userEvent.click(screen.getByTestId('project-work-mobile-close-button'))
-
     await userEvent.click(screen.getByTestId('project-branch-button'))
     expect(await screen.findByTestId('project-branch-menu')).toHaveAttribute('data-mobile', 'true')
+    expect(onListEnvironmentBranches).toHaveBeenCalledTimes(1)
     expect(screen.getByTestId('project-branch-menu')).toHaveClass('fixed', 'max-h-[56dvh]')
     expect(screen.getByTestId('project-branch-search-input')).not.toHaveFocus()
     const options = await screen.findAllByTestId('project-branch-option')

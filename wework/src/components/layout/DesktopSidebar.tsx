@@ -25,8 +25,10 @@ import { cn } from '@/lib/utils'
 import type {
   CreateGitWorkspaceProjectRequest,
   CreateProjectRequest,
+  DeleteDeviceWorkspaceRequest,
   DeviceWorkspacePrepareRequest,
   DeviceWorkspacePrepareResponse,
+  DeviceWorkspaceResponse,
   DeviceInfo,
   GitBranch,
   GitRepoInfo,
@@ -90,6 +92,7 @@ interface DesktopSidebarProps {
   onPrepareDeviceWorkspace: (
     data: DeviceWorkspacePrepareRequest
   ) => Promise<DeviceWorkspacePrepareResponse>
+  onDeleteDeviceWorkspace: (data: DeleteDeviceWorkspaceRequest) => Promise<void>
   onListGitRepositories: () => Promise<GitRepoInfo[]>
   onListGitBranches: (repo: GitRepoInfo) => Promise<GitBranch[]>
   onUpdateProjectName: (projectId: number, name: string) => Promise<void>
@@ -333,6 +336,29 @@ function getRuntimeWorkspaceDeviceColor(workspace: RuntimeDeviceWorkspace): stri
 
 function getRuntimeWorkspaceTaskCount(workspaces: RuntimeDeviceWorkspace[]): number {
   return workspaces.reduce((count, workspace) => count + workspace.localTasks.length, 0)
+}
+
+function getProjectDeviceWorkspaces(
+  runtimeWork: RuntimeWorkListResponse | null | undefined,
+  projectId: number | undefined
+): DeviceWorkspaceResponse[] {
+  if (!runtimeWork || projectId === undefined) return []
+  const projectWork = runtimeWork.projects.find(item => item.project.id === projectId)
+  return (
+    projectWork?.deviceWorkspaces.map((workspace, index) => ({
+      id: workspace.id ?? -(index + 1),
+      userId: 0,
+      projectId,
+      deviceId: workspace.deviceId,
+      workspacePath: workspace.workspacePath,
+      repoUrl: workspace.repoUrl ?? null,
+      repoRootFingerprint: workspace.repoRootFingerprint ?? null,
+      label: workspace.label ?? null,
+      lastSeenAt: null,
+      createdAt: '',
+      updatedAt: '',
+    })) ?? []
+  )
 }
 
 function filterRuntimeWorkspacesByDevice(
@@ -1114,6 +1140,7 @@ export function DesktopSidebar({
   onCreateProject,
   onCreateGitWorkspaceProject,
   onPrepareDeviceWorkspace,
+  onDeleteDeviceWorkspace,
   onListGitRepositories,
   onListGitBranches,
   onUpdateProjectName,
@@ -1557,6 +1584,7 @@ export function DesktopSidebar({
         open={projectCreateMode !== null || editingProject !== null}
         mode={editingProject ? 'existing' : (projectCreateMode ?? 'scratch')}
         project={editingProject}
+        deviceWorkspaces={getProjectDeviceWorkspaces(runtimeWork, editingProject?.id)}
         devices={devices}
         onClose={() => {
           setProjectCreateMode(null)
@@ -1570,6 +1598,8 @@ export function DesktopSidebar({
         onCreateProject={onCreateProject}
         onCreateGitWorkspaceProject={onCreateGitWorkspaceProject}
         onPrepareDeviceWorkspace={onPrepareDeviceWorkspace}
+        onDeleteDeviceWorkspace={onDeleteDeviceWorkspace}
+        onUpdateProjectName={onUpdateProjectName}
         preferredDeviceId={preferredDeviceId}
         onSelectDevicePreference={onRememberExecutionDevice}
         upgradingDevices={upgradingDevices}

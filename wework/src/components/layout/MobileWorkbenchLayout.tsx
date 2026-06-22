@@ -25,6 +25,7 @@ import type {
   BindRuntimeTaskIMSessionsResponse,
   CreateGitWorkspaceProjectRequest,
   CreateProjectRequest,
+  DeleteDeviceWorkspaceRequest,
   DeviceWorkspacePrepareRequest,
   DeviceWorkspacePrepareResponse,
   GitBranch,
@@ -81,6 +82,7 @@ interface MobileWorkbenchLayoutProps {
   onPrepareDeviceWorkspace?: (
     data: DeviceWorkspacePrepareRequest
   ) => Promise<DeviceWorkspacePrepareResponse>
+  onDeleteDeviceWorkspace?: (data: DeleteDeviceWorkspaceRequest) => Promise<void>
   onListGitRepositories?: () => Promise<GitRepoInfo[]>
   onListGitBranches?: (repo: GitRepoInfo) => Promise<GitBranch[]>
   onUpdateProjectName?: (projectId: number, name: string) => Promise<void>
@@ -168,6 +170,7 @@ export function MobileWorkbenchLayout({
   onCreateProject,
   onCreateGitWorkspaceProject,
   onPrepareDeviceWorkspace,
+  onDeleteDeviceWorkspace,
   onListGitRepositories,
   onListGitBranches,
   onUpdateProjectName,
@@ -176,7 +179,6 @@ export function MobileWorkbenchLayout({
   onGetProjectWorkspaceRoot,
   onListDeviceDirectories,
   onCreateDeviceDirectory,
-  onLoadEnvironmentInfo,
   onListEnvironmentBranches,
   onCheckoutEnvironmentBranch,
   onCreateEnvironmentBranch,
@@ -209,8 +211,6 @@ export function MobileWorkbenchLayout({
     executionTarget: 'local',
   })
   const [workspaceTarget, setWorkspaceTarget] = useState<WorkspaceTarget | null>(null)
-  const [workspaceTargetError, setWorkspaceTargetError] = useState<string | null>(null)
-  const [workspaceTargetResolving, setWorkspaceTargetResolving] = useState(true)
   const [continueInImOpen, setContinueInImOpen] = useState(false)
   const [forkDialogOpen, setForkDialogOpen] = useState(false)
   const [imSessions, setImSessions] = useState<IMPrivateSession[]>([])
@@ -264,42 +264,6 @@ export function MobileWorkbenchLayout({
         projectName: state.currentProject.name,
       })
     : t('workbench.empty_title', '我们该做什么？')
-  const refreshEnvironmentInfo = useCallback(async () => {
-    if (!onLoadEnvironmentInfo || !activeConversationProject) return
-
-    if (workspaceTargetResolving) {
-      setEnvironmentInfo(info => ({ ...info, loading: true }))
-      return
-    }
-
-    if (!workspaceTarget) {
-      setEnvironmentInfo(info => ({
-        ...info,
-        loading: false,
-        error: workspaceTargetError ?? 'Workspace is not ready',
-      }))
-      return
-    }
-
-    setEnvironmentInfo(info => ({ ...info, loading: true }))
-    try {
-      const info = await onLoadEnvironmentInfo(activeConversationProject, workspaceTarget)
-      setEnvironmentInfo({ ...info, loading: false })
-    } catch (error) {
-      setEnvironmentInfo(info => ({
-        ...info,
-        loading: false,
-        error: error instanceof Error ? error.message : 'Failed to load environment info',
-      }))
-    }
-  }, [
-    activeConversationProject,
-    onLoadEnvironmentInfo,
-    workspaceTarget,
-    workspaceTargetError,
-    workspaceTargetResolving,
-  ])
-
   const baseProjectWork = projectWork ?? {
     projects: state.projects,
     devices: state.devices,
@@ -315,7 +279,7 @@ export function MobileWorkbenchLayout({
     ...baseProjectWork,
     branchName: environmentInfo.branchName,
     branchLoading: environmentInfo.loading,
-    onRefreshBranch: refreshEnvironmentInfo,
+    onRefreshBranch: undefined,
     onListBranches:
       activeConversationProject && onListEnvironmentBranches && workspaceTarget
         ? () => onListEnvironmentBranches(activeConversationProject, workspaceTarget)
@@ -328,14 +292,14 @@ export function MobileWorkbenchLayout({
               branchName,
               workspaceTarget
             )
-            await refreshEnvironmentInfo()
+            setEnvironmentInfo(info => ({ ...info, branchName }))
           }
         : undefined,
     onCreateBranch:
       activeConversationProject && onCreateEnvironmentBranch && workspaceTarget
         ? async branchName => {
             await onCreateEnvironmentBranch(activeConversationProject, branchName, workspaceTarget)
-            await refreshEnvironmentInfo()
+            setEnvironmentInfo(info => ({ ...info, branchName }))
           }
         : undefined,
   }
@@ -384,37 +348,28 @@ export function MobileWorkbenchLayout({
   }, [])
 
   useEffect(() => {
-    if (activeConversationProject && !state.currentTask) {
-      void refreshEnvironmentInfo()
-    }
-  }, [activeConversationProject, refreshEnvironmentInfo, state.currentTask])
-
-  useEffect(() => {
     let cancelled = false
-    setWorkspaceTargetResolving(true)
-    setWorkspaceTarget(null)
-    setWorkspaceTargetError(null)
-    resolveWorkspaceTarget({
-      currentTask: state.currentTask,
-      currentProject: activeConversationProject,
-      api: workspaceTargetResolverApi,
-    })
+    Promise.resolve()
+      .then(() => {
+        if (!cancelled) {
+          setWorkspaceTarget(null)
+        }
+        return resolveWorkspaceTarget({
+          currentTask: state.currentTask,
+          currentProject: activeConversationProject,
+          api: workspaceTargetResolverApi,
+        })
+      })
       .then(target => {
         if (!cancelled) {
           setWorkspaceTarget(current =>
             workspaceTargetKey(current) === workspaceTargetKey(target) ? current : target
           )
-          setWorkspaceTargetError(null)
-          setWorkspaceTargetResolving(false)
         }
       })
-      .catch(error => {
+      .catch(() => {
         if (!cancelled) {
           setWorkspaceTarget(null)
-          setWorkspaceTargetError(
-            error instanceof Error ? error.message : 'Failed to resolve workspace'
-          )
-          setWorkspaceTargetResolving(false)
         }
       })
     return () => {
@@ -735,6 +690,7 @@ export function MobileWorkbenchLayout({
         onCreateProject={onCreateProject}
         onCreateGitWorkspaceProject={onCreateGitWorkspaceProject}
         onPrepareDeviceWorkspace={onPrepareDeviceWorkspace}
+        onDeleteDeviceWorkspace={onDeleteDeviceWorkspace}
         onListGitRepositories={onListGitRepositories}
         onListGitBranches={onListGitBranches}
         onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
@@ -767,6 +723,7 @@ export function MobileWorkbenchLayout({
         onOpenChange={setForkDialogOpen}
         onStopCurrentResponse={onPauseResponse}
         onPrepareDeviceWorkspace={onPrepareDeviceWorkspace}
+        onDeleteDeviceWorkspace={onDeleteDeviceWorkspace}
         onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
         onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot}
         onListDeviceDirectories={onListDeviceDirectories}
