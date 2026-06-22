@@ -116,6 +116,9 @@ const RUNTIME_WORK_POLL_INTERVAL_MS = 5000
 const STANDALONE_PROJECT_ID = 0
 const EMPTY_MESSAGE_TASK_TITLE = '新对话'
 const RUNTIME_BLOCK_SUBTASK_ID_OFFSET = 1_000_000_000
+
+type SelectableProjectDeviceWorkspace = RuntimeDeviceWorkspace & { id: number }
+
 const DEVICE_STATUS_LABELS: Record<string, string> = {
   online: '在线',
   busy: '忙碌',
@@ -719,12 +722,13 @@ function findRuntimeWorkspaceForDevice(
 function getSelectableProjectDeviceWorkspaces(
   runtimeWork: RuntimeWorkListResponse | null | undefined,
   projectId: number | null | undefined
-): RuntimeDeviceWorkspace[] {
+): SelectableProjectDeviceWorkspace[] {
   if (!projectId) return []
   const projectWork = runtimeWork?.projects.find(item => item.project.id === projectId)
   return (
     projectWork?.deviceWorkspaces.filter(
-      workspace => workspace.id != null && workspace.available
+      (workspace): workspace is SelectableProjectDeviceWorkspace =>
+        workspace.id != null && workspace.available
     ) ?? []
   )
 }
@@ -734,14 +738,14 @@ function getSingleProjectDeviceWorkspaceId(
   projectId: number | null | undefined
 ): number | null {
   const workspaces = getSelectableProjectDeviceWorkspaces(runtimeWork, projectId)
-  return workspaces.length === 1 ? (workspaces[0].id ?? null) : null
+  return workspaces.length === 1 ? workspaces[0].id : null
 }
 
 function findProjectDeviceWorkspace(
   runtimeWork: RuntimeWorkListResponse | null | undefined,
   projectId: number | null | undefined,
   deviceWorkspaceId: number | null | undefined
-): RuntimeDeviceWorkspace | null {
+): SelectableProjectDeviceWorkspace | null {
   if (!deviceWorkspaceId) return null
   return (
     getSelectableProjectDeviceWorkspaces(runtimeWork, projectId).find(
@@ -1976,24 +1980,35 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         projectId,
         state.selectedDeviceWorkspaceId
       )
-      if (projectId && !selectedProjectWorkspace) {
-        reportSendBlocked('请选择任务运行位置')
-        return false
-      }
-      const workspacePath = projectId
-        ? null
-        : findRuntimeWorkspaceForDevice(state.runtimeWork, activeDeviceId)
-      if (!projectId && (!activeDeviceId || !workspacePath)) {
-        reportSendBlocked('请选择项目或打开设备工作区后再发送')
-        return false
+      let runtimeTaskTarget: Pick<
+        RuntimeTaskCreateRequest,
+        'projectId' | 'deviceWorkspaceId' | 'deviceId' | 'workspacePath'
+      >
+      if (projectId) {
+        if (!selectedProjectWorkspace) {
+          reportSendBlocked('请选择任务运行位置')
+          return false
+        }
+        runtimeTaskTarget = {
+          projectId,
+          deviceWorkspaceId: selectedProjectWorkspace.id,
+        }
+      } else {
+        const workspacePath = findRuntimeWorkspaceForDevice(state.runtimeWork, activeDeviceId)
+        if (!activeDeviceId || !workspacePath) {
+          reportSendBlocked('请选择项目或打开设备工作区后再发送')
+          return false
+        }
+        runtimeTaskTarget = {
+          deviceId: activeDeviceId,
+          workspacePath,
+        }
       }
 
       const selectedModel =
         modelSelection.selectedModel ?? resolveAutomaticModel(modelSelection.models)
       const createRequest: RuntimeTaskCreateRequest = {
-        ...(projectId
-          ? { projectId, deviceWorkspaceId: selectedProjectWorkspace?.id }
-          : { deviceId: activeDeviceId, workspacePath: workspacePath as string }),
+        ...runtimeTaskTarget,
         teamId: payload.team_id,
         runtime: inferRuntimeName(selectedModel),
         message: payload.message,
