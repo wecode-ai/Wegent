@@ -82,6 +82,10 @@ def test_create_upload_grant_returns_presigned_upload(
         generate_upload_url.call_args.kwargs["bucket"]
         == settings.WORKSPACE_ARCHIVE_BUCKET
     )
+    assert (
+        generate_upload_url.call_args.kwargs["expires_seconds"]
+        == settings.PUBLISH_PRESIGNED_UPLOAD_EXPIRE_SECONDS
+    )
 
 
 def test_create_download_grant_returns_presigned_download(
@@ -117,6 +121,10 @@ def test_create_download_grant_returns_presigned_download(
     assert (
         generate_download_url.call_args.kwargs["bucket"]
         == settings.WORKSPACE_ARCHIVE_BUCKET
+    )
+    assert (
+        generate_download_url.call_args.kwargs["expires_seconds"]
+        == settings.PUBLISH_PRESIGNED_DOWNLOAD_EXPIRE_SECONDS
     )
 
 

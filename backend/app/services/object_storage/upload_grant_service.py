@@ -105,7 +105,7 @@ class ObjectStorageUploadGrantService:
         download_url, expires_at = object_storage_presign_service.generate_download_url(
             bucket=settings.WORKSPACE_ARCHIVE_BUCKET,
             object_key=object_key,
-            expires_seconds=settings.PUBLISH_PRESIGNED_UPLOAD_EXPIRE_SECONDS,
+            expires_seconds=settings.PUBLISH_PRESIGNED_DOWNLOAD_EXPIRE_SECONDS,
         )
         return ObjectStorageDownloadGrant(
             download_url=download_url,

@@ -218,6 +218,7 @@ class Settings(BaseSettings):
 
     # Publish storage configuration
     PUBLISH_PRESIGNED_UPLOAD_EXPIRE_SECONDS: int = 3600
+    PUBLISH_PRESIGNED_DOWNLOAD_EXPIRE_SECONDS: int = 90 * 24 * 60 * 60
 
     # Frontend URL configuration
     FRONTEND_URL: str = "http://localhost:3000"

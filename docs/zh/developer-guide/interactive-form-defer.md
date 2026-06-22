@@ -114,3 +114,16 @@ Skill 发布相关 API 必须支持该 token：
 - `PUT /api/v1/kinds/skills/{skill_id}`：覆盖已有 Skill。
 
 普通业务接口不应默认接受 `WEGENT_SKILL_IDENTITY_TOKEN`，避免把 Skill runtime identity 扩大成通用用户凭证。
+
+## Skill 发布对象存储授权
+
+Skill 发布脚本需要上传或读取生成产物时，应通过 Backend 内部对象存储授权接口获取按 Task 和文件名限定的预签名 URL。Backend 会使用当前用户、`task_id` 和安全文件名生成 `publish/{user_name}/{task_id}/{object_name}` 对象 key，并校验 `WEGENT_SKILL_IDENTITY_TOKEN` 与当前用户匹配。
+
+预签名 URL 过期时间分开配置：
+
+| 配置项 | 默认值 | 用途 |
+| --- | --- | --- |
+| `PUBLISH_PRESIGNED_UPLOAD_EXPIRE_SECONDS` | `3600` | 上传 URL 的有效期 |
+| `PUBLISH_PRESIGNED_DOWNLOAD_EXPIRE_SECONDS` | `7776000` | 下载 URL 的有效期，默认 90 天 |
+
+上传 URL 应保持短有效期，降低未使用授权泄露后的风险。下载 URL 需要覆盖发布产物被后续流程读取的时间窗口，因此与上传 URL 使用独立配置。

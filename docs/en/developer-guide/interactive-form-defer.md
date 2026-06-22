@@ -114,3 +114,16 @@ Skill publishing APIs must support this token:
 - `PUT /api/v1/kinds/skills/{skill_id}`: overwrite an existing Skill.
 
 General business APIs should not accept `WEGENT_SKILL_IDENTITY_TOKEN` by default, otherwise the Skill runtime identity would become a general user credential.
+
+## Skill Publishing Object Storage Grants
+
+When Skill publishing scripts need to upload or read generated artifacts, they should ask Backend internal object-storage grant APIs for presigned URLs scoped to one Task and one file name. Backend builds the object key as `publish/{user_name}/{task_id}/{object_name}` from the current user, `task_id`, and a safe file name, then verifies that `WEGENT_SKILL_IDENTITY_TOKEN` matches the current user.
+
+Presigned URL expiration is configured separately:
+
+| Setting | Default | Purpose |
+| --- | --- | --- |
+| `PUBLISH_PRESIGNED_UPLOAD_EXPIRE_SECONDS` | `3600` | Upload URL lifetime |
+| `PUBLISH_PRESIGNED_DOWNLOAD_EXPIRE_SECONDS` | `7776000` | Download URL lifetime, 90 days by default |
+
+Upload URLs should stay short-lived to limit risk if an unused grant leaks. Download URLs need to cover the time window in which later publishing steps read generated artifacts, so they use an independent setting.
