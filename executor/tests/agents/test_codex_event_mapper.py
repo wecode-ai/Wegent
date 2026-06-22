@@ -79,6 +79,35 @@ async def test_codex_completion_includes_turn_file_changes():
 
 
 @pytest.mark.asyncio
+async def test_codex_completion_includes_executor_session_metadata():
+    transport = GeneratorTransport()
+    emitter = EmitterBuilder().with_task(1, 2).with_transport(transport).build()
+    mapper = CodeXEventMapper(
+        emitter,
+        executor_session_provider=lambda: {
+            "agent": "CodeX",
+            "threadId": "codex-thread-1",
+        },
+    )
+
+    status = await mapper.handle(
+        SimpleNamespace(
+            method="turn/completed",
+            payload=SimpleNamespace(
+                turn=SimpleNamespace(status=SimpleNamespace(value="completed"))
+            ),
+        )
+    )
+
+    completed = transport.get_events()[-1][1]["response"]
+    assert status == TaskStatus.COMPLETED
+    assert completed["executor_session"] == {
+        "agent": "CodeX",
+        "threadId": "codex-thread-1",
+    }
+
+
+@pytest.mark.asyncio
 async def test_codex_records_native_turn_diff_for_diagnostics_only():
     emitter = MagicMock()
     mapper = CodeXEventMapper(emitter)

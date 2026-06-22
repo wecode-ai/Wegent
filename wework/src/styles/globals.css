@@ -17,6 +17,9 @@
   --color-sidebar: 229 229 231 / 0.72;
   --color-sidebar-active: 222 223 226;
   --color-sidebar-hover: 255 255 255 / 0.7;
+  --color-sidebar-marked: 255 244 214;
+  --color-sidebar-marked-hover: 255 232 163;
+  --color-sidebar-marked-accent: 166 106 0;
   --color-sidebar-text-primary: 36 40 45;
   --color-sidebar-text-secondary: 82 89 98;
   --color-sidebar-text-muted: 136 143 152;
@@ -52,6 +55,9 @@
   --color-sidebar: 31 35 41 / 0.82;
   --color-sidebar-active: 52 58 66;
   --color-sidebar-hover: 255 255 255 / 0.08;
+  --color-sidebar-marked: 82 64 24;
+  --color-sidebar-marked-hover: 105 83 31;
+  --color-sidebar-marked-accent: 245 180 52;
   --color-sidebar-text-primary: 232 238 246;
   --color-sidebar-text-secondary: 181 191 205;
   --color-sidebar-text-muted: 126 138 153;

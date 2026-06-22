@@ -18,7 +18,6 @@ from app.api.endpoints import (
     knowledge,
     knowledge_open,
     knowledge_transfer,
-    local_codex,
     local_executor,
     mcp_providers,
     oidc,
@@ -28,6 +27,7 @@ from app.api.endpoints import (
     prompt_optimization,
     quota,
     repository,
+    runtime_work,
     share,
     skill_identity,
     skill_market,
@@ -230,7 +230,7 @@ api_router.include_router(
     local_executor.router, prefix="/local-executor", tags=["local-executor"]
 )
 api_router.include_router(
-    local_codex.router, prefix="/local-codex", tags=["local-codex"]
+    runtime_work.router, prefix="/runtime-work", tags=["runtime-work"]
 )
 
 api_router.include_router(utils.router, prefix="/utils", tags=["utils"])

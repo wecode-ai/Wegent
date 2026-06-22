@@ -92,7 +92,6 @@ class CodeXAgent(Agent):
         self._turn = None
         self._bot_id = self._resolve_bot_id(task_data)
         self._session_store = CodeXSessionStore()
-        self.local_codex_thread_id = getattr(task_data, "local_codex_thread_id", None)
         self.thread_id: Optional[str] = None
         self._local_image_paths: list[str | None] = []
         self._model_input_files: list[str] = []
@@ -115,11 +114,13 @@ class CodeXAgent(Agent):
 
     async def pre_execute(self) -> Tuple[TaskStatus, Optional[str]]:
         try:
+            self.prepare_project_workspace_path()
+            await self.restore_fork_workspace_archive_if_needed()
             await self.download_code()
             self._prepare_standalone_chat_workspace()
             if self.project_path is None:
                 self.prepare_project_workspace_path()
-            if self.project_path is None and not self._workspace_is_optional():
+            if self.project_path is None:
                 self.project_path = self._default_workspace_path()
                 Path(self.project_path).mkdir(parents=True, exist_ok=True)
             return TaskStatus.SUCCESS, None
@@ -208,6 +209,7 @@ class CodeXAgent(Agent):
         mapper = CodeXEventMapper(
             self.emitter,
             turn_file_change_tracker=turn_file_change_tracker,
+            executor_session_provider=self._executor_session_metadata,
         )
 
         try:
@@ -322,17 +324,9 @@ class CodeXAgent(Agent):
 
     async def _open_thread(self) -> None:
         assert self.codex_config is not None
+        self._seed_inherited_thread()
         developer_instructions = self._build_developer_instructions()
         thread_kwargs = self._build_thread_kwargs(developer_instructions)
-        if self.local_codex_thread_id:
-            self._thread = await self._codex.thread_resume(
-                self.local_codex_thread_id,
-                **thread_kwargs,
-            )
-            self.thread_id = self.local_codex_thread_id
-            self._session_store.save(self.task_id, self._bot_id, self.thread_id)
-            return
-
         thread_id = self._session_store.load(
             self.task_id,
             self._bot_id,
@@ -361,6 +355,44 @@ class CodeXAgent(Agent):
             )
         self.thread_id = self._thread.id
         self._session_store.save(self.task_id, self._bot_id, self.thread_id)
+
+    def _find_inherited_thread(self) -> Optional[str]:
+        for session in self.task_data.inherited_sessions or []:
+            if not isinstance(session, dict):
+                continue
+            if str(session.get("agent") or "") not in {"CodeX", "Codex"}:
+                continue
+            bot_id = session.get("botId")
+            if bot_id is not None and self._bot_id is not None:
+                try:
+                    if int(bot_id) != int(self._bot_id):
+                        continue
+                except (TypeError, ValueError):
+                    continue
+            thread_id = session.get("threadId")
+            if thread_id:
+                return str(thread_id)
+        return None
+
+    def _seed_inherited_thread(self) -> bool:
+        if self.new_session:
+            return False
+        if self._session_store.load(self.task_id, self._bot_id, new_session=False):
+            return False
+        thread_id = self._find_inherited_thread()
+        if not thread_id:
+            return False
+        self._session_store.save(self.task_id, self._bot_id, thread_id)
+        return True
+
+    def _executor_session_metadata(self) -> Optional[dict[str, Any]]:
+        thread_id = getattr(self._thread, "id", None)
+        if not thread_id:
+            return None
+        return {
+            "agent": "CodeX",
+            "threadId": str(thread_id),
+        }
 
     def _build_thread_kwargs(
         self, developer_instructions: Optional[str] = None
@@ -550,6 +582,3 @@ class CodeXAgent(Agent):
 
     def _default_workspace_path(self) -> str:
         return os.path.join(config.get_workspace_root(), str(self.task_id))
-
-    def _workspace_is_optional(self) -> bool:
-        return getattr(self.task_data, "workspace_source", None) == "local_codex_thread"

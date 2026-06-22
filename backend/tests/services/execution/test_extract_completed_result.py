@@ -86,6 +86,14 @@ class TestExtractCompletedResult:
         result = extract_completed_result({"file_changes": file_changes})
         assert result["file_changes"] == file_changes
 
+    def test_preserves_executor_session(self):
+        executor_session = {
+            "agent": "CodeX",
+            "threadId": "codex-thread-1",
+        }
+        result = extract_completed_result({"executor_session": executor_session})
+        assert result["executor_session"] == executor_session
+
     def test_preserves_silent_exit_fields(self):
         result = extract_completed_result(
             {

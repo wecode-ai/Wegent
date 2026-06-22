@@ -31,6 +31,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, Generator, Optional
+from urllib.parse import urlsplit
 
 import socketio
 from socketio.exceptions import ConnectionRefusedError
@@ -39,6 +40,8 @@ from sqlalchemy.orm import Session
 
 from app.api.ws.connection_utils import enter_connect_room, save_connect_session
 from app.api.ws.decorators import trace_websocket_event
+from app.api.ws.events import ServerEvents
+from app.api.ws.local_task_responses import LocalTaskResponsesHandler
 from app.core.auth_utils import is_api_key, verify_api_key
 from app.core.events import TaskCompletedEvent, get_event_bus
 from app.core.socketio import get_sio
@@ -55,7 +58,9 @@ from app.schemas.device import (
     DeviceStatusPayload,
     DeviceType,
 )
-from app.services.channels.callback import forward_event_to_channel_callbacks
+from app.services.channels.callback import (
+    forward_event_to_channel_callbacks,
+)
 from app.services.chat.access import get_token_expiry, verify_jwt_token
 from app.services.chat.storage.db import get_db_session, run_sync_in_executor
 from app.services.chat.webpage_ws_chat_emitter import get_extended_emitter
@@ -68,6 +73,7 @@ from app.services.device_service import device_service
 from app.services.execution.dispatcher import ResponsesAPIEventParser
 from app.services.execution.emitters.status_updating import StatusUpdatingEmitter
 from app.services.execution.emitters.websocket import WebSocketResultEmitter
+from app.services.im.notification_dispatcher import im_notification_dispatcher
 from app.services.user_runtime_config import (
     UserRuntimeConfigError,
     UserRuntimeConfigSyncError,
@@ -84,6 +90,23 @@ DEVICE_CONNECT_RATE_LIMIT_MAX_ATTEMPTS = 30
 DEVICE_REGISTER_UPSERT_DEBOUNCE_SECONDS = 10
 REGISTER_CAPABILITY_SYNC_TIMEOUT_SECONDS = 5
 DEVICE_DISCONNECT_FAILURE_GRACE_SECONDS = 2
+RUNTIME_TASK_TERMINAL_STATUSES = {
+    "done",
+    "complete",
+    "completed",
+    "success",
+    "succeeded",
+    "failed",
+    "error",
+    "cancelled",
+    "canceled",
+}
+RUNTIME_TASK_NON_REPLY_TERMINAL_STATUSES = {
+    "failed",
+    "error",
+    "cancelled",
+    "canceled",
+}
 
 
 @contextmanager
@@ -189,6 +212,7 @@ def _register_device(
     client_ip: Optional[str] = None,
     device_type: Optional[str] = None,
     bind_shell: Optional[str] = None,
+    runtime_transfer_host: Optional[str] = None,
 ) -> tuple[bool, Optional[str], Optional[str]]:
     """
     Register or update device CRD in database.
@@ -200,6 +224,7 @@ def _register_device(
         client_ip: Device's client IP address
         device_type: Device type ('local' or 'cloud')
         bind_shell: Shell runtime binding ('claudecode' or 'openclaw')
+        runtime_transfer_host: Host peers should use for direct transfers
 
     Returns (success, persisted_display_name, error_message).
     """
@@ -213,6 +238,7 @@ def _register_device(
                 client_ip=client_ip,
                 device_type=device_type,
                 bind_shell=bind_shell,
+                runtime_transfer_host=runtime_transfer_host,
             )
             persisted_display_name = (
                 device_kind.json.get("spec", {}).get("displayName") or name
@@ -221,6 +247,22 @@ def _register_device(
     except Exception as e:
         logger.error(f"[Device WS] Error registering device: {e}")
         return False, None, str(e)
+
+
+def _normalize_runtime_transfer_host(value: Any) -> Optional[str]:
+    """Normalize an executor-advertised direct-transfer host."""
+
+    if not isinstance(value, str):
+        return None
+    candidate = value.strip()
+    if not candidate:
+        return None
+    parsed = urlsplit(candidate)
+    if parsed.scheme and parsed.hostname:
+        candidate = parsed.hostname
+    elif "/" in candidate:
+        return None
+    return candidate.strip("[]") or None
 
 
 def _update_device_heartbeat(user_id: int, device_id: str) -> None:
@@ -452,6 +494,49 @@ def _runtime_auth_file_missing(runtime_auth_files: Any, runtime: str) -> bool:
     return state.get("exists") is False
 
 
+def _is_runtime_task_terminal_status(status: Any) -> bool:
+    """Return True when a runtime task update represents a completed turn."""
+    normalized = _normalize_runtime_task_status(status)
+    return normalized in RUNTIME_TASK_TERMINAL_STATUSES
+
+
+def _is_runtime_task_reply_status(status: Any) -> bool:
+    normalized = _normalize_runtime_task_status(status)
+    return (
+        normalized in RUNTIME_TASK_TERMINAL_STATUSES
+        and normalized not in RUNTIME_TASK_NON_REPLY_TERMINAL_STATUSES
+    )
+
+
+def _summarize_runtime_notification_results(
+    notification: dict[str, Any],
+) -> list[dict[str, Any]]:
+    results = notification.get("results")
+    if not isinstance(results, list):
+        return []
+    summarized: list[dict[str, Any]] = []
+    for result in results:
+        if not isinstance(result, dict):
+            continue
+        summarized.append(
+            {
+                "success": bool(result.get("success")),
+                "channel_id": result.get("channel_id"),
+                "channel_type": result.get("channel_type"),
+                "session_key": result.get("session_key"),
+                "error": result.get("error"),
+                "error_type": result.get("error_type"),
+            }
+        )
+    return summarized
+
+
+def _normalize_runtime_task_status(status: Any) -> str:
+    if not isinstance(status, str):
+        return ""
+    return status.strip().replace("_", "").replace("-", "").lower()
+
+
 class DeviceNamespace(socketio.AsyncNamespace):
     """
     Socket.IO namespace for local executor connections.
@@ -473,12 +558,14 @@ class DeviceNamespace(socketio.AsyncNamespace):
             "device:heartbeat": "on_device_heartbeat",
             "device:status": "on_device_status",
             "device:upgrade_status": "on_device_upgrade_status",
+            "runtime.tasks.updated": "on_runtime_task_updated",
             "terminal:output": "on_terminal_output",
             "terminal:exit": "on_terminal_exit",
         }
 
         # Shared event parser for OpenAI Responses API events
         self._event_parser = ResponsesAPIEventParser()
+        self._local_task_responses = LocalTaskResponsesHandler(self._event_parser)
 
         # Known OpenAI Responses API event prefixes
         self._responses_api_prefixes = ("response.", "error")
@@ -608,29 +695,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
         return await super().trigger_event(event, sid, *args)
 
     def _get_client_ip(self, environ: dict) -> Optional[str]:
-        """Extract client IP from WSGI environ.
-
-        Checks X-Forwarded-For header first (for proxied connections),
-        then falls back to REMOTE_ADDR.
-
-        Args:
-            environ: WSGI environ dict
-
-        Returns:
-            Client IP address or None
-        """
-        # Check X-Forwarded-For header (common for proxied connections)
-        forwarded_for = environ.get("HTTP_X_FORWARDED_FOR")
-        if forwarded_for:
-            # X-Forwarded-For can contain multiple IPs, take the first one
-            return forwarded_for.split(",")[0].strip()
-
-        # Check X-Real-IP header
-        real_ip = environ.get("HTTP_X_REAL_IP")
-        if real_ip:
-            return real_ip
-
-        # Fall back to REMOTE_ADDR
+        """Extract the TCP peer IP from WSGI environ."""
         return environ.get("REMOTE_ADDR")
 
     def _get_client_ip_log_context(self, environ: dict) -> tuple[Optional[str], str]:
@@ -928,14 +993,21 @@ class DeviceNamespace(socketio.AsyncNamespace):
         if not user_id:
             return {"error": "Not authenticated"}
 
+        runtime_transfer_host = _normalize_runtime_transfer_host(
+            payload.runtime_transfer_host or payload.client_ip
+        )
         logger.info(
             f"[Device WS] device:register user={user_id}, device_id={payload.device_id}, "
-            f"name={payload.name}, executor_version={payload.executor_version}, client_ip={payload.client_ip}"
+            f"name={payload.name}, executor_version={payload.executor_version}, "
+            f"tcp_client_ip={session.get('client_ip')}, "
+            f"reported_client_ip={payload.client_ip}, "
+            f"runtime_transfer_host={runtime_transfer_host}"
         )
 
         # Check if this is a cloud device registration (by IP matching)
-        # Prefer self-reported IP from executor, fall back to WebSocket client IP
-        client_ip = payload.client_ip or session.get("client_ip")
+        # Use the WebSocket TCP peer observed by backend. The executor-reported
+        # address is advisory and must not drive transfer routing.
+        client_ip = session.get("client_ip")
         is_cloud_device = False
         if payload.device_type == DeviceType.CLOUD and client_ip:
             cloud_device_id = await self._match_cloud_device(
@@ -961,9 +1033,10 @@ class DeviceNamespace(socketio.AsyncNamespace):
                     user_id,
                     payload.device_id,
                     payload.name,
-                    payload.client_ip,
+                    client_ip,
                     payload.device_type.value,
                     payload.bind_shell.value,
+                    runtime_transfer_host,
                 )
                 if not success:
                     return {"error": f"Registration failed: {error}"}
@@ -982,11 +1055,14 @@ class DeviceNamespace(socketio.AsyncNamespace):
             socket_id=sid,
             name=effective_device_name,
             executor_version=payload.executor_version,
+            client_ip=client_ip,
+            runtime_transfer_host=runtime_transfer_host,
         )
 
         # Update session with device_id and device_name
         session["device_id"] = payload.device_id
         session["device_name"] = effective_device_name
+        session["runtime_transfer_host"] = runtime_transfer_host
         session["registered"] = True
         await self.save_session(sid, session)
 
@@ -1163,12 +1239,19 @@ class DeviceNamespace(socketio.AsyncNamespace):
         if session_device_id != payload.device_id:
             return {"error": "Device ID mismatch"}
 
+        runtime_transfer_host = _normalize_runtime_transfer_host(
+            payload.runtime_transfer_host
+        ) or session.get("runtime_transfer_host")
+        session["runtime_transfer_host"] = runtime_transfer_host
+        await self.save_session(sid, session)
+
         # Refresh Redis TTL and update running_task_ids
         success = await device_service.refresh_device_heartbeat(
             user_id,
             payload.device_id,
             payload.running_task_ids,
             payload.executor_version,
+            runtime_transfer_host=runtime_transfer_host,
         )
 
         if not success:
@@ -1184,6 +1267,8 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 socket_id=sid,
                 name=device_name,
                 executor_version=payload.executor_version,
+                client_ip=session.get("client_ip"),
+                runtime_transfer_host=runtime_transfer_host,
             )
             # Re-broadcast device online event
             await self._broadcast_device_online(user_id, payload.device_id, device_name)
@@ -1416,6 +1501,17 @@ class DeviceNamespace(socketio.AsyncNamespace):
         subtask_id = data.get("subtask_id")
         event_data = data.get("data", {})
         message_id = data.get("message_id")
+        local_task_id = data.get("local_task_id")
+
+        if isinstance(local_task_id, str) and local_task_id.strip():
+            return await self._handle_local_task_responses_api_event(
+                user_id=user_id,
+                device_id=device_id,
+                event_type=event_type,
+                data=data,
+                event_data=event_data if isinstance(event_data, dict) else {},
+                message_id=message_id,
+            )
 
         if not task_id or not subtask_id:
             return {"error": "Missing task_id or subtask_id"}
@@ -1504,6 +1600,108 @@ class DeviceNamespace(socketio.AsyncNamespace):
             # Clean up lock on error to prevent memory leak
             self._cleanup_subtask_lock(subtask_id)
             return {"error": str(e)}
+
+    async def _handle_local_task_responses_api_event(
+        self,
+        *,
+        user_id: int,
+        device_id: str,
+        event_type: str,
+        data: dict,
+        event_data: dict,
+        message_id: Optional[int],
+    ) -> dict:
+        """Forward local-task Responses API events through the existing chat stream."""
+
+        return await self._local_task_responses.handle(
+            user_id=user_id,
+            device_id=device_id,
+            event_type=event_type,
+            data=data,
+            event_data=event_data,
+            message_id=message_id,
+            get_lock=self._get_subtask_lock,
+            cleanup_lock=self._cleanup_subtask_lock,
+        )
+
+    async def on_runtime_task_updated(self, sid: str, data: dict) -> dict:
+        """Handle native runtime task updates detected by a local executor watcher."""
+
+        session = await self.get_session(sid)
+        if not session:
+            return {"error": "Device not authenticated"}
+
+        user_id = int(session.get("user_id"))
+        device_id = str(session.get("device_id") or "")
+        local_task_id = str(data.get("localTaskId") or data.get("local_task_id") or "")
+        workspace_path = str(
+            data.get("workspacePath") or data.get("workspace_path") or ""
+        )
+        if not device_id or not local_task_id:
+            return {"error": "Invalid runtime task update payload"}
+
+        address = {
+            "deviceId": device_id,
+            "localTaskId": local_task_id,
+        }
+        if workspace_path:
+            address["workspacePath"] = workspace_path
+
+        status = str(data.get("status") or "updated")
+        if not _is_runtime_task_terminal_status(status):
+            logger.info(
+                "[RuntimeTaskNotification] Skipped non-terminal update: "
+                "user_id=%s device_id=%s local_task_id=%s status=%s",
+                user_id,
+                device_id,
+                local_task_id,
+                status,
+            )
+            return {"success": True, "notified": 0, "skipped": "non_terminal"}
+        content = str(data.get("content") or "")
+        if _is_runtime_task_reply_status(status) and not content.strip():
+            logger.info(
+                "[RuntimeTaskNotification] Skipped empty reply update: "
+                "user_id=%s device_id=%s local_task_id=%s status=%s",
+                user_id,
+                device_id,
+                local_task_id,
+                status,
+            )
+            return {"success": True, "notified": 0, "skipped": "empty_content"}
+
+        notification = (
+            await im_notification_dispatcher.send_runtime_task_update_for_user(
+                user_id=user_id,
+                address=address,
+                title=str(data.get("title") or local_task_id),
+                status=status,
+                content=content,
+                source="codex_watcher",
+            )
+        )
+        notified = int(notification.get("sent") or 0)
+        if notified <= 0:
+            logger.warning(
+                "[RuntimeTaskNotification] Runtime task update notification "
+                "was not delivered: user_id=%s device_id=%s local_task_id=%s "
+                "status=%s results=%s",
+                user_id,
+                device_id,
+                local_task_id,
+                status,
+                _summarize_runtime_notification_results(notification),
+            )
+        logger.info(
+            "[RuntimeTaskNotification] Dispatched runtime task update: "
+            "user_id=%s device_id=%s local_task_id=%s status=%s sent=%s",
+            user_id,
+            device_id,
+            local_task_id,
+            status,
+            notified,
+        )
+        return {"success": True, "notified": notified}
 
     async def _publish_task_completed_event(
         self,

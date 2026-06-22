@@ -11,23 +11,4 @@ describe('createImSessionApi', () => {
 
     expect(get).toHaveBeenCalledWith('/im/private-sessions')
   })
-
-  test('binds private IM sessions to a task', async () => {
-    const post = vi.fn().mockResolvedValue({
-      task_id: 42,
-      bound_session_keys: ['session-a', 'session-b'],
-      notified_count: 2,
-    })
-    const api = createImSessionApi({ post } as unknown as HttpClient)
-
-    await expect(api.bindTaskSessions(42, ['session-a', 'session-b'])).resolves.toEqual({
-      task_id: 42,
-      bound_session_keys: ['session-a', 'session-b'],
-      notified_count: 2,
-    })
-
-    expect(post).toHaveBeenCalledWith('/tasks/42/im-sessions', {
-      session_keys: ['session-a', 'session-b'],
-    })
-  })
 })

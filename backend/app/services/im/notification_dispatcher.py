@@ -5,12 +5,15 @@
 """Best-effort private IM notifications for task continuation events."""
 
 import logging
-from typing import Any, Sequence
+from contextlib import contextmanager
+from typing import Any, Generator, Sequence
 
 from sqlalchemy.orm import Session
 
+from app.db.session import SessionLocal
 from app.models.im_session import IMPrivateSession
 from app.models.kind import Kind
+from app.services.im.session_service import im_session_service
 from shared.utils.crypto import decrypt_sensitive_data
 
 logger = logging.getLogger(__name__)
@@ -53,6 +56,63 @@ class IMNotificationDispatcher:
                 sent += 1
 
         return {"sent": sent, "results": results}
+
+    async def send_runtime_task_update(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        address: dict[str, Any],
+        title: str,
+        status: str,
+        content: str = "",
+        source: str | None = None,
+    ) -> dict[str, Any]:
+        """Notify IM sessions about a runtime task update using priority rules."""
+
+        if source == "im":
+            return {"sent": 0, "results": [], "skipped": "im_source"}
+
+        sessions = await self._runtime_notification_sessions(
+            db=db,
+            user_id=user_id,
+            address=address,
+        )
+        message = _runtime_task_update_message(
+            title=title,
+            local_task_id=str(address.get("localTaskId") or "本地任务"),
+            status=status,
+            content=content,
+        )
+        return await self._send_to_sessions(
+            db,
+            sessions,
+            message,
+            runtime_task=address,
+        )
+
+    async def send_runtime_task_update_for_user(
+        self,
+        *,
+        user_id: int,
+        address: dict[str, Any],
+        title: str,
+        status: str,
+        content: str = "",
+        source: str | None = None,
+    ) -> dict[str, Any]:
+        """Notify IM sessions about a runtime task update without exposing DB plumbing."""
+
+        with _notification_db_session() as db:
+            return await self.send_runtime_task_update(
+                db,
+                user_id=user_id,
+                address=address,
+                title=title,
+                status=status,
+                content=content,
+                source=source,
+            )
 
     async def send_text(
         self,
@@ -99,6 +159,63 @@ class IMNotificationDispatcher:
                 "channel_type": session.channel_type,
                 "error": str(exc),
             }
+
+    async def _runtime_notification_sessions(
+        self,
+        *,
+        db: Session,
+        user_id: int,
+        address: dict[str, Any],
+    ) -> list[IMPrivateSession]:
+        active_sessions = await im_session_service.list_active_runtime_task_sessions(
+            db,
+            user_id=user_id,
+            runtime_task=address,
+        )
+        if active_sessions:
+            return _dedupe_sessions(active_sessions)
+
+        subscribed_sessions = (
+            await im_session_service.list_runtime_task_notification_sessions(
+                db,
+                user_id=user_id,
+                runtime_task=address,
+            )
+        )
+        if subscribed_sessions:
+            return _dedupe_sessions(subscribed_sessions)
+
+        settings = await im_session_service.get_global_notification_settings(user_id)
+        if not settings.enabled or not settings.session_key:
+            return []
+        session = await im_session_service.get_session(settings.session_key)
+        if session is None or session.user_id != user_id:
+            return []
+        return [session]
+
+    async def _send_to_sessions(
+        self,
+        db: Session,
+        sessions: Sequence[IMPrivateSession],
+        message: str,
+        runtime_task: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        sent = 0
+        results: list[dict[str, Any]] = []
+        for session in _dedupe_sessions(sessions):
+            result = await self.send_text(db, session, message)
+            result.setdefault("session_key", session.session_key)
+            results.append(result)
+            if result.get("success"):
+                sent += 1
+                message_id = _result_message_id(result)
+                if runtime_task is not None and message_id is not None:
+                    await im_session_service.save_runtime_task_reply_target(
+                        session=session,
+                        message_id=message_id,
+                        runtime_task=runtime_task,
+                    )
+        return {"sent": sent, "results": results}
 
     def _get_channel(self, db: Session, channel_id: int) -> Kind | None:
         return (
@@ -225,6 +342,67 @@ def _config_value(config: dict[str, Any], *keys: str) -> str | None:
         if isinstance(value, str) and value:
             return value
     return None
+
+
+def _dedupe_sessions(
+    sessions: Sequence[IMPrivateSession],
+) -> list[IMPrivateSession]:
+    seen: set[str] = set()
+    deduped: list[IMPrivateSession] = []
+    for session in sessions:
+        if session.session_key in seen:
+            continue
+        seen.add(session.session_key)
+        deduped.append(session)
+    return deduped
+
+
+def _result_message_id(result: dict[str, Any]) -> int | str | None:
+    payload = result.get("result")
+    if not isinstance(payload, dict):
+        return None
+    result_payload = payload.get("result")
+    if not isinstance(result_payload, dict):
+        return None
+    message_id = result_payload.get("message_id")
+    if isinstance(message_id, (int, str)) and not isinstance(message_id, bool):
+        return message_id
+    return None
+
+
+@contextmanager
+def _notification_db_session() -> Generator[Session, None, None]:
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+def _runtime_task_update_message(
+    *,
+    title: str,
+    local_task_id: str,
+    status: str,
+    content: str,
+) -> str:
+    task_title = title or local_task_id or "本地任务"
+    if status in {"failed", "FAILED"}:
+        body = content or "任务执行失败。"
+        return f"任务「{task_title}」执行失败：\n\n{body}"
+    if status in {"cancelled", "CANCELLED"}:
+        return f"任务「{task_title}」已取消。"
+
+    body = content or "任务有新的更新，请打开 Wework 查看完整对话。"
+    return "\n".join(
+        [
+            f"任务「{task_title}」有新的 AI 回复：",
+            "",
+            body,
+            "",
+            "回复这条通知可继续该任务。",
+        ]
+    )
 
 
 im_notification_dispatcher = IMNotificationDispatcher()
