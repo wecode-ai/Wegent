@@ -102,6 +102,28 @@ def list_device_workspace_kinds(
     return mappings
 
 
+def get_device_workspace_kind_by_id(
+    *,
+    db: Session,
+    user_id: int,
+    workspace_id: int,
+) -> Optional[DeviceWorkspaceResponse]:
+    """Load one active DeviceWorkspace Kind by row ID for one user."""
+
+    row = (
+        db.query(Kind)
+        .filter(
+            Kind.id == workspace_id,
+            Kind.user_id == user_id,
+            Kind.kind == DEVICE_WORKSPACE_KIND,
+            Kind.namespace == DEVICE_WORKSPACE_NAMESPACE,
+            Kind.is_active,
+        )
+        .first()
+    )
+    return device_workspace_response(row) if row is not None else None
+
+
 def touch_device_workspace_kind(
     *,
     db: Session,

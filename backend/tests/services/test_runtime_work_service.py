@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from fastapi import HTTPException
 
 from app.core.constants import CLIENT_ORIGIN_WEWORK
 from app.models.kind import Kind
@@ -1090,6 +1091,124 @@ async def test_create_runtime_task_dispatches_to_project_device_without_task_row
         timeout_seconds=600,
     )
     assert test_db.query(TaskResource).count() == 0
+
+
+@pytest.mark.asyncio
+async def test_create_runtime_task_uses_device_workspace_id_as_trusted_target(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    from app.schemas.runtime_work import DeviceWorkspaceUpsert, RuntimeTaskCreateRequest
+    from app.services import runtime_work_service
+
+    project = _project(test_db, test_user.id)
+    mapping = runtime_work_service.upsert_device_workspace(
+        db=test_db,
+        user_id=test_user.id,
+        payload=DeviceWorkspaceUpsert(
+            projectId=project.id,
+            deviceId="device-1",
+            workspacePath="/repo/Wegent",
+            label="workspace",
+        ),
+    )
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: object(),
+    )
+    monkeypatch.setattr(
+        runtime_work_service,
+        "_build_runtime_execution_request",
+        lambda **kwargs: SimpleNamespace(
+            to_dict=lambda: {
+                "team_id": kwargs["request"].team_id,
+                "prompt": kwargs["request"].message,
+                "project_workspace_path": kwargs["target"].workspace_path,
+            }
+        ),
+    )
+    rpc = AsyncMock(
+        return_value={
+            "success": True,
+            "accepted": True,
+            "localTaskId": "runtime-1",
+            "workspacePath": "/repo/Wegent",
+            "runtime": "claude_code",
+        }
+    )
+    monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
+
+    response = await runtime_work_service.create_runtime_task(
+        db=test_db,
+        user_id=test_user.id,
+        request=RuntimeTaskCreateRequest(
+            projectId=project.id,
+            deviceWorkspaceId=mapping.id,
+            teamId=3,
+            runtime="claude_code",
+            message="create runtime task",
+        ),
+    )
+
+    assert response.accepted is True
+    assert response.device_id == "device-1"
+    assert response.workspace_path == "/repo/Wegent"
+    rpc.assert_awaited_once_with(
+        user_id=test_user.id,
+        device_id="device-1",
+        method="runtime.tasks.create",
+        payload={
+            "runtime": "claude_code",
+            "workspacePath": "/repo/Wegent",
+            "message": "create runtime task",
+            "title": "create runtime task",
+            "executionRequest": {
+                "team_id": 3,
+                "prompt": "create runtime task",
+                "project_workspace_path": "/repo/Wegent",
+            },
+        },
+        timeout_seconds=600,
+    )
+
+
+@pytest.mark.asyncio
+async def test_create_runtime_task_rejects_device_workspace_from_another_project(
+    test_db,
+    test_user,
+):
+    from app.schemas.runtime_work import DeviceWorkspaceUpsert, RuntimeTaskCreateRequest
+    from app.services import runtime_work_service
+
+    source_project = _project(test_db, test_user.id, name="Source")
+    target_project = _project(test_db, test_user.id, name="Target")
+    mapping = runtime_work_service.upsert_device_workspace(
+        db=test_db,
+        user_id=test_user.id,
+        payload=DeviceWorkspaceUpsert(
+            projectId=source_project.id,
+            deviceId="device-1",
+            workspacePath="/repo/Source",
+        ),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await runtime_work_service.create_runtime_task(
+            db=test_db,
+            user_id=test_user.id,
+            request=RuntimeTaskCreateRequest(
+                projectId=target_project.id,
+                deviceWorkspaceId=mapping.id,
+                teamId=3,
+                runtime="claude_code",
+                message="create runtime task",
+            ),
+        )
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail == "Device workspace does not belong to project"
 
 
 @pytest.mark.asyncio

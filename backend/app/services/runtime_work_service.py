@@ -61,6 +61,7 @@ from app.services.im.notification_dispatcher import im_notification_dispatcher
 from app.services.im.session_service import im_session_service
 from app.services.object_storage import object_storage_presign_service
 from app.services.runtime_work_kind_store import (
+    get_device_workspace_kind_by_id,
     list_device_workspace_kinds,
     touch_device_workspace_kind,
     upsert_device_workspace_kind,
@@ -2217,6 +2218,42 @@ def _parse_project_config(
         return None
 
 
+def _device_workspace_runtime_target(
+    *,
+    db: Session,
+    user_id: int,
+    project: Project,
+    device_workspace_id: int,
+) -> RuntimeTaskTarget:
+    mapping = get_device_workspace_kind_by_id(
+        db=db,
+        user_id=user_id,
+        workspace_id=device_workspace_id,
+    )
+    if mapping is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Device workspace not found",
+        )
+    if mapping.project_id != project.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Device workspace does not belong to project",
+        )
+
+    workspace_source = "local_path"
+    config = _parse_project_config(project, strict=False)
+    if config and config.workspace:
+        workspace_source = config.workspace.source
+
+    return RuntimeTaskTarget(
+        device_id=mapping.device_id,
+        workspace_path=normalize_workspace_path(mapping.workspace_path),
+        project=project,
+        workspace_source=workspace_source,
+    )
+
+
 def _resolve_runtime_task_target(
     db: Session,
     user_id: int,
@@ -2229,6 +2266,13 @@ def _resolve_runtime_task_target(
             request.project_id,
             CLIENT_ORIGIN_WEWORK,
         )
+        if request.device_workspace_id is not None:
+            return _device_workspace_runtime_target(
+                db=db,
+                user_id=user_id,
+                project=project,
+                device_workspace_id=request.device_workspace_id,
+            )
         target = _project_runtime_target(project, strict=True)
         if target:
             return _apply_requested_workspace_source(target, request)
@@ -2243,7 +2287,7 @@ def _resolve_runtime_task_target(
 
     raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
-        detail="projectId or deviceId + workspacePath is required",
+        detail="projectId + deviceWorkspaceId or deviceId + workspacePath is required",
     )
 
 
