@@ -59,6 +59,13 @@ def _codex_discovery_for_threads(codex_home, *threads):
     return discovery, fake_codex
 
 
+def _write_codex_session(path, *items):
+    path.write_text(
+        "\n".join(json.dumps(item, ensure_ascii=False) for item in items),
+        encoding="utf-8",
+    )
+
+
 async def _drain_runtime_adapter(adapter):
     while adapter._running_tasks:
         await asyncio.gather(*adapter._running_tasks)
@@ -938,6 +945,168 @@ def test_codex_discovery_reads_threads_from_codex_sdk_thread_list(tmp_path):
             "sha": "abc123",
         },
     }
+
+
+def test_codex_discovery_marks_pending_function_call_thread_running(tmp_path):
+    session_path = tmp_path / "running.jsonl"
+    _write_codex_session(
+        session_path,
+        {"type": "event_msg", "payload": {"type": "task_started"}},
+        {"type": "response_item", "payload": {"type": "message", "role": "user"}},
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "function_call",
+                "id": "fc_1",
+                "call_id": "call_1",
+            },
+        },
+    )
+    discovery, _fake_codex = _codex_discovery_for_threads(
+        tmp_path / "codex-home",
+        SimpleNamespace(
+            id="019eeded-6af3-7542-a549-eecd930024a5",
+            cwd="/repo/Wegent",
+            name="Fix runtime state",
+            preview=None,
+            path=str(session_path),
+            created_at=1782008137,
+            updated_at=1782008158,
+            status=SimpleNamespace(root=SimpleNamespace(type="notLoaded")),
+        ),
+    )
+
+    records = discovery.discover()
+
+    assert records[0].running is True
+
+
+def test_codex_discovery_marks_active_text_turn_running(tmp_path):
+    session_path = tmp_path / "text-running.jsonl"
+    _write_codex_session(
+        session_path,
+        {"type": "event_msg", "payload": {"type": "task_started"}},
+        {"type": "event_msg", "payload": {"type": "user_message"}},
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "reasoning",
+                "id": "rs_1",
+            },
+        },
+        {
+            "type": "event_msg",
+            "payload": {
+                "type": "agent_message",
+                "message": "Working through the request.",
+            },
+        },
+    )
+    discovery, _fake_codex = _codex_discovery_for_threads(
+        tmp_path / "codex-home",
+        SimpleNamespace(
+            id="019eeded-6af3-7542-a549-eecd930024a5",
+            cwd="/repo/Wegent",
+            name="Fix runtime state",
+            preview=None,
+            path=str(session_path),
+            created_at=1782008137,
+            updated_at=1782008158,
+            status=SimpleNamespace(root=SimpleNamespace(type="notLoaded")),
+        ),
+    )
+
+    records = discovery.discover()
+
+    assert records[0].running is True
+
+
+def test_codex_discovery_keeps_completed_function_call_thread_idle(tmp_path):
+    session_path = tmp_path / "idle.jsonl"
+    _write_codex_session(
+        session_path,
+        {"type": "event_msg", "payload": {"type": "task_started"}},
+        {"type": "response_item", "payload": {"type": "message", "role": "user"}},
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "function_call",
+                "id": "fc_1",
+                "call_id": "call_1",
+            },
+        },
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "function_call_output",
+                "call_id": "call_1",
+                "output": "done",
+            },
+        },
+        {"type": "event_msg", "payload": {"type": "task_complete"}},
+    )
+    discovery, _fake_codex = _codex_discovery_for_threads(
+        tmp_path / "codex-home",
+        SimpleNamespace(
+            id="019eedbd-d0d6-7d12-a112-77dc97ab3804",
+            cwd="/repo/Wegent",
+            name="Done task",
+            preview=None,
+            path=str(session_path),
+            created_at=1782008137,
+            updated_at=1782008158,
+            status=SimpleNamespace(root=SimpleNamespace(type="notLoaded")),
+        ),
+    )
+
+    records = discovery.discover()
+
+    assert records[0].running is False
+
+
+@pytest.mark.parametrize("terminal_event_type", ["task_complete", "turn_aborted"])
+def test_codex_discovery_keeps_terminal_text_turn_idle(
+    tmp_path,
+    terminal_event_type,
+):
+    session_path = tmp_path / "text-idle.jsonl"
+    _write_codex_session(
+        session_path,
+        {"type": "event_msg", "payload": {"type": "task_started"}},
+        {"type": "event_msg", "payload": {"type": "user_message"}},
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "reasoning",
+                "id": "rs_1",
+            },
+        },
+        {
+            "type": "event_msg",
+            "payload": {
+                "type": "agent_message",
+                "message": "Done.",
+            },
+        },
+        {"type": "event_msg", "payload": {"type": terminal_event_type}},
+    )
+    discovery, _fake_codex = _codex_discovery_for_threads(
+        tmp_path / "codex-home",
+        SimpleNamespace(
+            id="019eeded-6af3-7542-a549-eecd930024a5",
+            cwd="/repo/Wegent",
+            name="Fix runtime state",
+            preview=None,
+            path=str(session_path),
+            created_at=1782008137,
+            updated_at=1782008158,
+            status=SimpleNamespace(root=SimpleNamespace(type="notLoaded")),
+        ),
+    )
+
+    records = discovery.discover()
+
+    assert records[0].running is False
 
 
 def test_codex_discovery_passes_resolved_codex_binary_to_sdk(tmp_path, monkeypatch):

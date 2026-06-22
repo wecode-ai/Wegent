@@ -6,6 +6,7 @@
 
 import json
 import os
+from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
@@ -20,6 +21,8 @@ from executor.runtime_work.local_task_store import (
 from shared.logger import setup_logger
 
 DEFAULT_CODEX_SESSION_LIMIT = 100
+CODEX_SESSION_RUNNING_TAIL_LINES = 200
+CODEX_TERMINAL_EVENT_TYPES = {"task_complete", "turn_aborted"}
 
 logger = setup_logger("codex_session_discovery")
 
@@ -179,7 +182,8 @@ def _thread_to_local_task(thread: Any) -> Optional[LocalTaskRecord]:
         runtime_handle=runtime_handle,
         created_at=created_at,
         updated_at=updated_at,
-        running=_is_thread_running(thread),
+        running=_is_thread_running(thread)
+        or _is_session_transcript_running(session_path),
         status="active",
     )
 
@@ -196,10 +200,74 @@ def _is_thread_running(thread: Any) -> bool:
     if isinstance(status, str):
         status_type = status
     else:
-        status_type = _object_text(status, "type", "status")
+        status_type = _object_text(status, "type", "status", "value", "name")
+        if not status_type:
+            status_type = _object_text(
+                _object_value(status, "root"),
+                "type",
+                "status",
+                "value",
+                "name",
+            )
 
     normalized = (status_type or "").replace("_", "").lower()
     return normalized not in ("", "notloaded", "completed", "archived", "idle")
+
+
+def _is_session_transcript_running(session_path: Optional[str]) -> bool:
+    if not session_path:
+        return False
+
+    path = Path(session_path).expanduser()
+    if not path.is_file():
+        return False
+
+    try:
+        lines: deque[str] = deque(maxlen=CODEX_SESSION_RUNNING_TAIL_LINES)
+        with path.open(encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                lines.append(line)
+    except OSError:
+        return False
+
+    active_turn = False
+    pending_call_ids: set[str] = set()
+    for line in lines:
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(entry, dict):
+            continue
+        payload = entry.get("payload")
+        if not isinstance(payload, dict):
+            continue
+
+        payload_type = payload.get("type")
+        if entry.get("type") == "event_msg" and payload_type == "task_started":
+            active_turn = True
+            pending_call_ids.clear()
+            continue
+        if (
+            entry.get("type") == "event_msg"
+            and payload_type in CODEX_TERMINAL_EVENT_TYPES
+        ):
+            active_turn = False
+            pending_call_ids.clear()
+            continue
+
+        if entry.get("type") != "response_item":
+            continue
+        if payload_type == "function_call":
+            call_id = _payload_text(payload, "call_id", "id")
+            if call_id:
+                pending_call_ids.add(call_id)
+        elif payload_type == "function_call_output":
+            call_id = _payload_text(payload, "call_id")
+            if call_id:
+                pending_call_ids.discard(call_id)
+
+    return active_turn or bool(pending_call_ids)
 
 
 def _thread_git_info(thread: Any) -> Optional[dict[str, Any]]:
@@ -256,6 +324,14 @@ def _object_text(value: Any, *names: str) -> Optional[str]:
         root = _object_value(raw, "root")
         if isinstance(root, str) and root.strip():
             return root.strip()
+    return None
+
+
+def _payload_text(payload: dict[str, Any], *names: str) -> Optional[str]:
+    for name in names:
+        value = payload.get(name)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
     return None
 
 
