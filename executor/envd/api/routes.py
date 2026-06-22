@@ -63,6 +63,7 @@ EXECUTOR_HOME_ARCHIVE_ALLOWLIST = {
 
 HOME_ARCHIVE_PREFIX = "home"
 WORKSPACE_ARCHIVE_PREFIX = "workspace"
+LEGACY_HOME_ARCHIVE_PREFIX = "__home__"
 SANDBOX_HOME_PATH = Path("/home/user")
 
 
@@ -163,6 +164,11 @@ def strip_tar_member_prefix(
         if stripped_member.name:
             stripped_members.append(stripped_member)
     return stripped_members
+
+
+def copy_tar_members(members: list[tarfile.TarInfo]) -> list[tarfile.TarInfo]:
+    """Return tar members copied before filters mutate names during extraction."""
+    return [copy(member) for member in members]
 
 
 def filter_restorable_tar_members(
@@ -605,6 +611,8 @@ def register_rest_api(app: FastAPI):
                 with tarfile.open(tmp_path, "r:gz") as tar:
                     home_members = []
                     workspace_members = []
+                    legacy_home_members = []
+                    legacy_workspace_members = []
 
                     # Get member names for tracking and split target location
                     for member in tar.getmembers():
@@ -618,11 +626,20 @@ def register_rest_api(app: FastAPI):
                             home_members.append(member)
                         elif member_name.startswith(f"{WORKSPACE_ARCHIVE_PREFIX}/"):
                             workspace_members.append(member)
+                        elif member_name.startswith(f"{LEGACY_HOME_ARCHIVE_PREFIX}/"):
+                            legacy_home_members.append(member)
+                        else:
+                            legacy_workspace_members.append(member)
 
                     stripped_home_members = strip_tar_member_prefix(
                         home_members,
                         HOME_ARCHIVE_PREFIX,
                     )
+                    stripped_legacy_home_members = strip_tar_member_prefix(
+                        legacy_home_members,
+                        LEGACY_HOME_ARCHIVE_PREFIX,
+                    )
+                    stripped_home_members.extend(stripped_legacy_home_members)
                     home_include_names = (
                         EXECUTOR_HOME_ARCHIVE_ALLOWLIST
                         if runtime_type == "executor"
@@ -645,6 +662,9 @@ def register_rest_api(app: FastAPI):
                         workspace_members,
                         WORKSPACE_ARCHIVE_PREFIX,
                     )
+                    stripped_workspace_members.extend(
+                        copy_tar_members(legacy_workspace_members)
+                    )
                     stripped_workspace_members = filter_restorable_tar_members(
                         stripped_workspace_members
                     )
@@ -654,6 +674,14 @@ def register_rest_api(app: FastAPI):
                             path=str(workspace_path),
                             members=stripped_workspace_members,
                         )
+
+                logger.info(
+                    f"[restore] Restored member counts for task {task_id}: "
+                    f"home={len(stripped_home_members)}, "
+                    f"workspace={len(stripped_workspace_members)}, "
+                    f"legacy_home={len(legacy_home_members)}, "
+                    f"legacy_workspace={len(legacy_workspace_members)}"
+                )
 
                 logger.info(
                     f"[restore] Successfully restored task {task_id}, "
