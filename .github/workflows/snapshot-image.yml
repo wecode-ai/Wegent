@@ -5,13 +5,16 @@
 name: Snapshot Image
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Image/app version to build. Must be >= 2.0.0, for example 2.0.0.'
+        type: string
+        required: true
+        default: '2.0.0'
 
 env:
-  GIT_REF: ${{ github.event_name == 'push' && github.sha || 'main' }}
+  GIT_REF: ${{ github.sha }}
   REGISTRY: ghcr.io
   IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}
 
@@ -39,12 +42,25 @@ jobs:
       - name: Prepare snapshot metadata
         id: meta
         shell: bash
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
         run: |
           set -euo pipefail
 
           GIT_SHA="$(git rev-parse HEAD)"
           SHORT_SHA="$(git rev-parse --short=12 HEAD)"
-          APP_VERSION="main-${SHORT_SHA}"
+          APP_VERSION="${INPUT_VERSION}"
+
+          if ! [[ "${APP_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Error: version '${APP_VERSION}' must use MAJOR.MINOR.PATCH format." >&2
+            exit 1
+          fi
+
+          IFS='.' read -r MAJOR MINOR PATCH <<< "${APP_VERSION}"
+          if (( MAJOR < 2 )); then
+            echo "Error: version '${APP_VERSION}' must be >= 2.0.0." >&2
+            exit 1
+          fi
 
           echo "git_sha=${GIT_SHA}" >> "$GITHUB_OUTPUT"
           echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
@@ -54,7 +70,7 @@ jobs:
             echo "### Snapshot metadata"
             echo ""
             echo "- Git SHA: \`${GIT_SHA}\`"
-            echo "- Commit-scoped image tag: \`${APP_VERSION}\`"
+            echo "- Image/app version: \`${APP_VERSION}\`"
             echo "- Channel tags after verification: \`main\`, \`edge\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -290,7 +306,7 @@ jobs:
           path: ${{ matrix.artifact_path }}
           retention-days: 14
 
-  create-commit-manifests:
+  create-version-manifests:
     needs:
       - prepare-snapshot
       - build-images
@@ -309,7 +325,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Create commit-scoped multi-arch manifests
+      - name: Create versioned multi-arch manifests
         shell: bash
         env:
           VERSION: ${{ needs.prepare-snapshot.outputs.app_version }}
@@ -318,7 +334,7 @@ jobs:
 
           create_manifest() {
             local image_name="$1"
-            echo "Creating commit-scoped manifest for ${image_name}:${VERSION}"
+            echo "Creating versioned manifest for ${image_name}:${VERSION}"
 
             docker buildx imagetools create -t "${IMAGE_PREFIX}/${image_name}:${VERSION}" \
               "${IMAGE_PREFIX}/${image_name}:${VERSION}-amd64" \
@@ -337,7 +353,7 @@ jobs:
   verify-standalone:
     needs:
       - prepare-snapshot
-      - create-commit-manifests
+      - create-version-manifests
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -410,6 +426,6 @@ jobs:
           {
             echo "### Snapshot channel tags promoted"
             echo ""
-            echo "- Commit-scoped tag: \`${VERSION}\`"
+            echo "- Versioned tag: \`${VERSION}\`"
             echo "- Mutable tags: \`main\`, \`edge\`"
           } >> "$GITHUB_STEP_SUMMARY"
