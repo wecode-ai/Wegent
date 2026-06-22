@@ -331,6 +331,53 @@ async def test_prepare_plain_device_workspace_creates_directory_and_mapping(
 
 
 @pytest.mark.asyncio
+async def test_prepare_plain_device_workspace_accepts_already_created_empty_directory(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    from app.schemas.runtime_work import DeviceWorkspacePrepareRequest
+    from app.services import runtime_work_service
+
+    project = _project(test_db, test_user.id)
+    calls: list[tuple[str, list[str]]] = []
+
+    async def execute(**kwargs):
+        calls.append((kwargs["command_key"], kwargs.get("args") or []))
+        if kwargs["command_key"] == "project_folder_status":
+            return {
+                "success": True,
+                "exit_code": 0,
+                "stdout": (
+                    '{"exists": true, "isDirectory": true, "isEmpty": true, '
+                    '"isGitRepo": false, "remoteUrl": null}'
+                ),
+            }
+        raise AssertionError(kwargs["command_key"])
+
+    monkeypatch.setattr(
+        runtime_work_service, "execute_configured_device_command", execute
+    )
+
+    response = await runtime_work_service.prepare_device_workspace(
+        db=test_db,
+        user_id=test_user.id,
+        payload=DeviceWorkspacePrepareRequest(
+            projectId=project.id,
+            deviceId="device-1",
+            workspacePath="/repo/Wegent",
+            action="create",
+        ),
+    )
+
+    assert response.mapping.project_id == project.id
+    assert response.mapping.workspace_path == "/repo/Wegent"
+    assert response.mapping.repo_url is None
+    assert response.prepared_action == "created"
+    assert calls == [("project_folder_status", ["/repo/Wegent"])]
+
+
+@pytest.mark.asyncio
 async def test_prepare_git_device_workspace_clones_into_empty_directory(
     test_db,
     test_user,
