@@ -111,6 +111,30 @@ class InvalidToolMessageSequenceError(ValueError):
     """
 
 
+def _log_tool_error_event(tool_name: str, run_id: str, event_data: Any) -> None:
+    """Log a tool execution failure surfaced by LangGraph's ``on_tool_error``.
+
+    LangGraph reports tool failures (e.g. argument ``ValidationError``) via an
+    ``on_tool_error`` event and then converts them into an error ``ToolMessage``
+    that is only visible to the model. Without this, chat_shell logs stay silent
+    on tool failures, making them hard to diagnose. The ``input`` is included
+    because mismatches between it and the error (e.g. a "Field required" error
+    with an empty input) are the fastest way to spot argument-routing bugs.
+    """
+    data = event_data if isinstance(event_data, dict) else {}
+    error = data.get("error")
+    tool_input = data.get("input")
+    # Truncate both fields: tool args can be large (e.g. file contents) or carry
+    # sensitive values, so we cap the logged length to avoid log bloat / leakage.
+    logger.error(
+        "[stream_tokens] Tool '%s' failed (run_id=%s): input=%s error=%s",
+        tool_name,
+        run_id,
+        repr(tool_input)[:1000],
+        str(error)[:1000],
+    )
+
+
 def _require_non_empty_tool_id(tool_id: Any, context: str) -> str:
     """Return a validated tool ID or raise if it is missing/blank."""
     if tool_id is None:
@@ -680,6 +704,13 @@ class LangGraphAgentBuilder:
                                 "data": event.get("data", {}),
                             },
                         )
+
+                elif kind == "on_tool_error":
+                    _log_tool_error_event(
+                        event.get("name", "unknown"),
+                        event.get("run_id", ""),
+                        event.get("data", {}),
+                    )
 
                 elif kind == "on_chain_end" and event.get("name") == "LangGraph":
                     data = event.get("data", {})
@@ -1667,6 +1698,13 @@ class LangGraphAgentBuilder:
                         # Yield empty string to trigger _emit_pending_events() in chat_service
                         # This ensures tool events are sent immediately instead of being buffered
                         yield ""
+
+                elif kind == "on_tool_error":
+                    _log_tool_error_event(
+                        event.get("name", "unknown"),
+                        event.get("run_id", ""),
+                        event.get("data", {}),
+                    )
 
             # If no content was streamed but we have final content, yield it
             # This handles non-streaming models

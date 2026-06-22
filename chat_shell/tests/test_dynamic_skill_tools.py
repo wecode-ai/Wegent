@@ -913,3 +913,69 @@ class TestSkillRetentionAcrossTurns:
         assert tool.is_skill_loaded("skill_a")
         # Loaded 0 turns ago, 5 - 0 = 5 remaining
         assert tool.get_skill_remaining_turns("skill_a") == 5
+
+
+class TestLazySkillProviderToolArgumentForwarding:
+    """Regression tests for LazySkillProviderTool argument forwarding.
+
+    LazySkillProviderInput uses ``extra="allow"`` with no declared fields.
+    LangChain's BaseTool._to_args_and_kwargs discards every argument when the
+    schema declares no fields, which previously stripped the real tool's
+    arguments (command/file_path) before delegation, surfacing as a paradoxical
+    "Field required" ValidationError even though the model provided the field.
+    """
+
+    @pytest.mark.asyncio
+    async def test_proxy_forwards_arguments_to_concrete_tool(self):
+        """Args provided by the model must reach the concrete tool intact."""
+        from langchain_core.tools import BaseTool
+        from pydantic import BaseModel, Field
+
+        from chat_shell.tools.builtin.load_skill import LazySkillProviderTool
+
+        received: dict = {}
+
+        class ExecInput(BaseModel):
+            command: str = Field(description="cmd")
+
+        class ConcreteExec(BaseTool):
+            name: str = "exec"
+            description: str = "run"
+            args_schema: type[BaseModel] = ExecInput
+
+            def _run(self, command: str, **_):
+                received["command"] = command
+                return f"ran:{command}"
+
+            async def _arun(self, command: str, **_):
+                return self._run(command)
+
+        concrete = ConcreteExec()
+
+        load_skill_tool = LoadSkillTool(
+            user_id=1,
+            skill_names=["sandbox"],
+            skill_metadata={"sandbox": {"description": "Sandbox", "prompt": "p"}},
+        )
+        load_skill_tool.register_skill_tools("sandbox", [concrete])
+
+        proxy = LazySkillProviderTool(
+            skill_name="sandbox",
+            tool_name="exec",
+            description="exec proxy",
+            load_skill_tool=load_skill_tool,
+        )
+
+        # Invoke through the proxy exactly as LangGraph ToolNode would.
+        result = await proxy.ainvoke(
+            {
+                "name": "exec",
+                "args": {"command": "echo hello"},
+                "id": "call_1",
+                "type": "tool_call",
+            }
+        )
+
+        content = getattr(result, "content", result)
+        assert "ran:echo hello" in content
+        assert received["command"] == "echo hello"
