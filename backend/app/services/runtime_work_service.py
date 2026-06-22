@@ -4,6 +4,7 @@
 
 """Service for Project -> Device Workspace -> LocalTask runtime work trees."""
 
+import asyncio
 import json
 import logging
 import posixpath
@@ -70,12 +71,13 @@ from app.services.runtime_work_kind_store import (
 
 logger = logging.getLogger(__name__)
 
-RUNTIME_LIST_TIMEOUT_SECONDS = 30
+RUNTIME_LIST_TIMEOUT_SECONDS = 3
 RUNTIME_TRANSCRIPT_TIMEOUT_SECONDS = 30
 RUNTIME_SEND_TIMEOUT_SECONDS = 600
 RUNTIME_CREATE_TIMEOUT_SECONDS = 600
 RUNTIME_FORK_TIMEOUT_SECONDS = 600
 DEVICE_WORKSPACE_PREPARE_TIMEOUT_SECONDS = 600
+RUNTIME_WORK_BIND_SHELL = "claudecode"
 RUNTIME_MODEL_TYPE = "runtime"
 WORKTREE_ROOT_DIR = "worktrees"
 CHAT_WORKSPACE_DIR = "chats"
@@ -1413,6 +1415,7 @@ async def _runtime_task_workspace_path(
             method="runtime.tasks.list",
             payload={},
             timeout_seconds=RUNTIME_LIST_TIMEOUT_SECONDS,
+            ack_grace_seconds=0,
         )
     except RuntimeRpcError as exc:
         raise HTTPException(
@@ -1803,20 +1806,14 @@ async def _list_online_runtime_workspaces(
     devices: list[dict[str, Any]],
 ) -> dict[tuple[str, str], list[LocalTaskSummary]]:
     grouped: dict[tuple[str, str], list[LocalTaskSummary]] = {}
-    for device in devices:
-        device_id = str(device.get("device_id") or "")
-        if not device_id or _device_status(device) not in {"online", "busy"}:
-            continue
-        try:
-            result = await runtime_rpc_service.call(
-                user_id=user_id,
-                device_id=device_id,
-                method="runtime.tasks.list",
-                payload={},
-                timeout_seconds=RUNTIME_LIST_TIMEOUT_SECONDS,
-            )
-        except RuntimeRpcError:
-            continue
+    results = await asyncio.gather(
+        *[
+            _list_device_runtime_workspaces(user_id=user_id, device=device)
+            for device in devices
+            if _should_poll_runtime_work_device(device)
+        ]
+    )
+    for device_id, result in results:
         for workspace in _iter_runtime_workspaces(result):
             workspace_path = normalize_workspace_path(workspace["workspacePath"])
             tasks = [
@@ -1839,6 +1836,40 @@ async def _list_online_runtime_workspaces(
             if tasks:
                 grouped[(device_id, workspace_path)] = tasks
     return grouped
+
+
+async def _list_device_runtime_workspaces(
+    *,
+    user_id: int,
+    device: dict[str, Any],
+) -> tuple[str, dict[str, Any]]:
+    device_id = str(device.get("device_id") or "")
+    try:
+        result = await runtime_rpc_service.call(
+            user_id=user_id,
+            device_id=device_id,
+            method="runtime.tasks.list",
+            payload={},
+            timeout_seconds=RUNTIME_LIST_TIMEOUT_SECONDS,
+            ack_grace_seconds=0,
+        )
+    except RuntimeRpcError:
+        return device_id, {"workspaces": []}
+    return device_id, result
+
+
+def _should_poll_runtime_work_device(device: dict[str, Any]) -> bool:
+    device_id = str(device.get("device_id") or "")
+    if not device_id or _device_status(device) not in {"online", "busy"}:
+        return False
+    return _device_bind_shell(device) == RUNTIME_WORK_BIND_SHELL
+
+
+def _device_bind_shell(device: dict[str, Any]) -> str:
+    raw_bind_shell = device.get("bind_shell") or device.get("bindShell")
+    if not isinstance(raw_bind_shell, str) or not raw_bind_shell.strip():
+        return RUNTIME_WORK_BIND_SHELL
+    return raw_bind_shell.strip().lower()
 
 
 def _iter_runtime_workspaces(result: dict[str, Any]) -> list[dict[str, Any]]:

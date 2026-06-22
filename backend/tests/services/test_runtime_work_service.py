@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -519,6 +520,102 @@ async def test_list_runtime_work_groups_local_tasks_under_device_workspaces(
     )
     rpc.assert_awaited_once()
     assert test_db.query(TaskResource).count() == 0
+
+
+@pytest.mark.asyncio
+async def test_list_runtime_work_polls_online_devices_concurrently(monkeypatch):
+    from app.services import runtime_work_service
+    from app.services.device.runtime_rpc_service import RuntimeRpcError
+
+    second_device_started = asyncio.Event()
+    calls: list[str] = []
+
+    async def rpc(**kwargs):
+        device_id = kwargs["device_id"]
+        calls.append(device_id)
+        if device_id == "stale-device":
+            await second_device_started.wait()
+            raise RuntimeRpcError("stale device did not acknowledge runtime list")
+
+        second_device_started.set()
+        return {
+            "workspaces": [
+                {
+                    "workspacePath": "/repo/Wegent",
+                    "localTasks": [
+                        {
+                            "localTaskId": "codex-1",
+                            "workspacePath": "/repo/Wegent",
+                            "title": "Healthy device task",
+                            "runtime": "codex",
+                            "createdAt": "2026-06-20T01:00:00Z",
+                            "updatedAt": "2026-06-20T02:00:00Z",
+                        }
+                    ],
+                }
+            ]
+        }
+
+    monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
+
+    result = await asyncio.wait_for(
+        runtime_work_service._list_online_runtime_workspaces(
+            user_id=7,
+            devices=[
+                {
+                    "device_id": "stale-device",
+                    "name": "Stale",
+                    "status": "online",
+                },
+                {
+                    "device_id": "healthy-device",
+                    "name": "Healthy",
+                    "status": "online",
+                },
+            ],
+        ),
+        timeout=0.2,
+    )
+
+    assert calls == ["stale-device", "healthy-device"]
+    assert result[("healthy-device", "/repo/Wegent")][0].title == "Healthy device task"
+
+
+@pytest.mark.asyncio
+async def test_list_runtime_work_only_polls_claudecode_devices_with_short_timeout(
+    monkeypatch,
+):
+    from app.services import runtime_work_service
+
+    calls: list[dict] = []
+
+    async def rpc(**kwargs):
+        calls.append(kwargs)
+        return {"workspaces": []}
+
+    monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
+
+    await runtime_work_service._list_online_runtime_workspaces(
+        user_id=7,
+        devices=[
+            {
+                "device_id": "claude-device",
+                "name": "Claude",
+                "status": "online",
+                "bind_shell": "claudecode",
+            },
+            {
+                "device_id": "openclaw-device",
+                "name": "OpenClaw",
+                "status": "online",
+                "bind_shell": "openclaw",
+            },
+        ],
+    )
+
+    assert [call["device_id"] for call in calls] == ["claude-device"]
+    assert calls[0]["timeout_seconds"] == 3
+    assert calls[0]["ack_grace_seconds"] == 0
 
 
 @pytest.mark.asyncio
@@ -1798,6 +1895,8 @@ async def test_fork_runtime_task_without_source_workspace_path_resolves_git_work
     )
 
     assert response.accepted is True
+    assert calls[0]["timeout_seconds"] == 3
+    assert calls[0]["ack_grace_seconds"] == 0
     assert [call["method"] for call in calls] == [
         "runtime.tasks.list",
         "runtime.tasks.prepare_fork_transfer",

@@ -35,10 +35,13 @@ class RuntimeRpcService:
         method: str,
         payload: dict[str, Any],
         timeout_seconds: int = DEFAULT_RUNTIME_RPC_TIMEOUT_SECONDS,
+        ack_grace_seconds: int = SOCKET_ACK_GRACE_SECONDS,
     ) -> dict[str, Any]:
         """Call `runtime:rpc` on an online local executor and return its result."""
 
         normalized_timeout = self._normalize_timeout(timeout_seconds)
+        normalized_ack_grace = self._normalize_ack_grace(ack_grace_seconds)
+        socket_timeout = normalized_timeout + normalized_ack_grace
         online_info = await device_service.get_device_online_info(user_id, device_id)
         if not online_info:
             raise RuntimeRpcError(f"Device '{device_id}' is offline")
@@ -60,7 +63,7 @@ class RuntimeRpcService:
                 request,
                 to=socket_id,
                 namespace="/local-executor",
-                timeout=normalized_timeout + SOCKET_ACK_GRACE_SECONDS,
+                timeout=socket_timeout,
             )
         except Exception as exc:
             raise RuntimeRpcError(
@@ -68,7 +71,7 @@ class RuntimeRpcService:
                     exc,
                     device_id=device_id,
                     method=method,
-                    timeout_seconds=normalized_timeout + SOCKET_ACK_GRACE_SECONDS,
+                    timeout_seconds=socket_timeout,
                 )
             ) from exc
 
@@ -85,6 +88,14 @@ class RuntimeRpcService:
         if parsed <= 0:
             return DEFAULT_RUNTIME_RPC_TIMEOUT_SECONDS
         return min(parsed, MAX_RUNTIME_RPC_TIMEOUT_SECONDS)
+
+    @staticmethod
+    def _normalize_ack_grace(ack_grace_seconds: Any) -> int:
+        try:
+            parsed = int(ack_grace_seconds)
+        except (TypeError, ValueError):
+            parsed = SOCKET_ACK_GRACE_SECONDS
+        return max(parsed, 0)
 
     @staticmethod
     def _format_rpc_error(
