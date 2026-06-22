@@ -62,6 +62,7 @@ from app.services.im.session_service import im_session_service
 from app.services.object_storage import object_storage_presign_service
 from app.services.runtime_work_kind_store import (
     deactivate_device_workspace_kind,
+    get_device_workspace_kind_by_id,
     list_device_workspace_kinds,
     touch_device_workspace_kind,
     upsert_device_workspace_kind,
@@ -271,16 +272,21 @@ async def list_runtime_work(
             )
         configured_target = _project_runtime_target(project)
         if configured_target:
-            key = (configured_target.device_id, configured_target.workspace_path)
+            materialized_mapping = _materialize_project_runtime_target(
+                db=db,
+                user_id=user_id,
+                project=project,
+                target=configured_target,
+            )
+            key = (materialized_mapping.device_id, materialized_mapping.workspace_path)
             if key not in mapped_keys:
                 mapped_keys.add(key)
                 local_tasks = runtime_workspaces.get(key, [])
                 total_local_tasks += len(local_tasks)
                 workspace_items.append(
-                    _build_project_config_workspace_item(
-                        project=project,
-                        target=configured_target,
-                        device=devices_by_id.get(configured_target.device_id),
+                    _build_device_workspace_item(
+                        mapping=materialized_mapping,
+                        device=devices_by_id.get(materialized_mapping.device_id),
                         local_tasks=local_tasks,
                     )
                 )
@@ -299,6 +305,7 @@ async def list_runtime_work(
             mapped_keys.add((device_id, workspace_path))
             total_local_tasks += len(local_tasks)
             _append_worktree_tasks_to_source_workspace(
+                db=db,
                 workspace_items_by_project_id=workspace_items_by_project_id,
                 target=target,
                 device=devices_by_id.get(device_id),
@@ -317,6 +324,7 @@ async def list_runtime_work(
         mapped_keys.add((device_id, workspace_path))
         total_local_tasks += len(local_tasks)
         _append_worktree_tasks_to_source_workspace(
+            db=db,
             workspace_items_by_project_id=workspace_items_by_project_id,
             target=target,
             device=devices_by_id.get(device_id),
@@ -2053,6 +2061,7 @@ def _find_project_target_for_runtime_worktree(
 
 def _append_worktree_tasks_to_source_workspace(
     *,
+    db: Session,
     workspace_items_by_project_id: dict[int, list[RuntimeDeviceWorkspace]],
     target: RuntimeTaskTarget,
     device: Optional[dict[str, Any]],
@@ -2070,13 +2079,40 @@ def _append_worktree_tasks_to_source_workspace(
             item.local_tasks.extend(local_tasks)
             return
 
+    mapping = _materialize_project_runtime_target(
+        db=db,
+        user_id=target.project.user_id,
+        project=target.project,
+        target=target,
+    )
     workspace_items.append(
-        _build_project_config_workspace_item(
-            project=target.project,
-            target=target,
+        _build_device_workspace_item(
+            mapping=mapping,
             device=device,
             local_tasks=local_tasks,
         )
+    )
+
+
+def _materialize_project_runtime_target(
+    *,
+    db: Session,
+    user_id: int,
+    project: Project,
+    target: RuntimeTaskTarget,
+) -> DeviceWorkspaceResponse:
+    config = _parse_project_config(project, strict=False)
+    repo_url = config.git.url if config and config.git else None
+    return upsert_device_workspace(
+        db=db,
+        user_id=user_id,
+        payload=DeviceWorkspaceUpsert(
+            projectId=project.id,
+            deviceId=target.device_id,
+            workspacePath=target.workspace_path,
+            repoUrl=repo_url,
+            label="workspace",
+        ),
     )
 
 
@@ -2104,31 +2140,6 @@ def _build_device_workspace_item(
         repoUrl=mapping.repo_url,
         repoRootFingerprint=mapping.repo_root_fingerprint,
         label=mapping.label,
-        mapped=True,
-        available=available,
-        error=None if available else "Device is offline",
-        localTasks=local_tasks if available else [],
-    )
-
-
-def _build_project_config_workspace_item(
-    *,
-    project: Project,
-    target: RuntimeTaskTarget,
-    device: Optional[dict[str, Any]],
-    local_tasks: list[LocalTaskSummary],
-) -> RuntimeDeviceWorkspace:
-    status_value = _device_status(device)
-    available = status_value in {"online", "busy"}
-    return RuntimeDeviceWorkspace(
-        id=None,
-        projectId=project.id,
-        deviceId=target.device_id,
-        deviceName=_device_name(device, target.device_id),
-        deviceStatus=status_value,
-        workspacePath=target.workspace_path,
-        **_runtime_workspace_kind_fields(target.workspace_path),
-        label=project.name,
         mapped=True,
         available=available,
         error=None if available else "Device is offline",
@@ -2239,6 +2250,42 @@ def _parse_project_config(
         return None
 
 
+def _device_workspace_runtime_target(
+    *,
+    db: Session,
+    user_id: int,
+    project: Project,
+    device_workspace_id: int,
+) -> RuntimeTaskTarget:
+    mapping = get_device_workspace_kind_by_id(
+        db=db,
+        user_id=user_id,
+        workspace_id=device_workspace_id,
+    )
+    if mapping is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Device workspace not found",
+        )
+    if mapping.project_id != project.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Device workspace does not belong to project",
+        )
+
+    workspace_source = "local_path"
+    config = _parse_project_config(project, strict=False)
+    if config and config.workspace:
+        workspace_source = config.workspace.source
+
+    return RuntimeTaskTarget(
+        device_id=mapping.device_id,
+        workspace_path=normalize_workspace_path(mapping.workspace_path),
+        project=project,
+        workspace_source=workspace_source,
+    )
+
+
 def _resolve_runtime_task_target(
     db: Session,
     user_id: int,
@@ -2251,6 +2298,13 @@ def _resolve_runtime_task_target(
             request.project_id,
             CLIENT_ORIGIN_WEWORK,
         )
+        if request.device_workspace_id is not None:
+            return _device_workspace_runtime_target(
+                db=db,
+                user_id=user_id,
+                project=project,
+                device_workspace_id=request.device_workspace_id,
+            )
         target = _project_runtime_target(project, strict=True)
         if target:
             return _apply_requested_workspace_source(target, request)
@@ -2265,7 +2319,7 @@ def _resolve_runtime_task_target(
 
     raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
-        detail="projectId or deviceId + workspacePath is required",
+        detail="projectId + deviceWorkspaceId or deviceId + workspacePath is required",
     )
 
 

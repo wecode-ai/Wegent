@@ -351,6 +351,11 @@ class RuntimeTaskCreateRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     project_id: Optional[int] = Field(default=None, alias="projectId", ge=1)
+    device_workspace_id: Optional[int] = Field(
+        default=None,
+        alias="deviceWorkspaceId",
+        ge=1,
+    )
     device_id: Optional[str] = Field(default=None, alias="deviceId")
     workspace_path: Optional[str] = Field(default=None, alias="workspacePath")
     team_id: int = Field(..., alias="teamId", ge=1)

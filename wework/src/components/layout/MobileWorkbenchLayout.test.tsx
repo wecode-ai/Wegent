@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState, type ReactNode } from 'react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
@@ -137,6 +137,97 @@ describe('MobileWorkbenchLayout', () => {
     )
     expect(screen.getByTestId('compact-input-pill')).toHaveClass('min-h-[52px]')
     expect(screen.getByTestId('add-context-button')).toHaveClass('h-[52px]')
+  })
+
+  test('treats a selected runtime task with an empty transcript as a conversation', () => {
+    renderAtMobileWidth(
+      <MobileWorkbenchLayout
+        state={{
+          ...baseState,
+          currentRuntimeTask: {
+            deviceId: 'device-1',
+            workspacePath: '/workspace/project-alpha',
+            localTaskId: 'runtime-empty',
+          },
+        }}
+        messages={[]}
+        projectChat={baseProjectChat}
+        onSelectProject={vi.fn()}
+        onInputChange={vi.fn()}
+        onSend={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('mobile-chat-input-dock')).toBeInTheDocument()
+    expect(screen.queryByTestId('mobile-empty-state-content')).not.toBeInTheDocument()
+  })
+
+  test('shows an offline device notice above mobile conversations', () => {
+    const offlineDevice = {
+      id: 1,
+      device_id: 'offline-device',
+      name: 'Offline Device',
+      status: 'offline' as const,
+      is_default: false,
+      device_type: 'cloud' as const,
+      bind_shell: 'claudecode',
+      executor_version: '1.8.5',
+    }
+    const project = {
+      id: 1,
+      name: 'github_wegent',
+      config: {
+        execution: {
+          targetType: 'cloud' as const,
+          deviceId: 'offline-device',
+        },
+      },
+      tasks: [
+        {
+          id: 11,
+          task_id: 7,
+          task_title: '项目任务',
+          task_status: 'COMPLETED',
+          created_at: '2026-05-25T00:00:00.000Z',
+        },
+      ],
+    }
+
+    renderAtMobileWidth(
+      <MobileWorkbenchLayout
+        state={{
+          ...baseState,
+          projects: [project],
+          devices: [offlineDevice],
+          currentProject: project,
+          input: 'hello',
+        }}
+        messages={[
+          {
+            id: 'message-1',
+            role: 'user',
+            content: 'hello',
+            status: 'done',
+            createdAt: '2026-05-25T00:00:00.000Z',
+          },
+        ]}
+        projectChat={baseProjectChat}
+        onSelectProject={vi.fn()}
+        onInputChange={vi.fn()}
+        onSend={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('conversation-device-offline-banner')).toHaveTextContent(
+      'Offline Device 已离线，恢复在线后可继续对话'
+    )
+    expect(
+      within(screen.getByTestId('mobile-chat-input-dock')).getByTestId(
+        'conversation-device-offline-banner'
+      )
+    ).toBeInTheDocument()
+    expect(screen.getByTestId('chat-message-scroll-area')).not.toHaveClass('pt-28')
+    expect(screen.getByTestId('send-message-button')).toBeDisabled()
   })
 
   test('uses a bottom sheet for the mobile model picker', async () => {

@@ -55,7 +55,7 @@ Backend 将 `deviceId + localTaskId` 转发给对应设备的 `runtime.tasks.tra
 POST /api/runtime-work/send
 ```
 
-Backend 转发 `runtime.tasks.send`。executor 根据本地运行时句柄继续 Codex 或 Claude Code 会话；原生 Codex 的后续状态由 Codex session 记录承载，不写回 JSON LocalTask 索引。流式 Responses 事件只携带 `local_task_id` 和运行时信息，不携带 `workspacePath`。
+Backend 转发 `runtime.tasks.send`。executor 根据本地 LocalTask 的 opaque runtime handle 继续运行时会话。Claude Code 任务会把本地 transcript 写回 JSON LocalTask 索引；原生 Codex 任务只继续 Codex SDK thread，消息和状态以 Codex 自己的 session 记录为准，不写回 executor JSON 索引。流式 Responses 事件只携带 `local_task_id` 和运行时信息，不携带 `workspacePath`。
 
 原生 Codex 任务有一个额外约束：刷新 transcript 时只信任 Codex 本身的会话记录。fork 包或 executor JSON 索引中携带的 `runtimeHandle.messages` 只是导入瞬间的快照，不能作为原生 Codex transcript 的回退来源，否则 Wework 刷新后会显示旧消息或丢失用户追问。非 SDK 原生任务仍可以使用 executor JSON 索引中的本地 transcript。
 
@@ -76,7 +76,24 @@ Wework 打开 LocalTask 后，右侧文件、审查和终端工具使用当前 L
 POST /api/runtime-work/create
 ```
 
-Backend 根据请求中的 `projectId` 或 `deviceId + workspacePath` 解析目标设备和目录，构造一次临时 execution request，然后调用设备 RPC `runtime.tasks.create`。这个流程不会 `db.add()` 任何 `TaskResource` 或 `Subtask`。
+Backend 根据请求中的项目映射或独立设备工作区解析目标设备和目录，构造一次临时 execution request，然后调用设备 RPC `runtime.tasks.create`。这个流程不会 `db.add()` 任何 `TaskResource` 或 `Subtask`。
+
+运行时创建的持久化位置由具体 runtime 决定：
+
+- Claude Code 创建 executor JSON LocalTask，并在该索引中保存 transcript 和 runtime handle。
+- Codex 创建时先返回 executor 进程内的 `localTaskId`，让前端立即打开任务并接收 stream；后台启动原生 Codex SDK thread 后，会把真实 Codex threadId 保存在内存 runtime handle 中用于后续 send/resume。
+- Codex 创建和继续时都不把任务缓存到 executor JSON 索引。当前 executor 进程内会保留一个临时内存记录，用来覆盖 Codex discovery 尚未发现新 thread 的短暂空窗；executor 重启后再以原生 Codex discovery/session 为准。
+- Codex 创建时仍通过 LocalTask Responses 事件通道流式返回 `response.created`、文本/tool 增量和 `response.completed`/`error`，这些事件使用 create 返回的 `localTaskId`，前端不需要等待下一次列表刷新才能显示运行中的回复。
+- 附件仍由 executor 的 Codex attachment pipeline 处理：Backend 只传 attachment id，executor 在目标设备上下载并转换给 Codex SDK，前端不传本地附件路径。
+
+Project 场景必须使用可信的 Device Workspace 映射：
+
+- Wework 发送 `projectId + deviceWorkspaceId`，不发送 `workspacePath`。
+- Backend 校验 `deviceWorkspaceId` 属于当前用户和该 `projectId`，并且映射里包含可信的 `deviceId + workspacePath`。
+- 如果同一个 Project 只有一个可用 Device Workspace，前端可以直接选中；如果有多个可用 Device Workspace，前端必须让用户确认运行位置后再发送。
+- 旧版 Project 配置里保存的 `execution.deviceId + workspace.localPath` 会在 runtime work 列表刷新时物化为 Device Workspace 映射，以便旧项目也走同一套可信映射路径。
+
+非 Project 的独立设备工作区仍使用 `deviceId + workspacePath` 创建任务。该路径只适用于用户显式选择的未映射设备工作区，不能用于 Project 任务的前端透传。
 
 ## 复制和跨设备转移
 
