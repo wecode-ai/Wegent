@@ -5,6 +5,7 @@ import { ProjectCreateDialog } from '@/components/projects/ProjectCreateDialog'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type {
+  DeleteDeviceWorkspaceRequest,
   DeviceInfo,
   DeviceWorkspacePrepareRequest,
   DeviceWorkspacePrepareResponse,
@@ -38,6 +39,7 @@ interface TaskForkDialogProps {
   onPrepareDeviceWorkspace?: (
     data: DeviceWorkspacePrepareRequest
   ) => Promise<DeviceWorkspacePrepareResponse>
+  onDeleteDeviceWorkspace?: (data: DeleteDeviceWorkspaceRequest) => Promise<void>
   onGetDeviceHomeDirectory?: (deviceId: string) => Promise<string>
   onGetProjectWorkspaceRoot?: (deviceId: string) => Promise<string>
   onListDeviceDirectories?: (deviceId: string, path: string) => Promise<string[]>
@@ -97,6 +99,7 @@ export function TaskForkDialog({
   onStopCurrentResponse,
   onFork,
   onPrepareDeviceWorkspace,
+  onDeleteDeviceWorkspace,
   onGetDeviceHomeDirectory,
   onGetProjectWorkspaceRoot,
   onListDeviceDirectories,
@@ -395,6 +398,7 @@ export function TaskForkDialog({
           onClose={() => setBindingDialogDeviceId(null)}
           onCreateProject={async () => projectForBinding}
           onPrepareDeviceWorkspace={onPrepareDeviceWorkspace}
+          onDeleteDeviceWorkspace={onDeleteDeviceWorkspace}
           onDeviceWorkspacePrepared={handleDeviceWorkspacePrepared}
           showWorkspaceKindSelect
           onGetDeviceHomeDirectory={onGetDeviceHomeDirectory ?? (() => Promise.resolve('/'))}

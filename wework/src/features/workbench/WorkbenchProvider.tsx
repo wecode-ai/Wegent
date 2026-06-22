@@ -56,6 +56,7 @@ import type {
   ChatSendPayload,
   CreateProjectRequest,
   CreateGitWorkspaceProjectRequest,
+  DeleteDeviceWorkspaceRequest,
   DeviceWorkspacePrepareRequest,
   DeviceWorkspacePrepareResponse,
   GitBranch,
@@ -315,6 +316,7 @@ export interface WorkbenchContextValue {
   prepareDeviceWorkspace: (
     data: DeviceWorkspacePrepareRequest
   ) => Promise<DeviceWorkspacePrepareResponse>
+  deleteDeviceWorkspace: (data: DeleteDeviceWorkspaceRequest) => Promise<void>
   listGitRepositories: () => Promise<GitRepoInfo[]>
   listGitBranches: (repo: GitRepoInfo) => Promise<GitBranch[]>
   updateProjectName: (projectId: number, name: string) => Promise<void>
@@ -2087,6 +2089,17 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     [refreshWorkLists, rememberExecutionDevice, resolvedServices.runtimeWorkApi]
   )
 
+  const deleteDeviceWorkspace = useCallback(
+    async (data: DeleteDeviceWorkspaceRequest) => {
+      if (!resolvedServices.runtimeWorkApi) {
+        throw new Error('Runtime work is unavailable')
+      }
+      await resolvedServices.runtimeWorkApi.deleteDeviceWorkspace(data)
+      await refreshWorkLists()
+    },
+    [refreshWorkLists, resolvedServices.runtimeWorkApi]
+  )
+
   const listGitRepositories = useCallback(
     () => resolvedServices.gitApi?.listRepositories() ?? Promise.resolve([]),
     [resolvedServices]
@@ -3019,6 +3032,7 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
     createProject,
     createGitWorkspaceProject,
     prepareDeviceWorkspace,
+    deleteDeviceWorkspace,
     listGitRepositories,
     listGitBranches,
     updateProjectName,

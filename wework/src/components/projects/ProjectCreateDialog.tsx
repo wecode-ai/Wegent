@@ -16,6 +16,7 @@ import {
 import type {
   CreateGitWorkspaceProjectRequest,
   CreateProjectRequest,
+  DeleteDeviceWorkspaceRequest,
   DeviceWorkspacePrepareRequest,
   DeviceWorkspacePrepareResponse,
   DeviceInfo,
@@ -43,6 +44,7 @@ interface ProjectCreateDialogProps {
   onPrepareDeviceWorkspace?: (
     data: DeviceWorkspacePrepareRequest
   ) => Promise<DeviceWorkspacePrepareResponse>
+  onDeleteDeviceWorkspace?: (data: DeleteDeviceWorkspaceRequest) => Promise<void>
   onDeviceWorkspacePrepared?: (response: DeviceWorkspacePrepareResponse) => Promise<void> | void
   showWorkspaceKindSelect?: boolean
   preferredDeviceId?: string | null
