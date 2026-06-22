@@ -14,6 +14,7 @@ import type {
   BindRuntimeTaskIMSessionsResponse,
   CreateGitWorkspaceProjectRequest,
   CreateProjectRequest,
+  DeleteDeviceWorkspaceRequest,
   DeviceWorkspacePrepareRequest,
   DeviceWorkspacePrepareResponse,
   GitBranch,
@@ -91,6 +92,7 @@ interface DesktopWorkbenchLayoutProps {
   onPrepareDeviceWorkspace: (
     data: DeviceWorkspacePrepareRequest
   ) => Promise<DeviceWorkspacePrepareResponse>
+  onDeleteDeviceWorkspace: (data: DeleteDeviceWorkspaceRequest) => Promise<void>
   onListGitRepositories: () => Promise<GitRepoInfo[]>
   onListGitBranches: (repo: GitRepoInfo) => Promise<GitBranch[]>
   onUpdateProjectName: (projectId: number, name: string) => Promise<void>
@@ -174,6 +176,7 @@ export function DesktopWorkbenchLayout({
   onCreateProject,
   onCreateGitWorkspaceProject,
   onPrepareDeviceWorkspace,
+  onDeleteDeviceWorkspace,
   onListGitRepositories,
   onListGitBranches,
   onUpdateProjectName,
@@ -710,6 +713,7 @@ export function DesktopWorkbenchLayout({
           onCreateProject={onCreateProject}
           onCreateGitWorkspaceProject={onCreateGitWorkspaceProject}
           onPrepareDeviceWorkspace={onPrepareDeviceWorkspace}
+          onDeleteDeviceWorkspace={onDeleteDeviceWorkspace}
           onListGitRepositories={onListGitRepositories}
           onListGitBranches={onListGitBranches}
           onUpdateProjectName={onUpdateProjectName}
@@ -795,6 +799,7 @@ export function DesktopWorkbenchLayout({
           onContinueInIm={openContinueInImDialog}
           onForkCurrentRuntimeTask={onForkCurrentRuntimeTask}
           onPrepareDeviceWorkspace={onPrepareDeviceWorkspace}
+          onDeleteDeviceWorkspace={onDeleteDeviceWorkspace}
           onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
           onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot}
           onListDeviceDirectories={onListDeviceDirectories}
@@ -824,6 +829,7 @@ export function DesktopWorkbenchLayout({
         onCreateProject={onCreateProject}
         onCreateGitWorkspaceProject={onCreateGitWorkspaceProject}
         onPrepareDeviceWorkspace={onPrepareDeviceWorkspace}
+        onDeleteDeviceWorkspace={onDeleteDeviceWorkspace}
         preferredDeviceId={
           state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
         }
