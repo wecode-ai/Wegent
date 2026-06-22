@@ -54,6 +54,7 @@
     "archive_chats": "Archive chats",
     "archive_chat": "Archive chat",
     "archive_runtime_task": "Archive task",
+    "runtime_task_running": "Running",
     "mark_runtime_task": "Mark task",
     "unmark_runtime_task": "Unmark task",
     "rename_project": "Rename project",
