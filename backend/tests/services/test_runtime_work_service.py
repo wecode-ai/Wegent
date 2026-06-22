@@ -460,6 +460,71 @@ async def test_list_runtime_work_groups_local_tasks_under_device_workspaces(
 
 
 @pytest.mark.asyncio
+async def test_list_runtime_work_materializes_legacy_project_config_workspace(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    from app.services import runtime_work_service
+
+    project = _local_path_project(
+        test_db,
+        test_user.id,
+        device_id="device-1",
+        path="/repo/Wegent",
+    )
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_all_devices",
+        AsyncMock(
+            return_value=[
+                {
+                    "device_id": "device-1",
+                    "name": "Local Device",
+                    "status": "online",
+                    "executor_version": "1.8.5",
+                }
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        runtime_work_service.runtime_rpc_service,
+        "call",
+        AsyncMock(
+            return_value={
+                "workspaces": [
+                    {
+                        "workspacePath": "/repo/Wegent",
+                        "localTasks": [],
+                    }
+                ]
+            }
+        ),
+    )
+
+    response = await runtime_work_service.list_runtime_work(
+        db=test_db,
+        user_id=test_user.id,
+        client_origin=CLIENT_ORIGIN_WEWORK,
+    )
+
+    workspace = response.projects[0].device_workspaces[0]
+    assert workspace.id is not None
+    assert workspace.project_id == project.id
+    assert workspace.device_id == "device-1"
+    assert workspace.workspace_path == "/repo/Wegent"
+
+    rows = runtime_work_service.list_device_workspaces(
+        db=test_db,
+        user_id=test_user.id,
+        project_id=project.id,
+    )
+    assert len(rows) == 1
+    assert rows[0].id == workspace.id
+    assert rows[0].workspace_path == "/repo/Wegent"
+
+
+@pytest.mark.asyncio
 async def test_list_runtime_work_uses_mapping_label_as_workspace_kind(
     test_db,
     test_user,
