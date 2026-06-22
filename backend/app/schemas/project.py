@@ -165,9 +165,7 @@ class ProjectConfig(BaseModel):
         if self.mode != "workspace":
             return self
 
-        if not self.execution:
-            if not self.device_id:
-                raise ValueError("execution is required for workspace projects")
+        if not self.execution and self.device_id:
             self.execution = ProjectExecutionConfig(
                 targetType="local",
                 deviceId=self.device_id,
@@ -189,13 +187,14 @@ class ProjectConfig(BaseModel):
                 )
                 workspace.checkoutPath = workspace_key
             if (
-                self.execution.targetType == "cloud"
+                self.execution
+                and self.execution.targetType == "cloud"
                 and workspace.checkoutPath
                 and posixpath.isabs(workspace.checkoutPath)
             ):
                 raise ValueError("cloud git checkoutPath must be relative")
         elif workspace.source == "local_path":
-            if self.execution.targetType != "local":
+            if not self.execution or self.execution.targetType != "local":
                 raise ValueError("local_path source is only supported for local target")
             if not workspace.localPath:
                 raise ValueError(
@@ -390,7 +389,11 @@ class ProjectDeviceSessionResponse(BaseModel):
     device_id: str = Field(..., description="Bound local device ID")
     type: Literal["terminal", "code_server"] = Field(..., description="Session type")
     path: str = Field(..., description="Project path on the local device")
-    url: str = Field(..., description="Browser URL for the interactive session")
+    url: str = Field(default="", description="Browser URL for URL-backed sessions")
+    transport: Literal["url", "socketio"] = Field(
+        default="url",
+        description="Browser transport for the interactive session",
+    )
     expires_at: Optional[datetime] = Field(
         None,
         description="Session expiration timestamp, if provided by the device",

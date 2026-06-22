@@ -121,3 +121,42 @@ async def test_execute_command_times_out_and_returns_error():
     assert result["exit_code"] is None
     assert result["timed_out"] is True
     assert "timed out" in result["error"].lower()
+
+
+@pytest.mark.asyncio
+async def test_execute_command_missing_cwd_returns_error_without_exception_log(
+    tmp_path, monkeypatch
+):
+    """Missing worktrees should return a normal error without traceback logging."""
+    from executor.modes.local import command_handler
+    from executor.modes.local.command_handler import CommandHandler
+
+    missing_cwd = tmp_path / "deleted-worktree"
+    logger_calls = []
+
+    class FakeLogger:
+        def info(self, *args, **kwargs):
+            logger_calls.append(("info", args, kwargs))
+
+        def warning(self, *args, **kwargs):
+            logger_calls.append(("warning", args, kwargs))
+
+        def exception(self, *args, **kwargs):
+            logger_calls.append(("exception", args, kwargs))
+
+    monkeypatch.setattr(command_handler, "logger", FakeLogger())
+
+    result = await CommandHandler().handle_execute_command(
+        {
+            "command": "pwd",
+            "cwd": str(missing_cwd),
+            "timeout_seconds": 5,
+            "max_output_bytes": 1024,
+        }
+    )
+
+    assert result["success"] is False
+    assert result["exit_code"] is None
+    assert "Working directory does not exist" in result["error"]
+    assert str(missing_cwd) in result["error"]
+    assert not any(level == "exception" for level, _, _ in logger_calls)

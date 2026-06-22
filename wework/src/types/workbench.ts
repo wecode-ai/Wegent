@@ -2,7 +2,8 @@ import type {
   Attachment,
   DeviceInfo,
   ProjectWithTasks,
-  Task,
+  RuntimeTaskAddress,
+  RuntimeWorkListResponse,
   Team,
   TurnFileChangesSummary,
   User,
@@ -34,6 +35,8 @@ export type TextBlock = WorkbenchTextBlock
 
 export type ProcessingBlock = WorkbenchProcessingBlock
 
+export type MessageSource = NonNullable<CoreWorkbenchMessage['source']>
+
 export type WorkbenchMessage = CoreWorkbenchMessage<Attachment, TurnFileChangesSummary>
 
 export type QueuedMessageStatus = 'queued' | 'sending' | 'failed'
@@ -60,10 +63,12 @@ export interface WorkbenchState {
   defaultTeam: Team | null
   projects: ProjectWithTasks[]
   devices: DeviceInfo[]
-  recentTasks: Task[]
+  runtimeWork: RuntimeWorkListResponse | null
   currentProject: ProjectWithTasks | null
+  currentRuntimeTask: RuntimeTaskAddress | null
+  selectedDeviceWorkspaceId: number | null
+  pendingProjectWorkspaceProjectId: number | null
   standaloneDeviceId: string | null
-  currentTask: Task | null
   input: string
   isBootstrapping: boolean
   isSending: boolean

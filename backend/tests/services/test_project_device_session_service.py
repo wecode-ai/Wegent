@@ -320,8 +320,60 @@ async def test_start_project_device_session_rejects_project_without_bound_device
 
 
 @pytest.mark.asyncio
-async def test_start_project_device_session_rejects_local_device_type(monkeypatch):
-    """Project terminal and code-server sessions are cloud-device-only tools."""
+async def test_start_project_terminal_session_allows_local_device_type(monkeypatch):
+    """Project terminal sessions should work for local devices through Socket.IO relay."""
+    from app.services import project_device_session_service as service
+
+    project = SimpleNamespace(
+        id=123,
+        user_id=7,
+        is_active=True,
+        config=_project_config(path="/workspace/project", device_id="local-device"),
+    )
+    device_kind = SimpleNamespace(json={"spec": {"deviceType": "local"}})
+    query = SimpleNamespace(filter=lambda *args: SimpleNamespace(first=lambda: project))
+    db = SimpleNamespace(query=lambda model: query)
+    execute_mock = AsyncMock(
+        return_value={
+            "success": True,
+            "session_id": "terminal-123",
+            "project_id": 123,
+            "device_id": "local-device",
+            "type": "terminal",
+            "path": "/workspace/project",
+            "url": "",
+            "transport": "socketio",
+        }
+    )
+    monkeypatch.setattr(
+        service.local_device_session_service,
+        "start_session",
+        execute_mock,
+    )
+    monkeypatch.setattr(
+        service,
+        "device_service",
+        SimpleNamespace(
+            get_device_by_device_id=lambda db, user_id, device_id: device_kind
+        ),
+        raising=False,
+    )
+
+    result = await service.start_project_device_session(
+        db=db,
+        user_id=7,
+        project_id=123,
+        session_type="terminal",
+    )
+
+    assert result.transport == "socketio"
+    assert result.device_id == "local-device"
+    execute_mock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_start_project_code_server_session_rejects_local_device_type(monkeypatch):
+    """Project code-server sessions still require a cloud device gateway."""
     from fastapi import HTTPException
 
     from app.services import project_device_session_service as service
@@ -355,11 +407,14 @@ async def test_start_project_device_session_rejects_local_device_type(monkeypatc
             db=db,
             user_id=7,
             project_id=123,
-            session_type="terminal",
+            session_type="code_server",
         )
 
     assert exc_info.value.status_code == 400
-    assert "local devices do not support" in exc_info.value.detail.lower()
+    assert (
+        "local devices do not support code-server sessions"
+        in exc_info.value.detail.lower()
+    )
     execute_mock.assert_not_awaited()
 
 
@@ -368,6 +423,7 @@ async def test_local_device_session_service_calls_device_start_session(monkeypat
     """Device session service should send a start_session RPC to the online device."""
     from app.services.device import session_service
 
+    monkeypatch.setattr(session_service.secrets, "token_urlsafe", lambda size: "secret")
     mock_sio = AsyncMock()
     mock_sio.call.return_value = {
         "success": True,
@@ -377,6 +433,7 @@ async def test_local_device_session_service_calls_device_start_session(monkeypat
         "device_id": "device-abc",
         "type": "terminal",
     }
+    terminal_registry = SimpleNamespace(register=AsyncMock())
     monkeypatch.setattr(
         session_service.device_service,
         "get_device_online_info",
@@ -388,6 +445,12 @@ async def test_local_device_session_service_calls_device_start_session(monkeypat
         lambda db, user_id, device_id: object(),
     )
     monkeypatch.setattr(session_service, "get_sio", lambda: mock_sio)
+    monkeypatch.setattr(
+        session_service,
+        "terminal_session_service",
+        terminal_registry,
+        raising=False,
+    )
 
     result = await session_service.local_device_session_service.start_session(
         db=object(),
@@ -399,20 +462,89 @@ async def test_local_device_session_service_calls_device_start_session(monkeypat
     )
 
     assert result["success"] is True
+    assert result["url"] == ""
+    assert result["transport"] == "socketio"
     payload = mock_sio.call.await_args.args[1]
     assert payload["type"] == "terminal"
     assert payload["project_id"] == 123
     assert payload["path"] == "/repo"
     assert payload["create_if_missing"] is False
     assert payload["session_id"].startswith("terminal-123-")
-    assert len(payload["access_token"]) >= 32
+    assert payload["access_token"] == "secret"
     assert mock_sio.call.await_args.args[0] == "device:start_terminal_session"
     mock_sio.call.assert_awaited_once()
+    terminal_registry.register.assert_awaited_once()
+    record = terminal_registry.register.await_args.args[0]
+    assert record.session_id == payload["session_id"]
+    assert record.user_id == 7
+    assert record.device_id == "device-abc"
+    assert record.socket_id == "socket-123"
+    assert record.project_id == 123
+    assert record.path == "/repo"
+
+
+@pytest.mark.asyncio
+async def test_local_device_session_service_maps_terminal_registry_failures(
+    monkeypatch,
+):
+    """Terminal registry failures should return a device session error and clean up."""
+    from app.services.device import session_service
+
+    mock_sio = AsyncMock()
+    mock_sio.call.return_value = {
+        "success": True,
+        "session_id": "session-123",
+        "url": "",
+        "path": "/repo",
+        "device_id": "device-abc",
+        "type": "terminal",
+    }
+    terminal_registry = SimpleNamespace(
+        register=AsyncMock(side_effect=RuntimeError("redis unavailable"))
+    )
+    monkeypatch.setattr(
+        session_service.device_service,
+        "get_device_online_info",
+        AsyncMock(return_value={"socket_id": "socket-123"}),
+    )
+    monkeypatch.setattr(
+        session_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: object(),
+    )
+    monkeypatch.setattr(session_service, "get_sio", lambda: mock_sio)
+    monkeypatch.setattr(
+        session_service,
+        "terminal_session_service",
+        terminal_registry,
+        raising=False,
+    )
+
+    with pytest.raises(
+        session_service.DeviceSessionError,
+        match="Failed to persist terminal session metadata",
+    ):
+        await session_service.local_device_session_service.start_session(
+            db=object(),
+            user_id=7,
+            device_id="device-abc",
+            project_id=123,
+            session_type="terminal",
+            path="/repo",
+        )
+
+    session_id = mock_sio.call.await_args.args[1]["session_id"]
+    mock_sio.emit.assert_awaited_once_with(
+        "terminal:close",
+        {"session_id": session_id},
+        to="socket-123",
+        namespace="/local-executor",
+    )
 
 
 @pytest.mark.asyncio
 async def test_local_device_session_service_adds_missing_url_token(monkeypatch):
-    """Returned session URLs must include the generated access token."""
+    """Returned code-server URLs must include the generated access token."""
     from app.services.device import session_service
 
     monkeypatch.setattr(session_service.secrets, "token_urlsafe", lambda size: "secret")
@@ -423,7 +555,7 @@ async def test_local_device_session_service_adds_missing_url_token(monkeypatch):
         "url": "http://localhost:17888/s/session-123/",
         "path": "/repo",
         "device_id": "device-abc",
-        "type": "terminal",
+        "type": "code_server",
     }
     monkeypatch.setattr(
         session_service.device_service,
@@ -442,18 +574,19 @@ async def test_local_device_session_service_adds_missing_url_token(monkeypatch):
         user_id=7,
         device_id="device-abc",
         project_id=123,
-        session_type="terminal",
+        session_type="code_server",
         path="/repo",
     )
 
     assert result["url"] == "http://localhost:17888/s/session-123/?token=secret"
+    assert result["transport"] == "url"
 
 
 @pytest.mark.asyncio
 async def test_cloud_device_session_service_rewrites_localhost_session_url(
     monkeypatch,
 ):
-    """Cloud device sessions should not return the device-local localhost URL."""
+    """Cloud code-server sessions should not return the device-local localhost URL."""
     from app.services.device import session_service
 
     monkeypatch.setattr(session_service.secrets, "token_urlsafe", lambda size: "short")
@@ -464,7 +597,7 @@ async def test_cloud_device_session_service_rewrites_localhost_session_url(
         "url": "http://localhost:17888/s/session-123/?token=short",
         "path": "/repo",
         "device_id": "device-abc",
-        "type": "terminal",
+        "type": "code_server",
     }
     device_kind = SimpleNamespace(
         json={
@@ -502,8 +635,9 @@ async def test_cloud_device_session_service_rewrites_localhost_session_url(
         user_id=7,
         device_id="device-abc",
         project_id=123,
-        session_type="terminal",
+        session_type="code_server",
         path="/repo",
     )
 
     assert result["url"] == "http://10.1.2.3:17888/s/session-123/?token=short"
+    assert result["transport"] == "url"

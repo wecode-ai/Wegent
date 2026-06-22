@@ -95,12 +95,12 @@
 
 ### 知识库页面设置 (`setupKnowledgePage`)
 - 导航到 `/knowledge`
-- 如需则处理登录 (admin/Wegent2025!)
+- 如需则使用测试环境配置的管理员账号登录
 - 通过 localStorage 跳过新手引导
 - 移除 driver.js 覆盖层
 
 ### 群聊页面设置 (`setupChatGroupPage`)
 - 导航到 `/chat`
-- 如需则处理登录 (admin/Wegent2025!)
+- 如需则使用测试环境配置的管理员账号登录
 - 通过 localStorage 跳过新手引导
 - 移除 driver.js 覆盖层

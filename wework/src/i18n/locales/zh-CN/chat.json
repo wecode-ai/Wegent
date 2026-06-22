@@ -127,7 +127,8 @@
       },
       "generic_error": {
         "title": "消息生成失败",
-        "description": "请求未能完成。你可以稍后重试，或查看错误详情。"
+        "description": "请求未能完成。你可以稍后重试，或查看错误详情。",
+        "description_without_details": "请求未能完成。你可以稍后重试。"
       }
     }
   }

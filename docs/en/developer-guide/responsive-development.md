@@ -606,5 +606,5 @@ function DesktopComponent() {
 
 For more examples, refer to:
 - `/app/(tasks)/chat/ChatPageDesktop.tsx` and `ChatPageMobile.tsx`
-- `/app/(tasks)/code/CodePageDesktop.tsx` and `CodePageMobile.tsx`
+- Coding entry points now use `/chat?agent=code` and reuse the Chat page responsive implementation
 - `/features/tasks/components/input/ChatInputControls.tsx` and `MobileChatInputControls.tsx`

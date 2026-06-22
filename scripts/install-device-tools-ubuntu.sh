@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Install the Ubuntu device tools used by docker/device/Dockerfile:
-# ttyd and code-server. The script is safe to run repeatedly.
+# code-server and runtime CLIs. The script is safe to run repeatedly.
 
 set -euo pipefail
 
@@ -24,7 +24,6 @@ CODE_SERVER_PASSWORD="${CODE_SERVER_PASSWORD:-password}"
 CODE_SERVER_BIND_ADDR="${CODE_SERVER_BIND_ADDR:-0.0.0.0:18080}"
 CODE_SERVER_CONFIG_DIR="${CODE_SERVER_CONFIG_DIR:-}"
 CODE_SERVER_EXTENSIONS_DIR="${CODE_SERVER_EXTENSIONS_DIR:-}"
-DISABLE_TTYD_SERVICE="${DISABLE_TTYD_SERVICE:-true}"
 INSTALL_NODEJS="${INSTALL_NODEJS:-false}"
 NODE_MAJOR="${NODE_MAJOR:-22}"
 NODE_VERSION="${NODE_VERSION:-}"
@@ -340,26 +339,6 @@ install_codex_cli() {
     fi
 
     success "Installed Codex CLI $(env PATH="${node_path_dir}:/usr/local/bin:${PATH}" codex --version)."
-}
-
-install_ttyd() {
-    info "Installing ttyd..."
-    run_apt apt-get install -y --no-install-recommends ttyd
-    stop_and_disable_ttyd_service
-}
-
-stop_and_disable_ttyd_service() {
-    if [ "$DISABLE_TTYD_SERVICE" != "true" ]; then
-        return
-    fi
-
-    if ! command -v systemctl >/dev/null 2>&1; then
-        return
-    fi
-
-    info "Stopping and disabling ttyd.service; this installer only installs tools."
-    $SUDO systemctl stop ttyd.service 2>/dev/null || true
-    $SUDO systemctl disable ttyd.service 2>/dev/null || true
 }
 
 install_code_server() {
@@ -769,7 +748,6 @@ print_versions() {
 
     success "Installation complete."
     printf '\nInstalled versions:\n'
-    ttyd --version || true
     code-server --version || true
     target_user="$(resolve_code_server_user)"
     target_home="$(resolve_user_home "$target_user" 2>/dev/null || true)"
@@ -794,7 +772,6 @@ main() {
     enable_universe_repository
     install_nodejs_if_requested
     install_codex_cli
-    install_ttyd
     install_code_server
     patch_code_server_vsda_assets
     configure_code_server_auth

@@ -285,6 +285,107 @@ class TestBuildExecutionRequestUserSubtaskId:
 
         assert mock_builder.build.call_args.kwargs["web_runtime_guidance"] is True
 
+    async def test_payload_can_skip_unavailable_task_model_override(self):
+        """IM task continuation can fall back when a Wework runtime model is not a Model CRD."""
+        from app.services.chat.trigger import unified as trigger_unified
+
+        mock_db = MagicMock()
+        request_from_builder = ExecutionRequest(task_id=1, subtask_id=2)
+        mock_builder = MagicMock()
+        mock_builder.build.return_value = request_from_builder
+        payload = SimpleNamespace(ignore_unavailable_task_model_override=True)
+
+        task = MagicMock()
+        task.id = 1
+        task.json = {
+            "metadata": {
+                "labels": {
+                    "modelId": "codex-gpt-5.5",
+                    "forceOverrideBotModel": "true",
+                }
+            }
+        }
+
+        assistant_subtask = MagicMock()
+        assistant_subtask.id = 2
+        team = MagicMock()
+        user = MagicMock()
+        user.id = 7
+
+        with patch.object(trigger_unified, "SessionLocal", return_value=mock_db):
+            with patch(
+                "app.services.execution.TaskRequestBuilder", return_value=mock_builder
+            ):
+                with patch(
+                    "app.services.chat.config.model_resolver._find_model_with_namespace",
+                    return_value=(None, None),
+                ) as mock_find_model:
+                    await trigger_unified.build_execution_request(
+                        task=task,
+                        assistant_subtask=assistant_subtask,
+                        team=team,
+                        user=user,
+                        message="hello",
+                        payload=payload,
+                    )
+
+        mock_find_model.assert_called_once_with(mock_db, "codex-gpt-5.5", 7)
+        assert mock_builder.build.call_args.kwargs["override_model_name"] is None
+        assert mock_builder.build.call_args.kwargs["force_override"] is False
+
+    async def test_runtime_task_model_override_uses_codex_runtime_config(self):
+        """Wework runtime model labels should execute through Codex auth config."""
+        from app.services.chat.trigger import unified as trigger_unified
+
+        mock_db = MagicMock()
+        request_from_builder = ExecutionRequest(task_id=1, subtask_id=2)
+        mock_builder = MagicMock()
+        mock_builder.build.return_value = request_from_builder
+        task = MagicMock()
+        task.id = 1
+        task.json = {
+            "metadata": {
+                "labels": {
+                    "modelId": "codex-gpt-5.5",
+                    "forceOverrideBotModel": "true",
+                    "forceOverrideBotModelType": "runtime",
+                }
+            }
+        }
+        assistant_subtask = MagicMock()
+        assistant_subtask.id = 2
+        team = MagicMock()
+        user = MagicMock()
+        user.id = 7
+
+        with patch.object(trigger_unified, "SessionLocal", return_value=mock_db):
+            with patch(
+                "app.services.execution.TaskRequestBuilder", return_value=mock_builder
+            ):
+                with patch(
+                    "app.services.chat.config.model_resolver._find_model_with_namespace"
+                ) as mock_find_model:
+                    await trigger_unified.build_execution_request(
+                        task=task,
+                        assistant_subtask=assistant_subtask,
+                        team=team,
+                        user=user,
+                        message="hello",
+                        payload=SimpleNamespace(
+                            ignore_unavailable_task_model_override=True
+                        ),
+                    )
+
+        mock_find_model.assert_not_called()
+        assert mock_builder.build.call_args.kwargs["override_model_name"] is None
+        assert mock_builder.build.call_args.kwargs["force_override"] is False
+        assert mock_builder.build.call_args.kwargs["runtime_model_config"] == {
+            "model": "openai",
+            "model_id": "gpt-5.5",
+            "api_format": "responses",
+            "protocol": "openai-responses",
+        }
+
     async def test_device_execution_keeps_sandbox_path_in_context_processing(self):
         """Device-routed tasks should keep sandbox path placeholders for executor rewrite."""
         from app.services.chat.trigger import unified as trigger_unified

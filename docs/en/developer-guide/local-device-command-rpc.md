@@ -99,7 +99,7 @@ The local executor prefers Backend-provided `argv`; it falls back to the system 
 
 ## macOS App Local Terminal
 
-When the WeWork macOS App opens a project that is bound to a local executor on the same Mac, it can embed a local terminal in the workspace panel. This terminal does not depend on `ttyd` and does not use the `/devices/{device_id}/commands` RPC. The App creates a local PTY through Tauri commands and renders the input/output stream with the frontend `xterm` component.
+When the WeWork macOS App opens a project that is bound to a local executor on the same Mac, it can embed a local terminal in the workspace panel. The App creates a local PTY through Tauri commands and renders the input/output stream with the frontend `xterm` component; it does not use the `/devices/{device_id}/commands` RPC.
 
 Enablement rules:
 

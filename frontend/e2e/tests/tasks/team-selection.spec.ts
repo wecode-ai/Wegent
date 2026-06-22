@@ -1,7 +1,7 @@
 /**
  * Team Selection E2E Tests
  *
- * Tests for team selection functionality in chat/code pages.
+ * Tests for team selection functionality in chat and code modes.
  * Covers:
  * - Team selection UI display
  * - User manual team selection
@@ -36,8 +36,8 @@ test.describe('Team Selection', () => {
       }
     })
 
-    test('should display team selector on code page', async ({ page }) => {
-      await page.goto('/code')
+    test('should display team selector in code mode', async ({ page }) => {
+      await page.goto('/chat?agent=code')
       await page.waitForLoadState('domcontentloaded')
 
       const teamSelector = page.locator(
@@ -204,7 +204,7 @@ test.describe('Team Selection', () => {
       })
 
       // Navigate to code mode
-      await page.goto('/code')
+      await page.goto('/chat?agent=code')
       await page.waitForLoadState('domcontentloaded')
 
       // Set code team
@@ -289,8 +289,8 @@ test.describe('Team Selection', () => {
       }
     })
 
-    test('should filter teams by bind_mode on code page', async ({ page }) => {
-      await page.goto('/code')
+    test('should filter teams by bind_mode in code mode', async ({ page }) => {
+      await page.goto('/chat?agent=code')
       await page.waitForLoadState('domcontentloaded')
 
       const teamSelector = page.locator(

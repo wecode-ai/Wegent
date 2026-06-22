@@ -192,8 +192,7 @@ function getDurationText(
   const durationMs = Math.max(0, endTime - first)
   const duration = formatDuration(durationMs)
 
-  if (isRunning) return `已处理 ${duration}`
-  return `用时 ${duration}`
+  return `已处理 ${duration}`
 }
 
 function formatDuration(durationMs: number): string {

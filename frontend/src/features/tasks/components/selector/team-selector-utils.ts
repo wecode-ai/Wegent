@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Team, TaskType } from '@/types/api'
+import { buildChatCodeHref } from '@/config/coding-route'
 
 export type TeamModeFilter = 'all' | TaskType
 export type TeamTargetPage = 'chat' | 'code' | 'knowledge' | 'devices/chat' | 'generate'
@@ -48,4 +49,13 @@ export function getTeamTargetPage(team: Team, currentMode: TeamModeFilter): Team
   }
 
   return targetMode
+}
+
+export function buildTeamTargetHref(targetPage: TeamTargetPage, params?: URLSearchParams): string {
+  if (targetPage === 'code') {
+    return buildChatCodeHref(params)
+  }
+
+  const query = params?.toString()
+  return query ? `/${targetPage}?${query}` : `/${targetPage}`
 }

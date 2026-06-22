@@ -8,7 +8,36 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
+from app.models.task import TaskResource
 from app.models.user import User
+
+
+def _create_task_resource(db: Session, *, user_id: int, task_id: int) -> TaskResource:
+    task = TaskResource(
+        id=task_id,
+        user_id=user_id,
+        kind="Task",
+        name=f"task-{task_id}",
+        namespace="default",
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Task",
+            "metadata": {"name": f"task-{task_id}", "namespace": "default"},
+            "spec": {
+                "title": f"task-{task_id}",
+                "prompt": "",
+                "teamRef": {"name": "team", "namespace": "default"},
+                "workspaceRef": {"name": "workspace", "namespace": "default"},
+            },
+            "status": {"state": "Available", "status": "COMPLETED"},
+        },
+        is_active=TaskResource.STATE_ACTIVE,
+        client_origin="wework",
+    )
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+    return task
 
 
 def _create_subtask(
@@ -52,6 +81,7 @@ def test_internal_chat_history_includes_cancelled_subtasks(
     test_user: User,
 ):
     task_id = 9527
+    _create_task_resource(test_db, user_id=test_user.id, task_id=task_id)
     completed = _create_subtask(
         test_db,
         user_id=test_user.id,
@@ -97,6 +127,7 @@ def test_internal_chat_history_includes_failed_only_when_value_exists(
     test_user: User,
 ):
     task_id = 9531
+    _create_task_resource(test_db, user_id=test_user.id, task_id=task_id)
     completed = _create_subtask(
         test_db,
         user_id=test_user.id,

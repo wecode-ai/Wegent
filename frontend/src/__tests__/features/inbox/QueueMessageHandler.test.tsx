@@ -30,7 +30,7 @@ jest.mock('@/apis/subtasks', () => ({
 describe('QueueMessageHandler', () => {
   beforeEach(() => {
     jest.clearAllMocks()
-    mockUsePathname.mockReturnValue('/code')
+    mockUsePathname.mockReturnValue('/chat')
   })
 
   it('clears process_message while staying on the current pathname', async () => {
@@ -47,7 +47,7 @@ describe('QueueMessageHandler', () => {
     render(<QueueMessageHandler onQueueMessageLoaded={jest.fn()} />)
 
     await waitFor(() => {
-      expect(replace).toHaveBeenCalledWith('/code')
+      expect(replace).toHaveBeenCalledWith('/chat')
     })
   })
 

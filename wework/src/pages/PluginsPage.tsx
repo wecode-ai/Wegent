@@ -19,28 +19,22 @@ export function PluginsPage() {
   const isMobile = useIsMobile()
   const {
     state,
-    runningTaskIds,
     selectProject,
     startNewChat,
     startStandaloneChat,
     startNewProjectChat,
-    openTask,
+    openRuntimeLocalTask,
+    archiveRuntimeLocalTask,
     refreshDevices,
+    refreshWorkLists,
     createProject,
     createGitWorkspaceProject,
+    prepareDeviceWorkspace,
+    deleteDeviceWorkspace,
     listGitRepositories,
     listGitBranches,
     updateProjectName,
     removeProject,
-    archiveAllChats,
-    archiveAllProjectChats,
-    archiveProjectChats,
-    archiveTask,
-    renameTask,
-    listArchivedTasks,
-    unarchiveTask,
-    deleteTask,
-    deleteArchivedTasks,
     getDeviceHomeDirectory,
     getProjectWorkspaceRoot,
     listDeviceDirectories,
@@ -53,11 +47,6 @@ export function PluginsPage() {
   const handleSelectProject = (projectId: number) => {
     navigateTo('/')
     selectProject(projectId)
-  }
-
-  const handleOpenTask = (taskId: number, projectId?: number) => {
-    navigateTo('/')
-    void openTask(taskId, projectId)
   }
 
   const handleOpenPlugins = () => {
@@ -75,15 +64,7 @@ export function PluginsPage() {
       )
     }
 
-    return (
-      <ConnectionsSettingsPage
-        onBack={() => setSettingsOpen(false)}
-        onListArchivedTasks={listArchivedTasks}
-        onUnarchiveTask={unarchiveTask}
-        onDeleteTask={deleteTask}
-        onDeleteArchivedTasks={deleteArchivedTasks}
-      />
-    )
+    return <ConnectionsSettingsPage onBack={() => setSettingsOpen(false)} />
   }
 
   const handleStartNewProjectChat = (projectId: number) => {
@@ -108,35 +89,34 @@ export function PluginsPage() {
           user={state.user}
           projects={state.projects}
           devices={state.devices}
-          recentTasks={state.recentTasks}
-          runningTaskIds={runningTaskIds}
-          currentProjectId={state.currentProject?.id}
-          currentTaskId={state.currentTask?.id}
+          runtimeWork={state.runtimeWork}
+          currentRuntimeTask={state.currentRuntimeTask}
+          preferredDeviceId={
+            state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
+          }
           activeItem="plugins"
           onCollapse={() => setSidebarCollapsed(true)}
           onNewChat={handleNewChat}
-          onStartStandaloneChat={handleStartStandaloneChat}
           onSelectProject={handleSelectProject}
           onStartNewProjectChat={handleStartNewProjectChat}
-          onOpenTask={handleOpenTask}
+          onOpenRuntimeLocalTask={openRuntimeLocalTask}
+          onArchiveRuntimeLocalTask={archiveRuntimeLocalTask}
           onOpenPlugins={handleOpenPlugins}
           onRefreshDevices={refreshDevices}
           onCreateProject={createProject}
           onCreateGitWorkspaceProject={createGitWorkspaceProject}
+          onPrepareDeviceWorkspace={prepareDeviceWorkspace}
+          onDeleteDeviceWorkspace={deleteDeviceWorkspace}
           onListGitRepositories={listGitRepositories}
           onListGitBranches={listGitBranches}
           onUpdateProjectName={updateProjectName}
           onRemoveProject={removeProject}
-          onArchiveAllChats={archiveAllChats}
-          onArchiveAllProjectChats={archiveAllProjectChats}
-          onArchiveProjectChats={archiveProjectChats}
-          onArchiveTask={archiveTask}
-          onRenameTask={renameTask}
           onGetDeviceHomeDirectory={getDeviceHomeDirectory}
           onGetProjectWorkspaceRoot={getProjectWorkspaceRoot}
           onListDeviceDirectories={listDeviceDirectories}
           onCreateDeviceDirectory={createDeviceDirectory}
           onOpenSettings={() => setSettingsOpen(true)}
+          onRefreshWorkLists={refreshWorkLists}
           onLogout={logout}
         />
       )}
@@ -156,18 +136,30 @@ export function PluginsPage() {
           <MobileDrawer
             open={drawerOpen}
             user={state.user}
+            devices={state.devices}
             projects={state.projects}
-            recentTasks={state.recentTasks}
-            runningTaskIds={runningTaskIds}
+            runtimeWork={state.runtimeWork}
             currentProjectId={state.currentProject?.id}
-            currentTaskId={state.currentTask?.id}
+            currentRuntimeTask={state.currentRuntimeTask}
             activeItem="plugins"
             onClose={() => setDrawerOpen(false)}
             onNewChat={handleNewChat}
             onStartStandaloneChat={handleStartStandaloneChat}
             onOpenSettings={() => setSettingsOpen(true)}
             onSelectProject={handleSelectProject}
-            onOpenTask={handleOpenTask}
+            onOpenRuntimeLocalTask={openRuntimeLocalTask}
+            onCreateProject={createProject}
+            onCreateGitWorkspaceProject={createGitWorkspaceProject}
+            onPrepareDeviceWorkspace={prepareDeviceWorkspace}
+            onDeleteDeviceWorkspace={deleteDeviceWorkspace}
+            onListGitRepositories={listGitRepositories}
+            onListGitBranches={listGitBranches}
+            onUpdateProjectName={updateProjectName}
+            onRemoveProject={removeProject}
+            onGetDeviceHomeDirectory={getDeviceHomeDirectory}
+            onGetProjectWorkspaceRoot={getProjectWorkspaceRoot}
+            onListDeviceDirectories={listDeviceDirectories}
+            onCreateDeviceDirectory={createDeviceDirectory}
           />
         </>
       )}

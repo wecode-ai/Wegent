@@ -352,7 +352,7 @@ async def start_project_terminal_session_endpoint(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Start a writable ttyd session for the project's bound local device."""
+    """Start a writable PTY terminal session for the project's bound device."""
     return await project_device_session_service.start_project_device_session(
         db=db,
         user_id=current_user.id,

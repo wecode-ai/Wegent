@@ -43,6 +43,8 @@ Wegent is an open-source AI-native operating system for defining, organizing, an
 - English version: [`docs/en/developer-guide/sandbox-workspace-archive.md`](docs/en/developer-guide/sandbox-workspace-archive.md)
 - Shared skill directory (unify Claude and Codex local skills under `~/.agents/skills`): [`docs/zh/developer-guide/shared-skill-directory.md`](docs/zh/developer-guide/shared-skill-directory.md)
 - English version: [`docs/en/developer-guide/shared-skill-directory.md`](docs/en/developer-guide/shared-skill-directory.md)
+- Runtime local work (Project -> Device Workspace -> LocalTask without DB task rows): [`docs/zh/developer-guide/runtime-local-work.md`](docs/zh/developer-guide/runtime-local-work.md)
+- English version: [`docs/en/developer-guide/runtime-local-work.md`](docs/en/developer-guide/runtime-local-work.md)
 
 **📚 Documentation Writing Rules:**
 - All documentation files MUST include frontmatter with `sidebar_position` for ordering:
@@ -455,7 +457,7 @@ uv run alembic downgrade -1                               # Rollback
 - `UserContext` - User auth state
 - `TaskContext` - Task list, pagination
 - `ChatStreamContext` - WebSocket streaming
-- `SocketContext` - Socket.IO connection
+- `SocketContext` - React wrapper around the shared SocketClient connection state
 - `ThemeContext` - Theme (light/dark)
 
 **Message Data Flow (Chat/Task Messages):**

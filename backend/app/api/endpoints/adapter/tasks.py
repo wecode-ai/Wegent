@@ -57,15 +57,14 @@ from app.schemas.task import (
     TaskSkillsResponse,
     TaskUpdate,
 )
+from app.schemas.task_fork import TaskForkRequest, TaskForkResponse
 from app.services import prompt_draft_service
 from app.services.adapters.executor_job import job_service
 from app.services.adapters.task_kinds import task_kinds_service
-from app.services.adapters.wework_conversation_search import (
-    search_wework_conversation_tasks,
-)
 from app.services.chat.storage import session_manager
 from app.services.remote_workspace_service import remote_workspace_service
 from app.services.shared_task import shared_task_service
+from app.services.task_fork import task_fork_service
 from app.stores.tasks import task_store
 from shared.telemetry.decorators import trace_sync
 
@@ -152,6 +151,31 @@ def create_task_with_id(
     return task_kinds_service.create_task_or_append(
         db=db, obj_in=task_create, user=current_user, task_id=task_id
     )
+
+
+@router.post("/{task_id}/fork", response_model=TaskForkResponse)
+def fork_task(
+    task_id: int,
+    request: TaskForkRequest,
+    client_origin: ClientOriginQuery = CLIENT_ORIGIN_FRONTEND,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Create a snapshot fork of a task with a new execution target."""
+    forked_task = task_fork_service.fork_task(
+        db=db,
+        source_task_id=task_id,
+        user_id=current_user.id,
+        request=request,
+        client_origin=client_origin,
+    )
+    task_detail = task_kinds_service.get_task_detail(
+        db=db,
+        task_id=forked_task.id,
+        user_id=current_user.id,
+        client_origin=client_origin,
+    )
+    return {"task_id": forked_task.id, "task": task_detail}
 
 
 @router.get("", response_model=TaskListResponse)
@@ -277,29 +301,6 @@ def search_tasks_by_title(
     skip = (page - 1) * limit
     items, total = task_kinds_service.get_user_tasks_by_title_with_pagination(
         db=db, user_id=current_user.id, title=title, skip=skip, limit=limit
-    )
-    return {"total": total, "items": items}
-
-
-@router.get("/wework/conversation-search", response_model=TaskListResponse)
-def search_wework_conversation_task_list(
-    keyword: str = Query(
-        ..., min_length=1, description="Search by task title or message keywords"
-    ),
-    page: int = Query(1, ge=1, description="Page number"),
-    limit: int = Query(10, ge=1, le=100, description="Items per page"),
-    current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db),
-):
-    """Search WeWork conversations by title or conversation content."""
-    skip = (page - 1) * limit
-    items, total = search_wework_conversation_tasks(
-        db=db,
-        user_id=current_user.id,
-        keyword=keyword,
-        skip=skip,
-        limit=limit,
-        client_origin=CLIENT_ORIGIN_WEWORK,
     )
     return {"total": total, "items": items}
 

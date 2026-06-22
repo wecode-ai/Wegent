@@ -95,6 +95,35 @@ def test_round_trip_preserves_skip_git_clone_for_archive_recovery():
     assert converted.skip_git_clone is True
 
 
+def test_round_trip_preserves_fork_runtime_and_inherited_sessions():
+    request = ExecutionRequest(
+        fork_runtime={
+            "workspaceArchive": {
+                "sourceTaskId": 1,
+                "storageKey": "workspace-archives/1/archive.tar.gz",
+            },
+            "sessions": [
+                {"agent": "ClaudeCode", "sessionId": "claude-session-1"},
+                {"agent": "CodeX", "threadId": "codex-thread-1"},
+            ],
+        },
+        inherited_sessions=[
+            {"agent": "ClaudeCode", "sessionId": "claude-session-1"},
+            {"agent": "CodeX", "threadId": "codex-thread-1"},
+        ],
+    )
+
+    openai_request = OpenAIRequestConverter.from_execution_request(request)
+    converted = OpenAIRequestConverter.to_execution_request(openai_request)
+
+    assert openai_request["metadata"]["fork_runtime"] == request.fork_runtime
+    assert (
+        openai_request["metadata"]["inherited_sessions"] == request.inherited_sessions
+    )
+    assert converted.fork_runtime == request.fork_runtime
+    assert converted.inherited_sessions == request.inherited_sessions
+
+
 def test_to_execution_request_preserves_message_history_and_stateless_flag():
     openai_request = {
         "model": "test-model",

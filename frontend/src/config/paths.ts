@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { getRuntimeConfigSync } from '@/lib/runtime-config'
+import { buildChatCodeHref, getCodingEntryHref } from '@/config/coding-route'
 
 export const paths = {
   home: {
@@ -24,9 +25,10 @@ export const paths = {
   },
   chat: {
     getHref: () => '/chat',
+    getCodeHref: () => buildChatCodeHref(),
   },
   code: {
-    getHref: () => '/code',
+    getHref: () => getCodingEntryHref(),
   },
   wiki: {
     getHref: () => '/knowledge',

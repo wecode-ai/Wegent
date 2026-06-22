@@ -48,7 +48,7 @@ ARG DEVICE_IMAGE_PLATFORM=${TARGETPLATFORM}
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install base tools, Python, Node.js 22, ttyd, and code-server.
+# Install base tools, Python, Node.js 22, and code-server.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
@@ -62,7 +62,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get update && apt-get install -y --no-install-recommends \
     nodejs \
-    ttyd \
     && npm install -g @anthropic-ai/claude-code@2.1.142 @openai/codex@0.137.0 \
     && curl -fsSL https://code-server.dev/install.sh | sh \
     && ln -sf /usr/bin/python3 /usr/bin/python \

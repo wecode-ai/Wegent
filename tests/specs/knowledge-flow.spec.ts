@@ -14,6 +14,8 @@ const TEST_ID = Math.random().toString(36).substring(2, 8)
 const TEST_KB_NAME = `Test-KB-${TEST_ID}-${Date.now()}`
 const TEST_KB_DESCRIPTION = 'Test knowledge base for E2E testing'
 const TEST_FILE_NAME = 'test-document.txt'
+const TEST_ADMIN_USERNAME = process.env.E2E_BOOTSTRAP_ADMIN_USER || 'admin'
+const TEST_ADMIN_PASSWORD = process.env.E2E_BOOTSTRAP_ADMIN_PASSWORD || 'E2EAdmin@12345'
 
 // ==================== Helper Functions ====================
 
@@ -36,8 +38,8 @@ async function loginIfNeeded(page: any) {
     const usernameInput = page.locator('input[placeholder*="username"]').first()
     const passwordInput = page.locator('input[placeholder*="password"]').first()
 
-    await usernameInput.fill('admin')
-    await passwordInput.fill('Wegent2025!')
+    await usernameInput.fill(TEST_ADMIN_USERNAME)
+    await passwordInput.fill(TEST_ADMIN_PASSWORD)
 
     // Click login button
     const loginButton = page.locator('button:has-text("Login")').first()

@@ -5,7 +5,7 @@
 Process Service Implementation using Connect RPC
 
 Cross-platform support:
-- Unix: Uses pty, fcntl, termios for PTY mode
+- Unix: Uses ptyprocess and fcntl for PTY mode
 - Windows: Uses pywinpty (ConPTY) via platform abstraction layer
 """
 
@@ -14,7 +14,7 @@ import os
 import signal as sig
 import subprocess
 import sys
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 import psutil
 
@@ -44,14 +44,14 @@ class ProcessManager:
     """Manages running processes"""
 
     def __init__(self):
-        self.processes: Dict[int, subprocess.Popen] = {}
+        self.processes: Dict[int, Any] = {}
         self.tagged_processes: Dict[str, int] = {}  # tag -> pid mapping
         self.pty_fds: Dict[int, int] = {}  # pid -> master fd mapping for PTY processes
 
     def add_process(
         self,
         pid: int,
-        process: subprocess.Popen,
+        process: Any,
         tag: Optional[str] = None,
         pty_fd: Optional[int] = None,
     ):
@@ -69,9 +69,7 @@ class ProcessManager:
             return self.pty_fds.get(pid)
         return None
 
-    def get_process(
-        self, selector: process_pb2.ProcessSelector
-    ) -> Optional[subprocess.Popen]:
+    def get_process(self, selector: process_pb2.ProcessSelector) -> Optional[Any]:
         """Get a process by selector (pid or tag)"""
         if selector.HasField("pid"):
             return self.processes.get(selector.pid)
@@ -209,15 +207,12 @@ class ProcessServiceHandler:
                     cols=request.pty.size.cols if request.pty.HasField("size") else 80,
                 )
 
-                # Get the underlying subprocess for process management
-                # On Unix, we need to track the subprocess; on Windows, PtyProcess handles it
+                # Store a Popen-like object for process management.
                 if IS_WINDOWS:
-                    # Windows: create a dummy Popen-like wrapper
                     proc = _WindowsPtyProcessWrapper(pty_process)
                     master = -1  # Not applicable on Windows
                 else:
-                    # Unix: get the actual process and fd
-                    proc = pty_process._process
+                    proc = pty_process
                     master = pty_process.fd
 
                 # Store process with PTY master fd (or -1 on Windows)
@@ -680,11 +675,10 @@ class ProcessServiceHandler:
                 rows = request.pty.size.rows
                 cols = request.pty.size.cols
 
-                if IS_WINDOWS and pty_proc:
-                    # Windows: use PtyProcess.resize()
+                if pty_proc:
                     pty_proc.resize(rows, cols)
                 elif pty_fd is not None:
-                    # Unix: use ioctl
+                    # Fallback for legacy managed PTY entries without a wrapper.
                     import fcntl
                     import struct
                     import termios

@@ -17,13 +17,17 @@ import asyncio
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Generic, List, Optional, TypeVar
 
+from fastapi import HTTPException
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
+from app.api.ws.events import ServerEvents
 from app.core.cache import cache_manager
 from app.core.config import settings
+from app.core.socketio import get_sio
 from app.db.session import SessionLocal
 from app.models.kind import Kind
 from app.models.user import User
@@ -31,6 +35,7 @@ from app.services.channels.callback import (
     BaseCallbackInfo,
     BaseChannelCallbackService,
     ChannelType,
+    runtime_local_task_callback_key,
 )
 from app.services.channels.commands import (
     AGENT_ITEM_TEMPLATE,
@@ -62,6 +67,9 @@ from app.services.channels.model_selection import (
     is_claude_provider,
     model_selection_manager,
 )
+from app.services.chat.wework_task_defaults import extract_task_device_id
+from app.services.im import task_continuation_service as im_task_continuation_service
+from app.services.im.session_service import im_session_service
 from app.services.readers.kinds import KindType, kindReader
 from app.stores.tasks import task_store
 
@@ -180,6 +188,15 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 config=config.get("config"),
             )
         return UserMappingConfig(mode="select_user")
+
+    def _build_message_source_metadata(self) -> Dict[str, Any]:
+        """Build provider-level source metadata for messages from IM channels."""
+        channel_type = self._channel_type.value
+        return {
+            "source": "im",
+            "channel_type": channel_type,
+            "channel_label": im_session_service.get_channel_label(channel_type),
+        }
 
     # ==================== Abstract Methods ====================
 
@@ -394,6 +411,11 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             return
         key = f"{CHANNEL_CONV_TASK_PREFIX}{self._channel_type.value}:{conversation_id}:{user_id}"
         await cache_manager.delete(key)
+
+    async def delete_conversation_task_id(
+        self, conversation_id: str, user_id: int
+    ) -> None:
+        await self._delete_conversation_task_id(conversation_id, user_id)
 
     def _get_default_team(self, db: Session, user_id: int) -> Optional[Kind]:
         """Get the default team for this channel.
@@ -632,6 +654,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
         # Resolve user with a short-lived db session
         db = SessionLocal()
+        db.expire_on_commit = False
         try:
             user = await self.resolve_user(db, message_context)
             if not user:
@@ -642,6 +665,26 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                     message_context, "用户未注册，请先登录 Wegent 系统"
                 )
                 return False
+
+            im_session = None
+            if self._is_private_conversation(message_context):
+                im_session = await im_session_service.get_or_create_private_session(
+                    db=db,
+                    user_id=user.id,
+                    channel_type=self._channel_type.value,
+                    channel_id=self._channel_id,
+                    conversation_id=message_context.conversation_id,
+                    sender_id=message_context.sender_id,
+                    display_name=message_context.sender_name or "",
+                )
+
+                if await self._route_private_im_session(
+                    db=db,
+                    user=user,
+                    im_session=im_session,
+                    message_context=message_context,
+                ):
+                    return True
 
             # Check for commands
             parsed_cmd = parse_command(message_context.content)
@@ -724,6 +767,653 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             await self._handle_agent_command(
                 db, user, command.argument, message_context
             )
+
+        elif command.command in {
+            CommandType.BIND,
+            CommandType.MODE,
+            CommandType.CHAT,
+            CommandType.TASK,
+            CommandType.SWITCH,
+            CommandType.CANCEL,
+        }:
+            await self.send_text_reply(
+                message_context,
+                "请在私聊会话中使用该命令；任务模式正在初始化，请稍后重试。",
+            )
+
+    def _is_private_conversation(self, message_context: MessageContext) -> bool:
+        return message_context.conversation_type.lower() == "private"
+
+    async def _route_private_im_session(
+        self,
+        db: Session,
+        user: User,
+        im_session: Any,
+        message_context: MessageContext,
+    ) -> bool:
+        from app.services.im.interaction_service import im_interaction_service
+
+        return await im_interaction_service.route_private_message(
+            db=db,
+            user=user,
+            im_session=im_session,
+            message_context=message_context,
+            port=self,
+        )
+
+    async def execute_private_im_bind_task(
+        self,
+        db: Session,
+        user: User,
+        im_session: Any,
+        task_id: Optional[int],
+        message_context: MessageContext,
+    ) -> None:
+        await self._execute_private_im_bind_task(
+            db=db,
+            user=user,
+            im_session=im_session,
+            task_id=task_id,
+            message_context=message_context,
+        )
+
+    async def _execute_private_im_bind_task(
+        self,
+        *,
+        db: Session,
+        user: User,
+        im_session: Any,
+        task_id: Optional[int],
+        message_context: MessageContext,
+    ) -> None:
+        if task_id is None:
+            await self.send_text_reply(
+                message_context, "任务选择无效，请使用 /switch 重试。"
+            )
+            return
+
+        try:
+            task = im_task_continuation_service.validate_personal_wework_task(
+                db, user.id, task_id
+            )
+        except HTTPException:
+            self.logger.exception(
+                "[%sHandler] Failed to bind private IM task: user_id=%s task_id=%s",
+                self._channel_type.value,
+                user.id,
+                task_id,
+            )
+            await self.send_text_reply(
+                message_context, "未找到可绑定的个人任务，请使用 /switch 重新选择。"
+            )
+            return
+        except Exception:
+            self.logger.exception(
+                "[%sHandler] Unexpected private IM bind failure: user_id=%s task_id=%s",
+                self._channel_type.value,
+                user.id,
+                task_id,
+            )
+            raise
+
+        await im_session_service.bind_active_task(
+            db, session=im_session, task_id=task.id
+        )
+        title = im_task_continuation_service.get_task_title(task)
+        await self.send_text_reply(message_context, f"已切换到任务：{title}。")
+
+    async def execute_private_im_continue_task(
+        self,
+        db: Session,
+        user: User,
+        im_session: Any,
+        task_id: Optional[int],
+        message: str,
+        message_context: MessageContext,
+        runtime_task: Optional[dict[str, Any]] = None,
+    ) -> None:
+        await self._execute_private_im_continue_task(
+            db=db,
+            user=user,
+            im_session=im_session,
+            task_id=task_id,
+            message=message,
+            message_context=message_context,
+            runtime_task=runtime_task,
+        )
+
+    async def _execute_private_im_continue_task(
+        self,
+        *,
+        db: Session,
+        user: User,
+        im_session: Any,
+        task_id: Optional[int],
+        message: str,
+        message_context: MessageContext,
+        runtime_task: Optional[dict[str, Any]] = None,
+    ) -> None:
+        if runtime_task is not None:
+            await self._execute_private_im_continue_runtime_task(
+                db=db,
+                user=user,
+                im_session=im_session,
+                message=message,
+                message_context=message_context,
+                runtime_task=runtime_task,
+            )
+            return
+
+        if task_id is None:
+            if runtime_task is not None or getattr(
+                im_session, "active_runtime_task", None
+            ):
+                await self._execute_private_im_continue_runtime_task(
+                    db=db,
+                    user=user,
+                    im_session=im_session,
+                    message=message,
+                    message_context=message_context,
+                    runtime_task=runtime_task,
+                )
+                return
+            await self.send_text_reply(message_context, "请先使用 /switch 选择任务。")
+            return
+
+        try:
+            task = im_task_continuation_service.validate_personal_wework_task(
+                db, user.id, task_id
+            )
+            team = im_task_continuation_service.get_task_team(db, task)
+        except HTTPException:
+            self.logger.exception(
+                "[%sHandler] Active private IM task is unavailable: user_id=%s task_id=%s",
+                self._channel_type.value,
+                user.id,
+                task_id,
+            )
+            await im_session_service.clear_active_task(db, session=im_session)
+            await self.send_text_reply(
+                message_context, "当前任务不可用，请使用 /switch 重新选择任务。"
+            )
+            return
+        except Exception:
+            self.logger.exception(
+                "[%sHandler] Unexpected private IM task validation failure: "
+                "user_id=%s task_id=%s",
+                self._channel_type.value,
+                user.id,
+                task_id,
+            )
+            raise
+
+        message_source = self._build_private_im_message_source(im_session)
+        try:
+            result = await im_task_continuation_service.append_message_to_task(
+                db=db,
+                user=user,
+                task_id=task.id,
+                message=message,
+                message_source=message_source,
+            )
+        except HTTPException as exc:
+            if exc.status_code == 400 and exc.detail == "Task is still running":
+                await self.send_text_reply(
+                    message_context,
+                    "当前任务仍在执行，请稍后再试，或使用 /status 查看当前状态。",
+                )
+                return
+            raise
+        params = getattr(result, "task_params", None)
+        if params is None:
+            params = await im_task_continuation_service.resolve_existing_task_params(
+                db,
+                user=user,
+                task=task,
+                message=message,
+                message_source=message_source,
+            )
+        await self._persist_private_im_task_media(
+            db=db,
+            user_id=user.id,
+            user_subtask_id=result.user_subtask.id,
+            message_context=message_context,
+        )
+        await self._trigger_private_im_task_response(
+            db=db,
+            task=result.task,
+            assistant_subtask=result.assistant_subtask,
+            team=team,
+            user=user,
+            user_subtask_id=result.user_subtask.id,
+            message=message,
+            message_context=message_context,
+            params=params,
+        )
+
+    async def _execute_private_im_continue_runtime_task(
+        self,
+        *,
+        db: Session,
+        user: User,
+        im_session: Any,
+        message: str,
+        message_context: MessageContext,
+        runtime_task: Optional[dict[str, Any]] = None,
+    ) -> None:
+        from app.schemas.runtime_work import (
+            RuntimeMessageSource,
+            RuntimeSendRequest,
+            RuntimeTaskAddress,
+        )
+        from app.services import runtime_work_service
+
+        runtime_task = runtime_task or getattr(im_session, "active_runtime_task", None)
+        if not isinstance(runtime_task, dict):
+            await self.send_text_reply(message_context, "请先使用 /switch 选择任务。")
+            return
+        if not message.strip():
+            await self.send_text_reply(message_context, "请发送文本继续本地任务。")
+            return
+
+        try:
+            address = RuntimeTaskAddress.model_validate(runtime_task)
+        except ValidationError:
+            self.logger.exception(
+                "[%sHandler] Active private IM runtime task address is invalid: "
+                "user_id=%s",
+                self._channel_type.value,
+                user.id,
+            )
+            await im_session_service.clear_active_task(db, session=im_session)
+            await self.send_text_reply(
+                message_context, "当前本地任务不可用,请回到 Wework 重新选择。"
+            )
+            return
+
+        message_source = self._build_private_im_message_source(im_session)
+        callback_key = runtime_local_task_callback_key(
+            address.device_id,
+            address.local_task_id,
+        )
+        await self._register_private_im_runtime_callback(
+            callback_key=callback_key,
+            message_context=message_context,
+        )
+        try:
+            response = await runtime_work_service.send_runtime_message(
+                db=db,
+                user_id=user.id,
+                request=RuntimeSendRequest(
+                    address=address,
+                    message=message,
+                    source=RuntimeMessageSource(
+                        source="im",
+                        external_id=str(
+                            message_source.get("session_key") or im_session.session_key
+                        ),
+                        channel_type=str(
+                            message_source.get("channel_type")
+                            or im_session.channel_type
+                        ),
+                        channel_id=int(
+                            message_source.get("channel_id") or im_session.channel_id
+                        ),
+                        conversation_id=str(
+                            message_source.get("conversation_id")
+                            or im_session.conversation_id
+                        ),
+                        sender_id=str(
+                            message_source.get("sender_id") or im_session.sender_id
+                        ),
+                        message_id=message_source.get("message_id"),
+                    ),
+                ),
+            )
+        except (HTTPException, ValidationError):
+            await self._delete_private_im_runtime_callback(callback_key)
+            self.logger.exception(
+                "[%sHandler] Active private IM runtime task is unavailable: "
+                "user_id=%s local_task_id=%s",
+                self._channel_type.value,
+                user.id,
+                runtime_task.get("localTaskId"),
+            )
+            await im_session_service.clear_active_task(db, session=im_session)
+            await self.send_text_reply(
+                message_context, "当前本地任务不可用,请回到 Wework 重新选择。"
+            )
+            return
+
+        if response.accepted:
+            await self._emit_private_im_runtime_user_message_to_web(
+                user=user,
+                runtime_task=runtime_task,
+                message=message,
+                message_context=message_context,
+                message_source=message_source,
+            )
+            return
+        await self._delete_private_im_runtime_callback(callback_key)
+        await self.send_text_reply(
+            message_context,
+            response.error or "本地任务暂时无法接收消息，请稍后重试。",
+        )
+
+    def _runtime_task_callback_key(self, runtime_task: dict[str, Any]) -> str:
+        return runtime_local_task_callback_key(
+            str(runtime_task.get("deviceId") or runtime_task.get("device_id") or ""),
+            str(
+                runtime_task.get("localTaskId")
+                or runtime_task.get("local_task_id")
+                or ""
+            ),
+        )
+
+    async def _register_private_im_runtime_callback(
+        self,
+        *,
+        callback_key: str,
+        message_context: MessageContext,
+    ) -> None:
+        callback_service = self.get_callback_service()
+        if not callback_service:
+            return
+        await callback_service.save_callback_info(
+            task_id=callback_key,
+            callback_info=self.create_callback_info(message_context),
+        )
+
+    async def _delete_private_im_runtime_callback(self, callback_key: str) -> None:
+        callback_service = self.get_callback_service()
+        if not callback_service:
+            return
+        await callback_service.delete_callback_info(callback_key)
+
+    async def _emit_private_im_runtime_user_message_to_web(
+        self,
+        *,
+        user: User,
+        runtime_task: dict[str, Any],
+        message: str,
+        message_context: MessageContext,
+        message_source: dict[str, Any],
+    ) -> None:
+        device_id = str(
+            runtime_task.get("deviceId") or runtime_task.get("device_id") or ""
+        ).strip()
+        local_task_id = str(
+            runtime_task.get("localTaskId") or runtime_task.get("local_task_id") or ""
+        ).strip()
+        if not device_id or not local_task_id:
+            return
+
+        now = datetime.now(timezone.utc)
+        message_id = int(now.timestamp() * 1000)
+        source = dict(message_source)
+        source["source"] = "im"
+        try:
+            await get_sio().emit(
+                ServerEvents.CHAT_MESSAGE,
+                {
+                    "subtask_id": message_id,
+                    "message_id": message_id,
+                    "role": "user",
+                    "content": message,
+                    "sender": {
+                        "user_id": user.id,
+                        "user_name": user.user_name,
+                        "im_sender_id": message_context.sender_id,
+                        "im_sender_name": message_context.sender_name,
+                    },
+                    "created_at": now.isoformat(),
+                    "device_id": device_id,
+                    "local_task_id": local_task_id,
+                    "runtime": runtime_task.get("runtime"),
+                    "source": source,
+                },
+                room=f"user:{user.id}",
+                namespace="/chat",
+            )
+        except Exception:
+            self.logger.warning(
+                "[%sHandler] Failed to emit private IM runtime user message: "
+                "user_id=%s local_task_id=%s",
+                self._channel_type.value,
+                user.id,
+                local_task_id,
+                exc_info=True,
+            )
+
+    async def execute_private_im_create_task(
+        self,
+        db: Session,
+        user: User,
+        im_session: Any,
+        project_id: Optional[int],
+        message: str,
+        message_context: MessageContext,
+    ) -> None:
+        await self._execute_private_im_create_task(
+            db=db,
+            user=user,
+            im_session=im_session,
+            project_id=project_id,
+            message=message,
+            message_context=message_context,
+        )
+
+    async def _execute_private_im_create_task(
+        self,
+        *,
+        db: Session,
+        user: User,
+        im_session: Any,
+        project_id: Optional[int],
+        message: str,
+        message_context: MessageContext,
+    ) -> None:
+        from app.services.chat.storage.task_manager import create_chat_task
+
+        team = self._get_task_mode_team(db, user.id)
+        if not team:
+            await self.send_text_reply(message_context, "配置错误: 未配置默认智能体")
+            return
+
+        message_source = self._build_private_im_message_source(im_session)
+        params = await im_task_continuation_service.build_new_task_params(
+            db,
+            user=user,
+            message=message,
+            project_id=project_id,
+            task_type="task",
+            message_source=message_source,
+        )
+        result = await create_chat_task(
+            db=db,
+            user=user,
+            team=team,
+            message=message,
+            params=params,
+            should_trigger_ai=bool(message.strip()),
+            source="im",
+        )
+        await im_session_service.bind_active_task(
+            db, session=im_session, task_id=result.task.id
+        )
+
+        if not message.strip():
+            await self.send_text_reply(
+                message_context, "已创建任务，请继续发送任务需求。"
+            )
+            return
+
+        await self.send_text_reply(message_context, "已创建任务，正在执行。")
+        await self._persist_private_im_task_media(
+            db=db,
+            user_id=user.id,
+            user_subtask_id=result.user_subtask.id,
+            message_context=message_context,
+        )
+        await self._trigger_private_im_task_response(
+            db=db,
+            task=result.task,
+            assistant_subtask=result.assistant_subtask,
+            team=team,
+            user=user,
+            user_subtask_id=result.user_subtask.id,
+            message=message,
+            message_context=message_context,
+            params=params,
+        )
+
+    def _build_private_im_message_source(self, im_session: Any) -> Dict[str, Any]:
+        return im_task_continuation_service.build_im_message_source(
+            im_session,
+            extra={
+                "channel_label": im_session_service.get_channel_label(
+                    self._channel_type.value
+                )
+            },
+        )
+
+    async def _persist_private_im_task_media(
+        self,
+        *,
+        db: Session,
+        user_id: int,
+        user_subtask_id: int,
+        message_context: MessageContext,
+    ) -> None:
+        if message_context.images:
+            self._persist_im_images_as_attachments(
+                db=db,
+                user_id=user_id,
+                subtask_id=user_subtask_id,
+                images=message_context.images,
+            )
+
+        if message_context.files:
+            self._persist_im_files_as_attachments(
+                db=db,
+                user_id=user_id,
+                subtask_id=user_subtask_id,
+                files=message_context.files,
+            )
+
+        db.commit()
+
+    async def _trigger_private_im_task_response(
+        self,
+        *,
+        db: Session,
+        task: Any,
+        assistant_subtask: Any,
+        team: Kind,
+        user: User,
+        user_subtask_id: int,
+        message: str,
+        message_context: MessageContext,
+        params: Any,
+    ) -> None:
+        if assistant_subtask is None:
+            return
+
+        task_id = task.id
+        device_id = extract_task_device_id(task) or getattr(params, "device_id", None)
+        streaming_emitter = await self.create_streaming_emitter(message_context)
+        if streaming_emitter:
+            response_emitter = streaming_emitter
+            await streaming_emitter.emit_start(
+                task_id=task_id,
+                subtask_id=assistant_subtask.id,
+            )
+            if hasattr(streaming_emitter, "set_shared_content_key"):
+                streaming_emitter.set_shared_content_key(
+                    f"channel:streaming_content:{task_id}"
+                )
+        else:
+            response_emitter = SyncResponseEmitter()
+
+        await self._register_streaming_emitter(
+            task_id=task_id,
+            streaming_emitter=streaming_emitter,
+            message_context=message_context,
+        )
+
+        from app.services.chat.trigger import trigger_ai_response_unified
+
+        try:
+            await trigger_ai_response_unified(
+                task=task,
+                assistant_subtask=assistant_subtask,
+                team=team,
+                user=user,
+                message=(message or "") + IM_CHANNEL_CONTEXT_HINT,
+                payload=self._build_chat_payload(
+                    params,
+                    ignore_unavailable_task_model_override=True,
+                ),
+                task_room=f"task_{task_id}",
+                device_id=device_id,
+                namespace=None,
+                user_subtask_id=user_subtask_id,
+                result_emitter=response_emitter,
+            )
+        except Exception as exc:
+            self.logger.exception(
+                "[%sHandler] Failed to trigger private IM task response: "
+                "task_id=%s, subtask_id=%s",
+                self._channel_type.value,
+                task_id,
+                assistant_subtask.id,
+            )
+            self._mark_private_im_task_response_failed(
+                db,
+                task=task,
+                assistant_subtask=assistant_subtask,
+                error_message=str(exc),
+            )
+            await self.send_text_reply(
+                message_context,
+                f"任务执行失败：{exc}。任务状态已恢复，可以继续发送消息重试。",
+            )
+            return
+
+        if streaming_emitter:
+            return
+
+        try:
+            response = await asyncio.wait_for(
+                response_emitter.wait_for_response(),
+                timeout=120.0,
+            )
+        except asyncio.TimeoutError:
+            self.logger.warning(
+                f"[{self._channel_type.value}Handler] Response timeout for task {task_id}"
+            )
+            response = "Response timeout, please try again later"
+
+        if response:
+            await self.send_text_reply(message_context, response)
+
+    def _mark_private_im_task_response_failed(
+        self,
+        db: Session,
+        *,
+        task: Any,
+        assistant_subtask: Any,
+        error_message: str,
+    ) -> None:
+        from app.models.subtask import SubtaskStatus
+        from app.services.task_status import mark_task_failed
+
+        mark_task_failed(task, error_message)
+        assistant_subtask.status = SubtaskStatus.FAILED
+        assistant_subtask.progress = 100
+        assistant_subtask.error_message = error_message
+        assistant_subtask.completed_at = datetime.now()
+        db.commit()
 
     async def _handle_devices_command(
         self,
@@ -1897,6 +2587,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             task_type="chat",
             model_id=override_model_name,
             force_override_bot_model=override_model_name is not None,
+            message_source=self._build_message_source_metadata(),
         )
 
         # Try to reuse existing task
@@ -2071,13 +2762,19 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             return "Response timeout, please try again later"
 
     def _build_chat_payload(
-        self, params: Any, override_model_name: Optional[str] = None
+        self,
+        params: Any,
+        override_model_name: Optional[str] = None,
+        *,
+        ignore_unavailable_task_model_override: bool = False,
     ) -> Any:
         """Build a chat payload object for trigger_ai_response.
 
         Args:
             params: Task creation params
             override_model_name: Optional model name to use (from user selection)
+            ignore_unavailable_task_model_override: Whether to fall back to the
+                agent/runtime default when a persisted task model label is stale.
         """
         from dataclasses import dataclass
 
@@ -2087,12 +2784,18 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             enable_web_search: bool = False
             search_engine: Optional[str] = None
             force_override_bot_model: Optional[str] = None
+            model_options: Optional[Dict[str, Any]] = None
             enable_clarification: bool = False
             preload_skills: Optional[list] = None
+            ignore_unavailable_task_model_override: bool = False
 
         return ChatPayload(
             is_group_chat=params.is_group_chat,
             force_override_bot_model=override_model_name,
+            model_options=getattr(params, "model_options", None),
+            ignore_unavailable_task_model_override=(
+                ignore_unavailable_task_model_override
+            ),
         )
 
     async def _create_and_process_device_task(
@@ -2132,6 +2835,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             force_override_bot_model=override_model_name is not None,
             force_override_bot_model_type=override_model_type,
             model_id=override_model_name,
+            message_source=self._build_message_source_metadata(),
         )
 
         existing_task_id = None
@@ -2289,6 +2993,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             force_override_bot_model=override_model_name is not None,
             force_override_bot_model_type=override_model_type,
             model_id=override_model_name,
+            message_source=self._build_message_source_metadata(),
         )
 
         existing_task_id = None

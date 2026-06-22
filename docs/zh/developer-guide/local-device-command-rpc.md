@@ -99,7 +99,7 @@ local executor 优先使用 Backend 下发的 `argv` 执行命令；缺少 `argv
 
 ## macOS App 本地终端
 
-WeWork macOS App 访问本机 local executor 项目时，可以在工作区面板内嵌入本地终端。该终端不依赖 `ttyd`，也不经过 `/devices/{device_id}/commands` RPC；App 通过 Tauri command 在本机创建 PTY，并用前端 `xterm` 组件渲染输入输出流。
+WeWork macOS App 访问本机 local executor 项目时，可以在工作区面板内嵌入本地终端。该终端由 App 通过 Tauri command 在本机创建 PTY，并用前端 `xterm` 组件渲染输入输出流；它不经过 `/devices/{device_id}/commands` RPC。
 
 启用条件：
 

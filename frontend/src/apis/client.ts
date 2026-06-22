@@ -26,6 +26,10 @@ export class ApiError extends Error {
   }
 }
 
+interface RequestOptions {
+  redirectOnUnauthorized?: boolean
+}
+
 // HTTP Client with interceptors
 class APIClient {
   private baseURL: string
@@ -60,7 +64,46 @@ class APIClient {
     return getApiBaseUrl()
   }
 
-  private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  private createApiError(errorText: string, status: number): ApiError {
+    let errorMsg = errorText
+    let errorCode: string | number | undefined
+    try {
+      // Try to parse as JSON and extract detail field
+      const json = JSON.parse(errorText)
+      if (json && typeof json.detail === 'string') {
+        errorMsg = json.detail
+      } else if (json && typeof json.detail === 'object' && json.detail !== null) {
+        // StructuredValidationException: detail may include error_code and a display message.
+        if (typeof json.detail.message === 'string') {
+          errorMsg = json.detail.message
+        } else if (
+          typeof json.detail.error_code === 'string' ||
+          typeof json.detail.error_code === 'number'
+        ) {
+          errorMsg = String(json.detail.error_code)
+        } else {
+          errorMsg = JSON.stringify(json.detail)
+        }
+      }
+      if (json && (typeof json.error_code === 'string' || typeof json.error_code === 'number')) {
+        errorCode = json.error_code
+      } else if (
+        json?.detail &&
+        (typeof json.detail.error_code === 'string' || typeof json.detail.error_code === 'number')
+      ) {
+        errorCode = json.detail.error_code
+      }
+    } catch {
+      // Not JSON, use original text directly
+    }
+    return new ApiError(errorMsg, status, errorCode)
+  }
+
+  private async request<T>(
+    endpoint: string,
+    options: RequestInit = {},
+    requestOptions: RequestOptions = {}
+  ): Promise<T> {
     const url = `${this.getBaseURL()}${endpoint}`
     const token = getToken()
 
@@ -77,13 +120,17 @@ class APIClient {
       const response = await fetch(url, config)
       // Handle authentication errors
       if (response.status === 401) {
+        if (requestOptions.redirectOnUnauthorized === false) {
+          const errorText = await response.text()
+          throw this.createApiError(errorText || 'Authentication failed', response.status)
+        }
         if (typeof window !== 'undefined') {
           // Check if Aidesk auth params are present - skip redirect to let AideskTokenHandler handle it
           const params = new URLSearchParams(window.location.search)
 
           if (hasAideskAuthParams(params)) {
             // Don't remove token or redirect - let AideskTokenHandler handle authentication
-            throw new Error('Authentication failed')
+            throw this.createApiError('Authentication failed', response.status)
           }
 
           // Only remove token if not in Aidesk auth flow
@@ -104,55 +151,15 @@ class APIClient {
               window.location.href = loginPath
             }
           }
+        } else {
+          removeToken()
         }
-        throw new Error('Authentication failed')
+        throw this.createApiError('Authentication failed', response.status)
       }
 
       if (!response.ok) {
         const errorText = await response.text()
-        let errorMsg = errorText
-        let errorCode: string | number | undefined
-        try {
-          // Try to parse as JSON and extract detail field
-          const json = JSON.parse(errorText)
-          if (json && typeof json.detail === 'string') {
-            errorMsg = json.detail
-          } else if (json && typeof json.detail === 'object' && json.detail !== null) {
-            // detail is an object (e.g. { error_code: 'no_dingtalk_binding', message: '...' })
-            if (typeof json.detail.message === 'string') {
-              errorMsg = json.detail.message
-            } else if (
-              typeof json.detail.error_code === 'string' ||
-              typeof json.detail.error_code === 'number'
-            ) {
-              errorMsg = String(json.detail.error_code)
-            } else {
-              errorMsg = JSON.stringify(json.detail)
-            }
-            if (
-              typeof json.detail.error_code === 'string' ||
-              typeof json.detail.error_code === 'number'
-            ) {
-              errorCode = json.detail.error_code
-            }
-          }
-          if (
-            json &&
-            (typeof json.error_code === 'string' || typeof json.error_code === 'number')
-          ) {
-            errorCode = json.error_code
-          } else if (
-            json?.detail &&
-            (typeof json.detail.error_code === 'string' ||
-              typeof json.detail.error_code === 'number')
-          ) {
-            errorCode = json.detail.error_code
-          }
-        } catch {
-          // Not JSON, use original text directly
-        }
-        // Throw ApiError with status code for better error handling
-        throw new ApiError(errorMsg, response.status, errorCode)
+        throw this.createApiError(errorText, response.status)
       }
 
       // Handle 204 No Content responses
@@ -167,8 +174,8 @@ class APIClient {
     }
   }
 
-  async get<T>(endpoint: string): Promise<T> {
-    return this.request<T>(endpoint, { method: 'GET' })
+  async get<T>(endpoint: string, requestOptions?: RequestOptions): Promise<T> {
+    return this.request<T>(endpoint, { method: 'GET' }, requestOptions)
   }
 
   async post<T>(endpoint: string, data?: unknown): Promise<T> {

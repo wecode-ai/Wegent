@@ -15,10 +15,10 @@ const workbenchValue: WorkbenchContextValue = {
     defaultTeam: null,
     projects: [{ id: 1, name: 'github_wegent', tasks: [] }],
     devices: [],
-    recentTasks: [],
+    runtimeWork: null,
     currentProject: null,
+    currentRuntimeTask: null,
     standaloneDeviceId: null,
-    currentTask: null,
     input: '',
     isBootstrapping: false,
     isSending: false,
@@ -27,9 +27,13 @@ const workbenchValue: WorkbenchContextValue = {
   messages: [],
   queuedMessages: [],
   guidanceMessages: [],
-  runningTaskIds: new Set(),
+  codeCommentContexts: [],
+  isRuntimeTranscriptLoading: false,
+  upgradingDevices: {},
   projectExecutionMode: 'current_workspace',
   setProjectExecutionMode: vi.fn(),
+  projectWorktreeBaseBranch: null,
+  setProjectWorktreeBaseBranch: vi.fn(),
   projectChat: {
     models: [],
     skills: [],
@@ -56,32 +60,50 @@ const workbenchValue: WorkbenchContextValue = {
   startNewChat: vi.fn(),
   startStandaloneChat: vi.fn(),
   startNewProjectChat: vi.fn(),
-  openTask: vi.fn(),
+  openRuntimeLocalTask: vi.fn(),
+  archiveRuntimeLocalTask: vi.fn(),
+  forkCurrentRuntimeTask: vi.fn(),
+  listImPrivateSessions: vi.fn(),
+  bindRuntimeTaskToImSessions: vi.fn(),
+  getImNotificationSettings: vi.fn(),
+  updateGlobalImNotification: vi.fn(),
+  subscribeRuntimeTaskNotifications: vi.fn(),
+  unsubscribeRuntimeTaskNotifications: vi.fn(),
   rememberExecutionDevice: vi.fn(),
   refreshWorkLists: vi.fn(),
+  refreshDevices: vi.fn(),
+  upgradeDevice: vi.fn(),
   createProject: vi.fn(),
+  createGitWorkspaceProject: vi.fn(),
+  prepareDeviceWorkspace: vi.fn(),
+  listGitRepositories: vi.fn(),
+  listGitBranches: vi.fn(),
   updateProjectName: vi.fn(),
   removeProject: vi.fn(),
-  archiveAllChats: vi.fn(),
-  archiveAllProjectChats: vi.fn(),
-  archiveProjectChats: vi.fn(),
-  archiveTask: vi.fn(),
-  renameTask: vi.fn(),
-  listArchivedTasks: vi.fn(),
-  unarchiveTask: vi.fn(),
-  deleteTask: vi.fn(),
-  deleteArchivedTasks: vi.fn(),
   getDeviceHomeDirectory: vi.fn(),
   getProjectWorkspaceRoot: vi.fn(),
   listDeviceDirectories: vi.fn(),
   createDeviceDirectory: vi.fn(),
   loadEnvironmentInfo: vi.fn(),
+  loadEnvironmentDiff: vi.fn(),
   commitEnvironmentChanges: vi.fn(),
   listEnvironmentBranches: vi.fn(),
   checkoutEnvironmentBranch: vi.fn(),
   createEnvironmentBranch: vi.fn(),
   setInput: vi.fn(),
+  addCodeCommentContext: vi.fn(),
+  removeCodeCommentContext: vi.fn(),
+  clearCodeCommentContexts: vi.fn(),
   sendCurrentInput: vi.fn(),
+  retryFailedMessage: vi.fn(),
+  pauseCurrentResponse: vi.fn(),
+  isResponseStreaming: false,
+  cancelQueuedMessage: vi.fn(),
+  sendQueuedAsGuidance: vi.fn(),
+  editQueuedMessage: vi.fn(),
+  cancelGuidanceMessage: vi.fn(),
+  loadTurnFileChangesDiff: vi.fn(),
+  revertTurnFileChanges: vi.fn(),
 }
 
 function createSkillZipFile(name: string, rootSkillMd = false): File {
@@ -99,7 +121,7 @@ function createSkillZipFile(name: string, rootSkillMd = false): File {
       '---',
       '',
       'Use this skill carefully.',
-    ].join('\n'),
+    ].join('\n')
   )
   const localHeader = new Uint8Array(30 + fileNameBytes.length)
   const localView = new DataView(localHeader.buffer)
@@ -137,26 +159,25 @@ function createSkillZipFile(name: string, rootSkillMd = false): File {
 }
 
 vi.mock('@/features/auth/AuthProvider', () => ({
-  AuthProvider: ({ children }: { children: React.ReactNode }) => (
-    <>{children}</>
-  ),
+  AuthProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }))
 
 vi.mock('@/features/auth/useAuth', () => ({
   useAuth: () => ({
     user: { id: 1, user_name: 'alice', email: 'alice@example.com' },
     isLoading: false,
+    adminPasswordSetupRequired: false,
+    adminUsername: 'admin',
     login: vi.fn(),
     logout: vi.fn(),
     refresh: vi.fn(),
     loginWithOidcToken: vi.fn(),
+    setupAdminPassword: vi.fn(),
   }),
 }))
 
 vi.mock('@/features/workbench/WorkbenchProvider', () => ({
-  WorkbenchProvider: ({ children }: { children: React.ReactNode }) => (
-    <>{children}</>
-  ),
+  WorkbenchProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }))
 
 vi.mock('@/features/workbench/useWorkbench', () => ({
@@ -467,7 +488,8 @@ function mockSystemSkillsFetch() {
       } else if (url.includes('/system-skills/install/personal')) {
         payload = installedUploadedPersonalSkill
       } else if (url.includes('/system-skills/installed')) {
-        payload = init?.method === 'PUT' ? installedSkillsResponse.items[0] : installedSkillsResponse
+        payload =
+          init?.method === 'PUT' ? installedSkillsResponse.items[0] : installedSkillsResponse
       } else if (url.includes('/system-skills/providers')) {
         payload = providersResponse
       } else if (url.includes('/mcp-providers')) {
@@ -481,14 +503,13 @@ function mockSystemSkillsFetch() {
         status: init?.method === 'DELETE' ? 204 : 200,
         json: () => Promise.resolve(payload),
       })
-    }),
+    })
   )
 }
 
 describe('App plugins route', () => {
   beforeEach(() => {
-    delete (window as typeof window & { __TAURI_INTERNALS__?: unknown })
-      .__TAURI_INTERNALS__
+    delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
     localStorage.clear()
     mockViewport.isMobile = false
     mockSystemSkillsFetch()
@@ -502,14 +523,8 @@ describe('App plugins route', () => {
     await userEvent.click(screen.getByTestId('plugins-button'))
 
     await waitFor(() => expect(window.location.pathname).toBe('/plugins'))
-    expect(screen.getByRole('tab', { name: '插件' })).toHaveAttribute(
-      'aria-selected',
-      'true',
-    )
-    expect(screen.getByRole('tab', { name: '技能' })).toHaveAttribute(
-      'aria-selected',
-      'false',
-    )
+    expect(screen.getByRole('tab', { name: '插件' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tab', { name: '技能' })).toHaveAttribute('aria-selected', 'false')
     expect(screen.getByRole('tab', { name: 'MCP' })).toBeInTheDocument()
     expect(screen.getByText('让 Wework 按你的方式工作')).toBeInTheDocument()
   })
@@ -519,21 +534,19 @@ describe('App plugins route', () => {
 
     render(<App />)
 
-    const pluginsDragRegion = within(
-      screen.getByTestId('plugins-topbar-drag-region'),
-    ).getByTestId('macos-titlebar-drag-region')
+    const pluginsDragRegion = within(screen.getByTestId('plugins-topbar-drag-region')).getByTestId(
+      'macos-titlebar-drag-region'
+    )
 
     expect(pluginsDragRegion).toHaveAttribute('data-tauri-drag-region')
-    expect(screen.getByTestId('plugins-topbar-drag-region')).toContainElement(
-      pluginsDragRegion,
-    )
+    expect(screen.getByTestId('plugins-topbar-drag-region')).toContainElement(pluginsDragRegion)
     expect(await screen.findByText('暂无已安装插件')).toBeInTheDocument()
     await userEvent.click(screen.getByRole('tab', { name: '技能' }))
     expect(await screen.findByText('wehot')).toBeInTheDocument()
     expect(screen.queryByText('找不到技能')).not.toBeInTheDocument()
     expect(fetch).toHaveBeenCalledWith(
       '/api/system-skills?category=system&page=1&pageSize=20',
-      expect.objectContaining({ method: 'GET' }),
+      expect.objectContaining({ method: 'GET' })
     )
   })
 
@@ -592,10 +605,7 @@ describe('App plugins route', () => {
 
     expect(screen.getByTestId('open-mobile-drawer-button')).toBeInTheDocument()
     expect(screen.queryByTestId('collapse-sidebar-button')).not.toBeInTheDocument()
-    expect(screen.getByTestId('plugins-create-button')).toHaveClass(
-      'h-11',
-      'w-11',
-    )
+    expect(screen.getByTestId('plugins-create-button')).toHaveClass('h-11', 'w-11')
     expect(await screen.findByText('暂无已安装插件')).toBeInTheDocument()
   })
 
@@ -615,7 +625,7 @@ describe('App plugins route', () => {
     await userEvent.click(screen.getByTestId('mobile-settings-plugins-button'))
 
     await waitFor(() =>
-      expect(screen.queryByTestId('mobile-settings-page')).not.toBeInTheDocument(),
+      expect(screen.queryByTestId('mobile-settings-page')).not.toBeInTheDocument()
     )
     expect(window.location.pathname).toBe('/plugins')
     expect(screen.getByTestId('open-mobile-drawer-button')).toBeInTheDocument()
@@ -640,22 +650,17 @@ describe('App plugins route', () => {
 
     await userEvent.click(screen.getByRole('tab', { name: 'MCP' }))
 
-    expect(screen.getByRole('tab', { name: 'MCP' })).toHaveAttribute(
-      'aria-selected',
-      'true',
-    )
+    expect(screen.getByRole('tab', { name: 'MCP' })).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByPlaceholderText('搜索 MCP')).toBeInTheDocument()
     expect(await screen.findByText('MCP Router')).toBeInTheDocument()
     expect(await screen.findByText('Hot Search MCP')).toBeInTheDocument()
     expect(screen.queryByPlaceholderText('供应商 Token')).not.toBeInTheDocument()
     expect(fetch).toHaveBeenCalledWith(
       '/api/mcp-providers/mcp_router/servers',
-      expect.objectContaining({ method: 'POST' }),
+      expect.objectContaining({ method: 'POST' })
     )
     expect(
-      vi
-        .mocked(fetch)
-        .mock.calls.some(([url]) => String(url).includes('/api/mcps/installed')),
+      vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes('/api/mcps/installed'))
     ).toBe(false)
   })
 
@@ -666,15 +671,10 @@ describe('App plugins route', () => {
 
     await userEvent.click(screen.getByTestId('plugins-manage-button'))
 
-    await waitFor(() =>
-      expect(window.location.pathname).toBe('/plugins/manage'),
-    )
+    await waitFor(() => expect(window.location.pathname).toBe('/plugins/manage'))
     expect(screen.getByTestId('plugins-button')).toBeInTheDocument()
     expect(screen.getByText('管理')).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: '插件 0' })).toHaveAttribute(
-      'aria-selected',
-      'true',
-    )
+    expect(screen.getByRole('tab', { name: '插件 0' })).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByRole('tab', { name: 'MCP 1' })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: '市场 1' })).toBeInTheDocument()
     expect(await screen.findByText('暂无已安装插件')).toBeInTheDocument()
@@ -687,15 +687,15 @@ describe('App plugins route', () => {
     render(<App />)
 
     expect(screen.getByTestId('plugins-button')).toHaveClass(
-      'bg-[rgb(var(--color-sidebar-active))]',
+      'bg-[rgb(var(--color-sidebar-active))]'
     )
     expect(screen.getByPlaceholderText('搜索插件')).toBeInTheDocument()
     expect(await screen.findByText('暂无已安装插件')).toBeInTheDocument()
     await waitFor(() =>
       expect(fetch).toHaveBeenCalledWith(
         '/api/plugins/installed',
-        expect.objectContaining({ method: 'GET' }),
-      ),
+        expect.objectContaining({ method: 'GET' })
+      )
     )
   })
 
@@ -705,9 +705,7 @@ describe('App plugins route', () => {
     render(<App />)
 
     await userEvent.click(await screen.findByRole('tab', { name: 'MCP 1' }))
-    const switchKnob = (
-      await screen.findByTestId('installed-mcp-toggle-7')
-    ).querySelector('span')
+    const switchKnob = (await screen.findByTestId('installed-mcp-toggle-7')).querySelector('span')
 
     expect(switchKnob).toHaveClass('left-1')
   })
@@ -726,7 +724,7 @@ describe('App plugins route', () => {
       expect.objectContaining({
         method: 'PUT',
         body: JSON.stringify({ enabled: false }),
-      }),
+      })
     )
   })
 
@@ -738,13 +736,10 @@ describe('App plugins route', () => {
     await userEvent.click(screen.getByTestId('plugin-management-create-button'))
     await userEvent.click(screen.getByTestId('plugins-create-mcp-option'))
     await userEvent.type(screen.getByTestId('custom-mcp-name-input'), 'local-docs')
-    await userEvent.type(
-      screen.getByTestId('custom-mcp-display-name-input'),
-      'Local Docs',
-    )
+    await userEvent.type(screen.getByTestId('custom-mcp-display-name-input'), 'Local Docs')
     await userEvent.type(
       screen.getByTestId('custom-mcp-url-input'),
-      'https://mcp.example.com/local',
+      'https://mcp.example.com/local'
     )
     await userEvent.click(screen.getByTestId('custom-mcp-submit-button'))
 
@@ -765,7 +760,7 @@ describe('App plugins route', () => {
           },
           enabled: true,
         }),
-      }),
+      })
     )
   })
 
@@ -776,18 +771,11 @@ describe('App plugins route', () => {
 
     await userEvent.click(await screen.findByRole('tab', { name: '市场 1' }))
     expect(screen.getByText('MCP Router')).toBeInTheDocument()
-    await userEvent.type(
-      screen.getByTestId('mcp-provider-token-mcp_router'),
-      'token',
-    )
-    await userEvent.click(
-      screen.getByTestId('mcp-provider-save-token-mcp_router'),
-    )
+    await userEvent.type(screen.getByTestId('mcp-provider-token-mcp_router'), 'token')
+    await userEvent.click(screen.getByTestId('mcp-provider-save-token-mcp_router'))
 
     expect(await screen.findByText('Hot Search MCP')).toBeInTheDocument()
-    await userEvent.click(
-      screen.getByTestId('mcp-provider-install--weibo-hot-search'),
-    )
+    await userEvent.click(screen.getByTestId('mcp-provider-install--weibo-hot-search'))
 
     await userEvent.click(await screen.findByRole('tab', { name: 'MCP 2' }))
     expect(await screen.findByText('Hot Search MCP')).toBeInTheDocument()
@@ -796,14 +784,14 @@ describe('App plugins route', () => {
       expect.objectContaining({
         method: 'PUT',
         body: JSON.stringify({ mcp_router: 'token' }),
-      }),
+      })
     )
     expect(fetch).toHaveBeenCalledWith(
       '/api/mcps/install',
       expect.objectContaining({
         method: 'POST',
         body: expect.stringContaining('"providerKey":"mcp_router"'),
-      }),
+      })
     )
   })
 
@@ -822,7 +810,7 @@ describe('App plugins route', () => {
       expect.objectContaining({
         method: 'PUT',
         body: JSON.stringify({ enabled: false }),
-      }),
+      })
     )
   })
 
@@ -836,12 +824,10 @@ describe('App plugins route', () => {
 
     await userEvent.click(screen.getByTestId('installed-skill-uninstall-42'))
 
-    await waitFor(() =>
-      expect(screen.queryByText('wehot')).not.toBeInTheDocument(),
-    )
+    await waitFor(() => expect(screen.queryByText('wehot')).not.toBeInTheDocument())
     expect(fetch).toHaveBeenCalledWith(
       '/api/system-skills/installed/42',
-      expect.objectContaining({ method: 'DELETE' }),
+      expect.objectContaining({ method: 'DELETE' })
     )
   })
 
@@ -860,17 +846,15 @@ describe('App plugins route', () => {
       expect.objectContaining({
         method: 'PUT',
         body: JSON.stringify({ enabled: false }),
-      }),
+      })
     )
 
     await userEvent.click(screen.getByTestId('installed-skill-uninstall-88'))
 
-    await waitFor(() =>
-      expect(screen.queryByText('Excel Helper')).not.toBeInTheDocument(),
-    )
+    await waitFor(() => expect(screen.queryByText('Excel Helper')).not.toBeInTheDocument())
     expect(fetch).toHaveBeenCalledWith(
       '/api/system-skills/installed/88',
-      expect.objectContaining({ method: 'DELETE' }),
+      expect.objectContaining({ method: 'DELETE' })
     )
   })
 
@@ -900,14 +884,14 @@ describe('App plugins route', () => {
       expect.objectContaining({
         method: 'POST',
         body: expect.any(FormData),
-      }),
+      })
     )
     expect(fetch).toHaveBeenCalledWith(
       '/api/system-skills/install/personal',
       expect.objectContaining({
         method: 'POST',
         body: JSON.stringify({ skillId: 78 }),
-      }),
+      })
     )
   })
 })

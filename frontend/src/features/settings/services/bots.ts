@@ -6,6 +6,7 @@ import { botApis } from '@/apis/bots'
 import { CheckRunningTasksResponse } from '@/apis/common'
 import { Bot, PaginationParams } from '@/types/api'
 import { CreateBotRequest, UpdateBotRequest } from '@/apis/bots'
+import type { ModelTypeEnum } from '@/apis/models'
 
 /**
  * Get Bot list
@@ -85,14 +86,19 @@ export const getModelFromConfig = (config: Record<string, unknown>): string => {
  /**
   * Get the model type from a predefined model configuration.
   * @param config The agent configuration object.
-  * @returns The model type ('public', 'user', or 'group'), or undefined if not specified.
+  * @returns The model type, or undefined if not specified.
   */
 export const getModelTypeFromConfig = (
   config: Record<string, unknown>
-): 'public' | 'user' | 'group' | undefined => {
+): ModelTypeEnum | undefined => {
   if (!config) return undefined
   const modelType = config.bind_model_type as string | undefined
-  if (modelType === 'public' || modelType === 'user' || modelType === 'group') {
+  if (
+    modelType === 'public' ||
+    modelType === 'user' ||
+    modelType === 'group' ||
+    modelType === 'runtime'
+  ) {
     return modelType
   }
   return undefined
@@ -114,14 +120,14 @@ export const getModelNamespaceFromConfig = (
  /**
   * Create a predefined model configuration with type and namespace.
   * @param modelName The model name.
-  * @param modelType The model type ('public', 'user', or 'group').
+  * @param modelType The model type.
   * @param modelNamespace The model namespace (defaults to 'default').
   * @param allowedModels Optional list of allowed model refs to restrict model selection.
   * @returns The agent configuration object.
   */
 export const createPredefinedModelConfig = (
   modelName: string,
-  modelType?: 'public' | 'user' | 'group',
+  modelType?: ModelTypeEnum,
   modelNamespace?: string,
   allowedModels?: AllowedModelRef[]
 ): Record<string, unknown> | null => {
@@ -148,7 +154,7 @@ export const createPredefinedModelConfig = (
  */
 export interface AllowedModelRef {
   name: string
-  type: 'public' | 'user' | 'group'
+  type: ModelTypeEnum
   namespace: string
 }
 

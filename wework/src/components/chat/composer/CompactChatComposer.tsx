@@ -13,6 +13,7 @@ interface CompactChatComposerProps {
   onChange: (value: string) => void
   onSubmit: () => void
   disabled: boolean
+  disabledReason?: string
   placeholder: string
   attachments?: Attachment[]
   codeComments?: CodeCommentContext[]
@@ -32,6 +33,7 @@ export function CompactChatComposer({
   onChange,
   onSubmit,
   disabled,
+  disabledReason,
   placeholder,
   attachments = [],
   codeComments = [],
@@ -53,8 +55,7 @@ export function CompactChatComposer({
   const [fullscreenInputOpen, setFullscreenInputOpen] = useState(false)
   const [canExpandInput, setCanExpandInput] = useState(false)
   const canSend =
-    (value.trim().length > 0 || attachments.length > 0 || codeComments.length > 0) &&
-    !disabled
+    (value.trim().length > 0 || attachments.length > 0 || codeComments.length > 0) && !disabled
   const explicitLineCount = value.split('\n').length
 
   const handleImageChange = (event: ChangeEvent<HTMLInputElement>) => {
@@ -111,6 +112,14 @@ export function CompactChatComposer({
         data-testid="mobile-camera-file-input"
         onChange={handleImageChange}
       />
+      {disabledReason && (
+        <div
+          data-testid="composer-disabled-reason"
+          className="mb-2 rounded-xl bg-muted px-3 py-2 text-xs text-text-secondary"
+        >
+          {disabledReason}
+        </div>
+      )}
       <form
         className="flex w-full items-end gap-2"
         onSubmit={event => {

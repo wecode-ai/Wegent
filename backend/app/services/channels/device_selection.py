@@ -105,7 +105,10 @@ class DeviceSelectionManager:
             if not user or not user.preferences:
                 return None
 
-            default_target = user.preferences.get("default_execution_target")
+            from app.services.user_mcp_service import UserMCPService
+
+            preferences = UserMCPService.load_preferences(user.preferences)
+            default_target = preferences.get("default_execution_target")
             if not default_target:
                 return None
 

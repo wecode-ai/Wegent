@@ -96,7 +96,7 @@ export const PerformanceLimits = {
 export const Routes = {
   login: '/login',
   chat: '/chat',
-  code: '/code',
+  code: '/chat?agent=code',
   settings: '/settings',
   settingsBots: '/settings?tab=bots',
   settingsTeams: '/settings?tab=team',

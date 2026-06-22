@@ -1,6 +1,5 @@
 import type { TestUser } from '../config/test-users'
 
-const DEFAULT_ADMIN_PASSWORD = 'Wegent2025!'
 const TOKEN_KEY = 'auth_token'
 const TOKEN_EXPIRE_KEY = 'auth_token_expire'
 const TOKEN_COOKIE_NAME = 'auth_token'
@@ -49,10 +48,21 @@ function shouldUseIsolatedUsers(env: EnvMap = process.env): boolean {
   return env.E2E_USE_ISOLATED_USERS !== 'false'
 }
 
+function requireEnvPassword(
+  env: EnvMap,
+  key: 'E2E_BOOTSTRAP_ADMIN_PASSWORD' | 'E2E_ADMIN_PASSWORD'
+): string {
+  const value = env[key]
+  if (!value) {
+    throw new Error(`Missing required environment variable: ${key}`)
+  }
+  return value
+}
+
 export function buildBootstrapAdminUser(env: EnvMap = process.env): TestUser {
   return {
     username: env.E2E_BOOTSTRAP_ADMIN_USER || 'admin',
-    password: env.E2E_BOOTSTRAP_ADMIN_PASSWORD || DEFAULT_ADMIN_PASSWORD,
+    password: requireEnvPassword(env, 'E2E_BOOTSTRAP_ADMIN_PASSWORD'),
     role: 'admin',
     description: 'Bootstrap admin user for E2E account provisioning',
   }
@@ -67,7 +77,7 @@ export function buildE2EAdminUser(env: EnvMap = process.env): TestUser {
   const descriptionSuffix = suffix.replace(/-/g, ' ')
   return {
     username: env.E2E_ADMIN_USER || `e2e-admin-${suffix}`,
-    password: env.E2E_ADMIN_PASSWORD || DEFAULT_ADMIN_PASSWORD,
+    password: requireEnvPassword(env, 'E2E_ADMIN_PASSWORD'),
     role: 'admin',
     description: `Isolated admin user for E2E ${descriptionSuffix}`,
   }

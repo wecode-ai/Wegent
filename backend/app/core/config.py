@@ -96,6 +96,8 @@ class Settings(BaseSettings):
     API_PREFIX: str = "/api"
     # API docs toggle (from env ENABLE_API_DOCS, default True)
     ENABLE_API_DOCS: bool = True
+    # Whether the auth handshake should surface first-run system initialization.
+    CHECK_SYSTEM_INITIALIZATION_STATUS: bool = True
 
     # Environment configuration
     ENVIRONMENT: str = "development"  # development or production
@@ -624,7 +626,7 @@ class Settings(BaseSettings):
         "wegent-wework#default"  # Default team for task mode (devices/chat page)
     )
     DEFAULT_TEAM_WEWORK: str = (
-        "wegent-wework-hidden#default"  # Default hidden team for WeWork workbench
+        "wegent-wework#default"  # Default team for WeWork workbench
     )
 
     # JSON configuration for MCP servers (similar to Claude Desktop format)

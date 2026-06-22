@@ -50,6 +50,11 @@ class CommandHandler:
             )
         )
 
+        cwd_error = self._missing_cwd_error(cwd)
+        if cwd_error:
+            logger.warning("[CommandHandler] %s", cwd_error)
+            return self._error_result(cwd_error, duration=self._elapsed(started_at))
+
         logger.info(
             "[CommandHandler] Executing command: cwd=%s, timeout=%s, mode=%s, command=%s",
             cwd or os.getcwd(),
@@ -60,6 +65,16 @@ class CommandHandler:
 
         try:
             process = await self._create_process(command, argv=argv, cwd=cwd, env=env)
+        except FileNotFoundError as exc:
+            if self._is_missing_cwd_error(exc, cwd):
+                cwd_error = self._missing_cwd_error(cwd) or str(exc)
+                logger.warning("[CommandHandler] %s", cwd_error)
+                return self._error_result(
+                    cwd_error,
+                    duration=self._elapsed(started_at),
+                )
+            logger.exception("[CommandHandler] Failed to start command")
+            return self._error_result(str(exc), duration=self._elapsed(started_at))
         except Exception as exc:
             logger.exception("[CommandHandler] Failed to start command")
             return self._error_result(str(exc), duration=self._elapsed(started_at))
@@ -163,6 +178,20 @@ class CommandHandler:
         if not isinstance(cwd, str) or not cwd.strip():
             return None
         return cwd
+
+    def _missing_cwd_error(self, cwd: Optional[str]) -> Optional[str]:
+        if cwd is None or os.path.isdir(cwd):
+            return None
+        return f"Working directory does not exist: {cwd}"
+
+    def _is_missing_cwd_error(
+        self,
+        exc: FileNotFoundError,
+        cwd: Optional[str],
+    ) -> bool:
+        if cwd is None:
+            return False
+        return exc.filename == cwd or not os.path.isdir(cwd)
 
     def _normalize_argv(self, argv: Any) -> Optional[list[str]]:
         if not isinstance(argv, list):
