@@ -7,6 +7,7 @@ import {
   isDeviceRunningTask,
   isVersionAtLeast,
   supportsLocalTerminalLaunch,
+  supportsRemoteTerminalSessions,
 } from './device-capabilities'
 
 describe('device-capabilities', () => {
@@ -75,6 +76,23 @@ describe('device-capabilities', () => {
     expect(supportsLocalTerminalLaunch({ ...claudeDevice, device_type: 'cloud' })).toBe(false)
     expect(
       supportsLocalTerminalLaunch({
+        ...claudeDevice,
+        device_type: 'local',
+        bind_shell: 'openclaw',
+      })
+    ).toBe(false)
+  })
+
+  test('supports remote terminal sessions on Claude Code devices without requiring cloud type', () => {
+    const claudeDevice = {
+      bind_shell: 'claudecode',
+      status: 'online',
+    }
+
+    expect(supportsRemoteTerminalSessions({ ...claudeDevice, device_type: 'local' })).toBe(true)
+    expect(supportsRemoteTerminalSessions({ ...claudeDevice, device_type: 'cloud' })).toBe(true)
+    expect(
+      supportsRemoteTerminalSessions({
         ...claudeDevice,
         device_type: 'local',
         bind_shell: 'openclaw',

@@ -1,6 +1,7 @@
 import { Page } from '@playwright/test'
 import { ApiClient, createApiClient } from './api-client'
 import { APIRequestContext } from '@playwright/test'
+import { ADMIN_USER } from '../config/test-users'
 
 /**
  * Smart wait utilities that replace hardcoded waitForTimeout calls
@@ -366,8 +367,8 @@ export function truncate(str: string, maxLength: number): string {
  */
 export async function createAuthenticatedApiClient(
   request: APIRequestContext,
-  username: string = 'admin',
-  password: string = 'Wegent2025!'
+  username: string = ADMIN_USER.username,
+  password: string = ADMIN_USER.password
 ): Promise<ApiClient> {
   const apiClient = createApiClient(request)
   await apiClient.login(username, password)

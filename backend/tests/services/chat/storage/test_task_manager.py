@@ -580,6 +580,73 @@ def _build_existing_running_task(task_id: int, user_id: int) -> TaskResource:
     return task
 
 
+def test_prepare_execution_session_uses_fork_history_next_message_id(monkeypatch):
+    from app.services.chat.trigger import lifecycle
+
+    calls = {}
+    db = MagicMock()
+    user = SimpleNamespace(id=7)
+    team = SimpleNamespace(
+        id=1256,
+        user_id=7,
+        name="quickstart",
+        namespace="default",
+    )
+    task = _build_existing_task(task_id=1385, user_id=7)
+    task.client_origin = "frontend"
+
+    monkeypatch.setattr(lifecycle, "_load_team_crd", lambda team: None)
+    monkeypatch.setattr(lifecycle, "get_bot_ids_from_team", lambda db, team: [1255])
+    monkeypatch.setattr(
+        lifecycle,
+        "get_task_with_access_check",
+        lambda db, task_id, user_id: (task, user_id),
+    )
+    monkeypatch.setattr(lifecycle, "check_task_status", lambda db, task: None)
+    monkeypatch.setattr(
+        lifecycle.task_stores.task_store,
+        "update_json",
+        lambda db, *, task, payload: setattr(task, "json", payload) or task,
+    )
+    monkeypatch.setattr(
+        lifecycle,
+        "task_fork_history_resolver",
+        SimpleNamespace(
+            resolve_for_task=lambda db, *, task_id, user_id, current_task=None: [],
+            get_next_message_id=lambda db, *, task_id, user_id, current_task=None: 9,
+        ),
+        raising=False,
+    )
+
+    def create_pair(**kwargs):
+        calls.update(kwargs)
+        return (
+            SimpleNamespace(id=1, message_id=kwargs["user_message_id"]),
+            SimpleNamespace(id=2, message_id=kwargs["assistant_message_id"]),
+        )
+
+    monkeypatch.setattr(
+        lifecycle.task_stores.subtask_store,
+        "create_user_and_assistant_subtasks",
+        lambda db, **kwargs: create_pair(**kwargs),
+    )
+
+    lifecycle.prepare_execution_session(
+        db=db,
+        user=user,
+        team=team,
+        input_text="continue",
+        task_params=TaskCreationParams(message="continue"),
+        task_id=task.id,
+        should_trigger_ai=True,
+    )
+
+    assert calls["user_message_id"] == 9
+    assert calls["user_parent_id"] == 8
+    assert calls["assistant_message_id"] == 10
+    assert calls["assistant_parent_id"] == 9
+
+
 @pytest.mark.asyncio
 async def test_create_task_and_subtasks_resets_existing_task_status_to_pending(
     test_db: Session,

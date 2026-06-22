@@ -54,6 +54,13 @@ class DeviceCommandConfigurationError(DeviceCommandError):
 class LocalDeviceCommandService:
     """Send command RPC requests to connected local executor devices."""
 
+    @staticmethod
+    def is_unavailable_error(exc: Exception) -> bool:
+        """Return whether an RPC error means the local device is unavailable."""
+
+        detail = str(exc).lower()
+        return "offline" in detail or "disconnected" in detail or "no socket" in detail
+
     async def execute_command(
         self,
         user_id: int,

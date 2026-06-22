@@ -14,7 +14,7 @@ import os
 import posixpath
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Body, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -558,24 +558,40 @@ class DeviceSessionResponse(BaseModel):
     type: str = Field(..., description="Session type (terminal or code_server)")
     path: str = Field(..., description="Working directory path")
     url: str = Field(default="", description="Browser-accessible session URL")
+    transport: str = Field(
+        default="url",
+        description="Browser transport for the interactive session",
+    )
+
+
+class DeviceSessionCreate(BaseModel):
+    """Request model for device session creation."""
+
+    path: Optional[str] = Field(
+        default=None,
+        description="Optional working directory path",
+    )
 
 
 @router.post("/{device_id}/terminal", response_model=DeviceSessionResponse)
 async def start_device_terminal(
     device_id: str,
+    payload: DeviceSessionCreate | None = Body(default=None),
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
     """Start a terminal session on a device.
 
-    Sends a Socket.IO RPC to the online device executor to start a ttyd
-    terminal session. Requires the device to be online.
+    Sends a Socket.IO RPC to the online device executor to start an embedded
+    PTY session. Requires the device to be online.
     """
     from app.services.device.session_service import (
         DeviceSessionError,
         local_device_session_service,
     )
 
+    requested_path = payload.path.strip() if payload and payload.path else ""
+    session_path = requested_path or DEFAULT_DEVICE_SESSION_PATH
     try:
         result = await local_device_session_service.start_session(
             db=db,
@@ -583,8 +599,8 @@ async def start_device_terminal(
             device_id=device_id,
             project_id=0,
             session_type="terminal",
-            path=DEFAULT_DEVICE_SESSION_PATH,
-            create_if_missing=True,
+            path=session_path,
+            create_if_missing=not bool(requested_path),
         )
     except DeviceSessionError as exc:
         raise HTTPException(
@@ -596,8 +612,9 @@ async def start_device_terminal(
         session_id=result.get("session_id", ""),
         device_id=result.get("device_id", device_id),
         type="terminal",
-        path=result.get("path", DEFAULT_DEVICE_SESSION_PATH),
+        path=result.get("path", session_path),
         url=result.get("url", ""),
+        transport=result.get("transport", "socketio"),
     )
 
 
@@ -639,4 +656,5 @@ async def start_device_code_server(
         type="code_server",
         path=result.get("path", DEFAULT_DEVICE_SESSION_PATH),
         url=result.get("url", ""),
+        transport=result.get("transport", "url"),
     )

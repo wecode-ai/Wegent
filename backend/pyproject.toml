@@ -118,7 +118,8 @@ dependencies = [
     "python-telegram-bot>=21.0",
     # Async ICMP ping for network latency measurement
     "aioping>=0.3.0",
-
+    # Discord Bot SDK for IM channel integration
+    "discord.py>=2.4.0",
     # RAG (Retrieval-Augmented Generation) dependencies
     "llama-index-core>=0.12.0",
     "llama-index-vector-stores-elasticsearch>=0.4.0",

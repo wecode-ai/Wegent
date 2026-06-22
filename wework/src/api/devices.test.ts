@@ -39,6 +39,20 @@ describe('createDeviceApi', () => {
     })
   })
 
+  test('starts an embedded terminal at the requested device path', async () => {
+    const client = {
+      post: vi.fn().mockResolvedValue({ session_id: 'terminal-1' }),
+    } as unknown as HttpClient
+
+    const api = createDeviceApi(client)
+
+    await api.startTerminal('device/1', ' /workspace/project ')
+
+    expect(client.post).toHaveBeenCalledWith('/devices/device%2F1/terminal', {
+      path: '/workspace/project',
+    })
+  })
+
   test('listWorkspaceEntries maps workspace tree output', async () => {
     const post = vi.fn().mockResolvedValue({
       success: true,

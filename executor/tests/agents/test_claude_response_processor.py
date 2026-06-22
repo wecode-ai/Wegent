@@ -329,6 +329,35 @@ async def test_claude_success_uses_explicit_completion_fields_provider():
 
 
 @pytest.mark.asyncio
+async def test_claude_success_includes_executor_session_metadata():
+    transport = GeneratorTransport()
+    emitter = EmitterBuilder().with_task(1, 2).with_transport(transport).build()
+    message = ResultMessage(
+        subtype="success",
+        duration_ms=1,
+        duration_api_ms=1,
+        is_error=False,
+        num_turns=1,
+        session_id="claude-session-1",
+        result="done",
+    )
+
+    result = await _process_result_message(
+        msg=message,
+        emitter=emitter,
+        state_manager=DummyStateManager(),
+        session_id="claude-session-1",
+    )
+
+    completed = transport.get_events()[-1][1]["response"]
+    assert result == TaskStatus.COMPLETED
+    assert completed["executor_session"] == {
+        "agent": "ClaudeCode",
+        "sessionId": "claude-session-1",
+    }
+
+
+@pytest.mark.asyncio
 async def test_assistant_tool_use_records_file_change_boundary():
     emitter = MagicMock()
     emitter.flush = AsyncMock()

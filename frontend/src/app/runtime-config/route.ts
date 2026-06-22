@@ -124,20 +124,20 @@ export async function GET() {
         'https://wecode-ai.github.io/wegent-docs',
 
       // Weibo AI Toolbox macOS download URL
-    // Priority: RUNTIME_WEIBO_AI_TOOLBOX_MAC_DOWNLOAD_URL > NEXT_PUBLIC_WEIBO_AI_TOOLBOX_MAC_DOWNLOAD_URL > empty
-    weiboAiToolboxMacDownloadUrl:
-      process.env.RUNTIME_WEIBO_AI_TOOLBOX_MAC_DOWNLOAD_URL ||
-      process.env.NEXT_PUBLIC_WEIBO_AI_TOOLBOX_MAC_DOWNLOAD_URL ||
-      '',
+      // Priority: RUNTIME_WEIBO_AI_TOOLBOX_MAC_DOWNLOAD_URL > NEXT_PUBLIC_WEIBO_AI_TOOLBOX_MAC_DOWNLOAD_URL > empty
+      weiboAiToolboxMacDownloadUrl:
+        process.env.RUNTIME_WEIBO_AI_TOOLBOX_MAC_DOWNLOAD_URL ||
+        process.env.NEXT_PUBLIC_WEIBO_AI_TOOLBOX_MAC_DOWNLOAD_URL ||
+        '',
 
-    // Weibo AI Toolbox Windows download URL
-    // Priority: RUNTIME_WEIBO_AI_TOOLBOX_WINDOWS_DOWNLOAD_URL > NEXT_PUBLIC_WEIBO_AI_TOOLBOX_WINDOWS_DOWNLOAD_URL > empty
-    weiboAiToolboxWindowsDownloadUrl:
-      process.env.RUNTIME_WEIBO_AI_TOOLBOX_WINDOWS_DOWNLOAD_URL ||
-      process.env.NEXT_PUBLIC_WEIBO_AI_TOOLBOX_WINDOWS_DOWNLOAD_URL ||
-      '',
+      // Weibo AI Toolbox Windows download URL
+      // Priority: RUNTIME_WEIBO_AI_TOOLBOX_WINDOWS_DOWNLOAD_URL > NEXT_PUBLIC_WEIBO_AI_TOOLBOX_WINDOWS_DOWNLOAD_URL > empty
+      weiboAiToolboxWindowsDownloadUrl:
+        process.env.RUNTIME_WEIBO_AI_TOOLBOX_WINDOWS_DOWNLOAD_URL ||
+        process.env.NEXT_PUBLIC_WEIBO_AI_TOOLBOX_WINDOWS_DOWNLOAD_URL ||
+        '',
 
-    // OpenTelemetry configuration
+      // OpenTelemetry configuration
       // Priority: RUNTIME_OTEL_* > NEXT_PUBLIC_OTEL_* > defaults
       otelEnabled:
         parseBoolean(process.env.RUNTIME_OTEL_ENABLED, false) ||
@@ -167,6 +167,10 @@ export async function GET() {
       // Application version (injected at Docker build time)
       // Priority: RUNTIME_APP_VERSION > NEXT_PUBLIC_APP_VERSION > 'dev'
       appVersion: process.env.RUNTIME_APP_VERSION || process.env.NEXT_PUBLIC_APP_VERSION || 'dev',
+
+      // External Wework URL for coding entry points.
+      // Runtime-only by design; no NEXT_PUBLIC_* fallback.
+      weworkCodeUrl: process.env.RUNTIME_WEWORK_CODE_URL || '',
     },
     {
       headers: {

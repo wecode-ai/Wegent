@@ -142,6 +142,53 @@ def _find_reusable_wework_local_path_project(
     return project
 
 
+def find_wework_project_for_worktree_path(
+    *,
+    db: Session,
+    user_id: int,
+    client_origin: Optional[str],
+    device_id: str,
+    worktree_path: str,
+) -> Optional[Project]:
+    """Return the source Wework project for a managed worktree path."""
+
+    parsed = _parse_managed_worktree_path(worktree_path)
+    if not parsed:
+        return None
+
+    _, project_dir_name = parsed
+    project_refs = _collect_worktree_project_refs(
+        db=db,
+        user_id=user_id,
+        client_origin=client_origin,
+    )
+    project_index = _build_worktree_project_index(project_refs)
+    device_index = project_index.get(device_id)
+    if not device_index:
+        return None
+
+    matched_project = _match_worktree_project(device_index, project_dir_name)
+    if not matched_project:
+        return None
+
+    return db.get(Project, matched_project["project_id"])
+
+
+def _parse_managed_worktree_path(path: str) -> Optional[tuple[str, str]]:
+    normalized_path = _normalize_local_workspace_path(path)
+    parts = [part for part in normalized_path.split("/") if part]
+    for index, part in enumerate(parts):
+        if part != WORKTREE_ROOT_DIR:
+            continue
+        if index + 2 >= len(parts):
+            continue
+        worktree_id = parts[index + 1]
+        project_dir_name = parts[index + 2]
+        if WORKTREE_ID_PATTERN.fullmatch(worktree_id):
+            return worktree_id, project_dir_name
+    return None
+
+
 def _is_reusable_local_path_config(config: ProjectConfig) -> bool:
     return bool(
         config.is_workspace

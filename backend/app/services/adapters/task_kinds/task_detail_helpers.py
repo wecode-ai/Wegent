@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.schemas.kind import Bot, Shell
 from app.schemas.task import SkillRef
+from app.services.task_fork_history import ForkHistoryItem
 from app.services.task_skill_selection import parse_requested_skill_refs_from_labels
 from app.utils.prompt_utils import extract_display_prompt
 
@@ -89,7 +90,17 @@ def convert_subtasks_to_dict(
 ) -> List[Dict[str, Any]]:
     """Convert subtask objects to response dictionaries."""
     subtasks_dict = []
-    for subtask in subtasks:
+    for item in subtasks:
+        subtask = item.subtask if isinstance(item, ForkHistoryItem) else item
+        inherited = item.inherited if isinstance(item, ForkHistoryItem) else False
+        origin_task_id = (
+            item.origin_task_id
+            if isinstance(item, ForkHistoryItem)
+            else subtask.task_id
+        )
+        origin_subtask_id = (
+            item.origin_subtask_id if isinstance(item, ForkHistoryItem) else subtask.id
+        )
         contexts_list = []
         if hasattr(subtask, "contexts") and subtask.contexts:
             for ctx in subtask.contexts:
@@ -124,6 +135,9 @@ def convert_subtasks_to_dict(
             {
                 "id": subtask.id,
                 "task_id": subtask.task_id,
+                "inherited": inherited,
+                "origin_task_id": origin_task_id,
+                "origin_subtask_id": origin_subtask_id,
                 "team_id": subtask.team_id,
                 "title": subtask.title,
                 "bot_ids": subtask.bot_ids,

@@ -423,7 +423,7 @@ curl -I http://localhost:8000/socket.io/
 **2. 验证 JWT Token**
 ```bash
 # 在浏览器控制台检查 token 是否有效
-localStorage.getItem('token')
+localStorage.getItem('auth_token')
 
 # Token 应该在 Socket.IO auth 中传递
 ```
@@ -443,13 +443,17 @@ docker-compose exec redis redis-cli ping
 
 **5. 检查前端 Socket.IO 配置**
 ```typescript
-// frontend/src/contexts/SocketContext.tsx
-// 验证连接参数
+// packages/chat-core/src/socket/authenticatedSocketClient.ts
+// frontend 和 wework 都通过共享 SocketClient 建立连接
 const socket = io(API_URL + '/chat', {
   path: '/socket.io',
   auth: { token },
-  transports: ['websocket', 'polling'],
-});
+  autoConnect: false,
+  reconnection: false,
+  transports: ['websocket'],
+  forceNew: true,
+  multiplex: false,
+})
 ```
 
 **6. 在浏览器中调试 WebSocket**

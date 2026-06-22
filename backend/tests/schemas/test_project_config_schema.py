@@ -8,6 +8,14 @@ from pydantic import ValidationError
 from app.schemas.project import ProjectConfig
 
 
+def test_workspace_project_can_be_cross_device_without_execution_target():
+    config = ProjectConfig.model_validate({"mode": "workspace"})
+
+    assert config.is_workspace is True
+    assert config.execution is None
+    assert config.workspace is None
+
+
 def test_workspace_project_git_config_accepts_cloud_relative_checkout_path():
     config = ProjectConfig.model_validate(
         {

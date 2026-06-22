@@ -8,6 +8,12 @@ import type { ReactNode } from 'react'
 
 import { ChatPageDesktop } from '@/app/(tasks)/chat/ChatPageDesktop'
 
+let mockSearchParams = new URLSearchParams()
+let mockRuntimeConfig = {
+  weworkCodeUrl: '',
+}
+const chatAreaProps: Record<string, unknown>[] = []
+
 // Mock window.matchMedia for useIsDesktop hook
 Object.defineProperty(window, 'matchMedia', {
   writable: true,
@@ -25,12 +31,16 @@ Object.defineProperty(window, 'matchMedia', {
 
 jest.mock('next/navigation', () => ({
   useSearchParams: () => ({
-    get: () => null,
+    get: (key: string) => mockSearchParams.get(key),
   }),
   useRouter: () => ({
     push: jest.fn(),
     replace: jest.fn(),
   }),
+}))
+
+jest.mock('@/lib/runtime-config', () => ({
+  getRuntimeConfigSync: () => mockRuntimeConfig,
 }))
 
 jest.mock('@/features/tasks/service/teamService', () => ({
@@ -110,7 +120,10 @@ jest.mock('@/features/tasks/hooks/useSearchShortcut', () => ({
 }))
 
 jest.mock('@/features/tasks/components/chat', () => ({
-  ChatArea: () => <div>chat-area</div>,
+  ChatArea: (props: Record<string, unknown>) => {
+    chatAreaProps.push(props)
+    return <div>chat-area</div>
+  },
 }))
 
 jest.mock('@/features/tasks/components/group-chat', () => ({
@@ -155,11 +168,41 @@ jest.mock('@/features/tasks/components/remote-workspace', () => ({
 }))
 
 describe('ChatPageDesktop remote workspace integration', () => {
+  beforeEach(() => {
+    mockSearchParams = new URLSearchParams()
+    mockRuntimeConfig = { weworkCodeUrl: '' }
+    chatAreaProps.length = 0
+  })
+
   test('chat desktop renders remote workspace entry in top nav when task selected', () => {
     render(<ChatPageDesktop />)
 
     expect(screen.getByTestId('remote-workspace-entry')).toHaveTextContent('42:false')
     expect(screen.queryByText('search-dialog')).not.toBeInTheDocument()
     expect(screen.queryByText('create-group-chat-dialog')).not.toBeInTheDocument()
+  })
+
+  test('agent=code query enables code task behavior in chat', () => {
+    mockSearchParams = new URLSearchParams('agent=code')
+
+    render(<ChatPageDesktop />)
+
+    expect(chatAreaProps[0]).toMatchObject({
+      taskType: 'code',
+      teamModeFilter: 'code',
+      showRepositorySelector: true,
+    })
+  })
+
+  test('configured Wework URL lets chat show chat and code agents together', () => {
+    mockRuntimeConfig = { weworkCodeUrl: 'https://wework.example.com/coding' }
+
+    render(<ChatPageDesktop />)
+
+    expect(chatAreaProps[0]).toMatchObject({
+      taskType: 'chat',
+      teamModeFilter: 'all',
+      showRepositorySelector: true,
+    })
   })
 })

@@ -13,7 +13,7 @@ import TopNavigation from '@/features/layout/TopNavigation'
 import { TaskSidebar } from '@/features/tasks/components/sidebar'
 import { ThemeToggle } from '@/features/theme/ThemeToggle'
 import GreyTestButton from '@/features/layout/components/GreyTestButton'
-import { Team } from '@/types/api'
+import type { Team, TaskType } from '@/types/api'
 import { saveLastTab } from '@/utils/userPreferences'
 import { useUser } from '@/features/common/UserContext'
 import { useTaskSession } from '@/features/tasks/session/TaskSession'
@@ -29,6 +29,7 @@ import { listGroups } from '@/apis/groups'
 import { fetchBotsList } from '@/features/settings/services/bots'
 import type { BaseRole } from '@/types/base-role'
 import { RemoteWorkspaceEntry } from '@/features/tasks/components/remote-workspace'
+import { getRuntimeConfigSync } from '@/lib/runtime-config'
 
 const SearchDialog = dynamic(() => import('@/features/tasks/components/sidebar/SearchDialog'), {
   ssr: false,
@@ -71,17 +72,6 @@ export function ChatPageMobile() {
   const { selectedDeviceId, devices } = useDevices()
   const selectedDevice = devices.find(d => d.device_id === selectedDeviceId)
 
-  // Determine taskType based on device selection
-  // When a device is selected, use 'task' mode (same as /devices/chat)
-  // Otherwise, use 'chat' mode
-  const taskType = selectedDeviceId ? 'task' : 'chat'
-
-  // Compute disabled reason for device mode
-  const disabledReason =
-    selectedDeviceId && (!selectedDevice || selectedDevice.status === 'offline')
-      ? t('devices:device_offline_cannot_send')
-      : undefined
-
   // Get current task title for top navigation
   const currentTaskTitle = selectedTaskDetail?.title
 
@@ -106,11 +96,37 @@ export function ChatPageMobile() {
   // Check for share_id in URL
   const searchParams = useSearchParams()
   const _hasShareId = !!searchParams.get('share_id')
+  const hasWeworkCodeUrl = getRuntimeConfigSync().weworkCodeUrl.trim().length > 0
+  const isCodeAgentMode = searchParams.get('agent') === 'code'
+  const isCodeTaskOpen = selectedTaskDetail?.task_type === 'code'
 
   // Check if a task is currently open (support multiple parameter formats)
   const taskId =
     searchParams.get('task_id') || searchParams.get('taskid') || searchParams.get('taskId')
   const hasOpenTask = !!taskId
+
+  const taskType: TaskType =
+    selectedDeviceId || selectedTaskDetail?.task_type === 'task'
+      ? 'task'
+      : isCodeAgentMode || isCodeTaskOpen
+        ? 'code'
+        : 'chat'
+  const teamModeFilter: 'chat' | 'code' | 'task' | 'all' =
+    selectedDeviceId || selectedTaskDetail?.task_type === 'task'
+      ? 'task'
+      : isCodeAgentMode || isCodeTaskOpen
+        ? 'code'
+        : hasWeworkCodeUrl
+          ? 'all'
+          : 'chat'
+  const showRepositorySelector =
+    !selectedDeviceId && selectedTaskDetail?.task_type !== 'task' && teamModeFilter !== 'chat'
+
+  // Compute disabled reason for device mode
+  const disabledReason =
+    selectedDeviceId && (!selectedDevice || selectedDevice.status === 'offline')
+      ? t('devices:device_offline_cannot_send')
+      : undefined
 
   // Redirect device tasks to /devices/chat page for proper layout
   useEffect(() => {
@@ -299,8 +315,9 @@ export function ChatPageMobile() {
           teams={teams}
           isTeamsLoading={isTeamsLoading}
           selectedTeamForNewTask={_selectedTeamForNewTask}
-          showRepositorySelector={false}
+          showRepositorySelector={showRepositorySelector}
           taskType={taskType}
+          teamModeFilter={teamModeFilter}
           onShareButtonRender={handleShareButtonRender}
           onRefreshTeams={handleRefreshTeams}
           disabledReason={disabledReason}

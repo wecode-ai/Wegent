@@ -107,6 +107,17 @@ async def _collect_completion_fields(
     return {}
 
 
+def _executor_session_result_fields(session_id: Optional[str]) -> dict[str, Any]:
+    if not session_id:
+        return {}
+    return {
+        "executor_session": {
+            "agent": "ClaudeCode",
+            "sessionId": session_id,
+        }
+    }
+
+
 def _tool_result_completion(block: ToolResultBlock) -> tuple[str, str | None]:
     """Translate Claude tool result errors into emitter terminal status."""
     if not block.is_error:
@@ -1233,6 +1244,7 @@ async def _process_result_message(
                 extra_fields = _standalone_workspace_result_fields(
                     state_manager, content
                 )
+                extra_fields.update(_executor_session_result_fields(session_id))
                 extra_fields.update(
                     await _collect_completion_fields(completion_fields_provider)
                 )
@@ -1268,6 +1280,7 @@ async def _process_result_message(
             extra_fields = _standalone_workspace_result_fields(
                 state_manager, result_str
             )
+            extra_fields.update(_executor_session_result_fields(session_id))
             extra_fields.update(
                 await _collect_completion_fields(completion_fields_provider)
             )

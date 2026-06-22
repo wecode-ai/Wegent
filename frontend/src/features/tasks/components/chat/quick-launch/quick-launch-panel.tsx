@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
-import type { TaskType, Team } from '@/types/api'
+import type { Team } from '@/types/api'
+import type { TeamModeFilter } from '../../selector/team-selector-utils'
 import { QuickLauncherCards } from './quick-launcher-cards'
 import { QuickPhraseList } from './QuickPhraseList'
 import {
@@ -20,7 +21,7 @@ interface QuickLaunchPanelProps {
   selectedTeam: Team | null
   onTeamSelect: (team: Team) => void
   onPresetSelect: (selection: QuickPresetSelection) => void
-  currentMode: TaskType
+  currentMode: TeamModeFilter
   isLoading?: boolean
   defaultTeam?: Team | null
   launchIntent?: QuickLaunchIntent | null

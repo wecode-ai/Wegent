@@ -8,6 +8,7 @@ import React, { useEffect, useState, useMemo } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { useToast } from '@/hooks/use-toast'
+import { buildChatCodeHref } from '@/config/coding-route'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { taskApis, TaskShareInfo } from '@/apis/tasks'
 import { teamApis } from '@/apis/team'
@@ -272,8 +273,13 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
       handleCloseModal()
 
       // Navigate to the appropriate page based on task type
-      const targetPage = isCodeTask ? '/code' : '/chat'
-      router.push(`${targetPage}?taskId=${response.task_id}`)
+      if (isCodeTask) {
+        const params = new URLSearchParams()
+        params.set('taskId', String(response.task_id))
+        router.push(buildChatCodeHref(params))
+      } else {
+        router.push(`/chat?taskId=${response.task_id}`)
+      }
     } catch (err) {
       console.error('Failed to copy shared task:', err)
       const errorMessage = (err as Error)?.message || 'Failed to copy task'

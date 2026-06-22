@@ -18,6 +18,13 @@ Supported commands:
 - /use cloud - Switch to cloud mode
 - /status - Show current status
 - /new - Start new conversation
+- /bind - Bind private IM session
+- /mode - Show private IM task/chat mode
+- /chat - Switch private IM session to Chat mode
+- /task - Switch private IM session to Task mode
+- /switch - Switch active private IM task
+- /notify - Manage global IM task notifications
+- /cancel - Cancel pending private IM choice
 - /help - Show available commands
 """
 
@@ -39,6 +46,13 @@ class CommandType(str, Enum):
     NEW = "new"  # New conversation
     HELP = "help"  # Show help
     AGENTS = "agents"  # List/switch teams/agents
+    BIND = "bind"  # Bind private IM session
+    MODE = "mode"  # Show private IM task/chat mode
+    CHAT = "chat"  # Switch private IM session to Chat mode
+    TASK = "task"  # Switch private IM session to Task mode
+    SWITCH = "switch"  # Switch active private IM task
+    NOTIFY = "notify"  # Manage global IM task notifications
+    CANCEL = "cancel"  # Cancel pending private IM choice
 
 
 @dataclass
@@ -73,7 +87,7 @@ def parse_command(content: str) -> Optional[ParsedCommand]:
         return None
 
     parts = content.split(maxsplit=1)
-    cmd_str = parts[0].lower()
+    cmd_str = parts[0].lower().split("@", 1)[0]
     argument = parts[1].strip() if len(parts) > 1 else None
 
     # Map command string to CommandType
@@ -87,6 +101,14 @@ def parse_command(content: str) -> Optional[ParsedCommand]:
         "/new": CommandType.NEW,
         "/help": CommandType.HELP,
         "/agents": CommandType.AGENTS,  # List/switch teams/agents
+        "/bind": CommandType.BIND,
+        "/mode": CommandType.MODE,
+        "/chat": CommandType.CHAT,
+        "/task": CommandType.TASK,
+        "/switch": CommandType.SWITCH,
+        "/notify": CommandType.NOTIFY,
+        "/通知": CommandType.NOTIFY,
+        "/cancel": CommandType.CANCEL,
     }
 
     command_type = cmd_map.get(cmd_str)
@@ -136,6 +158,13 @@ HELP_MESSAGE = """📋 **可用命令**
 
 **会话管理**
 • `/new` - 开始新对话
+• `/bind` - 绑定当前私聊会话
+• `/mode` - 查看私聊 Chat/Task 模式
+• `/chat` - 切换到 Chat 模式
+• `/task` - 切换到 Task 模式
+• `/switch` - 切换当前任务
+• `/notify on|off|status` - 管理全局 IM 任务通知
+• `/cancel` - 取消当前选择
 • `/status` - 查看当前状态
 • `/help` - 显示此帮助
 
@@ -194,6 +223,13 @@ IM_CHANNEL_CONTEXT_HINT = """
 - `/use cloud` - 切换到云端模式（在云端容器执行代码任务）
 - `/status` - 查看当前状态
 - `/new` - 开始新对话
+- `/bind` - 绑定当前私聊会话
+- `/mode` - 查看私聊 Chat/Task 模式
+- `/chat` - 切换到 Chat 模式
+- `/task` - 切换到 Task 模式
+- `/switch` - 切换当前任务
+- `/notify on|off|status` - 管理全局 IM 任务通知
+- `/cancel` - 取消当前选择
 - `/help` - 显示完整帮助
 
 如果用户询问如何切换智能体、模型、使用设备、执行模式等问题，请引导用户使用上述命令。"""

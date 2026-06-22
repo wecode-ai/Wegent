@@ -24,11 +24,12 @@ import { AgentIcon } from '@/components/icons/AgentIcon'
 import { cn } from '@/lib/utils'
 import { paths } from '@/config/paths'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { Team, TaskDetail, TaskType } from '@/types/api'
+import type { Team, TaskDetail } from '@/types/api'
 import TeamCreationWizard from '@/features/settings/components/wizard/TeamCreationWizard'
 import TeamSelectorList from './TeamSelectorList'
 import { TEAM_SELECTOR_POPOVER_CLASS_NAME } from './team-selector-popover'
 import { filterTeamsByMode, getTeamDisplayName } from './team-selector-utils'
+import type { TeamModeFilter } from './team-selector-utils'
 import { useTeamFavorites } from './useTeamFavorites'
 
 interface TeamSelectorButtonProps {
@@ -39,7 +40,7 @@ interface TeamSelectorButtonProps {
   taskDetail?: TaskDetail | null
   hideSettingsLink?: boolean
   /** Current mode for filtering teams by bind_mode */
-  currentMode?: TaskType
+  currentMode?: TeamModeFilter
   /** Callback to refresh teams list after creation */
   onTeamsRefresh?: () => Promise<void>
   /** Render style for the selector trigger */

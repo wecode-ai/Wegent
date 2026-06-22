@@ -1,6 +1,6 @@
 import { describe, expect, test, vi } from 'vitest'
 import type { ProjectWithTasks } from '@/types/api'
-import { resolveWorkspaceTarget } from './workspace-target'
+import { resolveRuntimeWorkspaceContext, resolveWorkspaceTarget } from './workspace-target'
 
 function createApi() {
   return {
@@ -100,5 +100,60 @@ describe('resolveWorkspaceTarget', () => {
         api: createApi(),
       })
     ).resolves.toBeNull()
+  })
+
+  test('resolves runtime task project and workspace from runtime work', () => {
+    const project: ProjectWithTasks = {
+      id: 12,
+      name: 'Wegent',
+      tasks: [],
+      config: {
+        mode: 'workspace',
+        execution: { targetType: 'local', deviceId: 'device-b' },
+      },
+    }
+
+    expect(
+      resolveRuntimeWorkspaceContext({
+        currentRuntimeTask: {
+          deviceId: 'device-b',
+          workspacePath: '/workspace/project-alpha',
+          localTaskId: 'runtime-1',
+        },
+        projects: [project],
+        runtimeWork: {
+          projects: [
+            {
+              project: { id: 12, name: 'Wegent' },
+              deviceWorkspaces: [
+                {
+                  id: 22,
+                  deviceId: 'device-b',
+                  workspacePath: '/workspace/project-alpha',
+                  available: true,
+                  localTasks: [
+                    {
+                      localTaskId: 'runtime-1',
+                      workspacePath: '/workspace/worktrees/8/project-alpha',
+                      title: 'Runtime task',
+                      runtime: 'codex',
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+          unmappedDeviceWorkspaces: [],
+          totalLocalTasks: 1,
+        },
+      })
+    ).toEqual({
+      project,
+      workspaceTarget: {
+        deviceId: 'device-b',
+        path: '/workspace/worktrees/8/project-alpha',
+        source: 'runtime',
+      },
+    })
   })
 })
