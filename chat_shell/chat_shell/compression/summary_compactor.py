@@ -22,7 +22,13 @@ from dataclasses import dataclass
 from typing import Any
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import (
+    AIMessage,
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
 
 from chat_shell.compression.token_counter import TokenCounter
 
@@ -50,6 +56,8 @@ Next step:
 <the most important next action to continue the task>
 """
 
+COMPACT_TASK_FINAL_PROMPT = "Produce the compact summary now."
+
 
 @dataclass
 class SummaryCompactResult:
@@ -58,6 +66,10 @@ class SummaryCompactResult:
     summary_text: str
     replacement_history: list[BaseMessage]
     removed_history_items: int
+
+
+class SummaryCompactNotApplicable(RuntimeError):
+    """Raised when summary compact cannot help after trimming to the floor."""
 
 
 def _message_to_counter_dict(message: BaseMessage) -> dict[str, Any]:
@@ -126,10 +138,12 @@ class SummaryCompactor:
         llm: BaseChatModel,
         token_counter: TokenCounter,
         recent_user_token_limit: int = DEFAULT_RECENT_USER_TOKEN_LIMIT,
+        max_compact_input_tokens: int | None = None,
     ) -> None:
         self._llm = llm
         self._token_counter = token_counter
         self._recent_user_token_limit = recent_user_token_limit
+        self._max_compact_input_tokens = max_compact_input_tokens
 
     async def compact(
         self,
@@ -143,8 +157,20 @@ class SummaryCompactor:
         current_user = self._find_current_user_message(working_messages)
 
         while True:
+            while self._is_compact_prompt_over_limit(working_messages):
+                if not self._remove_oldest_history_item(
+                    working_messages,
+                    current_user=current_user,
+                ):
+                    raise SummaryCompactNotApplicable(
+                        "Summary compact cannot reduce the request because the "
+                        "remaining floor still exceeds the compact-task input budget."
+                    )
+                removed += 1
             try:
-                summary_body = await self._generate_summary(working_messages)
+                summary_body = await self._generate_summary(
+                    self._sanitize_tool_message_sequence(working_messages)
+                )
                 break
             except Exception as exc:
                 if not _is_context_too_long_error(
@@ -171,10 +197,76 @@ class SummaryCompactor:
         prompt_messages: list[BaseMessage] = [
             SystemMessage(content=COMPACT_TASK_INSTRUCTION),
             *messages,
-            HumanMessage(content="Produce the compact summary now."),
+            HumanMessage(content=COMPACT_TASK_FINAL_PROMPT),
         ]
         result = await self._llm.ainvoke(prompt_messages)
         return _extract_text(result).strip()
+
+    def _is_compact_prompt_over_limit(self, messages: list[BaseMessage]) -> bool:
+        """Return True when the compact task prompt itself exceeds input budget."""
+        if self._max_compact_input_tokens is None:
+            return False
+        compact_prompt = [
+            SystemMessage(content=COMPACT_TASK_INSTRUCTION),
+            *self._sanitize_tool_message_sequence(messages),
+            HumanMessage(content=COMPACT_TASK_FINAL_PROMPT),
+        ]
+        compact_prompt_dicts = [
+            _message_to_counter_dict(message) for message in compact_prompt
+        ]
+        return (
+            self._token_counter.count_messages(compact_prompt_dicts)
+            > self._max_compact_input_tokens
+        )
+
+    def _sanitize_tool_message_sequence(
+        self, messages: list[BaseMessage]
+    ) -> list[BaseMessage]:
+        """Drop orphan tool messages and strip unresolved assistant tool calls."""
+        pending_call_ids: dict[str, None] = {}
+        matched_call_ids: set[str] = set()
+        tool_message_indices_to_keep: set[int] = set()
+
+        for index, message in enumerate(messages):
+            if isinstance(message, AIMessage):
+                for tool_call in message.tool_calls or []:
+                    tool_id = tool_call.get("id")
+                    if isinstance(tool_id, str) and tool_id:
+                        pending_call_ids[tool_id] = None
+                continue
+
+            if isinstance(message, ToolMessage):
+                tool_call_id = getattr(message, "tool_call_id", "")
+                if tool_call_id in pending_call_ids:
+                    matched_call_ids.add(tool_call_id)
+                    tool_message_indices_to_keep.add(index)
+
+        sanitized: list[BaseMessage] = []
+        for index, message in enumerate(messages):
+            if isinstance(message, AIMessage) and message.tool_calls:
+                kept_tool_calls = [
+                    deepcopy(tool_call)
+                    for tool_call in message.tool_calls
+                    if tool_call.get("id") in matched_call_ids
+                ]
+                if len(kept_tool_calls) == len(message.tool_calls):
+                    sanitized.append(message)
+                    continue
+
+                cloned = message.model_copy(deep=True)
+                cloned.tool_calls = kept_tool_calls
+                if cloned.content or cloned.tool_calls:
+                    sanitized.append(cloned)
+                continue
+
+            if isinstance(message, ToolMessage):
+                if index in tool_message_indices_to_keep:
+                    sanitized.append(message)
+                continue
+
+            sanitized.append(message)
+
+        return sanitized
 
     def _build_replacement_history(
         self,

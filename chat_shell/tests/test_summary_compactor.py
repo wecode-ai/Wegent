@@ -5,11 +5,12 @@
 from __future__ import annotations
 
 import pytest
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from chat_shell.compression.summary_compactor import (
     SUMMARY_METADATA_FLAG,
     SUMMARY_PREFIX,
+    SummaryCompactNotApplicable,
     SummaryCompactor,
 )
 from chat_shell.compression.token_counter import TokenCounter
@@ -151,3 +152,59 @@ async def test_recent_user_messages_truncate_boundary_message_to_fit_budget():
     assert retained_user_messages[1] == newest.content
     assert retained_user_messages[0] != older.content
     assert retained_user_messages[0]
+
+
+@pytest.mark.asyncio
+async def test_compact_sanitizes_orphan_tool_messages_before_llm_call():
+    llm = _FakeLLM([AIMessage(content="Current objective:\ncontinue")])
+    counter = TokenCounter(model_name="gpt-4")
+    compactor = SummaryCompactor(llm=llm, token_counter=counter)
+
+    messages = [
+        SystemMessage(content="system"),
+        AIMessage(
+            content="I will use tools",
+            tool_calls=[
+                {"id": "call-1", "name": "read_file", "args": {"path": "a"}},
+                {"id": "call-2", "name": "read_file", "args": {"path": "b"}},
+            ],
+        ),
+        ToolMessage(content="result a", tool_call_id="call-1", name="read_file"),
+        HumanMessage(content="latest user"),
+    ]
+
+    await compactor.compact(messages, preserve_initial_context=True)
+
+    compact_history = llm.calls[0][1:-1]
+    assistant_message = next(
+        message for message in compact_history if isinstance(message, AIMessage)
+    )
+    tool_messages = [
+        message for message in compact_history if isinstance(message, ToolMessage)
+    ]
+
+    assert [tool_call["id"] for tool_call in assistant_message.tool_calls] == ["call-1"]
+    assert len(tool_messages) == 1
+    assert tool_messages[0].tool_call_id == "call-1"
+
+
+@pytest.mark.asyncio
+async def test_compact_short_circuits_when_floor_still_exceeds_compact_budget():
+    llm = _FakeLLM([AIMessage(content="should not be used")])
+    counter = TokenCounter(model_name="gpt-4")
+    compactor = SummaryCompactor(
+        llm=llm,
+        token_counter=counter,
+        max_compact_input_tokens=1,
+    )
+
+    with pytest.raises(SummaryCompactNotApplicable):
+        await compactor.compact(
+            [
+                SystemMessage(content="system"),
+                HumanMessage(content="latest user message"),
+            ],
+            preserve_initial_context=True,
+        )
+
+    assert llm.calls == []

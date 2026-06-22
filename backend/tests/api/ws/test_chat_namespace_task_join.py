@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from app.api.ws import chat_namespace
 from app.api.ws.chat_namespace import ChatNamespace
 from app.api.ws.events import ServerEvents
 from app.models.subtask import SubtaskStatus
@@ -164,3 +165,44 @@ async def test_chat_resume_rejects_subtask_from_different_task() -> None:
 
     assert result == {"error": "Access denied"}
     mock_get_streaming_content.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_finalize_failed_ai_trigger_persists_failed_terminal_state() -> None:
+    """Async trigger failures should finalize task state so follow-up is not blocked."""
+
+    collected_result = {
+        "blocks": [{"id": "err-block", "type": "output_text", "content": "oops"}],
+        "error_type": "generic_error",
+    }
+
+    with (
+        patch(
+            "app.api.ws.chat_namespace.collect_completed_result",
+            AsyncMock(return_value=collected_result),
+        ) as collect_completed_result,
+        patch(
+            "app.api.ws.chat_namespace.persist_completed_result",
+            AsyncMock(),
+        ) as persist_completed_result,
+    ):
+        await chat_namespace._finalize_failed_ai_trigger(
+            task_id=101,
+            assistant_subtask_id=55,
+            error_message="database failed",
+            error_code="generic_error",
+        )
+
+    collect_completed_result.assert_awaited_once_with(
+        55,
+        status="FAILED",
+        error_message="database failed",
+        error_code="generic_error",
+    )
+    persist_completed_result.assert_awaited_once_with(
+        subtask_id=55,
+        task_id=101,
+        status="FAILED",
+        result=collected_result,
+        error="database failed",
+    )

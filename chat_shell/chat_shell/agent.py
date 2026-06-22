@@ -60,7 +60,7 @@ class AgentConfig:
     enable_deep_thinking: bool = True
     skills: list[dict[str, Any]] | None = None  # All skill configs (with preload field)
     pre_model_hook: Callable[[dict[str, Any]], Any] | None = None
-    on_model_usage: Callable[[list[dict[str, Any]], int], Any] | None = None
+    on_model_usage: Callable[..., Any] | None = None
 
 
 class ChatAgent:

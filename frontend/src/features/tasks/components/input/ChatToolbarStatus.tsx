@@ -265,11 +265,7 @@ export default function ChatToolbarStatus({ className, compact = false }: ChatTo
     </div>
   )
 
-  const triggerIconClassName = cn(
-    'h-4 w-4 text-text-muted hover:text-text-primary',
-    status.isCompacting && 'text-primary hover:text-primary',
-    showStatusSection && statusDisplay?.isOverTrigger && 'text-amber-700 hover:text-amber-800'
-  )
+  const triggerIconClassName = 'h-4 w-4 text-text-muted hover:text-text-primary'
 
   if (compact) {
     return (
@@ -286,11 +282,6 @@ export default function ChatToolbarStatus({ className, compact = false }: ChatTo
                   style={{ padding: 0 }}
                 >
                   <Coins className={triggerIconClassName} />
-                  {status.isCompacting && (
-                    <span className="absolute -right-0.5 -top-0.5">
-                      <Spinner size="sm" />
-                    </span>
-                  )}
                 </Button>
               </PopoverTrigger>
             </TooltipTrigger>
@@ -328,14 +319,7 @@ export default function ChatToolbarStatus({ className, compact = false }: ChatTo
                   e.currentTarget.style.color = 'rgb(var(--color-text-muted))'
                 }}
               >
-                <Coins
-                  className={cn(
-                    'h-4 w-4',
-                    status.isCompacting && 'text-primary',
-                    showStatusSection && statusDisplay?.isOverTrigger && 'text-amber-700'
-                  )}
-                />
-                {status.isCompacting && <Spinner size="sm" />}
+                <Coins className="h-4 w-4" />
               </Button>
             </PopoverTrigger>
           </TooltipTrigger>

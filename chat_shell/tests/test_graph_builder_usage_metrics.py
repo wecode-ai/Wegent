@@ -2,11 +2,13 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from chat_shell.agents.graph_builder import (
     _extract_model_input_messages,
     _extract_model_input_tokens,
+    _invoke_model_usage_callback,
 )
 
 
@@ -48,3 +50,17 @@ def test_extract_model_input_tokens_falls_back_to_response_metadata_usage():
     )
 
     assert _extract_model_input_tokens(output) == 456
+
+
+@pytest.mark.asyncio
+async def test_invoke_model_usage_callback_supports_keyword_only_callback():
+    called = {}
+
+    def callback(messages, *, input_tokens):
+        called["messages"] = messages
+        called["input_tokens"] = input_tokens
+
+    messages = [{"role": "user", "content": "hello"}]
+    await _invoke_model_usage_callback(callback, messages, input_tokens=123)
+
+    assert called == {"messages": messages, "input_tokens": 123}

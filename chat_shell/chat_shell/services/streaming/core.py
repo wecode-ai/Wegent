@@ -442,6 +442,7 @@ class StreamingCore:
             messages_chain=result.get("messages_chain"),
             reasoning_content=result.get("reasoning_content"),
             context_metrics=result.get("context_metrics"),
+            context_compactions=result.get("context_compactions"),
         )
 
         return result

@@ -62,9 +62,13 @@ from chat_shell.compression.context_metrics import (
     ContextMetricsSnapshot,
     ContextMetricsTracker,
     ProviderUsageBaseline,
+    _estimate_used_input_tokens,
     calculate_context_metrics,
 )
-from chat_shell.compression.summary_compactor import SummaryCompactor
+from chat_shell.compression.summary_compactor import (
+    SummaryCompactNotApplicable,
+    SummaryCompactor,
+)
 from chat_shell.compression.token_counter import TokenCounter
 from chat_shell.guard.tool_output import COMPACTED_FLAG
 from chat_shell.guard.types import GuardSource
@@ -342,6 +346,21 @@ class UnifiedContextGuard:
     def _compaction_created_at() -> str:
         return datetime.now(timezone.utc).isoformat()
 
+    def _current_usage_baseline(self) -> ProviderUsageBaseline | None:
+        if self._tracker is None:
+            return None
+        baseline = self._tracker.usage_baseline
+        if isinstance(baseline, ProviderUsageBaseline):
+            return baseline
+        return None
+
+    def _current_used_input_tokens(self, view: list[dict[str, Any]]) -> int:
+        return _estimate_used_input_tokens(
+            view,
+            token_counter=self._counter,
+            usage_baseline=self._current_usage_baseline(),
+        )
+
     async def _emit_context_compaction_status(
         self,
         *,
@@ -351,6 +370,20 @@ class UnifiedContextGuard:
     ) -> None:
         if self._tracker is None:
             return
+        logger.info(
+            "[SummaryCompact] task_id=%d subtask_id=%d status=%s before=%d after=%s "
+            "trigger=%d target=%d reserved_output=%d model_id=%s failure_reason=%s",
+            self._tracker.task_id,
+            self._tracker.subtask_id,
+            event.status,
+            event.before_tokens,
+            event.after_tokens if event.after_tokens is not None else "-",
+            event.trigger_limit,
+            event.target_limit,
+            snapshot.reserved_output_tokens,
+            self._model_id,
+            event.failure_reason or "-",
+        )
         try:
             await self._tracker.emit_status(
                 phase=phase,
@@ -419,7 +452,7 @@ class UnifiedContextGuard:
                     "[UnifiedContextGuard] Live state still over trigger after "
                     "emergency pass (used=%d, trigger=%d). No further reductions "
                     "available from registered sources.",
-                    self._counter.count_messages(view),
+                    self._current_used_input_tokens(view),
                     self.trigger_limit,
                 )
                 if self._has_bypass_protected_messages(view):
@@ -438,7 +471,7 @@ class UnifiedContextGuard:
                         "[UnifiedContextGuard] Fail-fast: protected payloads "
                         "prevent further safe compaction (used=%d, trigger=%d, "
                         "protected_messages=%d)",
-                        self._counter.count_messages(view),
+                        self._current_used_input_tokens(view),
                         self.trigger_limit,
                         protected_count,
                     )
@@ -680,7 +713,7 @@ class UnifiedContextGuard:
         if self._summary_compactor is None:
             return _StagePass(updates=[], view=view)
 
-        before_tokens = self._counter.count_messages(view)
+        before_tokens = self._current_used_input_tokens(view)
         before_snapshot = self.metrics(view)
         created_at = self._compaction_created_at()
         await self._emit_context_compaction_status(
@@ -701,7 +734,12 @@ class UnifiedContextGuard:
                 [_dict_to_state_message(message_dict) for message_dict in view],
                 preserve_initial_context=True,
             )
-        except Exception:
+        except Exception as exc:
+            failure_reason = (
+                "summary_compact_not_applicable"
+                if isinstance(exc, SummaryCompactNotApplicable)
+                else "summary_compact_failed"
+            )
             self._context_compactions.append(
                 {
                     "strategy": "summary_compact",
@@ -710,8 +748,8 @@ class UnifiedContextGuard:
                     "before_tokens": before_tokens,
                     "trigger_limit": self.trigger_limit,
                     "target_limit": self.target_limit,
-                    "used_legacy_fallback": True,
-                    "failure_reason": "summary_compact_failed",
+                    "used_legacy_fallback": self._compressor is not None,
+                    "failure_reason": failure_reason,
                     "created_at": created_at,
                 }
             )
@@ -724,9 +762,9 @@ class UnifiedContextGuard:
                     before_tokens=before_tokens,
                     trigger_limit=self.trigger_limit,
                     target_limit=self.target_limit,
-                    used_legacy_fallback=True,
+                    used_legacy_fallback=self._compressor is not None,
                     created_at=created_at,
-                    failure_reason="summary_compact_failed",
+                    failure_reason=failure_reason,
                 ),
             )
             logger.warning(
@@ -737,7 +775,7 @@ class UnifiedContextGuard:
             return _StagePass(updates=[], view=view)
 
         replacement_view = _state_messages_to_dicts(result.replacement_history)
-        after_tokens = self._counter.count_messages(replacement_view)
+        after_tokens = self.metrics(replacement_view).used_input_tokens
         updates: list[Any] = [
             RemoveMessage(id=message.id)
             for message in original_messages
@@ -968,4 +1006,4 @@ class UnifiedContextGuard:
     # ------------------------------------------------------------------
 
     def _is_over_trigger(self, view: list[dict[str, Any]]) -> bool:
-        return self._counter.count_messages(view) > self.trigger_limit
+        return self._current_used_input_tokens(view) > self.trigger_limit

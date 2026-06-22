@@ -62,6 +62,15 @@ jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
 }))
 
+jest.mock('@/features/tasks/hooks/useChatStatusIndicator', () => ({
+  useChatStatusIndicator: () => ({
+    enabled: false,
+    display: null,
+    currentTaskId: null,
+    isCompacting: false,
+  }),
+}))
+
 jest.mock('@/features/tasks/components/chat/useChatAreaState', () => ({
   useChatAreaState: () => ({
     selectedTeam: null,

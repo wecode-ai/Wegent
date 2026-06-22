@@ -72,7 +72,11 @@ from app.services.chat.operations import (
 from app.services.chat.rag import process_context_and_rag
 from app.services.chat.storage import session_manager
 from app.services.chat.storage.db import get_db_session, run_sync_in_executor
-from app.services.chat.trigger import trigger_ai_response_unified
+from app.services.chat.trigger import (
+    collect_completed_result,
+    persist_completed_result,
+    trigger_ai_response_unified,
+)
 from app.services.chat.wework_task_defaults import apply_wework_task_defaults
 from app.services.task_fork_history import task_fork_history_resolver
 from app.utils.prompt_utils import extract_display_prompt
@@ -82,6 +86,29 @@ from shared.telemetry.context import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+async def _finalize_failed_ai_trigger(
+    *,
+    task_id: int,
+    assistant_subtask_id: int,
+    error_message: str,
+    error_code: str,
+) -> None:
+    """Persist a failed async AI trigger so follow-up messages are not blocked."""
+    final_result = await collect_completed_result(
+        assistant_subtask_id,
+        status="FAILED",
+        error_message=error_message,
+        error_code=error_code,
+    )
+    await persist_completed_result(
+        subtask_id=assistant_subtask_id,
+        task_id=task_id,
+        status="FAILED",
+        result=final_result,
+        error=error_message,
+    )
 
 
 class ChatNamespace(socketio.AsyncNamespace):
@@ -989,12 +1016,31 @@ class ChatNamespace(socketio.AsyncNamespace):
                         )
 
                         error_code = classify_error(e)
+                        error_message = format_error_message(e)
+
+                        try:
+                            await _finalize_failed_ai_trigger(
+                                task_id=task.id,
+                                assistant_subtask_id=assistant_subtask.id,
+                                error_message=error_message,
+                                error_code=error_code,
+                            )
+                        except Exception as finalize_error:
+                            logger.error(
+                                "[WS] chat:send failed to persist async trigger error: "
+                                "task_id=%s, subtask_id=%s, error=%s",
+                                task.id,
+                                assistant_subtask.id,
+                                finalize_error,
+                                exc_info=True,
+                            )
+
                         # Emit error to frontend so user sees the failure
                         await self.emit(
                             ServerEvents.CHAT_ERROR,
                             ChatErrorPayload(
                                 subtask_id=assistant_subtask.id,
-                                error=format_error_message(e),
+                                error=error_message,
                                 type=error_code,
                                 message_id=assistant_subtask.message_id,
                                 task_id=task.id,

@@ -347,6 +347,7 @@ class ChatService(ChatInterface):
                         DEFAULT_RECENT_USER_TOKEN_LIMIT,
                         max(1, int(context_config.target_limit * 0.5)),
                     ),
+                    max_compact_input_tokens=context_config.available_tokens,
                 )
             context_guard = UnifiedContextGuard(
                 model_id=guard_model_id,

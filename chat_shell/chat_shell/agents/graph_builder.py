@@ -292,6 +292,18 @@ def _extract_model_input_tokens(output: Any) -> int | None:
     return None
 
 
+async def _invoke_model_usage_callback(
+    callback: Callable[..., Any],
+    messages: list[dict[str, Any]],
+    *,
+    input_tokens: int,
+) -> None:
+    """Call the optional provider-usage callback with keyword-safe semantics."""
+    callback_result = callback(messages, input_tokens=input_tokens)
+    if inspect.isawaitable(callback_result):
+        await callback_result
+
+
 def _validate_tool_message_sequence(
     messages: list[dict[str, Any]], *, context: str
 ) -> None:
@@ -492,8 +504,24 @@ def _serialize_compacted_additional_kwargs(msg: BaseMessage) -> dict[str, Any] |
     """Persist only compact markers needed for history reconstruction."""
     kwargs = dict(getattr(msg, "additional_kwargs", {}) or {})
     if kwargs.get("compacted") is True:
-        return {"compacted": True}
+        serialized = {"compacted": True}
+        if kwargs.get("summary_compacted") is True:
+            serialized["summary_compacted"] = True
+        if "summary_compact_version" in kwargs:
+            serialized["summary_compact_version"] = kwargs.get(
+                "summary_compact_version"
+            )
+        return serialized
     return None
+
+
+def _contains_summary_compacted_message(messages: list[BaseMessage]) -> bool:
+    """Return True when the final live state contains summary-compact artifacts."""
+    for msg in messages:
+        kwargs = dict(getattr(msg, "additional_kwargs", {}) or {})
+        if kwargs.get("summary_compacted") is True:
+            return True
+    return False
 
 
 def _serialize_passthrough_content(content: Any) -> Any:
@@ -691,7 +719,7 @@ class LangGraphAgentBuilder:
         enable_checkpointing: bool = False,
         max_truncation_retries: int | None = None,
         pre_model_hook: Callable | None = None,
-        on_model_usage: Callable[[list[dict[str, Any]], int], Any] | None = None,
+        on_model_usage: Callable[..., Any] | None = None,
     ):
         """Initialize agent builder.
 
@@ -1653,12 +1681,11 @@ class LangGraphAgentBuilder:
                         and last_model_input_messages is not None
                         and self.on_model_usage is not None
                     ):
-                        callback_result = self.on_model_usage(
+                        await _invoke_model_usage_callback(
+                            self.on_model_usage,
                             last_model_input_messages,
-                            input_tokens,
+                            input_tokens=input_tokens,
                         )
-                        if inspect.isawaitable(callback_result):
-                            await callback_result
                     last_model_input_messages = None
 
                     if truncation_detected:

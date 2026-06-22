@@ -18,7 +18,11 @@ from langchain_core.messages import (
     ToolMessage,
 )
 
-from chat_shell.compression.summary_compactor import SummaryCompactResult
+from chat_shell.compression.context_metrics import ProviderUsageBaseline
+from chat_shell.compression.summary_compactor import (
+    SummaryCompactNotApplicable,
+    SummaryCompactResult,
+)
 from chat_shell.compression.token_counter import TokenCounter
 from chat_shell.guard.context_guard import (
     ContextGuardFailFastError,
@@ -404,6 +408,80 @@ class TestCompressionPass:
         }
         synthesized = [u for u in updates if not isinstance(u, RemoveMessage)]
         assert synthesized[0].content == "[legacy summary]"
+
+    async def test_summary_compact_failure_without_legacy_compressor_keeps_flag_false(
+        self, guard_no_compression, monkeypatch
+    ):
+        guard_no_compression._summary_compactor = _FakeSummaryCompactor(
+            error=RuntimeError("context length exceeded")
+        )
+        state = {
+            "messages": [
+                HumanMessage(content="x " * 50_000, id="h-1"),
+            ]
+        }
+        monkeypatch.setattr(
+            guard_no_compression._counter,
+            "count_messages",
+            lambda messages: guard_no_compression.trigger_limit + 100,
+        )
+
+        result = await guard_no_compression(state)
+
+        assert result == {}
+        assert guard_no_compression.context_compactions[0]["status"] == "fallback"
+        assert (
+            guard_no_compression.context_compactions[0]["used_legacy_fallback"] is False
+        )
+
+    async def test_summary_compact_not_applicable_sets_specific_failure_reason(
+        self, guard_no_compression, monkeypatch
+    ):
+        guard_no_compression._summary_compactor = _FakeSummaryCompactor(
+            error=SummaryCompactNotApplicable("floor too large")
+        )
+        state = {
+            "messages": [
+                HumanMessage(content="x " * 50_000, id="h-1"),
+            ]
+        }
+        monkeypatch.setattr(
+            guard_no_compression._counter,
+            "count_messages",
+            lambda messages: guard_no_compression.trigger_limit + 100,
+        )
+
+        await guard_no_compression(state)
+
+        assert (
+            guard_no_compression.context_compactions[0]["failure_reason"]
+            == "summary_compact_not_applicable"
+        )
+
+    async def test_over_trigger_uses_provider_usage_baseline(self, guard):
+        state = {
+            "messages": [
+                HumanMessage(content="x " * 10_000, id="h-1"),
+            ]
+        }
+        guard._summary_compactor = _FakeSummaryCompactor(
+            result=SummaryCompactResult(
+                summary_text="Current objective:\ncontinue",
+                replacement_history=[HumanMessage(content="[COMPACT SUMMARY]")],
+                removed_history_items=1,
+            )
+        )
+        tracker = MagicMock()
+        tracker.usage_baseline = ProviderUsageBaseline(
+            input_tokens=100,
+            messages=[{"role": "user", "content": "x " * 10_000}],
+        )
+        guard.set_tracker(tracker)
+
+        result = await guard(state)
+
+        assert result == {}
+        assert guard._summary_compactor.calls == []
 
     async def test_compression_emits_remove_and_synthesized(self, guard, monkeypatch):
         """When compressor drops messages and synthesizes a summary, the guard

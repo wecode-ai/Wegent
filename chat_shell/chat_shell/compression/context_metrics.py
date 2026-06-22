@@ -76,6 +76,14 @@ class ContextCompactionEvent:
         return {key: value for key, value in payload.items() if value is not None}
 
 
+_BASELINE_FIELDS = ("role", "content", "tool_calls", "name", "tool_call_id")
+
+
+def _baseline_message_shape(message: dict[str, Any]) -> tuple[Any, ...]:
+    """Project a message dict to the stable shape used for baseline matching."""
+    return tuple(deepcopy(message.get(field)) for field in _BASELINE_FIELDS)
+
+
 def calculate_context_metrics(
     messages: list[dict[str, Any]],
     *,
@@ -118,7 +126,7 @@ def calculate_context_metrics(
 
     return ContextMetricsSnapshot(
         context_window=context_config.context_window,
-        reserved_output_tokens=context_config.output_tokens,
+        reserved_output_tokens=context_config.reserved_output_tokens,
         available_input_tokens=available_input_tokens,
         used_input_tokens=used_input_tokens,
         remaining_input_tokens=remaining_input_tokens,
@@ -138,7 +146,9 @@ def _message_prefix_matches(
     """Return True when *prefix* matches the head of *messages* exactly."""
     if len(messages) < len(prefix):
         return False
-    return messages[: len(prefix)] == prefix
+    return [
+        _baseline_message_shape(message) for message in messages[: len(prefix)]
+    ] == [_baseline_message_shape(message) for message in prefix]
 
 
 def _estimate_used_input_tokens(
@@ -278,12 +288,24 @@ class ContextMetricsTracker:
         """Remember provider-observed prompt usage for the next pre-call estimate."""
         self._usage_baseline = ProviderUsageBaseline(
             input_tokens=input_tokens,
-            messages=deepcopy(messages),
+            messages=[
+                {
+                    field: deepcopy(message.get(field))
+                    for field in _BASELINE_FIELDS
+                    if field in message
+                }
+                for message in messages
+            ],
         )
 
     def invalidate_provider_usage_baseline(self) -> None:
         """Drop the cached provider-usage baseline after non-append rewrites."""
         self._usage_baseline = None
+
+    @property
+    def usage_baseline(self) -> ProviderUsageBaseline | None:
+        """Read-only access to the current provider-usage baseline."""
+        return self._usage_baseline
 
     async def emit_status(
         self,
