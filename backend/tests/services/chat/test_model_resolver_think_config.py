@@ -121,3 +121,28 @@ class TestExtractTemperature:
         spec = _make_spec()
         result = _extract_model_config(spec)
         assert result["temperature"] is None
+
+
+class TestExtractDeveloperRoleSupport:
+    """Tests for supports_developer_role extraction from env."""
+
+    @_DECRYPT_PATCH
+    def test_supports_developer_role_false_extracted(self, _decrypt):
+        """supports_developer_role=false in env is forwarded to runtime config."""
+        spec = _make_spec(supports_developer_role=False)
+        result = _extract_model_config(spec)
+        assert result["supports_developer_role"] is False
+
+    @_DECRYPT_PATCH
+    def test_supports_developer_role_string_false_extracted(self, _decrypt):
+        """String values are preserved for downstream normalization."""
+        spec = _make_spec(supports_developer_role="false")
+        result = _extract_model_config(spec)
+        assert result["supports_developer_role"] == "false"
+
+    @_DECRYPT_PATCH
+    def test_supports_developer_role_absent(self, _decrypt):
+        """No supports_developer_role in env → None."""
+        spec = _make_spec()
+        result = _extract_model_config(spec)
+        assert result["supports_developer_role"] is None
