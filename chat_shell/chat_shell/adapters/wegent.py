@@ -197,6 +197,7 @@ class WeGentToResponseAdapter:
             "max_output_tokens": model_spec.get("max_output_tokens"),
             "timeout": model_spec.get("timeout", 120),
             "max_retries": model_spec.get("max_retries", 3),
+            "supports_developer_role": model_spec.get("supports_developer_role"),
         }
 
     @staticmethod

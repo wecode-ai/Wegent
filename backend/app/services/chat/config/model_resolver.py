@@ -783,6 +783,13 @@ def _extract_model_config(model_spec: Dict[str, Any]) -> Dict[str, Any]:
             f"[model_resolver] _extract_model_config: temperature={temperature}"
         )
 
+    supports_developer_role = env.get("supports_developer_role")
+    if supports_developer_role is not None:
+        logger.info(
+            "[model_resolver] _extract_model_config: "
+            f"supports_developer_role={supports_developer_role}"
+        )
+
     result = {
         "api_key": api_key,
         "base_url": base_url,
@@ -803,6 +810,8 @@ def _extract_model_config(model_spec: Dict[str, Any]) -> Dict[str, Any]:
         "think_config": thinking_config,
         # User-configured temperature override
         "temperature": temperature,
+        # Whether OpenAI-compatible chat models accept developer-role messages.
+        "supports_developer_role": supports_developer_role,
     }
     if model_capabilities:
         result["modelCapabilities"] = model_capabilities
