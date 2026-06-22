@@ -130,6 +130,34 @@ def touch_device_workspace_kind(
     return device_workspace_response(row)
 
 
+def deactivate_device_workspace_kind(
+    *,
+    db: Session,
+    user_id: int,
+    project_id: int,
+    device_id: str,
+    workspace_path_hash: str,
+) -> bool:
+    """Deactivate one DeviceWorkspace Kind if it belongs to the given Project."""
+
+    row = _get_device_workspace_kind(
+        db=db,
+        user_id=user_id,
+        device_id=device_id,
+        workspace_path_hash=workspace_path_hash,
+    )
+    if row is None:
+        return False
+
+    mapping = device_workspace_response(row)
+    if mapping.project_id != project_id:
+        return False
+
+    row.is_active = False
+    db.commit()
+    return True
+
+
 def device_workspace_response(row: Kind) -> DeviceWorkspaceResponse:
     """Convert a DeviceWorkspace Kind row to the API response shape."""
 
