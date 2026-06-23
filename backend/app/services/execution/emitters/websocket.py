@@ -270,6 +270,11 @@ class WebSocketResultEmitter(BaseResultEmitter):
                     "subtask_id": event.subtask_id,
                     "phase": phase,
                     "context_metrics": context_metrics,
+                    "context_compaction": (
+                        context_compaction
+                        if isinstance(context_compaction, dict)
+                        else None
+                    ),
                 },
             )
         except Exception as exc:

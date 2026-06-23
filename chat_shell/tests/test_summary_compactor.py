@@ -208,3 +208,16 @@ async def test_compact_short_circuits_when_floor_still_exceeds_compact_budget():
         )
 
     assert llm.calls == []
+
+
+@pytest.mark.asyncio
+async def test_compact_raises_when_llm_returns_empty_summary():
+    llm = _FakeLLM([AIMessage(content="   ")])
+    counter = TokenCounter(model_name="gpt-4")
+    compactor = SummaryCompactor(llm=llm, token_counter=counter)
+
+    with pytest.raises(SummaryCompactNotApplicable):
+        await compactor.compact(
+            [HumanMessage(content="please continue")],
+            preserve_initial_context=False,
+        )

@@ -84,7 +84,10 @@ class ModelContextConfig:
         base_limit = int(self.available_tokens * self.target_threshold)
         if self.auto_compact_token_limit is None:
             return base_limit
-        return min(base_limit, self.trigger_limit)
+        trigger_limit = self.trigger_limit
+        if trigger_limit <= 0:
+            return 0
+        return min(base_limit, trigger_limit - 1)
 
     @property
     def effective_limit(self) -> int:

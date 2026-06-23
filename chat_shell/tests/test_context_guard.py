@@ -1033,12 +1033,16 @@ class TestTrackerEmits:
 
         await guard(state)
 
-        compaction_statuses = [
-            call.kwargs["context_compaction"]["status"]
+        compaction_events = [
+            call.kwargs["context_compaction"]
             for call in emitter.status_updated.await_args_list
-            if call.kwargs.get("context_compaction") is not None
+            if call.kwargs.get("context_compaction", {}).get("type")
+            == "summary_compact"
         ]
-        assert compaction_statuses == ["started", "completed"]
+        assert [event["status"] for event in compaction_events] == [
+            "started",
+            "completed",
+        ]
 
     async def test_summary_compaction_failure_emits_fallback_runtime_event(self, guard):
         from unittest.mock import AsyncMock
@@ -1066,12 +1070,16 @@ class TestTrackerEmits:
 
         await guard(state)
 
-        compaction_statuses = [
-            call.kwargs["context_compaction"]["status"]
+        compaction_events = [
+            call.kwargs["context_compaction"]
             for call in emitter.status_updated.await_args_list
-            if call.kwargs.get("context_compaction") is not None
+            if call.kwargs.get("context_compaction", {}).get("type")
+            == "summary_compact"
         ]
-        assert compaction_statuses == ["started", "fallback"]
+        assert [event["status"] for event in compaction_events] == [
+            "started",
+            "fallback",
+        ]
 
     async def test_no_tracker_no_emit(self, guard):
         """When no tracker is wired, the guard simply skips emitting — no

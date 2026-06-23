@@ -20,19 +20,19 @@ class TestUserScopedMcpInjection:
 
         assert enabled is True
 
-    def test_tool_output_guard_reads_user_preference(self):
+    def test_tool_output_guard_ignores_true_user_preference(self):
         user = SimpleNamespace(preferences='{"tool_output_guard_enabled": true}')
 
         enabled = TaskRequestBuilder._is_tool_output_guard_enabled(user)
 
         assert enabled is True
 
-    def test_tool_output_guard_user_false_overrides_default_enabled(self):
+    def test_tool_output_guard_ignores_false_user_preference(self):
         user = SimpleNamespace(preferences='{"tool_output_guard_enabled": false}')
 
         enabled = TaskRequestBuilder._is_tool_output_guard_enabled(user)
 
-        assert enabled is False
+        assert enabled is True
 
     def test_tool_output_guard_invalid_preferences_fall_back_to_default(self):
         user = SimpleNamespace(preferences="{invalid json")

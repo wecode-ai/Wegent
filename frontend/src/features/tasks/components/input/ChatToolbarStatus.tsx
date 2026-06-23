@@ -279,6 +279,7 @@ export default function ChatToolbarStatus({ className, compact = false }: ChatTo
                   size="icon"
                   className={cn('relative h-6 w-6 flex-shrink-0', className ?? '')}
                   data-testid="chat-toolbar-status-trigger"
+                  aria-label={t('common:chat_status.tooltip')}
                   style={{ padding: 0 }}
                 >
                   <Coins className={triggerIconClassName} />
@@ -308,6 +309,7 @@ export default function ChatToolbarStatus({ className, compact = false }: ChatTo
                   className ?? ''
                 )}
                 data-testid="chat-toolbar-status-trigger"
+                aria-label={t('common:chat_status.tooltip')}
                 style={{
                   lineHeight: 'normal',
                   color: 'rgb(var(--color-text-muted))',

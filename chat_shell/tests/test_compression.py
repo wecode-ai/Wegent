@@ -197,6 +197,15 @@ class TestModelContextConfig:
         assert config.available_tokens == 256000 - 8192
         assert config.trigger_limit == int((256000 - 8192) * 0.90)
 
+    def test_target_limit_stays_strictly_below_trigger_when_override_enabled(self):
+        """Auto-compact overrides must not let target land on the trigger boundary."""
+        config = ModelContextConfig(
+            context_window=256000,
+            output_tokens=96000,
+            auto_compact_token_limit=200000,
+        )
+        assert config.target_limit < config.trigger_limit
+
     def test_get_model_context_config_claude(self):
         """Test getting config for Claude model."""
         config = get_model_context_config("claude-3-5-sonnet-20241022")

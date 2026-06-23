@@ -40,6 +40,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
+from uuid import uuid4
 
 from langchain_core.messages import (
     AIMessage,
@@ -777,12 +778,12 @@ class UnifiedContextGuard:
             )
             return _StagePass(updates=[], view=view)
 
+        self._ensure_message_ids(original_messages)
+        self._ensure_message_ids(result.replacement_history)
         replacement_view = _state_messages_to_dicts(result.replacement_history)
         after_tokens = self.metrics(replacement_view).used_input_tokens
         updates: list[Any] = [
-            RemoveMessage(id=message.id)
-            for message in original_messages
-            if getattr(message, "id", None)
+            RemoveMessage(id=message.id) for message in original_messages
         ]
         updates.extend(result.replacement_history)
 
@@ -1009,4 +1010,11 @@ class UnifiedContextGuard:
     # ------------------------------------------------------------------
 
     def _is_over_trigger(self, view: list[dict[str, Any]]) -> bool:
-        return self._current_used_input_tokens(view) > self.trigger_limit
+        return self._current_used_input_tokens(view) >= self.trigger_limit
+
+    @staticmethod
+    def _ensure_message_ids(messages: list[BaseMessage]) -> None:
+        """Assign stable ids to messages that will participate in state rewrites."""
+        for message in messages:
+            if not getattr(message, "id", None):
+                message.id = str(uuid4())

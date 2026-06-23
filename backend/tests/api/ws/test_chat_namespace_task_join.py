@@ -29,6 +29,10 @@ async def test_task_join_replays_cached_context_metrics_for_active_stream() -> N
         "context_metrics": {
             "remaining_percent": 42,
         },
+        "context_compaction": {
+            "type": "summary_compact",
+            "status": "started",
+        },
     }
 
     with (

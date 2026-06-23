@@ -1531,32 +1531,10 @@ class TaskRequestBuilder:
     @staticmethod
     def _is_tool_output_guard_enabled(user: User | None) -> bool:
         """Return whether source-level tool output truncation is enabled."""
-        default_enabled = True
-        if not user or not getattr(user, "preferences", None):
-            return default_enabled
-
-        raw_preferences = user.preferences
-        if isinstance(raw_preferences, str):
-            try:
-                preferences = json.loads(raw_preferences)
-            except json.JSONDecodeError:
-                logger.warning(
-                    "[TaskRequestBuilder] Failed to parse user preferences for tool output guard toggle"
-                )
-                return default_enabled
-            if not isinstance(preferences, dict):
-                logger.warning(
-                    "[TaskRequestBuilder] Ignoring non-object user preferences for tool output guard toggle"
-                )
-                return default_enabled
-        elif isinstance(raw_preferences, dict):
-            preferences = raw_preferences
-        else:
-            return default_enabled
-
-        if "tool_output_guard_enabled" in preferences:
-            return bool(preferences["tool_output_guard_enabled"])
-        return default_enabled
+        # The frontend toggle has been removed. Persisted user preferences are
+        # intentionally ignored so tool-output guarding behaves consistently for
+        # all users unless chat_shell disables it via deployment kill switch.
+        return True
 
     def _build_skill_data(self, skill: Kind, *, user: User | None = None) -> dict:
         """Build skill data dictionary from a Skill Kind object.

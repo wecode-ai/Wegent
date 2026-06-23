@@ -317,10 +317,7 @@ class ChatService(ChatInterface):
                 model_name=guard_model_id, model_type=guard_model_type
             )
             guard_sources = []
-            if (
-                request.enable_tool_output_guard
-                and not settings.DISABLE_TOOL_OUTPUT_GUARD
-            ):
+            if not settings.DISABLE_TOOL_OUTPUT_GUARD:
                 tool_output_adapter = ToolOutputGuardAdapter(
                     token_counter=guard_counter,
                     default_policy=TruncationPolicy(

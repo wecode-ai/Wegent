@@ -200,7 +200,12 @@ class SummaryCompactor:
             HumanMessage(content=COMPACT_TASK_FINAL_PROMPT),
         ]
         result = await self._llm.ainvoke(prompt_messages)
-        return _extract_text(result).strip()
+        summary_text = _extract_text(result).strip()
+        if not summary_text:
+            raise SummaryCompactNotApplicable(
+                "Summary compact returned an empty summary."
+            )
+        return summary_text
 
     def _is_compact_prompt_over_limit(self, messages: list[BaseMessage]) -> bool:
         """Return True when the compact task prompt itself exceeds input budget."""

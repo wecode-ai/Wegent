@@ -427,6 +427,10 @@ async def collect_completed_result(
             and existing_termination_reason
             else None
         )
+    if termination_reason:
+        runtime_result["termination_reason"] = termination_reason
+    else:
+        runtime_result.pop("termination_reason", None)
     blocks = await chat_storage.session_manager.finalize_and_get_blocks(
         subtask_id,
         termination_reason=termination_reason,
