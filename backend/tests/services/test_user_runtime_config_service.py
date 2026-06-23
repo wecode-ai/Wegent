@@ -103,6 +103,23 @@ def test_save_auth_json_encrypts_runtime_config(test_db: Session) -> None:
     }
 
 
+def test_save_auth_json_records_source_metadata(test_db: Session) -> None:
+    user_runtime_config_service.save_auth_json(
+        test_db,
+        user_id=109,
+        runtime="codex",
+        auth_json='{"token":"from-master"}',
+        source_device_id="master-device",
+        source_modified_at="2026-06-23T01:02:03+00:00",
+    )
+
+    kind = _get_codex_kind(test_db, 109)
+    auth = kind.json["spec"]["auth"]
+
+    assert auth["sourceDeviceId"] == "master-device"
+    assert auth["sourceModifiedAt"] == "2026-06-23T01:02:03+00:00"
+
+
 def test_set_use_user_config_stores_preference(test_db: Session) -> None:
     user = User(
         id=1201,
@@ -375,6 +392,128 @@ async def test_sync_auth_to_devices_preserves_skipped_existing_status(
     assert json.loads(calls[0]["env"]["WEGENT_RUNTIME_CONFIG_CONTENT"]) == {
         "token": "secret"
     }
+
+
+@pytest.mark.asyncio
+async def test_sync_auth_to_devices_can_overwrite_selected_devices(
+    test_db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_runtime_config_service.save_auth_json(
+        test_db,
+        user_id=1210,
+        runtime="codex",
+        auth_json='{"token":"secret"}',
+    )
+    calls = []
+
+    async def fake_get_online_devices(db, user_id):
+        return [
+            {"device_id": "slave-a", "status": "online"},
+            {"device_id": "other-device", "status": "online"},
+        ]
+
+    async def fake_execute_configured_device_command(**kwargs):
+        calls.append(kwargs)
+        return {
+            "success": True,
+            "stdout": {
+                "status": "overwritten",
+                "runtime": "codex",
+                "path": "~/.codex/auth.json",
+            },
+            "stderr": "",
+        }
+
+    monkeypatch.setattr(
+        runtime_config_module.device_service,
+        "get_online_devices",
+        fake_get_online_devices,
+    )
+    monkeypatch.setattr(
+        runtime_config_module,
+        "execute_configured_device_command",
+        fake_execute_configured_device_command,
+    )
+
+    result = await user_runtime_config_service.sync_auth_to_devices(
+        test_db,
+        user_id=1210,
+        runtime="codex",
+        preferences={"runtime_configs": {"codex": {"use_user_config": True}}},
+        device_ids=["slave-a"],
+        overwrite=True,
+    )
+
+    assert result["total"] == 1
+    assert result["items"][0]["status"] == "overwritten"
+    assert calls[0]["device_id"] == "slave-a"
+    assert calls[0]["env"]["WEGENT_RUNTIME_CONFIG_OVERWRITE"] == "true"
+
+
+@pytest.mark.asyncio
+async def test_sync_auth_to_slave_devices_excludes_master(
+    test_db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    preferences = {
+        "runtime_configs": {
+            "codex": {
+                "use_user_config": True,
+                "auth_sync": {
+                    "master_device_id": "master-device",
+                    "slave_device_ids": ["slave-a", "slave-b"],
+                },
+            }
+        }
+    }
+    user_runtime_config_service.save_auth_json(
+        test_db,
+        user_id=1211,
+        runtime="codex",
+        auth_json='{"token":"secret"}',
+        preferences=preferences,
+    )
+    calls = []
+
+    async def fake_get_online_devices(db, user_id):
+        return [
+            {"device_id": "master-device", "status": "online"},
+            {"device_id": "slave-a", "status": "online"},
+            {"device_id": "slave-b", "status": "online"},
+        ]
+
+    async def fake_execute_configured_device_command(**kwargs):
+        calls.append(kwargs)
+        return {
+            "success": True,
+            "stdout": {"status": "overwritten"},
+            "stderr": "",
+        }
+
+    monkeypatch.setattr(
+        runtime_config_module.device_service,
+        "get_online_devices",
+        fake_get_online_devices,
+    )
+    monkeypatch.setattr(
+        runtime_config_module,
+        "execute_configured_device_command",
+        fake_execute_configured_device_command,
+    )
+
+    result = await user_runtime_config_service.sync_auth_to_slave_devices(
+        test_db,
+        user_id=1211,
+        runtime="codex",
+        preferences=preferences,
+    )
+
+    assert result["total"] == 2
+    assert {call["device_id"] for call in calls} == {"slave-a", "slave-b"}
+    assert all(
+        call["env"]["WEGENT_RUNTIME_CONFIG_OVERWRITE"] == "true" for call in calls
+    )
 
 
 @pytest.mark.asyncio

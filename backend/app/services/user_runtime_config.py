@@ -454,6 +454,8 @@ class UserRuntimeConfigService:
         runtime: str,
         auth_json: str,
         preferences: Any = None,
+        source_device_id: Optional[str] = None,
+        source_modified_at: Optional[str] = None,
     ) -> dict[str, Any]:
         """Validate and store encrypted auth JSON for a runtime."""
         normalized_runtime = _normalize_runtime(runtime)
@@ -472,6 +474,12 @@ class UserRuntimeConfigService:
             "sha256": digest,
             "updatedAt": now,
         }
+        normalized_source_device_id = str(source_device_id or "").strip()
+        normalized_source_modified_at = str(source_modified_at or "").strip()
+        if normalized_source_device_id:
+            spec["auth"]["sourceDeviceId"] = normalized_source_device_id
+        if normalized_source_modified_at:
+            spec["auth"]["sourceModifiedAt"] = normalized_source_modified_at
         spec["updatedAt"] = now
         data["spec"] = spec
         kind.json = data
@@ -539,8 +547,9 @@ class UserRuntimeConfigService:
         runtime: str,
         preferences: Any = None,
         device_ids: Optional[Iterable[str]] = None,
+        overwrite: bool = False,
     ) -> dict[str, Any]:
-        """Sync a saved auth file to online devices without overwriting files."""
+        """Sync a saved auth file to online devices."""
         normalized_runtime = _normalize_runtime(runtime)
         kind = self._get_kind(db, user_id=user_id, runtime=normalized_runtime)
         spec = self._get_spec(kind)
@@ -581,6 +590,7 @@ class UserRuntimeConfigService:
                 runtime=normalized_runtime,
                 target_path=target_path,
                 auth_json=auth_json,
+                overwrite=overwrite,
             )
             results.append(result)
 
@@ -591,6 +601,42 @@ class UserRuntimeConfigService:
             "items": results,
         }
 
+    async def sync_auth_to_slave_devices(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        runtime: str,
+        preferences: Any = None,
+    ) -> dict[str, Any]:
+        """Sync a saved auth file to selected slave devices, overwriting them."""
+        normalized_runtime = _normalize_runtime(runtime)
+        auth_sync = get_runtime_auth_sync(preferences, normalized_runtime)
+        slave_device_ids = auth_sync["slave_device_ids"]
+        if not slave_device_ids:
+            kind = self._get_kind(db, user_id=user_id, runtime=normalized_runtime)
+            spec = self._get_spec(kind)
+            auth = dict(spec.get("auth") or {})
+            target_path = (
+                auth.get("targetPath")
+                or RUNTIME_AUTH_FILES[normalized_runtime]["target_path"]
+            )
+            return {
+                "runtime": normalized_runtime,
+                "target_path": target_path,
+                "total": 0,
+                "items": [],
+            }
+
+        return await self.sync_auth_to_devices(
+            db,
+            user_id=user_id,
+            runtime=normalized_runtime,
+            preferences=preferences,
+            device_ids=slave_device_ids,
+            overwrite=True,
+        )
+
     async def _sync_auth_to_device(
         self,
         *,
@@ -600,18 +646,22 @@ class UserRuntimeConfigService:
         runtime: str,
         target_path: str,
         auth_json: str,
+        overwrite: bool = False,
     ) -> dict[str, Any]:
+        env = {
+            "WEGENT_RUNTIME_CONFIG_RUNTIME": runtime,
+            "WEGENT_RUNTIME_CONFIG_TARGET_PATH": target_path,
+            "WEGENT_RUNTIME_CONFIG_CONTENT": auth_json,
+        }
+        if overwrite:
+            env["WEGENT_RUNTIME_CONFIG_OVERWRITE"] = "true"
         try:
             result = await execute_configured_device_command(
                 db=db,
                 user_id=user_id,
                 device_id=device_id,
                 command_key="sync_runtime_auth_file",
-                env={
-                    "WEGENT_RUNTIME_CONFIG_RUNTIME": runtime,
-                    "WEGENT_RUNTIME_CONFIG_TARGET_PATH": target_path,
-                    "WEGENT_RUNTIME_CONFIG_CONTENT": auth_json,
-                },
+                env=env,
                 timeout_seconds=DEFAULT_COMMAND_TIMEOUT_SECONDS,
             )
         except DeviceCommandError as exc:
@@ -766,6 +816,8 @@ class UserRuntimeConfigService:
             or RUNTIME_AUTH_FILES[runtime]["target_path"],
             "auth_json_sha256": auth.get("sha256"),
             "auth_json_updated_at": auth.get("updatedAt"),
+            "auth_json_source_device_id": auth.get("sourceDeviceId"),
+            "auth_json_source_modified_at": auth.get("sourceModifiedAt"),
             "proxy_configured": bool(proxy_url),
             "proxy_url_masked": _mask_proxy_url(proxy_url),
             "proxy_updated_at": dict(proxy_spec.get("proxy") or {}).get("updatedAt"),
