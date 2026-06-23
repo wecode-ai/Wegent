@@ -81,3 +81,43 @@ async def test_reconnect_resets_socket_state_and_registers_device():
     assert connect_called is True
     assert register_called is True
     assert client._registered is True
+
+
+@pytest.mark.asyncio
+async def test_connect_disconnects_stale_engineio_transport_before_connecting():
+    client = WebSocketClient.__new__(WebSocketClient)
+
+    class FakeEngineIO:
+        state = "connected"
+
+    class FakeSocket:
+        connected = False
+        namespaces = {}
+
+        def __init__(self):
+            self.eio = FakeEngineIO()
+            self.disconnect_called = False
+            self.connect_called = False
+
+        async def disconnect(self):
+            self.disconnect_called = True
+            self.eio.state = "disconnected"
+
+        async def connect(self, *args, **kwargs):
+            self.connect_called = True
+            assert self.eio.state == "disconnected"
+            client._connected = True
+
+    client.sio = FakeSocket()
+    client.backend_url = "http://localhost:8000"
+    client.auth_token = "wg-test"
+    client._connected = False
+    client._registered = True
+    client._connecting = False
+    client._connection_error = None
+
+    assert await client.connect(wait_timeout=12.0) is True
+
+    assert client.sio.disconnect_called is True
+    assert client.sio.connect_called is True
+    assert client._registered is False
