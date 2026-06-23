@@ -36,6 +36,10 @@ export function isClaudeCodeDevice(device: DeviceLike): boolean {
   return (device.bind_shell ?? 'claudecode').toLowerCase() === 'claudecode'
 }
 
+export function filterClaudeCodeDevices<T extends DeviceLike>(devices: T[]): T[] {
+  return devices.filter(isClaudeCodeDevice)
+}
+
 export function isCloudDevice(device: Pick<DeviceInfo, 'device_type'>): boolean {
   return device.device_type === 'cloud'
 }

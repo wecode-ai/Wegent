@@ -50,6 +50,10 @@ CompletionFieldsProvider = Callable[
     [], Union[Dict[str, Any], Awaitable[Dict[str, Any]]]
 ]
 
+CLAUDE_STREAM_TOOL_STATE_ATTR = "_claude_stream_tool_state"
+CLAUDE_STREAM_TOOL_STARTED_ATTR = "_claude_stream_tool_started"
+CLAUDE_STREAM_TOOL_FINALIZED_ATTR = "_claude_stream_tool_finalized"
+
 
 # Maximum retry count for API errors per session
 MAX_API_ERROR_RETRIES = 3
@@ -504,6 +508,7 @@ async def _handle_user_message(
                 message_details["message"]["content"].append(tool_detail)
 
                 logger.info(f"UserMessage ToolUseBlock: tool = {block.name}")
+                await _emit_tool_use_start(block, emitter)
 
             elif isinstance(block, TextBlock):
                 # Check if this is SDK interruption text block
@@ -727,23 +732,7 @@ async def _handle_assistant_message(
                         block.id,
                     )
 
-            # Always emit tool_start from the finalized ToolUseBlock. Raw stream
-            # events do not contain complete arguments and may not correlate with
-            # the later ToolResultBlock in Claude Code SDK output.
-            try:
-                # Flush any buffered text_delta events before sending tool_start
-                # This ensures text content is sent before tool events
-                await emitter.flush()
-
-                arguments = block.input if isinstance(block.input, dict) else {}
-                await emitter.tool_start(
-                    call_id=block.id,
-                    name=block.name,
-                    arguments=arguments,
-                )
-                logger.info(f"Sent tool_start event for tool {block.name}")
-            except Exception as e:
-                logger.warning(f"Failed to send tool_start event: {e}")
+            await _emit_tool_use_start(block, emitter)
 
         elif isinstance(block, TextBlock):
             # Text content details in target format
@@ -850,11 +839,27 @@ async def _handle_stream_event(
                     state_manager.update_workbench_summary(text, append=True)
 
         elif delta_type == "input_json_delta":
-            # Tool input streaming - could be used for showing tool arguments being built
             partial_json = delta.get("partial_json", "")
             logger.debug(
                 f"StreamEvent: input_json_delta with {len(partial_json)} chars"
             )
+            if partial_json:
+                tool_state = _stream_tool_for_index(emitter, event.get("index"))
+                if tool_state is not None:
+                    tool_state["partial_json"] = (
+                        str(tool_state.get("partial_json") or "") + partial_json
+                    )
+                    arguments_summary = _parse_tool_arguments_summary(
+                        tool_state.get("partial_json")
+                    )
+                    try:
+                        await emitter.tool_argument_delta(
+                            call_id=tool_state["call_id"],
+                            arguments_delta=partial_json,
+                            arguments_summary=arguments_summary,
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to send stream input_json_delta: {e}")
 
         elif delta_type == "thinking_delta":
             thinking = delta.get("thinking", "")
@@ -874,10 +879,31 @@ async def _handle_stream_event(
         logger.debug(f"StreamEvent: content_block_start, type={block_type}")
 
         if block_type == "tool_use":
-            # Do not emit tool_start from raw stream start. The finalized
-            # AssistantMessage ToolUseBlock carries complete input and is the
-            # stable source for the tool_use_id used by ToolResultBlock.
-            logger.debug("StreamEvent: defer tool_start until ToolUseBlock")
+            call_id = content_block.get("id")
+            name = content_block.get("name")
+            if call_id and name:
+                arguments_summary = (
+                    content_block.get("input")
+                    if isinstance(content_block.get("input"), dict)
+                    else {}
+                )
+                try:
+                    await emitter.tool_argument_start(
+                        call_id=call_id,
+                        name=name,
+                        arguments_summary=arguments_summary,
+                    )
+                    _remember_stream_tool(
+                        emitter,
+                        event.get("index"),
+                        str(call_id),
+                        str(name),
+                        arguments_summary,
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to send stream tool_start: {e}")
+            else:
+                logger.debug("StreamEvent: tool_use start missing id or name")
 
         elif block_type == "text":
             # A start event carries no text; only text_delta proves content
@@ -887,6 +913,26 @@ async def _handle_stream_event(
     elif event_type == "content_block_stop":
         # A content block has finished
         logger.debug(f"StreamEvent: content_block_stop, index={event.get('index', -1)}")
+        tool_state = _pop_stream_tool_for_index(emitter, event.get("index"))
+        if tool_state is not None:
+            arguments_summary = _parse_tool_arguments_summary(
+                tool_state.get("partial_json")
+            )
+            if arguments_summary is None:
+                arguments_summary = tool_state.get("arguments_summary")
+            if not isinstance(arguments_summary, dict):
+                arguments_summary = {}
+            try:
+                await emitter.tool_argument_done(
+                    call_id=tool_state["call_id"],
+                    arguments=arguments_summary,
+                    arguments_summary=arguments_summary,
+                )
+                _mark_stream_tool_finalized(
+                    emitter, tool_state["call_id"], arguments_summary
+                )
+            except Exception as e:
+                logger.warning(f"Failed to send stream tool_argument_done: {e}")
 
     elif event_type == "message_start":
         # Message is starting
@@ -908,6 +954,122 @@ async def _handle_stream_event(
         logger.debug(f"StreamEvent: unknown type={event_type}, event={event}")
 
     return sent_content
+
+
+async def _emit_tool_use_start(
+    block: ToolUseBlock,
+    emitter: ResponsesAPIEmitter,
+) -> None:
+    try:
+        arguments = block.input if isinstance(block.input, dict) else {}
+        if _stream_tool_was_started(emitter, block.id):
+            if _stream_tool_needs_final_arguments(emitter, block.id, arguments):
+                await emitter.tool_argument_done(
+                    call_id=block.id,
+                    arguments=arguments,
+                    arguments_summary=arguments,
+                )
+                _mark_stream_tool_finalized(emitter, block.id, arguments)
+            logger.info(f"Finalized streamed tool arguments for tool {block.name}")
+            return
+
+        # Flush any buffered text_delta events before sending tool_start.
+        # This ensures text content is sent before tool events.
+        await emitter.flush()
+
+        await emitter.tool_start(
+            call_id=block.id,
+            name=block.name,
+            arguments=arguments,
+        )
+        logger.info(f"Sent tool_start event for tool {block.name}")
+    except Exception as e:
+        logger.warning(f"Failed to send tool_start event: {e}")
+
+
+def _stream_tool_state(emitter: ResponsesAPIEmitter) -> dict[str, dict[str, Any]]:
+    state = getattr(emitter, "__dict__", {}).get(CLAUDE_STREAM_TOOL_STATE_ATTR)
+    if isinstance(state, dict):
+        return state
+    state = {}
+    setattr(emitter, CLAUDE_STREAM_TOOL_STATE_ATTR, state)
+    return state
+
+
+def _stream_tool_started(emitter: ResponsesAPIEmitter) -> set[str]:
+    started = getattr(emitter, "__dict__", {}).get(CLAUDE_STREAM_TOOL_STARTED_ATTR)
+    if isinstance(started, set):
+        return started
+    started = set()
+    setattr(emitter, CLAUDE_STREAM_TOOL_STARTED_ATTR, started)
+    return started
+
+
+def _stream_tool_finalized(emitter: ResponsesAPIEmitter) -> dict[str, dict[str, Any]]:
+    finalized = getattr(emitter, "__dict__", {}).get(CLAUDE_STREAM_TOOL_FINALIZED_ATTR)
+    if isinstance(finalized, dict):
+        return finalized
+    finalized = {}
+    setattr(emitter, CLAUDE_STREAM_TOOL_FINALIZED_ATTR, finalized)
+    return finalized
+
+
+def _stream_index_key(index: Any) -> str:
+    return str(index)
+
+
+def _remember_stream_tool(
+    emitter: ResponsesAPIEmitter,
+    index: Any,
+    call_id: str,
+    name: str,
+    arguments_summary: dict[str, Any],
+) -> None:
+    _stream_tool_state(emitter)[_stream_index_key(index)] = {
+        "call_id": call_id,
+        "name": name,
+        "arguments_summary": arguments_summary,
+        "partial_json": "",
+    }
+    _stream_tool_started(emitter).add(call_id)
+
+
+def _stream_tool_for_index(
+    emitter: ResponsesAPIEmitter, index: Any
+) -> Optional[dict[str, Any]]:
+    return _stream_tool_state(emitter).get(_stream_index_key(index))
+
+
+def _pop_stream_tool_for_index(
+    emitter: ResponsesAPIEmitter, index: Any
+) -> Optional[dict[str, Any]]:
+    return _stream_tool_state(emitter).pop(_stream_index_key(index), None)
+
+
+def _stream_tool_was_started(emitter: ResponsesAPIEmitter, call_id: str) -> bool:
+    return call_id in _stream_tool_started(emitter)
+
+
+def _mark_stream_tool_finalized(
+    emitter: ResponsesAPIEmitter, call_id: str, arguments_summary: dict[str, Any]
+) -> None:
+    _stream_tool_finalized(emitter)[call_id] = arguments_summary
+
+
+def _stream_tool_needs_final_arguments(
+    emitter: ResponsesAPIEmitter, call_id: str, arguments: dict[str, Any]
+) -> bool:
+    return _stream_tool_finalized(emitter).get(call_id) != arguments
+
+
+def _parse_tool_arguments_summary(value: Any) -> Optional[dict[str, Any]]:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = json.loads(value)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
 
 
 def _handle_legacy_message(msg: Dict[str, Any], thinking_manager=None):

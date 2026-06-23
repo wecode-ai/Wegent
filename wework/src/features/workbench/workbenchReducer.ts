@@ -1,7 +1,10 @@
 import type {
+  DeviceWorkspaceResponse,
   DeviceInfo,
   ProjectWithTasks,
+  RuntimeDeviceWorkspace,
   RuntimeTaskAddress,
+  RuntimeProjectWork,
   RuntimeWorkListResponse,
   Team,
   User,
@@ -50,7 +53,9 @@ export type WorkbenchAction =
       standaloneDeviceId?: string | null
     }
   | { type: 'bootstrap_failed'; error: string }
+  | { type: 'project_created'; project: ProjectWithTasks }
   | { type: 'project_selected'; project: ProjectWithTasks }
+  | { type: 'device_workspace_prepared'; mapping: DeviceWorkspaceResponse }
   | {
       type: 'project_workspace_selected'
       project: ProjectWithTasks
@@ -78,6 +83,88 @@ function keepDevicesOnTransientEmpty(
   if (nextDevices.length > 0) return nextDevices
   if (currentDevices.length > 0) return currentDevices
   return nextDevices
+}
+
+function runtimeWorkspaceFromMapping(
+  mapping: DeviceWorkspaceResponse,
+  devices: DeviceInfo[]
+): RuntimeDeviceWorkspace {
+  const device = devices.find(item => item.device_id === mapping.deviceId)
+  return {
+    id: mapping.id,
+    projectId: mapping.projectId,
+    deviceId: mapping.deviceId,
+    deviceName: device?.name ?? mapping.deviceId,
+    deviceStatus: device?.status ?? null,
+    workspacePath: mapping.workspacePath,
+    workspaceKind: mapping.label ?? 'workspace',
+    label: mapping.label,
+    repoUrl: mapping.repoUrl,
+    repoRootFingerprint: mapping.repoRootFingerprint,
+    mapped: true,
+    available: device ? device.status !== 'offline' : true,
+    localTasks: [],
+  }
+}
+
+function upsertPreparedRuntimeWorkspace(
+  runtimeWork: RuntimeWorkListResponse | null | undefined,
+  projects: ProjectWithTasks[],
+  devices: DeviceInfo[],
+  mapping: DeviceWorkspaceResponse
+): RuntimeWorkListResponse {
+  const project = projects.find(item => item.id === mapping.projectId)
+  const projectRef = {
+    id: mapping.projectId,
+    name: project?.name ?? '',
+    description: project?.description,
+    color: project?.color,
+  }
+  const currentRuntimeWork = runtimeWork ?? {
+    projects: [],
+    unmappedDeviceWorkspaces: [],
+    totalLocalTasks: 0,
+  }
+  const nextWorkspace = runtimeWorkspaceFromMapping(mapping, devices)
+  const hasProject = currentRuntimeWork.projects.some(item => item.project.id === mapping.projectId)
+  const projectsWithTarget = hasProject
+    ? currentRuntimeWork.projects.map(item => {
+        if (item.project.id !== mapping.projectId) return item
+        const workspaces = item.deviceWorkspaces.filter(
+          workspace =>
+            !(
+              workspace.deviceId === mapping.deviceId &&
+              workspace.workspacePath === mapping.workspacePath
+            )
+        )
+        return {
+          ...item,
+          project: {
+            ...item.project,
+            ...projectRef,
+          },
+          deviceWorkspaces: [...workspaces, nextWorkspace],
+        }
+      })
+    : ([
+        ...currentRuntimeWork.projects,
+        {
+          project: projectRef,
+          deviceWorkspaces: [nextWorkspace],
+        },
+      ] as RuntimeProjectWork[])
+
+  return {
+    ...currentRuntimeWork,
+    projects: projectsWithTarget,
+    unmappedDeviceWorkspaces: currentRuntimeWork.unmappedDeviceWorkspaces.filter(
+      workspace =>
+        !(
+          workspace.deviceId === mapping.deviceId &&
+          workspace.workspacePath === mapping.workspacePath
+        )
+    ),
+  }
 }
 
 export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction): WorkbenchState {
@@ -126,6 +213,14 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
       }
     case 'bootstrap_failed':
       return { ...state, isBootstrapping: false, error: action.error }
+    case 'project_created':
+      return {
+        ...state,
+        projects: [
+          action.project,
+          ...state.projects.filter(project => project.id !== action.project.id),
+        ],
+      }
     case 'project_selected':
       return {
         ...state,
@@ -133,6 +228,18 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
         selectedDeviceWorkspaceId: null,
         pendingProjectWorkspaceProjectId: null,
         currentRuntimeTask: null,
+      }
+    case 'device_workspace_prepared':
+      return {
+        ...state,
+        selectedDeviceWorkspaceId: action.mapping.id,
+        pendingProjectWorkspaceProjectId: null,
+        runtimeWork: upsertPreparedRuntimeWorkspace(
+          state.runtimeWork,
+          state.projects,
+          state.devices,
+          action.mapping
+        ),
       }
     case 'project_workspace_selected':
       return {

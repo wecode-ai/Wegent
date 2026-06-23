@@ -3,8 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { render, screen, waitFor } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 import { QueueEditDialog } from '@/features/inbox/components/QueueEditDialog'
 import { createWorkQueue } from '@/apis/work-queue'
@@ -153,13 +152,13 @@ describe('QueueEditDialog', () => {
   })
 
   it('saves selected direct agent models as force override by default', async () => {
-    const user = userEvent.setup()
-
     render(<QueueEditDialog open onOpenChange={jest.fn()} />)
 
-    await user.type(screen.getByTestId('queue-name-input'), 'triage')
-    await user.type(screen.getByTestId('queue-display-name-input'), 'Triage Queue')
-    await user.click(screen.getByTestId('auto-process-toggle'))
+    fireEvent.change(screen.getByTestId('queue-name-input'), { target: { value: 'triage' } })
+    fireEvent.change(screen.getByTestId('queue-display-name-input'), {
+      target: { value: 'Triage Queue' },
+    })
+    fireEvent.click(screen.getByTestId('auto-process-toggle'))
 
     await waitFor(() => {
       expect(screen.getByTestId('queue-team-searchable-select')).toHaveValue('7')
@@ -169,8 +168,8 @@ describe('QueueEditDialog', () => {
       expect(screen.getByTestId('queue-model-selector')).toBeInTheDocument()
     })
 
-    await user.click(screen.getByTestId('queue-select-gpt-5'))
-    await user.click(screen.getByRole('button', { name: 'common:actions.save' }))
+    fireEvent.click(screen.getByTestId('queue-select-gpt-5'))
+    fireEvent.click(screen.getByRole('button', { name: 'common:actions.save' }))
 
     await waitFor(() => {
       expect(createWorkQueue).toHaveBeenCalledWith({

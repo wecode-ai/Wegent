@@ -119,9 +119,9 @@ class RuntimeWorkRpcHandler:
         responses_event_emitter: Optional[Callable[[str, dict[str, Any]], Any]] = None,
     ) -> None:
         self.store = store or LocalTaskStore()
-        self.adapters = adapters or self._default_adapters()
         self.codex_discovery = codex_discovery or CodexSessionDiscovery()
         self.responses_event_emitter = responses_event_emitter
+        self.adapters = adapters or self._default_adapters()
         self._running_sdk_tasks: set[asyncio.Task] = set()
         self._running_sdk_task_ids: set[str] = set()
         self._sdk_codex_task_records: dict[str, LocalTaskRecord] = {}
@@ -411,6 +411,7 @@ class RuntimeWorkRpcHandler:
             "claude_code": RuntimeAgentAdapter(
                 runtime="claude_code",
                 store=self.store,
+                responses_event_emitter=self.responses_event_emitter,
             ),
         }
 

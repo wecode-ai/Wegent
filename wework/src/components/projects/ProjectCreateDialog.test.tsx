@@ -199,18 +199,24 @@ describe('ProjectCreateDialog', () => {
     await userEvent.click(screen.getByTestId('create-project-button'))
 
     await waitFor(() =>
-      expect(onCreateProject).toHaveBeenCalledWith({
-        name: 'repo',
-        description: '',
-        config: { mode: 'workspace' },
-      })
+      expect(onCreateProject).toHaveBeenCalledWith(
+        {
+          name: 'repo',
+          description: '',
+          config: { mode: 'workspace' },
+        },
+        { refreshWorkLists: false }
+      )
     )
-    expect(onPrepareDeviceWorkspace).toHaveBeenCalledWith({
-      projectId: 2,
-      deviceId: 'local-device',
-      workspacePath: '/home/user/repo',
-      action: 'select',
-    })
+    expect(onPrepareDeviceWorkspace).toHaveBeenCalledWith(
+      {
+        projectId: 2,
+        deviceId: 'local-device',
+        workspacePath: '/home/user/repo',
+        action: 'select',
+      },
+      { refreshWorkLists: false }
+    )
   })
 
   test('can switch the target device before choosing a folder', async () => {
@@ -249,12 +255,15 @@ describe('ProjectCreateDialog', () => {
     await userEvent.click(screen.getByTestId('create-project-button'))
 
     await waitFor(() =>
-      expect(onPrepareDeviceWorkspace).toHaveBeenCalledWith({
-        projectId: 2,
-        deviceId: 'cloud-device',
-        workspacePath: '/home/user/cloud-repo',
-        action: 'select',
-      })
+      expect(onPrepareDeviceWorkspace).toHaveBeenCalledWith(
+        {
+          projectId: 2,
+          deviceId: 'cloud-device',
+          workspacePath: '/home/user/cloud-repo',
+          action: 'select',
+        },
+        { refreshWorkLists: false }
+      )
     )
   })
 

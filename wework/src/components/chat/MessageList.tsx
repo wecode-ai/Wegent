@@ -389,7 +389,6 @@ function AssistantMessage({
   const hasBlocks = displayBlocks.length > 0
   const hasVisibleContent = Boolean(visibleContent.trim())
   const isStreaming = message.status === 'streaming'
-  const isThinking = isStreaming && !hasVisibleContent && !hasBlocks
 
   return (
     <div className="group min-w-0 overflow-x-hidden text-[13px] leading-6 text-text-primary">
@@ -470,9 +469,13 @@ function AssistantMessage({
           </ReactMarkdown>
         </div>
       )}
-      {isThinking && <span className="text-text-muted">正在思考</span>}
-      {isStreaming && hasVisibleContent && !hasBlocks && (
-        <span className="text-text-muted">正在思考</span>
+      {isStreaming && !hasBlocks && (
+        <ToolBlocksDisplay
+          blocks={[]}
+          isStreaming={true}
+          startedAt={getTurnStartMs(message.createdAt)}
+          onOpenWorkspaceFile={onOpenWorkspaceFile}
+        />
       )}
       {message.status === 'failed' && (
         <AssistantErrorCard
