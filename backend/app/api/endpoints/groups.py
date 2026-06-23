@@ -11,7 +11,10 @@ from sqlalchemy.orm import Session
 logger = logging.getLogger(__name__)
 
 from app.api.dependencies import get_db
-from app.core.security import get_current_user
+from app.core.security import (
+    get_current_user,
+    get_current_user_jwt_apikey_tasktoken,
+)
 from app.models.namespace import Namespace
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.user import User
@@ -29,6 +32,7 @@ from app.schemas.namespace import (
     GroupResponse,
     GroupRole,
     GroupUpdate,
+    GroupWithChildrenResponse,
 )
 from app.schemas.namespace_member import (
     AddMemberResult,
@@ -161,7 +165,7 @@ def list_members(
     group_name: str = Path(
         ..., description="Group name (may contain slashes for subgroups)"
     ),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
     db: Session = Depends(get_db),
 ):
     """
@@ -936,6 +940,57 @@ def transfer_ownership_endpoint(
 # ============================================================================
 # Generic group routes - MUST come after specific sub-routes
 # ============================================================================
+
+
+@router.get(
+    "/{group_name:path}/with-children", response_model=GroupWithChildrenResponse
+)
+@trace_sync("get_group_with_children", "groups.api")
+def get_group_with_children_endpoint(
+    group_name: str = Path(
+        ..., description="Group name (may contain slashes for subgroups)"
+    ),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
+    db: Session = Depends(get_db),
+) -> GroupWithChildrenResponse:
+    """
+    Get group details including its subgroups.
+    User must be a member of the group to view it.
+    Only returns subgroups where the user is also a member.
+    """
+    group = group_service.get_group(db=db, group_name=group_name)
+
+    if not group:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Group not found",
+        )
+
+    user_role = get_view_role_in_group(
+        db,
+        current_user.id,
+        group_name,
+        user_role=current_user.role,
+        group_level=group.level,
+    )
+    if user_role is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You are not a member of this group",
+        )
+
+    # Set the current user's role in the group
+    group.my_role = user_role
+
+    # Get subgroups
+    children = group_service.get_child_groups(
+        db=db,
+        parent_name=group_name,
+        user_id=current_user.id,
+        user_role=current_user.role,
+    )
+
+    return GroupWithChildrenResponse(group=group, children=children)
 
 
 @router.get("/{group_name:path}", response_model=GroupResponse)

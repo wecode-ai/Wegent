@@ -117,3 +117,10 @@ class GroupListResponse(BaseModel):
 
     total: int
     items: list[GroupResponse]
+
+
+class GroupWithChildrenResponse(BaseModel):
+    """Group response including its subgroups"""
+
+    group: GroupResponse
+    children: list[GroupResponse]

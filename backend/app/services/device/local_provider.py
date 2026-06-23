@@ -433,7 +433,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
                         else "offline"
                     ),
                     "is_default": spec.get("isDefault", False),
-                    "device_type": spec.get("deviceType", DeviceType.LOCAL.value),
+                    "device_type": DeviceType.LOCAL.value,
                     "connection_mode": spec.get(
                         "connectionMode", DeviceConnectionMode.WEBSOCKET.value
                     ),

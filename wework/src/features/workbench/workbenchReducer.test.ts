@@ -100,6 +100,65 @@ describe('workbenchReducer', () => {
     expect(refreshed.projects[0].tasks).toHaveLength(1)
   })
 
+  test('optimistically adds a prepared device workspace', () => {
+    const base = workbenchReducer(initialWorkbenchState, {
+      type: 'lists_refreshed',
+      projects: [{ id: 7, name: 'Repo', tasks: [] }],
+      devices: [
+        {
+          id: 1,
+          device_id: 'device-1',
+          name: 'Device 1',
+          status: 'online',
+          is_default: false,
+        },
+      ],
+      runtimeWork: {
+        projects: [{ project: { id: 7, name: 'Repo' }, deviceWorkspaces: [] }],
+        unmappedDeviceWorkspaces: [
+          {
+            deviceId: 'device-1',
+            workspacePath: '/workspace/repo',
+            available: true,
+            mapped: false,
+            localTasks: [],
+          },
+        ],
+        totalLocalTasks: 0,
+      },
+    })
+
+    const updated = workbenchReducer(base, {
+      type: 'device_workspace_prepared',
+      mapping: {
+        id: 22,
+        userId: 1,
+        projectId: 7,
+        deviceId: 'device-1',
+        workspacePath: '/workspace/repo',
+        repoUrl: null,
+        repoRootFingerprint: null,
+        label: null,
+        lastSeenAt: null,
+        createdAt: '2026-06-21T00:00:00',
+        updatedAt: '2026-06-21T00:00:00',
+      },
+    })
+
+    expect(updated.selectedDeviceWorkspaceId).toBe(22)
+    expect(updated.runtimeWork?.projects[0].deviceWorkspaces).toEqual([
+      expect.objectContaining({
+        id: 22,
+        projectId: 7,
+        deviceId: 'device-1',
+        deviceName: 'Device 1',
+        workspacePath: '/workspace/repo',
+        mapped: true,
+      }),
+    ])
+    expect(updated.runtimeWork?.unmappedDeviceWorkspaces).toEqual([])
+  })
+
   test('keeps existing devices when a device refresh returns a transient empty list', () => {
     const device = {
       id: 1,

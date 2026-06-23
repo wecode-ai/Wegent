@@ -395,6 +395,47 @@ async def test_local_task_tool_event_emits_block_created(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_local_task_streaming_tool_arguments_emit_generating_block(monkeypatch):
+    namespace = device_namespace.DeviceNamespace()
+    sio = SimpleNamespace(emit=AsyncMock())
+
+    async def fake_get_session(sid):
+        return {"user_id": 7, "device_id": "device-1"}
+
+    monkeypatch.setattr(namespace, "get_session", fake_get_session)
+    monkeypatch.setattr(local_task_responses, "get_sio", lambda: sio, raising=False)
+
+    result = await namespace._handle_responses_api_event(
+        "sid-1",
+        "response.output_item.added",
+        {
+            "subtask_id": 202,
+            "local_task_id": "claude-1",
+            "runtime": "claude_code",
+            "data": {
+                "item": {
+                    "type": "function_call",
+                    "call_id": "call-1",
+                    "name": "Bash",
+                    "arguments": "{}",
+                },
+                "argument_status": "streaming",
+            },
+        },
+    )
+
+    assert result == {"success": True}
+    sio.emit.assert_awaited_once()
+    event_name, payload = sio.emit.await_args.args[:2]
+    assert event_name == device_namespace.ServerEvents.CHAT_BLOCK_CREATED
+    assert payload["device_id"] == "device-1"
+    assert payload["local_task_id"] == "claude-1"
+    assert payload["block"]["type"] == "tool"
+    assert payload["block"]["tool_name"] == "Bash"
+    assert payload["block"]["status"] == "generating_arguments"
+
+
+@pytest.mark.asyncio
 async def test_local_task_im_source_forwards_stream_event_to_channel_callbacks(
     monkeypatch,
 ):

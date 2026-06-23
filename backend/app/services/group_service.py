@@ -1101,6 +1101,74 @@ def invite_all_users(
     return result
 
 
+def get_child_groups(
+    db: Session,
+    parent_name: str,
+    user_id: int,
+    user_role: str | None = None,
+) -> list[GroupResponse]:
+    """
+    Get all subgroups under the given parent group.
+
+    Args:
+        db: Database session
+        parent_name: Parent group name
+        user_id: Current user ID for permission filtering
+        user_role: User's system role ('admin' or 'user')
+
+    Returns:
+        List of GroupResponse for child groups the user can access
+    """
+    # Query all active subgroups with explicit LIKE escape for safety
+    escaped_name = (
+        parent_name.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    )
+    subgroups = (
+        db.query(Namespace)
+        .filter(
+            Namespace.name.like(f"{escaped_name}/%", escape="\\"),
+            Namespace.is_active.is_(True),
+        )
+        .order_by(Namespace.name.asc())
+        .all()
+    )
+
+    if not subgroups:
+        return []
+
+    # Get user's role in each subgroup for permission filtering
+    from app.services.group_member_helper import get_user_groups_with_roles
+
+    member_data = get_user_groups_with_roles(db, user_id)
+    user_group_roles = {name: role for name, role in member_data}
+
+    if user_role == "admin":
+        organization_groups = (
+            db.query(Namespace.name)
+            .filter(
+                Namespace.level == GroupLevel.organization.value,
+                Namespace.is_active.is_(True),
+            )
+            .all()
+        )
+        for (group_name,) in organization_groups:
+            user_group_roles[group_name] = GroupRole.Owner.value
+
+    result = []
+    for group in subgroups:
+        # Only include groups where user has access
+        group_access_role = user_group_roles.get(group.name)
+        if group_access_role is None:
+            continue
+
+        group_response = GroupResponse.model_validate(group)
+        group_response.my_role = group_access_role
+        group_response.member_count = get_group_member_count(db, group.name)
+        result.append(group_response)
+
+    return result
+
+
 def _transfer_resources_to_owner(
     db: Session, group_name: str, from_user_id: int, to_user_id: int
 ) -> None:
