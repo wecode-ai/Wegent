@@ -708,6 +708,35 @@ def _new_messages_from_state(
     return [msg for msg in collected if not msg.id or msg.id not in input_ids]
 
 
+def _build_limit_recovery_messages_chain(
+    *,
+    collected_state_messages: list[BaseMessage],
+    limit_messages: list[BaseMessage],
+    input_ids: frozenset[str],
+    final_response_text: str,
+) -> list[BaseMessage]:
+    """Build persisted chain for tool-limit recovery turns.
+
+    When LangGraph raises ``GraphRecursionError`` before emitting a final
+    ``on_chain_end`` state, ``collected_state_messages`` can be empty even
+    though the turn should still persist the recovery notice. Fall back to the
+    synthetic ``limit_messages`` prompt so ``messages_chain`` is not lost.
+    """
+
+    chain = (
+        _new_messages_from_state(collected_state_messages, input_ids)
+        if collected_state_messages
+        else []
+    )
+    limit_recovery_messages = _new_messages_from_state(limit_messages, input_ids)
+    if limit_recovery_messages:
+        chain = list(chain) + list(limit_recovery_messages)
+
+    if final_response_text:
+        chain = list(chain) + [AIMessage(content=final_response_text)]
+    return chain
+
+
 class LangGraphAgentBuilder:
     """Builder for LangGraph-based agent workflows using prebuilt ReAct agent."""
 
@@ -2030,26 +2059,12 @@ class LangGraphAgentBuilder:
                 _last_tool_call_name(_collected_state_messages) or "none",
             )
 
-            # Persist messages chain from iterations before the limit
-            if _collected_state_messages:
-                self._last_live_state_messages = [
-                    _message_to_context_metrics_dict(msg)
-                    for msg in _collected_state_messages
-                ]
-                new_msgs = _new_messages_from_state(
-                    _collected_state_messages, _input_message_ids
-                )
-                self._last_messages_chain = _serialize_validated_messages_chain(
-                    new_msgs,
-                    provider=self._provider,
-                    model_id=self._model_id,
-                )
-
             # Build messages with the limit reached notice
             # Add a human message to prompt the model to provide final response
             limit_messages = list(lc_messages) + [
                 HumanMessage(content=TOOL_LIMIT_REACHED_MESSAGE)
             ]
+            recovery_response_parts: list[str] = []
 
             # Call the LLM directly (without tools) to get final response
             try:
@@ -2062,15 +2077,47 @@ class LangGraphAgentBuilder:
                     if hasattr(chunk, "content"):
                         content = chunk.content
                         if isinstance(content, str) and content:
+                            recovery_response_parts.append(content)
                             yield content
                         elif isinstance(content, list):
                             for part in content:
                                 if isinstance(part, str) and part:
+                                    recovery_response_parts.append(part)
                                     yield part
                                 elif isinstance(part, dict):
                                     text = part.get("text", "")
                                     if text:
+                                        recovery_response_parts.append(text)
                                         yield text
+
+                recovery_response_text = "".join(recovery_response_parts)
+                recovery_chain_messages = _build_limit_recovery_messages_chain(
+                    collected_state_messages=_collected_state_messages,
+                    limit_messages=limit_messages,
+                    input_ids=_input_message_ids,
+                    final_response_text=recovery_response_text,
+                )
+                self._last_messages_chain = _serialize_validated_messages_chain(
+                    recovery_chain_messages,
+                    provider=self._provider,
+                    model_id=self._model_id,
+                )
+                self._last_live_state_messages = (
+                    [
+                        _message_to_context_metrics_dict(msg)
+                        for msg in _collected_state_messages
+                    ]
+                    if _collected_state_messages
+                    else [
+                        _message_to_context_metrics_dict(msg)
+                        for msg in list(limit_messages)
+                        + (
+                            [AIMessage(content=recovery_response_text)]
+                            if recovery_response_text
+                            else []
+                        )
+                    ]
+                )
 
                 logger.info(
                     "[stream_tokens] Final response generated after tool limit reached"

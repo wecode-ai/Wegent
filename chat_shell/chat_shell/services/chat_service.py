@@ -317,7 +317,10 @@ class ChatService(ChatInterface):
                 model_name=guard_model_id, model_type=guard_model_type
             )
             guard_sources = []
-            if request.enable_tool_output_guard:
+            if (
+                request.enable_tool_output_guard
+                and not settings.DISABLE_TOOL_OUTPUT_GUARD
+            ):
                 tool_output_adapter = ToolOutputGuardAdapter(
                     token_counter=guard_counter,
                     default_policy=TruncationPolicy(
@@ -327,7 +330,10 @@ class ChatService(ChatInterface):
                 )
                 guard_sources = [tool_output_adapter]
             summary_compactor = None
-            if settings.MESSAGE_COMPRESSION_ENABLED:
+            if (
+                settings.MESSAGE_COMPRESSION_ENABLED
+                and not settings.DISABLE_SUMMARY_COMPACT
+            ):
                 summary_llm = LangChainModelFactory.create_from_config(
                     request.model_config
                     or {

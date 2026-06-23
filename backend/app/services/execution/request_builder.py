@@ -1531,7 +1531,7 @@ class TaskRequestBuilder:
     @staticmethod
     def _is_tool_output_guard_enabled(user: User | None) -> bool:
         """Return whether source-level tool output truncation is enabled."""
-        default_enabled = settings.TOOL_OUTPUT_GUARD_ENABLED
+        default_enabled = True
         if not user or not getattr(user, "preferences", None):
             return default_enabled
 
