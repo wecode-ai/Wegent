@@ -102,7 +102,7 @@ def test_runtime_subtask_id_fallback_is_scoped_by_device():
 
 
 @pytest.mark.asyncio
-async def test_heartbeat_runtime_auth_sync_uses_user_preferences(monkeypatch):
+async def test_heartbeat_runtime_auth_sync_delegates_master_slave_policy(monkeypatch):
     namespace = device_namespace.DeviceNamespace()
     user = SimpleNamespace(
         id=7,
@@ -117,34 +117,19 @@ async def test_heartbeat_runtime_auth_sync_uses_user_preferences(monkeypatch):
     def fake_db_session():
         yield db
 
-    def fake_get_config(db_arg, *, user_id, runtime, preferences):
-        assert db_arg is db
-        assert user_id == 7
-        assert runtime == "codex"
-        assert preferences == user.preferences
-        return {"use_user_config": True, "configured": True}
-
-    sync_auth_to_devices = AsyncMock(
-        return_value={
-            "items": [
-                {
-                    "device_id": "device-1",
-                    "success": True,
-                    "status": "written",
-                }
-            ]
+    runtime_auth_files = {
+        "codex": {
+            "exists": True,
+            "sha256": "sha256:test",
+            "modified_at": "2026-06-23T02:00:00+00:00",
         }
-    )
+    }
+    sync_auth_for_heartbeat_device = AsyncMock(return_value={"status": "slave_synced"})
     monkeypatch.setattr(device_namespace, "_db_session", fake_db_session)
     monkeypatch.setattr(
         device_namespace.user_runtime_config_service,
-        "get_config",
-        fake_get_config,
-    )
-    monkeypatch.setattr(
-        device_namespace.user_runtime_config_service,
-        "sync_auth_to_devices",
-        sync_auth_to_devices,
+        "sync_auth_for_heartbeat_device",
+        sync_auth_for_heartbeat_device,
     )
 
     key = (7, "device-1", "codex")
@@ -155,14 +140,16 @@ async def test_heartbeat_runtime_auth_sync_uses_user_preferences(monkeypatch):
         device_id="device-1",
         runtime="codex",
         key=key,
+        runtime_auth_files=runtime_auth_files,
     )
 
-    sync_auth_to_devices.assert_awaited_once_with(
+    sync_auth_for_heartbeat_device.assert_awaited_once_with(
         db,
         user_id=7,
         runtime="codex",
+        device_id="device-1",
+        runtime_auth_files=runtime_auth_files,
         preferences=user.preferences,
-        device_ids=["device-1"],
     )
     assert key not in namespace._runtime_auth_sync_inflight
 

@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import json
+from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy.orm import Session
@@ -514,6 +515,208 @@ async def test_sync_auth_to_slave_devices_excludes_master(
     assert all(
         call["env"]["WEGENT_RUNTIME_CONFIG_OVERWRITE"] == "true" for call in calls
     )
+
+
+@pytest.mark.asyncio
+async def test_sync_auth_for_heartbeat_imports_newer_master_and_syncs_slaves(
+    test_db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    preferences = {
+        "runtime_configs": {
+            "codex": {
+                "use_user_config": True,
+                "auth_sync": {
+                    "master_device_id": "master-device",
+                    "slave_device_ids": ["slave-a"],
+                },
+            }
+        }
+    }
+    user_runtime_config_service.save_auth_json(
+        test_db,
+        user_id=1212,
+        runtime="codex",
+        auth_json='{"token":"old"}',
+        preferences=preferences,
+        source_device_id="master-device",
+        source_modified_at="2026-06-23T01:00:00+00:00",
+    )
+    calls = []
+
+    async def fake_get_online_devices(db, user_id):
+        return [
+            {"device_id": "master-device", "status": "online"},
+            {"device_id": "slave-a", "status": "online"},
+        ]
+
+    async def fake_execute_configured_device_command(**kwargs):
+        calls.append(kwargs)
+        if kwargs["command_key"] == "read_runtime_auth_file":
+            return {
+                "success": True,
+                "stdout": {"content": '{"token":"new"}'},
+                "stderr": "",
+            }
+        return {
+            "success": True,
+            "stdout": {"status": "overwritten"},
+            "stderr": "",
+        }
+
+    monkeypatch.setattr(
+        runtime_config_module.device_service,
+        "get_online_devices",
+        fake_get_online_devices,
+    )
+    monkeypatch.setattr(
+        runtime_config_module,
+        "execute_configured_device_command",
+        fake_execute_configured_device_command,
+    )
+
+    result = await user_runtime_config_service.sync_auth_for_heartbeat_device(
+        test_db,
+        user_id=1212,
+        runtime="codex",
+        device_id="master-device",
+        runtime_auth_files={
+            "codex": {
+                "exists": True,
+                "sha256": "new-sha",
+                "modified_at": "2026-06-23T02:00:00+00:00",
+            }
+        },
+        preferences=preferences,
+    )
+
+    kind = _get_codex_kind(test_db, 1212)
+    auth = kind.json["spec"]["auth"]
+
+    assert result["status"] == "master_imported"
+    assert auth["sourceDeviceId"] == "master-device"
+    assert auth["sourceModifiedAt"] == "2026-06-23T02:00:00+00:00"
+    assert json.loads(decrypt_sensitive_data(auth["encryptedValue"])) == {
+        "token": "new"
+    }
+    assert [call["command_key"] for call in calls] == [
+        "read_runtime_auth_file",
+        "sync_runtime_auth_file",
+    ]
+    assert calls[1]["device_id"] == "slave-a"
+    assert calls[1]["env"]["WEGENT_RUNTIME_CONFIG_OVERWRITE"] == "true"
+
+
+@pytest.mark.asyncio
+async def test_sync_auth_for_heartbeat_ignores_older_master_report(
+    test_db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    preferences = {
+        "runtime_configs": {
+            "codex": {
+                "use_user_config": True,
+                "auth_sync": {
+                    "master_device_id": "master-device",
+                    "slave_device_ids": ["slave-a"],
+                },
+            }
+        }
+    }
+    user_runtime_config_service.save_auth_json(
+        test_db,
+        user_id=1213,
+        runtime="codex",
+        auth_json='{"token":"newer"}',
+        preferences=preferences,
+        source_device_id="master-device",
+        source_modified_at="2026-06-23T03:00:00+00:00",
+    )
+    execute_configured_device_command = AsyncMock()
+    monkeypatch.setattr(
+        runtime_config_module,
+        "execute_configured_device_command",
+        execute_configured_device_command,
+    )
+
+    result = await user_runtime_config_service.sync_auth_for_heartbeat_device(
+        test_db,
+        user_id=1213,
+        runtime="codex",
+        device_id="master-device",
+        runtime_auth_files={
+            "codex": {
+                "exists": True,
+                "sha256": "older-sha",
+                "modified_at": "2026-06-23T02:00:00+00:00",
+            }
+        },
+        preferences=preferences,
+    )
+
+    assert result["status"] == "master_not_newer"
+    execute_configured_device_command.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_sync_auth_for_heartbeat_overwrites_slave_device(
+    test_db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    preferences = {
+        "runtime_configs": {
+            "codex": {
+                "use_user_config": True,
+                "auth_sync": {
+                    "master_device_id": "master-device",
+                    "slave_device_ids": ["slave-a"],
+                },
+            }
+        }
+    }
+    user_runtime_config_service.save_auth_json(
+        test_db,
+        user_id=1214,
+        runtime="codex",
+        auth_json='{"token":"master"}',
+        preferences=preferences,
+    )
+    calls = []
+
+    async def fake_get_online_devices(db, user_id):
+        return [{"device_id": "slave-a", "status": "online"}]
+
+    async def fake_execute_configured_device_command(**kwargs):
+        calls.append(kwargs)
+        return {
+            "success": True,
+            "stdout": {"status": "overwritten"},
+            "stderr": "",
+        }
+
+    monkeypatch.setattr(
+        runtime_config_module.device_service,
+        "get_online_devices",
+        fake_get_online_devices,
+    )
+    monkeypatch.setattr(
+        runtime_config_module,
+        "execute_configured_device_command",
+        fake_execute_configured_device_command,
+    )
+
+    result = await user_runtime_config_service.sync_auth_for_heartbeat_device(
+        test_db,
+        user_id=1214,
+        runtime="codex",
+        device_id="slave-a",
+        runtime_auth_files={"codex": {"exists": True}},
+        preferences=preferences,
+    )
+
+    assert result["status"] == "slave_synced"
+    assert calls[0]["device_id"] == "slave-a"
+    assert calls[0]["env"]["WEGENT_RUNTIME_CONFIG_OVERWRITE"] == "true"
 
 
 @pytest.mark.asyncio

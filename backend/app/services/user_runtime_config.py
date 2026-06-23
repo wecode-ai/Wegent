@@ -212,6 +212,53 @@ def get_runtime_auth_sync(preferences: Any, runtime: str) -> dict[str, Any]:
     }
 
 
+def _parse_iso_datetime(value: Any) -> Optional[datetime]:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _runtime_auth_report(
+    runtime_auth_files: Any,
+    runtime: str,
+) -> Optional[dict[str, Any]]:
+    if not isinstance(runtime_auth_files, dict):
+        return None
+    report = runtime_auth_files.get(runtime)
+    return report if isinstance(report, dict) else None
+
+
+def _is_master_report_newer(auth: dict[str, Any], report: Any) -> bool:
+    if not isinstance(report, dict) or report.get("exists") is not True:
+        return False
+
+    report_sha = str(report.get("sha256") or "").strip()
+    report_modified_at = _parse_iso_datetime(report.get("modified_at"))
+    if not report_sha and not report_modified_at:
+        return False
+    if not auth.get("encryptedValue"):
+        return True
+    if report_sha and report_sha == str(auth.get("sha256") or ""):
+        return False
+
+    saved_source_modified_at = _parse_iso_datetime(auth.get("sourceModifiedAt"))
+    if saved_source_modified_at:
+        return bool(
+            report_modified_at and report_modified_at > saved_source_modified_at
+        )
+
+    saved_updated_at = _parse_iso_datetime(auth.get("updatedAt"))
+    if saved_updated_at and report_modified_at:
+        return report_modified_at > saved_updated_at
+    return True
+
+
 def _normalize_auth_sync_input(auth_sync: Any) -> dict[str, Any]:
     if auth_sync is None:
         return {"master_device_id": None, "slave_device_ids": []}
@@ -259,9 +306,7 @@ def _validate_auth_sync_devices(
         return
     missing = sorted(selected - _known_device_ids(db, user_id))
     if missing:
-        raise UserRuntimeConfigError(
-            f"unknown auth sync device: {', '.join(missing)}"
-        )
+        raise UserRuntimeConfigError(f"unknown auth sync device: {', '.join(missing)}")
 
 
 def set_runtime_user_config_enabled(
@@ -282,9 +327,7 @@ def set_runtime_user_config_enabled(
     if use_proxy is not None:
         runtime_config["use_proxy"] = bool(use_proxy)
     if auth_sync is not None:
-        runtime_config[AUTH_SYNC_PREFERENCE_KEY] = _normalize_auth_sync_input(
-            auth_sync
-        )
+        runtime_config[AUTH_SYNC_PREFERENCE_KEY] = _normalize_auth_sync_input(auth_sync)
     runtime_configs[normalized_runtime] = runtime_config
     parsed[USER_RUNTIME_CONFIG_PREFERENCE_KEY] = runtime_configs
     return parsed
@@ -503,6 +546,7 @@ class UserRuntimeConfigService:
         runtime: str,
         device_id: str,
         preferences: Any = None,
+        source_modified_at: Optional[str] = None,
     ) -> dict[str, Any]:
         """Read auth JSON from an online device and store it encrypted."""
         normalized_runtime = _normalize_runtime(runtime)
@@ -537,7 +581,130 @@ class UserRuntimeConfigService:
             runtime=normalized_runtime,
             auth_json=stdout["content"],
             preferences=preferences,
+            source_device_id=device_id,
+            source_modified_at=source_modified_at,
         )
+
+    async def sync_auth_for_heartbeat_device(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        runtime: str,
+        device_id: str,
+        runtime_auth_files: Any,
+        preferences: Any = None,
+    ) -> dict[str, Any]:
+        """Apply master/slave auth sync policy for one heartbeat device."""
+        normalized_runtime = _normalize_runtime(runtime)
+        auth_sync = get_runtime_auth_sync(preferences, normalized_runtime)
+        master_device_id = auth_sync["master_device_id"]
+        slave_device_ids = auth_sync["slave_device_ids"]
+
+        if device_id == master_device_id:
+            if not is_runtime_user_config_enabled(preferences, normalized_runtime):
+                return {
+                    "runtime": normalized_runtime,
+                    "device_id": device_id,
+                    "status": "master_not_newer",
+                }
+            return await self._sync_master_auth_for_heartbeat(
+                db,
+                user_id=user_id,
+                runtime=normalized_runtime,
+                device_id=device_id,
+                runtime_auth_files=runtime_auth_files,
+                preferences=preferences,
+            )
+
+        if device_id in slave_device_ids:
+            if not is_runtime_user_config_enabled(preferences, normalized_runtime):
+                return {
+                    "runtime": normalized_runtime,
+                    "device_id": device_id,
+                    "status": "slave_skipped_disabled",
+                }
+            sync_result = await self.sync_auth_to_devices(
+                db,
+                user_id=user_id,
+                runtime=normalized_runtime,
+                preferences=preferences,
+                device_ids=[device_id],
+                overwrite=True,
+            )
+            items = sync_result.get("items") if isinstance(sync_result, dict) else []
+            target_item = next(
+                (
+                    item
+                    for item in items
+                    if isinstance(item, dict) and item.get("device_id") == device_id
+                ),
+                None,
+            )
+            status = (
+                "slave_synced"
+                if target_item and target_item.get("success")
+                else "slave_sync_failed"
+            )
+            return {
+                "runtime": normalized_runtime,
+                "device_id": device_id,
+                "status": status,
+                "sync": sync_result,
+            }
+
+        return {
+            "runtime": normalized_runtime,
+            "device_id": device_id,
+            "status": "not_configured_device",
+        }
+
+    async def _sync_master_auth_for_heartbeat(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        runtime: str,
+        device_id: str,
+        runtime_auth_files: Any,
+        preferences: Any = None,
+    ) -> dict[str, Any]:
+        report = _runtime_auth_report(runtime_auth_files, runtime)
+        kind = self._get_kind(db, user_id=user_id, runtime=runtime)
+        spec = self._get_spec(kind)
+        auth = dict(spec.get("auth") or {})
+        if not _is_master_report_newer(auth, report):
+            return {
+                "runtime": runtime,
+                "device_id": device_id,
+                "status": "master_not_newer",
+            }
+
+        source_modified_at = None
+        if isinstance(report, dict):
+            source_modified_at = str(report.get("modified_at") or "").strip() or None
+
+        imported = await self.import_auth_json_from_device(
+            db,
+            user_id=user_id,
+            runtime=runtime,
+            device_id=device_id,
+            preferences=preferences,
+            source_modified_at=source_modified_at,
+        )
+        sync_result = await self.sync_auth_to_slave_devices(
+            db,
+            user_id=user_id,
+            runtime=runtime,
+            preferences=preferences,
+        )
+        return {
+            "runtime": runtime,
+            "device_id": device_id,
+            "status": "master_imported",
+            "config": imported,
+            "sync": sync_result,
+        }
 
     async def sync_auth_to_devices(
         self,
