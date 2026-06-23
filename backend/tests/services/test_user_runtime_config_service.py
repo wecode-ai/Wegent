@@ -60,6 +60,25 @@ def _create_user(test_db: Session, user_id: int, preferences=None) -> User:
     return user
 
 
+def _create_device(test_db: Session, user_id: int, device_id: str) -> Kind:
+    device = Kind(
+        user_id=user_id,
+        kind="Device",
+        namespace="default",
+        name=device_id,
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Device",
+            "metadata": {"name": device_id, "namespace": "default"},
+            "spec": {"deviceId": device_id, "displayName": device_id},
+        },
+        is_active=True,
+    )
+    test_db.add(device)
+    test_db.commit()
+    return device
+
+
 def test_save_auth_json_encrypts_runtime_config(test_db: Session) -> None:
     response = user_runtime_config_service.save_auth_json(
         test_db,
@@ -107,6 +126,70 @@ def test_set_use_user_config_stores_preference(test_db: Session) -> None:
         "send_key": "cmd_enter",
         "runtime_configs": {"codex": {"use_user_config": True}},
     }
+
+
+def test_set_use_user_config_stores_auth_sync_preference(test_db: Session) -> None:
+    user = _create_user(test_db, 1204)
+    _create_device(test_db, user.id, "master-device")
+    _create_device(test_db, user.id, "slave-a")
+    _create_device(test_db, user.id, "slave-b")
+
+    response = user_runtime_config_service.set_use_user_config(
+        test_db,
+        user=user,
+        runtime="codex",
+        use_user_config=True,
+        auth_sync={
+            "master_device_id": "master-device",
+            "slave_device_ids": ["slave-a", "slave-b", "slave-a", ""],
+        },
+    )
+
+    test_db.refresh(user)
+    assert response["auth_sync"] == {
+        "master_device_id": "master-device",
+        "slave_device_ids": ["slave-a", "slave-b"],
+    }
+    assert json.loads(user.preferences)["runtime_configs"]["codex"]["auth_sync"] == {
+        "master_device_id": "master-device",
+        "slave_device_ids": ["slave-a", "slave-b"],
+    }
+
+
+def test_set_use_user_config_rejects_master_as_slave(test_db: Session) -> None:
+    user = _create_user(test_db, 1205)
+    _create_device(test_db, user.id, "same-device")
+
+    with pytest.raises(UserRuntimeConfigError, match="master device cannot be a slave"):
+        user_runtime_config_service.set_use_user_config(
+            test_db,
+            user=user,
+            runtime="codex",
+            use_user_config=True,
+            auth_sync={
+                "master_device_id": "same-device",
+                "slave_device_ids": ["same-device"],
+            },
+        )
+
+
+def test_set_use_user_config_rejects_unknown_auth_sync_device(
+    test_db: Session,
+) -> None:
+    user = _create_user(test_db, 1206)
+    _create_device(test_db, user.id, "master-device")
+
+    with pytest.raises(UserRuntimeConfigError, match="unknown auth sync device"):
+        user_runtime_config_service.set_use_user_config(
+            test_db,
+            user=user,
+            runtime="codex",
+            use_user_config=True,
+            auth_sync={
+                "master_device_id": "master-device",
+                "slave_device_ids": ["missing-device"],
+            },
+        )
 
 
 def test_set_use_proxy_stores_runtime_preference(test_db: Session) -> None:

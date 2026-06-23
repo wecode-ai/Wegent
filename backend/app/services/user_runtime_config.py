@@ -28,6 +28,7 @@ USER_RUNTIME_CONFIG_API_VERSION = "agent.wecode.io/v1"
 USER_RUNTIME_CONFIG_NAMESPACE = "default"
 USER_PROXY_CONFIG_NAME = "default"
 USER_RUNTIME_CONFIG_PREFERENCE_KEY = "runtime_configs"
+AUTH_SYNC_PREFERENCE_KEY = "auth_sync"
 MAX_AUTH_JSON_BYTES = 512 * 1024
 MAX_PROXY_URL_BYTES = 2048
 
@@ -174,11 +175,101 @@ def is_runtime_proxy_enabled(preferences: Any, runtime: str) -> bool:
     return bool(config.get("use_proxy"))
 
 
+def _dedupe_device_ids(device_ids: Iterable[Any]) -> list[str]:
+    seen: set[str] = set()
+    normalized: list[str] = []
+    for raw_device_id in device_ids:
+        device_id = str(raw_device_id or "").strip()
+        if not device_id or device_id in seen:
+            continue
+        seen.add(device_id)
+        normalized.append(device_id)
+    return normalized
+
+
+def get_runtime_auth_sync(preferences: Any, runtime: str) -> dict[str, Any]:
+    """Return normalized auth sync topology for a runtime."""
+    normalized_runtime = _normalize_runtime(runtime)
+    parsed = load_runtime_preferences(preferences)
+    runtime_configs = parsed.get(USER_RUNTIME_CONFIG_PREFERENCE_KEY) or {}
+    if not isinstance(runtime_configs, dict):
+        return {"master_device_id": None, "slave_device_ids": []}
+    config = runtime_configs.get(normalized_runtime) or {}
+    if not isinstance(config, dict):
+        return {"master_device_id": None, "slave_device_ids": []}
+    auth_sync = config.get(AUTH_SYNC_PREFERENCE_KEY) or {}
+    if not isinstance(auth_sync, dict):
+        return {"master_device_id": None, "slave_device_ids": []}
+    master_device_id = str(auth_sync.get("master_device_id") or "").strip() or None
+    slave_device_ids = _dedupe_device_ids(auth_sync.get("slave_device_ids") or [])
+    if master_device_id:
+        slave_device_ids = [
+            device_id for device_id in slave_device_ids if device_id != master_device_id
+        ]
+    return {
+        "master_device_id": master_device_id,
+        "slave_device_ids": slave_device_ids,
+    }
+
+
+def _normalize_auth_sync_input(auth_sync: Any) -> dict[str, Any]:
+    if auth_sync is None:
+        return {"master_device_id": None, "slave_device_ids": []}
+    if not isinstance(auth_sync, dict):
+        raise UserRuntimeConfigError("auth_sync must be an object")
+    master_device_id = str(auth_sync.get("master_device_id") or "").strip() or None
+    slave_device_ids = _dedupe_device_ids(auth_sync.get("slave_device_ids") or [])
+    if master_device_id and master_device_id in slave_device_ids:
+        raise UserRuntimeConfigError("master device cannot be a slave")
+    return {
+        "master_device_id": master_device_id,
+        "slave_device_ids": slave_device_ids,
+    }
+
+
+def _known_device_ids(db: Session, user_id: int) -> set[str]:
+    rows = (
+        db.query(Kind.name)
+        .filter(
+            Kind.user_id == user_id,
+            Kind.kind == "Device",
+            Kind.namespace == USER_RUNTIME_CONFIG_NAMESPACE,
+            Kind.is_active.is_(True),
+        )
+        .all()
+    )
+    return {str(row[0]) for row in rows if row and row[0]}
+
+
+def _validate_auth_sync_devices(
+    db: Session,
+    *,
+    user_id: int,
+    auth_sync: dict[str, Any],
+) -> None:
+    selected = {
+        device_id
+        for device_id in [
+            auth_sync.get("master_device_id"),
+            *auth_sync.get("slave_device_ids", []),
+        ]
+        if device_id
+    }
+    if not selected:
+        return
+    missing = sorted(selected - _known_device_ids(db, user_id))
+    if missing:
+        raise UserRuntimeConfigError(
+            f"unknown auth sync device: {', '.join(missing)}"
+        )
+
+
 def set_runtime_user_config_enabled(
     preferences: Any,
     runtime: str,
     enabled: bool,
     use_proxy: Optional[bool] = None,
+    auth_sync: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """Return preferences with the runtime config enablement updated."""
     normalized_runtime = _normalize_runtime(runtime)
@@ -190,6 +281,10 @@ def set_runtime_user_config_enabled(
     runtime_config["use_user_config"] = bool(enabled)
     if use_proxy is not None:
         runtime_config["use_proxy"] = bool(use_proxy)
+    if auth_sync is not None:
+        runtime_config[AUTH_SYNC_PREFERENCE_KEY] = _normalize_auth_sync_input(
+            auth_sync
+        )
     runtime_configs[normalized_runtime] = runtime_config
     parsed[USER_RUNTIME_CONFIG_PREFERENCE_KEY] = runtime_configs
     return parsed
@@ -255,14 +350,25 @@ class UserRuntimeConfigService:
         runtime: str,
         use_user_config: bool,
         use_proxy: Optional[bool] = None,
+        auth_sync: Optional[dict[str, Any]] = None,
     ) -> dict[str, Any]:
         """Update whether the runtime should use this user's saved config."""
         normalized_runtime = _normalize_runtime(runtime)
+        normalized_auth_sync = (
+            _normalize_auth_sync_input(auth_sync) if auth_sync is not None else None
+        )
+        if normalized_auth_sync is not None:
+            _validate_auth_sync_devices(
+                db,
+                user_id=user.id,
+                auth_sync=normalized_auth_sync,
+            )
         preferences = set_runtime_user_config_enabled(
             user.preferences,
             normalized_runtime,
             use_user_config,
             use_proxy,
+            normalized_auth_sync,
         )
         proxy_kind = self._get_proxy_kind(db, user_id=user.id)
         if use_proxy is True and not self._get_proxy_url(proxy_kind):
@@ -663,6 +769,7 @@ class UserRuntimeConfigService:
             "proxy_configured": bool(proxy_url),
             "proxy_url_masked": _mask_proxy_url(proxy_url),
             "proxy_updated_at": dict(proxy_spec.get("proxy") or {}).get("updatedAt"),
+            "auth_sync": get_runtime_auth_sync(preferences, runtime),
             "updated_at": spec.get("updatedAt"),
         }
 
