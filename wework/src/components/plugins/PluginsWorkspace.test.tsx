@@ -448,13 +448,6 @@ function mockSystemSkillsFetch(
             Promise.resolve({ items: [installedPluginResponse, installedCodexPluginResponse] }),
         })
       }
-      if (requestUrl.pathname.startsWith('/api/plugins/installed/')) {
-        return Promise.resolve({
-          ok: true,
-          status: 204,
-          json: () => Promise.resolve(null),
-        })
-      }
       if (requestUrl.pathname === '/api/plugins/installed') {
         return Promise.resolve({
           ok: true,
@@ -570,7 +563,7 @@ describe('PluginsWorkspace', () => {
     )
   })
 
-  test('uninstalls an installed system plugin from the catalog', async () => {
+  test('shows installed system plugins in the catalog without uninstall actions', async () => {
     mockSystemSkillsFetch({
       pluginInstallState: 'installed',
       installedPluginId: 55,
@@ -578,17 +571,12 @@ describe('PluginsWorkspace', () => {
     render(<PluginsWorkspace />)
 
     expect(await screen.findByText('Superpowers')).toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('system-plugin-uninstall-100'))
-
-    expect(fetch).toHaveBeenCalledWith(
-      '/api/plugins/installed/55',
+    expect(screen.getByTestId('system-plugin-installed-100')).toHaveTextContent('已安装')
+    expect(screen.queryByTestId('system-plugin-uninstall-100')).not.toBeInTheDocument()
+    expect(fetch).not.toHaveBeenCalledWith(
+      expect.stringMatching(/\/api\/plugins\/installed\/\d+/),
       expect.objectContaining({ method: 'DELETE' })
     )
-    expect(fetch).toHaveBeenCalledWith(
-      '/api/plugins/installed/56',
-      expect.objectContaining({ method: 'DELETE' })
-    )
-    expect(screen.getByTestId('system-plugin-install-100')).toBeInTheDocument()
   })
 
   test('filters skills and shows the empty state for unmatched search', async () => {

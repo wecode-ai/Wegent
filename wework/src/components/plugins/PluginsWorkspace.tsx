@@ -8,7 +8,6 @@ import {
   Search,
   Settings,
   Sparkles,
-  Trash2,
 } from 'lucide-react'
 import type { FormEvent, ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
@@ -244,21 +243,6 @@ function componentCountsFromPlugin(
   }
 }
 
-function getCatalogInstalledPluginIds(plugin: PluginCatalogItem): number[] {
-  const ids = new Set<number>()
-  Object.values(plugin.installedPluginIds ?? {}).forEach(id => {
-    if (typeof id === 'number' && id > 0) {
-      ids.add(id)
-    }
-  })
-
-  if (typeof plugin.installedPluginId === 'number' && plugin.installedPluginId > 0) {
-    ids.add(plugin.installedPluginId)
-  }
-
-  return Array.from(ids)
-}
-
 function getKindIdFromMetadata(metadata: Record<string, unknown>): number | null {
   const labels = metadata['labels']
   const id =
@@ -315,19 +299,17 @@ function tabClassName(selected: boolean) {
 function SystemPluginCatalogRow({
   plugin,
   installLabel,
+  installedLabel,
   updateLabel,
-  uninstallLabel,
   onInstall,
   onUpdate,
-  onUninstall,
 }: {
   plugin: PluginCatalogItem
   installLabel: string
+  installedLabel: string
   updateLabel: string
-  uninstallLabel: string
   onInstall: () => void
   onUpdate: () => void
-  onUninstall: () => void
 }) {
   const counts = componentCountsFromPlugin(plugin.components)
   const componentLabels = Object.entries(counts)
@@ -372,15 +354,12 @@ function SystemPluginCatalogRow({
           <RefreshCw className="h-4 w-4" />
         </button>
       ) : plugin.installState === 'installed' ? (
-        <button
-          type="button"
-          aria-label={uninstallLabel}
-          data-testid={`system-plugin-uninstall-${safeId}`}
-          onClick={onUninstall}
-          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-text-muted hover:bg-surface hover:text-red-500 sm:h-8 sm:w-8 sm:rounded-lg"
+        <span
+          data-testid={`system-plugin-installed-${safeId}`}
+          className="shrink-0 rounded-lg bg-surface px-3 py-1.5 text-xs font-semibold text-text-muted"
         >
-          <Trash2 className="h-4 w-4" />
-        </button>
+          {installedLabel}
+        </span>
       ) : (
         <button
           type="button"
@@ -794,38 +773,6 @@ export function PluginsWorkspace({
   const updateCatalogPlugin = async (plugin: PluginCatalogItem) => {
     const installed = await pluginApi.updateSystemPlugin(plugin.id)
     updateCatalogAfterInstall(plugin.id, installed)
-  }
-
-  const uninstallCatalogPlugin = async (plugin: PluginCatalogItem) => {
-    const installedPluginIds = getCatalogInstalledPluginIds(plugin)
-    if (installedPluginIds.length === 0) return
-
-    const previousInstalledPlugins = installedPlugins
-    const previousCatalogItems = pluginCatalogState.items
-    const idSet = new Set(installedPluginIds)
-
-    setInstalledPlugins(previous => previous.filter(item => !idSet.has(item.id)))
-    setPluginCatalogState(previous => ({
-      ...previous,
-      items: previous.items.map(item =>
-        item.id === plugin.id
-          ? {
-              ...item,
-              installState: 'not_installed',
-              installedPluginId: null,
-              installedPluginIds: {},
-              installedChecksum: null,
-            }
-          : item
-      ),
-    }))
-
-    try {
-      await Promise.all(installedPluginIds.map(id => pluginApi.uninstallInstalledPlugin(id)))
-    } catch {
-      setInstalledPlugins(previousInstalledPlugins)
-      setPluginCatalogState(previous => ({ ...previous, items: previousCatalogItems }))
-    }
   }
 
   const toggleInstalledPlugin = (id: number) => {
@@ -1402,11 +1349,10 @@ export function PluginsWorkspace({
                     key={plugin.id}
                     plugin={plugin}
                     installLabel={t('workbench.plugins_install', '安装')}
-                    uninstallLabel={t('workbench.plugins_uninstall', '卸载')}
+                    installedLabel={t('workbench.plugins_installed', '已安装')}
                     updateLabel={t('workbench.plugins_update', '更新')}
                     onInstall={() => void installCatalogPlugin(plugin)}
                     onUpdate={() => void updateCatalogPlugin(plugin)}
-                    onUninstall={() => void uninstallCatalogPlugin(plugin)}
                   />
                 ))}
               </div>
