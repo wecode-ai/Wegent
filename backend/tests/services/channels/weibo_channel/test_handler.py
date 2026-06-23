@@ -80,6 +80,19 @@ async def test_send_text_reply_returns_false_without_sender():
 
 
 @pytest.mark.asyncio
+async def test_send_text_reply_logs_when_sender_returns_false(caplog):
+    sender = FakeSender()
+    sender.send_text_message.return_value = False
+    handler = WeiboChannelHandler(channel_id=7, sender=sender)
+    context = handler.parse_message(_event())
+
+    result = await handler.send_text_reply(context, "reply")
+
+    assert result is False
+    assert "Weibo reply send returned false" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_resolve_user_passes_weibo_fields_and_mapping_config(monkeypatch):
     calls = {}
     resolved_user = object()

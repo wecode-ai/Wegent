@@ -52,7 +52,9 @@ async def test_emit_chunk_sends_incrementing_chunk_ids():
     )
     assert sender.send_stream_chunk.await_args_list[0].kwargs["chunk_id"] == 0
     assert sender.send_stream_chunk.await_args_list[0].kwargs["done"] is False
+    assert sender.send_stream_chunk.await_args_list[0].kwargs["text"] == "hello"
     assert sender.send_stream_chunk.await_args_list[1].kwargs["chunk_id"] == 1
+    assert sender.send_stream_chunk.await_args_list[1].kwargs["text"] == " world"
 
 
 @pytest.mark.asyncio
@@ -96,3 +98,25 @@ async def test_emit_done_sends_unsent_tail_from_final_result():
 
     assert sender.send_stream_chunk.await_args_list[-1].kwargs["text"] == " world"
     assert sender.send_stream_chunk.await_args_list[-1].kwargs["done"] is True
+
+
+@pytest.mark.asyncio
+async def test_emit_error_raises_when_weibo_send_fails():
+    sender = AsyncMock()
+    sender.send_stream_chunk.return_value = False
+    cache = FakeCache()
+    emitter = WeiboStreamingResponseEmitter(
+        channel_id=7,
+        to_user_id="10001",
+        sender=sender,
+        cache=cache,
+    )
+
+    await emitter.emit_start(task_id=11, subtask_id=13)
+
+    with pytest.raises(RuntimeError, match="Failed to send Weibo stream chunk"):
+        await emitter.emit_error(task_id=11, subtask_id=13, error="Device lost")
+
+    assert sender.send_stream_chunk.await_args.kwargs["text"] == (
+        "任务执行失败: Device lost"
+    )

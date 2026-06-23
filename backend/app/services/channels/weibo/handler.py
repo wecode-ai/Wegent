@@ -113,10 +113,18 @@ class WeiboChannelHandler(BaseChannelHandler[dict[str, Any], WeiboCallbackInfo])
             return False
 
         try:
-            return await self._sender.send_text_message(
+            sent = await self._sender.send_text_message(
                 to_user_id=to_user_id,
                 text=text,
             )
+            if not sent:
+                self.logger.error(
+                    "[WeiboHandler] Weibo reply send returned false: "
+                    "to_user_id=%s text_len=%s",
+                    to_user_id,
+                    len(text),
+                )
+            return sent
         except Exception as exc:
             self.logger.exception("[WeiboHandler] Failed to send reply: %s", exc)
             return False

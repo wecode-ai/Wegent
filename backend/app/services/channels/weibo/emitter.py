@@ -175,13 +175,25 @@ class WeiboStreamingResponseEmitter(ResultEmitter):
             raise RuntimeError("Weibo stream message_id is not initialized")
 
         chunk_id = await self._next_chunk_id()
-        await self._sender.send_stream_chunk(
+        sent = await self._sender.send_stream_chunk(
             to_user_id=self._to_user_id,
             text=text,
             message_id=self._message_id,
             chunk_id=chunk_id,
             done=done,
         )
+        logger.info(
+            "[WeiboEmitter] Sent stream chunk: to_user_id=%s message_id=%s "
+            "chunk_id=%s done=%s text_len=%s success=%s",
+            self._to_user_id,
+            self._message_id,
+            chunk_id,
+            done,
+            len(text),
+            sent,
+        )
+        if not sent:
+            raise RuntimeError("Failed to send Weibo stream chunk")
 
     async def _next_chunk_id(self) -> int:
         if not self._message_id:
