@@ -85,6 +85,12 @@ export function RuntimeConfigSettingsPage({ runtime }: RuntimeConfigSettingsPage
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
 
+  const applyRuntimeConfig = useCallback((nextConfig: UserRuntimeConfig) => {
+    setConfig(nextConfig)
+    setDraftMasterDeviceId(nextConfig.auth_sync.master_device_id ?? '')
+    setDraftSlaveDeviceIds([...nextConfig.auth_sync.slave_device_ids])
+  }, [])
+
   const onlineDevices = useMemo(
     () => devices.filter(device => device.status === 'online' && isClaudeCodeDevice(device)),
     [devices],
@@ -115,7 +121,7 @@ export function RuntimeConfigSettingsPage({ runtime }: RuntimeConfigSettingsPage
         userApi.getRuntimeConfig(runtime),
         deviceApi.getAllDevices(),
       ])
-      setConfig(nextConfig)
+      applyRuntimeConfig(nextConfig)
       setDevices(nextDevices.filter(isClaudeCodeDevice))
     } catch (loadError) {
       setError(
@@ -128,16 +134,11 @@ export function RuntimeConfigSettingsPage({ runtime }: RuntimeConfigSettingsPage
       setLoading(false)
       setRefreshing(false)
     }
-  }, [runtime, t])
+  }, [applyRuntimeConfig, runtime, t])
 
   useEffect(() => {
     void Promise.resolve().then(() => loadRuntimeConfig())
   }, [loadRuntimeConfig])
-
-  useEffect(() => {
-    setDraftMasterDeviceId(config?.auth_sync?.master_device_id ?? '')
-    setDraftSlaveDeviceIds(config?.auth_sync?.slave_device_ids ?? [])
-  }, [config?.auth_sync])
 
   const handleToggleUseUserConfig = async () => {
     if (!config || !config.configured || updating) return
@@ -149,7 +150,7 @@ export function RuntimeConfigSettingsPage({ runtime }: RuntimeConfigSettingsPage
       const nextConfig = await userApi.updateRuntimeConfig(runtime, {
         use_user_config: !config.use_user_config,
       })
-      setConfig(nextConfig)
+      applyRuntimeConfig(nextConfig)
     } catch (updateError) {
       setError(
         getErrorMessage(
@@ -178,7 +179,7 @@ export function RuntimeConfigSettingsPage({ runtime }: RuntimeConfigSettingsPage
         use_user_config: config.use_user_config,
         use_proxy: !config.use_proxy,
       })
-      setConfig(nextConfig)
+      applyRuntimeConfig(nextConfig)
     } catch (proxyError) {
       setError(
         getErrorMessage(
@@ -228,7 +229,7 @@ export function RuntimeConfigSettingsPage({ runtime }: RuntimeConfigSettingsPage
           slave_device_ids: slaveDeviceIds,
         },
       })
-      setConfig(nextConfig)
+      applyRuntimeConfig(nextConfig)
       setNotice(t('workbench.runtime_config_auth_sync_saved'))
     } catch (syncError) {
       setError(
@@ -258,7 +259,7 @@ export function RuntimeConfigSettingsPage({ runtime }: RuntimeConfigSettingsPage
       )
       const { userApi } = createRuntimeSettingsApis()
       const nextConfig = await userApi.uploadRuntimeAuthJson(runtime, content)
-      setConfig(nextConfig)
+      applyRuntimeConfig(nextConfig)
       setNotice(t('workbench.runtime_config_upload_success', 'auth.json 已保存'))
     } catch (uploadError) {
       setError(
@@ -283,7 +284,7 @@ export function RuntimeConfigSettingsPage({ runtime }: RuntimeConfigSettingsPage
         runtime,
         effectiveImportDeviceId,
       )
-      setConfig(nextConfig)
+      applyRuntimeConfig(nextConfig)
       setNotice(t('workbench.runtime_config_import_success', '已从设备导入 auth.json'))
     } catch (importError) {
       setError(
