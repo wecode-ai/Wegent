@@ -98,6 +98,7 @@ class CodexSessionDiscovery:
         return CodexConfig
 
     def _codex_config(self, config_type: Any) -> Any:
+        _ensure_codex_home(self.codex_home)
         return config_type(
             codex_bin=_resolve_codex_binary(config.CODEX_BINARY_PATH),
             client_name="wegent_executor",
@@ -478,10 +479,15 @@ def _codex_enum_value(enum_name: str, value: str) -> Any:
 def _codex_env(
     codex_home: Path, runtime_env: Optional[dict[str, str]]
 ) -> dict[str, str]:
+    _ensure_codex_home(codex_home)
     env = {**os.environ, "CODEX_HOME": str(codex_home)}
     if runtime_env:
         env.update(runtime_env)
     return env
+
+
+def _ensure_codex_home(codex_home: Path) -> None:
+    codex_home.mkdir(parents=True, exist_ok=True)
 
 
 def _developer_instructions(request: Any) -> Optional[str]:

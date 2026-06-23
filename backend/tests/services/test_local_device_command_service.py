@@ -523,6 +523,7 @@ def test_codex_threads_list_command_reads_sdk_thread_list(tmp_path):
     assert payload["threads"][1]["running"] is False
     assert "transcript" not in json.dumps(payload)
     assert "session_index" not in json.dumps(payload)
+    assert (tmp_path / "codex-home").is_dir()
 
 
 def test_codex_threads_list_command_surfaces_sdk_errors(tmp_path):
