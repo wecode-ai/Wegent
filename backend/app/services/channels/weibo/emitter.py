@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 from app.core.cache import cache_manager
 from app.services.channels.weibo.sender import WeiboSender, generate_weibo_message_id
@@ -18,6 +18,27 @@ logger = logging.getLogger(__name__)
 
 MAX_WEIBO_CHUNK_CHARS = 1800
 STREAM_COUNTER_TTL_SECONDS = 60 * 60
+
+
+def normalize_execution_event_type(event_type: Any) -> str:
+    """Return the canonical EventType value for enum-like event inputs."""
+    if isinstance(event_type, EventType):
+        return event_type.value
+
+    if isinstance(event_type, str):
+        try:
+            return EventType(event_type).value
+        except ValueError:
+            pass
+
+        if event_type.startswith("EventType."):
+            enum_name = event_type.split(".", 1)[1]
+            try:
+                return EventType[enum_name].value
+            except KeyError:
+                return event_type
+
+    return str(event_type)
 
 
 class WeiboStreamingResponseEmitter(ResultEmitter):
@@ -40,8 +61,16 @@ class WeiboStreamingResponseEmitter(ResultEmitter):
         self._finished = False
 
     async def emit(self, event: ExecutionEvent) -> None:
-        event_type = (
-            event.type.value if isinstance(event.type, EventType) else event.type
+        event_type = normalize_execution_event_type(event.type)
+        logger.debug(
+            "[WeiboEmitter] Handling event: raw_type=%r normalized_type=%s "
+            "task_id=%s subtask_id=%s finished=%s content_len=%s",
+            event.type,
+            event_type,
+            event.task_id,
+            event.subtask_id,
+            self._finished,
+            len(event.content) if event.content else 0,
         )
         if event_type == EventType.START.value:
             await self.emit_start(event.task_id, event.subtask_id, event.message_id)
@@ -62,6 +91,15 @@ class WeiboStreamingResponseEmitter(ResultEmitter):
             )
         elif event_type in {EventType.CANCEL.value, EventType.CANCELLED.value}:
             await self.emit_cancelled(event.task_id, event.subtask_id)
+        else:
+            logger.warning(
+                "[WeiboEmitter] Ignoring unsupported event type: raw_type=%r "
+                "normalized_type=%s task_id=%s subtask_id=%s",
+                event.type,
+                event_type,
+                event.task_id,
+                event.subtask_id,
+            )
 
     async def emit_start(
         self,
@@ -80,7 +118,19 @@ class WeiboStreamingResponseEmitter(ResultEmitter):
         offset: int,
         **kwargs,
     ) -> None:
-        if self._finished or not content:
+        if self._finished:
+            logger.debug(
+                "[WeiboEmitter] Ignoring chunk after finish: task_id=%s subtask_id=%s",
+                task_id,
+                subtask_id,
+            )
+            return
+        if not content:
+            logger.debug(
+                "[WeiboEmitter] Ignoring empty chunk: task_id=%s subtask_id=%s",
+                task_id,
+                subtask_id,
+            )
             return
 
         self._ensure_message_id(task_id, subtask_id)
@@ -95,6 +145,11 @@ class WeiboStreamingResponseEmitter(ResultEmitter):
         **kwargs,
     ) -> None:
         if self._finished:
+            logger.debug(
+                "[WeiboEmitter] Ignoring done after finish: task_id=%s subtask_id=%s",
+                task_id,
+                subtask_id,
+            )
             return
 
         self._ensure_message_id(task_id, subtask_id)

@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.services.channels.weibo.emitter import WeiboStreamingResponseEmitter
+from shared.models import ExecutionEvent
 
 
 class FakeCache:
@@ -57,6 +58,32 @@ async def test_emit_chunk_sends_incrementing_chunk_ids():
     )
     assert sender.send_stream_chunk.await_args_list[1].kwargs["chunk_id"] == 1
     assert sender.send_stream_chunk.await_args_list[1].kwargs["text"] == " world"
+
+
+@pytest.mark.asyncio
+async def test_emit_accepts_enum_name_event_type_string():
+    sender = AsyncMock()
+    sender.send_stream_chunk.return_value = True
+    cache = FakeCache()
+    emitter = WeiboStreamingResponseEmitter(
+        channel_id=7,
+        to_user_id="10001",
+        sender=sender,
+        cache=cache,
+    )
+
+    await emitter.emit(
+        ExecutionEvent(
+            type="EventType.CHUNK",
+            task_id=11,
+            subtask_id=13,
+            content="hello",
+            offset=0,
+        )
+    )
+
+    assert sender.send_stream_chunk.await_args.kwargs["text"] == "hello"
+    assert sender.send_stream_chunk.await_args.kwargs["done"] is False
 
 
 @pytest.mark.asyncio
