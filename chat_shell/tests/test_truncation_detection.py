@@ -101,6 +101,15 @@ class TestStreamingStateTruncation:
         assert result["truncated"] is True
         assert result["truncation_reason"] == "max_tokens"
 
+    def test_get_current_result_includes_context_compactions(self, streaming_state):
+        streaming_state.context_compactions = [
+            {"strategy": "summary_compact", "before_tokens": 1000, "after_tokens": 400}
+        ]
+
+        result = streaming_state.get_current_result()
+
+        assert result["context_compactions"] == streaming_state.context_compactions
+
     def test_truncation_info_in_result_all_providers(self):
         """Test truncation info is correctly included for all provider reasons."""
         for reason in ["length", "max_tokens", "MAX_TOKENS"]:

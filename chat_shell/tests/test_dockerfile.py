@@ -4,7 +4,6 @@
 
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CHAT_SHELL_DOCKERFILE = REPO_ROOT / "docker" / "chat_shell" / "Dockerfile"
 

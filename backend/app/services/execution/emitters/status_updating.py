@@ -331,11 +331,17 @@ class StatusUpdatingEmitter(ResultEmitter):
             await self._cancel_pending_storage_flush_task()
 
             if event.type == EventType.DONE.value:
-                await self._handle_done(event)
+                final_result = await self._handle_done(event)
+                if final_result is not None:
+                    event.result = final_result
             elif event.type == EventType.ERROR.value:
-                await self._handle_error(event)
+                final_result = await self._handle_error(event)
+                if final_result is not None:
+                    event.result = final_result
             elif event.type == EventType.CANCELLED.value:
-                await self._handle_cancelled(event)
+                final_result = await self._handle_cancelled(event)
+                if final_result is not None:
+                    event.result = final_result
 
         # Forward event to wrapped emitter
         await self._wrapped.emit(event)
@@ -414,43 +420,47 @@ class StatusUpdatingEmitter(ResultEmitter):
         await self._cancel_pending_storage_flush_task()
         await self._wrapped.close()
 
-    async def _handle_done(self, event: ExecutionEvent) -> None:
+    async def _handle_done(self, event: ExecutionEvent) -> Optional[Dict[str, Any]]:
         """Handle DONE event - update status to COMPLETED.
 
         Args:
             event: The DONE event
         """
         if self._status_updated:
-            return
+            return event.result
 
-        await self._update_status_completed(event.result)
+        return await self._update_status_completed(event.result)
 
-    async def _handle_error(self, event: ExecutionEvent) -> None:
+    async def _handle_error(self, event: ExecutionEvent) -> Optional[Dict[str, Any]]:
         """Handle ERROR event - update status to FAILED.
 
         Args:
             event: The ERROR event
         """
         if self._status_updated:
-            return
+            return event.result
 
         error_message = event.error or "Unknown error"
-        await self._update_status_failed(error_message, error_code=event.error_code)
+        return await self._update_status_failed(
+            error_message, error_code=event.error_code
+        )
 
-    async def _handle_cancelled(self, event: ExecutionEvent) -> None:
+    async def _handle_cancelled(
+        self, event: ExecutionEvent
+    ) -> Optional[Dict[str, Any]]:
         """Handle CANCELLED event - update status to CANCELLED.
 
         Args:
             event: The CANCELLED event
         """
         if self._status_updated:
-            return
+            return event.result
 
-        await self._update_status_cancelled()
+        return await self._update_status_cancelled()
 
     async def _update_status_completed(
         self, result: Optional[Dict[str, Any]] = None
-    ) -> None:
+    ) -> Optional[Dict[str, Any]]:
         """Update subtask and task status to COMPLETED.
 
         The actual task status (COMPLETED or PENDING_CONFIRMATION for pipeline mode)
@@ -485,16 +495,18 @@ class StatusUpdatingEmitter(ResultEmitter):
             # Publish TaskCompletedEvent for unified handling
             # This ensures subscription execution status is updated regardless of execution mode
             await self._publish_task_completed_event("COMPLETED", final_result, None)
+            return final_result
 
         except Exception as e:
             logger.error(
                 f"[StatusUpdatingEmitter] Failed to update status to COMPLETED: {e}",
                 exc_info=True,
             )
+            return result
 
     async def _update_status_failed(
         self, error_message: str, error_code: Optional[str] = None
-    ) -> None:
+    ) -> Optional[Dict[str, Any]]:
         """Update subtask and task status to FAILED.
 
         Also publishes TaskCompletedEvent for unified handling by subscription
@@ -528,14 +540,16 @@ class StatusUpdatingEmitter(ResultEmitter):
 
             # Publish TaskCompletedEvent for unified handling
             await self._publish_task_completed_event("FAILED", result, error_message)
+            return result
 
         except Exception as e:
             logger.error(
                 f"[StatusUpdatingEmitter] Failed to update status to FAILED: {e}",
                 exc_info=True,
             )
+            return None
 
-    async def _update_status_cancelled(self) -> None:
+    async def _update_status_cancelled(self) -> Optional[Dict[str, Any]]:
         """Update subtask and task status to CANCELLED.
 
         Also publishes TaskCompletedEvent for unified handling by subscription
@@ -562,12 +576,14 @@ class StatusUpdatingEmitter(ResultEmitter):
 
             # Publish TaskCompletedEvent for unified handling
             await self._publish_task_completed_event("CANCELLED", result, None)
+            return result
 
         except Exception as e:
             logger.error(
                 f"[StatusUpdatingEmitter] Failed to update status for cancelled: {e}",
                 exc_info=True,
             )
+            return None
 
     async def _publish_task_completed_event(
         self,

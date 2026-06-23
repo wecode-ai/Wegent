@@ -11,6 +11,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 
 from chat_shell.agents.graph_builder import (
     InvalidToolMessageSequenceError,
+    _contains_summary_compacted_message,
     _serialize_messages_chain,
     _validate_tool_message_sequence,
 )
@@ -203,6 +204,43 @@ class TestSerializeMessagesChain:
                 "additional_kwargs": {"compacted": True},
             }
         ]
+
+    def test_summary_compacted_markers_are_persisted(self):
+        """Summary compact markers should survive serialization for debugging/reload."""
+        msg = HumanMessage(
+            content="[summary]",
+            additional_kwargs={
+                "compacted": True,
+                "summary_compacted": True,
+                "summary_compact_version": 1,
+            },
+        )
+        result = _serialize_messages_chain([msg])
+        assert result == [
+            {
+                "role": "user",
+                "content": "[summary]",
+                "additional_kwargs": {
+                    "compacted": True,
+                    "summary_compacted": True,
+                    "summary_compact_version": 1,
+                },
+            }
+        ]
+
+    def test_detects_summary_compacted_live_state(self):
+        """Final-state rewrite detection should trigger when summary_compacted is present."""
+        messages = [
+            HumanMessage(content="orig"),
+            HumanMessage(
+                content="[summary]",
+                additional_kwargs={
+                    "compacted": True,
+                    "summary_compacted": True,
+                },
+            ),
+        ]
+        assert _contains_summary_compacted_message(messages) is True
 
     def test_compacted_assistant_message_preserves_marker(self):
         """Assistant summaries keep the compacted marker through serialization."""

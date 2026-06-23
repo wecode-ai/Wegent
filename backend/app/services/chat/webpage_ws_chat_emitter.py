@@ -248,16 +248,20 @@ class WebPageSocketEmitter:
         subtask_id: int,
         phase: str,
         context_metrics: Dict[str, Any],
+        context_compaction: Dict[str, Any] | None = None,
     ) -> None:
         """Emit chat:status_updated event to task room."""
+        payload: Dict[str, Any] = {
+            "task_id": task_id,
+            "subtask_id": subtask_id,
+            "phase": phase,
+            "context_metrics": context_metrics,
+        }
+        if context_compaction is not None:
+            payload["context_compaction"] = context_compaction
         await self.sio.emit(
             ServerEvents.CHAT_STATUS_UPDATED,
-            {
-                "task_id": task_id,
-                "subtask_id": subtask_id,
-                "phase": phase,
-                "context_metrics": context_metrics,
-            },
+            payload,
             room=f"task:{task_id}",
             namespace=self.namespace,
         )

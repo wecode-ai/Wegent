@@ -118,6 +118,7 @@ interface SocketContextType {
       started_at?: string
       last_activity_at?: string
     }
+    status_updated?: ChatStatusUpdatedPayload
     /** Subtasks data for immediate message sync (same format as task detail API) */
     subtasks?: Array<Record<string, unknown>>
     error?: string
@@ -242,6 +243,13 @@ function registerSocketHandlers(
   }
 }
 
+function cacheChatStatusSnapshot(
+  cache: React.MutableRefObject<Record<number, ChatStatusUpdatedPayload>>,
+  payload: ChatStatusUpdatedPayload
+): void {
+  cache.current[payload.task_id] = payload
+}
+
 export function SocketProvider({ children }: { children: ReactNode }) {
   const [socket, setSocket] = useState<SocketClientSocket | null>(null)
   const [isConnected, setIsConnected] = useState(false)
@@ -250,6 +258,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
 
   // Track current joined tasks
   const joinedTasksRef = useRef<Set<number>>(new Set())
+  const latestChatStatusRef = useRef<Record<number, ChatStatusUpdatedPayload>>({})
   const handleAuthError = useCallback((_error: unknown) => {
     removeToken()
     redirectToLoginAfterAuthFailure()
@@ -326,6 +335,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         started_at?: string
         last_activity_at?: string
       }
+      status_updated?: ChatStatusUpdatedPayload
       subtasks?: Array<Record<string, unknown>>
       error?: string
     }> => {
@@ -369,6 +379,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
               started_at?: string
               last_activity_at?: string
             }
+            status_updated?: ChatStatusUpdatedPayload
             subtasks?: Array<Record<string, unknown>>
             error?: string
           }) => {
@@ -402,6 +413,10 @@ export function SocketProvider({ children }: { children: ReactNode }) {
                 lastMessageId: lastSubtask?.message_id,
                 hasError: Boolean(response.error),
               })
+            }
+
+            if (response.status_updated) {
+              cacheChatStatusSnapshot(latestChatStatusRef, response.status_updated)
             }
 
             // If there was an error, remove from the set so it can be retried
@@ -582,13 +597,20 @@ export function SocketProvider({ children }: { children: ReactNode }) {
    */
   const registerChatHandlers = useCallback(
     (handlers: ChatEventHandlers): (() => void) => {
-      return registerSocketHandlers(socketClient.socket, [
+      const wrappedStatusUpdated = handlers.onChatStatusUpdated
+        ? (payload: ChatStatusUpdatedPayload) => {
+            cacheChatStatusSnapshot(latestChatStatusRef, payload)
+            handlers.onChatStatusUpdated?.(payload)
+          }
+        : undefined
+
+      const cleanup = registerSocketHandlers(socketClient.socket, [
         socketHandler(ServerEvents.CHAT_START, handlers.onChatStart),
         socketHandler(ServerEvents.CHAT_CHUNK, handlers.onChatChunk),
         socketHandler(ServerEvents.CHAT_DONE, handlers.onChatDone),
         socketHandler(ServerEvents.CHAT_ERROR, handlers.onChatError),
         socketHandler(ServerEvents.CHAT_CANCELLED, handlers.onChatCancelled),
-        socketHandler(ServerEvents.CHAT_STATUS_UPDATED, handlers.onChatStatusUpdated),
+        socketHandler(ServerEvents.CHAT_STATUS_UPDATED, wrappedStatusUpdated),
         socketHandler(ServerEvents.CHAT_MESSAGE, handlers.onChatMessage),
         socketHandler(ServerEvents.CHAT_BLOCK_CREATED, handlers.onBlockCreated),
         socketHandler(ServerEvents.CHAT_BLOCK_UPDATED, handlers.onBlockUpdated),
@@ -596,6 +618,14 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         socketHandler(ServerEvents.CHAT_GUIDANCE_APPLIED, handlers.onGuidanceApplied),
         socketHandler(ServerEvents.CHAT_GUIDANCE_EXPIRED, handlers.onGuidanceExpired),
       ])
+
+      if (wrappedStatusUpdated) {
+        Object.values(latestChatStatusRef.current).forEach(snapshot => {
+          wrappedStatusUpdated(snapshot)
+        })
+      }
+
+      return cleanup
     },
     [socketClient]
   )

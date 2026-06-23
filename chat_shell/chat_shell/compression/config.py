@@ -9,8 +9,14 @@ Model-specific limits can be configured in Model CRD spec (contextWindow, maxOut
 or fall back to built-in defaults based on model ID.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Optional
+
+# Flat output-buffer reservation for context budgeting (decoupled from a
+# model's max output capability). See ModelContextConfig.reserved_output_tokens.
+RESERVED_OUTPUT_WINDOW_RATIO = 0.1
+RESERVED_OUTPUT_MIN_TOKENS = 16_000
+RESERVED_OUTPUT_MAX_TOKENS = 48_000
 
 
 @dataclass
@@ -19,30 +25,69 @@ class ModelContextConfig:
 
     Attributes:
         context_window: Maximum context window size in tokens
-        output_tokens: Reserved tokens for model output
+        output_tokens: Model's max output capability (informational; from CRD).
+            NOT used to size the input budget — see ``reserved_output_tokens``.
         trigger_threshold: Percentage of context window that triggers compression (0.0-1.0)
         target_threshold: Target percentage of context window after compression (0.0-1.0)
     """
 
     context_window: int
     output_tokens: int = 4096
+    output_tokens_cap_enabled: bool = True
     trigger_threshold: float = 0.90  # Trigger compression at 90% of available context
     target_threshold: float = 0.70  # Compress to 70% of available context
+    auto_compact_token_limit: int | None = None
+
+    @property
+    def reserved_output_tokens(self) -> int:
+        """Flat output buffer reserved from the window for context budgeting.
+
+        Deliberately decoupled from ``output_tokens`` (the model's max output
+        capability, commonly configured at the model ceiling, e.g. 96k). Using
+        that ceiling as the reserve makes compaction trigger far too early. We
+        reserve a flat buffer instead, and only cap it by ``output_tokens`` when
+        that cap is explicitly trustworthy for governance budgeting:
+
+            reserved = clamp(context_window * 0.1, 16k, 48k)
+            if output_tokens_cap_enabled:
+                reserved = min(reserved, output_tokens)
+            reserved = min(reserved, context_window // 2)
+
+        The final ``window // 2`` cap protects small-window models from
+        over-reserving input budget.
+        """
+        ratio_based = int(self.context_window * RESERVED_OUTPUT_WINDOW_RATIO)
+        reserved = min(
+            max(ratio_based, RESERVED_OUTPUT_MIN_TOKENS), RESERVED_OUTPUT_MAX_TOKENS
+        )
+        if self.output_tokens_cap_enabled:
+            reserved = min(reserved, self.output_tokens)
+        return min(reserved, self.context_window // 2)
 
     @property
     def available_tokens(self) -> int:
-        """Calculate available tokens after reserving output tokens."""
-        return self.context_window - self.output_tokens
+        """Calculate available input tokens after reserving the output buffer."""
+        return max(0, self.context_window - self.reserved_output_tokens)
 
     @property
     def trigger_limit(self) -> int:
         """Calculate token count that triggers compression."""
-        return int(self.available_tokens * self.trigger_threshold)
+        base_limit = int(self.available_tokens * self.trigger_threshold)
+        if self.auto_compact_token_limit is None:
+            return base_limit
+        hard_limit = max(0, self.available_tokens)
+        return min(max(0, self.auto_compact_token_limit), hard_limit)
 
     @property
     def target_limit(self) -> int:
         """Calculate target token count after compression."""
-        return int(self.available_tokens * self.target_threshold)
+        base_limit = int(self.available_tokens * self.target_threshold)
+        if self.auto_compact_token_limit is None:
+            return base_limit
+        trigger_limit = self.trigger_limit
+        if trigger_limit <= 0:
+            return 0
+        return min(base_limit, trigger_limit - 1)
 
     @property
     def effective_limit(self) -> int:
@@ -133,6 +178,15 @@ def get_model_context_config(
     Returns:
         ModelContextConfig for the model
     """
+
+    def _apply_auto_compact_limit(config: ModelContextConfig) -> ModelContextConfig:
+        from chat_shell.core.config import settings
+
+        override = settings.AUTO_COMPACT_TOKEN_LIMIT
+        if override is None:
+            return replace(config)
+        return replace(config, auto_compact_token_limit=override)
+
     # Priority 1: Use values from Model CRD spec if provided
     if model_config:
         context_window = model_config.get("context_window")
@@ -141,11 +195,14 @@ def get_model_context_config(
         if context_window is not None:
             # Use CRD values with fallback for output_tokens
             output_tokens = max_output_tokens if max_output_tokens is not None else 4096
-            return ModelContextConfig(
-                context_window=context_window,
-                output_tokens=output_tokens,
-                trigger_threshold=0.90,
-                target_threshold=0.70,
+            return _apply_auto_compact_limit(
+                ModelContextConfig(
+                    context_window=context_window,
+                    output_tokens=output_tokens,
+                    output_tokens_cap_enabled=max_output_tokens is not None,
+                    trigger_threshold=0.90,
+                    target_threshold=0.70,
+                )
             )
 
     # Priority 2: Look up in built-in defaults
@@ -153,17 +210,20 @@ def get_model_context_config(
 
     # Try exact match first
     if model_lower in MODEL_CONTEXT_LIMITS:
-        return MODEL_CONTEXT_LIMITS[model_lower]
+        return _apply_auto_compact_limit(MODEL_CONTEXT_LIMITS[model_lower])
 
     # Try prefix matching (handles versioned model names)
     for prefix, config in MODEL_CONTEXT_LIMITS.items():
         if model_lower.startswith(prefix):
-            return config
+            return _apply_auto_compact_limit(config)
 
     # Priority 3: Default config for unknown models (conservative estimate)
-    return ModelContextConfig(
-        context_window=128000,
-        output_tokens=4096,
-        trigger_threshold=0.85,  # More conservative for unknown models
-        target_threshold=0.65,
+    return _apply_auto_compact_limit(
+        ModelContextConfig(
+            context_window=128000,
+            output_tokens=4096,
+            output_tokens_cap_enabled=False,
+            trigger_threshold=0.85,  # More conservative for unknown models
+            target_threshold=0.65,
+        )
     )

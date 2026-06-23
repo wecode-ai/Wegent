@@ -328,7 +328,7 @@ class DeviceService:
             device_id: Device unique identifier (stored in Kind.name)
             name: Device display name (stored in spec.displayName)
             client_ip: Device's client IP address (stored in spec.clientIp)
-            device_type: Device type ('local' or 'cloud'). If None, defaults
+            device_type: Device type ('local', 'cloud', or 'remote'). If None, defaults
                          to 'local' for new devices or preserves existing value.
             bind_shell: Shell runtime binding ('claudecode' or 'openclaw').
                         If None, defaults to 'claudecode' for new devices or

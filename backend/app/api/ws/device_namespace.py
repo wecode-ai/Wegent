@@ -222,7 +222,7 @@ def _register_device(
         device_id: Device unique identifier (stored in Kind.name)
         name: Device display name
         client_ip: Device's client IP address
-        device_type: Device type ('local' or 'cloud')
+        device_type: Device type ('local', 'cloud', or 'remote')
         bind_shell: Shell runtime binding ('claudecode' or 'openclaw')
         runtime_transfer_host: Host peers should use for direct transfers
 

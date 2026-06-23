@@ -47,6 +47,10 @@ class TestResponsesAPIEventParserToolIds:
                     "remaining_percent": 42,
                     "is_over_trigger": False,
                 },
+                "context_compaction": {
+                    "type": "summary_compact",
+                    "status": "started",
+                },
             },
         )
 
@@ -57,6 +61,10 @@ class TestResponsesAPIEventParserToolIds:
             "context_metrics": {
                 "remaining_percent": 42,
                 "is_over_trigger": False,
+            },
+            "context_compaction": {
+                "type": "summary_compact",
+                "status": "started",
             },
         }
 

@@ -170,9 +170,22 @@ class KnowledgeBaseTool(BaseTool):
 
     def _get_reserved_output_tokens(self) -> int:
         """Get effective reserved output tokens for the current model."""
-        if self.max_output_tokens is not None:
-            return self.max_output_tokens
-        return get_model_context_config(self.model_id).output_tokens
+        model_config: dict[str, Any] | None = None
+        if self.context_window is not None or self.max_output_tokens is not None:
+            base_config = get_model_context_config(self.model_id)
+            model_config = {
+                "context_window": self._get_effective_context_window(),
+                "max_output_tokens": (
+                    self.max_output_tokens
+                    if self.max_output_tokens is not None
+                    else base_config.output_tokens
+                ),
+            }
+
+        return get_model_context_config(
+            self.model_id,
+            model_config=model_config,
+        ).reserved_output_tokens
 
     def _get_effective_input_budget(self) -> int:
         """Get usable input budget after reserving model output space."""

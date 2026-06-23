@@ -193,7 +193,7 @@ function mergeDoneBlocksWithInlineThinking(
   })
   const existingIds = new Set(existingBlocks.map(block => block.id))
   const appendedBlocks = incomingBlocks.filter(
-    block => !existingIds.has(block.id) && !hasDuplicateTextContent(existingBlocks, block)
+    block => !existingIds.has(block.id) && !hasDuplicateBlockContent(existingBlocks, block)
   )
 
   return [...mergedBlocks, ...appendedBlocks]
@@ -217,15 +217,15 @@ function mergeDoneBlocksWithBackendOrder(
   })
 }
 
-function hasDuplicateTextContent(
+function hasDuplicateBlockContent(
   existingBlocks: MessageBlock[],
   incomingBlock: MessageBlock
 ): boolean {
   return (
-    incomingBlock.type === 'text' &&
+    (incomingBlock.type === 'text' || incomingBlock.type === 'thinking') &&
     existingBlocks.some(
       existingBlock =>
-        existingBlock.type === 'text' && existingBlock.content === incomingBlock.content
+        existingBlock.type === incomingBlock.type && existingBlock.content === incomingBlock.content
     )
   )
 }
