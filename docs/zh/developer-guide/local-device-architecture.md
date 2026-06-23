@@ -204,6 +204,8 @@ Plugin 上报必须包含其内部 Skill 列表。Executor 会扫描每个 Plugi
 
 后端只在 `capabilities.full = true` 时保存完整能力状态；后续心跳如果只有相同 `digest`，只刷新在线状态，不重复写入完整列表。
 
+Codex 本地设备还会在 `runtime_auth_files.codex_auth_json` 中上报 `~/.codex/auth.json` 的存在状态、路径、SHA-256 摘要和文件修改时间。后端用这些元数据判断用户设置的主设备是否拥有更新版本；主设备只作为来源不会被覆盖，从设备会在同步时直接覆盖本机 auth 文件。
+
 ### 全局能力同步
 
 后端可以通过 `device:sync_capabilities` 向在线本地设备下发全局能力期望状态。当前同步内容包括：

@@ -91,7 +91,9 @@ chmod +x wegent-executor
 
 #### Use Personal Codex CLI Configuration
 
-By default, the executor uses the Claude/Codex model and provider configuration issued by Wegent. To use personal Codex login information, open Wework **Settings** -> **Personal**, import or upload `~/.codex/auth.json` from a device, and enable the personal configuration. When device heartbeat reports that the local Codex auth file is missing, Wegent syncs the saved auth in the background; if `~/.codex/auth.json` already exists on the device, it is not overwritten. GPT models that use Codex access Codex through that authenticated account.
+By default, the executor uses the Claude/Codex model and provider configuration issued by Wegent. To use personal Codex login information, open Wework **Settings** -> **Personal**, import or upload `~/.codex/auth.json` from a device, and enable the personal configuration. GPT models that use Codex access Codex through that authenticated account.
+
+If multiple devices run Codex, use the **Device sync** section in **Codex Auth** to choose a master device and slave devices. The master device is the `auth.json` source: when its heartbeat reports a newer file modification time and digest than the saved cloud copy, Wegent imports that version. Wegent does not overwrite the master device. Slave devices receive the master or manually uploaded version and overwrite local `~/.codex/auth.json` directly. Devices that are not configured as slaves keep the non-overwrite sync behavior: Wegent writes the saved auth only when local `auth.json` is missing, and existing files are not replaced.
 
 If Codex access requires a proxy, first save the personal proxy URL in Wework **Settings** -> **Personal** -> **Proxy**, then enable the Codex proxy switch in **Codex Auth**. Wegent injects `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, and the matching lowercase environment variables when executing Codex. If `NO_PROXY` or `no_proxy` already exists, Wegent keeps that value; otherwise it bypasses `localhost`, `127.0.0.1`, `::1`, and `host.docker.internal` by default.
 
