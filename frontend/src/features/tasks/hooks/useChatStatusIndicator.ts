@@ -57,6 +57,7 @@ export interface ChatStatusIndicatorState {
   enabled: boolean
   display: ChatStatusDisplayModel | null
   currentTaskId: number | null
+  isCompacting: boolean
 }
 
 export function useChatStatusIndicator(): ChatStatusIndicatorState {
@@ -64,6 +65,7 @@ export function useChatStatusIndicator(): ChatStatusIndicatorState {
   const { user } = useUser()
   const taskSession = useOptionalTaskSession()
   const [statusByTaskId, setStatusByTaskId] = useState<Record<number, ChatStatusUpdatedPayload>>({})
+  const [compactingTaskIds, setCompactingTaskIds] = useState<Record<number, boolean>>({})
 
   const currentTaskId =
     taskSession?.currentTaskId ??
@@ -74,6 +76,7 @@ export function useChatStatusIndicator(): ChatStatusIndicatorState {
   const enabledItems = user?.preferences?.chat_status_items ?? []
   const enabled = enabledItems.includes(CONTEXT_REMAINING_STATUS_ITEM)
   const liveStatus = currentTaskId ? statusByTaskId[currentTaskId] : null
+  const isCompacting = currentTaskId ? compactingTaskIds[currentTaskId] === true : false
 
   const fallbackStatus = useMemo<ChatStatusUpdatedPayload | null>(() => {
     if (!currentTaskId || liveStatus) return null
@@ -85,15 +88,43 @@ export function useChatStatusIndicator(): ChatStatusIndicatorState {
   const currentStatus = liveStatus ?? fallbackStatus
 
   useEffect(() => {
+    const clearCompacting = (taskId?: number | null) => {
+      if (!taskId) return
+      setCompactingTaskIds(previous => {
+        if (!previous[taskId]) return previous
+        const next = { ...previous }
+        delete next[taskId]
+        return next
+      })
+    }
+
     return registerChatHandlers({
       onChatStatusUpdated: payload => {
         setStatusByTaskId(previous => ({
           ...previous,
           [payload.task_id]: payload,
         }))
+        const compactionStatus = payload.context_compaction?.status
+        if (compactionStatus === 'started') {
+          setCompactingTaskIds(previous => ({
+            ...previous,
+            [payload.task_id]: true,
+          }))
+          return
+        }
+        if (compactionStatus === 'completed' || compactionStatus === 'fallback') {
+          clearCompacting(payload.task_id)
+        }
       },
+      onChatChunk: payload => clearCompacting(payload.task_id ?? currentTaskId),
+      onChatMessage: payload => clearCompacting(payload.task_id),
+      onBlockCreated: payload => clearCompacting(payload.task_id),
+      onBlockUpdated: payload => clearCompacting(payload.task_id),
+      onChatDone: payload => clearCompacting(payload.task_id ?? currentTaskId),
+      onChatError: payload => clearCompacting(payload.task_id ?? currentTaskId),
+      onChatCancelled: payload => clearCompacting(payload.task_id),
     })
-  }, [registerChatHandlers])
+  }, [currentTaskId, registerChatHandlers])
 
   const display = useMemo<ChatStatusDisplayModel | null>(() => {
     if (!currentStatus) {
@@ -116,5 +147,6 @@ export function useChatStatusIndicator(): ChatStatusIndicatorState {
     enabled,
     display,
     currentTaskId,
+    isCompacting,
   }
 }

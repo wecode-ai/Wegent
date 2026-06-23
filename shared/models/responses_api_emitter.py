@@ -590,9 +590,14 @@ class ResponsesAPIEmitter:
         *,
         phase: str,
         context_metrics: dict[str, Any],
+        context_compaction: dict[str, Any] | None = None,
     ) -> Any:
         """Emit a session-level context status update event."""
-        data = self.builder.status_updated(phase, context_metrics)
+        data = self.builder.status_updated(
+            phase,
+            context_metrics,
+            context_compaction=context_compaction,
+        )
         return await self._emit(ResponsesAPIStreamEvents.STATUS_UPDATED.value, data)
 
     # ============================================================

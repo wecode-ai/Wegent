@@ -29,6 +29,7 @@ class DeviceType(str, Enum):
 
     LOCAL = "local"
     CLOUD = "cloud"
+    REMOTE = "remote"
 
 
 class BindShell(str, Enum):
@@ -81,7 +82,7 @@ class DeviceInfo(BaseModel):
     )
     # Device type and connection mode
     device_type: DeviceType = Field(
-        DeviceType.LOCAL, description="Device type (local or cloud)"
+        DeviceType.LOCAL, description="Device type (local, cloud, or remote)"
     )
     connection_mode: DeviceConnectionMode = Field(
         DeviceConnectionMode.WEBSOCKET, description="How device connects to backend"
@@ -110,6 +111,10 @@ class DeviceInfo(BaseModel):
     # Cloud device specific config
     cloud_config: Optional[Dict[str, Any]] = Field(
         None, description="Cloud device configuration (only for cloud devices)"
+    )
+    # Remote device specific config
+    remote_config: Optional[Dict[str, Any]] = Field(
+        None, description="Remote device configuration (only for remote devices)"
     )
     # Shell binding type
     bind_shell: BindShell = Field(

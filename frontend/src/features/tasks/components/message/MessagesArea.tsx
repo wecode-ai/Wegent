@@ -92,6 +92,7 @@ interface StreamingMessageBubbleProps {
   isPendingConfirmation?: boolean
   onContextReselect?: (context: import('@/types/api').SubtaskContextBrief) => void
   onUseAsReference?: (item: import('./ImageGallery').ImageItem) => void
+  waitingMessage?: string
 }
 
 function StreamingMessageBubble({
@@ -108,6 +109,7 @@ function StreamingMessageBubble({
   isPendingConfirmation,
   onContextReselect,
   onUseAsReference,
+  waitingMessage,
 }: StreamingMessageBubbleProps) {
   // Use typewriter effect for streaming content
   const displayContent = useTypewriter(message.content || '')
@@ -165,6 +167,7 @@ function StreamingMessageBubble({
       theme={theme}
       t={t}
       isWaiting={Boolean(isStreaming && !hasContent && !hasThinking)}
+      waitingMessage={waitingMessage}
       onSendMessage={onSendMessage}
       isGroupChat={isGroupChat}
       isPendingConfirmation={isPendingConfirmation}
@@ -219,6 +222,8 @@ interface MessagesAreaProps {
   onUseAsReference?: (item: import('./ImageGallery').ImageItem) => void
   /** Callback when user clicks re-edit button on an AI message */
   onReEdit?: (msg: Message) => void
+  /** Optional override for the in-message waiting indicator text */
+  waitingMessage?: string
 }
 
 function MessagesArea({
@@ -242,6 +247,7 @@ function MessagesArea({
   hideGroupChatOptions = false,
   onUseAsReference,
   onReEdit,
+  waitingMessage,
 }: MessagesAreaProps) {
   const { t } = useTranslation()
   const { toast } = useToast()
@@ -1248,6 +1254,7 @@ function MessagesArea({
                     isPendingConfirmation={isPendingConfirmation}
                     onContextReselect={onContextReselect}
                     onUseAsReference={onUseAsReference}
+                    waitingMessage={waitingMessage}
                   />
                 </div>
               )
@@ -1286,6 +1293,7 @@ function MessagesArea({
                     onContextReselect={onContextReselect}
                     onUseAsReference={onUseAsReference}
                     onReEdit={onReEdit}
+                    waitingMessage={waitingMessage}
                     taskType={selectedTaskDetail?.task_type}
                   />
                   <div className="flex flex-col gap-2">
@@ -1359,6 +1367,7 @@ function MessagesArea({
                   isRegenerating={isRegenerating}
                   onUseAsReference={onUseAsReference}
                   onReEdit={onReEdit}
+                  waitingMessage={waitingMessage}
                   taskType={selectedTaskDetail?.task_type}
                   onForwardClick={handleForwardClick}
                 />

@@ -378,7 +378,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
         for device_kind in devices:
             spec = device_kind.json.get("spec", {})
             device_type = spec.get("deviceType", DeviceType.LOCAL.value)
-            if device_type != DeviceType.CLOUD.value:
+            if device_type == DeviceType.LOCAL.value:
                 local_devices.append(device_kind)
 
         if not local_devices:
@@ -433,7 +433,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
                         else "offline"
                     ),
                     "is_default": spec.get("isDefault", False),
-                    "device_type": spec.get("deviceType", DeviceType.LOCAL.value),
+                    "device_type": DeviceType.LOCAL.value,
                     "connection_mode": spec.get(
                         "connectionMode", DeviceConnectionMode.WEBSOCKET.value
                     ),

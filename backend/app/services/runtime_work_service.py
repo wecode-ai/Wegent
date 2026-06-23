@@ -942,6 +942,9 @@ async def _prepare_plain_workspace_path(
     )
     if action == "create":
         if status_payload.get("exists"):
+            _ensure_selectable_directory(status_payload)
+            if status_payload.get("isEmpty"):
+                return "created"
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Project folder already exists",

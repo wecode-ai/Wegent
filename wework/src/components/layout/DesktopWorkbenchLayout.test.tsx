@@ -1513,15 +1513,19 @@ describe('DesktopWorkbenchLayout', () => {
           config: {
             mode: 'workspace',
           },
-        })
+        }),
+        { refreshWorkLists: false }
       )
     )
-    expect(onPrepareDeviceWorkspace).toHaveBeenCalledWith({
-      projectId: 2,
-      deviceId: 'device-1',
-      workspacePath: '/home/ubuntu/repo',
-      action: 'select',
-    })
+    expect(onPrepareDeviceWorkspace).toHaveBeenCalledWith(
+      {
+        projectId: 2,
+        deviceId: 'device-1',
+        workspacePath: '/home/ubuntu/repo',
+        action: 'select',
+      },
+      { refreshWorkLists: false }
+    )
   })
 
   test('hides project device status when the project device is online', () => {

@@ -11,7 +11,9 @@ class _SessionManager:
     async def get_accumulated_content(self, _subtask_id: int) -> str:
         return ""
 
-    async def finalize_and_get_blocks(self, _subtask_id: int) -> list[dict]:
+    async def finalize_and_get_blocks(
+        self, _subtask_id: int, *, termination_reason: str | None = None
+    ) -> list[dict]:
         return [
             {
                 "id": "tool_123",
@@ -41,7 +43,9 @@ class _TextBlockSessionManager:
     async def get_accumulated_content(self, _subtask_id: int) -> str:
         return ""
 
-    async def finalize_and_get_blocks(self, _subtask_id: int) -> list[dict]:
+    async def finalize_and_get_blocks(
+        self, _subtask_id: int, *, termination_reason: str | None = None
+    ) -> list[dict]:
         return [
             {
                 "id": "text-1",
@@ -56,7 +60,9 @@ class _OutputTextBlockSessionManager:
     async def get_accumulated_content(self, _subtask_id: int) -> str:
         return ""
 
-    async def finalize_and_get_blocks(self, _subtask_id: int) -> list[dict]:
+    async def finalize_and_get_blocks(
+        self, _subtask_id: int, *, termination_reason: str | None = None
+    ) -> list[dict]:
         return [
             {
                 "id": "reasoning-1",

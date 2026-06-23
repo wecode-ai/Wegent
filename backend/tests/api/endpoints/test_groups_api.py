@@ -829,3 +829,335 @@ def test_add_entity_member_exceed_limit(
 
     assert response.status_code == 400
     assert "limit reached" in response.json()["detail"].lower()
+
+
+def test_get_group_with_children_success(
+    test_client: TestClient, test_db: Session, test_user: User, test_token: str
+):
+    """Test GET /groups/{name}/with-children returns group and its subgroups."""
+    parent_group = _create_group(test_db, test_user, name="parent-group")
+    _add_member(test_db, parent_group, test_user, "Owner")
+
+    child_group = Namespace(
+        name="parent-group/child",
+        display_name="Child Group",
+        owner_user_id=test_user.id,
+        visibility="internal",
+        description="child",
+        level="group",
+        is_active=True,
+    )
+    test_db.add(child_group)
+    test_db.commit()
+    _add_member(test_db, child_group, test_user, "Owner")
+
+    response = test_client.get(
+        f"/api/groups/{parent_group.name}/with-children",
+        headers=_auth_header(test_token),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["group"]["name"] == "parent-group"
+    assert payload["group"]["my_role"] == "Owner"
+    assert len(payload["children"]) == 1
+    assert payload["children"][0]["name"] == "parent-group/child"
+    assert payload["children"][0]["my_role"] == "Owner"
+
+
+def test_get_group_with_children_with_api_key_x_header(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_api_key: tuple[str, object],
+):
+    """Test with-children endpoint supports X-API-Key header."""
+    raw_key, _ = test_api_key
+    parent_group = _create_group(test_db, test_user, name="apikey-parent")
+    _add_member(test_db, parent_group, test_user, "Owner")
+
+    response = test_client.get(
+        f"/api/groups/{parent_group.name}/with-children",
+        headers={"X-API-Key": raw_key},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["group"]["name"] == "apikey-parent"
+
+
+def test_get_group_with_children_with_api_key_bearer(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_api_key: tuple[str, object],
+):
+    """Test with-children endpoint supports Authorization: Bearer API Key."""
+    raw_key, _ = test_api_key
+    parent_group = _create_group(test_db, test_user, name="apikey-bearer-parent")
+    _add_member(test_db, parent_group, test_user, "Owner")
+
+    response = test_client.get(
+        f"/api/groups/{parent_group.name}/with-children",
+        headers={"Authorization": f"Bearer {raw_key}"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["group"]["name"] == "apikey-bearer-parent"
+
+
+def test_list_members_with_api_key(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_api_key: tuple[str, object],
+):
+    """Test members endpoint supports API Key authentication."""
+    raw_key, _ = test_api_key
+    group = _create_group(test_db, test_user, name="apikey-members-group")
+    _add_member(test_db, group, test_user, "Owner")
+
+    response = test_client.get(
+        f"/api/groups/{group.name}/members",
+        headers={"X-API-Key": raw_key},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert isinstance(payload, list)
+    assert len(payload) == 1
+    assert payload[0]["user_id"] == test_user.id
+    assert payload[0]["role"] == "Owner"
+
+
+def test_get_group_with_children_non_member_forbidden(
+    test_client: TestClient, test_db: Session, test_user: User, test_token: str
+):
+    """Test non-member gets 403 on with-children endpoint."""
+    other_user = _create_user(test_db, "other", "other@example.com")
+    parent_group = _create_group(test_db, other_user, name="forbidden-parent")
+    _add_member(test_db, parent_group, other_user, "Owner")
+
+    response = test_client.get(
+        f"/api/groups/{parent_group.name}/with-children",
+        headers=_auth_header(test_token),
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "You are not a member of this group"
+
+
+def test_get_group_with_children_not_found(
+    test_client: TestClient, test_user: User, test_token: str
+):
+    """Test 404 on with-children endpoint for non-existent group."""
+    response = test_client.get(
+        "/api/groups/non-existent-group/with-children",
+        headers=_auth_header(test_token),
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Group not found"
+
+
+def test_get_child_groups_sql_like_escape(
+    test_client: TestClient, test_db: Session, test_user: User, test_token: str
+):
+    """Test SQL LIKE wildcard characters in parent_name are escaped."""
+    parent_group = _create_group(test_db, test_user, name="test_underscore")
+    _add_member(test_db, parent_group, test_user, "Owner")
+
+    decoy_group = _create_group(test_db, test_user, name="testAunderscore")
+    _add_member(test_db, decoy_group, test_user, "Owner")
+
+    real_child = Namespace(
+        name="test_underscore/child",
+        display_name="Real Child",
+        owner_user_id=test_user.id,
+        visibility="internal",
+        description="child",
+        level="group",
+        is_active=True,
+    )
+    test_db.add(real_child)
+    test_db.commit()
+    _add_member(test_db, real_child, test_user, "Owner")
+
+    response = test_client.get(
+        f"/api/groups/{parent_group.name}/with-children",
+        headers=_auth_header(test_token),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["group"]["name"] == "test_underscore"
+    children_names = [c["name"] for c in payload["children"]]
+    assert "test_underscore/child" in children_names
+    assert "testAunderscore" not in children_names
+
+
+def test_get_group_with_children_success(
+    test_client: TestClient, test_db: Session, test_user: User, test_token: str
+):
+    """Test GET /groups/{name}/with-children returns group and its subgroups."""
+    parent_group = _create_group(test_db, test_user, name="parent-group")
+    _add_member(test_db, parent_group, test_user, "Owner")
+
+    child_group = Namespace(
+        name="parent-group/child",
+        display_name="Child Group",
+        owner_user_id=test_user.id,
+        visibility="internal",
+        description="child",
+        level="group",
+        is_active=True,
+    )
+    test_db.add(child_group)
+    test_db.commit()
+    _add_member(test_db, child_group, test_user, "Owner")
+
+    response = test_client.get(
+        f"/api/groups/{parent_group.name}/with-children",
+        headers=_auth_header(test_token),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["group"]["name"] == "parent-group"
+    assert payload["group"]["my_role"] == "Owner"
+    assert len(payload["children"]) == 1
+    assert payload["children"][0]["name"] == "parent-group/child"
+    assert payload["children"][0]["my_role"] == "Owner"
+
+
+def test_get_group_with_children_with_api_key_x_header(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_api_key: tuple[str, object],
+):
+    """Test with-children endpoint supports X-API-Key header."""
+    raw_key, _ = test_api_key
+    parent_group = _create_group(test_db, test_user, name="apikey-parent")
+    _add_member(test_db, parent_group, test_user, "Owner")
+
+    response = test_client.get(
+        f"/api/groups/{parent_group.name}/with-children",
+        headers={"X-API-Key": raw_key},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["group"]["name"] == "apikey-parent"
+
+
+def test_get_group_with_children_with_api_key_bearer(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_api_key: tuple[str, object],
+):
+    """Test with-children endpoint supports Authorization: Bearer API Key."""
+    raw_key, _ = test_api_key
+    parent_group = _create_group(test_db, test_user, name="apikey-bearer-parent")
+    _add_member(test_db, parent_group, test_user, "Owner")
+
+    response = test_client.get(
+        f"/api/groups/{parent_group.name}/with-children",
+        headers={"Authorization": f"Bearer {raw_key}"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["group"]["name"] == "apikey-bearer-parent"
+
+
+def test_list_members_with_api_key(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_api_key: tuple[str, object],
+):
+    """Test members endpoint supports API Key authentication."""
+    raw_key, _ = test_api_key
+    group = _create_group(test_db, test_user, name="apikey-members-group")
+    _add_member(test_db, group, test_user, "Owner")
+
+    response = test_client.get(
+        f"/api/groups/{group.name}/members",
+        headers={"X-API-Key": raw_key},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert isinstance(payload, list)
+    assert len(payload) == 1
+    assert payload[0]["user_id"] == test_user.id
+    assert payload[0]["role"] == "Owner"
+
+
+def test_get_group_with_children_non_member_forbidden(
+    test_client: TestClient, test_db: Session, test_user: User, test_token: str
+):
+    """Test non-member gets 403 on with-children endpoint."""
+    other_user = _create_user(test_db, "other", "other@example.com")
+    parent_group = _create_group(test_db, other_user, name="forbidden-parent")
+    _add_member(test_db, parent_group, other_user, "Owner")
+
+    response = test_client.get(
+        f"/api/groups/{parent_group.name}/with-children",
+        headers=_auth_header(test_token),
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "You are not a member of this group"
+
+
+def test_get_group_with_children_not_found(
+    test_client: TestClient, test_user: User, test_token: str
+):
+    """Test 404 on with-children endpoint for non-existent group."""
+    response = test_client.get(
+        "/api/groups/non-existent-group/with-children",
+        headers=_auth_header(test_token),
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Group not found"
+
+
+def test_get_child_groups_sql_like_escape(
+    test_client: TestClient, test_db: Session, test_user: User, test_token: str
+):
+    """Test SQL LIKE wildcard characters in parent_name are escaped."""
+    parent_group = _create_group(test_db, test_user, name="test_underscore")
+    _add_member(test_db, parent_group, test_user, "Owner")
+
+    decoy_group = _create_group(test_db, test_user, name="testAunderscore")
+    _add_member(test_db, decoy_group, test_user, "Owner")
+
+    real_child = Namespace(
+        name="test_underscore/child",
+        display_name="Real Child",
+        owner_user_id=test_user.id,
+        visibility="internal",
+        description="child",
+        level="group",
+        is_active=True,
+    )
+    test_db.add(real_child)
+    test_db.commit()
+    _add_member(test_db, real_child, test_user, "Owner")
+
+    response = test_client.get(
+        f"/api/groups/{parent_group.name}/with-children",
+        headers=_auth_header(test_token),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["group"]["name"] == "test_underscore"
+    children_names = [c["name"] for c in payload["children"]]
+    assert "test_underscore/child" in children_names
+    assert "testAunderscore" not in children_names

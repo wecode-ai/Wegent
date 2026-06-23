@@ -41,6 +41,16 @@ function createMockSocket() {
     on: jest.fn((event: string, handler: (...args: unknown[]) => void) => {
       socketHandlers.set(event, handler)
     }),
+    off: jest.fn((event: string, handler?: (...args: unknown[]) => void) => {
+      if (!handler) {
+        socketHandlers.delete(event)
+        return
+      }
+      const currentHandler = socketHandlers.get(event)
+      if (currentHandler === handler) {
+        socketHandlers.delete(event)
+      }
+    }),
     connect,
     disconnect: jest.fn(),
     io: {
@@ -252,6 +262,83 @@ describe('SocketProvider reconnect notification', () => {
     })
 
     expect(mockReconnectCallback).toHaveBeenCalledTimes(1)
+  })
+
+  it('replays cached chat status to handlers registered after task join', async () => {
+    const socket = createMockSocket()
+    socket.emit.mockImplementation(
+      (event: string, _payload: unknown, ack?: (response: unknown) => void) => {
+        if (event === 'task:join' && ack) {
+          ack({
+            subtasks: [],
+            status_updated: {
+              task_id: 2384260,
+              subtask_id: 77,
+              phase: 'summary_compact',
+              context_metrics: {
+                context_window: 262144,
+                reserved_output_tokens: 26214,
+                available_input_tokens: 235930,
+                used_input_tokens: 108473,
+                remaining_input_tokens: 127457,
+                remaining_percent: 54,
+                display_remaining_tokens: 153671,
+                display_remaining_percent: 59,
+                trigger_limit: 100000,
+                target_limit: 99999,
+                is_over_trigger: true,
+              },
+              context_compaction: {
+                type: 'summary_compact',
+                status: 'started',
+                before_tokens: 108473,
+                trigger_limit: 100000,
+                target_limit: 99999,
+                used_legacy_fallback: false,
+                created_at: '2026-06-23T14:55:34Z',
+              },
+            },
+          })
+        }
+      }
+    )
+    mockIo.mockReturnValue(socket)
+
+    let socketApi: ReturnType<typeof useSocket> | undefined
+    const statusHandler = jest.fn()
+    render(
+      <SocketProvider>
+        <SocketProbe
+          onReady={api => {
+            socketApi = api
+          }}
+        />
+      </SocketProvider>
+    )
+
+    await waitFor(() => expect(socket.connect).toHaveBeenCalledTimes(1))
+    expect(socketApi).toBeDefined()
+
+    await act(async () => {
+      socket.triggerSocket('connect')
+      await socketApi!.joinTask(2384260)
+    })
+
+    const cleanup = socketApi!.registerChatHandlers({
+      onChatStatusUpdated: statusHandler,
+    })
+
+    expect(statusHandler).toHaveBeenCalledWith(
+      expect.objectContaining({
+        task_id: 2384260,
+        phase: 'summary_compact',
+        context_compaction: expect.objectContaining({
+          status: 'started',
+        }),
+      })
+    )
+
+    cleanup()
   })
 
   it('recreates a fresh authenticated namespace socket after connect_error', async () => {

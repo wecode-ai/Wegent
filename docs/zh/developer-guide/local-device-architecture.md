@@ -70,19 +70,33 @@ sequenceDiagram
     BE->>FE: chat:done
 ```
 
+### 设备类型
+
+设备 CRD 使用 `spec.deviceType` 区分生命周期归属和前端能力入口：
+
+| 类型     | 生命周期归属                   | 连接方式  | 典型入口                            |
+| -------- | ------------------------------ | --------- | ----------------------------------- |
+| `local`  | 用户本机 executor              | WebSocket | 本地安装脚本或手动启动 executor     |
+| `cloud`  | Wegent 云设备服务              | WebSocket | 云设备创建、重启、释放流程          |
+| `remote` | 用户自管 Docker 容器或远端主机 | WebSocket | Wework 连接设置中的远程 Docker 命令 |
+
+`remote` 设备复用本地 executor 的 WebSocket 注册、心跳、任务执行和 command RPC 通道，但由 `RemoteDeviceProvider` 独立列出和返回 `remoteConfig`。Backend 不保存生成命令中的 `WEGENT_AUTH_TOKEN`；Device CRD 只保存 provider、image、deviceId、deviceName、backendUrl、publicBaseUrl 和 createdAt 等非敏感元数据。
+
+远程 Docker 设备启动后会发送 `device:register`，payload 中的 `device_type=remote` 会更新同名 Device CRD。在线状态仍存储在 Redis 的设备在线键中，因此任务调度、slot 统计、terminal/code-server session RPC 与本地设备保持同一套协议。前端不会对 `remote` 设备展示云设备生命周期操作；停止、重启、删除容器由用户在 Docker 主机上完成。
+
 ---
 
 ## 📡 WebSocket 协议
 
 ### 事件类型
 
-| 事件 | 方向 | 描述 |
-|------|------|------|
-| `device:register` | 设备 → 后端 | 设备注册 |
+| 事件               | 方向        | 描述     |
+| ------------------ | ----------- | -------- |
+| `device:register`  | 设备 → 后端 | 设备注册 |
 | `device:heartbeat` | 设备 → 后端 | 心跳保活 |
-| `task:execute` | 后端 → 设备 | 下发任务 |
-| `task:progress` | 设备 → 后端 | 任务进度 |
-| `task:complete` | 设备 → 后端 | 任务完成 |
+| `task:execute`     | 后端 → 设备 | 下发任务 |
+| `task:progress`    | 设备 → 后端 | 任务进度 |
+| `task:complete`    | 设备 → 后端 | 任务完成 |
 
 ### 消息格式
 
@@ -144,12 +158,12 @@ sequenceDiagram
 
 ### 时间参数
 
-| 参数 | 值 | 描述 |
-|------|-----|------|
-| **心跳间隔** | 30 秒 | 设备发送心跳 |
-| **在线 TTL** | 90 秒 | Redis 键过期时间 |
-| **监控间隔** | 60 秒 | 后端检查过期设备 |
-| **离线阈值** | 3 次心跳缺失 | 设备标记为离线 |
+| 参数         | 值           | 描述             |
+| ------------ | ------------ | ---------------- |
+| **心跳间隔** | 30 秒        | 设备发送心跳     |
+| **在线 TTL** | 90 秒        | Redis 键过期时间 |
+| **监控间隔** | 60 秒        | 后端检查过期设备 |
+| **离线阈值** | 3 次心跳缺失 | 设备标记为离线   |
 
 ### 运行任务追踪
 
@@ -273,12 +287,12 @@ flowchart LR
 
 ### 安全特性
 
-| 特性 | 描述 |
-|------|------|
-| **JWT 认证** | WebSocket 连接需要有效 token |
-| **Token 有效期** | 7 天过期，需定期刷新 |
-| **用户隔离** | 设备只能执行其所有者的任务 |
-| **硬件绑定** | 设备 ID 基于硬件标识生成 |
+| 特性             | 描述                         |
+| ---------------- | ---------------------------- |
+| **JWT 认证**     | WebSocket 连接需要有效 token |
+| **Token 有效期** | 7 天过期，需定期刷新         |
+| **用户隔离**     | 设备只能执行其所有者的任务   |
+| **硬件绑定**     | 设备 ID 基于硬件标识生成     |
 
 ### 本地执行器连接配置
 
@@ -290,11 +304,11 @@ flowchart LR
 
 云设备通过 user data 启动脚本自动安装并运行 executor。启动脚本会注入以下身份相关环境变量：
 
-| 变量 | 来源 | 用途 |
-|------|------|------|
-| `WEGENT_AUTH_TOKEN` | 后端为云设备自动生成的 API Key | executor 连接后端并注册设备 |
+| 变量                    | 来源                                  | 用途                                               |
+| ----------------------- | ------------------------------------- | -------------------------------------------------- |
+| `WEGENT_AUTH_TOKEN`     | 后端为云设备自动生成的 API Key        | executor 连接后端并注册设备                        |
 | `WEGENT_USER_JWT_TOKEN` | 创建云设备请求中的当前用户 Bearer JWT | 云设备内需要以当前用户身份访问后端能力的脚本或集成 |
-| `WEGENT_USER_NAME` | 当前登录用户名 | 云设备内需要识别当前用户的脚本或集成 |
+| `WEGENT_USER_NAME`      | 当前登录用户名                        | 云设备内需要识别当前用户的脚本或集成               |
 
 `WEGENT_AUTH_TOKEN` 与 `WEGENT_USER_JWT_TOKEN` 不能混用：前者代表设备认证身份，后者代表创建云设备时的用户身份。
 

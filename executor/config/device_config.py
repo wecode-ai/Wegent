@@ -43,6 +43,7 @@ class DeviceType(str, Enum):
 
     LOCAL = "local"
     CLOUD = "cloud"
+    REMOTE = "remote"
 
 
 class BindShell(str, Enum):

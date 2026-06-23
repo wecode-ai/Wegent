@@ -551,8 +551,6 @@
     "connections_tab_other_devices": "控制其他设备",
     "connections_authorized_devices": "可连接的设备",
     "connection_add": "添加",
-    "connection_start_device_command_title": "启动本地设备",
-    "connection_start_device_command_desc": "已安装本地 Executor 后，在目标机器运行以下命令，设备会自动连接到 Wegent。",
     "connection_cloud_devices": "云设备",
     "connection_local_devices": "本地设备",
     "connection_empty_devices": "暂无设备",

@@ -10,6 +10,8 @@ import type {
 } from '@/types/workspace-files'
 import type {
   CloudDeviceResponse,
+  CreateDockerRemoteDeviceCommandRequest,
+  DockerRemoteDeviceCommandResponse,
   CloudDeviceMetricsResponse,
   DeviceInfo,
   DeviceListResponse,
@@ -19,6 +21,7 @@ import type {
   UpgradeDeviceResponse,
   VncConfigResponse,
 } from '@/types/devices'
+import { filterClaudeCodeDevices } from '@/lib/device-capabilities'
 import type { HttpClient } from './http'
 
 const WORKSPACE_TEXT_FILE_MAX_OUTPUT_BYTES = 1024 * 1024 * 2
@@ -119,11 +122,7 @@ function isWorkspacePathWithin(path: string, rootPath: string): boolean {
   return path === rootPath || path.startsWith(`${rootPath.replace(/\/+$/, '')}/`)
 }
 
-function requireWorkspacePathWithin(
-  path: string,
-  rootPath: string,
-  errorMessage: string,
-) {
+function requireWorkspacePathWithin(path: string, rootPath: string, errorMessage: string) {
   if (!isWorkspacePathWithin(path, rootPath)) {
     throw new Error(errorMessage)
   }
@@ -139,10 +138,7 @@ function normalizeWorkspaceEntry(value: unknown, rootPath: string): WorkspaceFil
   ) {
     throw new Error('Invalid workspace tree response')
   }
-  const path = normalizeAbsoluteWorkspacePath(
-    record.path,
-    'Invalid workspace tree response',
-  )
+  const path = normalizeAbsoluteWorkspacePath(record.path, 'Invalid workspace tree response')
   requireWorkspacePathWithin(path, rootPath, 'Invalid workspace tree response')
   return {
     name: record.name,
@@ -153,22 +149,16 @@ function normalizeWorkspaceEntry(value: unknown, rootPath: string): WorkspaceFil
   }
 }
 
-function normalizeWorkspaceTree(
-  output: unknown,
-  requestedPath: string,
-): WorkspaceTreeResponse {
+function normalizeWorkspaceTree(output: unknown, requestedPath: string): WorkspaceTreeResponse {
   const normalizedRequestedPath = normalizeAbsoluteWorkspacePath(
     requestedPath,
-    'Workspace path must be absolute',
+    'Workspace path must be absolute'
   )
   const record = requireRecord(output, 'Invalid workspace tree response')
   if (typeof record.path !== 'string' || !Array.isArray(record.entries)) {
     throw new Error('Invalid workspace tree response')
   }
-  const path = normalizeAbsoluteWorkspacePath(
-    record.path,
-    'Invalid workspace tree response',
-  )
+  const path = normalizeAbsoluteWorkspacePath(record.path, 'Invalid workspace tree response')
   if (path !== normalizedRequestedPath) {
     throw new Error('Invalid workspace tree response')
   }
@@ -180,11 +170,11 @@ function normalizeWorkspaceTree(
 
 function normalizeWorkspaceTextFile(
   output: unknown,
-  requestedFilePath: string,
+  requestedFilePath: string
 ): WorkspaceTextFileResponse {
   const normalizedRequestedFilePath = normalizeAbsoluteWorkspacePath(
     requestedFilePath,
-    'Workspace file path must be absolute',
+    'Workspace file path must be absolute'
   )
   const record = requireRecord(output, 'Invalid workspace text file response')
   if (
@@ -196,10 +186,7 @@ function normalizeWorkspaceTextFile(
   ) {
     throw new Error('Invalid workspace text file response')
   }
-  const path = normalizeAbsoluteWorkspacePath(
-    record.path,
-    'Invalid workspace text file response',
-  )
+  const path = normalizeAbsoluteWorkspacePath(record.path, 'Invalid workspace text file response')
   if (path !== normalizedRequestedFilePath) {
     throw new Error('Invalid workspace text file response')
   }
@@ -219,14 +206,13 @@ function splitAbsoluteWorkspaceFilePath(filePath: string): {
 } {
   const normalizedFilePath = normalizeAbsoluteWorkspacePath(
     filePath,
-    'Workspace file path must be absolute',
+    'Workspace file path must be absolute'
   )
 
   const separatorIndex = normalizedFilePath.lastIndexOf('/')
   const parentPath = separatorIndex > 0 ? normalizedFilePath.slice(0, separatorIndex) : '/'
-  const fileName = separatorIndex >= 0
-    ? normalizedFilePath.slice(separatorIndex + 1)
-    : normalizedFilePath
+  const fileName =
+    separatorIndex >= 0 ? normalizedFilePath.slice(separatorIndex + 1) : normalizedFilePath
   if (!fileName) {
     throw new Error('Workspace file name is required')
   }
@@ -236,7 +222,7 @@ function splitAbsoluteWorkspaceFilePath(filePath: string): {
 export function createDeviceApi(client: HttpClient) {
   async function fetchDevices(): Promise<DeviceInfo[]> {
     const response = await client.get<DeviceListResponse>('/devices')
-    return response.items
+    return filterClaudeCodeDevices(response.items)
   }
 
   return {
@@ -305,10 +291,7 @@ export function createDeviceApi(client: HttpClient) {
     },
 
     async listWorkspaceEntries(deviceId: string, path: string): Promise<WorkspaceTreeResponse> {
-      const normalizedPath = normalizeAbsoluteWorkspacePath(
-        path,
-        'Workspace path must be absolute',
-      )
+      const normalizedPath = normalizeAbsoluteWorkspacePath(path, 'Workspace path must be absolute')
       const response = await client.post<DeviceCommandResponse>(
         `/devices/${encodeURIComponent(deviceId)}/commands`,
         {
@@ -316,7 +299,7 @@ export function createDeviceApi(client: HttpClient) {
           path: normalizedPath,
           timeout_seconds: 15,
           max_output_bytes: 1024 * 512,
-        },
+        }
       )
       if (!response.success) {
         throw new Error(response.error || response.stderr || 'Failed to list workspace files')
@@ -326,7 +309,7 @@ export function createDeviceApi(client: HttpClient) {
 
     async readWorkspaceTextFile(
       deviceId: string,
-      filePath: string,
+      filePath: string
     ): Promise<WorkspaceTextFileResponse> {
       const { parentPath, fileName } = splitAbsoluteWorkspaceFilePath(filePath)
       const response = await client.post<DeviceCommandResponse>(
@@ -337,7 +320,7 @@ export function createDeviceApi(client: HttpClient) {
           args: [fileName],
           timeout_seconds: 15,
           max_output_bytes: WORKSPACE_TEXT_FILE_MAX_OUTPUT_BYTES,
-        },
+        }
       )
       if (!response.success) {
         throw new Error(response.error || response.stderr || 'Failed to read workspace file')
@@ -436,6 +419,15 @@ export function createDeviceApi(client: HttpClient) {
 
     async createCloudDevice(): Promise<CloudDeviceResponse> {
       return client.post<CloudDeviceResponse>('/cloud-devices')
+    },
+
+    async createDockerRemoteDeviceCommand(
+      data?: CreateDockerRemoteDeviceCommandRequest
+    ): Promise<DockerRemoteDeviceCommandResponse> {
+      return client.post<DockerRemoteDeviceCommandResponse>(
+        '/remote-devices/docker/start-command',
+        data || {}
+      )
     },
 
     async restartCloudDevice(deviceId: string): Promise<{ message: string }> {

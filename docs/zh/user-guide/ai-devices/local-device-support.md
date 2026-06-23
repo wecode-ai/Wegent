@@ -29,12 +29,12 @@ sidebar_position: 10
 
 ### 核心价值
 
-| 优势 | 描述 |
-|------|------|
-| **更低延迟** | 本地直接执行，无需网络传输延迟 |
-| **数据隐私** | 您的代码和数据永远不会离开本地机器 |
-| **环境控制** | 使用本地安装的工具、依赖和配置 |
-| **成本节约** | 减少云端执行资源消耗 |
+| 优势           | 描述                               |
+| -------------- | ---------------------------------- |
+| **更低延迟**   | 本地直接执行，无需网络传输延迟     |
+| **数据隐私**   | 您的代码和数据永远不会离开本地机器 |
+| **环境控制**   | 使用本地安装的工具、依赖和配置     |
+| **成本节约**   | 减少云端执行资源消耗               |
 | **自定义设置** | 访问本地凭证、自定义工具和专业软件 |
 
 ---
@@ -55,16 +55,19 @@ sidebar_position: 10
 #### 一键安装（推荐）
 
 **macOS / Linux：**
+
 ```bash
 curl -fsSL https://github.com/wecode-ai/Wegent/releases/latest/download/local_executor_install.sh | bash
 ```
 
 **Windows (PowerShell)：**
+
 ```powershell
 irm https://github.com/wecode-ai/Wegent/releases/latest/download/local_executor_install.ps1 | iex
 ```
 
 安装脚本将会：
+
 - 检查并安装 Node.js 18+（Claude Code 运行所需）
 - 安装或升级 Claude Code SDK
 - 下载适合您平台的二进制文件
@@ -131,11 +134,43 @@ docker run -d --platform linux/amd64 \
   -p 17888:17888 \
   -e CODE_SERVER_PASSWORD=wegent \
   -e EXECUTOR_MODE=local \
-  -e WEGENT_BACKEND_URL=http://localhost:8000 \
+  -e WEGENT_BACKEND_URL=http://host.docker.internal:8000 \
   -e WEGENT_AUTH_TOKEN="$WEGENT_AUTH_TOKEN" \
   -e DEVICE_PUBLIC_BASE_URL=http://localhost:17888 \
   wegent-device:linux-amd64
 ```
+
+`WEGENT_BACKEND_URL` 必须是容器内可以访问到的 Backend 地址。如果 Backend 运行在同一台 macOS 或 Windows 宿主机上，通常使用 `http://host.docker.internal:8000`；生成的远程 Docker 命令会在需要时自动加入 `--add-host host.docker.internal:host-gateway` 以兼容 Linux Docker。`DEVICE_PUBLIC_BASE_URL` 是浏览器访问容器 session gateway 的地址，本机运行通常使用 `http://localhost:17888`。
+
+### 添加远程 Docker 设备
+
+远程 Docker 设备适合把一台自管服务器或容器主机接入 Wegent。它和云设备一样通过设备 WebSocket 协议接收任务，并支持终端与 code-server 会话；区别是容器生命周期由用户自己管理，Wegent 不会自动创建、重启或销毁这台 Docker 容器。
+
+每个用户最多只能创建一台云设备。如果已经存在云设备，添加设备弹窗会禁用云设备创建入口，但仍可继续生成远程 Docker 设备命令。
+
+在 Wework 中进入 **设置** -> **连接**，点击 **添加设备**，选择 **远程 Docker 设备** 并生成启动命令。Wegent 会先创建一条 `remote` 类型的 Device 记录，并根据 Backend 当前环境自动生成镜像地址、`WEGENT_BACKEND_URL` 和一把新的 remote device API Key，再把设备 ID 等参数放入返回的 `docker run` 命令中。复制命令到目标机器执行后，容器会注册为远程设备并显示在 **远程设备** 分组。
+
+生成的命令会包含类似参数：
+
+```bash
+docker run -d \
+  --name wegent-remote-device \
+  --restart unless-stopped \
+  -e EXECUTOR_MODE=local \
+  -e DEVICE_TYPE=remote \
+  -e DEVICE_ID=<generated-device-id> \
+  -e DEVICE_NAME=<generated-device-name> \
+  -e WEGENT_BACKEND_URL=https://backend.example.com \
+  -e WEGENT_AUTH_TOKEN=<generated-api-key> \
+  -e DEVICE_PUBLIC_BASE_URL=http://localhost:17888 \
+  -p 17888:17888 \
+  -v wegent-remote-device-home:/home/wegent/.wecode/wegent-executor \
+  ghcr.io/wecode-ai/wegent-device:latest
+```
+
+生成接口会使用后端当前环境地址生成 `WEGENT_BACKEND_URL`，优先级为 `REMOTE_DEVICE_BACKEND_URL`、`BACKEND_INTERNAL_URL`、当前请求 Host。`WEGENT_AUTH_TOKEN` 每次生成命令时都会新建一把 remote device API Key，只出现在生成命令中，不会写入 Device CRD 的 `remoteConfig`。`DEVICE_PUBLIC_BASE_URL` 会根据当前前端访问域名推导，用于浏览器访问设备 session gateway。
+
+默认镜像由 Backend 环境变量 `REMOTE_DEVICE_DOCKER_IMAGE` 控制，未配置时使用 `ghcr.io/wecode-ai/wegent-device:latest`。如果目标部署需要使用内部镜像仓库，请部署方在 Backend 启动环境中设置 `REMOTE_DEVICE_DOCKER_IMAGE=<your-registry>/<your-image>:<tag>`，用户侧不需要手动填写镜像地址。
 
 设备镜像默认只启动 `wegent-executor` 和 code-server session gateway。Wework 项目终端通过 Backend 和 Executor 之间已有的 Socket.IO 连接中转，不要求设备有公网地址；IDE/code-server 和桌面 VNC/VPN 入口仍然只对云设备开放。
 
@@ -165,11 +200,13 @@ Wework 入口的新对话在未选择项目（`project_id=0`）且绑定到在�
 #### 安装指定版本
 
 **macOS / Linux：**
+
 ```bash
 curl -fsSL https://github.com/wecode-ai/Wegent/releases/download/v1.0.0/local_executor_install.sh | bash -s -- --version v1.0.0
 ```
 
 **Windows (PowerShell)：**
+
 ```powershell
 $env:WEGENT_VERSION='v1.0.0'; irm https://github.com/wecode-ai/Wegent/releases/latest/download/local_executor_install.ps1 | iex
 ```
@@ -233,12 +270,12 @@ wegent-executor
 
 ### 设备状态指示
 
-| 状态 | 图标 | 描述 |
-|------|------|------|
-| **在线** | 🟢 | 设备已连接，有可用槽位 |
-| **离线** | 🔴 | 设备未连接 |
-| **繁忙** | 🟡 | 所有 5 个并发槽位均被占用 |
-| **默认** | ⭐ | 您的新任务默认设备 |
+| 状态     | 图标 | 描述                      |
+| -------- | ---- | ------------------------- |
+| **在线** | 🟢   | 设备已连接，有可用槽位    |
+| **离线** | 🔴   | 设备未连接                |
+| **繁忙** | 🟡   | 所有 5 个并发槽位均被占用 |
+| **默认** | ⭐   | 您的新任务默认设备        |
 
 ### 并发任务槽位
 
@@ -252,10 +289,10 @@ wegent-executor
 
 您可以动态选择执行位置：
 
-| 选择 | 行为 |
-|------|------|
+| 选择             | 行为                             |
+| ---------------- | -------------------------------- |
 | **云端**（默认） | 任务在 Wegent 云端基础设施上执行 |
-| **本地设备** | 任务在您选择的本地机器上执行 |
+| **本地设备**     | 任务在您选择的本地机器上执行     |
 
 只需在发送每条消息之前更改设备选择即可。
 
@@ -265,12 +302,12 @@ wegent-executor
 
 本地设备不支持项目工具栏中的云端连接能力：
 
-| 功能 | 本地设备支持 |
-|------|--------------|
-| **终端** | 不支持 |
-| **IDE/code-server** | 不支持 |
-| **桌面 VNC/VPN** | 不支持 |
-| **CPU/MEM/磁盘监控** | 不支持 |
+| 功能                 | 本地设备支持 |
+| -------------------- | ------------ |
+| **终端**             | 不支持       |
+| **IDE/code-server**  | 不支持       |
+| **桌面 VNC/VPN**     | 不支持       |
+| **CPU/MEM/磁盘监控** | 不支持       |
 
 如果项目绑定本地设备，工作区工具栏会隐藏终端、IDE 和桌面入口，并显示本地设备能力限制提示。需要这些连接和监控能力时，请选择云设备创建项目。
 
@@ -311,32 +348,32 @@ wegent-executor
 
 更多菜单提供低频管理操作：
 
-| 操作 | 说明 |
-|------|------|
-| **重命名** | 点击设备名称或编辑图标，保存后会刷新列表 |
+| 操作         | 说明                                               |
+| ------------ | -------------------------------------------------- |
+| **重命名**   | 点击设备名称或编辑图标，保存后会刷新列表           |
 | **重启设备** | 需要二次确认；设备会短暂离线，进行中的连接可能中断 |
-| **删除设备** | 需要二次确认；云资源会被释放 |
+| **删除设备** | 需要二次确认；云资源会被释放                       |
 
 ### 设备信息
 
 每个设备显示：
 
-| 字段 | 描述 |
-|------|------|
-| **名称** | 设备主机名（如 "Darwin - MacBook-Pro.local"） |
-| **状态** | 在线/离线指示器 |
-| **版本** | executor 版本（如适用） |
-| **资源使用率** | CPU、内存、磁盘使用率（仅云设备） |
-| **槽位** | 并发任务容量（X/5） |
-| **默认** | 如果设为默认则显示星号 |
+| 字段           | 描述                                          |
+| -------------- | --------------------------------------------- |
+| **名称**       | 设备主机名（如 "Darwin - MacBook-Pro.local"） |
+| **状态**       | 在线/离线指示器                               |
+| **版本**       | executor 版本（如适用）                       |
+| **资源使用率** | CPU、内存、磁盘使用率（仅云设备）             |
+| **槽位**       | 并发任务容量（X/5）                           |
+| **默认**       | 如果设为默认则显示星号                        |
 
 ### 管理设备
 
-| 操作 | 方法 |
-|------|------|
-| **设为默认** | 点击星号图标 |
+| 操作         | 方法                       |
+| ------------ | -------------------------- |
+| **设为默认** | 点击星号图标               |
 | **取消默认** | 再次点击当前默认设备的星号 |
-| **删除设备** | 点击删除图标 |
+| **删除设备** | 点击删除图标               |
 
 > **注意**：本地设备的删除只是移除注册记录。如果设备重新连接，它会自动重新注册。云设备在连接设置页删除时会释放对应云资源。
 
@@ -359,11 +396,13 @@ wegent-executor
 #### 设备无法连接
 
 **可能原因：**
+
 1. JWT token 无效或已过期
 2. 网络连接问题
 3. 后端 URL 配置错误
 
 **解决方案：**
+
 1. 从 Wegent UI 生成新的 JWT token
 2. 检查到 Wegent 后端的网络连接
 3. 验证 `~/.wegent-executor/device-config.json` 或 `WEGENT_BACKEND_URL` 环境变量
@@ -371,11 +410,13 @@ wegent-executor
 #### 设备连接后立即显示离线
 
 **可能原因：**
+
 1. Token 验证失败
 2. 防火墙阻止 WebSocket
 3. 后端服务问题
 
 **解决方案：**
+
 1. 检查 token 有效性和权限
 2. 确保允许 WebSocket 连接
 3. 检查 Wegent 后端日志中的错误
@@ -385,11 +426,13 @@ wegent-executor
 #### 任务立即失败
 
 **可能原因：**
+
 1. Claude Code SDK 未安装
 2. 本地机器缺少依赖
 3. 权限不足
 
 **解决方案：**
+
 1. 安装并配置 Claude Code SDK
 2. 安装所需依赖
 3. 检查文件系统权限
@@ -397,11 +440,13 @@ wegent-executor
 #### 任务挂起无进展
 
 **可能原因：**
+
 1. Claude Code SDK 卡住
 2. 执行期间网络中断
 3. 本地机器资源耗尽
 
 **解决方案：**
+
 1. 重启 executor
 2. 检查网络连接
 3. 监控本地资源使用（CPU、内存）
@@ -422,14 +467,14 @@ wegent-executor
 
 ### 何时使用本地设备
 
-| 使用场景 | 建议 |
-|----------|------|
-| **敏感代码库** | ✅ 本地设备 |
-| **快速迭代** | ✅ 本地设备 |
-| **自定义工具需求** | ✅ 本地设备 |
-| **批量处理** | 云端（更大容量） |
-| **团队协作** | 云端（共享访问） |
-| **移动/远程访问** | 云端（无需本地设置） |
+| 使用场景           | 建议                 |
+| ------------------ | -------------------- |
+| **敏感代码库**     | ✅ 本地设备          |
+| **快速迭代**       | ✅ 本地设备          |
+| **自定义工具需求** | ✅ 本地设备          |
+| **批量处理**       | 云端（更大容量）     |
+| **团队协作**       | 云端（共享访问）     |
+| **移动/远程访问**  | 云端（无需本地设置） |
 
 ### 多设备设置
 
@@ -452,10 +497,12 @@ wegent-executor
 ## 🔗 相关资源
 
 ### 文档
+
 - [核心概念](../../concepts/core-concepts.md) - 了解 Wegent 的架构
 - [管理任务](../chat/managing-tasks.md) - 了解任务执行
 
 ### 技术参考
+
 - [本地设备架构](../../developer-guide/local-device-architecture.md) - 技术架构详解
 
 ---

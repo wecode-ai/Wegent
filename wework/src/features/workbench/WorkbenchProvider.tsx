@@ -28,6 +28,7 @@ import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
 import {
   WEWORK_MIN_EXECUTOR_VERSION,
   canRequestDeviceUpgrade,
+  filterClaudeCodeDevices,
   isDeviceBelowWeWorkVersion,
   isWeWorkCompatibleDevice,
 } from '@/lib/device-capabilities'
@@ -116,6 +117,12 @@ const RUNTIME_WORK_POLL_INTERVAL_MS = 5000
 const STANDALONE_PROJECT_ID = 0
 const EMPTY_MESSAGE_TASK_TITLE = '新对话'
 const RUNTIME_BLOCK_SUBTASK_ID_OFFSET = 1_000_000_000
+
+type SelectableProjectDeviceWorkspace = RuntimeDeviceWorkspace & { id: number }
+type ProjectMutationOptions = {
+  refreshWorkLists?: boolean
+}
+
 const DEVICE_STATUS_LABELS: Record<string, string> = {
   online: '在线',
   busy: '忙碌',
@@ -162,18 +169,19 @@ function readCachedDeviceList(): DeviceInfo[] {
       return []
     }
     if (Date.now() - parsed.updatedAt > DEVICE_LIST_CACHE_TTL_MS) return []
-    return parsed.devices
+    return filterClaudeCodeDevices(parsed.devices as DeviceInfo[])
   } catch {
     return []
   }
 }
 
 function writeCachedDeviceList(devices: DeviceInfo[]) {
-  if (devices.length === 0) return
+  const claudeCodeDevices = filterClaudeCodeDevices(devices)
+  if (claudeCodeDevices.length === 0) return
   try {
     window.sessionStorage.setItem(
       DEVICE_LIST_CACHE_KEY,
-      JSON.stringify({ devices, updatedAt: Date.now() })
+      JSON.stringify({ devices: claudeCodeDevices, updatedAt: Date.now() })
     )
   } catch {
     // The live state remains authoritative when browser storage is unavailable.
@@ -181,9 +189,10 @@ function writeCachedDeviceList(devices: DeviceInfo[]) {
 }
 
 function resolveDeviceListWithCache(devices: DeviceInfo[]): DeviceInfo[] {
-  if (devices.length > 0) {
-    writeCachedDeviceList(devices)
-    return devices
+  const claudeCodeDevices = filterClaudeCodeDevices(devices)
+  if (claudeCodeDevices.length > 0) {
+    writeCachedDeviceList(claudeCodeDevices)
+    return claudeCodeDevices
   }
 
   const cachedDevices = readCachedDeviceList()
@@ -304,10 +313,14 @@ export interface WorkbenchContextValue {
   refreshWorkLists: () => Promise<void>
   refreshDevices: () => Promise<void>
   upgradeDevice: (deviceId: string) => Promise<void>
-  createProject: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
+  createProject: (
+    data: CreateProjectRequest,
+    options?: ProjectMutationOptions
+  ) => Promise<ProjectWithTasks>
   createGitWorkspaceProject: (data: CreateGitWorkspaceProjectRequest) => Promise<ProjectWithTasks>
   prepareDeviceWorkspace: (
-    data: DeviceWorkspacePrepareRequest
+    data: DeviceWorkspacePrepareRequest,
+    options?: ProjectMutationOptions
   ) => Promise<DeviceWorkspacePrepareResponse>
   deleteDeviceWorkspace: (data: DeleteDeviceWorkspaceRequest) => Promise<void>
   listGitRepositories: () => Promise<GitRepoInfo[]>
@@ -719,12 +732,13 @@ function findRuntimeWorkspaceForDevice(
 function getSelectableProjectDeviceWorkspaces(
   runtimeWork: RuntimeWorkListResponse | null | undefined,
   projectId: number | null | undefined
-): RuntimeDeviceWorkspace[] {
+): SelectableProjectDeviceWorkspace[] {
   if (!projectId) return []
   const projectWork = runtimeWork?.projects.find(item => item.project.id === projectId)
   return (
     projectWork?.deviceWorkspaces.filter(
-      workspace => workspace.id != null && workspace.available
+      (workspace): workspace is SelectableProjectDeviceWorkspace =>
+        workspace.id != null && workspace.available
     ) ?? []
   )
 }
@@ -734,14 +748,14 @@ function getSingleProjectDeviceWorkspaceId(
   projectId: number | null | undefined
 ): number | null {
   const workspaces = getSelectableProjectDeviceWorkspaces(runtimeWork, projectId)
-  return workspaces.length === 1 ? (workspaces[0].id ?? null) : null
+  return workspaces.length === 1 ? workspaces[0].id : null
 }
 
 function findProjectDeviceWorkspace(
   runtimeWork: RuntimeWorkListResponse | null | undefined,
   projectId: number | null | undefined,
   deviceWorkspaceId: number | null | undefined
-): RuntimeDeviceWorkspace | null {
+): SelectableProjectDeviceWorkspace | null {
   if (!deviceWorkspaceId) return null
   return (
     getSelectableProjectDeviceWorkspaces(runtimeWork, projectId).find(
@@ -1698,13 +1712,17 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
   }, [])
 
   const createProject = useCallback(
-    async (data: CreateProjectRequest) => {
+    async (data: CreateProjectRequest, options: ProjectMutationOptions = {}) => {
       const project = await resolvedServices.projectApi.createProject(data)
       const projectDeviceId = data.config?.execution?.deviceId ?? data.config?.device_id
       if (projectDeviceId) {
         rememberExecutionDevice(projectDeviceId)
       }
-      await refreshWorkLists()
+      if (options.refreshWorkLists === false) {
+        dispatch({ type: 'project_created', project })
+      } else {
+        await refreshWorkLists()
+      }
       writeLastProjectId(user.id, project.id)
       dispatch({ type: 'project_selected', project })
       dispatchMessages({ type: 'reset', messages: [] })
@@ -1740,13 +1758,20 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
   )
 
   const prepareDeviceWorkspace = useCallback(
-    async (data: DeviceWorkspacePrepareRequest) => {
+    async (data: DeviceWorkspacePrepareRequest, options: ProjectMutationOptions = {}) => {
       if (!resolvedServices.runtimeWorkApi) {
         throw new Error('Runtime work is unavailable')
       }
       const response = await resolvedServices.runtimeWorkApi.prepareDeviceWorkspace(data)
       rememberExecutionDevice(data.deviceId)
-      await refreshWorkLists()
+      if (options.refreshWorkLists === false) {
+        dispatch({ type: 'device_workspace_prepared', mapping: response.mapping })
+        void refreshWorkLists().catch(() => {
+          // Keep the optimistic workspace mapping when the background refresh fails.
+        })
+      } else {
+        await refreshWorkLists()
+      }
       return response
     },
     [refreshWorkLists, rememberExecutionDevice, resolvedServices.runtimeWorkApi]
@@ -1976,24 +2001,35 @@ export function WorkbenchProvider({ children, user, services }: WorkbenchProvide
         projectId,
         state.selectedDeviceWorkspaceId
       )
-      if (projectId && !selectedProjectWorkspace) {
-        reportSendBlocked('请选择任务运行位置')
-        return false
-      }
-      const workspacePath = projectId
-        ? null
-        : findRuntimeWorkspaceForDevice(state.runtimeWork, activeDeviceId)
-      if (!projectId && (!activeDeviceId || !workspacePath)) {
-        reportSendBlocked('请选择项目或打开设备工作区后再发送')
-        return false
+      let runtimeTaskTarget: Pick<
+        RuntimeTaskCreateRequest,
+        'projectId' | 'deviceWorkspaceId' | 'deviceId' | 'workspacePath'
+      >
+      if (projectId) {
+        if (!selectedProjectWorkspace) {
+          reportSendBlocked('请选择任务运行位置')
+          return false
+        }
+        runtimeTaskTarget = {
+          projectId,
+          deviceWorkspaceId: selectedProjectWorkspace.id,
+        }
+      } else {
+        const workspacePath = findRuntimeWorkspaceForDevice(state.runtimeWork, activeDeviceId)
+        if (!activeDeviceId || !workspacePath) {
+          reportSendBlocked('请选择项目或打开设备工作区后再发送')
+          return false
+        }
+        runtimeTaskTarget = {
+          deviceId: activeDeviceId,
+          workspacePath,
+        }
       }
 
       const selectedModel =
         modelSelection.selectedModel ?? resolveAutomaticModel(modelSelection.models)
       const createRequest: RuntimeTaskCreateRequest = {
-        ...(projectId
-          ? { projectId, deviceWorkspaceId: selectedProjectWorkspace?.id }
-          : { deviceId: activeDeviceId, workspacePath: workspacePath as string }),
+        ...runtimeTaskTarget,
         teamId: payload.team_id,
         runtime: inferRuntimeName(selectedModel),
         message: payload.message,

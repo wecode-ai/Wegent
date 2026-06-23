@@ -16,7 +16,6 @@ export interface UserPreferences {
   quick_access?: QuickAccessConfig
   memory_enabled?: boolean
   chat_status_items?: string[]
-  tool_output_guard_enabled?: boolean
   /** Default execution target: 'cloud' for cloud mode, or device_id for a specific device */
   default_execution_target?: string | null
   weibo_binding?: {
@@ -377,6 +376,7 @@ export interface SubtaskResult {
   thinking?: unknown[]
   value?: string | { workbench?: WorkbenchData }
   workbench?: WorkbenchData
+  termination_reason?: string
   /** Persisted correction data from AI correction mode */
   correction?: CorrectionData
   /** Video generation result */

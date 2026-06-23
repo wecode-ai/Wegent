@@ -33,6 +33,9 @@ import { basename } from './device-folder-path'
 
 type ProjectCreateMode = 'scratch' | 'existing' | 'git'
 type ProjectWorkspaceKind = 'worktree' | 'workspace'
+type ProjectMutationOptions = {
+  refreshWorkLists?: boolean
+}
 
 interface ProjectCreateDialogProps {
   open: boolean
@@ -42,12 +45,16 @@ interface ProjectCreateDialogProps {
   deviceWorkspaces?: DeviceWorkspaceResponse[]
   devices: DeviceInfo[]
   onClose: () => void
-  onCreateProject: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
+  onCreateProject: (
+    data: CreateProjectRequest,
+    options?: ProjectMutationOptions
+  ) => Promise<ProjectWithTasks>
   onCreateGitWorkspaceProject?: (
     data: CreateGitWorkspaceProjectRequest
   ) => Promise<ProjectWithTasks>
   onPrepareDeviceWorkspace?: (
-    data: DeviceWorkspacePrepareRequest
+    data: DeviceWorkspacePrepareRequest,
+    options?: ProjectMutationOptions
   ) => Promise<DeviceWorkspacePrepareResponse>
   onDeleteDeviceWorkspace?: (data: DeleteDeviceWorkspaceRequest) => Promise<void>
   onDeviceWorkspacePrepared?: (response: DeviceWorkspacePrepareResponse) => Promise<void> | void
@@ -301,19 +308,25 @@ function ProjectCreateDialogContent({
         }
       } else {
         if (!selectedDrafts.length || !finalProjectName || !onPrepareDeviceWorkspace) return
-        const createdProject = await onCreateProject({
-          name: finalProjectName,
-          description: '',
-          config: { mode: mode === 'git' ? 'workspace' : 'workspace' },
-        })
+        const createdProject = await onCreateProject(
+          {
+            name: finalProjectName,
+            description: '',
+            config: { mode: mode === 'git' ? 'workspace' : 'workspace' },
+          },
+          { refreshWorkLists: false }
+        )
         for (const draft of selectedDrafts) {
-          const preparedWorkspace = await onPrepareDeviceWorkspace({
-            projectId: createdProject.id,
-            deviceId: draft.deviceId,
-            workspacePath: draft.path,
-            action: draft.action,
-            ...(showWorkspaceKindSelect ? { label: workspaceKind } : {}),
-          })
+          const preparedWorkspace = await onPrepareDeviceWorkspace(
+            {
+              projectId: createdProject.id,
+              deviceId: draft.deviceId,
+              workspacePath: draft.path,
+              action: draft.action,
+              ...(showWorkspaceKindSelect ? { label: workspaceKind } : {}),
+            },
+            { refreshWorkLists: false }
+          )
           await onDeviceWorkspacePrepared?.(preparedWorkspace)
         }
       }
