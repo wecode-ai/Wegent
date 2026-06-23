@@ -13,10 +13,13 @@ import type { GuidanceWorkbenchMessage, QueuedWorkbenchMessage } from '@/types/w
 
 vi.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
-    t: (key: string, options?: string | { count?: number }) => {
+    t: (key: string, options?: string | { action?: string; count?: number; device?: string }) => {
       if (typeof options === 'string') return options
       if (key === 'workbench.code_comment_count') {
         return `${options?.count ?? 0} 个评论`
+      }
+      if (key === 'workbench.project_work_trigger_device_aria') {
+        return `${options?.action ?? ''}，当前设备 ${options?.device ?? ''}`
       }
       if (key === 'workbench.remove_code_comments') {
         return '移除代码评论'
@@ -105,6 +108,7 @@ describe('ChatInput', () => {
     vi.useRealTimers()
     localStorage.clear()
     URL.createObjectURL = originalCreateObjectUrl
+    delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
   })
 
   test('renders the desktop composer sections', () => {
@@ -840,6 +844,33 @@ describe('ChatInput', () => {
     expect(handleFileSelect).toHaveBeenCalledWith([documentFile])
   })
 
+  test('uploads dropped files from the desktop composer', () => {
+    const handleFileSelect = vi.fn().mockResolvedValue(undefined)
+    const documentFile = new File(['document'], 'drop-requirements.pdf', {
+      type: 'application/pdf',
+    })
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({ handleFileSelect })}
+      />
+    )
+
+    fireEvent.drop(screen.getByTestId('chat-message-input'), {
+      dataTransfer: {
+        types: ['Files'],
+        files: [documentFile],
+      },
+    })
+
+    expect(handleFileSelect).toHaveBeenCalledWith([documentFile])
+  })
+
   test('uploads pasted images from the fullscreen compact textbox', async () => {
     const handleFileSelect = vi.fn().mockResolvedValue(undefined)
     const image = new File(['image'], 'fullscreen-clipboard.png', { type: 'image/png' })
@@ -1206,6 +1237,7 @@ describe('ChatInput', () => {
       },
     }
     const setSelectedModel = vi.fn()
+    const onBlockedModelSelect = vi.fn()
     render(
       <ChatInput
         value=""
@@ -1218,6 +1250,7 @@ describe('ChatInput', () => {
           selectedModel,
           selectedModelOptions: {},
           setSelectedModel,
+          onBlockedModelSelect,
         })}
       />
     )
@@ -1225,7 +1258,7 @@ describe('ChatInput', () => {
     await userEvent.click(screen.getByTestId('model-selector-button'))
 
     const disabledOption = screen.getByTestId('model-option-overseas-gpt-5.4')
-    expect(disabledOption).toBeDisabled()
+    expect(disabledOption).not.toBeDisabled()
     expect(disabledOption).toHaveAttribute('aria-disabled', 'true')
     expect(disabledOption).toHaveAttribute('title', 'Incompatible with the current model protocol')
     expect(disabledOption).toHaveTextContent('Incompatible with the current model protocol')
@@ -1233,6 +1266,10 @@ describe('ChatInput', () => {
     await userEvent.click(disabledOption)
 
     expect(setSelectedModel).not.toHaveBeenCalled()
+    expect(onBlockedModelSelect).toHaveBeenCalledWith(
+      incompatibleModel,
+      'Incompatible with the current model protocol'
+    )
   })
 
   test('closes the model menu after selecting a reasoning option', async () => {
@@ -1906,6 +1943,41 @@ describe('ChatInput', () => {
     ).not.toBeInTheDocument()
   })
 
+  test('shows the current standalone device in the project work trigger', () => {
+    const devices: DeviceInfo[] = [
+      {
+        id: 1,
+        device_id: 'local-online',
+        name: 'Local Online',
+        status: 'online',
+        is_default: false,
+        device_type: 'local',
+      },
+    ]
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectWork={projectWorkControls({
+          projects: [{ id: 7, name: 'hello', tasks: [] }],
+          devices,
+          currentProjectId: undefined,
+          currentStandaloneDeviceId: 'local-online',
+        })}
+      />
+    )
+
+    const trigger = screen.getByTestId('project-work-button')
+
+    expect(trigger).toHaveTextContent('进入项目工作')
+    expect(trigger).toHaveTextContent('Local Online')
+    expect(trigger).toHaveAccessibleName('进入项目工作，当前设备 Local Online')
+  })
+
   test('does not include enter-project work as a menu item', async () => {
     render(
       <ChatInput
@@ -2094,6 +2166,58 @@ describe('ChatInput', () => {
       expect(screen.queryByTestId(menuTestId)).not.toBeInTheDocument()
     }
   )
+
+  test('limits the desktop project branch menu while branches scroll', async () => {
+    const branches = Array.from({ length: 50 }, (_, index) => `feature/branch-${index}`)
+    vi.stubGlobal('innerHeight', 380)
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectWork={projectWorkControls({
+          projects: [{ id: 7, name: 'Wegent', tasks: [] }],
+          currentProjectId: 7,
+          executionMode: 'current_workspace',
+          executionModeLocked: false,
+          onExecutionModeChange: vi.fn(),
+          branchName: 'main',
+          branchLoading: false,
+          onRefreshBranch: vi.fn().mockResolvedValue(undefined),
+          onListBranches: vi.fn().mockResolvedValue(branches),
+          onCheckoutBranch: vi.fn().mockResolvedValue(undefined),
+        })}
+      />
+    )
+
+    const branchButton = screen.getByTestId('project-branch-button')
+    vi.spyOn(branchButton, 'getBoundingClientRect').mockReturnValue({
+      x: 0,
+      y: 300,
+      left: 0,
+      top: 300,
+      right: 120,
+      bottom: 336,
+      width: 120,
+      height: 36,
+      toJSON: () => ({}),
+    })
+
+    await userEvent.click(branchButton)
+
+    const menu = await screen.findByTestId('project-branch-menu')
+    await waitFor(() => expect(menu).toHaveStyle({ maxHeight: '276px' }))
+    expect(menu).toHaveClass('bottom-11', 'overflow-hidden')
+    expect(screen.getByTestId('project-branch-list')).toHaveClass(
+      'min-h-0',
+      'flex-1',
+      'overflow-y-auto'
+    )
+    expect(await screen.findAllByTestId('project-branch-option')).toHaveLength(50)
+  })
 
   test('submits typed content', async () => {
     const onChange = vi.fn()

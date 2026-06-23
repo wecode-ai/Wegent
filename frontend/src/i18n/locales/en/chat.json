@@ -246,7 +246,8 @@
       "glob": "Find Files",
       "todo": "Update Tasks",
       "kb_search": "Search Knowledge Base",
-      "web_search": "Web Search"
+      "web_search": "Web Search",
+      "load_skill": "Load Skill"
     }
   },
   "send_button": {

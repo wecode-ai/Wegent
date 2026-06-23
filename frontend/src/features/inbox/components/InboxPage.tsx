@@ -7,6 +7,7 @@
 import { useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { useTranslation } from '@/hooks/useTranslation'
+import { buildChatCodeHref } from '@/config/coding-route'
 import { useDevices } from '@/contexts/DeviceContext'
 import {
   AlertDialog,
@@ -134,7 +135,7 @@ export function InboxPage() {
       params.set('process_message', String(message.id))
 
       if (mode === 'code') {
-        router.push(`/code?${params.toString()}`)
+        router.push(buildChatCodeHref(params))
         return
       }
 

@@ -22,6 +22,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import (
     AIMessage,
     BaseMessage,
+    ChatMessage,
     HumanMessage,
     SystemMessage,
     ToolMessage,
@@ -30,6 +31,7 @@ from langchain_core.messages.utils import convert_to_messages
 from langchain_core.tools.base import BaseTool
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.errors import GraphRecursionError
+from langgraph.graph.message import add_messages
 from langgraph.prebuilt import create_react_agent
 from opentelemetry import trace as otel_trace
 
@@ -107,6 +109,30 @@ class InvalidToolMessageSequenceError(ValueError):
     representation before they are adapted to OpenAI Chat Completions,
     OpenAI Responses API, Anthropic Messages API, or Gemini API.
     """
+
+
+def _log_tool_error_event(tool_name: str, run_id: str, event_data: Any) -> None:
+    """Log a tool execution failure surfaced by LangGraph's ``on_tool_error``.
+
+    LangGraph reports tool failures (e.g. argument ``ValidationError``) via an
+    ``on_tool_error`` event and then converts them into an error ``ToolMessage``
+    that is only visible to the model. Without this, chat_shell logs stay silent
+    on tool failures, making them hard to diagnose. The ``input`` is included
+    because mismatches between it and the error (e.g. a "Field required" error
+    with an empty input) are the fastest way to spot argument-routing bugs.
+    """
+    data = event_data if isinstance(event_data, dict) else {}
+    error = data.get("error")
+    tool_input = data.get("input")
+    # Truncate both fields: tool args can be large (e.g. file contents) or carry
+    # sensitive values, so we cap the logged length to avoid log bloat / leakage.
+    logger.error(
+        "[stream_tokens] Tool '%s' failed (run_id=%s): input=%s error=%s",
+        tool_name,
+        run_id,
+        repr(tool_input)[:1000],
+        str(error)[:1000],
+    )
 
 
 def _require_non_empty_tool_id(tool_id: Any, context: str) -> str:
@@ -368,6 +394,8 @@ def _message_to_context_metrics_dict(msg: BaseMessage) -> dict[str, Any]:
     """Convert a LangChain message into the dict view used by metrics counting."""
     if isinstance(msg, SystemMessage):
         role = "system"
+    elif isinstance(msg, ChatMessage):
+        role = msg.role
     elif isinstance(msg, HumanMessage):
         role = "user"
     elif isinstance(msg, AIMessage):
@@ -510,6 +538,35 @@ def _serialize_validated_messages_chain(
     return chain
 
 
+def _new_messages_from_state(
+    collected: list[BaseMessage],
+    input_ids: frozenset[str],
+) -> list[BaseMessage]:
+    """Return only messages generated this turn from the LangGraph final state.
+
+    The ``UnifiedContextGuard`` (registered as ``pre_model_hook``) can remove
+    input messages from LangGraph state mid-run via ``RemoveMessage``.  After
+    such removals the count-based slice ``collected[len(input_messages):]``
+    becomes incorrect: the offset now points past the first generated
+    AIMessage(tool_calls), making the first ToolMessage appear as index 0 and
+    breaking ``_validate_tool_message_sequence``.
+
+    Using message IDs avoids this: input messages keep their original IDs
+    regardless of whether the guard removed or compacted other inputs; all
+    LLM-generated messages have fresh IDs that are never in ``input_ids``.
+
+    Args:
+        collected: Final LangGraph state from the ``on_chain_end`` event.
+        input_ids: Frozenset of IDs from messages passed as input to the agent.
+
+    Returns:
+        Messages generated during the current turn only.
+    """
+    if not input_ids:
+        return list(collected)
+    return [msg for msg in collected if not msg.id or msg.id not in input_ids]
+
+
 class LangGraphAgentBuilder:
     """Builder for LangGraph-based agent workflows using prebuilt ReAct agent."""
 
@@ -648,6 +705,13 @@ class LangGraphAgentBuilder:
                             },
                         )
 
+                elif kind == "on_tool_error":
+                    _log_tool_error_event(
+                        event.get("name", "unknown"),
+                        event.get("run_id", ""),
+                        event.get("data", {}),
+                    )
+
                 elif kind == "on_chain_end" and event.get("name") == "LangGraph":
                     data = event.get("data", {})
                     output = data.get("output", {})
@@ -731,7 +795,7 @@ class LangGraphAgentBuilder:
         return modifier_tools
 
     def _create_prompt_modifier(self) -> Callable | None:
-        """Create a prompt modifier function for dynamic prompt injection.
+        """Create a prompt modifier function for dynamic instruction injection.
 
         This function is called before each model invocation to inject
         prompt modifications from all PromptModifierTool instances.
@@ -744,12 +808,42 @@ class LangGraphAgentBuilder:
 
         modifier_tools = self._prompt_modifier_tools
 
+        def supports_developer_message() -> bool:
+            """Return whether the current LangChain adapter accepts developer role."""
+            return self._provider == "openai"
+
+        def create_dynamic_instruction_message(content: str) -> BaseMessage:
+            """Create a provider-safe message for dynamic skill instructions."""
+            if supports_developer_message():
+                return ChatMessage(role="developer", content=content)
+
+            wrapped_content = (
+                "<application_skill_context>\n"
+                "The following skill context was injected by the application for "
+                "this model call. It is not authored by the user.\n"
+                f"{content.strip()}\n"
+                "</application_skill_context>"
+            )
+            return HumanMessage(content=wrapped_content)
+
+        def insert_after_leading_system_messages(
+            messages: list[BaseMessage], dynamic_message: BaseMessage
+        ) -> list[BaseMessage]:
+            """Insert dynamic context without mutating stable system prompts."""
+            insert_at = 0
+            while insert_at < len(messages) and isinstance(
+                messages[insert_at], SystemMessage
+            ):
+                insert_at += 1
+            return messages[:insert_at] + [dynamic_message] + messages[insert_at:]
+
         def prompt_modifier(state: dict[str, Any]) -> list[BaseMessage]:
-            """Modify messages to inject prompt modifications into system message.
+            """Inject dynamic prompt modifications as a separate message.
 
             This function is called by LangGraph's create_react_agent before each
             model invocation. It collects prompt modifications from all
-            PromptModifierTool instances and appends them to the system message.
+            PromptModifierTool instances and inserts them after the stable system
+            prompts so prompt caching can keep the base system prefix unchanged.
             """
             messages = state.get("messages", [])
             if not messages:
@@ -766,55 +860,13 @@ class LangGraphAgentBuilder:
                 # No modifications, return messages unchanged
                 return messages
 
-            # Find and update the system message
-            new_messages = []
-            system_updated = False
-
-            for msg in messages:
-                if isinstance(msg, SystemMessage) and not system_updated:
-                    # Append modifications to existing system message.
-                    # Content may be a string or a list of content blocks
-                    # (e.g., when Anthropic cache_control breakpoints are set).
-                    # Preserve the original format to keep cache markers intact.
-                    if isinstance(msg.content, list):
-                        # List of content blocks — append modification as a new
-                        # text block so existing cache_control markers stay valid.
-                        updated_content = msg.content + [
-                            {"type": "text", "text": combined_modification}
-                        ]
-                    else:
-                        updated_content = msg.content + combined_modification
-                    new_messages.append(SystemMessage(content=updated_content))
-                    system_updated = True
-
-                    # Log the final system prompt metadata at INFO level
-                    # Full content is only logged at DEBUG level to avoid leaking sensitive data
-                    content_len = (
-                        sum(
-                            len(b.get("text", ""))
-                            for b in updated_content
-                            if isinstance(b, dict)
-                        )
-                        if isinstance(updated_content, list)
-                        else len(updated_content)
-                    )
-                    logger.info(
-                        "[prompt_modifier] Final system prompt (len=%d)",
-                        content_len,
-                    )
-                    # logger.debug(
-                    #     "[prompt_modifier] Final system prompt content:\n%s",
-                    #     updated_content,
-                    # )
-
-                else:
-                    new_messages.append(msg)
-
-            # If no system message found, prepend one with modifications
-            if not system_updated:
-                new_messages.insert(0, SystemMessage(content=combined_modification))
-
-            return new_messages
+            dynamic_message = create_dynamic_instruction_message(combined_modification)
+            logger.info(
+                "[prompt_modifier] Dynamic skill context injected role=%s len=%d",
+                getattr(dynamic_message, "role", dynamic_message.type),
+                len(str(dynamic_message.content)),
+            )
+            return insert_after_leading_system_messages(messages, dynamic_message)
 
         return prompt_modifier
 
@@ -906,7 +958,8 @@ class LangGraphAgentBuilder:
 
         # Get all registered skill tools
         all_skill_tools = load_skill_tool.get_all_registered_tools()
-        if not all_skill_tools:
+        has_deferred_loaders = load_skill_tool.has_deferred_tool_loaders()
+        if not all_skill_tools and not has_deferred_loaders:
             return None, self.tools
 
         # Create a set of skill tool names for quick lookup
@@ -948,6 +1001,44 @@ class LangGraphAgentBuilder:
             return llm.bind_tools(selected_tools)
 
         return configure_model, all_tools
+
+    def _create_dynamic_tool_node(
+        self,
+        *,
+        all_tools: list[BaseTool],
+        load_skill_tool: Any | None,
+    ) -> list[BaseTool] | Any:
+        """Create a ToolNode that can execute tools registered after graph build."""
+        if not load_skill_tool:
+            return all_tools
+
+        from langgraph.prebuilt.tool_node import ToolCallRequest, ToolNode
+
+        async def awrap_tool_call(tool_request: Any, execute: Callable) -> Any:
+            """Resolve a dynamically registered skill tool before execution."""
+            if tool_request.tool is not None:
+                return await execute(tool_request)
+
+            finder = getattr(load_skill_tool, "find_registered_tool", None)
+            if not finder:
+                return await execute(tool_request)
+
+            tool_name = tool_request.tool_call["name"]
+            dynamic_tool = finder(tool_name)
+            if dynamic_tool is None:
+                return await execute(tool_request)
+
+            logger.info("[dynamic_tool_node] Resolved dynamic tool '%s'", tool_name)
+            return await execute(
+                ToolCallRequest(
+                    tool_call=tool_request.tool_call,
+                    tool=dynamic_tool,
+                    state=tool_request.state,
+                    runtime=tool_request.runtime,
+                )
+            )
+
+        return ToolNode(all_tools, awrap_tool_call=awrap_tool_call)
 
     @trace_sync(
         span_name="agent_builder.build_agent",
@@ -991,6 +1082,11 @@ class LangGraphAgentBuilder:
 
         # Store all_tools for external access (e.g., for display_name lookup)
         self.all_tools = all_tools
+        load_skill_tool = self._find_load_skill_tool()
+        tool_node_or_tools = self._create_dynamic_tool_node(
+            all_tools=all_tools,
+            load_skill_tool=load_skill_tool if model_configurator else None,
+        )
 
         # Add llm built-in tools if supported (currently none)
         model_with_tools: BaseChatModel | Callable = self.llm
@@ -1000,7 +1096,7 @@ class LangGraphAgentBuilder:
         if model_configurator:
             self._agent = create_react_agent(
                 model=model_configurator,
-                tools=all_tools,
+                tools=tool_node_or_tools,
                 checkpointer=checkpointer,
                 prompt=prompt_modifier,
                 pre_model_hook=self.pre_model_hook,
@@ -1008,7 +1104,7 @@ class LangGraphAgentBuilder:
         else:
             self._agent = create_react_agent(
                 model=model_with_tools,
-                tools=all_tools,
+                tools=tool_node_or_tools,
                 checkpointer=checkpointer,
                 prompt=prompt_modifier,
                 pre_model_hook=self.pre_model_hook,
@@ -1126,6 +1222,17 @@ class LangGraphAgentBuilder:
         )
         add_span_event(
             "convert_to_messages_completed", {"lc_message_count": len(lc_messages)}
+        )
+        # Pre-assign stable LangGraph message IDs before the run starts.
+        # add_messages mutates in-place, assigning the same UUIDs that LangGraph
+        # will use when it initialises its state with {"messages": lc_messages}.
+        # We snapshot those IDs so we can correctly identify newly generated
+        # messages after the run, even when UnifiedContextGuard removes some
+        # input messages mid-run via RemoveMessage (which would break the old
+        # count-based slice ``collected[len(lc_messages):]``).
+        add_messages([], lc_messages)
+        _input_message_ids: frozenset[str] = frozenset(
+            msg.id for msg in lc_messages if msg.id
         )
 
         exec_config = {"configurable": config} if config else None
@@ -1592,6 +1699,13 @@ class LangGraphAgentBuilder:
                         # This ensures tool events are sent immediately instead of being buffered
                         yield ""
 
+                elif kind == "on_tool_error":
+                    _log_tool_error_event(
+                        event.get("name", "unknown"),
+                        event.get("run_id", ""),
+                        event.get("data", {}),
+                    )
+
             # If no content was streamed but we have final content, yield it
             # This handles non-streaming models
             if not streamed_content and final_content:
@@ -1621,7 +1735,9 @@ class LangGraphAgentBuilder:
                             or []
                         ),
                     )
-                new_msgs = _collected_state_messages[len(lc_messages) :]
+                new_msgs = _new_messages_from_state(
+                    _collected_state_messages, _input_message_ids
+                )
                 self._last_messages_chain = _serialize_validated_messages_chain(
                     new_msgs,
                     provider=self._provider,
@@ -1708,7 +1824,9 @@ class LangGraphAgentBuilder:
                     _message_to_context_metrics_dict(msg)
                     for msg in _collected_state_messages
                 ]
-                new_msgs = _collected_state_messages[len(lc_messages) :]
+                new_msgs = _new_messages_from_state(
+                    _collected_state_messages, _input_message_ids
+                )
                 self._last_messages_chain = _serialize_validated_messages_chain(
                     new_msgs,
                     provider=self._provider,
@@ -1732,7 +1850,9 @@ class LangGraphAgentBuilder:
                     _message_to_context_metrics_dict(msg)
                     for msg in _collected_state_messages
                 ]
-                new_msgs = _collected_state_messages[len(lc_messages) :]
+                new_msgs = _new_messages_from_state(
+                    _collected_state_messages, _input_message_ids
+                )
                 self._last_messages_chain = _serialize_validated_messages_chain(
                     new_msgs,
                     provider=self._provider,

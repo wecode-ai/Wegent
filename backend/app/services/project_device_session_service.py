@@ -56,7 +56,7 @@ async def start_project_device_session(
 
     project_config = _parse_project_config(project.config)
     device_id = _get_bound_device_id(project_config)
-    _ensure_device_supports_project_sessions(db, user_id, device_id)
+    _ensure_device_supports_project_session_type(db, user_id, device_id, session_type)
     if task_id is not None:
         path = _get_task_session_path(
             db=db,
@@ -174,12 +174,13 @@ def _get_bound_device_id(config: ProjectConfig) -> str:
     return config.execution.deviceId
 
 
-def _ensure_device_supports_project_sessions(
+def _ensure_device_supports_project_session_type(
     db: Session,
     user_id: int,
     device_id: str,
+    session_type: ProjectSessionType,
 ) -> None:
-    """Reject project terminal and code-server sessions for local devices."""
+    """Reject gateway-backed project sessions for local devices."""
 
     device_kind = device_service.get_device_by_device_id(db, user_id, device_id)
     if not device_kind:
@@ -188,10 +189,10 @@ def _ensure_device_supports_project_sessions(
     spec = getattr(device_kind, "json", None)
     spec = spec.get("spec", {}) if isinstance(spec, dict) else {}
     device_type = spec.get("deviceType")
-    if device_type == DeviceType.LOCAL.value:
+    if device_type == DeviceType.LOCAL.value and session_type == "code_server":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Local devices do not support terminal or code-server sessions",
+            detail="Local devices do not support code-server sessions",
         )
 
 

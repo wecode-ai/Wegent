@@ -43,9 +43,9 @@ Code Task = User Prompt + Code Agent + Git Repository + Branch
 
 ## Creating a Code Task
 
-### Step 1: Navigate to Code Page
+### Step 1: Open the Code Entry
 
-1. Click **"Code"** in the left navigation bar
+1. Click **"Code"** in the left navigation bar to enter coding mode at `/chat?agent=code`
 2. The system displays the code task list and input area
 
 ### Step 2: Select a Code Agent

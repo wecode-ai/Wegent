@@ -1,0 +1,431 @@
+# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+name: Snapshot Image
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Image/app version to build. Must be >= 2.0.0, for example 2.0.0.'
+        type: string
+        required: true
+        default: '2.0.0'
+
+env:
+  GIT_REF: ${{ github.sha }}
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}
+
+concurrency:
+  group: snapshot-image-main
+  cancel-in-progress: true
+
+jobs:
+  prepare-snapshot:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    outputs:
+      app_version: ${{ steps.meta.outputs.app_version }}
+      git_sha: ${{ steps.meta.outputs.git_sha }}
+      short_sha: ${{ steps.meta.outputs.short_sha }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.GIT_REF }}
+
+      - name: Prepare snapshot metadata
+        id: meta
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          set -euo pipefail
+
+          GIT_SHA="$(git rev-parse HEAD)"
+          SHORT_SHA="$(git rev-parse --short=12 HEAD)"
+          APP_VERSION="${INPUT_VERSION}"
+
+          if ! [[ "${APP_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Error: version '${APP_VERSION}' must use MAJOR.MINOR.PATCH format." >&2
+            exit 1
+          fi
+
+          IFS='.' read -r MAJOR MINOR PATCH <<< "${APP_VERSION}"
+          if (( MAJOR < 2 )); then
+            echo "Error: version '${APP_VERSION}' must be >= 2.0.0." >&2
+            exit 1
+          fi
+
+          echo "git_sha=${GIT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "app_version=${APP_VERSION}" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### Snapshot metadata"
+            echo ""
+            echo "- Git SHA: \`${GIT_SHA}\`"
+            echo "- Image/app version: \`${APP_VERSION}\`"
+            echo "- Channel tags after verification: \`main\`, \`edge\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  build-images:
+    needs: prepare-snapshot
+    runs-on: ${{ matrix.platform.runner }}
+    permissions:
+      contents: read
+      packages: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - runner: ubuntu-latest
+            value: linux/amd64
+            suffix: amd64
+          - runner: ubuntu-24.04-arm
+            value: linux/arm64
+            suffix: arm64
+        image:
+          - name: wegent-backend
+            dockerfile: docker/backend/Dockerfile
+            cache_scope: backend
+          - name: wegent-executor
+            dockerfile: docker/executor/Dockerfile
+            cache_scope: executor
+          - name: wegent-executor-manager
+            dockerfile: docker/executor_manager/Dockerfile
+            cache_scope: executor-manager
+          - name: wegent-web
+            dockerfile: docker/frontend/Dockerfile
+            cache_scope: frontend
+          - name: wegent-chat-shell
+            dockerfile: docker/chat_shell/Dockerfile
+            cache_scope: chat-shell
+          - name: wegent-knowledge-runtime
+            dockerfile: docker/knowledge_runtime/Dockerfile
+            cache_scope: knowledge-runtime
+          - name: wegent-knowledge-doc-converter
+            dockerfile: docker/knowledge_doc_converter/Dockerfile
+            cache_scope: knowledge-doc-converter
+          - name: wegent-standalone
+            dockerfile: docker/standalone/Dockerfile
+            cache_scope: standalone
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-snapshot.outputs.git_sha }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Prepare build arguments
+        id: build-args
+        shell: bash
+        env:
+          IMAGE_NAME: ${{ matrix.image.name }}
+          APP_VERSION: ${{ needs.prepare-snapshot.outputs.app_version }}
+        run: |
+          set -euo pipefail
+
+          case "${IMAGE_NAME}" in
+            wegent-web)
+              {
+                echo "args<<EOF"
+                echo "NEXT_TELEMETRY_DISABLED=1"
+                echo "APP_VERSION=${APP_VERSION}"
+                echo "EOF"
+              } >> "$GITHUB_OUTPUT"
+              ;;
+            wegent-standalone)
+              {
+                echo "args<<EOF"
+                echo "APP_VERSION=${APP_VERSION}"
+                echo "EOF"
+              } >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "args=" >> "$GITHUB_OUTPUT"
+              ;;
+          esac
+
+      - name: Build and push image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ${{ matrix.image.dockerfile }}
+          push: true
+          platforms: ${{ matrix.platform.value }}
+          tags: ${{ env.IMAGE_PREFIX }}/${{ matrix.image.name }}:${{ needs.prepare-snapshot.outputs.app_version }}-${{ matrix.platform.suffix }}
+          cache-from: type=gha,scope=snapshot-${{ matrix.image.cache_scope }}-${{ matrix.platform.suffix }}
+          cache-to: type=gha,mode=max,scope=snapshot-${{ matrix.image.cache_scope }}-${{ matrix.platform.suffix }}
+          build-args: ${{ steps.build-args.outputs.args }}
+
+  build-executor-binaries:
+    needs: prepare-snapshot
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: macos-arm64
+            runner: macos-14
+            output_path: executor/dist/wegent-executor
+            artifact_path: executor/dist/wegent-executor-macos-arm64
+            artifact_name: wegent-executor-macos-arm64
+          - target: macos-amd64
+            runner: macos-14
+            output_path: executor/dist/wegent-executor
+            artifact_path: executor/dist/wegent-executor-macos-amd64
+            artifact_name: wegent-executor-macos-amd64
+          - target: linux-amd64
+            runner: ubuntu-22.04
+            output_path: executor/dist/wegent-executor
+            artifact_path: executor/dist/wegent-executor-linux-amd64
+            artifact_name: wegent-executor-linux-amd64
+          - target: linux-amd64-no-claude
+            runner: ubuntu-22.04
+            output_path: executor/dist/wegent-executor
+            artifact_path: executor/dist/wegent-executor-linux-amd64-no-claude
+            artifact_name: wegent-executor-linux-amd64-no-claude
+          - target: linux-arm64
+            runner: ubuntu-22.04-arm
+            output_path: executor/dist/wegent-executor
+            artifact_path: executor/dist/wegent-executor-linux-arm64
+            artifact_name: wegent-executor-linux-arm64
+          - target: windows-amd64
+            runner: windows-latest
+            output_path: executor/dist/wegent-executor.exe
+            artifact_path: executor/dist/wegent-executor-windows-amd64.exe
+            artifact_name: wegent-executor-windows-amd64
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-snapshot.outputs.git_sha }}
+
+      - name: Install Rosetta 2
+        if: matrix.target == 'macos-amd64'
+        run: |
+          if ! /usr/bin/pgrep -q oahd; then
+            sudo softwareupdate --install-rosetta --agree-to-license || true
+          fi
+
+      - name: Set up Python
+        if: matrix.target != 'macos-amd64'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Set up Python x86_64
+        if: matrix.target == 'macos-amd64'
+        run: |
+          curl -L -o python-installer.pkg "https://www.python.org/ftp/python/3.11.9/python-3.11.9-macos11.pkg"
+          sudo installer -pkg python-installer.pkg -target /
+          rm python-installer.pkg
+
+      - name: Install uv
+        if: matrix.target != 'macos-amd64'
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install uv x86_64
+        if: matrix.target == 'macos-amd64'
+        run: |
+          arch -x86_64 /usr/local/bin/python3.11 -m pip install --upgrade pip
+          arch -x86_64 /usr/local/bin/python3.11 -m pip install uv
+
+      - name: Build executor binary
+        if: matrix.target != 'macos-amd64' && matrix.target != 'windows-amd64'
+        working-directory: executor
+        env:
+          GITHUB_REPO: ${{ github.repository }}
+          APP_VERSION: ${{ needs.prepare-snapshot.outputs.app_version }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          uv sync --group build
+          build_args=("--version" "${APP_VERSION}")
+          if [[ "${TARGET}" == "linux-amd64-no-claude" ]]; then
+            build_args+=("--no-bundle-claude")
+          fi
+          uv run python scripts/build_local.py "${build_args[@]}"
+
+      - name: Build executor binary x86_64
+        if: matrix.target == 'macos-amd64'
+        working-directory: executor
+        env:
+          GITHUB_REPO: ${{ github.repository }}
+          APP_VERSION: ${{ needs.prepare-snapshot.outputs.app_version }}
+        run: |
+          set -euo pipefail
+          arch -x86_64 /usr/local/bin/python3.11 -m uv sync --group build
+          arch -x86_64 /usr/local/bin/python3.11 -m uv run python scripts/build_local.py --version "${APP_VERSION}"
+
+      - name: Build executor binary Windows
+        if: matrix.target == 'windows-amd64'
+        working-directory: executor
+        shell: pwsh
+        env:
+          GITHUB_REPO: ${{ github.repository }}
+          APP_VERSION: ${{ needs.prepare-snapshot.outputs.app_version }}
+        run: |
+          uv sync --group build
+          uv run python scripts/build_local.py --version "$env:APP_VERSION"
+
+      - name: Rename binary
+        if: matrix.target != 'windows-amd64'
+        run: mv "${{ matrix.output_path }}" "${{ matrix.artifact_path }}"
+
+      - name: Rename binary Windows
+        if: matrix.target == 'windows-amd64'
+        shell: pwsh
+        run: Move-Item "${{ matrix.output_path }}" "${{ matrix.artifact_path }}"
+
+      - name: Upload executor binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_path }}
+          retention-days: 14
+
+  create-version-manifests:
+    needs:
+      - prepare-snapshot
+      - build-images
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+
+    steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Create versioned multi-arch manifests
+        shell: bash
+        env:
+          VERSION: ${{ needs.prepare-snapshot.outputs.app_version }}
+        run: |
+          set -euo pipefail
+
+          create_manifest() {
+            local image_name="$1"
+            echo "Creating versioned manifest for ${image_name}:${VERSION}"
+
+            docker buildx imagetools create -t "${IMAGE_PREFIX}/${image_name}:${VERSION}" \
+              "${IMAGE_PREFIX}/${image_name}:${VERSION}-amd64" \
+              "${IMAGE_PREFIX}/${image_name}:${VERSION}-arm64"
+          }
+
+          create_manifest "wegent-backend"
+          create_manifest "wegent-executor"
+          create_manifest "wegent-executor-manager"
+          create_manifest "wegent-web"
+          create_manifest "wegent-chat-shell"
+          create_manifest "wegent-knowledge-runtime"
+          create_manifest "wegent-knowledge-doc-converter"
+          create_manifest "wegent-standalone"
+
+  verify-standalone:
+    needs:
+      - prepare-snapshot
+      - create-version-manifests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-snapshot.outputs.git_sha }}
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify standalone snapshot image
+        env:
+          IMAGE: ${{ env.IMAGE_PREFIX }}/wegent-standalone:${{ needs.prepare-snapshot.outputs.app_version }}
+          CONTAINER_NAME: wegent-standalone-snapshot-verify
+        run: bash scripts/verify-standalone-image.sh "$IMAGE"
+
+  promote-channel-tags:
+    needs:
+      - prepare-snapshot
+      - verify-standalone
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+
+    steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Promote verified snapshot to channel tags
+        shell: bash
+        env:
+          VERSION: ${{ needs.prepare-snapshot.outputs.app_version }}
+        run: |
+          set -euo pipefail
+
+          promote_manifest() {
+            local image_name="$1"
+            echo "Promoting ${image_name}:${VERSION} to ${image_name}:main and ${image_name}:edge"
+
+            docker buildx imagetools create \
+              -t "${IMAGE_PREFIX}/${image_name}:main" \
+              -t "${IMAGE_PREFIX}/${image_name}:edge" \
+              "${IMAGE_PREFIX}/${image_name}:${VERSION}"
+          }
+
+          promote_manifest "wegent-backend"
+          promote_manifest "wegent-executor"
+          promote_manifest "wegent-executor-manager"
+          promote_manifest "wegent-web"
+          promote_manifest "wegent-chat-shell"
+          promote_manifest "wegent-knowledge-runtime"
+          promote_manifest "wegent-knowledge-doc-converter"
+          promote_manifest "wegent-standalone"
+
+          {
+            echo "### Snapshot channel tags promoted"
+            echo ""
+            echo "- Versioned tag: \`${VERSION}\`"
+            echo "- Mutable tags: \`main\`, \`edge\`"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -5,18 +5,22 @@
 """Message converter utilities for LangGraph Chat Service."""
 
 import base64
-import io
 import logging
 from datetime import datetime
 from typing import Any
 
-from PIL import Image
+from shared.utils.image_preprocessor import (
+    MAX_MODEL_IMAGE_LONG_EDGE,
+    PreparedModelImage,
+    prepare_image_bytes_for_model,
+)
 
 logger = logging.getLogger(__name__)
 
 # Maximum image size: 1MB (hard limit after compression)
 MAX_IMAGE_SIZE_MB = 1
 MAX_IMAGE_SIZE_BYTES = MAX_IMAGE_SIZE_MB * 1024 * 1024
+MAX_IMAGE_LONG_EDGE = MAX_MODEL_IMAGE_LONG_EDGE
 
 
 class MessageConverter:
@@ -266,15 +270,13 @@ class MessageConverter:
                             mime_type = header.split(":")[1].split(";")[0]
 
                             image_bytes = base64.b64decode(base64_data)
-                            if len(image_bytes) > MAX_IMAGE_SIZE_BYTES:
-                                compressed_bytes = MessageConverter._compress_image(
-                                    image_bytes, mime_type
-                                )
-                                compressed_base64 = base64.b64encode(
-                                    compressed_bytes
-                                ).decode("utf-8")
+                            prepared = MessageConverter._prepare_image_for_model(
+                                image_bytes, mime_type
+                            )
+                            if prepared.resized:
                                 image_url = (
-                                    f"data:{mime_type};base64,{compressed_base64}"
+                                    f"data:{prepared.mime_type};base64,"
+                                    f"{base64.b64encode(prepared.data).decode('utf-8')}"
                                 )
                     except Exception as e:
                         logger.warning(f"Failed to process image: {e}")
@@ -309,89 +311,21 @@ class MessageConverter:
 
     @staticmethod
     def _compress_image(image_data: bytes, mime_type: str = "image/png") -> bytes:
-        """Compress image if it exceeds the size limit."""
-        original_size = len(image_data)
-        if original_size <= MAX_IMAGE_SIZE_BYTES:
-            logger.debug(
-                f"Image size {original_size / 1024 / 1024:.2f}MB is within limit {MAX_IMAGE_SIZE_MB}MB, skipping compression"
-            )
-            return image_data
+        """Return image bytes normalized for Chat Shell model inputs."""
+        return MessageConverter._prepare_image_for_model(image_data, mime_type).data
 
-        logger.info(
-            f"Image size {original_size / 1024 / 1024:.2f}MB exceeds limit {MAX_IMAGE_SIZE_MB}MB, compressing..."
+    @staticmethod
+    def _prepare_image_for_model(
+        image_data: bytes,
+        mime_type: str = "image/png",
+    ) -> PreparedModelImage:
+        """Prepare image bytes for Chat Shell model calls."""
+        return prepare_image_bytes_for_model(
+            image_data,
+            mime_type,
+            max_long_edge=MAX_IMAGE_LONG_EDGE,
+            max_size_bytes=MAX_IMAGE_SIZE_BYTES,
         )
-
-        try:
-            # Convert mime_type to PIL format
-            fmt = mime_type.split("/")[-1].upper()
-            if fmt == "JPG":
-                fmt = "JPEG"
-
-            img = Image.open(io.BytesIO(image_data))
-
-            # Convert to RGB if necessary (e.g. for JPEG)
-            if fmt == "JPEG" and img.mode != "RGB":
-                img = img.convert("RGB")
-
-            # Initial quality
-            quality = 85
-            output = io.BytesIO()
-
-            while quality > 10:
-                output.seek(0)
-                output.truncate()
-
-                if fmt in ("JPEG", "WEBP"):
-                    img.save(output, format=fmt, quality=quality)
-                else:
-                    # For PNG and others, quality param is ignored, try optimize
-                    img.save(output, format=fmt, optimize=True)
-
-                compressed_data = output.getvalue()
-
-                if len(compressed_data) <= MAX_IMAGE_SIZE_BYTES:
-                    logger.info(
-                        f"Image compressed (quality reduction): {original_size / 1024 / 1024:.2f}MB -> {len(compressed_data) / 1024 / 1024:.2f}MB "
-                        f"(ratio: {len(compressed_data) / original_size:.2%})"
-                    )
-                    return compressed_data
-
-                quality -= 10
-
-                # For non-quality formats (like PNG), quality loop is ineffective
-                # so we break after first attempt (with optimize=True) and move to resizing
-                if fmt not in ("JPEG", "WEBP"):
-                    break
-
-            # If still too big, resize
-            width, height = img.size
-            ratio = 0.8
-            while len(compressed_data) > MAX_IMAGE_SIZE_BYTES and width > 100:
-                width = int(width * ratio)
-                height = int(height * ratio)
-                img = img.resize((width, height), Image.Resampling.LANCZOS)
-
-                output.seek(0)
-                output.truncate()
-
-                if fmt in ("JPEG", "WEBP"):
-                    img.save(output, format=fmt, quality=quality)
-                else:
-                    img.save(output, format=fmt, optimize=True)
-
-                compressed_data = output.getvalue()
-
-            final_size = len(compressed_data)
-            logger.info(
-                f"Image compressed: {original_size / 1024 / 1024:.2f}MB -> {final_size / 1024 / 1024:.2f}MB "
-                f"(ratio: {final_size / original_size:.2%})"
-            )
-            return compressed_data
-
-        except Exception as e:
-            logger.warning(f"Image compression failed: {e}")
-            # If compression fails, return original data
-            return image_data
 
     @staticmethod
     def build_user_message(content: str, username: str | None = None) -> dict[str, Any]:
@@ -434,11 +368,10 @@ class MessageConverter:
         image_data: bytes, mime_type: str = "image/png"
     ) -> dict[str, Any]:
         """Create an image content block from raw bytes."""
-        if len(image_data) > MAX_IMAGE_SIZE_BYTES:
-            image_data = MessageConverter._compress_image(image_data, mime_type)
+        prepared = MessageConverter._prepare_image_for_model(image_data, mime_type)
 
-        encoded = base64.b64encode(image_data).decode("utf-8")
+        encoded = base64.b64encode(prepared.data).decode("utf-8")
         return {
             "type": "image_url",
-            "image_url": {"url": f"data:{mime_type};base64,{encoded}"},
+            "image_url": {"url": f"data:{prepared.mime_type};base64,{encoded}"},
         }

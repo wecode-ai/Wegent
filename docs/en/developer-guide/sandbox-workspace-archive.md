@@ -62,6 +62,15 @@ During restore, `workspace/*` is written back to `/workspace/{task_id}`. `home/*
 
 Executor home restore uses the same allowlist. If an old archive contains `.ssh/`, `.npmrc`, `.config/`, `.local/`, `.gvm/`, or code-server runtime directories, envd skips those members to avoid restoring credentials or writing into Kubernetes read-only mounts.
 
+## Legacy Archive Compatibility
+
+Early executor archives did not use the `home/` and `workspace/` roots: workspace files lived directly at the tar root, while Claude home config lived under `__home__/.claude/` and `__home__/.claude.json`. The current restore logic remains compatible with that format:
+
+- Tar root members that are not under `home/`, `workspace/`, or `__home__/` are restored as legacy workspace content to `/workspace/{task_id}`.
+- `__home__/.claude/` and `__home__/.claude.json` are restored to the runtime home through the executor home allowlist.
+- Restore still applies exclusion rules and skips caches, large directories, and code-server runtime state.
+- Restore logs include member counts for new and legacy formats to help diagnose cases where the download succeeds but no content is restored.
+
 ## Failure Handling
 
 Sandbox archive and restore are best effort:

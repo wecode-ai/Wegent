@@ -1,9 +1,11 @@
 import type {
+  DeviceWorkspaceResponse,
   DeviceInfo,
-  ModelSelectionConfig,
-  ProjectTask,
   ProjectWithTasks,
-  Task,
+  RuntimeDeviceWorkspace,
+  RuntimeTaskAddress,
+  RuntimeProjectWork,
+  RuntimeWorkListResponse,
   Team,
   User,
   UserPreferences,
@@ -15,10 +17,12 @@ export const initialWorkbenchState: WorkbenchState = {
   defaultTeam: null,
   projects: [],
   devices: [],
-  recentTasks: [],
+  runtimeWork: null,
   currentProject: null,
+  currentRuntimeTask: null,
+  selectedDeviceWorkspaceId: null,
+  pendingProjectWorkspaceProjectId: null,
   standaloneDeviceId: null,
-  currentTask: null,
   input: '',
   isBootstrapping: true,
   isSending: false,
@@ -32,7 +36,7 @@ export type WorkbenchAction =
       defaultTeam: Team | null
       projects: ProjectWithTasks[]
       devices: DeviceInfo[]
-      recentTasks: Task[]
+      runtimeWork?: RuntimeWorkListResponse | null
       currentProject?: ProjectWithTasks | null
       standaloneDeviceId?: string | null
     }
@@ -40,7 +44,7 @@ export type WorkbenchAction =
       type: 'lists_refreshed'
       projects: ProjectWithTasks[]
       devices: DeviceInfo[]
-      recentTasks: Task[]
+      runtimeWork?: RuntimeWorkListResponse | null
       standaloneDeviceId?: string | null
     }
   | {
@@ -49,22 +53,22 @@ export type WorkbenchAction =
       standaloneDeviceId?: string | null
     }
   | { type: 'bootstrap_failed'; error: string }
+  | { type: 'project_created'; project: ProjectWithTasks }
   | { type: 'project_selected'; project: ProjectWithTasks }
+  | { type: 'device_workspace_prepared'; mapping: DeviceWorkspaceResponse }
+  | {
+      type: 'project_workspace_selected'
+      project: ProjectWithTasks
+      deviceWorkspaceId: number | null
+    }
   | { type: 'project_updated'; project: ProjectWithTasks }
   | { type: 'project_cleared'; standaloneDeviceId?: string | null }
   | { type: 'user_preferences_updated'; preferences: UserPreferences }
   | { type: 'standalone_device_preference_changed'; standaloneDeviceId: string | null }
   | {
-      type: 'task_opened'
-      task: Task
-      project?: ProjectWithTasks | null
-      standaloneDeviceId?: string | null
-    }
-  | { type: 'task_upserted'; task: Task }
-  | { type: 'task_status_changed'; taskId: number; status: string }
-  | {
-      type: 'current_task_model_selection_changed'
-      selection: ModelSelectionConfig
+      type: 'runtime_task_opened'
+      address: RuntimeTaskAddress
+      project: ProjectWithTasks | null
     }
   | { type: 'current_task_cleared' }
   | { type: 'input_changed'; input: string }
@@ -72,183 +76,131 @@ export type WorkbenchAction =
   | { type: 'sending_finished' }
   | { type: 'error_set'; error: string | null }
 
-function taskBelongsToProject(task: Task): boolean {
-  return Boolean(task.project_id && task.project_id > 0)
-}
-
-function collectProjectTaskIds(projects: ProjectWithTasks[]): Set<number> {
-  const ids = new Set<number>()
-  for (const project of projects) {
-    for (const task of project.tasks ?? []) {
-      ids.add(task.task_id)
-    }
-  }
-  return ids
-}
-
-function removeTaskFromProjects(
-  projects: ProjectWithTasks[],
-  taskId: number
-): ProjectWithTasks[] {
-  return projects.map(project => {
-    if (!project.tasks?.some(task => task.task_id === taskId)) return project
-    return {
-      ...project,
-      tasks: project.tasks.filter(task => task.task_id !== taskId),
-    }
-  })
-}
-
-/**
- * Enforce that the "conversations" list (recentTasks) and the "projects" lists
- * are mutually exclusive. A task already grouped under a project must never
- * leak into recentTasks, even if the server momentarily reports project_id=0
- * for it (eventual consistency right after task creation).
- */
-function normalizeListExclusivity(state: WorkbenchState): WorkbenchState {
-  const projectTaskIds = collectProjectTaskIds(state.projects)
-  if (projectTaskIds.size === 0) return state
-  const dedupedRecentTasks = state.recentTasks.filter(
-    task => !projectTaskIds.has(task.id)
-  )
-  if (dedupedRecentTasks.length === state.recentTasks.length) return state
-  return { ...state, recentTasks: dedupedRecentTasks }
-}
-
 function keepDevicesOnTransientEmpty(
   currentDevices: DeviceInfo[],
-  nextDevices: DeviceInfo[],
+  nextDevices: DeviceInfo[]
 ): DeviceInfo[] {
   if (nextDevices.length > 0) return nextDevices
   if (currentDevices.length > 0) return currentDevices
   return nextDevices
 }
 
-function toProjectTask(task: Task): ProjectTask {
+function runtimeWorkspaceFromMapping(
+  mapping: DeviceWorkspaceResponse,
+  devices: DeviceInfo[]
+): RuntimeDeviceWorkspace {
+  const device = devices.find(item => item.device_id === mapping.deviceId)
   return {
-    id: task.id,
-    task_id: task.id,
-    task_title: task.title,
-    task_status: task.status,
-    title: task.title,
-    status: task.status,
-    task_type: task.task_type,
-    created_at: task.created_at,
-    updated_at: task.updated_at,
+    id: mapping.id,
+    projectId: mapping.projectId,
+    deviceId: mapping.deviceId,
+    deviceName: device?.name ?? mapping.deviceId,
+    deviceStatus: device?.status ?? null,
+    workspacePath: mapping.workspacePath,
+    workspaceKind: mapping.label ?? 'workspace',
+    label: mapping.label,
+    repoUrl: mapping.repoUrl,
+    repoRootFingerprint: mapping.repoRootFingerprint,
+    mapped: true,
+    available: device ? device.status !== 'offline' : true,
+    localTasks: [],
   }
 }
 
-function upsertTask<T>(
-  tasks: T[] | undefined,
-  taskId: number,
-  nextTask: T,
-  getTaskId: (task: T) => number
-): T[] {
-  const currentTasks = tasks ?? []
-  const existingIndex = currentTasks.findIndex(task => getTaskId(task) === taskId)
-  if (existingIndex === -1) return [nextTask, ...currentTasks]
-
-  return currentTasks.map((task, index) => (index === existingIndex ? nextTask : task))
-}
-
-function upsertOpenedTask(state: WorkbenchState, task: Task): WorkbenchState {
-  if (taskBelongsToProject(task)) {
-    return {
-      ...state,
-      projects: state.projects.map(project =>
-        project.id === task.project_id
-          ? {
-              ...project,
-              tasks: upsertTask(project.tasks, task.id, toProjectTask(task), item => item.task_id),
-            }
-          : project
-      ),
-      // A project task must not linger in the standalone conversation list.
-      recentTasks: state.recentTasks.filter(item => item.id !== task.id),
-    }
-  }
-
-  return {
-    ...state,
-    recentTasks: upsertTask(state.recentTasks, task.id, task, item => item.id),
-    // A standalone task must not linger in any project bucket.
-    projects: removeTaskFromProjects(state.projects, task.id),
-  }
-}
-
-function normalizeOpenedTaskProject(
-  task: Task,
-  project: ProjectWithTasks | null | undefined
-): Task {
-  if (project === undefined) return task
-  return {
-    ...task,
-    project_id: project?.id ?? 0,
-  }
-}
-
-function workListsIncludeTask(
+function upsertPreparedRuntimeWorkspace(
+  runtimeWork: RuntimeWorkListResponse | null | undefined,
   projects: ProjectWithTasks[],
-  recentTasks: Task[],
-  task: Task
-): boolean {
-  if (taskBelongsToProject(task)) {
-    return projects.some(project =>
-      project.id === task.project_id &&
-      (project.tasks ?? []).some(projectTask => projectTask.task_id === task.id)
-    )
+  devices: DeviceInfo[],
+  mapping: DeviceWorkspaceResponse
+): RuntimeWorkListResponse {
+  const project = projects.find(item => item.id === mapping.projectId)
+  const projectRef = {
+    id: mapping.projectId,
+    name: project?.name ?? '',
+    description: project?.description,
+    color: project?.color,
   }
+  const currentRuntimeWork = runtimeWork ?? {
+    projects: [],
+    unmappedDeviceWorkspaces: [],
+    totalLocalTasks: 0,
+  }
+  const nextWorkspace = runtimeWorkspaceFromMapping(mapping, devices)
+  const hasProject = currentRuntimeWork.projects.some(item => item.project.id === mapping.projectId)
+  const projectsWithTarget = hasProject
+    ? currentRuntimeWork.projects.map(item => {
+        if (item.project.id !== mapping.projectId) return item
+        const workspaces = item.deviceWorkspaces.filter(
+          workspace =>
+            !(
+              workspace.deviceId === mapping.deviceId &&
+              workspace.workspacePath === mapping.workspacePath
+            )
+        )
+        return {
+          ...item,
+          project: {
+            ...item.project,
+            ...projectRef,
+          },
+          deviceWorkspaces: [...workspaces, nextWorkspace],
+        }
+      })
+    : ([
+        ...currentRuntimeWork.projects,
+        {
+          project: projectRef,
+          deviceWorkspaces: [nextWorkspace],
+        },
+      ] as RuntimeProjectWork[])
 
-  return recentTasks.some(recentTask => recentTask.id === task.id)
+  return {
+    ...currentRuntimeWork,
+    projects: projectsWithTarget,
+    unmappedDeviceWorkspaces: currentRuntimeWork.unmappedDeviceWorkspaces.filter(
+      workspace =>
+        !(
+          workspace.deviceId === mapping.deviceId &&
+          workspace.workspacePath === mapping.workspacePath
+        )
+    ),
+  }
 }
 
-export function workbenchReducer(
-  state: WorkbenchState,
-  action: WorkbenchAction
-): WorkbenchState {
+export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction): WorkbenchState {
   switch (action.type) {
     case 'bootstrapped':
-      return normalizeListExclusivity({
+      return {
         ...state,
         user: action.user,
         defaultTeam: action.defaultTeam,
         projects: action.projects,
         devices: keepDevicesOnTransientEmpty(state.devices, action.devices),
-        recentTasks: action.recentTasks,
+        runtimeWork: action.runtimeWork === undefined ? state.runtimeWork : action.runtimeWork,
         currentProject:
-          action.currentProject === undefined
-            ? state.currentProject
-            : action.currentProject,
+          action.currentProject === undefined ? state.currentProject : action.currentProject,
         standaloneDeviceId:
           action.standaloneDeviceId === undefined
             ? state.standaloneDeviceId
             : action.standaloneDeviceId,
         isBootstrapping: false,
         error: null,
-      })
+      }
     case 'lists_refreshed': {
       const refreshedState = {
         ...state,
         projects: action.projects,
         devices: keepDevicesOnTransientEmpty(state.devices, action.devices),
-        recentTasks: action.recentTasks,
+        runtimeWork: action.runtimeWork === undefined ? state.runtimeWork : action.runtimeWork,
         currentProject: state.currentProject
-          ? action.projects.find(project => project.id === state.currentProject?.id) ?? null
+          ? (action.projects.find(project => project.id === state.currentProject?.id) ?? null)
           : null,
         standaloneDeviceId:
           action.standaloneDeviceId === undefined
             ? state.standaloneDeviceId
             : action.standaloneDeviceId,
       }
-      if (
-        state.currentTask &&
-        !workListsIncludeTask(action.projects, action.recentTasks, state.currentTask)
-      ) {
-        return normalizeListExclusivity(
-          upsertOpenedTask(refreshedState, state.currentTask)
-        )
-      }
-      return normalizeListExclusivity(refreshedState)
+      return refreshedState
     }
     case 'devices_refreshed':
       return {
@@ -261,15 +213,48 @@ export function workbenchReducer(
       }
     case 'bootstrap_failed':
       return { ...state, isBootstrapping: false, error: action.error }
+    case 'project_created':
+      return {
+        ...state,
+        projects: [
+          action.project,
+          ...state.projects.filter(project => project.id !== action.project.id),
+        ],
+      }
     case 'project_selected':
-      return { ...state, currentProject: action.project, currentTask: null }
+      return {
+        ...state,
+        currentProject: action.project,
+        selectedDeviceWorkspaceId: null,
+        pendingProjectWorkspaceProjectId: null,
+        currentRuntimeTask: null,
+      }
+    case 'device_workspace_prepared':
+      return {
+        ...state,
+        selectedDeviceWorkspaceId: action.mapping.id,
+        pendingProjectWorkspaceProjectId: null,
+        runtimeWork: upsertPreparedRuntimeWorkspace(
+          state.runtimeWork,
+          state.projects,
+          state.devices,
+          action.mapping
+        ),
+      }
+    case 'project_workspace_selected':
+      return {
+        ...state,
+        currentProject: action.project,
+        selectedDeviceWorkspaceId: action.deviceWorkspaceId,
+        pendingProjectWorkspaceProjectId:
+          action.deviceWorkspaceId === null ? action.project.id : null,
+        currentRuntimeTask: null,
+      }
     case 'project_updated':
       return {
         ...state,
         currentProject:
-          state.currentProject?.id === action.project.id
-            ? action.project
-            : state.currentProject,
+          state.currentProject?.id === action.project.id ? action.project : state.currentProject,
         projects: state.projects.map(project =>
           project.id === action.project.id ? action.project : project
         ),
@@ -278,11 +263,13 @@ export function workbenchReducer(
       return {
         ...state,
         currentProject: null,
+        selectedDeviceWorkspaceId: null,
+        pendingProjectWorkspaceProjectId: null,
         standaloneDeviceId:
           action.standaloneDeviceId === undefined
             ? state.standaloneDeviceId
             : action.standaloneDeviceId,
-        currentTask: null,
+        currentRuntimeTask: null,
       }
     case 'user_preferences_updated':
       return {
@@ -299,58 +286,14 @@ export function workbenchReducer(
         ...state,
         standaloneDeviceId: action.standaloneDeviceId,
       }
-    case 'task_opened':
-      {
-        const openedTask = normalizeOpenedTaskProject(action.task, action.project)
-        return {
-          ...upsertOpenedTask(state, openedTask),
-          currentProject:
-            action.project === undefined ? state.currentProject : action.project,
-          standaloneDeviceId:
-            action.project === null
-              ? action.standaloneDeviceId ?? openedTask.device_id ?? state.standaloneDeviceId
-              : state.standaloneDeviceId,
-          currentTask: openedTask,
-        }
-      }
-    case 'task_upserted':
-      return upsertOpenedTask(
-        state,
-        state.currentTask?.id === action.task.id ? state.currentTask : action.task
-      )
-    case 'task_status_changed':
+    case 'runtime_task_opened':
       return {
         ...state,
-        currentTask:
-          state.currentTask?.id === action.taskId
-            ? { ...state.currentTask, status: action.status }
-            : state.currentTask,
-        recentTasks: state.recentTasks.map(task =>
-          task.id === action.taskId ? { ...task, status: action.status } : task
-        ),
-        projects: state.projects.map(project => ({
-          ...project,
-          tasks: project.tasks?.map(task =>
-            task.task_id === action.taskId
-              ? { ...task, task_status: action.status, status: action.status }
-              : task
-          ),
-        })),
-      }
-    case 'current_task_model_selection_changed':
-      return {
-        ...state,
-        currentTask: state.currentTask
-          ? {
-              ...state.currentTask,
-              model_id: action.selection.modelName,
-              force_override_bot_model_type: action.selection.modelType ?? null,
-              model_options: action.selection.options ?? {},
-            }
-          : state.currentTask,
+        currentProject: action.project,
+        currentRuntimeTask: action.address,
       }
     case 'current_task_cleared':
-      return { ...state, currentTask: null }
+      return { ...state, currentRuntimeTask: null }
     case 'input_changed':
       return { ...state, input: action.input }
     case 'sending_started':

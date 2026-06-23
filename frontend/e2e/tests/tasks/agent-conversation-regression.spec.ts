@@ -153,7 +153,7 @@ test.describe('Agent conversation regression', () => {
     const firstPrompt = `Remember this code context token: ${contextToken}`
     const followUpPrompt = 'What context token did I provide in the previous code turn?'
 
-    await openTaskPage(page, '/code', codeTeam.id, 'code')
+    await openTaskPage(page, '/chat?agent=code', codeTeam.id, 'code')
 
     await sendMessage(page, firstPrompt)
     const taskId = await waitForTaskId(page)

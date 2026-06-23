@@ -1,0 +1,1 @@
+window.__WEWORK_RUNTIME_CONFIG__ = window.__WEWORK_RUNTIME_CONFIG__ || {}

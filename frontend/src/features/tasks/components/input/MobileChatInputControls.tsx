@@ -38,6 +38,7 @@ import { supportsAttachments } from '../../service/attachmentService'
 import SkillSelectorPopover from '../selector/SkillSelectorPopover'
 import { getChatSendState } from './chatSendState'
 import { useTranslation } from '@/hooks/useTranslation'
+import { filterTeamsByMode, type TeamModeFilter } from '../selector/team-selector-utils'
 
 const MOBILE_ACTION_MENU_WIDTH = 224
 const MOBILE_ACTION_MENU_MARGIN = 12
@@ -47,6 +48,7 @@ const MOBILE_ACTION_MENU_MIN_HEIGHT = 44
 
 export interface MobileChatInputControlsProps {
   taskType?: TaskType
+  teamModeFilter?: TeamModeFilter
   // Team and Model
   selectedTeam: Team | null
   teams?: Team[]
@@ -128,6 +130,7 @@ export interface MobileChatInputControlsProps {
  */
 export function MobileChatInputControls({
   taskType,
+  teamModeFilter = taskType ?? 'chat',
   selectedTeam,
   teams = [],
   onTeamChange,
@@ -185,12 +188,10 @@ export function MobileChatInputControls({
   const showChatContexts = canUseChatContexts(taskType, selectedTeam)
   const showAttachmentAction = supportsAttachments(selectedTeam)
   const showSkillAction = availableSkills.length > 0 && Boolean(onToggleSkill)
-  const currentMode = taskType ?? 'chat'
-  const filteredTeams = useMemo(() => {
-    return teams
-      .filter(team => !(Array.isArray(team.bind_mode) && team.bind_mode.length === 0))
-      .filter(team => !team.bind_mode || team.bind_mode.includes(currentMode))
-  }, [teams, currentMode])
+  const filteredTeams = useMemo(
+    () => filterTeamsByMode(teams, teamModeFilter),
+    [teams, teamModeFilter]
+  )
   const selectedTeamForDisplay = useMemo(() => {
     if (!selectedTeam) return null
     return filteredTeams.find(team => team.id === selectedTeam.id) ?? selectedTeam

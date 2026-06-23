@@ -73,11 +73,19 @@ export function createAuthApi(client: HttpClient) {
       setToken(res.access_token)
       return client.get('/users/me')
     },
+    async setupAdminPassword(password: string): Promise<User> {
+      const res = await client.post<LoginResponse>('/auth/admin-password/setup', { password })
+      setToken(res.access_token)
+      return client.get('/users/me')
+    },
     logout() {
       removeToken()
     },
     getCurrentUser(): Promise<User> {
       return client.get('/users/me')
+    },
+    getCurrentUserWithoutAuthRedirect(): Promise<User> {
+      return client.get('/users/me', { redirectOnUnauthorized: false })
     },
     async loginWithOidcToken(accessToken: string): Promise<void> {
       setToken(accessToken)

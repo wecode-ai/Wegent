@@ -105,6 +105,9 @@ class DeviceInfo(BaseModel):
     update_available: bool = Field(False, description="Whether an update is available")
     # Network information
     client_ip: Optional[str] = Field(None, description="Device's client IP address")
+    runtime_transfer_host: Optional[str] = Field(
+        None, description="Host peers should use for runtime direct transfers"
+    )
     # Cloud device specific config
     cloud_config: Optional[Dict[str, Any]] = Field(
         None, description="Cloud device configuration (only for cloud devices)"
@@ -279,6 +282,11 @@ class DeviceRegisterPayload(BaseModel):
         max_length=50,
         description="Device's client IP address",
     )
+    runtime_transfer_host: Optional[str] = Field(
+        None,
+        max_length=255,
+        description="Host peers should use for runtime direct transfers",
+    )
     bind_shell: BindShell = Field(
         BindShell.CLAUDECODE,
         description="Shell runtime binding (claudecode or openclaw)",
@@ -304,6 +312,11 @@ class DeviceHeartbeatPayload(BaseModel):
     runtime_auth_files: Optional[Dict[str, Any]] = Field(
         None,
         description="Sanitized runtime auth file existence state reported by executor",
+    )
+    runtime_transfer_host: Optional[str] = Field(
+        None,
+        max_length=255,
+        description="Host peers should use for runtime direct transfers",
     )
 
 

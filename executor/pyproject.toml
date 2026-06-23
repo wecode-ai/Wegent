@@ -26,6 +26,7 @@ dependencies = [
     "openai-codex==0.1.0b3; platform_system != 'Linux'",
     "openai-codex-cli-bin==0.137.0a4; platform_system != 'Linux'",
     "openai==1.107.1",
+    "pillow>=12.0.0",
     "pydantic>=2.12,<2.13",
     "pymysql==1.1.0",
     "requests==2.31.0",
@@ -58,6 +59,7 @@ dependencies = [
     # Local mode dependencies (Socket.IO for WebSocket communication)
     "python-socketio[asyncio_client]>=5.11.0",
     "aiohttp>=3.9.0",
+    "ptyprocess>=0.7.0; sys_platform != 'win32'",
 
     # Windows platform dependencies (ConPTY and Win32 API)
     "pywinpty>=2.0.0; sys_platform == 'win32'",
@@ -103,10 +105,3 @@ ensure_newline_before_comments = true
 skip = [".venv", "venv"]
 skip_gitignore = true
 known_first_party = ["agents", "callback", "code_server", "config", "envd", "services", "tasks", "utils", "shared"]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-python_files = ["test_*.py"]
-python_classes = ["Test*"]
-python_functions = ["test_*"]
-addopts = "-v --tb=short"

@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import subprocess
+import sys
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -80,7 +81,7 @@ def test_turn_file_changes_command_rejects_invalid_artifact_id(
     from app.services.device.command_registry import TURN_FILE_CHANGES_SCRIPT
 
     result = subprocess.run(
-        ["python3", "-c", TURN_FILE_CHANGES_SCRIPT, "review", artifact_id],
+        [sys.executable, "-c", TURN_FILE_CHANGES_SCRIPT, "review", artifact_id],
         cwd=tmp_path,
         env={**os.environ, "WEGENT_EXECUTOR_HOME": str(tmp_path / "home")},
         capture_output=True,
@@ -97,7 +98,7 @@ def test_turn_file_changes_review_returns_validated_diff(tmp_path):
     repo, executor_home = _create_turn_file_changes_artifact(tmp_path)
     result = subprocess.run(
         [
-            "python3",
+            sys.executable,
             "-c",
             TURN_FILE_CHANGES_SCRIPT,
             "review",
@@ -122,7 +123,7 @@ def test_turn_file_changes_revert_is_conflict_safe(tmp_path):
     (repo / "changed.txt").write_text("later change\n", encoding="utf-8")
     result = subprocess.run(
         [
-            "python3",
+            sys.executable,
             "-c",
             TURN_FILE_CHANGES_SCRIPT,
             "revert",
@@ -145,7 +146,7 @@ def test_turn_file_changes_revert_applies_reverse_patch(tmp_path):
     repo, executor_home = _create_turn_file_changes_artifact(tmp_path)
     result = subprocess.run(
         [
-            "python3",
+            sys.executable,
             "-c",
             TURN_FILE_CHANGES_SCRIPT,
             "revert",
@@ -248,6 +249,9 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     )
     read_runtime_auth_file_definition = resolve_local_device_command(
         "read_runtime_auth_file", settings.LOCAL_DEVICE_COMMANDS
+    )
+    codex_threads_list_definition = resolve_local_device_command(
+        "codex_threads_list", settings.LOCAL_DEVICE_COMMANDS
     )
 
     assert pwd_definition is not None
@@ -352,6 +356,223 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
         "WEGENT_RUNTIME_CONFIG_TARGET_PATH" in read_runtime_auth_file_definition.command
     )
     assert read_runtime_auth_file_definition.post_processor == "json"
+    assert codex_threads_list_definition is not None
+    assert "openai_codex" in codex_threads_list_definition.command
+    assert "thread_list" in codex_threads_list_definition.command
+    assert "session_index.jsonl" not in codex_threads_list_definition.command
+    assert "transcript" not in codex_threads_list_definition.command
+    assert codex_threads_list_definition.post_processor == "json"
+
+
+def _write_fake_openai_codex_sdk(root):
+    package_root = root / "openai_codex"
+    generated_root = package_root / "generated"
+    generated_root.mkdir(parents=True)
+    (package_root / "__init__.py").write_text(
+        """
+from types import SimpleNamespace
+
+
+class CodexConfig:
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+
+
+class Codex:
+    def __init__(self, config):
+        self.config = config
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, _exc_type, _exc, _tb):
+        return None
+
+    def thread_list(self, **kwargs):
+        if kwargs.get("archived") is not False:
+            raise AssertionError("archived must be false")
+        if kwargs.get("use_state_db_only") is not True:
+            raise AssertionError("use_state_db_only must be true")
+        limit = kwargs.get("limit", 100)
+        threads = [
+            SimpleNamespace(
+                id="018f2d6b-8c7a-7abc-9def-0123456789ac",
+                name="Newer",
+                preview=None,
+                cwd=SimpleNamespace(root="/tmp/newer-project"),
+                updated_at=1782008158,
+                archived=False,
+                status=SimpleNamespace(type="running"),
+            ),
+            SimpleNamespace(
+                id="018f2d6b-8c7a-7abc-9def-0123456789ab",
+                name=None,
+                preview="Older",
+                cwd="/tmp/older-project",
+                updated_at=1781979275,
+                archived=False,
+                status=SimpleNamespace(type="notLoaded"),
+            ),
+            SimpleNamespace(
+                id="018f2d6b-8c7a-7abc-9def-0123456789aa",
+                name="Oldest",
+                preview=None,
+                cwd="/tmp/oldest-project",
+                updated_at=1781970000,
+                archived=False,
+                status=None,
+            ),
+        ]
+        return SimpleNamespace(data=threads[:limit])
+""".strip(),
+        encoding="utf-8",
+    )
+    (generated_root / "__init__.py").write_text("", encoding="utf-8")
+    (generated_root / "v2_all.py").write_text(
+        """
+class SortDirection(str):
+    pass
+
+
+class ThreadSortKey(str):
+    pass
+""".strip(),
+        encoding="utf-8",
+    )
+    return root
+
+
+def _write_failing_openai_codex_sdk(root):
+    package_root = root / "openai_codex"
+    generated_root = package_root / "generated"
+    generated_root.mkdir(parents=True)
+    (package_root / "__init__.py").write_text(
+        """
+class CodexConfig:
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+
+
+class Codex:
+    def __init__(self, config):
+        self.config = config
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, _exc_type, _exc, _tb):
+        return None
+
+    def thread_list(self, **kwargs):
+        raise RuntimeError("sdk exploded")
+""".strip(),
+        encoding="utf-8",
+    )
+    (generated_root / "__init__.py").write_text("", encoding="utf-8")
+    (generated_root / "v2_all.py").write_text(
+        """
+class SortDirection(str):
+    pass
+
+
+class ThreadSortKey(str):
+    pass
+""".strip(),
+        encoding="utf-8",
+    )
+    return root
+
+
+def test_codex_threads_list_command_reads_sdk_thread_list(tmp_path):
+    """codex_threads_list should expose SDK thread summaries without transcripts."""
+    from app.services.device.command_registry import CODEX_THREADS_LIST_SCRIPT
+
+    fake_sdk_root = _write_fake_openai_codex_sdk(tmp_path / "fake-sdk")
+
+    result = subprocess.run(
+        [sys.executable, "-c", CODEX_THREADS_LIST_SCRIPT],
+        env={
+            **os.environ,
+            "CODEX_HOME": str(tmp_path / "codex-home"),
+            "PYTHONPATH": str(fake_sdk_root),
+            "WEGENT_CODEX_THREADS_LIMIT": "1000",
+        },
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(result.stdout)
+    assert [thread["title"] for thread in payload["threads"]] == [
+        "Newer",
+        "Older",
+        "Oldest",
+    ]
+    assert set(payload["threads"][0]) == {
+        "threadId",
+        "title",
+        "cwd",
+        "updatedAt",
+        "archived",
+        "running",
+    }
+    assert payload["threads"][0]["threadId"] == "018f2d6b-8c7a-7abc-9def-0123456789ac"
+    assert payload["threads"][0]["cwd"] == "/tmp/newer-project"
+    assert payload["threads"][0]["archived"] is False
+    assert payload["threads"][0]["running"] is True
+    assert payload["threads"][1]["running"] is False
+    assert "transcript" not in json.dumps(payload)
+    assert "session_index" not in json.dumps(payload)
+
+
+def test_codex_threads_list_command_surfaces_sdk_errors(tmp_path):
+    """codex_threads_list should report SDK discovery failures."""
+    from app.services.device.command_registry import CODEX_THREADS_LIST_SCRIPT
+
+    fake_sdk_root = _write_failing_openai_codex_sdk(tmp_path / "fake-sdk")
+
+    result = subprocess.run(
+        [sys.executable, "-c", CODEX_THREADS_LIST_SCRIPT],
+        env={
+            **os.environ,
+            "CODEX_HOME": str(tmp_path / "codex-home"),
+            "PYTHONPATH": str(fake_sdk_root),
+            "WEGENT_CODEX_THREADS_LIMIT": "1000",
+        },
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(result.stdout)
+    assert payload["threads"] == []
+    assert payload["error"] == "sdk exploded"
+
+
+def test_codex_threads_list_command_stops_after_limit(tmp_path):
+    """codex_threads_list should pass a bounded limit to the SDK."""
+    from app.services.device.command_registry import CODEX_THREADS_LIST_SCRIPT
+
+    fake_sdk_root = _write_fake_openai_codex_sdk(tmp_path / "fake-sdk")
+
+    result = subprocess.run(
+        [sys.executable, "-c", CODEX_THREADS_LIST_SCRIPT],
+        env={
+            **os.environ,
+            "PYTHONPATH": str(fake_sdk_root),
+            "CODEX_HOME": str(tmp_path / "codex-home"),
+            "WEGENT_CODEX_THREADS_LIMIT": "2",
+        },
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(result.stdout)
+    assert [thread["title"] for thread in payload["threads"]] == [
+        "Newer",
+        "Older",
+    ]
 
 
 def test_local_device_command_registry_default_includes_workspace_file_commands():
@@ -735,6 +956,20 @@ def test_local_device_command_registry_builds_git_worktree_add_argv():
     )
 
     definition = resolve_local_device_command("git_worktree_add")
+    expected_script = (
+        'source=$1; target=$2; ref=$3; mkdir -p "$(dirname "$target")"; '
+        'if git -C "$target" rev-parse --is-inside-work-tree '
+        ">/dev/null 2>&1; then "
+        'if [ -n "$ref" ]; then '
+        'git -C "$target" checkout --force --detach "$ref"; fi; '
+        "else "
+        'if [ -e "$target" ]; then '
+        'echo "target exists and is not a Git worktree" >&2; exit 64; fi; '
+        'if [ -n "$ref" ]; then '
+        'git -C "$source" worktree add --detach "$target" "$ref"; '
+        'else git -C "$source" worktree add --detach "$target"; fi; '
+        "fi"
+    )
 
     assert definition is not None
     assert build_local_device_command_argv(
@@ -743,7 +978,7 @@ def test_local_device_command_registry_builds_git_worktree_add_argv():
     ) == [
         "sh",
         "-c",
-        'if [ -n "$3" ]; then git -C "$1" worktree add --detach "$2" "$3"; else git -C "$1" worktree add --detach "$2"; fi',
+        expected_script,
         "--",
         "/workspace/projects/d837/Wegent",
         "/workspace/worktrees/1386/Wegent",
@@ -758,6 +993,20 @@ def test_local_device_command_registry_builds_git_worktree_add_argv_with_branch(
     )
 
     definition = resolve_local_device_command("git_worktree_add")
+    expected_script = (
+        'source=$1; target=$2; ref=$3; mkdir -p "$(dirname "$target")"; '
+        'if git -C "$target" rev-parse --is-inside-work-tree '
+        ">/dev/null 2>&1; then "
+        'if [ -n "$ref" ]; then '
+        'git -C "$target" checkout --force --detach "$ref"; fi; '
+        "else "
+        'if [ -e "$target" ]; then '
+        'echo "target exists and is not a Git worktree" >&2; exit 64; fi; '
+        'if [ -n "$ref" ]; then '
+        'git -C "$source" worktree add --detach "$target" "$ref"; '
+        'else git -C "$source" worktree add --detach "$target"; fi; '
+        "fi"
+    )
 
     assert definition is not None
     assert build_local_device_command_argv(
@@ -770,7 +1019,7 @@ def test_local_device_command_registry_builds_git_worktree_add_argv_with_branch(
     ) == [
         "sh",
         "-c",
-        'if [ -n "$3" ]; then git -C "$1" worktree add --detach "$2" "$3"; else git -C "$1" worktree add --detach "$2"; fi',
+        expected_script,
         "--",
         "/workspace/projects/d837/Wegent",
         "/workspace/worktrees/1386/Wegent",
@@ -936,7 +1185,7 @@ metadata:
 
     env = {**os.environ, "HOME": str(tmp_path)}
     result = subprocess.run(
-        ["python3", "-c", LS_SKILLS_SCRIPT],
+        [sys.executable, "-c", LS_SKILLS_SCRIPT],
         env=env,
         check=True,
         capture_output=True,
@@ -991,7 +1240,7 @@ description: Shared local context.
 
     env = {**os.environ, "HOME": str(tmp_path)}
     result = subprocess.run(
-        ["python3", "-c", LS_SKILLS_SCRIPT],
+        [sys.executable, "-c", LS_SKILLS_SCRIPT],
         env=env,
         check=True,
         capture_output=True,
@@ -1004,6 +1253,94 @@ description: Shared local context.
     assert skills[0]["name"] == "shared-context"
     assert skills[0]["source"] == "agents"
     assert skills[0]["path"] == str(skill_dir / "SKILL.md")
+
+
+def test_ls_skills_command_follows_agents_skill_directory_symlinks(tmp_path):
+    """ls_skills should include skill directories symlinked under ~/.agents/skills."""
+    from app.services.device.command_registry import LS_SKILLS_SCRIPT
+
+    agents_skills_dir = tmp_path / ".agents" / "skills"
+    agents_skills_dir.mkdir(parents=True)
+    external_skill_dir = tmp_path / "external-skills" / "linked-helper"
+    external_skill_dir.mkdir(parents=True)
+    (agents_skills_dir / "linked-helper").symlink_to(
+        external_skill_dir,
+        target_is_directory=True,
+    )
+    (agents_skills_dir / "missing-helper").symlink_to(
+        tmp_path / "missing-helper",
+        target_is_directory=True,
+    )
+    (external_skill_dir / "SKILL.md").write_text(
+        """---
+name: linked-helper
+description: Linked helper skill.
+---
+
+# Linked Helper
+""",
+        encoding="utf-8",
+    )
+
+    env = {**os.environ, "HOME": str(tmp_path)}
+    result = subprocess.run(
+        [sys.executable, "-c", LS_SKILLS_SCRIPT],
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    skills = json.loads(result.stdout)
+
+    assert len(skills) == 1
+    assert skills[0]["name"] == "linked-helper"
+    assert skills[0]["source"] == "agents"
+    assert skills[0]["origin"] == "local"
+    assert skills[0]["path"] == str(agents_skills_dir / "linked-helper" / "SKILL.md")
+
+
+def test_ls_skills_command_scans_legacy_symlink_when_not_shared_root(tmp_path):
+    """ls_skills should scan legacy skill roots linked outside ~/.agents/skills."""
+    from app.services.device.command_registry import LS_SKILLS_SCRIPT
+
+    codex_target_dir = tmp_path / "custom-codex-skills"
+    codex_skill_dir = codex_target_dir / "codex-only"
+    codex_skill_dir.mkdir(parents=True)
+    (tmp_path / ".agents" / "skills").mkdir(parents=True)
+    (tmp_path / ".codex").mkdir()
+    (tmp_path / ".codex" / "skills").symlink_to(
+        codex_target_dir,
+        target_is_directory=True,
+    )
+    (codex_skill_dir / "SKILL.md").write_text(
+        """---
+name: codex-only
+description: Codex-only linked skill.
+---
+
+# Codex Only
+""",
+        encoding="utf-8",
+    )
+
+    env = {**os.environ, "HOME": str(tmp_path)}
+    result = subprocess.run(
+        [sys.executable, "-c", LS_SKILLS_SCRIPT],
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    skills = json.loads(result.stdout)
+
+    assert len(skills) == 1
+    assert skills[0]["name"] == "codex-only"
+    assert skills[0]["source"] == "codex"
+    assert skills[0]["path"] == str(
+        tmp_path / ".codex" / "skills" / "codex-only" / "SKILL.md"
+    )
 
 
 def test_setup_shared_skills_command_migrates_legacy_skill_dirs(tmp_path):
@@ -1019,7 +1356,7 @@ def test_setup_shared_skills_command_migrates_legacy_skill_dirs(tmp_path):
 
     env = {**os.environ, "HOME": str(tmp_path)}
     result = subprocess.run(
-        ["python3", "-c", SETUP_SHARED_SKILLS_SCRIPT],
+        [sys.executable, "-c", SETUP_SHARED_SKILLS_SCRIPT],
         env=env,
         check=True,
         capture_output=True,
@@ -1064,7 +1401,7 @@ def test_setup_shared_skills_command_is_idempotent(tmp_path):
 
     env = {**os.environ, "HOME": str(tmp_path)}
     result = subprocess.run(
-        ["python3", "-c", SETUP_SHARED_SKILLS_SCRIPT],
+        [sys.executable, "-c", SETUP_SHARED_SKILLS_SCRIPT],
         env=env,
         check=True,
         capture_output=True,
@@ -1090,7 +1427,7 @@ def test_sync_runtime_auth_file_command_writes_json_object(tmp_path):
         "WEGENT_RUNTIME_CONFIG_CONTENT": '{"token":"secret","account":{"id":"u1"}}',
     }
     result = subprocess.run(
-        ["python3", "-c", SYNC_RUNTIME_AUTH_FILE_SCRIPT],
+        [sys.executable, "-c", SYNC_RUNTIME_AUTH_FILE_SCRIPT],
         env=env,
         check=True,
         capture_output=True,
@@ -1127,7 +1464,7 @@ def test_sync_runtime_auth_file_command_does_not_overwrite_existing_file(tmp_pat
         "WEGENT_RUNTIME_CONFIG_CONTENT": '{"token":"new"}',
     }
     result = subprocess.run(
-        ["python3", "-c", SYNC_RUNTIME_AUTH_FILE_SCRIPT],
+        [sys.executable, "-c", SYNC_RUNTIME_AUTH_FILE_SCRIPT],
         env=env,
         check=True,
         capture_output=True,
@@ -1156,7 +1493,7 @@ def test_read_runtime_auth_file_command_returns_existing_json(tmp_path):
         "WEGENT_RUNTIME_CONFIG_TARGET_PATH": "~/.codex/auth.json",
     }
     result = subprocess.run(
-        ["python3", "-c", READ_RUNTIME_AUTH_FILE_SCRIPT],
+        [sys.executable, "-c", READ_RUNTIME_AUTH_FILE_SCRIPT],
         env=env,
         check=True,
         capture_output=True,
@@ -1243,7 +1580,7 @@ metadata:
 
     env = {**os.environ, "HOME": str(tmp_path)}
     result = subprocess.run(
-        ["python3", "-c", LS_SKILLS_SCRIPT],
+        [sys.executable, "-c", LS_SKILLS_SCRIPT],
         env=env,
         check=True,
         capture_output=True,

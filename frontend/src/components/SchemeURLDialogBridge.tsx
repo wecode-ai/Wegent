@@ -9,6 +9,7 @@ import { useRouter } from 'next/navigation'
 
 import { useToast } from '@/hooks/use-toast'
 import { paths } from '@/config/paths'
+import { getCodingEntryHref, openNavigationHref } from '@/config/coding-route'
 import { taskApis } from '@/apis/tasks'
 import { getRegisteredModal } from '@/lib/scheme/modal-registry'
 import { McpProviderConfigDialog } from '@/features/settings/components/McpProviderConfigDialog'
@@ -70,11 +71,11 @@ export default function SchemeURLDialogBridge() {
       }
 
       if (dialogType === 'create-task') {
+        const query = new URLSearchParams()
         if (params.team) {
-          router.push(`${paths.code.getHref()}?team=${params.team}`)
-        } else {
-          router.push(paths.code.getHref())
+          query.set('team', String(params.team))
         }
+        openNavigationHref(router, getCodingEntryHref(undefined, query))
         return
       }
 

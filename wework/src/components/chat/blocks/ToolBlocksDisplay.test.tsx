@@ -23,7 +23,7 @@ describe('ToolBlocksDisplay', () => {
   test('groups completed tools into an activity summary', () => {
     render(<ToolBlocksDisplay blocks={[completedCommandBlock]} isStreaming={false} />)
 
-    fireEvent.click(screen.getByRole('button', { name: /用时/ }))
+    fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
 
     expect(screen.getByText('已运行 1 条命令')).toBeInTheDocument()
     expect(screen.queryByText('已运行 pwd')).not.toBeInTheDocument()
@@ -52,7 +52,25 @@ describe('ToolBlocksDisplay', () => {
       vi.advanceTimersByTime(0)
     })
 
-    expect(screen.getByRole('button', { name: /用时 3 秒/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /已处理 3 秒/ })).toBeInTheDocument()
+  })
+
+  test('uses restored block timestamps for completed historical duration', () => {
+    const turnStart = new Date('2026-06-05T00:00:00.000Z').getTime()
+    const completedHistoricalBlock: ProcessingBlock = {
+      ...completedCommandBlock,
+      createdAt: turnStart + 368000,
+    }
+
+    render(
+      <ToolBlocksDisplay
+        blocks={[completedHistoricalBlock]}
+        isStreaming={false}
+        startedAt={turnStart}
+      />
+    )
+
+    expect(screen.getByRole('button', { name: /已处理 6 分 8 秒/ })).toBeInTheDocument()
   })
 
   test('formats live duration with natural Chinese units', () => {

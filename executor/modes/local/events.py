@@ -24,6 +24,15 @@ class DeviceEvents:
     EXECUTE_COMMAND = "device:execute_command"
     START_TERMINAL_SESSION = "device:start_terminal_session"
     START_CODE_SERVER_SESSION = "device:start_code_server_session"
+    TERMINAL_INPUT = "terminal:input"
+    TERMINAL_RESIZE = "terminal:resize"
+    TERMINAL_CLOSE = "terminal:close"
+
+
+class RuntimeEvents:
+    """Native runtime session RPC events."""
+
+    RPC = "runtime:rpc"
 
 
 class TaskEvents:

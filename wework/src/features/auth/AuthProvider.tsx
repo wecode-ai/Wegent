@@ -1,19 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import {
-  createAuthApi,
-  isAuthenticated,
-  removeToken,
-  type LoginRequest,
-} from '@/api/auth'
-import { createHttpClient } from '@/api/http'
+import { createAuthApi, isAuthenticated, removeToken, type LoginRequest } from '@/api/auth'
+import { ApiError, createHttpClient } from '@/api/http'
 import { getRuntimeConfig, stripAppBasePath } from '@/config/runtime'
 import type { User } from '@/types/api'
 import {
-  LOGIN_PATH,
-  OIDC_CALLBACK_PATH,
-  redirectToLogin,
-} from './redirect'
+  getAdminUsernameFromSetupError,
+  INITIAL_ADMIN_USERNAME,
+  isAdminPasswordSetupRequiredError,
+} from './adminPasswordSetup'
+import { LOGIN_PATH, OIDC_CALLBACK_PATH, redirectToLogin } from './redirect'
 import { AuthContext, type AuthContextValue } from './useAuth'
 
 type AuthApi = ReturnType<typeof createAuthApi>
@@ -37,11 +33,41 @@ export function AuthProvider({ children, authApi }: AuthProviderProps) {
   const resolvedAuthApi = useMemo(() => authApi ?? createDefaultAuthApi(), [authApi])
   const [user, setUser] = useState<User | null>(null)
   const [isLoading, setIsLoading] = useState(true)
+  const [adminPasswordSetupRequired, setAdminPasswordSetupRequired] = useState(false)
+  const [adminUsername, setAdminUsername] = useState(INITIAL_ADMIN_USERNAME)
   const userRef = useRef<User | null>(null)
 
   useEffect(() => {
     userRef.current = user
   }, [user])
+
+  const clearAdminPasswordSetupState = useCallback(() => {
+    setAdminPasswordSetupRequired(false)
+    setAdminUsername(INITIAL_ADMIN_USERNAME)
+  }, [])
+
+  const applyAdminPasswordSetupError = useCallback((error: ApiError) => {
+    setUser(null)
+    setAdminPasswordSetupRequired(true)
+    setAdminUsername(getAdminUsernameFromSetupError(error))
+  }, [])
+
+  const fetchAnonymousLoginHandshake = useCallback(async () => {
+    clearAdminPasswordSetupState()
+    try {
+      const currentUser = await resolvedAuthApi.getCurrentUserWithoutAuthRedirect()
+      setUser(currentUser)
+    } catch (error) {
+      if (isAdminPasswordSetupRequiredError(error)) {
+        applyAdminPasswordSetupError(error)
+        return
+      }
+      if (error instanceof ApiError && error.status === 401) {
+        return
+      }
+      console.error('Failed to check admin password setup state:', error)
+    }
+  }, [applyAdminPasswordSetupError, clearAdminPasswordSetupState, resolvedAuthApi])
 
   const refresh = useCallback(async () => {
     setIsLoading(true)
@@ -49,7 +75,10 @@ export function AuthProvider({ children, authApi }: AuthProviderProps) {
     try {
       if (!isAuthenticated()) {
         setUser(null)
-        if (!isAuthRoute(window.location.pathname)) {
+        if (isAuthRoute(window.location.pathname)) {
+          await fetchAnonymousLoginHandshake()
+        } else {
+          clearAdminPasswordSetupState()
           redirectToLogin()
         }
         return
@@ -57,16 +86,27 @@ export function AuthProvider({ children, authApi }: AuthProviderProps) {
 
       const currentUser = await resolvedAuthApi.getCurrentUser()
       setUser(currentUser)
-    } catch {
+      clearAdminPasswordSetupState()
+    } catch (error) {
+      if (isAdminPasswordSetupRequiredError(error)) {
+        applyAdminPasswordSetupError(error)
+        return
+      }
       removeToken()
       setUser(null)
+      clearAdminPasswordSetupState()
       if (!isAuthRoute(window.location.pathname)) {
         redirectToLogin()
       }
     } finally {
       setIsLoading(false)
     }
-  }, [resolvedAuthApi])
+  }, [
+    applyAdminPasswordSetupError,
+    clearAdminPasswordSetupState,
+    fetchAnonymousLoginHandshake,
+    resolvedAuthApi,
+  ])
 
   useEffect(() => {
     void Promise.resolve().then(() => refresh())
@@ -74,12 +114,13 @@ export function AuthProvider({ children, authApi }: AuthProviderProps) {
     const interval = window.setInterval(() => {
       if (!isAuthenticated() && userRef.current) {
         setUser(null)
+        clearAdminPasswordSetupState()
         redirectToLogin()
       }
     }, 10000)
 
     return () => window.clearInterval(interval)
-  }, [refresh])
+  }, [clearAdminPasswordSetupState, refresh])
 
   const login = useCallback(
     async (data: LoginRequest) => {
@@ -87,34 +128,60 @@ export function AuthProvider({ children, authApi }: AuthProviderProps) {
       try {
         const loggedInUser = await resolvedAuthApi.login(data)
         setUser(loggedInUser)
+        clearAdminPasswordSetupState()
         return loggedInUser
+      } catch (error) {
+        if (isAdminPasswordSetupRequiredError(error)) {
+          applyAdminPasswordSetupError(error)
+        }
+        throw error
       } finally {
         setIsLoading(false)
       }
     },
-    [resolvedAuthApi],
+    [applyAdminPasswordSetupError, clearAdminPasswordSetupState, resolvedAuthApi]
   )
 
   const logout = useCallback(() => {
     resolvedAuthApi.logout()
     setUser(null)
+    clearAdminPasswordSetupState()
     redirectToLogin()
-  }, [resolvedAuthApi])
+  }, [clearAdminPasswordSetupState, resolvedAuthApi])
 
   const loginWithOidcToken = useCallback(
     async (accessToken: string) => {
       await resolvedAuthApi.loginWithOidcToken(accessToken)
+      clearAdminPasswordSetupState()
     },
-    [resolvedAuthApi],
+    [clearAdminPasswordSetupState, resolvedAuthApi]
+  )
+
+  const setupAdminPassword = useCallback(
+    async (password: string) => {
+      setIsLoading(true)
+      try {
+        const adminUser = await resolvedAuthApi.setupAdminPassword(password)
+        setUser(adminUser)
+        clearAdminPasswordSetupState()
+        return adminUser
+      } finally {
+        setIsLoading(false)
+      }
+    },
+    [clearAdminPasswordSetupState, resolvedAuthApi]
   )
 
   const value: AuthContextValue = {
     user,
     isLoading,
+    adminPasswordSetupRequired,
+    adminUsername,
     login,
     logout,
     refresh,
     loginWithOidcToken,
+    setupAdminPassword,
   }
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

@@ -51,9 +51,22 @@ curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | 
 | **Standard** | 多容器 + MySQL + Redis，适合团队和生产环境 |
 | **Development** | 源码启动 + 热重载，适合开发和二次扩展 |
 
+Standalone 可以选择编码/执行 Agent 的运行位置：
+
+| Standalone Executor 模式 | 行为 | 适合场景 |
+|--------------------------|------|----------|
+| `host` | Backend、Frontend 和 Wework 仍在 Docker 中运行，executor 在宿主机运行 | macOS，或需要调用 `open`、`osascript`、系统 Terminal、本机 CLI 工具等宿主机能力 |
+| `container` | executor 在 standalone 容器内运行 | Linux 快速体验和单容器部署 |
+| `hybrid` | 宿主机 executor 和容器 executor 同时运行 | 保留容器设备，同时使用宿主机能力 |
+
+交互式 macOS 安装默认选择 `host`；Linux 和非交互安装默认选择 `container`。
+
 ```bash
-# Standalone 模式（默认）
+# Standalone 模式（默认 executor 模式）
 curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash -s -- --standalone
+
+# Standalone 模式显式指定 executor 模式：host、container 或 hybrid
+curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash -s -- --standalone --executor-mode host
 
 # Standard 模式
 curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash -s -- --standard
@@ -278,17 +291,17 @@ graph TB
         </a>
     </td>
     <td align="center">
-        <a href="https://github.com/kissghosts">
-            <img src="https://avatars.githubusercontent.com/u/3409715?v=4" width="80;" alt="kissghosts"/>
-            <br />
-            <sub><b>Yanhe</b></sub>
-        </a>
-    </td>
-    <td align="center">
         <a href="https://github.com/icycrystal4">
             <img src="https://avatars.githubusercontent.com/u/946207?v=4" width="80;" alt="icycrystal4"/>
             <br />
             <sub><b>Icycrystal4</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/kissghosts">
+            <img src="https://avatars.githubusercontent.com/u/3409715?v=4" width="80;" alt="kissghosts"/>
+            <br />
+            <sub><b>Yanhe</b></sub>
         </a>
     </td>
     <td align="center">
@@ -335,17 +348,17 @@ graph TB
         </a>
     </td>
     <td align="center">
-        <a href="https://github.com/2561056571">
-            <img src="https://avatars.githubusercontent.com/u/112464849?v=4" width="80;" alt="2561056571"/>
-            <br />
-            <sub><b>Xuemin</b></sub>
-        </a>
-    </td>
-    <td align="center">
         <a href="https://github.com/cocowh">
             <img src="https://avatars.githubusercontent.com/u/17496282?v=4" width="80;" alt="cocowh"/>
             <br />
             <sub><b>Birch</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/2561056571">
+            <img src="https://avatars.githubusercontent.com/u/112464849?v=4" width="80;" alt="2561056571"/>
+            <br />
+            <sub><b>Xuemin</b></sub>
         </a>
     </td>
     <td align="center">
@@ -385,6 +398,13 @@ graph TB
         </a>
     </td>
     <td align="center">
+        <a href="https://github.com/DavidLeeUX">
+            <img src="https://avatars.githubusercontent.com/u/16267902?v=4" width="80;" alt="DavidLeeUX"/>
+            <br />
+            <sub><b>Kva</b></sub>
+        </a>
+    </td>
+    <td align="center">
         <a href="https://github.com/junbaor">
             <img src="https://avatars.githubusercontent.com/u/10198622?v=4" width="80;" alt="junbaor"/>
             <br />
@@ -396,13 +416,6 @@ graph TB
             <img src="https://avatars.githubusercontent.com/u/11422037?v=4" width="80;" alt="fingki"/>
             <br />
             <sub><b>Fingki</b></sub>
-        </a>
-    </td>
-    <td align="center">
-        <a href="https://github.com/DavidLeeUX">
-            <img src="https://avatars.githubusercontent.com/u/16267902?v=4" width="80;" alt="DavidLeeUX"/>
-            <br />
-            <sub><b>Kva</b></sub>
         </a>
     </td>
     <td align="center">

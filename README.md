@@ -51,9 +51,22 @@ Then open http://localhost:3000 in your browser.
 | **Standard** | Multi-container + MySQL + Redis, best for teams and production |
 | **Development** | Source startup + hot reload, best for development and extensions |
 
+Standalone can choose where coding/execution agents run:
+
+| Standalone Executor Mode | Behavior | Best For |
+|--------------------------|----------|----------|
+| `host` | Run the executor on the host machine while Backend, Frontend, and Wework stay in Docker | macOS or any setup that needs host commands such as `open`, `osascript`, Terminal, or local CLI tools |
+| `container` | Run the executor inside the standalone container | Linux quick start and single-container deployments |
+| `hybrid` | Run both host and container executors | Keeping the container device while also using host-native capabilities |
+
+Interactive macOS installs default to `host`; Linux and non-interactive installs default to `container`.
+
 ```bash
-# Standalone mode (default)
+# Standalone mode (default executor mode)
 curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash -s -- --standalone
+
+# Standalone mode with an explicit executor mode: host, container, or hybrid
+curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash -s -- --standalone --executor-mode host
 
 # Standard mode
 curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash -s -- --standard
@@ -278,17 +291,17 @@ Thanks to the following developers for their contributions and efforts to make t
         </a>
     </td>
     <td align="center">
-        <a href="https://github.com/kissghosts">
-            <img src="https://avatars.githubusercontent.com/u/3409715?v=4" width="80;" alt="kissghosts"/>
-            <br />
-            <sub><b>Yanhe</b></sub>
-        </a>
-    </td>
-    <td align="center">
         <a href="https://github.com/icycrystal4">
             <img src="https://avatars.githubusercontent.com/u/946207?v=4" width="80;" alt="icycrystal4"/>
             <br />
             <sub><b>Icycrystal4</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/kissghosts">
+            <img src="https://avatars.githubusercontent.com/u/3409715?v=4" width="80;" alt="kissghosts"/>
+            <br />
+            <sub><b>Yanhe</b></sub>
         </a>
     </td>
     <td align="center">
@@ -335,17 +348,17 @@ Thanks to the following developers for their contributions and efforts to make t
         </a>
     </td>
     <td align="center">
-        <a href="https://github.com/2561056571">
-            <img src="https://avatars.githubusercontent.com/u/112464849?v=4" width="80;" alt="2561056571"/>
-            <br />
-            <sub><b>Xuemin</b></sub>
-        </a>
-    </td>
-    <td align="center">
         <a href="https://github.com/cocowh">
             <img src="https://avatars.githubusercontent.com/u/17496282?v=4" width="80;" alt="cocowh"/>
             <br />
             <sub><b>Birch</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/2561056571">
+            <img src="https://avatars.githubusercontent.com/u/112464849?v=4" width="80;" alt="2561056571"/>
+            <br />
+            <sub><b>Xuemin</b></sub>
         </a>
     </td>
     <td align="center">
@@ -385,6 +398,13 @@ Thanks to the following developers for their contributions and efforts to make t
         </a>
     </td>
     <td align="center">
+        <a href="https://github.com/DavidLeeUX">
+            <img src="https://avatars.githubusercontent.com/u/16267902?v=4" width="80;" alt="DavidLeeUX"/>
+            <br />
+            <sub><b>Kva</b></sub>
+        </a>
+    </td>
+    <td align="center">
         <a href="https://github.com/junbaor">
             <img src="https://avatars.githubusercontent.com/u/10198622?v=4" width="80;" alt="junbaor"/>
             <br />
@@ -396,13 +416,6 @@ Thanks to the following developers for their contributions and efforts to make t
             <img src="https://avatars.githubusercontent.com/u/11422037?v=4" width="80;" alt="fingki"/>
             <br />
             <sub><b>Fingki</b></sub>
-        </a>
-    </td>
-    <td align="center">
-        <a href="https://github.com/DavidLeeUX">
-            <img src="https://avatars.githubusercontent.com/u/16267902?v=4" width="80;" alt="DavidLeeUX"/>
-            <br />
-            <sub><b>Kva</b></sub>
         </a>
     </td>
     <td align="center">

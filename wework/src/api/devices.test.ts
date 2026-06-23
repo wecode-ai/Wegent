@@ -3,6 +3,43 @@ import { createDeviceApi } from './devices'
 import type { HttpClient } from './http'
 
 describe('createDeviceApi', () => {
+  test('filters OpenClaw devices out of device list responses', async () => {
+    const client = {
+      get: vi.fn().mockResolvedValue({
+        items: [
+          {
+            id: 1,
+            device_id: 'claude-device',
+            name: 'Claude Device',
+            status: 'online',
+            is_default: true,
+            device_type: 'cloud',
+            bind_shell: 'claudecode',
+          },
+          {
+            id: 2,
+            device_id: 'openclaw-device',
+            name: 'OpenClaw Device',
+            status: 'online',
+            is_default: false,
+            device_type: 'cloud',
+            bind_shell: 'openclaw',
+          },
+        ],
+        total: 2,
+      }),
+    } as unknown as HttpClient
+
+    const api = createDeviceApi(client)
+
+    await expect(api.listDevices()).resolves.toEqual([
+      expect.objectContaining({ device_id: 'claude-device' }),
+    ])
+    await expect(api.getAllDevices()).resolves.toEqual([
+      expect.objectContaining({ device_id: 'claude-device' }),
+    ])
+  })
+
   test('uses cloud device endpoints for restart and delete actions', async () => {
     const client = {
       delete: vi.fn().mockResolvedValue({ message: 'deleted' }),
@@ -36,6 +73,20 @@ describe('createDeviceApi', () => {
       args: ['/workspace/project'],
       timeout_seconds: 10,
       max_output_bytes: 4096,
+    })
+  })
+
+  test('starts an embedded terminal at the requested device path', async () => {
+    const client = {
+      post: vi.fn().mockResolvedValue({ session_id: 'terminal-1' }),
+    } as unknown as HttpClient
+
+    const api = createDeviceApi(client)
+
+    await api.startTerminal('device/1', ' /workspace/project ')
+
+    expect(client.post).toHaveBeenCalledWith('/devices/device%2F1/terminal', {
+      path: '/workspace/project',
     })
   })
 

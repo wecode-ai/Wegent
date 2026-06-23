@@ -60,8 +60,9 @@ class TestExtractClaudeOptionsWithMcp:
         assert mcp["ghost-server"]["type"] == "http"
         assert mcp["my-skill_skillServer"]["type"] == "http"
 
-    def test_no_mcp_servers(self):
+    def test_no_mcp_servers(self, tmp_path, monkeypatch):
         """No mcp_servers key when bot has none configured."""
+        monkeypatch.setenv("HOME", str(tmp_path))
         task_data = ExecutionRequest(
             task_id=1,
             bot=[{"system_prompt": "You are helpful."}],
@@ -97,6 +98,37 @@ class TestExtractClaudeOptionsWithMcp:
         options = extract_claude_options(task_data)
 
         assert options["system_prompt"] == "You are helpful."
+
+    def test_task_model_is_passed_as_explicit_sdk_option(self):
+        """Task model selection must override Claude user-level settings."""
+        task_data = ExecutionRequest(
+            task_id=1,
+            bot=[
+                {
+                    "agent_config": {
+                        "env": {
+                            "model": "claude",
+                            "model_id": "deepseek-v4-pro",
+                        }
+                    }
+                }
+            ],
+        )
+
+        options = extract_claude_options(task_data)
+
+        assert options["model"] == "deepseek-v4-pro"
+
+    def test_missing_task_model_keeps_sdk_default_behavior(self):
+        """Bots without a resolved task model should not force an SDK model."""
+        task_data = ExecutionRequest(
+            task_id=1,
+            bot=[{"agent_config": {"env": {"model": "claude"}}}],
+        )
+
+        options = extract_claude_options(task_data)
+
+        assert "model" not in options
 
     def test_pipeline_uses_current_request_system_prompt(self):
         """Pipeline stages pass the stage-specific top-level prompt to Claude."""

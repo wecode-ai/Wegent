@@ -9,6 +9,7 @@ import { useRouter } from 'next/navigation'
 import { paths } from '@/config/paths'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getRuntimeConfigSync } from '@/lib/runtime-config'
+import { getCodingNavItem, openNavigationHref } from '@/config/coding-route'
 
 interface DesktopNavLinksProps {
   activePage: 'chat' | 'code' | 'wiki' | 'flow' | 'dashboard'
@@ -20,7 +21,9 @@ export function DesktopNavLinks({ activePage }: DesktopNavLinksProps) {
   const [isPending, startTransition] = useTransition()
 
   // Check if Wiki module is enabled via runtime config
-  const isWikiEnabled = getRuntimeConfigSync().enableWiki
+  const runtimeConfig = getRuntimeConfigSync()
+  const isWikiEnabled = runtimeConfig.enableWiki
+  const codingNavItem = getCodingNavItem(runtimeConfig)
 
   const indicatorContainerRef = useRef<HTMLDivElement | null>(null)
   const itemRefs = useRef<Record<string, HTMLButtonElement | null>>({})
@@ -29,12 +32,14 @@ export function DesktopNavLinks({ activePage }: DesktopNavLinksProps) {
   // Prefetch all navigation pages on mount for smoother navigation
   useEffect(() => {
     router.prefetch(paths.chat.getHref())
-    router.prefetch(paths.code.getHref())
+    if (!codingNavItem.external) {
+      router.prefetch(codingNavItem.href)
+    }
     router.prefetch(paths.feed.getHref())
     if (isWikiEnabled) {
       router.prefetch(paths.wiki.getHref())
     }
-  }, [router, isWikiEnabled])
+  }, [router, isWikiEnabled, codingNavItem.external, codingNavItem.href])
 
   const navItems = useMemo(
     () => [
@@ -48,11 +53,11 @@ export function DesktopNavLinks({ activePage }: DesktopNavLinksProps) {
         },
       },
       {
-        key: 'code' as const,
-        label: t('common:navigation.code'),
+        key: codingNavItem.key,
+        label: t(codingNavItem.labelKey),
         onClick: () => {
           startTransition(() => {
-            router.push(paths.code.getHref())
+            openNavigationHref(router, codingNavItem.href)
           })
         },
       },
@@ -79,7 +84,15 @@ export function DesktopNavLinks({ activePage }: DesktopNavLinksProps) {
           ]
         : []),
     ],
-    [t, router, startTransition]
+    [
+      t,
+      router,
+      startTransition,
+      isWikiEnabled,
+      codingNavItem.href,
+      codingNavItem.key,
+      codingNavItem.labelKey,
+    ]
   )
 
   useEffect(() => {

@@ -112,6 +112,32 @@ def _get_mcp_lifespan_servers():
     return tuple(servers)
 
 
+def _load_system_initialization_state(logger: logging.Logger) -> None:
+    from app.services.admin_password_bootstrap import (
+        load_admin_password_setup_state,
+        set_admin_password_setup_required_cache,
+    )
+
+    if not settings.CHECK_SYSTEM_INITIALIZATION_STATUS:
+        set_admin_password_setup_required_cache(False)
+        logger.info(
+            "System initialization state check disabled "
+            "(CHECK_SYSTEM_INITIALIZATION_STATUS=false)"
+        )
+        return
+
+    logger.info("Loading system initialization state...")
+    db = SessionLocal()
+    try:
+        setup_required = load_admin_password_setup_state(db)
+        logger.info(
+            "✓ System initialization state loaded (admin password setup required: %s)",
+            setup_required,
+        )
+    finally:
+        db.close()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
@@ -255,6 +281,9 @@ async def lifespan(app: FastAPI):
             # Release lock
             redis_client.delete(STARTUP_LOCK_KEY)
             logger.info("Released startup initialization lock")
+
+    # Load system initialization state once per process after startup data exists.
+    _load_system_initialization_state(logger)
 
     # Start background jobs
     logger.info("Starting background jobs...")
@@ -746,6 +775,7 @@ def create_socketio_asgi_app():
     """
     from app.api.ws import register_chat_namespace
     from app.api.ws.device_namespace import register_device_namespace
+    from app.api.ws.terminal_namespace import register_terminal_namespace
     from app.core.socketio import create_socketio_app, get_sio
 
     sio = get_sio()
@@ -758,6 +788,10 @@ def create_socketio_asgi_app():
     # Register device namespace for local device connections
     register_device_namespace(sio)
     _logger.info("Device namespace registered during ASGI app creation")
+
+    # Register terminal namespace for browser terminal clients
+    register_terminal_namespace(sio)
+    _logger.info("Terminal namespace registered during ASGI app creation")
 
     socketio_app = create_socketio_app(sio)
 

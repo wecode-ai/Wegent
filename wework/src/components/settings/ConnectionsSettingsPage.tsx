@@ -1,6 +1,5 @@
 import {
   ArrowLeft,
-  Archive,
   Palette,
   BookOpen,
   Check,
@@ -35,6 +34,7 @@ import { openExternalUrl } from '@/lib/external-links'
 import { navigateTo } from '@/lib/navigation'
 import { cn } from '@/lib/utils'
 import { DesktopTopBar } from '@/components/layout/DesktopTopBar'
+import { RemoteTerminal } from '@/components/layout/workspace-panels/RemoteTerminal'
 import { useResizableSidebar } from '@/components/layout/useResizableSidebar'
 import { buildVncPageUrl } from '@/lib/vnc'
 import {
@@ -48,8 +48,7 @@ import {
   supportsRemoteSessions,
 } from '@/lib/device-capabilities'
 import { getLocalExecutorDeviceId, isLocalTerminalAvailable } from '@/lib/local-terminal'
-import type { ArchivedTask } from '@/types/api'
-import type { CloudDeviceMetricsResponse, DeviceInfo } from '@/types/devices'
+import type { CloudDeviceMetricsResponse, DeviceInfo, DeviceSessionResponse } from '@/types/devices'
 import { AppearanceSettingsPage } from '@/features/appearance/AppearanceSettingsPage'
 import { AddCloudDeviceDialog } from './AddCloudDeviceDialog'
 import { ProxySettingsPage } from './ProxySettingsPage'
@@ -60,10 +59,6 @@ import { WorktreesSettingsPage } from './WorktreesSettingsPage'
 interface ConnectionsSettingsPageProps {
   onBack: () => void
   autoOpenAddCloudDeviceDialog?: boolean
-  onListArchivedTasks?: () => Promise<{ items: ArchivedTask[]; total: number }>
-  onUnarchiveTask?: (taskId: number) => Promise<void>
-  onDeleteTask?: (taskId: number) => Promise<void>
-  onDeleteArchivedTasks?: () => Promise<void>
 }
 
 type SettingsCategory = 'personal' | 'coding'
@@ -117,16 +112,8 @@ const settingsNavItems: SettingsNavItem[] = [
     fallback: '工作树',
     category: 'coding',
   },
-  {
-    key: 'archived-chats',
-    icon: Archive,
-    label: 'settings_nav_archived_chats',
-    fallback: '已归档会话',
-  },
 ]
 
-const emptyArchivedTasks = async () => ({ items: [], total: 0 })
-const noopArchivedAction = async () => undefined
 const settingsCategoryLabels: Record<SettingsCategory, { label: string; fallback: string }> = {
   personal: {
     label: 'settings_category_personal',
@@ -531,6 +518,7 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
   const [actionMenuOpen, setActionMenuOpen] = useState(false)
   const [confirmAction, setConfirmAction] = useState<ConfirmDeviceAction | null>(null)
   const [connectionInfoOpen, setConnectionInfoOpen] = useState(false)
+  const [terminalSession, setTerminalSession] = useState<DeviceSessionResponse | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const actionMenuRef = useRef<HTMLDivElement>(null)
 
@@ -546,7 +534,9 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
       const result = await createSettingsDeviceApi().startTerminal(device.device_id)
       if (result.url) {
         window.open(result.url, '_blank', 'noopener')
+        return
       }
+      setTerminalSession(result)
     } catch (e) {
       console.error('Failed to start terminal:', e)
     } finally {
@@ -861,6 +851,35 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
         {supportsDeviceMetrics(device) && <DeviceMetrics deviceId={device.device_id} />}
       </div>
 
+      {terminalSession && (
+        <section
+          data-testid="settings-device-terminal-panel"
+          className="mt-3 flex h-[360px] min-h-0 flex-col overflow-hidden rounded-lg border border-border bg-background"
+        >
+          <div className="flex h-10 shrink-0 items-center justify-between border-b border-border px-3">
+            <div className="flex min-w-0 items-center gap-2">
+              <Terminal className="h-4 w-4 shrink-0 text-text-secondary" />
+              <span className="truncate text-sm font-medium text-text-primary">{device.name}</span>
+              {terminalSession.path && (
+                <span className="truncate text-xs text-text-muted">{terminalSession.path}</span>
+              )}
+            </div>
+            <button
+              type="button"
+              data-testid="settings-device-terminal-close-button"
+              onClick={() => setTerminalSession(null)}
+              className="flex h-7 w-7 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary"
+              aria-label="关闭终端"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="min-h-0 flex-1">
+            <RemoteTerminal sessionId={terminalSession.session_id} active />
+          </div>
+        </section>
+      )}
+
       {confirmAction && (
         <ConfirmDeviceActionDialog
           device={device}
@@ -1089,160 +1108,9 @@ function ConnectionsDeviceSettingsPage({
   )
 }
 
-function formatArchivedDate(value: string) {
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return value
-  return date.toLocaleString([], {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
-}
-
-function ArchivedChatsSettingsPage({
-  onListArchivedTasks,
-  onUnarchiveTask,
-  onDeleteTask,
-  onDeleteArchivedTasks,
-}: Required<Omit<ConnectionsSettingsPageProps, 'onBack' | 'autoOpenAddCloudDeviceDialog'>>) {
-  const { t } = useTranslation('common')
-  const [items, setItems] = useState<ArchivedTask[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-
-  const loadArchivedTasks = useCallback(async () => {
-    setLoading(true)
-    setError(null)
-    try {
-      const result = await onListArchivedTasks()
-      setItems(result.items)
-    } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : '加载失败')
-    } finally {
-      setLoading(false)
-    }
-  }, [onListArchivedTasks])
-
-  useEffect(() => {
-    let cancelled = false
-
-    async function loadInitialArchivedTasks() {
-      try {
-        const result = await onListArchivedTasks()
-        if (cancelled) return
-        setItems(result.items)
-      } catch (loadError) {
-        if (cancelled) return
-        setError(loadError instanceof Error ? loadError.message : '加载失败')
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
-    }
-
-    void loadInitialArchivedTasks()
-    return () => {
-      cancelled = true
-    }
-  }, [onListArchivedTasks])
-
-  return (
-    <div data-testid="archived-chats-settings" className="mx-auto w-full max-w-[860px]">
-      <div className="flex items-center justify-between gap-4">
-        <div>
-          <h1 className="text-xl font-semibold tracking-normal text-text-primary">
-            {t('workbench.archived_chats_title', '已归档会话')}
-          </h1>
-          <p className="mt-2 text-sm text-text-secondary">
-            {t('workbench.archived_chats_subtitle', '查看、恢复或删除已归档的会话')}
-          </p>
-        </div>
-        <button
-          type="button"
-          data-testid="delete-all-archived-chats-button"
-          disabled={items.length === 0 || loading}
-          onClick={async () => {
-            await onDeleteArchivedTasks()
-            await loadArchivedTasks()
-          }}
-          className="h-9 rounded-full border border-red-500/20 bg-red-500/10 px-3 text-sm font-medium text-red-500 hover:bg-red-500/15 disabled:cursor-not-allowed disabled:border-border disabled:bg-muted disabled:text-text-muted"
-        >
-          {t('workbench.archived_chats_delete_all', '全部删除')}
-        </button>
-      </div>
-
-      <div className="mt-8 overflow-hidden rounded-lg border border-border bg-surface">
-        {loading && (
-          <p className="px-5 py-8 text-sm text-text-muted">{t('common.loading', '加载中...')}</p>
-        )}
-        {!loading && error && <p className="px-5 py-6 text-sm text-red-500">{error}</p>}
-        {!loading && !error && items.length === 0 && (
-          <div className="flex min-h-[156px] flex-col items-center justify-center px-5 py-10 text-center">
-            <Archive className="mb-3 h-7 w-7 text-text-muted" />
-            <h2 className="text-sm font-semibold text-text-primary">
-              {t('workbench.archived_chats_empty_title', '暂无已归档会话')}
-            </h2>
-            <p className="mt-2 max-w-sm text-sm leading-6 text-text-secondary">
-              {t(
-                'workbench.archived_chats_empty_desc',
-                '归档后的会话会显示在这里，方便之后恢复或清理。'
-              )}
-            </p>
-          </div>
-        )}
-        {!loading &&
-          !error &&
-          items.map(item => (
-            <div
-              key={item.id}
-              data-testid="archived-chat-row"
-              className="flex min-h-[74px] items-center gap-4 border-b border-border bg-background px-5 py-3 last:border-b-0 hover:bg-muted"
-            >
-              <div className="min-w-0 flex-1">
-                <h2 className="truncate text-sm font-semibold text-text-primary">{item.title}</h2>
-                <p className="mt-1 truncate text-sm text-text-secondary">
-                  {formatArchivedDate(item.updated_at)}
-                  {item.project_name ? ` · ${item.project_name}` : ''}
-                </p>
-              </div>
-              <button
-                type="button"
-                data-testid={`delete-archived-chat-${item.id}`}
-                onClick={async () => {
-                  await onDeleteTask(item.id)
-                  await loadArchivedTasks()
-                }}
-                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-red-500/10 hover:text-red-500"
-                aria-label={t('workbench.archived_chats_delete_one', '删除归档会话')}
-              >
-                <Trash2 className="h-4 w-4" />
-              </button>
-              <button
-                type="button"
-                data-testid={`unarchive-chat-${item.id}`}
-                onClick={async () => {
-                  await onUnarchiveTask(item.id)
-                  await loadArchivedTasks()
-                }}
-                className="h-9 shrink-0 rounded-md bg-surface px-3 text-sm font-medium text-text-primary hover:bg-muted"
-              >
-                {t('workbench.archived_chats_unarchive', '恢复')}
-              </button>
-            </div>
-          ))}
-      </div>
-    </div>
-  )
-}
-
 export function ConnectionsSettingsPage({
   onBack,
   autoOpenAddCloudDeviceDialog = false,
-  onListArchivedTasks = emptyArchivedTasks,
-  onUnarchiveTask = noopArchivedAction,
-  onDeleteTask = noopArchivedAction,
-  onDeleteArchivedTasks = noopArchivedAction,
 }: ConnectionsSettingsPageProps) {
   const { t } = useTranslation('common')
   const { sidebarWidth, handleResizeStart } = useResizableSidebar()
@@ -1328,14 +1196,7 @@ export function ConnectionsSettingsPage({
       </aside>
 
       <main className="min-w-0 flex-1 overflow-auto bg-background px-8 py-16">
-        {activeNav === 'archived-chats' ? (
-          <ArchivedChatsSettingsPage
-            onListArchivedTasks={onListArchivedTasks}
-            onUnarchiveTask={onUnarchiveTask}
-            onDeleteTask={onDeleteTask}
-            onDeleteArchivedTasks={onDeleteArchivedTasks}
-          />
-        ) : activeNav === 'appearance' ? (
+        {activeNav === 'appearance' ? (
           <AppearanceSettingsPage />
         ) : activeNav === 'codex-auth' ? (
           <RuntimeConfigSettingsPage runtime="codex" />

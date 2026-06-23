@@ -27,6 +27,10 @@ export function isSharedTeam(team: Team): boolean {
   return team.share_status === 2
 }
 
+export function isNamespaceAuthorizedTeam(team: Team): boolean {
+  return team.access_source === 'namespace_authorization'
+}
+
 /**
  * Check if the current user can edit a given team.
  *

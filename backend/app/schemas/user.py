@@ -34,7 +34,7 @@ class UserModelSelectionPreference(BaseModel):
     """User-level model selection preference."""
 
     modelName: str
-    modelType: Optional[Literal["public", "user", "group"]] = None
+    modelType: Optional[Literal["public", "user", "group", "runtime"]] = None
     options: dict[str, str] = Field(default_factory=dict)
 
 
@@ -166,6 +166,12 @@ class LoginRequest(BaseModel):
 class LoginResponse(BaseModel):
     access_token: str
     token_type: str
+
+
+class AdminPasswordSetupRequest(BaseModel):
+    """Request body for setting the initial admin password."""
+
+    password: str = Field(..., min_length=6)
 
 
 class UserInfo(BaseModel):

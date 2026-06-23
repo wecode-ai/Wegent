@@ -21,6 +21,7 @@ import type {
   UpgradeDeviceResponse,
   VncConfigResponse,
 } from '@/types/devices'
+import { filterClaudeCodeDevices } from '@/lib/device-capabilities'
 import type { HttpClient } from './http'
 
 const WORKSPACE_TEXT_FILE_MAX_OUTPUT_BYTES = 1024 * 1024 * 2
@@ -221,7 +222,7 @@ function splitAbsoluteWorkspaceFilePath(filePath: string): {
 export function createDeviceApi(client: HttpClient) {
   async function fetchDevices(): Promise<DeviceInfo[]> {
     const response = await client.get<DeviceListResponse>('/devices')
-    return response.items
+    return filterClaudeCodeDevices(response.items)
   }
 
   return {
@@ -385,8 +386,13 @@ export function createDeviceApi(client: HttpClient) {
       )
     },
 
-    async startTerminal(deviceId: string): Promise<DeviceSessionResponse> {
-      return client.post<DeviceSessionResponse>(`/devices/${encodeURIComponent(deviceId)}/terminal`)
+    async startTerminal(deviceId: string, cwd?: string): Promise<DeviceSessionResponse> {
+      const path = cwd?.trim()
+      return path
+        ? client.post<DeviceSessionResponse>(`/devices/${encodeURIComponent(deviceId)}/terminal`, {
+            path,
+          })
+        : client.post<DeviceSessionResponse>(`/devices/${encodeURIComponent(deviceId)}/terminal`)
     },
 
     async startCodeServer(deviceId: string): Promise<DeviceSessionResponse> {

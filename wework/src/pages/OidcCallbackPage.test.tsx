@@ -15,15 +15,17 @@ describe('OidcCallbackPage', () => {
     window.history.pushState({}, '', '/login/oidc?access_token=token-1&login_success=true')
     const authApi = {
       getCurrentUser: vi.fn(),
+      getCurrentUserWithoutAuthRedirect: vi.fn(),
       login: vi.fn(),
       logout: vi.fn(),
       loginWithOidcToken: vi.fn().mockResolvedValue(undefined),
+      setupAdminPassword: vi.fn(),
     }
 
     render(
       <AuthProvider authApi={authApi}>
         <OidcCallbackPage />
-      </AuthProvider>,
+      </AuthProvider>
     )
 
     await waitFor(() => expect(authApi.loginWithOidcToken).toHaveBeenCalledWith('token-1'))

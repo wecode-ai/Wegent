@@ -9,7 +9,7 @@ def test_default_team_config_includes_wework_mode(monkeypatch):
     monkeypatch.setattr(
         teams_endpoint.settings,
         "DEFAULT_TEAM_WEWORK",
-        "wegent-wework-hidden#default",
+        "wegent-wework#default",
     )
     monkeypatch.setattr(
         teams_endpoint.settings,
@@ -20,19 +20,28 @@ def test_default_team_config_includes_wework_mode(monkeypatch):
     config = teams_endpoint._get_default_teams_config()
 
     assert config["wework"] == {
-        "name": "wegent-wework-hidden",
+        "name": "wegent-wework",
         "namespace": "default",
     }
     assert config["chat"] == {"name": "wegent-chat", "namespace": "default"}
 
 
+def test_default_wework_team_matches_seeded_resource():
+    config = teams_endpoint._get_default_teams_config()
+
+    assert config["wework"] == {
+        "name": "wegent-wework",
+        "namespace": "default",
+    }
+
+
 def test_add_default_for_modes_marks_wework_team():
     items = [
-        {"name": "wegent-wework-hidden", "namespace": "default"},
+        {"name": "wegent-wework", "namespace": "default"},
         {"name": "wegent-chat", "namespace": "default"},
     ]
     default_config = {
-        "wework": {"name": "wegent-wework-hidden", "namespace": "default"},
+        "wework": {"name": "wegent-wework", "namespace": "default"},
         "chat": {"name": "wegent-chat", "namespace": "default"},
     }
 
@@ -54,7 +63,7 @@ def test_list_teams_api_marks_wework_default(monkeypatch):
     monkeypatch.setattr(
         teams_endpoint.settings,
         "DEFAULT_TEAM_WEWORK",
-        "wegent-wework-hidden#default",
+        "wegent-wework#default",
     )
     monkeypatch.setattr(teams_endpoint.settings, "DEFAULT_TEAM_CHAT", "")
     monkeypatch.setattr(teams_endpoint.settings, "DEFAULT_TEAM_CODE", "")
@@ -66,7 +75,7 @@ def test_list_teams_api_marks_wework_default(monkeypatch):
         lambda **_: [
             {
                 "id": 1,
-                "name": "wegent-wework-hidden",
+                "name": "wegent-wework",
                 "namespace": "default",
                 "is_active": True,
             }

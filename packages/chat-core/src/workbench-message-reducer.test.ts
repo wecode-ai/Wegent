@@ -40,6 +40,55 @@ describe('reduceWorkbenchMessages', () => {
     })
   })
 
+  test('late assistant stream creates an assistant message when a user message has the same subtask id', () => {
+    const state: WorkbenchMessage[] = [
+      {
+        id: 'user-9',
+        role: 'user',
+        subtaskId: 9,
+        content: 'hello',
+        status: 'done',
+        createdAt: '2026-05-25T00:00:00.000Z',
+      },
+    ]
+
+    const withTool = reduceWorkbenchMessages(state, {
+      type: 'block_created',
+      subtaskId: 9,
+      block: {
+        id: 'call_1',
+        subtaskId: 9,
+        type: 'tool',
+        toolName: 'bash',
+        status: 'pending',
+        createdAt: 1770000000000,
+      },
+    })
+    const withChunk = reduceWorkbenchMessages(withTool, {
+      type: 'assistant_chunk',
+      subtaskId: 9,
+      content: 'Hi',
+    })
+    const done = reduceWorkbenchMessages(withChunk, {
+      type: 'assistant_done',
+      subtaskId: 9,
+      content: 'Hi',
+    })
+
+    expect(done).toHaveLength(2)
+    expect(done[0]).toMatchObject({
+      role: 'user',
+      content: 'hello',
+      status: 'done',
+    })
+    expect(done[1]).toMatchObject({
+      role: 'assistant',
+      content: 'Hi',
+      status: 'done',
+      blocks: [{ type: 'tool', toolName: 'bash', status: 'done' }],
+    })
+  })
+
   test('finalizes thinking blocks when a tool block is created', () => {
     const state = reduceWorkbenchMessages(
       reduceWorkbenchMessages([], {
@@ -203,6 +252,35 @@ describe('reduceWorkbenchMessages', () => {
     expect(resumed[0].blocks).toMatchObject([
       { id: 'call_1', type: 'tool', status: 'streaming', toolOutput: 'still running' },
     ])
+  })
+
+  test('keeps a specific assistant error when a later generic task status error arrives', () => {
+    const state = reduceWorkbenchMessages(
+      reduceWorkbenchMessages([], {
+        type: 'assistant_started',
+        taskId: 1,
+        subtaskId: 9,
+      }),
+      {
+        type: 'assistant_error',
+        subtaskId: 9,
+        error: 'Codex CLI failed to resume thread: session not found',
+        errorType: 'execution_error',
+      }
+    )
+
+    const next = reduceWorkbenchMessages(state, {
+      type: 'assistant_error',
+      subtaskId: 9,
+      error: 'Task failed with status: FAILED',
+      errorType: 'execution_error',
+    })
+
+    expect(next[0]).toMatchObject({
+      status: 'failed',
+      error: 'Codex CLI failed to resume thread: session not found',
+      errorType: 'execution_error',
+    })
   })
 
   test('preserves state for unknown runtime actions', () => {

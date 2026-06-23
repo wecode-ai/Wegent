@@ -223,16 +223,15 @@ describe('loadProjectEnvironment', () => {
         },
       },
       {
-        deviceId: 'task-device',
+        deviceId: 'runtime-device',
         path: '/workspace/worktrees/1029/Wegent',
-        source: 'task',
-        taskId: 1029,
+        source: 'runtime',
       }
     )
 
     expect(info).toMatchObject({
       executionTarget: 'cloud',
-      deviceId: 'task-device',
+      deviceId: 'runtime-device',
       branchName: 'human/worktree-branch',
       additions: '+4',
       deletions: '-0',
@@ -244,7 +243,7 @@ describe('loadProjectEnvironment', () => {
       'git_remote_url',
     ]) {
       expect(executeCommand).toHaveBeenCalledWith(
-        'task-device',
+        'runtime-device',
         expect.objectContaining({
           command_key: commandKey,
           path: '/workspace/worktrees/1029/Wegent',
@@ -801,20 +800,19 @@ describe('commitProjectChanges', () => {
       },
       'feat: update environment info',
       {
-        deviceId: 'task-device',
+        deviceId: 'runtime-device',
         path: '/workspace/worktrees/1029/Wegent',
-        source: 'task',
-        taskId: 1029,
+        source: 'runtime',
       }
     )
 
-    expect(executeCommand).toHaveBeenNthCalledWith(1, 'task-device', {
+    expect(executeCommand).toHaveBeenNthCalledWith(1, 'runtime-device', {
       command_key: 'git_add_all',
       path: '/workspace/worktrees/1029/Wegent',
       timeout_seconds: 30,
       max_output_bytes: 4096,
     })
-    expect(executeCommand).toHaveBeenNthCalledWith(2, 'task-device', {
+    expect(executeCommand).toHaveBeenNthCalledWith(2, 'runtime-device', {
       command_key: 'git_commit',
       path: '/workspace/worktrees/1029/Wegent',
       args: ['-m', 'feat: update environment info'],
@@ -884,10 +882,9 @@ describe('branch environment commands', () => {
       stderr: '',
     })
     const target = {
-      deviceId: 'task-device',
+      deviceId: 'runtime-device',
       path: '/workspace/worktrees/1029/Wegent',
-      source: 'task' as const,
-      taskId: 1029,
+      source: 'runtime' as const,
     }
 
     await expect(listProjectBranches({ executeCommand }, project, target)).resolves.toEqual([
@@ -896,20 +893,20 @@ describe('branch environment commands', () => {
     await checkoutProjectBranch({ executeCommand }, project, 'human/alpaca', target)
     await createAndCheckoutProjectBranch({ executeCommand }, project, 'human/new-branch', target)
 
-    expect(executeCommand).toHaveBeenNthCalledWith(1, 'task-device', {
+    expect(executeCommand).toHaveBeenNthCalledWith(1, 'runtime-device', {
       command_key: 'git_branch_list',
       path: '/workspace/worktrees/1029/Wegent',
       timeout_seconds: 15,
       max_output_bytes: 1024 * 64,
     })
-    expect(executeCommand).toHaveBeenNthCalledWith(2, 'task-device', {
+    expect(executeCommand).toHaveBeenNthCalledWith(2, 'runtime-device', {
       command_key: 'git_checkout',
       path: '/workspace/worktrees/1029/Wegent',
       args: ['human/alpaca'],
       timeout_seconds: 30,
       max_output_bytes: 8192,
     })
-    expect(executeCommand).toHaveBeenNthCalledWith(3, 'task-device', {
+    expect(executeCommand).toHaveBeenNthCalledWith(3, 'runtime-device', {
       command_key: 'git_checkout_new',
       path: '/workspace/worktrees/1029/Wegent',
       args: ['human/new-branch'],

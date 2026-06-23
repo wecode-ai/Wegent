@@ -44,10 +44,13 @@ import { ProjectSelectorTab } from '@/features/projects/components/ProjectSelect
 import { getChatSendState } from './chatSendState'
 import AgentSkillSelectorMenu from './AgentSkillSelectorMenu'
 import InputMoreActionsMenu from './InputMoreActionsMenu'
+import type { TeamModeFilter } from '../selector/team-selector-utils'
 
 export interface ChatInputControlsProps {
   /** Task type to determine which controls to show */
   taskType?: TaskType
+  /** Mode used to filter visible teams in selectors. */
+  teamModeFilter?: TeamModeFilter
   // Team and Model
   selectedTeam: Team | null
   /** Available teams for team selector */
@@ -184,6 +187,7 @@ export interface ChatInputControlsProps {
  */
 export function ChatInputControls({
   taskType,
+  teamModeFilter = taskType ?? 'chat',
   selectedTeam,
   teams = [],
   onTeamChange,
@@ -374,6 +378,7 @@ export function ChatInputControls({
         teams={teams}
         onTeamChange={onTeamChange}
         taskType={taskType}
+        teamModeFilter={teamModeFilter}
         selectedModel={selectedModel}
         setSelectedModel={setSelectedModel}
         forceOverride={forceOverride}
@@ -542,6 +547,7 @@ export function ChatInputControls({
               onTeamsRefresh={onTeamsRefresh}
               selectedTaskDetail={selectedTaskDetail}
               taskType={taskType}
+              teamModeFilter={teamModeFilter}
               hasMessages={hasMessages}
               isLoading={false}
               isStreaming={isStreaming}

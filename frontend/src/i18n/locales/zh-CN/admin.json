@@ -875,7 +875,7 @@
   },
   "im_channels": {
     "title": "IM 渠道管理",
-    "description": "管理 IM 平台集成（钉钉、飞书）",
+    "description": "管理 IM 平台集成（钉钉、Telegram、Discord）",
     "create_description": "创建新的 IM 渠道集成。配置平台凭据和默认智能体。",
     "loading": "加载渠道中...",
     "no_channels": "暂无 IM 渠道配置",
@@ -889,6 +889,7 @@
       "dingtalk": "钉钉",
       "feishu": "飞书",
       "telegram": "Telegram",
+      "discord": "Discord",
       "not_supported": "暂不支持"
     },
     "status": {
@@ -912,7 +913,7 @@
       "card_template_id_placeholder": "请输入钉钉 AI 卡片模板 ID（可选）",
       "card_template_id_help": "配置后，订阅通知将使用 AI 卡片格式发送",
       "bot_token": "Bot Token",
-      "bot_token_placeholder": "请输入 Telegram Bot Token",
+      "bot_token_placeholder": "请输入 Bot Token",
       "bot_token_edit_placeholder": "请输入新的 Bot Token（留空保持不变）",
       "leave_empty_to_keep": "留空保持不变",
       "default_team": "默认智能体",
@@ -920,8 +921,8 @@
       "no_default_team": "无默认智能体",
       "default_model": "默认模型",
       "default_model_placeholder": "选择默认模型",
-      "no_default_model": "使用智能体默认模型",
-      "team_no_model_warning": "该智能体没有配置模型，必须选择一个默认模型",
+      "no_default_model": "使用智能体/运行时默认模型",
+      "team_no_model_warning": "该智能体没有配置 Wegent 模型；不选择默认模型时，将使用智能体或运行时默认模型。",
       "is_enabled": "启用渠道",
       "user_mapping_mode": "用户映射方式",
       "user_mapping_mode_description": "选择如何将 IM 用户映射到系统用户",
@@ -957,7 +958,7 @@
       "config_required": "Client ID 和 Client Secret 不能为空",
       "bot_token_required": "Bot Token 不能为空",
       "team_required": "必须选择一个默认智能体",
-      "model_required_for_team": "所选智能体没有配置模型，必须选择一个默认模型",
+      "model_required_for_team": "所选智能体没有配置 Wegent 模型，可选择默认模型或使用运行时默认模型",
       "target_user_required": "使用指定用户模式时必须选择一个目标用户"
     }
   },

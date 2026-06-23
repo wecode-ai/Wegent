@@ -8,6 +8,7 @@ import { useState } from 'react'
 import { createSmartMarkdownComponents } from '@/components/common/SmartUrlRenderer'
 import { Copy, Check, Plus, Star, RefreshCw, Edit3, X, Save, Loader2, Send } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { buildChatCodeHref } from '@/config/coding-route'
 import type { FinalPromptData, Team, GitRepoInfo, GitBranch } from '@/types/api'
 import EnhancedMarkdown from '@/components/common/EnhancedMarkdown'
 import { useTheme } from '@/features/theme/ThemeProvider'
@@ -122,7 +123,7 @@ export default function FinalPromptMessage({
     sessionStorage.setItem('pendingTaskPrompt', JSON.stringify(promptData))
 
     // Navigate to new task page
-    router.push('/code')
+    router.push(buildChatCodeHref())
 
     toast({
       title: t('clarification.prompt_ready'),

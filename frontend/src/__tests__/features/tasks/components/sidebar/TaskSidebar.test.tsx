@@ -55,6 +55,11 @@ const mockTaskSessionContext = {
   selectTask: jest.fn(),
   isRefreshing: false,
 }
+const mockRuntimeConfig = {
+  weworkCodeUrl: '',
+}
+let mockPathname = '/chat'
+let mockSearchParams = new URLSearchParams()
 
 jest.mock('next/image', () => ({
   __esModule: true,
@@ -73,18 +78,24 @@ jest.mock('next/navigation', () => ({
     push: jest.fn(),
     replace: jest.fn(),
   }),
+  usePathname: () => mockPathname,
+  useSearchParams: () => mockSearchParams,
 }))
 
 jest.mock('@/config/paths', () => ({
   paths: {
     feed: { getHref: () => '/feed' },
-    code: { getHref: () => '/code' },
+    code: { getHref: () => '/chat?agent=code' },
     wiki: { getHref: () => '/knowledge' },
     devices: { getHref: () => '/devices' },
     inbox: { getHref: () => '/inbox' },
     chat: { getHref: () => '/chat' },
     resourceLibrary: { getHref: () => '/resource-library' },
   },
+}))
+
+jest.mock('@/lib/runtime-config', () => ({
+  getRuntimeConfigSync: () => mockRuntimeConfig,
 }))
 
 jest.mock('@/features/tasks/session/TaskSession', () => ({
@@ -194,6 +205,10 @@ describe('TaskSidebar scroll structure', () => {
       selectTask: jest.fn(),
       isRefreshing: false,
     })
+    mockRuntimeConfig.weworkCodeUrl = ''
+    mockPathname = '/chat'
+    mockSearchParams = new URLSearchParams()
+    window.history.pushState({}, '', '/chat')
   })
 
   afterEach(() => {
@@ -230,6 +245,47 @@ describe('TaskSidebar scroll structure', () => {
     expect(within(scrollableSection).queryByText('common:navigation.wiki')).not.toBeInTheDocument()
     expect(within(scrollableSection).queryByText('devices:my_devices')).not.toBeInTheDocument()
     expect(within(scrollableSection).queryByText('common:navigation.inbox')).not.toBeInTheDocument()
+  })
+
+  it('shows WeWork instead of Code when a Wework URL is configured', () => {
+    mockRuntimeConfig.weworkCodeUrl = 'https://wework.example.com/coding'
+
+    render(
+      <TaskSidebar isMobileSidebarOpen={false} setIsMobileSidebarOpen={jest.fn()} pageType="chat" />
+    )
+
+    const fixedSection = screen.getAllByTestId('task-sidebar-fixed-section')[0]
+
+    expect(within(fixedSection).queryByText('common:navigation.code')).not.toBeInTheDocument()
+    expect(within(fixedSection).getByText('common:navigation.wework')).toBeInTheDocument()
+    expect(
+      within(fixedSection).queryByTestId('task-sidebar-nav-code-button')
+    ).not.toBeInTheDocument()
+    const weworkButton = within(fixedSection).getByTestId('task-sidebar-nav-wework-button')
+    const weworkIcon = weworkButton.querySelector('svg')
+
+    if (!weworkIcon) {
+      throw new Error('Expected WeWork sidebar button to render an icon')
+    }
+
+    expect(weworkButton).toBeInTheDocument()
+    expect(weworkIcon).toHaveClass('lucide-zap')
+    expect(weworkIcon).not.toHaveClass('lucide-layout-grid')
+  })
+
+  it('does not keep Code highlighted on plain chat after leaving code agent mode', () => {
+    window.history.pushState({}, '', '/chat?agent=code')
+    mockPathname = '/chat'
+    mockSearchParams = new URLSearchParams()
+
+    render(
+      <TaskSidebar isMobileSidebarOpen={false} setIsMobileSidebarOpen={jest.fn()} pageType="chat" />
+    )
+
+    const fixedSection = screen.getAllByTestId('task-sidebar-fixed-section')[0]
+    const codeButton = within(fixedSection).getByTestId('task-sidebar-nav-code-button')
+
+    expect(codeButton).not.toHaveClass('bg-primary/10')
   })
 
   it('shows secondary navigation in a right-side flyout from more', () => {

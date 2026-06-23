@@ -606,5 +606,5 @@ function DesktopComponent() {
 
 更多示例请参考：
 - `/app/(tasks)/chat/ChatPageDesktop.tsx` 和 `ChatPageMobile.tsx`
-- `/app/(tasks)/code/CodePageDesktop.tsx` 和 `CodePageMobile.tsx`
+- 编码入口已合并到 `/chat?agent=code`，复用 Chat 页面响应式实现
 - `/features/tasks/components/input/ChatInputControls.tsx` 和 `MobileChatInputControls.tsx`

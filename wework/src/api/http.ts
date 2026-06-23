@@ -6,7 +6,7 @@ import { redirectToLogin } from '@/features/auth/redirect'
 // triggers CORS preflight. Routing through the Tauri (Rust) HTTP client
 // bypasses the WebView same-origin policy entirely. Outside Tauri (browser
 // dev server via Vite proxy, vitest) fall back to the global fetch.
-function shouldUseTauriFetch(): boolean {
+export function shouldUseTauriFetch(): boolean {
   return (
     import.meta.env.MODE !== 'test' &&
     typeof window !== 'undefined' &&
@@ -32,12 +32,7 @@ export class ApiError extends Error {
   errorCode?: string | number
   detail?: unknown
 
-  constructor(
-    message: string,
-    status: number,
-    errorCode?: string | number,
-    detail?: unknown,
-  ) {
+  constructor(message: string, status: number, errorCode?: string | number, detail?: unknown) {
     super(message)
     this.name = 'ApiError'
     this.status = status
@@ -51,8 +46,12 @@ export interface HttpClientOptions {
   getToken?: () => string | null
 }
 
+export interface HttpRequestOptions {
+  redirectOnUnauthorized?: boolean
+}
+
 export interface HttpClient {
-  get<T>(endpoint: string): Promise<T>
+  get<T>(endpoint: string, options?: HttpRequestOptions): Promise<T>
   post<T>(endpoint: string, data?: unknown): Promise<T>
   put<T>(endpoint: string, data?: unknown): Promise<T>
   delete<T>(endpoint: string): Promise<T>
@@ -95,7 +94,11 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
   const getToken = options.getToken ?? defaultGetToken
   const inFlightGetRequests = new Map<string, Promise<unknown>>()
 
-  async function request<T>(endpoint: string, init: RequestInit): Promise<T> {
+  async function request<T>(
+    endpoint: string,
+    init: RequestInit,
+    requestOptions: HttpRequestOptions = {}
+  ): Promise<T> {
     const token = getToken()
     const isFormData = init.body instanceof FormData
     const response = await httpFetch()(requestUrl(options.baseUrl, endpoint), {
@@ -109,7 +112,7 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
 
     if (!response.ok) {
       const error = await parseError(response)
-      if (response.status === 401) {
+      if (response.status === 401 && requestOptions.redirectOnUnauthorized !== false) {
         removeToken()
         redirectToLogin()
       }
@@ -123,15 +126,16 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
     return response.json() as Promise<T>
   }
 
-  function get<T>(endpoint: string): Promise<T> {
+  function get<T>(endpoint: string, requestOptions: HttpRequestOptions = {}): Promise<T> {
     const token = getToken()
-    const cacheKey = `${token ?? ''}:${endpoint}`
+    const redirectKey = requestOptions.redirectOnUnauthorized === false ? 'no-redirect' : 'redirect'
+    const cacheKey = `${redirectKey}:${token ?? ''}:${endpoint}`
     const currentRequest = inFlightGetRequests.get(cacheKey)
     if (currentRequest) {
       return currentRequest as Promise<T>
     }
 
-    const nextRequest = request<T>(endpoint, { method: 'GET' }).finally(() => {
+    const nextRequest = request<T>(endpoint, { method: 'GET' }, requestOptions).finally(() => {
       inFlightGetRequests.delete(cacheKey)
     })
     inFlightGetRequests.set(cacheKey, nextRequest)
@@ -144,21 +148,13 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
       request(endpoint, {
         method: 'POST',
         body:
-          data === undefined
-            ? undefined
-            : data instanceof FormData
-              ? data
-              : JSON.stringify(data),
+          data === undefined ? undefined : data instanceof FormData ? data : JSON.stringify(data),
       }),
     put: (endpoint, data) =>
       request(endpoint, {
         method: 'PUT',
         body:
-          data === undefined
-            ? undefined
-            : data instanceof FormData
-              ? data
-              : JSON.stringify(data),
+          data === undefined ? undefined : data instanceof FormData ? data : JSON.stringify(data),
       }),
     delete: endpoint => request(endpoint, { method: 'DELETE' }),
   }

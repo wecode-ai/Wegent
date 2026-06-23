@@ -54,16 +54,17 @@ class FakeClaudeClient:
 
 
 @pytest.mark.asyncio
-async def test_stream_tool_use_start_does_not_emit_incomplete_tool_block():
+async def test_stream_tool_use_start_emits_generating_tool_block():
     emitter = MagicMock()
     emitter.flush = AsyncMock()
-    emitter.tool_start = AsyncMock()
+    emitter.tool_argument_start = AsyncMock()
 
     msg = StreamEvent(
         uuid="event-1",
         session_id="session-1",
         event={
             "type": "content_block_start",
+            "index": 0,
             "content_block": {
                 "type": "tool_use",
                 "id": "Bash_0",
@@ -75,7 +76,78 @@ async def test_stream_tool_use_start_does_not_emit_incomplete_tool_block():
     sent = await _handle_stream_event(msg, emitter, DummyStateManager())
 
     assert sent is False
-    emitter.tool_start.assert_not_awaited()
+    emitter.tool_argument_start.assert_awaited_once_with(
+        call_id="Bash_0",
+        name="Bash",
+        arguments_summary={},
+    )
+
+
+@pytest.mark.asyncio
+async def test_stream_tool_use_arguments_update_existing_tool_block():
+    emitter = MagicMock()
+    emitter.tool_argument_start = AsyncMock()
+    emitter.tool_argument_delta = AsyncMock()
+    emitter.tool_argument_done = AsyncMock()
+
+    await _handle_stream_event(
+        StreamEvent(
+            uuid="event-tool-start-1",
+            session_id="session-1",
+            event={
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {
+                    "type": "tool_use",
+                    "id": "Bash_0",
+                    "name": "Bash",
+                },
+            },
+        ),
+        emitter,
+        DummyStateManager(),
+    )
+
+    await _handle_stream_event(
+        StreamEvent(
+            uuid="event-tool-delta-1",
+            session_id="session-1",
+            event={
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {
+                    "type": "input_json_delta",
+                    "partial_json": '{"command": "pwd"}',
+                },
+            },
+        ),
+        emitter,
+        DummyStateManager(),
+    )
+
+    await _handle_stream_event(
+        StreamEvent(
+            uuid="event-tool-stop-1",
+            session_id="session-1",
+            event={
+                "type": "content_block_stop",
+                "index": 0,
+            },
+        ),
+        emitter,
+        DummyStateManager(),
+    )
+
+    emitter.tool_argument_delta.assert_awaited_once_with(
+        call_id="Bash_0",
+        arguments_delta='{"command": "pwd"}',
+        arguments_summary={"command": "pwd"},
+    )
+    emitter.tool_argument_done.assert_awaited_once_with(
+        call_id="Bash_0",
+        arguments={"command": "pwd"},
+        arguments_summary={"command": "pwd"},
+    )
 
 
 @pytest.mark.asyncio
@@ -150,6 +222,80 @@ async def test_assistant_message_emits_tool_start_when_text_was_streamed():
         call_id="Bash_2",
         name="Bash",
         arguments={"command": "git status"},
+    )
+
+
+@pytest.mark.asyncio
+async def test_user_message_tool_use_emits_tool_start_before_tool_result():
+    emitter = MagicMock()
+    emitter.flush = AsyncMock()
+    emitter.tool_start = AsyncMock()
+    emitter.tool_done = AsyncMock()
+
+    await _handle_user_message(
+        UserMessage(
+            content=[
+                ToolUseBlock(id="Bash_3", name="Bash", input={"command": "sleep 1"}),
+            ],
+        ),
+        emitter,
+        state_manager=DummyStateManager(),
+    )
+
+    emitter.tool_start.assert_awaited_once_with(
+        call_id="Bash_3",
+        name="Bash",
+        arguments={"command": "sleep 1"},
+    )
+    emitter.tool_done.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_assistant_message_finalizes_streamed_tool_without_duplicate_start():
+    emitter = MagicMock()
+    emitter.flush = AsyncMock()
+    emitter.tool_argument_start = AsyncMock()
+    emitter.tool_argument_done = AsyncMock()
+    emitter.tool_start = AsyncMock()
+
+    await _handle_stream_event(
+        StreamEvent(
+            uuid="event-tool-start-2",
+            session_id="session-1",
+            event={
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {
+                    "type": "tool_use",
+                    "id": "Bash_2",
+                    "name": "Bash",
+                },
+            },
+        ),
+        emitter,
+        DummyStateManager(),
+    )
+
+    msg = AssistantMessage(
+        content=[
+            ToolUseBlock(id="Bash_2", name="Bash", input={"command": "git status"}),
+        ],
+        model="claude-test",
+    )
+
+    await _handle_assistant_message(
+        msg,
+        emitter,
+        DummyStateManager(),
+        thinking_manager=None,
+        stream_event_sent=True,
+    )
+
+    emitter.tool_start.assert_not_awaited()
+    emitter.tool_argument_done.assert_awaited_once_with(
+        call_id="Bash_2",
+        arguments={"command": "git status"},
+        arguments_summary={"command": "git status"},
     )
 
 
@@ -326,6 +472,35 @@ async def test_claude_success_uses_explicit_completion_fields_provider():
     assert result == TaskStatus.COMPLETED
     completion_fields.assert_awaited_once()
     assert completed["file_changes"]["file_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_claude_success_includes_executor_session_metadata():
+    transport = GeneratorTransport()
+    emitter = EmitterBuilder().with_task(1, 2).with_transport(transport).build()
+    message = ResultMessage(
+        subtype="success",
+        duration_ms=1,
+        duration_api_ms=1,
+        is_error=False,
+        num_turns=1,
+        session_id="claude-session-1",
+        result="done",
+    )
+
+    result = await _process_result_message(
+        msg=message,
+        emitter=emitter,
+        state_manager=DummyStateManager(),
+        session_id="claude-session-1",
+    )
+
+    completed = transport.get_events()[-1][1]["response"]
+    assert result == TaskStatus.COMPLETED
+    assert completed["executor_session"] == {
+        "agent": "ClaudeCode",
+        "sessionId": "claude-session-1",
+    }
 
 
 @pytest.mark.asyncio

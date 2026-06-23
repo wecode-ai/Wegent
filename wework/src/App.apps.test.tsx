@@ -12,10 +12,13 @@ vi.mock('@/features/auth/useAuth', () => ({
   useAuth: () => ({
     user: { id: 1, user_name: 'alice', email: 'alice@example.com' },
     isLoading: false,
+    adminPasswordSetupRequired: false,
+    adminUsername: 'admin',
     login: vi.fn(),
     logout: vi.fn(),
     refresh: vi.fn(),
     loginWithOidcToken: vi.fn(),
+    setupAdminPassword: vi.fn(),
   }),
 }))
 
@@ -108,6 +111,25 @@ describe('App center route', () => {
     expect(screen.queryByText('Skills')).not.toBeInTheDocument()
     expect(screen.queryByText('MCP')).not.toBeInTheDocument()
     expect(screen.queryByText('插件包')).not.toBeInTheDocument()
+  })
+
+  test('keeps the app center sidebar available on desktop app widths', async () => {
+    window.history.pushState({}, '', '/apps')
+
+    render(<App />)
+
+    expect(await screen.findByText('Executor 状态')).toBeInTheDocument()
+
+    const appsPage = screen.getByTestId('apps-page')
+    const sidebar = screen.getByTestId('apps-sidebar-nav')
+    const sectionTabs = screen.getByTestId('apps-section-tabs')
+
+    expect(appsPage).toHaveClass('md:grid-cols-[220px_minmax(0,1fr)]')
+    expect(appsPage).not.toHaveClass('xl:grid-cols-[220px_minmax(0,1fr)]')
+    expect(sidebar).toHaveClass('hidden', 'md:flex')
+    expect(sidebar).not.toHaveClass('xl:flex')
+    expect(sectionTabs).toHaveClass('md:hidden')
+    expect(sectionTabs).not.toHaveClass('xl:hidden')
   })
 
   test('collapses the apps page header while scrolling the overview', async () => {

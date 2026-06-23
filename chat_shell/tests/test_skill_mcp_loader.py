@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from chat_shell.tools import skill_factory
 from chat_shell.tools.builtin.load_skill import LoadSkillTool
 from chat_shell.tools.skill_factory import (
     _load_skill_mcp_tools,
@@ -220,8 +221,232 @@ class TestPrepareSkillToolsWithMcp:
             assert clients == []
 
     @pytest.mark.asyncio
-    async def test_skill_mcp_tools_registered_and_gated_by_load_skill(self):
-        """Test that MCP tools are registered but only exposed after load_skill."""
+    async def test_inactive_skill_mcp_tools_load_after_load_skill(self):
+        """Test that inactive skill MCP tools load on demand after load_skill."""
+        skill_configs = [
+            {
+                "name": "test_skill",
+                "description": "A test skill",
+                "prompt": "Test skill prompt",
+                "mcpServers": {
+                    "server1": {
+                        "type": "stdio",
+                        "command": "python",
+                        "args": ["-m", "test_server"],
+                    }
+                },
+            }
+        ]
+
+        load_skill_tool = LoadSkillTool(
+            user_id=1,
+            skill_names=["test_skill"],
+            skill_metadata={
+                "test_skill": {
+                    "description": "A test skill",
+                    "prompt": "Test skill prompt",
+                }
+            },
+        )
+
+        with patch("chat_shell.tools.mcp.MCPClient") as mock_mcp_class:
+            tools, clients = await prepare_skill_tools(
+                task_id=1,
+                subtask_id=1,
+                user_id=1,
+                skill_configs=skill_configs,
+                load_skill_tool=load_skill_tool,
+                # Not preloaded: should register but not expose yet
+                preload_skills=[],
+            )
+
+            # MCP client should not be created during startup.
+            mock_mcp_class.assert_not_called()
+
+            assert tools == []
+            assert clients == []
+
+            assert load_skill_tool.get_available_tools() == []
+            assert load_skill_tool.get_skill_tools("test_skill") == []
+
+            mock_mcp_tool = MagicMock()
+            mock_mcp_tool.name = "test_skill_server1_interactive_form_question"
+            mock_mcp_tool.server_name = "test_skill_server1"
+
+            mock_client = MagicMock()
+            mock_client.is_connected = True
+            mock_client.connect = AsyncMock()
+            mock_client.get_tools_with_server.return_value = {
+                "test_skill_server1": [mock_mcp_tool]
+            }
+            mock_mcp_class.return_value = mock_client
+
+            await load_skill_tool._arun("test_skill")
+
+            mock_mcp_class.assert_called_once()
+            mock_client.connect.assert_awaited_once()
+            assert load_skill_tool.get_available_tools() == [mock_mcp_tool]
+            assert load_skill_tool.get_skill_tools("test_skill") == [mock_mcp_tool]
+
+    @pytest.mark.asyncio
+    async def test_inactive_provider_skill_tools_load_only_after_load_skill(
+        self, monkeypatch
+    ):
+        """Test that inactive provider-backed tools are loaded on demand."""
+        skill_configs = [
+            {
+                "name": "slow_skill",
+                "description": "A slow provider-backed skill",
+                "prompt": "Slow skill prompt",
+                "skill_id": 123,
+                "skill_user_id": 0,
+                "provider": {
+                    "module": "provider",
+                    "class": "SlowProvider",
+                },
+                "tools": [
+                    {
+                        "name": "slow_tool",
+                        "provider": "slow_provider",
+                        "description": "A slow tool",
+                    }
+                ],
+            }
+        ]
+
+        monkeypatch.setattr(
+            skill_factory.settings,
+            "REMOTE_STORAGE_URL",
+            "http://backend.example",
+            raising=False,
+        )
+
+        load_skill_tool = LoadSkillTool(
+            user_id=1,
+            skill_names=["slow_skill"],
+            skill_metadata={
+                "slow_skill": {
+                    "description": "A slow provider-backed skill",
+                    "prompt": "Slow skill prompt",
+                }
+            },
+        )
+
+        actual_tool = MagicMock()
+        actual_tool.name = "slow_tool"
+
+        registry = MagicMock()
+        registry.get_provider.return_value = None
+        registry.ensure_provider_loaded.return_value = True
+        registry.create_tools_for_skill.return_value = [actual_tool]
+
+        with (
+            patch(
+                "chat_shell.skills.SkillToolRegistry.get_instance",
+                return_value=registry,
+            ),
+            patch(
+                "chat_shell.tools.skill_factory._download_skill_binary",
+                new=AsyncMock(return_value=b"zip-content"),
+            ) as download_binary,
+        ):
+            tools, clients = await prepare_skill_tools(
+                task_id=1,
+                subtask_id=1,
+                user_id=1,
+                skill_configs=skill_configs,
+                load_skill_tool=load_skill_tool,
+                preload_skills=[],
+                user_selected_skills=[],
+            )
+
+            download_binary.assert_not_awaited()
+            registry.ensure_provider_loaded.assert_not_called()
+            registry.create_tools_for_skill.assert_not_called()
+            assert tools == []
+            assert clients == []
+            assert load_skill_tool.get_available_tools() == []
+
+            registered_tools = load_skill_tool.get_skill_tools("slow_skill")
+            assert len(registered_tools) == 1
+            assert registered_tools[0].name == "slow_tool"
+
+            await load_skill_tool._arun("slow_skill")
+
+            download_binary.assert_awaited_once()
+            registry.ensure_provider_loaded.assert_called_once()
+            registry.create_tools_for_skill.assert_called_once()
+            assert load_skill_tool.get_skill_tools("slow_skill") == [actual_tool]
+            assert load_skill_tool.get_available_tools() == [actual_tool]
+
+    @pytest.mark.asyncio
+    async def test_active_provider_skill_uses_registered_provider_without_download(
+        self, monkeypatch
+    ):
+        """Test that already-registered providers do not download skill binaries."""
+        skill_configs = [
+            {
+                "name": "cached_skill",
+                "description": "A cached provider-backed skill",
+                "prompt": "Cached skill prompt",
+                "skill_id": 123,
+                "skill_user_id": 0,
+                "provider": {
+                    "module": "provider",
+                    "class": "CachedProvider",
+                },
+                "tools": [
+                    {
+                        "name": "cached_tool",
+                        "provider": "cached_provider",
+                        "description": "A cached tool",
+                    }
+                ],
+            }
+        ]
+
+        monkeypatch.setattr(
+            skill_factory.settings,
+            "REMOTE_STORAGE_URL",
+            "http://backend.example",
+            raising=False,
+        )
+
+        actual_tool = MagicMock()
+        actual_tool.name = "cached_tool"
+
+        registry = MagicMock()
+        registry.get_provider.return_value = MagicMock()
+        registry.create_tools_for_skill.return_value = [actual_tool]
+
+        with (
+            patch(
+                "chat_shell.skills.SkillToolRegistry.get_instance",
+                return_value=registry,
+            ),
+            patch(
+                "chat_shell.tools.skill_factory._download_skill_binary",
+                new=AsyncMock(return_value=b"zip-content"),
+            ) as download_binary,
+        ):
+            tools, clients = await prepare_skill_tools(
+                task_id=1,
+                subtask_id=1,
+                user_id=1,
+                skill_configs=skill_configs,
+                preload_skills=["cached_skill"],
+                user_selected_skills=[],
+            )
+
+            download_binary.assert_not_awaited()
+            registry.ensure_provider_loaded.assert_not_called()
+            registry.create_tools_for_skill.assert_called_once()
+            assert tools == [actual_tool]
+            assert clients == []
+
+    @pytest.mark.asyncio
+    async def test_user_selected_skill_mcp_tools_are_loaded(self):
+        """Test that user-selected skill MCP servers are treated as active."""
         skill_configs = [
             {
                 "name": "test_skill",
@@ -269,23 +494,14 @@ class TestPrepareSkillToolsWithMcp:
                 user_id=1,
                 skill_configs=skill_configs,
                 load_skill_tool=load_skill_tool,
-                # Not preloaded: should register but not expose yet
                 preload_skills=[],
+                user_selected_skills=["test_skill"],
             )
 
-            # MCP client should be created so tools can be registered for later exposure
             mock_mcp_class.assert_called_once()
-
-            # No immediate tools (skill not loaded yet)
             assert tools == []
             assert len(clients) == 1
-
-            # Tools are registered under the owning skill but gated by load_skill
-            assert load_skill_tool.get_available_tools() == []
             assert load_skill_tool.get_skill_tools("test_skill") == [mock_mcp_tool]
-
-            # After loading the skill, tools become available
-            load_skill_tool._run("test_skill")
             assert mock_mcp_tool in load_skill_tool.get_available_tools()
 
     @pytest.mark.asyncio

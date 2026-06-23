@@ -110,7 +110,7 @@ test.describe('Remote Workspace', () => {
     // root_path is task-scoped: /workspace/{task_id} when sandbox is unavailable
     expect(statusResponse.data?.root_path).toBe(`/workspace/${taskId}`)
 
-    await page.goto(`/code?taskId=${taskId}`)
+    await page.goto(`/chat?agent=code&taskId=${taskId}`)
     await page.waitForLoadState('domcontentloaded')
 
     // Wait for task list to load in sidebar and find the created task

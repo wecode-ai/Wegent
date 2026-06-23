@@ -55,12 +55,18 @@ jobs:
       - name: Generate internal service token
         run: |
           token=$(openssl rand -hex 32)
+          bootstrap_admin_password=$(openssl rand -hex 32)
+          e2e_admin_password=$(openssl rand -hex 32)
           echo "::add-mask::$token"
+          echo "::add-mask::$bootstrap_admin_password"
+          echo "::add-mask::$e2e_admin_password"
           {
             echo "E2E_INTERNAL_SERVICE_TOKEN=$token"
             echo "INTERNAL_SERVICE_TOKEN=$token"
             echo "CHAT_SHELL_REMOTE_STORAGE_TOKEN=$token"
             echo "CHAT_SHELL_INTERNAL_SERVICE_TOKEN=$token"
+            echo "E2E_BOOTSTRAP_ADMIN_PASSWORD=$bootstrap_admin_password"
+            echo "E2E_ADMIN_PASSWORD=$e2e_admin_password"
           } >> "$GITHUB_ENV"
 
       - name: Checkout code
@@ -350,12 +356,18 @@ jobs:
       - name: Generate internal service token
         run: |
           token=$(openssl rand -hex 32)
+          bootstrap_admin_password=$(openssl rand -hex 32)
+          e2e_admin_password=$(openssl rand -hex 32)
           echo "::add-mask::$token"
+          echo "::add-mask::$bootstrap_admin_password"
+          echo "::add-mask::$e2e_admin_password"
           {
             echo "E2E_INTERNAL_SERVICE_TOKEN=$token"
             echo "INTERNAL_SERVICE_TOKEN=$token"
             echo "CHAT_SHELL_REMOTE_STORAGE_TOKEN=$token"
             echo "CHAT_SHELL_INTERNAL_SERVICE_TOKEN=$token"
+            echo "E2E_BOOTSTRAP_ADMIN_PASSWORD=$bootstrap_admin_password"
+            echo "E2E_ADMIN_PASSWORD=$e2e_admin_password"
           } >> "$GITHUB_ENV"
 
       - name: Checkout code
@@ -594,20 +606,50 @@ jobs:
           done
           TOKEN=$(python - <<'PY'
           import json
+          import os
+          import urllib.error
           import urllib.request
 
-          payload = json.dumps({
-              "user_name": "admin",
-              "password": "Wegent2025!",
-          }).encode("utf-8")
-          request = urllib.request.Request(
-              "http://localhost:8000/api/auth/login",
-              data=payload,
-              headers={"Content-Type": "application/json"},
+          API_BASE_URL = "http://localhost:8000/api"
+          ADMIN_PASSWORD = os.environ["E2E_BOOTSTRAP_ADMIN_PASSWORD"]
+
+
+          def request_json(path, *, method="GET", payload=None, allowed_statuses=()):
+              data = None
+              headers = {"Content-Type": "application/json"}
+              if payload is not None:
+                  data = json.dumps(payload).encode("utf-8")
+              request = urllib.request.Request(
+                  f"{API_BASE_URL}{path}",
+                  data=data,
+                  headers=headers,
+                  method=method,
+              )
+              try:
+                  with urllib.request.urlopen(request, timeout=30) as response:
+                      return json.load(response)
+              except urllib.error.HTTPError as error:
+                  if error.code in allowed_statuses:
+                      return None
+                  body = error.read().decode("utf-8", errors="replace")
+                  raise RuntimeError(
+                      f"{method} {path} failed with HTTP {error.code}: {body}"
+                  ) from error
+
+
+          request_json(
+              "/auth/admin-password/setup",
               method="POST",
+              payload={"password": ADMIN_PASSWORD},
+              allowed_statuses=(409,),
           )
-          with urllib.request.urlopen(request, timeout=30) as response:
-              print(json.load(response)["access_token"])
+
+          token_response = request_json(
+              "/auth/login",
+              method="POST",
+              payload={"user_name": "admin", "password": ADMIN_PASSWORD},
+          )
+          print(token_response["access_token"])
           PY
           )
           source executor/.venv/bin/activate

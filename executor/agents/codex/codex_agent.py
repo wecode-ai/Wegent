@@ -7,6 +7,7 @@
 # -*- coding: utf-8 -*-
 
 import asyncio
+import contextlib
 import os
 import threading
 from pathlib import Path
@@ -29,6 +30,22 @@ from shared.models.responses_api_emitter import ResponsesAPIEmitter
 from shared.status import TaskStatus
 
 logger = setup_logger("codex_agent")
+
+
+def _deny_all_approval_mode() -> Any:
+    try:
+        from openai_codex import ApprovalMode
+    except ImportError:
+        return "deny_all"
+    return getattr(ApprovalMode, "deny_all", "deny_all")
+
+
+def _full_access_sandbox() -> Any:
+    try:
+        from openai_codex import Sandbox
+    except ImportError:
+        return "full-access"
+    return getattr(Sandbox, "full_access", "full-access")
 
 
 class CodeXAgent(Agent):
@@ -75,7 +92,9 @@ class CodeXAgent(Agent):
         self._turn = None
         self._bot_id = self._resolve_bot_id(task_data)
         self._session_store = CodeXSessionStore()
+        self.thread_id: Optional[str] = None
         self._local_image_paths: list[str | None] = []
+        self._model_input_files: list[str] = []
         self._cancel_requested = False
         self._turn_interrupt_requested = False
         self.on_client_created_callback: Optional[Callable[[], Any]] = None
@@ -95,6 +114,8 @@ class CodeXAgent(Agent):
 
     async def pre_execute(self) -> Tuple[TaskStatus, Optional[str]]:
         try:
+            self.prepare_project_workspace_path()
+            await self.restore_fork_workspace_archive_if_needed()
             await self.download_code()
             self._prepare_standalone_chat_workspace()
             if self.project_path is None:
@@ -173,7 +194,7 @@ class CodeXAgent(Agent):
         self.__class__._active_agents[self.task_id] = self
         turn_file_change_tracker = None
         device_id = getattr(self.task_data, "device_id", None)
-        if device_id:
+        if device_id and self.project_path:
             turn_file_change_tracker = NativeTurnFileChangeTracker(
                 workspace=Path(self.project_path),
                 task_id=self.task_id,
@@ -188,6 +209,7 @@ class CodeXAgent(Agent):
         mapper = CodeXEventMapper(
             self.emitter,
             turn_file_change_tracker=turn_file_change_tracker,
+            executor_session_provider=self._executor_session_metadata,
         )
 
         try:
@@ -277,8 +299,15 @@ class CodeXAgent(Agent):
         self._codex = None
         self._thread = None
         self._turn = None
+        self._cleanup_model_input_files()
         self.__class__._active_task_ids.discard(self.task_id)
         self.__class__._active_agents.pop(self.task_id, None)
+
+    def _cleanup_model_input_files(self) -> None:
+        for path in self._model_input_files:
+            with contextlib.suppress(OSError):
+                os.unlink(path)
+        self._model_input_files = []
 
     async def _start_codex_client(self) -> None:
         from openai_codex import AsyncCodex, CodexConfig
@@ -295,13 +324,14 @@ class CodeXAgent(Agent):
 
     async def _open_thread(self) -> None:
         assert self.codex_config is not None
+        self._seed_inherited_thread()
+        developer_instructions = self._build_developer_instructions()
+        thread_kwargs = self._build_thread_kwargs(developer_instructions)
         thread_id = self._session_store.load(
             self.task_id,
             self._bot_id,
             self.new_session,
         )
-        developer_instructions = self._build_developer_instructions()
-        thread_kwargs = self._build_thread_kwargs(developer_instructions)
         try:
             if thread_id:
                 self._thread = await self._codex.thread_resume(
@@ -323,20 +353,60 @@ class CodeXAgent(Agent):
                 **thread_kwargs,
                 service_name="wegent",
             )
-        self._session_store.save(self.task_id, self._bot_id, self._thread.id)
+        self.thread_id = self._thread.id
+        self._session_store.save(self.task_id, self._bot_id, self.thread_id)
 
-    def _build_thread_kwargs(self, developer_instructions: str) -> dict[str, Any]:
-        from openai_codex import ApprovalMode
+    def _find_inherited_thread(self) -> Optional[str]:
+        for session in self.task_data.inherited_sessions or []:
+            if not isinstance(session, dict):
+                continue
+            if str(session.get("agent") or "") not in {"CodeX", "Codex"}:
+                continue
+            bot_id = session.get("botId")
+            if bot_id is not None and self._bot_id is not None:
+                try:
+                    if int(bot_id) != int(self._bot_id):
+                        continue
+                except (TypeError, ValueError):
+                    continue
+            thread_id = session.get("threadId")
+            if thread_id:
+                return str(thread_id)
+        return None
 
+    def _seed_inherited_thread(self) -> bool:
+        if self.new_session:
+            return False
+        if self._session_store.load(self.task_id, self._bot_id, new_session=False):
+            return False
+        thread_id = self._find_inherited_thread()
+        if not thread_id:
+            return False
+        self._session_store.save(self.task_id, self._bot_id, thread_id)
+        return True
+
+    def _executor_session_metadata(self) -> Optional[dict[str, Any]]:
+        thread_id = getattr(self._thread, "id", None)
+        if not thread_id:
+            return None
+        return {
+            "agent": "CodeX",
+            "threadId": str(thread_id),
+        }
+
+    def _build_thread_kwargs(
+        self, developer_instructions: Optional[str] = None
+    ) -> dict[str, Any]:
         assert self.codex_config is not None
         kwargs = {
-            "approval_mode": ApprovalMode.deny_all,
+            "approval_mode": _deny_all_approval_mode(),
             "config": self.codex_config.thread_config,
-            "cwd": self.project_path,
             "developer_instructions": developer_instructions,
             "model": self.codex_config.model,
             "sandbox": self._sandbox_full_access(),
         }
+        if self.project_path:
+            kwargs["cwd"] = self.project_path
         if self.codex_config.model_provider:
             kwargs["model_provider"] = self.codex_config.model_provider
         return kwargs
@@ -360,6 +430,7 @@ class CodeXAgent(Agent):
         )
         self.prompt = result.prompt
         self._local_image_paths = result.local_image_paths
+        self._model_input_files = result.model_input_files
 
     def _build_turn_input(self) -> Any:
         from openai_codex import ImageInput, LocalImageInput, TextInput
@@ -500,9 +571,7 @@ class CodeXAgent(Agent):
 
     @staticmethod
     def _sandbox_full_access() -> Any:
-        from openai_codex import Sandbox
-
-        return Sandbox.full_access
+        return _full_access_sandbox()
 
     @staticmethod
     def _resolve_bot_id(task_data: ExecutionRequest) -> Optional[int]:
