@@ -95,6 +95,8 @@ Project 场景必须使用可信的 Device Workspace 映射：
 
 非 Project 的独立设备工作区仍使用 `deviceId + workspacePath` 创建任务。该路径只适用于用户显式选择的未映射设备工作区，不能用于 Project 任务的前端透传。
 
+微博私信等后端发起的私聊 Task 创建也走非 Project 运行时任务：当用户在私信里选择“不关联项目”时，Backend 解析当前用户已选择的本地设备，或在只有一个在线本地设备时自动使用该设备，并使用内部独立聊天工作区 `workspace/chat` 创建任务。这个流程同样不创建 `TaskResource` 或 `Subtask`，也不把 `workspacePath` 暴露为 Project 任务的前端输入。
+
 ## 复制和跨设备转移
 
 复制运行时任务时，Wework 只在当前任务所属 Project 内选择目标工作区：

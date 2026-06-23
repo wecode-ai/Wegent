@@ -95,6 +95,8 @@ Project-backed creation must use a trusted Device Workspace mapping:
 
 Standalone non-Project device workspaces still use `deviceId + workspacePath` for task creation. That path only applies to explicitly selected unmapped device workspaces and must not be used as a frontend-supplied Project task target.
 
+Backend-initiated private-chat Task creation, such as Weibo DM, also uses non-Project runtime tasks. When the user chooses no Project in the DM flow, Backend resolves the user's selected local device, or automatically uses the only online local device, and creates the task in the internal standalone chat workspace `workspace/chat`. This flow also does not create a `TaskResource` or `Subtask`, and it does not expose `workspacePath` as a frontend input for Project tasks.
+
 ## Fork And Cross-Device Transfer
 
 When Wework forks a runtime task, it only offers target workspaces that belong to the source task's Project:
