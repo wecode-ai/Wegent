@@ -6,6 +6,8 @@
 
 import asyncio
 import copy
+import json
+import time
 import uuid
 from dataclasses import replace
 from typing import Any, Awaitable, Callable, Optional
@@ -43,6 +45,9 @@ class RuntimeTranscriptTransport(EventTransport):
         self.runtime = runtime
         self.emit_event = emit_event
         self._assistant_draft = ""
+        self._processing_blocks: list[dict[str, Any]] = []
+        self._tool_blocks_by_call_id: dict[str, dict[str, Any]] = {}
+        self._active_thinking_block: Optional[dict[str, Any]] = None
 
     async def send(
         self,
@@ -54,6 +59,8 @@ class RuntimeTranscriptTransport(EventTransport):
         executor_name: Optional[str] = None,
         executor_namespace: Optional[str] = None,
     ) -> None:
+        self._record_processing_event(event_type, data, subtask_id)
+
         if event_type == ResponsesAPIStreamEvents.OUTPUT_TEXT_DELTA.value:
             self._assistant_draft += str(data.get("delta") or "")
             await self._forward_event(
@@ -84,6 +91,7 @@ class RuntimeTranscriptTransport(EventTransport):
                 status="done",
                 subtask_id=subtask_id,
                 executor_session=data.get("executor_session"),
+                blocks=self._consume_processing_blocks(terminal_status="done"),
             )
             self._assistant_draft = ""
             await self._forward_event(
@@ -101,6 +109,7 @@ class RuntimeTranscriptTransport(EventTransport):
                 content=_incomplete_content(data) or self._assistant_draft,
                 status="cancelled",
                 subtask_id=subtask_id,
+                blocks=self._consume_processing_blocks(terminal_status="done"),
             )
             self._assistant_draft = ""
             await self._forward_event(
@@ -118,6 +127,7 @@ class RuntimeTranscriptTransport(EventTransport):
                 content=str(data.get("message") or "Runtime execution failed"),
                 status="failed",
                 subtask_id=subtask_id,
+                blocks=self._consume_processing_blocks(terminal_status="error"),
             )
             self._assistant_draft = ""
             await self._forward_event(
@@ -173,6 +183,175 @@ class RuntimeTranscriptTransport(EventTransport):
         if asyncio.iscoroutine(result):
             await result
 
+    def _record_processing_event(
+        self, event_type: str, data: dict[str, Any], subtask_id: int
+    ) -> None:
+        if event_type in {
+            ResponsesAPIStreamEvents.REASONING_SUMMARY_TEXT_DELTA.value,
+            ResponsesAPIStreamEvents.RESPONSE_PART_ADDED.value,
+        }:
+            content = _reasoning_content(event_type, data)
+            if content:
+                self._append_thinking(content, subtask_id)
+            return
+
+        if event_type == ResponsesAPIStreamEvents.OUTPUT_ITEM_ADDED.value:
+            self._record_tool_start(data)
+            return
+
+        if event_type in {
+            ResponsesAPIStreamEvents.FUNCTION_CALL_ARGUMENTS_DELTA.value,
+            ResponsesAPIStreamEvents.FUNCTION_CALL_ARGUMENTS_DONE.value,
+        }:
+            self._record_tool_arguments(data)
+            return
+
+        if event_type == ResponsesAPIStreamEvents.OUTPUT_ITEM_DONE.value:
+            self._record_tool_done(data)
+
+    def _append_thinking(self, content: str, subtask_id: int) -> None:
+        if self._active_thinking_block is None:
+            self._active_thinking_block = {
+                "id": (
+                    f"{self.local_task_id}:thinking:{subtask_id}:"
+                    f"{len(self._processing_blocks)}"
+                ),
+                "type": "thinking",
+                "content": "",
+                "status": "streaming",
+                "timestamp": _current_timestamp_ms(),
+            }
+            self._processing_blocks.append(self._active_thinking_block)
+
+        self._active_thinking_block["content"] = (
+            str(self._active_thinking_block.get("content") or "") + content
+        )
+        self._active_thinking_block["timestamp"] = _current_timestamp_ms()
+
+    def _finish_active_thinking(self) -> None:
+        if self._active_thinking_block is None:
+            return
+        self._active_thinking_block["status"] = "done"
+        self._active_thinking_block["timestamp"] = _current_timestamp_ms()
+        self._active_thinking_block = None
+
+    def _record_tool_start(self, data: dict[str, Any]) -> None:
+        item = data.get("item")
+        if not isinstance(item, dict):
+            return
+        item_type = item.get("type")
+        if item_type not in {"function_call", "mcp_call", "shell_call"}:
+            return
+
+        call_id = item.get("call_id") or item.get("id")
+        if not isinstance(call_id, str) or not call_id:
+            return
+
+        self._finish_active_thinking()
+        arguments = _tool_arguments(data, item)
+        block = self._tool_blocks_by_call_id.get(call_id)
+        if block is None:
+            block = {
+                "id": call_id,
+                "type": "tool",
+                "tool_use_id": call_id,
+                "tool_name": str(item.get("name") or "unknown"),
+                "tool_input": arguments,
+                "status": "pending",
+                "timestamp": _current_timestamp_ms(),
+            }
+            self._processing_blocks.append(block)
+            self._tool_blocks_by_call_id[call_id] = block
+        else:
+            block["tool_name"] = str(
+                item.get("name") or block.get("tool_name") or "unknown"
+            )
+            block["tool_input"] = arguments
+            block["timestamp"] = _current_timestamp_ms()
+
+        if data.get("display_name"):
+            block["display_name"] = data.get("display_name")
+        if data.get("argument_status") == "streaming":
+            block["status"] = "generating_arguments"
+            block["argument_status"] = "streaming"
+
+    def _record_tool_arguments(self, data: dict[str, Any]) -> None:
+        call_id = data.get("call_id") or data.get("item_id")
+        if not isinstance(call_id, str) or not call_id:
+            return
+        block = self._tool_blocks_by_call_id.get(call_id)
+        if block is None:
+            block = {
+                "id": call_id,
+                "type": "tool",
+                "tool_use_id": call_id,
+                "tool_name": "unknown",
+                "tool_input": {},
+                "timestamp": _current_timestamp_ms(),
+            }
+            self._processing_blocks.append(block)
+            self._tool_blocks_by_call_id[call_id] = block
+
+        arguments = _tool_arguments(data, {})
+        if arguments:
+            block["tool_input"] = arguments
+        block["status"] = (
+            "generating_arguments"
+            if data.get("type")
+            == ResponsesAPIStreamEvents.FUNCTION_CALL_ARGUMENTS_DELTA.value
+            else "pending"
+        )
+        block["timestamp"] = _current_timestamp_ms()
+
+    def _record_tool_done(self, data: dict[str, Any]) -> None:
+        item = data.get("item")
+        if not isinstance(item, dict):
+            return
+        item_type = item.get("type")
+        if item_type not in {"function_call", "mcp_call", "shell_call"}:
+            return
+
+        call_id = item.get("call_id") or item.get("id")
+        if not isinstance(call_id, str) or not call_id:
+            return
+
+        block = self._tool_blocks_by_call_id.get(call_id)
+        if block is None:
+            block = {
+                "id": call_id,
+                "type": "tool",
+                "tool_use_id": call_id,
+                "tool_name": str(item.get("name") or "unknown"),
+                "tool_input": _tool_arguments(data, item),
+                "timestamp": _current_timestamp_ms(),
+            }
+            self._processing_blocks.append(block)
+            self._tool_blocks_by_call_id[call_id] = block
+
+        arguments = _tool_arguments(data, item)
+        if arguments:
+            block["tool_input"] = arguments
+        block["tool_output"] = item.get("output")
+        block.pop("argument_status", None)
+        block["status"] = (
+            "error" if item.get("status") in {"error", "failed"} else "done"
+        )
+        block["timestamp"] = _current_timestamp_ms()
+
+    def _consume_processing_blocks(
+        self, *, terminal_status: str
+    ) -> list[dict[str, Any]]:
+        self._finish_active_thinking()
+        blocks = copy.deepcopy(self._processing_blocks)
+        for block in blocks:
+            if block.get("status") not in {"done", "error"}:
+                block["status"] = terminal_status
+            block.setdefault("timestamp", _current_timestamp_ms())
+        self._processing_blocks = []
+        self._tool_blocks_by_call_id = {}
+        self._active_thinking_block = None
+        return blocks
+
     def _append_assistant_message(
         self,
         *,
@@ -180,6 +359,7 @@ class RuntimeTranscriptTransport(EventTransport):
         status: str,
         subtask_id: int,
         executor_session: Optional[Any] = None,
+        blocks: Optional[list[dict[str, Any]]] = None,
     ) -> None:
         message = {
             "id": f"{self.local_task_id}:assistant:{subtask_id}",
@@ -189,6 +369,8 @@ class RuntimeTranscriptTransport(EventTransport):
             "status": status,
             "subtaskId": subtask_id,
         }
+        if blocks:
+            message["blocks"] = blocks
 
         def update(task: LocalTaskRecord) -> LocalTaskRecord:
             handle = dict(task.runtime_handle)
@@ -505,3 +687,35 @@ def _completed_content(data: dict[str, Any]) -> str:
 
 def _incomplete_content(data: dict[str, Any]) -> str:
     return _completed_content(data)
+
+
+def _current_timestamp_ms() -> int:
+    return int(time.time() * 1000)
+
+
+def _reasoning_content(event_type: str, data: dict[str, Any]) -> str:
+    if event_type == ResponsesAPIStreamEvents.REASONING_SUMMARY_TEXT_DELTA.value:
+        value = data.get("delta")
+        return value if isinstance(value, str) else ""
+    part = data.get("part")
+    if isinstance(part, dict) and part.get("type") == "reasoning":
+        text = part.get("text")
+        return text if isinstance(text, str) else ""
+    return ""
+
+
+def _tool_arguments(data: dict[str, Any], item: dict[str, Any]) -> dict[str, Any]:
+    arguments_summary = data.get("arguments_summary")
+    if isinstance(arguments_summary, dict):
+        return arguments_summary
+
+    arguments = item.get("arguments") or data.get("arguments")
+    if isinstance(arguments, dict):
+        return arguments
+    if isinstance(arguments, str) and arguments:
+        try:
+            parsed = json.loads(arguments)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}

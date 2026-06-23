@@ -2305,6 +2305,106 @@ async def test_runtime_work_handler_streams_claude_runtime_task_events(
 
 
 @pytest.mark.asyncio
+async def test_runtime_work_handler_persists_claude_processing_blocks_after_completion(
+    tmp_path,
+    monkeypatch,
+):
+    from executor.runtime_work.agent_adapter import RuntimeAgentAdapter
+    from executor.runtime_work.local_task_store import LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    async def execute_agent(self, request, emitter):
+        await emitter.start(shell_type="ClaudeCode")
+        await emitter.reasoning("Checking the workspace")
+        await emitter.tool_argument_start(
+            call_id="Bash_0",
+            name="Bash",
+            arguments_summary={},
+        )
+        await emitter.tool_argument_delta(
+            call_id="Bash_0",
+            arguments_delta='{"command": "pwd"}',
+            arguments_summary={"command": "pwd"},
+        )
+        await emitter.tool_argument_done(
+            call_id="Bash_0",
+            arguments={"command": "pwd"},
+            arguments_summary={"command": "pwd"},
+        )
+        await emitter.tool_done(
+            call_id="Bash_0",
+            name="Bash",
+            arguments={"command": "pwd"},
+            output="/repo/Wegent",
+        )
+        await emitter.done(content="Current workspace is /repo/Wegent")
+
+    monkeypatch.setattr(RuntimeAgentAdapter, "_execute_real_agent", execute_agent)
+
+    handler = RuntimeWorkRpcHandler(
+        store=LocalTaskStore(tmp_path / "index.json"),
+        codex_discovery=EmptyDiscovery(),
+        responses_event_emitter=lambda _event, _payload: None,
+    )
+
+    result = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.create",
+            "payload": {
+                "runtime": "claude_code",
+                "workspacePath": "/repo/Wegent",
+                "message": "show pwd",
+                "executionRequest": {
+                    "task_id": 1001,
+                    "subtask_id": 2001,
+                    "team_id": 1,
+                    "prompt": "show pwd",
+                    "workspace_source": "local_path",
+                    "project_workspace_path": "/repo/Wegent",
+                    "model_config": {},
+                    "bot": [],
+                },
+            },
+        }
+    )
+
+    assert result["success"] is True
+    await _drain_runtime_adapter(handler.adapters["claude_code"])
+
+    transcript = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "workspacePath": "/repo/Wegent",
+                "localTaskId": result["localTaskId"],
+            },
+        }
+    )
+
+    assistant = transcript["messages"][1]
+    assert assistant["content"] == "Current workspace is /repo/Wegent"
+    assert assistant["blocks"] == [
+        {
+            "id": f"{result['localTaskId']}:thinking:2001:0",
+            "type": "thinking",
+            "content": "Checking the workspace",
+            "status": "done",
+            "timestamp": assistant["blocks"][0]["timestamp"],
+        },
+        {
+            "id": "Bash_0",
+            "type": "tool",
+            "tool_use_id": "Bash_0",
+            "tool_name": "Bash",
+            "tool_input": {"command": "pwd"},
+            "tool_output": "/repo/Wegent",
+            "status": "done",
+            "timestamp": assistant["blocks"][1]["timestamp"],
+        },
+    ]
+
+
+@pytest.mark.asyncio
 async def test_runtime_work_handler_creates_codex_runtime_task_as_native_thread(
     tmp_path,
 ):
