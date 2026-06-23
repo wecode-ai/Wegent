@@ -634,6 +634,11 @@ def fail(message, code=64):
 runtime = os.environ.get("WEGENT_RUNTIME_CONFIG_RUNTIME", "").strip()
 target_path = os.environ.get("WEGENT_RUNTIME_CONFIG_TARGET_PATH", "").strip()
 content = os.environ.get("WEGENT_RUNTIME_CONFIG_CONTENT", "")
+overwrite = os.environ.get("WEGENT_RUNTIME_CONFIG_OVERWRITE", "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
 
 if not runtime:
     fail("runtime is required")
@@ -659,7 +664,7 @@ except OSError as exc:
 if home not in [resolved_target, *resolved_target.parents]:
     fail("target path must stay inside the user home directory")
 
-if target.exists():
+if target.exists() and not overwrite:
     print(
         json.dumps(
             {"status": "skipped_existing", "runtime": runtime, "path": target_path},
@@ -669,24 +674,42 @@ if target.exists():
     sys.exit(0)
 
 target.parent.mkdir(parents=True, exist_ok=True)
-try:
-    fd = os.open(str(target), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-except FileExistsError:
-    print(
-        json.dumps(
-            {"status": "skipped_existing", "runtime": runtime, "path": target_path},
-            ensure_ascii=False,
-        )
-    )
-    sys.exit(0)
+payload = json.dumps(parsed, ensure_ascii=False, indent=2, sort_keys=True) + "\\n"
 
-with os.fdopen(fd, "w", encoding="utf-8") as handle:
-    handle.write(json.dumps(parsed, ensure_ascii=False, indent=2, sort_keys=True))
-    handle.write("\\n")
+if overwrite:
+    existed = target.exists()
+    temporary_target = target.parent / f".{target.name}.tmp.{os.getpid()}"
+    try:
+        fd = os.open(str(temporary_target), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(payload)
+        os.replace(str(temporary_target), str(target))
+        os.chmod(str(target), 0o600)
+    finally:
+        try:
+            if temporary_target.exists():
+                temporary_target.unlink()
+        except OSError:
+            pass
+    status = "overwritten" if existed else "written"
+else:
+    try:
+        fd = os.open(str(target), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        print(
+            json.dumps(
+                {"status": "skipped_existing", "runtime": runtime, "path": target_path},
+                ensure_ascii=False,
+            )
+        )
+        sys.exit(0)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(payload)
+    status = "written"
 
 print(
     json.dumps(
-        {"status": "written", "runtime": runtime, "path": target_path},
+        {"status": status, "runtime": runtime, "path": target_path},
         ensure_ascii=False,
     )
 )
