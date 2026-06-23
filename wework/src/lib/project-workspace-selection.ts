@@ -27,14 +27,16 @@ function deviceById(devices: DeviceInfo[]) {
 }
 
 function runtimeWorkspacesByProjectId(runtimeWork: RuntimeWorkListResponse | null | undefined) {
-  return new Map((runtimeWork?.projects ?? []).map(item => [item.project.id, item.deviceWorkspaces]))
+  return new Map(
+    (runtimeWork?.projects ?? []).map(item => [item.project.id, item.deviceWorkspaces])
+  )
 }
 
 export function isSelectableProjectWorkspace(
   workspace: RuntimeDeviceWorkspace | null | undefined,
   devices: DeviceInfo[] = []
 ): workspace is RuntimeDeviceWorkspace {
-  if (!workspace || !workspace.id) return false
+  if (!workspace) return false
   if (!workspace.available) return false
 
   const device = deviceById(devices).get(workspace.deviceId)

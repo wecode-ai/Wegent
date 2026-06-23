@@ -3,6 +3,23 @@ import { createRuntimeWorkApi } from './runtimeWork'
 import type { HttpClient } from './http'
 
 describe('createRuntimeWorkApi', () => {
+  test('lists runtime work without client origin query', async () => {
+    const get = vi.fn().mockResolvedValue({
+      projects: [],
+      unmappedDeviceWorkspaces: [],
+      totalLocalTasks: 0,
+    })
+    const api = createRuntimeWorkApi({ get } as unknown as HttpClient)
+
+    await expect(api.listRuntimeWork()).resolves.toEqual({
+      projects: [],
+      unmappedDeviceWorkspaces: [],
+      totalLocalTasks: 0,
+    })
+
+    expect(get).toHaveBeenCalledWith('/runtime-work')
+  })
+
   test('deletes a device workspace mapping', async () => {
     const del = vi.fn().mockResolvedValue({ deleted: true })
     const api = createRuntimeWorkApi({ delete: del } as unknown as HttpClient)

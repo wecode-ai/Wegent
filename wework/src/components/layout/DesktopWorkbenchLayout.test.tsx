@@ -1528,7 +1528,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
   })
 
-  test('hides project device status when the project device is online', () => {
+  test('shows project device network status for non-local devices when multiple devices exist', () => {
     const onlineDevice = {
       id: 1,
       device_id: 'online-device',
@@ -1537,6 +1537,8 @@ describe('DesktopWorkbenchLayout', () => {
       is_default: false,
       device_type: 'cloud' as const,
       bind_shell: 'claudecode',
+      client_ip: '127.0.0.1',
+      runtime_transfer_host: '192.0.2.10:9000',
     }
 
     render(
@@ -1544,7 +1546,60 @@ describe('DesktopWorkbenchLayout', () => {
         {...baseProps}
         state={{
           ...baseProps.state,
-          devices: [onlineDevice],
+          devices: [
+            onlineDevice,
+            {
+              id: 2,
+              device_id: 'local-device',
+              name: 'Local Device',
+              status: 'online' as const,
+              is_default: true,
+              device_type: 'local' as const,
+              bind_shell: 'claudecode',
+            },
+          ],
+          projects: [
+            {
+              id: 7,
+              name: 'hello',
+              config: {
+                execution: {
+                  targetType: 'cloud',
+                  deviceId: 'online-device',
+                },
+              },
+              tasks: [],
+            },
+          ],
+        }}
+      />
+    )
+
+    const projectRow = screen.getByTestId('project-row-7')
+    expect(within(projectRow).getByTestId('project-device-status-7')).toHaveTextContent(
+      '192.0.2.10'
+    )
+    expect(within(projectRow).getByTestId('project-new-conversation-button')).not.toBeDisabled()
+  })
+
+  test('hides project device network status when only one device exists', () => {
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          devices: [
+            {
+              id: 1,
+              device_id: 'online-device',
+              name: 'Online Device',
+              status: 'online' as const,
+              is_default: false,
+              device_type: 'cloud' as const,
+              bind_shell: 'claudecode',
+              runtime_transfer_host: '192.0.2.10:9000',
+            },
+          ],
           projects: [
             {
               id: 7,
@@ -1564,7 +1619,54 @@ describe('DesktopWorkbenchLayout', () => {
 
     const projectRow = screen.getByTestId('project-row-7')
     expect(within(projectRow).queryByTestId('project-device-status-7')).not.toBeInTheDocument()
-    expect(within(projectRow).getByTestId('project-new-conversation-button')).not.toBeDisabled()
+  })
+
+  test('hides project device network status for local devices when multiple devices exist', () => {
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          devices: [
+            {
+              id: 1,
+              device_id: 'local-device',
+              name: 'Local Device',
+              status: 'online' as const,
+              is_default: true,
+              device_type: 'local' as const,
+              bind_shell: 'claudecode',
+              runtime_transfer_host: '192.0.2.10:9000',
+            },
+            {
+              id: 2,
+              device_id: 'cloud-device',
+              name: 'Cloud Device',
+              status: 'online' as const,
+              is_default: false,
+              device_type: 'cloud' as const,
+              bind_shell: 'claudecode',
+            },
+          ],
+          projects: [
+            {
+              id: 7,
+              name: 'hello',
+              config: {
+                execution: {
+                  targetType: 'local',
+                  deviceId: 'local-device',
+                },
+              },
+              tasks: [],
+            },
+          ],
+        }}
+      />
+    )
+
+    const projectRow = screen.getByTestId('project-row-7')
+    expect(within(projectRow).queryByTestId('project-device-status-7')).not.toBeInTheDocument()
   })
 
   test('keeps offline project conversations readable but locks the composer', async () => {
@@ -1714,18 +1816,19 @@ describe('DesktopWorkbenchLayout', () => {
   test('selects a project while toggling an empty project task list', async () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
-    expect(screen.queryByText('暂无会话')).not.toBeInTheDocument()
+    expect(screen.getByTestId('runtime-chat-empty')).toHaveTextContent('暂无会话')
+    expect(screen.queryByTestId('project-local-tasks-empty-1')).not.toBeInTheDocument()
     expect(screen.getByTestId('project-row-1')).not.toHaveClass('bg-white')
 
     await userEvent.click(screen.getByTestId('project-item-button'))
 
     expect(baseProps.onSelectProject).toHaveBeenNthCalledWith(1, 1)
-    expect(screen.getByText('暂无会话')).toBeInTheDocument()
+    expect(screen.getByTestId('project-local-tasks-empty-1')).toHaveTextContent('暂无会话')
     expect(screen.getByTestId('project-row-1')).not.toHaveClass('bg-white')
 
     await userEvent.click(screen.getByTestId('project-item-button'))
 
-    expect(screen.queryByText('暂无会话')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('project-local-tasks-empty-1')).not.toBeInTheDocument()
     expect(baseProps.onSelectProject).toHaveBeenNthCalledWith(2, 1)
     expect(baseProps.onSelectProject).toHaveBeenCalledTimes(2)
   })

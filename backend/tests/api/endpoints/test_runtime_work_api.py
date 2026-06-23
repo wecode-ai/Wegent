@@ -25,14 +25,11 @@ def test_list_runtime_work_endpoint_uses_current_user(
         runtime_work.runtime_work_service, "list_runtime_work", service_mock
     )
 
-    response = test_client.get(
-        "/api/runtime-work?client_origin=wework",
-        headers=_auth_headers(test_token),
-    )
+    response = test_client.get("/api/runtime-work", headers=_auth_headers(test_token))
 
     assert response.status_code == 200
     assert response.json()["totalLocalTasks"] == 0
-    assert service_mock.await_args.kwargs["client_origin"] == "wework"
+    assert "client_origin" not in service_mock.await_args.kwargs
 
 
 def test_upsert_device_workspace_endpoint_returns_mapping(

@@ -367,8 +367,8 @@ export function ProjectWorkBar({
 
   const handleSelectDeviceWorkspace = useCallback(
     (projectId: number, workspace: RuntimeDeviceWorkspace) => {
-      if (!isSelectableProjectWorkspace(workspace, devices) || !workspace.id) return
-      onSelectProjectWorkspace?.(projectId, workspace.id)
+      if (!isSelectableProjectWorkspace(workspace, devices)) return
+      onSelectProjectWorkspace?.(projectId, workspace.id ?? null)
       closeMenu()
     },
     [closeMenu, devices, onSelectProjectWorkspace]
@@ -723,7 +723,7 @@ export function ProjectWorkBar({
                               <button
                                 key={`${workspace.deviceId}:${workspace.workspacePath}`}
                                 type="button"
-                                data-testid={`project-workspace-option-${workspace.id}`}
+                                data-testid={`project-workspace-option-${workspace.id ?? workspace.deviceId}`}
                                 disabled={!selectable}
                                 onClick={() => handleSelectDeviceWorkspace(project.id, workspace)}
                                 className={cn(

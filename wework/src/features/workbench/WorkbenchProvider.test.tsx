@@ -57,7 +57,9 @@ function createProject(overrides: Partial<ProjectWithTasks> = {}): ProjectWithTa
   }
 }
 
-function createRuntimeWork(overrides: Partial<RuntimeWorkListResponse> = {}): RuntimeWorkListResponse {
+function createRuntimeWork(
+  overrides: Partial<RuntimeWorkListResponse> = {}
+): RuntimeWorkListResponse {
   return {
     projects: [
       {
@@ -225,7 +227,7 @@ function ProjectSendProbe() {
         {workbench.messages.map(message => `${message.role}:${message.content}`).join('|')}
       </span>
       <span data-testid="workbench-error">{workbench.state.error ?? ''}</span>
-      <button type="button" onClick={() => workbench.selectProjectWorkspace(7, 22)}>
+      <button type="button" onClick={() => workbench.selectProjectWorkspace(7, null)}>
         select project
       </button>
       <button type="button" onClick={() => workbench.setInput('修复 CI')}>
@@ -319,8 +321,9 @@ describe('WorkbenchProvider runtime tasks', () => {
     renderWorkbench(<BootstrapProbe />, services)
 
     await waitFor(() => expect(screen.getByTestId('boot-state')).toHaveTextContent('alice'))
-    expect(screen.getByTestId('project-count')).toHaveTextContent('1')
+    expect(screen.getByTestId('project-count')).toHaveTextContent('0')
     expect(screen.getByTestId('runtime-total')).toHaveTextContent('3')
+    expect(services.projectApi.listProjects).not.toHaveBeenCalled()
     expect(services.runtimeWorkApi?.listRuntimeWork).toHaveBeenCalledTimes(1)
   })
 
@@ -345,6 +348,27 @@ describe('WorkbenchProvider runtime tasks', () => {
 
   test('creates a runtime local task for a new project message', async () => {
     const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(
+        createRuntimeWork({
+          projects: [
+            {
+              project: { id: 7, name: 'Wegent' },
+              deviceWorkspaces: [
+                {
+                  deviceId: 'device-1',
+                  deviceName: 'Project Device',
+                  deviceStatus: 'online',
+                  workspacePath: '/workspace/project-alpha',
+                  mapped: true,
+                  available: true,
+                  localTasks: [],
+                },
+              ],
+            },
+          ],
+          totalLocalTasks: 0,
+        })
+      ),
       createRuntimeTask: vi.fn().mockResolvedValue({
         accepted: true,
         deviceId: 'resolved-device',
@@ -373,14 +397,17 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
     expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledWith(
       expect.objectContaining({
-        projectId: 7,
-        deviceWorkspaceId: 22,
+        deviceId: 'device-1',
+        workspacePath: '/workspace/project-alpha',
         teamId: 2,
         message: '修复 CI',
       })
     )
+    expect(runtimeWorkApi.createRuntimeTask.mock.calls[0][0]).not.toHaveProperty('projectId')
+    expect(runtimeWorkApi.createRuntimeTask.mock.calls[0][0]).not.toHaveProperty(
+      'deviceWorkspaceId'
+    )
     expect(runtimeWorkApi.createRuntimeTask.mock.calls[0][0]).not.toHaveProperty('task_id')
-    expect(runtimeWorkApi.createRuntimeTask.mock.calls[0][0]).not.toHaveProperty('workspacePath')
     await waitFor(() =>
       expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent(
         'resolved-device:runtime-created'
@@ -520,7 +547,9 @@ describe('WorkbenchProvider runtime tasks', () => {
       )
     )
     expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('恢复的问题')
-    expect(screen.getByTestId('runtime-open-blocks')).toHaveTextContent('thinking:读取历史记录:done')
+    expect(screen.getByTestId('runtime-open-blocks')).toHaveTextContent(
+      'thinking:读取历史记录:done'
+    )
     expect(screen.getByTestId('runtime-open-blocks')).toHaveTextContent('tool:exec_command:done')
     expect(screen.getByTestId('runtime-open-blocks')).toHaveTextContent('text:处理完成:done')
     expect(getRuntimeTranscript).toHaveBeenCalledWith({

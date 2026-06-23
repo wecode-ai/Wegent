@@ -33,6 +33,8 @@ class LocalTaskRecord:
     workspace_path: str
     title: str
     runtime: str
+    workspace_kind: str = "workspace"
+    worktree_id: Optional[str] = None
     runtime_handle: dict[str, Any] = field(default_factory=dict)
     parent: Optional[dict[str, Any]] = None
     children: list[dict[str, Any]] = field(default_factory=list)
@@ -64,6 +66,8 @@ class LocalTaskStore:
             workspace_path=workspace_path,
             title=task.title,
             runtime=task.runtime,
+            workspace_kind=task.workspace_kind or "workspace",
+            worktree_id=task.worktree_id,
             runtime_handle=task.runtime_handle,
             parent=task.parent,
             children=task.children,
@@ -153,6 +157,8 @@ class LocalTaskStore:
                 workspace_path=normalize_workspace_path(updated.workspace_path),
                 title=updated.title,
                 runtime=updated.runtime,
+                workspace_kind=updated.workspace_kind or current.workspace_kind or "workspace",
+                worktree_id=updated.worktree_id,
                 runtime_handle=updated.runtime_handle,
                 parent=updated.parent,
                 children=updated.children,
@@ -200,6 +206,8 @@ class LocalTaskStore:
             workspace_path=normalize_workspace_path(str(payload["workspace_path"])),
             title=str(payload["title"]),
             runtime=str(payload["runtime"]),
+            workspace_kind=str(payload.get("workspace_kind") or "workspace"),
+            worktree_id=self._optional_text_value(payload.get("worktree_id")),
             runtime_handle=self._dict_value(payload.get("runtime_handle")),
             parent=self._optional_dict_value(payload.get("parent")),
             children=self._list_value(payload.get("children")),
@@ -214,6 +222,9 @@ class LocalTaskStore:
 
     def _optional_dict_value(self, value: Any) -> Optional[dict[str, Any]]:
         return value if isinstance(value, dict) else None
+
+    def _optional_text_value(self, value: Any) -> Optional[str]:
+        return value if isinstance(value, str) and value.strip() else None
 
     def _list_value(self, value: Any) -> list[dict[str, Any]]:
         return value if isinstance(value, list) else []

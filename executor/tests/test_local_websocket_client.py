@@ -7,6 +7,7 @@ import pytest
 from executor.modes.local.websocket_client import (
     WebSocketClient,
     build_runtime_auth_file_report,
+    _is_usable_device_ip,
 )
 
 
@@ -25,6 +26,13 @@ def test_build_runtime_auth_file_report_reports_codex_auth_presence(tmp_path):
     (codex_dir / "auth.json").write_text('{"token":"secret"}', encoding="utf-8")
 
     assert build_runtime_auth_file_report(home=tmp_path)["codex"]["exists"] is True
+
+
+def test_usable_device_ip_rejects_loopback_and_accepts_non_loopback_address():
+    assert _is_usable_device_ip("192.0.2.10") is True
+    assert _is_usable_device_ip("192.168.1.8") is True
+    assert _is_usable_device_ip("127.0.0.1") is False
+    assert _is_usable_device_ip("localhost") is False
 
 
 def test_connected_accepts_namespace_connected_during_connect_callback():

@@ -1327,6 +1327,8 @@ class RuntimeWorkRpcHandler:
             "workspacePath": task.workspace_path,
             "title": task.title,
             "runtime": task.runtime,
+            "workspaceKind": task.workspace_kind,
+            "worktreeId": task.worktree_id,
             "createdAt": task.created_at,
             "updatedAt": task.updated_at,
             "running": task.running,

@@ -119,4 +119,41 @@ describe('project workspace selection', () => {
       workspaces: [],
     })
   })
+
+  test('allows runtime-native workspaces without central mapping ids', () => {
+    const options = buildProjectWorkspaceOptions({
+      projects: [{ id: 10, name: 'runtime-only', tasks: [] }],
+      devices,
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 10, name: 'runtime-only' },
+            deviceWorkspaces: [
+              {
+                projectId: null,
+                deviceId: 'device-1',
+                deviceName: 'MacBook Pro',
+                deviceStatus: 'online',
+                available: true,
+                workspacePath: '/repo/runtime-only',
+                mapped: true,
+                localTasks: [],
+              },
+            ],
+          },
+        ],
+        unmappedDeviceWorkspaces: [],
+        totalLocalTasks: 0,
+      },
+    })
+
+    expect(options[0]).toMatchObject({
+      kind: 'single',
+      selectable: true,
+      workspace: {
+        deviceId: 'device-1',
+        workspacePath: '/repo/runtime-only',
+      },
+    })
+  })
 })

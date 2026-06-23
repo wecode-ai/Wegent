@@ -78,17 +78,7 @@ describe('DesktopSidebar', () => {
     localStorage.clear()
   })
 
-  test('opens add device settings from the sidebar device section', async () => {
-    const props = renderSidebar()
-
-    await userEvent.click(screen.getByTestId('sidebar-add-device-button'))
-
-    expect(props.onOpenSettings).toHaveBeenCalledWith({
-      autoOpenAddCloudDeviceDialog: true,
-    })
-  })
-
-  test('renders unmapped device runtime tasks without local Codex import UI', async () => {
+  test('does not render unmapped runtime workspace groups', async () => {
     const onOpenRuntimeLocalTask = vi.fn()
 
     renderSidebar({
@@ -117,22 +107,27 @@ describe('DesktopSidebar', () => {
       onOpenRuntimeLocalTask,
     })
 
-    expect(screen.getByTestId('runtime-workspace-row-/tmp/spike')).toHaveTextContent(
-      'Local Mac /tmp/spike'
+    expect(screen.queryByTestId('unmapped-runtime-section')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('runtime-workspace-row-/tmp/spike')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('runtime-local-task-row-claude-1')).not.toBeInTheDocument()
+    expect(screen.getByTestId('runtime-chat-section')).toHaveTextContent('对话')
+    expect(screen.getByTestId('runtime-chat-section-toggle')).toHaveAttribute(
+      'aria-expanded',
+      'true'
     )
-    expect(screen.getByTestId('runtime-local-task-row-claude-1')).toHaveTextContent(
-      'Spike runtime task'
+    expect(screen.getByTestId('runtime-chat-empty')).toHaveTextContent('暂无会话')
+
+    await userEvent.click(screen.getByTestId('runtime-chat-section-toggle'))
+
+    expect(screen.getByTestId('runtime-chat-section-toggle')).toHaveAttribute(
+      'aria-expanded',
+      'false'
     )
-
-    await userEvent.click(screen.getByTestId('runtime-local-task-row-claude-1'))
-
-    expect(onOpenRuntimeLocalTask).toHaveBeenCalledWith({
-      deviceId: 'local-device',
-      localTaskId: 'claude-1',
-    })
+    expect(screen.queryByTestId('runtime-chat-empty')).not.toBeInTheDocument()
+    expect(onOpenRuntimeLocalTask).not.toHaveBeenCalled()
   })
 
-  test('renders unmapped chat runtime tasks as conversations instead of workspace groups', async () => {
+  test('renders chat runtime tasks as conversations instead of workspace groups', async () => {
     const onOpenRuntimeLocalTask = vi.fn()
     const chatPath = '/Users/alice/.wecode/wegent-executor/workspace/chats/2026-06-20/hi-1'
 
@@ -180,14 +175,22 @@ describe('DesktopSidebar', () => {
     })
 
     expect(screen.getByTestId('runtime-chat-section')).toHaveTextContent('对话')
+    expect(screen.getByTestId('runtime-chat-section-toggle')).toHaveAttribute(
+      'aria-expanded',
+      'true'
+    )
     expect(screen.queryByTestId(`runtime-workspace-row-${chatPath}`)).not.toBeInTheDocument()
     expect(screen.getByTestId('runtime-local-task-row-chat-1')).toHaveTextContent('hi')
     expect(screen.queryByTestId('runtime-local-task-device-marker-chat-1')).not.toBeInTheDocument()
     expect(screen.queryByTestId('runtime-local-task-device-icon-chat-1')).not.toBeInTheDocument()
-    expect(screen.getByTestId('runtime-workspace-row-/tmp/spike')).toHaveTextContent(
-      'Local Mac /tmp/spike'
-    )
+    expect(screen.queryByTestId('runtime-workspace-row-/tmp/spike')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('runtime-local-task-row-workspace-1')).not.toBeInTheDocument()
 
+    await userEvent.click(screen.getByTestId('runtime-chat-section-toggle'))
+
+    expect(screen.queryByTestId('runtime-local-task-row-chat-1')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('runtime-chat-section-toggle'))
     await userEvent.click(screen.getByTestId('runtime-local-task-row-chat-1'))
 
     expect(onOpenRuntimeLocalTask).toHaveBeenCalledWith({
@@ -301,7 +304,7 @@ describe('DesktopSidebar', () => {
     expect(screen.queryByTestId('runtime-local-task-running-codex-idle')).not.toBeInTheDocument()
   })
 
-  test('shows online device colors and marks runtime tasks by device', async () => {
+  test('does not render online devices section and keeps all runtime tasks visible', async () => {
     renderSidebar({
       devices: [
         localDevice(),
@@ -366,77 +369,18 @@ describe('DesktopSidebar', () => {
       },
     })
 
-    expect(screen.getByTestId('sidebar-online-devices')).toHaveTextContent('在线设备2')
-    expect(screen.getByTestId('sidebar-devices-section-toggle')).toHaveAttribute(
-      'aria-expanded',
-      'false'
-    )
-    expect(screen.getByTestId('sidebar-offline-devices-toggle').parentElement).toBe(
-      screen.getByTestId('sidebar-devices-header')
-    )
-    expect(screen.getByTestId('sidebar-offline-devices-toggle')).toHaveTextContent('离线 1')
-    expect(screen.queryByTestId('sidebar-online-device-local-device')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('sidebar-online-device-offline-device')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('sidebar-online-devices')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('project-item-button'))
 
+    expect(screen.getByTestId('runtime-local-task-row-local-task')).toBeInTheDocument()
+    expect(screen.getByTestId('runtime-local-task-row-cloud-task')).toBeInTheDocument()
     expect(
       screen.queryByTestId('runtime-local-task-device-marker-local-task')
     ).not.toBeInTheDocument()
     expect(
       screen.queryByTestId('runtime-local-task-device-marker-cloud-task')
     ).not.toBeInTheDocument()
-
-    await userEvent.click(screen.getByTestId('sidebar-devices-section-toggle'))
-
-    expect(screen.getByTestId('sidebar-devices-section-toggle')).toHaveAttribute(
-      'aria-expanded',
-      'true'
-    )
-    expect(screen.getByTestId('sidebar-online-device-local-device')).toHaveTextContent('Local Mac')
-    expect(screen.getByTestId('sidebar-online-device-cloud-device')).toHaveTextContent('Cloud Box')
-
-    const localLegendColor = screen.getByTestId('sidebar-online-device-color-local-device')
-    const cloudLegendColor = screen.getByTestId('sidebar-online-device-color-cloud-device')
-    const localTaskMarker = screen.getByTestId('runtime-local-task-device-marker-local-task')
-    const cloudTaskMarker = screen.getByTestId('runtime-local-task-device-marker-cloud-task')
-
-    expect(localTaskMarker).toHaveAttribute('title', 'Local Mac /repo/Wegent')
-    expect(cloudTaskMarker).toHaveAttribute('title', 'Cloud Box /repo/Wegent')
-    expect(localTaskMarker.style.backgroundColor).toBe(localLegendColor.style.backgroundColor)
-    expect(cloudTaskMarker.style.backgroundColor).toBe(cloudLegendColor.style.backgroundColor)
-
-    await userEvent.click(screen.getByTestId('sidebar-online-device-local-device'))
-
-    expect(screen.getByTestId('sidebar-online-device-local-device')).toHaveAttribute(
-      'aria-pressed',
-      'true'
-    )
-    expect(screen.getByTestId('runtime-local-task-row-local-task')).toBeInTheDocument()
-    expect(screen.queryByTestId('runtime-local-task-row-cloud-task')).not.toBeInTheDocument()
-
-    await userEvent.click(screen.getByTestId('sidebar-online-device-local-device'))
-
-    expect(screen.getByTestId('runtime-local-task-row-cloud-task')).toBeInTheDocument()
-
-    await userEvent.click(screen.getByTestId('sidebar-offline-devices-toggle'))
-
-    expect(screen.getByTestId('sidebar-online-device-offline-device')).toHaveTextContent(
-      'Offline Box'
-    )
-    expect(screen.getByTestId('sidebar-offline-devices-toggle')).toHaveTextContent('收起离线')
-
-    await userEvent.click(screen.getByTestId('sidebar-devices-section-toggle'))
-
-    expect(screen.getByTestId('sidebar-devices-section-toggle')).toHaveAttribute(
-      'aria-expanded',
-      'false'
-    )
-    expect(screen.queryByTestId('sidebar-online-device-local-device')).not.toBeInTheDocument()
-    expect(
-      screen.queryByTestId('runtime-local-task-device-marker-local-task')
-    ).not.toBeInTheDocument()
-    expect(screen.getByTestId('sidebar-offline-devices-toggle')).toBeInTheDocument()
   })
 
   test('shows hover actions to mark and archive project runtime tasks', async () => {

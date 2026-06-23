@@ -4,20 +4,23 @@ sidebar_position: 16
 
 # Runtime Local Work
 
-Wework runtime local work surfaces Codex and Claude Code work that already exists on a user's device. It does not import that work into central `TaskResource` or `Subtask` rows. The visible model has three levels:
+Wework runtime local work surfaces Codex and Claude Code work that already exists on a user's device. It does not import that work into central `TaskResource` or `Subtask` rows, and it no longer depends on the Backend `projects` table to build the sidebar list. The list comes from runtime threads returned by online device executors and is shown in two groups:
 
 ```text
 Project
-  Device Workspace
-    LocalTask
+  LocalTask
+
+Conversation
+  LocalTask
 ```
 
 ## Ownership
 
-- Project is central Backend state.
-- Device Workspace is a central mapping from user, device, and local directory to a Project.
+- Project is a display group inferred from the runtime workspace information returned by the executor.
+- Conversation is a Codex chat thread that does not belong to a Project workspace.
 - LocalTask is executor-local state and remains on the device.
 - A LocalTask's stable identity is `deviceId + localTaskId`. `workspacePath` is only device-workspace context for list grouping, task creation, and right-side workspace tools; task URLs, IM notification subscriptions, and native Codex update deduplication do not use the path as an identity field.
+- The executor returns `workspaceKind` to distinguish Project work from Conversations. Codex App-style directories such as `~/Documents/Codex/YYYY-MM-DD/<name>` are marked as `chat` and shown under "Conversations"; other workspaces are shown under "Projects".
 
 The executor still keeps a JSON LocalTask index for non-Codex or imported local tasks:
 
@@ -29,15 +32,18 @@ Native Codex tasks are not written to this index. List refresh discovers them fr
 
 ## List Refresh
 
-The frontend drives task list refreshes through polling.
+Wework requests the task list on startup, explicit refresh, or device-state changes. It no longer refreshes the list through a fixed polling interval.
 
-1. Wework periodically requests `GET /api/runtime-work?client_origin=wework`.
-2. Backend reads the user's Projects and Device Workspace mappings.
-3. Backend calls `runtime.tasks.list` over the online device WebSocket RPC channel.
-4. The executor refreshes local Codex discovery and merges the non-Codex/imported JSON LocalTask index.
-5. Backend groups results by `deviceId + workspacePath` and returns Project -> Device Workspace -> LocalTask, while each LocalTask is still opened and notified by `deviceId + localTaskId`.
+1. Wework requests `GET /api/runtime-work`.
+2. Backend reads the current user's online devices and calls `runtime.tasks.list` over each device WebSocket RPC channel.
+3. The executor refreshes local Codex discovery and merges the non-Codex/imported JSON LocalTask index.
+4. The executor returns `workspaceKind`, workspace path, task title, update time, and device status.
+5. Backend performs light aggregation and returns the result to Wework without reading or matching the Backend `projects` table.
+6. Wework renders Projects and Conversations from the runtime work response, while each LocalTask is still opened and notified by `deviceId + localTaskId`.
 
 The executor does not poll or push task lists to Backend by itself. Offline devices do not contribute LocalTasks. Wework may show an offline mapped workspace, but it does not keep a central cache of local tasks.
+
+When there is only one device, Wework does not show an IP next to Project names. When there are multiple devices, the local device still omits the IP, while online remote devices show a usable non-loopback runtime transfer host or client IP with a green online dot.
 
 ## Open And Continue
 
@@ -110,9 +116,13 @@ When Wework forks a runtime task, it only offers target workspaces that belong t
 
 The forked task identity still uses `deviceId + localTaskId`. `workspacePath` is only target-directory and workspace-tool context.
 
-## Non-Project Workspaces
+## Projects And Conversations
 
-Directories discovered by an executor but not mapped to a central Project appear in Wework under "Unmapped Device Workspaces". They also come from online device `runtime.tasks.list` responses, not from central database tasks.
+Wework no longer shows "Unmapped Device Workspaces". Every thread returned by the executor must be grouped into either "Projects" or "Conversations":
+
+- Tasks with `workspaceKind: chat` are shown under "Conversations".
+- Other tasks are grouped as "Projects" by workspace name.
+- The "Conversations" section is always visible, even when empty, and supports the same collapse and expand interaction as "Projects".
 
 ## IM Notifications
 
@@ -136,4 +146,4 @@ The URL does not contain `workspacePath`. On refresh or shared links, the fronte
 
 ## Compatibility
 
-Wegent-native Task/Subtask flows remain available for existing chat, shared task, and historical task URL paths. Wework sidebar, mobile drawer, project task display, and new task creation use the runtime work API instead of the DB task list.
+Wegent-native Task/Subtask flows remain available for existing chat, shared task, and historical task URL paths. Wework sidebar, mobile drawer, project task display, and new task creation use the runtime work API instead of the DB task list or Backend `projects` table.

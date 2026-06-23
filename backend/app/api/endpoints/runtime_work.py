@@ -4,13 +4,10 @@
 
 """Runtime-native local work endpoints for Wework."""
 
-from typing import Annotated
-
 from fastapi import APIRouter, Body, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
-from app.core.constants import CLIENT_ORIGIN_WEWORK, SUPPORTED_CLIENT_ORIGINS
 from app.core.security import get_current_user
 from app.models.user import User
 from app.schemas.runtime_work import (
@@ -44,27 +41,17 @@ from shared.telemetry.decorators import (
 
 router = APIRouter()
 
-ClientOriginQuery = Annotated[
-    str,
-    Query(
-        pattern=f"^({'|'.join(SUPPORTED_CLIENT_ORIGINS)})$",
-        description="Client surface to scope projects",
-    ),
-]
-
 
 @router.get("", response_model=RuntimeWorkListResponse, response_model_by_alias=True)
 async def list_runtime_work_endpoint(
-    client_origin: ClientOriginQuery = CLIENT_ORIGIN_WEWORK,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """List Projects -> Device Workspaces -> executor-local LocalTasks."""
+    """List executor-local work grouped as projects and conversations."""
 
     return await runtime_work_service.list_runtime_work(
         db=db,
         user_id=current_user.id,
-        client_origin=client_origin,
     )
 
 
