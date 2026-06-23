@@ -42,6 +42,35 @@ CODEX_NATIVE_UPDATE_TERMINAL_STATUSES = {
 }
 
 
+def _runtime_rpc_payload_metadata(payload: dict[str, Any]) -> dict[str, Any]:
+    metadata: dict[str, Any] = {
+        "runtime": payload.get("runtime"),
+        "local_task_id": payload.get("localTaskId"),
+        "workspace_path": payload.get("workspacePath"),
+    }
+    message = payload.get("message") or payload.get("content")
+    if isinstance(message, str):
+        metadata["message_length"] = len(message)
+    execution_request = payload.get("executionRequest")
+    if isinstance(execution_request, dict):
+        metadata["task_id"] = execution_request.get("task_id")
+        metadata["subtask_id"] = execution_request.get("subtask_id")
+    return metadata
+
+
+def _runtime_rpc_result_metadata(result: Any) -> dict[str, Any]:
+    if not isinstance(result, dict):
+        return {"response_type": type(result).__name__}
+    return {
+        "success": result.get("success"),
+        "accepted": result.get("accepted"),
+        "runtime": result.get("runtime"),
+        "local_task_id": result.get("localTaskId"),
+        "workspace_path": result.get("workspacePath"),
+        "error_code": result.get("code"),
+    }
+
+
 class LocalTaskResponsesTransport(EventTransport):
     """Send local-task Responses API events over the existing local executor socket."""
 
@@ -132,41 +161,95 @@ class RuntimeWorkRpcHandler:
     async def handle_runtime_rpc(self, data: dict[str, Any]) -> dict[str, Any]:
         method = data.get("method")
         payload = data.get("payload") if isinstance(data.get("payload"), dict) else {}
+        started_at = time.monotonic()
+        payload_metadata = _runtime_rpc_payload_metadata(payload)
+        logger.info(
+            "Runtime RPC received: method=%s runtime=%s local_task_id=%s "
+            "workspace_path=%s task_id=%s subtask_id=%s message_length=%s",
+            method,
+            payload_metadata.get("runtime"),
+            payload_metadata.get("local_task_id"),
+            payload_metadata.get("workspace_path"),
+            payload_metadata.get("task_id"),
+            payload_metadata.get("subtask_id"),
+            payload_metadata.get("message_length"),
+        )
 
         try:
             if method == "runtime.tasks.list":
-                return self._list_tasks(payload)
-            if method == "runtime.tasks.transcript":
-                return await self._transcript(payload)
-            if method == "runtime.tasks.send":
-                return await self._send(payload)
-            if method == "runtime.tasks.archive":
-                return await self._archive(payload)
-            if method == "runtime.tasks.status":
-                return self._status(payload)
-            if method == "runtime.tasks.prepare_fork_transfer":
-                return await self._prepare_fork_transfer(payload)
-            if method == "runtime.tasks.prepare_fork_receiver":
-                return await self._prepare_fork_receiver(payload)
-            if method == "runtime.tasks.push_fork_transfer":
-                return await self._push_fork_transfer(payload)
-            if method == "runtime.tasks.upload_fork_transfer":
-                return await self._upload_fork_transfer(payload)
-            if method == "runtime.tasks.import_fork":
-                return await self._import_fork(payload)
-            if method in {
+                result = self._list_tasks(payload)
+            elif method == "runtime.tasks.transcript":
+                result = await self._transcript(payload)
+            elif method == "runtime.tasks.send":
+                result = await self._send(payload)
+            elif method == "runtime.tasks.archive":
+                result = await self._archive(payload)
+            elif method == "runtime.tasks.status":
+                result = self._status(payload)
+            elif method == "runtime.tasks.prepare_fork_transfer":
+                result = await self._prepare_fork_transfer(payload)
+            elif method == "runtime.tasks.prepare_fork_receiver":
+                result = await self._prepare_fork_receiver(payload)
+            elif method == "runtime.tasks.push_fork_transfer":
+                result = await self._push_fork_transfer(payload)
+            elif method == "runtime.tasks.upload_fork_transfer":
+                result = await self._upload_fork_transfer(payload)
+            elif method == "runtime.tasks.import_fork":
+                result = await self._import_fork(payload)
+            elif method in {
                 "runtime.tasks.create",
                 "runtime.tasks.cancel",
             }:
-                return await self._adapter_method(method, payload)
-            return self._error(f"Unsupported runtime RPC method: {method}")
+                result = await self._adapter_method(method, payload)
+            else:
+                result = self._error(f"Unsupported runtime RPC method: {method}")
+            self._log_rpc_completed(method, started_at, result)
+            return result
         except KeyError as exc:
-            return self._error(str(exc), code="not_found")
+            result = self._error(str(exc), code="not_found")
+            logger.warning(
+                "Runtime RPC not found: method=%s error=%s duration_ms=%s",
+                method,
+                exc,
+                int((time.monotonic() - started_at) * 1000),
+            )
+            return result
         except ValueError as exc:
-            return self._error(str(exc), code="bad_request")
+            result = self._error(str(exc), code="bad_request")
+            logger.warning(
+                "Runtime RPC bad request: method=%s error=%s duration_ms=%s",
+                method,
+                exc,
+                int((time.monotonic() - started_at) * 1000),
+            )
+            return result
         except Exception as exc:
-            logger.exception("Runtime RPC failed: method=%s", method)
+            logger.exception(
+                "Runtime RPC failed: method=%s duration_ms=%s",
+                method,
+                int((time.monotonic() - started_at) * 1000),
+            )
             return self._error(str(exc), code="internal_error")
+
+    def _log_rpc_completed(
+        self,
+        method: Any,
+        started_at: float,
+        result: Any,
+    ) -> None:
+        metadata = _runtime_rpc_result_metadata(result)
+        logger.info(
+            "Runtime RPC completed: method=%s success=%s accepted=%s runtime=%s "
+            "local_task_id=%s workspace_path=%s error_code=%s duration_ms=%s",
+            method,
+            metadata.get("success"),
+            metadata.get("accepted"),
+            metadata.get("runtime"),
+            metadata.get("local_task_id"),
+            metadata.get("workspace_path"),
+            metadata.get("error_code"),
+            int((time.monotonic() - started_at) * 1000),
+        )
 
     def _list_tasks(self, payload: dict[str, Any]) -> dict[str, Any]:
         discovered_tasks = self._refresh_discovered_tasks()
@@ -527,6 +610,15 @@ class RuntimeWorkRpcHandler:
         task = self._mark_task_running(task, subtask_id)
         self._remember_sdk_codex_task(task)
         self._running_sdk_task_ids.add(task.local_task_id)
+        logger.info(
+            "SDK Codex send accepted: local_task_id=%s thread_id=%s "
+            "workspace_path=%s subtask_id=%s message_length=%s",
+            task.local_task_id,
+            thread_id,
+            task.workspace_path,
+            subtask_id,
+            len(message),
+        )
         sdk_task = asyncio.create_task(
             self._run_sdk_codex_task(
                 task=task,
@@ -574,6 +666,15 @@ class RuntimeWorkRpcHandler:
         source: Optional[dict[str, Any]],
         subtask_id: int,
     ) -> None:
+        started_at = time.monotonic()
+        logger.info(
+            "SDK Codex send stream started: local_task_id=%s thread_id=%s "
+            "workspace_path=%s subtask_id=%s",
+            task.local_task_id,
+            thread_id,
+            task.workspace_path,
+            subtask_id,
+        )
         emitter = self._create_local_task_emitter(task, source, subtask_id)
         try:
             await stream_message(
@@ -582,8 +683,26 @@ class RuntimeWorkRpcHandler:
                 cwd=task.workspace_path,
                 emitter=emitter,
             )
+            logger.info(
+                "SDK Codex send stream completed: local_task_id=%s thread_id=%s "
+                "workspace_path=%s subtask_id=%s duration_ms=%s",
+                task.local_task_id,
+                thread_id,
+                task.workspace_path,
+                subtask_id,
+                int((time.monotonic() - started_at) * 1000),
+            )
         except Exception as exc:
-            logger.exception("Failed to continue Codex SDK thread: %s", thread_id)
+            logger.exception(
+                "SDK Codex send stream failed: local_task_id=%s thread_id=%s "
+                "workspace_path=%s subtask_id=%s duration_ms=%s error=%s",
+                task.local_task_id,
+                thread_id,
+                task.workspace_path,
+                subtask_id,
+                int((time.monotonic() - started_at) * 1000),
+                exc,
+            )
             try:
                 await emitter.error(str(exc), "execution_error")
             except Exception:
@@ -997,6 +1116,14 @@ class RuntimeWorkRpcHandler:
         )
         self._remember_sdk_codex_task(task)
         self._running_sdk_task_ids.add(task.local_task_id)
+        logger.info(
+            "SDK Codex create accepted: local_task_id=%s workspace_path=%s "
+            "subtask_id=%s message_length=%s",
+            task.local_task_id,
+            task.workspace_path,
+            request.subtask_id,
+            len(message),
+        )
         sdk_task = asyncio.create_task(
             self._run_sdk_codex_create_task(
                 stream_new_thread=stream_new_thread,
@@ -1024,10 +1151,27 @@ class RuntimeWorkRpcHandler:
         message: str,
         task: LocalTaskRecord,
     ) -> None:
+        started_at = time.monotonic()
+        logger.info(
+            "SDK Codex create stream started: local_task_id=%s workspace_path=%s "
+            "subtask_id=%s",
+            task.local_task_id,
+            task.workspace_path,
+            request.subtask_id,
+        )
+
         def emitter_factory(thread_id: str) -> ResponsesAPIEmitter:
             attached_task = self._attach_sdk_codex_thread(
                 local_task_id=task.local_task_id,
                 thread_id=thread_id,
+            )
+            logger.info(
+                "SDK Codex thread attached: local_task_id=%s thread_id=%s "
+                "workspace_path=%s subtask_id=%s",
+                task.local_task_id,
+                thread_id,
+                attached_task.workspace_path,
+                request.subtask_id,
             )
             return self._create_local_task_emitter(
                 attached_task,
@@ -1044,8 +1188,24 @@ class RuntimeWorkRpcHandler:
                     emitter_factory=emitter_factory,
                 )
             )
+            logger.info(
+                "SDK Codex create stream completed: local_task_id=%s "
+                "workspace_path=%s subtask_id=%s duration_ms=%s",
+                task.local_task_id,
+                task.workspace_path,
+                request.subtask_id,
+                int((time.monotonic() - started_at) * 1000),
+            )
         except Exception as exc:
-            logger.exception("Failed to create Codex SDK thread")
+            logger.exception(
+                "SDK Codex create stream failed: local_task_id=%s workspace_path=%s "
+                "subtask_id=%s duration_ms=%s error=%s",
+                task.local_task_id,
+                task.workspace_path,
+                request.subtask_id,
+                int((time.monotonic() - started_at) * 1000),
+                exc,
+            )
             emitter = self._create_local_task_emitter(
                 task,
                 source=None,

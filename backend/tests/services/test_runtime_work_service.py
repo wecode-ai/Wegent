@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -1190,6 +1191,62 @@ async def test_send_runtime_message_normalizes_runtime_rpc_failure_without_task_
 
 
 @pytest.mark.asyncio
+async def test_send_runtime_message_logs_safe_lifecycle_metadata(
+    test_db,
+    test_user,
+    monkeypatch,
+    caplog,
+):
+    from app.schemas.runtime_work import RuntimeSendRequest, RuntimeTaskAddress
+    from app.services import runtime_work_service
+
+    monkeypatch.setattr(
+        runtime_work_service,
+        "_ensure_owned_device",
+        lambda db, user_id, device_id: None,
+    )
+    monkeypatch.setattr(
+        runtime_work_service,
+        "_touch_workspace_mapping",
+        lambda db, user_id, address: None,
+    )
+    rpc = AsyncMock(
+        return_value={
+            "success": True,
+            "accepted": True,
+            "localTaskId": "codex-1",
+            "workspacePath": "/repo/Wegent",
+            "runtime": "codex",
+        }
+    )
+    monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
+
+    caplog.set_level(logging.INFO, logger="app.services.runtime_work_service")
+
+    response = await runtime_work_service.send_runtime_message(
+        db=test_db,
+        user_id=test_user.id,
+        request=RuntimeSendRequest(
+            address=RuntimeTaskAddress(
+                deviceId="device-1",
+                workspacePath="/repo/Wegent",
+                localTaskId="codex-1",
+            ),
+            message="secret followup prompt",
+        ),
+    )
+
+    assert response.accepted is True
+    assert "Runtime task send dispatching" in caplog.text
+    assert "Runtime task send completed" in caplog.text
+    assert "device_id=device-1" in caplog.text
+    assert "local_task_id=codex-1" in caplog.text
+    assert "workspace_path=/repo/Wegent" in caplog.text
+    assert "message_length=22" in caplog.text
+    assert "secret followup prompt" not in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_create_runtime_task_dispatches_to_project_device_without_task_rows(
     test_db,
     test_user,
@@ -1265,6 +1322,73 @@ async def test_create_runtime_task_dispatches_to_project_device_without_task_row
         timeout_seconds=600,
     )
     assert test_db.query(TaskResource).count() == 0
+
+
+@pytest.mark.asyncio
+async def test_create_runtime_task_logs_safe_lifecycle_metadata(
+    test_db,
+    test_user,
+    monkeypatch,
+    caplog,
+):
+    from app.schemas.runtime_work import RuntimeTaskCreateRequest
+    from app.services import runtime_work_service
+
+    project = _local_path_project(test_db, test_user.id)
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: object(),
+    )
+    monkeypatch.setattr(
+        runtime_work_service,
+        "_build_runtime_execution_request",
+        lambda **kwargs: SimpleNamespace(
+            to_dict=lambda: {
+                "task_id": 1001,
+                "subtask_id": 2001,
+                "team_id": kwargs["request"].team_id,
+                "prompt": kwargs["request"].message,
+                "workspace_source": "local_path",
+                "project_workspace_path": "/repo/Wegent",
+            }
+        ),
+    )
+    rpc = AsyncMock(
+        return_value={
+            "success": True,
+            "accepted": True,
+            "localTaskId": "runtime-1",
+            "workspacePath": "/repo/Wegent",
+            "runtime": "claude_code",
+        }
+    )
+    monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
+
+    caplog.set_level(logging.INFO, logger="app.services.runtime_work_service")
+
+    response = await runtime_work_service.create_runtime_task(
+        db=test_db,
+        user_id=test_user.id,
+        request=RuntimeTaskCreateRequest(
+            projectId=project.id,
+            teamId=3,
+            runtime="claude_code",
+            message="secret create prompt",
+            title="Secret title",
+        ),
+    )
+
+    assert response.accepted is True
+    assert "Runtime task create dispatching" in caplog.text
+    assert "Runtime task create completed" in caplog.text
+    assert "device_id=device-1" in caplog.text
+    assert "workspace_path=/repo/Wegent" in caplog.text
+    assert "runtime=claude_code" in caplog.text
+    assert "local_task_id=runtime-1" in caplog.text
+    assert "message_length=20" in caplog.text
+    assert "secret create prompt" not in caplog.text
+    assert "Secret title" not in caplog.text
 
 
 @pytest.mark.asyncio

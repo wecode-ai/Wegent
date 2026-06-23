@@ -438,6 +438,16 @@ class RuntimeAgentAdapter:
                 status="active",
             )
         )
+        logger.info(
+            "Runtime task create accepted: runtime=%s local_task_id=%s "
+            "workspace_path=%s task_id=%s subtask_id=%s message_length=%s",
+            self.runtime,
+            local_task_id,
+            workspace_path,
+            request.task_id,
+            request.subtask_id,
+            len(message),
+        )
         await self._start_run(local_task_id, request)
         return {
             "success": True,
@@ -471,6 +481,16 @@ class RuntimeAgentAdapter:
         self.store.update_task(
             task.local_task_id, update, workspace_path=task.workspace_path
         )
+        logger.info(
+            "Runtime task send accepted: runtime=%s local_task_id=%s "
+            "workspace_path=%s task_id=%s subtask_id=%s message_length=%s",
+            self.runtime,
+            task.local_task_id,
+            task.workspace_path,
+            request.task_id,
+            request.subtask_id,
+            len(message),
+        )
         await self._start_run(task.local_task_id, request)
         return {
             "success": True,
@@ -503,11 +523,38 @@ class RuntimeAgentAdapter:
             transport=transport,
             model=str(request.model_config.get("model_id") or ""),
         )
+        started_at = time.monotonic()
+        logger.info(
+            "Runtime agent run started: runtime=%s local_task_id=%s "
+            "task_id=%s subtask_id=%s",
+            self.runtime,
+            local_task_id,
+            request.task_id,
+            request.subtask_id,
+        )
         try:
             await self.execute_agent(request, emitter)
+            logger.info(
+                "Runtime agent run completed: runtime=%s local_task_id=%s "
+                "task_id=%s subtask_id=%s duration_ms=%s",
+                self.runtime,
+                local_task_id,
+                request.task_id,
+                request.subtask_id,
+                int((time.monotonic() - started_at) * 1000),
+            )
             self._mark_not_running(local_task_id)
         except Exception as exc:
-            logger.exception("Runtime agent execution failed: %s", exc)
+            logger.exception(
+                "Runtime agent run failed: runtime=%s local_task_id=%s "
+                "task_id=%s subtask_id=%s duration_ms=%s error=%s",
+                self.runtime,
+                local_task_id,
+                request.task_id,
+                request.subtask_id,
+                int((time.monotonic() - started_at) * 1000),
+                exc,
+            )
             await emitter.error(str(exc), "execution_error")
             self._mark_not_running(local_task_id)
 

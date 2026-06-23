@@ -5,6 +5,7 @@
 """Typed runtime task RPC over the existing local executor Socket.IO channel."""
 
 import logging
+import time
 from typing import Any, Optional
 
 from socketio.exceptions import BadNamespaceError, DisconnectedError
@@ -48,11 +49,17 @@ class RuntimeRpcService:
             raise RuntimeRpcError(f"Device '{device_id}' has no socket information")
 
         request = {"method": method, "payload": payload}
+        payload_keys = sorted(str(key) for key in payload.keys())
+        started_at = time.monotonic()
         logger.info(
-            "[RuntimeRpcService] Sending runtime RPC: user_id=%s device_id=%s method=%s",
+            "[RuntimeRpcService] Runtime RPC dispatching: user_id=%s device_id=%s "
+            "method=%s timeout_seconds=%s socket_id=%s payload_keys=%s",
             user_id,
             device_id,
             method,
+            normalized_timeout,
+            socket_id,
+            payload_keys,
         )
         try:
             result = await get_sio().call(
@@ -72,8 +79,32 @@ class RuntimeRpcService:
                 )
             ) from exc
 
+        duration_ms = int((time.monotonic() - started_at) * 1000)
         if not isinstance(result, dict):
+            logger.warning(
+                "[RuntimeRpcService] Runtime RPC returned invalid response: "
+                "user_id=%s device_id=%s method=%s duration_ms=%s response_type=%s",
+                user_id,
+                device_id,
+                method,
+                duration_ms,
+                type(result).__name__,
+            )
             raise RuntimeRpcError("Runtime RPC returned an invalid response")
+        logger.info(
+            "[RuntimeRpcService] Runtime RPC completed: user_id=%s device_id=%s "
+            "method=%s success=%s accepted=%s local_task_id=%s runtime=%s "
+            "error_code=%s duration_ms=%s",
+            user_id,
+            device_id,
+            method,
+            result.get("success"),
+            result.get("accepted"),
+            result.get("localTaskId"),
+            result.get("runtime"),
+            result.get("code"),
+            duration_ms,
+        )
         return result
 
     @staticmethod

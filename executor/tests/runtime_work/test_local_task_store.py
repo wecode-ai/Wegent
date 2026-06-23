@@ -862,6 +862,172 @@ async def test_runtime_work_handler_normalizes_content_payload_before_send(tmp_p
 
 
 @pytest.mark.asyncio
+async def test_runtime_work_rpc_handler_logs_create_and_send_lifecycle(
+    tmp_path,
+    monkeypatch,
+):
+    from executor.runtime_work import rpc_handler as rpc_handler_module
+    from executor.runtime_work.agent_adapter import RuntimeAgentAdapter
+    from executor.runtime_work.local_task_store import LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    info_logs = []
+
+    def record_info(message, *args, **kwargs):
+        info_logs.append(message % args if args else message)
+
+    monkeypatch.setattr(rpc_handler_module.logger, "info", record_info)
+
+    async def execute_agent(request, emitter):
+        await emitter.done(content=f"reply:{request.prompt}")
+
+    store = LocalTaskStore(tmp_path / "index.json")
+    adapter = RuntimeAgentAdapter(
+        runtime="claude_code",
+        store=store,
+        execute_agent=execute_agent,
+    )
+    handler = RuntimeWorkRpcHandler(
+        store=store,
+        adapters={"claude_code": adapter},
+        codex_discovery=EmptyDiscovery(),
+    )
+
+    create = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.create",
+            "payload": {
+                "runtime": "claude_code",
+                "workspacePath": "/repo/Wegent",
+                "message": "secret create prompt",
+                "executionRequest": {
+                    "task_id": 1002,
+                    "subtask_id": 2002,
+                    "team_id": 1,
+                    "prompt": "secret create prompt",
+                    "workspace_source": "local_path",
+                    "project_workspace_path": "/repo/Wegent",
+                    "model_config": {},
+                    "bot": [],
+                },
+            },
+        }
+    )
+    await _drain_runtime_adapter(adapter)
+    await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.send",
+            "payload": {
+                "workspacePath": "/repo/Wegent",
+                "localTaskId": create["localTaskId"],
+                "message": "secret followup prompt",
+            },
+        }
+    )
+    await _drain_runtime_adapter(adapter)
+
+    log_text = "\n".join(info_logs)
+    assert "Runtime RPC received" in log_text
+    assert "Runtime RPC completed" in log_text
+    assert "method=runtime.tasks.create" in log_text
+    assert "method=runtime.tasks.send" in log_text
+    assert f"local_task_id={create['localTaskId']}" in log_text
+    assert "workspace_path=/repo/Wegent" in log_text
+    assert "runtime=claude_code" in log_text
+    assert "duration_ms=" in log_text
+    assert "secret create prompt" not in log_text
+    assert "secret followup prompt" not in log_text
+
+
+@pytest.mark.asyncio
+async def test_runtime_work_rpc_handler_logs_bad_request_without_prompt(monkeypatch):
+    from executor.runtime_work import rpc_handler as rpc_handler_module
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    warning_logs = []
+
+    def record_warning(message, *args, **kwargs):
+        warning_logs.append(message % args if args else message)
+
+    monkeypatch.setattr(rpc_handler_module.logger, "warning", record_warning)
+
+    result = await RuntimeWorkRpcHandler(
+        codex_discovery=EmptyDiscovery()
+    ).handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.create",
+            "payload": {
+                "runtime": "claude_code",
+                "message": "secret prompt",
+            },
+        }
+    )
+
+    assert result["success"] is False
+    assert result["code"] == "bad_request"
+    log_text = "\n".join(warning_logs)
+    assert "Runtime RPC bad request" in log_text
+    assert "method=runtime.tasks.create" in log_text
+    assert "secret prompt" not in log_text
+
+
+@pytest.mark.asyncio
+async def test_runtime_agent_adapter_logs_background_run_lifecycle(
+    tmp_path,
+    monkeypatch,
+):
+    from executor.runtime_work import agent_adapter as agent_adapter_module
+    from executor.runtime_work.agent_adapter import RuntimeAgentAdapter
+    from executor.runtime_work.local_task_store import LocalTaskStore
+
+    info_logs = []
+
+    def record_info(message, *args, **kwargs):
+        info_logs.append(message % args if args else message)
+
+    monkeypatch.setattr(agent_adapter_module.logger, "info", record_info)
+
+    async def execute_agent(request, emitter):
+        await emitter.done(content="done")
+
+    adapter = RuntimeAgentAdapter(
+        runtime="claude_code",
+        store=LocalTaskStore(tmp_path / "index.json"),
+        execute_agent=execute_agent,
+    )
+
+    result = await adapter.create(
+        {
+            "workspacePath": "/repo/Wegent",
+            "message": "secret create prompt",
+            "executionRequest": {
+                "task_id": 1001,
+                "subtask_id": 2001,
+                "team_id": 1,
+                "prompt": "secret create prompt",
+                "workspace_source": "local_path",
+                "project_workspace_path": "/repo/Wegent",
+                "model_config": {},
+                "bot": [],
+            },
+        }
+    )
+    await _drain_runtime_adapter(adapter)
+
+    assert result["accepted"] is True
+    log_text = "\n".join(info_logs)
+    assert "Runtime task create accepted" in log_text
+    assert "Runtime agent run started" in log_text
+    assert "Runtime agent run completed" in log_text
+    assert "runtime=claude_code" in log_text
+    assert f"local_task_id={result['localTaskId']}" in log_text
+    assert "task_id=1001" in log_text
+    assert "subtask_id=2001" in log_text
+    assert "duration_ms=" in log_text
+    assert "secret create prompt" not in log_text
+
+
+@pytest.mark.asyncio
 async def test_runtime_agent_adapter_rejects_blank_workspace_before_store_write(
     tmp_path,
 ):
@@ -2502,6 +2668,67 @@ async def test_runtime_work_handler_creates_codex_runtime_task_as_native_thread(
         "create a Codex task",
         "Created",
     ]
+
+
+@pytest.mark.asyncio
+async def test_runtime_work_handler_logs_sdk_codex_create_lifecycle(
+    tmp_path,
+    monkeypatch,
+):
+    from executor.runtime_work import rpc_handler as rpc_handler_module
+    from executor.runtime_work.local_task_store import LocalTaskStore
+    from executor.runtime_work.rpc_handler import RuntimeWorkRpcHandler
+
+    info_logs = []
+
+    def record_info(message, *args, **kwargs):
+        info_logs.append(message % args if args else message)
+
+    monkeypatch.setattr(rpc_handler_module.logger, "info", record_info)
+
+    class NativeCreateDiscovery(EmptyDiscovery):
+        async def stream_new_thread(self, request, message, *, cwd, emitter_factory):
+            emitter = emitter_factory("codex-thread-1")
+            await emitter.start(shell_type="Codex")
+            await emitter.done(content="Created")
+
+    handler = RuntimeWorkRpcHandler(
+        store=LocalTaskStore(tmp_path / "index.json"),
+        codex_discovery=NativeCreateDiscovery(),
+        responses_event_emitter=lambda _event, _payload: None,
+    )
+
+    result = await handler.handle_runtime_rpc(
+        {
+            "method": "runtime.tasks.create",
+            "payload": {
+                "runtime": "codex",
+                "workspacePath": "/repo/Wegent",
+                "message": "secret codex prompt",
+                "executionRequest": {
+                    "task_id": 1001,
+                    "subtask_id": 2001,
+                    "team_id": 1,
+                    "prompt": "secret codex prompt",
+                    "workspace_source": "local_path",
+                    "project_workspace_path": "/repo/Wegent",
+                    "model_config": {},
+                    "bot": [],
+                },
+            },
+        }
+    )
+    await asyncio.gather(*handler._running_sdk_tasks)
+
+    assert result["accepted"] is True
+    log_text = "\n".join(info_logs)
+    assert "SDK Codex create accepted" in log_text
+    assert "SDK Codex create stream started" in log_text
+    assert "SDK Codex thread attached" in log_text
+    assert "SDK Codex create stream completed" in log_text
+    assert f"local_task_id={result['localTaskId']}" in log_text
+    assert "thread_id=codex-thread-1" in log_text
+    assert "secret codex prompt" not in log_text
 
 
 @pytest.mark.asyncio

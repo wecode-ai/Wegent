@@ -395,6 +395,61 @@ async def test_local_task_tool_event_emits_block_created(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_local_task_terminal_event_logs_metadata(monkeypatch, caplog):
+    import logging
+
+    from app.services.execution.dispatcher import ResponsesAPIEventParser
+
+    emitted = []
+
+    class FakeSio:
+        async def emit(self, event_name, payload, room=None, namespace=None):
+            emitted.append((event_name, payload, room, namespace))
+
+    monkeypatch.setattr(local_task_responses, "get_sio", lambda: FakeSio())
+    handler = local_task_responses.LocalTaskResponsesHandler(
+        event_parser=ResponsesAPIEventParser()
+    )
+    locks = {}
+
+    def get_lock(subtask_id):
+        locks.setdefault(subtask_id, asyncio.Lock())
+        return locks[subtask_id]
+
+    cleaned = []
+    caplog.set_level(logging.INFO, logger="app.api.ws.local_task_responses")
+
+    result = await handler.handle(
+        user_id=7,
+        device_id="device-1",
+        event_type="response.completed",
+        data={
+            "local_task_id": "codex-1",
+            "runtime": "codex",
+            "subtask_id": 2001,
+        },
+        event_data={
+            "response": {
+                "output_text": "done",
+            }
+        },
+        message_id=None,
+        get_lock=get_lock,
+        cleanup_lock=lambda subtask_id: cleaned.append(subtask_id),
+    )
+
+    assert result == {"success": True}
+    assert cleaned == [2001]
+    assert emitted
+    assert "Local task terminal event handled" in caplog.text
+    assert "device_id=device-1" in caplog.text
+    assert "local_task_id=codex-1" in caplog.text
+    assert "runtime=codex" in caplog.text
+    assert "subtask_id=2001" in caplog.text
+    assert "terminal_status=COMPLETED" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_local_task_streaming_tool_arguments_emit_generating_block(monkeypatch):
     namespace = device_namespace.DeviceNamespace()
     sio = SimpleNamespace(emit=AsyncMock())
