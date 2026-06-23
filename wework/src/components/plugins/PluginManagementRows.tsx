@@ -1,6 +1,6 @@
 import { Boxes, Globe, Sparkles, Trash2 } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { InstalledPlugin } from '@/types/api'
+import type { InstalledPlugin, PluginRuntime } from '@/types/api'
 
 export interface InstalledSkillItem {
   id: number
@@ -25,9 +25,23 @@ export interface InstalledPluginItem {
   description: string
   enabled: boolean
   version?: string | null
+  sourceType: InstalledPlugin['spec']['source']['type']
+  runtimes: PluginRuntime[]
   componentCounts: Record<string, number>
   raw: InstalledPlugin
   rawVariants: InstalledPlugin[]
+}
+
+const pluginSourceFallback: Record<InstalledPluginItem['sourceType'], string> = {
+  system: '系统插件',
+  upload: '上传插件',
+  marketplace: '市场插件',
+  local: '本地插件',
+}
+
+const pluginRuntimeFallback: Record<PluginRuntime, string> = {
+  claudecode: 'ClaudeCode',
+  codex: 'Codex',
 }
 
 export function InstalledSkillRow({
@@ -160,6 +174,13 @@ export function InstalledPluginRow({
   const componentLabels = Object.entries(plugin.componentCounts)
     .filter(([, count]) => count > 0)
     .map(([key, count]) => `${key} ${count}`)
+  const sourceLabel = t(
+    `workbench.plugin_source_${plugin.sourceType}`,
+    pluginSourceFallback[plugin.sourceType]
+  )
+  const runtimeLabel = plugin.runtimes
+    .map(runtime => t(`workbench.plugin_runtime_${runtime}`, pluginRuntimeFallback[runtime]))
+    .join(' + ')
 
   return (
     <article
@@ -185,6 +206,20 @@ export function InstalledPluginRow({
           {plugin.version && (
             <span className="rounded-md bg-surface px-2 py-0.5 text-xs font-semibold text-text-muted">
               {plugin.version}
+            </span>
+          )}
+          <span
+            className="rounded-md bg-surface px-2 py-0.5 text-xs font-semibold text-text-muted"
+            data-testid={`installed-plugin-source-${plugin.id}`}
+          >
+            {sourceLabel}
+          </span>
+          {runtimeLabel && (
+            <span
+              className="rounded-md bg-surface px-2 py-0.5 text-xs font-semibold text-text-muted"
+              data-testid={`installed-plugin-runtime-${plugin.id}`}
+            >
+              {runtimeLabel}
             </span>
           )}
         </div>

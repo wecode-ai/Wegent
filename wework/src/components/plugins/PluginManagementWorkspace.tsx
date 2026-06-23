@@ -35,6 +35,7 @@ import type {
   InstalledSkill,
   MCPProviderInfo,
   MCPServer,
+  PluginRuntime,
 } from '@/types/api'
 
 type ManagementTab = 'plugins' | 'apps' | 'mcp' | 'skills' | 'marketplace'
@@ -167,6 +168,21 @@ function runtimeRank(item: InstalledPlugin): number {
   return 2
 }
 
+function pluginRuntimes(items: InstalledPlugin[]): PluginRuntime[] {
+  return Array.from(
+    new Set(
+      items
+        .map(item => item.spec.runtime)
+        .filter(
+          (runtime): runtime is PluginRuntime => runtime === 'claudecode' || runtime === 'codex'
+        )
+    )
+  ).sort((left, right) => {
+    const rank = { claudecode: 0, codex: 1 }
+    return rank[left] - rank[right]
+  })
+}
+
 function groupInstalledPlugins(items: InstalledPlugin[]): InstalledPluginItem[] {
   const groups = new Map<string, InstalledPlugin[]>()
   items.forEach(item => {
@@ -189,6 +205,8 @@ function groupInstalledPlugins(items: InstalledPlugin[]): InstalledPluginItem[] 
       description: representative.spec.description,
       enabled: variants.every(item => item.spec.enabled),
       version: representative.spec.version,
+      sourceType: representative.spec.source.type,
+      runtimes: pluginRuntimes(variants),
       componentCounts: countUniquePluginComponents(variants),
       raw: representative,
       rawVariants: variants,

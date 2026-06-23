@@ -212,6 +212,8 @@ function toInstalledPluginItem(item: InstalledPlugin): InstalledPluginItem {
     description: item.spec.description,
     enabled: item.spec.enabled,
     version: item.spec.version,
+    sourceType: item.spec.source.type,
+    runtimes: [item.spec.runtime],
     componentCounts: {
       skills: components.skills.length,
       commands: components.commands.length,

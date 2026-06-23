@@ -5,7 +5,11 @@ import '@/i18n'
 import { PluginManagementWorkspace } from './PluginManagementWorkspace'
 import type { InstalledPlugin } from '@/types/api'
 
-function makeInstalledPlugin(id: number, runtime: 'claudecode' | 'codex'): InstalledPlugin {
+function makeInstalledPlugin(
+  id: number,
+  runtime: 'claudecode' | 'codex',
+  sourceType: InstalledPlugin['spec']['source']['type'] = 'system'
+): InstalledPlugin {
   return {
     apiVersion: 'agent.wecode.io/v1',
     kind: 'InstalledPlugin',
@@ -16,7 +20,7 @@ function makeInstalledPlugin(id: number, runtime: 'claudecode' | 'codex'): Insta
     },
     spec: {
       source: {
-        type: 'system',
+        type: sourceType,
         providerKey: runtime === 'codex' ? 'codex' : 'claude-code',
         pluginKey: 'superpowers',
         catalogItemId: '100',
@@ -132,6 +136,10 @@ describe('PluginManagementWorkspace', () => {
 
     expect(await screen.findByText('superpowers')).toBeInTheDocument()
     expect(screen.getAllByTestId(/installed-plugin-row-/)).toHaveLength(1)
+    expect(screen.getByTestId('installed-plugin-source-501')).toHaveTextContent('系统插件')
+    expect(screen.getByTestId('installed-plugin-runtime-501')).toHaveTextContent(
+      'ClaudeCode + Codex'
+    )
 
     await userEvent.click(screen.getByTestId('installed-plugin-toggle-501'))
 
@@ -147,5 +155,24 @@ describe('PluginManagementWorkspace', () => {
       '/api/plugins/installed/503',
       expect.objectContaining({ method: 'PUT' })
     )
+  })
+
+  test('distinguishes same-name plugins by source', async () => {
+    mockManagementFetch([
+      makeInstalledPlugin(501, 'claudecode', 'system'),
+      makeInstalledPlugin(502, 'codex', 'system'),
+      makeInstalledPlugin(601, 'claudecode', 'upload'),
+    ])
+
+    render(<PluginManagementWorkspace />)
+
+    expect(await screen.findAllByText('superpowers')).toHaveLength(2)
+    expect(screen.getAllByTestId(/installed-plugin-row-/)).toHaveLength(2)
+    expect(screen.getByTestId('installed-plugin-source-501')).toHaveTextContent('系统插件')
+    expect(screen.getByTestId('installed-plugin-runtime-501')).toHaveTextContent(
+      'ClaudeCode + Codex'
+    )
+    expect(screen.getByTestId('installed-plugin-source-601')).toHaveTextContent('上传插件')
+    expect(screen.getByTestId('installed-plugin-runtime-601')).toHaveTextContent('ClaudeCode')
   })
 })
