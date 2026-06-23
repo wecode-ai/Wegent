@@ -37,6 +37,7 @@ import re
 import socket
 import subprocess
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, Optional
 
@@ -64,10 +65,23 @@ def build_runtime_auth_file_report(
     """Build sanitized local runtime auth file state for heartbeat reports."""
     home_dir = home or Path.home()
     codex_auth_path = home_dir / ".codex" / "auth.json"
+    if not codex_auth_path.is_file():
+        return {
+            "codex": {
+                "target_path": CODEX_AUTH_TARGET_PATH,
+                "exists": False,
+            }
+        }
+
+    stat = codex_auth_path.stat()
     return {
         "codex": {
             "target_path": CODEX_AUTH_TARGET_PATH,
-            "exists": codex_auth_path.is_file(),
+            "exists": True,
+            "sha256": hashlib.sha256(codex_auth_path.read_bytes()).hexdigest(),
+            "modified_at": datetime.fromtimestamp(
+                stat.st_mtime, timezone.utc
+            ).isoformat(),
         }
     }
 

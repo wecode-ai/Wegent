@@ -10,7 +10,7 @@ from executor.modes.local.websocket_client import (
 )
 
 
-def test_build_runtime_auth_file_report_reports_codex_auth_presence(tmp_path):
+def test_build_runtime_auth_file_report_reports_codex_auth_metadata(tmp_path):
     report = build_runtime_auth_file_report(home=tmp_path)
 
     assert report == {
@@ -22,9 +22,18 @@ def test_build_runtime_auth_file_report_reports_codex_auth_presence(tmp_path):
 
     codex_dir = tmp_path / ".codex"
     codex_dir.mkdir()
-    (codex_dir / "auth.json").write_text('{"token":"secret"}', encoding="utf-8")
+    auth_file = codex_dir / "auth.json"
+    auth_file.write_text('{"token":"secret"}', encoding="utf-8")
 
-    assert build_runtime_auth_file_report(home=tmp_path)["codex"]["exists"] is True
+    existing_report = build_runtime_auth_file_report(home=tmp_path)["codex"]
+
+    assert existing_report["target_path"] == "~/.codex/auth.json"
+    assert existing_report["exists"] is True
+    assert (
+        existing_report["sha256"]
+        == "632df890ac256889a1e442b454b933de1d699eca8110bbbccc230f5d49ba35a4"
+    )
+    assert existing_report["modified_at"].endswith("+00:00")
 
 
 def test_connected_accepts_namespace_connected_during_connect_callback():
