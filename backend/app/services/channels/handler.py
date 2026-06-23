@@ -79,6 +79,7 @@ logger = logging.getLogger(__name__)
 CHANNEL_CONV_TASK_PREFIX = "channel:conv_task:"
 # TTL for conversation-task mapping (7 days)
 CHANNEL_CONV_TASK_TTL = 7 * 24 * 60 * 60
+TASK_CREATED_RUNNING_NOTICE = "已创建任务，正在执行。"
 
 
 @dataclass
@@ -325,6 +326,47 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         )
         await callback_service.register_emitter(
             task_id=task_id, emitter=streaming_emitter
+        )
+
+    def _select_dispatch_result_emitter(
+        self,
+        *,
+        device_id: Optional[str],
+        streaming_emitter: Any,
+        response_emitter: Any,
+    ) -> Any:
+        """Avoid letting WebSocket dispatch close callback-owned emitters."""
+        if device_id and streaming_emitter:
+            return None
+        return response_emitter
+
+    def should_merge_task_created_running_notice_with_stream(self) -> bool:
+        return self._channel_type == ChannelType.WEIBO
+
+    async def _emit_initial_stream_content(
+        self,
+        streaming_emitter: Any,
+        *,
+        task_id: int | str,
+        subtask_id: int,
+        content: Optional[str],
+    ) -> None:
+        if not streaming_emitter or not content:
+            return
+
+        if hasattr(streaming_emitter, "emit_status_prefix"):
+            await streaming_emitter.emit_status_prefix(
+                task_id=task_id,
+                subtask_id=subtask_id,
+                content=content,
+            )
+            return
+
+        await streaming_emitter.emit_chunk(
+            task_id=task_id,
+            subtask_id=subtask_id,
+            content=content,
+            offset=0,
         )
 
     # ==================== Common Methods ====================
@@ -1036,9 +1078,14 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             address.device_id,
             address.local_task_id,
         )
+        streaming_emitter = await self._create_private_im_runtime_streaming_emitter(
+            callback_key=callback_key,
+            message_context=message_context,
+        )
         await self._register_private_im_runtime_callback(
             callback_key=callback_key,
             message_context=message_context,
+            streaming_emitter=streaming_emitter,
         )
         try:
             response = await runtime_work_service.send_runtime_message(
@@ -1080,8 +1127,11 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 runtime_task.get("localTaskId"),
             )
             await im_session_service.clear_active_task(db, session=im_session)
-            await self.send_text_reply(
-                message_context, "当前本地任务不可用,请回到 Wework 重新选择。"
+            await self._emit_private_im_runtime_stream_error(
+                streaming_emitter=streaming_emitter,
+                task_id=callback_key,
+                message_context=message_context,
+                error="当前本地任务不可用,请回到 Wework 重新选择。",
             )
             return
 
@@ -1095,9 +1145,11 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             )
             return
         await self._delete_private_im_runtime_callback(callback_key)
-        await self.send_text_reply(
-            message_context,
-            response.error or "本地任务暂时无法接收消息，请稍后重试。",
+        await self._emit_private_im_runtime_stream_error(
+            streaming_emitter=streaming_emitter,
+            task_id=callback_key,
+            message_context=message_context,
+            error=response.error or "本地任务暂时无法接收消息，请稍后重试。",
         )
 
     def _runtime_task_callback_key(self, runtime_task: dict[str, Any]) -> str:
@@ -1115,6 +1167,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         *,
         callback_key: str,
         message_context: MessageContext,
+        streaming_emitter: Any = None,
     ) -> None:
         callback_service = self.get_callback_service()
         if not callback_service:
@@ -1123,6 +1176,41 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             task_id=callback_key,
             callback_info=self.create_callback_info(message_context),
         )
+        if streaming_emitter and hasattr(callback_service, "register_emitter"):
+            await callback_service.register_emitter(callback_key, streaming_emitter)
+
+    async def _create_private_im_runtime_streaming_emitter(
+        self,
+        *,
+        callback_key: str,
+        message_context: MessageContext,
+    ) -> Any:
+        if not self.should_merge_task_created_running_notice_with_stream():
+            return None
+
+        streaming_emitter = await self.create_streaming_emitter(message_context)
+        if not streaming_emitter:
+            return None
+
+        await streaming_emitter.emit_start(task_id=callback_key, subtask_id=0)
+        return streaming_emitter
+
+    async def _emit_private_im_runtime_stream_error(
+        self,
+        *,
+        streaming_emitter: Any,
+        task_id: str,
+        message_context: MessageContext,
+        error: str,
+    ) -> None:
+        if streaming_emitter and hasattr(streaming_emitter, "emit_error"):
+            await streaming_emitter.emit_error(
+                task_id=task_id,
+                subtask_id=0,
+                error=error,
+            )
+            return
+        await self.send_text_reply(message_context, error)
 
     async def _delete_private_im_runtime_callback(self, callback_key: str) -> None:
         callback_service = self.get_callback_service()
@@ -1248,7 +1336,12 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             )
             return
 
-        await self.send_text_reply(message_context, "已创建任务，正在执行。")
+        initial_stream_content = None
+        if self.should_merge_task_created_running_notice_with_stream():
+            initial_stream_content = f"{TASK_CREATED_RUNNING_NOTICE}\n\n"
+        else:
+            await self.send_text_reply(message_context, TASK_CREATED_RUNNING_NOTICE)
+
         await self._persist_private_im_task_media(
             db=db,
             user_id=user.id,
@@ -1265,6 +1358,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             message=message,
             message_context=message_context,
             params=params,
+            initial_stream_content=initial_stream_content,
         )
 
     def _build_private_im_message_source(self, im_session: Any) -> Dict[str, Any]:
@@ -1315,6 +1409,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         message: str,
         message_context: MessageContext,
         params: Any,
+        initial_stream_content: Optional[str] = None,
     ) -> None:
         if assistant_subtask is None:
             return
@@ -1328,12 +1423,23 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 task_id=task_id,
                 subtask_id=assistant_subtask.id,
             )
+            await self._emit_initial_stream_content(
+                streaming_emitter,
+                task_id=task_id,
+                subtask_id=assistant_subtask.id,
+                content=initial_stream_content,
+            )
             if hasattr(streaming_emitter, "set_shared_content_key"):
                 streaming_emitter.set_shared_content_key(
                     f"channel:streaming_content:{task_id}"
                 )
         else:
             response_emitter = SyncResponseEmitter()
+            if initial_stream_content:
+                await self.send_text_reply(
+                    message_context,
+                    initial_stream_content.strip(),
+                )
 
         await self._register_streaming_emitter(
             task_id=task_id,
@@ -1344,6 +1450,11 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         from app.services.chat.trigger import trigger_ai_response_unified
 
         try:
+            dispatch_result_emitter = self._select_dispatch_result_emitter(
+                device_id=device_id,
+                streaming_emitter=streaming_emitter,
+                response_emitter=response_emitter,
+            )
             await trigger_ai_response_unified(
                 task=task,
                 assistant_subtask=assistant_subtask,
@@ -1358,7 +1469,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 device_id=device_id,
                 namespace=None,
                 user_subtask_id=user_subtask_id,
-                result_emitter=response_emitter,
+                result_emitter=dispatch_result_emitter,
             )
         except Exception as exc:
             self.logger.exception(
@@ -2725,6 +2836,14 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         # will read them from the DB and inject as vision content automatically,
         # following the same path as PC-uploaded image attachments.
         ai_message = (message or "") + IM_CHANNEL_CONTEXT_HINT
+        dispatch_device_id = extract_task_device_id(trigger_data["task"]) or getattr(
+            params, "device_id", None
+        )
+        dispatch_result_emitter = self._select_dispatch_result_emitter(
+            device_id=dispatch_device_id,
+            streaming_emitter=streaming_emitter,
+            response_emitter=response_emitter,
+        )
 
         await trigger_ai_response_unified(
             task=trigger_data["task"],
@@ -2736,7 +2855,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             task_room=task_room,
             namespace=None,
             user_subtask_id=trigger_data["user_subtask_id"],
-            result_emitter=response_emitter,
+            result_emitter=dispatch_result_emitter,
         )
 
         # When a streaming emitter is available (e.g., DingTalk AI Card), rely on

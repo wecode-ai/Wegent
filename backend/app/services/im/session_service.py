@@ -29,6 +29,7 @@ CHANNEL_LABELS = {
     "dingtalk": "钉钉",
     "telegram": "Telegram",
     "discord": "Discord",
+    "weibo": "微博",
 }
 
 

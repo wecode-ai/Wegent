@@ -455,6 +455,16 @@ class WebSocketClient:
             "/local-executor" in namespaces
         )
 
+    def _engineio_connected(self) -> bool:
+        """Check whether the underlying Engine.IO transport is still connected."""
+        eio = getattr(self.sio, "eio", None)
+        state = getattr(eio, "state", None)
+        return str(state).lower() == "connected"
+
+    def _has_active_transport(self) -> bool:
+        """Check any Socket.IO/Engine.IO state that blocks a fresh connect."""
+        return self._socketio_connected() or self._engineio_connected()
+
     @property
     def registered(self) -> bool:
         """Check if device is registered."""
@@ -486,6 +496,17 @@ class WebSocketClient:
         if self.connected:
             logger.info("Already connected to WebSocket")
             return True
+
+        if self._has_active_transport():
+            logger.warning(
+                "Socket.IO transport state was stale; disconnecting before connect"
+            )
+            try:
+                await self.sio.disconnect()
+            except Exception as e:
+                logger.warning(f"Error while disconnecting stale WebSocket: {e}")
+            self._connected = False
+            self._registered = False
 
         if self._connected:
             logger.warning("WebSocket local state was stale; resetting before connect")
@@ -528,7 +549,7 @@ class WebSocketClient:
         logger.info("Forcing WebSocket reconnect")
 
         try:
-            if self._connected or self._socketio_connected():
+            if self._connected or self._has_active_transport():
                 await self.sio.disconnect()
         except Exception as e:
             logger.warning(f"Error while disconnecting stale WebSocket: {e}")
