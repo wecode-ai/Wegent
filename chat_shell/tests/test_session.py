@@ -158,6 +158,7 @@ class TestStreamingCore:
                 "after_tokens": 110000,
             }
         ]
+        streaming_state.termination_reason = "completed_with_unexecuted_tool_calls"
 
         core = StreamingCore(emitter=emitter, state=streaming_state)
 
@@ -171,3 +172,4 @@ class TestStreamingCore:
         response = completed["response"]
         assert response["messages_chain"] == streaming_state.messages_chain
         assert response["context_compactions"] == streaming_state.context_compactions
+        assert response["termination_reason"] == "completed_with_unexecuted_tool_calls"

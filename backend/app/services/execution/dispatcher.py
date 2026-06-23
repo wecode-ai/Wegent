@@ -171,6 +171,7 @@ def extract_completed_result(response_data: dict) -> dict:
         ),
         "loaded_skills": response_data.get("loaded_skills"),
         "stop_reason": response_data.get("stop_reason"),
+        "termination_reason": response_data.get("termination_reason"),
         "messages_chain": response_data.get("messages_chain"),
         "context_metrics": response_data.get("context_metrics"),
         "context_compactions": response_data.get("context_compactions"),

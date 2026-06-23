@@ -408,7 +408,6 @@ async def collect_completed_result(
     accumulated_content = await chat_storage.session_manager.get_accumulated_content(
         subtask_id
     )
-    blocks = await chat_storage.session_manager.finalize_and_get_blocks(subtask_id)
     existing_result = await _get_existing_subtask_result(subtask_id)
 
     if result is not None and not isinstance(result, dict):
@@ -419,6 +418,19 @@ async def collect_completed_result(
         )
 
     runtime_result = dict(result) if isinstance(result, dict) else {}
+    termination_reason = runtime_result.get("termination_reason")
+    if not isinstance(termination_reason, str) or not termination_reason:
+        existing_termination_reason = existing_result.get("termination_reason")
+        termination_reason = (
+            existing_termination_reason
+            if isinstance(existing_termination_reason, str)
+            and existing_termination_reason
+            else None
+        )
+    blocks = await chat_storage.session_manager.finalize_and_get_blocks(
+        subtask_id,
+        termination_reason=termination_reason,
+    )
 
     has_payload = bool(
         runtime_result

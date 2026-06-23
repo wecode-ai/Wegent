@@ -367,6 +367,7 @@ export interface SubtaskResult {
   thinking?: unknown[]
   value?: string | { workbench?: WorkbenchData }
   workbench?: WorkbenchData
+  termination_reason?: string
   /** Persisted correction data from AI correction mode */
   correction?: CorrectionData
   /** Video generation result */

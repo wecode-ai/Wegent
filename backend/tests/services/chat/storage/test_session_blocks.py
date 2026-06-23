@@ -285,7 +285,10 @@ async def test_finalize_and_get_blocks_marks_unresolved_preview_tool_blocks_erro
         tool_input={"file_path": "/tmp/a.txt"},
     )
 
-    blocks = await manager.finalize_and_get_blocks(505)
+    blocks = await manager.finalize_and_get_blocks(
+        505,
+        termination_reason="completed_with_unexecuted_tool_calls",
+    )
 
     assert blocks == [
         {
@@ -299,6 +302,86 @@ async def test_finalize_and_get_blocks_marks_unresolved_preview_tool_blocks_erro
             "tool_output": "Tool call was not executed before the turn completed. The turn may have hit the tool-call limit.",
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_finalize_and_get_blocks_uses_generic_message_without_limit_reason():
+    manager = SessionManager()
+    redis_client = FakeRedisClient()
+    manager._cache = FakeCache(redis_client)
+
+    await manager.add_tool_block(
+        subtask_id=506,
+        tool_use_id="read_file_2",
+        tool_name="read_file",
+        tool_input={"file_path": "/tmp/b.txt"},
+    )
+    await manager.update_tool_block_status(
+        subtask_id=506,
+        tool_use_id="read_file_2",
+        status="pending",
+        tool_input={"file_path": "/tmp/b.txt"},
+    )
+
+    blocks = await manager.finalize_and_get_blocks(506)
+
+    assert blocks[0]["status"] == "error"
+    assert (
+        blocks[0]["tool_output"]
+        == "Tool call preview did not complete before the turn ended."
+    )
+
+
+@pytest.mark.asyncio
+async def test_finalize_and_get_blocks_uses_generic_message_when_explicit_tool_error_exists():
+    manager = SessionManager()
+    redis_client = FakeRedisClient()
+    manager._cache = FakeCache(redis_client)
+
+    await manager.add_tool_block(
+        subtask_id=507,
+        tool_use_id="preview_1",
+        tool_name="exec",
+        tool_input={"command": "ls"},
+    )
+    await manager.update_tool_block_status(
+        subtask_id=507,
+        tool_use_id="preview_1",
+        status="pending",
+        tool_input={"command": "ls"},
+    )
+    await manager.add_tool_block(
+        subtask_id=507,
+        tool_use_id="exec_real_1",
+        tool_name="exec",
+        tool_input={"command": "ls"},
+    )
+    await manager.update_tool_block_status(
+        subtask_id=507,
+        tool_use_id="exec_real_1",
+        status="error",
+        tool_input={"command": "ls"},
+        tool_output="command: Field required",
+    )
+
+    blocks = await manager.finalize_and_get_blocks(
+        507,
+        termination_reason="completed_with_unexecuted_tool_calls",
+    )
+
+    preview_block = next(
+        block for block in blocks if block["tool_use_id"] == "preview_1"
+    )
+    real_error_block = next(
+        block for block in blocks if block["tool_use_id"] == "exec_real_1"
+    )
+
+    assert preview_block["status"] == "error"
+    assert (
+        preview_block["tool_output"]
+        == "Tool call preview did not complete before the turn ended."
+    )
+    assert real_error_block["tool_output"] == "command: Field required"
 
 
 @pytest.mark.asyncio

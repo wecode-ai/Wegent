@@ -297,6 +297,7 @@ export interface ChatDonePayload {
     /** Message blocks for mixed rendering (new format) */
     blocks?: ChatBlock[]
     error?: string // Error message if result represents error completion
+    termination_reason?: string
     /** Gemini Deep Research grounding annotations */
     annotations?: GeminiAnnotation[]
   }

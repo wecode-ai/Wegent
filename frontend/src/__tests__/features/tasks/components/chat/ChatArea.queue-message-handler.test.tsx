@@ -40,6 +40,13 @@ let streamHandlersMock = { ...defaultStreamHandlers }
 let selectedTaskDetailMock: TaskDetail | null = null
 let mockTaskInputMessage = ''
 const mockSetTaskInputMessage = jest.fn()
+let chatStatusIndicatorMock = {
+  enabled: false,
+  display: null,
+  currentTaskId: null,
+  isCompacting: false,
+}
+const mockMessagesArea = jest.fn(() => <div data-testid="messages-area" />)
 
 jest.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(),
@@ -63,12 +70,7 @@ jest.mock('@/hooks/useTranslation', () => ({
 }))
 
 jest.mock('@/features/tasks/hooks/useChatStatusIndicator', () => ({
-  useChatStatusIndicator: () => ({
-    enabled: false,
-    display: null,
-    currentTaskId: null,
-    isCompacting: false,
-  }),
+  useChatStatusIndicator: () => chatStatusIndicatorMock,
 }))
 
 jest.mock('@/features/tasks/components/chat/useChatAreaState', () => ({
@@ -155,8 +157,8 @@ jest.mock('@/features/projects/contexts/projectContext', () => ({
 jest.mock(
   '@/features/tasks/components/message/MessagesArea',
   () =>
-    function MockMessagesArea() {
-      return <div data-testid="messages-area" />
+    function MockMessagesArea(props: Record<string, unknown>) {
+      return mockMessagesArea(props)
     }
 )
 jest.mock('@/features/tasks/components/chat/QuickAccessCards', () => ({
@@ -335,6 +337,13 @@ describe('ChatArea queue message handler mounting', () => {
     streamHandlersMock = { ...defaultStreamHandlers }
     selectedTaskDetailMock = null
     mockTaskInputMessage = ''
+    chatStatusIndicatorMock = {
+      enabled: false,
+      display: null,
+      currentTaskId: null,
+      isCompacting: false,
+    }
+    mockMessagesArea.mockClear()
     mockSetTaskInputMessage.mockClear()
     mockChatInputCard.mockClear()
     mockAddExistingAttachment.mockClear()
@@ -362,6 +371,21 @@ describe('ChatArea queue message handler mounting', () => {
       <ChatArea teams={[]} isTeamsLoading={false} taskType="task" showRepositorySelector={false} />
     )
     expect(screen.getByTestId('queue-message-handler')).toBeInTheDocument()
+  })
+
+  it('passes compacting wait message into MessagesArea while compacting', () => {
+    chatStatusIndicatorMock = {
+      enabled: true,
+      display: null,
+      currentTaskId: 42,
+      isCompacting: true,
+    }
+
+    render(<ChatArea teams={[]} isTeamsLoading={false} taskType="chat" showRepositorySelector />)
+
+    expect(mockMessagesArea).toHaveBeenCalledWith(
+      expect.objectContaining({ waitingMessage: 'common:chat_status.compacting' })
+    )
   })
 
   it('passes queued send availability to ChatInputCard for a running task', () => {

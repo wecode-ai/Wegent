@@ -72,9 +72,6 @@ import type { QuickPresetSelection } from './quick-launch/types'
 import { useDevices } from '@/contexts/DeviceContext'
 import { filterTeamsByMode, type TeamModeFilter } from '../selector/team-selector-utils'
 import type { UnifiedMessage } from '@wegent/chat-core'
-import { Spinner } from '@/components/ui/spinner'
-import { filterTeamsByMode, type TeamModeFilter } from '../selector/team-selector-utils'
-import type { UnifiedMessage } from '@wegent/chat-core'
 
 /**
  * Threshold in pixels for determining when to collapse selectors.
@@ -140,18 +137,6 @@ function getSystemQuickLaunchFunctionId(selection: QuickPresetSelection): string
 
   const functionId = idParts.join(':').trim()
   return functionId || null
-}
-
-function CompactingContextBanner({ label }: { label: string }) {
-  return (
-    <div
-      className="mb-4 flex items-center gap-2 rounded-xl border border-border bg-surface/80 px-3 py-2 text-sm text-text-secondary"
-      data-testid="chat-area-compacting-banner"
-    >
-      <Spinner size="sm" />
-      <span>{label}</span>
-    </div>
-  )
 }
 
 interface ChatAreaProps {
@@ -1635,6 +1620,9 @@ function ChatAreaContent({
 
   const shouldMountQueueMessageHandler =
     effectiveTaskType === 'chat' || effectiveTaskType === 'task' || effectiveTaskType === 'code'
+  const compactingWaitMessage = chatStatus.isCompacting
+    ? t('common:chat_status.compacting')
+    : undefined
 
   return (
     <div
@@ -1698,9 +1686,6 @@ function ChatAreaContent({
           style={{ paddingBottom: hasMessages ? `${inputHeight + 16}px` : '0' }}
         >
           <div className="w-full max-w-5xl mx-auto px-4 sm:px-6 pt-12">
-            {hasMessages && chatStatus.isCompacting && (
-              <CompactingContextBanner label={t('common:chat_status.compacting')} />
-            )}
             <MessagesArea
               selectedTeam={chatState.selectedTeam}
               selectedRepo={chatState.selectedRepo}
@@ -1722,6 +1707,7 @@ function ChatAreaContent({
               hideGroupChatOptions={taskType === 'knowledge'}
               onUseAsReference={handleUseAsReference}
               onReEdit={handleReEdit}
+              waitingMessage={compactingWaitMessage}
             />
           </div>
         </div>

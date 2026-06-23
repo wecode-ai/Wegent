@@ -763,6 +763,7 @@ class LangGraphAgentBuilder:
         # Messages chain produced by the last stream_tokens() call
         self._last_messages_chain: list[dict[str, Any]] = []
         self._last_live_state_messages: list[dict[str, Any]] = []
+        self._last_termination_reason: str | None = None
 
         # Automatically detect PromptModifierTool instances from registered tools
         self._prompt_modifier_tools = self._find_prompt_modifier_tools()
@@ -1905,6 +1906,7 @@ class LangGraphAgentBuilder:
             ):
                 termination_reason = "completed_with_unexecuted_tool_calls"
                 termination_log = logger.warning
+            self._last_termination_reason = termination_reason
 
             termination_log(
                 "[stream_tokens] Termination: reason=%s "
@@ -1933,6 +1935,7 @@ class LangGraphAgentBuilder:
 
             # Check if we've exceeded retry limit
             if _truncation_retry_count >= self.max_truncation_retries:
+                self._last_termination_reason = "tool_call_truncation_retry_exhausted"
                 logger.error(
                     "[stream_tokens] Max truncation retries exceeded (%d). "
                     "Yielding final truncation warning.",
@@ -2013,6 +2016,7 @@ class LangGraphAgentBuilder:
             raise
 
         except GraphRecursionError:
+            self._last_termination_reason = "graph_recursion_limit_recovery"
             # Tool call limit reached - ask model to provide final response
             logger.warning(
                 "[stream_tokens] GraphRecursionError: Tool call limit reached "

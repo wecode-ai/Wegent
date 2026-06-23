@@ -50,6 +50,9 @@ STREAMING_TTL = 3600
 BLOCK_CONTENT_KEY_FIELD = "_content_key"
 UNRESOLVED_PREVIEW_TOOL_BLOCK_STATUSES = {"pending", "generating_arguments"}
 UNRESOLVED_PREVIEW_TOOL_BLOCK_MESSAGE = "Tool call was not executed before the turn completed. The turn may have hit the tool-call limit."
+UNRESOLVED_PREVIEW_TOOL_BLOCK_GENERIC_MESSAGE = (
+    "Tool call preview did not complete before the turn ended."
+)
 
 
 class StreamContentType(str, Enum):
@@ -1319,7 +1322,12 @@ class SessionManager:
             )
             return []
 
-    async def finalize_and_get_blocks(self, subtask_id: int) -> List[Dict[str, Any]]:
+    async def finalize_and_get_blocks(
+        self,
+        subtask_id: int,
+        *,
+        termination_reason: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
         """Finalize any pending text block and return all blocks.
 
         This should be called when the subtask completes (DONE event).
@@ -1340,7 +1348,10 @@ class SessionManager:
             redis_client = await self._cache._get_client()
             try:
                 blocks = await self._load_blocks_from_client(redis_client, blocks_key)
-                blocks = self._finalize_unresolved_preview_tool_blocks(blocks)
+                blocks = self._finalize_unresolved_preview_tool_blocks(
+                    blocks,
+                    termination_reason=termination_reason,
+                )
                 logger.info(
                     f"[SessionManager] Finalized blocks for subtask {subtask_id}: "
                     f"count={len(blocks)}"
@@ -1355,7 +1366,10 @@ class SessionManager:
             return []
 
     def _finalize_unresolved_preview_tool_blocks(
-        self, blocks: List[Dict[str, Any]]
+        self,
+        blocks: List[Dict[str, Any]],
+        *,
+        termination_reason: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Convert unresolved preview-only tool blocks into terminal error blocks.
 
@@ -1367,6 +1381,20 @@ class SessionManager:
         pending blocks that already carry a semantic output payload (for example
         deferred interactive forms waiting for user input) are preserved.
         """
+        inferred_tool_limit = (
+            termination_reason == "completed_with_unexecuted_tool_calls"
+        )
+        has_explicit_tool_error = any(
+            block.get("type") == "tool"
+            and block.get("status") == BlockStatus.ERROR.value
+            and block.get("tool_output")
+            for block in blocks
+        )
+        unresolved_message = (
+            UNRESOLVED_PREVIEW_TOOL_BLOCK_MESSAGE
+            if inferred_tool_limit and not has_explicit_tool_error
+            else UNRESOLVED_PREVIEW_TOOL_BLOCK_GENERIC_MESSAGE
+        )
         finalized_blocks: List[Dict[str, Any]] = []
         for block in blocks:
             if (
@@ -1378,7 +1406,7 @@ class SessionManager:
                     {
                         **block,
                         "status": BlockStatus.ERROR.value,
-                        "tool_output": UNRESOLVED_PREVIEW_TOOL_BLOCK_MESSAGE,
+                        "tool_output": unresolved_message,
                     }
                 )
                 continue

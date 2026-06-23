@@ -509,6 +509,11 @@ class ChatService(ChatInterface):
             messages_chain = getattr(agent_builder, "_last_messages_chain", None)
             if messages_chain:
                 state.messages_chain = messages_chain
+            termination_reason = getattr(
+                agent_builder, "_last_termination_reason", None
+            )
+            if termination_reason:
+                state.termination_reason = termination_reason
             if context_guard.context_compactions:
                 state.context_compactions = context_guard.context_compactions
 
