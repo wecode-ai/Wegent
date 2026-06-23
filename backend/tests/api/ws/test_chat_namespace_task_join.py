@@ -66,6 +66,7 @@ async def test_task_join_replays_cached_context_metrics_for_active_stream() -> N
         )
 
     assert result["streaming"]["subtask_id"] == 55
+    assert result["status_updated"] == cached_metrics
     namespace.emit.assert_awaited_once_with(
         ServerEvents.CHAT_STATUS_UPDATED,
         cached_metrics,

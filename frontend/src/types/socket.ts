@@ -685,6 +685,8 @@ export interface TaskJoinAck {
   }
   /** Subtasks data for immediate message sync (same format as task detail API) */
   subtasks?: Array<Record<string, unknown>>
+  /** Latest cached status snapshot for active streaming recovery. */
+  status_updated?: ChatStatusUpdatedPayload
   error?: string
 }
 

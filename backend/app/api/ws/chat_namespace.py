@@ -523,6 +523,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                     "started_at": streaming_info.get("started_at"),
                     "last_activity_at": streaming_info.get("last_activity_at"),
                 },
+                "status_updated": cached_context_metrics,
                 "subtasks": subtasks_dict,
             }
 
