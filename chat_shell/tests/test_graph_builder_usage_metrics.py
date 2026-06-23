@@ -64,3 +64,16 @@ async def test_invoke_model_usage_callback_supports_keyword_only_callback():
     await _invoke_model_usage_callback(callback, messages, input_tokens=123)
 
     assert called == {"messages": messages, "input_tokens": 123}
+
+
+@pytest.mark.asyncio
+async def test_invoke_model_usage_callback_swallows_callback_exceptions():
+    def callback(messages, *, input_tokens):
+        del messages, input_tokens
+        raise RuntimeError("telemetry broke")
+
+    await _invoke_model_usage_callback(
+        callback,
+        [{"role": "user", "content": "hello"}],
+        input_tokens=123,
+    )

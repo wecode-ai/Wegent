@@ -250,6 +250,8 @@ class TestModelContextConfig:
         # Should use context_window from model_config and default output_tokens
         assert config.context_window == 300000
         assert config.output_tokens == 4096  # default fallback
+        assert config.output_tokens_cap_enabled is False
+        assert config.reserved_output_tokens == 30000
 
     def test_get_model_context_config_empty_model_config(self):
         """Test getting config with empty model_config falls back to built-in."""
@@ -258,6 +260,15 @@ class TestModelContextConfig:
         # Should fall back to built-in defaults for gpt-4o
         assert config.context_window == 128000
         assert config.output_tokens == 16384
+
+    def test_unknown_model_default_does_not_cap_reserve_by_fallback_output_tokens(self):
+        """Unknown-model fallback must keep the flat reserve instead of 4k."""
+        config = get_model_context_config("totally-unknown-model")
+
+        assert config.context_window == 128000
+        assert config.output_tokens == 4096
+        assert config.output_tokens_cap_enabled is False
+        assert config.reserved_output_tokens == 16000
 
 
 class TestCompressionConfig:

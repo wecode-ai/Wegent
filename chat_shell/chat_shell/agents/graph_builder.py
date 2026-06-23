@@ -299,9 +299,15 @@ async def _invoke_model_usage_callback(
     input_tokens: int,
 ) -> None:
     """Call the optional provider-usage callback with keyword-safe semantics."""
-    callback_result = callback(messages, input_tokens=input_tokens)
-    if inspect.isawaitable(callback_result):
-        await callback_result
+    try:
+        callback_result = callback(messages, input_tokens=input_tokens)
+        if inspect.isawaitable(callback_result):
+            await callback_result
+    except Exception:
+        logger.warning(
+            "[stream_tokens] on_model_usage callback failed; continuing without provider usage baseline",
+            exc_info=True,
+        )
 
 
 def _validate_tool_message_sequence(

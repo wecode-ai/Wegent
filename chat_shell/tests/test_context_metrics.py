@@ -5,7 +5,9 @@
 from unittest.mock import AsyncMock
 
 import pytest
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
+from chat_shell.agents.graph_builder import _extract_model_input_messages
 from chat_shell.compression.config import get_model_context_config
 from chat_shell.compression.context_metrics import (
     PHASE_AFTER_TOOL_END,
@@ -47,8 +49,8 @@ def test_calculate_context_metrics_uses_model_config_limits():
         },
     )
 
-    # reserved uses the flat buffer, capped by the configured model output cap.
-    # clamp(32000 * 0.1, 16k, 48k) = 16000, then min(16000, 4000) = 4000.
+    # reserved uses the flat buffer, capped by the explicitly configured model
+    # output cap. clamp(32000 * 0.1, 16k, 48k) = 16000, then min(16000, 4000) = 4000.
     assert snapshot.context_window == 32000
     assert snapshot.reserved_output_tokens == 4000
     assert snapshot.available_input_tokens == 28000
@@ -251,6 +253,67 @@ async def test_tracker_baseline_matches_even_when_live_view_has_extra_fields():
     expected = 500 + counter.count_messages(messages[1:])
 
     snapshot = await tracker.capture(messages, PHASE_BUILD_MESSAGES)
+
+    assert snapshot.used_input_tokens == expected
+
+
+@pytest.mark.asyncio
+async def test_tracker_baseline_matches_model_start_event_shape_against_guard_live_view():
+    emitter = AsyncMock()
+    tracker = ContextMetricsTracker(
+        task_id=1,
+        subtask_id=2,
+        metrics_fn=_metrics_fn,
+        emitter=emitter,
+    )
+    event = {
+        "data": {
+            "input": {
+                "messages": [
+                    HumanMessage(content="use tool"),
+                    AIMessage(
+                        content="",
+                        tool_calls=[
+                            {"id": "call_1", "name": "search", "args": {"q": "x"}}
+                        ],
+                    ),
+                    ToolMessage(content="result", tool_call_id="call_1"),
+                ]
+            }
+        }
+    }
+    baseline_messages = _extract_model_input_messages(event)
+    assert baseline_messages is not None
+
+    tracker.record_provider_usage(baseline_messages, input_tokens=700)
+
+    live_view = [
+        {
+            "role": "user",
+            "content": "use tool",
+            "id": "u-1",
+            "additional_kwargs": {"cache_control": {"type": "ephemeral"}},
+        },
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{"id": "call_1", "name": "search", "args": {"q": "x"}}],
+            "id": "a-1",
+            "additional_kwargs": {},
+        },
+        {
+            "role": "tool",
+            "content": "result",
+            "tool_call_id": "call_1",
+            "id": "t-1",
+            "additional_kwargs": {},
+        },
+        {"role": "assistant", "content": "delta"},
+    ]
+    counter = TokenCounter(model_name="gpt-4o", model_type="openai")
+    expected = 700 + counter.count_messages(live_view[-1:])
+
+    snapshot = await tracker.capture(live_view, PHASE_BUILD_MESSAGES)
 
     assert snapshot.used_input_tokens == expected
 

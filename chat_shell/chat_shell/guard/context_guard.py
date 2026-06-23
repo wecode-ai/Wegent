@@ -714,7 +714,10 @@ class UnifiedContextGuard:
             return _StagePass(updates=[], view=view)
 
         before_tokens = self._current_used_input_tokens(view)
-        before_snapshot = self.metrics(view)
+        before_snapshot = self.metrics(
+            view,
+            usage_baseline=self._current_usage_baseline(),
+        )
         created_at = self._compaction_created_at()
         await self._emit_context_compaction_status(
             phase="summary_compact",

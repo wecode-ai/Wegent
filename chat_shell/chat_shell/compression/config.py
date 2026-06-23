@@ -33,6 +33,7 @@ class ModelContextConfig:
 
     context_window: int
     output_tokens: int = 4096
+    output_tokens_cap_enabled: bool = True
     trigger_threshold: float = 0.90  # Trigger compression at 90% of available context
     target_threshold: float = 0.70  # Compress to 70% of available context
     auto_compact_token_limit: int | None = None
@@ -44,10 +45,12 @@ class ModelContextConfig:
         Deliberately decoupled from ``output_tokens`` (the model's max output
         capability, commonly configured at the model ceiling, e.g. 96k). Using
         that ceiling as the reserve makes compaction trigger far too early. We
-        reserve a flat buffer instead, but never more than the configured model
-        output cap when it is smaller:
+        reserve a flat buffer instead, and only cap it by ``output_tokens`` when
+        that cap is explicitly trustworthy for governance budgeting:
 
-            reserved = min(clamp(context_window * 0.1, 16k, 48k), output_tokens)
+            reserved = clamp(context_window * 0.1, 16k, 48k)
+            if output_tokens_cap_enabled:
+                reserved = min(reserved, output_tokens)
             reserved = min(reserved, context_window // 2)
 
         The final ``window // 2`` cap protects small-window models from
@@ -57,7 +60,8 @@ class ModelContextConfig:
         reserved = min(
             max(ratio_based, RESERVED_OUTPUT_MIN_TOKENS), RESERVED_OUTPUT_MAX_TOKENS
         )
-        reserved = min(reserved, self.output_tokens)
+        if self.output_tokens_cap_enabled:
+            reserved = min(reserved, self.output_tokens)
         return min(reserved, self.context_window // 2)
 
     @property
@@ -192,6 +196,7 @@ def get_model_context_config(
                 ModelContextConfig(
                     context_window=context_window,
                     output_tokens=output_tokens,
+                    output_tokens_cap_enabled=max_output_tokens is not None,
                     trigger_threshold=0.90,
                     target_threshold=0.70,
                 )
@@ -214,6 +219,7 @@ def get_model_context_config(
         ModelContextConfig(
             context_window=128000,
             output_tokens=4096,
+            output_tokens_cap_enabled=False,
             trigger_threshold=0.85,  # More conservative for unknown models
             target_threshold=0.65,
         )

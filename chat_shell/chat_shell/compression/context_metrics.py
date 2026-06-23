@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from collections.abc import Callable
@@ -79,9 +80,46 @@ class ContextCompactionEvent:
 _BASELINE_FIELDS = ("role", "content", "tool_calls", "name", "tool_call_id")
 
 
+def _normalize_tool_call_shape(tool_call: Any) -> Any:
+    """Project provider-specific tool-call payloads to a stable semantic shape."""
+    if not isinstance(tool_call, dict):
+        return deepcopy(tool_call)
+
+    name = tool_call.get("name")
+    args = tool_call.get("args")
+
+    function = tool_call.get("function")
+    if isinstance(function, dict):
+        name = function.get("name", name)
+        function_args = function.get("arguments")
+        if isinstance(function_args, str):
+            try:
+                args = json.loads(function_args)
+            except json.JSONDecodeError:
+                args = function_args
+        elif function_args is not None:
+            args = function_args
+
+    return {
+        "id": tool_call.get("id"),
+        "name": name,
+        "args": deepcopy(args),
+    }
+
+
+def _normalize_baseline_field(field: str, value: Any) -> Any:
+    """Normalize fields before baseline prefix comparison."""
+    if field == "tool_calls" and isinstance(value, list):
+        return [_normalize_tool_call_shape(tool_call) for tool_call in value]
+    return deepcopy(value)
+
+
 def _baseline_message_shape(message: dict[str, Any]) -> tuple[Any, ...]:
     """Project a message dict to the stable shape used for baseline matching."""
-    return tuple(deepcopy(message.get(field)) for field in _BASELINE_FIELDS)
+    return tuple(
+        _normalize_baseline_field(field, message.get(field))
+        for field in _BASELINE_FIELDS
+    )
 
 
 def calculate_context_metrics(
