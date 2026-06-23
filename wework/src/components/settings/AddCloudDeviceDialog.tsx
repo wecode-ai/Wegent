@@ -3,10 +3,7 @@ import { useCallback, useState } from 'react'
 import { createHttpClient } from '@/api/http'
 import { createDeviceApi } from '@/api/devices'
 import { getRuntimeConfig } from '@/config/runtime'
-import { useTranslation } from '@/hooks/useTranslation'
 import type { DockerRemoteDeviceCommandResponse } from '@/types/devices'
-
-const LOCAL_DEVICE_START_COMMAND = 'wegent-executor'
 
 interface AddCloudDeviceDialogProps {
   open: boolean
@@ -23,7 +20,6 @@ export function AddCloudDeviceDialog({
   onCreated,
   onCreatingChange,
 }: AddCloudDeviceDialogProps) {
-  const { t } = useTranslation('common')
   const [loading, setLoading] = useState(false)
   const [remoteLoading, setRemoteLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -121,21 +117,6 @@ export function AddCloudDeviceDialog({
         )}
 
         <div className="mt-5 max-h-[calc(100vh-176px)] space-y-3 overflow-y-auto px-5 pb-1">
-          <div className="rounded-md border border-border bg-surface px-3 py-2.5">
-            <div className="text-xs font-medium text-text-primary">
-              {t('workbench.connection_start_device_command_title')}
-            </div>
-            <p className="mt-1 text-xs leading-5 text-text-secondary">
-              {t('workbench.connection_start_device_command_desc')}
-            </p>
-            <code
-              data-testid="add-cloud-device-start-command"
-              className="mt-2 block overflow-x-auto rounded bg-background px-2 py-1.5 font-mono text-[11px] leading-5 text-text-primary"
-            >
-              {LOCAL_DEVICE_START_COMMAND}
-            </code>
-          </div>
-
           <div className="flex items-start gap-3 rounded-lg border border-border bg-surface p-3">
             <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-background text-text-secondary">
               <Cloud className="h-4 w-4" />

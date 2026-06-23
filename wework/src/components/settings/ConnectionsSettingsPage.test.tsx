@@ -278,9 +278,7 @@ describe('ConnectionsSettingsPage', () => {
     const createDialog = screen.getByTestId('add-cloud-device-dialog')
     expect(createDialog.querySelector('.text-\\[\\#0d9488\\]')).toBeNull()
     expect(createDialog).toHaveClass('bg-popover')
-    expect(screen.getByTestId('add-cloud-device-start-command')).toHaveTextContent(
-      'wegent-executor'
-    )
+    expect(screen.queryByTestId('add-cloud-device-start-command')).not.toBeInTheDocument()
     expect(screen.getByTestId('add-cloud-device-confirm')).toHaveClass(
       'bg-text-primary',
       'text-background'
