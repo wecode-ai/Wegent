@@ -252,6 +252,9 @@ class WebSocketResultEmitter(BaseResultEmitter):
         """Emit chat:status_updated and cache the latest snapshot."""
         phase = event.data.get("phase") if event.data else None
         context_metrics = event.data.get("context_metrics", {}) if event.data else {}
+        context_compaction = (
+            event.data.get("context_compaction") if event.data else None
+        )
         if not phase or not isinstance(context_metrics, dict):
             logger.debug(
                 "[WebSocketResultEmitter] Skipping invalid status update event: %s",
@@ -267,6 +270,11 @@ class WebSocketResultEmitter(BaseResultEmitter):
                     "subtask_id": event.subtask_id,
                     "phase": phase,
                     "context_metrics": context_metrics,
+                    "context_compaction": (
+                        context_compaction
+                        if isinstance(context_compaction, dict)
+                        else None
+                    ),
                 },
             )
         except Exception as exc:
@@ -281,6 +289,9 @@ class WebSocketResultEmitter(BaseResultEmitter):
             subtask_id=event.subtask_id,
             phase=phase,
             context_metrics=context_metrics,
+            context_compaction=(
+                context_compaction if isinstance(context_compaction, dict) else None
+            ),
         )
 
     async def _emit_block_created(self, event: ExecutionEvent, ws_emitter) -> None:

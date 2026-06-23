@@ -39,6 +39,7 @@ jest.mock('@/hooks/useTranslation', () => ({
       if (key === 'common:chat_status.context_usage') {
         return `${params?.used} / ${params?.total} context tokens`
       }
+      if (key === 'common:chat_status.compacting') return 'Compacting context...'
       if (key === 'common:chat_status.over_trigger') return 'Compression threshold reached'
       if (key === 'common:quota.title') return 'Model quota'
       if (key === 'common:quota.brief') return 'Quota brief'
@@ -79,6 +80,7 @@ describe('ChatToolbarStatus', () => {
         totalTokens: '262,144',
         isOverTrigger: false,
       },
+      isCompacting: false,
     })
 
     render(<ChatToolbarStatus compact />)
@@ -112,6 +114,7 @@ describe('ChatToolbarStatus', () => {
       enabled: false,
       currentTaskId: null,
       display: null,
+      isCompacting: false,
     })
 
     render(<ChatToolbarStatus compact />)
@@ -126,20 +129,28 @@ describe('ChatToolbarStatus', () => {
     expect(screen.queryByTestId('chat-status-section')).not.toBeInTheDocument()
   })
 
-  test('does not render a standalone loading spinner in compact mode', () => {
+  test('renders compacting indicator when summary compact is in progress', async () => {
     getRuntimeConfigSync.mockReturnValue({
-      enableDisplayQuotas: true,
+      enableDisplayQuotas: false,
     })
-    fetchQuota.mockReturnValue(new Promise(() => {}))
     useChatStatusIndicator.mockReturnValue({
-      enabled: false,
-      currentTaskId: null,
-      display: null,
+      enabled: true,
+      currentTaskId: 1,
+      display: {
+        percent: 43,
+        usedTokens: '149,700',
+        totalTokens: '262,144',
+        isOverTrigger: true,
+      },
+      isCompacting: true,
     })
 
     render(<ChatToolbarStatus compact />)
 
-    expect(screen.queryByRole('status', { name: 'Loading' })).not.toBeInTheDocument()
-    expect(screen.queryByTestId('chat-toolbar-status-trigger')).not.toBeInTheDocument()
+    fireEvent.click(await screen.findByTestId('chat-toolbar-status-trigger'))
+
+    expect(await screen.findByTestId('chat-status-compacting')).toHaveTextContent(
+      'Compacting context...'
+    )
   })
 })

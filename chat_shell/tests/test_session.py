@@ -137,3 +137,39 @@ class TestStreamingCore:
         assert response["silent_exit_reason"] == "waiting_for_user_input"
         assert response["deferred_user_input"] is True
         assert response["deferred_user_input_tool_use_id"] == "tool_123"
+
+    @pytest.mark.asyncio
+    async def test_finalize_includes_messages_chain_and_context_compactions(
+        self, streaming_state
+    ):
+        """Completed payload should carry compact artifacts through response.completed."""
+        from chat_shell.services.streaming.core import StreamingCore
+        from shared.models import EmitterBuilder, GeneratorTransport
+
+        transport = GeneratorTransport()
+        emitter = EmitterBuilder().with_task(1, 2).with_transport(transport).build()
+        streaming_state.append_content("Hello")
+        streaming_state.messages_chain = [{"role": "assistant", "content": "Hello"}]
+        streaming_state.context_compactions = [
+            {
+                "strategy": "summary_compact",
+                "status": "completed",
+                "before_tokens": 150000,
+                "after_tokens": 110000,
+            }
+        ]
+        streaming_state.termination_reason = "completed_with_unexecuted_tool_calls"
+
+        core = StreamingCore(emitter=emitter, state=streaming_state)
+
+        await core.finalize()
+
+        completed = next(
+            data
+            for event_type, data in transport.get_events()
+            if event_type == "response.completed"
+        )
+        response = completed["response"]
+        assert response["messages_chain"] == streaming_state.messages_chain
+        assert response["context_compactions"] == streaming_state.context_compactions
+        assert response["termination_reason"] == "completed_with_unexecuted_tool_calls"

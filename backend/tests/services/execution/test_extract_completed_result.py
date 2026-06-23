@@ -50,6 +50,12 @@ class TestExtractCompletedResult:
         result = extract_completed_result({"messages_chain": chain})
         assert result["messages_chain"] == chain
 
+    def test_preserves_termination_reason(self):
+        result = extract_completed_result(
+            {"termination_reason": "completed_with_unexecuted_tool_calls"}
+        )
+        assert result["termination_reason"] == "completed_with_unexecuted_tool_calls"
+
     def test_preserves_reasoning_content(self):
         result = extract_completed_result({"reasoning_content": "thinking..."})
         assert result["reasoning_content"] == "thinking..."
@@ -122,6 +128,7 @@ class TestExtractCompletedResult:
         result = extract_completed_result({})
         assert result["sources"] is None
         assert result["messages_chain"] is None
+        assert result["termination_reason"] is None
         assert result["reasoning_content"] is None
         assert result["loaded_skills"] is None
 

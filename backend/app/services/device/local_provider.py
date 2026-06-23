@@ -378,7 +378,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
         for device_kind in devices:
             spec = device_kind.json.get("spec", {})
             device_type = spec.get("deviceType", DeviceType.LOCAL.value)
-            if device_type != DeviceType.CLOUD.value:
+            if device_type == DeviceType.LOCAL.value:
                 local_devices.append(device_kind)
 
         if not local_devices:

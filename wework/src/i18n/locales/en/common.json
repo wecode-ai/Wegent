@@ -542,8 +542,6 @@
     "connections_tab_other_devices": "Control other devices",
     "connections_authorized_devices": "Connectable devices",
     "connection_add": "Add",
-    "connection_start_device_command_title": "Start a local device",
-    "connection_start_device_command_desc": "After installing the local Executor, run this command on the target machine. The device will connect to Wegent automatically.",
     "connection_cloud_devices": "Cloud Devices",
     "connection_local_devices": "Local Devices",
     "connection_empty_devices": "No devices",

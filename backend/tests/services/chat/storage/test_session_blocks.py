@@ -220,7 +220,6 @@ async def test_text_chunks_use_block_content_key_and_pipeline():
     manager = SessionManager()
     redis_client = FakeRedisClient()
     manager._cache = FakeCache(redis_client)
-
     await manager.add_text_content(subtask_id=505, content="Hel")
     await manager.add_text_content(subtask_id=505, content="lo")
 
@@ -265,3 +264,157 @@ async def test_add_block_preserves_existing_block_content_key():
     assert raw_block["content"] == ""
     assert redis_client.values[content_key] == "updated"
     assert updated_blocks[0]["content"] == "updated"
+
+
+@pytest.mark.asyncio
+async def test_finalize_and_get_blocks_marks_unresolved_preview_tool_blocks_error():
+    manager = SessionManager()
+    redis_client = FakeRedisClient()
+    manager._cache = FakeCache(redis_client)
+
+    await manager.add_tool_block(
+        subtask_id=505,
+        tool_use_id="read_file_1",
+        tool_name="read_file",
+        tool_input={"file_path": "/tmp/a.txt"},
+    )
+    await manager.update_tool_block_status(
+        subtask_id=505,
+        tool_use_id="read_file_1",
+        status="pending",
+        tool_input={"file_path": "/tmp/a.txt"},
+    )
+
+    blocks = await manager.finalize_and_get_blocks(
+        505,
+        termination_reason="completed_with_unexecuted_tool_calls",
+    )
+
+    assert blocks == [
+        {
+            "id": "read_file_1",
+            "type": "tool",
+            "tool_use_id": "read_file_1",
+            "tool_name": "read_file",
+            "tool_input": {"file_path": "/tmp/a.txt"},
+            "status": "error",
+            "timestamp": blocks[0]["timestamp"],
+            "tool_output": "Tool call was not executed before the turn completed. The turn may have hit the tool-call limit.",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_finalize_and_get_blocks_uses_generic_message_without_limit_reason():
+    manager = SessionManager()
+    redis_client = FakeRedisClient()
+    manager._cache = FakeCache(redis_client)
+
+    await manager.add_tool_block(
+        subtask_id=506,
+        tool_use_id="read_file_2",
+        tool_name="read_file",
+        tool_input={"file_path": "/tmp/b.txt"},
+    )
+    await manager.update_tool_block_status(
+        subtask_id=506,
+        tool_use_id="read_file_2",
+        status="pending",
+        tool_input={"file_path": "/tmp/b.txt"},
+    )
+
+    blocks = await manager.finalize_and_get_blocks(506)
+
+    assert blocks[0]["status"] == "error"
+    assert (
+        blocks[0]["tool_output"]
+        == "Tool call preview did not complete before the turn ended."
+    )
+
+
+@pytest.mark.asyncio
+async def test_finalize_and_get_blocks_uses_generic_message_when_explicit_tool_error_exists():
+    manager = SessionManager()
+    redis_client = FakeRedisClient()
+    manager._cache = FakeCache(redis_client)
+
+    await manager.add_tool_block(
+        subtask_id=507,
+        tool_use_id="preview_1",
+        tool_name="exec",
+        tool_input={"command": "ls"},
+    )
+    await manager.update_tool_block_status(
+        subtask_id=507,
+        tool_use_id="preview_1",
+        status="pending",
+        tool_input={"command": "ls"},
+    )
+    await manager.add_tool_block(
+        subtask_id=507,
+        tool_use_id="exec_real_1",
+        tool_name="exec",
+        tool_input={"command": "ls"},
+    )
+    await manager.update_tool_block_status(
+        subtask_id=507,
+        tool_use_id="exec_real_1",
+        status="error",
+        tool_input={"command": "ls"},
+        tool_output="command: Field required",
+    )
+
+    blocks = await manager.finalize_and_get_blocks(
+        507,
+        termination_reason="completed_with_unexecuted_tool_calls",
+    )
+
+    preview_block = next(
+        block for block in blocks if block["tool_use_id"] == "preview_1"
+    )
+    real_error_block = next(
+        block for block in blocks if block["tool_use_id"] == "exec_real_1"
+    )
+
+    assert preview_block["status"] == "error"
+    assert (
+        preview_block["tool_output"]
+        == "Tool call preview did not complete before the turn ended."
+    )
+    assert real_error_block["tool_output"] == "command: Field required"
+
+
+@pytest.mark.asyncio
+async def test_finalize_and_get_blocks_preserves_legitimate_pending_tool_blocks():
+    manager = SessionManager()
+    redis_client = FakeRedisClient()
+    manager._cache = FakeCache(redis_client)
+
+    await manager.add_tool_block(
+        subtask_id=606,
+        tool_use_id="interactive_1",
+        tool_name="interactive_form_question",
+        tool_input={"questions": [{"id": "genre"}]},
+    )
+    await manager.update_tool_block_status(
+        subtask_id=606,
+        tool_use_id="interactive_1",
+        status="pending",
+        tool_input={"questions": [{"id": "genre"}]},
+        tool_output={"status": "waiting_for_user_response"},
+    )
+
+    blocks = await manager.finalize_and_get_blocks(606)
+
+    assert blocks == [
+        {
+            "id": "interactive_1",
+            "type": "tool",
+            "tool_use_id": "interactive_1",
+            "tool_name": "interactive_form_question",
+            "tool_input": {"questions": [{"id": "genre"}]},
+            "status": "pending",
+            "timestamp": blocks[0]["timestamp"],
+            "tool_output": {"status": "waiting_for_user_response"},
+        }
+    ]

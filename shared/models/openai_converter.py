@@ -357,7 +357,7 @@ class OpenAIRequestConverter:
             enable_web_search=metadata.get("enable_web_search", False),
             enable_clarification=metadata.get("enable_clarification", False),
             enable_deep_thinking=metadata.get("enable_deep_thinking", True),
-            enable_tool_output_guard=metadata.get("enable_tool_output_guard", False),
+            enable_tool_output_guard=metadata.get("enable_tool_output_guard", True),
             search_engine=metadata.get("search_engine"),
             skill_names=metadata.get("skill_names", []),
             skill_configs=metadata.get("skill_configs", []),

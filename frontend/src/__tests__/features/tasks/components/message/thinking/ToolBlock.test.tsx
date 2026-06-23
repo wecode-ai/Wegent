@@ -85,9 +85,7 @@ describe('ToolBlock', () => {
 
   it('shows the skill name when load_skill input is serialized JSON', () => {
     render(
-      <ToolBlock
-        tool={createTool(JSON.stringify({ skill_name: 'weibo-tools' }), 'load_skill')}
-      />
+      <ToolBlock tool={createTool(JSON.stringify({ skill_name: 'weibo-tools' }), 'load_skill')} />
     )
 
     expect(screen.getByText('加载技能 weibo-tools')).toBeInTheDocument()
