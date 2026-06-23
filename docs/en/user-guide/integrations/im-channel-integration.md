@@ -185,7 +185,7 @@ In IM channels that support private chats, use commands to choose chat or task m
 | `/status` | View current private chat status |
 | `/cancel` | Cancel the current selection flow |
 
-Weibo DM Task mode only supports local runtime tasks bound from Wework. First click **Continue in private chat** from the Wework local task, choose the Weibo private chat, and then continue sending messages in Weibo. If you use `/task` or `/switch` directly in Weibo without a bound local task, Wegent prompts you to return to Wework and choose a target private chat.
+Weibo DM Task mode uses Wework local runtime tasks and does not create central database Tasks. You can click **Continue in private chat** from a Wework local task, choose the Weibo private chat, and then continue sending messages in Weibo. You can also send `/new` in Weibo DM, choose `2. Create Task`, and then choose a Project or reply `0` to create a non-Project local runtime task. For non-Project tasks, Wegent uses the currently selected local device; if none is selected and exactly one local device is online, Wegent uses that device automatically. If you use `/task` or `/switch` to continue a task before binding a local runtime task, Wegent still prompts you to return to Wework and choose one.
 
 ---
 

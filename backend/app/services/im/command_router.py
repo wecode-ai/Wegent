@@ -369,10 +369,10 @@ class IMCommandRouter:
                 projects=projects,
             )
 
-        if self._uses_runtime_only_task_mode(session) and session.state in {
-            IMSessionState.PENDING_TASK_SWITCH,
-            IMSessionState.PENDING_TASK_CREATION,
-        }:
+        if (
+            self._uses_runtime_only_task_mode(session)
+            and session.state == IMSessionState.PENDING_TASK_SWITCH
+        ):
             if self._has_runtime_task_binding(session):
                 await self._prepare_runtime_only_task_mode(
                     db=db, session=session, keep_runtime_task=True
@@ -532,8 +532,6 @@ class IMCommandRouter:
             )
 
         if normalized in {"2", "task"}:
-            if self._uses_runtime_only_task_mode(session):
-                return await self._enter_runtime_only_task_mode(db=db, session=session)
             await im_session_service.set_mode(
                 db, session=session, mode=IMSessionMode.TASK
             )
