@@ -137,6 +137,27 @@ class WeiboStreamingResponseEmitter(ResultEmitter):
         await self._send_text_parts(content, done=False)
         self._sent_content += content
 
+    async def emit_status_prefix(
+        self,
+        task_id: int,
+        subtask_id: int,
+        content: str,
+        **kwargs,
+    ) -> None:
+        if self._finished:
+            logger.debug(
+                "[WeiboEmitter] Ignoring status prefix after finish: "
+                "task_id=%s subtask_id=%s",
+                task_id,
+                subtask_id,
+            )
+            return
+        if not content:
+            return
+
+        self._ensure_message_id(task_id, subtask_id)
+        await self._send_text_parts(content, done=False)
+
     async def emit_done(
         self,
         task_id: int,

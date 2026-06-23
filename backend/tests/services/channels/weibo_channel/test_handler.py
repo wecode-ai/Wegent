@@ -143,3 +143,9 @@ def test_create_callback_info_uses_weibo_channel_type():
     assert info.channel_id == 7
     assert info.conversation_id == "10001"
     assert info.to_user_id == "10001"
+
+
+def test_task_created_running_notice_merges_into_weibo_stream():
+    handler = WeiboChannelHandler(channel_id=7)
+
+    assert handler.should_merge_task_created_running_notice_with_stream() is True

@@ -79,6 +79,7 @@ logger = logging.getLogger(__name__)
 CHANNEL_CONV_TASK_PREFIX = "channel:conv_task:"
 # TTL for conversation-task mapping (7 days)
 CHANNEL_CONV_TASK_TTL = 7 * 24 * 60 * 60
+TASK_CREATED_RUNNING_NOTICE = "已创建任务，正在执行。"
 
 
 @dataclass
@@ -338,6 +339,35 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         if device_id and streaming_emitter:
             return None
         return response_emitter
+
+    def should_merge_task_created_running_notice_with_stream(self) -> bool:
+        return False
+
+    async def _emit_initial_stream_content(
+        self,
+        streaming_emitter: Any,
+        *,
+        task_id: int,
+        subtask_id: int,
+        content: Optional[str],
+    ) -> None:
+        if not streaming_emitter or not content:
+            return
+
+        if hasattr(streaming_emitter, "emit_status_prefix"):
+            await streaming_emitter.emit_status_prefix(
+                task_id=task_id,
+                subtask_id=subtask_id,
+                content=content,
+            )
+            return
+
+        await streaming_emitter.emit_chunk(
+            task_id=task_id,
+            subtask_id=subtask_id,
+            content=content,
+            offset=0,
+        )
 
     # ==================== Common Methods ====================
 
@@ -1260,7 +1290,12 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             )
             return
 
-        await self.send_text_reply(message_context, "已创建任务，正在执行。")
+        initial_stream_content = None
+        if self.should_merge_task_created_running_notice_with_stream():
+            initial_stream_content = f"{TASK_CREATED_RUNNING_NOTICE}\n\n"
+        else:
+            await self.send_text_reply(message_context, TASK_CREATED_RUNNING_NOTICE)
+
         await self._persist_private_im_task_media(
             db=db,
             user_id=user.id,
@@ -1277,6 +1312,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             message=message,
             message_context=message_context,
             params=params,
+            initial_stream_content=initial_stream_content,
         )
 
     def _build_private_im_message_source(self, im_session: Any) -> Dict[str, Any]:
@@ -1327,6 +1363,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         message: str,
         message_context: MessageContext,
         params: Any,
+        initial_stream_content: Optional[str] = None,
     ) -> None:
         if assistant_subtask is None:
             return
@@ -1340,12 +1377,23 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 task_id=task_id,
                 subtask_id=assistant_subtask.id,
             )
+            await self._emit_initial_stream_content(
+                streaming_emitter,
+                task_id=task_id,
+                subtask_id=assistant_subtask.id,
+                content=initial_stream_content,
+            )
             if hasattr(streaming_emitter, "set_shared_content_key"):
                 streaming_emitter.set_shared_content_key(
                     f"channel:streaming_content:{task_id}"
                 )
         else:
             response_emitter = SyncResponseEmitter()
+            if initial_stream_content:
+                await self.send_text_reply(
+                    message_context,
+                    initial_stream_content.strip(),
+                )
 
         await self._register_streaming_emitter(
             task_id=task_id,

@@ -110,6 +110,38 @@ async def test_emit_done_sends_empty_done_marker_when_no_tail():
 
 
 @pytest.mark.asyncio
+async def test_emit_status_prefix_uses_same_stream_without_result_dedup():
+    sender = AsyncMock()
+    cache = FakeCache()
+    emitter = WeiboStreamingResponseEmitter(
+        channel_id=7,
+        to_user_id="10001",
+        sender=sender,
+        cache=cache,
+    )
+
+    await emitter.emit_start(task_id=11, subtask_id=13)
+    await emitter.emit_status_prefix(
+        task_id=11,
+        subtask_id=13,
+        content="已创建任务，正在执行。\n\n",
+    )
+    await emitter.emit_chunk(task_id=11, subtask_id=13, content="hello", offset=0)
+    await emitter.emit_done(task_id=11, subtask_id=13, result={"value": "hello"})
+
+    calls = sender.send_stream_chunk.await_args_list
+    assert calls[0].kwargs["text"] == "已创建任务，正在执行。\n\n"
+    assert calls[0].kwargs["chunk_id"] == 0
+    assert calls[0].kwargs["done"] is False
+    assert calls[1].kwargs["text"] == "hello"
+    assert calls[1].kwargs["message_id"] == calls[0].kwargs["message_id"]
+    assert calls[1].kwargs["chunk_id"] == 1
+    assert calls[2].kwargs["text"] == ""
+    assert calls[2].kwargs["chunk_id"] == 2
+    assert calls[2].kwargs["done"] is True
+
+
+@pytest.mark.asyncio
 async def test_emit_done_sends_unsent_tail_from_final_result():
     sender = AsyncMock()
     cache = FakeCache()

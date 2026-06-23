@@ -47,6 +47,9 @@ class WeiboChannelHandler(BaseChannelHandler[dict[str, Any], WeiboCallbackInfo])
     def set_sender(self, sender: WeiboSender) -> None:
         self._sender = sender
 
+    def should_merge_task_created_running_notice_with_stream(self) -> bool:
+        return True
+
     def parse_message(self, raw_data: Any) -> MessageContext:
         if not isinstance(raw_data, dict):
             return self._empty_context(raw_data, "unknown")
