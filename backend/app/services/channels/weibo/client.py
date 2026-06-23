@@ -64,11 +64,6 @@ class WeiboTokenFetchError(Exception):
         self.retryable = retryable
 
 
-def build_weibo_message_id(*, channel_id: int, task_id: int, subtask_id: int) -> str:
-    """Build the stable Weibo message ID for one assistant streaming response."""
-    return f"weibo_{channel_id}_{task_id}_{subtask_id}"
-
-
 class WeiboWebSocketClient:
     """Small aiohttp-based Weibo Open IM WebSocket client."""
 

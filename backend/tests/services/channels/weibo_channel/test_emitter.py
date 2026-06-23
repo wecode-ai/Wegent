@@ -47,12 +47,14 @@ async def test_emit_chunk_sends_incrementing_chunk_ids():
     await emitter.emit_chunk(task_id=11, subtask_id=13, content="hello", offset=0)
     await emitter.emit_chunk(task_id=11, subtask_id=13, content=" world", offset=5)
 
-    assert sender.send_stream_chunk.await_args_list[0].kwargs["message_id"] == (
-        "weibo_7_11_13"
-    )
+    first_message_id = sender.send_stream_chunk.await_args_list[0].kwargs["message_id"]
+    assert first_message_id.startswith("msg_")
     assert sender.send_stream_chunk.await_args_list[0].kwargs["chunk_id"] == 0
     assert sender.send_stream_chunk.await_args_list[0].kwargs["done"] is False
     assert sender.send_stream_chunk.await_args_list[0].kwargs["text"] == "hello"
+    assert sender.send_stream_chunk.await_args_list[1].kwargs["message_id"] == (
+        first_message_id
+    )
     assert sender.send_stream_chunk.await_args_list[1].kwargs["chunk_id"] == 1
     assert sender.send_stream_chunk.await_args_list[1].kwargs["text"] == " world"
 
@@ -72,13 +74,12 @@ async def test_emit_done_sends_empty_done_marker_when_no_tail():
     await emitter.emit_chunk(task_id=11, subtask_id=13, content="hello", offset=0)
     await emitter.emit_done(task_id=11, subtask_id=13, result={"value": "hello"})
 
-    assert sender.send_stream_chunk.await_args_list[-1].kwargs == {
-        "to_user_id": "10001",
-        "text": "",
-        "message_id": "weibo_7_11_13",
-        "chunk_id": 1,
-        "done": True,
-    }
+    done_kwargs = sender.send_stream_chunk.await_args_list[-1].kwargs
+    assert done_kwargs["to_user_id"] == "10001"
+    assert done_kwargs["text"] == ""
+    assert done_kwargs["message_id"].startswith("msg_")
+    assert done_kwargs["chunk_id"] == 1
+    assert done_kwargs["done"] is True
 
 
 @pytest.mark.asyncio

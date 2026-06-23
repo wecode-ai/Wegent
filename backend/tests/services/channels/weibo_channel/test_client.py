@@ -15,7 +15,6 @@ from app.services.channels.weibo.client import (
     WeiboClientConfig,
     WeiboTokenFetchError,
     WeiboWebSocketClient,
-    build_weibo_message_id,
 )
 
 
@@ -251,10 +250,3 @@ async def test_start_creates_background_tasks_and_close_cancels_them():
     assert client._running is False
     assert client._task is None
     assert client._heartbeat_task is None
-
-
-def test_build_weibo_message_id_is_stable_for_stream():
-    assert (
-        build_weibo_message_id(channel_id=7, task_id=11, subtask_id=13)
-        == "weibo_7_11_13"
-    )

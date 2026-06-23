@@ -10,8 +10,7 @@ import logging
 from typing import Optional
 
 from app.core.cache import cache_manager
-from app.services.channels.weibo.client import build_weibo_message_id
-from app.services.channels.weibo.sender import WeiboSender
+from app.services.channels.weibo.sender import WeiboSender, generate_weibo_message_id
 from app.services.execution.emitters import ResultEmitter
 from shared.models import EventType, ExecutionEvent
 
@@ -134,11 +133,7 @@ class WeiboStreamingResponseEmitter(ResultEmitter):
 
     def _ensure_message_id(self, task_id: int, subtask_id: int) -> str:
         if self._message_id is None:
-            self._message_id = build_weibo_message_id(
-                channel_id=self._channel_id,
-                task_id=task_id,
-                subtask_id=subtask_id,
-            )
+            self._message_id = generate_weibo_message_id()
         return self._message_id
 
     def _extract_unsent_tail(self, result: Optional[dict]) -> str:
