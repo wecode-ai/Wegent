@@ -356,7 +356,10 @@ function SystemPluginCatalogRow({
 
   return (
     <article className="group flex min-h-[84px] items-center gap-3 rounded-2xl border border-border/70 bg-background px-3 py-3 shadow-sm hover:bg-surface sm:min-h-[74px] sm:gap-4 sm:rounded-lg sm:border-0 sm:bg-transparent sm:py-2 sm:shadow-none">
-      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-violet-50 text-violet-600">
+      <div
+        className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary"
+        data-testid={`system-plugin-icon-${safeId}`}
+      >
         <Boxes className="h-6 w-6" />
       </div>
       <div className="min-w-0 flex-1">

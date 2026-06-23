@@ -523,6 +523,10 @@ describe('PluginsWorkspace', () => {
 
     expect(await screen.findByText('Superpowers')).toBeInTheDocument()
     expect(screen.getByText('System managed plugin')).toBeInTheDocument()
+    expect(screen.getByTestId('system-plugin-icon-100')).toHaveClass(
+      'bg-primary/10',
+      'text-primary'
+    )
     expect(screen.queryByText('上传 Claude Code 插件')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('plugins-create-button'))
