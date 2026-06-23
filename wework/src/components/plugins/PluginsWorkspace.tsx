@@ -3,7 +3,6 @@ import {
   BookOpen,
   Check,
   ImageIcon,
-  MessageCircle,
   MoreHorizontal,
   Plus,
   RefreshCw,
@@ -292,45 +291,6 @@ function tabClassName(selected: boolean) {
       ? 'bg-background text-text-primary shadow-[0_1px_6px_rgba(15,23,42,0.10)]'
       : 'text-text-secondary hover:text-text-primary',
   ].join(' ')
-}
-
-function MarketplaceHero() {
-  const { t } = useTranslation('common')
-
-  return (
-    <section className="relative z-0 flex min-h-[190px] w-full overflow-hidden rounded-2xl bg-surface shadow-[0_14px_38px_rgba(104,117,179,0.16)] md:min-h-[220px]">
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_16%_20%,rgba(255,255,255,0.95),transparent_31%),radial-gradient(circle_at_82%_24%,rgba(226,215,255,0.95),transparent_34%),linear-gradient(135deg,#b9c9ff_0%,#eef4ff_38%,#d8d4ff_68%,#b8c3ff_100%)]" />
-      <div className="absolute -left-16 top-4 h-[360px] w-[520px] rotate-[-20deg] rounded-[50%] border border-white/45 bg-white/22 blur-[2px]" />
-      <div className="absolute -right-10 bottom-[-120px] h-[360px] w-[600px] rotate-[-8deg] rounded-[50%] border border-white/35 bg-white/18 blur-[2px]" />
-      <div className="absolute inset-0 bg-[linear-gradient(120deg,rgba(255,255,255,0.34),transparent_45%,rgba(255,255,255,0.18))]" />
-      <div className="relative z-0 flex min-h-full w-full flex-col items-center justify-center gap-7 px-6 py-8 text-center">
-        <div className="inline-flex max-w-full items-center gap-2.5 rounded-xl border border-background/70 bg-background/80 px-4 py-2.5 text-sm font-semibold leading-5 text-text-primary shadow-[0_10px_32px_rgba(82,88,132,0.18)] backdrop-blur-md">
-          <Sparkles className="h-4 w-4 shrink-0 text-primary" />
-          <span className="truncate">
-            {t('workbench.plugins_hero_prompt', '帮我整理本周的项目进度并生成可视化报告')}
-          </span>
-        </div>
-        <button
-          type="button"
-          className="inline-flex h-11 items-center gap-2.5 rounded-lg bg-text-primary px-5 text-sm font-semibold leading-5 text-background shadow-[0_14px_24px_rgba(0,0,0,0.20)] transition-transform hover:-translate-y-0.5"
-        >
-          <MessageCircle className="h-5 w-5" />
-          {t('workbench.plugins_hero_cta', '在对话中试用')}
-        </button>
-      </div>
-      <div className="absolute right-7 top-1/2 z-0 flex -translate-y-1/2 flex-col gap-3">
-        {[0, 1, 2, 3, 4].map(dot => (
-          <span
-            key={dot}
-            className={[
-              'h-2.5 w-2.5 rounded-full',
-              dot === 0 ? 'bg-text-primary' : 'bg-text-primary/25',
-            ].join(' ')}
-          />
-        ))}
-      </div>
-    </section>
-  )
 }
 
 function SystemPluginCatalogRow({
@@ -1345,8 +1305,6 @@ export function PluginsWorkspace({
             </>
           )}
         </div>
-
-        <MarketplaceHero />
 
         <section className="space-y-8">
           {activeTab === 'mcp' ? (
