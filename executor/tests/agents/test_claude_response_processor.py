@@ -226,6 +226,31 @@ async def test_assistant_message_emits_tool_start_when_text_was_streamed():
 
 
 @pytest.mark.asyncio
+async def test_user_message_tool_use_emits_tool_start_before_tool_result():
+    emitter = MagicMock()
+    emitter.flush = AsyncMock()
+    emitter.tool_start = AsyncMock()
+    emitter.tool_done = AsyncMock()
+
+    await _handle_user_message(
+        UserMessage(
+            content=[
+                ToolUseBlock(id="Bash_3", name="Bash", input={"command": "sleep 1"}),
+            ],
+        ),
+        emitter,
+        state_manager=DummyStateManager(),
+    )
+
+    emitter.tool_start.assert_awaited_once_with(
+        call_id="Bash_3",
+        name="Bash",
+        arguments={"command": "sleep 1"},
+    )
+    emitter.tool_done.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_assistant_message_finalizes_streamed_tool_without_duplicate_start():
     emitter = MagicMock()
     emitter.flush = AsyncMock()

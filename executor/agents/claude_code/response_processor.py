@@ -508,6 +508,7 @@ async def _handle_user_message(
                 message_details["message"]["content"].append(tool_detail)
 
                 logger.info(f"UserMessage ToolUseBlock: tool = {block.name}")
+                await _emit_tool_use_start(block, emitter)
 
             elif isinstance(block, TextBlock):
                 # Check if this is SDK interruption text block
@@ -731,32 +732,7 @@ async def _handle_assistant_message(
                         block.id,
                     )
 
-            try:
-                arguments = block.input if isinstance(block.input, dict) else {}
-                if _stream_tool_was_started(emitter, block.id):
-                    if _stream_tool_needs_final_arguments(emitter, block.id, arguments):
-                        await emitter.tool_argument_done(
-                            call_id=block.id,
-                            arguments=arguments,
-                            arguments_summary=arguments,
-                        )
-                        _mark_stream_tool_finalized(emitter, block.id, arguments)
-                    logger.info(
-                        f"Finalized streamed tool arguments for tool {block.name}"
-                    )
-                else:
-                    # Flush any buffered text_delta events before sending tool_start
-                    # This ensures text content is sent before tool events
-                    await emitter.flush()
-
-                    await emitter.tool_start(
-                        call_id=block.id,
-                        name=block.name,
-                        arguments=arguments,
-                    )
-                    logger.info(f"Sent tool_start event for tool {block.name}")
-            except Exception as e:
-                logger.warning(f"Failed to send tool_start event: {e}")
+            await _emit_tool_use_start(block, emitter)
 
         elif isinstance(block, TextBlock):
             # Text content details in target format
@@ -978,6 +954,37 @@ async def _handle_stream_event(
         logger.debug(f"StreamEvent: unknown type={event_type}, event={event}")
 
     return sent_content
+
+
+async def _emit_tool_use_start(
+    block: ToolUseBlock,
+    emitter: ResponsesAPIEmitter,
+) -> None:
+    try:
+        arguments = block.input if isinstance(block.input, dict) else {}
+        if _stream_tool_was_started(emitter, block.id):
+            if _stream_tool_needs_final_arguments(emitter, block.id, arguments):
+                await emitter.tool_argument_done(
+                    call_id=block.id,
+                    arguments=arguments,
+                    arguments_summary=arguments,
+                )
+                _mark_stream_tool_finalized(emitter, block.id, arguments)
+            logger.info(f"Finalized streamed tool arguments for tool {block.name}")
+            return
+
+        # Flush any buffered text_delta events before sending tool_start.
+        # This ensures text content is sent before tool events.
+        await emitter.flush()
+
+        await emitter.tool_start(
+            call_id=block.id,
+            name=block.name,
+            arguments=arguments,
+        )
+        logger.info(f"Sent tool_start event for tool {block.name}")
+    except Exception as e:
+        logger.warning(f"Failed to send tool_start event: {e}")
 
 
 def _stream_tool_state(emitter: ResponsesAPIEmitter) -> dict[str, dict[str, Any]]:
