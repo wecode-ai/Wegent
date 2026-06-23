@@ -7,7 +7,7 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
@@ -83,6 +83,13 @@ class MCPProviderServiceConfigResponse(BaseModel):
     url: str = ""
 
 
+class UserRuntimeAuthSync(BaseModel):
+    """Master/slave sync topology for a runtime auth file."""
+
+    master_device_id: Optional[str] = None
+    slave_device_ids: list[str] = Field(default_factory=list)
+
+
 class UserRuntimeConfigResponse(BaseModel):
     """Public status for a user-scoped runtime configuration."""
 
@@ -94,9 +101,12 @@ class UserRuntimeConfigResponse(BaseModel):
     target_path: str
     auth_json_sha256: Optional[str] = None
     auth_json_updated_at: Optional[str] = None
+    auth_json_source_device_id: Optional[str] = None
+    auth_json_source_modified_at: Optional[str] = None
     proxy_configured: bool = False
     proxy_url_masked: str = ""
     proxy_updated_at: Optional[str] = None
+    auth_sync: UserRuntimeAuthSync = Field(default_factory=UserRuntimeAuthSync)
     updated_at: Optional[str] = None
 
 
@@ -114,6 +124,7 @@ class UserRuntimeConfigUpdateRequest(BaseModel):
 
     use_user_config: bool
     use_proxy: Optional[bool] = None
+    auth_sync: Optional[UserRuntimeAuthSync] = None
 
 
 class UserRuntimeAuthJsonRequest(BaseModel):
@@ -132,6 +143,29 @@ class UserRuntimeConfigImportRequest(BaseModel):
     """Request body for importing runtime auth JSON from one local device."""
 
     device_id: str
+
+
+async def _sync_runtime_auth_to_slave_devices_best_effort(
+    db: Session,
+    *,
+    user_id: int,
+    runtime: str,
+    preferences: object,
+) -> None:
+    try:
+        await user_runtime_config_service.sync_auth_to_slave_devices(
+            db,
+            user_id=user_id,
+            runtime=runtime,
+            preferences=preferences,
+        )
+    except UserRuntimeConfigSyncError:
+        logger.warning(
+            "Failed to sync runtime auth to slave devices: user=%s runtime=%s",
+            user_id,
+            runtime,
+            exc_info=True,
+        )
 
 
 @router.get("/features", response_model=FeatureFlags)
@@ -271,15 +305,25 @@ async def update_user_runtime_config(
 ):
     """Update whether a user runtime config is enabled."""
     try:
-        return UserRuntimeConfigResponse(
-            **user_runtime_config_service.set_use_user_config(
-                db,
-                user=current_user,
-                runtime=runtime,
-                use_user_config=request.use_user_config,
-                use_proxy=request.use_proxy,
-            )
+        auth_sync = (
+            request.auth_sync.model_dump() if request.auth_sync is not None else None
         )
+        response_data = user_runtime_config_service.set_use_user_config(
+            db,
+            user=current_user,
+            runtime=runtime,
+            use_user_config=request.use_user_config,
+            use_proxy=request.use_proxy,
+            auth_sync=auth_sync,
+        )
+        if request.auth_sync is not None and response_data.get("configured"):
+            await _sync_runtime_auth_to_slave_devices_best_effort(
+                db,
+                user_id=current_user.id,
+                runtime=runtime,
+                preferences=current_user.preferences,
+            )
+        return UserRuntimeConfigResponse(**response_data)
     except UserRuntimeConfigError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -341,15 +385,20 @@ async def upload_user_runtime_auth_json(
 ):
     """Upload and encrypt current user's runtime auth JSON."""
     try:
-        return UserRuntimeConfigResponse(
-            **user_runtime_config_service.save_auth_json(
-                db,
-                user_id=current_user.id,
-                runtime=runtime,
-                auth_json=request.auth_json,
-                preferences=current_user.preferences,
-            )
+        response_data = user_runtime_config_service.save_auth_json(
+            db,
+            user_id=current_user.id,
+            runtime=runtime,
+            auth_json=request.auth_json,
+            preferences=current_user.preferences,
         )
+        await _sync_runtime_auth_to_slave_devices_best_effort(
+            db,
+            user_id=current_user.id,
+            runtime=runtime,
+            preferences=current_user.preferences,
+        )
+        return UserRuntimeConfigResponse(**response_data)
     except UserRuntimeConfigError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
