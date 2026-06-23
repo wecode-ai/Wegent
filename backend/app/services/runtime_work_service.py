@@ -8,6 +8,7 @@ import json
 import logging
 import posixpath
 import re
+import time
 from dataclasses import dataclass, replace
 from hashlib import sha256
 from types import SimpleNamespace
@@ -412,6 +413,16 @@ async def send_runtime_message(
     }
     if request.source:
         payload["source"] = request.source.model_dump()
+    started_at = time.monotonic()
+    logger.info(
+        "Runtime task send dispatching: user_id=%s device_id=%s "
+        "workspace_path=%s local_task_id=%s message_length=%s",
+        user_id,
+        address.device_id,
+        address.workspace_path,
+        address.local_task_id,
+        len(request.message),
+    )
     try:
         result = await runtime_rpc_service.call(
             user_id=user_id,
@@ -421,10 +432,36 @@ async def send_runtime_message(
             timeout_seconds=RUNTIME_SEND_TIMEOUT_SECONDS,
         )
     except RuntimeRpcError as exc:
+        duration_ms = int((time.monotonic() - started_at) * 1000)
+        logger.warning(
+            "Runtime task send RPC failed: user_id=%s device_id=%s "
+            "workspace_path=%s local_task_id=%s duration_ms=%s error=%s",
+            user_id,
+            address.device_id,
+            address.workspace_path,
+            address.local_task_id,
+            duration_ms,
+            exc,
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=str(exc),
         ) from exc
+    duration_ms = int((time.monotonic() - started_at) * 1000)
+    logger.info(
+        "Runtime task send completed: user_id=%s device_id=%s workspace_path=%s "
+        "local_task_id=%s runtime=%s success=%s accepted=%s error_code=%s "
+        "duration_ms=%s",
+        user_id,
+        address.device_id,
+        address.workspace_path,
+        result.get("localTaskId") or address.local_task_id,
+        result.get("runtime"),
+        result.get("success"),
+        result.get("accepted"),
+        result.get("code"),
+        duration_ms,
+    )
     return _runtime_send_response(result, address.local_task_id)
 
 
@@ -620,6 +657,17 @@ async def create_runtime_task(
         "title": _runtime_task_title(request),
         "executionRequest": execution_request.to_dict(),
     }
+    started_at = time.monotonic()
+    logger.info(
+        "Runtime task create dispatching: user_id=%s project_id=%s device_id=%s "
+        "workspace_path=%s runtime=%s message_length=%s",
+        user_id,
+        target.project.id if target.project else None,
+        target.device_id,
+        target.workspace_path,
+        request.runtime,
+        len(request.message),
+    )
     try:
         result = await runtime_rpc_service.call(
             user_id=user_id,
@@ -629,10 +677,36 @@ async def create_runtime_task(
             timeout_seconds=RUNTIME_CREATE_TIMEOUT_SECONDS,
         )
     except RuntimeRpcError as exc:
+        duration_ms = int((time.monotonic() - started_at) * 1000)
+        logger.warning(
+            "Runtime task create RPC failed: user_id=%s device_id=%s "
+            "workspace_path=%s runtime=%s duration_ms=%s error=%s",
+            user_id,
+            target.device_id,
+            target.workspace_path,
+            request.runtime,
+            duration_ms,
+            exc,
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=str(exc),
         ) from exc
+    duration_ms = int((time.monotonic() - started_at) * 1000)
+    logger.info(
+        "Runtime task create completed: user_id=%s device_id=%s workspace_path=%s "
+        "runtime=%s success=%s accepted=%s local_task_id=%s error_code=%s "
+        "duration_ms=%s",
+        user_id,
+        target.device_id,
+        target.workspace_path,
+        result.get("runtime") or request.runtime,
+        result.get("success"),
+        result.get("accepted"),
+        result.get("localTaskId"),
+        result.get("code"),
+        duration_ms,
+    )
     return _runtime_create_response(
         result,
         request.runtime,

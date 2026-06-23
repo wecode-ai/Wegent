@@ -77,6 +77,20 @@ class LocalTaskResponsesHandler:
                     event=event,
                 )
                 is_terminal = is_terminal_event(event)
+                if is_terminal:
+                    logger.info(
+                        "Local task terminal event handled: user_id=%s "
+                        "device_id=%s local_task_id=%s runtime=%s subtask_id=%s "
+                        "event_type=%s terminal_status=%s error_code=%s",
+                        user_id,
+                        device_id,
+                        local_task_id,
+                        data.get("runtime"),
+                        subtask_id,
+                        event_type,
+                        local_task_terminal_status(event),
+                        event.error_code,
+                    )
 
             if is_terminal:
                 cleanup_lock(subtask_id)
