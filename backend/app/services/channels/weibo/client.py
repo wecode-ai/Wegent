@@ -215,6 +215,56 @@ class WeiboWebSocketClient:
         await self._ws.send_str(json.dumps(data, ensure_ascii=False))
         return True
 
+    async def start(self) -> None:
+        self._running = True
+        self._task = asyncio.create_task(self._run_forever())
+        self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+
+    async def _run_forever(self) -> None:
+        reconnect_attempt = 0
+        while self._running:
+            try:
+                await self.connect_once()
+                reconnect_attempt = 0
+                await self._receive_loop()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                self._last_error = str(exc)
+                delay = min(
+                    INITIAL_RECONNECT_DELAY_SECONDS * (2**reconnect_attempt),
+                    MAX_RECONNECT_DELAY_SECONDS,
+                )
+                reconnect_attempt += 1
+                await asyncio.sleep(delay)
+
+    async def _receive_loop(self) -> None:
+        if self._ws is None:
+            return
+
+        async for message in self._ws:
+            data = getattr(message, "data", None)
+            if not isinstance(data, str):
+                continue
+            parsed = self.handle_ws_text(data)
+            if parsed is None:
+                continue
+            if self._on_message:
+                await self._on_message(parsed)
+
+    async def _heartbeat_loop(self) -> None:
+        while self._running:
+            await asyncio.sleep(PING_INTERVAL_SECONDS)
+            if not self.is_connected:
+                continue
+            if time.time() - self._last_pong_at > (
+                PING_INTERVAL_SECONDS + PONG_TIMEOUT_SECONDS
+            ):
+                self._last_error = "Weibo pong timeout"
+                await self._ws.close()
+                continue
+            await self.send_ping()
+
     async def close(self) -> None:
         self._running = False
         if self._task and not self._task.done():

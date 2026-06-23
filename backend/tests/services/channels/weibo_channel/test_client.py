@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -73,6 +74,22 @@ class FakeSession:
 
     async def close(self):
         return None
+
+
+class FakeReceiveWebSocket:
+    def __init__(self, messages):
+        self.messages = list(messages)
+        self.closed = False
+        self.close = AsyncMock()
+        self.send_str = AsyncMock()
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if not self.messages:
+            raise StopAsyncIteration
+        return SimpleNamespace(data=self.messages.pop(0))
 
 
 def _config():
@@ -190,6 +207,50 @@ def test_handle_ws_text_marks_pong_timestamp():
 
     assert client.handle_ws_text("pong") is None
     assert client._last_pong_at > 0
+
+
+@pytest.mark.asyncio
+async def test_receive_loop_routes_json_message_to_callback():
+    received = []
+    client = WeiboWebSocketClient(
+        config=_config(),
+        cache=FakeCache(),
+        on_message=AsyncMock(side_effect=lambda event: received.append(event)),
+    )
+    client._ws = FakeReceiveWebSocket(
+        [
+            "pong",
+            '{"type":"message","payload":{"text":"hello"}}',
+            "not-json",
+        ]
+    )
+
+    await client._receive_loop()
+
+    assert received == [{"type": "message", "payload": {"text": "hello"}}]
+
+
+@pytest.mark.asyncio
+async def test_start_creates_background_tasks_and_close_cancels_them():
+    client = WeiboWebSocketClient(config=_config(), cache=FakeCache())
+
+    async def wait_forever():
+        await asyncio.sleep(3600)
+
+    client._run_forever = wait_forever
+    client._heartbeat_loop = wait_forever
+
+    await client.start()
+
+    assert client._running is True
+    assert client._task is not None
+    assert client._heartbeat_task is not None
+
+    await client.close()
+
+    assert client._running is False
+    assert client._task is None
+    assert client._heartbeat_task is None
 
 
 def test_build_weibo_message_id_is_stable_for_stream():
