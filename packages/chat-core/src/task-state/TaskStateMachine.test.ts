@@ -126,7 +126,7 @@ describe('TaskStateMachine', () => {
 
   it('does not duplicate completed thinking blocks when chat done replays backend blocks', () => {
     const machine = new TaskStateMachine(100, {
-      joinTask: jest.fn(),
+      joinTask: vi.fn(),
       isConnected: () => true,
     })
 

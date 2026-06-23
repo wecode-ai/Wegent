@@ -43,10 +43,12 @@ const mockSetTaskInputMessage = jest.fn()
 let chatStatusIndicatorMock = {
   enabled: false,
   display: null,
-  currentTaskId: null,
+  currentTaskId: null as number | null,
   isCompacting: false,
 }
-const mockMessagesArea = jest.fn(() => <div data-testid="messages-area" />)
+const mockMessagesArea = jest.fn((_: Record<string, unknown>) => (
+  <div data-testid="messages-area" />
+))
 
 jest.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(),
