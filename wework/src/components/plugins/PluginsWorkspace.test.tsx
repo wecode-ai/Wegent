@@ -529,6 +529,11 @@ describe('PluginsWorkspace', () => {
       'bg-primary/10',
       'text-primary'
     )
+    expect(screen.getByTestId('system-plugin-title-100')).toHaveClass(
+      'min-w-0',
+      'flex-1',
+      'text-text-primary'
+    )
     expect(screen.queryByText('上传 Claude Code 插件')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('plugins-create-button'))

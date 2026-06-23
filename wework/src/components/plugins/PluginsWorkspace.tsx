@@ -326,11 +326,14 @@ function SystemPluginCatalogRow({
       </div>
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-2">
-          <h3 className="truncate text-base font-semibold leading-5 sm:text-[15px]">
+          <h3
+            className="min-w-0 flex-1 truncate text-base font-semibold leading-5 text-text-primary sm:text-[15px]"
+            data-testid={`system-plugin-title-${safeId}`}
+          >
             {plugin.displayName || plugin.name}
           </h3>
           {plugin.version && (
-            <span className="rounded-md bg-surface px-2 py-0.5 text-xs font-semibold text-text-muted">
+            <span className="shrink-0 rounded-md bg-surface px-2 py-0.5 text-xs font-semibold text-text-muted">
               {plugin.version}
             </span>
           )}
