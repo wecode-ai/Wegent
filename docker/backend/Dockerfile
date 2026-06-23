@@ -30,6 +30,13 @@ COPY backend /app
 # - skills/: Skill packages (mermaid-diagram, wiki_submit, sandbox)
 COPY backend/init_data /app/init_data
 
+# Generate built-in Wegent Help knowledge seed from repository docs.
+COPY docs /app/docs
+RUN python /app/scripts/generate_wegent_help_knowledge_seed.py \
+    --docs-root /app/docs \
+    --output-dir /app/init_data/system_knowledge/wegent-help \
+    && rm -rf /app/docs
+
 # Create .env file (if it doesn't exist)
 RUN if [ ! -f .env ]; then cp .env.example .env; fi
 
