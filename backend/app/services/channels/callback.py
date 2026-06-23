@@ -51,6 +51,7 @@ class ChannelType(str, Enum):
     DISCORD = "discord"
     SLACK = "slack"
     WECHAT = "wechat"
+    WEIBO = "weibo"
 
 
 @dataclass
