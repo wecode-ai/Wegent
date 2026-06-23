@@ -130,3 +130,25 @@ def test_system_knowledge_init_updates_changed_document(
     doc = test_db.query(KnowledgeDocument).one()
     assert result["documents_updated"] == 1
     assert doc.source_config["content_sha256"] == "hash-2"
+
+
+def test_yaml_initialization_calls_system_knowledge_init(test_db, mocker) -> None:
+    mocker.patch("app.core.yaml_init.settings.INIT_DATA_ENABLED", True)
+    mocker.patch("app.core.yaml_init.settings.ENVIRONMENT", "development")
+    mocker.patch("app.core.yaml_init.ensure_default_user", return_value=(123, False))
+    mocker.patch(
+        "app.core.yaml_init.scan_and_apply_yaml_directory",
+        return_value={"status": "completed", "resources_total": 0},
+    )
+    system_init = mocker.patch(
+        "app.core.yaml_init.run_system_knowledge_initialization",
+        return_value={"status": "completed"},
+    )
+
+    from app.core.yaml_init import run_yaml_initialization
+
+    result = run_yaml_initialization(test_db)
+
+    assert result["status"] == "completed"
+    assert result["system_knowledge"] == {"status": "completed"}
+    system_init.assert_called_once()
