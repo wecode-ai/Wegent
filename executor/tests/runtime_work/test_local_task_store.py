@@ -1140,6 +1140,7 @@ def test_codex_discovery_passes_resolved_codex_binary_to_sdk(tmp_path, monkeypat
         == "/Applications/Codex.app/Contents/Resources/codex"
     )
     assert client.config.kwargs["env"]["CODEX_HOME"] == str(tmp_path / "codex-home")
+    assert (tmp_path / "codex-home").is_dir()
 
 
 def test_codex_discovery_reads_user_visible_transcript(tmp_path):

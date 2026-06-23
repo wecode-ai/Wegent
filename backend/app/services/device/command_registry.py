@@ -886,6 +886,8 @@ records = []
 discovery_error = None
 
 try:
+    codex_home.mkdir(parents=True, exist_ok=True)
+
     from openai_codex import Codex, CodexConfig
 
     with Codex(
