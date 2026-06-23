@@ -15,6 +15,8 @@ PluginInstallState = Literal[
     "uninstalled",
 ]
 
+PluginRuntime = Literal["claudecode", "codex"]
+
 
 class PluginSkillComponent(BaseModel):
     """Skill metadata discovered inside a Claude Code plugin."""
@@ -55,11 +57,12 @@ class InstalledPluginComponents(BaseModel):
 class InstalledPluginSource(BaseModel):
     """Source identity for a user-installed Claude Code plugin."""
 
-    type: Literal["upload", "marketplace", "local"] = "upload"
+    type: Literal["upload", "marketplace", "local", "system"] = "upload"
     providerKey: str = "claude-code"
     pluginKey: str
     catalogItemId: Optional[str] = None
     marketplace: Optional[str] = None
+    systemPluginId: Optional[int] = None
 
 
 class InstalledPluginPackageRef(BaseModel):
@@ -74,6 +77,7 @@ class InstalledPluginSpec(BaseModel):
     """User-scoped Claude Code plugin installation state."""
 
     source: InstalledPluginSource
+    runtime: PluginRuntime = "claudecode"
     displayName: str
     description: str = ""
     version: Optional[str] = None
@@ -111,6 +115,50 @@ class InstalledPluginListResponse(BaseModel):
     items: List[InstalledPlugin]
 
 
+class SystemPlugin(BaseModel):
+    """System-managed Claude Code plugin catalog item."""
+
+    apiVersion: str = "agent.wecode.io/v1"
+    kind: Literal["Plugin"] = "Plugin"
+    metadata: Dict[str, Any]
+    spec: InstalledPluginSpec
+    status: InstalledPluginStatus = Field(default_factory=InstalledPluginStatus)
+
+
+class SystemPluginListResponse(BaseModel):
+    """Response for admin system plugin management."""
+
+    total: int
+    items: List[SystemPlugin]
+
+
+class PluginCatalogItem(BaseModel):
+    """User-facing system plugin catalog item with install state."""
+
+    id: int
+    name: str
+    displayName: str
+    description: str = ""
+    version: Optional[str] = None
+    author: Optional[str] = None
+    enabled: bool = True
+    installState: PluginInstallState = "not_installed"
+    installedPluginId: Optional[int] = None
+    installedPluginIds: Dict[PluginRuntime, int] = Field(default_factory=dict)
+    variantIds: Dict[PluginRuntime, int] = Field(default_factory=dict)
+    sourceChecksum: Optional[str] = None
+    installedChecksum: Optional[str] = None
+    components: InstalledPluginComponents = Field(
+        default_factory=InstalledPluginComponents
+    )
+
+
+class PluginCatalogListResponse(BaseModel):
+    """Response for user-facing plugin catalog."""
+
+    items: List[PluginCatalogItem]
+
+
 class InstalledPluginUpdateRequest(BaseModel):
     """Request to update installed plugin runtime state."""
 
@@ -118,6 +166,14 @@ class InstalledPluginUpdateRequest(BaseModel):
     componentStates: Optional[Dict[str, bool]] = None
     displayName: Optional[str] = None
     description: Optional[str] = None
+
+
+class SystemPluginUpdateRequest(BaseModel):
+    """Request to update system plugin catalog metadata."""
+
+    displayName: Optional[str] = None
+    description: Optional[str] = None
+    enabled: Optional[bool] = None
 
 
 class PluginUploadInfo(BaseModel):

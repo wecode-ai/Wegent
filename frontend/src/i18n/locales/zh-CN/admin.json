@@ -6,6 +6,7 @@
     "public_models": "公共模型",
     "public_retrievers": "公共检索引擎",
     "public_skills": "公共技能",
+    "plugins": "插件管理",
     "public_teams": "公共智能体",
     "public_bots": "公共机器人",
     "public_ghosts": "公共 Ghost",
@@ -32,6 +33,67 @@
     "reset": "重置",
     "loading": "加载中...",
     "done": "完成"
+  },
+  "system_plugins": {
+    "title": "插件管理",
+    "description": "管理系统默认展示给用户的插件，支持上传、修改展示信息、启停和替换 ZIP 版本",
+    "no_plugins": "暂无系统插件",
+    "no_description": "暂无描述",
+    "version": "版本 {{version}}",
+    "runtime": {
+      "claudecode": "ClaudeCode",
+      "codex": "Codex"
+    },
+    "status": {
+      "enabled": "已启用",
+      "disabled": "已停用"
+    },
+    "fields": {
+      "name": "插件名称",
+      "components": "组件数",
+      "package_size": "包大小",
+      "zip_file": "ZIP 文件",
+      "enabled": "启用",
+      "display_name": "展示名称",
+      "description": "描述",
+      "runtime": "运行时版本"
+    },
+    "actions": {
+      "upload": "上传插件",
+      "toggle": "切换启停状态",
+      "edit": "编辑展示信息",
+      "replace_package": "替换 ZIP",
+      "delete": "删除插件"
+    },
+    "upload": {
+      "title": "上传系统插件",
+      "description": "分别上传 ClaudeCode 和 Codex 两个运行时版本后，用户可在 wework 插件管理中看到一个整合插件并手动添加。"
+    },
+    "edit": {
+      "title": "编辑插件展示信息"
+    },
+    "replace": {
+      "title": "替换插件包",
+      "description": "上传新的 ZIP 替换 {{name}}。已安装用户会看到可更新提示，并需要手动更新。"
+    },
+    "delete": {
+      "title": "删除插件",
+      "description": "确定要删除 {{name}} 吗？删除后该插件不会继续展示给用户。"
+    },
+    "success": {
+      "uploaded": "插件已上传",
+      "updated": "插件已更新",
+      "replaced": "插件包已替换",
+      "deleted": "插件已删除"
+    },
+    "errors": {
+      "load_failed": "加载插件失败",
+      "file_required": "请选择 ZIP 文件",
+      "upload_failed": "上传插件失败",
+      "update_failed": "更新插件失败",
+      "replace_failed": "替换插件包失败",
+      "delete_failed": "删除插件失败"
+    }
   },
   "users": {
     "title": "用户管理",

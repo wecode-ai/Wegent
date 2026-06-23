@@ -6,6 +6,7 @@
     "public_models": "Public Models",
     "public_retrievers": "Public Retrievers",
     "public_skills": "Public Skills",
+    "plugins": "Plugins",
     "public_teams": "Public Agents",
     "public_bots": "Public Bots",
     "public_ghosts": "Public Ghosts",
@@ -32,6 +33,67 @@
     "reset": "Reset",
     "loading": "Loading...",
     "done": "Done"
+  },
+  "system_plugins": {
+    "title": "Plugin Management",
+    "description": "Manage the plugins shown to users by default, including uploads, display metadata, enabled state, and ZIP package replacements",
+    "no_plugins": "No system plugins yet",
+    "no_description": "No description",
+    "version": "Version {{version}}",
+    "runtime": {
+      "claudecode": "ClaudeCode",
+      "codex": "Codex"
+    },
+    "status": {
+      "enabled": "Enabled",
+      "disabled": "Disabled"
+    },
+    "fields": {
+      "name": "Plugin name",
+      "components": "Components",
+      "package_size": "Package size",
+      "zip_file": "ZIP file",
+      "enabled": "Enabled",
+      "display_name": "Display name",
+      "description": "Description",
+      "runtime": "Runtime version"
+    },
+    "actions": {
+      "upload": "Upload plugin",
+      "toggle": "Toggle enabled state",
+      "edit": "Edit display metadata",
+      "replace_package": "Replace ZIP",
+      "delete": "Delete plugin"
+    },
+    "upload": {
+      "title": "Upload System Plugin",
+      "description": "After uploading both ClaudeCode and Codex runtime ZIPs, users can see one combined plugin in wework plugin management and add it manually."
+    },
+    "edit": {
+      "title": "Edit Plugin Display Metadata"
+    },
+    "replace": {
+      "title": "Replace Plugin Package",
+      "description": "Upload a new ZIP to replace {{name}}. Installed users will see an update prompt and update manually."
+    },
+    "delete": {
+      "title": "Delete Plugin",
+      "description": "Delete {{name}}? The plugin will no longer be shown to users."
+    },
+    "success": {
+      "uploaded": "Plugin uploaded",
+      "updated": "Plugin updated",
+      "replaced": "Plugin package replaced",
+      "deleted": "Plugin deleted"
+    },
+    "errors": {
+      "load_failed": "Failed to load plugins",
+      "file_required": "Select a ZIP file",
+      "upload_failed": "Failed to upload plugin",
+      "update_failed": "Failed to update plugin",
+      "replace_failed": "Failed to replace plugin package",
+      "delete_failed": "Failed to delete plugin"
+    }
   },
   "users": {
     "title": "User Management",

@@ -23,7 +23,7 @@ function createSkillZipFile(name: string, rootSkillMd = false): File {
       '---',
       '',
       'Use this skill carefully.',
-    ].join('\n'),
+    ].join('\n')
   )
   const localHeader = new Uint8Array(30 + fileNameBytes.length)
   const localView = new DataView(localHeader.buffer)
@@ -55,13 +55,9 @@ function createSkillZipFile(name: string, rootSkillMd = false): File {
   endView.setUint32(12, centralHeader.length, true)
   endView.setUint32(16, centralDirectoryOffset, true)
 
-  return new File(
-    [localHeader, contentBytes, centralHeader, endHeader],
-    `${name}.zip`,
-    {
-      type: 'application/zip',
-    },
-  )
+  return new File([localHeader, contentBytes, centralHeader, endHeader], `${name}.zip`, {
+    type: 'application/zip',
+  })
 }
 
 function mockSystemSkillsFetch(
@@ -69,7 +65,9 @@ function mockSystemSkillsFetch(
     installState: 'not_installed' | 'installed' | 'update_available'
     enabled: boolean
     installedSkillId: number | null
-  }> = {},
+    pluginInstallState: 'not_installed' | 'installed' | 'update_available'
+    installedPluginId: number | null
+  }> = {}
 ) {
   const personalSkillsResponse = {
     items: [
@@ -254,6 +252,86 @@ function mockSystemSkillsFetch(
     },
     status: { state: 'Available' },
   }
+  const pluginCatalogItem = {
+    id: 100,
+    name: 'superpowers',
+    displayName: 'Superpowers',
+    description: 'System managed plugin',
+    version: '1.0.0',
+    author: 'Weibo',
+    enabled: true,
+    installState: overrides.pluginInstallState ?? 'not_installed',
+    installedPluginId: overrides.installedPluginId ?? null,
+    installedPluginIds: overrides.installedPluginId
+      ? { claudecode: overrides.installedPluginId, codex: overrides.installedPluginId + 1 }
+      : {},
+    variantIds: { claudecode: 100, codex: 101 },
+    sourceChecksum: 'sha256:system',
+    installedChecksum:
+      overrides.pluginInstallState === 'update_available' ? 'sha256:installed' : null,
+    components: {
+      skills: [],
+      commands: [{ name: 'test', path: 'commands/test.md' }],
+      agents: [],
+      hooks: [],
+      mcps: [],
+      lsps: [],
+      monitors: [],
+      bins: [],
+    },
+  }
+  const installedPluginResponse = {
+    apiVersion: 'agent.wecode.io/v1',
+    kind: 'InstalledPlugin',
+    metadata: {
+      name: 'superpowers',
+      namespace: 'default',
+      labels: { id: String(overrides.installedPluginId ?? 55) },
+    },
+    spec: {
+      source: {
+        type: 'system',
+        providerKey: 'claude-code',
+        pluginKey: 'superpowers',
+        catalogItemId: '100',
+        systemPluginId: 100,
+        runtime: 'claudecode',
+      },
+      displayName: 'Superpowers',
+      description: 'System managed plugin',
+      version: '1.0.0',
+      runtime: 'claudecode',
+      installState: 'installed',
+      enabled: true,
+      componentStates: { 'command:test': true },
+      manifest: { name: 'superpowers' },
+      components: pluginCatalogItem.components,
+      packageRef: {
+        storageKey: 'skill-binaries/55',
+        checksum: 'sha256:system',
+        sizeBytes: 100,
+      },
+      sourcePayload: null,
+    },
+    status: { state: 'Available' },
+  }
+  const installedCodexPluginResponse = {
+    ...installedPluginResponse,
+    metadata: {
+      ...installedPluginResponse.metadata,
+      labels: { id: String((overrides.installedPluginId ?? 55) + 1) },
+    },
+    spec: {
+      ...installedPluginResponse.spec,
+      source: {
+        ...installedPluginResponse.spec.source,
+        providerKey: 'codex',
+        systemPluginId: 101,
+        runtime: 'codex',
+      },
+      runtime: 'codex',
+    },
+  }
   const skill = (page: number) => ({
     id: `@weibo/page-${page}`,
     providerKey: 'weibo',
@@ -308,9 +386,7 @@ function mockSystemSkillsFetch(
           status: 201,
           json: () =>
             Promise.resolve(
-              body.skillId === 78
-                ? installedUploadedPersonalSkill
-                : installedPersonalSkill,
+              body.skillId === 78 ? installedUploadedPersonalSkill : installedPersonalSkill
             ),
         })
       }
@@ -347,6 +423,36 @@ function mockSystemSkillsFetch(
           ok: true,
           status: 200,
           json: () => Promise.resolve(customMcpResponse),
+        })
+      }
+      if (requestUrl.pathname === '/api/plugins/catalog') {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ items: [pluginCatalogItem] }),
+        })
+      }
+      if (requestUrl.pathname === '/api/plugins/catalog/100/install') {
+        return Promise.resolve({
+          ok: true,
+          status: 201,
+          json: () =>
+            Promise.resolve({ items: [installedPluginResponse, installedCodexPluginResponse] }),
+        })
+      }
+      if (requestUrl.pathname === '/api/plugins/catalog/100/update') {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () =>
+            Promise.resolve({ items: [installedPluginResponse, installedCodexPluginResponse] }),
+        })
+      }
+      if (requestUrl.pathname === '/api/plugins/installed') {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ items: [] }),
         })
       }
       const page = Number(requestUrl.searchParams.get('page') ?? 1)
@@ -392,7 +498,7 @@ function mockSystemSkillsFetch(
         status: init?.method === 'DELETE' ? 204 : 200,
         json: () => Promise.resolve(payload),
       })
-    }),
+    })
   )
 }
 
@@ -408,11 +514,42 @@ describe('PluginsWorkspace', () => {
     const skillsTab = screen.getByRole('tab', { name: '技能' })
 
     expect(skillsTab).toHaveAttribute('aria-selected', 'true')
-    expect(skillsTab).toHaveClass(
-      'bg-background',
-      'text-text-primary',
-    )
+    expect(skillsTab).toHaveClass('bg-background', 'text-text-primary')
     expect(await screen.findByText('Weibo Skill 1')).toBeInTheDocument()
+  })
+
+  test('shows system plugin catalog and removes plugin upload entry', async () => {
+    render(<PluginsWorkspace />)
+
+    expect(await screen.findByText('Superpowers')).toBeInTheDocument()
+    expect(screen.getByText('System managed plugin')).toBeInTheDocument()
+    expect(screen.queryByText('上传 Claude Code 插件')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('plugins-create-button'))
+    expect(screen.queryByTestId('plugins-create-plugin-option')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('system-plugin-install-100'))
+
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/plugins/catalog/100/install',
+      expect.objectContaining({ method: 'POST' })
+    )
+  })
+
+  test('updates an installed system plugin from the catalog', async () => {
+    mockSystemSkillsFetch({
+      pluginInstallState: 'update_available',
+      installedPluginId: 55,
+    })
+    render(<PluginsWorkspace />)
+
+    expect(await screen.findByText('Superpowers')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('system-plugin-update-100'))
+
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/plugins/catalog/100/update',
+      expect.objectContaining({ method: 'POST' })
+    )
   })
 
   test('filters skills and shows the empty state for unmatched search', async () => {
@@ -420,15 +557,9 @@ describe('PluginsWorkspace', () => {
 
     await openSkillsTab()
     expect(await screen.findByText('Weibo Skill 1')).toBeInTheDocument()
-    expect(screen.getByTestId('plugins-search-input')).toHaveClass(
-      'h-11',
-      'w-full',
-    )
+    expect(screen.getByTestId('plugins-search-input')).toHaveClass('h-11', 'w-full')
 
-    await userEvent.type(
-      screen.getByTestId('plugins-search-input'),
-      'does-not-exist',
-    )
+    await userEvent.type(screen.getByTestId('plugins-search-input'), 'does-not-exist')
 
     expect(await screen.findByText('找不到匹配的技能')).toBeInTheDocument()
     expect(screen.queryByText('Weibo Skill 1')).not.toBeInTheDocument()
@@ -441,38 +572,24 @@ describe('PluginsWorkspace', () => {
     expect(await screen.findByText('Weibo Skill 1')).toBeInTheDocument()
     expect(screen.getByTestId('plugins-workspace')).toHaveClass(
       'bg-background',
-      'text-text-primary',
+      'text-text-primary'
     )
     expect(screen.getByRole('tablist')).toHaveClass('w-full', 'md:w-fit')
     expect(screen.getByRole('tab', { name: '技能' })).toHaveClass(
       'h-7',
       'flex-1',
       'bg-background',
-      'text-text-primary',
+      'text-text-primary'
     )
-    expect(screen.getByTestId('plugins-search-input')).toHaveClass(
-      'text-[13px]',
-      'leading-[18px]',
-    )
-    expect(screen.getByTestId('plugins-mobile-section-filter')).toHaveClass(
-      'md:hidden',
-    )
-    expect(screen.getByTestId('plugins-section-filter')).toHaveClass(
-      'hidden',
-      'md:block',
-    )
+    expect(screen.getByTestId('plugins-search-input')).toHaveClass('text-[13px]', 'leading-[18px]')
+    expect(screen.getByTestId('plugins-mobile-section-filter')).toHaveClass('md:hidden')
+    expect(screen.getByTestId('plugins-section-filter')).toHaveClass('hidden', 'md:block')
 
     const catalogCard = screen.getByText('Weibo Skill 1').closest('article')
     expect(catalogCard).toHaveClass('grid', 'min-h-[72px]', 'border-b')
-    expect(catalogCard?.querySelector('button')).toHaveClass(
-      'h-11',
-      'w-11',
-    )
+    expect(catalogCard?.querySelector('button')).toHaveClass('h-11', 'w-11')
 
-    const catalogGrid = screen
-      .getByText('Weibo Skill 1')
-      .closest('section')
-      ?.querySelector('.grid')
+    const catalogGrid = screen.getByText('Weibo Skill 1').closest('section')?.querySelector('.grid')
     expect(catalogGrid).toHaveClass('grid-cols-1', 'sm:grid-cols-2')
   })
 
@@ -482,32 +599,21 @@ describe('PluginsWorkspace', () => {
     await openSkillsTab()
     expect(await screen.findByText('Excel Helper')).toBeInTheDocument()
 
-    await userEvent.selectOptions(
-      screen.getByTestId('plugins-section-filter'),
-      'personal',
-    )
+    await userEvent.selectOptions(screen.getByTestId('plugins-section-filter'), 'personal')
     expect(screen.getByText('Excel Helper')).toBeInTheDocument()
     expect(screen.queryByText('Weibo Skill 1')).not.toBeInTheDocument()
-    expect(
-      screen.queryByTestId('system-skills-pagination'),
-    ).not.toBeInTheDocument()
+    expect(screen.queryByTestId('system-skills-pagination')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('plugins-create-button'))
     expect(screen.getByTestId('plugins-create-menu')).toHaveClass(
       'bg-[rgb(var(--color-popover))]',
       'text-text-primary',
-      'isolate',
+      'isolate'
     )
-    expect(
-      screen.getByTestId('plugins-create-skill-option'),
-    ).toBeInTheDocument()
-    expect(screen.getByTestId('plugins-create-skill-option')).toHaveClass(
-      'text-text-primary',
-    )
+    expect(screen.getByTestId('plugins-create-skill-option')).toBeInTheDocument()
+    expect(screen.getByTestId('plugins-create-skill-option')).toHaveClass('text-text-primary')
     expect(screen.getByTestId('plugins-create-mcp-option')).toBeInTheDocument()
-    expect(screen.getByTestId('plugins-create-mcp-option')).toHaveClass(
-      'text-text-primary',
-    )
+    expect(screen.getByTestId('plugins-create-mcp-option')).toHaveClass('text-text-primary')
     await userEvent.click(screen.getByTestId('plugins-create-skill-option'))
     expect(screen.getByRole('dialog')).toBeInTheDocument()
     const upload = screen.getByTestId('skill-upload-file-input')
@@ -525,14 +631,14 @@ describe('PluginsWorkspace', () => {
       expect.objectContaining({
         method: 'POST',
         body: expect.any(FormData),
-      }),
+      })
     )
     expect(fetch).toHaveBeenCalledWith(
       '/api/system-skills/install/personal',
       expect.objectContaining({
         method: 'POST',
         body: JSON.stringify({ skillId: 78 }),
-      }),
+      })
     )
   })
 
@@ -560,17 +666,11 @@ describe('PluginsWorkspace', () => {
     })
     await userEvent.click(screen.getByTestId('custom-mcp-apply-json-button'))
 
-    expect(screen.getByTestId('custom-mcp-name-input')).toHaveValue(
-      'local-docs',
-    )
-    expect(screen.getByTestId('custom-mcp-display-name-input')).toHaveValue(
-      'local-docs',
-    )
-    expect(screen.getByTestId('custom-mcp-url-input')).toHaveValue(
-      'https://mcp.example.com/local',
-    )
+    expect(screen.getByTestId('custom-mcp-name-input')).toHaveValue('local-docs')
+    expect(screen.getByTestId('custom-mcp-display-name-input')).toHaveValue('local-docs')
+    expect(screen.getByTestId('custom-mcp-url-input')).toHaveValue('https://mcp.example.com/local')
     expect(screen.getByTestId('custom-mcp-headers-input')).toHaveValue(
-      '{\n  "Authorization": "Bearer token"\n}',
+      '{\n  "Authorization": "Bearer token"\n}'
     )
     await userEvent.click(screen.getByTestId('custom-mcp-submit-button'))
 
@@ -590,7 +690,7 @@ describe('PluginsWorkspace', () => {
           },
           enabled: true,
         }),
-      }),
+      })
     )
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
@@ -623,12 +723,10 @@ describe('PluginsWorkspace', () => {
     const personalHeading = screen.getByRole('heading', { name: '个人' })
 
     expect(
-      systemHeading.compareDocumentPosition(pagination) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
+      systemHeading.compareDocumentPosition(pagination) & Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy()
     expect(
-      pagination.compareDocumentPosition(personalHeading) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
+      pagination.compareDocumentPosition(personalHeading) & Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy()
   })
 
@@ -641,45 +739,35 @@ describe('PluginsWorkspace', () => {
     expect(await screen.findByText('Hot Search MCP')).toBeInTheDocument()
     expect(fetch).toHaveBeenCalledWith(
       '/api/mcp-providers/mcp_router/servers',
-      expect.objectContaining({ method: 'POST' }),
+      expect.objectContaining({ method: 'POST' })
     )
     expect(
-      vi
-        .mocked(fetch)
-        .mock.calls.some(([url]) =>
-          String(url).includes('/api/mcps/installed'),
-        ),
+      vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes('/api/mcps/installed'))
     ).toBe(false)
 
-    await userEvent.click(
-      screen.getByTestId('mcp-market-install--mcp_router-hot-search'),
-    )
+    await userEvent.click(screen.getByTestId('mcp-market-install--mcp_router-hot-search'))
 
     expect(
-      await screen.findByTestId('mcp-market-uninstall--mcp_router-hot-search'),
+      await screen.findByTestId('mcp-market-uninstall--mcp_router-hot-search')
     ).toBeInTheDocument()
     expect(fetch).toHaveBeenCalledWith(
       '/api/mcps/install',
       expect.objectContaining({
         method: 'POST',
         body: expect.stringContaining('"providerKey":"mcp_router"'),
-      }),
+      })
     )
 
-    await userEvent.click(
-      screen.getByTestId('mcp-market-uninstall--mcp_router-hot-search'),
-    )
+    await userEvent.click(screen.getByTestId('mcp-market-uninstall--mcp_router-hot-search'))
     expect(screen.getByRole('dialog')).toBeInTheDocument()
-    await userEvent.click(
-      screen.getByTestId('mcp-market-confirm-uninstall-button'),
-    )
+    await userEvent.click(screen.getByTestId('mcp-market-confirm-uninstall-button'))
 
     expect(fetch).toHaveBeenCalledWith(
       '/api/mcps/installed/9',
-      expect.objectContaining({ method: 'DELETE' }),
+      expect.objectContaining({ method: 'DELETE' })
     )
     expect(
-      await screen.findByTestId('mcp-market-install--mcp_router-hot-search'),
+      await screen.findByTestId('mcp-market-install--mcp_router-hot-search')
     ).toBeInTheDocument()
   })
 
@@ -694,7 +782,7 @@ describe('PluginsWorkspace', () => {
     expect(await screen.findByText('Weibo Skill 2')).toBeInTheDocument()
     expect(fetch).toHaveBeenCalledWith(
       '/api/system-skills?category=system&page=2&pageSize=20',
-      expect.objectContaining({ method: 'GET' }),
+      expect.objectContaining({ method: 'GET' })
     )
   })
 
@@ -704,19 +792,15 @@ describe('PluginsWorkspace', () => {
     await openSkillsTab()
     expect(await screen.findByText('Weibo Skill 1')).toBeInTheDocument()
 
-    await userEvent.click(
-      screen.getByTestId('system-skill-install--weibo-page-1'),
-    )
+    await userEvent.click(screen.getByTestId('system-skill-install--weibo-page-1'))
 
-    expect(
-      await screen.findByTestId('system-skill-uninstall--weibo-page-1'),
-    ).toBeInTheDocument()
+    expect(await screen.findByTestId('system-skill-uninstall--weibo-page-1')).toBeInTheDocument()
     expect(fetch).toHaveBeenCalledWith(
       '/api/system-skills/install',
       expect.objectContaining({
         method: 'POST',
         body: expect.stringContaining('"catalogItemId":"@weibo/page-1"'),
-      }),
+      })
     )
   })
 
@@ -725,23 +809,19 @@ describe('PluginsWorkspace', () => {
 
     await openSkillsTab()
     expect(await screen.findByText('Excel Helper')).toBeInTheDocument()
-    expect(
-      screen.getByTestId('system-skill-install-personal-excel-helper'),
-    ).toBeInTheDocument()
+    expect(screen.getByTestId('system-skill-install-personal-excel-helper')).toBeInTheDocument()
 
-    await userEvent.click(
-      screen.getByTestId('system-skill-install-personal-excel-helper'),
-    )
+    await userEvent.click(screen.getByTestId('system-skill-install-personal-excel-helper'))
 
     expect(
-      await screen.findByTestId('system-skill-uninstall-personal-excel-helper'),
+      await screen.findByTestId('system-skill-uninstall-personal-excel-helper')
     ).toBeInTheDocument()
     expect(fetch).toHaveBeenCalledWith(
       '/api/system-skills/install/personal',
       expect.objectContaining({
         method: 'POST',
         body: '{"skillId":77}',
-      }),
+      })
     )
   })
 
@@ -756,25 +836,17 @@ describe('PluginsWorkspace', () => {
 
     await openSkillsTab()
     expect(await screen.findByText('Weibo Skill 1')).toBeInTheDocument()
-    expect(
-      screen.queryByTestId('system-skill-install--weibo-page-1'),
-    ).not.toBeInTheDocument()
+    expect(screen.queryByTestId('system-skill-install--weibo-page-1')).not.toBeInTheDocument()
 
-    await userEvent.click(
-      screen.getByTestId('system-skill-uninstall--weibo-page-1'),
-    )
+    await userEvent.click(screen.getByTestId('system-skill-uninstall--weibo-page-1'))
 
     expect(screen.getByRole('dialog')).toBeInTheDocument()
-    await userEvent.click(
-      screen.getByTestId('system-skill-confirm-uninstall-button'),
-    )
+    await userEvent.click(screen.getByTestId('system-skill-confirm-uninstall-button'))
 
-    expect(
-      await screen.findByTestId('system-skill-install--weibo-page-1'),
-    ).toBeInTheDocument()
+    expect(await screen.findByTestId('system-skill-install--weibo-page-1')).toBeInTheDocument()
     expect(fetch).toHaveBeenCalledWith(
       '/api/system-skills/installed/42',
-      expect.objectContaining({ method: 'DELETE' }),
+      expect.objectContaining({ method: 'DELETE' })
     )
   })
 
@@ -790,16 +862,14 @@ describe('PluginsWorkspace', () => {
     await openSkillsTab()
     expect(await screen.findByText('Weibo Skill 1')).toBeInTheDocument()
 
-    await userEvent.click(
-      screen.getByTestId('system-skill-update--weibo-page-1'),
-    )
+    await userEvent.click(screen.getByTestId('system-skill-update--weibo-page-1'))
 
     expect(fetch).toHaveBeenCalledWith(
       '/api/system-skills/install',
       expect.objectContaining({
         method: 'POST',
         body: expect.stringContaining('"catalogItemId":"@weibo/page-1"'),
-      }),
+      })
     )
   })
 })

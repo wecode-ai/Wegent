@@ -646,6 +646,7 @@ class DeviceCapabilitySyncService:
             "marketplace": marketplace,
             "version": spec.get("version"),
             "source": source,
+            "runtime": spec.get("runtime") or source.get("runtime") or "claudecode",
         }
         component_states = spec.get("componentStates") or {}
         if component_states:

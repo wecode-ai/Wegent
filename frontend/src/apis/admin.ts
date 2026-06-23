@@ -3,12 +3,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { apiClient } from './client'
+import { getToken } from './user'
 import {
   getQuickLaunchFunctionsConfig,
   updateQuickLaunchFunctionsConfig,
 } from './admin-quick-launch'
 import { outboundTokenAdminApis } from './outboundTokens'
 import { RetrieverCRD } from './retrievers'
+import { getApiBaseUrl } from '@/lib/runtime-config'
 import type { SkillRefMeta } from '@/types/api'
 
 // Re-export RetrieverCRD for backward compatibility
@@ -574,6 +576,124 @@ export interface AdminTemplateUpdate {
   resources?: TemplateResources
 }
 
+export type PluginInstallState =
+  | 'not_installed'
+  | 'installed'
+  | 'update_available'
+  | 'unavailable'
+  | 'failed'
+  | 'uninstalled'
+
+export type PluginRuntime = 'claudecode' | 'codex'
+
+export interface AdminPluginPathComponent {
+  name: string
+  path: string
+}
+
+export interface AdminPluginSkillComponent extends AdminPluginPathComponent {
+  description: string
+}
+
+export interface AdminPluginMCPComponent {
+  name: string
+  server: Record<string, unknown>
+}
+
+export interface AdminPluginComponents {
+  skills: AdminPluginSkillComponent[]
+  commands: AdminPluginPathComponent[]
+  agents: AdminPluginPathComponent[]
+  hooks: AdminPluginPathComponent[]
+  mcps: AdminPluginMCPComponent[]
+  lsps: AdminPluginPathComponent[]
+  monitors: AdminPluginPathComponent[]
+  bins: AdminPluginPathComponent[]
+  settings?: Record<string, unknown> | null
+}
+
+export interface AdminPluginPackageRef {
+  storageKey: string
+  checksum: string
+  sizeBytes: number
+}
+
+export interface AdminSystemPlugin {
+  apiVersion: string
+  kind: 'Plugin'
+  metadata: Record<string, unknown>
+  spec: {
+    source: {
+      type: 'upload' | 'marketplace' | 'local' | 'system'
+      providerKey: string
+      pluginKey: string
+      catalogItemId?: string | null
+      marketplace?: string | null
+      systemPluginId?: number | null
+      runtime?: PluginRuntime | null
+    }
+    displayName: string
+    description: string
+    version?: string | null
+    author?: string | null
+    runtime: PluginRuntime
+    installState: PluginInstallState
+    enabled: boolean
+    componentStates?: Record<string, boolean>
+    manifest: Record<string, unknown>
+    components: AdminPluginComponents
+    packageRef?: AdminPluginPackageRef | null
+    sourcePayload?: Record<string, unknown> | null
+  }
+  status: {
+    state: string
+  }
+}
+
+export interface AdminSystemPluginListResponse {
+  total: number
+  items: AdminSystemPlugin[]
+}
+
+export interface AdminSystemPluginUpdate {
+  displayName?: string
+  description?: string
+  enabled?: boolean
+}
+
+async function uploadSystemPluginForm(
+  endpoint: string,
+  formData: FormData,
+  method: 'POST' | 'PUT'
+): Promise<AdminSystemPlugin> {
+  const token = getToken()
+  if (!token) {
+    throw new Error('No authentication token')
+  }
+
+  const response = await fetch(`${getApiBaseUrl()}${endpoint}`, {
+    method,
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    body: formData,
+  })
+
+  if (!response.ok) {
+    const errorText = await response.text()
+    let message = errorText
+    try {
+      const error = JSON.parse(errorText)
+      message = typeof error.detail === 'string' ? error.detail : errorText
+    } catch {
+      message = errorText
+    }
+    throw new Error(message || 'Failed to upload system plugin')
+  }
+
+  return response.json()
+}
+
 // Admin API Services
 export const adminApis = {
   ...outboundTokenAdminApis,
@@ -686,6 +806,41 @@ export const adminApis = {
    */
   async deletePublicModel(modelId: number): Promise<void> {
     return apiClient.delete(`/admin/public-models/${modelId}`)
+  },
+
+  // ==================== System Plugin Management ====================
+
+  async getSystemPlugins(): Promise<AdminSystemPluginListResponse> {
+    return apiClient.get('/admin/plugins')
+  },
+
+  async uploadSystemPlugin(
+    file: File,
+    enabled: boolean = true,
+    runtime: PluginRuntime = 'claudecode'
+  ): Promise<AdminSystemPlugin> {
+    const formData = new FormData()
+    formData.append('file', file)
+    formData.append('enabled', String(enabled))
+    formData.append('runtime', runtime)
+    return uploadSystemPluginForm('/admin/plugins', formData, 'POST')
+  },
+
+  async updateSystemPlugin(
+    pluginId: number,
+    pluginData: AdminSystemPluginUpdate
+  ): Promise<AdminSystemPlugin> {
+    return apiClient.put(`/admin/plugins/${pluginId}`, pluginData)
+  },
+
+  async replaceSystemPluginPackage(pluginId: number, file: File): Promise<AdminSystemPlugin> {
+    const formData = new FormData()
+    formData.append('file', file)
+    return uploadSystemPluginForm(`/admin/plugins/${pluginId}/package`, formData, 'PUT')
+  },
+
+  async deleteSystemPlugin(pluginId: number): Promise<void> {
+    return apiClient.delete(`/admin/plugins/${pluginId}`)
   },
 
   // ==================== System Stats ====================

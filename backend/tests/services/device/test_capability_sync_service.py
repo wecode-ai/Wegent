@@ -173,6 +173,7 @@ def test_resolve_payload_uses_uploaded_plugin_key_and_download_ref(test_db):
                     "providerKey": "claude-code",
                     "pluginKey": "superpowers",
                 },
+                "runtime": "claudecode",
                 "displayName": "Superpowers",
                 "description": "Core skills",
                 "version": "5.0.7",
@@ -211,6 +212,7 @@ def test_resolve_payload_uses_uploaded_plugin_key_and_download_ref(test_db):
                 "providerKey": "claude-code",
                 "pluginKey": "superpowers",
             },
+            "runtime": "claudecode",
             "checksum": "sha256:abc123",
             "download_path": "/api/plugins/installed/302/download",
         }
