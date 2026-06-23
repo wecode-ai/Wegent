@@ -448,6 +448,13 @@ function mockSystemSkillsFetch(
             Promise.resolve({ items: [installedPluginResponse, installedCodexPluginResponse] }),
         })
       }
+      if (requestUrl.pathname.startsWith('/api/plugins/installed/')) {
+        return Promise.resolve({
+          ok: true,
+          status: 204,
+          json: () => Promise.resolve(null),
+        })
+      }
       if (requestUrl.pathname === '/api/plugins/installed') {
         return Promise.resolve({
           ok: true,
@@ -561,6 +568,27 @@ describe('PluginsWorkspace', () => {
       '/api/plugins/catalog/100/update',
       expect.objectContaining({ method: 'POST' })
     )
+  })
+
+  test('uninstalls an installed system plugin from the catalog', async () => {
+    mockSystemSkillsFetch({
+      pluginInstallState: 'installed',
+      installedPluginId: 55,
+    })
+    render(<PluginsWorkspace />)
+
+    expect(await screen.findByText('Superpowers')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('system-plugin-uninstall-100'))
+
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/plugins/installed/55',
+      expect.objectContaining({ method: 'DELETE' })
+    )
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/plugins/installed/56',
+      expect.objectContaining({ method: 'DELETE' })
+    )
+    expect(screen.getByTestId('system-plugin-install-100')).toBeInTheDocument()
   })
 
   test('filters skills and shows the empty state for unmatched search', async () => {
